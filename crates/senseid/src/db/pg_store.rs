@@ -1382,6 +1382,18 @@ impl PgStore {
         Ok(())
     }
 
+    /// Set a folder's lifecycle status (D6a). The general setter behind the
+    /// `discovered → queued → indexing → indexed | failed` lifecycle;
+    /// `mark_folder_indexed` remains the dedicated writer of `indexed` (it also
+    /// stamps `props.indexed_at`/`libs`). A scan marks `indexing` at start so a
+    /// crash leaves a recoverable state (resume re-enqueues non-terminal folders).
+    pub async fn update_folder_status(&self, folder_id: &uuid::Uuid, status: &str) -> Result<(), String> {
+        sqlx_core::query::query(
+            "UPDATE sensei.folders SET status = $2::sensei.folder_status, modified_at = now() WHERE id = $1"
+        ).bind(folder_id).bind(status).execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
     /// Append a tag to a folder's `tags` array, idempotently (no duplicates).
     /// Used by the scan reconcile to flag a former project root that still has
     /// on-disk content but no live owner (`stale`) for the user to triage,
@@ -2171,18 +2183,23 @@ impl PgStore {
         Ok(())
     }
 
-    /// List folders that were registered by a scan but never finished
-    /// indexing — i.e. status is `discovered` (scan ran, ProcessGitFolder
-    /// hadn't started) or `queued` (mid-flight when the daemon stopped).
-    /// `indexing`, `indexed`, `failed`, and `deferred` are excluded.
+    /// List folders in a non-terminal (recoverable) index state, for startup
+    /// resume: `discovered` (scan ran, ProcessGitFolder hadn't started),
+    /// `queued` (enqueued, not started), `indexing` (a scan was in-flight when
+    /// the daemon stopped — its in-memory task was lost, D6a), and `failed`
+    /// (errored, should retry). `indexed`, `deferred` (intentionally not indexed
+    /// — sibling/standalone), and `archived` (directory gone) are terminal and
+    /// excluded.
     ///
     /// Called once at daemon startup to rebuild the in-memory queue, which
-    /// otherwise loses every task on restart.
+    /// otherwise loses every task on restart. Re-enqueuing an already-running
+    /// folder is deduped by the single-writer guard (`enqueue_unique`).
     pub async fn list_pending_folders(&self) -> Result<Vec<serde_json::Value>, String> {
         let rows: Vec<(uuid::Uuid, uuid::Uuid, String, String, String, String)> = sqlx_core::query_as::query_as(
             "SELECT id, root_id, kind::text, name, abs_path, status::text \
              FROM sensei.folders \
-             WHERE status IN ('discovered'::sensei.folder_status, 'queued'::sensei.folder_status) \
+             WHERE status IN ('discovered'::sensei.folder_status, 'queued'::sensei.folder_status, \
+                              'indexing'::sensei.folder_status, 'failed'::sensei.folder_status) \
              ORDER BY abs_path"
         ).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(rows.into_iter().map(|(id, root_id, kind, name, abs_path, status)| {
@@ -10673,13 +10690,12 @@ mod tests {
             ("indexed",    "d"),
             ("failed",     "e"),
             ("deferred",   "f"),
+            ("archived",   "g"),
         ] {
             let name = format!("repo_{}", suffix);
             let abs_path = format!("{}/{}", root_path, name);
             let fid = s.upsert_folder(&rid, "git", &name, &name, &abs_path, None, None).await.unwrap();
-            sqlx_core::query::query(
-                "UPDATE sensei.folders SET status = $2::sensei.folder_status WHERE id = $1"
-            ).bind(fid).bind(status).execute(s.pool()).await.unwrap();
+            s.update_folder_status(&fid, status).await.unwrap();
         }
 
         let rows = s.list_pending_folders().await.unwrap();
@@ -10687,16 +10703,18 @@ mod tests {
             .filter(|r| r["abs_path"].as_str().unwrap_or("").starts_with(&root_path))
             .collect();
 
-        // Only `discovered` and `queued` are non-terminal in the resume sense.
-        // `indexing` would mean a worker is still running, which can't be true
-        // at startup since the in-memory queue was just created.
+        // Recoverable = non-terminal. `discovered`/`queued` never started;
+        // `indexing`/`failed` are a scan interrupted mid-flight or errored —
+        // its in-memory task was lost on restart (D6a marks `indexing` at scan
+        // start), so resume MUST re-enqueue them. `indexed`/`deferred`/`archived`
+        // are terminal and never resumed.
         let statuses: std::collections::BTreeSet<&str> = ours.iter()
             .map(|r| r["status"].as_str().unwrap())
             .collect();
         assert_eq!(
             statuses,
-            std::collections::BTreeSet::from(["discovered", "queued"]),
-            "expected only discovered+queued, got {:?}", statuses
+            std::collections::BTreeSet::from(["discovered", "queued", "indexing", "failed"]),
+            "expected discovered+queued+indexing+failed, got {:?}", statuses
         );
 
         // Resume needs enough info to enqueue ProcessGitFolder: id, kind, abs_path.
@@ -10707,6 +10725,26 @@ mod tests {
         }
 
         // cleanup — removing the watch root cascades to folders.
+        s.remove_watch_root(&rid).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn update_folder_status_round_trips() {
+        // D6a: the folder-status lifecycle needs a production setter — before
+        // this, only `indexed` (mark_folder_indexed) and `archived` were
+        // writable, so a scan could never record that it had started.
+        let s = pg_store().await;
+        let root_path = format!("/_test/status_{}", uuid::Uuid::new_v4().simple());
+        let rid = s.add_watch_root(&root_path, "status_root", &serde_json::json!([])).await.unwrap();
+        let fid = s.upsert_folder(&rid, "git", "r", "r", &format!("{root_path}/r"), None, None).await.unwrap();
+
+        s.update_folder_status(&fid, "indexing").await.unwrap();
+
+        let (status,): (String,) = sqlx_core::query_as::query_as(
+            "SELECT status::text FROM sensei.folders WHERE id = $1"
+        ).bind(fid).fetch_one(s.pool()).await.unwrap();
+        assert_eq!(status, "indexing", "update_folder_status writes the enum value");
+
         s.remove_watch_root(&rid).await.unwrap();
     }
 

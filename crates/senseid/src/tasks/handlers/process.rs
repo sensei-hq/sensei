@@ -37,6 +37,16 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
     let is_quasi = pre_registered.as_ref()
         .and_then(|r| r["kind"].as_str()) == Some("standalone");
 
+    // D6a: capture this folder's id now (pre_registered is moved below). The
+    // `indexing` mark is written later, INSIDE the has_changes block, so it is
+    // symmetric with the barrier's `indexed` write — a no-op re-scan of an
+    // already-indexed folder is never downgraded. A folder not registered at
+    // scan time (None) is simply not marked; it isn't in the DB, so there is
+    // nothing to recover anyway.
+    let this_folder_id: Option<uuid::Uuid> = pre_registered.as_ref()
+        .and_then(|r| r["id"].as_str())
+        .and_then(|s| uuid::Uuid::parse_str(s).ok());
+
     // ── 1. Detect stack ──────────────────────────────────────────────
     let stack = super::scan_logic::detect_stack(repo_path);
 
@@ -370,6 +380,17 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
     // skip the barriers entirely. This keeps a no-op re-scan cheap.
     let has_changes = !all_file_task_ids.is_empty() || !plan.removed.is_empty();
     if has_changes {
+        // D6a: mark the scan in-flight only when we will actually re-index — a
+        // crash then leaves a recoverable `indexing` state, and the barrier
+        // flips it to `indexed` on success. Gated on has_changes (symmetric
+        // with that write) so an unchanged already-indexed folder is never
+        // downgraded to `indexing`.
+        if let Some(fid) = this_folder_id
+            && let Err(e) = ctx.pg().update_folder_status(&fid, "indexing").await
+        {
+            tracing::warn!(error = %e, folder = %folder_name, "process_git_folder: mark indexing failed");
+        }
+
         let resolve_id = ctx.queue.enqueue(
             Task::new(TaskKind::ResolveEdges, folder_path, "")
                 .with_parent(task.id)
@@ -1042,6 +1063,81 @@ mod tests {
         assert_eq!(role_of(&ctx, &root.join("crates/mylib").to_string_lossy()).await.as_deref(), Some("library"));
         assert_eq!(role_of(&ctx, &root.join("crates/mytool").to_string_lossy()).await.as_deref(), Some("tool"));
         assert_eq!(role_of(&ctx, &root.join("site").to_string_lossy()).await.as_deref(), Some("website"));
+    }
+
+    #[tokio::test]
+    async fn process_git_folder_marks_folder_indexing() {
+        // D6a: process_git_folder marks the folder `indexing` at start. The
+        // `indexed` transition happens later at the build_connections barrier
+        // (mark_folder_indexed), NOT here — so after process_git_folder alone
+        // the folder is left `indexing`, the recoverable in-flight state a
+        // crash would leave behind.
+        async fn status_of(ctx: &TaskContext, abs: &str) -> Option<String> {
+            let row: Option<(String,)> = sqlx_core::query_as::query_as(
+                "SELECT status::text FROM sensei.folders WHERE abs_path = $1",
+            ).bind(abs).fetch_optional(ctx.pg().pool()).await.unwrap();
+            row.map(|r| r.0)
+        }
+
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("repo/src")).unwrap();
+        std::fs::write(root.join("repo/Cargo.toml"), "[package]\nname=\"repo\"").unwrap();
+        std::fs::write(root.join("repo/src/lib.rs"), "pub fn a() {}").unwrap();
+
+        let ctx = make_ctx().await;
+        let repo_path = root.join("repo").to_string_lossy().to_string();
+        let rid = ctx.pg().add_watch_root(&root.to_string_lossy(), "d6a_root", &serde_json::json!([])).await.unwrap();
+        // Register the folder as scan_root would, so process_git_folder resolves it.
+        ctx.pg().upsert_repo_kind(&rid, "git", "repo", &repo_path).await.unwrap();
+        assert_eq!(status_of(&ctx, &repo_path).await.as_deref(), Some("discovered"), "starts discovered");
+
+        let task = Task::new(TaskKind::ProcessGitFolder, &repo_path, &repo_path);
+        process_git_folder(&ctx, &task).await.unwrap();
+
+        assert_eq!(status_of(&ctx, &repo_path).await.as_deref(), Some("indexing"),
+            "process_git_folder leaves the folder indexing (the barrier marks indexed later)");
+
+        ctx.pg().remove_watch_root(&rid).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn process_git_folder_keeps_unchanged_indexed_folder_indexed() {
+        // D6a regression: a no-op re-scan of an already-`indexed` folder (no file
+        // changes → the barrier that writes `indexed` is skipped) must NOT be
+        // downgraded to `indexing`. scan_root re-enqueues ProcessGitFolder for
+        // every folder on every scan, so this is the common steady-state case —
+        // an unconditional mark would strand it at `indexing` forever and make
+        // resume re-index it on every boot. The mark is gated on has_changes.
+        async fn status_of(ctx: &TaskContext, abs: &str) -> Option<String> {
+            let row: Option<(String,)> = sqlx_core::query_as::query_as(
+                "SELECT status::text FROM sensei.folders WHERE abs_path = $1",
+            ).bind(abs).fetch_optional(ctx.pg().pool()).await.unwrap();
+            row.map(|r| r.0)
+        }
+
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        // Empty repo → no indexable files → has_changes is false → no barrier.
+        std::fs::create_dir_all(root.join("repo")).unwrap();
+
+        let ctx = make_ctx().await;
+        let repo_path = root.join("repo").to_string_lossy().to_string();
+        let rid = ctx.pg().add_watch_root(&root.to_string_lossy(), "d6a_noop", &serde_json::json!([])).await.unwrap();
+        ctx.pg().upsert_repo_kind(&rid, "git", "repo", &repo_path).await.unwrap();
+        // Simulate a prior completed index.
+        let (fid,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "SELECT id FROM sensei.folders WHERE abs_path = $1"
+        ).bind(&repo_path).fetch_one(ctx.pg().pool()).await.unwrap();
+        ctx.pg().update_folder_status(&fid, "indexed").await.unwrap();
+
+        let task = Task::new(TaskKind::ProcessGitFolder, &repo_path, &repo_path);
+        process_git_folder(&ctx, &task).await.unwrap();
+
+        assert_eq!(status_of(&ctx, &repo_path).await.as_deref(), Some("indexed"),
+            "an unchanged already-indexed folder must not be downgraded to indexing");
+
+        ctx.pg().remove_watch_root(&rid).await.unwrap();
     }
 
     #[tokio::test]
