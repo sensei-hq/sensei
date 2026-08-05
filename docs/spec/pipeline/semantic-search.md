@@ -1,5 +1,12 @@
 # 探 · Pipeline · Semantic search
 
+> **Status: roadmap (partial).** Semantic (pgvector) + structural (call-graph) + RRF fusion
+> are real and beat grep for embedded symbols, but as of 2026-08-05 the owner files/tables
+> below **do not exist** (`search/hybrid.rs`, `sensei.node_fts`, `node_embeddings`): there is
+> **no FTS**, the lexical arm is a `name LIKE`, the MCP `search` is a keyword router, and
+> embedding coverage is 26%. Verify against the code. See the
+> [indexer capability roadmap](../../analysis/2026-08-05-indexer-capability-coverage.md).
+
 **Owner files:**
 - Search: `crates/senseid/src/search/hybrid.rs`
 - Full-text index: `sensei.node_fts` (pg tsvector)
