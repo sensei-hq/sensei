@@ -1394,6 +1394,17 @@ impl PgStore {
         Ok(())
     }
 
+    /// Read a folder's index status (`sensei.folders.status`). `None` when no
+    /// such folder row exists — an honest miss, never a fabricated status. Used
+    /// by the fail-closed barrier (D6d) to leave a folder with a recorded fatal
+    /// failure `failed` rather than advancing it to `indexed`.
+    pub async fn get_folder_status(&self, folder_id: &uuid::Uuid) -> Result<Option<String>, String> {
+        let row: Option<(String,)> = sqlx_core::query_as::query_as(
+            "SELECT status::text FROM sensei.folders WHERE id = $1"
+        ).bind(folder_id).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row.map(|r| r.0))
+    }
+
     /// Append a tag to a folder's `tags` array, idempotently (no duplicates).
     /// Used by the scan reconcile to flag a former project root that still has
     /// on-disk content but no live owner (`stale`) for the user to triage,
@@ -10857,6 +10868,25 @@ mod tests {
             "SELECT status::text FROM sensei.folders WHERE id = $1"
         ).bind(fid).fetch_one(s.pool()).await.unwrap();
         assert_eq!(status, "indexing", "update_folder_status writes the enum value");
+
+        s.remove_watch_root(&rid).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn get_folder_status_reads_back_status_and_is_none_for_missing() {
+        // D6d: the fail-closed barrier reads folder status to decide whether to
+        // mark `indexed`. A missing folder must be honest-`None`, never an error
+        // or a fabricated status.
+        let s = pg_store().await;
+        let root_path = format!("/_test/getstatus_{}", uuid::Uuid::new_v4().simple());
+        let rid = s.add_watch_root(&root_path, "getstatus_root", &serde_json::json!([])).await.unwrap();
+        let fid = s.upsert_folder(&rid, "git", "r", "r", &format!("{root_path}/r"), None, None).await.unwrap();
+
+        s.update_folder_status(&fid, "failed").await.unwrap();
+        assert_eq!(s.get_folder_status(&fid).await.unwrap().as_deref(), Some("failed"),
+            "reads back the written status");
+        assert_eq!(s.get_folder_status(&uuid::Uuid::new_v4()).await.unwrap(), None,
+            "a missing folder is None, not an error");
 
         s.remove_watch_root(&rid).await.unwrap();
     }

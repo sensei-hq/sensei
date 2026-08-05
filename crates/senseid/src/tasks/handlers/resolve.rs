@@ -148,10 +148,11 @@ pub async fn build_connections(ctx: &TaskContext, task: &Task) -> Result<u32, St
     }
     let libs: Vec<String> = lib_set.into_iter().collect();
 
-    // Mark as indexed
-    if let Err(e) = ctx.pg().mark_folder_indexed(&folder_id, &libs).await {
-        tracing::warn!(error = %e, folder = %folder_name, "build_connections: mark_folder_indexed failed");
-    }
+    // D6d — mark indexed, fail-closed: a ProcessFile that recorded a fatal
+    // failure left the folder `failed`; don't advance it to `indexed`. The guard
+    // is shared with resolve_libs (the other barrier writer) so it can't be
+    // bypassed at one site.
+    super::helpers::mark_folder_indexed_fail_closed(ctx, &folder_id, folder_name, &libs).await;
 
     tracing::info!("build_connections: {} — {} traceability edges, {} libs detected", folder_name, edges_created, libs.len());
     Ok(edges_created)
@@ -268,5 +269,64 @@ mod tests {
 
         let task = Task::new(TaskKind::ResolveEdges, folder_path, folder_path);
         resolve_edges(&ctx, &task).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn build_connections_is_fail_closed_on_a_failed_folder() {
+        // D6d: a folder a ProcessFile marked `failed` (D6c-trigger) must NOT be
+        // advanced to `indexed` by the terminal barrier — leave it `failed` so
+        // boot-reconcile / bounded-retry re-drives it.
+        let ctx = make_ctx().await;
+        let folder_path = format!("/tmp/failclosed_{}", uuid::Uuid::new_v4());
+        let root_id = ctx.pg().add_watch_root(&folder_path, "fc", &serde_json::json!([])).await.unwrap();
+        let fid = ctx.pg().upsert_repo(&root_id, "fc-repo", &folder_path).await.unwrap();
+        ctx.pg().update_folder_status(&fid, "failed").await.unwrap();
+
+        let task = Task::new(TaskKind::BuildConnections, &folder_path, &folder_path);
+        build_connections(&ctx, &task).await.unwrap();
+
+        assert_eq!(ctx.pg().get_folder_status(&fid).await.unwrap().as_deref(), Some("failed"),
+            "the barrier must not mark a failed folder indexed");
+        ctx.pg().remove_watch_root(&root_id).await.ok();
+    }
+
+    #[tokio::test]
+    async fn build_connections_marks_a_clean_folder_indexed() {
+        // The happy path: a folder with no recorded failure is advanced to
+        // `indexed` by the barrier (regression guard for the fail-closed check).
+        let ctx = make_ctx().await;
+        let folder_path = format!("/tmp/clean_{}", uuid::Uuid::new_v4());
+        let root_id = ctx.pg().add_watch_root(&folder_path, "cl", &serde_json::json!([])).await.unwrap();
+        let fid = ctx.pg().upsert_repo(&root_id, "cl-repo", &folder_path).await.unwrap();
+        ctx.pg().update_folder_status(&fid, "indexing").await.unwrap();
+
+        let task = Task::new(TaskKind::BuildConnections, &folder_path, &folder_path);
+        build_connections(&ctx, &task).await.unwrap();
+
+        assert_eq!(ctx.pg().get_folder_status(&fid).await.unwrap().as_deref(), Some("indexed"),
+            "a clean folder is marked indexed by the barrier");
+        ctx.pg().remove_watch_root(&root_id).await.ok();
+    }
+
+    #[tokio::test]
+    async fn resolve_libs_is_fail_closed_on_a_failed_folder() {
+        // D6d regression: resolve_libs runs BEFORE build_connections in the
+        // barrier chain and ALSO marks a folder indexed — so it must honour the
+        // same fail-closed guard, else a `failed` folder is flipped to `indexed`
+        // here and build_connections' guard never sees it (the real-pipeline
+        // bypass the isolated build_connections test misses).
+        let ctx = make_ctx().await;
+        let tmp = tempfile::tempdir().unwrap(); // empty dir → no libs to walk
+        let folder_path = tmp.path().to_string_lossy().to_string();
+        let root_id = ctx.pg().add_watch_root(&folder_path, "rl_fc", &serde_json::json!([])).await.unwrap();
+        let fid = ctx.pg().upsert_repo(&root_id, "rl-fc-repo", &folder_path).await.unwrap();
+        ctx.pg().update_folder_status(&fid, "failed").await.unwrap();
+
+        let task = Task::new(TaskKind::ResolveLibs, &folder_path, &folder_path);
+        super::super::resolve_libs(&ctx, &task).await.unwrap();
+
+        assert_eq!(ctx.pg().get_folder_status(&fid).await.unwrap().as_deref(), Some("failed"),
+            "resolve_libs must not mark a failed folder indexed (fail-closed)");
+        ctx.pg().remove_watch_root(&root_id).await.ok();
     }
 }
