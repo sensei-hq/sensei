@@ -9207,6 +9207,32 @@ impl PgStore {
         Ok(())
     }
 
+    /// Boot reconcile (D6b/W2): terminate task-execution rows still `running`
+    /// from a prior daemon session. `task_id` resets per session and the queue
+    /// is in-memory, so a `running` row whose `started_at` precedes this
+    /// session's start can never complete — its worker died with the process.
+    /// Mark those `failed` (a terminal state) with a completion time and an
+    /// explanatory `error_message`, so `status='running'` reflects only live
+    /// work. Rows started at/after `session_start` (this session's own
+    /// in-flight tasks) are left untouched. Idempotent. Returns rows reconciled.
+    pub async fn reconcile_orphaned_task_executions(
+        &self,
+        session_start: chrono::DateTime<chrono::Utc>,
+    ) -> Result<u64, String> {
+        let res = sqlx_core::query::query(
+            "UPDATE activity.task_executions
+                SET status = 'failed',
+                    error_message = 'orphaned: daemon restarted while task was running',
+                    completed_at = now()
+              WHERE status = 'running' AND started_at < $1"
+        )
+        .bind(session_start)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| format!("reconcile_orphaned_task_executions: {}", e))?;
+        Ok(res.rows_affected())
+    }
+
     // ── Knowledge Sources (federation endpoints) ──────────────────────
 
     pub async fn create_knowledge_source(&self, s: &NewKnowledgeSource) -> Result<uuid::Uuid, String> {
@@ -10244,6 +10270,72 @@ mod tests {
         assert_eq!(all[&k2], "2");
         s.delete_config(&k1).await.unwrap();
         s.delete_config(&k2).await.unwrap();
+    }
+
+    // ── Task executions — boot reconcile (D6b) ────────────────────────
+
+    #[tokio::test]
+    async fn reconcile_orphaned_task_executions_terminates_only_prior_session_running() {
+        // D6b: on boot, a `running` task_execution row left over from a dead
+        // daemon session (started before this session's start time) can never
+        // complete — its in-memory task is gone. Reconcile flips it to a
+        // terminal `failed`; a row from THIS session (started at/after the
+        // cutoff) and an already-terminal row are both left untouched.
+        let s = pg_store().await;
+        let fp = format!("/_test/reconcile/{}", uuid::Uuid::new_v4());
+
+        // A — orphaned: running, started well before the cutoff (prior session).
+        let a = s.start_task_execution(1, None, "ProcessFile", &fp, "a").await.unwrap();
+        sqlx_core::query::query(
+            "UPDATE activity.task_executions SET started_at = now() - interval '2 hours' WHERE id = $1")
+            .bind(a).execute(s.pool()).await.unwrap();
+        // B — this session: running, started at now() (after the cutoff).
+        let b = s.start_task_execution(2, None, "ProcessFile", &fp, "b").await.unwrap();
+        // C — already terminal from a prior session: must not be re-touched.
+        let c = s.start_task_execution(3, None, "ProcessFile", &fp, "c").await.unwrap();
+        sqlx_core::query::query(
+            "UPDATE activity.task_executions SET status = 'completed', started_at = now() - interval '2 hours' WHERE id = $1")
+            .bind(c).execute(s.pool()).await.unwrap();
+
+        // Cutoff sits between the prior-session rows (−2h) and this session (now).
+        let cutoff = chrono::Utc::now() - chrono::Duration::hours(1);
+        // D — boundary: running, started EXACTLY at the cutoff. The sweep is
+        // exclusive (`started_at < cutoff`), so a row at session_start belongs
+        // to this session and must be left running — locks the `<` vs `<=` line.
+        let d = s.start_task_execution(4, None, "ProcessFile", &fp, "d").await.unwrap();
+        sqlx_core::query::query(
+            "UPDATE activity.task_executions SET started_at = $2 WHERE id = $1")
+            .bind(d).bind(cutoff).execute(s.pool()).await.unwrap();
+
+        let n = s.reconcile_orphaned_task_executions(cutoff).await.unwrap();
+        assert!(n >= 1, "at least the one orphaned running row is reconciled, got {n}");
+
+        let (a_status, a_completed, a_err): (String, Option<chrono::DateTime<chrono::Utc>>, Option<String>) =
+            query_as("SELECT status, completed_at, error_message FROM activity.task_executions WHERE id = $1")
+                .bind(a).fetch_one(s.pool()).await.unwrap();
+        assert_eq!(a_status, "failed", "orphaned running row is marked failed");
+        assert!(a_completed.is_some(), "reconciled row gets a completed_at");
+        assert!(a_err.is_some(), "reconciled row records why it was terminated");
+
+        let (b_status, b_completed): (String, Option<chrono::DateTime<chrono::Utc>>) =
+            query_as("SELECT status, completed_at FROM activity.task_executions WHERE id = $1")
+                .bind(b).fetch_one(s.pool()).await.unwrap();
+        assert_eq!(b_status, "running", "this session's in-flight row is left running");
+        assert!(b_completed.is_none(), "this session's row keeps a null completed_at");
+
+        let (c_status,): (String,) =
+            query_as("SELECT status FROM activity.task_executions WHERE id = $1")
+                .bind(c).fetch_one(s.pool()).await.unwrap();
+        assert_eq!(c_status, "completed", "an already-terminal row is not re-touched");
+
+        let (d_status,): (String,) =
+            query_as("SELECT status FROM activity.task_executions WHERE id = $1")
+                .bind(d).fetch_one(s.pool()).await.unwrap();
+        assert_eq!(d_status, "running", "a row exactly at the cutoff is this session's — left running");
+
+        // Cleanup.
+        sqlx_core::query::query("DELETE FROM activity.task_executions WHERE folder_path = $1")
+            .bind(&fp).execute(s.pool()).await.unwrap();
     }
 
     // ── Scan exclusions (per watch root) ──────────────────────────────
