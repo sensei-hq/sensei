@@ -119,7 +119,7 @@
             {/key}
 
             {#if commitError}
-                <div class="mx-16 mb-2 p-3 rounded-md border border-danger bg-paper-mute text-xs text-danger select-text">
+                <div class="mx-16 mb-2 p-3 rounded-md border border-danger bg-danger-soft text-xs text-danger select-text">
                     Could not finish: {commitError} — fix and try Continue again.
                 </div>
             {/if}

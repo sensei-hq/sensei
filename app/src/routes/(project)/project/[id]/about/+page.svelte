@@ -210,7 +210,7 @@
     </section>
 
     <section class="mt-5" data-testid="project-bindings">
-        <h3 class="text-xs font-semibold opacity-60 m-0 mb-2 uppercase tracking-wide">
+        <h3 class="text-xs font-semibold text-ink-mute m-0 mb-2 uppercase tracking-wide">
             Bindings
         </h3>
         <p class="text-xs text-ink-mute leading-normal mb-3">
@@ -232,7 +232,7 @@
     </section>
 
     <section class="mt-5">
-        <h3 class="text-xs font-semibold opacity-60 m-0 mb-2 uppercase tracking-wide">
+        <h3 class="text-xs font-semibold text-ink-mute m-0 mb-2 uppercase tracking-wide">
             Repos ({data.repos.length})
         </h3>
         <ul class="list-none m-0 p-0">
@@ -247,7 +247,7 @@
 
     {#if p?.stack}
         <section class="mt-5">
-            <h3 class="text-xs font-semibold opacity-60 m-0 mb-2 uppercase tracking-wide">
+            <h3 class="text-xs font-semibold text-ink-mute m-0 mb-2 uppercase tracking-wide">
                 Stack
             </h3>
             <div class="flex flex-wrap gap-1.5">

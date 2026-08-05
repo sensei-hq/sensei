@@ -101,7 +101,7 @@
     </div>
 
     {#if filtered.length === 0}
-        <p class="text-sm opacity-50">
+        <p class="text-sm text-ink-mute">
             {data.libraries.length === 0
                 ? 'No libraries associated with this project yet.'
                 : 'No libraries match this filter.'}
@@ -113,7 +113,7 @@
                 <li class="lib-row flex items-center gap-2.5 py-2 border-b border-paper-mute text-sm"
                     data-testid={`library-row-${lib.name}`}>
                     <span class="font-semibold text-ink truncate max-w-[280px]">{lib.name}</span>
-                    <span class="opacity-50 text-xs">{lib.ecosystem}</span>
+                    <span class="text-ink-mute text-xs">{lib.ecosystem}</span>
                     <div class="flex gap-1 flex-1">
                         {#if lib.hasDocs}
                             <span class="badge bg-success-soft text-success border border-success-edge"
