@@ -44,8 +44,9 @@ test.describe('Settings — Rail sub-routes', () => {
 
   test('/settings/assistants renders (assistants list or empty state)', async ({ tauriPage }) => {
     await navigateTo(tauriPage, '/settings/assistants');
-    // Page mount is enough — the header lands regardless of detection result.
-    await expect(tauriPage.locator('text=/Assistants/').first()).toBeVisible({ timeout: 10_000 });
+    // Page mount is enough — assert the content wrapper (a stable data-testid; the
+    // `text=/…/` pseudo-locator isn't supported by the socket harness).
+    await expect(tauriPage.locator('[data-testid="settings-assistants"]')).toBeVisible({ timeout: 10_000 });
   });
 
   test('/settings/roots renders the input + list', async ({ tauriPage }) => {
@@ -55,7 +56,7 @@ test.describe('Settings — Rail sub-routes', () => {
 
   test('/settings/projects renders', async ({ tauriPage }) => {
     await navigateTo(tauriPage, '/settings/projects');
-    await expect(tauriPage.locator('text=/Projects/').first()).toBeVisible({ timeout: 10_000 });
+    await expect(tauriPage.locator('[data-testid="settings-projects"]')).toBeVisible({ timeout: 10_000 });
   });
 
   test('/settings/libraries renders (summary or empty state)', async ({ tauriPage }) => {
@@ -87,6 +88,6 @@ test.describe('Settings — Rail sub-routes', () => {
 
   test('/settings/extensions renders', async ({ tauriPage }) => {
     await navigateTo(tauriPage, '/settings/extensions');
-    await expect(tauriPage.locator('text=/Extensions/').first()).toBeVisible({ timeout: 10_000 });
+    await expect(tauriPage.locator('[data-testid="settings-extensions"]')).toBeVisible({ timeout: 10_000 });
   });
 });

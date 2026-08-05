@@ -27,7 +27,7 @@
 </script>
 
 <PageHeader kanji="連" eyebrow="Settings" title="Assistants" />
-<div class="max-w-[720px] mx-auto px-12 pt-8 pb-16">
+<div class="max-w-[720px] mx-auto px-12 pt-8 pb-16" data-testid="settings-assistants">
     {#if loading}
         <p class="text-sm text-ink-soft leading-normal">Loading…</p>
     {:else}
