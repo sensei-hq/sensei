@@ -1,5 +1,6 @@
 <script lang="ts">
-    import { PageHeader } from '$lib/components';
+    import { invalidateAll } from '$app/navigation';
+    import { PageHeader, ScreenState } from '$lib/components';
     import { Toggle } from '@rokkit/ui';
     import type { ProxyItem } from '@rokkit/states';
     let { data } = $props();
@@ -52,6 +53,9 @@
 </PageHeader>
 
 <div class="px-6 py-6">
+    {#if data.error}
+        <ScreenState status="error" error={data.error} onretry={invalidateAll} />
+    {:else}
     <!-- Version conflicts banner — the T1a signal. Users decide before browsing rows.
          A paper surface (flips for dark mode) with a warning left-accent + heading — NOT a
          bg-warning-soft fill. warning-soft is a single-pole tint that stays pale (0.95) in dark
@@ -138,6 +142,7 @@
                 </li>
             {/each}
         </ul>
+    {/if}
     {/if}
 </div>
 

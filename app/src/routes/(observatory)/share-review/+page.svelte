@@ -13,4 +13,4 @@
   const actions = new PublishBatchAction(senseiApi(appState.port), invalidateAll);
 </script>
 
-<ShareReviewScreen batch={data.batch} {actions} />
+<ShareReviewScreen batch={data.batch} {actions} loadError={data.error} onretry={invalidateAll} />
