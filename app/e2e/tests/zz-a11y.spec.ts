@@ -38,9 +38,20 @@ async function seedSetupComplete(tauriPage: any): Promise<void> {
 /** Force the color mode the same way the app does (body.dataset.mode). Returns
  *  the applied mode so the eval is value-returning (avoids the void-eval hang). */
 async function setMode(tauriPage: any, mode: 'light' | 'dark'): Promise<void> {
+  // Drive the app's REAL mode mechanism: store the choice and reload so app.html
+  // applies it before first paint (a stored mode now wins over the OS preference).
+  // Live-mutating data-mode was unreliable — the app reuses data-mode for
+  // maturity/chart state, and its theme resolves at load, so the whole tree only
+  // renders one consistent mode when it's baked in at load time.
   await tauriPage.evaluate(
-    `(function () { document.body.dataset.mode = ${JSON.stringify(mode)}; return document.body.dataset.mode; })()`,
+    `(function () {
+      try { localStorage.setItem('sensei', JSON.stringify({ mode: ${JSON.stringify(mode)} })); } catch (e) { /* shim */ }
+      location.reload();
+      return ${JSON.stringify(mode)};
+    })()`,
   );
+  // Let the reload + app.html run and the shell remount.
+  await settle(1500);
 }
 
 /** Inject axe-core once per page context. Value-returning. */
@@ -118,21 +129,27 @@ test.describe('accessibility (axe) — light + dark', () => {
     const report: Record<string, Record<string, Violation[]>> = {};
     const offenders: string[] = [];
 
-    for (const { route, sel } of screens) {
-      try {
-        await navigateToScreen(tauriPage, route, sel);
-      } catch {
-        // A screen that can't mount on this DB (e.g. empty state selector miss)
-        // is logged, not silently skipped — honest coverage.
-        report[route] = { error: [{ id: 'did-not-mount', impact: 'n/a', help: `selector ${sel} never appeared`, n: 0, targets: [] }] };
-        continue;
-      }
-      await ensureAxe(tauriPage);
-      report[route] = {};
-      for (const mode of ['light', 'dark'] as const) {
-        await setMode(tauriPage, mode);
+    // Mode is set the way the REAL app resolves it — a stored choice applied by
+    // app.html at LOAD — then held across SPA navigation. Set localStorage +
+    // reload ONCE per mode (no live data-mode mutation, which the app's reactive
+    // theme + the maturity/chart data-mode reuse fought), then walk every screen
+    // in that consistent mode.
+    for (const mode of ['light', 'dark'] as const) {
+      await setMode(tauriPage, mode); // writes localStorage "sensei".mode + reloads
+      await seedSetupComplete(tauriPage); // reload reset in-memory appState
+
+      for (const { route, sel } of screens) {
+        try {
+          await navigateToScreen(tauriPage, route, sel);
+        } catch {
+          report[route] = report[route] || {};
+          report[route][mode] = [{ id: 'did-not-mount', impact: 'n/a', help: `selector ${sel} never appeared`, n: 0, targets: [] }];
+          continue;
+        }
+        await ensureAxe(tauriPage); // re-inject: the reload wiped window.axe
         await settle();
         const violations = await runAxe(tauriPage);
+        report[route] = report[route] || {};
         report[route][mode] = violations;
         for (const v of violations) {
           if (v.impact === 'serious' || v.impact === 'critical') {
