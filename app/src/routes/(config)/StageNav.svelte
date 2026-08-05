@@ -40,7 +40,7 @@
 
 <div
     data-component="stage-nav"
-    class="flex items-center gap-5 px-16 py-3.5 border-t border-paper-mute bg-paper-soft shrink-0"
+    class="flex items-center gap-5 px-16 py-3.5 border-t border-paper-edge bg-paper-soft shrink-0"
 >
     <div class="flex items-baseline gap-3">
         <span class="text-xs tracking-wide text-ink-soft uppercase">

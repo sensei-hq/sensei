@@ -61,7 +61,7 @@
     <!-- Search -->
     <div class="flex items-center gap-4 mb-6">
         <input
-            class="lib-search flex-1 px-3.5 py-2 border border-paper-mute rounded-md bg-paper-soft text-ink text-sm outline-none"
+            class="lib-search flex-1 px-3.5 py-2 border border-paper-edge rounded-md bg-paper-soft text-ink text-sm outline-none"
             type="text"
             placeholder="Search libraries..."
             bind:value={search}
@@ -85,7 +85,7 @@
                      Show the ecosystem so same-named libs are distinguishable. -->
                 {#each filtered as lib (lib.id)}
                     <button
-                        class="lib-card text-left px-4 py-3.5 border border-paper-mute rounded-md bg-paper-soft cursor-pointer transition-colors duration-fast"
+                        class="lib-card text-left px-4 py-3.5 border border-paper-edge rounded-md bg-paper-soft cursor-pointer transition-colors duration-fast"
                         class:selected={selectedLib?.id === lib.id}
                         onclick={() => (selectedLib = lib)}
                     >
@@ -106,7 +106,7 @@
 
             {#if selectedLib}
                 <div
-                    class="p-6 bg-paper-mute border border-paper-mute rounded-lg sticky top-6"
+                    class="p-6 bg-paper-mute border border-paper-edge rounded-lg sticky top-6"
                 >
                     <h3 class="text-base font-medium m-0 mb-1">
                         {selectedLib.name}
@@ -134,7 +134,7 @@
                         <div>
                             <p class="m-0 mb-2"><Eyebrow>Usage by folder</Eyebrow></p>
                             {#each usageData as u}
-                                <div class="flex justify-between py-1.5 border-b border-paper-mute text-sm">
+                                <div class="flex justify-between py-1.5 border-b border-paper-edge text-sm">
                                     <div>
                                         <span class="font-mono text-xs">{u.folder}</span>
                                         {#if u.version_used}

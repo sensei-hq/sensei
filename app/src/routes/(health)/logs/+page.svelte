@@ -49,10 +49,10 @@
 <div class="h-full flex overflow-hidden text-ink">
     <!-- ── Sidebar ─────────────────────────────────────────────────────────── -->
     <aside
-        class="w-[248px] shrink-0 border-r border-paper-mute bg-paper-mute flex flex-col overflow-hidden"
+        class="w-[248px] shrink-0 border-r border-paper-edge bg-paper-mute flex flex-col overflow-hidden"
     >
         <div
-            class="px-5 pt-6 pb-3.5 border-b border-paper-mute flex items-center gap-2.5 shrink-0"
+            class="px-5 pt-6 pb-3.5 border-b border-paper-edge flex items-center gap-2.5 shrink-0"
         >
             <Kanji char="診" size="lg" />
             <Eyebrow>diagnostic logs</Eyebrow>
@@ -124,7 +124,7 @@
             {@const fixes = bt.filter((t) => t.fix_attempted).length}
 
             <!-- Session header -->
-            <div class="shrink-0 pt-6 px-9 border-b border-paper-mute">
+            <div class="shrink-0 pt-6 px-9 border-b border-paper-edge">
                 <div class="flex items-start justify-between mb-4">
                     <div>
                         <div class="mb-1.5"><Eyebrow>{moduleLabel(s.module)}</Eyebrow></div>
@@ -173,7 +173,7 @@
 
             <!-- Column headers -->
             <div
-                class="grid grid-cols-[68px_148px_1fr_52px_40px] gap-3 px-9 py-2 border-b border-paper-mute bg-paper-mute shrink-0 text-xs tracking-wide uppercase text-ink-soft"
+                class="grid grid-cols-[68px_148px_1fr_52px_40px] gap-3 px-9 py-2 border-b border-paper-edge bg-paper-mute shrink-0 text-xs tracking-wide uppercase text-ink-soft"
             >
                 <span>action</span>
                 <span>step</span>
@@ -189,7 +189,7 @@
                     {@const isOpen = state.expandedTraceId === t.id}
                     {@const hasDetail = !!(t.out || t.err || t.fix_attempted)}
 
-                    <div class="border-b border-paper-mute">
+                    <div class="border-b border-paper-edge">
                         <!-- Main row -->
                         <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
                         <div
@@ -251,7 +251,7 @@
                         <!-- Expanded detail -->
                         {#if isOpen && hasDetail}
                             <div
-                                class="ml-20 mb-3 px-3.5 py-3 bg-paper-mute rounded-md border border-paper-mute flex flex-col gap-2.5"
+                                class="ml-20 mb-3 px-3.5 py-3 bg-paper-mute rounded-md border border-paper-edge flex flex-col gap-2.5"
                             >
                                 {#if t.out}
                                     <div class="flex flex-col gap-1">
@@ -275,7 +275,7 @@
                                 {/if}
                                 {#if t.fix_attempted}
                                     <div
-                                        class="flex flex-col gap-1 pt-2.5 border-t border-paper-mute"
+                                        class="flex flex-col gap-1 pt-2.5 border-t border-paper-edge"
                                     >
                                         <div
                                             class="detail-block-label fix text-xs tracking-wide uppercase"
@@ -338,10 +338,10 @@
         tabindex="-1"
     >
         <div
-            class="modal w-[84vw] max-w-[960px] max-h-[90vh] bg-paper-soft rounded-xl border border-paper-mute flex flex-col"
+            class="modal w-[84vw] max-w-[960px] max-h-[90vh] bg-paper-soft rounded-xl border border-paper-edge flex flex-col"
         >
             <div
-                class="flex items-start justify-between pt-4 pb-3 px-7 border-b border-paper-mute shrink-0"
+                class="flex items-start justify-between pt-4 pb-3 px-7 border-b border-paper-edge shrink-0"
             >
                 <div>
                     <div class="display text-lg font-normal mb-1">
@@ -363,12 +363,12 @@
                 <div class="flex-1 flex flex-col gap-2 min-h-0 overflow-hidden">
                     <Eyebrow>Issue preview — anonymized</Eyebrow>
                     <div
-                        class="bg-paper-mute border border-paper-mute rounded-md px-3 py-2 text-sm text-ink font-medium shrink-0"
+                        class="bg-paper-mute border border-paper-edge rounded-md px-3 py-2 text-sm text-ink font-medium shrink-0"
                     >
                         {buildTitle(s)}
                     </div>
                     <pre
-                        class="flex-1 bg-paper-mute border border-paper-mute rounded-md px-3.5 py-3 font-mono text-xs text-ink-mute leading-loose overflow-auto whitespace-pre-wrap break-words min-h-0 m-0">{buildBody(
+                        class="flex-1 bg-paper-mute border border-paper-edge rounded-md px-3.5 py-3 font-mono text-xs text-ink-mute leading-loose overflow-auto whitespace-pre-wrap break-words min-h-0 m-0">{buildBody(
                             s,
                             state.addCtx,
                         )}</pre>
@@ -377,7 +377,7 @@
                 <!-- Compose column -->
                 <div class="w-[264px] shrink-0 flex flex-col gap-3">
                     <div
-                        class="bg-paper-mute border border-paper-mute rounded-md px-3.5 py-3"
+                        class="bg-paper-mute border border-paper-edge rounded-md px-3.5 py-3"
                     >
                         <div class="mb-2"><Eyebrow>Included in report</Eyebrow></div>
                         {#each [["Session", formatTime(s.started_at)], ["OS", anonymize(si.os)], ["Arch", si.arch], ["RAM", `${si.ram_gb} GB`], ["Traces", String(bt.length)], ["Fixes", String(bt.filter((t) => t.fix_attempted).length)], ["App", `v${s.app_version}`]] as [k, v]}
@@ -393,7 +393,7 @@
                     <div>
                         <div class="mb-2"><Eyebrow>Additional context</Eyebrow></div>
                         <textarea
-                            class="ctx-input w-full resize-none font-sans text-sm text-ink bg-paper-mute border border-paper-mute rounded-md px-2.5 py-2 leading-normal"
+                            class="ctx-input w-full resize-none font-sans text-sm text-ink bg-paper-mute border border-paper-edge rounded-md px-2.5 py-2 leading-normal"
                             bind:value={state.addCtx}
                             placeholder="What were you doing? Any other details…"
                             rows={4}
@@ -415,7 +415,7 @@
                             Submit to GitHub ↗
                         </button>
                         <button
-                            class="outline-btn w-full text-sm px-4 py-2.5 bg-transparent border border-paper-mute text-ink rounded-md cursor-pointer font-sans transition-colors duration"
+                            class="outline-btn w-full text-sm px-4 py-2.5 bg-transparent border border-paper-edge text-ink rounded-md cursor-pointer font-sans transition-colors duration"
                             onclick={copyMarkdown}
                         >
                             {state.copied ? "Copied ✓" : "Copy markdown"}

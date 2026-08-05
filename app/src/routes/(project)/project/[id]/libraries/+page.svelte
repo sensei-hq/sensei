@@ -110,7 +110,7 @@
         <ul class="list-none m-0 p-0" data-testid="library-list">
             {#each filtered as lib (lib.id)}
                 {@const inConflict = conflictSet.has(lib.name)}
-                <li class="lib-row flex items-center gap-2.5 py-2 border-b border-paper-mute text-sm"
+                <li class="lib-row flex items-center gap-2.5 py-2 border-b border-paper-edge text-sm"
                     data-testid={`library-row-${lib.name}`}>
                     <span class="font-semibold text-ink truncate max-w-[280px]">{lib.name}</span>
                     <span class="text-ink-mute text-xs">{lib.ecosystem}</span>

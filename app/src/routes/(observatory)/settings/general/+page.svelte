@@ -77,7 +77,7 @@
         <p class="text-sm text-ink-soft leading-normal">Loading…</p>
     {:else}
         <div
-            class="px-7 py-7 bg-paper-mute border border-paper-mute rounded-lg"
+            class="px-7 py-7 bg-paper-mute border border-paper-edge rounded-lg"
             data-testid="settings-general"
         >
             <div class="flex items-baseline justify-between mb-4">
@@ -108,7 +108,7 @@
                     </div>
                     <input
                         type="text"
-                        class="w-[220px] px-3 py-2 text-sm border border-paper-mute rounded-md bg-paper-soft text-ink outline-none text-right"
+                        class="w-[220px] px-3 py-2 text-sm border border-paper-edge rounded-md bg-paper-soft text-ink outline-none text-right"
                         data-testid="pref-display-name"
                         value={prefs.displayName}
                         oninput={(e) => {

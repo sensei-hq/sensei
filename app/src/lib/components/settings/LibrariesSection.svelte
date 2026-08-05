@@ -29,7 +29,7 @@
   </p>
 
   {#if loading}
-    <div data-testid="libraries-loading" class="text-center p-12 bg-paper-mute rounded-lg border border-paper-mute">
+    <div data-testid="libraries-loading" class="text-center p-12 bg-paper-mute rounded-lg border border-paper-edge">
       <span class="kanji text-4xl text-accent opacity-20 block mb-4">書</span>
       <p class="text-sm text-ink-soft">Loading libraries…</p>
     </div>
@@ -39,13 +39,13 @@
       <div class="text-xs text-ink-mute mt-1 font-mono select-text">{error}</div>
     </div>
   {:else if libs.length === 0}
-    <div data-testid="libraries-empty" class="text-center p-12 bg-paper-mute rounded-lg border border-paper-mute">
+    <div data-testid="libraries-empty" class="text-center p-12 bg-paper-mute rounded-lg border border-paper-edge">
       <span class="kanji text-4xl text-accent opacity-20 block mb-4">書</span>
       <p class="text-sm text-ink-soft">No libraries detected yet. Run the scan stage first.</p>
     </div>
   {:else}
     <div class="flex items-center gap-2 mb-6" data-testid="libraries-summary">
-      <span class="font-mono py-1 px-2 text-xs text-ink-mute bg-paper-mute border border-paper-mute rounded-sm">
+      <span class="font-mono py-1 px-2 text-xs text-ink-mute bg-paper-mute border border-paper-edge rounded-sm">
         {detectedCount} detected
       </span>
       <span class="font-mono py-1 px-2 text-xs text-success bg-success-soft border border-success rounded-sm">
@@ -57,7 +57,7 @@
       Detected · sensei will wrap
     </div>
 
-    <div class="flex flex-col bg-paper-mute border border-paper-mute rounded-md overflow-hidden">
+    <div class="flex flex-col bg-paper-mute border border-paper-edge rounded-md overflow-hidden">
       {#each libs as lib, i (lib.id)}
         <div
           data-testid={`library-row-${lib.id}`}
@@ -65,7 +65,7 @@
           class="grid grid-cols-[1fr_auto_auto] gap-3 py-3 px-4 items-center transition-opacity duration-fast"
           class:opacity-45={!lib.enabled}
           class:border-t={i > 0}
-          class:border-paper-mute={i > 0}
+          class:border-paper-edge={i > 0}
         >
           <div class="min-w-0">
             <div class="flex items-baseline gap-2">
