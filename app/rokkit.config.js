@@ -93,10 +93,14 @@ export default {
     // white and failed 4.5:1 (warning 2.35:1, success 3.26:1, danger 4.55:1). Raw
     // oklch keeps each hue at ~5:1 for status TEXT (counts, verdicts, deltas). Dark
     // keeps the lightened .400 shades (dark mode already passes on the dark surface).
+    // danger/error deepened 0.520→0.490: `text-danger` on `bg-danger-soft` (badges,
+    // drift chips) measured 4.39:1 over a card surface — under AA. At 0.490 with the
+    // soft at the mockup's 10% alpha (below) it clears to 5.13:1 (gamma-composite),
+    // ~4.87 axe-adjusted. Still a clean crimson; visually indistinguishable from .520.
     success:      { light: "oklch(0.510 0.076 160)", dark: "hisui.400"  },
     warning:      { light: "oklch(0.510 0.100 75)",  dark: "kohaku.400" },
-    danger:       { light: "oklch(0.520 0.178 25)",  dark: "beni.400"   },
-    error:        { light: "oklch(0.520 0.178 25)",  dark: "beni.400"   },
+    danger:       { light: "oklch(0.490 0.178 25)",  dark: "beni.400"   },
+    error:        { light: "oklch(0.490 0.178 25)",  dark: "beni.400"   },
     info:         { light: "oklch(0.520 0.150 254)", dark: "ai.400"     },
 
     // ── Status/accent SOFT (tinted callout backgrounds) — ALPHA-COMPOSITE model ──
@@ -110,8 +114,8 @@ export default {
     "accent-soft":  { light: "color-mix(in oklch, var(--accent) 14%, transparent)",  dark: "color-mix(in oklch, var(--accent) 20%, transparent)"  },
     "success-soft": { light: "color-mix(in oklch, var(--success) 14%, transparent)", dark: "color-mix(in oklch, var(--success) 20%, transparent)" },
     "warning-soft": { light: "color-mix(in oklch, var(--warning) 15%, transparent)", dark: "color-mix(in oklch, var(--warning) 22%, transparent)" },
-    "danger-soft":  { light: "color-mix(in oklch, var(--danger) 12%, transparent)",  dark: "color-mix(in oklch, var(--danger) 18%, transparent)"  },
-    "error-soft":   { light: "color-mix(in oklch, var(--error) 12%, transparent)",   dark: "color-mix(in oklch, var(--error) 18%, transparent)"   },
+    "danger-soft":  { light: "color-mix(in oklch, var(--danger) 10%, transparent)",  dark: "color-mix(in oklch, var(--danger) 18%, transparent)"  },
+    "error-soft":   { light: "color-mix(in oklch, var(--error) 10%, transparent)",   dark: "color-mix(in oklch, var(--error) 18%, transparent)"   },
     "info-soft":    { light: "color-mix(in oklch, var(--info) 14%, transparent)",    dark: "color-mix(in oklch, var(--info) 20%, transparent)"    },
 
     // Modal/dialog backdrop scrim — a semantic token so components never hardcode
