@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { PageHeader, EmptyState } from '$lib/components';
+  import { PageHeader, EmptyState, ScreenState } from '$lib/components';
   import { Button } from '@rokkit/ui';
   import { typePill, attributionSummary, type ChipClasses } from '$lib/dojo-artifacts.js';
   import type { ShareReviewBatch, ShareReviewItem, PublishBatchOutcome } from '$lib/types.js';
@@ -24,8 +24,13 @@
     batch: ShareReviewBatch | null;
     /** The Publish controller — api + reload injected by the page. */
     actions: PublishBatchAction;
+    /** A LOAD failure (F8) — distinct from `batch: null` (honest-empty). When
+     *  set, the screen shows error-with-Retry instead of the empty state. */
+    loadError?: string | null;
+    /** Retry callback for the load-error state (the page injects invalidateAll). */
+    onretry?: () => void;
   }
-  let { batch, actions }: Props = $props();
+  let { batch, actions, loadError = null, onretry }: Props = $props();
 
   // A large batch takes a second click: the first flips into a confirm prompt.
   let confirming = $state(false);
@@ -142,6 +147,9 @@
 />
 
 <div class="max-w-[1060px] mx-auto px-7 pb-10" data-share-review>
+  {#if loadError}
+    <ScreenState status="error" error={loadError} {onretry} />
+  {:else}
   {#if actions.error}
     <p class="text-xs text-danger mb-3" data-share-error>{actions.error}</p>
   {/if}
@@ -257,5 +265,6 @@
         {/each}
       </section>
     {/if}
+  {/if}
   {/if}
 </div>

@@ -263,23 +263,28 @@ export function senseiApi(port: number) {
         `/api/projects/${enc(id)}/repos`, { repos: [] }
       ),
 
-    getProjectLibraries: (id: string) =>
-      get<{ libraries: Array<{
+    // Error-propagating (mockup-drift-audit F8): a fetch failure must be
+    // distinguishable from a project that genuinely has no libraries. tryGet
+    // surfaces {ok:false,error} so the screen shows error-with-Retry instead of
+    // an empty list that hides a broken daemon.
+    tryGetProjectLibraries: (id: string) =>
+      tryGet<{ libraries: Array<{
         id: string; name: string; ecosystem: string;
         scope: 'global' | 'project'; enabled: boolean;
         description?: string | null;
         hasDocs?: boolean; pageCount?: number;
         localSource?: string | null;
       }> }>(
-        `/api/projects/${enc(id)}/libraries`, { libraries: [] }
+        `/api/projects/${enc(id)}/libraries`,
       ),
 
     // T1a version-conflict view — surfaces libraries pinned to multiple
     // versions across the project's folders. One row per (project, library)
     // pair with the distinct versions + folders where each was seen.
-    getProjectLibraryVersionConflicts: (id: string) =>
-      get<{ conflicts: Array<{ library_id: string; library_name: string; ecosystem: string; versions: string[]; folders: string[] }> }>(
-        `/api/projects/${enc(id)}/library-version-conflicts`, { conflicts: [] },
+    // Error-propagating (F8) — see tryGetProjectLibraries.
+    tryGetProjectLibraryVersionConflicts: (id: string) =>
+      tryGet<{ conflicts: Array<{ library_id: string; library_name: string; ecosystem: string; versions: string[]; folders: string[] }> }>(
+        `/api/projects/${enc(id)}/library-version-conflicts`,
       ),
 
     getProjectInstruments: (id: string) =>
@@ -1034,8 +1039,11 @@ export function senseiApi(port: number) {
     // ruleset (approved if present, else latest proposed) or `null` when a
     // consolidation has never run. Fallback is `null` so a daemon hiccup renders
     // the empty state, never a broken screen.
-    getConsolidatedRuleset: () =>
-      get<ConsolidatedRuleset | null>('/api/knowledge/rules/consolidated', null),
+    // Error-propagating (mockup-drift-audit F8): `null` means "never consolidated"
+    // (honest-empty). A fetch FAILURE must not collapse to that same null — tryGet
+    // surfaces {ok:false,error} so the screen shows error-with-Retry instead.
+    tryGetConsolidatedRuleset: () =>
+      tryGet<ConsolidatedRuleset | null>('/api/knowledge/rules/consolidated'),
 
     // Run the merge now → a fresh `proposed` version, or `{ skipped, reason }`
     // when there's nothing to merge / the Tier-1 input is unchanged. `tryPost` so
@@ -1139,30 +1147,25 @@ export function senseiApi(port: number) {
     // not-approved (409) batch surfaces as `{ ok: false, error }` for the screen
     // to show, rather than being absorbed into a fallback. On success the screen
     // re-loads via `invalidateAll` and the returned outcome is shown.
-    getShareReviewBatch: () =>
-      get<ShareReviewResponse>('/api/share-review/next-batch', { batch: null }),
+    // Error-propagating (mockup-drift-audit F8): `{ batch: null }` means nothing
+    // is pending (honest-empty). A daemon hiccup must NOT masquerade as that —
+    // tryGet surfaces the error so the screen shows error-with-Retry.
+    tryGetShareReviewBatch: () =>
+      tryGet<ShareReviewResponse>('/api/share-review/next-batch'),
 
     publishBatch: (batchId: string) =>
       tryPost<PublishBatchOutcome>(`/api/share-review/${enc(batchId)}/publish`, {}),
 
     // ── Collective sharing preferences (Observatory · Collective · C9) ───────
-    // GET always returns a FULL object (the stored row, or the defaults when
-    // unset), so the fallback here mirrors the daemon's defaults — a daemon
-    // hiccup renders the defaults, never a broken screen. PUT is a whole-object
-    // full-replace that echoes the saved object back (fresh updated_at);
-    // `tryPutJson` so a 400 (bad enum / unknown category / non-boolean) surfaces
-    // as `{ ok: false, error }` with the daemon's message for the screen to show.
-    getCollectivePreferences: () =>
-      get<CollectivePreferences>('/api/preferences/collective', {
-        destination: 'none',
-        cadence: 'manual',
-        categories: {
-          memory: true, pattern: true, rule: true, prompt: true,
-          guard: true, skill: true, agent: true,
-        },
-        attribution_default: 'dereferenced',
-        updated_at: null,
-      }),
+    // GET always returns a FULL object on success (the stored row, or the daemon's
+    // defaults when unset) — so a FAILURE here is a real error, never "empty".
+    // Error-propagating (mockup-drift-audit F8): tryGet surfaces {ok:false,error}
+    // so the screen shows error-with-Retry rather than fabricating the defaults
+    // and hiding a broken daemon. PUT is a whole-object full-replace that echoes
+    // the saved object back (fresh updated_at); `tryPutJson` so a 400 (bad enum /
+    // unknown category / non-boolean) surfaces with the daemon's message.
+    tryGetCollectivePreferences: () =>
+      tryGet<CollectivePreferences>('/api/preferences/collective'),
 
     putCollectivePreferences: (body: CollectivePreferences) =>
       tryPutJson<CollectivePreferences>('/api/preferences/collective', body),
