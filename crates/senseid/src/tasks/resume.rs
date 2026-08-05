@@ -1,12 +1,14 @@
 //! Startup recovery for the in-memory task queue.
 //!
 //! `TaskQueue` is in-memory only — every queued task is lost on daemon
-//! restart. Folders left at `status='discovered'` (the default after
-//! `ScanRoot` upserts a row) or `'queued'` never finish indexing.
+//! restart. Folders in a non-terminal index state — `discovered` (the default
+//! after `ScanRoot` upserts a row), `queued`, `indexing` (a scan was in-flight
+//! when the daemon stopped, D6a), or `failed` — never finish indexing.
 //!
 //! This module reads those rows back from PostgreSQL on startup and
 //! re-enqueues a `ProcessGitFolder` task per row, mirroring what
-//! `scan_root` does on the initial scan.
+//! `scan_root` does on the initial scan. The single-writer guard
+//! (`enqueue_unique`) makes a re-enqueue of an already-running folder a no-op.
 
 use crate::db::pg_store::PgStore;
 use crate::tasks::queue::TaskQueue;
@@ -167,6 +169,35 @@ mod tests {
         let b_count = tasks.iter().filter(|t| t.path == b).count();
         assert_eq!(a_count, 1, "an already-scanning folder is not double-enqueued");
         assert_eq!(b_count, 1, "a not-yet-scanning folder is still resumed");
+
+        pg.remove_watch_root(&rid).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn resume_recovers_interrupted_indexing_and_failed_folders() {
+        // D6a/D6b: a scan interrupted mid-flight (`indexing`) or errored
+        // (`failed`) must be re-enqueued on the next boot — not stranded. A
+        // terminal `indexed` folder must NOT resume.
+        let pg = PgStore::connect_test().await.unwrap();
+        let queue = TaskQueue::new();
+        let tmp = tempfile::tempdir().unwrap();
+        let base = tmp.path();
+        let root_path = base.to_string_lossy().to_string();
+        let rid = pg.add_watch_root(&root_path, "resume_recover_root", &serde_json::json!([])).await.unwrap();
+
+        let indexing = seed(&pg, &rid, base, "i", "indexing", true).await;
+        let failed = seed(&pg, &rid, base, "f", "failed", true).await;
+        seed(&pg, &rid, base, "done", "indexed", true).await; // terminal — must not resume
+
+        resume_pending_scans(&queue, &pg).await;
+
+        let paths: std::collections::BTreeSet<String> = drain(&queue).await.into_iter()
+            .map(|t| t.path)
+            .filter(|p| p.starts_with(&root_path))
+            .collect();
+        assert!(paths.contains(&indexing), "an interrupted `indexing` folder is recovered");
+        assert!(paths.contains(&failed), "a `failed` folder is retried");
+        assert_eq!(paths.len(), 2, "only non-terminal folders resume (indexed excluded), got {paths:?}");
 
         pg.remove_watch_root(&rid).await.unwrap();
     }
