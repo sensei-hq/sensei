@@ -14,21 +14,20 @@
         data-density="comfortable"
     >
         <script>
+            // Resolve the theme mode before first paint. A STORED manual choice
+            // (localStorage "sensei".mode = "light"|"dark") wins; otherwise follow
+            // the OS. (Previously the OS preference unconditionally overrode the
+            // stored choice, so a manual selection could never stick — and it left
+            // no deterministic way to render a chosen mode.) data-mode is written on
+            // BOTH <html> and <body> so the token cascade is unambiguous.
             (function () {
-                try {
-                    var t = JSON.parse(localStorage.getItem("sensei") || "{}");
-                    var b = document.body;
-                    b.dataset.mode = t.mode || "dark";
-                } catch (e) {}
-            })();
-        </script>
-        <script>
-            // Set dark/light from system preference immediately (before first paint)
-            (function () {
-                var dark = window.matchMedia(
-                    "(prefers-color-scheme: dark)",
-                ).matches;
-                document.body.dataset.mode = dark ? "dark" : "light";
+                var stored;
+                try { stored = (JSON.parse(localStorage.getItem("sensei") || "{}") || {}).mode; } catch (e) {}
+                var mode = (stored === "light" || stored === "dark")
+                    ? stored
+                    : (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+                document.documentElement.dataset.mode = mode;
+                document.body.dataset.mode = mode;
             })();
         </script>
         <div style="display: contents">%sveltekit.body%</div>
