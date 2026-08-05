@@ -288,8 +288,9 @@ DDL + `upsert_node`/prune change + a one-time reindex; **raise with the user bef
 ### D4 (P1) — Community durability, coverage, determinism, enrichment
 
 1. **Chain `DetectCommunities` into the scan** — enqueue on the `ProcessGitFolder` barrier
-   after `BuildConnections` for any folder whose node/edge set changed (debounced; unchanged
-   folder = no-op).
+   after `BuildConnections` for any folder whose node/edge set changed (an unchanged folder's
+   re-detect is a no-op by construction — no timing-debounce needed). This is the **terminal
+   barrier** that flips `folder_status` to `indexed` (D6a).
 2. **Transactional replace per folder** — in one tx: `DELETE FROM inference.communities
    WHERE folder_id=$1`, clear `nodes.community_id` for the folder, recompute, upsert
    communities + `update_node_community`. Kills stale rows and orphans (invariant 5).
@@ -329,9 +330,11 @@ DB write or method so an implementer has a concrete surface, not a wish.
 
 - **D6a — Folder-status lifecycle (new writers).** The enum already defines the states but
   code writes only `indexed` (pg_store.rs:1380) and `archived` (2136). Add writers:
-  `queued` at enqueue of `ProcessGitFolder`; `indexing` at its start; `indexed` at
-  `build_connections` success; `failed` when D6d trips. Add `update_folder_status(folder_id,
-  status)` to `PgStore`. Enables precise resume (W2) and fail-closed barriers (W3).
+  `queued` at enqueue of `ProcessGitFolder`; `indexing` at its start; `indexed` at the
+  **terminal community barrier** (`DetectCommunities`, D4.1) success — so `indexed` implies
+  communities are computed, and a mid-detect crash (atomic replace, D4.2) can't leave a
+  half-indexed folder; `failed` when D6d trips. Add `update_folder_status(folder_id, status)` to
+  `PgStore`. Enables precise resume (W2) and fail-closed barriers (W3).
 - **D6b — Boot reconcile.** On startup, before workers spawn: (1) reconcile orphaned
   `task_executions` rows still `running` from a prior session to a terminal state — they can be
   detected by a per-session id (the daemon start time), since `task_id` resets per session
@@ -340,7 +343,7 @@ DB write or method so an implementer has a concrete surface, not a wish.
   `scan_state` (W4), so resume is cheap.
 - **D6c — Bounded retry with a retry identity.** *Reality:* `Task` (mod.rs:253) has no attempt
   field and `enqueue` mints a fresh `task_id` (queue.rs:71), so there is nothing to carry an
-  attempt count. Add a `retry_number: u32` (and optional `retry_of` origin key) to `Task`;
+  attempt count. Add a `retry_number: u32` to `Task`;
   on a **recorded fatal failure** (see D6c-trigger) re-enqueue the same `(kind, path)` with
   `retry_number+1` up to N (default 3), writing that number to
   `task_executions.retry_number` (currently always 0). Backoff: the queue has **no
@@ -517,9 +520,10 @@ Done gate points at.
 - **Scoped incremental** — touch one file, re-scan: only that file's nodes change
   `modified_at`; others keep `id`+`community_id`; a deleted symbol disappears; no edge dupes.
 - **Determinism** — two `clear + full-scan` runs produce identical `community_id` assignment.
-- **Resilience/resume** — the `single_file_failure_is_isolated` and `restart_mid_scan_converges`
-  tests pass; after a simulated restart mid-scan, `SELECT count(*) FROM activity.task_executions
-  WHERE status='running'` reconciles to 0 and the folder reaches `indexed`.
+- **Resilience/resume** — the `fatal_file_failure_is_recorded_and_retried` and
+  `restart_mid_scan_converges` tests pass; after a simulated restart mid-scan,
+  `SELECT count(*) FROM activity.task_executions WHERE status='running'` reconciles to 0 and the
+  folder reaches `indexed`.
 - **Convergence** — steady-state counts from `clear + full-scan` equal those from replaying
   the same edits incrementally (`graph_scan_end_to_end` step 5/6).
 - **Retrieval** — `GET /api/graph/nodes?repoId=<fixture>` returns per-node `community_id` and
@@ -596,7 +600,7 @@ Anything not verifiable is listed as an open question to resolve *before* coding
 | D3 `content_hash` column + embedding-null-on-change | **build new** (DDL + write) | column does not exist |
 | D4 community replace + determinism + adjacency | rewire (community.rs) | logic change, no new table |
 | D5a folder kind=subtree/workspace_member | rewire | detection exists; classification write is wrong |
-| **D5b `section`/`rationale` emission** | **build new parser** | `doc_indexer` emits 0 sections today — this is a heading/comment parser, NOT a two-line change |
+| **D5b `section`/`rationale` emission** | **wire existing + new** | the heading parser already exists but is test-gated (`doc_indexer.rs:157` `extract_sections`/`process_ir`, "test-only; will be wired"); D5b = un-gate+wire it + write section nodes via D3 + **NEW rationale-comment extraction** (absent today) |
 | D5c `package`/sub-symbol nodes | **build new** | P2 |
 | D6a `update_folder_status` + lifecycle writers | **build new** | 5 states have no writer |
 | D6b boot reconcile of orphaned `running` rows | **build new** | none today |
