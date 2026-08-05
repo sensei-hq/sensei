@@ -1,5 +1,12 @@
 # 巻 · Pipeline · Traceability
 
+> **Status: roadmap (partial).** The deletion-of-symbol drift scanner is real and careful, but
+> as of 2026-08-05: `traces_to` = 0 rows, `covers` is file-stem proximity (not identifier-level),
+> drift is doc-**file** level (0 `section` nodes), and `expected/actual_signature` are NULL on
+> all rows (no signature-diff / `drifted` status). Requirement-level traceability depends on the
+> code-graph fixes (`section` nodes, deterministic ids). Verify against the code. See the
+> [indexer capability roadmap](../../analysis/2026-08-05-indexer-capability-coverage.md).
+
 **Owner files:**
 - Scanner: `crates/senseid/src/db/pg_store.rs::scan_project_doc_drift`
 - Extractor: `crates/senseid/src/analysis/doc_drift.rs` — identifier extraction (unit-tested; no DB round-trip)
