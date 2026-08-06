@@ -29,10 +29,27 @@ pub async fn resolve_edges(ctx: &TaskContext, task: &Task) -> Result<u32, String
     // Get all nodes for name matching
     let nodes = ctx.pg().get_nodes_by_folder(&folder_id).await.unwrap_or_else(|e| { tracing::warn!(error = %e, folder = %folder_name, "resolve_edges: get_nodes_by_folder failed"); Vec::new() });
 
-    // Build lookup maps
-    let node_by_name: std::collections::HashMap<&str, &serde_json::Value> = nodes.iter()
-        .filter_map(|n| n["name"].as_str().map(|name| (name, n)))
-        .collect();
+    // Build lookup maps. `nodes_by_name` is a MULTIMAP (name → all defs): a call
+    // is resolved only when the name maps to EXACTLY ONE definition. Bare-name
+    // resolution otherwise collapses every `Foo::new()` / adapter `parse()` onto
+    // one arbitrary same-named node (a false mega-hub — ~1/3 of resolved calls in
+    // a real repo point at an ambiguous name). An ambiguous name is left
+    // unresolved (target_name kept) — honest, and re-resolvable once qualified
+    // identity (D5c symbol nesting) lands. See docs backlog / atlas blueprint.
+    let mut nodes_by_name: std::collections::HashMap<&str, Vec<&serde_json::Value>> =
+        std::collections::HashMap::new();
+    for n in &nodes {
+        if let Some(name) = n["name"].as_str() {
+            nodes_by_name.entry(name).or_default().push(n);
+        }
+    }
+    // Resolve `name` to a node id ONLY when it is unambiguous (one definition).
+    let resolve_unique = |name: &str| -> Option<uuid::Uuid> {
+        match nodes_by_name.get(name).map(|v| v.as_slice()) {
+            Some([only]) => crate::api::util::json_uuid(&only["id"]),
+            _ => None, // 0 matches, or 2+ (ambiguous) → leave unresolved
+        }
+    };
 
     let file_by_path: std::collections::HashMap<&str, &serde_json::Value> = nodes.iter()
         .filter(|n| n["kind"].as_str() == Some("file"))
@@ -52,15 +69,8 @@ pub async fn resolve_edges(ctx: &TaskContext, task: &Task) -> Result<u32, String
                     .find(|(fp, _)| fp.contains(target_name))
                     .and_then(|(_, n)| crate::api::util::json_uuid(&n["id"]))
             }
-            "calls" => {
-                // Resolve function call by name
-                node_by_name.get(target_name)
-                    .and_then(|n| crate::api::util::json_uuid(&n["id"]))
-            }
-            _ => {
-                node_by_name.get(target_name)
-                    .and_then(|n| crate::api::util::json_uuid(&n["id"]))
-            }
+            "calls" => resolve_unique(target_name),
+            _ => resolve_unique(target_name),
         };
 
         if let Some(target_id) = matched_id {
@@ -295,6 +305,42 @@ mod tests {
 
         assert_eq!(ctx.pg().get_folder_status(&fid).await.unwrap().as_deref(), Some("failed"),
             "resolve_libs must not mark a failed folder indexed (fail-closed)");
+        ctx.pg().remove_watch_root(&root_id).await.ok();
+    }
+
+    #[tokio::test]
+    async fn resolve_edges_leaves_ambiguous_name_unresolved() {
+        // A bare call name that matches MULTIPLE definitions (e.g. `new`, defined
+        // on every struct) must NOT resolve to an arbitrary one — that collapses
+        // every `Foo::new()` onto a single false mega-hub. Resolve only on a
+        // UNIQUE match; leave an ambiguous name unresolved (honest, no false edge).
+        let ctx = make_ctx().await;
+        let folder_path = format!("/tmp/ambig_{}", uuid::Uuid::new_v4());
+        let root_id = ctx.pg().add_watch_root(&folder_path, "am", &serde_json::json!([])).await.unwrap();
+        let fid = ctx.pg().upsert_repo(&root_id, "am-repo", &folder_path).await.unwrap();
+
+        // Two `new` methods (ambiguous) + one uniquely-named `compute`.
+        ctx.pg().upsert_node(&fid, "method", "new", "a.rs", None, Some("()"), Some(2), Some(3)).await.unwrap();
+        ctx.pg().upsert_node(&fid, "method", "new", "b.rs", None, Some("()"), Some(2), Some(3)).await.unwrap();
+        let compute = ctx.pg().upsert_node(&fid, "function", "compute", "c.rs", None, Some("()"), Some(1), Some(5)).await.unwrap();
+        let caller = ctx.pg().upsert_node(&fid, "function", "caller", "c.rs", None, Some("()"), Some(7), Some(9)).await.unwrap();
+        // Unresolved call edges: caller → new (ambiguous) and caller → compute (unique).
+        let e_new = ctx.pg().insert_edge(&fid, &caller, None, Some("new"), None, "calls").await.unwrap();
+        let e_compute = ctx.pg().insert_edge(&fid, &caller, None, Some("compute"), None, "calls").await.unwrap();
+
+        let task = Task::new(TaskKind::ResolveEdges, &folder_path, &folder_path);
+        resolve_edges(&ctx, &task).await.unwrap();
+
+        // The ambiguous `new` call stays unresolved (target_id NULL, target_name kept).
+        let (new_tid, new_tname): (Option<uuid::Uuid>, Option<String>) = sqlx_core::query_as::query_as(
+            "SELECT target_id, target_name FROM sensei.edges WHERE id=$1").bind(e_new).fetch_one(ctx.pg().pool()).await.unwrap();
+        assert_eq!(new_tid, None, "an ambiguous bare name is NOT resolved to an arbitrary node");
+        assert_eq!(new_tname.as_deref(), Some("new"), "target_name kept for later type-aware resolution");
+        // The unique `compute` call resolves normally.
+        let (compute_tid,): (Option<uuid::Uuid>,) = sqlx_core::query_as::query_as(
+            "SELECT target_id FROM sensei.edges WHERE id=$1").bind(e_compute).fetch_one(ctx.pg().pool()).await.unwrap();
+        assert_eq!(compute_tid, Some(compute), "a uniquely-named call still resolves");
+
         ctx.pg().remove_watch_root(&root_id).await.ok();
     }
 
