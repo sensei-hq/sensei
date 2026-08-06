@@ -1446,17 +1446,36 @@ mod tests {
         let live = ctx.pg().list_communities_live_scoped(&[fid]).await.unwrap();
         assert!(!live.is_empty() && live.iter().all(|c| c["node_count"].as_i64().unwrap_or(0) > 0), "live overview sized by real membership");
 
-        // ── Idempotency / convergence: re-run yields ZERO net new rows ──
-        let n0 = count("SELECT count(*) FROM sensei.nodes WHERE folder_id=$1").await;
+        // ── Idempotency / convergence: re-run is IDENTITY-STABLE, not just
+        // count-stable. Capture every node's id keyed on its natural key
+        // (file_path,kind,name,line_start); after a second scan assert the id map
+        // is byte-identical — so a regression to delete-then-insert (which keeps
+        // counts equal but MINTS NEW UUIDs, nulling embeddings/community) fails
+        // here, per invariant 2 (identical nodes.id set on re-run).
+        let ids_before: std::collections::BTreeMap<(String, String, String, Option<i32>), uuid::Uuid> = {
+            let rows: Vec<(String, String, String, Option<i32>, uuid::Uuid)> = sqlx_core::query_as::query_as(
+                "SELECT file_path, kind::text, name, line_start, id FROM sensei.nodes WHERE folder_id=$1")
+                .bind(fid).fetch_all(ctx.pg().pool()).await.unwrap();
+            rows.into_iter().map(|(fp, k, n, ls, id)| ((fp, k, n, ls), id)).collect()
+        };
         let e0 = count("SELECT count(*) FROM sensei.edges WHERE folder_id=$1").await;
         scan_files(&ctx, &repo, &repo_path, &files).await;
-        let n1 = count("SELECT count(*) FROM sensei.nodes WHERE folder_id=$1").await;
+        let ids_after: std::collections::BTreeMap<(String, String, String, Option<i32>), uuid::Uuid> = {
+            let rows: Vec<(String, String, String, Option<i32>, uuid::Uuid)> = sqlx_core::query_as::query_as(
+                "SELECT file_path, kind::text, name, line_start, id FROM sensei.nodes WHERE folder_id=$1")
+                .bind(fid).fetch_all(ctx.pg().pool()).await.unwrap();
+            rows.into_iter().map(|(fp, k, n, ls, id)| ((fp, k, n, ls), id)).collect()
+        };
         let e1 = count("SELECT count(*) FROM sensei.edges WHERE folder_id=$1").await;
-        assert_eq!((n0, e0), (n1, e1), "a second scan is a no-op — convergent (nodes {n0}->{n1}, edges {e0}->{e1})");
+        assert_eq!(ids_before, ids_after,
+            "a second scan is identity-stable — every node keeps its exact id (not delete-then-insert)");
+        assert_eq!(e0, e1, "a second scan adds no edges (dup-factor 1.0, convergent)");
 
-        // ── Scoped incremental: add a heading to the doc → new section, others preserved ──
-        let (compute_comm_before,): (Option<i32>,) = sqlx_core::query_as::query_as(
-            "SELECT community_id FROM sensei.nodes WHERE folder_id=$1 AND kind='function'::sensei.node_kind AND name='compute'")
+        // ── Scoped incremental: add a heading to the doc → new section, and an
+        // unrelated code node keeps its exact id AND community (upsert-then-prune,
+        // not a wholesale re-mint) ──
+        let (compute_id_before, compute_comm_before): (uuid::Uuid, Option<i32>) = sqlx_core::query_as::query_as(
+            "SELECT id, community_id FROM sensei.nodes WHERE folder_id=$1 AND kind='function'::sensei.node_kind AND name='compute'")
             .bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
         let design = repo.join("docs/design.md");
         let mut doc = std::fs::read_to_string(&design).unwrap();
@@ -1468,10 +1487,11 @@ mod tests {
             "SELECT count(*) FROM sensei.nodes WHERE folder_id=$1 AND kind='section'::sensei.node_kind AND name='Design > Extra'")
             .bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
         assert_eq!(extra, 1, "the new heading became a section node");
-        let (compute_comm_after,): (Option<i32>,) = sqlx_core::query_as::query_as(
-            "SELECT community_id FROM sensei.nodes WHERE folder_id=$1 AND kind='function'::sensei.node_kind AND name='compute'")
+        let (compute_id_after, compute_comm_after): (uuid::Uuid, Option<i32>) = sqlx_core::query_as::query_as(
+            "SELECT id, community_id FROM sensei.nodes WHERE folder_id=$1 AND kind='function'::sensei.node_kind AND name='compute'")
             .bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
-        assert_eq!(compute_comm_after, compute_comm_before, "an unrelated code node keeps its community across a scoped doc edit");
+        assert_eq!(compute_id_after, compute_id_before, "an unrelated code node keeps its EXACT id across a scoped doc edit (upsert-then-prune)");
+        assert_eq!(compute_comm_after, compute_comm_before, "and keeps its community_id");
         // Still no duplicate edges after the incremental edit.
         let (dup2,): (i64,) = sqlx_core::query_as::query_as(
             "SELECT count(*) FROM (SELECT kind, count(*) c, count(DISTINCT (source_id,target_id,target_name,target_file)) d FROM sensei.edges WHERE folder_id=$1 GROUP BY kind) t WHERE c <> d")
