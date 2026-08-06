@@ -2910,6 +2910,29 @@ impl PgStore {
         }).collect())
     }
 
+    /// Communities across a project scope with LIVE membership counts (7.3): the
+    /// `node_count` is computed from the real `nodes.community_id` join, not the
+    /// denormalized `communities.node_count` — so the overview reflects the
+    /// current graph (a node whose community changed since the last detect is
+    /// counted where it actually is now). Also carries `god_node_ids`. Ordered by
+    /// live count desc. This is what turns the flat "scattered circles" overview
+    /// into one sized by real per-community membership.
+    pub async fn list_communities_live_scoped(&self, folder_ids: &[uuid::Uuid]) -> Result<Vec<serde_json::Value>, String> {
+        if folder_ids.is_empty() { return Ok(vec![]); }
+        let rows: Vec<(uuid::Uuid, Option<String>, i64, Vec<uuid::Uuid>)> = sqlx_core::query_as::query_as(
+            "SELECT c.id, c.label, count(n.id) AS live_count, c.god_node_ids
+               FROM inference.communities c
+               LEFT JOIN sensei.nodes n
+                 ON n.folder_id = c.folder_id AND n.community_id = c.community_id
+              WHERE c.folder_id = ANY($1)
+              GROUP BY c.id, c.label, c.god_node_ids
+              ORDER BY live_count DESC, c.id"
+        ).bind(folder_ids).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(id, label, count, gods)| {
+            serde_json::json!({ "id": id, "label": label.unwrap_or_default(), "node_count": count, "god_node_ids": gods })
+        }).collect())
+    }
+
     /// The folder's communities with their `god_node_ids`, largest first — the
     /// input to description enrichment (D4.5). Bounded by `limit` so a huge cold
     /// repo enriches only its most significant clusters per detect run.
@@ -9959,21 +9982,31 @@ impl PgStore {
 
     /// Get all nodes across multiple folders (project-scoped variant).
     pub async fn get_nodes_scoped(&self, folder_ids: &[uuid::Uuid]) -> Result<Vec<serde_json::Value>, String> {
-        let rows: Vec<(uuid::Uuid, String, String, String, Option<uuid::Uuid>, Option<i32>, Option<i32>, Option<i32>, uuid::Uuid)> = sqlx_core::query_as::query_as(
-            "SELECT id, kind::text, name, file_path, parent_id, line_start, line_end, degree, folder_id FROM sensei.nodes WHERE folder_id = ANY($1) ORDER BY file_path, line_start"
+        let rows: Vec<(uuid::Uuid, String, String, String, Option<uuid::Uuid>, Option<i32>, Option<i32>, Option<i32>, Option<i32>, uuid::Uuid)> = sqlx_core::query_as::query_as(
+            "SELECT id, kind::text, name, file_path, parent_id, line_start, line_end, degree, community_id, folder_id FROM sensei.nodes WHERE folder_id = ANY($1) ORDER BY file_path, line_start"
         ).bind(folder_ids).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
-        Ok(rows.into_iter().map(|(id, kind, name, fp, pid, ls, le, degree, folder_id)| {
-            serde_json::json!({ "id": id, "kind": kind, "name": name, "file_path": fp, "parent_id": pid, "line_start": ls, "line_end": le, "degree": degree, "folder_id": folder_id })
+        Ok(rows.into_iter().map(|(id, kind, name, fp, pid, ls, le, degree, community_id, folder_id)| {
+            serde_json::json!({ "id": id, "kind": kind, "name": name, "file_path": fp, "parent_id": pid, "line_start": ls, "line_end": le, "degree": degree, "community_id": community_id, "folder_id": folder_id })
         }).collect())
     }
 
     /// Get edges by kind across multiple folders (project-scoped variant).
     pub async fn get_edges_scoped(&self, folder_ids: &[uuid::Uuid], kind: &str) -> Result<Vec<serde_json::Value>, String> {
-        let rows: Vec<(uuid::Uuid, uuid::Uuid, Option<uuid::Uuid>, Option<String>)> = sqlx_core::query_as::query_as(
-            "SELECT id, source_id, target_id, target_name FROM sensei.edges WHERE folder_id = ANY($1) AND kind = $2::sensei.edge_kind"
-        ).bind(folder_ids).bind(kind).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
-        Ok(rows.into_iter().map(|(id, src, tgt, name)| {
-            serde_json::json!({ "id": id, "source_id": src, "target_id": tgt, "target_name": name })
+        self.get_edges_scoped_kinds(folder_ids, &[kind]).await
+    }
+
+    /// Get edges of ANY of `kinds` across multiple folders (7.1) — the graph
+    /// layout set is `calls,imports,extends` (+`implements` once emitted), not the
+    /// single `calls` the node view used to fetch. Each row carries its `kind` so
+    /// the client can style/overlay per relationship type.
+    pub async fn get_edges_scoped_kinds(&self, folder_ids: &[uuid::Uuid], kinds: &[&str]) -> Result<Vec<serde_json::Value>, String> {
+        let kinds_owned: Vec<String> = kinds.iter().map(|k| k.to_string()).collect();
+        let rows: Vec<(uuid::Uuid, uuid::Uuid, Option<uuid::Uuid>, Option<String>, String)> = sqlx_core::query_as::query_as(
+            "SELECT id, source_id, target_id, target_name, kind::text FROM sensei.edges
+              WHERE folder_id = ANY($1) AND kind::text = ANY($2)"
+        ).bind(folder_ids).bind(&kinds_owned).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(id, src, tgt, name, kind)| {
+            serde_json::json!({ "id": id, "source_id": src, "target_id": tgt, "target_name": name, "kind": kind })
         }).collect())
     }
 
@@ -11377,6 +11410,64 @@ mod tests {
             assert_eq!(source, Some("null"), "props.source records the honest-empty provenance");
             assert_ne!(source, Some("template"), "never a templated description (never-fabricate)");
         }
+
+        s.delete_nodes_by_folder(&fid).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn graph_nodes_returns_community_and_structural_edges() {
+        // 7.1: get_nodes_scoped exposes community_id, and get_edges_scoped_kinds
+        // returns the full layout set calls,imports,extends — NOT just calls, and
+        // NOT overlay kinds like covers.
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, &format!("gscope_{}", uuid::Uuid::new_v4())).await;
+        let a = s.upsert_node(&fid, "function", "a", "a.rs", None, Some("()"), Some(1), Some(2)).await.unwrap();
+        let b = s.upsert_node(&fid, "class", "B", "a.rs", None, Some("()"), Some(3), Some(4)).await.unwrap();
+        sqlx_core::query::query("UPDATE sensei.nodes SET community_id=5 WHERE id=$1").bind(a).execute(s.pool()).await.unwrap();
+        s.insert_edge(&fid, &a, Some(&b), None, None, "calls").await.unwrap();
+        s.insert_edge(&fid, &a, None, Some("lib"), None, "imports").await.unwrap();
+        s.insert_edge(&fid, &b, Some(&a), None, None, "extends").await.unwrap();
+        s.insert_edge(&fid, &a, Some(&b), None, None, "covers").await.unwrap(); // overlay — excluded
+
+        let nodes = s.get_nodes_scoped(&[fid]).await.unwrap();
+        let a_node = nodes.iter().find(|n| n["name"] == "a").unwrap();
+        assert_eq!(a_node["community_id"].as_i64(), Some(5), "get_nodes_scoped exposes community_id");
+
+        let edges = s.get_edges_scoped_kinds(&[fid], &["calls", "imports", "extends"]).await.unwrap();
+        let kinds: std::collections::HashSet<&str> = edges.iter().filter_map(|e| e["kind"].as_str()).collect();
+        assert_eq!(edges.len(), 3, "exactly the 3 layout edges (covers excluded)");
+        assert!(kinds.contains("calls") && kinds.contains("imports") && kinds.contains("extends"), "all 3 layout kinds present: {kinds:?}");
+        assert!(!kinds.contains("covers"), "covers (overlay) is not a layout edge");
+
+        s.delete_nodes_by_folder(&fid).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn communities_info_uses_live_membership() {
+        // 7.3: list_communities_live_scoped counts from the real nodes.community_id
+        // join, NOT the denormalized communities.node_count — so a stale count
+        // doesn't drive the overview.
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, &format!("livecomm_{}", uuid::Uuid::new_v4())).await;
+        let n1 = s.upsert_node(&fid, "function", "n1", "a.rs", None, Some("()"), Some(1), Some(2)).await.unwrap();
+        let n2 = s.upsert_node(&fid, "function", "n2", "a.rs", None, Some("()"), Some(3), Some(4)).await.unwrap();
+        let n3 = s.upsert_node(&fid, "function", "n3", "a.rs", None, Some("()"), Some(5), Some(6)).await.unwrap();
+        // Community 1 has 2 live members, community 2 has 1 — but seed a STALE count.
+        s.upsert_community(&fid, 1, "c1", 99).await.unwrap(); // stale node_count = 99
+        s.upsert_community(&fid, 2, "c2", 0).await.unwrap();  // stale node_count = 0
+        sqlx_core::query::query("UPDATE sensei.nodes SET community_id=1 WHERE id = ANY($1)")
+            .bind(vec![n1, n2]).execute(s.pool()).await.unwrap();
+        sqlx_core::query::query("UPDATE sensei.nodes SET community_id=2 WHERE id=$1")
+            .bind(n3).execute(s.pool()).await.unwrap();
+
+        let live = s.list_communities_live_scoped(&[fid]).await.unwrap();
+        let count_of = |label: &str| live.iter()
+            .find(|c| c["label"] == label)
+            .and_then(|c| c["node_count"].as_i64());
+        assert_eq!(count_of("c1"), Some(2), "c1 sized by 2 LIVE members, not the stale 99");
+        assert_eq!(count_of("c2"), Some(1), "c2 sized by 1 LIVE member, not the stale 0");
+        // Ordered by live count desc → c1 first.
+        assert_eq!(live.first().and_then(|c| c["label"].as_str()), Some("c1"));
 
         s.delete_nodes_by_folder(&fid).await.unwrap();
     }
