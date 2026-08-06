@@ -66,6 +66,15 @@ pub struct ActivityPruneCounts {
     pub assistant_events:  u64,
 }
 
+/// One community to write via [`PgStore::replace_communities_for_folder`] (D4):
+/// a deterministic `community_id` (1..k), a human label, and its member node ids.
+#[derive(Debug, Clone)]
+pub struct CommunityAssignment {
+    pub community_id: i32,
+    pub label: String,
+    pub member_node_ids: Vec<uuid::Uuid>,
+}
+
 /// One edge to (re)insert via [`PgStore::replace_edges_of_kind`] (D2). Mirrors
 /// the `insert_edge` shape: a resolved edge carries `target_id`; an unresolved
 /// one carries `target_name`/`target_file`.
@@ -2782,6 +2791,41 @@ impl PgStore {
         ).bind(folder_id).bind(community_id).bind(label).bind(node_count)
             .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(row.0)
+    }
+
+    /// Replace a folder's ENTIRE community assignment in one transaction (D4):
+    /// delete its community rows, clear every node's `community_id`, then insert
+    /// the new communities and set their members' `community_id`. This makes
+    /// `inference.communities` + `nodes.community_id` a pure function of the
+    /// current graph — no stale community rows, no stranded/orphaned
+    /// `community_id`s (invariant 5) — and atomic (a crash can't leave a
+    /// half-assigned folder). An empty `communities` just clears the folder.
+    pub async fn replace_communities_for_folder(
+        &self, folder_id: &uuid::Uuid, communities: &[CommunityAssignment],
+    ) -> Result<(), String> {
+        let mut tx = self.pool.begin().await.map_err(|e| e.to_string())?;
+        sqlx_core::query::query("DELETE FROM inference.communities WHERE folder_id = $1")
+            .bind(folder_id).execute(&mut *tx).await.map_err(|e| e.to_string())?;
+        sqlx_core::query::query(
+            "UPDATE sensei.nodes SET community_id = NULL, modified_at = now()
+              WHERE folder_id = $1 AND community_id IS NOT NULL"
+        ).bind(folder_id).execute(&mut *tx).await.map_err(|e| e.to_string())?;
+        for c in communities {
+            sqlx_core::query::query(
+                "INSERT INTO inference.communities(folder_id, community_id, label, node_count)
+                 VALUES($1, $2, $3, $4)"
+            ).bind(folder_id).bind(c.community_id).bind(&c.label).bind(c.member_node_ids.len() as i32)
+                .execute(&mut *tx).await.map_err(|e| e.to_string())?;
+            if !c.member_node_ids.is_empty() {
+                sqlx_core::query::query(
+                    "UPDATE sensei.nodes SET community_id = $2, modified_at = now()
+                      WHERE folder_id = $1 AND id = ANY($3)"
+                ).bind(folder_id).bind(c.community_id).bind(&c.member_node_ids)
+                    .execute(&mut *tx).await.map_err(|e| e.to_string())?;
+            }
+        }
+        tx.commit().await.map_err(|e| e.to_string())?;
+        Ok(())
     }
 
     pub async fn list_communities(&self, folder_id: &uuid::Uuid) -> Result<Vec<serde_json::Value>, String> {
@@ -10958,6 +11002,123 @@ mod tests {
         let exists: (bool,) = query_as("SELECT EXISTS(SELECT 1 FROM sensei.edges WHERE id=$1)")
             .bind(u).fetch_one(s.pool()).await.unwrap();
         assert!(!exists.0, "the loser unresolved edge is deleted");
+
+        s.delete_nodes_by_folder(&fid).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn replace_communities_for_folder_kills_stale_and_orphans() {
+        // D4 invariant 5: the per-folder replace DELETEs stale community rows,
+        // CLEARs every node's community_id, then writes the new set — no orphaned
+        // rows, no stranded community_ids. Per-folder, sum(node_count) equals the
+        // count of nodes actually carrying a community_id.
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, &format!("comm_{}", uuid::Uuid::new_v4())).await;
+        let a = s.upsert_node(&fid, "function", "a", "a.rs", None, Some("()"), Some(1), Some(2)).await.unwrap();
+        let b = s.upsert_node(&fid, "function", "b", "a.rs", None, Some("()"), Some(3), Some(4)).await.unwrap();
+        let c = s.upsert_node(&fid, "function", "c", "a.rs", None, Some("()"), Some(5), Some(6)).await.unwrap();
+
+        // Stale prior state: community 99 + nodes a & c assigned to it.
+        s.upsert_community(&fid, 99, "stale", 2).await.unwrap();
+        s.update_node_community(&a, 99).await.unwrap();
+        s.update_node_community(&c, 99).await.unwrap();
+
+        // Replace with a single community {1: [a, b]} — c must be orphaned out.
+        s.replace_communities_for_folder(&fid, &[
+            CommunityAssignment { community_id: 1, label: "new".into(), member_node_ids: vec![a, b] },
+        ]).await.unwrap();
+
+        assert_eq!(s.list_communities(&fid).await.unwrap().len(), 1, "stale community 99 is gone");
+        let cid = |id: uuid::Uuid| {
+            let s = &s;
+            async move {
+                let (v,): (Option<i32>,) = query_as("SELECT community_id FROM sensei.nodes WHERE id=$1")
+                    .bind(id).fetch_one(s.pool()).await.unwrap();
+                v
+            }
+        };
+        assert_eq!(cid(a).await, Some(1), "a assigned to the new community");
+        assert_eq!(cid(b).await, Some(1), "b assigned to the new community");
+        assert_eq!(cid(c).await, None, "c's stale community_id is cleared (orphan removed)");
+
+        // Per-folder integrity: claimed node_count == real nodes carrying a community_id.
+        let (claimed,): (i64,) = query_as("SELECT COALESCE(sum(node_count),0) FROM inference.communities WHERE folder_id=$1")
+            .bind(fid).fetch_one(s.pool()).await.unwrap();
+        let (real,): (i64,) = query_as("SELECT count(*) FROM sensei.nodes WHERE folder_id=$1 AND community_id IS NOT NULL")
+            .bind(fid).fetch_one(s.pool()).await.unwrap();
+        assert_eq!(claimed, real, "claimed == real (invariant 5)");
+
+        s.delete_nodes_by_folder(&fid).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn detect_communities_assigns_deterministic_ids_by_natural_key() {
+        // D4 invariant 2: community_id is DETERMINISTIC — communities are ranked
+        // 1..k by the natural key (file_path, line_start, …) of their smallest
+        // member, so an identical graph always yields identical ids. Two disjoint
+        // triangles ⇒ two communities; the one holding the earliest node is #1.
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, &format!("commdet_{}", uuid::Uuid::new_v4())).await;
+        let mut n = std::collections::HashMap::new();
+        for (name, line) in [("a", 10), ("b", 20), ("c", 30), ("d", 40), ("e", 50), ("f", 60)] {
+            let id = s.upsert_node(&fid, "function", name, "a.rs", None, Some("()"), Some(line), Some(line + 1)).await.unwrap();
+            n.insert(name, id);
+        }
+        // Two disjoint triangles: {a,b,c} and {d,e,f} (resolved calls).
+        for (x, y) in [("a","b"),("b","c"),("c","a"),("d","e"),("e","f"),("f","d")] {
+            s.insert_edge(&fid, &n[x], Some(&n[y]), None, None, "calls").await.unwrap();
+        }
+
+        let read_ids = |s: &PgStore, n: &std::collections::HashMap<&str, uuid::Uuid>| {
+            let ids: Vec<uuid::Uuid> = ["a","b","c","d","e","f"].iter().map(|k| n[*k]).collect();
+            let pool = s.pool().clone();
+            async move {
+                let mut out = Vec::new();
+                for id in ids {
+                    let (v,): (Option<i32>,) = query_as("SELECT community_id FROM sensei.nodes WHERE id=$1")
+                        .bind(id).fetch_one(&pool).await.unwrap();
+                    out.push(v);
+                }
+                out
+            }
+        };
+
+        crate::indexer::community::detect_communities_for_folder(&s, &fid).await.unwrap();
+        let first: Vec<Option<i32>> = read_ids(&s, &n).await;
+        // {a,b,c} share a community; {d,e,f} share another; triangle-a (earliest
+        // natural key) is community 1, triangle-d is 2.
+        assert_eq!(&first[0..3], &[Some(1), Some(1), Some(1)], "earliest triangle is community 1");
+        assert_eq!(&first[3..6], &[Some(2), Some(2), Some(2)], "later triangle is community 2");
+
+        // Invariant 5 after a REAL detect run (not just the hand-built replace):
+        // claimed sum(node_count) == real nodes carrying a community_id.
+        let (claimed,): (i64,) = query_as("SELECT COALESCE(sum(node_count),0) FROM inference.communities WHERE folder_id=$1")
+            .bind(fid).fetch_one(s.pool()).await.unwrap();
+        let (real,): (i64,) = query_as("SELECT count(*) FROM sensei.nodes WHERE folder_id=$1 AND community_id IS NOT NULL")
+            .bind(fid).fetch_one(s.pool()).await.unwrap();
+        assert_eq!(claimed, real, "per-folder claimed == real after detect_communities (invariant 5)");
+
+        // Re-running over the identical graph yields the identical assignment.
+        crate::indexer::community::detect_communities_for_folder(&s, &fid).await.unwrap();
+        let second: Vec<Option<i32>> = read_ids(&s, &n).await;
+        assert_eq!(first, second, "identical graph ⇒ identical community ids (deterministic)");
+
+        s.delete_nodes_by_folder(&fid).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn detect_communities_clears_stale_on_empty_folder() {
+        // D4 invariant 5: running detection on a folder that has become empty
+        // clears its stale community rows (the nodes.is_empty() → replace([]) path).
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, &format!("commempty_{}", uuid::Uuid::new_v4())).await;
+        s.upsert_community(&fid, 1, "stale", 3).await.unwrap();
+        assert_eq!(s.list_communities(&fid).await.unwrap().len(), 1, "seeded a stale community");
+
+        // No nodes exist for this folder → detection must clear the stale rows.
+        crate::indexer::community::detect_communities_for_folder(&s, &fid).await.unwrap();
+        assert!(s.list_communities(&fid).await.unwrap().is_empty(),
+            "an empty folder's stale communities are cleared");
 
         s.delete_nodes_by_folder(&fid).await.unwrap();
     }

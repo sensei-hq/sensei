@@ -7,15 +7,22 @@ pub async fn detect_communities_for_folder(
     pg: &crate::db::pg_store::PgStore,
     folder_id: &uuid::Uuid,
 ) -> Result<u32, String> {
-    // Load all nodes for this folder
-    let nodes = pg.get_nodes_by_folder(folder_id).await
+    // Load all nodes for this folder.
+    let mut nodes = pg.get_nodes_by_folder(folder_id).await
         .map_err(|e| format!("Failed to load nodes: {}", e))?;
 
     if nodes.is_empty() {
+        // Clear any stale communities for a now-empty folder (D4 invariant 5).
+        pg.replace_communities_for_folder(folder_id, &[]).await?;
         return Ok(0);
     }
 
-    // Build node index: uuid -> position
+    // D4: order nodes by a STABLE natural key (independent of the random node
+    // UUID) so both label propagation and the community-id remap below are
+    // deterministic for an identical tree (invariant 2).
+    nodes.sort_by_key(natural_key);
+
+    // Build node index: uuid -> position (in natural-key order).
     let mut id_to_idx: HashMap<String, usize> = HashMap::new();
     let mut node_ids: Vec<String> = Vec::with_capacity(nodes.len());
     for (i, node) in nodes.iter().enumerate() {
@@ -24,53 +31,61 @@ pub async fn detect_communities_for_folder(
         node_ids.push(id);
     }
 
-    // Load resolved edges (calls, implements, imports) for this folder
     let adjacency = build_adjacency(pg, folder_id, &id_to_idx, nodes.len()).await?;
-
-    // Run label propagation
     let labels = label_propagation(&adjacency, nodes.len(), 20);
 
-    // Group nodes by community label
-    let mut communities: HashMap<u32, Vec<usize>> = HashMap::new();
+    // Group members by raw propagation label.
+    let mut groups: HashMap<u32, Vec<usize>> = HashMap::new();
     for (i, &label) in labels.iter().enumerate() {
-        communities.entry(label).or_default().push(i);
+        groups.entry(label).or_default().push(i);
     }
 
-    // Persist to inference.communities and update nodes.community_id
-    let mut community_count = 0u32;
-    for (community_id, members) in &communities {
-        if members.len() < 2 {
-            continue; // skip singletons
-        }
+    // D4 deterministic ids: keep non-singleton communities (singletons are
+    // assigned in D4b), and — since nodes are natural-key sorted — a community's
+    // MIN member index IS its min natural key. Rank communities by that min index
+    // and assign community_id = 1..k, so an identical tree always yields the same
+    // ids regardless of raw label values.
+    let mut kept: Vec<(usize, Vec<usize>)> = groups.into_values()
+        .filter(|members| members.len() >= 2)
+        .map(|mut members| { members.sort_unstable(); (members[0], members) })
+        .collect();
+    kept.sort_by_key(|(min_idx, _)| *min_idx);
 
-        // Generate label from most common node kind + first member name
+    let mut assignments = Vec::with_capacity(kept.len());
+    for (rank, (_min_idx, members)) in kept.iter().enumerate() {
         let label = generate_community_label(&nodes, members);
-
-        pg.upsert_community(folder_id, *community_id as i32, &label, members.len() as i32).await
-            .map_err(|e| format!("upsert_community failed: {}", e))?;
-
-        // Update nodes.community_id for each member
-        for &idx in members {
-            let node_id = match uuid::Uuid::parse_str(&node_ids[idx]) {
-                Ok(id) => id,
-                Err(e) => {
-                    tracing::warn!(error = %e, node_id = %node_ids[idx], "detect_communities: skipping member with unparseable node id");
-                    continue;
-                }
-            };
-            if let Err(e) = pg.update_node_community(&node_id, *community_id as i32).await {
-                tracing::warn!(error = %e, node_id = %node_id, community_id = *community_id, "detect_communities: failed to update node community_id");
-            }
-        }
-
-        community_count += 1;
+        let member_node_ids: Vec<uuid::Uuid> = members.iter()
+            .filter_map(|&idx| uuid::Uuid::parse_str(&node_ids[idx]).ok())
+            .collect();
+        assignments.push(crate::db::pg_store::CommunityAssignment {
+            community_id: (rank + 1) as i32,
+            label,
+            member_node_ids,
+        });
     }
+
+    // D4 durability: replace the folder's ENTIRE community set in one tx (kills
+    // stale rows + orphaned community_ids — invariant 5).
+    let community_count = assignments.len() as u32;
+    pg.replace_communities_for_folder(folder_id, &assignments).await?;
 
     tracing::info!(
         "detect_communities: folder {} — {} communities from {} nodes",
         folder_id, community_count, nodes.len()
     );
     Ok(community_count)
+}
+
+/// Stable per-node ordering key — independent of the random node UUID — so
+/// community detection and id assignment are deterministic for an unchanged
+/// tree (D4 invariant 2).
+fn natural_key(node: &serde_json::Value) -> (String, i64, String, String) {
+    (
+        node["file_path"].as_str().unwrap_or("").to_string(),
+        node["line_start"].as_i64().unwrap_or(-1),
+        node["kind"].as_str().unwrap_or("").to_string(),
+        node["name"].as_str().unwrap_or("").to_string(),
+    )
 }
 
 /// Build undirected adjacency list from resolved edges.
