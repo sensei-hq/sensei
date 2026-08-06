@@ -370,8 +370,9 @@ pub(crate) async fn detect_vanished_folders(
 
     let mut ghosts = Vec::new();
     for r in &recorded {
-        // Only non-root subfolders; roots are owned by reconcile_roots.
-        if r["kind"].as_str() != Some("folder") {
+        // Only structural subfolders (`folder` + the monorepo-member `workspace_member`,
+        // D5a); project ROOTS (git/standalone/subtree) are owned by reconcile_roots.
+        if !matches!(r["kind"].as_str(), Some("folder") | Some("workspace_member")) {
             continue;
         }
         let Some(abs) = r["abs_path"].as_str() else { continue };
@@ -1051,6 +1052,35 @@ mod tests {
 
         // Idempotent: a second run prunes nothing.
         assert_eq!(prune_vanished_folders(ctx.pg(), &root_id).await, 0, "re-run is a no-op");
+    }
+
+    #[tokio::test]
+    async fn prune_vanished_folders_drops_ghost_workspace_member() {
+        // D5a: a monorepo member (kind='workspace_member') whose dir vanished is
+        // ghost-pruned like a structural `folder` — detect_vanished_folders was
+        // extended to include workspace_member so a deleted member doesn't linger.
+        let ctx = make_ctx().await;
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let repo = root.join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        let root_id = ctx.pg().add_watch_root(&root.to_string_lossy(), "pvfwm", &serde_json::json!([])).await.unwrap();
+        let repo_fid = ctx.pg().upsert_repo_kind(&root_id, "git", "repo", &repo.to_string_lossy()).await.unwrap();
+
+        // A LIVE member (dir exists) and a GHOST member (dir never created).
+        let live = repo.join("packages/live");
+        std::fs::create_dir_all(&live).unwrap();
+        ctx.pg().upsert_subfolder_kind(&root_id, "workspace_member", "live", "packages/live", &live.to_string_lossy(), Some(&repo_fid), None).await.unwrap();
+        let gone = repo.join("packages/gone"); // NOT created on disk
+        ctx.pg().upsert_subfolder_kind(&root_id, "workspace_member", "gone", "packages/gone", &gone.to_string_lossy(), Some(&repo_fid), None).await.unwrap();
+
+        let pruned = prune_vanished_folders(ctx.pg(), &root_id).await;
+        assert_eq!(pruned, 1, "the vanished workspace_member is ghost-pruned");
+        let abs_paths: std::collections::HashSet<String> = ctx.pg().list_folders_by_root(&root_id).await.unwrap()
+            .iter().filter_map(|r| r["abs_path"].as_str().map(String::from)).collect();
+        assert!(!abs_paths.contains(&gone.to_string_lossy().to_string()), "ghost member row pruned");
+        assert!(abs_paths.contains(&live.to_string_lossy().to_string()), "live member row kept");
+        assert!(abs_paths.contains(&repo.to_string_lossy().to_string()), "repo root kept");
     }
 
     #[tokio::test]
