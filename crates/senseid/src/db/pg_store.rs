@@ -1252,24 +1252,37 @@ impl PgStore {
     }
 
     /// Upsert a structural subfolder (`kind='folder'`) within a project, linked
-    /// to its parent folder. Status is terminal (`indexed`) — these rows model
-    /// the filesystem tree, not scan progress. On conflict the kind is preserved
-    /// so a path that is actually a (nested) project root is never reclassified.
+    /// to its parent folder. Thin wrapper over [`Self::upsert_subfolder_kind`].
     pub async fn upsert_subfolder(
         &self, root_id: &uuid::Uuid, name: &str, path: &str, abs_path: &str,
         parent_id: Option<&uuid::Uuid>, project_id: Option<&uuid::Uuid>,
     ) -> Result<uuid::Uuid, String> {
+        self.upsert_subfolder_kind(root_id, "folder", name, path, abs_path, parent_id, project_id).await
+    }
+
+    /// Upsert a structural subfolder with an explicit `kind` — `folder` (the
+    /// navigable filesystem-tree row) or `workspace_member` (a monorepo member,
+    /// D5a). Status is terminal (`indexed`) — these rows model the tree, not scan
+    /// progress. On conflict the kind is relabelled ONLY between the two
+    /// structural kinds (`folder`↔`workspace_member`); a path that is actually a
+    /// (nested) project ROOT (`git`/`standalone`/`subtree`) is never reclassified.
+    pub async fn upsert_subfolder_kind(
+        &self, root_id: &uuid::Uuid, kind: &str, name: &str, path: &str, abs_path: &str,
+        parent_id: Option<&uuid::Uuid>, project_id: Option<&uuid::Uuid>,
+    ) -> Result<uuid::Uuid, String> {
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "INSERT INTO sensei.folders(root_id, kind, status, name, path, abs_path, parent_id, project_id)
-             VALUES($1, 'folder'::sensei.folder_kind, 'indexed'::sensei.folder_status, $2, $3, $4, $5, $6)
+             VALUES($1, $2::sensei.folder_kind, 'indexed'::sensei.folder_status, $3, $4, $5, $6, $7)
              ON CONFLICT(abs_path) DO UPDATE SET
+                kind = CASE WHEN folders.kind IN ('folder'::sensei.folder_kind, 'workspace_member'::sensei.folder_kind)
+                            THEN EXCLUDED.kind ELSE folders.kind END,
                 name = EXCLUDED.name,
                 parent_id = COALESCE(EXCLUDED.parent_id, folders.parent_id),
                 project_id = COALESCE(EXCLUDED.project_id, folders.project_id),
                 modified_at = now()
              RETURNING id"
         )
-            .bind(root_id).bind(name).bind(path).bind(abs_path).bind(parent_id).bind(project_id)
+            .bind(root_id).bind(kind).bind(name).bind(path).bind(abs_path).bind(parent_id).bind(project_id)
             .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(row.0)
     }
@@ -6957,7 +6970,7 @@ impl PgStore {
             "DELETE FROM sensei.nodes s
                USING sensei.folders sf
               WHERE s.folder_id = sf.id
-                AND sf.kind = 'folder'::sensei.folder_kind
+                AND sf.kind IN ('folder'::sensei.folder_kind, 'workspace_member'::sensei.folder_kind)
                 AND sf.root_id = $1
                 AND EXISTS (
                   SELECT 1
@@ -9052,15 +9065,15 @@ impl PgStore {
     }
 
     pub async fn get_project_repos(&self, project_id: &uuid::Uuid) -> Result<Vec<serde_json::Value>, String> {
-        // Only project ROOTS are repos. `kind='folder'` rows are the navigable
-        // subfolder tree (materialized by process_git_folder) and must NOT be
-        // listed as repos — otherwise a single-repo project with N subfolders
-        // renders as an N+1-repo "multi-repo" project (#62). The data is correct;
-        // this read path was projecting the subfolder tree as repos.
+        // Only project ROOTS are repos. `kind='folder'` (navigable subfolder tree)
+        // AND `kind='workspace_member'` (monorepo members, D5a) are the structural
+        // tree, NOT separate repos — listing them makes a single-repo monorepo with
+        // N members render as an N+1-repo "multi-repo" project (#62). The data is
+        // correct; this read path was projecting the subfolder tree as repos.
         let rows: Vec<(uuid::Uuid, String, String, Option<String>)> =
             sqlx_core::query_as::query_as(
                 "SELECT id, name, abs_path, kind::text FROM sensei.folders
-                 WHERE project_id = $1 AND kind::text <> 'folder' ORDER BY name"
+                 WHERE project_id = $1 AND kind::text NOT IN ('folder', 'workspace_member') ORDER BY name"
             ).bind(project_id)
             .fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
 
@@ -13570,19 +13583,60 @@ mod tests {
         ).await.unwrap();
         let git_abs = format!("/_test/repos-git-{}", uuid::Uuid::new_v4());
         let sub_abs = format!("/_test/repos-sub-{}", uuid::Uuid::new_v4());
+        let mem_abs = format!("/_test/repos-mem-{}", uuid::Uuid::new_v4());
         sqlx_core::query::query(
             "INSERT INTO sensei.folders(root_id, kind, name, path, abs_path, project_id) VALUES
                ('00000000-0000-0000-0000-000000000001','git'::sensei.folder_kind,'the-repo','the-repo',$1,$3),
-               ('00000000-0000-0000-0000-000000000001','folder'::sensei.folder_kind,'subdir','subdir',$2,$3)"
-        ).bind(&git_abs).bind(&sub_abs).bind(pid).execute(s.pool()).await.unwrap();
+               ('00000000-0000-0000-0000-000000000001','folder'::sensei.folder_kind,'subdir','subdir',$2,$3),
+               ('00000000-0000-0000-0000-000000000001','workspace_member'::sensei.folder_kind,'member','member',$4,$3)"
+        ).bind(&git_abs).bind(&sub_abs).bind(pid).bind(&mem_abs).execute(s.pool()).await.unwrap();
 
         let repos = s.get_project_repos(&pid).await.unwrap();
         let kinds: Vec<String> = repos.iter().filter_map(|r| r["kind"].as_str().map(str::to_string)).collect();
         assert!(kinds.iter().any(|k| k == "git"), "the repo root is listed: {kinds:?}");
         assert!(!kinds.iter().any(|k| k == "folder"), "kind=folder subfolders excluded: {kinds:?}");
+        // D5a: monorepo members are the structural tree, NOT separate repos — else
+        // a monorepo with N members regresses to an N+1-repo project (#62).
+        assert!(!kinds.iter().any(|k| k == "workspace_member"), "kind=workspace_member excluded from repos: {kinds:?}");
 
         sqlx_core::query::query("DELETE FROM sensei.folders WHERE project_id = $1").bind(pid).execute(s.pool()).await.unwrap();
         sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1").bind(pid).execute(s.pool()).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn upsert_subfolder_kind_relabels_structural_but_preserves_root() {
+        // D5a: upsert_subfolder_kind relabels between the two STRUCTURAL kinds
+        // (folder ↔ workspace_member) on conflict, but NEVER reclassifies a path
+        // that is actually a nested project ROOT (git/standalone/subtree).
+        let s = pg_store().await;
+        s.execute_raw(
+            "INSERT INTO sensei.folders_to_watch(id, path, name, status) VALUES('00000000-0000-0000-0000-000000000001', '/_test', '_test', 'watching'::sensei.watch_status) ON CONFLICT DO NOTHING"
+        ).await.unwrap();
+        let rid = uuid::Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap();
+        let kind_at = |s: &PgStore, abs: String| {
+            let pool = s.pool().clone();
+            async move {
+                let (k,): (String,) = query_as("SELECT kind::text FROM sensei.folders WHERE abs_path=$1")
+                    .bind(&abs).fetch_one(&pool).await.unwrap();
+                k
+            }
+        };
+
+        // A plain structural folder → relabel to workspace_member on re-upsert.
+        let a = format!("/_test/sfk-a-{}", uuid::Uuid::new_v4());
+        s.upsert_subfolder(&rid, "a", "a", &a, None, None).await.unwrap();
+        assert_eq!(kind_at(&s, a.clone()).await, "folder", "first upsert is a plain folder");
+        s.upsert_subfolder_kind(&rid, "workspace_member", "a", "a", &a, None, None).await.unwrap();
+        assert_eq!(kind_at(&s, a.clone()).await, "workspace_member", "relabelled folder → workspace_member");
+
+        // A nested project root (subtree) must NOT be reclassified by a member upsert.
+        let b = format!("/_test/sfk-b-{}", uuid::Uuid::new_v4());
+        s.upsert_repo_kind(&rid, "subtree", "b", &b).await.unwrap();
+        s.upsert_subfolder_kind(&rid, "workspace_member", "b", "b", &b, None, None).await.unwrap();
+        assert_eq!(kind_at(&s, b.clone()).await, "subtree", "a nested root is preserved, never reclassified");
+
+        sqlx_core::query::query("DELETE FROM sensei.folders WHERE abs_path IN ($1,$2)")
+            .bind(&a).bind(&b).execute(s.pool()).await.unwrap();
     }
 
     #[tokio::test]
