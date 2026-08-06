@@ -461,8 +461,12 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
                 if let Some(root_id) = root_id {
                     for (name, subtree_path) in &subtrees {
                         let subtree_folder_name = format!("{}:{}", folder_name, name);
-                        if let Err(e) = ctx.pg().upsert_repo(&root_id, &subtree_folder_name, subtree_path).await {
-                            tracing::warn!(name = %subtree_folder_name, path = %subtree_path, error = %e, "upsert_repo (subtree) failed");
+                        // D5a: a nested git repo is a `subtree`, not a `git` root.
+                        // upsert_repo_kind relabels an existing git/standalone row and
+                        // preserves an existing subtree, so this converges regardless
+                        // of whether scan_root discovered the nested repo first.
+                        if let Err(e) = ctx.pg().upsert_repo_kind(&root_id, "subtree", &subtree_folder_name, subtree_path).await {
+                            tracing::warn!(name = %subtree_folder_name, path = %subtree_path, error = %e, "upsert_repo_kind (subtree) failed");
                         }
                     }
                 }
@@ -659,15 +663,19 @@ pub async fn reconcile_repo_identity(ctx: &TaskContext, repo_abs_path: &str) -> 
             let sub_abs = sub.to_string_lossy().to_string();
             let rel = sub.strip_prefix(repo_path).unwrap_or(&sub).to_string_lossy().to_string();
             let name = sub.file_name().and_then(|n| n.to_str()).unwrap_or(rel.as_str()).to_string();
-            match ctx.pg().upsert_subfolder(
-                &root_id, &name, &rel, &sub_abs, Some(&folder_id), project_id.as_ref(),
+            // D5a: a monorepo sub-project is a `workspace_member` (not a plain
+            // structural `folder`) — its own boundary in the graph, keeping the
+            // inferred role. The kind-aware upsert relabels an existing `folder`
+            // member but never reclassifies a nested project root.
+            match ctx.pg().upsert_subfolder_kind(
+                &root_id, "workspace_member", &name, &rel, &sub_abs, Some(&folder_id), project_id.as_ref(),
             ).await {
                 Ok(sub_id) => {
                     if let Err(e) = ctx.pg().update_folder_role(&sub_id, Some(role)).await {
                         tracing::warn!(sub = %sub_abs, error = %e, "sub-project update_folder_role failed");
                     }
                 }
-                Err(e) => tracing::warn!(sub = %sub_abs, error = %e, "sub-project upsert_subfolder failed"),
+                Err(e) => tracing::warn!(sub = %sub_abs, error = %e, "sub-project upsert_subfolder_kind failed"),
             }
         }
     }
@@ -1187,6 +1195,12 @@ mod tests {
             ).bind(abs).fetch_optional(ctx.pg().pool()).await.unwrap();
             row.and_then(|r| r.0)
         }
+        async fn kind_of(ctx: &TaskContext, abs: &str) -> Option<String> {
+            let row: Option<(String,)> = sqlx_core::query_as::query_as(
+                "SELECT kind::text FROM sensei.folders WHERE abs_path = $1",
+            ).bind(abs).fetch_optional(ctx.pg().pool()).await.unwrap();
+            row.map(|r| r.0)
+        }
 
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path();
@@ -1210,6 +1224,14 @@ mod tests {
         assert_eq!(role_of(&ctx, &root.join("crates/mylib").to_string_lossy()).await.as_deref(), Some("library"));
         assert_eq!(role_of(&ctx, &root.join("crates/mytool").to_string_lossy()).await.as_deref(), Some("tool"));
         assert_eq!(role_of(&ctx, &root.join("site").to_string_lossy()).await.as_deref(), Some("website"));
+
+        // D5a: each sub-project is classified `workspace_member` (not a plain
+        // structural `folder`), keeping its inferred role.
+        assert_eq!(kind_of(&ctx, &root.join("crates/mylib").to_string_lossy()).await.as_deref(), Some("workspace_member"));
+        assert_eq!(kind_of(&ctx, &root.join("crates/mytool").to_string_lossy()).await.as_deref(), Some("workspace_member"));
+        assert_eq!(kind_of(&ctx, &root.join("site").to_string_lossy()).await.as_deref(), Some("workspace_member"));
+
+        ctx.pg().remove_watch_root(&root_id).await.ok();
     }
 
     #[tokio::test]
