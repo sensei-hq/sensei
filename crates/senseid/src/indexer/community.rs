@@ -31,8 +31,8 @@ pub async fn detect_communities_for_folder(
         node_ids.push(id);
     }
 
-    let adjacency = build_adjacency(pg, folder_id, &id_to_idx, nodes.len()).await?;
-    let labels = label_propagation(&adjacency, nodes.len(), 20);
+    let adjacency = build_adjacency(pg, folder_id, &id_to_idx, &nodes).await?;
+    let mut labels = label_propagation(&adjacency, nodes.len(), 20);
 
     // Group members by raw propagation label.
     let mut groups: HashMap<u32, Vec<usize>> = HashMap::new();
@@ -40,13 +40,45 @@ pub async fn detect_communities_for_folder(
         groups.entry(label).or_default().push(i);
     }
 
-    // D4 deterministic ids: keep non-singleton communities (singletons are
-    // assigned in D4b), and — since nodes are natural-key sorted — a community's
-    // MIN member index IS its min natural key. Rank communities by that min index
-    // and assign community_id = 1..k, so an identical tree always yields the same
-    // ids regardless of raw label values.
+    // D4.4 singleton assignment: a node the propagation left alone (its label
+    // group has one member — no calls/imports/extends/references edge AND no
+    // parent inside the folder) inherits its enclosing FILE community rather than
+    // being dropped, so coverage is ~100 % of nodes (invariant 5). Re-point each
+    // such singleton's label at its file node's label; a lone file (no children,
+    // no edges) keeps its own label and forms a one-node community.
+    let singletons: Vec<usize> = groups.values()
+        .filter(|members| members.len() == 1)
+        .map(|members| members[0])
+        .collect();
+    if !singletons.is_empty() {
+        let file_idx_by_path: HashMap<&str, usize> = nodes.iter().enumerate()
+            .filter(|(_, node)| node["kind"].as_str() == Some("file"))
+            .filter_map(|(i, node)| node["file_path"].as_str().map(|fp| (fp, i)))
+            .collect();
+        for i in singletons {
+            if nodes[i]["kind"].as_str() == Some("file") {
+                continue; // a lone file forms its own community — nothing to inherit
+            }
+            if let Some(fp) = nodes[i]["file_path"].as_str()
+                && let Some(&f) = file_idx_by_path.get(fp)
+                && f != i
+            {
+                labels[i] = labels[f];
+            }
+        }
+        // Re-group after folding singletons into their file's label.
+        groups.clear();
+        for (i, &label) in labels.iter().enumerate() {
+            groups.entry(label).or_default().push(i);
+        }
+    }
+
+    // D4 deterministic ids: KEEP EVERY group — singletons now belong to their
+    // file community, so every node carries a community_id (invariant 5). Since
+    // nodes are natural-key sorted, a community's MIN member index IS its min
+    // natural key; rank by it and assign community_id = 1..k, so an identical
+    // tree always yields the same ids regardless of raw label values (invariant 2).
     let mut kept: Vec<(usize, Vec<usize>)> = groups.into_values()
-        .filter(|members| members.len() >= 2)
         .map(|mut members| { members.sort_unstable(); (members[0], members) })
         .collect();
     kept.sort_by_key(|(min_idx, _)| *min_idx);
@@ -88,16 +120,24 @@ fn natural_key(node: &serde_json::Value) -> (String, i64, String, String) {
     )
 }
 
-/// Build undirected adjacency list from resolved edges.
+/// Build the undirected adjacency list community detection runs over.
+///
+/// D4.4 — two adjacency sources:
+/// - **Semantic edges** `calls,imports,extends,references` (resolved only). The
+///   dead `implements` kind (0 rows produced) is dropped.
+/// - **Structural containment** via `parent_id`: a node is adjacent to its
+///   enclosing parent (file/class/module). This clusters a file's symbols
+///   together and gives a symbol with no semantic edge a path into its
+///   container's community (so coverage reaches ~100 %).
 async fn build_adjacency(
     pg: &crate::db::pg_store::PgStore,
     folder_id: &uuid::Uuid,
     id_to_idx: &HashMap<String, usize>,
-    n: usize,
+    nodes: &[serde_json::Value],
 ) -> Result<Vec<Vec<usize>>, String> {
-    let mut adj: Vec<Vec<usize>> = vec![Vec::new(); n];
+    let mut adj: Vec<Vec<usize>> = vec![Vec::new(); nodes.len()];
 
-    for kind in &["calls", "implements", "imports"] {
+    for kind in &["calls", "imports", "extends", "references"] {
         let edges = pg.get_edges_by_kind(folder_id, kind).await
             .map_err(|e| format!("Failed to load {} edges: {}", kind, e))?;
 
@@ -112,6 +152,16 @@ async fn build_adjacency(
                 adj[si].push(ti);
                 adj[ti].push(si); // undirected
             }
+        }
+    }
+
+    // parent_id containment — connect each node to its enclosing parent.
+    for (i, node) in nodes.iter().enumerate() {
+        if let Some(pid) = node["parent_id"].as_str()
+            && let Some(&pi) = id_to_idx.get(pid)
+        {
+            adj[i].push(pi);
+            adj[pi].push(i); // undirected
         }
     }
 
