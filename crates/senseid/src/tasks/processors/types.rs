@@ -20,6 +20,9 @@ pub struct FileProcessResult {
     pub parent_refs: Vec<ParentRef>,
     pub file_refs: Vec<String>,       // doc: backtick file references
     pub fn_mentions: Vec<String>,     // doc: backtick function mentions
+    /// doc (D5b): heading sections, in document order. Written as a nested
+    /// `section` node tree (file → H1 → H2 → H3) via the D3 upsert/prune path.
+    pub sections: Vec<crate::ir::IRSection>,
     /// IR parse result — rich data for ir_functions/ir_classes tables.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ir: Option<crate::ir::IRParsedFile>,
@@ -62,6 +65,7 @@ impl FileProcessResult {
             symbols: vec![], unresolved_imports: vec![],
             unresolved_calls: vec![], parent_refs: vec![],
             file_refs: vec![], fn_mentions: vec![],
+            sections: vec![],
             ir: None,
         }
     }

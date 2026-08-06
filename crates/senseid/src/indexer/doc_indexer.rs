@@ -220,8 +220,14 @@ pub fn parse_to_ir(content: &str, rel_path: &str, repo_path: &str) -> crate::ir:
     }
 }
 
+/// Public wrapper (D5b): extract a doc's heading sections for the production doc
+/// processor. Each `IRSection` carries the heading text, level, and line span —
+/// the input to the nested `section` node tree written via the D3 upsert/prune path.
+pub fn extract_sections_pub(content: &str) -> Vec<crate::ir::IRSection> {
+    extract_sections(content)
+}
+
 /// Extract sections split by headings.
-#[cfg(test)]
 fn extract_sections(content: &str) -> Vec<crate::ir::IRSection> {
     let lines: Vec<&str> = content.lines().collect();
     let mut sections = Vec::new();
@@ -256,7 +262,6 @@ fn extract_sections(content: &str) -> Vec<crate::ir::IRSection> {
     sections
 }
 
-#[cfg(test)]
 fn parse_heading(line: &str) -> Option<(u8, String)> {
     for (n, prefix) in [(6, "######"), (5, "#####"), (4, "####"), (3, "###"), (2, "##"), (1, "# ")] {
         if let Some(rest) = line.strip_prefix(prefix) {
@@ -266,7 +271,6 @@ fn parse_heading(line: &str) -> Option<(u8, String)> {
     None
 }
 
-#[cfg(test)]
 fn make_preview(lines: &[&str], start: usize, end: usize) -> Option<String> {
     let text: String = lines.get(start..end.min(lines.len()))
         .map(|s| s.join("\n"))
