@@ -67,20 +67,18 @@ pub struct ActivityPruneCounts {
 }
 
 /// One community to write via [`PgStore::replace_communities_for_folder`] (D4):
-/// a deterministic `community_id` (1..k), a human label, its member node ids, its
-/// `god_node_ids` — the top-5 members by `degree` (D4.5), the community's hubs —
-/// and an optional model-authored `description` with its provenance `source`
-/// (D4.5). `source` is `"insight-copy"` when `description` is model prose and
-/// `"null"` when it is honest-empty; it is NEVER a static template
-/// (never-fabricate). Persisted as `props.source`.
+/// a deterministic `community_id` (1..k), a human label, its member node ids, and
+/// its `god_node_ids` — the top-5 members by `degree` (D4.5), the community's hubs.
+/// This is the AUTHORITATIVE payload; it is written with an honest-empty
+/// `description` (`props.source = "null"`). The non-authoritative model-authored
+/// description is filled in afterwards, off the terminal barrier, by
+/// [`crate::indexer::community::enrich_community_descriptions`] (spec W3 fail-open).
 #[derive(Debug, Clone)]
 pub struct CommunityAssignment {
     pub community_id: i32,
     pub label: String,
     pub member_node_ids: Vec<uuid::Uuid>,
     pub god_node_ids: Vec<uuid::Uuid>,
-    pub description: Option<String>,
-    pub source: String,
 }
 
 /// One edge to (re)insert via [`PgStore::replace_edges_of_kind`] (D2). Mirrors
@@ -2846,12 +2844,13 @@ impl PgStore {
               WHERE folder_id = $1 AND community_id IS NOT NULL"
         ).bind(folder_id).execute(&mut *tx).await.map_err(|e| e.to_string())?;
         for c in communities {
-            let props = serde_json::json!({ "source": c.source });
+            // Authoritative write: description honest-empty (`props.source='null'`);
+            // enrich_community_descriptions fills real prose later, off-barrier.
             sqlx_core::query::query(
                 "INSERT INTO inference.communities(folder_id, community_id, label, node_count, god_node_ids, description, props)
-                 VALUES($1, $2, $3, $4, $5, $6, $7)"
+                 VALUES($1, $2, $3, $4, $5, NULL, '{\"source\":\"null\"}'::jsonb)"
             ).bind(folder_id).bind(c.community_id).bind(&c.label).bind(c.member_node_ids.len() as i32)
-                .bind(&c.god_node_ids).bind(&c.description).bind(&props)
+                .bind(&c.god_node_ids)
                 .execute(&mut *tx).await.map_err(|e| e.to_string())?;
             if !c.member_node_ids.is_empty() {
                 sqlx_core::query::query(
@@ -2886,6 +2885,52 @@ impl PgStore {
         Ok(rows.into_iter().map(|(id, label, count)| {
             serde_json::json!({ "id": id, "label": label, "node_count": count })
         }).collect())
+    }
+
+    /// The folder's communities with their `god_node_ids`, largest first — the
+    /// input to description enrichment (D4.5). Bounded by `limit` so a huge cold
+    /// repo enriches only its most significant clusters per detect run.
+    pub async fn list_communities_with_god_nodes(
+        &self, folder_id: &uuid::Uuid, limit: i64,
+    ) -> Result<Vec<(i32, String, i32, Vec<uuid::Uuid>)>, String> {
+        let rows: Vec<(i32, Option<String>, i32, Vec<uuid::Uuid>)> = sqlx_core::query_as::query_as(
+            "SELECT community_id, label, node_count, god_node_ids
+               FROM inference.communities
+              WHERE folder_id = $1
+              ORDER BY node_count DESC, community_id
+              LIMIT $2"
+        ).bind(folder_id).bind(limit).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(cid, label, n, gods)| (cid, label.unwrap_or_default(), n, gods)).collect())
+    }
+
+    /// `(id, name, kind)` for a set of node ids — builds community description
+    /// facts from the god-node hubs. Empty input is a no-op.
+    pub async fn get_node_name_kind(
+        &self, ids: &[uuid::Uuid],
+    ) -> Result<Vec<(uuid::Uuid, String, String)>, String> {
+        if ids.is_empty() { return Ok(vec![]); }
+        let rows: Vec<(uuid::Uuid, String, String)> = sqlx_core::query_as::query_as(
+            "SELECT id, name, kind::text FROM sensei.nodes WHERE id = ANY($1)"
+        ).bind(ids).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows)
+    }
+
+    /// Stamp a community's model-authored `description` + its provenance
+    /// (`props.source`), replacing the honest-empty placeholder from the
+    /// authoritative write (D4.5). Only called on a successful insight-copy
+    /// generation — a failure leaves the honest-empty NULL/`'null'` as written.
+    pub async fn set_community_description(
+        &self, folder_id: &uuid::Uuid, community_id: i32, description: &str, source: &str,
+    ) -> Result<(), String> {
+        sqlx_core::query::query(
+            "UPDATE inference.communities
+                SET description = $3,
+                    props = props || jsonb_build_object('source', $4::text),
+                    modified_at = now()
+              WHERE folder_id = $1 AND community_id = $2"
+        ).bind(folder_id).bind(community_id).bind(description).bind(source)
+            .execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(())
     }
 
     // ── Reasoning Traces (inference) ─────────────────────────────────
@@ -11062,7 +11107,7 @@ mod tests {
 
         // Replace with a single community {1: [a, b]} — c must be orphaned out.
         s.replace_communities_for_folder(&fid, &[
-            CommunityAssignment { community_id: 1, label: "new".into(), member_node_ids: vec![a, b], god_node_ids: vec![a], description: None, source: "null".into() },
+            CommunityAssignment { community_id: 1, label: "new".into(), member_node_ids: vec![a, b], god_node_ids: vec![a] },
         ]).await.unwrap();
 
         assert_eq!(s.list_communities(&fid).await.unwrap().len(), 1, "stale community 99 is gone");
@@ -11120,7 +11165,7 @@ mod tests {
             }
         };
 
-        crate::indexer::community::detect_communities_for_folder(&s, &fid, None).await.unwrap();
+        crate::indexer::community::detect_communities_for_folder(&s, &fid).await.unwrap();
         let first: Vec<Option<i32>> = read_ids(&s, &n).await;
         // {a,b,c} share a community; {d,e,f} share another; triangle-a (earliest
         // natural key) is community 1, triangle-d is 2.
@@ -11136,7 +11181,7 @@ mod tests {
         assert_eq!(claimed, real, "per-folder claimed == real after detect_communities (invariant 5)");
 
         // Re-running over the identical graph yields the identical assignment.
-        crate::indexer::community::detect_communities_for_folder(&s, &fid, None).await.unwrap();
+        crate::indexer::community::detect_communities_for_folder(&s, &fid).await.unwrap();
         let second: Vec<Option<i32>> = read_ids(&s, &n).await;
         assert_eq!(first, second, "identical graph ⇒ identical community ids (deterministic)");
 
@@ -11153,7 +11198,7 @@ mod tests {
         assert_eq!(s.list_communities(&fid).await.unwrap().len(), 1, "seeded a stale community");
 
         // No nodes exist for this folder → detection must clear the stale rows.
-        crate::indexer::community::detect_communities_for_folder(&s, &fid, None).await.unwrap();
+        crate::indexer::community::detect_communities_for_folder(&s, &fid).await.unwrap();
         assert!(s.list_communities(&fid).await.unwrap().is_empty(),
             "an empty folder's stale communities are cleared");
 
@@ -11175,7 +11220,7 @@ mod tests {
         s.upsert_node(&fid, "method", "new", "src/widget.rs", Some(&file), Some("() -> Self"), Some(3), Some(5)).await.unwrap();
         s.upsert_node(&fid, "method", "render", "src/widget.rs", Some(&file), Some("(&self)"), Some(7), Some(20)).await.unwrap();
 
-        crate::indexer::community::detect_communities_for_folder(&s, &fid, None).await.unwrap();
+        crate::indexer::community::detect_communities_for_folder(&s, &fid).await.unwrap();
 
         let (total,): (i64,) = query_as("SELECT count(*) FROM sensei.nodes WHERE folder_id=$1")
             .bind(fid).fetch_one(s.pool()).await.unwrap();
@@ -11205,7 +11250,7 @@ mod tests {
         let derived = s.upsert_node(&fid, "class", "Derived", "src/derived.rs", None, Some("class Derived"), Some(1), Some(5)).await.unwrap();
         s.insert_edge(&fid, &derived, Some(&base), None, None, "extends").await.unwrap();
 
-        crate::indexer::community::detect_communities_for_folder(&s, &fid, None).await.unwrap();
+        crate::indexer::community::detect_communities_for_folder(&s, &fid).await.unwrap();
 
         let cid = |id: uuid::Uuid| {
             let pool = s.pool().clone();
@@ -11272,7 +11317,7 @@ mod tests {
         s.insert_edge(&fid, &a, Some(&b), None, None, "calls").await.unwrap();
 
         s.recompute_degrees_for_folder(&fid).await.unwrap();
-        crate::indexer::community::detect_communities_for_folder(&s, &fid, None).await.unwrap();
+        crate::indexer::community::detect_communities_for_folder(&s, &fid).await.unwrap();
 
         let (god,): (Vec<uuid::Uuid>,) = query_as(
             "SELECT god_node_ids FROM inference.communities WHERE folder_id=$1 ORDER BY community_id LIMIT 1")
@@ -11285,18 +11330,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn community_description_is_honest_null_without_gateway() {
-        // D4.5 never-fabricate: with no gateway (or on model failure) a community's
-        // description is NULL and props.source is 'null' — honest-empty, NEVER a
-        // static template. The Done-gate keys on props.source ∈ {'insight-copy','null'}.
+    async fn community_description_authoritative_write_is_honest_null() {
+        // D4.5 never-fabricate: the authoritative detection write leaves every
+        // community's description NULL with props.source='null' — honest-empty,
+        // NEVER a static template. (Model prose is stamped later, off-barrier, by
+        // enrich_community_descriptions.) The Done-gate keys on
+        // props.source ∈ {'insight-copy','null'}.
         let s = pg_store().await;
         let fid = create_test_folder(&s, &format!("commdesc_{}", uuid::Uuid::new_v4())).await;
         let a = s.upsert_node(&fid, "function", "a", "a.rs", None, Some("()"), Some(1), Some(2)).await.unwrap();
         let b = s.upsert_node(&fid, "function", "b", "a.rs", None, Some("()"), Some(3), Some(4)).await.unwrap();
         s.insert_edge(&fid, &a, Some(&b), None, None, "calls").await.unwrap();
 
-        // No gateway → the description generation is skipped, honest-empty.
-        crate::indexer::community::detect_communities_for_folder(&s, &fid, None).await.unwrap();
+        crate::indexer::community::detect_communities_for_folder(&s, &fid).await.unwrap();
 
         let rows: Vec<(Option<String>, serde_json::Value)> = query_as(
             "SELECT description, props FROM inference.communities WHERE folder_id=$1")
