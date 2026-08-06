@@ -11129,6 +11129,69 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn community_coverage_full_singletons_inherit_file_community() {
+        // D4.4: every node gets a community_id. A file's symbols with NO call/
+        // import edge still land in a community via `parent_id` containment
+        // (they cluster under the file), and any residual singleton inherits its
+        // enclosing file community — so coverage is ~100% (invariant 5), not just
+        // the nodes that happen to carry a resolved semantic edge.
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, &format!("commcov_{}", uuid::Uuid::new_v4())).await;
+        // A file with a struct + two methods, and NO edges between any of them.
+        let file = s.upsert_node(&fid, "file", "widget.rs", "src/widget.rs", None, None, Some(1), Some(99)).await.unwrap();
+        s.upsert_node(&fid, "struct", "Widget", "src/widget.rs", Some(&file), None, Some(2), Some(2)).await.unwrap();
+        s.upsert_node(&fid, "method", "new", "src/widget.rs", Some(&file), Some("() -> Self"), Some(3), Some(5)).await.unwrap();
+        s.upsert_node(&fid, "method", "render", "src/widget.rs", Some(&file), Some("(&self)"), Some(7), Some(20)).await.unwrap();
+
+        crate::indexer::community::detect_communities_for_folder(&s, &fid).await.unwrap();
+
+        let (total,): (i64,) = query_as("SELECT count(*) FROM sensei.nodes WHERE folder_id=$1")
+            .bind(fid).fetch_one(s.pool()).await.unwrap();
+        let (covered,): (i64,) = query_as("SELECT count(*) FROM sensei.nodes WHERE folder_id=$1 AND community_id IS NOT NULL")
+            .bind(fid).fetch_one(s.pool()).await.unwrap();
+        assert_eq!(total, 4, "seeded 4 nodes");
+        assert_eq!(covered, total, "every node carries a community_id (singletons inherit the file community)");
+
+        // per-folder integrity still holds with the broadened coverage.
+        let (claimed,): (i64,) = query_as("SELECT COALESCE(sum(node_count),0) FROM inference.communities WHERE folder_id=$1")
+            .bind(fid).fetch_one(s.pool()).await.unwrap();
+        assert_eq!(claimed, covered, "claimed == real (invariant 5)");
+
+        s.delete_nodes_by_folder(&fid).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn community_adjacency_includes_extends() {
+        // D4.4: the adjacency set is broadened to calls,imports,extends,references
+        // (the dead `implements` is dropped). Two classes in DIFFERENT files
+        // (so `parent_id` containment does NOT group them) linked only by an
+        // `extends` edge land in the SAME community — before D4b, `extends` was
+        // ignored and they would be separate singletons.
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, &format!("commext_{}", uuid::Uuid::new_v4())).await;
+        let base = s.upsert_node(&fid, "class", "Base", "src/base.rs", None, Some("class Base"), Some(1), Some(5)).await.unwrap();
+        let derived = s.upsert_node(&fid, "class", "Derived", "src/derived.rs", None, Some("class Derived"), Some(1), Some(5)).await.unwrap();
+        s.insert_edge(&fid, &derived, Some(&base), None, None, "extends").await.unwrap();
+
+        crate::indexer::community::detect_communities_for_folder(&s, &fid).await.unwrap();
+
+        let cid = |id: uuid::Uuid| {
+            let pool = s.pool().clone();
+            async move {
+                let (v,): (Option<i32>,) = query_as("SELECT community_id FROM sensei.nodes WHERE id=$1")
+                    .bind(id).fetch_one(&pool).await.unwrap();
+                v
+            }
+        };
+        let cb = cid(base).await;
+        let cd = cid(derived).await;
+        assert!(cb.is_some(), "extends-linked class carries a community");
+        assert_eq!(cb, cd, "extends-linked classes share a community (broadened adjacency)");
+
+        s.delete_nodes_by_folder(&fid).await.unwrap();
+    }
+
+    #[tokio::test]
     async fn upsert_node_at_same_line_keeps_id_and_renulls_embedding_on_sig_change() {
         // D3: a re-upsert at the SAME identity (line_start is part of the key)
         // keeps the id — preserving community_id and degree. The embedding is
