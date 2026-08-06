@@ -153,11 +153,14 @@ pub async fn build_connections(ctx: &TaskContext, task: &Task) -> Result<u32, St
     }
     let libs: Vec<String> = lib_set.into_iter().collect();
 
-    // D6d — mark indexed, fail-closed: a ProcessFile that recorded a fatal
-    // failure left the folder `failed`; don't advance it to `indexed`. The guard
-    // is shared with resolve_libs (the other barrier writer) so it can't be
-    // bypassed at one site.
-    super::helpers::mark_folder_indexed_fail_closed(ctx, &folder_id, folder_name, &libs).await;
+    // D4.1: build_connections is NO LONGER the terminal barrier — it stamps the
+    // detected libs (folder metadata read by the Observatory/query views) but
+    // does NOT advance `folder_status`. DetectCommunities, chained after this,
+    // is the sole writer of `indexed` (so `indexed` implies communities exist).
+    // Stamping libs on a `failed` folder is harmless — it's metadata, not status.
+    if let Err(e) = ctx.pg().set_folder_props(&folder_id, &serde_json::json!({"libs": libs})).await {
+        tracing::warn!(error = %e, folder = %folder_name, "build_connections: set libs props failed");
+    }
 
     tracing::info!("build_connections: {} — {} traceability edges, {} libs detected", folder_name, edges_created, libs.len());
     Ok(edges_created)
@@ -224,9 +227,10 @@ mod tests {
 
     #[tokio::test]
     async fn build_connections_is_fail_closed_on_a_failed_folder() {
-        // D6d: a folder a ProcessFile marked `failed` (D6c-trigger) must NOT be
-        // advanced to `indexed` by the terminal barrier — leave it `failed` so
-        // boot-reconcile / bounded-retry re-drives it.
+        // D4.1/D6d: build_connections stamps libs but no longer advances the
+        // folder status, so a folder a ProcessFile marked `failed` (D6c-trigger)
+        // stays `failed` — only DetectCommunities (fail-closed) can flip it, and
+        // only from `indexing`.
         let ctx = make_ctx().await;
         let folder_path = format!("/tmp/failclosed_{}", uuid::Uuid::new_v4());
         let root_id = ctx.pg().add_watch_root(&folder_path, "fc", &serde_json::json!([])).await.unwrap();
@@ -242,9 +246,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn build_connections_marks_a_clean_folder_indexed() {
-        // The happy path: a folder with no recorded failure is advanced to
-        // `indexed` by the barrier (regression guard for the fail-closed check).
+    async fn build_connections_does_not_flip_status_indexed() {
+        // D4.1: build_connections is NO LONGER the terminal barrier. It stamps
+        // libs (folder metadata) but leaves the folder `indexing`; DetectCommunities
+        // — the new terminal barrier — flips it to `indexed` after communities are
+        // computed, so `indexed` implies communities exist.
         let ctx = make_ctx().await;
         let folder_path = format!("/tmp/clean_{}", uuid::Uuid::new_v4());
         let root_id = ctx.pg().add_watch_root(&folder_path, "cl", &serde_json::json!([])).await.unwrap();
@@ -254,18 +260,16 @@ mod tests {
         let task = Task::new(TaskKind::BuildConnections, &folder_path, &folder_path);
         build_connections(&ctx, &task).await.unwrap();
 
-        assert_eq!(ctx.pg().get_folder_status(&fid).await.unwrap().as_deref(), Some("indexed"),
-            "a clean folder is marked indexed by the barrier");
+        assert_eq!(ctx.pg().get_folder_status(&fid).await.unwrap().as_deref(), Some("indexing"),
+            "build_connections leaves the folder indexing (D4.1 moved the terminal barrier to DetectCommunities)");
         ctx.pg().remove_watch_root(&root_id).await.ok();
     }
 
     #[tokio::test]
     async fn resolve_libs_is_fail_closed_on_a_failed_folder() {
-        // D6d regression: resolve_libs runs BEFORE build_connections in the
-        // barrier chain and ALSO marks a folder indexed — so it must honour the
-        // same fail-closed guard, else a `failed` folder is flipped to `indexed`
-        // here and build_connections' guard never sees it (the real-pipeline
-        // bypass the isolated build_connections test misses).
+        // D4.1/D6d: resolve_libs stamps the walked libs but no longer advances
+        // the folder status, so a `failed` folder stays `failed` here — the
+        // terminal barrier (DetectCommunities) is the only writer of `indexed`.
         let ctx = make_ctx().await;
         let tmp = tempfile::tempdir().unwrap(); // empty dir → no libs to walk
         let folder_path = tmp.path().to_string_lossy().to_string();

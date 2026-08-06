@@ -84,13 +84,14 @@ pub async fn resolve_libs(ctx: &TaskContext, task: &Task) -> Result<u32, String>
         .filter_map(|p| p["name"].as_str().map(|s| s.to_lowercase()))
         .collect();
 
-    // Update folder libs + mark indexed, fail-closed (D6d): resolve_libs runs
-    // BEFORE build_connections in the barrier chain, so it must honour the same
-    // fail-closed guard — otherwise a `failed` folder would be flipped to
-    // `indexed` here and build_connections' guard would never see it.
+    // D4.1: resolve_libs stamps the walked libs (folder metadata) but does NOT
+    // advance `folder_status` — the terminal barrier moved to DetectCommunities,
+    // the sole writer of `indexed`. build_connections re-stamps libs from its
+    // import-derived set afterwards (last write wins, as before).
     if let Some(folder) = folder.as_ref()
-        && let Some(folder_id) = crate::api::util::json_uuid(&folder["id"]) {
-            super::helpers::mark_folder_indexed_fail_closed(ctx, &folder_id, folder_name, &libs).await;
+        && let Some(folder_id) = crate::api::util::json_uuid(&folder["id"])
+        && let Err(e) = ctx.pg().set_folder_props(&folder_id, &serde_json::json!({"libs": libs})).await {
+            tracing::warn!(error = %e, folder = %folder_name, "resolve_libs: set libs props failed");
         }
 
     // Enqueue ExtractDeps to parse manifest files and populate referenced_libraries
