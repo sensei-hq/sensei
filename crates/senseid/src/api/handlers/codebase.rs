@@ -43,10 +43,13 @@ pub(crate) async fn graph_nodes(
     if ids.is_empty() {
         return Ok(Json(serde_json::json!({"nodes": [], "edges": []})));
     }
+    // 7.1: nodes now carry `community_id` (via get_nodes_scoped), and the edge
+    // set is the full graph-layout set `calls,imports,extends` — not just `calls`,
+    // which was too sparse to lay out a nested map (the "scattered circles").
     let nodes = state.pg.get_nodes_scoped(&ids).await
         .map_err(|e| { tracing::warn!(error = %e, repo_id = %repo_id, "graph_nodes: get_nodes_scoped failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
-    let edges = state.pg.get_edges_scoped(&ids, "calls").await
-        .map_err(|e| { tracing::warn!(error = %e, repo_id = %repo_id, "graph_nodes: get_edges_scoped failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+    let edges = state.pg.get_edges_scoped_kinds(&ids, &["calls", "imports", "extends"]).await
+        .map_err(|e| { tracing::warn!(error = %e, repo_id = %repo_id, "graph_nodes: get_edges_scoped_kinds failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
     Ok(Json(serde_json::json!({"nodes": nodes, "edges": edges})))
 }
 
@@ -195,13 +198,20 @@ pub(crate) async fn community_info(
     State(state): State<AppState>,
     Query(q): Query<GraphQuery>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
+    // 7.3: drive the overview from LIVE per-node membership (nodes.community_id),
+    // scoped to ALL the project's folders — not a single folder's stale
+    // communities.node_count. Communities are usually owned by the repo root, so
+    // a single-folder lookup (repo_folder_id) missed them (#G5a); scope_folder_ids
+    // captures every folder in the project.
     let repo_id = q.repo_id.unwrap_or_default();
-    if let Some(folder_id) = repo_folder_id(&state, &repo_id).await? {
-        let communities = state.pg.list_communities(&folder_id).await
-            .map_err(|e| { tracing::warn!(error = %e, repo_id = %repo_id, "community_info: list_communities failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
-        return Ok(Json(serde_json::json!(communities)));
+    let ids = state.pg.scope_folder_ids(&repo_id).await
+        .map_err(|e| { tracing::warn!(error = %e, repo_id = %repo_id, "community_info: scope_folder_ids failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+    if ids.is_empty() {
+        return Ok(Json(serde_json::json!([])));
     }
-    Ok(Json(serde_json::json!([])))
+    let communities = state.pg.list_communities_live_scoped(&ids).await
+        .map_err(|e| { tracing::warn!(error = %e, repo_id = %repo_id, "community_info: list_communities_live_scoped failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+    Ok(Json(serde_json::json!(communities)))
 }
 
 // ── Patterns ────────────────────────────────────────────────────────────────
