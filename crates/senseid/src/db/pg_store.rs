@@ -67,14 +67,20 @@ pub struct ActivityPruneCounts {
 }
 
 /// One community to write via [`PgStore::replace_communities_for_folder`] (D4):
-/// a deterministic `community_id` (1..k), a human label, its member node ids, and
-/// its `god_node_ids` — the top-5 members by `degree` (D4.5), the community's hubs.
+/// a deterministic `community_id` (1..k), a human label, its member node ids, its
+/// `god_node_ids` — the top-5 members by `degree` (D4.5), the community's hubs —
+/// and an optional model-authored `description` with its provenance `source`
+/// (D4.5). `source` is `"insight-copy"` when `description` is model prose and
+/// `"null"` when it is honest-empty; it is NEVER a static template
+/// (never-fabricate). Persisted as `props.source`.
 #[derive(Debug, Clone)]
 pub struct CommunityAssignment {
     pub community_id: i32,
     pub label: String,
     pub member_node_ids: Vec<uuid::Uuid>,
     pub god_node_ids: Vec<uuid::Uuid>,
+    pub description: Option<String>,
+    pub source: String,
 }
 
 /// One edge to (re)insert via [`PgStore::replace_edges_of_kind`] (D2). Mirrors
@@ -2840,10 +2846,12 @@ impl PgStore {
               WHERE folder_id = $1 AND community_id IS NOT NULL"
         ).bind(folder_id).execute(&mut *tx).await.map_err(|e| e.to_string())?;
         for c in communities {
+            let props = serde_json::json!({ "source": c.source });
             sqlx_core::query::query(
-                "INSERT INTO inference.communities(folder_id, community_id, label, node_count, god_node_ids)
-                 VALUES($1, $2, $3, $4, $5)"
-            ).bind(folder_id).bind(c.community_id).bind(&c.label).bind(c.member_node_ids.len() as i32).bind(&c.god_node_ids)
+                "INSERT INTO inference.communities(folder_id, community_id, label, node_count, god_node_ids, description, props)
+                 VALUES($1, $2, $3, $4, $5, $6, $7)"
+            ).bind(folder_id).bind(c.community_id).bind(&c.label).bind(c.member_node_ids.len() as i32)
+                .bind(&c.god_node_ids).bind(&c.description).bind(&props)
                 .execute(&mut *tx).await.map_err(|e| e.to_string())?;
             if !c.member_node_ids.is_empty() {
                 sqlx_core::query::query(
@@ -11054,7 +11062,7 @@ mod tests {
 
         // Replace with a single community {1: [a, b]} — c must be orphaned out.
         s.replace_communities_for_folder(&fid, &[
-            CommunityAssignment { community_id: 1, label: "new".into(), member_node_ids: vec![a, b], god_node_ids: vec![a] },
+            CommunityAssignment { community_id: 1, label: "new".into(), member_node_ids: vec![a, b], god_node_ids: vec![a], description: None, source: "null".into() },
         ]).await.unwrap();
 
         assert_eq!(s.list_communities(&fid).await.unwrap().len(), 1, "stale community 99 is gone");
@@ -11112,7 +11120,7 @@ mod tests {
             }
         };
 
-        crate::indexer::community::detect_communities_for_folder(&s, &fid).await.unwrap();
+        crate::indexer::community::detect_communities_for_folder(&s, &fid, None).await.unwrap();
         let first: Vec<Option<i32>> = read_ids(&s, &n).await;
         // {a,b,c} share a community; {d,e,f} share another; triangle-a (earliest
         // natural key) is community 1, triangle-d is 2.
@@ -11128,7 +11136,7 @@ mod tests {
         assert_eq!(claimed, real, "per-folder claimed == real after detect_communities (invariant 5)");
 
         // Re-running over the identical graph yields the identical assignment.
-        crate::indexer::community::detect_communities_for_folder(&s, &fid).await.unwrap();
+        crate::indexer::community::detect_communities_for_folder(&s, &fid, None).await.unwrap();
         let second: Vec<Option<i32>> = read_ids(&s, &n).await;
         assert_eq!(first, second, "identical graph ⇒ identical community ids (deterministic)");
 
@@ -11145,7 +11153,7 @@ mod tests {
         assert_eq!(s.list_communities(&fid).await.unwrap().len(), 1, "seeded a stale community");
 
         // No nodes exist for this folder → detection must clear the stale rows.
-        crate::indexer::community::detect_communities_for_folder(&s, &fid).await.unwrap();
+        crate::indexer::community::detect_communities_for_folder(&s, &fid, None).await.unwrap();
         assert!(s.list_communities(&fid).await.unwrap().is_empty(),
             "an empty folder's stale communities are cleared");
 
@@ -11167,7 +11175,7 @@ mod tests {
         s.upsert_node(&fid, "method", "new", "src/widget.rs", Some(&file), Some("() -> Self"), Some(3), Some(5)).await.unwrap();
         s.upsert_node(&fid, "method", "render", "src/widget.rs", Some(&file), Some("(&self)"), Some(7), Some(20)).await.unwrap();
 
-        crate::indexer::community::detect_communities_for_folder(&s, &fid).await.unwrap();
+        crate::indexer::community::detect_communities_for_folder(&s, &fid, None).await.unwrap();
 
         let (total,): (i64,) = query_as("SELECT count(*) FROM sensei.nodes WHERE folder_id=$1")
             .bind(fid).fetch_one(s.pool()).await.unwrap();
@@ -11197,7 +11205,7 @@ mod tests {
         let derived = s.upsert_node(&fid, "class", "Derived", "src/derived.rs", None, Some("class Derived"), Some(1), Some(5)).await.unwrap();
         s.insert_edge(&fid, &derived, Some(&base), None, None, "extends").await.unwrap();
 
-        crate::indexer::community::detect_communities_for_folder(&s, &fid).await.unwrap();
+        crate::indexer::community::detect_communities_for_folder(&s, &fid, None).await.unwrap();
 
         let cid = |id: uuid::Uuid| {
             let pool = s.pool().clone();
@@ -11264,7 +11272,7 @@ mod tests {
         s.insert_edge(&fid, &a, Some(&b), None, None, "calls").await.unwrap();
 
         s.recompute_degrees_for_folder(&fid).await.unwrap();
-        crate::indexer::community::detect_communities_for_folder(&s, &fid).await.unwrap();
+        crate::indexer::community::detect_communities_for_folder(&s, &fid, None).await.unwrap();
 
         let (god,): (Vec<uuid::Uuid>,) = query_as(
             "SELECT god_node_ids FROM inference.communities WHERE folder_id=$1 ORDER BY community_id LIMIT 1")
@@ -11272,6 +11280,34 @@ mod tests {
         assert_eq!(god.first(), Some(&hub), "the highest-degree node is the first god node");
         assert!(god.contains(&hub), "hub is a god node");
         assert!(god.len() <= 5, "at most 5 god nodes per community");
+
+        s.delete_nodes_by_folder(&fid).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn community_description_is_honest_null_without_gateway() {
+        // D4.5 never-fabricate: with no gateway (or on model failure) a community's
+        // description is NULL and props.source is 'null' — honest-empty, NEVER a
+        // static template. The Done-gate keys on props.source ∈ {'insight-copy','null'}.
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, &format!("commdesc_{}", uuid::Uuid::new_v4())).await;
+        let a = s.upsert_node(&fid, "function", "a", "a.rs", None, Some("()"), Some(1), Some(2)).await.unwrap();
+        let b = s.upsert_node(&fid, "function", "b", "a.rs", None, Some("()"), Some(3), Some(4)).await.unwrap();
+        s.insert_edge(&fid, &a, Some(&b), None, None, "calls").await.unwrap();
+
+        // No gateway → the description generation is skipped, honest-empty.
+        crate::indexer::community::detect_communities_for_folder(&s, &fid, None).await.unwrap();
+
+        let rows: Vec<(Option<String>, serde_json::Value)> = query_as(
+            "SELECT description, props FROM inference.communities WHERE folder_id=$1")
+            .bind(fid).fetch_all(s.pool()).await.unwrap();
+        assert!(!rows.is_empty(), "at least one community was written");
+        for (desc, props) in &rows {
+            assert_eq!(*desc, None, "description is honest-NULL without a gateway");
+            let source = props.get("source").and_then(|v| v.as_str());
+            assert_eq!(source, Some("null"), "props.source records the honest-empty provenance");
+            assert_ne!(source, Some("template"), "never a templated description (never-fabricate)");
+        }
 
         s.delete_nodes_by_folder(&fid).await.unwrap();
     }

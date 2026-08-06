@@ -12,7 +12,9 @@ pub async fn detect_communities(ctx: &TaskContext, task: &Task) -> Result<u32, S
         .ok_or("Invalid folder id")?;
     let folder_name = folder["name"].as_str().unwrap_or_else(|| task.folder_name());
 
-    let count = crate::indexer::community::detect_communities_for_folder(ctx.pg(), &folder_id).await?;
+    let count = crate::indexer::community::detect_communities_for_folder(
+        ctx.pg(), &folder_id, Some(ctx.app_state.gateway.as_ref()),
+    ).await?;
 
     // D4.1: DetectCommunities is the TERMINAL scan barrier. Only on a successful
     // detection do we flip the folder to `indexed` — so `indexed` implies

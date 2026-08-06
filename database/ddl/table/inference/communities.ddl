@@ -8,6 +8,7 @@ create table if not exists communities (
 , description              text
 , node_count               integer     not null default 0
 , god_node_ids             uuid[]      not null default '{}'
+, props                     jsonb       not null default '{}'
 , computed_at              timestamptz not null default now()
 , modified_at              timestamptz not null default now()
 , unique(folder_id, community_id)
@@ -36,6 +37,10 @@ comment on column communities.node_count
      is 'Number of nodes assigned to this community.';
 comment on column communities.god_node_ids
      is 'UUIDs of top-5 highest-degree nodes in this community.';
+comment on column communities.props
+     is 'Enrichment provenance/metadata. props.source records how `description` was
+produced: ''insight-copy'' (model-authored) or ''null'' (honest-empty on model
+failure) — never a static template (D4.5 never-fabricate).';
 comment on column communities.computed_at
      is 'Timestamp when Leiden algorithm last ran for this cluster.';
 comment on column communities.modified_at
