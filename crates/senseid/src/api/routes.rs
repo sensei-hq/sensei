@@ -173,6 +173,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/graph/files", get(codebase::files_by_tag))
         .route("/api/graph/communities", post(codebase::detect_communities))
         .route("/api/graph/communities/info", get(codebase::community_info))
+        .route("/api/graph/{repoId}/tree", get(codebase::graph_tree))
         .route("/api/graph/doc-drift", get(codebase::doc_drift))
         .route("/api/graph/call-flow", get(codebase::call_flow))
         // Project analysis
