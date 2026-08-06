@@ -884,15 +884,20 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
                 .map_err(|e| format!("insert_edge (extends): {e}"))?;
         }
 
-        // Doc references (file_refs → covers, fn_mentions → references).
+        // Doc references (D2): an explicit doc→file path ref AND a doc→symbol
+        // mention are both `references` edges — per the edge_kind contract
+        // ("doc section references a symbol or file"). `covers` is reserved for
+        // BuildConnections' folder-derived stem-proximity set, which it REPLACES
+        // wholesale; a doc→file ref must not be `covers` or that replace would
+        // wipe it (the two-producer data-loss D2 review caught).
         if result.kind == "doc" {
             for file_ref in &result.file_refs {
-                ctx.pg().insert_edge(&folder_id, &file_node_id, None, Some(file_ref), None, "covers").await
-                    .map_err(|e| format!("insert_edge (covers): {e}"))?;
+                ctx.pg().insert_edge(&folder_id, &file_node_id, None, Some(file_ref), None, "references").await
+                    .map_err(|e| format!("insert_edge (references, file): {e}"))?;
             }
             for fn_ref in &result.fn_mentions {
                 ctx.pg().insert_edge(&folder_id, &file_node_id, None, Some(fn_ref), None, "references").await
-                    .map_err(|e| format!("insert_edge (references): {e}"))?;
+                    .map_err(|e| format!("insert_edge (references, symbol): {e}"))?;
             }
         }
         Ok::<(), String>(())

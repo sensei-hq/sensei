@@ -109,15 +109,16 @@ pub async fn build_connections(ctx: &TaskContext, task: &Task) -> Result<u32, St
         .filter_map(|n| n["file_path"].as_str().map(|fp| (fp, n)))
         .collect();
 
-    let mut edges_created = 0u32;
-
-    // For each doc, check if its file_path suggests coverage of code files
+    // Covers = doc-stem × file-stem proximity, a folder-DERIVED set. D2: build
+    // the current set and REPLACE it in one transaction, so a doc that no longer
+    // matches a file (renamed/deleted/moved) drops its stale covers instead of
+    // them accumulating. `covers` becomes a pure function of the current
+    // (docs, files) — idempotent, no duplication (which D1 also prevents).
+    let mut covers: Vec<crate::db::pg_store::EdgeSpec> = Vec::new();
     for doc in &docs {
         let doc_id = match crate::api::util::json_uuid(&doc["id"]) { Some(id) => id, None => continue };
         let doc_path = doc["file_path"].as_str().unwrap_or("");
-
-        // Check if doc covers a code file by path proximity
-        // e.g., docs/api/auth.md → src/api/auth.ts
+        // e.g. docs/api/auth.md → src/api/auth.ts
         let doc_stem = std::path::Path::new(doc_path)
             .file_stem().and_then(|s| s.to_str()).unwrap_or("");
         if doc_stem.is_empty() { continue; }
@@ -127,12 +128,16 @@ pub async fn build_connections(ctx: &TaskContext, task: &Task) -> Result<u32, St
                 .file_stem().and_then(|s| s.to_str()).unwrap_or("");
             if file_stem == doc_stem && file_path != &doc_path
                 && let Some(file_id) = crate::api::util::json_uuid(&file_node["id"]) {
-                    if let Err(e) = ctx.pg().insert_edge(&folder_id, &doc_id, Some(&file_id), None, None, "covers").await {
-                        tracing::warn!(error = %e, doc_id = %doc_id, file_id = %file_id, "build_connections: insert covers edge failed");
-                    }
-                    edges_created += 1;
+                    covers.push(crate::db::pg_store::EdgeSpec {
+                        source_id: doc_id, target_id: Some(file_id), target_name: None, target_file: None,
+                    });
                 }
         }
+    }
+    let edges_created = covers.len() as u32;
+    // Atomic replace (rolls back to the old set on failure — never zero covers).
+    if let Err(e) = ctx.pg().replace_edges_of_kind(&folder_id, "covers", &covers).await {
+        tracing::warn!(error = %e, folder = %folder_name, "build_connections: replace covers failed");
     }
 
     // Collect libs from detected import targets
@@ -156,60 +161,6 @@ pub async fn build_connections(ctx: &TaskContext, task: &Task) -> Result<u32, St
 
     tracing::info!("build_connections: {} — {} traceability edges, {} libs detected", folder_name, edges_created, libs.len());
     Ok(edges_created)
-}
-
-// ── Reconcile Connections ──────────────────────────────────────────────────
-
-/// Re-evaluate cross-repo edges after a branch switch or repo update.
-/// Detects shared symbols across repos in the same project.
-pub async fn reconcile_connections(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
-    let folder = match ctx.pg().get_repo_by_path(&task.folder_path).await {
-        Ok(f) => f,
-        Err(e) => { tracing::warn!(error = %e, path = %task.folder_path, "reconcile_connections: get_repo_by_path failed"); None }
-    };
-    let folder_name = folder.as_ref()
-        .and_then(|f| f["name"].as_str())
-        .unwrap_or_else(|| task.folder_name());
-    let folder_id = folder.as_ref()
-        .and_then(|f| crate::api::util::json_uuid(&f["id"]));
-    let project_id = folder.as_ref()
-        .and_then(|f| crate::api::util::json_uuid(&f["project_id"]));
-
-    // Rebuild doc↔code traceability for this repo
-    let mut edges = 0u32;
-    if let Some(ref fid) = folder_id {
-        let nodes = ctx.pg().get_nodes_by_folder(fid).await.unwrap_or_else(|e| { tracing::warn!(error = %e, folder = %folder_name, "reconcile_connections: get_nodes_by_folder failed"); Vec::new() });
-        let docs: Vec<_> = nodes.iter().filter(|n| n["kind"].as_str() == Some("doc")).collect();
-        let code_files: Vec<_> = nodes.iter().filter(|n| n["kind"].as_str() == Some("file")).collect();
-
-        for doc in &docs {
-            let doc_id = match crate::api::util::json_uuid(&doc["id"]) { Some(id) => id, None => continue };
-            let doc_stem = std::path::Path::new(doc["file_path"].as_str().unwrap_or(""))
-                .file_stem().and_then(|s| s.to_str()).unwrap_or("");
-            for code in &code_files {
-                let code_stem = std::path::Path::new(code["file_path"].as_str().unwrap_or(""))
-                    .file_stem().and_then(|s| s.to_str()).unwrap_or("");
-                if !doc_stem.is_empty() && doc_stem == code_stem
-                    && let Some(code_id) = crate::api::util::json_uuid(&code["id"]) {
-                        if let Err(e) = ctx.pg().insert_edge(fid, &doc_id, Some(&code_id), None, None, "covers").await {
-                            tracing::warn!(error = %e, doc_id = %doc_id, code_id = %code_id, "reconcile_connections: insert covers edge failed");
-                        }
-                        edges += 1;
-                    }
-            }
-        }
-        tracing::info!("reconcile_connections: {} — {} traceability edges", folder_name, edges);
-    }
-
-    // Cross-repo analysis requires a project with 2+ repos
-    if project_id.is_none() {
-        tracing::info!("reconcile_connections: {} not in any project", folder_name);
-        return Ok(edges);
-    }
-
-    let project_id = project_id.unwrap();
-    tracing::info!("reconcile_connections: {} — project {}", folder_name, project_id);
-    Ok(edges)
 }
 
 #[cfg(test)]
@@ -327,6 +278,74 @@ mod tests {
 
         assert_eq!(ctx.pg().get_folder_status(&fid).await.unwrap().as_deref(), Some("failed"),
             "resolve_libs must not mark a failed folder indexed (fail-closed)");
+        ctx.pg().remove_watch_root(&root_id).await.ok();
+    }
+
+    #[tokio::test]
+    async fn build_connections_replaces_stale_covers() {
+        // D2: covers is REPLACED, not appended. A covers edge whose covered file
+        // no longer matches (renamed/removed) is GONE after build_connections —
+        // the shrink case nothing exercised before. Re-running is idempotent.
+        let ctx = make_ctx().await;
+        let folder_path = format!("/tmp/coversreplace_{}", uuid::Uuid::new_v4());
+        let root_id = ctx.pg().add_watch_root(&folder_path, "cr", &serde_json::json!([])).await.unwrap();
+        let fid = ctx.pg().upsert_repo(&root_id, "cr-repo", &folder_path).await.unwrap();
+        ctx.pg().update_folder_status(&fid, "indexing").await.unwrap();
+
+        // Doc "auth.md" + a matching file "auth.rs" (stem "auth"); plus "other.rs".
+        let doc = ctx.pg().upsert_node(&fid, "doc", "auth", "docs/auth.md", None, None, None, None).await.unwrap();
+        let auth = ctx.pg().upsert_node(&fid, "file", "auth", "src/auth.rs", None, None, None, None).await.unwrap();
+        let other = ctx.pg().upsert_node(&fid, "file", "other", "src/other.rs", None, None, None, None).await.unwrap();
+
+        // A STALE covers edge doc→other (as if a prior scan matched it).
+        ctx.pg().insert_edge(&fid, &doc, Some(&other), None, None, "covers").await.unwrap();
+
+        let covers_count = "SELECT count(*) FROM sensei.edges WHERE folder_id=$1 AND kind='covers'::sensei.edge_kind";
+
+        let task = Task::new(TaskKind::BuildConnections, &folder_path, &folder_path);
+        build_connections(&ctx, &task).await.unwrap();
+
+        let (n,): (i64,) = sqlx_core::query_as::query_as(covers_count).bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
+        assert_eq!(n, 1, "exactly the current covers match — stale one removed");
+        let (tgt,): (Option<uuid::Uuid>,) = sqlx_core::query_as::query_as(
+            "SELECT target_id FROM sensei.edges WHERE folder_id=$1 AND kind='covers'::sensei.edge_kind")
+            .bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
+        assert_eq!(tgt, Some(auth), "the surviving covers edge points at the matching file");
+
+        // Idempotent: a second run yields the same single edge.
+        build_connections(&ctx, &task).await.unwrap();
+        let (n2,): (i64,) = sqlx_core::query_as::query_as(covers_count).bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
+        assert_eq!(n2, 1, "re-running build_connections is idempotent");
+
+        ctx.pg().remove_watch_root(&root_id).await.ok();
+    }
+
+    #[tokio::test]
+    async fn build_connections_does_not_clobber_doc_references() {
+        // Regression (D2): the covers replace is folder-wide BY KIND, so it must
+        // touch only `covers` — never `references`. process_file emits a doc's
+        // explicit file/symbol refs as `references`; before the file-refs→
+        // references fix those were `covers` and build_connections' wholesale
+        // replace destroyed them.
+        let ctx = make_ctx().await;
+        let folder_path = format!("/tmp/coversref_{}", uuid::Uuid::new_v4());
+        let root_id = ctx.pg().add_watch_root(&folder_path, "cx", &serde_json::json!([])).await.unwrap();
+        let fid = ctx.pg().upsert_repo(&root_id, "cx-repo", &folder_path).await.unwrap();
+        ctx.pg().update_folder_status(&fid, "indexing").await.unwrap();
+
+        let doc = ctx.pg().upsert_node(&fid, "doc", "guide", "docs/guide.md", None, None, None, None).await.unwrap();
+        ctx.pg().upsert_node(&fid, "file", "engine", "src/engine.rs", None, None, None, None).await.unwrap();
+        // An explicit doc→file reference, as process_file now emits it: `references`.
+        ctx.pg().insert_edge(&fid, &doc, None, Some("src/engine.rs"), None, "references").await.unwrap();
+
+        let task = Task::new(TaskKind::BuildConnections, &folder_path, &folder_path);
+        build_connections(&ctx, &task).await.unwrap();
+
+        let (refs,): (i64,) = sqlx_core::query_as::query_as(
+            "SELECT count(*) FROM sensei.edges WHERE folder_id=$1 AND kind='references'::sensei.edge_kind")
+            .bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
+        assert_eq!(refs, 1, "build_connections must not wipe doc→file `references` edges");
+
         ctx.pg().remove_watch_root(&root_id).await.ok();
     }
 }

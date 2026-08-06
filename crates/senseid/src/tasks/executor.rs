@@ -113,7 +113,6 @@ async fn execute_task(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
             TaskKind::ImportLib => handlers::import_lib(ctx, task).await,
             TaskKind::BranchSwitch => handlers::branch_switch(ctx, task).await,
             TaskKind::BuildConnections => handlers::build_connections(ctx, task).await,
-            TaskKind::ReconcileConnections => handlers::reconcile_connections(ctx, task).await,
             TaskKind::EmbedNodes => handlers::embed_nodes(ctx, task).await,
             TaskKind::IndexLibrary => handlers::index_library(ctx, task).await,
             TaskKind::IndexLibraryPage => handlers::index_library_page(ctx, task).await,
@@ -356,19 +355,6 @@ mod tests {
         assert!(result.is_ok());
 
         // TODO: verify module node once module writes are implemented
-    }
-
-    #[tokio::test]
-    async fn execute_task_dispatches_reconcile_connections() {
-        let ctx = make_ctx().await;
-        {
-            let root_id = ctx.pg().add_watch_root("/tmp/repo", "test", &serde_json::json!([])).await.unwrap();
-            ctx.pg().upsert_repo(&root_id, "repo", "/tmp/repo").await.unwrap();
-        }
-        // ReconcileConnections with no solutions should succeed (no-op)
-        let task = Task::new(TaskKind::ReconcileConnections, "repo", "");
-        let result = execute_task(&ctx, &task).await;
-        assert!(result.is_ok());
     }
 
     #[tokio::test]
