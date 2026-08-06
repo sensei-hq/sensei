@@ -95,6 +95,7 @@ pub fn process(abs_path: &str, rel_path: &str, ext: &str, content: &str, _repo_i
         parent_refs,
         file_refs: vec![],
         fn_mentions: vec![],
+        sections: vec![],
         ir,
     })
 }

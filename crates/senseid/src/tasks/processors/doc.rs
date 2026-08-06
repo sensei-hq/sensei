@@ -14,6 +14,9 @@ pub fn process(abs_path: &str, rel_path: &str, content: &str, _repo_id: &str, re
 
     let file_refs = doc_indexer::extract_file_refs(content, repo_path);
     let fn_mentions = doc_indexer::extract_fn_mentions(content);
+    // D5b: decompose the doc into heading sections (nested section nodes written
+    // downstream via the D3 upsert/prune path).
+    let sections = doc_indexer::extract_sections_pub(content);
 
     FileProcessResult {
         file_id: format!("file:{}", abs_path),
@@ -31,6 +34,7 @@ pub fn process(abs_path: &str, rel_path: &str, content: &str, _repo_id: &str, re
         parent_refs: vec![],
         file_refs,
         fn_mentions,
+        sections,
         ir: None,
     }
 }

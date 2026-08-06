@@ -1300,6 +1300,16 @@ impl PgStore {
         }))
     }
 
+    /// Merge into a node's `props` jsonb (D5b): used to stamp a `section` node's
+    /// `level` and real `line_start` (the identity key carries a NULL line so
+    /// section identity is line-independent — 0.4). Idempotent (`props || $2`).
+    pub async fn set_node_props(&self, node_id: &uuid::Uuid, props: &serde_json::Value) -> Result<(), String> {
+        sqlx_core::query::query(
+            "UPDATE sensei.nodes SET props = props || $2, modified_at = now() WHERE id = $1"
+        ).bind(node_id).bind(props).execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
     /// Set folder props (metadata like stack, libs, indexed_at, etc.).
     pub async fn set_folder_props(&self, folder_id: &uuid::Uuid, props: &serde_json::Value) -> Result<(), String> {
         sqlx_core::query::query(

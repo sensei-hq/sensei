@@ -867,11 +867,50 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
             sym_ids.insert((sym.name.clone(), sym.line as i32), id);
         }
 
+        // D5b: nested doc `section` nodes (file → H1 → H2 → H3). Identity is the
+        // full heading PATH ("Design > Auth > Refresh") with a NULL `line_start`,
+        // so a section keeps its id across line edits (line-independent identity,
+        // 0.4) — the real line + level live in `props`. Written through this same
+        // upsert/prune path, so a re-index reconciles the section set (a removed
+        // heading is pruned, no duplicates). Empty for code files.
+        let mut section_ids: Vec<uuid::Uuid> = Vec::with_capacity(result.sections.len());
+        // Stack of (level, heading_path, node_id) for the current ancestor chain.
+        let mut path_stack: Vec<(u8, String, uuid::Uuid)> = Vec::new();
+        for sec in &result.sections {
+            while path_stack.last().is_some_and(|(lvl, _, _)| *lvl >= sec.level) {
+                path_stack.pop();
+            }
+            let parent_id = path_stack.last().map(|(_, _, id)| *id).unwrap_or(file_node_id);
+            let heading_path = path_stack.iter()
+                .map(|(_, h, _)| h.as_str())
+                .chain(std::iter::once(sec.heading.as_str()))
+                .collect::<Vec<_>>()
+                .join(" > ");
+            let sec_id = ctx.pg().upsert_node(
+                &folder_id, "section", &heading_path, &result.rel_path,
+                Some(&parent_id), None, None, None,
+            ).await.map_err(|e| format!("upsert section node {}: {e}", heading_path))?;
+            let props = serde_json::json!({
+                "level": sec.level,
+                "line_start": sec.line_start,
+                "line_end": sec.line_end,
+                "preview": sec.content_preview,
+            });
+            ctx.pg().set_node_props(&sec_id, &props).await
+                .map_err(|e| format!("set section props {}: {e}", heading_path))?;
+            section_ids.push(sec_id);
+            // Stack holds each heading's OWN text (not the cumulative path) so the
+            // next child's path is built by joining ancestors + itself exactly once.
+            path_stack.push((sec.level, sec.heading.clone(), sec_id));
+        }
+
         // Everything just upserted is this file's current node set (its source
         // nodes for out-edges too). `kept` is never empty — the file node always
         // survives.
-        let kept: Vec<uuid::Uuid> =
-            std::iter::once(file_node_id).chain(sym_ids.values().copied()).collect();
+        let kept: Vec<uuid::Uuid> = std::iter::once(file_node_id)
+            .chain(sym_ids.values().copied())
+            .chain(section_ids.iter().copied())
+            .collect();
 
         // D3 prune: delete the file's nodes that vanished from the parse (their
         // out-edges cascade; inbound edges to them are unresolved, target_name
@@ -1382,6 +1421,93 @@ mod tests {
             "SELECT count(*) FROM sensei.nodes WHERE folder_id=$1 AND name='gone'")
             .bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
         assert_eq!(gone_cnt, 0, "the removed symbol is pruned");
+
+        ctx.pg().remove_watch_root(&rid).await.ok();
+    }
+
+    #[tokio::test]
+    async fn doc_decomposes_into_nested_sections() {
+        // D5b: a design doc decomposes into nested `section` nodes (file → H1 → H2
+        // → H3 via parent_id, level in props), keyed on the heading PATH so a
+        // re-index reconciles the set (no duplicate headings). Line-independent
+        // identity: a body edit that shifts a heading's line keeps the section's id.
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("repo/docs")).unwrap();
+        let file = root.join("repo/docs/design.md");
+        std::fs::write(&file,
+            "# Design\n\nIntro.\n\n## Auth\n\nAuth overview.\n\n### Refresh\n\nToken refresh.\n\n## Storage\n\nStorage overview.\n"
+        ).unwrap();
+
+        let ctx = make_ctx().await;
+        let (rid, fid, repo_path) = seed_indexing_repo(&ctx, root, "d5b_sections").await;
+        let abs = file.to_string_lossy().to_string();
+        let task = Task::new(TaskKind::ProcessFile, &repo_path, &abs);
+
+        process_file(&ctx, &task).await.unwrap();
+
+        // Four section nodes: Design(H1), Auth(H2), Refresh(H3), Storage(H2).
+        let (sec_cnt,): (i64,) = sqlx_core::query_as::query_as(
+            "SELECT count(*) FROM sensei.nodes WHERE folder_id=$1 AND kind='section'::sensei.node_kind")
+            .bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
+        assert_eq!(sec_cnt, 4, "one section node per heading");
+
+        // Nesting: Refresh's parent is Auth, Auth's parent is the H1 Design, and
+        // Design's parent is the file node. Identity is the heading PATH.
+        let parent_kind_name = |name: &str| {
+            let pool = ctx.pg().pool().clone();
+            let name = name.to_string();
+            async move {
+                let row: (String, String) = sqlx_core::query_as::query_as(
+                    "SELECT p.kind::text, p.name FROM sensei.nodes s JOIN sensei.nodes p ON s.parent_id=p.id
+                      WHERE s.folder_id=$1 AND s.kind='section'::sensei.node_kind AND s.name=$2")
+                    .bind(fid).bind(&name).fetch_one(&pool).await.unwrap();
+                row
+            }
+        };
+        assert_eq!(parent_kind_name("Design > Auth > Refresh").await, ("section".into(), "Design > Auth".into()),
+            "H3 Refresh nests under H2 Auth");
+        assert_eq!(parent_kind_name("Design > Auth").await, ("section".into(), "Design".into()),
+            "H2 Auth nests under H1 Design");
+        assert_eq!(parent_kind_name("Design").await.0, "doc",
+            "the top-level H1 nests under the doc/file node");
+
+        // level lives in props; identity carries a NULL line (line-independent).
+        let (level, line_start_col): (Option<i32>, Option<i32>) = sqlx_core::query_as::query_as(
+            "SELECT (props->>'level')::int, line_start FROM sensei.nodes
+              WHERE folder_id=$1 AND kind='section'::sensei.node_kind AND name='Design > Auth > Refresh'")
+            .bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
+        assert_eq!(level, Some(3), "H3 level stamped in props");
+        assert_eq!(line_start_col, None, "identity line_start is NULL (line-independent section identity)");
+
+        // Capture Refresh's id, then re-index with the heading MOVED down (extra
+        // intro line) — same heading path ⇒ same id, and still exactly 4 sections.
+        let (refresh_id,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "SELECT id FROM sensei.nodes WHERE folder_id=$1 AND name='Design > Auth > Refresh'")
+            .bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
+        std::fs::write(&file,
+            "# Design\n\nIntro paragraph one.\nIntro paragraph two.\n\n## Auth\n\nAuth overview.\n\n### Refresh\n\nToken refresh.\n\n## Storage\n\nStorage overview.\n"
+        ).unwrap();
+        process_file(&ctx, &task).await.unwrap();
+
+        let (sec_cnt2,): (i64,) = sqlx_core::query_as::query_as(
+            "SELECT count(*) FROM sensei.nodes WHERE folder_id=$1 AND kind='section'::sensei.node_kind")
+            .bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
+        assert_eq!(sec_cnt2, 4, "re-index reconciles — no duplicate sections");
+        let (refresh_id2,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "SELECT id FROM sensei.nodes WHERE folder_id=$1 AND name='Design > Auth > Refresh'")
+            .bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
+        assert_eq!(refresh_id2, refresh_id, "a moved heading keeps its id (line-independent identity)");
+
+        // Remove the Refresh heading → it is pruned (no stale section).
+        std::fs::write(&file,
+            "# Design\n\nIntro.\n\n## Auth\n\nAuth overview.\n\n## Storage\n\nStorage overview.\n"
+        ).unwrap();
+        process_file(&ctx, &task).await.unwrap();
+        let (refresh_gone,): (i64,) = sqlx_core::query_as::query_as(
+            "SELECT count(*) FROM sensei.nodes WHERE folder_id=$1 AND name='Design > Auth > Refresh'")
+            .bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
+        assert_eq!(refresh_gone, 0, "a removed heading is pruned");
 
         ctx.pg().remove_watch_root(&rid).await.ok();
     }
