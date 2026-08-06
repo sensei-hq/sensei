@@ -9990,6 +9990,21 @@ impl PgStore {
         }).collect())
     }
 
+    /// Folder rows for a set of folder ids (7.2) — the structural skeleton of the
+    /// `/tree` endpoint: `kind`/`role`/`parent_id` drive the folder hierarchy
+    /// (repo root → sub-projects/subtrees → subfolders) that the node subtrees
+    /// hang off.
+    pub async fn get_folders_scoped(&self, folder_ids: &[uuid::Uuid]) -> Result<Vec<serde_json::Value>, String> {
+        if folder_ids.is_empty() { return Ok(vec![]); }
+        let rows: Vec<(uuid::Uuid, String, Option<String>, String, String, Option<uuid::Uuid>)> = sqlx_core::query_as::query_as(
+            "SELECT id, kind::text, role::text, name, abs_path, parent_id FROM sensei.folders
+              WHERE id = ANY($1) ORDER BY abs_path"
+        ).bind(folder_ids).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(id, kind, role, name, abs_path, parent_id)| {
+            serde_json::json!({ "id": id, "kind": kind, "role": role, "name": name, "abs_path": abs_path, "parent_id": parent_id })
+        }).collect())
+    }
+
     /// Get edges by kind across multiple folders (project-scoped variant).
     pub async fn get_edges_scoped(&self, folder_ids: &[uuid::Uuid], kind: &str) -> Result<Vec<serde_json::Value>, String> {
         self.get_edges_scoped_kinds(folder_ids, &[kind]).await
