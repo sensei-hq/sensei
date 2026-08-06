@@ -904,12 +904,28 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
             path_stack.push((sec.level, sec.heading.clone(), sec_id));
         }
 
+        // D5b: rationale nodes (NOTE/WHY/HACK/TODO/IMPORTANT) — the design "why".
+        // Parented to the file node (finer function/section parenting is a
+        // follow-up), keyed on (name=text, line_start) so identical markers on
+        // different lines are distinct and a re-index of unchanged text is a no-op.
+        let mut rationale_ids: Vec<uuid::Uuid> = Vec::with_capacity(result.rationales.len());
+        for r in &result.rationales {
+            let id = ctx.pg().upsert_node(
+                &folder_id, "rationale", &r.text, &result.rel_path,
+                Some(&file_node_id), None, Some(r.line as i32), Some(r.line as i32),
+            ).await.map_err(|e| format!("upsert rationale node: {e}"))?;
+            ctx.pg().set_node_props(&id, &serde_json::json!({ "marker": r.marker })).await
+                .map_err(|e| format!("set rationale props: {e}"))?;
+            rationale_ids.push(id);
+        }
+
         // Everything just upserted is this file's current node set (its source
         // nodes for out-edges too). `kept` is never empty — the file node always
         // survives.
         let kept: Vec<uuid::Uuid> = std::iter::once(file_node_id)
             .chain(sym_ids.values().copied())
             .chain(section_ids.iter().copied())
+            .chain(rationale_ids.iter().copied())
             .collect();
 
         // D3 prune: delete the file's nodes that vanished from the parse (their
@@ -1508,6 +1524,60 @@ mod tests {
             "SELECT count(*) FROM sensei.nodes WHERE folder_id=$1 AND name='Design > Auth > Refresh'")
             .bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
         assert_eq!(refresh_gone, 0, "a removed heading is pruned");
+
+        ctx.pg().remove_watch_root(&rid).await.ok();
+    }
+
+    #[tokio::test]
+    async fn doc_rationale_comment_emits_rationale_node() {
+        // D5b: a NOTE/WHY/HACK/TODO/IMPORTANT marker in a doc becomes a `rationale`
+        // node parented to the file, with the marker in props. Re-indexing the
+        // unchanged doc is idempotent (no duplicate rationale).
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("repo/docs")).unwrap();
+        let file = root.join("repo/docs/plan.md");
+        std::fs::write(&file,
+            "# Plan\n\nSome design text.\n\n<!-- TODO: wire the retry path -->\n\nMore text noting nothing.\n"
+        ).unwrap();
+
+        let ctx = make_ctx().await;
+        let (rid, fid, repo_path) = seed_indexing_repo(&ctx, root, "d5b_rationale").await;
+        let abs = file.to_string_lossy().to_string();
+        let task = Task::new(TaskKind::ProcessFile, &repo_path, &abs);
+
+        process_file(&ctx, &task).await.unwrap();
+
+        // Exactly one rationale (the lowercase "noting" prose must NOT match).
+        let rows: Vec<(String, Option<uuid::Uuid>, String)> = sqlx_core::query_as::query_as(
+            "SELECT name, parent_id, props->>'marker' FROM sensei.nodes
+              WHERE folder_id=$1 AND kind='rationale'::sensei.node_kind")
+            .bind(fid).fetch_all(ctx.pg().pool()).await.unwrap();
+        assert_eq!(rows.len(), 1, "one rationale node (prose 'noting' does not match)");
+        assert!(rows[0].0.starts_with("TODO"), "rationale text keeps the marker: {}", rows[0].0);
+        assert_eq!(rows[0].2, "TODO", "marker stamped in props");
+
+        // Parent is the doc/file node.
+        let (pkind,): (String,) = sqlx_core::query_as::query_as(
+            "SELECT p.kind::text FROM sensei.nodes r JOIN sensei.nodes p ON r.parent_id=p.id
+              WHERE r.id=(SELECT id FROM sensei.nodes WHERE folder_id=$1 AND kind='rationale'::sensei.node_kind LIMIT 1)")
+            .bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
+        assert_eq!(pkind, "doc", "rationale is parented to the doc file node");
+
+        // Idempotent re-index.
+        process_file(&ctx, &task).await.unwrap();
+        let (cnt2,): (i64,) = sqlx_core::query_as::query_as(
+            "SELECT count(*) FROM sensei.nodes WHERE folder_id=$1 AND kind='rationale'::sensei.node_kind")
+            .bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
+        assert_eq!(cnt2, 1, "re-index does not duplicate the rationale");
+
+        // Remove the marker → the rationale is pruned.
+        std::fs::write(&file, "# Plan\n\nSome design text.\n").unwrap();
+        process_file(&ctx, &task).await.unwrap();
+        let (cnt3,): (i64,) = sqlx_core::query_as::query_as(
+            "SELECT count(*) FROM sensei.nodes WHERE folder_id=$1 AND kind='rationale'::sensei.node_kind")
+            .bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
+        assert_eq!(cnt3, 0, "a removed rationale marker is pruned");
 
         ctx.pg().remove_watch_root(&rid).await.ok();
     }
