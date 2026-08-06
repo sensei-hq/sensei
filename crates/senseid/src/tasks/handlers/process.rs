@@ -882,18 +882,32 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
         // upsert/prune path, so a re-index reconciles the section set (a removed
         // heading is pruned, no duplicates). Empty for code files.
         let mut section_ids: Vec<uuid::Uuid> = Vec::with_capacity(result.sections.len());
-        // Stack of (level, heading_path, node_id) for the current ancestor chain.
+        // Stack of (level, heading_segment, node_id) for the current ancestor chain.
         let mut path_stack: Vec<(u8, String, uuid::Uuid)> = Vec::new();
+        // Disambiguate identical-text siblings under the same parent: the Nth
+        // (N>1) occurrence of a full heading path gets a " #N" suffix, so two
+        // `## Setup` under one H1 are DISTINCT nodes rather than the second's
+        // upsert colliding onto the first (which would silently clobber it). The
+        // suffix flows into the stacked segment, so children of the second Setup
+        // ("… > Setup #2 > …") don't collide with children of the first either.
+        // Deterministic per document ⇒ idempotent on re-index.
+        let mut seen_paths: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
         for sec in &result.sections {
             while path_stack.last().is_some_and(|(lvl, _, _)| *lvl >= sec.level) {
                 path_stack.pop();
             }
             let parent_id = path_stack.last().map(|(_, _, id)| *id).unwrap_or(file_node_id);
-            let heading_path = path_stack.iter()
+            let base_path = path_stack.iter()
                 .map(|(_, h, _)| h.as_str())
                 .chain(std::iter::once(sec.heading.as_str()))
                 .collect::<Vec<_>>()
                 .join(" > ");
+            let occ = { let c = seen_paths.entry(base_path.clone()).or_insert(0); *c += 1; *c };
+            let (heading_path, segment) = if occ == 1 {
+                (base_path, sec.heading.clone())
+            } else {
+                (format!("{base_path} #{occ}"), format!("{} #{occ}", sec.heading))
+            };
             let sec_id = ctx.pg().upsert_node(
                 &folder_id, "section", &heading_path, &result.rel_path,
                 Some(&parent_id), None, None, None,
@@ -907,9 +921,9 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
             ctx.pg().set_node_props(&sec_id, &props).await
                 .map_err(|e| format!("set section props {}: {e}", heading_path))?;
             section_ids.push(sec_id);
-            // Stack holds each heading's OWN text (not the cumulative path) so the
-            // next child's path is built by joining ancestors + itself exactly once.
-            path_stack.push((sec.level, sec.heading.clone(), sec_id));
+            // Stack holds each heading's OWN (disambiguated) segment so the next
+            // child's path joins ancestors + itself exactly once, carrying the suffix.
+            path_stack.push((sec.level, segment, sec_id));
         }
 
         // D5b: rationale nodes (NOTE/WHY/HACK/TODO/IMPORTANT) — the design "why".
@@ -1546,6 +1560,62 @@ mod tests {
             "SELECT count(*) FROM sensei.nodes WHERE folder_id=$1 AND name='Design > Auth > Refresh'")
             .bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
         assert_eq!(refresh_gone, 0, "a removed heading is pruned");
+
+        ctx.pg().remove_watch_root(&rid).await.ok();
+    }
+
+    #[tokio::test]
+    async fn doc_duplicate_sibling_headings_are_distinct_sections() {
+        // D5b review fix: two identical-text siblings under the same parent must be
+        // DISTINCT section nodes — else the second's upsert collides onto the first
+        // (same heading-path + parent_id) and silently clobbers it. The Nth (N>1)
+        // occurrence gets a " #N" suffix that also flows to its children, so a child
+        // of the second sibling doesn't collide with a child of the first.
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("repo/docs")).unwrap();
+        let file = root.join("repo/docs/faq.md");
+        std::fs::write(&file,
+            "# FAQ\n\n## Setup\n\nFirst setup.\n\n### Step\n\nA.\n\n## Setup\n\nSecond setup.\n\n### Step\n\nB.\n"
+        ).unwrap();
+
+        let ctx = make_ctx().await;
+        let (rid, fid, repo_path) = seed_indexing_repo(&ctx, root, "d5b_dupe").await;
+        let abs = file.to_string_lossy().to_string();
+        let task = Task::new(TaskKind::ProcessFile, &repo_path, &abs);
+
+        process_file(&ctx, &task).await.unwrap();
+
+        // 5 distinct sections: FAQ, "FAQ > Setup", "FAQ > Setup > Step",
+        // "FAQ > Setup #2", "FAQ > Setup #2 > Step".
+        let names: Vec<String> = sqlx_core::query_as::query_as::<_, (String,)>(
+            "SELECT name FROM sensei.nodes WHERE folder_id=$1 AND kind='section'::sensei.node_kind ORDER BY name")
+            .bind(fid).fetch_all(ctx.pg().pool()).await.unwrap()
+            .into_iter().map(|(n,)| n).collect();
+        assert_eq!(names, vec![
+            "FAQ".to_string(),
+            "FAQ > Setup".to_string(),
+            "FAQ > Setup #2".to_string(),
+            "FAQ > Setup #2 > Step".to_string(),
+            "FAQ > Setup > Step".to_string(),
+        ], "duplicate siblings + their children are distinct nodes");
+
+        // Both Setup sections exist with their OWN preview (neither clobbered).
+        let previews: Vec<Option<String>> = sqlx_core::query_as::query_as::<_, (Option<String>,)>(
+            "SELECT props->>'preview' FROM sensei.nodes
+              WHERE folder_id=$1 AND kind='section'::sensei.node_kind AND name IN ('FAQ > Setup','FAQ > Setup #2')
+              ORDER BY name")
+            .bind(fid).fetch_all(ctx.pg().pool()).await.unwrap()
+            .into_iter().map(|(p,)| p).collect();
+        assert!(previews[0].as_deref().unwrap_or("").contains("First setup"), "first Setup keeps its own content");
+        assert!(previews[1].as_deref().unwrap_or("").contains("Second setup"), "second Setup keeps its own content (not clobbered)");
+
+        // Idempotent: re-index yields the same 5, no growth.
+        process_file(&ctx, &task).await.unwrap();
+        let (cnt,): (i64,) = sqlx_core::query_as::query_as(
+            "SELECT count(*) FROM sensei.nodes WHERE folder_id=$1 AND kind='section'::sensei.node_kind")
+            .bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
+        assert_eq!(cnt, 5, "re-index of duplicate-sibling doc is idempotent");
 
         ctx.pg().remove_watch_root(&rid).await.ok();
     }
