@@ -240,8 +240,15 @@ reshuffle, over-claim).**
 
 ## Phase 6 — Restore grouping/granularity kinds: section/rationale, subtree (D5a/b)
 
-**Precondition (verified + reviewer note):** `section`/`rationale`/`package`/… = 0 rows;
-`folders.kind` hardcoded `'folder'`. **`doc_indexer.rs:157-267` already has a tested heading
+**Precondition (verified 2026-08-06):** `section`/`rationale`/`package`/… = 0 rows.
+`folders.kind` is NOT hardcoded `'folder'` (spec D5a corrected): `scan_root` writes
+`git`/`standalone`; nested git subtrees write `git` (process.rs:462, `upsert_repo`); monorepo
+members write `folder`+`role` (process.rs:662, `upsert_subfolder`). D5a must change BOTH write
+sites (member→`workspace_member`, subtree→`subtree`) and extend the `kind='folder'` allow/deny
+lists in `index_audit`/`dedup_structural_folder_nodes`/`prune_vanished_folders` — see spec D5a.
+Section identity (Phase-0.4) keys on heading-path with `line_start=NULL` (D3 kept `line_start`
+in `nodes_unique_identity`, so a NULL line makes section identity line-independent WITHOUT the
+0.1 key change). **`doc_indexer.rs:157-267` already has a tested heading
 parser** (`extract_sections`/`parse_heading`/`parse_to_ir` → `IRSection` with level+nesting;
 tests l.580-589) and `processors/doc.rs:38-51` has `process_ir` commented *"test-only; will be
 wired into the processing pipeline."* — all `#[cfg(test)]`-gated and disconnected from the
@@ -254,8 +261,10 @@ production doc path (`doc.rs::process()` never calls it). Applies Phase-0.4 sect
   through the D3 upsert/prune path; (c) NEW: rationale-comment (NOTE/WHY/HACK/TODO/IMPORTANT)
   extraction (absent today — this is the genuinely new parser piece).** PASS.
 - [ ] **6.2 Failing test** `monorepo_folders_classified`: a monorepo fixture → members
-  `folders.kind='workspace_member'`, nested repos `'subtree'`. FAIL → route `find_subprojects`/
-  `is_monorepo` to the correct `kind`. PASS.
+  `folders.kind='workspace_member'` (process.rs:662 site, kind-aware upsert), nested repos
+  `'subtree'` (process.rs:462 site). FAIL → change both write sites + extend the kind lists in
+  `index_audit`/`dedup_structural_folder_nodes`/`prune_vanished_folders` so a reclassified
+  member/subtree is neither a false ghost nor escapes a genuine prune. PASS.
 - [ ] **6.3** Green. Commit `feat(senseid): wire section/rationale emission + subtree folder kinds
   (D5a/b)`.
 

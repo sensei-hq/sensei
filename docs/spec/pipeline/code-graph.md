@@ -91,8 +91,12 @@ Svelte rendering that consumes that contract is a downstream follow-on, named in
   | `property`,`field`,`parameter`,`enum_variant` | sub-symbol members | finest code granularity absent |
 
   The `nodes.ddl` comment documents the intended hierarchy `file → section (H1→H2→H3)` and
-  `function → rationale`. `folder_kind` defines `subtree`/`workspace_member` but scanning
-  hardcodes `folders.kind='folder'` (pg_store.rs:1237) + a partial `folders.role`.
+  `function → rationale`. `folder_kind` defines `subtree`/`workspace_member` but scanning never
+  writes either (verified 2026-08-06): `scan_root` classifies project roots `git`/`standalone`
+  (scan.rs:99, authoritative each scan); nested **git subtrees** register as `git` via
+  `upsert_repo` (process.rs:462-467); **monorepo members** register as `folder` + a partial
+  `folders.role` via `upsert_subfolder` (process.rs:653-672). So the two granularity kinds exist
+  in the enum but nothing emits them.
 
 ### Target invariants — what must be true after every run
 
@@ -307,9 +311,20 @@ DDL + `upsert_node`/prune change + a one-time reindex; **raise with the user bef
 
 ### D5 — Restore the grouping + granularity kinds (the 7 not-emitted kinds)
 
-- **D5a (P1) — Sub-project boundary.** `find_subprojects`/`is_monorepo` results →
-  `folders.kind = workspace_member` (monorepo members) / `subtree` (nested git repos).
-  scan_logic already detects both; today it writes `'folder'` + `role`.
+- **D5a (P1) — Sub-project boundary.** Detection already exists; the classification WRITE is
+  wrong at **two** sites (verified 2026-08-06):
+  - **Monorepo members** — `is_monorepo` → `find_subprojects` → `upsert_subfolder` (hardcoded
+    `kind='folder'`) + `update_folder_role` (process.rs:653-672). Write `kind='workspace_member'`
+    (a kind-aware subfolder upsert), keeping the role. `detect_workspace_members` is already
+    computed at process.rs:210 (for the `pkg:` module id) — reuse it to mark the member dirs.
+  - **Nested git subtrees** — `detect_git_subtrees_pub` → `upsert_repo` → `upsert_folder(git)`
+    (process.rs:462-467), so a subtree gets `kind='git'`, not `subtree`. Write `kind='subtree'`
+    (`upsert_repo_kind`'s `ON CONFLICT` already preserves a non-git/standalone kind, so a later
+    `scan_root` pass that rediscovers the nested repo won't clobber it back to `git`).
+  - **Reconcile-path caveat (must preserve):** `index_audit` ghost-prune (index_audit.rs:110/167),
+    `dedup_structural_folder_nodes`, and `prune_vanished_folders` key on `kind='folder'`. Their
+    kind allow/deny lists must be extended so a reclassified `workspace_member`/`subtree` is
+    neither treated as a false ghost nor allowed to escape a genuine vanished-dir prune.
 - **D5b (P1) — Doc decomposition (`section` + `rationale`).** The "granular design feature /
   requirement" level. `doc_indexer.rs` emits one `section` node per markdown heading, nested
   `file → H1 → H2 → H3` via `parent_id` with `props.level`, plus `rationale` nodes from
@@ -599,7 +614,7 @@ Anything not verifiable is listed as an open question to resolve *before* coding
 | D3 upsert-then-prune | rewire | invert existing delete-then-insert |
 | D3 `content_hash` column + embedding-null-on-change | **build new** (DDL + write) | column does not exist |
 | D4 community replace + determinism + adjacency | rewire (community.rs) | logic change, no new table |
-| D5a folder kind=subtree/workspace_member | rewire | detection exists; classification write is wrong |
+| D5a folder kind=subtree/workspace_member | rewire (2 sites) | detection exists; member writes `folder` (process.rs:662), subtree writes `git` (process.rs:462); must extend the kind lists in index_audit/dedup/prune |
 | **D5b `section`/`rationale` emission** | **wire existing + new** | the heading parser already exists but is test-gated (`doc_indexer.rs:157` `extract_sections`/`process_ir`, "test-only; will be wired"); D5b = un-gate+wire it + write section nodes via D3 + **NEW rationale-comment extraction** (absent today) |
 | D5c `package`/sub-symbol nodes | **build new** | P2 |
 | D6a `update_folder_status` + lifecycle writers | **build new** | 5 states have no writer |
