@@ -1393,9 +1393,14 @@ impl PgStore {
         Ok(row.map(|(p,)| p))
     }
 
-    /// Mark a folder as indexed with detected libs.
-    pub async fn mark_folder_indexed(&self, folder_id: &uuid::Uuid, libs: &[String]) -> Result<(), String> {
-        let props = serde_json::json!({"indexed_at": chrono::Utc::now().to_rfc3339(), "libs": libs});
+    /// Flip a folder to `indexed` and stamp `props.indexed_at`. The dedicated
+    /// writer of the `indexed` status, called at the terminal community barrier
+    /// (D4.1). Detected libs are folder metadata stamped separately via
+    /// `set_folder_props` by the resolve/build barriers, so this need not carry
+    /// them — keeping "communities computed → indexed" as the single meaning of
+    /// this write.
+    pub async fn mark_folder_indexed(&self, folder_id: &uuid::Uuid) -> Result<(), String> {
+        let props = serde_json::json!({"indexed_at": chrono::Utc::now().to_rfc3339()});
         sqlx_core::query::query(
             "UPDATE sensei.folders SET status = 'indexed'::sensei.folder_status, props = props || $2, modified_at = now() WHERE id = $1"
         ).bind(folder_id).bind(&props).execute(&self.pool).await.map_err(|e| e.to_string())?;
@@ -1405,7 +1410,7 @@ impl PgStore {
     /// Set a folder's lifecycle status (D6a). The general setter behind the
     /// `discovered → queued → indexing → indexed | failed` lifecycle;
     /// `mark_folder_indexed` remains the dedicated writer of `indexed` (it also
-    /// stamps `props.indexed_at`/`libs`). A scan marks `indexing` at start so a
+    /// stamps `props.indexed_at`). A scan marks `indexing` at start so a
     /// crash leaves a recoverable state (resume re-enqueues non-terminal folders).
     pub async fn update_folder_status(&self, folder_id: &uuid::Uuid, status: &str) -> Result<(), String> {
         sqlx_core::query::query(
