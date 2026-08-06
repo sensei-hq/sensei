@@ -317,6 +317,13 @@ fn build_tree(folders: &[serde_json::Value], nodes: &[serde_json::Value]) -> ser
     serde_json::json!({ "tree": tree })
 }
 
+/// Crate-visible wrapper over [`build_tree`] for the whole-graph integration
+/// test (7.5), which asserts the retrieval hierarchy from real scanned data.
+#[cfg(test)]
+pub(crate) fn build_tree_pub(folders: &[serde_json::Value], nodes: &[serde_json::Value]) -> serde_json::Value {
+    build_tree(folders, nodes)
+}
+
 // ── Patterns ────────────────────────────────────────────────────────────────
 
 pub(crate) async fn detect_patterns(

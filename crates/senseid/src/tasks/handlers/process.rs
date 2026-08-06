@@ -1344,6 +1344,144 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn graph_scan_end_to_end() {
+        // 7.5: scan the committed fixture repo through the real handler chain and
+        // assert the WHOLE graph at once — code + doc-section + rationale nodes,
+        // resolved edges (dup-factor 1.0), deterministic communities, the folder
+        // reaching `indexed`, and the retrieval contract (tree + per-node
+        // community_id + live overview). Then re-run → convergent (zero net rows),
+        // then mutate a doc → scoped incremental. (The monorepo `workspace_member`
+        // kind is covered separately by `reconcile_classifies_monorepo_member_roles`;
+        // this fixture is manifest-free by design.)
+        let ctx = make_ctx().await;
+        // Materialise the committed fixture into a tempdir — read the real committed
+        // files by their known relative paths — so the incremental step can mutate
+        // it without dirtying the repo.
+        let src_fixture = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/graph-scan");
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("graph-scan");
+        for rel in ["src/lib.rs", "docs/design.md"] {
+            let content = std::fs::read_to_string(src_fixture.join(rel)).unwrap();
+            let dst = repo.join(rel);
+            std::fs::create_dir_all(dst.parent().unwrap()).unwrap();
+            std::fs::write(&dst, content).unwrap();
+        }
+        let repo_path = repo.to_string_lossy().to_string();
+
+        let rid = ctx.pg().add_watch_root(&tmp.path().to_string_lossy(), "gse", &serde_json::json!([])).await.unwrap();
+        let fid = ctx.pg().upsert_repo_kind(&rid, "git", "graph-scan", &repo_path).await.unwrap();
+        ctx.pg().update_folder_status(&fid, "indexing").await.unwrap();
+
+        // Drive the real handler chain (deterministic — the queue's next_task
+        // blocks, so tests drive handlers directly, the codebase idiom).
+        async fn scan_files(ctx: &TaskContext, repo: &std::path::Path, repo_path: &str, rels: &[&str]) {
+            for rel in rels {
+                let abs = repo.join(rel).to_string_lossy().to_string();
+                process_file(ctx, &Task::new(TaskKind::ProcessFile, repo_path, &abs)).await.unwrap();
+            }
+            crate::tasks::handlers::resolve_edges(ctx, &Task::new(TaskKind::ResolveEdges, repo_path, repo_path)).await.unwrap();
+            crate::tasks::handlers::build_connections(ctx, &Task::new(TaskKind::BuildConnections, repo_path, repo_path)).await.unwrap();
+            crate::tasks::handlers::detect_communities(ctx, &Task::new(TaskKind::DetectCommunities, repo_path, "")).await.unwrap();
+        }
+        let files = ["src/lib.rs", "docs/design.md"];
+        scan_files(&ctx, &repo, &repo_path, &files).await;
+
+        let count = |sql: &'static str| {
+            let pool = ctx.pg().pool().clone();
+            async move {
+                let (n,): (i64,) = sqlx_core::query_as::query_as(sql).bind(fid).fetch_one(&pool).await.unwrap();
+                n
+            }
+        };
+
+        // ── Whole-graph: kinds present ──
+        assert!(count("SELECT count(*) FROM sensei.nodes WHERE folder_id=$1 AND kind='file'::sensei.node_kind").await >= 1, "file node(s)");
+        assert!(count("SELECT count(*) FROM sensei.nodes WHERE folder_id=$1 AND kind='function'::sensei.node_kind").await >= 2, "compute + helper function nodes");
+        assert!(count("SELECT count(*) FROM sensei.nodes WHERE folder_id=$1 AND kind='section'::sensei.node_kind").await >= 3, "nested section nodes (Design/Auth/Refresh/Storage)");
+        assert_eq!(count("SELECT count(*) FROM sensei.nodes WHERE folder_id=$1 AND kind='rationale'::sensei.node_kind").await, 1, "one TODO rationale");
+
+        // ── Section nesting (Refresh under Auth under a doc/file node) ──
+        let (nested,): (i64,) = sqlx_core::query_as::query_as(
+            "SELECT count(*) FROM sensei.nodes s JOIN sensei.nodes p ON s.parent_id=p.id
+              WHERE s.folder_id=$1 AND s.kind='section'::sensei.node_kind AND p.kind IN ('doc'::sensei.node_kind,'file'::sensei.node_kind,'section'::sensei.node_kind)")
+            .bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
+        assert!(nested >= 3, "sections nest via parent_id");
+
+        // ── Resolved call edge (compute → helper) ──
+        let (resolved_calls,): (i64,) = sqlx_core::query_as::query_as(
+            "SELECT count(*) FROM sensei.edges WHERE folder_id=$1 AND kind='calls'::sensei.edge_kind AND target_id IS NOT NULL")
+            .bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
+        assert!(resolved_calls >= 1, "the compute→helper call resolved");
+
+        // ── dup-factor 1.0 for every edge kind ──
+        let (dup_kinds,): (i64,) = sqlx_core::query_as::query_as(
+            "SELECT count(*) FROM (
+               SELECT kind, count(*) c, count(DISTINCT (source_id,target_id,target_name,target_file)) d
+                 FROM sensei.edges WHERE folder_id=$1 GROUP BY kind) t WHERE c <> d")
+            .bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
+        assert_eq!(dup_kinds, 0, "no duplicate edges — dup-factor 1.0 for every kind");
+
+        // ── Communities deterministic + coverage ──
+        let code_uncovered = count("SELECT count(*) FROM sensei.nodes WHERE folder_id=$1 AND kind IN ('function'::sensei.node_kind,'file'::sensei.node_kind) AND community_id IS NULL").await;
+        assert_eq!(code_uncovered, 0, "every code/file node carries a community_id (coverage)");
+
+        // ── Folder reached `indexed` (terminal barrier) ──
+        assert_eq!(ctx.pg().get_folder_status(&fid).await.unwrap().as_deref(), Some("indexed"), "the terminal DetectCommunities barrier flipped the folder to indexed");
+
+        // ── Retrieval contract: tree nests, node projection carries community_id, live overview ──
+        let folders = ctx.pg().get_folders_scoped(&[fid]).await.unwrap();
+        let nodes = ctx.pg().get_nodes_scoped(&[fid]).await.unwrap();
+        assert!(nodes.iter().any(|n| n.get("community_id").is_some()), "get_nodes_scoped projects community_id");
+        let tree = crate::api::handlers::codebase::build_tree_pub(&folders, &nodes);
+        let roots = tree["tree"].as_array().unwrap();
+        assert!(!roots.is_empty(), "tree has a root folder");
+        // The root folder exposes file/doc nodes, and a doc node has section children.
+        let has_section_child = |v: &serde_json::Value| -> bool {
+            v["nodes"].as_array().map(|ns| ns.iter().any(|f| {
+                f["children"].as_array().map(|c| c.iter().any(|ch| ch["kind"] == "section")).unwrap_or(false)
+            })).unwrap_or(false)
+        };
+        assert!(roots.iter().any(has_section_child), "the tree nests a doc → section subtree");
+        let live = ctx.pg().list_communities_live_scoped(&[fid]).await.unwrap();
+        assert!(!live.is_empty() && live.iter().all(|c| c["node_count"].as_i64().unwrap_or(0) > 0), "live overview sized by real membership");
+
+        // ── Idempotency / convergence: re-run yields ZERO net new rows ──
+        let n0 = count("SELECT count(*) FROM sensei.nodes WHERE folder_id=$1").await;
+        let e0 = count("SELECT count(*) FROM sensei.edges WHERE folder_id=$1").await;
+        scan_files(&ctx, &repo, &repo_path, &files).await;
+        let n1 = count("SELECT count(*) FROM sensei.nodes WHERE folder_id=$1").await;
+        let e1 = count("SELECT count(*) FROM sensei.edges WHERE folder_id=$1").await;
+        assert_eq!((n0, e0), (n1, e1), "a second scan is a no-op — convergent (nodes {n0}->{n1}, edges {e0}->{e1})");
+
+        // ── Scoped incremental: add a heading to the doc → new section, others preserved ──
+        let (compute_comm_before,): (Option<i32>,) = sqlx_core::query_as::query_as(
+            "SELECT community_id FROM sensei.nodes WHERE folder_id=$1 AND kind='function'::sensei.node_kind AND name='compute'")
+            .bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
+        let design = repo.join("docs/design.md");
+        let mut doc = std::fs::read_to_string(&design).unwrap();
+        doc.push_str("\n## Extra\n\nAdded section.\n");
+        std::fs::write(&design, &doc).unwrap();
+        scan_files(&ctx, &repo, &repo_path, &files).await;
+
+        let (extra,): (i64,) = sqlx_core::query_as::query_as(
+            "SELECT count(*) FROM sensei.nodes WHERE folder_id=$1 AND kind='section'::sensei.node_kind AND name='Design > Extra'")
+            .bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
+        assert_eq!(extra, 1, "the new heading became a section node");
+        let (compute_comm_after,): (Option<i32>,) = sqlx_core::query_as::query_as(
+            "SELECT community_id FROM sensei.nodes WHERE folder_id=$1 AND kind='function'::sensei.node_kind AND name='compute'")
+            .bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
+        assert_eq!(compute_comm_after, compute_comm_before, "an unrelated code node keeps its community across a scoped doc edit");
+        // Still no duplicate edges after the incremental edit.
+        let (dup2,): (i64,) = sqlx_core::query_as::query_as(
+            "SELECT count(*) FROM (SELECT kind, count(*) c, count(DISTINCT (source_id,target_id,target_name,target_file)) d FROM sensei.edges WHERE folder_id=$1 GROUP BY kind) t WHERE c <> d")
+            .bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
+        assert_eq!(dup2, 0, "still dup-factor 1.0 after the incremental edit");
+
+        ctx.pg().remove_watch_root(&rid).await.ok();
+    }
+
+    #[tokio::test]
     async fn processing_order_invariant() {
         // 7.4: processing the same files in DIFFERENT orders yields an identical
         // graph — the node set (by natural key), per-kind edge counts, and the
