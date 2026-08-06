@@ -102,33 +102,42 @@ pub(crate) fn build_walker(path: &std::path::Path) -> ignore::WalkBuilder {
     b
 }
 
-/// Mark a folder `indexed` UNLESS a fatal failure was recorded for it (D6d
-/// fail-closed). If the status is already `failed` — or the status read itself
-/// fails, so we cannot certify the folder clean — leave it as-is for
-/// boot-reconcile / bounded-retry to re-drive, rather than advancing it to
-/// `indexed`. Shared by BOTH barrier writers (`resolve_libs` and
-/// `build_connections`, which run in sequence): if either marked `indexed`
-/// unconditionally it would defeat the other's guard, so the guard lives here.
+/// Flip a folder to `indexed` at the terminal community barrier (D4.1),
+/// fail-closed (D6d). Promotes ONLY from `indexing` — the in-flight state
+/// `process_git_folder` sets at scan start:
+/// - `failed` (a ProcessFile recorded a fatal error) → left `failed` for
+///   boot-reconcile / bounded-retry to re-drive (the D6d guard).
+/// - already `indexed` (the daily analyzer re-detect of a settled folder) →
+///   left as-is, so `indexed_at` isn't spuriously bumped.
+/// - status read fails, so we can't certify the folder in-flight → left as-is.
+///
+/// This is the SOLE writer of `indexed`: the resolve/build barriers stamp libs
+/// via `set_folder_props` but never advance the status, so `indexed` implies the
+/// whole chain — including community detection — completed.
 pub(crate) async fn mark_folder_indexed_fail_closed(
     ctx: &TaskContext,
     folder_id: &uuid::Uuid,
     folder_name: &str,
-    libs: &[String],
 ) {
     match ctx.pg().get_folder_status(folder_id).await {
-        Ok(Some(status)) if status == "failed" => {
-            tracing::warn!(folder = %folder_name,
-                "fail-closed (D6d): folder has a recorded fatal failure — not marking indexed");
+        Ok(Some(status)) if status == "indexing" => {}
+        Ok(Some(status)) => {
+            tracing::debug!(folder = %folder_name, %status,
+                "terminal barrier (D4.1): folder not `indexing` — leaving status unchanged");
             return;
         }
-        Ok(_) => {}
+        Ok(None) => {
+            tracing::warn!(folder = %folder_name,
+                "terminal barrier (D4.1): folder row missing — not marking indexed");
+            return;
+        }
         Err(e) => {
             tracing::warn!(error = %e, folder = %folder_name,
                 "fail-closed (D6d): get_folder_status failed — not marking indexed");
             return;
         }
     }
-    if let Err(e) = ctx.pg().mark_folder_indexed(folder_id, libs).await {
+    if let Err(e) = ctx.pg().mark_folder_indexed(folder_id).await {
         tracing::warn!(error = %e, folder = %folder_name, "mark_folder_indexed failed");
     }
 }

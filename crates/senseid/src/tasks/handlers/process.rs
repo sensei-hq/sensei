@@ -419,10 +419,21 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
                 .blocked_by(vec![resolve_id])
         ).await;
 
-        ctx.queue.enqueue(
+        let build_id = ctx.queue.enqueue(
             Task::new(TaskKind::BuildConnections, folder_path, "")
                 .with_parent(task.id)
                 .blocked_by(vec![libs_id])
+        ).await;
+
+        // D4.1: DetectCommunities is the TERMINAL barrier — chained after
+        // BuildConnections so the whole edge set exists before detection, and it
+        // is the sole writer of `indexed` (so `indexed` implies communities are
+        // computed). Its atomic per-folder replace (D4.2) makes a re-detect of an
+        // unchanged graph a no-op, so re-driving it on recovery is cheap.
+        ctx.queue.enqueue(
+            Task::new(TaskKind::DetectCommunities, folder_path, "")
+                .with_parent(task.id)
+                .blocked_by(vec![build_id])
         ).await;
 
         // Embed code-graph nodes for semantic search + duplicate detection.
@@ -1149,10 +1160,10 @@ mod tests {
     #[tokio::test]
     async fn process_git_folder_marks_folder_indexing() {
         // D6a: process_git_folder marks the folder `indexing` at start. The
-        // `indexed` transition happens later at the build_connections barrier
-        // (mark_folder_indexed), NOT here — so after process_git_folder alone
-        // the folder is left `indexing`, the recoverable in-flight state a
-        // crash would leave behind.
+        // `indexed` transition happens later at the DetectCommunities terminal
+        // barrier (D4.1), NOT here — so after process_git_folder alone the folder
+        // is left `indexing`, the recoverable in-flight state a crash would leave
+        // behind.
         async fn status_of(ctx: &TaskContext, abs: &str) -> Option<String> {
             let row: Option<(String,)> = sqlx_core::query_as::query_as(
                 "SELECT status::text FROM sensei.folders WHERE abs_path = $1",
@@ -1178,6 +1189,12 @@ mod tests {
 
         assert_eq!(status_of(&ctx, &repo_path).await.as_deref(), Some("indexing"),
             "process_git_folder leaves the folder indexing (the barrier marks indexed later)");
+
+        // D4.1: DetectCommunities is chained as the terminal barrier on a scan
+        // with changes, so the folder can later reach `indexed` through it.
+        let has_detect = ctx.queue.snapshot().await.iter()
+            .any(|(kind, fp, _)| *kind == TaskKind::DetectCommunities && fp == &repo_path);
+        assert!(has_detect, "process_git_folder chains DetectCommunities as the terminal barrier");
 
         ctx.pg().remove_watch_root(&rid).await.unwrap();
     }
@@ -1411,7 +1428,7 @@ mod tests {
         // The next scan must RE-DRIVE the barrier — not skip it on
         // has_changes=false — so the folder can reach `indexed`. Here an empty
         // repo marked `failed` is reset to `indexing` and the terminal
-        // BuildConnections barrier is re-enqueued.
+        // DetectCommunities barrier is re-enqueued.
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path();
         std::fs::create_dir_all(root.join("repo")).unwrap(); // empty → has_changes=false
@@ -1426,8 +1443,8 @@ mod tests {
         assert_eq!(ctx.pg().get_folder_status(&fid).await.unwrap().as_deref(), Some("indexing"),
             "a `failed` folder is re-driven (reset to `indexing`) even with no changes");
         let has_barrier = ctx.queue.snapshot().await.iter()
-            .any(|(kind, fp, _)| *kind == TaskKind::BuildConnections && fp == &repo_path);
-        assert!(has_barrier, "the terminal barrier is re-enqueued so recovery can reach `indexed`");
+            .any(|(kind, fp, _)| *kind == TaskKind::DetectCommunities && fp == &repo_path);
+        assert!(has_barrier, "the terminal barrier (DetectCommunities) is re-enqueued so recovery can reach `indexed`");
 
         ctx.pg().remove_watch_root(&rid).await.ok();
     }
