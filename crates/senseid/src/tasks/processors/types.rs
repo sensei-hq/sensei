@@ -23,6 +23,9 @@ pub struct FileProcessResult {
     /// doc (D5b): heading sections, in document order. Written as a nested
     /// `section` node tree (file → H1 → H2 → H3) via the D3 upsert/prune path.
     pub sections: Vec<crate::ir::IRSection>,
+    /// doc (D5b): design-rationale markers (NOTE/WHY/HACK/TODO/IMPORTANT).
+    /// Written as `rationale` nodes (parented to the file) via the D3 path.
+    pub rationales: Vec<crate::ir::IRRationale>,
     /// IR parse result — rich data for ir_functions/ir_classes tables.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ir: Option<crate::ir::IRParsedFile>,
@@ -65,7 +68,7 @@ impl FileProcessResult {
             symbols: vec![], unresolved_imports: vec![],
             unresolved_calls: vec![], parent_refs: vec![],
             file_refs: vec![], fn_mentions: vec![],
-            sections: vec![],
+            sections: vec![], rationales: vec![],
             ir: None,
         }
     }
