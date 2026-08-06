@@ -832,14 +832,9 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
     // Any DB write in here failing is fatal — `?` propagates it out of the async
     // block and we handle it uniformly below (no partial "success").
     let write_result: Result<(), String> = async {
-        // Re-indexing this file: un-resolve inbound edges (preserve their
-        // target_name so resolve_edges re-points them to the new nodes) and drop
-        // the file's prior nodes (cascading their outgoing edges) so the rewrite
-        // is clean. No-op for a brand-new file.
-        ctx.pg().unresolve_edges_to_file(&folder_id, &result.rel_path).await
-            .map_err(|e| format!("unresolve_edges_to_file: {e}"))?;
-        ctx.pg().delete_nodes_by_file(&folder_id, &result.rel_path).await
-            .map_err(|e| format!("delete_nodes_by_file: {e}"))?;
+        // D3 upsert-then-prune: UPSERT the file's current nodes (surviving symbols
+        // keep their id → community_id/embedding/inbound edges), then prune the
+        // ones that vanished from the parse. No destructive delete-then-insert.
 
         // File node.
         let file_node_id = ctx.pg().upsert_node(
@@ -860,6 +855,25 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
             ).await.map_err(|e| format!("upsert symbol node {}: {e}", sym.name))?;
             sym_ids.insert((sym.name.clone(), sym.line as i32), id);
         }
+
+        // Everything just upserted is this file's current node set (its source
+        // nodes for out-edges too). `kept` is never empty — the file node always
+        // survives.
+        let kept: Vec<uuid::Uuid> =
+            std::iter::once(file_node_id).chain(sym_ids.values().copied()).collect();
+
+        // D3 prune: delete the file's nodes that vanished from the parse (their
+        // out-edges cascade; inbound edges to them are unresolved, target_name
+        // kept, so resolve_edges can re-point them).
+        ctx.pg().prune_file_nodes(&folder_id, &result.rel_path, &kept).await
+            .map_err(|e| format!("prune_file_nodes: {e}"))?;
+
+        // D2/D3 per-file out-edge reconcile: a SURVIVING node keeps its id, so its
+        // stale out-edges (a call/import a re-edit removed) don't cascade — clear
+        // this file's out-edges, then re-insert the current set below (replace,
+        // not append).
+        ctx.pg().delete_edges_from_sources(&folder_id, &kept).await
+            .map_err(|e| format!("delete_edges_from_sources: {e}"))?;
 
         // Unresolved import edges.
         for import in &result.unresolved_imports {
@@ -1309,6 +1323,83 @@ mod tests {
         assert_eq!(scan.len(), 1, "only the healthy sibling advanced scan_state");
         assert!(scan.iter().any(|(p, _)| p.ends_with("good.rs")), "the sibling's fingerprint is recorded");
         assert!(!scan.iter().any(|(p, _)| p.ends_with("bad.rs")), "the failed file did NOT advance scan_state");
+
+        ctx.pg().remove_watch_root(&rid).await.ok();
+    }
+
+    #[tokio::test]
+    async fn process_file_reindex_keeps_surviving_node_and_prunes_removed() {
+        // D3 end-to-end: re-indexing a file KEEPS a surviving symbol's node id
+        // (and its community_id — proving upsert-then-prune, not delete-then-
+        // insert) and PRUNES a symbol removed from the source.
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("repo/src")).unwrap();
+        let file = root.join("repo/src/lib.rs");
+        std::fs::write(&file, "pub fn keep() {}\npub fn gone() {}\n").unwrap();
+
+        let ctx = make_ctx().await;
+        let (rid, fid, repo_path) = seed_indexing_repo(&ctx, root, "d3_reindex").await;
+        let abs = file.to_string_lossy().to_string();
+        let task = Task::new(TaskKind::ProcessFile, &repo_path, &abs);
+
+        process_file(&ctx, &task).await.unwrap();
+        let keep_id: uuid::Uuid = sqlx_core::query_as::query_as::<_, (uuid::Uuid,)>(
+            "SELECT id FROM sensei.nodes WHERE folder_id=$1 AND name='keep' AND kind='function'::sensei.node_kind")
+            .bind(fid).fetch_one(ctx.pg().pool()).await
+            .expect("first index creates the `keep` function node").0;
+        sqlx_core::query::query("UPDATE sensei.nodes SET community_id=42 WHERE id=$1")
+            .bind(keep_id).execute(ctx.pg().pool()).await.unwrap();
+
+        // Edit: remove `gone`; `keep` stays at line 1 (unchanged identity), so it
+        // survives with the same id (upsert-then-prune, not delete-then-insert).
+        std::fs::write(&file, "pub fn keep() {}\n").unwrap();
+        process_file(&ctx, &task).await.unwrap();
+
+        let keep_after: Option<(uuid::Uuid, Option<i32>)> = sqlx_core::query_as::query_as(
+            "SELECT id, community_id FROM sensei.nodes WHERE folder_id=$1 AND name='keep' AND kind='function'::sensei.node_kind")
+            .bind(fid).fetch_optional(ctx.pg().pool()).await.unwrap();
+        assert_eq!(keep_after, Some((keep_id, Some(42))),
+            "surviving symbol keeps its id AND community_id across a reindex (upsert-then-prune)");
+        let (gone_cnt,): (i64,) = sqlx_core::query_as::query_as(
+            "SELECT count(*) FROM sensei.nodes WHERE folder_id=$1 AND name='gone'")
+            .bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
+        assert_eq!(gone_cnt, 0, "the removed symbol is pruned");
+
+        ctx.pg().remove_watch_root(&rid).await.ok();
+    }
+
+    #[tokio::test]
+    async fn process_file_reindex_reconciles_a_removed_out_edge() {
+        // D3 per-file out-edge reconcile (end-to-end): a SURVIVING symbol whose
+        // call is removed on re-edit drops its stale edge — the surviving node
+        // isn't deleted, so the edge doesn't cascade; delete_edges_from_sources
+        // clears the file's out-edges before re-inserting the current set.
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("repo/src")).unwrap();
+        let file = root.join("repo/src/lib.rs");
+        std::fs::write(&file, "pub fn keep() { gone(); }\npub fn gone() {}\n").unwrap();
+
+        let ctx = make_ctx().await;
+        let (rid, fid, repo_path) = seed_indexing_repo(&ctx, root, "d3_edge").await;
+        let abs = file.to_string_lossy().to_string();
+        let task = Task::new(TaskKind::ProcessFile, &repo_path, &abs);
+
+        process_file(&ctx, &task).await.unwrap();
+        let (calls_before,): (i64,) = sqlx_core::query_as::query_as(
+            "SELECT count(*) FROM sensei.edges WHERE folder_id=$1 AND kind='calls'::sensei.edge_kind")
+            .bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
+        assert_eq!(calls_before, 1, "keep→gone call edge is created on first index");
+
+        // Re-edit: keep no longer calls gone (both fns stay at their lines).
+        std::fs::write(&file, "pub fn keep() {}\npub fn gone() {}\n").unwrap();
+        process_file(&ctx, &task).await.unwrap();
+
+        let (calls_after,): (i64,) = sqlx_core::query_as::query_as(
+            "SELECT count(*) FROM sensei.edges WHERE folder_id=$1 AND kind='calls'::sensei.edge_kind")
+            .bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
+        assert_eq!(calls_after, 0, "the removed call's stale edge is reconciled away (replace, not append)");
 
         ctx.pg().remove_watch_root(&rid).await.ok();
     }

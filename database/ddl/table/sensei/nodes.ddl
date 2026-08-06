@@ -19,9 +19,16 @@ create table if not exists nodes (
 , tags                     text[]      not null default '{}'
 , props                    jsonb       not null default '{}'
 , modified_at              timestamptz not null default now()
--- Prevents duplicate nodes when a file is re-processed.
--- NULLS NOT DISTINCT treats NULLs as equal so (parent_id=NULL, line_start=NULL)
--- rows correctly conflict with each other (e.g. file and module nodes).
+-- Node identity. Keyed on `line_start` (not `signature`): symbols are currently
+-- flat under the file node (parent_id is the file, not the enclosing class/impl
+-- — that nesting is D5c), and `signature` is the raw declaration-line text, so
+-- two same-name methods with identical decl lines (e.g. `fn fmt(&self, …)` in two
+-- impl blocks) would COLLAPSE to one node under a signature key. `line_start`
+-- keeps them distinct. Trade-off: a symbol that MOVES lines re-mints its id
+-- (re-embeds); full move-resilience needs D5c nesting first (see D3 in the spec /
+-- backlog). NULLS NOT DISTINCT treats NULLs as equal so rows with
+-- (parent_id=NULL, line_start=NULL) — e.g. a file or module node — correctly
+-- conflict rather than duplicate.
 , constraint nodes_unique_identity
     unique nulls not distinct (folder_id, file_path, kind, name, parent_id, line_start)
 );

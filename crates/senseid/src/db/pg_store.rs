@@ -1466,15 +1466,22 @@ impl PgStore {
         line_start: Option<i32>, line_end: Option<i32>,
     ) -> Result<uuid::Uuid, String> {
         // ON CONFLICT targets nodes_unique_identity (folder_id, file_path, kind, name,
-        // parent_id, line_start NULLS NOT DISTINCT).  DO UPDATE keeps the row stable
-        // on re-scans — same UUID returned whether the row was just inserted or already
-        // existed — and refreshes mutable fields (signature, line_end, modified_at).
+        // parent_id, line_start NULLS NOT DISTINCT). DO UPDATE keeps the row STABLE on
+        // re-scans — same UUID whether just inserted or pre-existing (D3 upsert-then-
+        // prune) — preserving community_id and degree. It refreshes signature/line_end,
+        // and re-nulls `embedding` ONLY when the signature changed: `embed_text` is a
+        // function of (kind, name, signature, file_path), and on a same-identity
+        // conflict the first three-of-four are fixed by the key, so `signature` is the
+        // only embed input that can change — nulling on that (and preserving it
+        // otherwise) keeps embeddings fresh without a separate content_hash column.
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "INSERT INTO sensei.nodes(folder_id, kind, name, file_path, parent_id, signature, line_start, line_end)
              VALUES($1, $2::sensei.node_kind, $3, $4, $5, $6, $7, $8)
              ON CONFLICT ON CONSTRAINT nodes_unique_identity DO UPDATE
                SET signature   = EXCLUDED.signature,
                    line_end    = EXCLUDED.line_end,
+                   embedding   = CASE WHEN nodes.signature IS DISTINCT FROM EXCLUDED.signature
+                                      THEN NULL ELSE nodes.embedding END,
                    modified_at = now()
              RETURNING id"
         ).bind(folder_id).bind(kind).bind(name).bind(file_path)
@@ -1864,6 +1871,49 @@ impl PgStore {
         }
         tx.commit().await.map_err(|e| e.to_string())?;
         Ok(())
+    }
+
+    /// Prune a file's nodes that vanished from the latest parse (D3 upsert-then-
+    /// prune): every node for `(folder, file_path)` whose id is NOT in `kept_ids`.
+    /// First unresolve inbound edges pointing at them (clear `target_id`, KEEP
+    /// `target_name` so `resolve_edges` can re-point them if the symbol
+    /// reappears — invariant 3), then delete the nodes (their out-edges cascade
+    /// via the `source_id` FK). One transaction. Returns nodes pruned. An empty
+    /// `kept_ids` prunes ALL of the file's nodes (nothing survived the parse).
+    pub async fn prune_file_nodes(
+        &self, folder_id: &uuid::Uuid, file_path: &str, kept_ids: &[uuid::Uuid],
+    ) -> Result<u64, String> {
+        let mut tx = self.pool.begin().await.map_err(|e| e.to_string())?;
+        sqlx_core::query::query(
+            "UPDATE sensei.edges SET target_id = NULL, modified_at = now()
+              WHERE folder_id = $1
+                AND target_name IS NOT NULL
+                AND target_id IN (
+                    SELECT id FROM sensei.nodes
+                     WHERE folder_id = $1 AND file_path = $2 AND id <> ALL($3))"
+        ).bind(folder_id).bind(file_path).bind(kept_ids).execute(&mut *tx).await.map_err(|e| e.to_string())?;
+        let res = sqlx_core::query::query(
+            "DELETE FROM sensei.nodes WHERE folder_id = $1 AND file_path = $2 AND id <> ALL($3)"
+        ).bind(folder_id).bind(file_path).bind(kept_ids).execute(&mut *tx).await.map_err(|e| e.to_string())?;
+        tx.commit().await.map_err(|e| e.to_string())?;
+        Ok(res.rows_affected())
+    }
+
+    /// Delete every out-edge sourced from `source_ids` in a folder (D3 per-file
+    /// reconcile). A symbol that SURVIVES a re-index keeps its node id, so its
+    /// stale out-edges (e.g. a call it no longer makes) aren't cascade-deleted —
+    /// clear them so the caller can re-insert the current set (replace, not
+    /// append). Returns rows deleted; an empty `source_ids` is a no-op.
+    pub async fn delete_edges_from_sources(
+        &self, folder_id: &uuid::Uuid, source_ids: &[uuid::Uuid],
+    ) -> Result<u64, String> {
+        if source_ids.is_empty() {
+            return Ok(0);
+        }
+        let res = sqlx_core::query::query(
+            "DELETE FROM sensei.edges WHERE folder_id = $1 AND source_id = ANY($2)"
+        ).bind(folder_id).bind(source_ids).execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(res.rows_affected())
     }
 
     /// Un-resolve edges that point INTO a file's nodes: clear `target_id` while
@@ -10908,6 +10958,102 @@ mod tests {
         let exists: (bool,) = query_as("SELECT EXISTS(SELECT 1 FROM sensei.edges WHERE id=$1)")
             .bind(u).fetch_one(s.pool()).await.unwrap();
         assert!(!exists.0, "the loser unresolved edge is deleted");
+
+        s.delete_nodes_by_folder(&fid).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn upsert_node_at_same_line_keeps_id_and_renulls_embedding_on_sig_change() {
+        // D3: a re-upsert at the SAME identity (line_start is part of the key)
+        // keeps the id — preserving community_id and degree. The embedding is
+        // PRESERVED when the signature is unchanged, and RE-NULLED (re-embed) when
+        // the signature changed — signature being the only embed input that can
+        // change on a same-identity conflict. A DIFFERENT line is a new identity.
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, &format!("nodeid_{}", uuid::Uuid::new_v4())).await;
+        let id1 = s.upsert_node(&fid, "function", "foo", "a.rs", None, Some("fn foo(x: i32)"), Some(10), Some(20)).await.unwrap();
+
+        // Simulate a prior enrich + embed pass on this node.
+        let zeros = format!("[{}]", vec!["0"; 384].join(","));
+        sqlx_core::query::query("UPDATE sensei.nodes SET community_id = 7, degree = 3, embedding = $2::vector WHERE id = $1")
+            .bind(id1).bind(&zeros).execute(s.pool()).await.unwrap();
+
+        // Re-upsert SAME line, SAME signature, only line_end grew → id kept, all preserved.
+        let id2 = s.upsert_node(&fid, "function", "foo", "a.rs", None, Some("fn foo(x: i32)"), Some(10), Some(25)).await.unwrap();
+        assert_eq!(id1, id2, "a re-upsert at the same identity keeps its id");
+        let (community, degree, has_emb): (Option<i32>, Option<i32>, bool) = query_as(
+            "SELECT community_id, degree, embedding IS NOT NULL FROM sensei.nodes WHERE id = $1")
+            .bind(id1).fetch_one(s.pool()).await.unwrap();
+        assert_eq!((community, degree, has_emb), (Some(7), Some(3), true),
+            "community_id/degree/embedding preserved when signature is unchanged");
+
+        // Re-upsert SAME line, CHANGED signature → id kept, community kept, embedding RE-NULLED.
+        let id3 = s.upsert_node(&fid, "function", "foo", "a.rs", None, Some("fn foo(x: i64)"), Some(10), Some(25)).await.unwrap();
+        assert_eq!(id1, id3, "same identity (line) keeps the id even when signature changes");
+        let (community2, has_emb2): (Option<i32>, bool) = query_as(
+            "SELECT community_id, embedding IS NOT NULL FROM sensei.nodes WHERE id = $1")
+            .bind(id1).fetch_one(s.pool()).await.unwrap();
+        assert_eq!(community2, Some(7), "community_id is still preserved");
+        assert!(!has_emb2, "embedding is re-nulled for re-embedding when the signature changed");
+
+        // A DIFFERENT line is a new identity ⇒ a new node (a moved symbol churns).
+        let id4 = s.upsert_node(&fid, "function", "foo", "a.rs", None, Some("fn foo(x: i32)"), Some(99), Some(105)).await.unwrap();
+        assert_ne!(id1, id4, "a different line_start is a new identity (moved symbol re-mints until D5c nesting)");
+
+        s.delete_nodes_by_folder(&fid).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn prune_file_nodes_deletes_vanished_and_unresolves_inbound() {
+        // D3: a symbol that vanished from the parse is pruned; an inbound
+        // cross-file edge to it is UNRESOLVED (target_id→NULL, target_name kept),
+        // not cascade-deleted (invariant 3). A kept node is untouched.
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, &format!("prune_{}", uuid::Uuid::new_v4())).await;
+        let keep = s.upsert_node(&fid, "function", "keep", "a.rs", None, Some("()"), Some(1), Some(5)).await.unwrap();
+        let gone = s.upsert_node(&fid, "function", "gone", "a.rs", None, Some("()"), Some(6), Some(9)).await.unwrap();
+        let caller = s.upsert_node(&fid, "function", "caller", "b.rs", None, Some("()"), Some(1), Some(3)).await.unwrap();
+        // A resolved inbound edge b.rs::caller → a.rs::gone, carrying target_name.
+        let e = s.insert_edge(&fid, &caller, None, Some("gone"), None, "calls").await.unwrap();
+        s.resolve_edge(&e, &gone).await.unwrap();
+
+        // Re-index of a.rs keeps only `keep`.
+        let pruned = s.prune_file_nodes(&fid, "a.rs", &[keep]).await.unwrap();
+        assert_eq!(pruned, 1, "the vanished `gone` node is pruned");
+
+        let (keep_exists,): (bool,) = query_as("SELECT EXISTS(SELECT 1 FROM sensei.nodes WHERE id=$1)")
+            .bind(keep).fetch_one(s.pool()).await.unwrap();
+        assert!(keep_exists, "the surviving node is untouched");
+        let (gone_exists,): (bool,) = query_as("SELECT EXISTS(SELECT 1 FROM sensei.nodes WHERE id=$1)")
+            .bind(gone).fetch_one(s.pool()).await.unwrap();
+        assert!(!gone_exists, "the vanished node is deleted");
+        // The inbound edge survived, unresolved (target_id NULL, target_name kept).
+        let (tid, tname): (Option<uuid::Uuid>, Option<String>) = query_as(
+            "SELECT target_id, target_name FROM sensei.edges WHERE id = $1")
+            .bind(e).fetch_one(s.pool()).await.unwrap();
+        assert_eq!(tid, None, "inbound edge to the pruned node is unresolved, not deleted");
+        assert_eq!(tname.as_deref(), Some("gone"), "target_name is kept for re-resolution");
+
+        s.delete_nodes_by_folder(&fid).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn delete_edges_from_sources_clears_a_files_out_edges() {
+        // D3 per-file reconcile: a surviving symbol's stale out-edges are cleared
+        // before re-inserting the current set (they don't cascade — the node
+        // lives). Only edges FROM the given sources are removed.
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, &format!("outedge_{}", uuid::Uuid::new_v4())).await;
+        let a = s.upsert_node(&fid, "function", "a", "a.rs", None, Some("()"), Some(1), Some(5)).await.unwrap();
+        let b = s.upsert_node(&fid, "function", "b", "b.rs", None, Some("()"), Some(1), Some(5)).await.unwrap();
+        s.insert_edge(&fid, &a, None, Some("x"), None, "calls").await.unwrap();       // a's out-edge
+        s.insert_edge(&fid, &b, None, Some("y"), None, "calls").await.unwrap();       // b's out-edge (must survive)
+
+        let n = s.delete_edges_from_sources(&fid, &[a]).await.unwrap();
+        assert_eq!(n, 1, "only a's out-edge is deleted");
+        assert_eq!(s.get_edges_by_kind(&fid, "calls").await.unwrap().len(), 1, "b's out-edge survives");
+        // Empty sources is a cheap no-op.
+        assert_eq!(s.delete_edges_from_sources(&fid, &[]).await.unwrap(), 0);
 
         s.delete_nodes_by_folder(&fid).await.unwrap();
     }
