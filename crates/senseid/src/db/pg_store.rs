@@ -66,6 +66,17 @@ pub struct ActivityPruneCounts {
     pub assistant_events:  u64,
 }
 
+/// One edge to (re)insert via [`PgStore::replace_edges_of_kind`] (D2). Mirrors
+/// the `insert_edge` shape: a resolved edge carries `target_id`; an unresolved
+/// one carries `target_name`/`target_file`.
+#[derive(Debug, Clone)]
+pub struct EdgeSpec {
+    pub source_id: uuid::Uuid,
+    pub target_id: Option<uuid::Uuid>,
+    pub target_name: Option<String>,
+    pub target_file: Option<String>,
+}
+
 #[derive(Clone)]
 pub struct InsertMemory {
     pub project_id:    Option<uuid::Uuid>,
@@ -1813,6 +1824,45 @@ impl PgStore {
             sqlx_core::query::query("DELETE FROM sensei.edges WHERE id = $1")
                 .bind(edge_id).execute(&self.pool).await.map_err(|e| e.to_string())?;
         }
+        Ok(())
+    }
+
+    /// Replace a folder's entire edge set of one `kind` with `edges`, in ONE
+    /// transaction (D2): DELETE every edge of that kind for the folder, then
+    /// insert the current set. This makes a derived kind (e.g. `covers`) a pure
+    /// function of the current tree — stale relations vanish instead of
+    /// accumulating — and the single transaction means a crash can't leave the
+    /// folder with a half-replaced (or empty) set: it either fully commits the
+    /// new set or rolls back to the old one. Idempotent: re-running with the same
+    /// set yields the same rows (the per-edge `ON CONFLICT` also absorbs a
+    /// duplicate pair within the input set).
+    pub async fn replace_edges_of_kind(
+        &self, folder_id: &uuid::Uuid, kind: &str, edges: &[EdgeSpec],
+    ) -> Result<(), String> {
+        let mut tx = self.pool.begin().await.map_err(|e| e.to_string())?;
+        sqlx_core::query::query(
+            "DELETE FROM sensei.edges WHERE folder_id = $1 AND kind = $2::sensei.edge_kind"
+        ).bind(folder_id).bind(kind).execute(&mut *tx).await.map_err(|e| e.to_string())?;
+        for e in edges {
+            if let Some(tid) = e.target_id {
+                sqlx_core::query::query(
+                    "INSERT INTO sensei.edges(folder_id, source_id, target_id, kind)
+                     VALUES($1, $2, $3, $4::sensei.edge_kind)
+                     ON CONFLICT (folder_id, source_id, target_id, kind) WHERE target_id IS NOT NULL
+                       DO UPDATE SET modified_at = now()"
+                ).bind(folder_id).bind(e.source_id).bind(tid).bind(kind)
+                    .execute(&mut *tx).await.map_err(|e2| e2.to_string())?;
+            } else {
+                sqlx_core::query::query(
+                    "INSERT INTO sensei.edges(folder_id, source_id, target_name, target_file, kind)
+                     VALUES($1, $2, $3, $4, $5::sensei.edge_kind)
+                     ON CONFLICT (folder_id, source_id, target_name, target_file, kind) WHERE target_id IS NULL
+                       DO UPDATE SET modified_at = now()"
+                ).bind(folder_id).bind(e.source_id).bind(e.target_name.as_deref()).bind(e.target_file.as_deref()).bind(kind)
+                    .execute(&mut *tx).await.map_err(|e2| e2.to_string())?;
+            }
+        }
+        tx.commit().await.map_err(|e| e.to_string())?;
         Ok(())
     }
 
@@ -10859,6 +10909,92 @@ mod tests {
             .bind(u).fetch_one(s.pool()).await.unwrap();
         assert!(!exists.0, "the loser unresolved edge is deleted");
 
+        s.delete_nodes_by_folder(&fid).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn replace_edges_of_kind_swaps_the_full_set() {
+        // D2: replace_edges_of_kind removes STALE edges of a kind and inserts the
+        // current set atomically — the "replaced, not appended" guarantee that
+        // makes a derived kind (covers) a pure function of the current tree.
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, &format!("replkind_{}", uuid::Uuid::new_v4())).await;
+        let doc = s.upsert_node(&fid, "doc", "d", "d.md", None, None, None, None).await.unwrap();
+        let f1 = s.upsert_node(&fid, "file", "f1", "f1.rs", None, None, None, None).await.unwrap();
+        let f2 = s.upsert_node(&fid, "file", "f2", "f2.rs", None, None, None, None).await.unwrap();
+
+        // A STALE covers edge doc→f1 (as if f1 was the covered file last scan).
+        s.insert_edge(&fid, &doc, Some(&f1), None, None, "covers").await.unwrap();
+        assert_eq!(s.get_edges_by_kind(&fid, "covers").await.unwrap().len(), 1);
+
+        // Replace the covers set with {doc→f2}: the stale doc→f1 must vanish.
+        s.replace_edges_of_kind(&fid, "covers", &[
+            EdgeSpec { source_id: doc, target_id: Some(f2), target_name: None, target_file: None },
+        ]).await.unwrap();
+
+        let (tid,): (Option<uuid::Uuid>,) = query_as(
+            "SELECT target_id FROM sensei.edges WHERE folder_id=$1 AND kind='covers'::sensei.edge_kind")
+            .bind(fid).fetch_one(s.pool()).await.unwrap();
+        assert_eq!(s.get_edges_by_kind(&fid, "covers").await.unwrap().len(), 1,
+            "exactly the current set — stale edge removed, not appended");
+        assert_eq!(tid, Some(f2), "the surviving covers edge is the new target");
+
+        // Replacing with an EMPTY set clears the kind for the folder.
+        s.replace_edges_of_kind(&fid, "covers", &[]).await.unwrap();
+        assert!(s.get_edges_by_kind(&fid, "covers").await.unwrap().is_empty(),
+            "an empty set clears every edge of the kind");
+
+        s.delete_nodes_by_folder(&fid).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn replace_edges_of_kind_handles_unresolved_edges() {
+        // The unresolved branch (target_id=None) — the path the per-file reconcile
+        // (D3) will use. Replaces by (target_name, target_file).
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, &format!("replun_{}", uuid::Uuid::new_v4())).await;
+        let a = s.upsert_node(&fid, "function", "a", "a.rs", None, None, Some(1), Some(5)).await.unwrap();
+        s.insert_edge(&fid, &a, None, Some("old"), None, "calls").await.unwrap(); // stale unresolved a→"old"
+
+        s.replace_edges_of_kind(&fid, "calls", &[
+            EdgeSpec { source_id: a, target_id: None, target_name: Some("new".into()), target_file: Some("x.rs".into()) },
+        ]).await.unwrap();
+
+        let (name, file): (Option<String>, Option<String>) = query_as(
+            "SELECT target_name, target_file FROM sensei.edges WHERE folder_id=$1 AND kind='calls'::sensei.edge_kind")
+            .bind(fid).fetch_one(s.pool()).await.unwrap();
+        assert_eq!((name.as_deref(), file.as_deref()), (Some("new"), Some("x.rs")),
+            "unresolved edge replaced by (target_name, target_file)");
+        assert_eq!(s.get_edges_by_kind(&fid, "calls").await.unwrap().len(), 1, "stale unresolved edge removed");
+        s.delete_nodes_by_folder(&fid).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn replace_edges_of_kind_is_atomic_and_rolls_back_on_failure() {
+        // The "one transaction" guarantee: if an insert in the batch fails (a bad
+        // source_id → FK violation), the whole replace rolls back — the OLD set is
+        // intact, never half-deleted (no zero-covers window).
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, &format!("replatomic_{}", uuid::Uuid::new_v4())).await;
+        let doc = s.upsert_node(&fid, "doc", "d", "d.md", None, None, None, None).await.unwrap();
+        let f1 = s.upsert_node(&fid, "file", "f1", "f1.rs", None, None, None, None).await.unwrap();
+        s.insert_edge(&fid, &doc, Some(&f1), None, None, "covers").await.unwrap();
+
+        // A batch whose second edge has a bogus source_id (no such node) → the
+        // FK on edges.source_id fails the insert mid-batch.
+        let bogus = uuid::Uuid::new_v4();
+        let res = s.replace_edges_of_kind(&fid, "covers", &[
+            EdgeSpec { source_id: doc, target_id: Some(f1), target_name: None, target_file: None },
+            EdgeSpec { source_id: bogus, target_id: Some(f1), target_name: None, target_file: None },
+        ]).await;
+        assert!(res.is_err(), "a bad edge fails the replace");
+
+        assert_eq!(s.get_edges_by_kind(&fid, "covers").await.unwrap().len(), 1,
+            "the DELETE rolled back with the failed insert — old set intact, not half-deleted");
+        let (tid,): (Option<uuid::Uuid>,) = query_as(
+            "SELECT target_id FROM sensei.edges WHERE folder_id=$1 AND kind='covers'::sensei.edge_kind")
+            .bind(fid).fetch_one(s.pool()).await.unwrap();
+        assert_eq!(tid, Some(f1), "the surviving edge is the original (rollback)");
         s.delete_nodes_by_folder(&fid).await.unwrap();
     }
 

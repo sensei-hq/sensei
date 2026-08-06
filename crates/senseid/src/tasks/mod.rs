@@ -47,7 +47,6 @@ pub enum TaskKind {
     ImportLib,
     BranchSwitch,
     BuildConnections,
-    ReconcileConnections,
     EmbedNodes,
     IndexLibrary,
     IndexLibraryPage,
@@ -137,7 +136,6 @@ impl std::fmt::Display for TaskKind {
             Self::ImportLib => write!(f, "import_lib"),
             Self::BranchSwitch => write!(f, "branch_switch"),
             Self::BuildConnections => write!(f, "build_connections"),
-            Self::ReconcileConnections => write!(f, "reconcile_connections"),
             Self::EmbedNodes => write!(f, "embed_nodes"),
             Self::IndexLibrary => write!(f, "index_library"),
             Self::IndexLibraryPage => write!(f, "index_library_page"),
@@ -214,7 +212,6 @@ impl TaskKind {
             | TaskKind::ResolveLibs
             | TaskKind::ImportLib
             | TaskKind::BuildConnections
-            | TaskKind::ReconcileConnections
             | TaskKind::EmbedNodes
             | TaskKind::IndexLibrary
             | TaskKind::IndexLibraryPage
@@ -358,7 +355,7 @@ impl Task {
 
     #[allow(dead_code)]
     pub fn is_barrier(&self) -> bool {
-        matches!(self.kind, TaskKind::ResolveEdges | TaskKind::ResolveLibs | TaskKind::BuildConnections | TaskKind::ReconcileConnections)
+        matches!(self.kind, TaskKind::ResolveEdges | TaskKind::ResolveLibs | TaskKind::BuildConnections)
     }
 }
 
@@ -466,7 +463,7 @@ mod tests {
             TaskKind::ScanRoot, TaskKind::ProcessGitFolder, TaskKind::ProcessFolder,
             TaskKind::ProcessFile, TaskKind::DeleteFile, TaskKind::DeleteFolder,
             TaskKind::ResolveEdges, TaskKind::ResolveLibs, TaskKind::ImportLib,
-            TaskKind::BranchSwitch, TaskKind::BuildConnections, TaskKind::ReconcileConnections,
+            TaskKind::BranchSwitch, TaskKind::BuildConnections,
             TaskKind::EmbedNodes, TaskKind::IndexLibrary, TaskKind::IndexLibraryPage,
             TaskKind::DetectCommunities, TaskKind::ExtractDeps, TaskKind::MeasureVerdicts,
             TaskKind::ReconcileIdentity, TaskKind::AnalyzeProject, TaskKind::ScanDocDrift,
