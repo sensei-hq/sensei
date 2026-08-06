@@ -1344,6 +1344,75 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn processing_order_invariant() {
+        // 7.4: processing the same files in DIFFERENT orders yields an identical
+        // graph — the node set (by natural key), per-kind edge counts, and the
+        // deterministic community_id per node all match. This is the convergence
+        // guarantee D1–D4 exist to provide.
+        use std::collections::BTreeMap;
+        // Natural key = (file_path, kind, name, line_start); a graph snapshot maps
+        // each to its community_id, plus per-kind edge counts.
+        type NatKey = (String, String, String, Option<i32>);
+        type GraphSnap = (BTreeMap<NatKey, Option<i32>>, BTreeMap<String, i64>);
+        type NodeRow = (String, String, String, Option<i32>, Option<i32>);
+
+        // Snapshot a folder's graph by NATURAL key (not the random UUID):
+        // {(file_path,kind,name,line_start) → community_id} + per-kind edge counts.
+        async fn snapshot(ctx: &TaskContext, fid: uuid::Uuid) -> GraphSnap {
+            let node_rows: Vec<NodeRow> = sqlx_core::query_as::query_as(
+                "SELECT file_path, kind::text, name, line_start, community_id FROM sensei.nodes WHERE folder_id=$1")
+                .bind(fid).fetch_all(ctx.pg().pool()).await.unwrap();
+            let nodes = node_rows.into_iter()
+                .map(|(fp, k, n, ls, cid)| ((fp, k, n, ls), cid)).collect();
+            let edge_rows: Vec<(String, i64)> = sqlx_core::query_as::query_as(
+                "SELECT kind::text, count(*) FROM sensei.edges WHERE folder_id=$1 GROUP BY kind::text")
+                .bind(fid).fetch_all(ctx.pg().pool()).await.unwrap();
+            (nodes, edge_rows.into_iter().collect())
+        }
+
+        // Build a repo with identical content under `root/repo`, then process the
+        // given file order, resolve edges, and detect communities.
+        async fn build_and_scan(ctx: &TaskContext, root: &std::path::Path, name: &str, order: &[&str]) -> uuid::Uuid {
+            std::fs::create_dir_all(root.join("repo/src")).unwrap();
+            std::fs::create_dir_all(root.join("repo/docs")).unwrap();
+            std::fs::write(root.join("repo/src/a.rs"), "pub fn caller() { helper(); }\n").unwrap();
+            std::fs::write(root.join("repo/src/b.rs"), "pub fn helper() {}\n").unwrap();
+            std::fs::write(root.join("repo/docs/design.md"),
+                "# Design\n\n## Auth\n\nAuth text.\n\n<!-- TODO: wire the retry path -->\n").unwrap();
+            let (_rid, fid, repo_path) = seed_indexing_repo(ctx, root, name).await;
+            for rel in order {
+                let abs = root.join("repo").join(rel).to_string_lossy().to_string();
+                process_file(ctx, &Task::new(TaskKind::ProcessFile, &repo_path, &abs)).await.unwrap();
+            }
+            crate::tasks::handlers::resolve_edges(ctx, &Task::new(TaskKind::ResolveEdges, &repo_path, &repo_path)).await.unwrap();
+            crate::indexer::community::detect_communities_for_folder(ctx.pg(), &fid).await.unwrap();
+            fid
+        }
+
+        let ctx = make_ctx().await;
+        let tmp_a = tempfile::tempdir().unwrap();
+        let tmp_b = tempfile::tempdir().unwrap();
+        // Opposite processing orders over identical content.
+        let fid_a = build_and_scan(&ctx, tmp_a.path(), "order_a",
+            &["src/a.rs", "src/b.rs", "docs/design.md"]).await;
+        let fid_b = build_and_scan(&ctx, tmp_b.path(), "order_b",
+            &["docs/design.md", "src/b.rs", "src/a.rs"]).await;
+
+        let (nodes_a, edges_a) = snapshot(&ctx, fid_a).await;
+        let (nodes_b, edges_b) = snapshot(&ctx, fid_b).await;
+
+        assert!(!nodes_a.is_empty(), "the scan produced nodes");
+        assert_eq!(nodes_a.keys().collect::<Vec<_>>(), nodes_b.keys().collect::<Vec<_>>(),
+            "identical node set (by natural key) regardless of processing order");
+        assert_eq!(nodes_a, nodes_b,
+            "identical community_id per node regardless of processing order (deterministic)");
+        assert_eq!(edges_a, edges_b,
+            "identical per-kind edge counts regardless of processing order");
+        // The resolved call edge exists (so this isn't a vacuously-empty comparison).
+        assert_eq!(edges_a.get("calls").copied(), Some(1), "caller→helper call edge resolved");
+    }
+
+    #[tokio::test]
     async fn process_file_fatal_db_write_marks_folder_failed_and_skips_scan_state() {
         // D6c-trigger: a fatal DB-write failure (simulated via the test fault
         // seam) propagates as Err, marks the folder `failed` (so the fail-closed
