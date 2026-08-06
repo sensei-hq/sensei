@@ -67,12 +67,14 @@ pub struct ActivityPruneCounts {
 }
 
 /// One community to write via [`PgStore::replace_communities_for_folder`] (D4):
-/// a deterministic `community_id` (1..k), a human label, and its member node ids.
+/// a deterministic `community_id` (1..k), a human label, its member node ids, and
+/// its `god_node_ids` — the top-5 members by `degree` (D4.5), the community's hubs.
 #[derive(Debug, Clone)]
 pub struct CommunityAssignment {
     pub community_id: i32,
     pub label: String,
     pub member_node_ids: Vec<uuid::Uuid>,
+    pub god_node_ids: Vec<uuid::Uuid>,
 }
 
 /// One edge to (re)insert via [`PgStore::replace_edges_of_kind`] (D2). Mirrors
@@ -2798,6 +2800,28 @@ impl PgStore {
         Ok(row.0)
     }
 
+    /// Recompute `nodes.degree` for every node in a folder (D4.5) — the in+out
+    /// count of edges incident to the node (source, plus resolved target). Run at
+    /// the `ResolveEdges` barrier so degree is fresh before `DetectCommunities`
+    /// ranks each community's god nodes. Edgeless nodes are set to 0 (not left
+    /// stale/NULL), so a symbol that lost its last edge on a re-scan reflects it.
+    pub async fn recompute_degrees_for_folder(&self, folder_id: &uuid::Uuid) -> Result<(), String> {
+        sqlx_core::query::query(
+            "UPDATE sensei.nodes n
+                SET degree = COALESCE(d.deg, 0), modified_at = now()
+               FROM (SELECT id FROM sensei.nodes WHERE folder_id = $1) an
+               LEFT JOIN (
+                   SELECT node_id, count(*)::int AS deg FROM (
+                       SELECT source_id AS node_id FROM sensei.edges WHERE folder_id = $1
+                       UNION ALL
+                       SELECT target_id AS node_id FROM sensei.edges WHERE folder_id = $1 AND target_id IS NOT NULL
+                   ) inc GROUP BY node_id
+               ) d ON d.node_id = an.id
+              WHERE n.id = an.id"
+        ).bind(folder_id).execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
     /// Replace a folder's ENTIRE community assignment in one transaction (D4):
     /// delete its community rows, clear every node's `community_id`, then insert
     /// the new communities and set their members' `community_id`. This makes
@@ -2817,9 +2841,9 @@ impl PgStore {
         ).bind(folder_id).execute(&mut *tx).await.map_err(|e| e.to_string())?;
         for c in communities {
             sqlx_core::query::query(
-                "INSERT INTO inference.communities(folder_id, community_id, label, node_count)
-                 VALUES($1, $2, $3, $4)"
-            ).bind(folder_id).bind(c.community_id).bind(&c.label).bind(c.member_node_ids.len() as i32)
+                "INSERT INTO inference.communities(folder_id, community_id, label, node_count, god_node_ids)
+                 VALUES($1, $2, $3, $4, $5)"
+            ).bind(folder_id).bind(c.community_id).bind(&c.label).bind(c.member_node_ids.len() as i32).bind(&c.god_node_ids)
                 .execute(&mut *tx).await.map_err(|e| e.to_string())?;
             if !c.member_node_ids.is_empty() {
                 sqlx_core::query::query(
@@ -9859,11 +9883,11 @@ impl PgStore {
 
     /// Get all nodes across multiple folders (project-scoped variant).
     pub async fn get_nodes_scoped(&self, folder_ids: &[uuid::Uuid]) -> Result<Vec<serde_json::Value>, String> {
-        let rows: Vec<(uuid::Uuid, String, String, String, Option<uuid::Uuid>, Option<i32>, Option<i32>, uuid::Uuid)> = sqlx_core::query_as::query_as(
-            "SELECT id, kind::text, name, file_path, parent_id, line_start, line_end, folder_id FROM sensei.nodes WHERE folder_id = ANY($1) ORDER BY file_path, line_start"
+        let rows: Vec<(uuid::Uuid, String, String, String, Option<uuid::Uuid>, Option<i32>, Option<i32>, Option<i32>, uuid::Uuid)> = sqlx_core::query_as::query_as(
+            "SELECT id, kind::text, name, file_path, parent_id, line_start, line_end, degree, folder_id FROM sensei.nodes WHERE folder_id = ANY($1) ORDER BY file_path, line_start"
         ).bind(folder_ids).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
-        Ok(rows.into_iter().map(|(id, kind, name, fp, pid, ls, le, folder_id)| {
-            serde_json::json!({ "id": id, "kind": kind, "name": name, "file_path": fp, "parent_id": pid, "line_start": ls, "line_end": le, "folder_id": folder_id })
+        Ok(rows.into_iter().map(|(id, kind, name, fp, pid, ls, le, degree, folder_id)| {
+            serde_json::json!({ "id": id, "kind": kind, "name": name, "file_path": fp, "parent_id": pid, "line_start": ls, "line_end": le, "degree": degree, "folder_id": folder_id })
         }).collect())
     }
 
@@ -11030,7 +11054,7 @@ mod tests {
 
         // Replace with a single community {1: [a, b]} — c must be orphaned out.
         s.replace_communities_for_folder(&fid, &[
-            CommunityAssignment { community_id: 1, label: "new".into(), member_node_ids: vec![a, b] },
+            CommunityAssignment { community_id: 1, label: "new".into(), member_node_ids: vec![a, b], god_node_ids: vec![a] },
         ]).await.unwrap();
 
         assert_eq!(s.list_communities(&fid).await.unwrap().len(), 1, "stale community 99 is gone");
@@ -11187,6 +11211,67 @@ mod tests {
         let cd = cid(derived).await;
         assert!(cb.is_some(), "extends-linked class carries a community");
         assert_eq!(cb, cd, "extends-linked classes share a community (broadened adjacency)");
+
+        s.delete_nodes_by_folder(&fid).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn recompute_degrees_counts_incident_edges() {
+        // D4.5: nodes.degree = in+out count of edges incident to the node (source,
+        // plus resolved target). An edgeless node is set to 0, not left NULL.
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, &format!("degree_{}", uuid::Uuid::new_v4())).await;
+        let hub = s.upsert_node(&fid, "function", "hub", "a.rs", None, Some("()"), Some(1), Some(2)).await.unwrap();
+        let a = s.upsert_node(&fid, "function", "a", "a.rs", None, Some("()"), Some(3), Some(4)).await.unwrap();
+        let b = s.upsert_node(&fid, "function", "b", "a.rs", None, Some("()"), Some(5), Some(6)).await.unwrap();
+        let lonely = s.upsert_node(&fid, "function", "lonely", "a.rs", None, Some("()"), Some(7), Some(8)).await.unwrap();
+        s.insert_edge(&fid, &a, Some(&hub), None, None, "calls").await.unwrap(); // a→hub
+        s.insert_edge(&fid, &b, Some(&hub), None, None, "calls").await.unwrap(); // b→hub
+
+        s.recompute_degrees_for_folder(&fid).await.unwrap();
+
+        let deg = |id: uuid::Uuid| {
+            let pool = s.pool().clone();
+            async move {
+                let (d,): (Option<i32>,) = query_as("SELECT degree FROM sensei.nodes WHERE id=$1")
+                    .bind(id).fetch_one(&pool).await.unwrap();
+                d
+            }
+        };
+        assert_eq!(deg(hub).await, Some(2), "hub is the resolved target of 2 calls");
+        assert_eq!(deg(a).await, Some(1), "a is the source of 1 call");
+        assert_eq!(deg(b).await, Some(1), "b is the source of 1 call");
+        assert_eq!(deg(lonely).await, Some(0), "an edgeless node has degree 0, not NULL");
+
+        s.delete_nodes_by_folder(&fid).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn god_node_ids_are_top_by_degree() {
+        // D4.5: a community's god_node_ids are its highest-degree members (top-5),
+        // read from nodes.degree; the hub ranks first.
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, &format!("godnode_{}", uuid::Uuid::new_v4())).await;
+        let hub = s.upsert_node(&fid, "function", "hub", "a.rs", None, Some("()"), Some(1), Some(2)).await.unwrap();
+        let a = s.upsert_node(&fid, "function", "a", "a.rs", None, Some("()"), Some(3), Some(4)).await.unwrap();
+        let b = s.upsert_node(&fid, "function", "b", "a.rs", None, Some("()"), Some(5), Some(6)).await.unwrap();
+        let c = s.upsert_node(&fid, "function", "c", "a.rs", None, Some("()"), Some(7), Some(8)).await.unwrap();
+        // a→hub, b→hub, c→hub, a→b (calls). Degrees: hub=3, a=2, b=2, c=1 → one
+        // community {hub,a,b,c}; hub is the clear hub.
+        s.insert_edge(&fid, &a, Some(&hub), None, None, "calls").await.unwrap();
+        s.insert_edge(&fid, &b, Some(&hub), None, None, "calls").await.unwrap();
+        s.insert_edge(&fid, &c, Some(&hub), None, None, "calls").await.unwrap();
+        s.insert_edge(&fid, &a, Some(&b), None, None, "calls").await.unwrap();
+
+        s.recompute_degrees_for_folder(&fid).await.unwrap();
+        crate::indexer::community::detect_communities_for_folder(&s, &fid).await.unwrap();
+
+        let (god,): (Vec<uuid::Uuid>,) = query_as(
+            "SELECT god_node_ids FROM inference.communities WHERE folder_id=$1 ORDER BY community_id LIMIT 1")
+            .bind(fid).fetch_one(s.pool()).await.unwrap();
+        assert_eq!(god.first(), Some(&hub), "the highest-degree node is the first god node");
+        assert!(god.contains(&hub), "hub is a god node");
+        assert!(god.len() <= 5, "at most 5 god nodes per community");
 
         s.delete_nodes_by_folder(&fid).await.unwrap();
     }
