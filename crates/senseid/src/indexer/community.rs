@@ -3,9 +3,15 @@ use std::collections::HashMap;
 /// Run label propagation community detection for a folder.
 /// Queries nodes and edges from the database, assigns community IDs,
 /// and persists results to inference.communities + nodes.community_id.
+///
+/// `gateway` drives the D4.5 community `description` enrichment: when `Some`,
+/// each community gets a one-line model-authored summary via insight-copy
+/// (cached, so a re-detect of an unchanged community reuses it); when `None`
+/// (or the model fails), the description is honest-empty — never a template.
 pub async fn detect_communities_for_folder(
     pg: &crate::db::pg_store::PgStore,
     folder_id: &uuid::Uuid,
+    gateway: Option<&gateway::Gateway>,
 ) -> Result<u32, String> {
     // Load all nodes for this folder.
     let mut nodes = pg.get_nodes_by_folder(folder_id).await
@@ -98,14 +104,19 @@ pub async fn detect_communities_for_folder(
             let db = nodes[b]["degree"].as_i64().unwrap_or(0);
             db.cmp(&da).then_with(|| a.cmp(&b))
         });
-        let god_node_ids: Vec<uuid::Uuid> = by_degree.iter().take(5)
+        let top: Vec<usize> = by_degree.iter().copied().take(5).collect();
+        let god_node_ids: Vec<uuid::Uuid> = top.iter()
             .filter_map(|&idx| uuid::Uuid::parse_str(&node_ids[idx]).ok())
             .collect();
+        // D4.5 description: a one-line model-authored summary, or honest-empty.
+        let (description, source) = describe_community(pg, gateway, &nodes, &label, members, &top).await;
         assignments.push(crate::db::pg_store::CommunityAssignment {
             community_id: (rank + 1) as i32,
             label,
             member_node_ids,
             god_node_ids,
+            description,
+            source: source.to_string(),
         });
     }
 
@@ -245,6 +256,51 @@ fn generate_community_label(nodes: &[serde_json::Value], members: &[usize]) -> S
         .unwrap_or("");
 
     format!("{} ({})", dominant_kind, dir)
+}
+
+/// D4.5 community description + its provenance. Returns `(Some(prose),
+/// "insight-copy")` when the model authored a valid summary, or `(None, "null")`
+/// when there is no gateway or the model failed / was rejected — an honest-empty
+/// description, NEVER a static template (never-fabricate). The cache is read
+/// first (the facts hash is identical for an unchanged community, so a re-detect
+/// reuses the copy and stays stable); a miss generates + caches one model call.
+async fn describe_community(
+    pg: &crate::db::pg_store::PgStore,
+    gateway: Option<&gateway::Gateway>,
+    nodes: &[serde_json::Value],
+    label: &str,
+    members: &[usize],
+    god_node_indices: &[usize],
+) -> (Option<String>, &'static str) {
+    use crate::analysis::insight_copy::{self, CopyLimits, InsightKind};
+
+    let gateway = match gateway {
+        Some(g) => g,
+        None => return (None, "null"),
+    };
+
+    // Facts the model summarises from: the cluster's hubs (name + kind) and size.
+    let god: Vec<serde_json::Value> = god_node_indices.iter().map(|&i| {
+        serde_json::json!({ "name": nodes[i]["name"], "kind": nodes[i]["kind"] })
+    }).collect();
+    let facts = serde_json::json!({
+        "label": label,
+        "size": members.len(),
+        "god_nodes": god,
+    });
+
+    // Cache-first, then one generation on a miss.
+    let copy = match insight_copy::read_cached_copy(pg, InsightKind::CommunityDescription, &facts).await {
+        Some(c) => Some(c),
+        None => insight_copy::generate_and_cache(
+            pg, gateway, InsightKind::CommunityDescription, &facts, CopyLimits::default(),
+        ).await,
+    };
+
+    match copy {
+        Some(c) => (Some(c.detail), "insight-copy"),
+        None => (None, "null"),
+    }
 }
 
 #[cfg(test)]
