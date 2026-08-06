@@ -7,6 +7,8 @@
 
 pub mod queue;
 pub mod executor;
+#[cfg(test)]
+pub(crate) mod test_support;
 pub mod retry;
 pub mod handlers;
 pub mod progress;
