@@ -636,7 +636,7 @@ Anything not verifiable is listed as an open question to resolve *before* coding
 - Backoff scheduling: the queue has no delayed-task primitive — confirm the spawned-`sleep`→`enqueue` approach vs adding a `run_after` to the queue.
 - `content_hash` scope: hash the symbol body only, or signature+body? (affects when embeddings re-queue).
 - Singleton→file-community assignment (D4.4): is a file always in exactly one community, or can a file span communities? (affects the "~100 % coverage" invariant's denominator).
-- Section identity: `section` nodes keyed on `(file, heading-path)` or `(file, line)`? (heading-path is stable across edits — preferred, but needs `doc_indexer` to track heading nesting).
+- ~~Section identity: `section` nodes keyed on `(file, heading-path)` or `(file, line)`?~~ **RESOLVED (D5b):** keyed on `(folder, file, kind='section', name=heading-path, parent_id, line_start=NULL)` — heading-path in `name` + a NULL `line_start` makes identity line-INDEPENDENT (stable across edits) without the reverted 0.1 key change. Identical-text SIBLINGS under the same parent are disambiguated with a deterministic ` #N` suffix on the 2nd+ occurrence (which flows into the child path too), so two `## Setup` under one H1 are distinct nodes rather than the second silently clobbering the first (correctness-review catch).
 
 > **Out of scope, explicitly (so the spec isn't read as covering them).** Architectural
 > pattern detection (adapter/strategy/…), duplication *persistence* (`duplicates`/`similar_to`
