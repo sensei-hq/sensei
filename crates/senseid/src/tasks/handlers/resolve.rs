@@ -71,6 +71,12 @@ pub async fn resolve_edges(ctx: &TaskContext, task: &Task) -> Result<u32, String
         }
     }
 
+    // D4.5: recompute node degree now that edges are resolved, so DetectCommunities
+    // (the terminal barrier) ranks god nodes off a fresh in+out edge count.
+    if let Err(e) = ctx.pg().recompute_degrees_for_folder(&folder_id).await {
+        tracing::warn!(error = %e, folder = %folder_name, "resolve_edges: recompute_degrees failed");
+    }
+
     tracing::info!("resolve_edges: {} — {} unresolved, {} resolved", folder_name, unresolved.len(), resolved);
     Ok(resolved)
 }
@@ -208,6 +214,30 @@ mod tests {
 
         let task = Task::new(TaskKind::ResolveEdges, folder_path, folder_path);
         resolve_edges(&ctx, &task).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn resolve_edges_populates_node_degree() {
+        // D4.5: degree is (re)computed at the ResolveEdges barrier, so it is fresh
+        // when the DetectCommunities terminal barrier ranks each community's hubs.
+        let ctx = make_ctx().await;
+        let folder_path = format!("/tmp/degree_{}", uuid::Uuid::new_v4());
+        let root_id = ctx.pg().add_watch_root(&folder_path, "deg", &serde_json::json!([])).await.unwrap();
+        let fid = ctx.pg().upsert_repo(&root_id, "deg-repo", &folder_path).await.unwrap();
+        let a = ctx.pg().upsert_node(&fid, "function", "a", "a.rs", None, Some("()"), Some(1), Some(2)).await.unwrap();
+        let b = ctx.pg().upsert_node(&fid, "function", "b", "a.rs", None, Some("()"), Some(3), Some(4)).await.unwrap();
+        ctx.pg().insert_edge(&fid, &a, Some(&b), None, None, "calls").await.unwrap();
+
+        let task = Task::new(TaskKind::ResolveEdges, &folder_path, &folder_path);
+        resolve_edges(&ctx, &task).await.unwrap();
+
+        let (da,): (Option<i32>,) = sqlx_core::query_as::query_as("SELECT degree FROM sensei.nodes WHERE id=$1")
+            .bind(a).fetch_one(ctx.pg().pool()).await.unwrap();
+        let (db,): (Option<i32>,) = sqlx_core::query_as::query_as("SELECT degree FROM sensei.nodes WHERE id=$1")
+            .bind(b).fetch_one(ctx.pg().pool()).await.unwrap();
+        assert_eq!(da, Some(1), "resolve_edges recomputed degree — a is the source of one call");
+        assert_eq!(db, Some(1), "resolve_edges recomputed degree — b is the target of one call");
+        ctx.pg().remove_watch_root(&root_id).await.ok();
     }
 
     #[tokio::test]

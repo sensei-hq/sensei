@@ -89,10 +89,23 @@ pub async fn detect_communities_for_folder(
         let member_node_ids: Vec<uuid::Uuid> = members.iter()
             .filter_map(|&idx| uuid::Uuid::parse_str(&node_ids[idx]).ok())
             .collect();
+        // D4.5 god nodes: the community's top-5 members by `degree` (the hubs).
+        // Rank by degree desc, tie-break on member index asc (== natural key, since
+        // nodes are sorted) so the set is deterministic for an unchanged graph.
+        let mut by_degree = members.clone();
+        by_degree.sort_by(|&a, &b| {
+            let da = nodes[a]["degree"].as_i64().unwrap_or(0);
+            let db = nodes[b]["degree"].as_i64().unwrap_or(0);
+            db.cmp(&da).then_with(|| a.cmp(&b))
+        });
+        let god_node_ids: Vec<uuid::Uuid> = by_degree.iter().take(5)
+            .filter_map(|&idx| uuid::Uuid::parse_str(&node_ids[idx]).ok())
+            .collect();
         assignments.push(crate::db::pg_store::CommunityAssignment {
             community_id: (rank + 1) as i32,
             label,
             member_node_ids,
+            god_node_ids,
         });
     }
 
