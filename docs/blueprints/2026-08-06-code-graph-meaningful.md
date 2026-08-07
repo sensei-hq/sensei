@@ -87,6 +87,24 @@ edges correct instead of guessed, it makes external dependencies first-class, an
 the same FQN/enclosing-type work delivers the crate/module/impl structure the UI
 needs — one change, three of the symptoms fixed.
 
+### Layering — shared FQN core, per-language resolvers (decided)
+
+The FQN and the symbol-table machinery are **shared and language-agnostic**; only
+the *name resolution that produces an FQN* is per-language:
+
+- **Shared core:** a canonical FQN moniker (structured, e.g.
+  `lang · package/crate · module-path · Type · member`, encoded to one stable
+  string), `upsert_node_by_fqn`, the `lib` namespace, node→node edge emit, and the
+  storage/query layer. One identity + edge model for every language, so a
+  cross-language reference in a polyglot repo still merges on the same FQN.
+- **Per-language (each `LanguageAdapter`):** walk the AST and emit definitions +
+  references already tagged with the shared FQN, applying that language's
+  import/scope/enclosing-type/binding-type rules. Adapters plug a `resolve_fqn`
+  into the shared core; they never own identity or edge logic.
+
+This mirrors SCIP (common moniker format + language-specific indexers): maximal
+reuse, and a new language only implements its resolver.
+
 ## Fix 2 — structure in the view (consume `/tree`) + community edges
 
 - **Atlas must consume `GET /api/graph/{repoId}/tree`** (already built, Phase 7)
