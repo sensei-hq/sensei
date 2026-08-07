@@ -407,16 +407,14 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
             tracing::warn!(error = %e, folder = %folder_name, "process_git_folder: mark indexing failed");
         }
 
-        let resolve_id = ctx.queue.enqueue(
-            Task::new(TaskKind::ResolveEdges, folder_path, "")
-                .with_parent(task.id)
-                .blocked_by(all_file_task_ids.clone())
-        ).await;
-
+        // Phase 7.1: no ResolveEdges pass — FQN edges resolve at emit (source_id →
+        // target_id in process_file). ResolveLibs (the first barrier) blocks on the
+        // file tasks directly; degree is recomputed at DetectCommunities (its sole
+        // consumer, the terminal barrier).
         let libs_id = ctx.queue.enqueue(
             Task::new(TaskKind::ResolveLibs, folder_path, "")
                 .with_parent(task.id)
-                .blocked_by(vec![resolve_id])
+                .blocked_by(all_file_task_ids.clone())
         ).await;
 
         let build_id = ctx.queue.enqueue(
@@ -766,7 +764,7 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
 
     // Skip files we can't parse as source text. Returning Ok (not Err) is
     // critical: a failed ProcessFile task would block its folder's
-    // resolve_edges barrier, leaving the folder stuck at 'discovered'. Binary
+    // post-processing barrier, leaving the folder stuck at 'discovered'. Binary
     // (by extension) and non-UTF8 (by content sniff) files are skipped so
     // indexing always completes.
     let fpath = std::path::Path::new(abs_path);
@@ -791,7 +789,7 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
     // future yields Pending). spawn_blocking moves it off the runtime so the
     // worker yields, the watchdog can fire, and one bad file can't wedge the
     // pool. A read/parse error is tolerated (skip, don't fail) so it never
-    // blocks the folder's resolve_edges barrier.
+    // blocks the folder's post-processing barrier.
     let folder_id = folder.as_ref().and_then(|f| crate::api::util::json_uuid(&f["id"]));
     let abs_owned = abs_path.clone();
     let folder_path_owned = task.folder_path.clone();
@@ -1014,8 +1012,9 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
             .collect();
 
         // D3 prune: delete the file's nodes that vanished from the parse (their
-        // out-edges cascade; inbound edges to them are unresolved, target_name
-        // kept, so resolve_edges can re-point them).
+        // out-edges cascade). Inbound FQN edges (target_id set) cascade-delete with
+        // the node — the demote-to-stub refinement (plan 0.5) is a deferred
+        // follow-up; a full reindex heals a removed-but-referenced def.
         ctx.pg().prune_file_nodes(&folder_id, &result.rel_path, &kept).await
             .map_err(|e| format!("prune_file_nodes: {e}"))?;
 
@@ -1032,12 +1031,13 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
                 .map_err(|e| format!("insert_edge (imports): {e}"))?;
         }
 
-        // Call edges. The Rust FQN path emits RESOLVED node→node edges AT EMIT: the
+        // Call edges. The FQN path emits RESOLVED node→node edges AT EMIT: the
         // target is get-or-created by FQN (a stub if its definition isn't indexed
         // yet — enriched later, keeping the same id; a `lib_symbol` for an external
-        // crate). An out-of-0.7 receiver (unresolvable) keeps a bare-name edge for
-        // the language-scoped fallback (3.3). Other languages keep the fully
-        // bare-name path (resolved later by resolve_edges).
+        // crate). An out-of-0.7 receiver (unresolvable) or an un-migrated language
+        // keeps an honest bare-name edge (target_name only) — the `dyn`/residual
+        // tail. Phase 7.1 retired the resolve_edges fallback, so these stay
+        // unresolved rather than being bare-name-matched to an arbitrary node.
         if let Some(fqn_out) = &result.fqn {
             let file_lang = crate::languages::language_for_path(&result.rel_path);
             for r in &fqn_out.refs {
@@ -1371,6 +1371,36 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn pipeline_has_no_resolve_pass() {
+        // Phase 7.1: FQN edges are resolved AT EMIT (source_id → target_id in
+        // process_file), so the scan pipeline no longer enqueues a `resolve_edges`
+        // pass — the barrier chain is file → resolve_libs → build_connections →
+        // detect_communities. `target_name` is vestigial (only the `dyn` residual).
+        // (Kinds are compared by string so the removed variant isn't referenced.)
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("repo/src")).unwrap();
+        std::fs::write(root.join("repo/Cargo.toml"), "[package]\nname=\"norsv\"").unwrap();
+        std::fs::write(root.join("repo/src/lib.rs"), "fn helper() {}\nfn compute() { helper(); }\n").unwrap();
+
+        let ctx = make_ctx().await;
+        let repo_path = root.join("repo").to_string_lossy().to_string();
+        let rid = ctx.pg().add_watch_root(&root.to_string_lossy(), "norsv_root", &serde_json::json!([])).await.unwrap();
+        ctx.pg().upsert_repo_kind(&rid, "git", "norsv", &repo_path).await.unwrap();
+
+        process_git_folder(&ctx, &Task::new(TaskKind::ProcessGitFolder, &repo_path, &repo_path)).await.unwrap();
+
+        let kinds: Vec<String> = ctx.queue.snapshot().await.iter().map(|(k, _, _)| k.to_string()).collect();
+        assert!(!kinds.iter().any(|k| k == "resolve_edges"),
+            "the scan pipeline has NO resolve_edges pass — edges resolve at emit, got {kinds:?}");
+        // The surviving barrier chain is intact (build_connections + the terminal detect).
+        assert!(kinds.iter().any(|k| k == "build_connections"), "build_connections still enqueued, got {kinds:?}");
+        assert!(kinds.iter().any(|k| k == "detect_communities"), "detect_communities (terminal) still enqueued, got {kinds:?}");
+
+        ctx.pg().remove_watch_root(&rid).await.unwrap();
+    }
+
+    #[tokio::test]
     async fn process_git_folder_keeps_unchanged_indexed_folder_indexed() {
         // D6a regression: a no-op re-scan of an already-`indexed` folder (no file
         // changes → the barrier that writes `indexed` is skipped) must NOT be
@@ -1519,49 +1549,6 @@ mod tests {
             "SELECT target_id FROM sensei.edges WHERE folder_id=$1 AND source_id=$2 AND kind='calls'::sensei.edge_kind")
             .bind(fid).bind(drive_id).fetch_one(ctx.pg().pool()).await.unwrap();
         assert_eq!(tid2, Some(run_id), "edge still resolved to the enriched node after enrichment");
-
-        ctx.pg().delete_nodes_by_folder(&fid).await.unwrap();
-    }
-
-    #[tokio::test]
-    async fn mixed_language_folder_fallback_is_language_scoped() {
-        // Phase 3.3 (plan 0.8): a Rust FQN node `parse` and a Python (bare-name)
-        // call to `parse` in the same folder. The Python fallback resolves to the
-        // PYTHON `parse`, never cross to the Rust one — even though, ignoring
-        // language, both are same-named `parse` defs (which would be ambiguous).
-        let ctx = make_ctx().await;
-        let tmp = tempfile::tempdir().unwrap();
-        let repo = tmp.path().join("mixed");
-        std::fs::create_dir_all(repo.join("src")).unwrap();
-        std::fs::write(repo.join("Cargo.toml"), "[package]\nname = \"mixed\"\n").unwrap();
-        std::fs::write(repo.join("src/lib.rs"), "pub fn parse() {}\n").unwrap();
-        let repo_path = repo.to_string_lossy().to_string();
-        let rid = ctx.pg().add_watch_root(&tmp.path().to_string_lossy(), "mixed", &serde_json::json!([])).await.unwrap();
-        let fid = ctx.pg().upsert_repo_kind(&rid, "git", "mixed", &repo_path).await.unwrap();
-        ctx.pg().update_folder_status(&fid, "indexing").await.unwrap();
-
-        // Rust `parse` via the FQN emit path (language=rust).
-        let abs_rs = repo.join("src/lib.rs").to_string_lossy().to_string();
-        process_file(&ctx, &Task::new(TaskKind::ProcessFile, &repo_path, &abs_rs)).await.unwrap();
-
-        // The Python (fallback) side: a python `parse` def + a caller whose bare-name
-        // call to `parse` is left unresolved (the python adapter isn't FQN-migrated).
-        let py_parse = ctx.pg().upsert_node(&fid, "function", "parse", "helpers.py", None, Some("def parse()"), Some(1), Some(2)).await.unwrap();
-        let py_caller = ctx.pg().upsert_node(&fid, "function", "use_it", "app.py", None, Some("def use_it()"), Some(1), Some(3)).await.unwrap();
-        let py_edge = ctx.pg().insert_edge(&fid, &py_caller, None, Some("parse"), None, "calls").await.unwrap();
-
-        crate::tasks::handlers::resolve_edges(&ctx, &Task::new(TaskKind::ResolveEdges, &repo_path, &repo_path)).await.unwrap();
-
-        // The Python call resolves to the same-language `parse`, not the Rust node.
-        let (tid,): (Option<uuid::Uuid>,) = sqlx_core::query_as::query_as(
-            "SELECT target_id FROM sensei.edges WHERE id=$1").bind(py_edge).fetch_one(ctx.pg().pool()).await.unwrap();
-        assert_eq!(tid, Some(py_parse), "the Python call resolves to the same-language `parse`, never the Rust node");
-
-        // Control: the Rust `parse` is a distinct rust FQN node.
-        let (rust_lang,): (Option<String>,) = sqlx_core::query_as::query_as(
-            "SELECT language FROM sensei.nodes WHERE folder_id=$1 AND name='parse' AND fqn IS NOT NULL")
-            .bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
-        assert_eq!(rust_lang.as_deref(), Some("rust"));
 
         ctx.pg().delete_nodes_by_folder(&fid).await.unwrap();
     }
@@ -1730,7 +1717,9 @@ mod tests {
             .join("tests/fixtures/graph-scan");
         let tmp = tempfile::tempdir().unwrap();
         let repo = tmp.path().join("graph-scan");
-        for rel in ["src/lib.rs", "docs/design.md"] {
+        // Cargo.toml is materialised too so the Rust FQN producer can derive the
+        // package (nearest manifest) and resolve compute→helper AT EMIT (7.1).
+        for rel in ["Cargo.toml", "src/lib.rs", "docs/design.md"] {
             let content = std::fs::read_to_string(src_fixture.join(rel)).unwrap();
             let dst = repo.join(rel);
             std::fs::create_dir_all(dst.parent().unwrap()).unwrap();
@@ -1749,7 +1738,6 @@ mod tests {
                 let abs = repo.join(rel).to_string_lossy().to_string();
                 process_file(ctx, &Task::new(TaskKind::ProcessFile, repo_path, &abs)).await.unwrap();
             }
-            crate::tasks::handlers::resolve_edges(ctx, &Task::new(TaskKind::ResolveEdges, repo_path, repo_path)).await.unwrap();
             crate::tasks::handlers::build_connections(ctx, &Task::new(TaskKind::BuildConnections, repo_path, repo_path)).await.unwrap();
             crate::tasks::handlers::detect_communities(ctx, &Task::new(TaskKind::DetectCommunities, repo_path, "")).await.unwrap();
         }
@@ -1898,7 +1886,7 @@ mod tests {
         }
 
         // Build a repo with identical content under `root/repo`, then process the
-        // given file order, resolve edges, and detect communities.
+        // given file order (edges resolve at emit) and detect communities.
         async fn build_and_scan(ctx: &TaskContext, root: &std::path::Path, name: &str, order: &[&str]) -> uuid::Uuid {
             std::fs::create_dir_all(root.join("repo/src")).unwrap();
             std::fs::create_dir_all(root.join("repo/docs")).unwrap();
@@ -1911,7 +1899,6 @@ mod tests {
                 let abs = root.join("repo").join(rel).to_string_lossy().to_string();
                 process_file(ctx, &Task::new(TaskKind::ProcessFile, &repo_path, &abs)).await.unwrap();
             }
-            crate::tasks::handlers::resolve_edges(ctx, &Task::new(TaskKind::ResolveEdges, &repo_path, &repo_path)).await.unwrap();
             crate::indexer::community::detect_communities_for_folder(ctx.pg(), &fid).await.unwrap();
             fid
         }

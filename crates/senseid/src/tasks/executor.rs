@@ -108,7 +108,6 @@ async fn execute_task(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
             TaskKind::ProcessFile => handlers::process_file(ctx, task).await,
             TaskKind::DeleteFile => handlers::delete_file(ctx, task).await,
             TaskKind::DeleteFolder => handlers::delete_folder(ctx, task).await,
-            TaskKind::ResolveEdges => handlers::resolve_edges(ctx, task).await,
             TaskKind::ResolveLibs => handlers::resolve_libs(ctx, task).await,
             TaskKind::ImportLib => handlers::import_lib(ctx, task).await,
             TaskKind::BranchSwitch => handlers::branch_switch(ctx, task).await,
@@ -216,18 +215,6 @@ mod tests {
             ctx.pg().upsert_repo(&root_id, "repo", "/tmp/repo").await.unwrap();
         }
         let task = Task::new(TaskKind::DeleteFolder, "repo", "/tmp/repo/src");
-        let result = execute_task(&ctx, &task).await;
-        assert!(result.is_ok());
-    }
-
-    #[tokio::test]
-    async fn execute_task_dispatches_resolve_edges() {
-        let ctx = make_ctx().await;
-        {
-            let root_id = ctx.pg().add_watch_root("/tmp/repo", "test", &serde_json::json!([])).await.unwrap();
-            ctx.pg().upsert_repo(&root_id, "repo", "/tmp/repo").await.unwrap();
-        }
-        let task = Task::new(TaskKind::ResolveEdges, "repo", "");
         let result = execute_task(&ctx, &task).await;
         assert!(result.is_ok());
     }

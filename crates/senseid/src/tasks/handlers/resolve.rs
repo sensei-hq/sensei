@@ -1,106 +1,12 @@
-//! Resolve phase: resolve edges, build connections, reconcile cross-repo links.
+//! Resolve phase: build doc↔code connections, reconcile cross-repo links.
+//!
+//! Phase 7.1 retired the `resolve_edges` bare-name pass — FQN call/import edges
+//! now resolve to their target node AT EMIT (`source_id → target_id` in
+//! `process_file`), so there is no separate resolution barrier. Node degree is
+//! recomputed at the `DetectCommunities` terminal barrier (its sole consumer).
 
 use super::super::executor::TaskContext;
 use super::super::Task;
-
-// ── Resolve Edges (barrier) ──────────────────────────────────────────────
-
-/// Resolve unresolved edges by matching target_name against existing nodes.
-pub async fn resolve_edges(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
-    let folder = match ctx.pg().get_repo_by_path(&task.folder_path).await {
-        Ok(f) => f,
-        Err(e) => { tracing::warn!(error = %e, path = %task.folder_path, "resolve_edges: get_repo_by_path failed"); None }
-    };
-    let folder_name = folder.as_ref()
-        .and_then(|f| f["name"].as_str())
-        .unwrap_or_else(|| task.folder_name());
-    let folder_id = match folder.as_ref()
-        .and_then(|f| crate::api::util::json_uuid(&f["id"])) {
-        Some(id) => id,
-        None => { tracing::warn!("resolve_edges: {} — folder not found", task.folder_path); return Ok(0); }
-    };
-
-    // Get all unresolved edges (target_id IS NULL, target_name IS NOT NULL), each
-    // carrying its SOURCE node's language so the fallback stays language-scoped (0.8).
-    let unresolved: Vec<serde_json::Value> = ctx.pg().unresolved_edges_scoped(&folder_id)
-        .await.unwrap_or_else(|e| { tracing::warn!(error = %e, folder = %folder_name, "resolve_edges: query unresolved edges failed"); Vec::new() });
-
-    // Get all nodes for name matching
-    let nodes = ctx.pg().get_nodes_by_folder(&folder_id).await.unwrap_or_else(|e| { tracing::warn!(error = %e, folder = %folder_name, "resolve_edges: get_nodes_by_folder failed"); Vec::new() });
-
-    // Build lookup maps. `nodes_by_name` is a MULTIMAP (name → all defs): a call
-    // is resolved only when the name maps to EXACTLY ONE definition. Bare-name
-    // resolution otherwise collapses every `Foo::new()` / adapter `parse()` onto
-    // one arbitrary same-named node (a false mega-hub — ~1/3 of resolved calls in
-    // a real repo point at an ambiguous name). An ambiguous name is left
-    // unresolved (target_name kept) — honest, and re-resolvable once qualified
-    // identity (D5c symbol nesting) lands. See docs backlog / atlas blueprint.
-    let mut nodes_by_name: std::collections::HashMap<&str, Vec<&serde_json::Value>> =
-        std::collections::HashMap::new();
-    for n in &nodes {
-        if let Some(name) = n["name"].as_str() {
-            nodes_by_name.entry(name).or_default().push(n);
-        }
-    }
-    // Resolve `name` to a node id ONLY when it is unambiguous AMONG same-language
-    // candidates (plan 0.8): the bare-name fallback must never cross languages, so a
-    // Python `parse()` cannot match a Rust `parse` node in the same folder. A caller
-    // with no language, or a name that isn't uniquely a same-language node (0 or 2+),
-    // stays unresolved.
-    let resolve_unique = |name: &str, source_language: Option<&str>| -> Option<uuid::Uuid> {
-        let src_lang = source_language?;
-        let ids: Vec<uuid::Uuid> = nodes_by_name.get(name)
-            .map(|v| v.as_slice()).unwrap_or(&[])
-            .iter()
-            .filter(|n| n["language"].as_str() == Some(src_lang))
-            .filter_map(|n| crate::api::util::json_uuid(&n["id"]))
-            .collect();
-        match ids.as_slice() {
-            [only] => Some(*only),
-            _ => None,
-        }
-    };
-
-    let file_by_path: std::collections::HashMap<&str, &serde_json::Value> = nodes.iter()
-        .filter(|n| n["kind"].as_str() == Some("file"))
-        .filter_map(|n| n["file_path"].as_str().map(|fp| (fp, n)))
-        .collect();
-
-    let mut resolved = 0u32;
-    for edge in &unresolved {
-        let target_name = match edge["target_name"].as_str() { Some(n) => n, None => continue };
-        let edge_id = match crate::api::util::json_uuid(&edge["id"]) { Some(id) => id, None => continue };
-        let kind = edge["kind"].as_str().unwrap_or("calls");
-        let source_language = edge["source_language"].as_str();
-
-        let matched_id = match kind {
-            "imports" => {
-                // Resolve relative import: match against file paths (language-agnostic).
-                file_by_path.iter()
-                    .find(|(fp, _)| fp.contains(target_name))
-                    .and_then(|(_, n)| crate::api::util::json_uuid(&n["id"]))
-            }
-            "calls" => resolve_unique(target_name, source_language),
-            _ => resolve_unique(target_name, source_language),
-        };
-
-        if let Some(target_id) = matched_id {
-            if let Err(e) = ctx.pg().resolve_edge(&edge_id, &target_id).await {
-                tracing::warn!(error = %e, edge_id = %edge_id, "resolve_edges: resolve_edge failed");
-            }
-            resolved += 1;
-        }
-    }
-
-    // D4.5: recompute node degree now that edges are resolved, so DetectCommunities
-    // (the terminal barrier) ranks god nodes off a fresh in+out edge count.
-    if let Err(e) = ctx.pg().recompute_degrees_for_folder(&folder_id).await {
-        tracing::warn!(error = %e, folder = %folder_name, "resolve_edges: recompute_degrees failed");
-    }
-
-    tracing::info!("resolve_edges: {} — {} unresolved, {} resolved", folder_name, unresolved.len(), resolved);
-    Ok(resolved)
-}
 
 // ── Build Connections ─────────────────────────────────────────────────────
 
@@ -206,60 +112,6 @@ mod tests {
     use crate::tasks::test_support::make_ctx;
 
     #[tokio::test]
-    async fn resolve_edges_succeeds() {
-        let ctx = make_ctx().await;
-        let folder_name = "test-repo";
-        let folder_path = "/tmp/repo";
-
-        {
-            let root_id = ctx.pg().add_watch_root(folder_path, "test", &serde_json::json!([])).await.unwrap();
-            ctx.pg().upsert_repo(&root_id, folder_name, folder_path).await.unwrap();
-        }
-
-        let task = Task::new(TaskKind::ResolveEdges, folder_path, folder_path);
-        resolve_edges(&ctx, &task).await.unwrap();
-    }
-
-    #[tokio::test]
-    async fn resolve_edges_populates_node_degree() {
-        // D4.5: degree is (re)computed at the ResolveEdges barrier, so it is fresh
-        // when the DetectCommunities terminal barrier ranks each community's hubs.
-        let ctx = make_ctx().await;
-        let folder_path = format!("/tmp/degree_{}", uuid::Uuid::new_v4());
-        let root_id = ctx.pg().add_watch_root(&folder_path, "deg", &serde_json::json!([])).await.unwrap();
-        let fid = ctx.pg().upsert_repo(&root_id, "deg-repo", &folder_path).await.unwrap();
-        let a = ctx.pg().upsert_node(&fid, "function", "a", "a.rs", None, Some("()"), Some(1), Some(2)).await.unwrap();
-        let b = ctx.pg().upsert_node(&fid, "function", "b", "a.rs", None, Some("()"), Some(3), Some(4)).await.unwrap();
-        ctx.pg().insert_edge(&fid, &a, Some(&b), None, None, "calls").await.unwrap();
-
-        let task = Task::new(TaskKind::ResolveEdges, &folder_path, &folder_path);
-        resolve_edges(&ctx, &task).await.unwrap();
-
-        let (da,): (Option<i32>,) = sqlx_core::query_as::query_as("SELECT degree FROM sensei.nodes WHERE id=$1")
-            .bind(a).fetch_one(ctx.pg().pool()).await.unwrap();
-        let (db,): (Option<i32>,) = sqlx_core::query_as::query_as("SELECT degree FROM sensei.nodes WHERE id=$1")
-            .bind(b).fetch_one(ctx.pg().pool()).await.unwrap();
-        assert_eq!(da, Some(1), "resolve_edges recomputed degree — a is the source of one call");
-        assert_eq!(db, Some(1), "resolve_edges recomputed degree — b is the target of one call");
-        ctx.pg().remove_watch_root(&root_id).await.ok();
-    }
-
-    #[tokio::test]
-    async fn resolve_edges_with_no_refs_is_noop() {
-        let ctx = make_ctx().await;
-        let folder_name = "test-repo";
-        let folder_path = "/tmp/repo";
-
-        {
-            let root_id = ctx.pg().add_watch_root(folder_path, "test", &serde_json::json!([])).await.unwrap();
-            ctx.pg().upsert_repo(&root_id, folder_name, folder_path).await.unwrap();
-        }
-
-        let task = Task::new(TaskKind::ResolveEdges, folder_path, folder_path);
-        resolve_edges(&ctx, &task).await.unwrap();
-    }
-
-    #[tokio::test]
     async fn build_connections_is_fail_closed_on_a_failed_folder() {
         // D4.1/D6d: build_connections stamps libs but no longer advances the
         // folder status, so a folder a ProcessFile marked `failed` (D6c-trigger)
@@ -316,42 +168,6 @@ mod tests {
 
         assert_eq!(ctx.pg().get_folder_status(&fid).await.unwrap().as_deref(), Some("failed"),
             "resolve_libs must not mark a failed folder indexed (fail-closed)");
-        ctx.pg().remove_watch_root(&root_id).await.ok();
-    }
-
-    #[tokio::test]
-    async fn resolve_edges_leaves_ambiguous_name_unresolved() {
-        // A bare call name that matches MULTIPLE definitions (e.g. `new`, defined
-        // on every struct) must NOT resolve to an arbitrary one — that collapses
-        // every `Foo::new()` onto a single false mega-hub. Resolve only on a
-        // UNIQUE match; leave an ambiguous name unresolved (honest, no false edge).
-        let ctx = make_ctx().await;
-        let folder_path = format!("/tmp/ambig_{}", uuid::Uuid::new_v4());
-        let root_id = ctx.pg().add_watch_root(&folder_path, "am", &serde_json::json!([])).await.unwrap();
-        let fid = ctx.pg().upsert_repo(&root_id, "am-repo", &folder_path).await.unwrap();
-
-        // Two `new` methods (ambiguous) + one uniquely-named `compute`.
-        ctx.pg().upsert_node(&fid, "method", "new", "a.rs", None, Some("()"), Some(2), Some(3)).await.unwrap();
-        ctx.pg().upsert_node(&fid, "method", "new", "b.rs", None, Some("()"), Some(2), Some(3)).await.unwrap();
-        let compute = ctx.pg().upsert_node(&fid, "function", "compute", "c.rs", None, Some("()"), Some(1), Some(5)).await.unwrap();
-        let caller = ctx.pg().upsert_node(&fid, "function", "caller", "c.rs", None, Some("()"), Some(7), Some(9)).await.unwrap();
-        // Unresolved call edges: caller → new (ambiguous) and caller → compute (unique).
-        let e_new = ctx.pg().insert_edge(&fid, &caller, None, Some("new"), None, "calls").await.unwrap();
-        let e_compute = ctx.pg().insert_edge(&fid, &caller, None, Some("compute"), None, "calls").await.unwrap();
-
-        let task = Task::new(TaskKind::ResolveEdges, &folder_path, &folder_path);
-        resolve_edges(&ctx, &task).await.unwrap();
-
-        // The ambiguous `new` call stays unresolved (target_id NULL, target_name kept).
-        let (new_tid, new_tname): (Option<uuid::Uuid>, Option<String>) = sqlx_core::query_as::query_as(
-            "SELECT target_id, target_name FROM sensei.edges WHERE id=$1").bind(e_new).fetch_one(ctx.pg().pool()).await.unwrap();
-        assert_eq!(new_tid, None, "an ambiguous bare name is NOT resolved to an arbitrary node");
-        assert_eq!(new_tname.as_deref(), Some("new"), "target_name kept for later type-aware resolution");
-        // The unique `compute` call resolves normally.
-        let (compute_tid,): (Option<uuid::Uuid>,) = sqlx_core::query_as::query_as(
-            "SELECT target_id FROM sensei.edges WHERE id=$1").bind(e_compute).fetch_one(ctx.pg().pool()).await.unwrap();
-        assert_eq!(compute_tid, Some(compute), "a uniquely-named call still resolves");
-
         ctx.pg().remove_watch_root(&root_id).await.ok();
     }
 

@@ -31,7 +31,6 @@ pub fn is_retryable(kind: &TaskKind) -> bool {
         TaskKind::ProcessFile
             | TaskKind::ProcessGitFolder
             | TaskKind::ProcessFolder
-            | TaskKind::ResolveEdges
             | TaskKind::BuildConnections
             | TaskKind::DetectCommunities
     )
@@ -88,7 +87,6 @@ mod tests {
             TaskKind::ProcessFile,
             TaskKind::ProcessGitFolder,
             TaskKind::ProcessFolder,
-            TaskKind::ResolveEdges,
             TaskKind::BuildConnections,
             TaskKind::DetectCommunities,
         ] {
