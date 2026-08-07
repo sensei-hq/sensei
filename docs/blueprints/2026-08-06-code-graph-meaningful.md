@@ -145,11 +145,15 @@ contract, the handler is a thin projection, and the UI can't drift from the data
 - **`is_exported`** — set it in each language adapter from visibility (`pub` in
   Rust; `export` in TS/JS; `__all__`/leading-underscore in Python). TDD per
   adapter. Unblocks exports everywhere.
-- **Subtree detection** — `detect_git_subtrees` only finds nested `.git`.
-  git-*subtree* merges (marketplace/homebrew) are recorded in `.git/config`
-  (`[remote] … ` + subtree merge refs) or a `.gittrees`/prefix marker. Detect via
-  the repo's configured subtree prefixes (or a `folders_to_watch.subtree_prefixes`
-  knob) and register `kind='subtree'` (the D5a write path already exists).
+- **Subtree detection** — `detect_git_subtrees` only finds nested `.git`, so
+  git-*subtree* merges (marketplace/homebrew — no nested `.git`) are missed. The
+  reliable, automatic signal: `git subtree add/pull` records `git-subtree-dir:
+  <prefix>` in the merge-commit body, so `git log --grep='git-subtree-dir:'
+  --pretty=%b` yields every subtree prefix deterministically. Extract the
+  prefixes, register each `kind='subtree'` (the D5a write path already exists).
+  (Fallback/override: a `folders_to_watch.subtree_prefixes` config knob.) Not a
+  one-liner — shells git + parses — so it rides with the structure work, not the
+  quick wins.
 
 ## Proposed build sequence (each its own reviewed chunk)
 
