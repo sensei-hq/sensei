@@ -21,51 +21,71 @@
 ## Fix 1 (the big one) — fully-qualified names for correct resolution
 
 **Goal: no ambiguity, no unresolved.** With a proper FQN every definition is
-unique and every call names exactly one target, so resolution should be
-*complete* — "unresolved" is not an acceptable end state (it's only the honest
-interim `2c520f2d` uses while bare-name matching is in place). The single
-legitimate exception is **true dynamic dispatch** (trait objects / `dyn`, fn
-pointers, reflection) — unresolvable even for a compiler, and rare; those stay
-honestly unresolved. Everything else must resolve.
+unique and every call names exactly one target. **"Unresolved" is not a valid
+state at all** — a call always references *something*; if we can't point it at a
+node, that's a modelling failure, not an honest empty. The interim guard
+(`2c520f2d`) that leaves ambiguous calls unresolved is therefore also wrong as an
+end state — it's a temporary artifact of the old name-matching model, and this
+design **removes it** along with the separate `resolve_edges` pass.
 
-Node *identity* is already unique (`folder, file_path, kind, name, parent_id,
-line_start`). The defect is purely **call resolution matching by bare name**. The
-correct model is FQN→FQN matching, built from the parser's AST — and to reach
-*complete* resolution the parser must qualify the call SITE, not just the
-definition:
+### The model — get-or-create nodes by FQN (a symbol table)
 
-- **Definition FQN** — each symbol gets a qualified name from its AST context:
-  the enclosing module/`impl`/type path + name, e.g.
-  `crate::watcher::root_watcher::RootWatcher::new`. At minimum `<impl-type>::<name>`
-  disambiguates every adapter method. Store as `nodes.fqn` (new column) *and*
-  attach the method to its enclosing type via `parent_id` — this is the deferred
-  **D5c symbol nesting**; it also fixes the "no crate/module grouping" complaint
-  for free (the tree gains `impl`/type containers).
-- **Call-site qualifier capture** — the parser reads the full AST, so it can
-  qualify almost every call. Tiers, most-static first:
-  - associated call `Foo::new()` → `scoped_identifier` → target `Foo::new`
-    (covers most `new`/`default`/`from`);
-  - `self.method()` / same-`impl` call → the enclosing `impl` type;
-  - local free call `foo()` → the module/use scope;
-  - `x.method()` on a local → **light intra-function type tracking**: record each
-    `let x = <expr>` binding's type where the RHS reveals it (`Foo::new()`,
-    `Foo { .. }`, a typed param/field, an annotated `let x: Foo`), then qualify
-    `x.method()` as `Foo::method`. This is NOT a full type checker — just a
-    single-pass binding→type map per function, which covers the overwhelming
-    majority of real method calls.
-  - **only** a receiver whose type is genuinely dynamic (`dyn Trait`, a returned
-    boxed trait object with no annotation) stays unqualified → honestly
-    unresolved. This should be a small tail, not a third of the graph.
-- **Resolution** — match the qualified call against `nodes.fqn` (exact), scoped
-  within-crate then project-wide. The unique-name guard (`2c520f2d`) remains only
-  as the fallback for a call the parser couldn't qualify — and the whole point of
-  this work is to shrink that fallback set toward zero. Never fabricate: a call we
-  cannot qualify AND cannot uniquely name stays unresolved, but that set should be
-  tiny (true dynamic dispatch), not the adapter methods.
+Adopt the SCIP/LSIF *moniker* model: **every symbol has a stable FQN, and both a
+definition and a reference get-or-create the node for that FQN.** There is no
+"resolve later" step — the edge is linked to a real node at emit time.
 
-**Why this is the right cut:** it turns the adapter methods from *wrong* edges
-(or dropped edges under the interim guard) into *correct* edges, and the same AST
-work (enclosing-type capture) delivers the structural containers the UI needs.
+1. **Every AST reference emits an FQN.** Processing a file, for each tree item —
+   a definition (`fn`, `impl fn`, `struct`, …) AND each reference (a call target,
+   a type mention, an import) — compute its canonical FQN and
+   **`upsert_node_by_fqn(fqn) → node id`**: fetch the existing node or create a
+   *stub* (kind + fqn only), returning its id. The edge is emitted node→node
+   immediately. A stub carries just enough to exist; when the file that *defines*
+   that FQN is processed, the same node is **enriched** (signature, body,
+   line span, is_exported, doc) — a get-or-create keyed on FQN, filled in on
+   definition. Order-independent: a call seen before its definition creates the
+   stub; the definition later fills it (D3 upsert-then-prune already gives us
+   idempotent enrichment).
+2. **External symbols get FQN nodes too — a `lib` group.** The ONLY legitimate
+   reason a target isn't an internal definition is that it lives in an external
+   library (`serde::de::from_str`, `std::vec::Vec::new`). Those get-or-create a
+   node under a **library namespace** (`kind='lib_symbol'`, grouped by crate/pkg),
+   so a call to a dependency resolves to the lib node — not dropped, not
+   unresolved. This also gives the graph a real "what we depend on and how much"
+   signal for free.
+3. **No `resolve_edges`, no `target_name` limbo.** Edges are `source_id →
+   target_id` from the start (target is the get-or-created FQN node). The whole
+   unresolved/resolve machinery — and the ambiguity guard — goes away.
+
+### The engine — canonical, cross-file-consistent FQN
+
+The one hard requirement is that a **definition and a reference compute the SAME
+FQN**, or they'd create two separate stubs. That needs per-language **name
+resolution** (the real work, LSP-grade but bounded):
+
+- **Definition FQN** from AST context: crate/module path + enclosing `impl`/type
+  + name → `crate::widget::Widget::new`. (Also gives `parent_id` nesting = the
+  deferred **D5c** structure the UI wants.)
+- **Reference FQN** by resolving the call's path against the file's scope:
+  - explicit path `Foo::new()` → expand `Foo` via the file's `use`/imports to its
+    canonical path (`use crate::widget::Widget; Widget::new()` → `crate::widget::Widget::new`);
+  - `self.method()` / same-`impl` → enclosing type;
+  - local `foo()` → module scope;
+  - `x.method()` on a local → light per-function binding→type map (`let x =
+    Foo::new()`, typed params/fields, `let x: Foo`) → `Foo::method`;
+  - a path that resolves to an imported *external* crate → the `lib` FQN (case 2).
+  - Truly dynamic dispatch (`dyn Trait` with no static type) is the only residual —
+    and even then we emit a reference to the *trait method* FQN (still a node),
+    not nothing.
+
+So "no ambiguity" (FQN is unique) and "no unresolved" (get-or-create always
+yields a node, internal or lib) both hold. The engineering is the name-resolution
+that makes the two sides agree on the FQN — per language, incrementally
+improvable, and each increment shrinks stubs/lib-fallbacks toward the true set.
+
+**Why this is the right cut:** it's the correct code-intelligence model, it makes
+edges correct instead of guessed, it makes external dependencies first-class, and
+the same FQN/enclosing-type work delivers the crate/module/impl structure the UI
+needs — one change, three of the symptoms fixed.
 
 ## Fix 2 — structure in the view (consume `/tree`) + community edges
 
@@ -117,9 +137,13 @@ contract, the handler is a thin projection, and the UI can't drift from the data
 
 1. **Data bugs** — `is_exported` + subtree detection (small, testable, immediate
    UI wins: exports populate, scope dropdown shows subtrees).
-2. **FQN + D5c symbol nesting** — parser emits enclosing-type containers +
-   `nodes.fqn`; resolver matches FQN, keeps the unique-name guard as fallback.
-   (The largest chunk; makes edges correct AND adds code structure.)
+2. **FQN symbol-table model** — the core. Add `nodes.fqn` + `upsert_node_by_fqn`
+   get-or-create; the parser emits definitions AND references as FQN nodes with
+   node→node edges (retire `resolve_edges`, `target_name` limbo, and the interim
+   guard `2c520f2d`); external targets → `lib` nodes; per-language name resolution
+   (imports/scope/enclosing-type + light binding→type) to canonicalise FQNs, plus
+   D5c enclosing-type nesting for structure. Build the name-resolution per language,
+   Rust first; each increment shrinks the stub/lib-fallback set.
 3. **DB views** — the four views above; repoint the handlers to them.
 4. **Community-edge aggregation** — the view + `communities/info` returning
    relations.
