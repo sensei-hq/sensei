@@ -1,0 +1,8 @@
+[package]
+name = "graph-scan"
+version = "0.0.0"
+edition = "2021"
+
+# Fixture crate for the graph_scan_end_to_end test. Present so the Rust FQN
+# producer can derive this file's package (nearest Cargo.toml) and resolve the
+# intra-file compute -> helper call AT EMIT — no resolve_edges pass (Phase 7.1).

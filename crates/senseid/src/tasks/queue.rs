@@ -164,7 +164,7 @@ impl TaskQueue {
 
     /// Add a dependency to a blocked task after creation.
     /// Used when file tasks are created by folder tasks and need to be
-    /// added to the resolve_edges barrier.
+    /// added to a post-processing barrier.
     #[allow(dead_code)]
     pub async fn add_dependency(&self, barrier_task_id: u64, new_dep_id: u64) {
         let mut state = self.inner.lock().await;
@@ -481,7 +481,7 @@ mod tests {
         // completed → unknown) all resolve as expected.
         let state = state_with(
             vec![task_with(11, TaskKind::ProcessFile)],
-            vec![task_with(22, TaskKind::ResolveEdges)],
+            vec![task_with(22, TaskKind::BuildConnections)],
             vec![task_with(33, TaskKind::ProcessGitFolder)],
         );
         let summary = blocker_summary(&state, &[11, 22, 33, 99]);
@@ -489,7 +489,7 @@ mod tests {
             summary,
             vec![
                 "11:process_file".to_string(),
-                "22:resolve_edges".to_string(),
+                "22:build_connections".to_string(),
                 "33:process_git_folder".to_string(),
                 "99:?".to_string(),
             ],
@@ -524,7 +524,7 @@ mod tests {
 
         // Enqueue barrier that depends on both
         let barrier = q.enqueue(
-            Task::new(TaskKind::ResolveEdges, "repo", "")
+            Task::new(TaskKind::BuildConnections, "repo", "")
                 .blocked_by(vec![f1, f2])
         ).await;
 
@@ -553,7 +553,7 @@ mod tests {
         // Can dequeue barrier
         let bt = q.next_task().await;
         assert_eq!(bt.id, barrier);
-        assert_eq!(bt.kind, TaskKind::ResolveEdges);
+        assert_eq!(bt.kind, TaskKind::BuildConnections);
     }
 
     #[tokio::test]
@@ -562,7 +562,7 @@ mod tests {
 
         // Create barrier first with no deps
         let barrier = q.enqueue(
-            Task::new(TaskKind::ResolveEdges, "repo", "").blocked_by(vec![])
+            Task::new(TaskKind::BuildConnections, "repo", "").blocked_by(vec![])
         ).await;
 
         // Barrier starts as Pending (no deps)
@@ -580,7 +580,7 @@ mod tests {
         let q = TaskQueue::new();
         let f1 = q.enqueue(Task::new(TaskKind::ProcessFile, "repo", "a.ts")).await;
         let _barrier = q.enqueue(
-            Task::new(TaskKind::ResolveEdges, "repo", "").blocked_by(vec![f1])
+            Task::new(TaskKind::BuildConnections, "repo", "").blocked_by(vec![f1])
         ).await;
 
         let t = q.next_task().await;

@@ -1,9 +1,11 @@
 //! Hierarchical task queue for scanning, indexing, and watching.
 //!
 //! Tasks form a dependency tree:
-//!   scan_root → process_git_folder → process_folder → process_file → resolve_edges → build_connections
+//!   scan_root → process_git_folder → process_folder → process_file → resolve_libs → build_connections → detect_communities
 //!
-//! Barrier tasks (resolve_edges, build_connections) wait for all dependencies to complete.
+//! FQN call/import edges resolve to their target node AT EMIT (Phase 7.1), so
+//! there is no `resolve_edges` pass. Barrier tasks (resolve_libs,
+//! build_connections, detect_communities) wait for all dependencies to complete.
 
 pub mod queue;
 pub mod executor;
@@ -44,7 +46,6 @@ pub enum TaskKind {
     ProcessFile,
     DeleteFile,
     DeleteFolder,
-    ResolveEdges,
     ResolveLibs,
     ImportLib,
     BranchSwitch,
@@ -133,7 +134,6 @@ impl std::fmt::Display for TaskKind {
             Self::ProcessFile => write!(f, "process_file"),
             Self::DeleteFile => write!(f, "delete_file"),
             Self::DeleteFolder => write!(f, "delete_folder"),
-            Self::ResolveEdges => write!(f, "resolve_edges"),
             Self::ResolveLibs => write!(f, "resolve_libs"),
             Self::ImportLib => write!(f, "import_lib"),
             Self::BranchSwitch => write!(f, "branch_switch"),
@@ -210,7 +210,6 @@ impl TaskKind {
             // tasks can legitimately run for minutes on a large repository.
             TaskKind::ScanRoot
             | TaskKind::ProcessGitFolder
-            | TaskKind::ResolveEdges
             | TaskKind::ResolveLibs
             | TaskKind::ImportLib
             | TaskKind::BuildConnections
@@ -357,7 +356,7 @@ impl Task {
 
     #[allow(dead_code)]
     pub fn is_barrier(&self) -> bool {
-        matches!(self.kind, TaskKind::ResolveEdges | TaskKind::ResolveLibs | TaskKind::BuildConnections)
+        matches!(self.kind, TaskKind::ResolveLibs | TaskKind::BuildConnections)
     }
 }
 
@@ -379,7 +378,7 @@ mod tests {
 
     #[test]
     fn blocked_task() {
-        let t = Task::new(TaskKind::ResolveEdges, "/code/myrepo", "/code/myrepo")
+        let t = Task::new(TaskKind::BuildConnections, "/code/myrepo", "/code/myrepo")
             .blocked_by(vec![1, 2, 3]);
         assert_eq!(t.status, TaskStatus::Blocked);
         assert!(!t.is_runnable());
@@ -436,7 +435,7 @@ mod tests {
     fn task_kind_display() {
         assert_eq!(TaskKind::ScanRoot.to_string(), "scan_root");
         assert_eq!(TaskKind::ProcessFile.to_string(), "process_file");
-        assert_eq!(TaskKind::ResolveEdges.to_string(), "resolve_edges");
+        assert_eq!(TaskKind::ResolveLibs.to_string(), "resolve_libs");
         assert_eq!(TaskKind::IndexLibrary.to_string(), "index_library");
         assert_eq!(TaskKind::IndexLibraryPage.to_string(), "index_library_page");
         assert_eq!(TaskKind::DetectCommunities.to_string(), "detect_communities");
@@ -456,7 +455,7 @@ mod tests {
         let long = std::time::Duration::from_secs(600);
         assert_eq!(TaskKind::ProcessFile.watchdog_timeout(), short);
         assert_eq!(TaskKind::DeleteFile.watchdog_timeout(), short);
-        assert_eq!(TaskKind::ResolveEdges.watchdog_timeout(), long);
+        assert_eq!(TaskKind::ResolveLibs.watchdog_timeout(), long);
         assert_eq!(TaskKind::EmbedNodes.watchdog_timeout(), long);
         assert_eq!(TaskKind::ScanRoot.watchdog_timeout(), long);
         assert_eq!(TaskKind::ScanDocDrift.watchdog_timeout(), long);
@@ -464,7 +463,7 @@ mod tests {
         for k in [
             TaskKind::ScanRoot, TaskKind::ProcessGitFolder, TaskKind::ProcessFolder,
             TaskKind::ProcessFile, TaskKind::DeleteFile, TaskKind::DeleteFolder,
-            TaskKind::ResolveEdges, TaskKind::ResolveLibs, TaskKind::ImportLib,
+            TaskKind::ResolveLibs, TaskKind::ImportLib,
             TaskKind::BranchSwitch, TaskKind::BuildConnections,
             TaskKind::EmbedNodes, TaskKind::IndexLibrary, TaskKind::IndexLibraryPage,
             TaskKind::DetectCommunities, TaskKind::ExtractDeps, TaskKind::MeasureVerdicts,

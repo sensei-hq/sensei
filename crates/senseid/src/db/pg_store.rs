@@ -2021,9 +2021,9 @@ impl PgStore {
     /// the edge is already gone) we delete this now-redundant unresolved edge.
     ///
     /// The guard-then-delete is not one transaction, which is safe under the
-    /// single-writer-per-folder invariant (W5/D6e): `resolve_edges` runs as one
-    /// barrier task per folder and calls this sequentially, and the unique index
-    /// is folder-scoped — so no concurrent resolve can race the `NOT EXISTS`.
+    /// single-writer-per-folder invariant (W5/D6e): a folder's graph writes run as
+    /// one barrier task at a time and the unique index is folder-scoped — so no
+    /// concurrent resolve can race the `NOT EXISTS`.
     pub async fn resolve_edge(&self, edge_id: &uuid::Uuid, target_id: &uuid::Uuid) -> Result<(), String> {
         let res = sqlx_core::query::query(
             "UPDATE sensei.edges e
@@ -2089,10 +2089,11 @@ impl PgStore {
     /// Prune a file's nodes that vanished from the latest parse (D3 upsert-then-
     /// prune): every node for `(folder, file_path)` whose id is NOT in `kept_ids`.
     /// First unresolve inbound edges pointing at them (clear `target_id`, KEEP
-    /// `target_name` so `resolve_edges` can re-point them if the symbol
-    /// reappears — invariant 3), then delete the nodes (their out-edges cascade
-    /// via the `source_id` FK). One transaction. Returns nodes pruned. An empty
-    /// `kept_ids` prunes ALL of the file's nodes (nothing survived the parse).
+    /// `target_name` as an honest unresolved residual — the caller re-emits a
+    /// resolved FQN edge when it is next processed, and a full reindex heals it;
+    /// Phase 7.1 retired the `resolve_edges` re-point pass), then delete the nodes
+    /// (their out-edges cascade via the `source_id` FK). One transaction. Returns
+    /// nodes pruned. An empty `kept_ids` prunes ALL of the file's nodes.
     pub async fn prune_file_nodes(
         &self, folder_id: &uuid::Uuid, file_path: &str, kept_ids: &[uuid::Uuid],
     ) -> Result<u64, String> {
@@ -2132,8 +2133,9 @@ impl PgStore {
     /// Un-resolve edges that point INTO a file's nodes: clear `target_id` while
     /// keeping `target_name`. Called before re-indexing a changed file so the
     /// inbound cross-file edges survive (they'd otherwise be cascade-deleted when
-    /// the target nodes are dropped) and are re-pointed by `resolve_edges` once
-    /// the file's new nodes exist. Returns the number of edges un-resolved.
+    /// the target nodes are dropped). They become an honest unresolved residual,
+    /// re-pointed when the calling file is next processed (FQN edges resolve at
+    /// emit — Phase 7.1 retired the resolve_edges pass). Returns edges un-resolved.
     pub async fn unresolve_edges_to_file(&self, folder_id: &uuid::Uuid, file_path: &str) -> Result<u64, String> {
         let res = sqlx_core::query::query(
             "UPDATE sensei.edges SET target_id = NULL, modified_at = now()
@@ -2999,7 +3001,8 @@ impl PgStore {
 
     /// Recompute `nodes.degree` for every node in a folder (D4.5) — the in+out
     /// count of edges incident to the node (source, plus resolved target). Run at
-    /// the `ResolveEdges` barrier so degree is fresh before `DetectCommunities`
+    /// the start of the `DetectCommunities` terminal barrier (Phase 7.1 moved it
+    /// there from the retired `ResolveEdges` pass) so degree is fresh before it
     /// ranks each community's god nodes. Edgeless nodes are set to 0 (not left
     /// stale/NULL), so a symbol that lost its last edge on a re-scan reflects it.
     pub async fn recompute_degrees_for_folder(&self, folder_id: &uuid::Uuid) -> Result<(), String> {
@@ -9535,22 +9538,6 @@ impl PgStore {
         }).collect())
     }
 
-    /// Unresolved edges (target_id NULL, target_name set) joined to their SOURCE
-    /// node's `language` — so the bare-name fallback (plan 0.8) can match a name
-    /// only among same-language candidates and never cross-contaminate a
-    /// co-resident un-migrated language.
-    pub async fn unresolved_edges_scoped(&self, folder_id: &uuid::Uuid) -> Result<Vec<serde_json::Value>, String> {
-        let rows: Vec<(uuid::Uuid, uuid::Uuid, Option<String>, String, Option<String>)> = sqlx_core::query_as::query_as(
-            "SELECT e.id, e.source_id, e.target_name, e.kind::text, sn.language
-               FROM sensei.edges e
-               JOIN sensei.nodes sn ON sn.id = e.source_id
-              WHERE e.folder_id = $1 AND e.target_id IS NULL AND e.target_name IS NOT NULL"
-        ).bind(folder_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
-        Ok(rows.into_iter().map(|(id, src, tgt_name, kind, src_lang)| {
-            serde_json::json!({ "id": id, "source_id": src, "target_name": tgt_name, "kind": kind, "source_language": src_lang })
-        }).collect())
-    }
-
     /// Execute a raw SQL statement.
     pub async fn execute_raw(&self, sql: &str) -> Result<(), String> {
         sqlx_core::query::query(sql)
@@ -12030,8 +12017,7 @@ mod tests {
 
     #[tokio::test]
     async fn resolve_edge_second_call_is_safe() {
-        // resolve_edges loops over unresolved edges every scan, so an already-
-        // resolved edge can be re-fed. Resolving the same edge to the same target
+        // resolve_edge is idempotent: resolving the same edge to the same target
         // twice must be a safe no-op (one edge), not a unique-violation throw.
         let s = pg_store().await;
         let fid = create_test_folder(&s, &format!("resolve2x_{}", uuid::Uuid::new_v4())).await;
