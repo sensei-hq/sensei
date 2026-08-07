@@ -54,8 +54,19 @@ structure (D5c) + community-determinism guard` → `6 per-language rollout` →
     — the **trait qualifier disambiguates** `Display::fmt` vs `Debug::fmt` on the
     same `Foo` (must-fix #6: otherwise the FQN re-collapses the exact bug we fix).
   - lib symbol: `lib·<package>·<path>·<member>`.
-  `package` = crate name (Rust), npm/pnpm package (TS), top module (Python).
-  `module-path` = the `::`/`.`-joined module chain within the package.
+  **`package` derivation (decided — critical for the monorepo case).** Because
+  identity is folder-scoped and a monorepo's crates ALL share the repo-root
+  `folder_id` (sensei's `crates/senseid|cli|mcp|…` are one `ProcessGitFolder`),
+  `folder_id` does NOT disambiguate crates — the **`package` segment must**. Derive
+  it per-file from the **nearest package manifest**: Rust → nearest `Cargo.toml`'s
+  `[package].name`; TS → nearest `package.json`'s `name`; Python → the top
+  package. So `crates/senseid/src/x.rs::ManifestAdapter::parse` →
+  `rust·senseid·…·ManifestAdapter·parse` and `crates/cli/src/y.rs`'s
+  `ManifestAdapter::parse` → `rust·sensei-cli·…` — distinct, no false merge. The
+  processor resolves each file's owning manifest (crate root) once and passes
+  package + crate-relative `module-path` to the FQN producer.
+  `module-path` = the `::`/`.`-joined module chain **relative to the crate's src
+  root** (so it's stable regardless of the repo layout).
   **Anchoring rule (cross-file consistency — critical):** a **method**'s
   `<module-path>·<Type>` is the **type's canonical definition location**, resolved
   from the `impl`/class's `Self` type — NOT the file the `impl` block lives in. So
@@ -142,8 +153,25 @@ same-language fallback filter — all concrete, zero remaining forks.
 - [ ] **1.3 Failing test** `lib_node_by_fqn`: an external fqn get-or-creates a
   `lib_symbol` node (`resolved=true`, NULL file, `props.package`) under the repo
   folder; stable id across refs. FAIL → implement. PASS.
-- [ ] **1.4** Green. Commit `feat(senseid): FQN node identity (folder-scoped) +
-  upsert_node_by_fqn get-or-create + lib nodes`.
+- [ ] **1.4 Nullable-`file_path` query audit (new-gap B).** Making `file_path`
+  nullable breaks every typed query that decodes it into a non-`Option String` —
+  confirmed at `PgStore::node_locations` (`pg_store.rs:1650-1667`), and ~30 other
+  node-tuple queries. **Failing test** `node_locations_tolerates_stub_rows`: a stub
+  (NULL file_path) among the ids doesn't error the whole `fetch_all`. FAIL → audit
+  every `nodes`-selecting typed query for `file_path`/`line_start`/`line_end`
+  columns now nullable; decode as `Option<_>` (or exclude stubs where a location is
+  required — e.g. `WHERE file_path IS NOT NULL`). PASS.
+- [ ] **1.5 Legacy `language` write path (new-gap C).** `nodes.language` must be
+  populated on the LEGACY `upsert_node`/`upsert_node_ex` path too (all non-Rust +
+  file/section/rationale nodes flow through it for the whole transition), or 0.8's
+  same-language fallback filter has nothing to match on. **Failing test**
+  `legacy_upsert_sets_language_from_extension`: a node written via `upsert_node`
+  gets `language` derived from its `file_path` extension. FAIL → set `language` at
+  the `upsert_node_ex` layer (derive from `file_path` ext) so both write paths
+  populate it. PASS.
+- [ ] **1.6** Green. Commit `feat(senseid): FQN node identity (folder-scoped) +
+  upsert_node_by_fqn get-or-create + lib nodes; nullable-file_path-safe reads +
+  language on all write paths`.
 
 **Acceptance:** a ref and a def with the same fqn resolve to one node; stub→
 enriched in place; lib fqns get lib nodes; both unique indexes coexist.
@@ -183,6 +211,13 @@ have no qualified path; symbols flat (`process.rs:870-874` parents to file node)
   (the type's home module, per the 0.1 anchoring rule), and a reference
   `Widget::m()` from a third file resolves to the SAME node (merge, not a stub).
   PASS.
+- [ ] **2.6c Failing test** `rust_package_boundary_disambiguates` (new-gap A —
+  the monorepo false-merge): two sibling crates under ONE repo `folder_id` (e.g.
+  `crates/senseid` + `crates/cli`), each defining `impl ManifestAdapter { fn parse }`
+  → TWO distinct fqns (`rust·senseid·…·ManifestAdapter·parse` vs
+  `rust·sensei-cli·…`), because `package` is resolved from each file's nearest
+  `Cargo.toml` `[package].name` (0.1). FAIL → implement per-file crate-root/package
+  resolution feeding the producer. PASS.
 - [ ] **2.7** Green. Commit `feat(senseid): Rust FQN producer — def + ref name
   resolution (bounded binding→type, trait-qualified)`.
 
