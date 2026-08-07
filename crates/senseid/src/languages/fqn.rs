@@ -36,6 +36,10 @@ pub struct FqnDefinition {
     pub docstring: Option<String>,
     /// Enclosing type name for a method (e.g. `Widget` for `Widget::new`).
     pub parent_type: Option<String>,
+    /// FQN of this def's STRUCTURAL parent (D5c): a method's enclosing TYPE, so
+    /// the emit path nests it under the type node (not the flat file node). `None`
+    /// for a top-level item, which nests under the file's module container.
+    pub parent_fqn: Option<String>,
 }
 
 /// A reference (call-site) resolved to a target FQN. `target_fqn = None` means the
@@ -59,6 +63,11 @@ pub struct FqnReference {
 pub struct FqnFileOutput {
     pub defs: Vec<FqnDefinition>,
     pub refs: Vec<FqnReference>,
+    /// The owning crate/package (for the D5c module container's fqn).
+    pub package: String,
+    /// This file's crate-relative module path (empty at the crate root). The emit
+    /// path materialises a `module` container node for it, nested under the file.
+    pub module: String,
 }
 
 /// Per-file context a producer needs: the owning crate/package name (from the
