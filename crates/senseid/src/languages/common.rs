@@ -68,6 +68,34 @@ pub fn extract_script_blocks(source: &str) -> Vec<(String, u32, bool)> {
     blocks
 }
 
+/// FQN output for a single-file component (Svelte/Vue): the `<script>` blocks are
+/// TypeScript, so run the TS producer on each block and offset every def/ref line by
+/// the block's position in the file. The component's module is its file path (a
+/// `.svelte`/`.vue` file is one module), so `.ts`↔SFC imports merge in the shared
+/// `typescript` namespace. Returns None with no resolvable package (no package.json).
+pub(crate) fn sfc_fqn_output(abs_path: &str, content: &str) -> Option<crate::languages::fqn::FqnFileOutput> {
+    use crate::languages::typescript::typescript_fqn;
+    let ctx = typescript_fqn::ts_file_context(abs_path)?;
+    let mut out = crate::languages::fqn::FqnFileOutput {
+        package: ctx.package.clone(),
+        module: ctx.module.clone(),
+        ..Default::default()
+    };
+    for (script, offset, _is_ts) in extract_script_blocks(content) {
+        let sub = typescript_fqn::produce_fqns(&script, &ctx);
+        out.defs.extend(sub.defs.into_iter().map(|mut d| {
+            d.line_start += offset;
+            d.line_end += offset;
+            d
+        }));
+        out.refs.extend(sub.refs.into_iter().map(|mut r| {
+            r.caller_line += offset;
+            r
+        }));
+    }
+    Some(out)
+}
+
 // ── IR helpers ──────────────────────────────────────────────────────────────
 
 /// Build an IRFunction from common fields. Used by all adapters.
