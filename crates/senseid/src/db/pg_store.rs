@@ -10160,11 +10160,14 @@ impl PgStore {
         // file_path is Option: reference stubs + lib_symbol nodes have none. The
         // whole-graph projection must decode them without erroring (they serialize
         // to a null file_path); NULLs sort last under ORDER BY file_path.
-        let rows: Vec<(uuid::Uuid, String, String, Option<String>, Option<uuid::Uuid>, Option<i32>, Option<i32>, Option<i32>, Option<i32>, uuid::Uuid, Option<String>)> = sqlx_core::query_as::query_as(
-            "SELECT id, kind::text, name, file_path, parent_id, line_start, line_end, degree, community_id, folder_id, language FROM sensei.nodes WHERE folder_id = ANY($1) ORDER BY file_path, line_start, parent_id, id"
+        // `fqn`/`resolved` are projected (7.2) so the Atlas can key symbols by
+        // moniker and distinguish enriched defs from reference stubs. `fqn` is NULL
+        // for pre-FQN/legacy rows; `resolved` is NOT NULL (defaults false).
+        let rows: Vec<(uuid::Uuid, String, String, Option<String>, Option<uuid::Uuid>, Option<i32>, Option<i32>, Option<i32>, Option<i32>, uuid::Uuid, Option<String>, Option<String>, bool)> = sqlx_core::query_as::query_as(
+            "SELECT id, kind::text, name, file_path, parent_id, line_start, line_end, degree, community_id, folder_id, language, fqn, resolved FROM sensei.nodes WHERE folder_id = ANY($1) ORDER BY file_path, line_start, parent_id, id"
         ).bind(folder_ids).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
-        Ok(rows.into_iter().map(|(id, kind, name, fp, pid, ls, le, degree, community_id, folder_id, language)| {
-            serde_json::json!({ "id": id, "kind": kind, "name": name, "file_path": fp, "parent_id": pid, "line_start": ls, "line_end": le, "degree": degree, "community_id": community_id, "folder_id": folder_id, "language": language })
+        Ok(rows.into_iter().map(|(id, kind, name, fp, pid, ls, le, degree, community_id, folder_id, language, fqn, resolved)| {
+            serde_json::json!({ "id": id, "kind": kind, "name": name, "file_path": fp, "parent_id": pid, "line_start": ls, "line_end": le, "degree": degree, "community_id": community_id, "folder_id": folder_id, "language": language, "fqn": fqn, "resolved": resolved })
         }).collect())
     }
 
@@ -11784,6 +11787,45 @@ mod tests {
             "SELECT count(*) FROM sensei.nodes WHERE folder_id=$1 AND kind='lib_symbol'::sensei.node_kind")
             .bind(fid).fetch_one(s.pool()).await.unwrap();
         assert_eq!(n, 1);
+
+        s.delete_nodes_by_folder(&fid).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn graph_nodes_and_tree_expose_fqn_and_containers() {
+        // Phase 7.2: the graph/nodes projection (get_nodes_scoped) carries `fqn` +
+        // `resolved` so the Atlas can key symbols by moniker, and /tree (build_tree)
+        // nests the Phase-5 type/module containers (file → type → method) via
+        // parent_id. These are the two projections the retrieval endpoints delegate to.
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, &format!("retr_{}", uuid::Uuid::new_v4())).await;
+
+        // file → struct container → method(fqn), nested by parent_id (Phase 5 shape).
+        let file_id = s.upsert_node(&fid, "file", "lib.rs", "src/lib.rs", None, None, Some(1), Some(9)).await.unwrap();
+        let type_id = s.upsert_node(&fid, "struct", "Widget", "src/lib.rs", Some(&file_id), Some("struct Widget"), Some(2), Some(6)).await.unwrap();
+        let method_fqn = "rust·pkg·lib·Widget·render";
+        let method_id = s.upsert_node_by_fqn(&fid, method_fqn, "method", "render", Some("rust"),
+            Some(super::FqnDef { file_path: "src/lib.rs", signature: Some("fn render(&self)"),
+                line_start: Some(3), line_end: Some(5), is_exported: true, parent_id: Some(&type_id) })).await.unwrap();
+
+        // ── graph/nodes exposes fqn + resolved ──
+        let nodes = s.get_nodes_scoped(&[fid]).await.unwrap();
+        let method = nodes.iter().find(|n| n["name"] == "render").expect("method node in projection");
+        assert_eq!(crate::api::util::json_uuid(&method["id"]), Some(method_id), "same method node");
+        assert_eq!(method["fqn"].as_str(), Some(method_fqn), "get_nodes_scoped projects the node's fqn");
+        assert_eq!(method["resolved"].as_bool(), Some(true), "and its resolved flag");
+
+        // ── /tree nests the type container → method (Phase 5 parent_id) ──
+        let folders = s.get_folders_scoped(&[fid]).await.unwrap();
+        let tree = crate::api::handlers::codebase::build_tree_pub(&folders, &nodes);
+        let files = tree["tree"][0]["nodes"].as_array().expect("folder root nodes");
+        let file = files.iter().find(|n| n["name"] == "lib.rs").expect("file node under folder");
+        let widget = file["children"].as_array().unwrap().iter()
+            .find(|n| n["name"] == "Widget").expect("type container nested under file");
+        assert_eq!(widget["kind"], "struct", "the type container carries its kind");
+        let render = widget["children"].as_array().unwrap().iter()
+            .find(|n| n["name"] == "render").expect("method nested under the type container");
+        assert_eq!(render["kind"], "method", "the method nests under the type container (Phase 5)");
 
         s.delete_nodes_by_folder(&fid).await.unwrap();
     }
