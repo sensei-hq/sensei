@@ -864,15 +864,39 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
         // line_start) so call edges can be sourced from the caller node — not the
         // file. Keyed on line because same-named methods across impl blocks are
         // legal in Rust.
+        // The Rust FQN path (result.fqn) get-or-creates each symbol node keyed on
+        // its canonical FQN — so a definition and every reference to it share one
+        // node — via `upsert_node_by_fqn`. Every other language keeps the line-based
+        // bare-name path (`upsert_node_ex`). `fqn_ids` maps fqn→id for edge sourcing.
         let mut sym_ids: std::collections::HashMap<(String, i32), uuid::Uuid> =
             std::collections::HashMap::new();
-        for sym in &result.symbols {
-            let id = ctx.pg().upsert_node_ex(
-                &folder_id, &sym.kind, &sym.name, &result.rel_path,
-                Some(&file_node_id), sym.signature.as_deref(),
-                Some(sym.line as i32), Some(sym.line_end as i32), sym.is_exported,
-            ).await.map_err(|e| format!("upsert symbol node {}: {e}", sym.name))?;
-            sym_ids.insert((sym.name.clone(), sym.line as i32), id);
+        let mut fqn_ids: std::collections::HashMap<String, uuid::Uuid> =
+            std::collections::HashMap::new();
+        if let Some(fqn_out) = &result.fqn {
+            for d in &fqn_out.defs {
+                let kind = crate::types::NodeKind::from_symbol_kind(&d.kind);
+                let id = ctx.pg().upsert_node_by_fqn(
+                    &folder_id, &d.fqn, kind.as_str(), &d.name, Some("rust"),
+                    Some(crate::db::pg_store::FqnDef {
+                        file_path: &result.rel_path,
+                        signature: d.signature.as_deref(),
+                        line_start: Some(d.line_start as i32),
+                        line_end: Some(d.line_end as i32),
+                        is_exported: d.is_exported,
+                        parent_id: Some(&file_node_id),
+                    }),
+                ).await.map_err(|e| format!("upsert fqn def {}: {e}", d.fqn))?;
+                fqn_ids.insert(d.fqn.clone(), id);
+            }
+        } else {
+            for sym in &result.symbols {
+                let id = ctx.pg().upsert_node_ex(
+                    &folder_id, &sym.kind, &sym.name, &result.rel_path,
+                    Some(&file_node_id), sym.signature.as_deref(),
+                    Some(sym.line as i32), Some(sym.line_end as i32), sym.is_exported,
+                ).await.map_err(|e| format!("upsert symbol node {}: {e}", sym.name))?;
+                sym_ids.insert((sym.name.clone(), sym.line as i32), id);
+            }
         }
 
         // D5b: nested doc `section` nodes (file → H1 → H2 → H3). Identity is the
@@ -946,6 +970,7 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
         // survives.
         let kept: Vec<uuid::Uuid> = std::iter::once(file_node_id)
             .chain(sym_ids.values().copied())
+            .chain(fqn_ids.values().copied())
             .chain(section_ids.iter().copied())
             .chain(rationale_ids.iter().copied())
             .collect();
@@ -969,15 +994,48 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
                 .map_err(|e| format!("insert_edge (imports): {e}"))?;
         }
 
-        // Unresolved call edges, sourced from the caller function node (falling
-        // back to the file node when the call has no enclosing named symbol).
-        for call in &result.unresolved_calls {
-            let source = sym_ids
-                .get(&(call.caller_name.clone(), call.caller_line as i32))
-                .copied()
-                .unwrap_or(file_node_id);
-            ctx.pg().insert_edge(&folder_id, &source, None, Some(&call.callee_name), None, "calls").await
-                .map_err(|e| format!("insert_edge (calls): {e}"))?;
+        // Call edges. The Rust FQN path emits RESOLVED node→node edges AT EMIT: the
+        // target is get-or-created by FQN (a stub if its definition isn't indexed
+        // yet — enriched later, keeping the same id; a `lib_symbol` for an external
+        // crate). An out-of-0.7 receiver (unresolvable) keeps a bare-name edge for
+        // the language-scoped fallback (3.3). Other languages keep the fully
+        // bare-name path (resolved later by resolve_edges).
+        if let Some(fqn_out) = &result.fqn {
+            for r in &fqn_out.refs {
+                let source = fqn_ids.get(&r.caller_fqn).copied().unwrap_or(file_node_id);
+                match &r.target_fqn {
+                    Some(tf) if r.is_lib => {
+                        let pkg = tf.split('·').nth(1).unwrap_or("");
+                        let tid = ctx.pg().upsert_lib_node_by_fqn(&folder_id, tf, &r.target_name, pkg).await
+                            .map_err(|e| format!("upsert lib node {tf}: {e}"))?;
+                        ctx.pg().insert_edge(&folder_id, &source, Some(&tid), None, None, "calls").await
+                            .map_err(|e| format!("insert_edge (fqn call, lib): {e}"))?;
+                    }
+                    Some(tf) => {
+                        // Target defined in THIS file → reuse its id; else get-or-create a stub.
+                        let tid = match fqn_ids.get(tf) {
+                            Some(id) => *id,
+                            None => ctx.pg().upsert_node_by_fqn(&folder_id, tf, "function", &r.target_name, Some("rust"), None).await
+                                .map_err(|e| format!("upsert fqn target {tf}: {e}"))?,
+                        };
+                        ctx.pg().insert_edge(&folder_id, &source, Some(&tid), None, None, "calls").await
+                            .map_err(|e| format!("insert_edge (fqn call): {e}"))?;
+                    }
+                    None => {
+                        ctx.pg().insert_edge(&folder_id, &source, None, Some(&r.target_name), None, "calls").await
+                            .map_err(|e| format!("insert_edge (fqn call, unresolved): {e}"))?;
+                    }
+                }
+            }
+        } else {
+            for call in &result.unresolved_calls {
+                let source = sym_ids
+                    .get(&(call.caller_name.clone(), call.caller_line as i32))
+                    .copied()
+                    .unwrap_or(file_node_id);
+                ctx.pg().insert_edge(&folder_id, &source, None, Some(&call.callee_name), None, "calls").await
+                    .map_err(|e| format!("insert_edge (calls): {e}"))?;
+            }
         }
 
         // Parent refs (HAS_METHOD: type → method).
@@ -1315,6 +1373,160 @@ mod tests {
     /// Register a repo folder on disk + in the DB, mark it `indexing`, and
     /// return (watch_root_id, folder_id, repo_abs_path). Mirrors what
     /// scan_root/process_git_folder set up before ProcessFile runs.
+    #[tokio::test]
+    async fn process_file_rust_emits_fqn_nodes_and_resolved_edges() {
+        // Phase 3.1: a Rust file with a resolvable crate context goes through the
+        // FQN path — defs get-or-created by fqn (language='rust'), call edges
+        // resolved to their target node AT EMIT (no resolve_edges run).
+        let ctx = make_ctx().await;
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("fqncrate");
+        std::fs::create_dir_all(repo.join("src")).unwrap();
+        std::fs::write(repo.join("Cargo.toml"), "[package]\nname = \"fqncrate\"\n").unwrap();
+        std::fs::write(
+            repo.join("src/lib.rs"),
+            "pub fn compute() -> i32 { helper() + 1 }\npub fn helper() -> i32 { 41 }\n",
+        ).unwrap();
+        let repo_path = repo.to_string_lossy().to_string();
+
+        let rid = ctx.pg().add_watch_root(&tmp.path().to_string_lossy(), "fqn", &serde_json::json!([])).await.unwrap();
+        let fid = ctx.pg().upsert_repo_kind(&rid, "git", "fqncrate", &repo_path).await.unwrap();
+        ctx.pg().update_folder_status(&fid, "indexing").await.unwrap();
+
+        // Process ONLY the file — deliberately NO resolve_edges. Edges must be
+        // resolved at emit for this to pass.
+        let abs = repo.join("src/lib.rs").to_string_lossy().to_string();
+        process_file(&ctx, &Task::new(TaskKind::ProcessFile, &repo_path, &abs)).await.unwrap();
+
+        // Defs carry their canonical fqn + language.
+        let (compute_id, compute_fqn, compute_lang): (uuid::Uuid, Option<String>, Option<String>) =
+            sqlx_core::query_as::query_as(
+                "SELECT id, fqn, language FROM sensei.nodes WHERE folder_id=$1 AND name='compute' AND kind='function'::sensei.node_kind")
+            .bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
+        assert_eq!(compute_fqn.as_deref(), Some("rust·fqncrate·compute"));
+        assert_eq!(compute_lang.as_deref(), Some("rust"));
+        let (helper_id, helper_fqn): (uuid::Uuid, Option<String>) =
+            sqlx_core::query_as::query_as(
+                "SELECT id, fqn FROM sensei.nodes WHERE folder_id=$1 AND name='helper' AND kind='function'::sensei.node_kind")
+            .bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
+        assert_eq!(helper_fqn.as_deref(), Some("rust·fqncrate·helper"));
+
+        // compute → helper resolves to the FQN target node AT EMIT.
+        let (target,): (Option<uuid::Uuid>,) = sqlx_core::query_as::query_as(
+            "SELECT target_id FROM sensei.edges WHERE folder_id=$1 AND source_id=$2 AND kind='calls'::sensei.edge_kind")
+            .bind(fid).bind(compute_id).fetch_one(ctx.pg().pool()).await.unwrap();
+        assert_eq!(target, Some(helper_id), "compute→helper resolves to the FQN target at emit (no resolve_edges)");
+
+        // No bare-name 'calls' residue for this file — the helper() call is resolved.
+        let (unresolved,): (i64,) = sqlx_core::query_as::query_as(
+            "SELECT count(*) FROM sensei.edges WHERE folder_id=$1 AND kind='calls'::sensei.edge_kind AND target_id IS NULL")
+            .bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
+        assert_eq!(unresolved, 0, "the helper() call is resolved at emit, not left bare");
+
+        ctx.pg().delete_nodes_by_folder(&fid).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn rust_call_before_def_creates_stub_then_enriched() {
+        // Phase 3.2: process the CALLER first — its target is a get-or-created stub
+        // (resolved=false, NULL file), and the edge is already resolved to it. Then
+        // process the callee's file — the SAME node is enriched in place (stable id),
+        // and the edge still points to it. Order-independent resolution.
+        let ctx = make_ctx().await;
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("twofile");
+        std::fs::create_dir_all(repo.join("src")).unwrap();
+        std::fs::write(repo.join("Cargo.toml"), "[package]\nname = \"twofile\"\n").unwrap();
+        std::fs::write(repo.join("src/caller.rs"), "use crate::callee::run;\npub fn drive() { run(); }\n").unwrap();
+        std::fs::write(repo.join("src/callee.rs"), "pub fn run() -> i32 { 7 }\n").unwrap();
+        let repo_path = repo.to_string_lossy().to_string();
+        let rid = ctx.pg().add_watch_root(&tmp.path().to_string_lossy(), "twofile", &serde_json::json!([])).await.unwrap();
+        let fid = ctx.pg().upsert_repo_kind(&rid, "git", "twofile", &repo_path).await.unwrap();
+        ctx.pg().update_folder_status(&fid, "indexing").await.unwrap();
+
+        // Caller first.
+        let abs_caller = repo.join("src/caller.rs").to_string_lossy().to_string();
+        process_file(&ctx, &Task::new(TaskKind::ProcessFile, &repo_path, &abs_caller)).await.unwrap();
+
+        // `run` is a STUB awaiting its definition.
+        let (run_id, run_resolved, run_file): (uuid::Uuid, bool, Option<String>) = sqlx_core::query_as::query_as(
+            "SELECT id, resolved, file_path FROM sensei.nodes WHERE folder_id=$1 AND fqn='rust·twofile·callee·run'")
+            .bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
+        assert!(!run_resolved, "callee target is an unresolved stub before its def is indexed");
+        assert_eq!(run_file, None, "a stub has no file");
+
+        // The call edge already resolves to the stub node.
+        let (drive_id,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "SELECT id FROM sensei.nodes WHERE folder_id=$1 AND fqn='rust·twofile·caller·drive'")
+            .bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
+        let (tid,): (Option<uuid::Uuid>,) = sqlx_core::query_as::query_as(
+            "SELECT target_id FROM sensei.edges WHERE folder_id=$1 AND source_id=$2 AND kind='calls'::sensei.edge_kind")
+            .bind(fid).bind(drive_id).fetch_one(ctx.pg().pool()).await.unwrap();
+        assert_eq!(tid, Some(run_id), "the call edge resolves to the stub node at emit");
+
+        // Now index the callee — the SAME node is enriched.
+        let abs_callee = repo.join("src/callee.rs").to_string_lossy().to_string();
+        process_file(&ctx, &Task::new(TaskKind::ProcessFile, &repo_path, &abs_callee)).await.unwrap();
+
+        let (run_id2, run_resolved2, run_file2): (uuid::Uuid, bool, Option<String>) = sqlx_core::query_as::query_as(
+            "SELECT id, resolved, file_path FROM sensei.nodes WHERE folder_id=$1 AND fqn='rust·twofile·callee·run'")
+            .bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
+        assert_eq!(run_id2, run_id, "the definition enriches the SAME node (stable id)");
+        assert!(run_resolved2, "the node is resolved once its def is seen");
+        assert_eq!(run_file2.as_deref(), Some("src/callee.rs"), "file filled in on enrich");
+
+        // The edge still points to the (now enriched) node.
+        let (tid2,): (Option<uuid::Uuid>,) = sqlx_core::query_as::query_as(
+            "SELECT target_id FROM sensei.edges WHERE folder_id=$1 AND source_id=$2 AND kind='calls'::sensei.edge_kind")
+            .bind(fid).bind(drive_id).fetch_one(ctx.pg().pool()).await.unwrap();
+        assert_eq!(tid2, Some(run_id), "edge still resolved to the enriched node after enrichment");
+
+        ctx.pg().delete_nodes_by_folder(&fid).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn mixed_language_folder_fallback_is_language_scoped() {
+        // Phase 3.3 (plan 0.8): a Rust FQN node `parse` and a Python (bare-name)
+        // call to `parse` in the same folder. The Python fallback resolves to the
+        // PYTHON `parse`, never cross to the Rust one — even though, ignoring
+        // language, both are same-named `parse` defs (which would be ambiguous).
+        let ctx = make_ctx().await;
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("mixed");
+        std::fs::create_dir_all(repo.join("src")).unwrap();
+        std::fs::write(repo.join("Cargo.toml"), "[package]\nname = \"mixed\"\n").unwrap();
+        std::fs::write(repo.join("src/lib.rs"), "pub fn parse() {}\n").unwrap();
+        let repo_path = repo.to_string_lossy().to_string();
+        let rid = ctx.pg().add_watch_root(&tmp.path().to_string_lossy(), "mixed", &serde_json::json!([])).await.unwrap();
+        let fid = ctx.pg().upsert_repo_kind(&rid, "git", "mixed", &repo_path).await.unwrap();
+        ctx.pg().update_folder_status(&fid, "indexing").await.unwrap();
+
+        // Rust `parse` via the FQN emit path (language=rust).
+        let abs_rs = repo.join("src/lib.rs").to_string_lossy().to_string();
+        process_file(&ctx, &Task::new(TaskKind::ProcessFile, &repo_path, &abs_rs)).await.unwrap();
+
+        // The Python (fallback) side: a python `parse` def + a caller whose bare-name
+        // call to `parse` is left unresolved (the python adapter isn't FQN-migrated).
+        let py_parse = ctx.pg().upsert_node(&fid, "function", "parse", "helpers.py", None, Some("def parse()"), Some(1), Some(2)).await.unwrap();
+        let py_caller = ctx.pg().upsert_node(&fid, "function", "use_it", "app.py", None, Some("def use_it()"), Some(1), Some(3)).await.unwrap();
+        let py_edge = ctx.pg().insert_edge(&fid, &py_caller, None, Some("parse"), None, "calls").await.unwrap();
+
+        crate::tasks::handlers::resolve_edges(&ctx, &Task::new(TaskKind::ResolveEdges, &repo_path, &repo_path)).await.unwrap();
+
+        // The Python call resolves to the same-language `parse`, not the Rust node.
+        let (tid,): (Option<uuid::Uuid>,) = sqlx_core::query_as::query_as(
+            "SELECT target_id FROM sensei.edges WHERE id=$1").bind(py_edge).fetch_one(ctx.pg().pool()).await.unwrap();
+        assert_eq!(tid, Some(py_parse), "the Python call resolves to the same-language `parse`, never the Rust node");
+
+        // Control: the Rust `parse` is a distinct rust FQN node.
+        let (rust_lang,): (Option<String>,) = sqlx_core::query_as::query_as(
+            "SELECT language FROM sensei.nodes WHERE folder_id=$1 AND name='parse' AND fqn IS NOT NULL")
+            .bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
+        assert_eq!(rust_lang.as_deref(), Some("rust"));
+
+        ctx.pg().delete_nodes_by_folder(&fid).await.unwrap();
+    }
+
     async fn seed_indexing_repo(ctx: &TaskContext, root: &std::path::Path, name: &str) -> (uuid::Uuid, uuid::Uuid, String) {
         let repo_path = root.join("repo").to_string_lossy().to_string();
         let rid = ctx.pg().add_watch_root(&root.to_string_lossy(), name, &serde_json::json!([])).await.unwrap();

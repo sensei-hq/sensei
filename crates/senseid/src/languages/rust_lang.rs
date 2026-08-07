@@ -634,11 +634,6 @@ fn collect_doc_comments(node: &Node, src: &[u8]) -> Option<String> {
 // stays honest (it resolves to the type's method node, never a wrong trait merge);
 // definitions of trait-impl methods DO carry the trait qualifier so `Display::fmt`
 // and `Debug::fmt` on one type are distinct nodes.
-//
-// `#[allow(dead_code)]`: the producer is the pure engine — reachable from tests
-// today; Phase 3 wires `produce_fqns` into `process_file` (reachable from main),
-// at which point the allow is removed.
-#[allow(dead_code)]
 pub(crate) mod rust_fqn {
     use super::*;
 
