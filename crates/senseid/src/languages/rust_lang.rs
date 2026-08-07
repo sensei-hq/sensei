@@ -1,6 +1,8 @@
 use super::common::field_text;
+use std::collections::{HashMap, HashSet};
 use tree_sitter::{Parser, Node};
 use crate::types::{ParsedFile, ParsedSymbol, ParsedImport, ParsedEdge, SymbolKind};
+use super::fqn::{self, FileFqnContext, FqnDefinition, FqnFileOutput, FqnReference};
 use crate::ir::{IRBase, IRModule, IRFunction, IRClass, IRMethod, IRParam, IRImport, IRConstant, IRParsedFile, ClassKind, Visibility};
 use super::LanguageAdapter;
 
@@ -624,12 +626,622 @@ fn collect_doc_comments(node: &Node, src: &[u8]) -> Option<String> {
     Some(comments.join("\n"))
 }
 
+// ── FQN producer (plan Phase 2) ──────────────────────────────────────────────
+// Pure name resolution: given a Rust source + its (package, module) context,
+// produce a canonical FQN (plan 0.1) for every definition and reference. Phase 3
+// wires this into `upsert_node_by_fqn` emit. References use the INHERENT method
+// form (`…·Type·member`) — a call site can't name the trait, so trait dispatch
+// stays honest (it resolves to the type's method node, never a wrong trait merge);
+// definitions of trait-impl methods DO carry the trait qualifier so `Display::fmt`
+// and `Debug::fmt` on one type are distinct nodes.
+//
+// `#[allow(dead_code)]`: the producer is the pure engine — reachable from tests
+// today; Phase 3 wires `produce_fqns` into `process_file` (reachable from main),
+// at which point the allow is removed.
+#[allow(dead_code)]
+pub(crate) mod rust_fqn {
+    use super::*;
+
+    const RUST_LANG: &str = "rust";
+
+/// Enclosing `impl` while walking: the Self type, its resolved canonical module
+/// (the anchoring rule — a method anchors on where its TYPE is defined, not the
+/// impl file), and the trait for a trait-impl (`impl Trait for Type`).
+struct ImplCtx {
+    type_name: String,
+    type_module: String,
+    trait_name: Option<String>,
+}
+
+/// File-level symbol context gathered in pass 1.
+#[derive(Default)]
+struct FileScope {
+    /// Imported leaf name → full use path (`Widget` → `crate::widget::Widget`).
+    use_map: HashMap<String, String>,
+    /// Type names defined in this file (anchor on this file's module).
+    local_types: HashSet<String>,
+    /// Submodules declared in this file (`mod util;`) — so `util::f()` classifies
+    /// as internal, not as an external crate.
+    local_modules: HashSet<String>,
+}
+
+/// A classified `::`-path.
+enum PathClass {
+    /// Current crate: `module` is the crate-relative module chain; `leaf` the item.
+    Internal { module: String, leaf: String },
+    /// A dependency: `package` is the crate, `path` the in-crate module path.
+    External { package: String, path: String, leaf: String },
+}
+
+/// Produce canonical FQNs (plan 0.1) for every definition and reference in a Rust
+/// source file. Pure over `(source, ctx)`.
+pub fn produce_fqns(source: &str, ctx: &FileFqnContext) -> FqnFileOutput {
+    let mut parser = Parser::new();
+    if parser.set_language(&tree_sitter_rust::LANGUAGE.into()).is_err() {
+        return FqnFileOutput::default();
+    }
+    let Some(tree) = parser.parse(source, None) else {
+        return FqnFileOutput::default();
+    };
+    let src = source.as_bytes();
+    let root = tree.root_node();
+
+    let mut scope = FileScope::default();
+    collect_scope(&root, src, &mut scope);
+
+    let mut out = FqnFileOutput::default();
+    let lines: Vec<&str> = source.lines().collect();
+    walk_fqn(&root, src, &lines, ctx, &ctx.module, &scope, None, &mut out);
+    out
+}
+
+/// Pass 1: gather the file-global use-map, local type names, and submodule names.
+fn collect_scope(node: &Node, src: &[u8], scope: &mut FileScope) {
+    for i in 0..node.child_count() {
+        let child = node.child(i).unwrap();
+        match child.kind() {
+            "use_declaration" => {
+                let text = child.utf8_text(src).unwrap_or_default();
+                let path = text.trim_start_matches("use ").trim_end_matches(';').trim();
+                if let Some((base, rest)) = path.split_once("::{") {
+                    for name in rest.trim_end_matches('}').split(',') {
+                        let name = name.trim();
+                        if name.is_empty() || name == "self" { continue; }
+                        let leaf = name.rsplit("::").next().unwrap_or(name).trim();
+                        scope.use_map.insert(leaf.to_string(), format!("{base}::{name}"));
+                    }
+                } else if !path.is_empty() {
+                    let leaf = path.rsplit("::").next().unwrap_or(path).trim();
+                    // `use a::b as c` → key on the alias.
+                    if let Some((full, alias)) = path.split_once(" as ") {
+                        scope.use_map.insert(alias.trim().to_string(), full.trim().to_string());
+                    } else {
+                        scope.use_map.insert(leaf.to_string(), path.to_string());
+                    }
+                }
+            }
+            "struct_item" | "enum_item" | "trait_item" | "type_item" | "union_item" => {
+                let name = field_text(&child, "name", src);
+                if !name.is_empty() { scope.local_types.insert(name); }
+            }
+            "mod_item" => {
+                let name = field_text(&child, "name", src);
+                if !name.is_empty() { scope.local_modules.insert(name); }
+                if let Some(body) = child.child_by_field_name("body") {
+                    collect_scope(&body, src, scope);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Main walk: emit a def (with FQN) for each item and, per function body, resolve
+/// its calls to target FQNs.
+#[allow(clippy::too_many_arguments)]
+fn walk_fqn(
+    node: &Node, src: &[u8], lines: &[&str], ctx: &FileFqnContext, module: &str,
+    scope: &FileScope, impl_ctx: Option<&ImplCtx>, out: &mut FqnFileOutput,
+) {
+    for i in 0..node.child_count() {
+        let child = node.child(i).unwrap();
+        match child.kind() {
+            "function_item" => {
+                let name = field_text(&child, "name", src);
+                if name.is_empty() { continue; }
+                let (fqn_str, kind, parent_type) = match impl_ctx {
+                    Some(ic) => {
+                        let f = match &ic.trait_name {
+                            Some(tr) => fqn::trait_method(RUST_LANG, &ctx.package, &ic.type_module, &ic.type_name, tr, &name),
+                            None => fqn::method(RUST_LANG, &ctx.package, &ic.type_module, &ic.type_name, &name),
+                        };
+                        (f, SymbolKind::Method, Some(ic.type_name.clone()))
+                    }
+                    None => (fqn::item(RUST_LANG, &ctx.package, module, &name), SymbolKind::Function, None),
+                };
+                out.defs.push(FqnDefinition {
+                    fqn: fqn_str.clone(),
+                    name,
+                    kind,
+                    line_start: child.start_position().row as u32 + 1,
+                    line_end: child.end_position().row as u32 + 1,
+                    is_exported: has_child_kind(&child, "visibility_modifier"),
+                    signature: line_at(lines, child.start_position().row),
+                    docstring: collect_doc_comments(&child, src),
+                    parent_type,
+                });
+                if let Some(body) = child.child_by_field_name("body") {
+                    let bindings = build_bindings(&child, src, ctx, scope, impl_ctx);
+                    let mut seen = HashSet::new();
+                    collect_fqn_calls(&body, src, ctx, module, scope, impl_ctx, &bindings, &fqn_str, &mut seen, out);
+                }
+            }
+            "struct_item" | "enum_item" | "trait_item" | "type_item" | "const_item" | "static_item" | "union_item" => {
+                let name = field_text(&child, "name", src);
+                if name.is_empty() { continue; }
+                let kind = match child.kind() {
+                    "struct_item" | "union_item" => SymbolKind::Struct,
+                    "enum_item" => SymbolKind::Enum,
+                    "trait_item" => SymbolKind::Interface,
+                    "const_item" | "static_item" => SymbolKind::Const,
+                    _ => SymbolKind::Type,
+                };
+                out.defs.push(FqnDefinition {
+                    fqn: fqn::item(RUST_LANG, &ctx.package, module, &name),
+                    name,
+                    kind,
+                    line_start: child.start_position().row as u32 + 1,
+                    line_end: child.end_position().row as u32 + 1,
+                    is_exported: has_child_kind(&child, "visibility_modifier"),
+                    signature: line_at(lines, child.start_position().row),
+                    docstring: collect_doc_comments(&child, src),
+                    parent_type: None,
+                });
+            }
+            "impl_item" => {
+                let type_name = base_type_name(&field_text(&child, "type", src)).unwrap_or_default();
+                if type_name.is_empty() {
+                    continue;
+                }
+                let trait_name = child
+                    .child_by_field_name("trait")
+                    .and_then(|t| base_type_name(&source_text(&t, src)));
+                let (_, type_module, _) = resolve_type_module(&type_name, ctx, module, scope);
+                let ic = ImplCtx { type_name, type_module, trait_name };
+                if let Some(body) = child.child_by_field_name("body") {
+                    walk_fqn(&body, src, lines, ctx, module, scope, Some(&ic), out);
+                }
+            }
+            "mod_item" => {
+                if let Some(body) = child.child_by_field_name("body") {
+                    let name = field_text(&child, "name", src);
+                    let inner = join_mod(module, &name);
+                    walk_fqn(&body, src, lines, ctx, &inner, scope, None, out);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Resolve a bare type NAME to `(package, module, is_external)`. Local defs anchor
+/// on this file's module; imported names use the use-map; else fall back to the
+/// current crate+module (best effort). For an external type, `module` carries the
+/// dependency's in-crate path.
+fn resolve_type_module(
+    type_name: &str, ctx: &FileFqnContext, module: &str, scope: &FileScope,
+) -> (String, String, bool) {
+    if scope.local_types.contains(type_name) {
+        return (ctx.package.clone(), module.to_string(), false);
+    }
+    if let Some(full) = scope.use_map.get(type_name) {
+        let segs: Vec<&str> = full.split("::").collect();
+        match classify_segments(&segs, ctx, scope) {
+            PathClass::Internal { module, .. } => return (ctx.package.clone(), module, false),
+            PathClass::External { package, path, .. } => return (package, path, true),
+        }
+    }
+    (ctx.package.clone(), module.to_string(), false)
+}
+
+/// Classify a `::`-path as current-crate vs dependency.
+fn classify_segments(segs: &[&str], ctx: &FileFqnContext, scope: &FileScope) -> PathClass {
+    let leaf = segs.last().copied().unwrap_or("").to_string();
+    let first = segs.first().copied().unwrap_or("");
+    // Modules strictly between the root marker and the leaf.
+    let mid = |from: usize| -> String {
+        if segs.len() <= from + 1 { String::new() } else { segs[from..segs.len() - 1].join("::") }
+    };
+    let internal_root = first == "crate"
+        || first == "self"
+        || first == "super"
+        || norm_crate(first) == norm_crate(&ctx.package)
+        || scope.local_modules.contains(first);
+    if internal_root {
+        let module = match first {
+            "crate" => mid(1),
+            "self" => join_mod(&ctx.module, &mid(1)),
+            "super" => join_mod(&parent_mod(&ctx.module), &mid(1)),
+            _ => {
+                // current-crate name prefix, or a local submodule used without `crate::`.
+                if norm_crate(first) == norm_crate(&ctx.package) { mid(1) } else { mid(0) }
+            }
+        };
+        PathClass::Internal { module, leaf }
+    } else {
+        let path = if segs.len() >= 2 { segs[..segs.len() - 1].join("::") } else { first.to_string() };
+        PathClass::External { package: first.to_string(), path, leaf }
+    }
+}
+
+/// Per-function bounded binding→type map (plan 0.7): typed params, `let x: Type`,
+/// and `let x = Type::new()` / `Type { .. }`. Everything else is out of scope.
+fn build_bindings(
+    fn_node: &Node, src: &[u8], _ctx: &FileFqnContext, _scope: &FileScope, _impl_ctx: Option<&ImplCtx>,
+) -> HashMap<String, String> {
+    let mut map = HashMap::new();
+    if let Some(params) = fn_node.child_by_field_name("parameters") {
+        for i in 0..params.child_count() {
+            let p = params.child(i).unwrap();
+            if p.kind() != "parameter" { continue; }
+            let (Some(pat), Some(ty)) = (p.child_by_field_name("pattern"), p.child_by_field_name("type")) else { continue };
+            if pat.kind() == "identifier"
+                && let Some(t) = base_type_name(&source_text(&ty, src)) {
+                map.insert(source_text(&pat, src), t);
+            }
+        }
+    }
+    if let Some(body) = fn_node.child_by_field_name("body") {
+        for i in 0..body.child_count() {
+            let stmt = body.child(i).unwrap();
+            if stmt.kind() != "let_declaration" { continue; }
+            let Some(pat) = stmt.child_by_field_name("pattern") else { continue };
+            if pat.kind() != "identifier" { continue; }
+            let vname = source_text(&pat, src);
+            if let Some(ty) = stmt.child_by_field_name("type") {
+                if let Some(t) = base_type_name(&source_text(&ty, src)) { map.insert(vname, t); }
+            } else if let Some(val) = stmt.child_by_field_name("value")
+                && let Some(t) = type_of_value(&val, src) {
+                map.insert(vname, t);
+            }
+        }
+    }
+    map
+}
+
+/// The type produced by a `let` initialiser, for the four bounded forms only:
+/// `Type::new()` / `Type::assoc()` (call whose function path starts with a Type)
+/// and `Type { .. }` (struct literal). Returns None for anything else.
+fn type_of_value(val: &Node, src: &[u8]) -> Option<String> {
+    match val.kind() {
+        "call_expression" => {
+            let func = val.child_by_field_name("function")?;
+            if func.kind() == "scoped_identifier" {
+                let path = func.child_by_field_name("path")?;
+                let ty = source_text(&path, src);
+                let base = ty.rsplit("::").next().unwrap_or(&ty);
+                if is_pascal(base) { return Some(base.to_string()); }
+            }
+            None
+        }
+        "struct_expression" => {
+            let name = val.child_by_field_name("name")?;
+            base_type_name(&source_text(&name, src))
+        }
+        "reference_expression" => val.child_by_field_name("value").and_then(|v| type_of_value(&v, src)),
+        _ => None,
+    }
+}
+
+/// Collect calls in `body`, attributing each to `caller_fqn`, resolving the target
+/// FQN. Dedups per (caller, target-name). A nested `function_item`'s calls belong
+/// to that fn (handled by the outer walk), so we don't descend into one here.
+#[allow(clippy::too_many_arguments)]
+fn collect_fqn_calls(
+    node: &Node, src: &[u8], ctx: &FileFqnContext, module: &str, scope: &FileScope,
+    impl_ctx: Option<&ImplCtx>, bindings: &HashMap<String, String>, caller_fqn: &str,
+    seen: &mut HashSet<String>, out: &mut FqnFileOutput,
+) {
+    for i in 0..node.child_count() {
+        let child = node.child(i).unwrap();
+        if child.kind() == "function_item" { continue; }
+        if child.kind() == "call_expression"
+            && let Some(func) = child.child_by_field_name("function")
+            && let Some((target_fqn, is_lib, target_name)) =
+                resolve_call(&func, src, ctx, module, scope, impl_ctx, bindings)
+            // Dedup on the resolved target (so `A::new()` and `B::new()` in one fn
+            // both survive), not the bare name.
+            && seen.insert(target_fqn.clone().unwrap_or_else(|| format!("?{target_name}")))
+        {
+            out.refs.push(FqnReference {
+                caller_fqn: caller_fqn.to_string(),
+                caller_line: child.start_position().row as u32 + 1,
+                target_fqn,
+                target_name,
+                is_lib,
+            });
+        }
+        collect_fqn_calls(&child, src, ctx, module, scope, impl_ctx, bindings, caller_fqn, seen, out);
+    }
+}
+
+/// Resolve one call's `function` node to `(target_fqn, is_lib, target_name)`.
+/// `target_fqn = None` = deliberately unresolved (out-of-0.7 receiver) so it never
+/// wrong-merges. Returns None to SKIP a call (denylisted / unsupported form).
+fn resolve_call(
+    func: &Node, src: &[u8], ctx: &FileFqnContext, module: &str, scope: &FileScope,
+    impl_ctx: Option<&ImplCtx>, bindings: &HashMap<String, String>,
+) -> Option<(Option<String>, bool, String)> {
+    match func.kind() {
+        "identifier" => {
+            let name = source_text(func, src);
+            if RUST_CALL_DENYLIST.contains(&name.as_str()) { return None; }
+            if let Some(full) = scope.use_map.get(&name) {
+                let segs: Vec<&str> = full.split("::").collect();
+                match classify_segments(&segs, ctx, scope) {
+                    PathClass::Internal { module: m, leaf } => Some((Some(fqn::item(RUST_LANG, &ctx.package, &m, &leaf)), false, name)),
+                    PathClass::External { package, path, leaf } => Some((Some(fqn::lib(&package, &path, &leaf)), true, name)),
+                }
+            } else {
+                Some((Some(fqn::item(RUST_LANG, &ctx.package, module, &name)), false, name))
+            }
+        }
+        "scoped_identifier" => {
+            let text = source_text(func, src);
+            let segs: Vec<&str> = text.split("::").collect();
+            let leaf = (*segs.last()?).to_string();
+            if RUST_CALL_DENYLIST.contains(&leaf.as_str()) { return None; }
+            if segs.len() >= 2 && segs[0] == "Self"
+                && let Some(ic) = impl_ctx {
+                return Some((Some(fqn::method(RUST_LANG, &ctx.package, &ic.type_module, &ic.type_name, &leaf)), false, leaf));
+            }
+            if segs.len() >= 2 && is_pascal(segs[segs.len() - 2]) {
+                let type_name = segs[segs.len() - 2];
+                let (pkg, mdl, is_ext) = if segs.len() == 2 {
+                    resolve_type_module(type_name, ctx, module, scope)
+                } else {
+                    match classify_segments(&segs[..segs.len() - 1], ctx, scope) {
+                        PathClass::Internal { module: m, .. } => (ctx.package.clone(), m, false),
+                        PathClass::External { package, path, .. } => (package, path, true),
+                    }
+                };
+                if is_ext {
+                    Some((Some(fqn::lib(&pkg, &mdl, &leaf)), true, leaf))
+                } else {
+                    Some((Some(fqn::method(RUST_LANG, &pkg, &mdl, type_name, &leaf)), false, leaf))
+                }
+            } else {
+                match classify_segments(&segs, ctx, scope) {
+                    PathClass::Internal { module: m, leaf } => Some((Some(fqn::item(RUST_LANG, &ctx.package, &m, &leaf)), false, leaf)),
+                    PathClass::External { package, path, leaf } => Some((Some(fqn::lib(&package, &path, &leaf)), true, leaf)),
+                }
+            }
+        }
+        "field_expression" => {
+            let field = func.child_by_field_name("field")?;
+            let method = source_text(&field, src);
+            if RUST_CALL_DENYLIST.contains(&method.as_str()) { return None; }
+            let recv = func.child_by_field_name("value")?;
+            let recv_is_self = recv.kind() == "self" || (recv.kind() == "identifier" && source_text(&recv, src) == "self");
+            if recv_is_self {
+                return match impl_ctx {
+                    Some(ic) => Some((Some(fqn::method(RUST_LANG, &ctx.package, &ic.type_module, &ic.type_name, &method)), false, method)),
+                    None => Some((None, false, method)),
+                };
+            }
+            if recv.kind() == "identifier"
+                && let Some(tname) = bindings.get(&source_text(&recv, src)) {
+                let (pkg, mdl, is_ext) = resolve_type_module(tname, ctx, module, scope);
+                return if is_ext {
+                    Some((Some(fqn::lib(&pkg, &mdl, &method)), true, method))
+                } else {
+                    Some((Some(fqn::method(RUST_LANG, &pkg, &mdl, tname, &method)), false, method))
+                };
+            }
+            // Unknown receiver (out of the bounded 0.7 scope) → no wrong merge.
+            Some((None, false, method))
+        }
+        "generic_function" => {
+            let inner = func.child_by_field_name("function")?;
+            resolve_call(&inner, src, ctx, module, scope, impl_ctx, bindings)
+        }
+        _ => None,
+    }
+}
+
+/// PascalCase heuristic: distinguishes a `Type` segment from a `module`/`fn`.
+fn is_pascal(s: &str) -> bool {
+    s.chars().next().is_some_and(|c| c.is_ascii_uppercase())
+}
+
+/// Normalise a crate name for comparison (path form uses `_`, manifest name `-`).
+fn norm_crate(s: &str) -> String {
+    s.replace('-', "_")
+}
+
+/// Join two module-path fragments, dropping empties (crate root stays "").
+fn join_mod(a: &str, b: &str) -> String {
+    match (a.is_empty(), b.is_empty()) {
+        (true, _) => b.to_string(),
+        (_, true) => a.to_string(),
+        _ => format!("{a}::{b}"),
+    }
+}
+
+/// Parent of a module path (`a::b::c` → `a::b`; `a` → ""). Best-effort for `super`.
+fn parent_mod(m: &str) -> String {
+    match m.rsplit_once("::") {
+        Some((head, _)) => head.to_string(),
+        None => String::new(),
+    }
+}
+
+/// Reduce a type expression's text to its base type name, peeling references,
+/// lifetimes, `dyn`/`impl`, and unwrapping smart-pointer wrappers (`Box<dyn T>`
+/// → `T`). Returns the final path's last segment (`crate::a::Widget` → `Widget`).
+fn base_type_name(text: &str) -> Option<String> {
+    let mut t = text.trim();
+    loop {
+        if let Some(r) = t.strip_prefix('&') { t = r.trim(); continue; }
+        if let Some(r) = t.strip_prefix("mut ") { t = r.trim(); continue; }
+        if t.starts_with('\'') {
+            // Lifetime token (e.g. `'a`) — drop it.
+            t = t[1..].trim_start_matches(|c: char| c.is_alphanumeric() || c == '_').trim();
+            continue;
+        }
+        break;
+    }
+    if let Some(r) = t.strip_prefix("dyn ") { t = r.trim(); }
+    else if let Some(r) = t.strip_prefix("impl ") { t = r.trim(); }
+    for wrapper in ["Box", "Rc", "Arc", "RefCell", "Cell", "Mutex", "RwLock"] {
+        if let Some(rest) = t.strip_prefix(wrapper)
+            && let Some(inner) = rest.trim().strip_prefix('<').and_then(|s| s.strip_suffix('>')) {
+            return base_type_name(inner.trim());
+        }
+    }
+    let base = t.split('<').next().unwrap_or(t).trim();
+    let name = base.rsplit("::").next().unwrap_or(base).trim();
+    let name = name.trim_end_matches(|c: char| !(c.is_alphanumeric() || c == '_'));
+    if name.is_empty() || !name.chars().next().unwrap().is_alphabetic() {
+        return None;
+    }
+    Some(name.to_string())
+}
+} // mod rust_fqn
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn parse(src: &str) -> ParsedFile {
         RustAdapter.parse(src, "test.rs")
+    }
+
+    // ── FQN producer (Phase 2) ──────────────────────────────────────────────
+    fn produce(src: &str, package: &str, module: &str) -> FqnFileOutput {
+        rust_fqn::produce_fqns(src, &FileFqnContext { package: package.into(), module: module.into() })
+    }
+    fn def_fqn<'a>(out: &'a FqnFileOutput, name: &str) -> &'a str {
+        out.defs.iter().find(|d| d.name == name).map(|d| d.fqn.as_str()).unwrap_or("<no-def>")
+    }
+    fn ref_to<'a>(out: &'a FqnFileOutput, target_name: &str) -> &'a FqnReference {
+        out.refs.iter().find(|r| r.target_name == target_name)
+            .unwrap_or_else(|| panic!("no ref to `{target_name}` in {:?}", out.refs))
+    }
+
+    #[test]
+    fn rust_def_fqn() {
+        let src = r#"
+pub struct Widget;
+impl Widget { pub fn new() -> Self { Widget } }
+impl std::fmt::Display for Widget {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result { Ok(()) }
+}
+pub fn make() -> Widget { Widget::new() }
+"#;
+        let out = produce(src, "senseid", "widget");
+        assert_eq!(def_fqn(&out, "make"), "rust·senseid·widget·make", "free fn");
+        assert_eq!(def_fqn(&out, "Widget"), "rust·senseid·widget·Widget", "type def");
+        assert_eq!(def_fqn(&out, "new"), "rust·senseid·widget·Widget·new", "inherent assoc fn");
+        assert_eq!(def_fqn(&out, "fmt"), "rust·senseid·widget·Widget·Display·fmt", "trait-impl method carries the trait qualifier");
+    }
+
+    #[test]
+    fn rust_ref_fqn_explicit_path() {
+        let src = "use crate::widget::Widget;\npub fn build() { Widget::new(); }\n";
+        let out = produce(src, "senseid", "builder");
+        let r = ref_to(&out, "new");
+        assert_eq!(r.target_fqn.as_deref(), Some("rust·senseid·widget·Widget·new"), "resolved via use-map");
+        assert!(!r.is_lib);
+        assert_eq!(r.caller_fqn, "rust·senseid·builder·build", "edge source is the caller fn's fqn");
+    }
+
+    #[test]
+    fn rust_ref_fqn_self_local_bounded() {
+        let src = r#"
+pub struct Engine;
+pub fn helper() {}
+impl Engine {
+    pub fn run(&self) {
+        self.tick();
+        helper();
+        let g = Gadget::new();
+        g.spin();
+        weird().wobble();
+    }
+    fn tick(&self) {}
+}
+"#;
+        let out = produce(src, "senseid", "engine");
+        assert_eq!(ref_to(&out, "tick").target_fqn.as_deref(), Some("rust·senseid·engine·Engine·tick"), "self.method → enclosing impl type");
+        assert_eq!(ref_to(&out, "helper").target_fqn.as_deref(), Some("rust·senseid·engine·helper"), "local free fn → module scope");
+        assert_eq!(ref_to(&out, "spin").target_fqn.as_deref(), Some("rust·senseid·engine·Gadget·spin"), "let x = Gadget::new(); x.spin() → Gadget::spin (0.7 binding)");
+        assert_eq!(ref_to(&out, "wobble").target_fqn, None, "out-of-0.7 receiver → unresolved, no wrong merge");
+    }
+
+    #[test]
+    fn rust_ref_fqn_external_is_lib() {
+        let src = "pub fn load(s: &str) { serde_json::from_str(s); }\n";
+        let out = produce(src, "senseid", "io");
+        let r = ref_to(&out, "from_str");
+        assert_eq!(r.target_fqn.as_deref(), Some("lib·serde_json·serde_json·from_str"), "external crate path → lib node");
+        assert!(r.is_lib);
+    }
+
+    #[test]
+    fn rust_adapter_and_trait_methods_do_not_collapse() {
+        let src = r#"
+pub struct A;
+pub struct B;
+impl A { pub fn parse(&self) {} }
+impl B { pub fn parse(&self) {} }
+impl std::fmt::Display for A { fn fmt(&self) {} }
+impl std::fmt::Debug for A { fn fmt(&self) {} }
+"#;
+        let out = produce(src, "senseid", "m");
+        let parses: Vec<&str> = out.defs.iter().filter(|d| d.name == "parse").map(|d| d.fqn.as_str()).collect();
+        assert!(parses.contains(&"rust·senseid·m·A·parse"), "A::parse distinct");
+        assert!(parses.contains(&"rust·senseid·m·B·parse"), "B::parse distinct");
+        let fmts: Vec<&str> = out.defs.iter().filter(|d| d.name == "fmt").map(|d| d.fqn.as_str()).collect();
+        assert!(fmts.contains(&"rust·senseid·m·A·Display·fmt"), "Display::fmt distinct by trait");
+        assert!(fmts.contains(&"rust·senseid·m·A·Debug·fmt"), "Debug::fmt distinct by trait");
+    }
+
+    #[test]
+    fn rust_dyn_receiver_stays_unqualified() {
+        let src = "pub trait Sink { fn emit(&self); }\npub fn drive(s: &dyn Sink) { s.emit(); }\n";
+        let out = produce(src, "senseid", "pipe");
+        // Resolves to the TRAIT's method node (Sink), never a concrete impl merge.
+        assert_eq!(ref_to(&out, "emit").target_fqn.as_deref(), Some("rust·senseid·pipe·Sink·emit"));
+    }
+
+    #[test]
+    fn rust_same_name_across_files_disambiguates() {
+        // Same-named free fns in different files → distinct (module differs).
+        let a = produce("pub fn parse() {}", "senseid", "a");
+        let b = produce("pub fn parse() {}", "senseid", "b");
+        assert_eq!(def_fqn(&a, "parse"), "rust·senseid·a·parse");
+        assert_eq!(def_fqn(&b, "parse"), "rust·senseid·b·parse");
+
+        // `impl Widget` split across files both anchor on the TYPE's home module.
+        let widget = produce("pub struct Widget; impl Widget { pub fn m(&self) {} }", "senseid", "widget");
+        let ext = produce("use crate::widget::Widget; impl Widget { pub fn n(&self) {} }", "senseid", "widget_ext");
+        assert_eq!(def_fqn(&widget, "m"), "rust·senseid·widget·Widget·m");
+        assert_eq!(def_fqn(&ext, "n"), "rust·senseid·widget·Widget·n", "anchored on widget, not widget_ext");
+
+        // A reference from a THIRD file resolves to the SAME node as the def.
+        let caller = produce("use crate::widget::Widget; pub fn go() { Widget::m(); }", "senseid", "caller");
+        assert_eq!(ref_to(&caller, "m").target_fqn.as_deref(), Some("rust·senseid·widget·Widget·m"), "ref merges onto the def's fqn");
+    }
+
+    #[test]
+    fn rust_package_boundary_disambiguates() {
+        let src = "pub struct ManifestAdapter; impl ManifestAdapter { pub fn parse(&self) {} }";
+        let a = produce(src, "senseid", "adapters::config");
+        let b = produce(src, "sensei-cli", "adapters::config");
+        assert_eq!(def_fqn(&a, "parse"), "rust·senseid·adapters::config·ManifestAdapter·parse");
+        assert_eq!(def_fqn(&b, "parse"), "rust·sensei-cli·adapters::config·ManifestAdapter·parse");
+        assert_ne!(def_fqn(&a, "parse"), def_fqn(&b, "parse"), "package disambiguates the monorepo false-merge");
     }
 
     #[test]
