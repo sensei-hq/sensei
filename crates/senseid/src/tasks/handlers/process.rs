@@ -876,12 +876,21 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
             // D5c: a `module` container per file (nested under the file). Top-level
             // items nest under it (or the file node at the crate root); methods nest
             // under their TYPE node — so the graph is file → module → type → method.
+            // The `nodes.language` column for every FQN node is the FILE's language
+            // (derived from its extension) — NOT the fqn's grouping lang and NOT a
+            // hardcoded "rust". Keeps the same-language fallback (0.8) honest across
+            // the migrated languages.
+            let file_lang = crate::languages::language_for_path(&result.rel_path);
             let mut top_parent = file_node_id;
             if !fqn_out.module.is_empty() {
-                let mfqn = crate::languages::fqn::item("rust", &fqn_out.package, "", &fqn_out.module);
+                // The module container's fqn language matches the file's defs (the
+                // first fqn's leading segment), so a Python/TS module node isn't
+                // mislabelled as rust.
+                let lang = fqn_out.defs.first().and_then(|d| d.fqn.split('·').next()).unwrap_or("rust");
+                let mfqn = crate::languages::fqn::item(lang, &fqn_out.package, "", &fqn_out.module);
                 let mname = fqn_out.module.rsplit("::").next().unwrap_or(&fqn_out.module);
                 let mid = ctx.pg().upsert_node_by_fqn(
-                    &folder_id, &mfqn, "module", mname, Some("rust"),
+                    &folder_id, &mfqn, "module", mname, file_lang,
                     Some(crate::db::pg_store::FqnDef {
                         file_path: &result.rel_path, signature: None, line_start: None,
                         line_end: None, is_exported: false, parent_id: Some(&file_node_id),
@@ -899,13 +908,13 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
                     Some(pf) => match fqn_ids.get(pf) {
                         Some(id) => *id,
                         None => ctx.pg().upsert_node_by_fqn(
-                            &folder_id, pf, "class", pf.rsplit('·').next().unwrap_or(pf), Some("rust"), None,
+                            &folder_id, pf, "class", pf.rsplit('·').next().unwrap_or(pf), file_lang, None,
                         ).await.map_err(|e| format!("upsert fqn parent {pf}: {e}"))?,
                     },
                     None => top_parent,
                 };
                 let id = ctx.pg().upsert_node_by_fqn(
-                    &folder_id, &d.fqn, kind.as_str(), &d.name, Some("rust"),
+                    &folder_id, &d.fqn, kind.as_str(), &d.name, file_lang,
                     Some(crate::db::pg_store::FqnDef {
                         file_path: &result.rel_path,
                         signature: d.signature.as_deref(),
@@ -1030,6 +1039,7 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
         // the language-scoped fallback (3.3). Other languages keep the fully
         // bare-name path (resolved later by resolve_edges).
         if let Some(fqn_out) = &result.fqn {
+            let file_lang = crate::languages::language_for_path(&result.rel_path);
             for r in &fqn_out.refs {
                 let source = fqn_ids.get(&r.caller_fqn).copied().unwrap_or(file_node_id);
                 match &r.target_fqn {
@@ -1044,7 +1054,7 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
                         // Target defined in THIS file → reuse its id; else get-or-create a stub.
                         let tid = match fqn_ids.get(tf) {
                             Some(id) => *id,
-                            None => ctx.pg().upsert_node_by_fqn(&folder_id, tf, "function", &r.target_name, Some("rust"), None).await
+                            None => ctx.pg().upsert_node_by_fqn(&folder_id, tf, "function", &r.target_name, file_lang, None).await
                                 .map_err(|e| format!("upsert fqn target {tf}: {e}"))?,
                         };
                         ctx.pg().insert_edge(&folder_id, &source, Some(&tid), None, None, "calls").await
@@ -1649,6 +1659,44 @@ mod tests {
 
         let (_, helper_parent, _) = node(&ctx, fid, "rust·w·widget·helper").await;
         assert_eq!(helper_parent, Some(module_id), "a free fn nests under the module");
+
+        ctx.pg().delete_nodes_by_folder(&fid).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn process_file_ts_emits_fqn_nodes() {
+        // Phase 6.1: a TypeScript file with a package.json → the FQN path. Validates
+        // the oxc producer end-to-end, the src-stripped module, resolved edges, AND
+        // that the node language column is 'typescript' (not the old hardcoded rust).
+        let ctx = make_ctx().await;
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("tsapp");
+        std::fs::create_dir_all(repo.join("src")).unwrap();
+        std::fs::write(repo.join("package.json"), "{\"name\": \"tsapp\"}").unwrap();
+        std::fs::write(repo.join("src/util.ts"),
+            "export function compute() { return helper(); }\nexport function helper() { return 1; }\n").unwrap();
+        let repo_path = repo.to_string_lossy().to_string();
+        let rid = ctx.pg().add_watch_root(&tmp.path().to_string_lossy(), "ts", &serde_json::json!([])).await.unwrap();
+        let fid = ctx.pg().upsert_repo_kind(&rid, "git", "tsapp", &repo_path).await.unwrap();
+        ctx.pg().update_folder_status(&fid, "indexing").await.unwrap();
+
+        let abs = repo.join("src/util.ts").to_string_lossy().to_string();
+        process_file(&ctx, &Task::new(TaskKind::ProcessFile, &repo_path, &abs)).await.unwrap();
+
+        let (compute_id, compute_fqn, compute_lang): (uuid::Uuid, Option<String>, Option<String>) =
+            sqlx_core::query_as::query_as(
+                "SELECT id, fqn, language FROM sensei.nodes WHERE folder_id=$1 AND name='compute' AND kind='function'::sensei.node_kind")
+            .bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
+        assert_eq!(compute_fqn.as_deref(), Some("typescript·tsapp·util·compute"), "src/ stripped module + oxc def");
+        assert_eq!(compute_lang.as_deref(), Some("typescript"), "language column is the file's language, not hardcoded rust");
+
+        let (helper_id,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "SELECT id FROM sensei.nodes WHERE folder_id=$1 AND fqn='typescript·tsapp·util·helper'")
+            .bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
+        let (target,): (Option<uuid::Uuid>,) = sqlx_core::query_as::query_as(
+            "SELECT target_id FROM sensei.edges WHERE folder_id=$1 AND source_id=$2 AND kind='calls'::sensei.edge_kind")
+            .bind(fid).bind(compute_id).fetch_one(ctx.pg().pool()).await.unwrap();
+        assert_eq!(target, Some(helper_id), "compute→helper resolves to the FQN target at emit");
 
         ctx.pg().delete_nodes_by_folder(&fid).await.unwrap();
     }
