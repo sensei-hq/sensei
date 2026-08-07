@@ -56,6 +56,16 @@ structure (D5c) + community-determinism guard` → `6 per-language rollout` →
   - lib symbol: `lib·<package>·<path>·<member>`.
   `package` = crate name (Rust), npm/pnpm package (TS), top module (Python).
   `module-path` = the `::`/`.`-joined module chain within the package.
+  **Anchoring rule (cross-file consistency — critical):** a **method**'s
+  `<module-path>·<Type>` is the **type's canonical definition location**, resolved
+  from the `impl`/class's `Self` type — NOT the file the `impl` block lives in. So
+  `impl Widget` split across `widget.rs` and `widget_ext.rs` both yield
+  `…·widget·Widget·…`, and a reference `Widget::m()` (with `use crate::widget::
+  Widget`) computes the same fqn → they merge. A **free fn/const** uses its own
+  file's module path (files ARE modules in Rust/TS/Python, so same-named free
+  functions in different files get distinct module-paths). Languages with **no
+  module system** (C): a file-static symbol includes the FILE segment (two files'
+  `static foo` are distinct); an external-linkage global is repo-global.
 - [ ] **0.2 Identity scope (decided): folder-scoped `(folder_id, fqn)`.** Nodes
   hang off the **repo-root folder** (the git/standalone folder that owns them; it
   carries `project_id`, child folders `parent_id`-ref it). So folder-scoped =
@@ -166,6 +176,13 @@ have no qualified path; symbols flat (`process.rs:870-874` parents to file node)
 - [ ] **2.6 Failing test** `rust_dyn_receiver_stays_unqualified`: a `dyn Trait`
   receiver method call → the trait-method fqn (a node), never a wrong concrete
   merge. PASS.
+- [ ] **2.6b Failing test** `rust_same_name_across_files_disambiguates` (the
+  cross-file consistency check): `a.rs::fn parse` and `b.rs::fn parse` → distinct
+  fqns (module-path differs); `impl Widget { fn m }` in `widget.rs` AND a second
+  `impl Widget { fn n }` in `widget_ext.rs` BOTH anchor on `…·widget·Widget·…`
+  (the type's home module, per the 0.1 anchoring rule), and a reference
+  `Widget::m()` from a third file resolves to the SAME node (merge, not a stub).
+  PASS.
 - [ ] **2.7** Green. Commit `feat(senseid): Rust FQN producer — def + ref name
   resolution (bounded binding→type, trait-qualified)`.
 
