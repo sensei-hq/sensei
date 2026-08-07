@@ -867,10 +867,10 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
         let mut sym_ids: std::collections::HashMap<(String, i32), uuid::Uuid> =
             std::collections::HashMap::new();
         for sym in &result.symbols {
-            let id = ctx.pg().upsert_node(
+            let id = ctx.pg().upsert_node_ex(
                 &folder_id, &sym.kind, &sym.name, &result.rel_path,
                 Some(&file_node_id), sym.signature.as_deref(),
-                Some(sym.line as i32), Some(sym.line_end as i32),
+                Some(sym.line as i32), Some(sym.line_end as i32), sym.is_exported,
             ).await.map_err(|e| format!("upsert symbol node {}: {e}", sym.name))?;
             sym_ids.insert((sym.name.clone(), sym.line as i32), id);
         }
@@ -1880,6 +1880,39 @@ mod tests {
             "SELECT count(*) FROM sensei.nodes WHERE folder_id=$1 AND kind='rationale'::sensei.node_kind")
             .bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
         assert_eq!(cnt3, 0, "a removed rationale marker is pruned");
+
+        ctx.pg().remove_watch_root(&rid).await.ok();
+    }
+
+    #[tokio::test]
+    async fn process_file_persists_is_exported_from_visibility() {
+        // A `pub` symbol is exported; a private one is not. The parser computes
+        // is_exported from the visibility modifier; process_file must PERSIST it
+        // (via upsert_node_ex) — it was previously dropped, so every symbol read
+        // back as is_exported=false (the "0 exports" call-flow bug).
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("repo/src")).unwrap();
+        let file = root.join("repo/src/lib.rs");
+        std::fs::write(&file, "pub fn exported_fn() {}\nfn private_fn() {}\n").unwrap();
+
+        let ctx = make_ctx().await;
+        let (rid, fid, repo_path) = seed_indexing_repo(&ctx, root, "isexp").await;
+        let abs = file.to_string_lossy().to_string();
+        process_file(&ctx, &Task::new(TaskKind::ProcessFile, &repo_path, &abs)).await.unwrap();
+
+        let exported = |name: &str| {
+            let pool = ctx.pg().pool().clone();
+            let name = name.to_string();
+            async move {
+                let (e,): (bool,) = sqlx_core::query_as::query_as(
+                    "SELECT is_exported FROM sensei.nodes WHERE folder_id=$1 AND name=$2 AND kind='function'::sensei.node_kind")
+                    .bind(fid).bind(&name).fetch_one(&pool).await.unwrap();
+                e
+            }
+        };
+        assert!(exported("exported_fn").await, "a pub fn is is_exported=true");
+        assert!(!exported("private_fn").await, "a private fn is is_exported=false");
 
         ctx.pg().remove_watch_root(&rid).await.ok();
     }

@@ -1503,10 +1503,26 @@ impl PgStore {
 
     // ── Nodes ─────────────────────────────────────────────────────────
 
+    /// Upsert a node (default `is_exported = false`). Thin wrapper over
+    /// [`Self::upsert_node_ex`] for the many callers that don't carry visibility
+    /// (file/section/rationale/module nodes, tests).
     pub async fn upsert_node(
         &self, folder_id: &uuid::Uuid, kind: &str, name: &str, file_path: &str,
         parent_id: Option<&uuid::Uuid>, signature: Option<&str>,
         line_start: Option<i32>, line_end: Option<i32>,
+    ) -> Result<uuid::Uuid, String> {
+        self.upsert_node_ex(folder_id, kind, name, file_path, parent_id, signature, line_start, line_end, false).await
+    }
+
+    /// Upsert a node carrying `is_exported` (the code-symbol path passes the
+    /// parser's `pub`/`export` visibility). `is_exported` is written on INSERT and
+    /// refreshed on the D3 upsert-then-prune conflict, so a symbol that flips
+    /// pub↔private is kept current.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn upsert_node_ex(
+        &self, folder_id: &uuid::Uuid, kind: &str, name: &str, file_path: &str,
+        parent_id: Option<&uuid::Uuid>, signature: Option<&str>,
+        line_start: Option<i32>, line_end: Option<i32>, is_exported: bool,
     ) -> Result<uuid::Uuid, String> {
         // ON CONFLICT targets nodes_unique_identity (folder_id, file_path, kind, name,
         // parent_id, line_start NULLS NOT DISTINCT). DO UPDATE keeps the row STABLE on
@@ -1518,17 +1534,18 @@ impl PgStore {
         // only embed input that can change — nulling on that (and preserving it
         // otherwise) keeps embeddings fresh without a separate content_hash column.
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
-            "INSERT INTO sensei.nodes(folder_id, kind, name, file_path, parent_id, signature, line_start, line_end)
-             VALUES($1, $2::sensei.node_kind, $3, $4, $5, $6, $7, $8)
+            "INSERT INTO sensei.nodes(folder_id, kind, name, file_path, parent_id, signature, line_start, line_end, is_exported)
+             VALUES($1, $2::sensei.node_kind, $3, $4, $5, $6, $7, $8, $9)
              ON CONFLICT ON CONSTRAINT nodes_unique_identity DO UPDATE
                SET signature   = EXCLUDED.signature,
                    line_end    = EXCLUDED.line_end,
+                   is_exported = EXCLUDED.is_exported,
                    embedding   = CASE WHEN nodes.signature IS DISTINCT FROM EXCLUDED.signature
                                       THEN NULL ELSE nodes.embedding END,
                    modified_at = now()
              RETURNING id"
         ).bind(folder_id).bind(kind).bind(name).bind(file_path)
-            .bind(parent_id).bind(signature).bind(line_start).bind(line_end)
+            .bind(parent_id).bind(signature).bind(line_start).bind(line_end).bind(is_exported)
             .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(row.0)
     }
