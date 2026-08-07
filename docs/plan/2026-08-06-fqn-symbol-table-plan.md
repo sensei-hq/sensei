@@ -1,12 +1,15 @@
-# FQN symbol-table rebuild — implementation plan (v2)
+# FQN symbol-table rebuild — implementation plan (v3 · depth-gate: READY)
 
 > **For agentic workers:** every task is TDD (failing test → confirm fail →
 > implement → confirm green → `zero-errors-policy` → commit). Forward-only: no
 > phase depends on a later one. Never mark done on a masked/piped exit code.
 >
-> **v2 (2026-08-06):** revised after `sensei-plan-depth-reviewer` returned
-> not-ready. All 10 must-fixes folded in; the load-bearing decision (identity
-> scope) is now concrete: **folder-scoped `(folder_id, fqn)`**.
+> **Depth-gate history:** v1 → not-ready (10 must-fixes). v2 → needs-depth (all
+> 10 closed, 3 new gaps). **v3 → READY** (`sensei-plan-depth-reviewer`, clean
+> pass — forward-only, six-criteria bar met on every phase). Load-bearing
+> decision: **folder-scoped `(folder_id, fqn)`**; `package` derived per-file from
+> the nearest manifest so monorepo crates don't false-merge. Ready to execute
+> Phase 0 → 1.
 
 **Goal.** Replace bare-name call matching with a **get-or-create-by-FQN symbol
 table** (SCIP/LSIF moniker model): every definition AND reference get-or-creates
