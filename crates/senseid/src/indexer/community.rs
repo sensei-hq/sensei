@@ -127,15 +127,22 @@ pub async fn detect_communities_for_folder(
     Ok(community_count)
 }
 
-/// Stable per-node ordering key — independent of the random node UUID — so
-/// community detection and id assignment are deterministic for an unchanged
-/// tree (D4 invariant 2).
-fn natural_key(node: &serde_json::Value) -> (String, i64, String, String) {
+/// Stable per-node ordering key so community detection and id assignment are
+/// deterministic for an unchanged tree (D4 invariant 2). `parent_id` then `id` are
+/// the final tiebreak (must-fix #8): once D5c nests symbols under their type/impl,
+/// two symbols can share `(file_path, line_start, kind, name)` under DIFFERENT
+/// parents — `parent_id` separates those, and `id` makes the order TOTAL so the
+/// result never depends on the DB's unspecified row order for a tied key. Node ids
+/// are stable across re-scans (get-or-create by fqn / upsert-then-prune), so this
+/// stays deterministic across re-runs of an unchanged graph.
+fn natural_key(node: &serde_json::Value) -> (String, i64, String, String, String, String) {
     (
         node["file_path"].as_str().unwrap_or("").to_string(),
         node["line_start"].as_i64().unwrap_or(-1),
         node["kind"].as_str().unwrap_or("").to_string(),
         node["name"].as_str().unwrap_or("").to_string(),
+        node["parent_id"].as_str().unwrap_or("").to_string(),
+        node["id"].as_str().unwrap_or("").to_string(),
     )
 }
 
@@ -325,6 +332,27 @@ async fn generate_description(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn community_ids_deterministic_under_nesting() {
+        // must-fix #8 (guards D4a): once D5c nests symbols under their type/impl,
+        // two symbols can share (file_path, line_start, kind, name) under DIFFERENT
+        // parents. The natural key — which orders nodes for the deterministic
+        // community-id assignment — must separate them (parent_id) and be TOTAL (id),
+        // so the result never depends on the DB's unspecified row order for a tie.
+        let mk = |parent: &str, id: &str| serde_json::json!({
+            "file_path": "a.rs", "line_start": 5, "kind": "method", "name": "fmt",
+            "parent_id": parent, "id": id,
+        });
+        // Same (file,line,kind,name), different enclosing type → distinct keys.
+        assert_ne!(natural_key(&mk("p-A", "n-1")), natural_key(&mk("p-B", "n-2")),
+            "different parents disambiguate an otherwise-identical key");
+        // Even a full tie on parent is broken by id → the order is total.
+        assert_ne!(natural_key(&mk("p-A", "n-1")), natural_key(&mk("p-A", "n-2")),
+            "id breaks a full tie so the sort order is total (deterministic)");
+        assert!(natural_key(&mk("p-A", "n-1")) < natural_key(&mk("p-A", "n-2")),
+            "when all else ties, ordering is by id");
+    }
 
     #[test]
     fn label_propagation_basic() {

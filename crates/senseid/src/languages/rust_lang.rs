@@ -684,7 +684,7 @@ pub fn produce_fqns(source: &str, ctx: &FileFqnContext) -> FqnFileOutput {
     let mut scope = FileScope::default();
     collect_scope(&root, src, &mut scope);
 
-    let mut out = FqnFileOutput::default();
+    let mut out = FqnFileOutput { package: ctx.package.clone(), module: ctx.module.clone(), ..Default::default() };
     let lines: Vec<&str> = source.lines().collect();
     walk_fqn(&root, src, &lines, ctx, &ctx.module, &scope, None, &mut out);
     out
@@ -744,15 +744,17 @@ fn walk_fqn(
             "function_item" => {
                 let name = field_text(&child, "name", src);
                 if name.is_empty() { continue; }
-                let (fqn_str, kind, parent_type) = match impl_ctx {
+                let (fqn_str, kind, parent_type, parent_fqn) = match impl_ctx {
                     Some(ic) => {
                         let f = match &ic.trait_name {
                             Some(tr) => fqn::trait_method(RUST_LANG, &ctx.package, &ic.type_module, &ic.type_name, tr, &name),
                             None => fqn::method(RUST_LANG, &ctx.package, &ic.type_module, &ic.type_name, &name),
                         };
-                        (f, SymbolKind::Method, Some(ic.type_name.clone()))
+                        // A method nests under its TYPE node (the type's own item fqn).
+                        let type_fqn = fqn::item(RUST_LANG, &ctx.package, &ic.type_module, &ic.type_name);
+                        (f, SymbolKind::Method, Some(ic.type_name.clone()), Some(type_fqn))
                     }
-                    None => (fqn::item(RUST_LANG, &ctx.package, module, &name), SymbolKind::Function, None),
+                    None => (fqn::item(RUST_LANG, &ctx.package, module, &name), SymbolKind::Function, None, None),
                 };
                 out.defs.push(FqnDefinition {
                     fqn: fqn_str.clone(),
@@ -764,6 +766,7 @@ fn walk_fqn(
                     signature: line_at(lines, child.start_position().row),
                     docstring: collect_doc_comments(&child, src),
                     parent_type,
+                    parent_fqn,
                 });
                 if let Some(body) = child.child_by_field_name("body") {
                     let bindings = build_bindings(&child, src, ctx, scope, impl_ctx);
@@ -791,6 +794,7 @@ fn walk_fqn(
                     signature: line_at(lines, child.start_position().row),
                     docstring: collect_doc_comments(&child, src),
                     parent_type: None,
+                    parent_fqn: None,
                 });
             }
             "impl_item" => {

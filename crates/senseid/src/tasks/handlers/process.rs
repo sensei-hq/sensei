@@ -873,8 +873,37 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
         let mut fqn_ids: std::collections::HashMap<String, uuid::Uuid> =
             std::collections::HashMap::new();
         if let Some(fqn_out) = &result.fqn {
+            // D5c: a `module` container per file (nested under the file). Top-level
+            // items nest under it (or the file node at the crate root); methods nest
+            // under their TYPE node — so the graph is file → module → type → method.
+            let mut top_parent = file_node_id;
+            if !fqn_out.module.is_empty() {
+                let mfqn = crate::languages::fqn::item("rust", &fqn_out.package, "", &fqn_out.module);
+                let mname = fqn_out.module.rsplit("::").next().unwrap_or(&fqn_out.module);
+                let mid = ctx.pg().upsert_node_by_fqn(
+                    &folder_id, &mfqn, "module", mname, Some("rust"),
+                    Some(crate::db::pg_store::FqnDef {
+                        file_path: &result.rel_path, signature: None, line_start: None,
+                        line_end: None, is_exported: false, parent_id: Some(&file_node_id),
+                    }),
+                ).await.map_err(|e| format!("upsert module node {mfqn}: {e}"))?;
+                fqn_ids.insert(mfqn, mid);
+                top_parent = mid;
+            }
             for d in &fqn_out.defs {
                 let kind = crate::types::NodeKind::from_symbol_kind(&d.kind);
+                // Structural parent: a method → its enclosing type node (get-or-create
+                // — a stub if the type is defined in another file); a top-level item →
+                // the module container (or the file at crate root).
+                let parent_id: uuid::Uuid = match &d.parent_fqn {
+                    Some(pf) => match fqn_ids.get(pf) {
+                        Some(id) => *id,
+                        None => ctx.pg().upsert_node_by_fqn(
+                            &folder_id, pf, "class", pf.rsplit('·').next().unwrap_or(pf), Some("rust"), None,
+                        ).await.map_err(|e| format!("upsert fqn parent {pf}: {e}"))?,
+                    },
+                    None => top_parent,
+                };
                 let id = ctx.pg().upsert_node_by_fqn(
                     &folder_id, &d.fqn, kind.as_str(), &d.name, Some("rust"),
                     Some(crate::db::pg_store::FqnDef {
@@ -883,7 +912,7 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
                         line_start: Some(d.line_start as i32),
                         line_end: Some(d.line_end as i32),
                         is_exported: d.is_exported,
-                        parent_id: Some(&file_node_id),
+                        parent_id: Some(&parent_id),
                     }),
                 ).await.map_err(|e| format!("upsert fqn def {}: {e}", d.fqn))?;
                 fqn_ids.insert(d.fqn.clone(), id);
@@ -1572,6 +1601,54 @@ mod tests {
             deps.iter().any(|d| d["package"] == "serde_json" && d["symbol_count"] == 1),
             "serde_json is a queryable dependency with one used symbol, got {deps:?}"
         );
+
+        ctx.pg().delete_nodes_by_folder(&fid).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn rust_impl_type_container_nesting() {
+        // Phase 5 (D5c): the graph nests file → module → type → method, instead of
+        // every symbol flat under the file node.
+        let ctx = make_ctx().await;
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("w");
+        std::fs::create_dir_all(repo.join("src")).unwrap();
+        std::fs::write(repo.join("Cargo.toml"), "[package]\nname = \"w\"\n").unwrap();
+        std::fs::write(
+            repo.join("src/widget.rs"),
+            "pub struct Widget;\nimpl Widget {\n    pub fn new() -> Self { Widget }\n    pub fn spin(&self) {}\n}\npub fn helper() {}\n",
+        ).unwrap();
+        let repo_path = repo.to_string_lossy().to_string();
+        let rid = ctx.pg().add_watch_root(&tmp.path().to_string_lossy(), "w", &serde_json::json!([])).await.unwrap();
+        let fid = ctx.pg().upsert_repo_kind(&rid, "git", "w", &repo_path).await.unwrap();
+        ctx.pg().update_folder_status(&fid, "indexing").await.unwrap();
+
+        let abs = repo.join("src/widget.rs").to_string_lossy().to_string();
+        process_file(&ctx, &Task::new(TaskKind::ProcessFile, &repo_path, &abs)).await.unwrap();
+
+        async fn node(ctx: &TaskContext, fid: uuid::Uuid, fqn: &str) -> (uuid::Uuid, Option<uuid::Uuid>, String) {
+            sqlx_core::query_as::query_as("SELECT id, parent_id, kind::text FROM sensei.nodes WHERE folder_id=$1 AND fqn=$2")
+                .bind(fid).bind(fqn).fetch_one(ctx.pg().pool()).await
+                .unwrap_or_else(|e| panic!("node {fqn} not found: {e}"))
+        }
+        let (file_id,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "SELECT id FROM sensei.nodes WHERE folder_id=$1 AND kind='file'::sensei.node_kind")
+            .bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
+
+        let (module_id, module_parent, module_kind) = node(&ctx, fid, "rust·w·widget").await;
+        assert_eq!(module_kind, "module", "a module container node exists");
+        assert_eq!(module_parent, Some(file_id), "the module nests under the file");
+
+        let (widget_id, widget_parent, _) = node(&ctx, fid, "rust·w·widget·Widget").await;
+        assert_eq!(widget_parent, Some(module_id), "the type nests under the module");
+
+        let (_, new_parent, _) = node(&ctx, fid, "rust·w·widget·Widget·new").await;
+        assert_eq!(new_parent, Some(widget_id), "a method nests under its type");
+        let (_, spin_parent, _) = node(&ctx, fid, "rust·w·widget·Widget·spin").await;
+        assert_eq!(spin_parent, Some(widget_id), "sibling methods nest under the same type");
+
+        let (_, helper_parent, _) = node(&ctx, fid, "rust·w·widget·helper").await;
+        assert_eq!(helper_parent, Some(module_id), "a free fn nests under the module");
 
         ctx.pg().delete_nodes_by_folder(&fid).await.unwrap();
     }
