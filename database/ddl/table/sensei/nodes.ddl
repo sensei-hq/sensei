@@ -5,7 +5,10 @@ create table if not exists nodes (
 , parent_id                uuid        references sensei.nodes(id) on delete cascade
 , kind                     node_kind   not null
 , name                     text        not null
-, file_path                text        not null
+, file_path                text
+, fqn                      text
+, resolved                 boolean     not null default false
+, language                 text
 , signature                text
 , description              text
 , content                  text
@@ -32,6 +35,24 @@ create table if not exists nodes (
 , constraint nodes_unique_identity
     unique nulls not distinct (folder_id, file_path, kind, name, parent_id, line_start)
 );
+
+-- FQN identity (SCIP/LSIF moniker model). A definition AND every reference to it
+-- get-or-create the same node keyed on the fully-qualified name, so a call edge
+-- resolves to a real target at emit instead of a bare-name guess. Partial (only
+-- fqn-bearing rows) so it coexists with the line-based `nodes_unique_identity`:
+--   • legacy nodes (file/section/rationale + not-yet-migrated languages): fqn NULL
+--     → governed by identity only (unchanged).
+--   • reference stubs + external `lib_symbol` nodes: file_path NULL, fqn set
+--     → governed by this index only.
+--   • migrated defs: both file_path and fqn set → in both indexes (consistent).
+-- NOTE (Phase-3 precondition): once the emit path CREATES reference stubs, two
+-- different-fqn same-simple-name stubs (both file_path/line NULL) would collide on
+-- `nodes_unique_identity` and false-merge. Before wiring stub emit, make
+-- `nodes_unique_identity` a partial index `where file_path is not null` and switch
+-- `upsert_node_ex`'s ON CONFLICT to column inference. See the FQN plan Phase 3.
+create unique index if not exists nodes_unique_fqn
+    on nodes (folder_id, fqn)
+ where fqn is not null;
 
 create index if not exists nodes_folder_id_idx
     on nodes(folder_id);
@@ -99,7 +120,21 @@ comment on column nodes.kind
 comment on column nodes.name
      is 'Identifier name or heading text.';
 comment on column nodes.file_path
-     is 'Folder-relative path of the source file. Denormalized for query performance.';
+     is 'Folder-relative path of the source file. Denormalized for query performance.
+NULL for reference stubs and external lib_symbol nodes, which have no local file
+(see resolved/fqn). Non-NULL for every definition and legacy node.';
+comment on column nodes.fqn
+     is 'Fully-qualified name (SCIP/LSIF moniker). Definitions and references
+get-or-create the same node by (folder_id, fqn) so call edges resolve at emit.
+NULL for legacy / not-yet-migrated nodes, which fall back to bare-name matching.';
+comment on column nodes.resolved
+     is 'True once a definition has been seen for this fqn (file_path/signature/line
+filled). False for a reference-first stub awaiting its definition. lib_symbol nodes
+are resolved=true (the external symbol IS the definition; nothing to enrich).';
+comment on column nodes.language
+     is 'Language slug (rust/python/typescript/…) derived from the file extension at
+write time. Scopes the bare-name fallback to same-language candidates during the
+per-language FQN rollout so a co-resident un-migrated language never cross-matches.';
 comment on column nodes.signature
      is 'Abbreviated type signature (L0 level). For code symbols.';
 comment on column nodes.description

@@ -11,6 +11,23 @@ pub struct PgStore {
     pool: PgPool,
 }
 
+/// Definition details for [`PgStore::upsert_node_by_fqn`] — the fields a
+/// DEFINITION fills on a node a reference may have created as a stub. Passing
+/// `None` for the `def` argument means "this mention is a REFERENCE": get-or-create
+/// the stub and leave it unresolved. `Some` ENRICHES: flip `resolved=true` and
+/// write these. `file_path` is required (a definition always has a home file);
+/// external symbols with no local file are `lib_symbol` nodes (see
+/// [`PgStore::upsert_lib_node_by_fqn`]).
+#[derive(Debug, Clone)]
+pub struct FqnDef<'a> {
+    pub file_path: &'a str,
+    pub signature: Option<&'a str>,
+    pub line_start: Option<i32>,
+    pub line_end: Option<i32>,
+    pub is_exported: bool,
+    pub parent_id: Option<&'a uuid::Uuid>,
+}
+
 /// Render a float slice to pgvector's text literal (`[v1,v2,...]`) so it can be
 /// bound as text and cast with `$n::vector` — no pgvector crate needed. Shared
 /// by `set_node_embedding` (writes) and `semantic_search_nodes` (query vector).
@@ -1533,20 +1550,112 @@ impl PgStore {
         // conflict the first three-of-four are fixed by the key, so `signature` is the
         // only embed input that can change — nulling on that (and preserving it
         // otherwise) keeps embeddings fresh without a separate content_hash column.
+        // `language` is derived from the file extension at write time (the single
+        // shared mapping). Populating it on THIS legacy path too — every non-Rust +
+        // file/section/rationale node flows through here for the whole FQN
+        // transition — is what gives the same-language bare-name fallback (plan 0.8)
+        // something to filter on. COALESCE on conflict backfills pre-existing rows.
+        let language = crate::languages::language_for_path(file_path);
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
-            "INSERT INTO sensei.nodes(folder_id, kind, name, file_path, parent_id, signature, line_start, line_end, is_exported)
-             VALUES($1, $2::sensei.node_kind, $3, $4, $5, $6, $7, $8, $9)
+            "INSERT INTO sensei.nodes(folder_id, kind, name, file_path, parent_id, signature, line_start, line_end, is_exported, language)
+             VALUES($1, $2::sensei.node_kind, $3, $4, $5, $6, $7, $8, $9, $10)
              ON CONFLICT ON CONSTRAINT nodes_unique_identity DO UPDATE
                SET signature   = EXCLUDED.signature,
                    line_end    = EXCLUDED.line_end,
                    is_exported = EXCLUDED.is_exported,
+                   language    = COALESCE(EXCLUDED.language, nodes.language),
                    embedding   = CASE WHEN nodes.signature IS DISTINCT FROM EXCLUDED.signature
                                       THEN NULL ELSE nodes.embedding END,
                    modified_at = now()
              RETURNING id"
         ).bind(folder_id).bind(kind).bind(name).bind(file_path)
-            .bind(parent_id).bind(signature).bind(line_start).bind(line_end).bind(is_exported)
+            .bind(parent_id).bind(signature).bind(line_start).bind(line_end).bind(is_exported).bind(language)
             .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row.0)
+    }
+
+    /// Get-or-create a node by its fully-qualified name (SCIP/LSIF moniker model).
+    /// A REFERENCE (`def = None`) creates — or returns — an unresolved STUB
+    /// (`resolved=false`, NULL `file_path`). A DEFINITION (`def = Some`) creates or
+    /// ENRICHES the same `(folder_id, fqn)` node in place: flips `resolved=true` and
+    /// fills `file_path`/`signature`/`line_start`/`line_end`/`is_exported`/`parent_id`.
+    ///
+    /// Monotone + idempotent: a reference NEVER downgrades an already-resolved node
+    /// (`resolved = OLD OR NEW`; def-only columns are kept unless the incoming row is
+    /// itself a definition), and re-enrichment re-nulls the embedding only when the
+    /// signature changed — the same freshness rule as `upsert_node_ex`. Arbiter is
+    /// the partial `nodes_unique_fqn` index, so this coexists with the line-based
+    /// `nodes_unique_identity`.
+    pub async fn upsert_node_by_fqn(
+        &self,
+        folder_id: &uuid::Uuid,
+        fqn: &str,
+        kind: &str,
+        name: &str,
+        language: Option<&str>,
+        def: Option<FqnDef<'_>>,
+    ) -> Result<uuid::Uuid, String> {
+        let resolved = def.is_some();
+        let file_path = def.as_ref().map(|d| d.file_path);
+        let signature = def.as_ref().and_then(|d| d.signature);
+        let line_start = def.as_ref().and_then(|d| d.line_start);
+        let line_end = def.as_ref().and_then(|d| d.line_end);
+        let is_exported = def.as_ref().is_some_and(|d| d.is_exported);
+        let parent_id = def.as_ref().and_then(|d| d.parent_id);
+
+        let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO sensei.nodes
+                 (folder_id, fqn, kind, name, language, resolved,
+                  file_path, signature, line_start, line_end, is_exported, parent_id)
+             VALUES($1, $2, $3::sensei.node_kind, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+             ON CONFLICT (folder_id, fqn) WHERE fqn IS NOT NULL DO UPDATE
+               SET resolved    = nodes.resolved OR EXCLUDED.resolved,
+                   kind        = CASE WHEN EXCLUDED.resolved THEN EXCLUDED.kind ELSE nodes.kind END,
+                   file_path   = COALESCE(EXCLUDED.file_path, nodes.file_path),
+                   signature   = CASE WHEN EXCLUDED.resolved THEN EXCLUDED.signature ELSE nodes.signature END,
+                   line_start  = CASE WHEN EXCLUDED.resolved THEN EXCLUDED.line_start ELSE nodes.line_start END,
+                   line_end    = CASE WHEN EXCLUDED.resolved THEN EXCLUDED.line_end ELSE nodes.line_end END,
+                   is_exported = CASE WHEN EXCLUDED.resolved THEN EXCLUDED.is_exported ELSE nodes.is_exported END,
+                   parent_id   = COALESCE(EXCLUDED.parent_id, nodes.parent_id),
+                   language    = COALESCE(EXCLUDED.language, nodes.language),
+                   embedding   = CASE WHEN EXCLUDED.resolved
+                                       AND nodes.signature IS DISTINCT FROM EXCLUDED.signature
+                                      THEN NULL ELSE nodes.embedding END,
+                   modified_at = now()
+             RETURNING id"
+        )
+        .bind(folder_id).bind(fqn).bind(kind).bind(name).bind(language).bind(resolved)
+        .bind(file_path).bind(signature).bind(line_start).bind(line_end).bind(is_exported).bind(parent_id)
+        .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row.0)
+    }
+
+    /// Get-or-create a first-class `lib_symbol` node for an EXTERNAL reference (a
+    /// dependency's symbol). Unlike a stub it is `resolved=true` — the external
+    /// symbol IS its own definition, there is nothing to enrich — with NULL
+    /// `file_path` (no local file) and grouped by `package` in `props`. Owned by
+    /// the referencing repo-root `folder_id` so it cascades with the folder.
+    /// Stable id across repeated references (arbiter = `nodes_unique_fqn`).
+    pub async fn upsert_lib_node_by_fqn(
+        &self,
+        folder_id: &uuid::Uuid,
+        fqn: &str,
+        name: &str,
+        package: &str,
+    ) -> Result<uuid::Uuid, String> {
+        let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO sensei.nodes
+                 (folder_id, fqn, kind, name, resolved, props)
+             VALUES($1, $2, 'lib_symbol'::sensei.node_kind, $3, true,
+                    jsonb_build_object('package', $4::text))
+             ON CONFLICT (folder_id, fqn) WHERE fqn IS NOT NULL DO UPDATE
+               SET resolved    = true,
+                   props       = nodes.props || jsonb_build_object('package', $4::text),
+                   modified_at = now()
+             RETURNING id"
+        )
+        .bind(folder_id).bind(fqn).bind(name).bind(package)
+        .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(row.0)
     }
 
@@ -1569,6 +1678,7 @@ impl PgStore {
                    FROM sensei.nodes
                   WHERE folder_id = $1
                     AND embedding IS NULL
+                    AND file_path IS NOT NULL
                     AND kind IN ('file','function','method','class','interface',
                                  'type','const','enum','enum_variant','section',
                                  'struct','component','hook','doc','extension')
@@ -1658,7 +1768,8 @@ impl PgStore {
                     n.kind::text, n.name, n.signature
                FROM sensei.nodes n
                JOIN sensei.folders f ON f.id = n.folder_id
-              WHERE n.id = ANY($1::uuid[])",
+              WHERE n.id = ANY($1::uuid[])
+                AND n.file_path IS NOT NULL",
         )
         .bind(ids)
         .fetch_all(&self.pool)
@@ -1775,6 +1886,7 @@ impl PgStore {
                FROM sensei.nodes n
                JOIN sensei.folders f ON f.id = n.folder_id
               WHERE n.embedding IS NULL
+                AND n.file_path IS NOT NULL
                 AND n.kind IN ('file','function','method','class','interface',
                                'type','const','enum','enum_variant','section',
                                'struct','component','hook','doc','extension')",
@@ -9968,6 +10080,7 @@ impl PgStore {
         let rows: Vec<(uuid::Uuid, String, String, Option<String>, Option<i32>)> = sqlx_core::query_as::query_as(
             "SELECT id, name, file_path, signature, line_start FROM sensei.nodes
              WHERE folder_id = ANY($1) AND kind IN ('function'::sensei.node_kind, 'method'::sensei.node_kind)
+             AND file_path IS NOT NULL
              AND (name ILIKE '%' || $2 || '%' OR signature ILIKE '%' || $2 || '%')
              ORDER BY name LIMIT 50"
         ).bind(folder_ids).bind(query).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
@@ -9981,6 +10094,7 @@ impl PgStore {
         let rows: Vec<(uuid::Uuid, String, String, Option<i32>)> = sqlx_core::query_as::query_as(
             "SELECT id, name, file_path, line_start FROM sensei.nodes
              WHERE folder_id = ANY($1) AND kind IN ('class'::sensei.node_kind, 'struct'::sensei.node_kind, 'interface'::sensei.node_kind, 'enum'::sensei.node_kind, 'type'::sensei.node_kind)
+             AND file_path IS NOT NULL
              AND name ILIKE '%' || $2 || '%'
              ORDER BY name LIMIT 50"
         ).bind(folder_ids).bind(query).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
@@ -9999,7 +10113,10 @@ impl PgStore {
 
     /// Get all nodes across multiple folders (project-scoped variant).
     pub async fn get_nodes_scoped(&self, folder_ids: &[uuid::Uuid]) -> Result<Vec<serde_json::Value>, String> {
-        let rows: Vec<(uuid::Uuid, String, String, String, Option<uuid::Uuid>, Option<i32>, Option<i32>, Option<i32>, Option<i32>, uuid::Uuid)> = sqlx_core::query_as::query_as(
+        // file_path is Option: reference stubs + lib_symbol nodes have none. The
+        // whole-graph projection must decode them without erroring (they serialize
+        // to a null file_path); NULLs sort last under ORDER BY file_path.
+        let rows: Vec<(uuid::Uuid, String, String, Option<String>, Option<uuid::Uuid>, Option<i32>, Option<i32>, Option<i32>, Option<i32>, uuid::Uuid)> = sqlx_core::query_as::query_as(
             "SELECT id, kind::text, name, file_path, parent_id, line_start, line_end, degree, community_id, folder_id FROM sensei.nodes WHERE folder_id = ANY($1) ORDER BY file_path, line_start"
         ).bind(folder_ids).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(rows.into_iter().map(|(id, kind, name, fp, pid, ls, le, degree, community_id, folder_id)| {
@@ -11541,6 +11658,132 @@ mod tests {
         // A DIFFERENT line is a new identity ⇒ a new node (a moved symbol churns).
         let id4 = s.upsert_node(&fid, "function", "foo", "a.rs", None, Some("fn foo(x: i32)"), Some(99), Some(105)).await.unwrap();
         assert_ne!(id1, id4, "a different line_start is a new identity (moved symbol re-mints until D5c nesting)");
+
+        s.delete_nodes_by_folder(&fid).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn upsert_node_by_fqn_merges_ref_and_def() {
+        // FQN get-or-create (SCIP/LSIF moniker model): a REFERENCE creates an
+        // unresolved stub (resolved=false, NULL file_path); a later DEFINITION
+        // with the same (folder_id, fqn) returns the SAME id, flips resolved=true
+        // and fills file/line/signature; a second reference shares the one node
+        // and never downgrades the resolved definition. No "unresolved" state —
+        // the node exists from its first mention.
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, &format!("fqn_{}", uuid::Uuid::new_v4())).await;
+        let fqn = "rust·senseid·widget·Widget·new";
+
+        // 1. Reference-first → a stub.
+        let stub = s.upsert_node_by_fqn(&fid, fqn, "method", "new", Some("rust"), None).await.unwrap();
+        let (resolved, fp): (bool, Option<String>) =
+            query_as("SELECT resolved, file_path FROM sensei.nodes WHERE id=$1")
+            .bind(stub).fetch_one(s.pool()).await.unwrap();
+        assert!(!resolved, "a reference-first node is an unresolved stub");
+        assert_eq!(fp, None, "a stub has no known file");
+
+        // 2. The definition enriches the SAME node in place.
+        let def = s.upsert_node_by_fqn(&fid, fqn, "method", "new", Some("rust"),
+            Some(FqnDef { file_path: "src/widget.rs", signature: Some("fn new() -> Self"),
+                          line_start: Some(10), line_end: Some(12), is_exported: true, parent_id: None })
+        ).await.unwrap();
+        assert_eq!(stub, def, "the definition get-or-creates the SAME node as the reference");
+        let (resolved2, fp2, sig, ls, exported): (bool, Option<String>, Option<String>, Option<i32>, bool) =
+            query_as("SELECT resolved, file_path, signature, line_start, is_exported FROM sensei.nodes WHERE id=$1")
+            .bind(def).fetch_one(s.pool()).await.unwrap();
+        assert!(resolved2, "the node is resolved once its definition is seen");
+        assert_eq!(fp2.as_deref(), Some("src/widget.rs"));
+        assert_eq!(sig.as_deref(), Some("fn new() -> Self"));
+        assert_eq!(ls, Some(10));
+        assert!(exported, "the definition's is_exported is written");
+
+        // 3. A second reference shares the one node and does NOT downgrade it.
+        let ref2 = s.upsert_node_by_fqn(&fid, fqn, "method", "new", Some("rust"), None).await.unwrap();
+        assert_eq!(ref2, def, "a later reference resolves to the same node");
+        let (still_resolved, still_fp): (bool, Option<String>) =
+            query_as("SELECT resolved, file_path FROM sensei.nodes WHERE id=$1")
+            .bind(def).fetch_one(s.pool()).await.unwrap();
+        assert!(still_resolved, "a reference must not downgrade an already-resolved node");
+        assert_eq!(still_fp.as_deref(), Some("src/widget.rs"), "a reference must not clear the definition's file");
+
+        // Exactly one node for this fqn.
+        let (n,): (i64,) = query_as("SELECT count(*) FROM sensei.nodes WHERE folder_id=$1 AND fqn=$2")
+            .bind(fid).bind(fqn).fetch_one(s.pool()).await.unwrap();
+        assert_eq!(n, 1, "ref + def + ref = exactly one node");
+
+        s.delete_nodes_by_folder(&fid).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn lib_node_by_fqn() {
+        // An external reference get-or-creates a first-class `lib_symbol` node:
+        // resolved=true (the external symbol IS its own definition — nothing to
+        // enrich), NULL file_path (no local file), grouped by package in props.
+        // Stable id across repeated references.
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, &format!("lib_{}", uuid::Uuid::new_v4())).await;
+        let fqn = "lib·serde_json·serde_json·from_str";
+
+        let a = s.upsert_lib_node_by_fqn(&fid, fqn, "from_str", "serde_json").await.unwrap();
+        let (kind, resolved, fp, pkg): (String, bool, Option<String>, Option<String>) = query_as(
+            "SELECT kind::text, resolved, file_path, props->>'package' FROM sensei.nodes WHERE id=$1")
+            .bind(a).fetch_one(s.pool()).await.unwrap();
+        assert_eq!(kind, "lib_symbol");
+        assert!(resolved, "a lib symbol is its own definition — resolved");
+        assert_eq!(fp, None, "a lib symbol has no local file");
+        assert_eq!(pkg.as_deref(), Some("serde_json"), "grouped by package in props");
+
+        // A second reference to the same external fqn shares the one node.
+        let b = s.upsert_lib_node_by_fqn(&fid, fqn, "from_str", "serde_json").await.unwrap();
+        assert_eq!(a, b, "repeated external references share one lib node");
+        let (n,): (i64,) = query_as(
+            "SELECT count(*) FROM sensei.nodes WHERE folder_id=$1 AND kind='lib_symbol'::sensei.node_kind")
+            .bind(fid).fetch_one(s.pool()).await.unwrap();
+        assert_eq!(n, 1);
+
+        s.delete_nodes_by_folder(&fid).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn legacy_upsert_sets_language_from_extension() {
+        // Every node written via the legacy upsert_node/_ex path (all non-Rust +
+        // file/section/rationale nodes, for the whole FQN transition) must carry
+        // `language` derived from its file extension — otherwise the same-language
+        // bare-name fallback filter (plan 0.8) has nothing to match on. Compound
+        // extensions resolve too (.svelte.ts → typescript).
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, &format!("lang_{}", uuid::Uuid::new_v4())).await;
+        let cases = [
+            ("src/a.rs",        "function", Some("fn f()"), "rust"),
+            ("pkg/b.py",        "function", Some("def g()"), "python"),
+            ("app/c.svelte.ts", "function", None,           "typescript"), // compound ext
+            ("docs/e.md",       "doc",      None,           "markdown"),
+        ];
+        for (path, kind, sig, want) in cases {
+            let id = s.upsert_node(&fid, kind, "n", path, None, sig, Some(1), Some(2)).await.unwrap();
+            let (lang,): (Option<String>,) = query_as("SELECT language FROM sensei.nodes WHERE id=$1")
+                .bind(id).fetch_one(s.pool()).await.unwrap();
+            assert_eq!(lang.as_deref(), Some(want), "{path} → language {want}");
+        }
+
+        s.delete_nodes_by_folder(&fid).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn node_locations_tolerates_stub_rows() {
+        // file_path is now nullable (reference stubs + lib_symbol nodes have none).
+        // node_locations decodes file_path as a required String, so a stub id among
+        // the requested ids must NOT error the whole fetch — the stub (no location)
+        // is simply omitted while the real node still resolves.
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, &format!("nodeloc_{}", uuid::Uuid::new_v4())).await;
+        let real = s.upsert_node(&fid, "function", "real", "a.rs", None, Some("fn real()"), Some(3), Some(9)).await.unwrap();
+        let stub = s.upsert_node_by_fqn(&fid, "rust·pkg·m·Missing·gone", "method", "gone", Some("rust"), None).await.unwrap();
+
+        let locs = s.node_locations(&[real, stub]).await.unwrap();
+        assert_eq!(locs.len(), 1, "the stub (NULL file_path) is omitted, not an error");
+        assert_eq!(locs[0].0, real, "the real node still resolves");
+        assert_eq!(locs[0].2, "a.rs", "with its file_path");
 
         s.delete_nodes_by_folder(&fid).await.unwrap();
     }
