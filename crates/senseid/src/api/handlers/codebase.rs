@@ -513,53 +513,12 @@ fn classify_case(name: &str) -> &'static str {
     "other"
 }
 
-/// Map a file extension to a language label for the structure summary.
-///
-/// For extensions with a `LanguageAdapter`, we consult the adapter directly so
-/// this handler doesn't duplicate the language slug knowledge. For extensions
-/// with no adapter yet (go, ruby, shell, config-file types) we fall through
-/// to the small hardcoded table below.
+/// Map a file extension to a language label for the structure summary. Thin
+/// wrapper over the shared `languages::language_for_ext_slug` (the single source
+/// of truth for adapter-backed + adapterless slugs); an unrecognized extension
+/// passes through as itself so callers can still bucket it.
 fn language_for_ext(ext: &str) -> &str {
-    let dotted = format!(".{ext}");
-    if let Some(adapter) = crate::languages::adapter_for_ext(&dotted) {
-        return adapter_language_static(adapter.language());
-    }
-    match ext {
-        "go" => "go",
-        "rb" => "ruby",
-        "sh" | "bash" => "shell",
-        "md" | "markdown" => "markdown",
-        "toml" => "toml",
-        "yaml" | "yml" => "yaml",
-        "json" => "json",
-        "css" => "css",
-        "html" => "html",
-        other => other,
-    }
-}
-
-/// Return-value adapter: `adapter.language()` yields a `&str` bound to a
-/// short-lived `Box<dyn LanguageAdapter>`, but every impl returns one of a
-/// closed set of static slugs. Map through this table so the caller gets a
-/// `&'static str` and doesn't have to clone on the hot path.
-fn adapter_language_static(slug: &str) -> &'static str {
-    match slug {
-        "rust" => "rust",
-        "typescript" => "typescript",
-        "javascript" => "javascript",
-        "python" => "python",
-        "java" => "java",
-        "kotlin" => "kotlin",
-        "swift" => "swift",
-        "svelte" => "svelte",
-        "vue" => "vue",
-        "sql" => "sql",
-        "c" => "c",
-        // Fallback for any future adapter — treat as unknown so this handler
-        // never surfaces stale labels; add a case above when a new adapter
-        // lands.
-        _ => "other",
-    }
+    crate::languages::language_for_ext_slug(ext).unwrap_or(ext)
 }
 
 /// Aggregate naming conventions (dominant case style per node kind), directory
