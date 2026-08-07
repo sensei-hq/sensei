@@ -1631,11 +1631,12 @@ impl PgStore {
     }
 
     /// Get-or-create a first-class `lib_symbol` node for an EXTERNAL reference (a
-    /// dependency's symbol). Unlike a stub it is `resolved=true` — the external
-    /// symbol IS its own definition, there is nothing to enrich — with NULL
-    /// `file_path` (no local file) and grouped by `package` in `props`. Owned by
-    /// the referencing repo-root `folder_id` so it cascades with the folder.
-    /// Stable id across repeated references (arbiter = `nodes_unique_fqn`).
+    /// dependency's symbol), grouped under a per-package `lib_package` container so
+    /// the graph shows "what we depend on and how much" (blueprint Fix 1, case 2).
+    /// Both are `resolved=true` (the external symbol IS its own definition) with
+    /// NULL `file_path` (no local file); the symbol's `parent_id` is its container.
+    /// Owned by the referencing repo-root `folder_id` so they cascade with it.
+    /// Stable ids across repeated references (arbiter = `nodes_unique_fqn`).
     pub async fn upsert_lib_node_by_fqn(
         &self,
         folder_id: &uuid::Uuid,
@@ -1643,20 +1644,60 @@ impl PgStore {
         name: &str,
         package: &str,
     ) -> Result<uuid::Uuid, String> {
-        let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
+        // One `lib_package` container per dependency (fqn = `lib·<package>`).
+        let pkg_fqn = format!("lib{}{}", crate::languages::fqn::SEP, package);
+        let container: (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "INSERT INTO sensei.nodes
                  (folder_id, fqn, kind, name, resolved, props)
-             VALUES($1, $2, 'lib_symbol'::sensei.node_kind, $3, true,
-                    jsonb_build_object('package', $4::text))
+             VALUES($1, $2, 'lib_package'::sensei.node_kind, $3, true,
+                    jsonb_build_object('package', $3::text))
+             ON CONFLICT (folder_id, fqn) WHERE fqn IS NOT NULL DO UPDATE
+               SET resolved = true, modified_at = now()
+             RETURNING id"
+        )
+        .bind(folder_id).bind(&pkg_fqn).bind(package)
+        .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
+
+        // The symbol, parented under its package container.
+        let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO sensei.nodes
+                 (folder_id, fqn, kind, name, resolved, parent_id, props)
+             VALUES($1, $2, 'lib_symbol'::sensei.node_kind, $3, true, $4,
+                    jsonb_build_object('package', $5::text))
              ON CONFLICT (folder_id, fqn) WHERE fqn IS NOT NULL DO UPDATE
                SET resolved    = true,
-                   props       = nodes.props || jsonb_build_object('package', $4::text),
+                   parent_id   = COALESCE(EXCLUDED.parent_id, nodes.parent_id),
+                   props       = nodes.props || jsonb_build_object('package', $5::text),
                    modified_at = now()
              RETURNING id"
         )
-        .bind(folder_id).bind(fqn).bind(name).bind(package)
+        .bind(folder_id).bind(fqn).bind(name).bind(container.0).bind(package)
         .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(row.0)
+    }
+
+    /// External dependencies referenced by a repo — one row per `lib_package` with
+    /// how many of its symbols the repo actually uses (`{package, symbol_count}`).
+    /// The graph-visible "what we depend on and how much".
+    pub async fn list_dependencies(&self, folder_id: &uuid::Uuid) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(String, i64)> = sqlx_core::query_as::query_as(
+            "SELECT p.name, count(s.id)
+               FROM sensei.nodes p
+               LEFT JOIN sensei.nodes s
+                 ON s.folder_id = p.folder_id
+                AND s.parent_id = p.id
+                AND s.kind = 'lib_symbol'::sensei.node_kind
+              WHERE p.folder_id = $1 AND p.kind = 'lib_package'::sensei.node_kind
+              GROUP BY p.name
+              ORDER BY count(s.id) DESC, p.name"
+        )
+        .bind(folder_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(package, symbol_count)| {
+            serde_json::json!({ "package": package, "symbol_count": symbol_count })
+        }).collect())
     }
 
     pub async fn get_nodes_by_folder(&self, folder_id: &uuid::Uuid) -> Result<Vec<serde_json::Value>, String> {

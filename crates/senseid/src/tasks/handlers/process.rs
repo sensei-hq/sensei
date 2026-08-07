@@ -1527,6 +1527,55 @@ mod tests {
         ctx.pg().delete_nodes_by_folder(&fid).await.unwrap();
     }
 
+    #[tokio::test]
+    async fn external_calls_link_to_lib_nodes() {
+        // Phase 4: a call into a dependency links to a first-class `lib_symbol` node
+        // grouped (props.package + parent_id) under a per-package `lib_package`
+        // container, and the dependency is queryable per repo. No external call dropped.
+        let ctx = make_ctx().await;
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("libcrate");
+        std::fs::create_dir_all(repo.join("src")).unwrap();
+        std::fs::write(repo.join("Cargo.toml"), "[package]\nname = \"libcrate\"\n").unwrap();
+        std::fs::write(repo.join("src/lib.rs"), "pub fn load(s: &str) { serde_json::from_str(s); }\n").unwrap();
+        let repo_path = repo.to_string_lossy().to_string();
+        let rid = ctx.pg().add_watch_root(&tmp.path().to_string_lossy(), "libc", &serde_json::json!([])).await.unwrap();
+        let fid = ctx.pg().upsert_repo_kind(&rid, "git", "libcrate", &repo_path).await.unwrap();
+        ctx.pg().update_folder_status(&fid, "indexing").await.unwrap();
+
+        let abs = repo.join("src/lib.rs").to_string_lossy().to_string();
+        process_file(&ctx, &Task::new(TaskKind::ProcessFile, &repo_path, &abs)).await.unwrap();
+
+        // The external symbol is a `lib_symbol`, grouped by package.
+        let (sym_id, sym_pkg, parent): (uuid::Uuid, Option<String>, Option<uuid::Uuid>) = sqlx_core::query_as::query_as(
+            "SELECT id, props->>'package', parent_id FROM sensei.nodes WHERE folder_id=$1 AND kind='lib_symbol'::sensei.node_kind AND name='from_str'")
+            .bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
+        assert_eq!(sym_pkg.as_deref(), Some("serde_json"), "lib symbol grouped by package");
+
+        // …under a per-package `lib_package` container.
+        let (container_id, container_name): (uuid::Uuid, String) = sqlx_core::query_as::query_as(
+            "SELECT id, name FROM sensei.nodes WHERE folder_id=$1 AND kind='lib_package'::sensei.node_kind")
+            .bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
+        assert_eq!(container_name, "serde_json", "a lib_package container per dependency");
+        assert_eq!(parent, Some(container_id), "the lib symbol is parented under its package container");
+
+        // A RESOLVED call edge load → from_str (external call not dropped).
+        let (edge_target,): (Option<uuid::Uuid>,) = sqlx_core::query_as::query_as(
+            "SELECT e.target_id FROM sensei.edges e JOIN sensei.nodes s ON s.id=e.source_id
+              WHERE e.folder_id=$1 AND s.name='load' AND e.kind='calls'::sensei.edge_kind")
+            .bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
+        assert_eq!(edge_target, Some(sym_id), "the external call resolves to the lib symbol node");
+
+        // Queryable per repo.
+        let deps = ctx.pg().list_dependencies(&fid).await.unwrap();
+        assert!(
+            deps.iter().any(|d| d["package"] == "serde_json" && d["symbol_count"] == 1),
+            "serde_json is a queryable dependency with one used symbol, got {deps:?}"
+        );
+
+        ctx.pg().delete_nodes_by_folder(&fid).await.unwrap();
+    }
+
     async fn seed_indexing_repo(ctx: &TaskContext, root: &std::path::Path, name: &str) -> (uuid::Uuid, uuid::Uuid, String) {
         let repo_path = root.join("repo").to_string_lossy().to_string();
         let rid = ctx.pg().add_watch_root(&root.to_string_lossy(), name, &serde_json::json!([])).await.unwrap();
