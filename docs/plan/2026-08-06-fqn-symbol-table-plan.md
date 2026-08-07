@@ -352,23 +352,34 @@ grammar mapping; no bare-name fallback remains for it.
 
 **Precondition:** all active adapters emit FQNs (Phase 6).
 
-- [ ] **7.1 Failing test** `pipeline_has_no_resolve_pass`: the scan produces
+- [x] **7.1 Failing test** `pipeline_has_no_resolve_pass`: the scan produces
   correct node→node edges with NO `resolve_edges`/guard in the path;
   `target_name` is vestigial (only the `dyn` residual). FAIL → remove
-  `resolve_edges` + the guard `2c520f2d`. PASS.
-- [ ] **7.2 Failing test** `graph_nodes_and_tree_expose_fqn_and_containers`:
+  `resolve_edges` + the guard `2c520f2d`. PASS. ✅ DONE (commit `243e4fc5`) —
+  degree-recompute relocated to `detect_communities` (its sole consumer).
+- [x] **7.2 Failing test** `graph_nodes_and_tree_expose_fqn_and_containers`:
   `graph/nodes` returns `fqn`; `/tree` renders the type/module containers (Phase
-  5). FAIL → widen the projections. PASS. **(The community-edge aggregation view +
-  the broader DB-views work are a SEPARATE plan — blueprint Fix 2/3, build-sequence
-  items 3–4; not folded here.)**
-- [ ] **7.3 Migration + live verify (HALT-ON-FAILURE on the irreversible
+  5). FAIL → widen the projections. PASS. ✅ DONE (commit `e2ead815`) —
+  `get_nodes_scoped` now projects `fqn`+`resolved`; `build_tree` already nests
+  containers. **(The community-edge aggregation view + the broader DB-views work
+  are a SEPARATE plan — blueprint Fix 2/3, build-sequence items 3–4; not folded here.)**
+- [~] **7.3 Migration + live verify (HALT-ON-FAILURE on the irreversible
   reindex).** Reindex (folds into the graph-clear deploy gate + `nodes_unique_fqn`,
   0.6). Assert on the live sensei graph: the `new`/`parse`/`load`/`GET`/`POST`
   hubs are gone (each fqn has its true inbound set), external deps appear as lib
   nodes, `SELECT count(*) FROM edges WHERE kind='calls' AND target_id IS NULL` is
   tiny (dyn residual only), the Atlas renders nested structure. If a check fails
   after the truncate, **halt and escalate** — do not re-run the truncate.
-- [ ] **7.4** Flip the blueprint's resolution section to shipped. Commit.
+  ✅ **SCOPED-VERIFIED (2026-08-07)** on the live DB, one repo (the sensei
+  monorepo): FQN deploy gates applied ([`2026-08-07-fqn-live-migration.sql`](2026-08-07-fqn-live-migration.sql));
+  develop-HEAD daemon installed; sensei graph rebuilt → `indexed`. Results:
+  `new` **1230→ across 308 FQN nodes (worst 105)** — mega-hub gone; **677**
+  `lib_symbol` deps; 1014 methods nested under structs; 56.5% calls resolved
+  (the 43.5% unresolved = the honest dyn/out-of-0.7 residual per 0.7, not false
+  edges). **DEFERRED to the develop→main deploy:** the full-graph reindex (all
+  8,660 folders) + the remaining additive schema drift via `dbd reconcile`
+  (notably `edges_target_id_idx`, which the degree-recompute wants).
+- [x] **7.4** Flip the blueprint's resolution section to shipped. Commit. ✅ DONE.
 
 **Acceptance:** no false mega-hubs; every call resolves to a correct FQN node
 (internal or lib); residual unresolved = only genuine dynamic dispatch; the Atlas
