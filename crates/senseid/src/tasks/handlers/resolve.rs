@@ -20,11 +20,10 @@ pub async fn resolve_edges(ctx: &TaskContext, task: &Task) -> Result<u32, String
         None => { tracing::warn!("resolve_edges: {} — folder not found", task.folder_path); return Ok(0); }
     };
 
-    // Get all unresolved edges (target_id IS NULL, target_name IS NOT NULL)
-    let unresolved: Vec<serde_json::Value> = ctx.pg().execute_raw_query(
-        "SELECT id, source_id, target_name, kind::text FROM sensei.edges WHERE folder_id = $1 AND target_id IS NULL AND target_name IS NOT NULL",
-        &folder_id,
-    ).await.unwrap_or_else(|e| { tracing::warn!(error = %e, folder = %folder_name, "resolve_edges: query unresolved edges failed"); Vec::new() });
+    // Get all unresolved edges (target_id IS NULL, target_name IS NOT NULL), each
+    // carrying its SOURCE node's language so the fallback stays language-scoped (0.8).
+    let unresolved: Vec<serde_json::Value> = ctx.pg().unresolved_edges_scoped(&folder_id)
+        .await.unwrap_or_else(|e| { tracing::warn!(error = %e, folder = %folder_name, "resolve_edges: query unresolved edges failed"); Vec::new() });
 
     // Get all nodes for name matching
     let nodes = ctx.pg().get_nodes_by_folder(&folder_id).await.unwrap_or_else(|e| { tracing::warn!(error = %e, folder = %folder_name, "resolve_edges: get_nodes_by_folder failed"); Vec::new() });
@@ -43,11 +42,22 @@ pub async fn resolve_edges(ctx: &TaskContext, task: &Task) -> Result<u32, String
             nodes_by_name.entry(name).or_default().push(n);
         }
     }
-    // Resolve `name` to a node id ONLY when it is unambiguous (one definition).
-    let resolve_unique = |name: &str| -> Option<uuid::Uuid> {
-        match nodes_by_name.get(name).map(|v| v.as_slice()) {
-            Some([only]) => crate::api::util::json_uuid(&only["id"]),
-            _ => None, // 0 matches, or 2+ (ambiguous) → leave unresolved
+    // Resolve `name` to a node id ONLY when it is unambiguous AMONG same-language
+    // candidates (plan 0.8): the bare-name fallback must never cross languages, so a
+    // Python `parse()` cannot match a Rust `parse` node in the same folder. A caller
+    // with no language, or a name that isn't uniquely a same-language node (0 or 2+),
+    // stays unresolved.
+    let resolve_unique = |name: &str, source_language: Option<&str>| -> Option<uuid::Uuid> {
+        let src_lang = source_language?;
+        let ids: Vec<uuid::Uuid> = nodes_by_name.get(name)
+            .map(|v| v.as_slice()).unwrap_or(&[])
+            .iter()
+            .filter(|n| n["language"].as_str() == Some(src_lang))
+            .filter_map(|n| crate::api::util::json_uuid(&n["id"]))
+            .collect();
+        match ids.as_slice() {
+            [only] => Some(*only),
+            _ => None,
         }
     };
 
@@ -61,16 +71,17 @@ pub async fn resolve_edges(ctx: &TaskContext, task: &Task) -> Result<u32, String
         let target_name = match edge["target_name"].as_str() { Some(n) => n, None => continue };
         let edge_id = match crate::api::util::json_uuid(&edge["id"]) { Some(id) => id, None => continue };
         let kind = edge["kind"].as_str().unwrap_or("calls");
+        let source_language = edge["source_language"].as_str();
 
         let matched_id = match kind {
             "imports" => {
-                // Resolve relative import: match against file paths
+                // Resolve relative import: match against file paths (language-agnostic).
                 file_by_path.iter()
                     .find(|(fp, _)| fp.contains(target_name))
                     .and_then(|(_, n)| crate::api::util::json_uuid(&n["id"]))
             }
-            "calls" => resolve_unique(target_name),
-            _ => resolve_unique(target_name),
+            "calls" => resolve_unique(target_name, source_language),
+            _ => resolve_unique(target_name, source_language),
         };
 
         if let Some(target_id) = matched_id {

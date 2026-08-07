@@ -22,34 +22,35 @@ create table if not exists nodes (
 , tags                     text[]      not null default '{}'
 , props                    jsonb       not null default '{}'
 , modified_at              timestamptz not null default now()
--- Node identity. Keyed on `line_start` (not `signature`): symbols are currently
--- flat under the file node (parent_id is the file, not the enclosing class/impl
--- — that nesting is D5c), and `signature` is the raw declaration-line text, so
--- two same-name methods with identical decl lines (e.g. `fn fmt(&self, …)` in two
--- impl blocks) would COLLAPSE to one node under a signature key. `line_start`
--- keeps them distinct. Trade-off: a symbol that MOVES lines re-mints its id
--- (re-embeds); full move-resilience needs D5c nesting first (see D3 in the spec /
--- backlog). NULLS NOT DISTINCT treats NULLs as equal so rows with
--- (parent_id=NULL, line_start=NULL) — e.g. a file or module node — correctly
--- conflict rather than duplicate.
-, constraint nodes_unique_identity
-    unique nulls not distinct (folder_id, file_path, kind, name, parent_id, line_start)
 );
+
+-- Node identity (line-based). A PARTIAL unique index (`where file_path is not
+-- null`) so it governs only rows that HAVE a local file — every legacy node and
+-- every migrated definition — and NOT the FQN reference stubs / `lib_symbol` nodes
+-- (file_path NULL), which are governed solely by `nodes_unique_fqn`. That split is
+-- what lets two same-simple-name, different-FQN stubs stay distinct: they would
+-- otherwise collide on `(folder_id, NULL, kind, name, NULL, NULL)` and false-merge.
+-- Behaviour-preserving for existing data — every current row has a non-null
+-- file_path, so the partial index covers exactly the same rows as the old table
+-- constraint. Keyed on `line_start` (not `signature`): same-name methods across
+-- impl blocks share a decl-line text and would collapse under a signature key
+-- (D5c nesting would fix that). NULLS NOT DISTINCT treats NULLs as equal so a
+-- file/module node (parent_id/line_start NULL) conflicts rather than duplicates.
+create unique index if not exists nodes_unique_identity
+    on nodes (folder_id, file_path, kind, name, parent_id, line_start)
+    nulls not distinct
+ where file_path is not null;
 
 -- FQN identity (SCIP/LSIF moniker model). A definition AND every reference to it
 -- get-or-create the same node keyed on the fully-qualified name, so a call edge
 -- resolves to a real target at emit instead of a bare-name guess. Partial (only
 -- fqn-bearing rows) so it coexists with the line-based `nodes_unique_identity`:
 --   • legacy nodes (file/section/rationale + not-yet-migrated languages): fqn NULL
---     → governed by identity only (unchanged).
+--     → governed by the (partial) identity index only.
 --   • reference stubs + external `lib_symbol` nodes: file_path NULL, fqn set
---     → governed by this index only.
+--     → governed by this index only (the partial identity index excludes them, so
+--       same-name different-fqn stubs never false-merge).
 --   • migrated defs: both file_path and fqn set → in both indexes (consistent).
--- NOTE (Phase-3 precondition): once the emit path CREATES reference stubs, two
--- different-fqn same-simple-name stubs (both file_path/line NULL) would collide on
--- `nodes_unique_identity` and false-merge. Before wiring stub emit, make
--- `nodes_unique_identity` a partial index `where file_path is not null` and switch
--- `upsert_node_ex`'s ON CONFLICT to column inference. See the FQN plan Phase 3.
 create unique index if not exists nodes_unique_fqn
     on nodes (folder_id, fqn)
  where fqn is not null;

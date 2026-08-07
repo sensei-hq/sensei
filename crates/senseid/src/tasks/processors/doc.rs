@@ -38,6 +38,7 @@ pub fn process(abs_path: &str, rel_path: &str, content: &str, _repo_id: &str, re
         sections,
         rationales,
         ir: None,
+        fqn: None,
     }
 }
 

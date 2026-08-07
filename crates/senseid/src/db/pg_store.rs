@@ -1559,7 +1559,7 @@ impl PgStore {
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "INSERT INTO sensei.nodes(folder_id, kind, name, file_path, parent_id, signature, line_start, line_end, is_exported, language)
              VALUES($1, $2::sensei.node_kind, $3, $4, $5, $6, $7, $8, $9, $10)
-             ON CONFLICT ON CONSTRAINT nodes_unique_identity DO UPDATE
+             ON CONFLICT (folder_id, file_path, kind, name, parent_id, line_start) WHERE file_path IS NOT NULL DO UPDATE
                SET signature   = EXCLUDED.signature,
                    line_end    = EXCLUDED.line_end,
                    is_exported = EXCLUDED.is_exported,
@@ -9494,6 +9494,22 @@ impl PgStore {
         }).collect())
     }
 
+    /// Unresolved edges (target_id NULL, target_name set) joined to their SOURCE
+    /// node's `language` — so the bare-name fallback (plan 0.8) can match a name
+    /// only among same-language candidates and never cross-contaminate a
+    /// co-resident un-migrated language.
+    pub async fn unresolved_edges_scoped(&self, folder_id: &uuid::Uuid) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(uuid::Uuid, uuid::Uuid, Option<String>, String, Option<String>)> = sqlx_core::query_as::query_as(
+            "SELECT e.id, e.source_id, e.target_name, e.kind::text, sn.language
+               FROM sensei.edges e
+               JOIN sensei.nodes sn ON sn.id = e.source_id
+              WHERE e.folder_id = $1 AND e.target_id IS NULL AND e.target_name IS NOT NULL"
+        ).bind(folder_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(id, src, tgt_name, kind, src_lang)| {
+            serde_json::json!({ "id": id, "source_id": src, "target_name": tgt_name, "kind": kind, "source_language": src_lang })
+        }).collect())
+    }
+
     /// Execute a raw SQL statement.
     pub async fn execute_raw(&self, sql: &str) -> Result<(), String> {
         sqlx_core::query::query(sql)
@@ -10116,11 +10132,11 @@ impl PgStore {
         // file_path is Option: reference stubs + lib_symbol nodes have none. The
         // whole-graph projection must decode them without erroring (they serialize
         // to a null file_path); NULLs sort last under ORDER BY file_path.
-        let rows: Vec<(uuid::Uuid, String, String, Option<String>, Option<uuid::Uuid>, Option<i32>, Option<i32>, Option<i32>, Option<i32>, uuid::Uuid)> = sqlx_core::query_as::query_as(
-            "SELECT id, kind::text, name, file_path, parent_id, line_start, line_end, degree, community_id, folder_id FROM sensei.nodes WHERE folder_id = ANY($1) ORDER BY file_path, line_start"
+        let rows: Vec<(uuid::Uuid, String, String, Option<String>, Option<uuid::Uuid>, Option<i32>, Option<i32>, Option<i32>, Option<i32>, uuid::Uuid, Option<String>)> = sqlx_core::query_as::query_as(
+            "SELECT id, kind::text, name, file_path, parent_id, line_start, line_end, degree, community_id, folder_id, language FROM sensei.nodes WHERE folder_id = ANY($1) ORDER BY file_path, line_start"
         ).bind(folder_ids).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
-        Ok(rows.into_iter().map(|(id, kind, name, fp, pid, ls, le, degree, community_id, folder_id)| {
-            serde_json::json!({ "id": id, "kind": kind, "name": name, "file_path": fp, "parent_id": pid, "line_start": ls, "line_end": le, "degree": degree, "community_id": community_id, "folder_id": folder_id })
+        Ok(rows.into_iter().map(|(id, kind, name, fp, pid, ls, le, degree, community_id, folder_id, language)| {
+            serde_json::json!({ "id": id, "kind": kind, "name": name, "file_path": fp, "parent_id": pid, "line_start": ls, "line_end": le, "degree": degree, "community_id": community_id, "folder_id": folder_id, "language": language })
         }).collect())
     }
 
@@ -11741,6 +11757,25 @@ mod tests {
             .bind(fid).fetch_one(s.pool()).await.unwrap();
         assert_eq!(n, 1);
 
+        s.delete_nodes_by_folder(&fid).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn two_same_name_stubs_do_not_merge() {
+        // Phase 3.0: with the partial identity index (`where file_path is not null`),
+        // reference stubs (file_path NULL) are governed ONLY by nodes_unique_fqn.
+        // Two references with the same simple name but DIFFERENT fqns must stay two
+        // distinct nodes — the false-merge this rebuild exists to kill. (Under the
+        // old non-partial identity constraint these would collide on
+        // (folder, NULL, kind, name, NULL, NULL).)
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, &format!("stubmerge_{}", uuid::Uuid::new_v4())).await;
+        let a = s.upsert_node_by_fqn(&fid, "rust·pkg·a·A·foo", "method", "foo", Some("rust"), None).await.unwrap();
+        let b = s.upsert_node_by_fqn(&fid, "rust·pkg·b·B·foo", "method", "foo", Some("rust"), None).await.unwrap();
+        assert_ne!(a, b, "same simple name, different fqn → two distinct stub nodes");
+        let (n,): (i64,) = query_as("SELECT count(*) FROM sensei.nodes WHERE folder_id=$1 AND resolved=false")
+            .bind(fid).fetch_one(s.pool()).await.unwrap();
+        assert_eq!(n, 2, "both stubs coexist under the fqn index");
         s.delete_nodes_by_folder(&fid).await.unwrap();
     }
 

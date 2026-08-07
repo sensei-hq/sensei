@@ -15,11 +15,6 @@
 //! `module` is a single segment that may itself contain `::` (the crate-relative
 //! module chain, e.g. `api::handlers::codebase`) and may be empty (crate root);
 //! empty segments are dropped when encoding.
-//!
-//! NOTE: `#![allow(dead_code)]` — this is the Phase-2 engine. Its consumers are
-//! the per-language producers + tests today; Phase 3 wires `produce_fqns` into
-//! `process_file` (reachable from `main`), at which point the allow is removed.
-#![allow(dead_code)]
 
 use crate::types::SymbolKind;
 
