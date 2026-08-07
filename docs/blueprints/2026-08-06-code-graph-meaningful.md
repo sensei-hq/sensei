@@ -1,11 +1,17 @@
 # Blueprint — make the code graph meaningful (resolution · structure · API · UI)
 
-> Status: **design / for review**. Follow-up to the code-graph indexing ship,
-> from live-app feedback (2026-08-06): the graph "looks like a sea of circles with
-> no connections and no organisation." Root-caused to three layers — wrong
-> *edges*, a view that ignores *structure*, and API↔data *disconnects*. One
-> honest interim fix already landed (`2c520f2d`, resolution ambiguity guard); the
-> rest is designed here. No further code until reviewed.
+> Status: **Fix 1 (resolution) — SHIPPED on `develop`.** The FQN symbol-table
+> rebuild landed (plan [`docs/plan/2026-08-06-fqn-symbol-table-plan.md`](../plan/2026-08-06-fqn-symbol-table-plan.md),
+> issue #108, Phases 1–7). `resolve_edges` + the interim guard (`2c520f2d`) are
+> retired — call/import edges now resolve to their target node AT EMIT by FQN.
+> **Live-verified** on the sensei repo (2026-08-07, scoped reindex on the live DB):
+> the `new` mega-hub (1230 inbound → distributed across **308** FQN nodes, worst
+> 105) is gone, external deps are first-class `lib_symbol` nodes (677: sqlx/axum/
+> serde_json/…), and file→type→method structure nests (1014 methods under structs).
+> **Deferred to the develop→main deploy:** the full-graph live reindex (all 8,660
+> folders) + the remaining additive schema drift (e.g. `edges_target_id_idx`).
+> **Separate plan:** Fix 2 (community-edge aggregation) and Fix 3 (DB views) —
+> below — are not yet built. Original design context (2026-08-06) follows.
 
 ## Symptom → root cause (grounded on the live sensei graph)
 
