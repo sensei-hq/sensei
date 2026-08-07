@@ -96,6 +96,67 @@ pub fn adapter_for_filename(filename: &str) -> Option<Box<dyn LanguageAdapter>> 
     adapter_for_ext(&ext)
 }
 
+/// Map an adapter's `language()` slug to a `&'static str`. Every adapter returns
+/// one of a closed set of slugs; this keeps callers off the short-lived boxed
+/// adapter borrow without a clone. A future adapter whose slug isn't listed maps
+/// to `"other"` (add a case when a new adapter lands).
+fn language_slug_static(slug: &str) -> &'static str {
+    match slug {
+        "rust" => "rust",
+        "typescript" => "typescript",
+        "javascript" => "javascript",
+        "python" => "python",
+        "java" => "java",
+        "kotlin" => "kotlin",
+        "swift" => "swift",
+        "svelte" => "svelte",
+        "vue" => "vue",
+        "sql" => "sql",
+        "c" => "c",
+        _ => "other",
+    }
+}
+
+/// Canonical language slug for a bare file extension (no leading dot), or `None`
+/// if unrecognized. Consults the `LanguageAdapter` registry first (so
+/// adapter-backed languages never duplicate their slug), then a small table for
+/// text/config formats that have no adapter yet. Single source of truth for the
+/// code-graph structure summary (`api::handlers::codebase`) and the node-write
+/// path (`nodes.language`).
+pub fn language_for_ext_slug(ext: &str) -> Option<&'static str> {
+    let dotted = format!(".{ext}");
+    if let Some(adapter) = adapter_for_ext(&dotted) {
+        return Some(language_slug_static(adapter.language()));
+    }
+    match ext {
+        "go" => Some("go"),
+        "rb" => Some("ruby"),
+        "sh" | "bash" => Some("shell"),
+        "md" | "markdown" => Some("markdown"),
+        "toml" => Some("toml"),
+        "yaml" | "yml" => Some("yaml"),
+        "json" => Some("json"),
+        "css" => Some("css"),
+        "html" => Some("html"),
+        _ => None,
+    }
+}
+
+/// Canonical language slug for a file PATH, or `None`. Compound-extension aware
+/// (`foo.svelte.ts` → typescript) via `adapter_for_filename`, then falls back to
+/// the bare-extension table. Used by the node-write path to populate
+/// `nodes.language`, which scopes the bare-name fallback to same-language
+/// candidates during the per-language FQN rollout.
+pub fn language_for_path(file_path: &str) -> Option<&'static str> {
+    if let Some(adapter) = adapter_for_filename(file_path) {
+        return Some(language_slug_static(adapter.language()));
+    }
+    let ext = std::path::Path::new(file_path)
+        .extension()
+        .and_then(|e| e.to_str())?;
+    language_for_ext_slug(&ext.to_ascii_lowercase())
+}
+
 /// Cyclomatic complexity estimate from source text.
 pub fn compute_complexity(body: &str) -> u32 {
     let patterns = ["if ", "else if ", "elif ", "else ", "for ", "while ", "catch ",

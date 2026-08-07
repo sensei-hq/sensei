@@ -143,11 +143,22 @@ same-language fallback filter — all concrete, zero remaining forks.
 `nodes.ddl`), `file_path text NOT NULL`, identity `nodes_unique_identity`
 (line-based, `nodes.ddl:32-33`); `insert_edge` folder-scoped (`pg_store.rs`).
 
-- [ ] **1.1** DDL (full-file `nodes.ddl`): add `fqn text`, `resolved boolean not
+- [x] **1.1** DDL (full-file `nodes.ddl`): add `fqn text`, `resolved boolean not
   null default false`, `language text`; make `file_path` **nullable**; add partial
   unique index `nodes_unique_fqn` on `(folder_id, fqn)` where `fqn IS NOT NULL`.
   It coexists with `nodes_unique_identity` (disjoint row-sets: stubs have NULL
-  file/line, defs have both keys). `dbd apply` to the test DB.
+  file/line, defs have both keys). `dbd apply` to the test DB. Also add
+  `'lib_symbol'` to the `node_kind` enum (was missing). ✅ DONE — applied to
+  `sensei_test`.
+  > **⚠ Gap found during 1.1 (deferred to Phase 3, correctness):** the
+  > "disjoint row-sets" claim only holds once `nodes_unique_identity` is **partial**.
+  > It is a NON-partial table constraint today, so it also governs stub rows: two
+  > references with the same simple name but different FQNs (`x.parse()` on two
+  > types → `name='parse', kind='method', file_path/line/parent NULL`) collide on
+  > `(folder_id, NULL, kind, name, NULL, NULL)` and **false-merge** — the exact bug
+  > this rebuild kills. Inert in Phase 1 (nothing emits stubs; the 1.2/1.3 tests
+  > never create two same-name different-FQN stubs), so 1.1 ships as-is. **Phase 3
+  > precondition (below) makes identity partial before wiring stub emit.**
 - [ ] **1.2 Failing test** `upsert_node_by_fqn_merges_ref_and_def`: a reference
   get-or-creates a stub (`resolved=false`, NULL file); a later definition with the
   same `(folder_id, fqn)` returns the SAME id, sets `resolved=true` + details; two
@@ -234,6 +245,19 @@ disambiguate; the four static binding forms resolve; external → lib; only the
 
 **Precondition:** Phases 1–2.
 
+- [ ] **3.0 Make `nodes_unique_identity` partial (from the 1.1 gap — MUST land before
+  any stub is emitted).** Convert the table constraint to a partial unique index
+  `where file_path is not null` (behaviour-preserving today: every existing row has
+  a non-null `file_path`, so the covered set is unchanged), and switch
+  `upsert_node_ex`'s `ON CONFLICT ON CONSTRAINT nodes_unique_identity` to column
+  inference `ON CONFLICT (folder_id, file_path, kind, name, parent_id, line_start)
+  WHERE file_path IS NOT NULL`. Then stubs (file_path NULL) are governed ONLY by
+  `nodes_unique_fqn`, so two same-simple-name different-FQN stubs stay distinct.
+  **Failing test** `two_same_name_stubs_do_not_merge`: two refs `A·foo` + `B·foo`
+  (same `kind`/`name`, both file/line NULL) → TWO nodes. The existing
+  `upsert_node_at_same_line_keeps_id_*` test guards the inference change. This is a
+  DEPLOY-GATE change (same class as 0.6) — the live DB re-applies it behind the
+  graph-clear gate.
 - [ ] **3.1 Failing test** `process_file_rust_emits_fqn_nodes_and_resolved_edges`:
   a Rust file (`compute()` calls `helper()` + `Foo::new()`) → nodes carry fqn +
   language='rust'; call edges are `target_id`-resolved AT EMIT (no `resolve_edges`

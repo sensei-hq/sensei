@@ -10,4 +10,5 @@ create type node_kind
       , 'section'
       , 'rationale'
       , 'struct', 'component', 'hook', 'doc', 'extension'
+      , 'lib_symbol'
     );
