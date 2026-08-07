@@ -35,6 +35,15 @@ pub async fn detect_communities(ctx: &TaskContext, task: &Task) -> Result<u32, S
         .ok_or("Invalid folder id")?;
     let folder_name = folder["name"].as_str().unwrap_or_else(|| task.folder_name());
 
+    // D4.5: recompute node degree (in+out edge count) before detection so god-node
+    // ranking reads a fresh count. Phase 7.1 moved this here from the retired
+    // ResolveEdges barrier — DetectCommunities is degree's sole consumer and the
+    // terminal barrier (every call/covers edge exists), so it's the natural home.
+    // Fail-open: a degree miss must not strand the folder (detection is authoritative).
+    if let Err(e) = ctx.pg().recompute_degrees_for_folder(&folder_id).await {
+        tracing::warn!(error = %e, folder = %folder_name, "detect_communities: recompute_degrees failed");
+    }
+
     // Authoritative detection — no model calls; this is what the terminal barrier
     // gates on. A failure here is FATAL for the folder: record `failed` (D6d
     // fail-closed) so it is not stranded at `indexing` (boot-reconcile / bounded
@@ -100,6 +109,32 @@ mod tests {
 
         assert_eq!(ctx.pg().get_folder_status(&fid).await.unwrap().as_deref(), Some("indexed"),
             "DetectCommunities flips an indexing folder to indexed (terminal barrier)");
+        ctx.pg().remove_watch_root(&root_id).await.ok();
+    }
+
+    #[tokio::test]
+    async fn detect_communities_recomputes_node_degree() {
+        // D4.5 (relocated in Phase 7.1 from the retired ResolveEdges barrier):
+        // DetectCommunities recomputes degree before ranking god nodes, so degree
+        // is fresh at the terminal barrier even though edges resolve at emit.
+        let ctx = make_ctx().await;
+        let folder_path = format!("/tmp/detect_degree_{}", uuid::Uuid::new_v4());
+        let root_id = ctx.pg().add_watch_root(&folder_path, "dd", &serde_json::json!([])).await.unwrap();
+        let fid = ctx.pg().upsert_repo(&root_id, "dd-repo", &folder_path).await.unwrap();
+        ctx.pg().update_folder_status(&fid, "indexing").await.unwrap();
+        let a = ctx.pg().upsert_node(&fid, "function", "a", "a.rs", None, Some("()"), Some(1), Some(2)).await.unwrap();
+        let b = ctx.pg().upsert_node(&fid, "function", "b", "a.rs", None, Some("()"), Some(3), Some(4)).await.unwrap();
+        ctx.pg().insert_edge(&fid, &a, Some(&b), None, None, "calls").await.unwrap();
+
+        let task = Task::new(TaskKind::DetectCommunities, &folder_path, "");
+        detect_communities(&ctx, &task).await.unwrap();
+
+        let (da,): (Option<i32>,) = sqlx_core::query_as::query_as("SELECT degree FROM sensei.nodes WHERE id=$1")
+            .bind(a).fetch_one(ctx.pg().pool()).await.unwrap();
+        let (db,): (Option<i32>,) = sqlx_core::query_as::query_as("SELECT degree FROM sensei.nodes WHERE id=$1")
+            .bind(b).fetch_one(ctx.pg().pool()).await.unwrap();
+        assert_eq!(da, Some(1), "detect_communities recomputed degree — a is the source of one call");
+        assert_eq!(db, Some(1), "detect_communities recomputed degree — b is the target of one call");
         ctx.pg().remove_watch_root(&root_id).await.ok();
     }
 
