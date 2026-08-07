@@ -30,6 +30,17 @@ pub trait LanguageAdapter: Send + Sync {
     }
     fn parse(&self, source: &str, file_path: &str) -> ParsedFile;
     fn parse_to_ir(&self, source: &str, file_path: &str) -> IRParsedFile;
+
+    /// Produce the FQN symbol-table output for this file (plan Phase 3+): every
+    /// definition and reference resolved to a canonical FQN so `process_file` can
+    /// emit resolved node→node edges. The default is `None` — the file stays on the
+    /// bare-name path (the language isn't FQN-migrated yet). A migrated adapter
+    /// overrides this: derive the file's `(package, module)` context from its own
+    /// manifest/layout rules, then run its per-language producer. `abs_path` is the
+    /// on-disk path (for the manifest walk); `content` is the source.
+    fn fqn_output(&self, _abs_path: &str, _content: &str) -> Option<fqn::FqnFileOutput> {
+        None
+    }
 }
 
 /// Title-Case a lowercase language slug for the default `display_name`.

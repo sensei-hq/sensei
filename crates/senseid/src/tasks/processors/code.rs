@@ -79,16 +79,12 @@ pub fn process(abs_path: &str, rel_path: &str, ext: &str, content: &str, _repo_i
 
     let ir = Some(adapter.parse_to_ir(content, rel_path));
 
-    // Phase 3: Rust FQN production. Resolve this file's (package, module) from the
-    // nearest Cargo.toml + crate layout and produce canonical FQNs so process_file
-    // can emit resolved node→node edges. None (no crate manifest) falls back to the
-    // bare-name path — same graph as before for anything without a resolvable crate.
-    let fqn = if parsed.language == "rust" {
-        rust_file_context(abs_path)
-            .map(|fctx| crate::languages::rust_lang::rust_fqn::produce_fqns(content, &fctx))
-    } else {
-        None
-    };
+    // Phase 3+: FQN production, dispatched per language via the adapter. A migrated
+    // adapter derives this file's (package, module) context from its own
+    // manifest/layout rules and produces canonical FQNs so process_file can emit
+    // resolved node→node edges; an un-migrated language returns None and stays on the
+    // bare-name path.
+    let fqn = adapter.fqn_output(abs_path, content);
 
     Some(FileProcessResult {
         file_id,
@@ -111,55 +107,6 @@ pub fn process(abs_path: &str, rel_path: &str, ext: &str, content: &str, _repo_i
         ir,
         fqn,
     })
-}
-
-/// Resolve a Rust file's FQN context: the owning crate's package name (from the
-/// nearest `Cargo.toml` carrying a `[package]`) and this file's crate-relative
-/// module path. None when no crate manifest is found (the file then falls back to
-/// bare-name resolution — the pre-FQN behaviour).
-fn rust_file_context(abs_path: &str) -> Option<crate::languages::fqn::FileFqnContext> {
-    let file = std::path::Path::new(abs_path);
-    let mut dir = file.parent();
-    while let Some(d) = dir {
-        let manifest = d.join("Cargo.toml");
-        if manifest.is_file()
-            && let Some(package) = cargo_package_name(&manifest) {
-            let module = rust_module_path(file, d);
-            return Some(crate::languages::fqn::FileFqnContext { package, module });
-        }
-        dir = d.parent();
-    }
-    None
-}
-
-/// `[package].name` from a Cargo.toml, or None (a workspace-only manifest has no
-/// `[package]`, so the caller keeps walking up to the owning crate).
-fn cargo_package_name(manifest: &std::path::Path) -> Option<String> {
-    let text = std::fs::read_to_string(manifest).ok()?;
-    let val = text.parse::<toml::Value>().ok()?;
-    val.get("package")?.get("name")?.as_str().map(str::to_string)
-}
-
-/// Crate-relative module path (`::`-joined) of a file, per Rust's file-as-module
-/// rule: relative to `src/` (or the crate root), drop the `.rs`, and drop a
-/// trailing `mod`/`lib`/`main` (those name their directory / the crate root, not a
-/// submodule). `crates/x/src/a/b.rs` → `a::b`; `.../src/a/mod.rs` → `a`;
-/// `.../src/lib.rs` → "" (crate root).
-fn rust_module_path(file: &std::path::Path, crate_root: &std::path::Path) -> String {
-    let src = crate_root.join("src");
-    let rel = file.strip_prefix(&src).or_else(|_| file.strip_prefix(crate_root)).unwrap_or(file);
-    let mut comps: Vec<String> = rel
-        .components()
-        .filter_map(|c| c.as_os_str().to_str().map(str::to_string))
-        .collect();
-    if let Some(last) = comps.last_mut()
-        && let Some(stem) = std::path::Path::new(last).file_stem().and_then(|s| s.to_str()) {
-        *last = stem.to_string();
-    }
-    if comps.last().is_some_and(|s| s == "mod" || s == "lib" || s == "main") {
-        comps.pop();
-    }
-    comps.join("::")
 }
 
 #[cfg(test)]

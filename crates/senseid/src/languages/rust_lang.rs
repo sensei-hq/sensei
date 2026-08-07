@@ -43,6 +43,10 @@ impl LanguageAdapter for RustAdapter {
             imports,
         }
     }
+
+    fn fqn_output(&self, abs_path: &str, content: &str) -> Option<super::fqn::FqnFileOutput> {
+        rust_fqn::rust_file_context(abs_path).map(|ctx| rust_fqn::produce_fqns(content, &ctx))
+    }
 }
 
 /// Parse Rust source into IR — rich nodes with params, return types, implements, decorators.
@@ -1105,6 +1109,54 @@ fn base_type_name(text: &str) -> Option<String> {
         return None;
     }
     Some(name.to_string())
+}
+
+/// Resolve a Rust file's FQN context: the owning crate's package name (from the
+/// nearest `Cargo.toml` carrying a `[package]`) and this file's crate-relative
+/// module path. None when no crate manifest is found (the file falls back to the
+/// bare-name path — the pre-FQN behaviour).
+pub(crate) fn rust_file_context(abs_path: &str) -> Option<FileFqnContext> {
+    let file = std::path::Path::new(abs_path);
+    let mut dir = file.parent();
+    while let Some(d) = dir {
+        let manifest = d.join("Cargo.toml");
+        if manifest.is_file()
+            && let Some(package) = cargo_package_name(&manifest) {
+            let module = rust_module_path(file, d);
+            return Some(FileFqnContext { package, module });
+        }
+        dir = d.parent();
+    }
+    None
+}
+
+/// `[package].name` from a Cargo.toml, or None (a workspace-only manifest has no
+/// `[package]`, so the caller keeps walking up to the owning crate).
+fn cargo_package_name(manifest: &std::path::Path) -> Option<String> {
+    let text = std::fs::read_to_string(manifest).ok()?;
+    let val = text.parse::<toml::Value>().ok()?;
+    val.get("package")?.get("name")?.as_str().map(str::to_string)
+}
+
+/// Crate-relative module path (`::`-joined) of a file, per Rust's file-as-module
+/// rule: relative to `src/` (or the crate root), drop the `.rs`, and drop a
+/// trailing `mod`/`lib`/`main`. `crates/x/src/a/b.rs` → `a::b`;
+/// `.../src/a/mod.rs` → `a`; `.../src/lib.rs` → "" (crate root).
+fn rust_module_path(file: &std::path::Path, crate_root: &std::path::Path) -> String {
+    let src = crate_root.join("src");
+    let rel = file.strip_prefix(&src).or_else(|_| file.strip_prefix(crate_root)).unwrap_or(file);
+    let mut comps: Vec<String> = rel
+        .components()
+        .filter_map(|c| c.as_os_str().to_str().map(str::to_string))
+        .collect();
+    if let Some(last) = comps.last_mut()
+        && let Some(stem) = std::path::Path::new(last).file_stem().and_then(|s| s.to_str()) {
+        *last = stem.to_string();
+    }
+    if comps.last().is_some_and(|s| s == "mod" || s == "lib" || s == "main") {
+        comps.pop();
+    }
+    comps.join("::")
 }
 } // mod rust_fqn
 
