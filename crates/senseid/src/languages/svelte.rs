@@ -8,6 +8,10 @@ pub struct SvelteAdapter;
 impl LanguageAdapter for SvelteAdapter {
     fn language(&self) -> &str { "svelte" }
 
+    fn fqn_output(&self, abs_path: &str, content: &str) -> Option<super::fqn::FqnFileOutput> {
+        super::common::sfc_fqn_output(abs_path, content)
+    }
+
     fn parse_to_ir(&self, source: &str, file_path: &str) -> crate::ir::IRParsedFile {
         parse_to_ir(source, file_path)
     }
@@ -86,6 +90,24 @@ mod tests {
     use super::*;
 
     fn parse(src: &str) -> ParsedFile { SvelteAdapter.parse(src, "App.svelte") }
+
+    #[test]
+    fn svelte_script_fqn() {
+        // Phase 6.8: an SFC's <script> block is TypeScript — its defs/refs get FQNs
+        // in the file's module (the component), reusing the TS producer.
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::write(root.join("package.json"), "{\"name\":\"app\"}").unwrap();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        let file = root.join("src/Card.svelte");
+        let content = "<script lang=\"ts\">\nimport { helper } from './util';\nexport function build() { helper(); }\n</script>\n<div>hi</div>\n";
+        std::fs::write(&file, content).unwrap();
+        let out = SvelteAdapter.fqn_output(&file.to_string_lossy(), content).unwrap();
+        assert!(out.defs.iter().any(|d| d.fqn == "typescript·app·Card·build"),
+            "component script def, got: {:?}", out.defs.iter().map(|d| &d.fqn).collect::<Vec<_>>());
+        assert!(out.refs.iter().any(|r| r.target_fqn.as_deref() == Some("typescript·app·util·helper")),
+            "relative import resolved from the SFC, got: {:?}", out.refs);
+    }
 
     #[test]
     fn svelte_component_name() {
