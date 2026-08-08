@@ -16,6 +16,7 @@ pub mod handlers;
 pub mod progress;
 pub mod progress_emitter;
 pub mod analyzer_scheduler;
+pub mod metrics_scheduler;
 pub mod advance_run_scheduler;
 pub mod watchdog_scheduler;
 pub mod contribute_scheduler;
@@ -123,6 +124,19 @@ pub enum TaskKind {
     /// active run (beside `AdvanceRun`). STATUS only (publishes status + heartbeat
     /// + stall + plan segments); never drives the run.
     PublishRun,
+    /// Metrics pipeline (Phase 4): compute ONE base metric group for ONE project.
+    /// The group (the registry `task_name`, e.g. `"session_outcomes"`) rides in
+    /// `task.path` and the project id in `task.folder_path` — one kind handles
+    /// every group (the group is payload, not enum), which is why there is no
+    /// `TaskKind` per group. Enqueued daily by `metrics_scheduler`; dispatched to
+    /// `handlers::metrics::compute`.
+    ComputeMetrics,
+    /// Metrics pipeline (Phase 4): the per-project HEALTH barrier — a SEPARATE
+    /// kind from [`TaskKind::ComputeMetrics`] because it must run AFTER the base
+    /// groups land. The scheduler enqueues it `blocked_by` the project's
+    /// `ComputeMetrics` ids (project id in `task.folder_path`); dispatched to
+    /// `handlers::metrics::compute_health` (Phase 6 fills in the derived score).
+    ComputeHealth,
 }
 
 impl std::fmt::Display for TaskKind {
@@ -158,6 +172,8 @@ impl std::fmt::Display for TaskKind {
             Self::PublishRelaySegments => write!(f, "publish_relay_segments"),
             Self::AdvanceRun => write!(f, "advance_run"),
             Self::PublishRun => write!(f, "publish_run"),
+            Self::ComputeMetrics => write!(f, "compute_metrics"),
+            Self::ComputeHealth => write!(f, "compute_health"),
         }
     }
 }
@@ -230,6 +246,12 @@ impl TaskKind {
             // Eager insight-copy warming is up to WARM_CAP sequential model calls
             // (a cold embedded model is slow first); the breaker caps a down model.
             | TaskKind::WarmInsightCopy
+            // Metrics compute (base groups) + the per-project health barrier each
+            // scan a project's window (sessions / churn / duplication …) and write
+            // sensei.project_metrics — a whole-project batch that can run for
+            // minutes on a large corpus, so they share the generous batch budget.
+            | TaskKind::ComputeMetrics
+            | TaskKind::ComputeHealth
             | TaskKind::AggregateCorrections => Duration::from_secs(600),
             // Community detection is the terminal barrier and, on a huge edge-heavy
             // folder post-FQN (observed: 141k nodes / 287k edges / 11k communities),
@@ -451,6 +473,8 @@ mod tests {
         assert_eq!(TaskKind::ClassifyPendingVerdicts.to_string(), "classify_pending_verdicts");
         assert_eq!(TaskKind::AdvanceRun.to_string(), "advance_run");
         assert_eq!(TaskKind::PublishRelaySegments.to_string(), "publish_relay_segments");
+        assert_eq!(TaskKind::ComputeMetrics.to_string(), "compute_metrics");
+        assert_eq!(TaskKind::ComputeHealth.to_string(), "compute_health");
     }
 
     #[test]
@@ -466,6 +490,9 @@ mod tests {
         assert_eq!(TaskKind::ScanRoot.watchdog_timeout(), long);
         assert_eq!(TaskKind::ScanDocDrift.watchdog_timeout(), long);
         assert_eq!(TaskKind::ClassifyPendingVerdicts.watchdog_timeout(), long);
+        // Metrics compute + health barrier are whole-project batches → long bucket.
+        assert_eq!(TaskKind::ComputeMetrics.watchdog_timeout(), long);
+        assert_eq!(TaskKind::ComputeHealth.watchdog_timeout(), long);
         // DetectCommunities (terminal barrier) gets a WIDER budget than `long` —
         // community detection on a huge edge-heavy folder legitimately runs many
         // minutes and must not be watchdog-killed into a retry-timeout loop.
@@ -485,6 +512,8 @@ mod tests {
             TaskKind::ConsolidateGovernance, TaskKind::WarmInsightCopy,
             TaskKind::LearnPlaybooks,
             TaskKind::PublishRelaySegments, TaskKind::AdvanceRun,
+            TaskKind::PublishRun,
+            TaskKind::ComputeMetrics, TaskKind::ComputeHealth,
         ] {
             assert!(k.watchdog_timeout().as_secs() > 0, "{k} must have a positive cap");
         }
