@@ -95,6 +95,17 @@ pub async fn build_connections(ctx: &TaskContext, task: &Task) -> Result<u32, St
         tracing::warn!(error = %e, folder = %folder_name, "build_connections: set libs props failed");
     }
 
+    // D4.5: recompute node degree here (in+out edge count, incl. the covers edges
+    // just built) so it is fresh before the DetectCommunities terminal barrier
+    // ranks god nodes. This is a folder-wide barrier AFTER all file/edge work, with
+    // its OWN watchdog budget — it was briefly folded into detect_communities (7.1)
+    // but that pushed edge-heavy giants (e.g. 287k-edge folders) past detect's 600s
+    // watchdog, so degree-recompute moved back to its own barrier. Fail-open: a
+    // degree miss must not strand the folder.
+    if let Err(e) = ctx.pg().recompute_degrees_for_folder(&folder_id).await {
+        tracing::warn!(error = %e, folder = %folder_name, "build_connections: recompute_degrees failed");
+    }
+
     tracing::info!("build_connections: {} — {} traceability edges, {} libs detected", folder_name, edges_created, libs.len());
     Ok(edges_created)
 }
@@ -110,6 +121,33 @@ mod tests {
 
     /// Build a TaskContext backed by PgStore and a fresh TaskQueue.
     use crate::tasks::test_support::make_ctx;
+
+    #[tokio::test]
+    async fn build_connections_recomputes_node_degree() {
+        // D4.5 (relocated here from detect_communities in the 7.3 timeout fix):
+        // degree is recomputed at the build_connections barrier — its OWN watchdog
+        // budget — so it is fresh before DetectCommunities ranks god nodes, without
+        // eating detect's 600s budget on edge-heavy giants.
+        let ctx = make_ctx().await;
+        let folder_path = format!("/tmp/bc_degree_{}", uuid::Uuid::new_v4());
+        let root_id = ctx.pg().add_watch_root(&folder_path, "bcd", &serde_json::json!([])).await.unwrap();
+        let fid = ctx.pg().upsert_repo(&root_id, "bcd-repo", &folder_path).await.unwrap();
+        ctx.pg().update_folder_status(&fid, "indexing").await.unwrap();
+        let a = ctx.pg().upsert_node(&fid, "function", "a", "a.rs", None, Some("()"), Some(1), Some(2)).await.unwrap();
+        let b = ctx.pg().upsert_node(&fid, "function", "b", "a.rs", None, Some("()"), Some(3), Some(4)).await.unwrap();
+        ctx.pg().insert_edge(&fid, &a, Some(&b), None, None, "calls").await.unwrap();
+
+        let task = Task::new(TaskKind::BuildConnections, &folder_path, &folder_path);
+        build_connections(&ctx, &task).await.unwrap();
+
+        let (da,): (Option<i32>,) = sqlx_core::query_as::query_as("SELECT degree FROM sensei.nodes WHERE id=$1")
+            .bind(a).fetch_one(ctx.pg().pool()).await.unwrap();
+        let (db,): (Option<i32>,) = sqlx_core::query_as::query_as("SELECT degree FROM sensei.nodes WHERE id=$1")
+            .bind(b).fetch_one(ctx.pg().pool()).await.unwrap();
+        assert_eq!(da, Some(1), "build_connections recomputed degree — a is the source of one call");
+        assert_eq!(db, Some(1), "build_connections recomputed degree — b is the target of one call");
+        ctx.pg().remove_watch_root(&root_id).await.ok();
+    }
 
     #[tokio::test]
     async fn build_connections_is_fail_closed_on_a_failed_folder() {

@@ -216,7 +216,6 @@ impl TaskKind {
             | TaskKind::EmbedNodes
             | TaskKind::IndexLibrary
             | TaskKind::IndexLibraryPage
-            | TaskKind::DetectCommunities
             | TaskKind::AnalyzeProject
             // Doc-drift scan walks up to 500 doc nodes, reading each file off
             // disk — on a large repo that's the same order as AnalyzeProject.
@@ -232,6 +231,13 @@ impl TaskKind {
             // (a cold embedded model is slow first); the breaker caps a down model.
             | TaskKind::WarmInsightCopy
             | TaskKind::AggregateCorrections => Duration::from_secs(600),
+            // Community detection is the terminal barrier and, on a huge edge-heavy
+            // folder post-FQN (observed: 141k nodes / 287k edges / 11k communities),
+            // runs label-propagation + an atomic replace of every community and node
+            // community_id — legitimately many minutes. 600s watchdog-killed those
+            // into a retry-timeout loop that stranded the folder at `indexing`, so
+            // the terminal barrier gets a wider budget.
+            TaskKind::DetectCommunities => Duration::from_secs(1800),
         }
     }
 }
@@ -460,6 +466,11 @@ mod tests {
         assert_eq!(TaskKind::ScanRoot.watchdog_timeout(), long);
         assert_eq!(TaskKind::ScanDocDrift.watchdog_timeout(), long);
         assert_eq!(TaskKind::ClassifyPendingVerdicts.watchdog_timeout(), long);
+        // DetectCommunities (terminal barrier) gets a WIDER budget than `long` —
+        // community detection on a huge edge-heavy folder legitimately runs many
+        // minutes and must not be watchdog-killed into a retry-timeout loop.
+        assert!(TaskKind::DetectCommunities.watchdog_timeout() > long,
+            "DetectCommunities gets a wider-than-long watchdog for huge graphs");
         for k in [
             TaskKind::ScanRoot, TaskKind::ProcessGitFolder, TaskKind::ProcessFolder,
             TaskKind::ProcessFile, TaskKind::DeleteFile, TaskKind::DeleteFolder,
