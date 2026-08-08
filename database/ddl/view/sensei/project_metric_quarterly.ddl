@@ -1,0 +1,27 @@
+set search_path to sensei, extensions;
+
+create or replace view project_metric_quarterly
+    as
+select project_id
+     , metric
+     , date_trunc('quarter', date)::date as period
+     , case
+         when type in ('ratio', 'pct')
+           then sum((props->>'numerator')::numeric)
+                / nullif(sum((props->>'denominator')::numeric), 0)
+         when type in ('count', 'currency')
+           then sum(value)
+         else (array_agg(value order by date desc))[1]
+       end                               as value
+     , direction
+  from sensei.project_metric_daily
+ group by project_id, metric, period, type, direction;
+
+comment on view project_metric_quarterly is
+'Quarterly roll-up of project_metric_daily, aggregating inline by metric type:
+- ratio/pct: re-derive sum(numerator)/nullif(sum(denominator),0) — NEVER the mean
+  of daily ratios
+- count/currency: sum(value)
+- value/score (point-in-time): the period-end value via
+  (array_agg(value order by date desc))[1]
+Grouped by project_id, metric, period (quarter start), type, direction.';
