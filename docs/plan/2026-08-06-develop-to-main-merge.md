@@ -1,8 +1,16 @@
 # develop → main merge runbook (code-graph idempotency ship)
 
-> Status: **ready to merge** — all work committed/pushed on `develop`, reviewed,
-> and **verified on live data** (2026-08-06: sensei/torii/dbd reindexed clean).
-> `develop` is **50 commits ahead** of `main`. Version is `0.6.4` (unbumped).
+> Status: **EXECUTED 2026-08-07 → released as v0.7.0.** `develop` (76 commits
+> ahead + the FQN symbol-table rebuild, Phases 1–7, #108, on top of the original
+> code-graph idempotency work) merged to `main` (merge `5e83fcca`), bumped
+> `0.6.4 → 0.7.0` (`make bump v=minor`; tag pushed, homebrew-tap + marketplace
+> synced), release binary installed (`make install-service`). Live deploy gate
+> applied: graph-cleared + `dbd reconcile --scope default` (adds
+> `edges_target_id_idx` + accumulated additive drift; FQN gates from
+> `2026-08-07-fqn-live-migration.sql` already present) → full reindex of all
+> 8,664 folders running on the 0.7.0 daemon.
+>
+> Original pre-merge status (2026-08-06): ready to merge; 50 commits ahead; 0.6.4.
 
 ## What ships
 
