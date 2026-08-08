@@ -28,6 +28,7 @@ mod corrections_llm;
 mod prompt_classify;
 pub(crate) mod tool_insights;
 mod learn_playbooks;
+pub(crate) mod metrics;
 pub(crate) mod helpers;
 
 pub use scan::{scan_root, branch_switch};

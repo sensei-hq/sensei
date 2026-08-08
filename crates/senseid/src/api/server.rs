@@ -247,6 +247,15 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
         Arc::new(state.pg.clone()),
     );
 
+    // Metrics pipeline (Phase 4): once-daily (watermarked), enqueue the active
+    // metric registry per project — one ComputeMetrics per base group + a
+    // ComputeHealth barrier. Mirrors the analyzer scheduler's spawn/watermark
+    // pattern; the first tick backfills if a day has elapsed since the last run.
+    crate::tasks::metrics_scheduler::spawn(
+        task_queue.clone(),
+        Arc::new(state.pg.clone()),
+    );
+
     // Relay-engine (P3.2): drive daemon-owned autonomous runs. Each tick (15s)
     // auto-resumes due pauses and enqueues an AdvanceRun per active run. P3.2
     // only heartbeats + logs housekeeping; the agent spawn/drive is P3.3. DB
