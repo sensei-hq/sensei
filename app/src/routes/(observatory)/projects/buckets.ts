@@ -38,11 +38,19 @@ export function projectStatus(
   return p.sessions7d > 0 ? 'active' : 'dormant';
 }
 
-/** Pure: split enriched projects into Active / Dormant / Archived and sort
- *  each. Buckets are mutually exclusive (see `projectStatus`) so the union
- *  is the full list and the chip counts sum to `all`. Active is ranked by
- *  FTR (the signal that matters when you glance across today's work);
- *  Dormant and Archived are alphabetical. */
+/** Parse `last_session_at` to epoch ms for recency ordering. Null / unparseable
+ *  timestamps sort LAST (a project that never ran a session is the least recent),
+ *  so they use -Infinity. Pure. */
+function recencyOf(p: EnrichedProject): number {
+  const t = p.last_session_at ? new Date(p.last_session_at).getTime() : NaN;
+  return Number.isNaN(t) ? -Infinity : t;
+}
+
+/** Pure: split enriched projects into Active / Dormant / Archived and sort each
+ *  by MOST-RECENT activity first (last_session_at desc), name as the tiebreak.
+ *  Buckets are mutually exclusive (see `projectStatus`) so the union is the full
+ *  list and the chip counts sum to `all`. Recency-first matches how you scan the
+ *  list — what you touched last is what you reach for; FTR stays a per-card stat. */
 export function bucketProjects(projects: EnrichedProject[]): Buckets {
   const active:   EnrichedProject[] = [];
   const dormant:  EnrichedProject[] = [];
@@ -54,9 +62,11 @@ export function bucketProjects(projects: EnrichedProject[]): Buckets {
       default:         dormant.push(p);  break;
     }
   }
-  active.sort((a, b) => b.ftr14d - a.ftr14d || a.name.localeCompare(b.name));
-  dormant.sort((a, b) => a.name.localeCompare(b.name));
-  archived.sort((a, b) => a.name.localeCompare(b.name));
+  const byRecency = (a: EnrichedProject, b: EnrichedProject) =>
+    recencyOf(b) - recencyOf(a) || a.name.localeCompare(b.name);
+  active.sort(byRecency);
+  dormant.sort(byRecency);
+  archived.sort(byRecency);
   return { active, dormant, archived };
 }
 

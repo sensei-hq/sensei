@@ -9,6 +9,10 @@ pub struct PythonAdapter;
 impl LanguageAdapter for PythonAdapter {
     fn language(&self) -> &str { "python" }
 
+    fn fqn_output(&self, abs_path: &str, content: &str) -> Option<super::fqn::FqnFileOutput> {
+        python_fqn::python_file_context(abs_path).map(|ctx| python_fqn::produce_fqns(content, &ctx))
+    }
+
     fn parse_to_ir(&self, source: &str, file_path: &str) -> crate::ir::IRParsedFile {
         parse_to_ir(source, file_path)
     }
@@ -485,12 +489,403 @@ fn find_calls(node: &Node, caller: &ParsedSymbol, known: &std::collections::Hash
     }
 }
 
+// ── FQN producer (plan Phase 6.2) ────────────────────────────────────────────
+// Pure name resolution for Python — the tree-sitter analogue of the Rust producer.
+// Python has no impl blocks or traits: methods live directly in a class body and
+// nest under it; a call resolves via the import map (from/import), `self` → the
+// enclosing class, a bounded `x = Type()` binding, or (external module) a lib node.
+pub(crate) mod python_fqn {
+    use super::{Node, Parser, SymbolKind};
+    use super::super::fqn::{self, FileFqnContext, FqnDefinition, FqnFileOutput, FqnReference};
+    use std::collections::{HashMap, HashSet};
+
+    const PY_LANG: &str = "python";
+
+    /// Ubiquitous builtin/method names whose call-sites carry no navigation signal.
+    const PY_CALL_DENYLIST: &[&str] = &[
+        "append", "extend", "get", "keys", "values", "items", "format", "join",
+        "split", "strip", "lower", "upper", "len", "print", "isinstance", "super",
+        "range", "enumerate", "zip", "map", "filter", "list", "dict", "set", "str",
+        "int", "float", "bool", "add", "update", "pop", "sort", "sorted",
+    ];
+
+    fn text(node: &Node, src: &[u8]) -> String {
+        node.utf8_text(src).unwrap_or_default().to_string()
+    }
+    fn field(node: &Node, name: &str, src: &[u8]) -> String {
+        node.child_by_field_name(name).map(|n| text(&n, src)).unwrap_or_default()
+    }
+    fn is_pascal(s: &str) -> bool {
+        s.chars().next().is_some_and(|c| c.is_ascii_uppercase())
+    }
+    /// A decorated_definition wraps the real class/function — unwrap to it.
+    fn unwrap_decorated<'a>(node: &Node<'a>) -> Node<'a> {
+        if node.kind() == "decorated_definition" {
+            for i in 0..node.child_count() {
+                let c = node.child(i).unwrap();
+                if c.kind() == "function_definition" || c.kind() == "class_definition" {
+                    return c;
+                }
+            }
+        }
+        *node
+    }
+    /// Reduce a Python type annotation to its base name: `Optional[Foo]` → `Foo`,
+    /// `a.b.Foo` → `Foo`.
+    fn base_py_type(t: &str) -> String {
+        let t = t.trim();
+        // Optional[X] / List[X] wrappers → inner.
+        if let Some(inner) = t.strip_suffix(']')
+            .and_then(|s| s.split_once('[').map(|(_, r)| r)) {
+            return base_py_type(inner);
+        }
+        let base = t.split('[').next().unwrap_or(t).trim();
+        base.rsplit('.').next().unwrap_or(base).trim().to_string()
+    }
+
+    /// Produce canonical FQNs (plan 0.1) for a Python source file. Pure over
+    /// `(source, ctx)`.
+    pub fn produce_fqns(source: &str, ctx: &FileFqnContext) -> FqnFileOutput {
+        let mut parser = Parser::new();
+        if parser.set_language(&tree_sitter_python::LANGUAGE.into()).is_err() {
+            return FqnFileOutput::default();
+        }
+        let Some(tree) = parser.parse(source, None) else {
+            return FqnFileOutput::default();
+        };
+        let src = source.as_bytes();
+        let root = tree.root_node();
+
+        let mut imports: HashMap<String, String> = HashMap::new();
+        collect_scope(&root, src, &mut imports);
+
+        let mut out = FqnFileOutput {
+            package: ctx.package.clone(),
+            module: ctx.module.clone(),
+            ..Default::default()
+        };
+        let lines: Vec<&str> = source.lines().collect();
+        walk(&root, src, &lines, ctx, &imports, None, &mut out);
+        out
+    }
+
+    /// Pass 1: import map (bound name → dotted source path).
+    fn collect_scope(node: &Node, src: &[u8], imports: &mut HashMap<String, String>) {
+        for i in 0..node.child_count() {
+            let child = unwrap_decorated(&node.child(i).unwrap());
+            match child.kind() {
+                "import_statement" => {
+                    for j in 0..child.child_count() {
+                        let c = child.child(j).unwrap();
+                        match c.kind() {
+                            // `import a.b.c` binds the top name `a`.
+                            "dotted_name" => {
+                                let full = text(&c, src);
+                                let top = full.split('.').next().unwrap_or(&full).to_string();
+                                imports.insert(top, full);
+                            }
+                            // `import a.b as x` binds `x` → `a.b`.
+                            "aliased_import" => {
+                                if let (Some(n), Some(a)) = (c.child_by_field_name("name"), c.child_by_field_name("alias")) {
+                                    imports.insert(text(&a, src), text(&n, src));
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                "import_from_statement" => {
+                    // `from a.b import c, d as e` → c→a.b.c, e→a.b.d. First dotted_name
+                    // (or relative_import) is the base module; the rest are imports.
+                    let mut base = String::new();
+                    for j in 0..child.child_count() {
+                        let c = child.child(j).unwrap();
+                        match c.kind() {
+                            "dotted_name" | "relative_import" if base.is_empty() => base = text(&c, src),
+                            "dotted_name" => {
+                                let name = text(&c, src);
+                                imports.insert(name.clone(), format!("{base}.{name}"));
+                            }
+                            "aliased_import" => {
+                                if let (Some(n), Some(a)) = (c.child_by_field_name("name"), c.child_by_field_name("alias")) {
+                                    imports.insert(text(&a, src), format!("{}.{}", base, text(&n, src)));
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn walk(
+        node: &Node, src: &[u8], lines: &[&str], ctx: &FileFqnContext,
+        imports: &HashMap<String, String>,
+        class: Option<&str>, out: &mut FqnFileOutput,
+    ) {
+        for i in 0..node.child_count() {
+            let child = unwrap_decorated(&node.child(i).unwrap());
+            match child.kind() {
+                "function_definition" => {
+                    let name = field(&child, "name", src);
+                    if name.is_empty() { continue; }
+                    let is_exported = !name.starts_with('_');
+                    let (fqn_str, kind, parent_type, parent_fqn) = match class {
+                        Some(cls) => (
+                            fqn::method(PY_LANG, &ctx.package, &ctx.module, cls, &name),
+                            SymbolKind::Method,
+                            Some(cls.to_string()),
+                            Some(fqn::item(PY_LANG, &ctx.package, &ctx.module, cls)),
+                        ),
+                        None => (fqn::item(PY_LANG, &ctx.package, &ctx.module, &name), SymbolKind::Function, None, None),
+                    };
+                    out.defs.push(FqnDefinition {
+                        fqn: fqn_str.clone(),
+                        name,
+                        kind,
+                        line_start: child.start_position().row as u32 + 1,
+                        line_end: child.end_position().row as u32 + 1,
+                        is_exported,
+                        signature: lines.get(child.start_position().row).map(|l| l.trim().to_string()),
+                        docstring: None,
+                        parent_type,
+                        parent_fqn,
+                    });
+                    if let Some(body) = child.child_by_field_name("body") {
+                        let bindings = build_bindings(&child, src);
+                        let mut seen = HashSet::new();
+                        collect_calls(&body, src, ctx, imports, class, &bindings, &fqn_str, &mut seen, out);
+                    }
+                }
+                "class_definition" => {
+                    let name = field(&child, "name", src);
+                    if name.is_empty() { continue; }
+                    out.defs.push(FqnDefinition {
+                        fqn: fqn::item(PY_LANG, &ctx.package, &ctx.module, &name),
+                        name: name.clone(),
+                        kind: SymbolKind::Class,
+                        line_start: child.start_position().row as u32 + 1,
+                        line_end: child.end_position().row as u32 + 1,
+                        is_exported: !name.starts_with('_'),
+                        signature: lines.get(child.start_position().row).map(|l| l.trim().to_string()),
+                        docstring: None,
+                        parent_type: None,
+                        parent_fqn: None,
+                    });
+                    if let Some(body) = child.child_by_field_name("body") {
+                        walk(&body, src, lines, ctx, imports, Some(&name), out);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// Bounded binding→type map (plan 0.7): typed params and `x = Type()`.
+    fn build_bindings(fn_node: &Node, src: &[u8]) -> HashMap<String, String> {
+        let mut map = HashMap::new();
+        if let Some(params) = fn_node.child_by_field_name("parameters") {
+            for i in 0..params.child_count() {
+                let p = params.child(i).unwrap();
+                if p.kind() == "typed_parameter"
+                    && let Some(ty) = p.child_by_field_name("type")
+                    && let Some(nm) = (0..p.child_count()).find_map(|j| p.child(j).filter(|c| c.kind() == "identifier")) {
+                    map.insert(text(&nm, src), base_py_type(&text(&ty, src)));
+                }
+            }
+        }
+        if let Some(body) = fn_node.child_by_field_name("body") {
+            for i in 0..body.child_count() {
+                let stmt = body.child(i).unwrap();
+                if stmt.kind() != "expression_statement" { continue; }
+                let Some(assign) = stmt.child(0).filter(|c| c.kind() == "assignment") else { continue };
+                let (Some(l), Some(r)) = (assign.child_by_field_name("left"), assign.child_by_field_name("right")) else { continue };
+                if l.kind() == "identifier" && r.kind() == "call"
+                    && let Some(f) = r.child_by_field_name("function")
+                    && f.kind() == "identifier" {
+                    let tn = text(&f, src);
+                    if is_pascal(&tn) { map.insert(text(&l, src), tn); }
+                }
+            }
+        }
+        map
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn collect_calls(
+        node: &Node, src: &[u8], ctx: &FileFqnContext, imports: &HashMap<String, String>,
+        class: Option<&str>, bindings: &HashMap<String, String>, caller_fqn: &str,
+        seen: &mut HashSet<String>, out: &mut FqnFileOutput,
+    ) {
+        for i in 0..node.child_count() {
+            let child = node.child(i).unwrap();
+            // A nested function's calls belong to it, not the enclosing one.
+            if child.kind() == "function_definition" { continue; }
+            if child.kind() == "call"
+                && let Some(func) = child.child_by_field_name("function")
+                && let Some((target_fqn, is_lib, target_name)) = resolve_call(&func, src, ctx, imports, class, bindings)
+                && seen.insert(target_fqn.clone().unwrap_or_else(|| format!("?{target_name}")))
+            {
+                out.refs.push(FqnReference {
+                    caller_fqn: caller_fqn.to_string(),
+                    caller_line: child.start_position().row as u32 + 1,
+                    target_fqn,
+                    target_name,
+                    is_lib,
+                });
+            }
+            collect_calls(&child, src, ctx, imports, class, bindings, caller_fqn, seen, out);
+        }
+    }
+
+    fn resolve_call(
+        func: &Node, src: &[u8], ctx: &FileFqnContext, imports: &HashMap<String, String>,
+        class: Option<&str>, bindings: &HashMap<String, String>,
+    ) -> Option<(Option<String>, bool, String)> {
+        match func.kind() {
+            "identifier" => {
+                let name = text(func, src);
+                if PY_CALL_DENYLIST.contains(&name.as_str()) { return None; }
+                if let Some(dotted) = imports.get(&name) {
+                    Some(classify(dotted, ctx, &name))
+                } else {
+                    // Local module-level function/class constructor.
+                    Some((Some(fqn::item(PY_LANG, &ctx.package, &ctx.module, &name)), false, name))
+                }
+            }
+            "attribute" => {
+                let obj = func.child_by_field_name("object")?;
+                let attr = func.child_by_field_name("attribute")?;
+                let method = text(&attr, src);
+                if PY_CALL_DENYLIST.contains(&method.as_str()) { return None; }
+                if obj.kind() == "identifier" {
+                    let obj_name = text(&obj, src);
+                    // self.method() / cls.method() → the enclosing class's method.
+                    if obj_name == "self" || obj_name == "cls" {
+                        return match class {
+                            Some(cls) => Some((Some(fqn::method(PY_LANG, &ctx.package, &ctx.module, cls, &method)), false, method)),
+                            None => Some((None, false, method)),
+                        };
+                    }
+                    // Imported module → module.func.
+                    if let Some(dotted) = imports.get(&obj_name) {
+                        return Some(classify(&format!("{dotted}.{method}"), ctx, &method));
+                    }
+                    // A bounded `x = Type()` receiver → the type's method.
+                    if let Some(ty) = bindings.get(&obj_name) {
+                        return Some((Some(fqn::method(PY_LANG, &ctx.package, &ctx.module, ty, &method)), false, method));
+                    }
+                }
+                // Unknown receiver (out of the bounded 0.7 scope) → no wrong merge.
+                Some((None, false, method))
+            }
+            _ => None,
+        }
+    }
+
+    /// Classify a dotted path as current-package (internal) vs a dependency, and
+    /// build the target fqn. `target_name` is the bare leaf.
+    fn classify(dotted: &str, ctx: &FileFqnContext, target_name: &str) -> (Option<String>, bool, String) {
+        let segs: Vec<&str> = dotted.split('.').collect();
+        let leaf = segs.last().copied().unwrap_or("");
+        let first = segs.first().copied().unwrap_or("");
+        if first == ctx.package {
+            // Internal: module = segments between the package and the leaf.
+            let module = if segs.len() > 2 { segs[1..segs.len() - 1].join(".") } else { String::new() };
+            (Some(fqn::item(PY_LANG, &ctx.package, &module, leaf)), false, target_name.to_string())
+        } else {
+            let path = if segs.len() >= 2 { segs[..segs.len() - 1].join(".") } else { first.to_string() };
+            (Some(fqn::lib(first, &path, leaf)), true, target_name.to_string())
+        }
+    }
+
+    /// Resolve a Python file's FQN context: the top package (the topmost ancestor
+    /// dir in the `__init__.py` chain) and the dotted module path below it. A
+    /// standalone script (no package) is its own package with an empty module.
+    pub(crate) fn python_file_context(abs_path: &str) -> Option<FileFqnContext> {
+        let file = std::path::Path::new(abs_path);
+        let stem = file.file_stem().and_then(|s| s.to_str())?.to_string();
+        let mut pkg_dirs: Vec<String> = Vec::new(); // nearest-first
+        let mut d = file.parent();
+        while let Some(cur) = d {
+            if cur.join("__init__.py").is_file() {
+                if let Some(n) = cur.file_name().and_then(|n| n.to_str()) {
+                    pkg_dirs.push(n.to_string());
+                }
+                d = cur.parent();
+            } else {
+                break;
+            }
+        }
+        if pkg_dirs.is_empty() {
+            return Some(FileFqnContext { package: stem, module: String::new() });
+        }
+        pkg_dirs.reverse(); // top-first: [package, sub, …]
+        let package = pkg_dirs[0].clone();
+        let mut mods: Vec<&str> = pkg_dirs[1..].iter().map(String::as_str).collect();
+        if stem != "__init__" { mods.push(&stem); }
+        Some(FileFqnContext { package, module: mods.join(".") })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn parse(source: &str) -> ParsedFile {
         PythonAdapter.parse(source, "test.py")
+    }
+
+    // ── FQN producer (Phase 6.2) ────────────────────────────────────────────
+    use crate::languages::fqn::{FileFqnContext, FqnFileOutput, FqnReference};
+    fn produce_py(src: &str, package: &str, module: &str) -> FqnFileOutput {
+        python_fqn::produce_fqns(src, &FileFqnContext { package: package.into(), module: module.into() })
+    }
+    fn def_fqn<'a>(out: &'a FqnFileOutput, name: &str) -> &'a str {
+        out.defs.iter().find(|d| d.name == name).map(|d| d.fqn.as_str()).unwrap_or("<no-def>")
+    }
+    fn ref_to<'a>(out: &'a FqnFileOutput, target_name: &str) -> &'a FqnReference {
+        out.refs.iter().find(|r| r.target_name == target_name)
+            .unwrap_or_else(|| panic!("no ref to `{target_name}` in {:?}", out.refs))
+    }
+
+    #[test]
+    fn py_def_fqn() {
+        let out = produce_py(
+            "def top():\n    pass\nclass Widget:\n    def __init__(self):\n        pass\n    def spin(self):\n        pass\n",
+            "mypkg", "app",
+        );
+        assert_eq!(def_fqn(&out, "top"), "python·mypkg·app·top", "module-level function");
+        assert_eq!(def_fqn(&out, "Widget"), "python·mypkg·app·Widget", "class");
+        assert_eq!(def_fqn(&out, "spin"), "python·mypkg·app·Widget·spin", "method nests on its class");
+    }
+
+    #[test]
+    fn py_ref_fqn_import() {
+        let out = produce_py("from mypkg.util import helper\ndef use():\n    helper()\n", "mypkg", "app");
+        let r = ref_to(&out, "helper");
+        assert_eq!(r.target_fqn.as_deref(), Some("python·mypkg·util·helper"), "resolved via the from-import map (same package → internal)");
+        assert!(!r.is_lib);
+        assert_eq!(r.caller_fqn, "python·mypkg·app·use");
+    }
+
+    #[test]
+    fn py_method_scope() {
+        let src = "class Engine:\n    def run(self):\n        self.tick()\n        g = Gadget()\n        g.spin()\n    def tick(self):\n        pass\n";
+        let out = produce_py(src, "mypkg", "engine");
+        assert_eq!(ref_to(&out, "tick").target_fqn.as_deref(), Some("python·mypkg·engine·Engine·tick"), "self.method → enclosing class");
+        assert_eq!(ref_to(&out, "spin").target_fqn.as_deref(), Some("python·mypkg·engine·Gadget·spin"), "x = Gadget(); x.spin() → Gadget.spin (0.7 binding)");
+    }
+
+    #[test]
+    fn py_external_is_lib() {
+        let out = produce_py("import json\ndef load(s):\n    json.loads(s)\n", "mypkg", "io");
+        let r = ref_to(&out, "loads");
+        assert_eq!(r.target_fqn.as_deref(), Some("lib·json·json·loads"), "external module call → lib node");
+        assert!(r.is_lib);
     }
 
     #[test]

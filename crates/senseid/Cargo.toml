@@ -39,6 +39,7 @@ semver = "1"
 # OXC for TypeScript/JavaScript (native Rust parser, no tree-sitter ABI issues)
 oxc_parser = "0.124"
 oxc_ast = "0.124"
+oxc_ast_visit = "0.124"
 oxc_span = "0.124"
 oxc_allocator = "0.124"
 

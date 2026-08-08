@@ -11,6 +11,10 @@ impl LanguageAdapter for SqlAdapter {
     fn language(&self) -> &str { "sql" }
     fn display_name(&self) -> &str { "SQL" }
 
+    fn fqn_output(&self, abs_path: &str, content: &str) -> Option<super::fqn::FqnFileOutput> {
+        Some(sql_fqn::produce_fqns(content, &sql_fqn::schema_from_path(abs_path)))
+    }
+
     fn parse_to_ir(&self, source: &str, file_path: &str) -> crate::ir::IRParsedFile {
         parse_to_ir(source, file_path)
     }
@@ -166,11 +170,194 @@ pub fn parse_to_ir(source: &str, file_path: &str) -> IRParsedFile {
     ir_parsed_file(file_path, "sql", module, classes)
 }
 
+// ── FQN producer (plan Phase 6.7) ────────────────────────────────────────────
+// SQL's "package" is the schema. A text scan (robust to the PG-specific DDL that a
+// generic SQL grammar rejects) maps `create <obj> [schema.]<name>` → sql·schema·name
+// and `references [schema.]<table>` (foreign keys) → resolved node→node edges,
+// attributed to the enclosing CREATE object.
+pub(crate) mod sql_fqn {
+    use super::super::fqn::{self, FqnDefinition, FqnFileOutput, FqnReference};
+    use crate::types::SymbolKind;
+
+    const SQL_LANG: &str = "sql";
+    // Object kinds we track as definitions (the leading create-modifiers are stripped first).
+    fn kind_of(word: &str) -> Option<SymbolKind> {
+        match word {
+            "table" => Some(SymbolKind::Class),
+            "view" => Some(SymbolKind::Type),
+            "function" | "procedure" => Some(SymbolKind::Function),
+            "type" | "domain" => Some(SymbolKind::Type),
+            "index" | "trigger" | "sequence" => Some(SymbolKind::Const),
+            _ => None,
+        }
+    }
+
+    /// Schema from `set search_path to <schema>` (the sensei DDL idiom); falls back
+    /// to the caller-supplied default (the dbd `ddl/<type>/<schema>/` dir name).
+    fn schema_of(source: &str, default_schema: &str) -> String {
+        for line in source.lines() {
+            let lower = line.to_lowercase();
+            if let Some(pos) = lower.find("search_path to ") {
+                let after = &line[pos + "search_path to ".len()..];
+                let sch = after.trim().split(|c: char| c == ',' || c == ';' || c.is_whitespace()).next().unwrap_or("").trim();
+                if !sch.is_empty() { return sch.to_string(); }
+            }
+        }
+        default_schema.to_string()
+    }
+
+    /// Split `schema.name` → (schema, name); a bare name uses the file's schema.
+    fn split_qualified(name: &str, default_schema: &str) -> (String, String) {
+        match name.rsplit_once('.') {
+            Some((s, n)) => (s.trim_matches('"').to_string(), n.trim_matches('"').to_string()),
+            None => (default_schema.to_string(), name.trim_matches('"').to_string()),
+        }
+    }
+
+    /// Parse a `create …` line into (kind_word, object_name), skipping the
+    /// or-replace / unique / materialized modifiers and `if not exists`.
+    fn parse_create(line: &str) -> Option<(SymbolKind, String)> {
+        let words: Vec<&str> = line.split_whitespace().collect();
+        if words.first().map(|w| w.to_lowercase()) != Some("create".to_string()) {
+            return None;
+        }
+        let mut i = 1;
+        while i < words.len() && ["or", "replace", "unique", "materialized"].contains(&words[i].to_lowercase().as_str()) {
+            i += 1;
+        }
+        let kind = kind_of(&words.get(i)?.to_lowercase())?;
+        i += 1;
+        while i < words.len() && ["if", "not", "exists"].contains(&words[i].to_lowercase().as_str()) {
+            i += 1;
+        }
+        let name = words.get(i)?.split('(').next().unwrap_or("").trim_matches('"').to_string();
+        if name.is_empty() { None } else { Some((kind, name)) }
+    }
+
+    /// Every `references <name>` target on a line (foreign keys).
+    fn references_on(line: &str) -> Vec<String> {
+        let lower = line.to_lowercase();
+        let mut out = Vec::new();
+        let mut from = 0;
+        while let Some(pos) = lower[from..].find("references ") {
+            let start = from + pos + "references ".len();
+            let name = line[start..].trim().split(|c: char| c.is_whitespace() || c == '(').next().unwrap_or("").trim_matches('"');
+            if !name.is_empty() && name.chars().next().is_some_and(|c| c.is_alphabetic() || c == '_' || c == '"') {
+                out.push(name.to_string());
+            }
+            from = start;
+        }
+        out
+    }
+
+    /// Produce canonical FQNs for a SQL file. `default_schema` is used when the file
+    /// has no `set search_path` (the dbd directory schema).
+    pub fn produce_fqns(source: &str, default_schema: &str) -> FqnFileOutput {
+        let schema = schema_of(source, default_schema);
+        let mut out = FqnFileOutput { package: schema.clone(), module: String::new(), ..Default::default() };
+        let mut current: Option<String> = None; // fqn of the enclosing CREATE object
+        for (i, line) in source.lines().enumerate() {
+            // Skip `--` comments so a prose mention of "references"/"create" isn't parsed.
+            if line.trim_start().starts_with("--") { continue; }
+            if let Some((kind, raw)) = parse_create(line) {
+                let (sch, name) = split_qualified(&raw, &schema);
+                let fqn_str = fqn::item(SQL_LANG, &sch, "", &name);
+                out.defs.push(FqnDefinition {
+                    fqn: fqn_str.clone(),
+                    name,
+                    kind,
+                    line_start: i as u32 + 1,
+                    line_end: i as u32 + 1,
+                    is_exported: true,
+                    signature: Some(line.trim().to_string()),
+                    docstring: None,
+                    parent_type: None,
+                    parent_fqn: None,
+                });
+                current = Some(fqn_str);
+            }
+            if let Some(caller) = &current {
+                for target in references_on(line) {
+                    let (tsch, tname) = split_qualified(&target, &schema);
+                    out.refs.push(FqnReference {
+                        caller_fqn: caller.clone(),
+                        caller_line: i as u32 + 1,
+                        target_fqn: Some(fqn::item(SQL_LANG, &tsch, "", &tname)),
+                        target_name: tname,
+                        is_lib: false,
+                    });
+                }
+            }
+        }
+        out
+    }
+
+    /// The schema a SQL file belongs to when it has no `set search_path`: the dbd
+    /// layout is `…/ddl/<type>/<schema>/<name>.ddl`, so the parent directory names it.
+    pub(crate) fn schema_from_path(abs_path: &str) -> String {
+        std::path::Path::new(abs_path)
+            .parent().and_then(|p| p.file_name()).and_then(|n| n.to_str())
+            .unwrap_or("public").to_string()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn parse(src: &str) -> ParsedFile { SqlAdapter.parse(src, "schema.sql") }
+
+    // ── FQN producer (Phase 6.7) ────────────────────────────────────────────
+    use crate::languages::fqn::{FqnFileOutput, FqnReference};
+    fn def_fqn<'a>(out: &'a FqnFileOutput, name: &str) -> &'a str {
+        out.defs.iter().find(|d| d.name == name).map(|d| d.fqn.as_str()).unwrap_or("<no-def>")
+    }
+    fn ref_to<'a>(out: &'a FqnFileOutput, target_name: &str) -> &'a FqnReference {
+        out.refs.iter().find(|r| r.target_name == target_name)
+            .unwrap_or_else(|| panic!("no ref to `{target_name}` in {:?}", out.refs))
+    }
+
+    #[test]
+    fn sql_def_fqn() {
+        let out = sql_fqn::produce_fqns(
+            "set search_path to sensei, extensions;\ncreate table if not exists nodes (id uuid);\ncreate view active_nodes as select * from nodes;",
+            "public",
+        );
+        assert_eq!(def_fqn(&out, "nodes"), "sql·sensei·nodes", "table → schema.name (schema from search_path)");
+        assert_eq!(def_fqn(&out, "active_nodes"), "sql·sensei·active_nodes", "view");
+    }
+
+    #[test]
+    fn sql_ref_fqn() {
+        let out = sql_fqn::produce_fqns(
+            "set search_path to sensei;\ncreate table edges (\n  source_id uuid references nodes(id)\n);",
+            "public",
+        );
+        let r = ref_to(&out, "nodes");
+        assert_eq!(r.target_fqn.as_deref(), Some("sql·sensei·nodes"), "foreign key resolves to the referenced table's fqn");
+        assert_eq!(r.caller_fqn, "sql·sensei·edges", "attributed to the enclosing table");
+    }
+
+    #[test]
+    fn sql_schema_from_path_uses_dbd_layout() {
+        assert_eq!(sql_fqn::schema_from_path("/x/database/ddl/table/sensei/nodes.ddl"), "sensei");
+    }
+
+    #[test]
+    fn sql_producer_handles_real_ddl() {
+        // Exercise the producer against a real, PG-specific DDL file (the corpus the
+        // text scan exists for) — a generic SQL grammar would reject it wholesale.
+        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent().unwrap().parent().unwrap().join("database/ddl/table/sensei/nodes.ddl");
+        if !root.exists() { return; }
+        let content = std::fs::read_to_string(&root).unwrap();
+        let out = sql_fqn::produce_fqns(&content, "sensei");
+        assert!(out.defs.iter().any(|d| d.fqn == "sql·sensei·nodes"),
+            "the nodes table def, got: {:?}", out.defs.iter().map(|d| &d.fqn).collect::<Vec<_>>());
+        assert!(out.refs.iter().any(|r| r.target_fqn.as_deref() == Some("sql·sensei·folders")),
+            "the folder_id → sensei.folders foreign-key edge, got: {:?}",
+            out.refs.iter().map(|r| &r.target_fqn).collect::<Vec<_>>());
+    }
 
     #[test]
     fn parses_create_table() {

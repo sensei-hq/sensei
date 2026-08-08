@@ -30,6 +30,20 @@ create index if not exists edges_kind_idx
 create index if not exists edges_confidence_idx
     on edges(confidence);
 
+-- Edge identity (D1): two partial unique indexes give an edge an identity so
+-- insert_edge can upsert instead of duplicating. The nullable target_id forces
+-- the split — a resolved edge is unique by its target node; an unresolved edge
+-- is unique by (target_name, target_file). `nulls not distinct` (PG15+) makes a
+-- NULL target_file/target_name dedup like a value, so repeated unresolved
+-- inserts collapse to one row instead of accumulating.
+create unique index if not exists edges_unique_resolved
+    on edges (folder_id, source_id, target_id, kind)
+ where target_id is not null;
+
+create unique index if not exists edges_unique_unresolved
+    on edges (folder_id, source_id, target_name, target_file, kind) nulls not distinct
+ where target_id is null;
+
 comment on table edges is
 'Typed relationships between nodes in the code graph.
 

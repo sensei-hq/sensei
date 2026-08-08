@@ -79,6 +79,13 @@ pub fn process(abs_path: &str, rel_path: &str, ext: &str, content: &str, _repo_i
 
     let ir = Some(adapter.parse_to_ir(content, rel_path));
 
+    // Phase 3+: FQN production, dispatched per language via the adapter. A migrated
+    // adapter derives this file's (package, module) context from its own
+    // manifest/layout rules and produces canonical FQNs so process_file can emit
+    // resolved node→node edges; an un-migrated language returns None and stays on the
+    // bare-name path.
+    let fqn = adapter.fqn_output(abs_path, content);
+
     Some(FileProcessResult {
         file_id,
         rel_path: rel_path.to_string(),
@@ -95,7 +102,10 @@ pub fn process(abs_path: &str, rel_path: &str, ext: &str, content: &str, _repo_i
         parent_refs,
         file_refs: vec![],
         fn_mentions: vec![],
+        sections: vec![],
+        rationales: vec![],
         ir,
+        fqn,
     })
 }
 

@@ -1114,7 +1114,13 @@ pub(crate) async fn get_insights(
         } else {
             "場"
         };
-        Some(serde_json::json!({ "id": pid, "name": p["name"], "kanji": kanji }))
+        // last_session_at lets the Insights project filter show the 3 MOST-RECENT
+        // projects as chips (the rest reachable by search) instead of one chip per
+        // project. Already computed by list_projects; pass it through.
+        Some(serde_json::json!({
+            "id": pid, "name": p["name"], "kanji": kanji,
+            "last_session_at": p["last_session_at"],
+        }))
     }).collect();
 
     Ok(Json(serde_json::json!({

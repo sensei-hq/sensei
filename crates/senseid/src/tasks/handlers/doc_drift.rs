@@ -35,24 +35,12 @@ pub async fn scan_doc_drift(ctx: &TaskContext, task: &Task) -> Result<u32, Strin
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
-    use crate::tasks::queue::TaskQueue;
+    
+    
     use crate::tasks::TaskKind;
-    use crate::api::state::SharedState;
+    
 
-    async fn make_ctx() -> Arc<TaskContext> {
-        let queue = Arc::new(TaskQueue::new());
-        let gateway = crate::api::gateway_init::init_gateway_test().await;
-        let app_state = Arc::new(SharedState {
-            task_queue: queue.clone(),
-            pg: crate::db::pg_store::PgStore::connect_test().await.unwrap(),
-            gateway,
-            event_tx: { let (tx, _) = tokio::sync::broadcast::channel(16); tx },
-            breaker: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
-            provisioning: None,
-        });
-        Arc::new(TaskContext { queue, app_state, _graph_path: None, logger: sensei_logger::Logger::noop() })
-    }
+    use crate::tasks::test_support::make_ctx;
 
     #[tokio::test]
     async fn rejects_bad_project_id_payload() {

@@ -4,6 +4,7 @@
   import { invalidateAll } from '$app/navigation';
   import { page } from '$app/state';
   import { EmptyState, MoeReasoningPanel } from '$lib/components';
+  import { Button } from '@rokkit/ui';
   import {
     formatDeltaPct,
     pct,
@@ -233,12 +234,14 @@
         class="px-3 py-2 border border-paper-edge rounded-md bg-paper text-ink text-sm outline-none resize-y"
         data-testid="impact-note"
       ></textarea>
-      <button
+      <Button
         type="submit"
+        variant="primary"
+        size="sm"
+        class="self-start"
         disabled={!logForm.title.trim() || logging}
-        class="self-start px-4 py-2 rounded-md text-sm bg-primary text-on-primary border-none cursor-pointer"
         data-testid="impact-log-button"
-      >{logging ? 'Logging…' : 'Log impact'}</button>
+      >{logging ? 'Logging…' : 'Log impact'}</Button>
     </form>
 
     {#if impactPending.length > 0}

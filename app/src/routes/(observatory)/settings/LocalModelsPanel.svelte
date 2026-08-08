@@ -26,7 +26,7 @@
   };
 </script>
 
-<div class="px-7 py-7 bg-paper-mute border border-paper-mute rounded-lg" data-testid="settings-local-models">
+<div class="px-7 py-7 bg-paper-mute border border-paper-edge rounded-lg" data-testid="settings-local-models">
   <h3 class="text-base m-0 mb-1">Local models</h3>
   <p class="text-sm text-ink-soft m-0 mb-5">
     Pulled to disk, served in-process by the embedded runtime — runs offline.

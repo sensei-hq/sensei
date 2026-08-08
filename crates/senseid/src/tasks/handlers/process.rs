@@ -37,6 +37,16 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
     let is_quasi = pre_registered.as_ref()
         .and_then(|r| r["kind"].as_str()) == Some("standalone");
 
+    // D6a: capture this folder's id now (pre_registered is moved below). The
+    // `indexing` mark is written later, INSIDE the has_changes block, so it is
+    // symmetric with the barrier's `indexed` write — a no-op re-scan of an
+    // already-indexed folder is never downgraded. A folder not registered at
+    // scan time (None) is simply not marked; it isn't in the DB, so there is
+    // nothing to recover anyway.
+    let this_folder_id: Option<uuid::Uuid> = pre_registered.as_ref()
+        .and_then(|r| r["id"].as_str())
+        .and_then(|s| uuid::Uuid::parse_str(s).ok());
+
     // ── 1. Detect stack ──────────────────────────────────────────────
     let stack = super::scan_logic::detect_stack(repo_path);
 
@@ -369,23 +379,59 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
     // switch elsewhere) the folder's edges + embeddings are already valid, so we
     // skip the barriers entirely. This keeps a no-op re-scan cheap.
     let has_changes = !all_file_task_ids.is_empty() || !plan.removed.is_empty();
-    if has_changes {
-        let resolve_id = ctx.queue.enqueue(
-            Task::new(TaskKind::ResolveEdges, folder_path, "")
+    // Recovery (D6b/D6d): also re-drive the barrier for a folder left in a
+    // NON-TERMINAL state — `failed` (a prior fatal file, D6c-trigger, possibly
+    // since healed by a bounded retry) or `indexing` (a crash mid-scan). Without
+    // this, a healed transient failure whose scan_state is now complete
+    // (has_changes=false) would strand the folder at `failed` forever, since the
+    // terminal barrier that flips it to `indexed` only runs when there are
+    // changes. An `indexed`/`archived`/`discovered` folder with no changes is
+    // left as-is (no spurious downgrade — the inc2 invariant).
+    let non_terminal = if let Some(fid) = this_folder_id {
+        matches!(
+            ctx.pg().get_folder_status(&fid).await.ok().flatten().as_deref(),
+            Some("failed") | Some("indexing")
+        )
+    } else {
+        false
+    };
+    if has_changes || non_terminal {
+        // D6a: mark the scan in-flight — a crash then leaves a recoverable
+        // `indexing` state, and the barrier flips it to `indexed` on success.
+        // Gated on has_changes||non_terminal so an unchanged already-`indexed`
+        // folder is never downgraded to `indexing`, but a `failed`/`indexing`
+        // folder is re-driven to recovery.
+        if let Some(fid) = this_folder_id
+            && let Err(e) = ctx.pg().update_folder_status(&fid, "indexing").await
+        {
+            tracing::warn!(error = %e, folder = %folder_name, "process_git_folder: mark indexing failed");
+        }
+
+        // Phase 7.1: no ResolveEdges pass — FQN edges resolve at emit (source_id →
+        // target_id in process_file). ResolveLibs (the first barrier) blocks on the
+        // file tasks directly; degree is recomputed at DetectCommunities (its sole
+        // consumer, the terminal barrier).
+        let libs_id = ctx.queue.enqueue(
+            Task::new(TaskKind::ResolveLibs, folder_path, "")
                 .with_parent(task.id)
                 .blocked_by(all_file_task_ids.clone())
         ).await;
 
-        let libs_id = ctx.queue.enqueue(
-            Task::new(TaskKind::ResolveLibs, folder_path, "")
-                .with_parent(task.id)
-                .blocked_by(vec![resolve_id])
-        ).await;
-
-        ctx.queue.enqueue(
+        let build_id = ctx.queue.enqueue(
             Task::new(TaskKind::BuildConnections, folder_path, "")
                 .with_parent(task.id)
                 .blocked_by(vec![libs_id])
+        ).await;
+
+        // D4.1: DetectCommunities is the TERMINAL barrier — chained after
+        // BuildConnections so the whole edge set exists before detection, and it
+        // is the sole writer of `indexed` (so `indexed` implies communities are
+        // computed). Its atomic per-folder replace (D4.2) makes a re-detect of an
+        // unchanged graph a no-op, so re-driving it on recovery is cheap.
+        ctx.queue.enqueue(
+            Task::new(TaskKind::DetectCommunities, folder_path, "")
+                .with_parent(task.id)
+                .blocked_by(vec![build_id])
         ).await;
 
         // Embed code-graph nodes for semantic search + duplicate detection.
@@ -413,8 +459,12 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
                 if let Some(root_id) = root_id {
                     for (name, subtree_path) in &subtrees {
                         let subtree_folder_name = format!("{}:{}", folder_name, name);
-                        if let Err(e) = ctx.pg().upsert_repo(&root_id, &subtree_folder_name, subtree_path).await {
-                            tracing::warn!(name = %subtree_folder_name, path = %subtree_path, error = %e, "upsert_repo (subtree) failed");
+                        // D5a: a nested git repo is a `subtree`, not a `git` root.
+                        // upsert_repo_kind relabels an existing git/standalone row and
+                        // preserves an existing subtree, so this converges regardless
+                        // of whether scan_root discovered the nested repo first.
+                        if let Err(e) = ctx.pg().upsert_repo_kind(&root_id, "subtree", &subtree_folder_name, subtree_path).await {
+                            tracing::warn!(name = %subtree_folder_name, path = %subtree_path, error = %e, "upsert_repo_kind (subtree) failed");
                         }
                     }
                 }
@@ -426,9 +476,14 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
                     // back by handlers via get_repo_by_path.
                     let sub_task = Task::new(TaskKind::ProcessGitFolder, subtree_path, subtree_path)
                         .with_parent(task.id);
-                    ctx.queue.enqueue(sub_task).await;
                     let subtree_folder_name = format!("{}:{}", folder_name, name);
-                    tracing::info!("process_git_folder: enqueued subtree {} at {}", subtree_folder_name, subtree_path);
+                    // Single-writer (D6e/W5): skip if this subtree is already being
+                    // scanned, and log the skip so the guard is observable.
+                    if ctx.queue.enqueue_unique(sub_task).await.is_some() {
+                        tracing::info!("process_git_folder: enqueued subtree {} at {}", subtree_folder_name, subtree_path);
+                    } else {
+                        tracing::debug!("process_git_folder: subtree {} already in flight, skipped", subtree_folder_name);
+                    }
                 }
             }
         }
@@ -606,15 +661,19 @@ pub async fn reconcile_repo_identity(ctx: &TaskContext, repo_abs_path: &str) -> 
             let sub_abs = sub.to_string_lossy().to_string();
             let rel = sub.strip_prefix(repo_path).unwrap_or(&sub).to_string_lossy().to_string();
             let name = sub.file_name().and_then(|n| n.to_str()).unwrap_or(rel.as_str()).to_string();
-            match ctx.pg().upsert_subfolder(
-                &root_id, &name, &rel, &sub_abs, Some(&folder_id), project_id.as_ref(),
+            // D5a: a monorepo sub-project is a `workspace_member` (not a plain
+            // structural `folder`) — its own boundary in the graph, keeping the
+            // inferred role. The kind-aware upsert relabels an existing `folder`
+            // member but never reclassifies a nested project root.
+            match ctx.pg().upsert_subfolder_kind(
+                &root_id, "workspace_member", &name, &rel, &sub_abs, Some(&folder_id), project_id.as_ref(),
             ).await {
                 Ok(sub_id) => {
                     if let Err(e) = ctx.pg().update_folder_role(&sub_id, Some(role)).await {
                         tracing::warn!(sub = %sub_abs, error = %e, "sub-project update_folder_role failed");
                     }
                 }
-                Err(e) => tracing::warn!(sub = %sub_abs, error = %e, "sub-project upsert_subfolder failed"),
+                Err(e) => tracing::warn!(sub = %sub_abs, error = %e, "sub-project upsert_subfolder_kind failed"),
             }
         }
     }
@@ -674,12 +733,38 @@ pub async fn process_folder(ctx: &TaskContext, task: &Task) -> Result<u32, Strin
 // ── Process File ──────────────────────────────────────────────────────────
 
 /// Parse a single file using file_processor, then write results to graph.
+/// Test-only fault seam (D6c-trigger): lets a test force a fatal DB-write
+/// failure for a specific file path, so the fatal path (folder → `failed`,
+/// `Err`, no `scan_state` advance) is exercised without needing a live DB fault.
+#[cfg(test)]
+pub(super) mod fault {
+    use std::collections::HashSet;
+    use std::sync::Mutex;
+
+    static FAIL_PATHS: Mutex<Option<HashSet<String>>> = Mutex::new(None);
+
+    /// Force the next `process_file` on `abs_path` to hit the fatal path.
+    pub fn fail_for(abs_path: &str) {
+        FAIL_PATHS.lock().unwrap().get_or_insert_with(HashSet::new).insert(abs_path.to_string());
+    }
+    /// Stop forcing failure for `abs_path`.
+    pub fn clear(abs_path: &str) {
+        if let Some(set) = FAIL_PATHS.lock().unwrap().as_mut() {
+            set.remove(abs_path);
+        }
+    }
+    /// Whether `abs_path` is currently marked to fail.
+    pub fn should_fail(abs_path: &str) -> bool {
+        FAIL_PATHS.lock().unwrap().as_ref().is_some_and(|s| s.contains(abs_path))
+    }
+}
+
 pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
     let abs_path = &task.path;
 
     // Skip files we can't parse as source text. Returning Ok (not Err) is
     // critical: a failed ProcessFile task would block its folder's
-    // resolve_edges barrier, leaving the folder stuck at 'discovered'. Binary
+    // post-processing barrier, leaving the folder stuck at 'discovered'. Binary
     // (by extension) and non-UTF8 (by content sniff) files are skipped so
     // indexing always completes.
     let fpath = std::path::Path::new(abs_path);
@@ -704,7 +789,7 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
     // future yields Pending). spawn_blocking moves it off the runtime so the
     // worker yields, the watchdog can fire, and one bad file can't wedge the
     // pool. A read/parse error is tolerated (skip, don't fail) so it never
-    // blocks the folder's resolve_edges barrier.
+    // blocks the folder's post-processing barrier.
     let folder_id = folder.as_ref().and_then(|f| crate::api::util::json_uuid(&f["id"]));
     let abs_owned = abs_path.clone();
     let folder_path_owned = task.folder_path.clone();
@@ -743,105 +828,312 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
         }
     };
 
-    // Write parsed symbols to PG
+    // Write parsed symbols to PG. A DB-write failure here is FATAL (D6c-trigger):
+    // the file isn't correctly indexed, so we must NOT advance its scan_state and
+    // must surface it — mark the folder `failed` (the fail-closed barrier D6d
+    // checks this) and propagate `Err` (recorded to task_executions and
+    // bounded-retried, D6c). Parse/read errors were TOLERATED above (Ok). A
+    // folder row that doesn't exist yet is a no-op.
     let symbols_count = result.symbols.len();
-    if let Some(folder) = folder
-        && let Some(folder_id) = crate::api::util::json_uuid(&folder["id"]) {
-            // Re-indexing this file: un-resolve inbound edges (preserve their
-            // target_name so resolve_edges re-points them to the new nodes) and
-            // drop the file's prior nodes (cascading their outgoing edges) so the
-            // rewrite is clean. No-op for a brand-new file.
-            if let Err(e) = ctx.pg().unresolve_edges_to_file(&folder_id, &result.rel_path).await {
-                tracing::warn!(folder_id = %folder_id, file = %result.rel_path, error = %e, "unresolve_edges_to_file (reindex) failed");
-            }
-            if let Err(e) = ctx.pg().delete_nodes_by_file(&folder_id, &result.rel_path).await {
-                tracing::warn!(folder_id = %folder_id, file = %result.rel_path, error = %e, "delete_nodes_by_file (reindex) failed");
-            }
+    let Some(folder_id) = folder_id else {
+        return Ok(symbols_count as u32);
+    };
 
-            // Write file node
-            let file_node_id = match ctx.pg().upsert_node(
-                &folder_id, &result.kind, &result.rel_path, &result.rel_path, None, None, None, None
-            ).await {
-                Ok(id) => Some(id),
-                Err(e) => {
-                    tracing::warn!(kind = %result.kind, file = %result.rel_path, error = %e, "upsert file node failed; skipping file");
-                    None
-                }
-            };
+    // Test seam (D6c-trigger): exercise the fatal path without a live DB fault.
+    #[cfg(test)]
+    if fault::should_fail(abs_path) {
+        return fail_folder(ctx, &folder_id, &result.rel_path,
+            "injected fatal DB-write failure (test fault seam)".to_string()).await;
+    }
 
-            // Write symbol nodes (functions, classes, types, etc.), capturing
-            // each id keyed by (name, line_start) so call edges can be sourced
-            // from the caller node — not the file. Generic graph-wiring; reused
-            // by any symbol-sourced edge kind. Keyed on line because same-named
-            // methods across impl blocks are legal in Rust.
-            let mut sym_ids: std::collections::HashMap<(String, i32), uuid::Uuid> =
-                std::collections::HashMap::new();
+    // Any DB write in here failing is fatal — `?` propagates it out of the async
+    // block and we handle it uniformly below (no partial "success").
+    let write_result: Result<(), String> = async {
+        // D3 upsert-then-prune: UPSERT the file's current nodes (surviving symbols
+        // keep their id → community_id/embedding/inbound edges), then prune the
+        // ones that vanished from the parse. No destructive delete-then-insert.
+
+        // File node.
+        let file_node_id = ctx.pg().upsert_node(
+            &folder_id, &result.kind, &result.rel_path, &result.rel_path, None, None, None, None
+        ).await.map_err(|e| format!("upsert file node: {e}"))?;
+
+        // Symbol nodes (functions, classes, types, …), captured by (name,
+        // line_start) so call edges can be sourced from the caller node — not the
+        // file. Keyed on line because same-named methods across impl blocks are
+        // legal in Rust.
+        // The Rust FQN path (result.fqn) get-or-creates each symbol node keyed on
+        // its canonical FQN — so a definition and every reference to it share one
+        // node — via `upsert_node_by_fqn`. Every other language keeps the line-based
+        // bare-name path (`upsert_node_ex`). `fqn_ids` maps fqn→id for edge sourcing.
+        let mut sym_ids: std::collections::HashMap<(String, i32), uuid::Uuid> =
+            std::collections::HashMap::new();
+        let mut fqn_ids: std::collections::HashMap<String, uuid::Uuid> =
+            std::collections::HashMap::new();
+        if let Some(fqn_out) = &result.fqn {
+            // D5c: a `module` container per file (nested under the file). Top-level
+            // items nest under it (or the file node at the crate root); methods nest
+            // under their TYPE node — so the graph is file → module → type → method.
+            // The `nodes.language` column for every FQN node is the FILE's language
+            // (derived from its extension) — NOT the fqn's grouping lang and NOT a
+            // hardcoded "rust". Keeps the same-language fallback (0.8) honest across
+            // the migrated languages.
+            let file_lang = crate::languages::language_for_path(&result.rel_path);
+            let mut top_parent = file_node_id;
+            if !fqn_out.module.is_empty() {
+                // The module container's fqn language matches the file's defs (the
+                // first fqn's leading segment), so a Python/TS module node isn't
+                // mislabelled as rust.
+                let lang = fqn_out.defs.first().and_then(|d| d.fqn.split('·').next()).unwrap_or("rust");
+                let mfqn = crate::languages::fqn::item(lang, &fqn_out.package, "", &fqn_out.module);
+                let mname = fqn_out.module.rsplit("::").next().unwrap_or(&fqn_out.module);
+                let mid = ctx.pg().upsert_node_by_fqn(
+                    &folder_id, &mfqn, "module", mname, file_lang,
+                    Some(crate::db::pg_store::FqnDef {
+                        file_path: &result.rel_path, signature: None, line_start: None,
+                        line_end: None, is_exported: false, parent_id: Some(&file_node_id),
+                    }),
+                ).await.map_err(|e| format!("upsert module node {mfqn}: {e}"))?;
+                fqn_ids.insert(mfqn, mid);
+                top_parent = mid;
+            }
+            for d in &fqn_out.defs {
+                let kind = crate::types::NodeKind::from_symbol_kind(&d.kind);
+                // Structural parent: a method → its enclosing type node (get-or-create
+                // — a stub if the type is defined in another file); a top-level item →
+                // the module container (or the file at crate root).
+                let parent_id: uuid::Uuid = match &d.parent_fqn {
+                    Some(pf) => match fqn_ids.get(pf) {
+                        Some(id) => *id,
+                        None => ctx.pg().upsert_node_by_fqn(
+                            &folder_id, pf, "class", pf.rsplit('·').next().unwrap_or(pf), file_lang, None,
+                        ).await.map_err(|e| format!("upsert fqn parent {pf}: {e}"))?,
+                    },
+                    None => top_parent,
+                };
+                let id = ctx.pg().upsert_node_by_fqn(
+                    &folder_id, &d.fqn, kind.as_str(), &d.name, file_lang,
+                    Some(crate::db::pg_store::FqnDef {
+                        file_path: &result.rel_path,
+                        signature: d.signature.as_deref(),
+                        line_start: Some(d.line_start as i32),
+                        line_end: Some(d.line_end as i32),
+                        is_exported: d.is_exported,
+                        parent_id: Some(&parent_id),
+                    }),
+                ).await.map_err(|e| format!("upsert fqn def {}: {e}", d.fqn))?;
+                fqn_ids.insert(d.fqn.clone(), id);
+            }
+        } else {
             for sym in &result.symbols {
-                let parent_uuid = file_node_id; // symbols are children of the file
-                match ctx.pg().upsert_node(
+                let id = ctx.pg().upsert_node_ex(
                     &folder_id, &sym.kind, &sym.name, &result.rel_path,
-                    parent_uuid.as_ref(), sym.signature.as_deref(),
-                    Some(sym.line as i32), Some(sym.line_end as i32),
-                ).await {
-                    Ok(id) => { sym_ids.insert((sym.name.clone(), sym.line as i32), id); }
-                    Err(e) => tracing::warn!(kind = %sym.kind, name = %sym.name, file = %result.rel_path, error = %e, "upsert symbol node failed; skipping symbol"),
+                    Some(&file_node_id), sym.signature.as_deref(),
+                    Some(sym.line as i32), Some(sym.line_end as i32), sym.is_exported,
+                ).await.map_err(|e| format!("upsert symbol node {}: {e}", sym.name))?;
+                sym_ids.insert((sym.name.clone(), sym.line as i32), id);
+            }
+        }
+
+        // D5b: nested doc `section` nodes (file → H1 → H2 → H3). Identity is the
+        // full heading PATH ("Design > Auth > Refresh") with a NULL `line_start`,
+        // so a section keeps its id across line edits (line-independent identity,
+        // 0.4) — the real line + level live in `props`. Written through this same
+        // upsert/prune path, so a re-index reconciles the section set (a removed
+        // heading is pruned, no duplicates). Empty for code files.
+        let mut section_ids: Vec<uuid::Uuid> = Vec::with_capacity(result.sections.len());
+        // Stack of (level, heading_segment, node_id) for the current ancestor chain.
+        let mut path_stack: Vec<(u8, String, uuid::Uuid)> = Vec::new();
+        // Disambiguate identical-text siblings under the same parent: the Nth
+        // (N>1) occurrence of a full heading path gets a " #N" suffix, so two
+        // `## Setup` under one H1 are DISTINCT nodes rather than the second's
+        // upsert colliding onto the first (which would silently clobber it). The
+        // suffix flows into the stacked segment, so children of the second Setup
+        // ("… > Setup #2 > …") don't collide with children of the first either.
+        // Deterministic per document ⇒ idempotent on re-index.
+        let mut seen_paths: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
+        for sec in &result.sections {
+            while path_stack.last().is_some_and(|(lvl, _, _)| *lvl >= sec.level) {
+                path_stack.pop();
+            }
+            let parent_id = path_stack.last().map(|(_, _, id)| *id).unwrap_or(file_node_id);
+            let base_path = path_stack.iter()
+                .map(|(_, h, _)| h.as_str())
+                .chain(std::iter::once(sec.heading.as_str()))
+                .collect::<Vec<_>>()
+                .join(" > ");
+            let occ = { let c = seen_paths.entry(base_path.clone()).or_insert(0); *c += 1; *c };
+            let (heading_path, segment) = if occ == 1 {
+                (base_path, sec.heading.clone())
+            } else {
+                (format!("{base_path} #{occ}"), format!("{} #{occ}", sec.heading))
+            };
+            let sec_id = ctx.pg().upsert_node(
+                &folder_id, "section", &heading_path, &result.rel_path,
+                Some(&parent_id), None, None, None,
+            ).await.map_err(|e| format!("upsert section node {}: {e}", heading_path))?;
+            let props = serde_json::json!({
+                "level": sec.level,
+                "line_start": sec.line_start,
+                "line_end": sec.line_end,
+                "preview": sec.content_preview,
+            });
+            ctx.pg().set_node_props(&sec_id, &props).await
+                .map_err(|e| format!("set section props {}: {e}", heading_path))?;
+            section_ids.push(sec_id);
+            // Stack holds each heading's OWN (disambiguated) segment so the next
+            // child's path joins ancestors + itself exactly once, carrying the suffix.
+            path_stack.push((sec.level, segment, sec_id));
+        }
+
+        // D5b: rationale nodes (NOTE/WHY/HACK/TODO/IMPORTANT) — the design "why".
+        // Parented to the file node (finer function/section parenting is a
+        // follow-up), keyed on (name=text, line_start) so identical markers on
+        // different lines are distinct and a re-index of unchanged text is a no-op.
+        let mut rationale_ids: Vec<uuid::Uuid> = Vec::with_capacity(result.rationales.len());
+        for r in &result.rationales {
+            let id = ctx.pg().upsert_node(
+                &folder_id, "rationale", &r.text, &result.rel_path,
+                Some(&file_node_id), None, Some(r.line as i32), Some(r.line as i32),
+            ).await.map_err(|e| format!("upsert rationale node: {e}"))?;
+            ctx.pg().set_node_props(&id, &serde_json::json!({ "marker": r.marker })).await
+                .map_err(|e| format!("set rationale props: {e}"))?;
+            rationale_ids.push(id);
+        }
+
+        // Everything just upserted is this file's current node set (its source
+        // nodes for out-edges too). `kept` is never empty — the file node always
+        // survives.
+        let kept: Vec<uuid::Uuid> = std::iter::once(file_node_id)
+            .chain(sym_ids.values().copied())
+            .chain(fqn_ids.values().copied())
+            .chain(section_ids.iter().copied())
+            .chain(rationale_ids.iter().copied())
+            .collect();
+
+        // D3 prune: delete the file's nodes that vanished from the parse (their
+        // out-edges cascade). Inbound FQN edges (target_id set) cascade-delete with
+        // the node — the demote-to-stub refinement (plan 0.5) is a deferred
+        // follow-up; a full reindex heals a removed-but-referenced def.
+        ctx.pg().prune_file_nodes(&folder_id, &result.rel_path, &kept).await
+            .map_err(|e| format!("prune_file_nodes: {e}"))?;
+
+        // D2/D3 per-file out-edge reconcile: a SURVIVING node keeps its id, so its
+        // stale out-edges (a call/import a re-edit removed) don't cascade — clear
+        // this file's out-edges, then re-insert the current set below (replace,
+        // not append).
+        ctx.pg().delete_edges_from_sources(&folder_id, &kept).await
+            .map_err(|e| format!("delete_edges_from_sources: {e}"))?;
+
+        // Unresolved import edges.
+        for import in &result.unresolved_imports {
+            ctx.pg().insert_edge(&folder_id, &file_node_id, None, Some(import), None, "imports").await
+                .map_err(|e| format!("insert_edge (imports): {e}"))?;
+        }
+
+        // Call edges. The FQN path emits RESOLVED node→node edges AT EMIT: the
+        // target is get-or-created by FQN (a stub if its definition isn't indexed
+        // yet — enriched later, keeping the same id; a `lib_symbol` for an external
+        // crate). An out-of-0.7 receiver (unresolvable) or an un-migrated language
+        // keeps an honest bare-name edge (target_name only) — the `dyn`/residual
+        // tail. Phase 7.1 retired the resolve_edges fallback, so these stay
+        // unresolved rather than being bare-name-matched to an arbitrary node.
+        if let Some(fqn_out) = &result.fqn {
+            let file_lang = crate::languages::language_for_path(&result.rel_path);
+            for r in &fqn_out.refs {
+                let source = fqn_ids.get(&r.caller_fqn).copied().unwrap_or(file_node_id);
+                match &r.target_fqn {
+                    Some(tf) if r.is_lib => {
+                        let pkg = tf.split('·').nth(1).unwrap_or("");
+                        let tid = ctx.pg().upsert_lib_node_by_fqn(&folder_id, tf, &r.target_name, pkg).await
+                            .map_err(|e| format!("upsert lib node {tf}: {e}"))?;
+                        ctx.pg().insert_edge(&folder_id, &source, Some(&tid), None, None, "calls").await
+                            .map_err(|e| format!("insert_edge (fqn call, lib): {e}"))?;
+                    }
+                    Some(tf) => {
+                        // Target defined in THIS file → reuse its id; else get-or-create a stub.
+                        let tid = match fqn_ids.get(tf) {
+                            Some(id) => *id,
+                            None => ctx.pg().upsert_node_by_fqn(&folder_id, tf, "function", &r.target_name, file_lang, None).await
+                                .map_err(|e| format!("upsert fqn target {tf}: {e}"))?,
+                        };
+                        ctx.pg().insert_edge(&folder_id, &source, Some(&tid), None, None, "calls").await
+                            .map_err(|e| format!("insert_edge (fqn call): {e}"))?;
+                    }
+                    None => {
+                        ctx.pg().insert_edge(&folder_id, &source, None, Some(&r.target_name), None, "calls").await
+                            .map_err(|e| format!("insert_edge (fqn call, unresolved): {e}"))?;
+                    }
                 }
             }
-
-            // Write unresolved import edges
-            for import in &result.unresolved_imports {
-                if let Some(ref fid) = file_node_id
-                    && let Err(e) = ctx.pg().insert_edge(&folder_id, fid, None, Some(import), "imports").await {
-                        tracing::warn!(folder_id = %folder_id, import = %import, error = %e, "insert_edge (imports) failed");
-                    }
-            }
-
-            // Write unresolved call edges, sourced from the caller function node
-            // (falling back to the file node when the call has no enclosing named
-            // symbol). target stays unresolved for resolve_edges to point.
+        } else {
             for call in &result.unresolved_calls {
                 let source = sym_ids
                     .get(&(call.caller_name.clone(), call.caller_line as i32))
                     .copied()
-                    .or(file_node_id);
-                if let Some(src_id) = source
-                    && let Err(e) = ctx.pg().insert_edge(&folder_id, &src_id, None, Some(&call.callee_name), "calls").await {
-                        tracing::warn!(folder_id = %folder_id, callee = %call.callee_name, error = %e, "insert_edge (calls) failed");
-                    }
-            }
-
-            // Write parent refs (HAS_METHOD: type → method)
-            for pref in &result.parent_refs {
-                if let Some(ref fid) = file_node_id
-                    && let Err(e) = ctx.pg().insert_edge(&folder_id, fid, None, Some(&pref.parent_name), "extends").await {
-                        tracing::warn!(folder_id = %folder_id, parent = %pref.parent_name, error = %e, "insert_edge (extends) failed");
-                    }
-            }
-
-            // Write doc references (file_refs → COVERS, fn_mentions → references)
-            if result.kind == "doc"
-                && let Some(ref fid) = file_node_id {
-                    for file_ref in &result.file_refs {
-                        if let Err(e) = ctx.pg().insert_edge(&folder_id, fid, None, Some(file_ref), "covers").await {
-                            tracing::warn!(folder_id = %folder_id, file_ref = %file_ref, error = %e, "insert_edge (covers) failed");
-                        }
-                    }
-                    for fn_ref in &result.fn_mentions {
-                        if let Err(e) = ctx.pg().insert_edge(&folder_id, fid, None, Some(fn_ref), "references").await {
-                            tracing::warn!(folder_id = %folder_id, fn_ref = %fn_ref, error = %e, "insert_edge (references) failed");
-                        }
-                    }
-                }
-
-            // Record this file's fingerprint so the next scan skips it when
-            // unchanged. Written last so a row exists only for a fully-indexed file.
-            if let Some((mtime, hash)) = super::helpers::file_fingerprint(fpath) {
-                ctx.pg().upsert_scan_state(&folder_id, &result.rel_path, mtime, &hash).await
-                    .unwrap_or_else(|e| tracing::warn!(folder_id = %folder_id, file = %result.rel_path, error = %e, "upsert_scan_state failed"));
+                    .unwrap_or(file_node_id);
+                ctx.pg().insert_edge(&folder_id, &source, None, Some(&call.callee_name), None, "calls").await
+                    .map_err(|e| format!("insert_edge (calls): {e}"))?;
             }
         }
 
+        // Parent refs (HAS_METHOD: type → method).
+        for pref in &result.parent_refs {
+            ctx.pg().insert_edge(&folder_id, &file_node_id, None, Some(&pref.parent_name), None, "extends").await
+                .map_err(|e| format!("insert_edge (extends): {e}"))?;
+        }
+
+        // Doc references (D2): an explicit doc→file path ref AND a doc→symbol
+        // mention are both `references` edges — per the edge_kind contract
+        // ("doc section references a symbol or file"). `covers` is reserved for
+        // BuildConnections' folder-derived stem-proximity set, which it REPLACES
+        // wholesale; a doc→file ref must not be `covers` or that replace would
+        // wipe it (the two-producer data-loss D2 review caught).
+        if result.kind == "doc" {
+            for file_ref in &result.file_refs {
+                ctx.pg().insert_edge(&folder_id, &file_node_id, None, Some(file_ref), None, "references").await
+                    .map_err(|e| format!("insert_edge (references, file): {e}"))?;
+            }
+            for fn_ref in &result.fn_mentions {
+                ctx.pg().insert_edge(&folder_id, &file_node_id, None, Some(fn_ref), None, "references").await
+                    .map_err(|e| format!("insert_edge (references, symbol): {e}"))?;
+            }
+        }
+        Ok::<(), String>(())
+    }.await;
+
+    if let Err(e) = write_result {
+        return fail_folder(ctx, &folder_id, &result.rel_path, e).await;
+    }
+
+    // Record this file's fingerprint LAST — only a fully-written file is "seen",
+    // so a fatal failure above leaves scan_state unadvanced and the next scan
+    // retries it. A scan_state write failure is itself fatal.
+    if let Some((mtime, hash)) = super::helpers::file_fingerprint(fpath)
+        && let Err(e) = ctx.pg().upsert_scan_state(&folder_id, &result.rel_path, mtime, &hash).await {
+            return fail_folder(ctx, &folder_id, &result.rel_path, format!("upsert_scan_state: {e}")).await;
+        }
+
     Ok(symbols_count as u32)
+}
+
+/// Mark a folder `failed` and return the fatal error (D6c-trigger / D6a): a DB
+/// write for one of its files failed, so the folder must not advance to
+/// `indexed` (the fail-closed barrier D6d checks this status) and boot-reconcile
+/// / bounded-retry re-drives it. Marking the status is best-effort — if THAT
+/// write also fails we still surface the original fatal error, never swallow it.
+async fn fail_folder(
+    ctx: &TaskContext,
+    folder_id: &uuid::Uuid,
+    rel_path: &str,
+    err: String,
+) -> Result<u32, String> {
+    if let Err(se) = ctx.pg().update_folder_status(folder_id, "failed").await {
+        tracing::warn!(error = %se, folder_id = %folder_id, "process_file: marking folder failed also failed");
+    }
+    tracing::warn!(folder_id = %folder_id, file = %rel_path, error = %err,
+        "process_file: fatal DB write — folder left `failed`, scan_state not advanced");
+    Err(format!("process_file fatal DB write ({rel_path}): {err}"))
 }
 
 // ── Delete File / Folder ──────────────────────────────────────────────────
@@ -941,31 +1233,14 @@ mod role_reconciliation_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
-    use crate::tasks::queue::TaskQueue;
+    
+    
     use crate::tasks::{Task, TaskKind};
-    use crate::api::state::SharedState;
+    
     use super::super::super::executor::TaskContext;
 
     /// Build a TaskContext backed by PgStore and a fresh TaskQueue.
-    async fn make_ctx() -> Arc<TaskContext> {
-        let queue = Arc::new(TaskQueue::new());
-        let gateway = crate::api::gateway_init::init_gateway_test().await;
-        let app_state = Arc::new(SharedState {
-            task_queue: queue.clone(),
-            pg: crate::db::pg_store::PgStore::connect_test().await.unwrap(),
-            gateway,
-            event_tx: { let (tx, _) = tokio::sync::broadcast::channel(16); tx },
-            breaker: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
-            provisioning: None,
-        });
-        Arc::new(TaskContext {
-            queue,
-            app_state,
-            _graph_path: None,
-            logger: sensei_logger::Logger::noop(),
-        })
-    }
+    use crate::tasks::test_support::make_ctx;
 
     #[tokio::test]
     async fn process_git_folder_errors_on_nonexistent_path() {
@@ -1014,6 +1289,12 @@ mod tests {
             ).bind(abs).fetch_optional(ctx.pg().pool()).await.unwrap();
             row.and_then(|r| r.0)
         }
+        async fn kind_of(ctx: &TaskContext, abs: &str) -> Option<String> {
+            let row: Option<(String,)> = sqlx_core::query_as::query_as(
+                "SELECT kind::text FROM sensei.folders WHERE abs_path = $1",
+            ).bind(abs).fetch_optional(ctx.pg().pool()).await.unwrap();
+            row.map(|r| r.0)
+        }
 
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path();
@@ -1037,6 +1318,1039 @@ mod tests {
         assert_eq!(role_of(&ctx, &root.join("crates/mylib").to_string_lossy()).await.as_deref(), Some("library"));
         assert_eq!(role_of(&ctx, &root.join("crates/mytool").to_string_lossy()).await.as_deref(), Some("tool"));
         assert_eq!(role_of(&ctx, &root.join("site").to_string_lossy()).await.as_deref(), Some("website"));
+
+        // D5a: each sub-project is classified `workspace_member` (not a plain
+        // structural `folder`), keeping its inferred role.
+        assert_eq!(kind_of(&ctx, &root.join("crates/mylib").to_string_lossy()).await.as_deref(), Some("workspace_member"));
+        assert_eq!(kind_of(&ctx, &root.join("crates/mytool").to_string_lossy()).await.as_deref(), Some("workspace_member"));
+        assert_eq!(kind_of(&ctx, &root.join("site").to_string_lossy()).await.as_deref(), Some("workspace_member"));
+
+        ctx.pg().remove_watch_root(&root_id).await.ok();
+    }
+
+    #[tokio::test]
+    async fn process_git_folder_marks_folder_indexing() {
+        // D6a: process_git_folder marks the folder `indexing` at start. The
+        // `indexed` transition happens later at the DetectCommunities terminal
+        // barrier (D4.1), NOT here — so after process_git_folder alone the folder
+        // is left `indexing`, the recoverable in-flight state a crash would leave
+        // behind.
+        async fn status_of(ctx: &TaskContext, abs: &str) -> Option<String> {
+            let row: Option<(String,)> = sqlx_core::query_as::query_as(
+                "SELECT status::text FROM sensei.folders WHERE abs_path = $1",
+            ).bind(abs).fetch_optional(ctx.pg().pool()).await.unwrap();
+            row.map(|r| r.0)
+        }
+
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("repo/src")).unwrap();
+        std::fs::write(root.join("repo/Cargo.toml"), "[package]\nname=\"repo\"").unwrap();
+        std::fs::write(root.join("repo/src/lib.rs"), "pub fn a() {}").unwrap();
+
+        let ctx = make_ctx().await;
+        let repo_path = root.join("repo").to_string_lossy().to_string();
+        let rid = ctx.pg().add_watch_root(&root.to_string_lossy(), "d6a_root", &serde_json::json!([])).await.unwrap();
+        // Register the folder as scan_root would, so process_git_folder resolves it.
+        ctx.pg().upsert_repo_kind(&rid, "git", "repo", &repo_path).await.unwrap();
+        assert_eq!(status_of(&ctx, &repo_path).await.as_deref(), Some("discovered"), "starts discovered");
+
+        let task = Task::new(TaskKind::ProcessGitFolder, &repo_path, &repo_path);
+        process_git_folder(&ctx, &task).await.unwrap();
+
+        assert_eq!(status_of(&ctx, &repo_path).await.as_deref(), Some("indexing"),
+            "process_git_folder leaves the folder indexing (the barrier marks indexed later)");
+
+        // D4.1: DetectCommunities is chained as the terminal barrier on a scan
+        // with changes, so the folder can later reach `indexed` through it.
+        let has_detect = ctx.queue.snapshot().await.iter()
+            .any(|(kind, fp, _)| *kind == TaskKind::DetectCommunities && fp == &repo_path);
+        assert!(has_detect, "process_git_folder chains DetectCommunities as the terminal barrier");
+
+        ctx.pg().remove_watch_root(&rid).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn pipeline_has_no_resolve_pass() {
+        // Phase 7.1: FQN edges are resolved AT EMIT (source_id → target_id in
+        // process_file), so the scan pipeline no longer enqueues a `resolve_edges`
+        // pass — the barrier chain is file → resolve_libs → build_connections →
+        // detect_communities. `target_name` is vestigial (only the `dyn` residual).
+        // (Kinds are compared by string so the removed variant isn't referenced.)
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("repo/src")).unwrap();
+        std::fs::write(root.join("repo/Cargo.toml"), "[package]\nname=\"norsv\"").unwrap();
+        std::fs::write(root.join("repo/src/lib.rs"), "fn helper() {}\nfn compute() { helper(); }\n").unwrap();
+
+        let ctx = make_ctx().await;
+        let repo_path = root.join("repo").to_string_lossy().to_string();
+        let rid = ctx.pg().add_watch_root(&root.to_string_lossy(), "norsv_root", &serde_json::json!([])).await.unwrap();
+        ctx.pg().upsert_repo_kind(&rid, "git", "norsv", &repo_path).await.unwrap();
+
+        process_git_folder(&ctx, &Task::new(TaskKind::ProcessGitFolder, &repo_path, &repo_path)).await.unwrap();
+
+        let kinds: Vec<String> = ctx.queue.snapshot().await.iter().map(|(k, _, _)| k.to_string()).collect();
+        assert!(!kinds.iter().any(|k| k == "resolve_edges"),
+            "the scan pipeline has NO resolve_edges pass — edges resolve at emit, got {kinds:?}");
+        // The surviving barrier chain is intact (build_connections + the terminal detect).
+        assert!(kinds.iter().any(|k| k == "build_connections"), "build_connections still enqueued, got {kinds:?}");
+        assert!(kinds.iter().any(|k| k == "detect_communities"), "detect_communities (terminal) still enqueued, got {kinds:?}");
+
+        ctx.pg().remove_watch_root(&rid).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn process_git_folder_keeps_unchanged_indexed_folder_indexed() {
+        // D6a regression: a no-op re-scan of an already-`indexed` folder (no file
+        // changes → the barrier that writes `indexed` is skipped) must NOT be
+        // downgraded to `indexing`. scan_root re-enqueues ProcessGitFolder for
+        // every folder on every scan, so this is the common steady-state case —
+        // an unconditional mark would strand it at `indexing` forever and make
+        // resume re-index it on every boot. The mark is gated on has_changes.
+        async fn status_of(ctx: &TaskContext, abs: &str) -> Option<String> {
+            let row: Option<(String,)> = sqlx_core::query_as::query_as(
+                "SELECT status::text FROM sensei.folders WHERE abs_path = $1",
+            ).bind(abs).fetch_optional(ctx.pg().pool()).await.unwrap();
+            row.map(|r| r.0)
+        }
+
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        // Empty repo → no indexable files → has_changes is false → no barrier.
+        std::fs::create_dir_all(root.join("repo")).unwrap();
+
+        let ctx = make_ctx().await;
+        let repo_path = root.join("repo").to_string_lossy().to_string();
+        let rid = ctx.pg().add_watch_root(&root.to_string_lossy(), "d6a_noop", &serde_json::json!([])).await.unwrap();
+        ctx.pg().upsert_repo_kind(&rid, "git", "repo", &repo_path).await.unwrap();
+        // Simulate a prior completed index.
+        let (fid,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "SELECT id FROM sensei.folders WHERE abs_path = $1"
+        ).bind(&repo_path).fetch_one(ctx.pg().pool()).await.unwrap();
+        ctx.pg().update_folder_status(&fid, "indexed").await.unwrap();
+
+        let task = Task::new(TaskKind::ProcessGitFolder, &repo_path, &repo_path);
+        process_git_folder(&ctx, &task).await.unwrap();
+
+        assert_eq!(status_of(&ctx, &repo_path).await.as_deref(), Some("indexed"),
+            "an unchanged already-indexed folder must not be downgraded to indexing");
+
+        ctx.pg().remove_watch_root(&rid).await.unwrap();
+    }
+
+    /// Register a repo folder on disk + in the DB, mark it `indexing`, and
+    /// return (watch_root_id, folder_id, repo_abs_path). Mirrors what
+    /// scan_root/process_git_folder set up before ProcessFile runs.
+    #[tokio::test]
+    async fn process_file_rust_emits_fqn_nodes_and_resolved_edges() {
+        // Phase 3.1: a Rust file with a resolvable crate context goes through the
+        // FQN path — defs get-or-created by fqn (language='rust'), call edges
+        // resolved to their target node AT EMIT (no resolve_edges run).
+        let ctx = make_ctx().await;
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("fqncrate");
+        std::fs::create_dir_all(repo.join("src")).unwrap();
+        std::fs::write(repo.join("Cargo.toml"), "[package]\nname = \"fqncrate\"\n").unwrap();
+        std::fs::write(
+            repo.join("src/lib.rs"),
+            "pub fn compute() -> i32 { helper() + 1 }\npub fn helper() -> i32 { 41 }\n",
+        ).unwrap();
+        let repo_path = repo.to_string_lossy().to_string();
+
+        let rid = ctx.pg().add_watch_root(&tmp.path().to_string_lossy(), "fqn", &serde_json::json!([])).await.unwrap();
+        let fid = ctx.pg().upsert_repo_kind(&rid, "git", "fqncrate", &repo_path).await.unwrap();
+        ctx.pg().update_folder_status(&fid, "indexing").await.unwrap();
+
+        // Process ONLY the file — deliberately NO resolve_edges. Edges must be
+        // resolved at emit for this to pass.
+        let abs = repo.join("src/lib.rs").to_string_lossy().to_string();
+        process_file(&ctx, &Task::new(TaskKind::ProcessFile, &repo_path, &abs)).await.unwrap();
+
+        // Defs carry their canonical fqn + language.
+        let (compute_id, compute_fqn, compute_lang): (uuid::Uuid, Option<String>, Option<String>) =
+            sqlx_core::query_as::query_as(
+                "SELECT id, fqn, language FROM sensei.nodes WHERE folder_id=$1 AND name='compute' AND kind='function'::sensei.node_kind")
+            .bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
+        assert_eq!(compute_fqn.as_deref(), Some("rust·fqncrate·compute"));
+        assert_eq!(compute_lang.as_deref(), Some("rust"));
+        let (helper_id, helper_fqn): (uuid::Uuid, Option<String>) =
+            sqlx_core::query_as::query_as(
+                "SELECT id, fqn FROM sensei.nodes WHERE folder_id=$1 AND name='helper' AND kind='function'::sensei.node_kind")
+            .bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
+        assert_eq!(helper_fqn.as_deref(), Some("rust·fqncrate·helper"));
+
+        // compute → helper resolves to the FQN target node AT EMIT.
+        let (target,): (Option<uuid::Uuid>,) = sqlx_core::query_as::query_as(
+            "SELECT target_id FROM sensei.edges WHERE folder_id=$1 AND source_id=$2 AND kind='calls'::sensei.edge_kind")
+            .bind(fid).bind(compute_id).fetch_one(ctx.pg().pool()).await.unwrap();
+        assert_eq!(target, Some(helper_id), "compute→helper resolves to the FQN target at emit (no resolve_edges)");
+
+        // No bare-name 'calls' residue for this file — the helper() call is resolved.
+        let (unresolved,): (i64,) = sqlx_core::query_as::query_as(
+            "SELECT count(*) FROM sensei.edges WHERE folder_id=$1 AND kind='calls'::sensei.edge_kind AND target_id IS NULL")
+            .bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
+        assert_eq!(unresolved, 0, "the helper() call is resolved at emit, not left bare");
+
+        ctx.pg().delete_nodes_by_folder(&fid).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn rust_call_before_def_creates_stub_then_enriched() {
+        // Phase 3.2: process the CALLER first — its target is a get-or-created stub
+        // (resolved=false, NULL file), and the edge is already resolved to it. Then
+        // process the callee's file — the SAME node is enriched in place (stable id),
+        // and the edge still points to it. Order-independent resolution.
+        let ctx = make_ctx().await;
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("twofile");
+        std::fs::create_dir_all(repo.join("src")).unwrap();
+        std::fs::write(repo.join("Cargo.toml"), "[package]\nname = \"twofile\"\n").unwrap();
+        std::fs::write(repo.join("src/caller.rs"), "use crate::callee::run;\npub fn drive() { run(); }\n").unwrap();
+        std::fs::write(repo.join("src/callee.rs"), "pub fn run() -> i32 { 7 }\n").unwrap();
+        let repo_path = repo.to_string_lossy().to_string();
+        let rid = ctx.pg().add_watch_root(&tmp.path().to_string_lossy(), "twofile", &serde_json::json!([])).await.unwrap();
+        let fid = ctx.pg().upsert_repo_kind(&rid, "git", "twofile", &repo_path).await.unwrap();
+        ctx.pg().update_folder_status(&fid, "indexing").await.unwrap();
+
+        // Caller first.
+        let abs_caller = repo.join("src/caller.rs").to_string_lossy().to_string();
+        process_file(&ctx, &Task::new(TaskKind::ProcessFile, &repo_path, &abs_caller)).await.unwrap();
+
+        // `run` is a STUB awaiting its definition.
+        let (run_id, run_resolved, run_file): (uuid::Uuid, bool, Option<String>) = sqlx_core::query_as::query_as(
+            "SELECT id, resolved, file_path FROM sensei.nodes WHERE folder_id=$1 AND fqn='rust·twofile·callee·run'")
+            .bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
+        assert!(!run_resolved, "callee target is an unresolved stub before its def is indexed");
+        assert_eq!(run_file, None, "a stub has no file");
+
+        // The call edge already resolves to the stub node.
+        let (drive_id,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "SELECT id FROM sensei.nodes WHERE folder_id=$1 AND fqn='rust·twofile·caller·drive'")
+            .bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
+        let (tid,): (Option<uuid::Uuid>,) = sqlx_core::query_as::query_as(
+            "SELECT target_id FROM sensei.edges WHERE folder_id=$1 AND source_id=$2 AND kind='calls'::sensei.edge_kind")
+            .bind(fid).bind(drive_id).fetch_one(ctx.pg().pool()).await.unwrap();
+        assert_eq!(tid, Some(run_id), "the call edge resolves to the stub node at emit");
+
+        // Now index the callee — the SAME node is enriched.
+        let abs_callee = repo.join("src/callee.rs").to_string_lossy().to_string();
+        process_file(&ctx, &Task::new(TaskKind::ProcessFile, &repo_path, &abs_callee)).await.unwrap();
+
+        let (run_id2, run_resolved2, run_file2): (uuid::Uuid, bool, Option<String>) = sqlx_core::query_as::query_as(
+            "SELECT id, resolved, file_path FROM sensei.nodes WHERE folder_id=$1 AND fqn='rust·twofile·callee·run'")
+            .bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
+        assert_eq!(run_id2, run_id, "the definition enriches the SAME node (stable id)");
+        assert!(run_resolved2, "the node is resolved once its def is seen");
+        assert_eq!(run_file2.as_deref(), Some("src/callee.rs"), "file filled in on enrich");
+
+        // The edge still points to the (now enriched) node.
+        let (tid2,): (Option<uuid::Uuid>,) = sqlx_core::query_as::query_as(
+            "SELECT target_id FROM sensei.edges WHERE folder_id=$1 AND source_id=$2 AND kind='calls'::sensei.edge_kind")
+            .bind(fid).bind(drive_id).fetch_one(ctx.pg().pool()).await.unwrap();
+        assert_eq!(tid2, Some(run_id), "edge still resolved to the enriched node after enrichment");
+
+        ctx.pg().delete_nodes_by_folder(&fid).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn external_calls_link_to_lib_nodes() {
+        // Phase 4: a call into a dependency links to a first-class `lib_symbol` node
+        // grouped (props.package + parent_id) under a per-package `lib_package`
+        // container, and the dependency is queryable per repo. No external call dropped.
+        let ctx = make_ctx().await;
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("libcrate");
+        std::fs::create_dir_all(repo.join("src")).unwrap();
+        std::fs::write(repo.join("Cargo.toml"), "[package]\nname = \"libcrate\"\n").unwrap();
+        std::fs::write(repo.join("src/lib.rs"), "pub fn load(s: &str) { serde_json::from_str(s); }\n").unwrap();
+        let repo_path = repo.to_string_lossy().to_string();
+        let rid = ctx.pg().add_watch_root(&tmp.path().to_string_lossy(), "libc", &serde_json::json!([])).await.unwrap();
+        let fid = ctx.pg().upsert_repo_kind(&rid, "git", "libcrate", &repo_path).await.unwrap();
+        ctx.pg().update_folder_status(&fid, "indexing").await.unwrap();
+
+        let abs = repo.join("src/lib.rs").to_string_lossy().to_string();
+        process_file(&ctx, &Task::new(TaskKind::ProcessFile, &repo_path, &abs)).await.unwrap();
+
+        // The external symbol is a `lib_symbol`, grouped by package.
+        let (sym_id, sym_pkg, parent): (uuid::Uuid, Option<String>, Option<uuid::Uuid>) = sqlx_core::query_as::query_as(
+            "SELECT id, props->>'package', parent_id FROM sensei.nodes WHERE folder_id=$1 AND kind='lib_symbol'::sensei.node_kind AND name='from_str'")
+            .bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
+        assert_eq!(sym_pkg.as_deref(), Some("serde_json"), "lib symbol grouped by package");
+
+        // …under a per-package `lib_package` container.
+        let (container_id, container_name): (uuid::Uuid, String) = sqlx_core::query_as::query_as(
+            "SELECT id, name FROM sensei.nodes WHERE folder_id=$1 AND kind='lib_package'::sensei.node_kind")
+            .bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
+        assert_eq!(container_name, "serde_json", "a lib_package container per dependency");
+        assert_eq!(parent, Some(container_id), "the lib symbol is parented under its package container");
+
+        // A RESOLVED call edge load → from_str (external call not dropped).
+        let (edge_target,): (Option<uuid::Uuid>,) = sqlx_core::query_as::query_as(
+            "SELECT e.target_id FROM sensei.edges e JOIN sensei.nodes s ON s.id=e.source_id
+              WHERE e.folder_id=$1 AND s.name='load' AND e.kind='calls'::sensei.edge_kind")
+            .bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
+        assert_eq!(edge_target, Some(sym_id), "the external call resolves to the lib symbol node");
+
+        // Queryable per repo.
+        let deps = ctx.pg().list_dependencies(&fid).await.unwrap();
+        assert!(
+            deps.iter().any(|d| d["package"] == "serde_json" && d["symbol_count"] == 1),
+            "serde_json is a queryable dependency with one used symbol, got {deps:?}"
+        );
+
+        ctx.pg().delete_nodes_by_folder(&fid).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn rust_impl_type_container_nesting() {
+        // Phase 5 (D5c): the graph nests file → module → type → method, instead of
+        // every symbol flat under the file node.
+        let ctx = make_ctx().await;
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("w");
+        std::fs::create_dir_all(repo.join("src")).unwrap();
+        std::fs::write(repo.join("Cargo.toml"), "[package]\nname = \"w\"\n").unwrap();
+        std::fs::write(
+            repo.join("src/widget.rs"),
+            "pub struct Widget;\nimpl Widget {\n    pub fn new() -> Self { Widget }\n    pub fn spin(&self) {}\n}\npub fn helper() {}\n",
+        ).unwrap();
+        let repo_path = repo.to_string_lossy().to_string();
+        let rid = ctx.pg().add_watch_root(&tmp.path().to_string_lossy(), "w", &serde_json::json!([])).await.unwrap();
+        let fid = ctx.pg().upsert_repo_kind(&rid, "git", "w", &repo_path).await.unwrap();
+        ctx.pg().update_folder_status(&fid, "indexing").await.unwrap();
+
+        let abs = repo.join("src/widget.rs").to_string_lossy().to_string();
+        process_file(&ctx, &Task::new(TaskKind::ProcessFile, &repo_path, &abs)).await.unwrap();
+
+        async fn node(ctx: &TaskContext, fid: uuid::Uuid, fqn: &str) -> (uuid::Uuid, Option<uuid::Uuid>, String) {
+            sqlx_core::query_as::query_as("SELECT id, parent_id, kind::text FROM sensei.nodes WHERE folder_id=$1 AND fqn=$2")
+                .bind(fid).bind(fqn).fetch_one(ctx.pg().pool()).await
+                .unwrap_or_else(|e| panic!("node {fqn} not found: {e}"))
+        }
+        let (file_id,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "SELECT id FROM sensei.nodes WHERE folder_id=$1 AND kind='file'::sensei.node_kind")
+            .bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
+
+        let (module_id, module_parent, module_kind) = node(&ctx, fid, "rust·w·widget").await;
+        assert_eq!(module_kind, "module", "a module container node exists");
+        assert_eq!(module_parent, Some(file_id), "the module nests under the file");
+
+        let (widget_id, widget_parent, _) = node(&ctx, fid, "rust·w·widget·Widget").await;
+        assert_eq!(widget_parent, Some(module_id), "the type nests under the module");
+
+        let (_, new_parent, _) = node(&ctx, fid, "rust·w·widget·Widget·new").await;
+        assert_eq!(new_parent, Some(widget_id), "a method nests under its type");
+        let (_, spin_parent, _) = node(&ctx, fid, "rust·w·widget·Widget·spin").await;
+        assert_eq!(spin_parent, Some(widget_id), "sibling methods nest under the same type");
+
+        let (_, helper_parent, _) = node(&ctx, fid, "rust·w·widget·helper").await;
+        assert_eq!(helper_parent, Some(module_id), "a free fn nests under the module");
+
+        ctx.pg().delete_nodes_by_folder(&fid).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn process_file_ts_emits_fqn_nodes() {
+        // Phase 6.1: a TypeScript file with a package.json → the FQN path. Validates
+        // the oxc producer end-to-end, the src-stripped module, resolved edges, AND
+        // that the node language column is 'typescript' (not the old hardcoded rust).
+        let ctx = make_ctx().await;
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("tsapp");
+        std::fs::create_dir_all(repo.join("src")).unwrap();
+        std::fs::write(repo.join("package.json"), "{\"name\": \"tsapp\"}").unwrap();
+        std::fs::write(repo.join("src/util.ts"),
+            "export function compute() { return helper(); }\nexport function helper() { return 1; }\n").unwrap();
+        let repo_path = repo.to_string_lossy().to_string();
+        let rid = ctx.pg().add_watch_root(&tmp.path().to_string_lossy(), "ts", &serde_json::json!([])).await.unwrap();
+        let fid = ctx.pg().upsert_repo_kind(&rid, "git", "tsapp", &repo_path).await.unwrap();
+        ctx.pg().update_folder_status(&fid, "indexing").await.unwrap();
+
+        let abs = repo.join("src/util.ts").to_string_lossy().to_string();
+        process_file(&ctx, &Task::new(TaskKind::ProcessFile, &repo_path, &abs)).await.unwrap();
+
+        let (compute_id, compute_fqn, compute_lang): (uuid::Uuid, Option<String>, Option<String>) =
+            sqlx_core::query_as::query_as(
+                "SELECT id, fqn, language FROM sensei.nodes WHERE folder_id=$1 AND name='compute' AND kind='function'::sensei.node_kind")
+            .bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
+        assert_eq!(compute_fqn.as_deref(), Some("typescript·tsapp·util·compute"), "src/ stripped module + oxc def");
+        assert_eq!(compute_lang.as_deref(), Some("typescript"), "language column is the file's language, not hardcoded rust");
+
+        let (helper_id,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "SELECT id FROM sensei.nodes WHERE folder_id=$1 AND fqn='typescript·tsapp·util·helper'")
+            .bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
+        let (target,): (Option<uuid::Uuid>,) = sqlx_core::query_as::query_as(
+            "SELECT target_id FROM sensei.edges WHERE folder_id=$1 AND source_id=$2 AND kind='calls'::sensei.edge_kind")
+            .bind(fid).bind(compute_id).fetch_one(ctx.pg().pool()).await.unwrap();
+        assert_eq!(target, Some(helper_id), "compute→helper resolves to the FQN target at emit");
+
+        ctx.pg().delete_nodes_by_folder(&fid).await.unwrap();
+    }
+
+    async fn seed_indexing_repo(ctx: &TaskContext, root: &std::path::Path, name: &str) -> (uuid::Uuid, uuid::Uuid, String) {
+        let repo_path = root.join("repo").to_string_lossy().to_string();
+        let rid = ctx.pg().add_watch_root(&root.to_string_lossy(), name, &serde_json::json!([])).await.unwrap();
+        ctx.pg().upsert_repo_kind(&rid, "git", "repo", &repo_path).await.unwrap();
+        let (fid,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "SELECT id FROM sensei.folders WHERE abs_path = $1"
+        ).bind(&repo_path).fetch_one(ctx.pg().pool()).await.unwrap();
+        ctx.pg().update_folder_status(&fid, "indexing").await.unwrap();
+        (rid, fid, repo_path)
+    }
+
+    #[tokio::test]
+    async fn graph_scan_end_to_end() {
+        // 7.5: scan the committed fixture repo through the real handler chain and
+        // assert the WHOLE graph at once — code + doc-section + rationale nodes,
+        // resolved edges (dup-factor 1.0), deterministic communities, the folder
+        // reaching `indexed`, and the retrieval contract (tree + per-node
+        // community_id + live overview). Then re-run → convergent (zero net rows),
+        // then mutate a doc → scoped incremental. (The monorepo `workspace_member`
+        // kind is covered separately by `reconcile_classifies_monorepo_member_roles`;
+        // this fixture is manifest-free by design.)
+        let ctx = make_ctx().await;
+        // Materialise the committed fixture into a tempdir — read the real committed
+        // files by their known relative paths — so the incremental step can mutate
+        // it without dirtying the repo.
+        let src_fixture = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/graph-scan");
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("graph-scan");
+        // Cargo.toml is materialised too so the Rust FQN producer can derive the
+        // package (nearest manifest) and resolve compute→helper AT EMIT (7.1).
+        for rel in ["Cargo.toml", "src/lib.rs", "docs/design.md"] {
+            let content = std::fs::read_to_string(src_fixture.join(rel)).unwrap();
+            let dst = repo.join(rel);
+            std::fs::create_dir_all(dst.parent().unwrap()).unwrap();
+            std::fs::write(&dst, content).unwrap();
+        }
+        let repo_path = repo.to_string_lossy().to_string();
+
+        let rid = ctx.pg().add_watch_root(&tmp.path().to_string_lossy(), "gse", &serde_json::json!([])).await.unwrap();
+        let fid = ctx.pg().upsert_repo_kind(&rid, "git", "graph-scan", &repo_path).await.unwrap();
+        ctx.pg().update_folder_status(&fid, "indexing").await.unwrap();
+
+        // Drive the real handler chain (deterministic — the queue's next_task
+        // blocks, so tests drive handlers directly, the codebase idiom).
+        async fn scan_files(ctx: &TaskContext, repo: &std::path::Path, repo_path: &str, rels: &[&str]) {
+            for rel in rels {
+                let abs = repo.join(rel).to_string_lossy().to_string();
+                process_file(ctx, &Task::new(TaskKind::ProcessFile, repo_path, &abs)).await.unwrap();
+            }
+            crate::tasks::handlers::build_connections(ctx, &Task::new(TaskKind::BuildConnections, repo_path, repo_path)).await.unwrap();
+            crate::tasks::handlers::detect_communities(ctx, &Task::new(TaskKind::DetectCommunities, repo_path, "")).await.unwrap();
+        }
+        let files = ["src/lib.rs", "docs/design.md"];
+        scan_files(&ctx, &repo, &repo_path, &files).await;
+
+        let count = |sql: &'static str| {
+            let pool = ctx.pg().pool().clone();
+            async move {
+                let (n,): (i64,) = sqlx_core::query_as::query_as(sql).bind(fid).fetch_one(&pool).await.unwrap();
+                n
+            }
+        };
+
+        // ── Whole-graph: kinds present ──
+        assert!(count("SELECT count(*) FROM sensei.nodes WHERE folder_id=$1 AND kind='file'::sensei.node_kind").await >= 1, "file node(s)");
+        assert!(count("SELECT count(*) FROM sensei.nodes WHERE folder_id=$1 AND kind='function'::sensei.node_kind").await >= 2, "compute + helper function nodes");
+        assert!(count("SELECT count(*) FROM sensei.nodes WHERE folder_id=$1 AND kind='section'::sensei.node_kind").await >= 3, "nested section nodes (Design/Auth/Refresh/Storage)");
+        assert_eq!(count("SELECT count(*) FROM sensei.nodes WHERE folder_id=$1 AND kind='rationale'::sensei.node_kind").await, 1, "one TODO rationale");
+
+        // ── Section nesting (Refresh under Auth under a doc/file node) ──
+        let (nested,): (i64,) = sqlx_core::query_as::query_as(
+            "SELECT count(*) FROM sensei.nodes s JOIN sensei.nodes p ON s.parent_id=p.id
+              WHERE s.folder_id=$1 AND s.kind='section'::sensei.node_kind AND p.kind IN ('doc'::sensei.node_kind,'file'::sensei.node_kind,'section'::sensei.node_kind)")
+            .bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
+        assert!(nested >= 3, "sections nest via parent_id");
+
+        // ── Resolved call edge (compute → helper) ──
+        let (resolved_calls,): (i64,) = sqlx_core::query_as::query_as(
+            "SELECT count(*) FROM sensei.edges WHERE folder_id=$1 AND kind='calls'::sensei.edge_kind AND target_id IS NOT NULL")
+            .bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
+        assert!(resolved_calls >= 1, "the compute→helper call resolved");
+
+        // ── dup-factor 1.0 for every edge kind ──
+        let (dup_kinds,): (i64,) = sqlx_core::query_as::query_as(
+            "SELECT count(*) FROM (
+               SELECT kind, count(*) c, count(DISTINCT (source_id,target_id,target_name,target_file)) d
+                 FROM sensei.edges WHERE folder_id=$1 GROUP BY kind) t WHERE c <> d")
+            .bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
+        assert_eq!(dup_kinds, 0, "no duplicate edges — dup-factor 1.0 for every kind");
+
+        // ── Communities deterministic + coverage ──
+        let code_uncovered = count("SELECT count(*) FROM sensei.nodes WHERE folder_id=$1 AND kind IN ('function'::sensei.node_kind,'file'::sensei.node_kind) AND community_id IS NULL").await;
+        assert_eq!(code_uncovered, 0, "every code/file node carries a community_id (coverage)");
+
+        // ── Folder reached `indexed` (terminal barrier) ──
+        assert_eq!(ctx.pg().get_folder_status(&fid).await.unwrap().as_deref(), Some("indexed"), "the terminal DetectCommunities barrier flipped the folder to indexed");
+
+        // ── Retrieval contract: tree nests, node projection carries community_id, live overview ──
+        let folders = ctx.pg().get_folders_scoped(&[fid]).await.unwrap();
+        let nodes = ctx.pg().get_nodes_scoped(&[fid]).await.unwrap();
+        assert!(nodes.iter().any(|n| n.get("community_id").is_some()), "get_nodes_scoped projects community_id");
+        let tree = crate::api::handlers::codebase::build_tree_pub(&folders, &nodes);
+        let roots = tree["tree"].as_array().unwrap();
+        assert!(!roots.is_empty(), "tree has a root folder");
+        // The root folder exposes file/doc nodes, and a doc node has section children.
+        let has_section_child = |v: &serde_json::Value| -> bool {
+            v["nodes"].as_array().map(|ns| ns.iter().any(|f| {
+                f["children"].as_array().map(|c| c.iter().any(|ch| ch["kind"] == "section")).unwrap_or(false)
+            })).unwrap_or(false)
+        };
+        assert!(roots.iter().any(has_section_child), "the tree nests a doc → section subtree");
+        let live = ctx.pg().list_communities_live_scoped(&[fid]).await.unwrap();
+        assert!(!live.is_empty() && live.iter().all(|c| c["node_count"].as_i64().unwrap_or(0) > 0), "live overview sized by real membership");
+
+        // ── Idempotency / convergence: re-run is IDENTITY-STABLE, not just
+        // count-stable. Capture every node's id keyed on its natural key
+        // (file_path,kind,name,line_start); after a second scan assert the id map
+        // is byte-identical — so a regression to delete-then-insert (which keeps
+        // counts equal but MINTS NEW UUIDs, nulling embeddings/community) fails
+        // here, per invariant 2 (identical nodes.id set on re-run).
+        let ids_before: std::collections::BTreeMap<(String, String, String, Option<i32>), uuid::Uuid> = {
+            let rows: Vec<(String, String, String, Option<i32>, uuid::Uuid)> = sqlx_core::query_as::query_as(
+                "SELECT file_path, kind::text, name, line_start, id FROM sensei.nodes WHERE folder_id=$1")
+                .bind(fid).fetch_all(ctx.pg().pool()).await.unwrap();
+            rows.into_iter().map(|(fp, k, n, ls, id)| ((fp, k, n, ls), id)).collect()
+        };
+        let e0 = count("SELECT count(*) FROM sensei.edges WHERE folder_id=$1").await;
+        scan_files(&ctx, &repo, &repo_path, &files).await;
+        let ids_after: std::collections::BTreeMap<(String, String, String, Option<i32>), uuid::Uuid> = {
+            let rows: Vec<(String, String, String, Option<i32>, uuid::Uuid)> = sqlx_core::query_as::query_as(
+                "SELECT file_path, kind::text, name, line_start, id FROM sensei.nodes WHERE folder_id=$1")
+                .bind(fid).fetch_all(ctx.pg().pool()).await.unwrap();
+            rows.into_iter().map(|(fp, k, n, ls, id)| ((fp, k, n, ls), id)).collect()
+        };
+        let e1 = count("SELECT count(*) FROM sensei.edges WHERE folder_id=$1").await;
+        assert_eq!(ids_before, ids_after,
+            "a second scan is identity-stable — every node keeps its exact id (not delete-then-insert)");
+        assert_eq!(e0, e1, "a second scan adds no edges (dup-factor 1.0, convergent)");
+
+        // ── Scoped incremental: add a heading to the doc → new section, and an
+        // unrelated code node keeps its exact id AND community (upsert-then-prune,
+        // not a wholesale re-mint) ──
+        let (compute_id_before, compute_comm_before): (uuid::Uuid, Option<i32>) = sqlx_core::query_as::query_as(
+            "SELECT id, community_id FROM sensei.nodes WHERE folder_id=$1 AND kind='function'::sensei.node_kind AND name='compute'")
+            .bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
+        let design = repo.join("docs/design.md");
+        let mut doc = std::fs::read_to_string(&design).unwrap();
+        doc.push_str("\n## Extra\n\nAdded section.\n");
+        std::fs::write(&design, &doc).unwrap();
+        scan_files(&ctx, &repo, &repo_path, &files).await;
+
+        let (extra,): (i64,) = sqlx_core::query_as::query_as(
+            "SELECT count(*) FROM sensei.nodes WHERE folder_id=$1 AND kind='section'::sensei.node_kind AND name='Design > Extra'")
+            .bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
+        assert_eq!(extra, 1, "the new heading became a section node");
+        let (compute_id_after, compute_comm_after): (uuid::Uuid, Option<i32>) = sqlx_core::query_as::query_as(
+            "SELECT id, community_id FROM sensei.nodes WHERE folder_id=$1 AND kind='function'::sensei.node_kind AND name='compute'")
+            .bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
+        assert_eq!(compute_id_after, compute_id_before, "an unrelated code node keeps its EXACT id across a scoped doc edit (upsert-then-prune)");
+        assert_eq!(compute_comm_after, compute_comm_before, "and keeps its community_id");
+        // Still no duplicate edges after the incremental edit.
+        let (dup2,): (i64,) = sqlx_core::query_as::query_as(
+            "SELECT count(*) FROM (SELECT kind, count(*) c, count(DISTINCT (source_id,target_id,target_name,target_file)) d FROM sensei.edges WHERE folder_id=$1 GROUP BY kind) t WHERE c <> d")
+            .bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
+        assert_eq!(dup2, 0, "still dup-factor 1.0 after the incremental edit");
+
+        ctx.pg().remove_watch_root(&rid).await.ok();
+    }
+
+    #[tokio::test]
+    async fn processing_order_invariant() {
+        // 7.4: processing the same files in DIFFERENT orders yields an identical
+        // graph — the node set (by natural key), per-kind edge counts, and the
+        // deterministic community_id per node all match. This is the convergence
+        // guarantee D1–D4 exist to provide.
+        use std::collections::BTreeMap;
+        // Natural key = (file_path, kind, name, line_start); a graph snapshot maps
+        // each to its community_id, plus per-kind edge counts.
+        type NatKey = (String, String, String, Option<i32>);
+        type GraphSnap = (BTreeMap<NatKey, Option<i32>>, BTreeMap<String, i64>);
+        type NodeRow = (String, String, String, Option<i32>, Option<i32>);
+
+        // Snapshot a folder's graph by NATURAL key (not the random UUID):
+        // {(file_path,kind,name,line_start) → community_id} + per-kind edge counts.
+        async fn snapshot(ctx: &TaskContext, fid: uuid::Uuid) -> GraphSnap {
+            let node_rows: Vec<NodeRow> = sqlx_core::query_as::query_as(
+                "SELECT file_path, kind::text, name, line_start, community_id FROM sensei.nodes WHERE folder_id=$1")
+                .bind(fid).fetch_all(ctx.pg().pool()).await.unwrap();
+            let nodes = node_rows.into_iter()
+                .map(|(fp, k, n, ls, cid)| ((fp, k, n, ls), cid)).collect();
+            let edge_rows: Vec<(String, i64)> = sqlx_core::query_as::query_as(
+                "SELECT kind::text, count(*) FROM sensei.edges WHERE folder_id=$1 GROUP BY kind::text")
+                .bind(fid).fetch_all(ctx.pg().pool()).await.unwrap();
+            (nodes, edge_rows.into_iter().collect())
+        }
+
+        // Build a repo with identical content under `root/repo`, then process the
+        // given file order (edges resolve at emit) and detect communities.
+        async fn build_and_scan(ctx: &TaskContext, root: &std::path::Path, name: &str, order: &[&str]) -> uuid::Uuid {
+            std::fs::create_dir_all(root.join("repo/src")).unwrap();
+            std::fs::create_dir_all(root.join("repo/docs")).unwrap();
+            std::fs::write(root.join("repo/src/a.rs"), "pub fn caller() { helper(); }\n").unwrap();
+            std::fs::write(root.join("repo/src/b.rs"), "pub fn helper() {}\n").unwrap();
+            std::fs::write(root.join("repo/docs/design.md"),
+                "# Design\n\n## Auth\n\nAuth text.\n\n<!-- TODO: wire the retry path -->\n").unwrap();
+            let (_rid, fid, repo_path) = seed_indexing_repo(ctx, root, name).await;
+            for rel in order {
+                let abs = root.join("repo").join(rel).to_string_lossy().to_string();
+                process_file(ctx, &Task::new(TaskKind::ProcessFile, &repo_path, &abs)).await.unwrap();
+            }
+            crate::indexer::community::detect_communities_for_folder(ctx.pg(), &fid).await.unwrap();
+            fid
+        }
+
+        let ctx = make_ctx().await;
+        let tmp_a = tempfile::tempdir().unwrap();
+        let tmp_b = tempfile::tempdir().unwrap();
+        // Opposite processing orders over identical content.
+        let fid_a = build_and_scan(&ctx, tmp_a.path(), "order_a",
+            &["src/a.rs", "src/b.rs", "docs/design.md"]).await;
+        let fid_b = build_and_scan(&ctx, tmp_b.path(), "order_b",
+            &["docs/design.md", "src/b.rs", "src/a.rs"]).await;
+
+        let (nodes_a, edges_a) = snapshot(&ctx, fid_a).await;
+        let (nodes_b, edges_b) = snapshot(&ctx, fid_b).await;
+
+        assert!(!nodes_a.is_empty(), "the scan produced nodes");
+        assert_eq!(nodes_a.keys().collect::<Vec<_>>(), nodes_b.keys().collect::<Vec<_>>(),
+            "identical node set (by natural key) regardless of processing order");
+        assert_eq!(nodes_a, nodes_b,
+            "identical community_id per node regardless of processing order (deterministic)");
+        assert_eq!(edges_a, edges_b,
+            "identical per-kind edge counts regardless of processing order");
+        // The resolved call edge exists (so this isn't a vacuously-empty comparison).
+        assert_eq!(edges_a.get("calls").copied(), Some(1), "caller→helper call edge resolved");
+    }
+
+    #[tokio::test]
+    async fn process_file_fatal_db_write_marks_folder_failed_and_skips_scan_state() {
+        // D6c-trigger: a fatal DB-write failure (simulated via the test fault
+        // seam) propagates as Err, marks the folder `failed` (so the fail-closed
+        // barrier D6d won't mark it indexed), and does NOT advance the file's
+        // scan_state — so the next scan retries it.
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("repo/src")).unwrap();
+        let file = root.join("repo/src/lib.rs");
+        std::fs::write(&file, "pub fn a() {}").unwrap();
+
+        let ctx = make_ctx().await;
+        let (rid, fid, repo_path) = seed_indexing_repo(&ctx, root, "d6c_fatal").await;
+
+        let abs = file.to_string_lossy().to_string();
+        super::fault::fail_for(&abs);
+        let task = Task::new(TaskKind::ProcessFile, &repo_path, &abs);
+        let res = process_file(&ctx, &task).await;
+        super::fault::clear(&abs);
+
+        assert!(res.is_err(), "a fatal DB write propagates as Err, not Ok");
+        assert_eq!(ctx.pg().get_folder_status(&fid).await.unwrap().as_deref(), Some("failed"),
+            "the folder is left `failed` (fail-closed)");
+        assert!(ctx.pg().list_scan_state(&fid).await.unwrap().is_empty(),
+            "scan_state is NOT advanced for a fatally-failed file");
+
+        ctx.pg().remove_watch_root(&rid).await.ok();
+    }
+
+    #[tokio::test]
+    async fn process_file_success_advances_scan_state_and_keeps_folder_status() {
+        // The success counterpart: a fully-written file advances scan_state and
+        // does NOT spuriously mark the folder failed (it stays `indexing` for the
+        // barrier to flip to `indexed`).
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("repo/src")).unwrap();
+        let file = root.join("repo/src/lib.rs");
+        std::fs::write(&file, "pub fn a() {}").unwrap();
+
+        let ctx = make_ctx().await;
+        let (rid, fid, repo_path) = seed_indexing_repo(&ctx, root, "d6c_ok").await;
+
+        let abs = file.to_string_lossy().to_string();
+        let task = Task::new(TaskKind::ProcessFile, &repo_path, &abs);
+        process_file(&ctx, &task).await.unwrap();
+
+        assert_eq!(ctx.pg().list_scan_state(&fid).await.unwrap().len(), 1,
+            "a fully-written file advances scan_state");
+        assert_eq!(ctx.pg().get_folder_status(&fid).await.unwrap().as_deref(), Some("indexing"),
+            "a successful file does not spuriously mark the folder failed");
+
+        ctx.pg().remove_watch_root(&rid).await.ok();
+    }
+
+    #[tokio::test]
+    async fn process_file_fatal_on_one_file_does_not_block_a_sibling() {
+        // The fatal path is per-file: a sibling file still indexes (its scan_state
+        // is written) even though another file in the same folder failed fatally.
+        // The folder ends `failed` (fail-closed), but the healthy file's work is
+        // durable.
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("repo/src")).unwrap();
+        let bad = root.join("repo/src/bad.rs");
+        let good = root.join("repo/src/good.rs");
+        std::fs::write(&bad, "pub fn a() {}").unwrap();
+        std::fs::write(&good, "pub fn b() {}").unwrap();
+
+        let ctx = make_ctx().await;
+        let (rid, fid, repo_path) = seed_indexing_repo(&ctx, root, "d6c_sibling").await;
+
+        let bad_abs = bad.to_string_lossy().to_string();
+        super::fault::fail_for(&bad_abs);
+        let bad_res = process_file(&ctx, &Task::new(TaskKind::ProcessFile, &repo_path, &bad_abs)).await;
+        super::fault::clear(&bad_abs);
+        // The sibling processes independently and succeeds.
+        let good_abs = good.to_string_lossy().to_string();
+        process_file(&ctx, &Task::new(TaskKind::ProcessFile, &repo_path, &good_abs)).await.unwrap();
+
+        assert!(bad_res.is_err(), "the bad file fails fatally");
+        assert_eq!(ctx.pg().get_folder_status(&fid).await.unwrap().as_deref(), Some("failed"),
+            "the folder is `failed` because one of its files failed");
+        let scan = ctx.pg().list_scan_state(&fid).await.unwrap();
+        assert_eq!(scan.len(), 1, "only the healthy sibling advanced scan_state");
+        assert!(scan.iter().any(|(p, _)| p.ends_with("good.rs")), "the sibling's fingerprint is recorded");
+        assert!(!scan.iter().any(|(p, _)| p.ends_with("bad.rs")), "the failed file did NOT advance scan_state");
+
+        ctx.pg().remove_watch_root(&rid).await.ok();
+    }
+
+    #[tokio::test]
+    async fn process_file_reindex_keeps_surviving_node_and_prunes_removed() {
+        // D3 end-to-end: re-indexing a file KEEPS a surviving symbol's node id
+        // (and its community_id — proving upsert-then-prune, not delete-then-
+        // insert) and PRUNES a symbol removed from the source.
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("repo/src")).unwrap();
+        let file = root.join("repo/src/lib.rs");
+        std::fs::write(&file, "pub fn keep() {}\npub fn gone() {}\n").unwrap();
+
+        let ctx = make_ctx().await;
+        let (rid, fid, repo_path) = seed_indexing_repo(&ctx, root, "d3_reindex").await;
+        let abs = file.to_string_lossy().to_string();
+        let task = Task::new(TaskKind::ProcessFile, &repo_path, &abs);
+
+        process_file(&ctx, &task).await.unwrap();
+        let keep_id: uuid::Uuid = sqlx_core::query_as::query_as::<_, (uuid::Uuid,)>(
+            "SELECT id FROM sensei.nodes WHERE folder_id=$1 AND name='keep' AND kind='function'::sensei.node_kind")
+            .bind(fid).fetch_one(ctx.pg().pool()).await
+            .expect("first index creates the `keep` function node").0;
+        sqlx_core::query::query("UPDATE sensei.nodes SET community_id=42 WHERE id=$1")
+            .bind(keep_id).execute(ctx.pg().pool()).await.unwrap();
+
+        // Edit: remove `gone`; `keep` stays at line 1 (unchanged identity), so it
+        // survives with the same id (upsert-then-prune, not delete-then-insert).
+        std::fs::write(&file, "pub fn keep() {}\n").unwrap();
+        process_file(&ctx, &task).await.unwrap();
+
+        let keep_after: Option<(uuid::Uuid, Option<i32>)> = sqlx_core::query_as::query_as(
+            "SELECT id, community_id FROM sensei.nodes WHERE folder_id=$1 AND name='keep' AND kind='function'::sensei.node_kind")
+            .bind(fid).fetch_optional(ctx.pg().pool()).await.unwrap();
+        assert_eq!(keep_after, Some((keep_id, Some(42))),
+            "surviving symbol keeps its id AND community_id across a reindex (upsert-then-prune)");
+        let (gone_cnt,): (i64,) = sqlx_core::query_as::query_as(
+            "SELECT count(*) FROM sensei.nodes WHERE folder_id=$1 AND name='gone'")
+            .bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
+        assert_eq!(gone_cnt, 0, "the removed symbol is pruned");
+
+        ctx.pg().remove_watch_root(&rid).await.ok();
+    }
+
+    #[tokio::test]
+    async fn doc_decomposes_into_nested_sections() {
+        // D5b: a design doc decomposes into nested `section` nodes (file → H1 → H2
+        // → H3 via parent_id, level in props), keyed on the heading PATH so a
+        // re-index reconciles the set (no duplicate headings). Line-independent
+        // identity: a body edit that shifts a heading's line keeps the section's id.
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("repo/docs")).unwrap();
+        let file = root.join("repo/docs/design.md");
+        std::fs::write(&file,
+            "# Design\n\nIntro.\n\n## Auth\n\nAuth overview.\n\n### Refresh\n\nToken refresh.\n\n## Storage\n\nStorage overview.\n"
+        ).unwrap();
+
+        let ctx = make_ctx().await;
+        let (rid, fid, repo_path) = seed_indexing_repo(&ctx, root, "d5b_sections").await;
+        let abs = file.to_string_lossy().to_string();
+        let task = Task::new(TaskKind::ProcessFile, &repo_path, &abs);
+
+        process_file(&ctx, &task).await.unwrap();
+
+        // Four section nodes: Design(H1), Auth(H2), Refresh(H3), Storage(H2).
+        let (sec_cnt,): (i64,) = sqlx_core::query_as::query_as(
+            "SELECT count(*) FROM sensei.nodes WHERE folder_id=$1 AND kind='section'::sensei.node_kind")
+            .bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
+        assert_eq!(sec_cnt, 4, "one section node per heading");
+
+        // Nesting: Refresh's parent is Auth, Auth's parent is the H1 Design, and
+        // Design's parent is the file node. Identity is the heading PATH.
+        let parent_kind_name = |name: &str| {
+            let pool = ctx.pg().pool().clone();
+            let name = name.to_string();
+            async move {
+                let row: (String, String) = sqlx_core::query_as::query_as(
+                    "SELECT p.kind::text, p.name FROM sensei.nodes s JOIN sensei.nodes p ON s.parent_id=p.id
+                      WHERE s.folder_id=$1 AND s.kind='section'::sensei.node_kind AND s.name=$2")
+                    .bind(fid).bind(&name).fetch_one(&pool).await.unwrap();
+                row
+            }
+        };
+        assert_eq!(parent_kind_name("Design > Auth > Refresh").await, ("section".into(), "Design > Auth".into()),
+            "H3 Refresh nests under H2 Auth");
+        assert_eq!(parent_kind_name("Design > Auth").await, ("section".into(), "Design".into()),
+            "H2 Auth nests under H1 Design");
+        assert_eq!(parent_kind_name("Design").await.0, "doc",
+            "the top-level H1 nests under the doc/file node");
+
+        // level lives in props; identity carries a NULL line (line-independent).
+        let (level, line_start_col): (Option<i32>, Option<i32>) = sqlx_core::query_as::query_as(
+            "SELECT (props->>'level')::int, line_start FROM sensei.nodes
+              WHERE folder_id=$1 AND kind='section'::sensei.node_kind AND name='Design > Auth > Refresh'")
+            .bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
+        assert_eq!(level, Some(3), "H3 level stamped in props");
+        assert_eq!(line_start_col, None, "identity line_start is NULL (line-independent section identity)");
+
+        // Capture Refresh's id, then re-index with the heading MOVED down (extra
+        // intro line) — same heading path ⇒ same id, and still exactly 4 sections.
+        let (refresh_id,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "SELECT id FROM sensei.nodes WHERE folder_id=$1 AND name='Design > Auth > Refresh'")
+            .bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
+        std::fs::write(&file,
+            "# Design\n\nIntro paragraph one.\nIntro paragraph two.\n\n## Auth\n\nAuth overview.\n\n### Refresh\n\nToken refresh.\n\n## Storage\n\nStorage overview.\n"
+        ).unwrap();
+        process_file(&ctx, &task).await.unwrap();
+
+        let (sec_cnt2,): (i64,) = sqlx_core::query_as::query_as(
+            "SELECT count(*) FROM sensei.nodes WHERE folder_id=$1 AND kind='section'::sensei.node_kind")
+            .bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
+        assert_eq!(sec_cnt2, 4, "re-index reconciles — no duplicate sections");
+        let (refresh_id2,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "SELECT id FROM sensei.nodes WHERE folder_id=$1 AND name='Design > Auth > Refresh'")
+            .bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
+        assert_eq!(refresh_id2, refresh_id, "a moved heading keeps its id (line-independent identity)");
+
+        // Remove the Refresh heading → it is pruned (no stale section).
+        std::fs::write(&file,
+            "# Design\n\nIntro.\n\n## Auth\n\nAuth overview.\n\n## Storage\n\nStorage overview.\n"
+        ).unwrap();
+        process_file(&ctx, &task).await.unwrap();
+        let (refresh_gone,): (i64,) = sqlx_core::query_as::query_as(
+            "SELECT count(*) FROM sensei.nodes WHERE folder_id=$1 AND name='Design > Auth > Refresh'")
+            .bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
+        assert_eq!(refresh_gone, 0, "a removed heading is pruned");
+
+        ctx.pg().remove_watch_root(&rid).await.ok();
+    }
+
+    #[tokio::test]
+    async fn doc_duplicate_sibling_headings_are_distinct_sections() {
+        // D5b review fix: two identical-text siblings under the same parent must be
+        // DISTINCT section nodes — else the second's upsert collides onto the first
+        // (same heading-path + parent_id) and silently clobbers it. The Nth (N>1)
+        // occurrence gets a " #N" suffix that also flows to its children, so a child
+        // of the second sibling doesn't collide with a child of the first.
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("repo/docs")).unwrap();
+        let file = root.join("repo/docs/faq.md");
+        std::fs::write(&file,
+            "# FAQ\n\n## Setup\n\nFirst setup.\n\n### Step\n\nA.\n\n## Setup\n\nSecond setup.\n\n### Step\n\nB.\n"
+        ).unwrap();
+
+        let ctx = make_ctx().await;
+        let (rid, fid, repo_path) = seed_indexing_repo(&ctx, root, "d5b_dupe").await;
+        let abs = file.to_string_lossy().to_string();
+        let task = Task::new(TaskKind::ProcessFile, &repo_path, &abs);
+
+        process_file(&ctx, &task).await.unwrap();
+
+        // 5 distinct sections: FAQ, "FAQ > Setup", "FAQ > Setup > Step",
+        // "FAQ > Setup #2", "FAQ > Setup #2 > Step".
+        let names: Vec<String> = sqlx_core::query_as::query_as::<_, (String,)>(
+            "SELECT name FROM sensei.nodes WHERE folder_id=$1 AND kind='section'::sensei.node_kind ORDER BY name")
+            .bind(fid).fetch_all(ctx.pg().pool()).await.unwrap()
+            .into_iter().map(|(n,)| n).collect();
+        assert_eq!(names, vec![
+            "FAQ".to_string(),
+            "FAQ > Setup".to_string(),
+            "FAQ > Setup #2".to_string(),
+            "FAQ > Setup #2 > Step".to_string(),
+            "FAQ > Setup > Step".to_string(),
+        ], "duplicate siblings + their children are distinct nodes");
+
+        // Both Setup sections exist with their OWN preview (neither clobbered).
+        let previews: Vec<Option<String>> = sqlx_core::query_as::query_as::<_, (Option<String>,)>(
+            "SELECT props->>'preview' FROM sensei.nodes
+              WHERE folder_id=$1 AND kind='section'::sensei.node_kind AND name IN ('FAQ > Setup','FAQ > Setup #2')
+              ORDER BY name")
+            .bind(fid).fetch_all(ctx.pg().pool()).await.unwrap()
+            .into_iter().map(|(p,)| p).collect();
+        assert!(previews[0].as_deref().unwrap_or("").contains("First setup"), "first Setup keeps its own content");
+        assert!(previews[1].as_deref().unwrap_or("").contains("Second setup"), "second Setup keeps its own content (not clobbered)");
+
+        // Idempotent: re-index yields the same 5, no growth.
+        process_file(&ctx, &task).await.unwrap();
+        let (cnt,): (i64,) = sqlx_core::query_as::query_as(
+            "SELECT count(*) FROM sensei.nodes WHERE folder_id=$1 AND kind='section'::sensei.node_kind")
+            .bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
+        assert_eq!(cnt, 5, "re-index of duplicate-sibling doc is idempotent");
+
+        ctx.pg().remove_watch_root(&rid).await.ok();
+    }
+
+    #[tokio::test]
+    async fn doc_rationale_comment_emits_rationale_node() {
+        // D5b: a NOTE/WHY/HACK/TODO/IMPORTANT marker in a doc becomes a `rationale`
+        // node parented to the file, with the marker in props. Re-indexing the
+        // unchanged doc is idempotent (no duplicate rationale).
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("repo/docs")).unwrap();
+        let file = root.join("repo/docs/plan.md");
+        std::fs::write(&file,
+            "# Plan\n\nSome design text.\n\n<!-- TODO: wire the retry path -->\n\nMore text noting nothing.\n"
+        ).unwrap();
+
+        let ctx = make_ctx().await;
+        let (rid, fid, repo_path) = seed_indexing_repo(&ctx, root, "d5b_rationale").await;
+        let abs = file.to_string_lossy().to_string();
+        let task = Task::new(TaskKind::ProcessFile, &repo_path, &abs);
+
+        process_file(&ctx, &task).await.unwrap();
+
+        // Exactly one rationale (the lowercase "noting" prose must NOT match).
+        let rows: Vec<(String, Option<uuid::Uuid>, String)> = sqlx_core::query_as::query_as(
+            "SELECT name, parent_id, props->>'marker' FROM sensei.nodes
+              WHERE folder_id=$1 AND kind='rationale'::sensei.node_kind")
+            .bind(fid).fetch_all(ctx.pg().pool()).await.unwrap();
+        assert_eq!(rows.len(), 1, "one rationale node (prose 'noting' does not match)");
+        assert!(rows[0].0.starts_with("TODO"), "rationale text keeps the marker: {}", rows[0].0);
+        assert_eq!(rows[0].2, "TODO", "marker stamped in props");
+
+        // Parent is the doc/file node.
+        let (pkind,): (String,) = sqlx_core::query_as::query_as(
+            "SELECT p.kind::text FROM sensei.nodes r JOIN sensei.nodes p ON r.parent_id=p.id
+              WHERE r.id=(SELECT id FROM sensei.nodes WHERE folder_id=$1 AND kind='rationale'::sensei.node_kind LIMIT 1)")
+            .bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
+        assert_eq!(pkind, "doc", "rationale is parented to the doc file node");
+
+        // Idempotent re-index.
+        process_file(&ctx, &task).await.unwrap();
+        let (cnt2,): (i64,) = sqlx_core::query_as::query_as(
+            "SELECT count(*) FROM sensei.nodes WHERE folder_id=$1 AND kind='rationale'::sensei.node_kind")
+            .bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
+        assert_eq!(cnt2, 1, "re-index does not duplicate the rationale");
+
+        // Remove the marker → the rationale is pruned.
+        std::fs::write(&file, "# Plan\n\nSome design text.\n").unwrap();
+        process_file(&ctx, &task).await.unwrap();
+        let (cnt3,): (i64,) = sqlx_core::query_as::query_as(
+            "SELECT count(*) FROM sensei.nodes WHERE folder_id=$1 AND kind='rationale'::sensei.node_kind")
+            .bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
+        assert_eq!(cnt3, 0, "a removed rationale marker is pruned");
+
+        ctx.pg().remove_watch_root(&rid).await.ok();
+    }
+
+    #[tokio::test]
+    async fn process_file_persists_is_exported_from_visibility() {
+        // A `pub` symbol is exported; a private one is not. The parser computes
+        // is_exported from the visibility modifier; process_file must PERSIST it
+        // (via upsert_node_ex) — it was previously dropped, so every symbol read
+        // back as is_exported=false (the "0 exports" call-flow bug).
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("repo/src")).unwrap();
+        let file = root.join("repo/src/lib.rs");
+        std::fs::write(&file, "pub fn exported_fn() {}\nfn private_fn() {}\n").unwrap();
+
+        let ctx = make_ctx().await;
+        let (rid, fid, repo_path) = seed_indexing_repo(&ctx, root, "isexp").await;
+        let abs = file.to_string_lossy().to_string();
+        process_file(&ctx, &Task::new(TaskKind::ProcessFile, &repo_path, &abs)).await.unwrap();
+
+        let exported = |name: &str| {
+            let pool = ctx.pg().pool().clone();
+            let name = name.to_string();
+            async move {
+                let (e,): (bool,) = sqlx_core::query_as::query_as(
+                    "SELECT is_exported FROM sensei.nodes WHERE folder_id=$1 AND name=$2 AND kind='function'::sensei.node_kind")
+                    .bind(fid).bind(&name).fetch_one(&pool).await.unwrap();
+                e
+            }
+        };
+        assert!(exported("exported_fn").await, "a pub fn is is_exported=true");
+        assert!(!exported("private_fn").await, "a private fn is is_exported=false");
+
+        ctx.pg().remove_watch_root(&rid).await.ok();
+    }
+
+    #[tokio::test]
+    async fn process_file_reindex_reconciles_a_removed_out_edge() {
+        // D3 per-file out-edge reconcile (end-to-end): a SURVIVING symbol whose
+        // call is removed on re-edit drops its stale edge — the surviving node
+        // isn't deleted, so the edge doesn't cascade; delete_edges_from_sources
+        // clears the file's out-edges before re-inserting the current set.
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("repo/src")).unwrap();
+        let file = root.join("repo/src/lib.rs");
+        std::fs::write(&file, "pub fn keep() { gone(); }\npub fn gone() {}\n").unwrap();
+
+        let ctx = make_ctx().await;
+        let (rid, fid, repo_path) = seed_indexing_repo(&ctx, root, "d3_edge").await;
+        let abs = file.to_string_lossy().to_string();
+        let task = Task::new(TaskKind::ProcessFile, &repo_path, &abs);
+
+        process_file(&ctx, &task).await.unwrap();
+        let (calls_before,): (i64,) = sqlx_core::query_as::query_as(
+            "SELECT count(*) FROM sensei.edges WHERE folder_id=$1 AND kind='calls'::sensei.edge_kind")
+            .bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
+        assert_eq!(calls_before, 1, "keep→gone call edge is created on first index");
+
+        // Re-edit: keep no longer calls gone (both fns stay at their lines).
+        std::fs::write(&file, "pub fn keep() {}\npub fn gone() {}\n").unwrap();
+        process_file(&ctx, &task).await.unwrap();
+
+        let (calls_after,): (i64,) = sqlx_core::query_as::query_as(
+            "SELECT count(*) FROM sensei.edges WHERE folder_id=$1 AND kind='calls'::sensei.edge_kind")
+            .bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
+        assert_eq!(calls_after, 0, "the removed call's stale edge is reconciled away (replace, not append)");
+
+        ctx.pg().remove_watch_root(&rid).await.ok();
+    }
+
+    #[tokio::test]
+    async fn process_git_folder_recovers_a_failed_folder_with_no_changes() {
+        // Recovery (D6b/D6d): a transient fatal failure a bounded retry later
+        // heals leaves the folder `failed` with scan_state complete (no changes).
+        // The next scan must RE-DRIVE the barrier — not skip it on
+        // has_changes=false — so the folder can reach `indexed`. Here an empty
+        // repo marked `failed` is reset to `indexing` and the terminal
+        // DetectCommunities barrier is re-enqueued.
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("repo")).unwrap(); // empty → has_changes=false
+
+        let ctx = make_ctx().await;
+        let (rid, fid, repo_path) = seed_indexing_repo(&ctx, root, "d6d_recover").await;
+        ctx.pg().update_folder_status(&fid, "failed").await.unwrap();
+
+        let task = Task::new(TaskKind::ProcessGitFolder, &repo_path, &repo_path);
+        process_git_folder(&ctx, &task).await.unwrap();
+
+        assert_eq!(ctx.pg().get_folder_status(&fid).await.unwrap().as_deref(), Some("indexing"),
+            "a `failed` folder is re-driven (reset to `indexing`) even with no changes");
+        let has_barrier = ctx.queue.snapshot().await.iter()
+            .any(|(kind, fp, _)| *kind == TaskKind::DetectCommunities && fp == &repo_path);
+        assert!(has_barrier, "the terminal barrier (DetectCommunities) is re-enqueued so recovery can reach `indexed`");
+
+        ctx.pg().remove_watch_root(&rid).await.ok();
     }
 
     #[tokio::test]
@@ -1066,10 +2380,13 @@ mod tests {
         let root_id = ctx.pg().add_watch_root(&repo_path, "ur", &serde_json::json!([])).await.unwrap();
         let fid = ctx.pg().upsert_repo(&root_id, "ur-repo", &repo_path).await.unwrap();
 
-        // funcA lives in a.rs; funcB in b.rs calls it (resolved edge B → A).
+        // funcA lives in a.rs; funcB in b.rs calls it. A call starts UNRESOLVED
+        // (target_name only); resolve_edge points it at funcA — the production
+        // path that preserves target_name for later re-resolution (D1).
         let node_a = ctx.pg().upsert_node(&fid, "function", "funcA", "a.rs", None, None, None, None).await.unwrap();
         let node_b = ctx.pg().upsert_node(&fid, "function", "funcB", "b.rs", None, None, None, None).await.unwrap();
-        ctx.pg().insert_edge(&fid, &node_b, Some(&node_a), Some("funcA"), "calls").await.unwrap();
+        let edge = ctx.pg().insert_edge(&fid, &node_b, None, Some("funcA"), None, "calls").await.unwrap();
+        ctx.pg().resolve_edge(&edge, &node_a).await.unwrap();
 
         // Re-indexing a.rs un-resolves inbound edges instead of letting the
         // cascade delete them: target_id cleared, target_name preserved.

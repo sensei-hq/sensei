@@ -17,13 +17,15 @@
 </script>
 
 <div data-component="project-shell" class="flex flex-col h-screen overflow-hidden bg-paper-soft text-ink">
-    <!-- Primary accent stripe -->
-    <div class="h-0.5 bg-accent shrink-0"></div>
-
-    <!-- Titlebar / drag region. Left inset (pl-[80px]) clears the macOS
-         overlay traffic lights that float top-left, so the project name is
-         never hidden behind them. -->
-    <div data-component="project-titlebar" class="drag-region h-9 flex items-center gap-2 pl-[80px] pr-4 shrink-0">
+    <!-- Titlebar / drag region. Left inset (pl-[80px]) clears the macOS overlay
+         traffic lights that float top-left, so the project name is never hidden
+         behind them. `data-tauri-drag-region` is Tauri's drag mechanism; it needs
+         the `core:window:allow-start-dragging` capability (granted for project-*
+         windows in capabilities/default.json) — without it startDragging is denied
+         and the window won't move. Tauri's handler walks ancestors (closest) so
+         clicking the glyph/name drags too. (No decorative accent stripe: it did
+         not aid dragging and read as a stray highlighted top border.) -->
+    <div data-component="project-titlebar" data-tauri-drag-region class="h-9 flex items-center gap-2 pl-[80px] pr-4 shrink-0">
         <ProjectGlyph {icon} />
         <span data-component="project-name" class="text-sm font-semibold">{data.project?.name ?? '…'}</span>
         <span class="text-xs text-ink-faint">· project window</span>

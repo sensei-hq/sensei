@@ -31,12 +31,19 @@
 
   --sumi-900: oklch(0.220 0.012 50);
   --sumi-700: oklch(0.380 0.012 50);
-  --sumi-500: oklch(0.580 0.010 50);
-  --sumi-300: oklch(0.750 0.008 50);
+  /* sumi-500/300 darkened for WCAG AA on card surfaces (mute 6.37:1, faint 5.37:1);
+     the originals (0.580 → 4.0:1, 0.750 → 2.07:1) failed on small text. These back
+     --ink-mute/--ink-faint AND the direct --ink-3/--ink-4 uses (meta, eyebrow, dots),
+     so both the semantic aliases and the numbered ones become AA-clean. Matches the
+     app (rokkit.config.js). See docs/spec/2026-08-05-mockup-drift-audit.md F3. */
+  --sumi-500: oklch(0.470 0.010 50);
+  --sumi-300: oklch(0.510 0.010 50);
 
-  --shu-500:   oklch(0.580 0.150 35);
-  --jade-500:  oklch(0.620 0.080 160);
-  --amber-500: oklch(0.720 0.120 75);
+  /* Status TEXT darkened for WCAG AA on paper (each lands ~5:1); the originals
+     failed: warning 2.35:1, success 3.26:1, accent 4.27:1. mockup-drift-audit F3. */
+  --shu-500:   oklch(0.520 0.145 35);
+  --jade-500:  oklch(0.510 0.076 160);
+  --amber-500: oklch(0.510 0.100 75);
 
   --paper:    var(--washi-100);
   --paper-2:  var(--washi-200);
@@ -52,15 +59,25 @@
   --on-primary: var(--paper);
 
   --accent:       var(--shu-500);
-  --accent-soft:  oklch(0.580 0.150 35 / 0.12);
+  --accent-soft:  oklch(0.520 0.145 35 / 0.14);
   --success:      var(--jade-500);
-  --success-soft: oklch(0.620 0.080 160 / 0.14);
+  --success-soft: oklch(0.510 0.076 160 / 0.14);
   --warning:      var(--amber-500);
-  --warning-soft: oklch(0.720 0.120 75 / 0.15);
-  --danger:       oklch(0.55 0.18 28);
-  --danger-soft:  oklch(0.55 0.18 28 / 0.10);
-  --danger-edge:  oklch(0.55 0.18 28 / 0.32);
+  --warning-soft: oklch(0.510 0.100 75 / 0.15);
+  --danger:       oklch(0.490 0.178 25);
+  --danger-soft:  oklch(0.490 0.178 25 / 0.10);
+  --danger-edge:  oklch(0.490 0.178 25 / 0.32);
   --focus-ring:   var(--shu-500);
+
+  /* App-only named tokens (no original mockup source) — single-sourced here so the
+     24-token vocabulary has ONE authority (mockup-drift-audit F4). DECISION: failures
+     read --danger (crimson) app-wide; --error is a documented ALIAS of --danger (the
+     activity-logs screen uses --error). --info is app-only (indigo blue, 藍). The soft
+     tints follow their base at the same alpha as the app. */
+  --error:      var(--danger);
+  --error-soft: var(--danger-soft);
+  --info:       oklch(0.520 0.150 254);
+  --info-soft:  oklch(0.520 0.150 254 / 0.14);
 
   /* ── Semantic ramp (PREFERRED names) ──────────────────────────
      Use these everywhere. Numbered tokens (--ink-2, --paper-2 …)
@@ -74,9 +91,9 @@
   --ink-soft:     var(--ink-2);
   --ink-mute:     var(--ink-3);
   --ink-faint:    var(--ink-4);
-  --success-edge: oklch(0.620 0.080 160 / 0.30);
-  --accent-edge:  oklch(0.580 0.150 35 / 0.28);
-  --warning-edge: oklch(0.720 0.120 75 / 0.30);
+  --success-edge: oklch(0.510 0.076 160 / 0.30);
+  --accent-edge:  oklch(0.520 0.145 35 / 0.28);
+  --warning-edge: oklch(0.510 0.100 75 / 0.30);
   --on-primary-soft: oklch(0.975 0.008 85 / 0.78);
   --on-primary-mute: oklch(0.975 0.008 85 / 0.62);
   --on-primary-faint: oklch(0.975 0.008 85 / 0.20);
@@ -215,8 +232,11 @@
 
   --ink:      oklch(0.940 0.008 85);
   --ink-2:    oklch(0.780 0.008 85);
-  --ink-3:    oklch(0.600 0.010 85);
-  --ink-4:    oklch(0.420 0.012 85);
+  /* ink-3/ink-4 lightened for WCAG AA on the dark paper (mute 7.47:1, faint 5.16:1);
+     the originals (0.600 / 0.420) were too dim on small text. Matches the app.
+     mockup-drift-audit F3. */
+  --ink-3:    oklch(0.760 0.009 85);
+  --ink-4:    oklch(0.660 0.009 85);
 
   --accent:       oklch(0.700 0.150 35);
   --accent-soft:  oklch(0.700 0.150 35 / 0.18);
@@ -227,6 +247,11 @@
   --danger:       oklch(0.700 0.170 28);
   --danger-soft:  oklch(0.700 0.170 28 / 0.16);
   --danger-edge:  oklch(0.700 0.170 28 / 0.38);
+  /* App-only tokens (mockup-drift-audit F4) — error aliases danger; info app-only (藍, ai.400) */
+  --error:        var(--danger);
+  --error-soft:   var(--danger-soft);
+  --info:         oklch(0.750 0.135 254);
+  --info-soft:    oklch(0.750 0.135 254 / 0.18);
   --success-edge: oklch(0.720 0.090 160 / 0.34);
   --accent-edge:  oklch(0.700 0.150 35 / 0.34);
   --warning-edge: oklch(0.780 0.120 75 / 0.34);

@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { PageHeader, EmptyState } from '$lib/components';
+  import { PageHeader, EmptyState, ScreenState } from '$lib/components';
+  import { Button } from '@rokkit/ui';
   import { typePill, attributionSummary, type ChipClasses } from '$lib/dojo-artifacts.js';
   import type { ShareReviewBatch, ShareReviewItem, PublishBatchOutcome } from '$lib/types.js';
   import {
@@ -23,8 +24,13 @@
     batch: ShareReviewBatch | null;
     /** The Publish controller — api + reload injected by the page. */
     actions: PublishBatchAction;
+    /** A LOAD failure (F8) — distinct from `batch: null` (honest-empty). When
+     *  set, the screen shows error-with-Retry instead of the empty state. */
+    loadError?: string | null;
+    /** Retry callback for the load-error state (the page injects invalidateAll). */
+    onretry?: () => void;
   }
-  let { batch, actions }: Props = $props();
+  let { batch, actions, loadError = null, onretry }: Props = $props();
 
   // A large batch takes a second click: the first flips into a confirm prompt.
   let confirming = $state(false);
@@ -141,6 +147,9 @@
 />
 
 <div class="max-w-[1060px] mx-auto px-7 pb-10" data-share-review>
+  {#if loadError}
+    <ScreenState status="error" error={loadError} {onretry} />
+  {:else}
   {#if actions.error}
     <p class="text-xs text-danger mb-3" data-share-error>{actions.error}</p>
   {/if}
@@ -209,31 +218,30 @@
         <span class="text-xs text-ink-soft" data-confirm-prompt>
           Publish {nShip} items to your Dōjō? A maintainer approves before distribution.
         </span>
-        <button
-          type="button"
+        <Button
+          variant="primary"
+          size="sm"
           data-action="confirm-publish"
           onclick={onPublish}
           disabled={actions.busy}
-          class="px-3 py-1.5 rounded-md border-none bg-primary text-on-primary text-xs cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-          >Confirm</button
-        >
-        <button
-          type="button"
+        >Confirm</Button>
+        <Button
+          variant="secondary"
+          style="outline"
+          size="sm"
           data-action="cancel-publish"
           onclick={() => (confirming = false)}
-          class="px-3 py-1.5 rounded-md border border-paper-edge bg-transparent text-ink-soft text-xs cursor-pointer"
-          >Cancel</button
-        >
+        >Cancel</Button>
       {:else}
-        <button
-          type="button"
+        <Button
+          variant="primary"
+          size="sm"
           data-action="publish"
           onclick={onPublish}
           disabled={!canPublish}
-          class="inline-flex items-center gap-1 px-3 py-1.5 rounded-md border-none bg-primary text-on-primary text-xs cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
         >
           <span class="kanji">共</span>{publishButtonLabel(nShip)}
-        </button>
+        </Button>
       {/if}
     </div>
 
@@ -257,5 +265,6 @@
         {/each}
       </section>
     {/if}
+  {/if}
   {/if}
 </div>

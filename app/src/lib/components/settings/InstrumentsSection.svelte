@@ -51,15 +51,15 @@
     <div class="text-xs uppercase tracking-wider text-ink-soft mb-2">
       Detected in your stack
     </div>
-    <div data-testid="instruments-stack" class="flex flex-wrap gap-1 mb-6 bg-paper-mute border border-paper-mute rounded-md p-3">
+    <div data-testid="instruments-stack" class="flex flex-wrap gap-1 mb-6 bg-paper-mute border border-paper-edge rounded-md p-3">
       {#each stackChips as chip}
-        <span class="font-mono py-1 px-2 text-xs text-ink-mute bg-paper-soft border border-paper-mute rounded-sm">{chip}</span>
+        <span class="font-mono py-1 px-2 text-xs text-ink-mute bg-paper-soft border border-paper-edge rounded-sm">{chip}</span>
       {/each}
     </div>
   {/if}
 
   {#if mcps.length === 0}
-    <div data-testid="instruments-empty" class="text-center p-12 bg-paper-mute rounded-lg border border-paper-mute">
+    <div data-testid="instruments-empty" class="text-center p-12 bg-paper-mute rounded-lg border border-paper-edge">
       <span class="kanji text-4xl text-accent opacity-20 block mb-4">器</span>
       <p class="text-sm text-ink-soft m-0">
         No instruments available yet.
@@ -72,7 +72,7 @@
     </div>
   {:else}
     <div class="flex items-center gap-2 mb-6">
-      <span class="font-mono py-1 px-2 text-xs text-success bg-paper-mute border border-success rounded-sm">
+      <span class="font-mono py-1 px-2 text-xs text-success bg-success-soft border border-success rounded-sm">
         {installCount} MCPs to install
       </span>
     </div>
@@ -86,10 +86,10 @@
           <div
             data-testid={`mcp-card-${mcp.id}`}
             data-selected={mcp.selected}
-            class="grid grid-cols-[auto_1fr_auto_auto] gap-3 px-4 py-3 bg-paper-mute border border-paper-mute rounded-md items-center transition-opacity duration-fast"
+            class="grid grid-cols-[auto_1fr_auto_auto] gap-3 px-4 py-3 bg-paper-mute border border-paper-edge rounded-md items-center transition-opacity duration-fast"
             class:opacity-55={!mcp.selected && !mcp.installed}
           >
-            <span class="kanji text-xl text-accent w-9 h-9 flex items-center justify-center rounded-full bg-paper-soft border border-paper-mute">
+            <span class="kanji text-xl text-accent w-9 h-9 flex items-center justify-center rounded-full bg-paper-soft border border-paper-edge">
               器
             </span>
             <div class="min-w-0">
@@ -122,10 +122,10 @@
           <div
             data-testid={`mcp-card-${mcp.id}`}
             data-selected={mcp.selected}
-            class="grid grid-cols-[auto_1fr_auto_auto] gap-3 px-4 py-3 bg-paper-mute border border-paper-mute rounded-md items-center transition-opacity duration-fast"
+            class="grid grid-cols-[auto_1fr_auto_auto] gap-3 px-4 py-3 bg-paper-mute border border-paper-edge rounded-md items-center transition-opacity duration-fast"
             class:opacity-60={!mcp.selected && !mcp.installed}
           >
-            <span class="kanji text-xl text-ink-soft w-9 h-9 flex items-center justify-center rounded-full bg-paper-soft border border-paper-mute">
+            <span class="kanji text-xl text-ink-soft w-9 h-9 flex items-center justify-center rounded-full bg-paper-soft border border-paper-edge">
               器
             </span>
             <div class="min-w-0">

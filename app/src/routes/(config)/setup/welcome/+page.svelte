@@ -29,7 +29,7 @@
     </p>
 
     <div
-        class="grid grid-cols-3 gap-4 py-6 border-t border-b border-paper-mute"
+        class="grid grid-cols-3 gap-4 py-6 border-t border-b border-paper-edge"
     >
         {#each pillars as pillar}
             <div>

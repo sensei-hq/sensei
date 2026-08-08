@@ -1,5 +1,6 @@
 <script lang="ts">
     import { PageHeader, Kanji } from '$lib/components';
+    import { Button, Select } from '@rokkit/ui';
     import { appState } from '$lib/appstate.svelte.js';
     import { senseiApi } from '$lib/api.js';
     import { page } from '$app/state';
@@ -43,6 +44,8 @@
     // mirroring the settings-general form. `persist` fires only from the field
     // handlers (never during hydrate), so no "initial load" guard is needed.
     const form = new ProjectMetadataForm();
+    // Mutable copy of the readonly enum list for rokkit Select's `items` prop.
+    const maturityItems = [...MATURITY_OPTIONS];
     let saveTimer: ReturnType<typeof setTimeout> | null = null;
 
     // Re-seed the form whenever a fresh project loads.
@@ -91,20 +94,20 @@
             <div class="font-mono text-xs text-ink-mute truncate mt-0.5">{b.tenantKey}</div>
         </div>
         {@render bindingChip(inferredChip().bg, inferredChip().text, inferredChip().label, 'inferred')}
-        <button
-            type="button"
+        <Button
+            variant="primary"
+            size="sm"
             data-testid="binding-confirm"
             disabled={bindAction.pending}
             onclick={() => confirmBinding(b)}
-            class="px-3 py-1.5 rounded-md border-none bg-primary text-on-primary text-xs cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-        >{bindAction.pending ? 'Confirming…' : 'Confirm'}</button>
+        >{bindAction.pending ? 'Confirming…' : 'Confirm'}</Button>
     </div>
 {/snippet}
 
 <PageHeader title={p?.name ?? "—"} description={p?.goal ?? p?.vision ?? undefined} />
 <div class="px-6 py-6 max-w-[600px]">
     <section
-        class="px-7 py-7 bg-paper-mute border border-paper-mute rounded-lg"
+        class="px-7 py-7 bg-paper-mute border border-paper-edge rounded-lg"
         data-testid="project-metadata"
     >
         <div class="flex items-baseline justify-between mb-4">
@@ -127,20 +130,18 @@
                         Lifecycle stage — from discovery through to archived.
                     </div>
                 </div>
-                <select
-                    class="text-xs px-2.5 py-1.5 border border-paper-mute rounded-md bg-paper-soft text-ink cursor-pointer"
-                    data-testid="metadata-maturity"
-                    disabled={!p}
-                    value={form.maturity}
-                    onchange={(e) => {
-                        form.maturity = e.currentTarget.value;
-                        void persist();
-                    }}
-                >
-                    {#each MATURITY_OPTIONS as opt (opt.value)}
-                        <option value={opt.value}>{opt.label}</option>
-                    {/each}
-                </select>
+                <div data-testid="metadata-maturity" class="min-w-[140px]">
+                    <Select
+                        class="text-xs"
+                        items={maturityItems}
+                        value={form.maturity}
+                        disabled={!p}
+                        onchange={(v) => {
+                            form.maturity = v as string;
+                            void persist();
+                        }}
+                    />
+                </div>
             </div>
 
             <div class="grid grid-cols-[1fr_auto] gap-6 items-center py-3">
@@ -152,7 +153,7 @@
                 </div>
                 <input
                     type="text"
-                    class="w-[220px] px-3 py-2 text-sm border border-paper-mute rounded-md bg-paper-soft text-ink outline-none text-right"
+                    class="w-[220px] px-3 py-2 text-sm border border-paper-edge rounded-md bg-paper-soft text-ink outline-none text-right"
                     data-testid="metadata-client"
                     disabled={!p}
                     value={form.client}
@@ -173,7 +174,7 @@
                 </div>
                 <textarea
                     rows="2"
-                    class="w-[260px] px-3 py-2 text-sm border border-paper-mute rounded-md bg-paper-soft text-ink outline-none resize-y"
+                    class="w-[260px] px-3 py-2 text-sm border border-paper-edge rounded-md bg-paper-soft text-ink outline-none resize-y"
                     data-testid="metadata-goal"
                     disabled={!p}
                     value={form.goal}
@@ -194,7 +195,7 @@
                 </div>
                 <textarea
                     rows="3"
-                    class="w-[260px] px-3 py-2 text-sm border border-paper-mute rounded-md bg-paper-soft text-ink outline-none resize-y"
+                    class="w-[260px] px-3 py-2 text-sm border border-paper-edge rounded-md bg-paper-soft text-ink outline-none resize-y"
                     data-testid="metadata-description"
                     disabled={!p}
                     value={form.description}
@@ -209,7 +210,7 @@
     </section>
 
     <section class="mt-5" data-testid="project-bindings">
-        <h3 class="text-xs font-semibold opacity-60 m-0 mb-2 uppercase tracking-wide">
+        <h3 class="text-xs font-semibold text-ink-mute m-0 mb-2 uppercase tracking-wide">
             Bindings
         </h3>
         <p class="text-xs text-ink-mute leading-normal mb-3">
@@ -231,12 +232,12 @@
     </section>
 
     <section class="mt-5">
-        <h3 class="text-xs font-semibold opacity-60 m-0 mb-2 uppercase tracking-wide">
+        <h3 class="text-xs font-semibold text-ink-mute m-0 mb-2 uppercase tracking-wide">
             Repos ({data.repos.length})
         </h3>
         <ul class="list-none m-0 p-0">
             {#each data.repos as repo (repo.id)}
-                <li class="repo-row flex gap-3 py-1.5 text-sm border-b border-paper-mute">
+                <li class="repo-row flex gap-3 py-1.5 text-sm border-b border-paper-edge">
                     <span class="font-semibold">{repo.name}</span>
                     <span class="opacity-50 text-xs font-mono overflow-hidden text-ellipsis">{repo.path}</span>
                 </li>
@@ -246,7 +247,7 @@
 
     {#if p?.stack}
         <section class="mt-5">
-            <h3 class="text-xs font-semibold opacity-60 m-0 mb-2 uppercase tracking-wide">
+            <h3 class="text-xs font-semibold text-ink-mute m-0 mb-2 uppercase tracking-wide">
                 Stack
             </h3>
             <div class="flex flex-wrap gap-1.5">

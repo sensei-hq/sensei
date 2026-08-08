@@ -32,7 +32,7 @@ pub(crate) mod helpers;
 
 pub use scan::{scan_root, branch_switch};
 pub use process::{process_git_folder, process_folder, process_file, delete_file, delete_folder, reconcile_identity};
-pub use resolve::{resolve_edges, build_connections, reconcile_connections};
+pub use resolve::build_connections;
 pub use embed::embed_nodes;
 pub use libraries::{resolve_libs, import_lib, index_library, index_library_page, extract_deps};
 pub use community::detect_communities;

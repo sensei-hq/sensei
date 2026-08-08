@@ -29,9 +29,10 @@ describe("buildNavItems", () => {
     expect(topHrefs).toContain("/projects");
     expect(topHrefs).toContain("/settings"); // Settings
 
-    // Intake is the front door — the leading anchor, above Today.
-    expect(topHrefs[0]).toBe("/intake");
-    expect(byHref(entries, "/intake")?.text).toBe("Intake");
+    // Intake moved to the project window (a run always starts IN a project), so
+    // it is NOT an observatory anchor anymore. Today is the leading anchor now.
+    expect(topHrefs[0]).toBe("/");
+    expect(byHref(entries, "/intake")).toBeUndefined();
   });
 
   it("hides Review group, separator and Settings in Focus", () => {

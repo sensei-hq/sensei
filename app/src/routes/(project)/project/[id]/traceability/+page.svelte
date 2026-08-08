@@ -71,7 +71,7 @@
             {#each data.driftItems as item (item.id)}
                 {@const opened = openedItemId === item.id}
                 {@const hasDiff = !!(item.expectedSignature || item.actualSignature)}
-                <li class="drift-row border-b border-paper-mute text-sm" data-testid="drift-row" data-opened={opened || undefined}>
+                <li class="drift-row border-b border-paper-edge text-sm" data-testid="drift-row" data-opened={opened || undefined}>
                     <button
                         type="button"
                         class="w-full flex gap-2.5 py-2 items-start bg-transparent border-none cursor-pointer text-left text-inherit"
@@ -90,13 +90,13 @@
                             {#if item.expectedSignature}
                                 <div>
                                     <p class="text-xs text-ink-mute uppercase tracking-wide m-0 mb-1">Expected</p>
-                                    <pre class="text-xs font-mono bg-paper-soft border border-paper-mute rounded-md p-2 m-0 whitespace-pre-wrap break-all">{item.expectedSignature}</pre>
+                                    <pre class="text-xs font-mono bg-paper-soft border border-paper-edge rounded-md p-2 m-0 whitespace-pre-wrap break-all">{item.expectedSignature}</pre>
                                 </div>
                             {/if}
                             {#if item.actualSignature}
                                 <div>
                                     <p class="text-xs text-ink-mute uppercase tracking-wide m-0 mb-1">Actual</p>
-                                    <pre class="text-xs font-mono bg-paper-soft border border-paper-mute rounded-md p-2 m-0 whitespace-pre-wrap break-all">{item.actualSignature}</pre>
+                                    <pre class="text-xs font-mono bg-paper-soft border border-paper-edge rounded-md p-2 m-0 whitespace-pre-wrap break-all">{item.actualSignature}</pre>
                                 </div>
                             {:else if item.status === 'broken'}
                                 <div>

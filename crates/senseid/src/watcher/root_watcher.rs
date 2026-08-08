@@ -454,8 +454,9 @@ impl RootWatcher {
     /// from each path via `PgStore::repo_root_for_path`) and enqueue the
     /// incremental tasks — `ProcessFile`/`DeleteFile`/`DeleteFolder` targeting the
     /// repo root's abs_path (the folder_path the handlers resolve by), plus the
-    /// post-processing barrier `ResolveEdges` + `EmbedNodes` so a live edit shows
-    /// up in the graph AND semantic search without waiting for a full scan.
+    /// post-processing `EmbedNodes` barrier so a live edit shows up in semantic
+    /// search without waiting for a full scan. FQN edges resolve at emit (Phase
+    /// 7.1), so no ResolveEdges pass is needed for the graph to be current.
     ///
     /// Two invariants from the design:
     ///  - a change in `~/Dev/kavach/src/x.ts` resolves to the kavach repo (not the
@@ -550,15 +551,12 @@ impl RootWatcher {
             }
 
             if !file_task_ids.is_empty() {
-                // Post-processing barrier for the changed repo, blocked on the
-                // file tasks: resolve edges + embed the new/changed nodes so the
-                // edit is reflected in the code graph AND the hybrid semantic
-                // search immediately. (Community detection stays periodic — the
-                // analyzer scheduler runs it; per-edit clustering is wasteful.)
-                queue.enqueue(
-                    Task::new(TaskKind::ResolveEdges, &repo_path, "")
-                        .blocked_by(file_task_ids.clone())
-                ).await;
+                // Post-processing barrier for the changed repo, blocked on the file
+                // tasks: embed the new/changed nodes so the edit is reflected in the
+                // hybrid semantic search immediately. FQN call/import edges resolve
+                // at emit (Phase 7.1) — there is no ResolveEdges pass. (Community
+                // detection + degree recompute stay periodic — the analyzer
+                // scheduler runs DetectCommunities; per-edit clustering is wasteful.)
                 queue.enqueue(
                     Task::new(TaskKind::EmbedNodes, &repo_path, "")
                         .blocked_by(file_task_ids)
@@ -940,7 +938,8 @@ mod tests {
     #[tokio::test]
     async fn process_batch_resolves_owning_repo_and_adds_postprocessing() {
         // A change under the repo resolves to the repo abs_path (NOT a watch-root
-        // name) and enqueues ProcessFile + ResolveEdges + EmbedNodes.
+        // name) and enqueues ProcessFile + EmbedNodes. Phase 7.1: FQN edges resolve
+        // at emit, so there is NO ResolveEdges pass in the incremental path.
         let (pg, repo, root_id) = seed_watch_repo().await;
         let queue = Arc::new(TaskQueue::new());
         let mut changes = HashMap::new();
@@ -949,8 +948,9 @@ mod tests {
 
         let snap = queue.snapshot().await;
         assert!(snap.iter().any(|(k, _, _)| *k == TaskKind::ProcessFile), "ProcessFile enqueued");
-        assert!(snap.iter().any(|(k, _, _)| *k == TaskKind::ResolveEdges), "ResolveEdges enqueued");
         assert!(snap.iter().any(|(k, _, _)| *k == TaskKind::EmbedNodes), "EmbedNodes enqueued (search freshness)");
+        assert!(!snap.iter().any(|(k, _, _)| k.to_string() == "resolve_edges"),
+            "no ResolveEdges pass — FQN edges resolve at emit");
         let pf = snap.iter().find(|(k, _, _)| *k == TaskKind::ProcessFile).unwrap();
         assert_eq!(pf.1, repo, "ProcessFile folder_path is the resolved repo abs_path, not a name");
         cleanup_watch_repo(&pg, &root_id).await;

@@ -3,6 +3,7 @@
   import { appState } from '$lib/appstate.svelte.js';
   import { senseiApi } from '$lib/api.js';
   import { PageHeader, EmptyState, Kanji } from '$lib/components';
+  import { Button, Select } from '@rokkit/ui';
   import type { DojoMembership } from '$lib/types.js';
   import {
     ConnectForm,
@@ -11,6 +12,7 @@
     connectionsHeadline,
     kindPill,
     syncChip,
+    type MembershipKind,
   } from './dojo-connections-state.svelte.js';
 
   let { data } = $props();
@@ -138,11 +140,12 @@
         </label>
         <label class="flex flex-col gap-1">
           {@render field('Kind')}
-          <select class={inputClass} bind:value={form.kind}>
-            {#each KIND_OPTIONS as opt (opt.value)}
-              <option value={opt.value}>{opt.label}</option>
-            {/each}
-          </select>
+          <Select
+            class="w-full"
+            items={KIND_OPTIONS}
+            value={form.kind}
+            onchange={(v) => (form.kind = v as MembershipKind)}
+          />
         </label>
         <label class="flex flex-col gap-1">
           {@render field('Org slugs (optional)')}
@@ -178,18 +181,19 @@
       </div>
 
       <div class="flex items-center gap-3 mt-4">
-        <button
-          type="button"
+        <Button
+          variant="primary"
+          size="sm"
           data-connect-submit
           disabled={!form.canSubmit}
           onclick={connect}
-          class="px-4 py-2 rounded-md border-none bg-primary text-on-primary text-sm cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-        >{form.submitting ? 'Connecting…' : 'Connect'}</button>
-        <button
-          type="button"
+        >{form.submitting ? 'Connecting…' : 'Connect'}</Button>
+        <Button
+          variant="secondary"
+          style="outline"
+          size="sm"
           onclick={() => (form.open = false)}
-          class="px-4 py-2 rounded-md border border-paper-edge bg-transparent text-ink-soft text-sm cursor-pointer"
-        >Cancel</button>
+        >Cancel</Button>
         {#if form.error}
           <span class="text-xs text-danger" data-connect-error>{form.error}</span>
         {/if}

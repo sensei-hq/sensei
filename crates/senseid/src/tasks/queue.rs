@@ -68,11 +68,46 @@ impl TaskQueue {
     }
 
     /// Enqueue a task. Returns the assigned task ID.
-    pub async fn enqueue(&self, mut task: Task) -> u64 {
+    pub async fn enqueue(&self, task: Task) -> u64 {
+        let mut state = self.inner.lock().await;
+        let id = self.enqueue_locked(&mut state, task);
+        drop(state);
+        self.notify.notify_one();
+        id
+    }
+
+    /// Like [`enqueue`], but a no-op returning `None` when a task with the same
+    /// `(kind, folder_path, path)` is already pending, blocked, or running — the
+    /// single-writer guard (D6e / W5). The dedup check and the insert happen
+    /// under **one** lock acquisition, so two concurrent callers can't both slip
+    /// a duplicate past the guard (the check-then-enqueue race). Enqueue sites
+    /// that must never double-scan a folder/file (ScanRoot / ProcessGitFolder /
+    /// ProcessFile) use this instead of [`enqueue`].
+    pub async fn enqueue_unique(&self, task: Task) -> Option<u64> {
+        let mut state = self.inner.lock().await;
+        let matches = |t: &Task| {
+            t.kind == task.kind && t.folder_path == task.folder_path && t.path == task.path
+        };
+        let dup = state.pending.iter().any(matches)
+            || state.blocked.iter().any(matches)
+            || state.running.values().any(matches);
+        if dup {
+            return None; // guard drops the lock on return
+        }
+        let id = self.enqueue_locked(&mut state, task);
+        drop(state);
+        self.notify.notify_one();
+        Some(id)
+    }
+
+    /// Shared enqueue body — assign an id, register dependency tracking, place
+    /// the task on `blocked` or `pending`, and broadcast `Queued`. Runs with the
+    /// queue lock already held so callers ([`enqueue`], [`enqueue_unique`]) can
+    /// combine it with a pre-check atomically. The caller notifies waiters after
+    /// dropping the lock.
+    fn enqueue_locked(&self, state: &mut QueueState, mut task: Task) -> u64 {
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
         task.id = id;
-
-        let mut state = self.inner.lock().await;
 
         // Register dependency tracking
         for dep_id in &task.depends_on {
@@ -98,7 +133,7 @@ impl TaskQueue {
                 // blocked / running / pending / completed for each dep id;
                 // unresolved ids are reported as `"?"` which is a signal that
                 // the dep was already dropped from history.
-                let blockers = blocker_summary(&state, &unmet);
+                let blockers = blocker_summary(state, &unmet);
                 tracing::debug!(
                     task_id = id,
                     kind = %task.kind,
@@ -114,8 +149,6 @@ impl TaskQueue {
         }
 
         let _ = self.tx.send(TaskEvent::Queued { task_id: id });
-        drop(state);
-        self.notify.notify_one();
         id
     }
 
@@ -131,7 +164,7 @@ impl TaskQueue {
 
     /// Add a dependency to a blocked task after creation.
     /// Used when file tasks are created by folder tasks and need to be
-    /// added to the resolve_edges barrier.
+    /// added to a post-processing barrier.
     #[allow(dead_code)]
     pub async fn add_dependency(&self, barrier_task_id: u64, new_dep_id: u64) {
         let mut state = self.inner.lock().await;
@@ -448,7 +481,7 @@ mod tests {
         // completed → unknown) all resolve as expected.
         let state = state_with(
             vec![task_with(11, TaskKind::ProcessFile)],
-            vec![task_with(22, TaskKind::ResolveEdges)],
+            vec![task_with(22, TaskKind::BuildConnections)],
             vec![task_with(33, TaskKind::ProcessGitFolder)],
         );
         let summary = blocker_summary(&state, &[11, 22, 33, 99]);
@@ -456,7 +489,7 @@ mod tests {
             summary,
             vec![
                 "11:process_file".to_string(),
-                "22:resolve_edges".to_string(),
+                "22:build_connections".to_string(),
                 "33:process_git_folder".to_string(),
                 "99:?".to_string(),
             ],
@@ -491,7 +524,7 @@ mod tests {
 
         // Enqueue barrier that depends on both
         let barrier = q.enqueue(
-            Task::new(TaskKind::ResolveEdges, "repo", "")
+            Task::new(TaskKind::BuildConnections, "repo", "")
                 .blocked_by(vec![f1, f2])
         ).await;
 
@@ -520,7 +553,7 @@ mod tests {
         // Can dequeue barrier
         let bt = q.next_task().await;
         assert_eq!(bt.id, barrier);
-        assert_eq!(bt.kind, TaskKind::ResolveEdges);
+        assert_eq!(bt.kind, TaskKind::BuildConnections);
     }
 
     #[tokio::test]
@@ -529,7 +562,7 @@ mod tests {
 
         // Create barrier first with no deps
         let barrier = q.enqueue(
-            Task::new(TaskKind::ResolveEdges, "repo", "").blocked_by(vec![])
+            Task::new(TaskKind::BuildConnections, "repo", "").blocked_by(vec![])
         ).await;
 
         // Barrier starts as Pending (no deps)
@@ -547,7 +580,7 @@ mod tests {
         let q = TaskQueue::new();
         let f1 = q.enqueue(Task::new(TaskKind::ProcessFile, "repo", "a.ts")).await;
         let _barrier = q.enqueue(
-            Task::new(TaskKind::ResolveEdges, "repo", "").blocked_by(vec![f1])
+            Task::new(TaskKind::BuildConnections, "repo", "").blocked_by(vec![f1])
         ).await;
 
         let t = q.next_task().await;
@@ -617,6 +650,81 @@ mod tests {
         assert!(!q.has_pending_kind_folder(TaskKind::IndexLibrary, lib_b).await, "different lib id → not pending");
         // Keyed on folder_path (the lib id), NOT the name in path.
         assert!(!q.has_pending_kind_folder(TaskKind::IndexLibrary, "some-lib").await, "the name is not the key");
+    }
+
+    #[tokio::test]
+    async fn enqueue_unique_dedupes_same_kind_folder_path() {
+        // Single-writer guard (D6e / W5): a second enqueue of the same
+        // (kind, folder_path, path) while one is still pending or running must
+        // be deduped, so two concurrent scans of the same folder can't both run
+        // and defeat the graph-idempotency fixes.
+        let q = TaskQueue::new();
+
+        // First admit returns an id.
+        let id1 = q.enqueue_unique(Task::new(TaskKind::ProcessGitFolder, "repo", "repo")).await;
+        assert!(id1.is_some(), "first enqueue_unique admits the task");
+        assert_eq!(q.status().await.pending, 1);
+
+        // Duplicate (same kind + folder + path) while pending → skipped, no new row.
+        let dup = q.enqueue_unique(Task::new(TaskKind::ProcessGitFolder, "repo", "repo")).await;
+        assert!(dup.is_none(), "a duplicate is not enqueued twice");
+        assert_eq!(q.status().await.pending, 1, "still exactly one pending");
+
+        // A different path is admitted.
+        let other = q.enqueue_unique(Task::new(TaskKind::ProcessFile, "repo", "a.ts")).await;
+        assert!(other.is_some(), "a different (kind, path) is admitted");
+        assert_eq!(q.status().await.pending, 2);
+
+        // A running (dequeued) task still blocks a re-enqueue — the writer is
+        // still active, so the guard must include running tasks.
+        let running = q.next_task().await;
+        let dup_running = q.enqueue_unique(
+            Task::new(running.kind.clone(), &running.folder_path, &running.path)
+        ).await;
+        assert!(dup_running.is_none(), "a running task still dedupes a re-enqueue");
+    }
+
+    #[tokio::test]
+    async fn enqueue_unique_dedupes_blocked_task() {
+        // The guard must match a task parked in `blocked` (waiting on an unmet
+        // dep), not only pending/running — else a duplicate slips in while the
+        // first task is blocked on a barrier.
+        let q = TaskQueue::new();
+        // blocked_by a dep id that never completes → the task stays in `blocked`.
+        let id1 = q.enqueue_unique(
+            Task::new(TaskKind::ProcessGitFolder, "repo", "repo").blocked_by(vec![9999])
+        ).await;
+        assert!(id1.is_some(), "first (blocked) task is admitted");
+        assert_eq!(q.status().await.blocked, 1);
+        assert_eq!(q.status().await.pending, 0);
+
+        let dup = q.enqueue_unique(
+            Task::new(TaskKind::ProcessGitFolder, "repo", "repo").blocked_by(vec![9999])
+        ).await;
+        assert!(dup.is_none(), "a duplicate is deduped even while the first is blocked");
+        assert_eq!(q.status().await.blocked, 1, "still exactly one blocked task");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn enqueue_unique_race_admits_exactly_one() {
+        // Atomicity: the doc claims two concurrent callers can't both slip a
+        // duplicate past the guard. Prove it — 50 tasks racing the identical
+        // (kind, folder_path, path) must yield exactly ONE admit.
+        use std::sync::Arc;
+        let q = Arc::new(TaskQueue::new());
+        let mut handles = Vec::new();
+        for _ in 0..50 {
+            let q = q.clone();
+            handles.push(tokio::spawn(async move {
+                q.enqueue_unique(Task::new(TaskKind::ProcessGitFolder, "repo", "repo")).await
+            }));
+        }
+        let mut admitted = 0usize;
+        for h in handles {
+            if h.await.unwrap().is_some() { admitted += 1; }
+        }
+        assert_eq!(admitted, 1, "exactly one concurrent caller is admitted");
+        assert_eq!(q.status().await.pending, 1, "queue holds exactly one task");
     }
 
     #[tokio::test]

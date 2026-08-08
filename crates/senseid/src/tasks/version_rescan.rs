@@ -87,12 +87,12 @@ pub async fn maybe_rescan_on_version_change(
         Ok(roots) => {
             let mut enqueued = 0u32;
             for r in &roots {
-                match r["path"].as_str() {
-                    Some(path) if !path.is_empty() => {
-                        queue.enqueue(Task::new(TaskKind::ScanRoot, "", path)).await;
-                        enqueued += 1;
-                    }
-                    _ => {}
+                let Some(path) = r["path"].as_str().filter(|p| !p.is_empty()) else { continue };
+                // Single-writer (D6e/W5): a version-bump rescan must not race the
+                // reconcile scheduler's tick — skip a root that already has a
+                // ScanRoot pending/running.
+                if queue.enqueue_unique(Task::new(TaskKind::ScanRoot, "", path)).await.is_some() {
+                    enqueued += 1;
                 }
             }
             tracing::info!("version rescan: enqueued {enqueued} ScanRoot task(s)");
@@ -286,6 +286,39 @@ mod tests {
         assert!(scanroots_for(&drain_all(&q3).await, &root_path).is_empty(), "no rescan on a committed version");
 
         // Cleanup shared-DB state.
+        pg.remove_watch_root(&rid).await.unwrap();
+        pg.delete_config(LAST_VERSION_KEY).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn version_rescan_skips_a_root_already_scanning() {
+        // Single-writer (D6e/W5): a version-bump rescan must not stack a second
+        // ScanRoot for a root the reconcile tick is already scanning — the race
+        // the review flagged. Without the guard the root would show 2 ScanRoots.
+        let pg = PgStore::connect_test().await.unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let root_path = tmp.path().to_string_lossy().to_string();
+        let rid = pg
+            .add_watch_root(&root_path, "version_rescan_dedup_root", &serde_json::json!([]))
+            .await
+            .unwrap();
+        pg.set_config(LAST_VERSION_KEY, "0.0.0-old").await.unwrap();
+
+        let q = Arc::new(TaskQueue::with_max_repos(4096));
+        // Pre-seed: this root already has a ScanRoot in flight.
+        q.enqueue(Task::new(TaskKind::ScanRoot, "", &root_path)).await;
+
+        assert!(
+            maybe_rescan_on_version_change(&pg, &q, "9.9.9-new").await,
+            "version change still triggers a rebuild",
+        );
+        // Only the pre-seeded ScanRoot exists for our root — the rescan deduped.
+        assert_eq!(
+            scanroots_for(&drain_all(&q).await, &root_path).len(),
+            1,
+            "an in-flight ScanRoot is not stacked by the version rescan",
+        );
+
         pg.remove_watch_root(&rid).await.unwrap();
         pg.delete_config(LAST_VERSION_KEY).await.unwrap();
     }

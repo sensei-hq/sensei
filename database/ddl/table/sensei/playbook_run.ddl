@@ -14,6 +14,8 @@ create table if not exists playbook_run (
 , classified_by   text
 , model_fallback  boolean     not null default false
 , outcome_ftr boolean
+, project_id  uuid            not null references projects(id) on delete cascade
 , created_at  timestamptz     not null default now()
 );
 create index if not exists playbook_run_session_idx on playbook_run(session_id);
+create index if not exists playbook_run_project_idx on playbook_run(project_id);

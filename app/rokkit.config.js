@@ -62,14 +62,24 @@ export default {
     //   ink-faint light 0.750  ↔ kami.500 ✓ / dark 0.420 ↔ sumi.600 ✓
     ink:          { light: "kami.900", dark: "sumi.900" },
     "ink-soft":   { light: "kami.700", dark: "sumi.800" },
-    "ink-mute":   { light: "kami.600", dark: "sumi.700" },
-    "ink-faint":  { light: "kami.500", dark: "sumi.600" },
+    // ink-mute / ink-faint retuned for WCAG 2.1 AA (4.5:1) on card surfaces AND to
+    // keep a 4-STEP ramp (soft > mute > faint, distinct in BOTH modes). The mockup's
+    // own muted inks fail AA on small text (mute 4.0:1, faint 2.07:1), so we keep the
+    // darkened values (see docs/spec/2026-08-05-mockup-drift-audit.md F1). Measured:
+    //   ink-mute  light 0.470 (6.37:1) / dark 0.760 (7.47:1)
+    //   ink-faint light 0.510 (5.37:1) / dark 0.660 (5.16:1)   — distinct from mute both modes.
+    // (faint light is 0.510 not 0.545: 0.545 measured 4.62 and axe's stricter calc
+    //  tipped it under 4.5 on ~10 screens; 0.510 keeps margin AND stays > mute 0.470.)
+    "ink-mute":   { light: "oklch(0.470 0.010 50)", dark: "oklch(0.760 0.009 85)" },
+    "ink-faint":  { light: "oklch(0.510 0.010 50)", dark: "oklch(0.660 0.009 85)" },
 
     // ── Accent — vermillion (design system: --accent: var(--shu-500)) ─
     // accent-soft is omitted: skin is now `accent: "shu"` so the canonical
     // default resolves to shu.100 / shu.200 — same as the former override.
     // accent override (shade 400 dark shift) is kept for dark-mode legibility.
-    accent:        { light: "shu.500", dark: "shu.400" },
+    // Light value darkened shu.500 (0.58L, 4.27:1) → 0.520L (5.5:1) so vermillion
+    // TEXT (stat numbers, arrows, kanji labels) passes WCAG AA. Dark keeps shu.400.
+    accent:        { light: "oklch(0.520 0.145 35)", dark: "shu.400" },
 
     // ── Primary named token — ink-colored CTA (design system: --primary: var(--ink)) ─
     // Named `bg-primary` / `text-primary` = ink color (for ink-on-paper buttons).
@@ -78,11 +88,43 @@ export default {
     primary:      { light: "kami.900", dark: "sumi.900" },
     "on-primary": { light: "kami.100", dark: "sumi.50"  },
 
-    // ── Status — lighten for legibility in dark mode (shade 400 vs 500) ─
-    success:      { light: "hisui.500",  dark: "hisui.400"  },
-    warning:      { light: "kohaku.500", dark: "kohaku.400" },
-    danger:       { light: "beni.500",   dark: "beni.400"   },
-    info:         { light: "ai.500",     dark: "ai.400"     },
+    // ── Status (solid/text) ────────────────────────────────────────────────────
+    // Light values DARKENED for WCAG AA — the .500 shades read as light text on
+    // white and failed 4.5:1 (warning 2.35:1, success 3.26:1, danger 4.55:1). Raw
+    // oklch keeps each hue at ~5:1 for status TEXT (counts, verdicts, deltas). Dark
+    // keeps the lightened .400 shades (dark mode already passes on the dark surface).
+    // danger/error deepened 0.520→0.490: `text-danger` on `bg-danger-soft` (badges,
+    // drift chips) measured 4.39:1 over a card surface — under AA. At 0.490 with the
+    // soft at the mockup's 10% alpha (below) it clears to 5.13:1 (gamma-composite),
+    // ~4.87 axe-adjusted. Still a clean crimson; visually indistinguishable from .520.
+    success:      { light: "oklch(0.510 0.076 160)", dark: "hisui.400"  },
+    warning:      { light: "oklch(0.510 0.100 75)",  dark: "kohaku.400" },
+    danger:       { light: "oklch(0.490 0.178 25)",  dark: "beni.400"   },
+    // error is a documented ALIAS of danger (mockup-drift-audit F4) — single-sourced
+    // via var() so it can never drift from danger. Kept because activity-logs uses
+    // text-error / bg-error-soft; every other failure reads danger. Same computed
+    // color as the former literal, so no visual change.
+    error:        { light: "var(--danger)", dark: "var(--danger)" },
+    info:         { light: "oklch(0.520 0.150 254)", dark: "ai.400"     },
+
+    // ── Status/accent SOFT (tinted callout backgrounds) — ALPHA-COMPOSITE model ──
+    // The mockup (WCAG-clean source of truth) defines each `-soft` as a TRANSLUCENT
+    // tint of its base — oklch(<base> / 0.10–0.20) — so it composites over whatever
+    // paper surface it sits on and is dark-safe BY CONSTRUCTION (no per-mode pale-vs-
+    // dark shade juggling). We match that with color-mix over the (mode-correct)
+    // named base token, at the mockup alphas (a touch higher in dark). This replaces
+    // the earlier solid two-pole shades (.100/.900) that couldn't composite and forced
+    // the hardcoded dark workaround. See mockup-drift-audit F2.
+    "accent-soft":  { light: "color-mix(in oklch, var(--accent) 14%, transparent)",  dark: "color-mix(in oklch, var(--accent) 20%, transparent)"  },
+    "success-soft": { light: "color-mix(in oklch, var(--success) 14%, transparent)", dark: "color-mix(in oklch, var(--success) 20%, transparent)" },
+    "warning-soft": { light: "color-mix(in oklch, var(--warning) 15%, transparent)", dark: "color-mix(in oklch, var(--warning) 22%, transparent)" },
+    "danger-soft":  { light: "color-mix(in oklch, var(--danger) 10%, transparent)",  dark: "color-mix(in oklch, var(--danger) 18%, transparent)"  },
+    "error-soft":   { light: "var(--danger-soft)", dark: "var(--danger-soft)" },
+    "info-soft":    { light: "color-mix(in oklch, var(--info) 14%, transparent)",    dark: "color-mix(in oklch, var(--info) 20%, transparent)"    },
+
+    // Modal/dialog backdrop scrim — a semantic token so components never hardcode
+    // rgba(0,0,0,…). A scrim dims the backdrop, so it's a dark veil in both modes.
+    "scrim":        { light: "oklch(0.150 0.008 50 / 0.45)", dark: "oklch(0.120 0.008 50 / 0.55)" },
   },
 
   typography: {
