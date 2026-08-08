@@ -299,6 +299,52 @@ pub(crate) fn remote_owner_slug(url: &str) -> Option<String> {
     (segments.len() >= 2).then(|| segments[segments.len() - 2].to_ascii_lowercase())
 }
 
+/// A row from the `sensei.metrics` registry — the data-driven catalog of what to
+/// compute (see `database/ddl/table/sensei/metrics.ddl`). Carries the descriptive
+/// facets (`name`/`purpose`/`how_to_read`/`formula`) and the compute knobs
+/// (`type`/`direction`/`weight`/`target`/`task_name`) the scheduler and compute
+/// handlers read. `family`/`metric_type`/`direction` are the `sensei.metric_*`
+/// enums surfaced as their text values; `weight`/`target` are the `numeric`
+/// columns as `f64`.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct Metric {
+    pub id:              uuid::Uuid,
+    pub key:             String,
+    pub name:            String,
+    pub description:     String,
+    pub family:          String,
+    pub metric_type:     String,
+    pub unit:            Option<String>,
+    pub direction:       String,
+    pub purpose:         String,
+    pub how_to_read:     String,
+    pub formula:         String,
+    pub task_name:       String,
+    pub weight:          f64,
+    pub target:          Option<f64>,
+    pub effective_from:  chrono::NaiveDate,
+    pub effective_until: Option<chrono::NaiveDate>,
+}
+
+/// Latest stored value for one metric of a project, with the catalog facets it is
+/// read through — the shape [`PgStore::get_project_metrics`] returns. `value`/`props`
+/// come from `sensei.project_metric_daily` (latest `date` per metric); `name`,
+/// `metric_type`, `unit`, `direction`, `purpose`, `how_to_read` are joined from
+/// `sensei.metrics`. Trend (prior/delta) is deferred to the Phase 7 endpoint.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ProjectMetricRow {
+    pub metric:      String,
+    pub date:        chrono::NaiveDate,
+    pub value:       f64,
+    pub props:       serde_json::Value,
+    pub name:        String,
+    pub metric_type: String,
+    pub unit:        Option<String>,
+    pub direction:   String,
+    pub purpose:     String,
+    pub how_to_read: String,
+}
+
 #[allow(dead_code, clippy::too_many_arguments, clippy::type_complexity)]
 // PgStore API surface — methods wired up incrementally; SQLx tuple return types
 // are inherently verbose and adding an extra layer of type aliases would
@@ -6296,6 +6342,164 @@ impl PgStore {
         .await
         .map_err(|e| e.to_string())?;
         Ok(())
+    }
+
+    // ── Metrics: value store + active registry (Phase 3) ──────────────────
+
+    /// Upsert one `sensei.project_metrics` row, keyed on its identity
+    /// `(metric_id, project_id, folder_id, session_id, computed_on, grain)` — the
+    /// `project_metrics_identity` unique index (`nulls not distinct`, so a
+    /// project-scope / daily-grain row's null `folder_id`/`session_id` collide
+    /// rather than duplicate). A re-run with the same identity BACKFILLS in place —
+    /// updates `value`, `props`, `source` and bumps `modified_at` — so the compute
+    /// tasks are idempotent. Returns the row id. `grain` is the
+    /// `sensei.metric_grain` enum (`daily`|`session`); `source` the
+    /// `sensei.metric_source` enum (`measured`|`estimated`).
+    ///
+    /// `project_metrics_identity` is a unique INDEX, not a named constraint, so the
+    /// conflict target is the column list — Postgres infers the arbiter index
+    /// (honouring its `nulls not distinct`); `ON CONFLICT ON CONSTRAINT <name>`
+    /// would not resolve against an index.
+    pub async fn upsert_project_metric(
+        &self,
+        metric_id:   &uuid::Uuid,
+        project_id:  &uuid::Uuid,
+        folder_id:   Option<&uuid::Uuid>,
+        session_id:  Option<&uuid::Uuid>,
+        computed_on: chrono::NaiveDate,
+        grain:       &str,
+        value:       f64,
+        props:       &serde_json::Value,
+        source:      &str,
+    ) -> Result<uuid::Uuid, String> {
+        let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO sensei.project_metrics
+                (metric_id, project_id, folder_id, session_id, computed_on, grain, value, props, source)
+             VALUES ($1, $2, $3, $4, $5, $6::sensei.metric_grain, $7::float8::numeric, $8, $9::sensei.metric_source)
+             ON CONFLICT (metric_id, project_id, folder_id, session_id, computed_on, grain) DO UPDATE
+                SET value       = EXCLUDED.value,
+                    props       = EXCLUDED.props,
+                    source      = EXCLUDED.source,
+                    modified_at = now()
+             RETURNING id",
+        )
+        .bind(metric_id)
+        .bind(project_id)
+        .bind(folder_id)
+        .bind(session_id)
+        .bind(computed_on)
+        .bind(grain)
+        .bind(value)
+        .bind(props)
+        .bind(source)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(row.0)
+    }
+
+    /// The ACTIVE metric registry: rows that live on `current_date`
+    /// (`effective_from <= current_date AND (effective_until IS NULL OR
+    /// effective_until >= current_date)`) — retired (past `effective_until`) and
+    /// not-yet-effective (future `effective_from`) rows are excluded. Drives the
+    /// scheduler and the compute handlers.
+    pub async fn active_metrics(&self) -> Result<Vec<Metric>, String> {
+        let rows: Vec<(
+            uuid::Uuid, String, String, String, String, String, Option<String>, String,
+            String, String, String, String, f64, Option<f64>, chrono::NaiveDate, Option<chrono::NaiveDate>,
+        )> = sqlx_core::query_as::query_as(
+            "SELECT id, key, name, description, family::text, type::text, unit, direction::text,
+                    purpose, how_to_read, formula, task_name, weight::float8, target::float8,
+                    effective_from, effective_until
+               FROM sensei.metrics
+              WHERE effective_from <= current_date
+                AND (effective_until IS NULL OR effective_until >= current_date)
+              ORDER BY key",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(rows
+            .into_iter()
+            .map(|(
+                id, key, name, description, family, metric_type, unit, direction,
+                purpose, how_to_read, formula, task_name, weight, target, effective_from, effective_until,
+            )| Metric {
+                id, key, name, description, family, metric_type, unit, direction,
+                purpose, how_to_read, formula, task_name, weight, target, effective_from, effective_until,
+            })
+            .collect())
+    }
+
+    /// Distinct `task_name`s over the ACTIVE metric registry — the set of compiled
+    /// TaskKinds the scheduler must dispatch. Same active-window filter as
+    /// [`Self::active_metrics`].
+    pub async fn active_task_names(&self) -> Result<Vec<String>, String> {
+        let rows: Vec<(String,)> = sqlx_core::query_as::query_as(
+            "SELECT DISTINCT task_name FROM sensei.metrics
+              WHERE effective_from <= current_date
+                AND (effective_until IS NULL OR effective_until >= current_date)
+              ORDER BY task_name",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(t,)| t).collect())
+    }
+
+    /// Resolve an absolute folder path to its `(folder_id, project_id)` for
+    /// project-scoped metric attribution. Thin wrapper over
+    /// [`Self::get_folder_ids_by_path`] (matches `folders.abs_path`, then falls
+    /// back to a `folder_path_aliases.alias_abs_path`) that additionally REQUIRES a
+    /// project: a folder not yet attached to a project can't own a project-scoped
+    /// metric, so it resolves to `None` — an honest miss, never a fabricated
+    /// project id. Reuses the shared resolver rather than duplicating the
+    /// folders/alias SQL.
+    pub async fn resolve_folder_by_path(
+        &self,
+        folder_path: &str,
+    ) -> Result<Option<(uuid::Uuid, uuid::Uuid)>, String> {
+        Ok(self
+            .get_folder_ids_by_path(folder_path)
+            .await?
+            .and_then(|(folder_id, project_id)| project_id.map(|p| (folder_id, p))))
+    }
+
+    /// Latest stored value per metric for a project, with the catalog facets it is
+    /// read through — reads `sensei.project_metric_daily` (project-scope daily
+    /// rows) and keeps the newest `date` per metric (`DISTINCT ON`), joining
+    /// `sensei.metrics` for name/type/unit/direction/purpose/how_to_read. Empty
+    /// when the project has no daily rows yet (honest-empty, not a failure). Trend
+    /// (prior/delta over `project_metric_trend`) is deferred to the Phase 7
+    /// endpoint.
+    pub async fn get_project_metrics(
+        &self,
+        project_id: &uuid::Uuid,
+    ) -> Result<Vec<ProjectMetricRow>, String> {
+        let rows: Vec<(
+            String, chrono::NaiveDate, f64, serde_json::Value, String, String,
+            Option<String>, String, String, String,
+        )> = sqlx_core::query_as::query_as(
+            "SELECT DISTINCT ON (d.metric)
+                    d.metric, d.date, d.value::float8, d.props,
+                    m.name, m.type::text, m.unit, m.direction::text, m.purpose, m.how_to_read
+               FROM sensei.project_metric_daily d
+               JOIN sensei.metrics m ON m.key = d.metric
+              WHERE d.project_id = $1
+              ORDER BY d.metric, d.date DESC",
+        )
+        .bind(project_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(rows
+            .into_iter()
+            .map(|(
+                metric, date, value, props, name, metric_type, unit, direction, purpose, how_to_read,
+            )| ProjectMetricRow {
+                metric, date, value, props, name, metric_type, unit, direction, purpose, how_to_read,
+            })
+            .collect())
     }
 
     /// Re-attach orphaned sessions: `activity.assistant_events` rows whose session
@@ -15447,6 +15651,183 @@ mod tests {
         // A source that never exists → empty Vec, not an error.
         let none = pg.query_logs(None, Some("_test:logs:does-not-exist"), None, None, 200).await.unwrap();
         assert!(none.is_empty());
+    }
+
+    // ── Metrics: value store + active registry (Phase 3) ──────────────────
+
+    /// Seed a `sensei.metrics` registry row for a test. Dates are relative to the
+    /// DB's `current_date` (via `current_date + <offset> days`) so the active-window
+    /// tests don't flake at a local midnight boundary. `until_offset = None` leaves
+    /// `effective_until` NULL (never retired). `name` is set to `key` so facet
+    /// assertions have a known value.
+    async fn seed_metric(
+        s: &PgStore, key: &str, task_name: &str, from_offset: i32, until_offset: Option<i32>,
+    ) -> uuid::Uuid {
+        let row: (uuid::Uuid,) = query_as(
+            "INSERT INTO sensei.metrics
+                (key, name, description, family, type, direction, purpose, how_to_read, formula,
+                 task_name, effective_from, effective_until)
+             VALUES ($1, $1, 'test metric', 'quality'::sensei.metric_family, 'ratio'::sensei.metric_type,
+                     'higher_better'::sensei.metric_direction, 'test purpose', 'test how', 'test formula',
+                     $2, current_date + $3::int, current_date + $4::int)
+             RETURNING id",
+        )
+        .bind(key).bind(task_name).bind(from_offset).bind(until_offset)
+        .fetch_one(s.pool()).await.unwrap();
+        row.0
+    }
+
+    #[tokio::test]
+    async fn upsert_project_metric_is_idempotent() {
+        // Two upserts of the same identity (metric x project x null folder x null
+        // session x date x daily) collapse to ONE row: the second updates value,
+        // props, source and bumps modified_at rather than duplicating.
+        let s = pg_store().await;
+        let uniq = uuid::Uuid::new_v4();
+        let pid = s.create_project(&format!("_test:pm-idem:{uniq}"), None, None).await.unwrap();
+        let mid = seed_metric(&s, &format!("_test:pm-idem:{uniq}:ftr"), "ComputeFtr", 0, None).await;
+        let day = chrono::NaiveDate::from_ymd_opt(2020, 1, 1).unwrap();
+
+        let id1 = s.upsert_project_metric(
+            &mid, &pid, None, None, day, "daily", 0.5,
+            &serde_json::json!({"numerator": 1, "denominator": 2}), "measured",
+        ).await.unwrap();
+
+        // Backdate modified_at so the second upsert's bump is observable.
+        sqlx_core::query::query(
+            "UPDATE sensei.project_metrics SET modified_at = now() - interval '1 hour' WHERE id = $1")
+            .bind(id1).execute(s.pool()).await.unwrap();
+        let (before,): (chrono::DateTime<chrono::Utc>,) =
+            query_as("SELECT modified_at FROM sensei.project_metrics WHERE id = $1")
+                .bind(id1).fetch_one(s.pool()).await.unwrap();
+
+        let id2 = s.upsert_project_metric(
+            &mid, &pid, None, None, day, "daily", 0.75,
+            &serde_json::json!({"numerator": 3, "denominator": 4}), "estimated",
+        ).await.unwrap();
+        assert_eq!(id1, id2, "same identity upserts the same row (no duplicate)");
+
+        let (n,): (i64,) = query_as(
+            "SELECT count(*) FROM sensei.project_metrics
+              WHERE metric_id = $1 AND project_id = $2 AND folder_id IS NULL
+                AND session_id IS NULL AND computed_on = $3 AND grain = 'daily'")
+            .bind(mid).bind(pid).bind(day).fetch_one(s.pool()).await.unwrap();
+        assert_eq!(n, 1, "one row per identity — the second upsert updated in place");
+
+        let (value, props, source, after): (f64, serde_json::Value, String, chrono::DateTime<chrono::Utc>) =
+            query_as("SELECT value::float8, props, source::text, modified_at FROM sensei.project_metrics WHERE id = $1")
+                .bind(id1).fetch_one(s.pool()).await.unwrap();
+        assert_eq!(value, 0.75, "value updated to the second upsert's");
+        assert_eq!(props, serde_json::json!({"numerator": 3, "denominator": 4}), "props updated");
+        assert_eq!(source, "estimated", "source updated");
+        assert!(after > before, "modified_at bumped past the backdated value");
+
+        // cleanup — project_metrics rows cascade from the metric + project.
+        sqlx_core::query::query("DELETE FROM sensei.metrics WHERE id = $1").bind(mid).execute(s.pool()).await.unwrap();
+        sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1").bind(pid).execute(s.pool()).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn active_metrics_excludes_retired_and_future() {
+        // active_metrics() returns only rows live on current_date: the retired
+        // (past effective_until) and not-yet-effective (future effective_from) rows
+        // are excluded. Assertions are key-specific so the pre-seeded registry and
+        // concurrent tests don't interfere.
+        let s = pg_store().await;
+        let uniq = uuid::Uuid::new_v4();
+        let active_key  = format!("_test:active:{uniq}");
+        let retired_key = format!("_test:retired:{uniq}");
+        let future_key  = format!("_test:future:{uniq}");
+        let active_task  = format!("ComputeActive_{uniq}");
+        let retired_task = format!("ComputeRetired_{uniq}");
+        let future_task  = format!("ComputeFuture_{uniq}");
+        seed_metric(&s, &active_key,  &active_task,  0,   None).await;      // from today, no end
+        seed_metric(&s, &retired_key, &retired_task, -10, Some(-1)).await;  // ended yesterday
+        seed_metric(&s, &future_key,  &future_task,  1,   None).await;      // effective tomorrow
+
+        let metrics = s.active_metrics().await.unwrap();
+        let keys: Vec<&str> = metrics.iter().map(|m| m.key.as_str()).collect();
+        assert!(keys.contains(&active_key.as_str()), "active metric is returned");
+        assert!(!keys.contains(&retired_key.as_str()), "retired metric is excluded");
+        assert!(!keys.contains(&future_key.as_str()), "not-yet-effective metric is excluded");
+
+        let tasks = s.active_task_names().await.unwrap();
+        assert!(tasks.contains(&active_task), "active metric's task_name is present");
+        assert!(!tasks.contains(&retired_task), "retired metric's task_name is absent");
+        assert!(!tasks.contains(&future_task), "future metric's task_name is absent");
+
+        // The mapped Metric carries the facets/knobs.
+        let active = metrics.iter().find(|m| m.key == active_key).unwrap();
+        assert_eq!(active.family, "quality");
+        assert_eq!(active.metric_type, "ratio");
+        assert_eq!(active.direction, "higher_better");
+        assert_eq!(active.weight, 1.0, "numeric weight defaults to 1");
+        assert!(active.effective_until.is_none(), "active metric has no end date");
+
+        sqlx_core::query::query("DELETE FROM sensei.metrics WHERE key IN ($1, $2, $3)")
+            .bind(&active_key).bind(&retired_key).bind(&future_key)
+            .execute(s.pool()).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn resolve_folder_from_path_uses_aliases() {
+        // A live folders.abs_path resolves; a folder_path_aliases OLD path resolves
+        // to the CURRENT folder + project; an unknown path is an honest None.
+        let s = pg_store().await;
+        let uniq = uuid::Uuid::new_v4();
+        let (pid, fid) = create_test_project_and_folder(&s, &format!("resolve-{uniq}")).await;
+        let abs_path = format!("/_test/resolve-{uniq}"); // create_test_folder sets abs_path = /_test/{suffix}
+        let alias = format!("/_test/old-resolve-{uniq}");
+        s.add_folder_path_alias(&alias, &fid, "rename").await.unwrap();
+
+        assert_eq!(
+            s.resolve_folder_by_path(&abs_path).await.unwrap(), Some((fid, pid)),
+            "a live folders.abs_path resolves to (folder_id, project_id)");
+        assert_eq!(
+            s.resolve_folder_by_path(&alias).await.unwrap(), Some((fid, pid)),
+            "a folder_path_aliases old path resolves to the current folder + project");
+        assert_eq!(
+            s.resolve_folder_by_path(&format!("/_test/unknown-{uniq}")).await.unwrap(), None,
+            "an unknown path resolves to None (never fabricated)");
+
+        // cleanup — the alias cascades on folder delete.
+        sqlx_core::query::query("DELETE FROM sensei.folders WHERE id = $1").bind(fid).execute(s.pool()).await.unwrap();
+        sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1").bind(pid).execute(s.pool()).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn get_project_metrics_reads_views() {
+        // After upserting two daily rows on different dates, get_project_metrics
+        // returns the LATEST-per-metric value + props with the catalog facets
+        // (name/type/unit/direction/purpose/how_to_read) joined from sensei.metrics.
+        let s = pg_store().await;
+        let uniq = uuid::Uuid::new_v4();
+        let pid = s.create_project(&format!("_test:gpm:{uniq}"), None, None).await.unwrap();
+        let key = format!("_test:gpm:{uniq}:cov");
+        let mid = seed_metric(&s, &key, "ComputeCoverage", 0, None).await;
+        let d1 = chrono::NaiveDate::from_ymd_opt(2020, 1, 1).unwrap();
+        let d2 = chrono::NaiveDate::from_ymd_opt(2020, 1, 2).unwrap(); // later => latest
+
+        s.upsert_project_metric(&mid, &pid, None, None, d1, "daily", 0.5,
+            &serde_json::json!({"numerator": 1, "denominator": 2}), "measured").await.unwrap();
+        s.upsert_project_metric(&mid, &pid, None, None, d2, "daily", 0.75,
+            &serde_json::json!({"numerator": 3, "denominator": 4}), "measured").await.unwrap();
+
+        let rows = s.get_project_metrics(&pid).await.unwrap();
+        let row = rows.iter().find(|r| r.metric == key).expect("our metric is present");
+        assert_eq!(row.date, d2, "latest date per metric wins");
+        assert_eq!(row.value, 0.75, "latest value");
+        assert_eq!(row.props, serde_json::json!({"numerator": 3, "denominator": 4}), "props from the latest row");
+        assert_eq!(row.name, key, "name facet joined from sensei.metrics (seed sets name = key)");
+        assert_eq!(row.metric_type, "ratio", "type facet");
+        assert_eq!(row.direction, "higher_better", "direction facet");
+        assert_eq!(row.purpose, "test purpose", "purpose facet");
+        assert_eq!(row.how_to_read, "test how", "how_to_read facet");
+        assert!(row.unit.is_none(), "seed leaves unit null");
+
+        // cleanup — project_metrics rows cascade from the metric + project.
+        sqlx_core::query::query("DELETE FROM sensei.metrics WHERE id = $1").bind(mid).execute(s.pool()).await.unwrap();
+        sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1").bind(pid).execute(s.pool()).await.unwrap();
     }
 }
 
