@@ -16,6 +16,7 @@ create table if not exists nodes (
 , line_start               integer
 , line_end                 integer
 , is_exported              boolean     not null default false
+, is_test                  boolean     not null default false
 , community_id             integer
 , degree                   integer
 , embedding                vector(384)
@@ -150,6 +151,11 @@ comment on column nodes.line_end
      is 'One-based line number where this node ends.';
 comment on column nodes.is_exported
      is 'True when the symbol is exported from its file. Only meaningful for code symbols.';
+comment on column nodes.is_test
+     is 'True when this node belongs to a test file (path-convention: tests/ dirs,
+*.test.*/*.spec.*, *_test.*, test_*.py, *Test.java, …; see languages::is_test_path).
+Lets the UI filter tests out when focusing on production code. lib_symbol/lib_package
+(external deps) are never test. Reference stubs inherit it from their definition.';
 comment on column nodes.community_id
      is 'Leiden community cluster ID. Batch-computed. Null until computed.';
 comment on column nodes.degree

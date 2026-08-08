@@ -1099,6 +1099,17 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
                     .map_err(|e| format!("insert_edge (references, symbol): {e}"))?;
             }
         }
+
+        // is_test: a FILE-level flag stamped on every one of this file's nodes so
+        // the UI can filter tests out when focusing on production code. Set after
+        // emit (all nodes exist); IS DISTINCT FROM makes a no-op re-scan cheap and
+        // a test↔prod rename flips the file's nodes.
+        let is_test = crate::languages::is_test_path(
+            &result.rel_path,
+            crate::languages::language_for_path(&result.rel_path),
+        );
+        ctx.pg().set_nodes_is_test_for_file(&folder_id, &result.rel_path, is_test).await
+            .map_err(|e| format!("set_nodes_is_test_for_file: {e}"))?;
         Ok::<(), String>(())
     }.await;
 
@@ -1598,6 +1609,46 @@ mod tests {
             deps.iter().any(|d| d["package"] == "serde_json" && d["symbol_count"] == 1),
             "serde_json is a queryable dependency with one used symbol, got {deps:?}"
         );
+
+        ctx.pg().delete_nodes_by_folder(&fid).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn process_file_flags_test_file_nodes_is_test() {
+        // Every node in a test file gets is_test=true (UI filters tests out);
+        // production-file nodes stay is_test=false.
+        let ctx = make_ctx().await;
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("istest");
+        std::fs::create_dir_all(repo.join("src")).unwrap();
+        std::fs::create_dir_all(repo.join("tests")).unwrap();
+        std::fs::write(repo.join("Cargo.toml"), "[package]\nname=\"istest\"\n").unwrap();
+        std::fs::write(repo.join("src/lib.rs"), "pub fn compute() -> i32 { 1 }\n").unwrap();
+        std::fs::write(repo.join("tests/it.rs"), "fn helper() {}\nfn check() { helper(); }\n").unwrap();
+        let repo_path = repo.to_string_lossy().to_string();
+        let rid = ctx.pg().add_watch_root(&tmp.path().to_string_lossy(), "istest", &serde_json::json!([])).await.unwrap();
+        let fid = ctx.pg().upsert_repo_kind(&rid, "git", "istest", &repo_path).await.unwrap();
+        ctx.pg().update_folder_status(&fid, "indexing").await.unwrap();
+
+        for rel in ["src/lib.rs", "tests/it.rs"] {
+            let abs = repo.join(rel).to_string_lossy().to_string();
+            process_file(&ctx, &Task::new(TaskKind::ProcessFile, &repo_path, &abs)).await.unwrap();
+        }
+
+        let count = |sql: &'static str| {
+            let pool = ctx.pg().pool().clone();
+            async move { let (n,): (i64,) = sqlx_core::query_as::query_as(sql).bind(fid).fetch_one(&pool).await.unwrap(); n }
+        };
+        // Every node of the test file is flagged; none left unflagged.
+        assert!(count("SELECT count(*) FROM sensei.nodes WHERE folder_id=$1 AND file_path='tests/it.rs' AND is_test").await >= 1,
+            "test-file nodes are is_test=true");
+        assert_eq!(count("SELECT count(*) FROM sensei.nodes WHERE folder_id=$1 AND file_path='tests/it.rs' AND NOT is_test").await, 0,
+            "no test-file node left unflagged");
+        // Production file nodes exist and are NOT flagged.
+        assert!(count("SELECT count(*) FROM sensei.nodes WHERE folder_id=$1 AND file_path='src/lib.rs'").await >= 1,
+            "prod file produced nodes");
+        assert_eq!(count("SELECT count(*) FROM sensei.nodes WHERE folder_id=$1 AND file_path='src/lib.rs' AND is_test").await, 0,
+            "production-file nodes are not is_test");
 
         ctx.pg().delete_nodes_by_folder(&fid).await.unwrap();
     }
