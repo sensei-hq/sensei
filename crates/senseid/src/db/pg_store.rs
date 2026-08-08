@@ -6398,24 +6398,36 @@ impl PgStore {
         Ok(row.0)
     }
 
-    /// The ACTIVE metric registry: rows that live on `current_date`
-    /// (`effective_from <= current_date AND (effective_until IS NULL OR
-    /// effective_until >= current_date)`) — retired (past `effective_until`) and
+    /// Active-window predicate for `sensei.metrics`: a metric is live on
+    /// `current_date` when today falls in the HALF-OPEN interval
+    /// `[effective_from, effective_until)` — `effective_until` is the EXCLUSIVE
+    /// last-active boundary, so a metric retired *effective today* is already
+    /// inactive (its `task_name` stops being scheduled that same day). Matches the
+    /// authoritative sources: `docs/spec/pipeline/metrics.md` and the
+    /// `database/ddl/table/sensei/metrics.ddl` column comments. Shared by
+    /// [`Self::active_metrics`] and [`Self::active_task_names`] so the two reads
+    /// can't drift.
+    const ACTIVE_METRIC_PREDICATE: &str =
+        "effective_from <= current_date and (effective_until is null or effective_until > current_date)";
+
+    /// The ACTIVE metric registry: rows that live on `current_date` (see
+    /// [`Self::ACTIVE_METRIC_PREDICATE`]) — retired (past/at `effective_until`) and
     /// not-yet-effective (future `effective_from`) rows are excluded. Drives the
     /// scheduler and the compute handlers.
     pub async fn active_metrics(&self) -> Result<Vec<Metric>, String> {
-        let rows: Vec<(
-            uuid::Uuid, String, String, String, String, String, Option<String>, String,
-            String, String, String, String, f64, Option<f64>, chrono::NaiveDate, Option<chrono::NaiveDate>,
-        )> = sqlx_core::query_as::query_as(
+        let sql = format!(
             "SELECT id, key, name, description, family::text, type::text, unit, direction::text,
                     purpose, how_to_read, formula, task_name, weight::float8, target::float8,
                     effective_from, effective_until
                FROM sensei.metrics
-              WHERE effective_from <= current_date
-                AND (effective_until IS NULL OR effective_until >= current_date)
+              WHERE {}
               ORDER BY key",
-        )
+            Self::ACTIVE_METRIC_PREDICATE,
+        );
+        let rows: Vec<(
+            uuid::Uuid, String, String, String, String, String, Option<String>, String,
+            String, String, String, String, f64, Option<f64>, chrono::NaiveDate, Option<chrono::NaiveDate>,
+        )> = sqlx_core::query_as::query_as(&sql)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| e.to_string())?;
@@ -6435,12 +6447,11 @@ impl PgStore {
     /// TaskKinds the scheduler must dispatch. Same active-window filter as
     /// [`Self::active_metrics`].
     pub async fn active_task_names(&self) -> Result<Vec<String>, String> {
-        let rows: Vec<(String,)> = sqlx_core::query_as::query_as(
-            "SELECT DISTINCT task_name FROM sensei.metrics
-              WHERE effective_from <= current_date
-                AND (effective_until IS NULL OR effective_until >= current_date)
-              ORDER BY task_name",
-        )
+        let sql = format!(
+            "SELECT DISTINCT task_name FROM sensei.metrics WHERE {} ORDER BY task_name",
+            Self::ACTIVE_METRIC_PREDICATE,
+        );
+        let rows: Vec<(String,)> = sqlx_core::query_as::query_as(&sql)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| e.to_string())?;
@@ -15735,26 +15746,36 @@ mod tests {
         // concurrent tests don't interfere.
         let s = pg_store().await;
         let uniq = uuid::Uuid::new_v4();
-        let active_key  = format!("_test:active:{uniq}");
-        let retired_key = format!("_test:retired:{uniq}");
-        let future_key  = format!("_test:future:{uniq}");
-        let active_task  = format!("ComputeActive_{uniq}");
-        let retired_task = format!("ComputeRetired_{uniq}");
-        let future_task  = format!("ComputeFuture_{uniq}");
-        seed_metric(&s, &active_key,  &active_task,  0,   None).await;      // from today, no end
-        seed_metric(&s, &retired_key, &retired_task, -10, Some(-1)).await;  // ended yesterday
-        seed_metric(&s, &future_key,  &future_task,  1,   None).await;      // effective tomorrow
+        let active_key       = format!("_test:active:{uniq}");
+        let retired_key      = format!("_test:retired:{uniq}");
+        let future_key       = format!("_test:future:{uniq}");
+        let today_retire_key = format!("_test:today-retire:{uniq}");
+        let active_task        = format!("ComputeActive_{uniq}");
+        let retired_task       = format!("ComputeRetired_{uniq}");
+        let future_task        = format!("ComputeFuture_{uniq}");
+        let today_retire_task  = format!("ComputeTodayRetire_{uniq}");
+        seed_metric(&s, &active_key,       &active_task,       0,   None).await;      // from today, no end
+        seed_metric(&s, &retired_key,      &retired_task,      -10, Some(-1)).await;  // ended yesterday
+        seed_metric(&s, &future_key,       &future_task,       1,   None).await;      // effective tomorrow
+        // Retired EFFECTIVE TODAY: effective_until = current_date. The window is
+        // half-open [from, until), so `until > current_date` is false today — this
+        // row must already be inactive (locks the exclusive-upper-bound boundary).
+        seed_metric(&s, &today_retire_key, &today_retire_task, -10, Some(0)).await;
 
         let metrics = s.active_metrics().await.unwrap();
         let keys: Vec<&str> = metrics.iter().map(|m| m.key.as_str()).collect();
         assert!(keys.contains(&active_key.as_str()), "active metric is returned");
         assert!(!keys.contains(&retired_key.as_str()), "retired metric is excluded");
         assert!(!keys.contains(&future_key.as_str()), "not-yet-effective metric is excluded");
+        assert!(!keys.contains(&today_retire_key.as_str()),
+            "a metric retired effective today is excluded (effective_until is exclusive)");
 
         let tasks = s.active_task_names().await.unwrap();
         assert!(tasks.contains(&active_task), "active metric's task_name is present");
         assert!(!tasks.contains(&retired_task), "retired metric's task_name is absent");
         assert!(!tasks.contains(&future_task), "future metric's task_name is absent");
+        assert!(!tasks.contains(&today_retire_task),
+            "task_name of a metric retired effective today is not scheduled");
 
         // The mapped Metric carries the facets/knobs.
         let active = metrics.iter().find(|m| m.key == active_key).unwrap();
@@ -15764,8 +15785,8 @@ mod tests {
         assert_eq!(active.weight, 1.0, "numeric weight defaults to 1");
         assert!(active.effective_until.is_none(), "active metric has no end date");
 
-        sqlx_core::query::query("DELETE FROM sensei.metrics WHERE key IN ($1, $2, $3)")
-            .bind(&active_key).bind(&retired_key).bind(&future_key)
+        sqlx_core::query::query("DELETE FROM sensei.metrics WHERE key IN ($1, $2, $3, $4)")
+            .bind(&active_key).bind(&retired_key).bind(&future_key).bind(&today_retire_key)
             .execute(s.pool()).await.unwrap();
     }
 
@@ -15790,7 +15811,18 @@ mod tests {
             s.resolve_folder_by_path(&format!("/_test/unknown-{uniq}")).await.unwrap(), None,
             "an unknown path resolves to None (never fabricated)");
 
+        // A folder with NO project attached (folders.project_id null — a real,
+        // reachable state: create_test_folder does not wire a project) resolves to
+        // None. This pins the never-fabricate contract: the impl must NOT invent a
+        // project id (e.g. from the folder id) when the folder has no project.
+        let noproj_fid = create_test_folder(&s, &format!("noproj-{uniq}")).await;
+        let noproj_path = format!("/_test/noproj-{uniq}");
+        assert_eq!(
+            s.resolve_folder_by_path(&noproj_path).await.unwrap(), None,
+            "a folder without a project resolves to None (never a fabricated project id)");
+
         // cleanup — the alias cascades on folder delete.
+        sqlx_core::query::query("DELETE FROM sensei.folders WHERE id = $1").bind(noproj_fid).execute(s.pool()).await.unwrap();
         sqlx_core::query::query("DELETE FROM sensei.folders WHERE id = $1").bind(fid).execute(s.pool()).await.unwrap();
         sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1").bind(pid).execute(s.pool()).await.unwrap();
     }
