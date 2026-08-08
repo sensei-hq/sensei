@@ -130,6 +130,8 @@ async fn execute_task(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
             TaskKind::PublishRelaySegments => handlers::publish_relay_segments(ctx, task).await,
             TaskKind::AdvanceRun => handlers::advance_run(ctx, task).await,
             TaskKind::PublishRun => handlers::publish_run(ctx, task).await,
+            TaskKind::ComputeMetrics => handlers::metrics::compute(ctx, task).await,
+            TaskKind::ComputeHealth => handlers::metrics::compute_health(ctx, task).await,
             TaskKind::BackfillTranscripts => crate::transcript::run_backfill(ctx, task).await,
             TaskKind::BackfillTranscriptFile => crate::transcript::run_backfill_file(ctx, task).await,
         }
@@ -304,6 +306,31 @@ mod tests {
             !ctx.pg().unclassified_verdict_sessions(window).await.unwrap().contains(&sid),
             "dispatched handler classified the fixture session",
         );
+    }
+
+    #[tokio::test]
+    async fn execute_task_dispatches_compute_metrics_and_health() {
+        // The executor must route ComputeMetrics → handlers::metrics::compute and
+        // ComputeHealth → handlers::metrics::compute_health. In the Phase 4 stub
+        // both return Ok (a known group is a logged no-op; the health barrier is a
+        // logged no-op) — proving the dispatch arms are wired without depending on
+        // Phase 5/6 compute logic.
+        let ctx = make_ctx().await;
+        let pid = uuid::Uuid::new_v4().to_string();
+
+        let compute = Task::new(TaskKind::ComputeMetrics, &pid, "session_outcomes");
+        assert!(execute_task(&ctx, &compute).await.is_ok(),
+            "ComputeMetrics routes to the metrics compute handler");
+
+        // An unknown group is still routed and is a logged no-op (never errors the
+        // queue) — the dispatch never panics on an unrecognised task_name.
+        let unknown = Task::new(TaskKind::ComputeMetrics, &pid, "no_such_group");
+        assert!(execute_task(&ctx, &unknown).await.is_ok(),
+            "an unknown metrics task_name is a logged no-op, not a queue error");
+
+        let health = Task::new(TaskKind::ComputeHealth, &pid, "");
+        assert!(execute_task(&ctx, &health).await.is_ok(),
+            "ComputeHealth routes to the metrics health handler");
     }
 
     #[tokio::test]
