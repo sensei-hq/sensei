@@ -4,6 +4,7 @@
   import { invalidateAll } from '$app/navigation';
   import { page } from '$app/state';
   import { Kanji, Eyebrow } from '$lib/components';
+  import { Button } from '@rokkit/ui';
   import ProjPill from '../../../../(observatory)/projects/ProjPill.svelte';
   import {
     ftrDisplay,
@@ -97,26 +98,24 @@
       {#if hero.action || hero.meta || rec}
         <div class="flex items-center gap-3 mt-3 flex-wrap">
           {#if hero.action}
-            <button
-              type="button"
-              class="text-sm bg-ink text-paper rounded px-3 py-2 border-none cursor-pointer"
-            >{hero.action} →</button>
+            <Button variant="primary" size="sm">{hero.action} →</Button>
           {/if}
           {#if rec}
-            <button
-              type="button"
+            <Button
+              variant="primary"
+              size="sm"
               data-testid="rec-accept"
               disabled={deciding}
               onclick={() => decide('accept')}
-              class="text-sm bg-primary text-on-primary rounded px-3 py-1.5 border-none cursor-pointer disabled:opacity-60"
-            >{deciding ? 'Working…' : 'Accept'}</button>
-            <button
-              type="button"
+            >{deciding ? 'Working…' : 'Accept'}</Button>
+            <Button
+              variant="secondary"
+              style="outline"
+              size="sm"
               data-testid="rec-reject"
               disabled={deciding}
               onclick={() => decide('reject')}
-              class="text-sm bg-transparent text-ink-soft rounded px-3 py-1.5 border border-paper-edge cursor-pointer disabled:opacity-60"
-            >Reject</button>
+            >Reject</Button>
           {/if}
           {#if hero.meta}
             <span class="font-mono text-xs text-ink-mute">{hero.meta}</span>

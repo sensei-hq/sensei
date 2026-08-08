@@ -44,7 +44,9 @@ describe('InsightCard', () => {
     const glyph = m.container.querySelector('.kanji');
     expect(glyph?.className).toContain('text-warning');
     const tag = m.container.querySelector('[data-insight-tag]');
-    expect(tag?.className).toContain('bg-warning-soft');
+    // Flipping paper surface + tone border/text (dark-safe), not a single-pole soft fill.
+    expect(tag?.className).toContain('bg-paper-mute');
+    expect(tag?.className).toContain('border-warning');
     expect(tag?.className).toContain('text-warning');
   });
 
@@ -52,7 +54,8 @@ describe('InsightCard', () => {
     const m = mountComponent(InsightCardHarness, { insight: insight({ tone: 'good' }) });
     cleanup.push(m.destroy);
     expect(m.container.querySelector('.kanji')?.className).toContain('text-success');
-    expect(m.container.querySelector('[data-insight-tag]')?.className).toContain('bg-success-soft');
+    expect(m.container.querySelector('[data-insight-tag]')?.className).toContain('bg-paper-mute');
+    expect(m.container.querySelector('[data-insight-tag]')?.className).toContain('border-success');
   });
 
   it('paints a mute insight with neutral ink tokens', () => {

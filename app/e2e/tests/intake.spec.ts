@@ -1,22 +1,22 @@
 /**
- * Intake — the front door (Operating-model Phase 2).
+ * Intake — now a PER-PROJECT front door.
  *
- * Verifies the new /intake screen end-to-end in the real built Tauri app
- * against a fresh e2e daemon: the route renders, the rail's "Intake" anchor
- * lands on it, and the freeform → recommend → confirm flow round-trips through
- * the daemon (classify + recommend + record).
+ * A playbook run always happens IN a project (no cwd/repo/graph/rules scope for a
+ * global run), so intake moved off the observatory rail into the project window.
+ * This verifies /project/<id>/intake end-to-end in the real built Tauri app against
+ * a fresh e2e daemon: the route renders, the project sidebar links to it, and the
+ * freeform → recommend → confirm flow round-trips through the daemon (classify +
+ * recommend + record) scoped to a real project.
  *
- * Seed-agnostic: the throwaway sensei_e2e DB has the playbook DDL but no
- * imported catalog/rules, so `recommend` returns a defaulted playbook (raw
- * name, no title/tone) rather than a seeded one. The flow is identical — this
- * spec asserts the plumbing (routes live, card renders, run records), not the
- * specific playbook copy (that's the seeded-DB visual smoke test).
+ * Seed-agnostic: the throwaway sensei_e2e DB has the playbook DDL but no imported
+ * catalog/rules, so `recommend` returns a defaulted playbook (raw name, no
+ * title/tone). The flow is identical — this asserts the plumbing, not the copy.
  */
 
 import { test, expect } from '../fixtures';
 import { navigateTo, navigateToScreen, daemonGet, daemonPost, DAEMON_URL } from '../helpers';
 
-/** Mark setup complete so the observatory shell is reachable (not rerouted to setup). */
+/** Mark setup complete so the app shell is reachable (not rerouted to setup). */
 async function seedSetupComplete(tauriPage: any): Promise<void> {
   await fetch(`${DAEMON_URL}/api/config`, {
     method: 'PUT',
@@ -38,32 +38,42 @@ async function pathname(tauriPage: any): Promise<string> {
   return (await tauriPage.evaluate(`window.location.pathname`)) as string;
 }
 
-test.describe('Intake — front door', () => {
+/** First project in the e2e DB — intake is project-scoped, so we need a real id. */
+async function firstProjectId(): Promise<string> {
+  const projects = await daemonGet<Array<{ id: string }>>('/api/projects');
+  if (!projects.length) throw new Error('e2e daemon has no projects to scope intake to');
+  return projects[0].id;
+}
+
+test.describe('Intake — per-project front door', () => {
   test.beforeEach(async ({ tauriPage }) => {
     await seedSetupComplete(tauriPage);
     await navigateTo(tauriPage, '/logs'); // reset the SPA before navigating to the target
   });
 
-  test('direct navigation renders the intake screen', async ({ tauriPage }) => {
-    // Cold-boot health-ready can take ~50s on a fresh e2e DB; navigateToScreen
-    // re-navigates through the gate for up to 120s, so lift the per-test cap.
+  test('direct navigation renders the project intake screen', async ({ tauriPage }) => {
+    // Cold-boot health-ready can take ~50s on a fresh e2e DB; lift the per-test cap.
     test.setTimeout(180_000);
-    await navigateToScreen(tauriPage, '/intake', '[data-testid="intake-input"]');
-    expect(await pathname(tauriPage)).toBe('/intake');
+    const id = await firstProjectId();
+    await navigateToScreen(tauriPage, `/project/${id}/intake`, '[data-testid="intake-input"]');
+    expect(await pathname(tauriPage)).toBe(`/project/${id}/intake`);
     await expect(tauriPage.locator('[data-testid="intake-input"]')).toBeVisible();
     await expect(tauriPage.locator('[data-testid="intake-recommend"]')).toBeVisible();
   });
 
-  test('the rail "Intake" anchor navigates to /intake', async ({ tauriPage }) => {
-    await navigateToScreen(tauriPage, '/', 'a[href="/intake"]');
-    await tauriPage.locator('a[href="/intake"]').first().click();
+  test('the project sidebar "Intake" link navigates to it', async ({ tauriPage }) => {
+    test.setTimeout(180_000);
+    const id = await firstProjectId();
+    await navigateToScreen(tauriPage, `/project/${id}/overview`, `a[href="/project/${id}/intake"]`);
+    await tauriPage.locator(`a[href="/project/${id}/intake"]`).first().click();
     await new Promise((r) => setTimeout(r, 800));
-    expect(await pathname(tauriPage)).toBe('/intake');
+    expect(await pathname(tauriPage)).toBe(`/project/${id}/intake`);
   });
 
   test('freeform → recommend → confirm records a run', async ({ tauriPage }) => {
     test.setTimeout(180_000);
-    await navigateToScreen(tauriPage, '/intake', '[data-testid="intake-input"]');
+    const id = await firstProjectId();
+    await navigateToScreen(tauriPage, `/project/${id}/intake`, '[data-testid="intake-input"]');
 
     // The tauri-playwright `fill` helper drives HTMLInputElement.value, which
     // throws on a <textarea>; set the value via the native textarea setter and
@@ -81,8 +91,6 @@ test.describe('Intake — front door', () => {
 
     // Classify (gateway, heuristic fallback) + recommend can take a few seconds.
     await expect(tauriPage.locator('[data-testid="intake-card"]')).toBeVisible({ timeout: 30_000 });
-    // Read textContent directly — the tauri-playwright wrapper's negated
-    // matchers (`.not.toBeEmpty()`) are unreliable; assert the real content.
     const title = ((await tauriPage.evaluate(
       `(document.querySelector('[data-testid="intake-playbook-title"]') || {}).textContent || ''`,
     )) as string).trim();
@@ -96,7 +104,8 @@ test.describe('Intake — front door', () => {
     await expect(tauriPage.locator('[data-testid="intake-recorded"]')).toBeVisible({ timeout: 15_000 });
   });
 
-  test('daemon exposes the front-door endpoints (guide + recommend with axes)', async () => {
+  test('daemon recommend is project-scoped (accepts project_id, refuses a project-less run)', async () => {
+    const id = await firstProjectId();
     const guide = await daemonGet<Record<string, unknown>>('/api/playbook/guide');
     expect(guide).toHaveProperty('playbooks');
     expect(guide).toHaveProperty('axes');
@@ -105,13 +114,20 @@ test.describe('Intake — front door', () => {
     const rec = await daemonPost<Record<string, unknown>>('/api/playbook/recommend', {
       chunk: 'add a small feature flag to gate the new panel',
       preview: true,
+      project_id: id,
     });
-    // The recommendation carries the chosen playbook AND the classified axes
-    // (added for the app form to display + drive the confirm leg).
     expect(rec).toHaveProperty('playbook');
     expect(rec).toHaveProperty('lifecycle');
     expect(rec).toHaveProperty('intent');
     expect(rec).toHaveProperty('risk');
     expect(rec).toHaveProperty('auto_select');
+
+    // A run always happens in a project — no project → an explicit error, never a
+    // fabricated global recommendation.
+    const err = await daemonPost<Record<string, unknown>>('/api/playbook/recommend', {
+      chunk: 'add a small feature flag to gate the new panel',
+      preview: true,
+    });
+    expect(err).toHaveProperty('error');
   });
 });

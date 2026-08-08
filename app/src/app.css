@@ -68,6 +68,21 @@ button {
     user-select: none;
 }
 
+/* F9 — the design system's primary CTA is INK-on-paper, not the vermillion accent.
+ * rokkit's skin maps primary→shu (vermillion), so <Button variant="primary"> renders
+ * vermillion. Override it globally to ink to match the mockup btnPrimary; reach for
+ * variant="accent" on the rare vermillion button. These rules sit after the theme
+ * @imports so they win at equal specificity. (docs/spec/2026-08-05-mockup-drift-audit.md F9) */
+[data-button][data-variant="primary"] {
+    background: var(--ink);
+    color: var(--on-primary);
+    border-color: var(--ink);
+}
+[data-button][data-variant="primary"]:hover:not(:disabled) {
+    background: var(--ink-soft);
+    border-color: var(--ink-soft);
+}
+
 /* Sidebar vibrancy */
 .sidebar-vibrancy {
     background: color-mix(
@@ -126,4 +141,36 @@ button {
 [data-component="observatory-sidebar"] [data-component="eyebrow"] {
     font-size: 9.5px;
     letter-spacing: 0.14em;
+}
+
+/*
+ * Phase-1 rokkit override — List / Toggle label CONTRAST (mockup-drift-audit).
+ *
+ * The zen-sumi theme paints List item + Toggle option labels with `--ink-mute`
+ * at ~55% opacity, which axe measured at 1.98:1 (light) / 2.79:1 (dark) — a
+ * WCAG-AA fail on every nav rail + toggle. Force AA-safe NAMED tokens at full
+ * opacity on the rokkit part selectors. `!important` because the vendor theme's
+ * `a[data-list-item]` selectors out-specify an app rule; this is the sanctioned
+ * "override the rokkit part" seam (colour stays a semantic token — no literals).
+ */
+[data-list] [data-list-item],
+[data-list] [data-list-item] [data-item-label],
+[data-list] [data-list-item] [data-item-text] {
+    color: var(--ink-soft) !important;
+    opacity: 1 !important;
+}
+[data-list] [data-list-item][data-selected="true"],
+[data-list] [data-list-item][data-selected="true"] [data-item-label],
+[data-list] [data-list-item][data-active="true"],
+[data-list] [data-list-item][data-active="true"] [data-item-label] {
+    color: var(--ink) !important;
+}
+[data-toggle] [data-toggle-option],
+[data-toggle] [data-toggle-option] [data-toggle-label] {
+    color: var(--ink-mute) !important;
+    opacity: 1 !important;
+}
+[data-toggle] [data-toggle-option][data-selected="true"],
+[data-toggle] [data-toggle-option][data-selected="true"] [data-toggle-label] {
+    color: var(--on-primary) !important;
 }

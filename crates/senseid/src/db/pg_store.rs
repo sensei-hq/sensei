@@ -11,6 +11,23 @@ pub struct PgStore {
     pool: PgPool,
 }
 
+/// Definition details for [`PgStore::upsert_node_by_fqn`] — the fields a
+/// DEFINITION fills on a node a reference may have created as a stub. Passing
+/// `None` for the `def` argument means "this mention is a REFERENCE": get-or-create
+/// the stub and leave it unresolved. `Some` ENRICHES: flip `resolved=true` and
+/// write these. `file_path` is required (a definition always has a home file);
+/// external symbols with no local file are `lib_symbol` nodes (see
+/// [`PgStore::upsert_lib_node_by_fqn`]).
+#[derive(Debug, Clone)]
+pub struct FqnDef<'a> {
+    pub file_path: &'a str,
+    pub signature: Option<&'a str>,
+    pub line_start: Option<i32>,
+    pub line_end: Option<i32>,
+    pub is_exported: bool,
+    pub parent_id: Option<&'a uuid::Uuid>,
+}
+
 /// Render a float slice to pgvector's text literal (`[v1,v2,...]`) so it can be
 /// bound as text and cast with `$n::vector` — no pgvector crate needed. Shared
 /// by `set_node_embedding` (writes) and `semantic_search_nodes` (query vector).
@@ -64,6 +81,32 @@ pub struct ActivityPruneCounts {
     pub turns:             u64,
     pub transcript_turns:  u64,
     pub assistant_events:  u64,
+}
+
+/// One community to write via [`PgStore::replace_communities_for_folder`] (D4):
+/// a deterministic `community_id` (1..k), a human label, its member node ids, and
+/// its `god_node_ids` — the top-5 members by `degree` (D4.5), the community's hubs.
+/// This is the AUTHORITATIVE payload; it is written with an honest-empty
+/// `description` (`props.source = "null"`). The non-authoritative model-authored
+/// description is filled in afterwards, off the terminal barrier, by
+/// [`crate::indexer::community::enrich_community_descriptions`] (spec W3 fail-open).
+#[derive(Debug, Clone)]
+pub struct CommunityAssignment {
+    pub community_id: i32,
+    pub label: String,
+    pub member_node_ids: Vec<uuid::Uuid>,
+    pub god_node_ids: Vec<uuid::Uuid>,
+}
+
+/// One edge to (re)insert via [`PgStore::replace_edges_of_kind`] (D2). Mirrors
+/// the `insert_edge` shape: a resolved edge carries `target_id`; an unresolved
+/// one carries `target_name`/`target_file`.
+#[derive(Debug, Clone)]
+pub struct EdgeSpec {
+    pub source_id: uuid::Uuid,
+    pub target_id: Option<uuid::Uuid>,
+    pub target_name: Option<String>,
+    pub target_file: Option<String>,
 }
 
 #[derive(Clone)]
@@ -1226,24 +1269,37 @@ impl PgStore {
     }
 
     /// Upsert a structural subfolder (`kind='folder'`) within a project, linked
-    /// to its parent folder. Status is terminal (`indexed`) — these rows model
-    /// the filesystem tree, not scan progress. On conflict the kind is preserved
-    /// so a path that is actually a (nested) project root is never reclassified.
+    /// to its parent folder. Thin wrapper over [`Self::upsert_subfolder_kind`].
     pub async fn upsert_subfolder(
         &self, root_id: &uuid::Uuid, name: &str, path: &str, abs_path: &str,
         parent_id: Option<&uuid::Uuid>, project_id: Option<&uuid::Uuid>,
     ) -> Result<uuid::Uuid, String> {
+        self.upsert_subfolder_kind(root_id, "folder", name, path, abs_path, parent_id, project_id).await
+    }
+
+    /// Upsert a structural subfolder with an explicit `kind` — `folder` (the
+    /// navigable filesystem-tree row) or `workspace_member` (a monorepo member,
+    /// D5a). Status is terminal (`indexed`) — these rows model the tree, not scan
+    /// progress. On conflict the kind is relabelled ONLY between the two
+    /// structural kinds (`folder`↔`workspace_member`); a path that is actually a
+    /// (nested) project ROOT (`git`/`standalone`/`subtree`) is never reclassified.
+    pub async fn upsert_subfolder_kind(
+        &self, root_id: &uuid::Uuid, kind: &str, name: &str, path: &str, abs_path: &str,
+        parent_id: Option<&uuid::Uuid>, project_id: Option<&uuid::Uuid>,
+    ) -> Result<uuid::Uuid, String> {
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "INSERT INTO sensei.folders(root_id, kind, status, name, path, abs_path, parent_id, project_id)
-             VALUES($1, 'folder'::sensei.folder_kind, 'indexed'::sensei.folder_status, $2, $3, $4, $5, $6)
+             VALUES($1, $2::sensei.folder_kind, 'indexed'::sensei.folder_status, $3, $4, $5, $6, $7)
              ON CONFLICT(abs_path) DO UPDATE SET
+                kind = CASE WHEN folders.kind IN ('folder'::sensei.folder_kind, 'workspace_member'::sensei.folder_kind)
+                            THEN EXCLUDED.kind ELSE folders.kind END,
                 name = EXCLUDED.name,
                 parent_id = COALESCE(EXCLUDED.parent_id, folders.parent_id),
                 project_id = COALESCE(EXCLUDED.project_id, folders.project_id),
                 modified_at = now()
              RETURNING id"
         )
-            .bind(root_id).bind(name).bind(path).bind(abs_path).bind(parent_id).bind(project_id)
+            .bind(root_id).bind(kind).bind(name).bind(path).bind(abs_path).bind(parent_id).bind(project_id)
             .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(row.0)
     }
@@ -1272,6 +1328,16 @@ impl PgStore {
         Ok(row.map(|(id, name, abs, pid, props, modified)| {
             serde_json::json!({ "id": id, "name": name, "abs_path": abs, "project_id": pid, "props": props, "modified_at": modified.to_rfc3339() })
         }))
+    }
+
+    /// Merge into a node's `props` jsonb (D5b): used to stamp a `section` node's
+    /// `level` and real `line_start` (the identity key carries a NULL line so
+    /// section identity is line-independent — 0.4). Idempotent (`props || $2`).
+    pub async fn set_node_props(&self, node_id: &uuid::Uuid, props: &serde_json::Value) -> Result<(), String> {
+        sqlx_core::query::query(
+            "UPDATE sensei.nodes SET props = props || $2, modified_at = now() WHERE id = $1"
+        ).bind(node_id).bind(props).execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(())
     }
 
     /// Set folder props (metadata like stack, libs, indexed_at, etc.).
@@ -1373,13 +1439,41 @@ impl PgStore {
         Ok(row.map(|(p,)| p))
     }
 
-    /// Mark a folder as indexed with detected libs.
-    pub async fn mark_folder_indexed(&self, folder_id: &uuid::Uuid, libs: &[String]) -> Result<(), String> {
-        let props = serde_json::json!({"indexed_at": chrono::Utc::now().to_rfc3339(), "libs": libs});
+    /// Flip a folder to `indexed` and stamp `props.indexed_at`. The dedicated
+    /// writer of the `indexed` status, called at the terminal community barrier
+    /// (D4.1). Detected libs are folder metadata stamped separately via
+    /// `set_folder_props` by the resolve/build barriers, so this need not carry
+    /// them — keeping "communities computed → indexed" as the single meaning of
+    /// this write.
+    pub async fn mark_folder_indexed(&self, folder_id: &uuid::Uuid) -> Result<(), String> {
+        let props = serde_json::json!({"indexed_at": chrono::Utc::now().to_rfc3339()});
         sqlx_core::query::query(
             "UPDATE sensei.folders SET status = 'indexed'::sensei.folder_status, props = props || $2, modified_at = now() WHERE id = $1"
         ).bind(folder_id).bind(&props).execute(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(())
+    }
+
+    /// Set a folder's lifecycle status (D6a). The general setter behind the
+    /// `discovered → queued → indexing → indexed | failed` lifecycle;
+    /// `mark_folder_indexed` remains the dedicated writer of `indexed` (it also
+    /// stamps `props.indexed_at`). A scan marks `indexing` at start so a
+    /// crash leaves a recoverable state (resume re-enqueues non-terminal folders).
+    pub async fn update_folder_status(&self, folder_id: &uuid::Uuid, status: &str) -> Result<(), String> {
+        sqlx_core::query::query(
+            "UPDATE sensei.folders SET status = $2::sensei.folder_status, modified_at = now() WHERE id = $1"
+        ).bind(folder_id).bind(status).execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// Read a folder's index status (`sensei.folders.status`). `None` when no
+    /// such folder row exists — an honest miss, never a fabricated status. Used
+    /// by the fail-closed barrier (D6d) to leave a folder with a recorded fatal
+    /// failure `failed` rather than advancing it to `indexed`.
+    pub async fn get_folder_status(&self, folder_id: &uuid::Uuid) -> Result<Option<String>, String> {
+        let row: Option<(String,)> = sqlx_core::query_as::query_as(
+            "SELECT status::text FROM sensei.folders WHERE id = $1"
+        ).bind(folder_id).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row.map(|r| r.0))
     }
 
     /// Append a tag to a folder's `tags` array, idempotently (no duplicates).
@@ -1426,27 +1520,184 @@ impl PgStore {
 
     // ── Nodes ─────────────────────────────────────────────────────────
 
+    /// Upsert a node (default `is_exported = false`). Thin wrapper over
+    /// [`Self::upsert_node_ex`] for the many callers that don't carry visibility
+    /// (file/section/rationale/module nodes, tests).
     pub async fn upsert_node(
         &self, folder_id: &uuid::Uuid, kind: &str, name: &str, file_path: &str,
         parent_id: Option<&uuid::Uuid>, signature: Option<&str>,
         line_start: Option<i32>, line_end: Option<i32>,
     ) -> Result<uuid::Uuid, String> {
+        self.upsert_node_ex(folder_id, kind, name, file_path, parent_id, signature, line_start, line_end, false).await
+    }
+
+    /// Upsert a node carrying `is_exported` (the code-symbol path passes the
+    /// parser's `pub`/`export` visibility). `is_exported` is written on INSERT and
+    /// refreshed on the D3 upsert-then-prune conflict, so a symbol that flips
+    /// pub↔private is kept current.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn upsert_node_ex(
+        &self, folder_id: &uuid::Uuid, kind: &str, name: &str, file_path: &str,
+        parent_id: Option<&uuid::Uuid>, signature: Option<&str>,
+        line_start: Option<i32>, line_end: Option<i32>, is_exported: bool,
+    ) -> Result<uuid::Uuid, String> {
         // ON CONFLICT targets nodes_unique_identity (folder_id, file_path, kind, name,
-        // parent_id, line_start NULLS NOT DISTINCT).  DO UPDATE keeps the row stable
-        // on re-scans — same UUID returned whether the row was just inserted or already
-        // existed — and refreshes mutable fields (signature, line_end, modified_at).
+        // parent_id, line_start NULLS NOT DISTINCT). DO UPDATE keeps the row STABLE on
+        // re-scans — same UUID whether just inserted or pre-existing (D3 upsert-then-
+        // prune) — preserving community_id and degree. It refreshes signature/line_end,
+        // and re-nulls `embedding` ONLY when the signature changed: `embed_text` is a
+        // function of (kind, name, signature, file_path), and on a same-identity
+        // conflict the first three-of-four are fixed by the key, so `signature` is the
+        // only embed input that can change — nulling on that (and preserving it
+        // otherwise) keeps embeddings fresh without a separate content_hash column.
+        // `language` is derived from the file extension at write time (the single
+        // shared mapping). Populating it on THIS legacy path too — every non-Rust +
+        // file/section/rationale node flows through here for the whole FQN
+        // transition — is what gives the same-language bare-name fallback (plan 0.8)
+        // something to filter on. COALESCE on conflict backfills pre-existing rows.
+        let language = crate::languages::language_for_path(file_path);
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
-            "INSERT INTO sensei.nodes(folder_id, kind, name, file_path, parent_id, signature, line_start, line_end)
-             VALUES($1, $2::sensei.node_kind, $3, $4, $5, $6, $7, $8)
-             ON CONFLICT ON CONSTRAINT nodes_unique_identity DO UPDATE
+            "INSERT INTO sensei.nodes(folder_id, kind, name, file_path, parent_id, signature, line_start, line_end, is_exported, language)
+             VALUES($1, $2::sensei.node_kind, $3, $4, $5, $6, $7, $8, $9, $10)
+             ON CONFLICT (folder_id, file_path, kind, name, parent_id, line_start) WHERE file_path IS NOT NULL DO UPDATE
                SET signature   = EXCLUDED.signature,
                    line_end    = EXCLUDED.line_end,
+                   is_exported = EXCLUDED.is_exported,
+                   language    = COALESCE(EXCLUDED.language, nodes.language),
+                   embedding   = CASE WHEN nodes.signature IS DISTINCT FROM EXCLUDED.signature
+                                      THEN NULL ELSE nodes.embedding END,
                    modified_at = now()
              RETURNING id"
         ).bind(folder_id).bind(kind).bind(name).bind(file_path)
-            .bind(parent_id).bind(signature).bind(line_start).bind(line_end)
+            .bind(parent_id).bind(signature).bind(line_start).bind(line_end).bind(is_exported).bind(language)
             .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(row.0)
+    }
+
+    /// Get-or-create a node by its fully-qualified name (SCIP/LSIF moniker model).
+    /// A REFERENCE (`def = None`) creates — or returns — an unresolved STUB
+    /// (`resolved=false`, NULL `file_path`). A DEFINITION (`def = Some`) creates or
+    /// ENRICHES the same `(folder_id, fqn)` node in place: flips `resolved=true` and
+    /// fills `file_path`/`signature`/`line_start`/`line_end`/`is_exported`/`parent_id`.
+    ///
+    /// Monotone + idempotent: a reference NEVER downgrades an already-resolved node
+    /// (`resolved = OLD OR NEW`; def-only columns are kept unless the incoming row is
+    /// itself a definition), and re-enrichment re-nulls the embedding only when the
+    /// signature changed — the same freshness rule as `upsert_node_ex`. Arbiter is
+    /// the partial `nodes_unique_fqn` index, so this coexists with the line-based
+    /// `nodes_unique_identity`.
+    pub async fn upsert_node_by_fqn(
+        &self,
+        folder_id: &uuid::Uuid,
+        fqn: &str,
+        kind: &str,
+        name: &str,
+        language: Option<&str>,
+        def: Option<FqnDef<'_>>,
+    ) -> Result<uuid::Uuid, String> {
+        let resolved = def.is_some();
+        let file_path = def.as_ref().map(|d| d.file_path);
+        let signature = def.as_ref().and_then(|d| d.signature);
+        let line_start = def.as_ref().and_then(|d| d.line_start);
+        let line_end = def.as_ref().and_then(|d| d.line_end);
+        let is_exported = def.as_ref().is_some_and(|d| d.is_exported);
+        let parent_id = def.as_ref().and_then(|d| d.parent_id);
+
+        let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO sensei.nodes
+                 (folder_id, fqn, kind, name, language, resolved,
+                  file_path, signature, line_start, line_end, is_exported, parent_id)
+             VALUES($1, $2, $3::sensei.node_kind, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+             ON CONFLICT (folder_id, fqn) WHERE fqn IS NOT NULL DO UPDATE
+               SET resolved    = nodes.resolved OR EXCLUDED.resolved,
+                   kind        = CASE WHEN EXCLUDED.resolved THEN EXCLUDED.kind ELSE nodes.kind END,
+                   file_path   = COALESCE(EXCLUDED.file_path, nodes.file_path),
+                   signature   = CASE WHEN EXCLUDED.resolved THEN EXCLUDED.signature ELSE nodes.signature END,
+                   line_start  = CASE WHEN EXCLUDED.resolved THEN EXCLUDED.line_start ELSE nodes.line_start END,
+                   line_end    = CASE WHEN EXCLUDED.resolved THEN EXCLUDED.line_end ELSE nodes.line_end END,
+                   is_exported = CASE WHEN EXCLUDED.resolved THEN EXCLUDED.is_exported ELSE nodes.is_exported END,
+                   parent_id   = COALESCE(EXCLUDED.parent_id, nodes.parent_id),
+                   language    = COALESCE(EXCLUDED.language, nodes.language),
+                   embedding   = CASE WHEN EXCLUDED.resolved
+                                       AND nodes.signature IS DISTINCT FROM EXCLUDED.signature
+                                      THEN NULL ELSE nodes.embedding END,
+                   modified_at = now()
+             RETURNING id"
+        )
+        .bind(folder_id).bind(fqn).bind(kind).bind(name).bind(language).bind(resolved)
+        .bind(file_path).bind(signature).bind(line_start).bind(line_end).bind(is_exported).bind(parent_id)
+        .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row.0)
+    }
+
+    /// Get-or-create a first-class `lib_symbol` node for an EXTERNAL reference (a
+    /// dependency's symbol), grouped under a per-package `lib_package` container so
+    /// the graph shows "what we depend on and how much" (blueprint Fix 1, case 2).
+    /// Both are `resolved=true` (the external symbol IS its own definition) with
+    /// NULL `file_path` (no local file); the symbol's `parent_id` is its container.
+    /// Owned by the referencing repo-root `folder_id` so they cascade with it.
+    /// Stable ids across repeated references (arbiter = `nodes_unique_fqn`).
+    pub async fn upsert_lib_node_by_fqn(
+        &self,
+        folder_id: &uuid::Uuid,
+        fqn: &str,
+        name: &str,
+        package: &str,
+    ) -> Result<uuid::Uuid, String> {
+        // One `lib_package` container per dependency (fqn = `lib·<package>`).
+        let pkg_fqn = format!("lib{}{}", crate::languages::fqn::SEP, package);
+        let container: (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO sensei.nodes
+                 (folder_id, fqn, kind, name, resolved, props)
+             VALUES($1, $2, 'lib_package'::sensei.node_kind, $3, true,
+                    jsonb_build_object('package', $3::text))
+             ON CONFLICT (folder_id, fqn) WHERE fqn IS NOT NULL DO UPDATE
+               SET resolved = true, modified_at = now()
+             RETURNING id"
+        )
+        .bind(folder_id).bind(&pkg_fqn).bind(package)
+        .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
+
+        // The symbol, parented under its package container.
+        let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO sensei.nodes
+                 (folder_id, fqn, kind, name, resolved, parent_id, props)
+             VALUES($1, $2, 'lib_symbol'::sensei.node_kind, $3, true, $4,
+                    jsonb_build_object('package', $5::text))
+             ON CONFLICT (folder_id, fqn) WHERE fqn IS NOT NULL DO UPDATE
+               SET resolved    = true,
+                   parent_id   = COALESCE(EXCLUDED.parent_id, nodes.parent_id),
+                   props       = nodes.props || jsonb_build_object('package', $5::text),
+                   modified_at = now()
+             RETURNING id"
+        )
+        .bind(folder_id).bind(fqn).bind(name).bind(container.0).bind(package)
+        .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row.0)
+    }
+
+    /// External dependencies referenced by a repo — one row per `lib_package` with
+    /// how many of its symbols the repo actually uses (`{package, symbol_count}`).
+    /// The graph-visible "what we depend on and how much".
+    pub async fn list_dependencies(&self, folder_id: &uuid::Uuid) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(String, i64)> = sqlx_core::query_as::query_as(
+            "SELECT p.name, count(s.id)
+               FROM sensei.nodes p
+               LEFT JOIN sensei.nodes s
+                 ON s.folder_id = p.folder_id
+                AND s.parent_id = p.id
+                AND s.kind = 'lib_symbol'::sensei.node_kind
+              WHERE p.folder_id = $1 AND p.kind = 'lib_package'::sensei.node_kind
+              GROUP BY p.name
+              ORDER BY count(s.id) DESC, p.name"
+        )
+        .bind(folder_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(package, symbol_count)| {
+            serde_json::json!({ "package": package, "symbol_count": symbol_count })
+        }).collect())
     }
 
     pub async fn get_nodes_by_folder(&self, folder_id: &uuid::Uuid) -> Result<Vec<serde_json::Value>, String> {
@@ -1468,6 +1719,7 @@ impl PgStore {
                    FROM sensei.nodes
                   WHERE folder_id = $1
                     AND embedding IS NULL
+                    AND file_path IS NOT NULL
                     AND kind IN ('file','function','method','class','interface',
                                  'type','const','enum','enum_variant','section',
                                  'struct','component','hook','doc','extension')
@@ -1557,7 +1809,8 @@ impl PgStore {
                     n.kind::text, n.name, n.signature
                FROM sensei.nodes n
                JOIN sensei.folders f ON f.id = n.folder_id
-              WHERE n.id = ANY($1::uuid[])",
+              WHERE n.id = ANY($1::uuid[])
+                AND n.file_path IS NOT NULL",
         )
         .bind(ids)
         .fetch_all(&self.pool)
@@ -1674,6 +1927,7 @@ impl PgStore {
                FROM sensei.nodes n
                JOIN sensei.folders f ON f.id = n.folder_id
               WHERE n.embedding IS NULL
+                AND n.file_path IS NOT NULL
                 AND n.kind IN ('file','function','method','class','interface',
                                'type','const','enum','enum_variant','section',
                                'struct','component','hook','doc','extension')",
@@ -1708,15 +1962,36 @@ impl PgStore {
 
     // ── Edges ────────────────────────────────────────────────────────
 
+    /// Insert (or upsert) an edge (D1). Edges carry an identity via two partial
+    /// unique indexes, so a repeated identical insert returns the SAME row
+    /// instead of duplicating. Branches on `target_id`: a resolved edge is keyed
+    /// by its target node; an unresolved edge by `(target_name, target_file)`.
+    /// `DO UPDATE SET modified_at = now()` (not `DO NOTHING`) so `RETURNING id`
+    /// is always the surviving row's id.
     pub async fn insert_edge(
         &self, folder_id: &uuid::Uuid, source_id: &uuid::Uuid,
         target_id: Option<&uuid::Uuid>, target_name: Option<&str>,
-        kind: &str,
+        target_file: Option<&str>, kind: &str,
     ) -> Result<uuid::Uuid, String> {
-        let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
-            "INSERT INTO sensei.edges(folder_id, source_id, target_id, target_name, kind) VALUES($1, $2, $3, $4, $5::sensei.edge_kind) RETURNING id"
-        ).bind(folder_id).bind(source_id).bind(target_id).bind(target_name).bind(kind)
-            .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
+        let row: (uuid::Uuid,) = if let Some(tid) = target_id {
+            sqlx_core::query_as::query_as(
+                "INSERT INTO sensei.edges(folder_id, source_id, target_id, kind)
+                 VALUES($1, $2, $3, $4::sensei.edge_kind)
+                 ON CONFLICT (folder_id, source_id, target_id, kind) WHERE target_id IS NOT NULL
+                   DO UPDATE SET modified_at = now()
+                 RETURNING id"
+            ).bind(folder_id).bind(source_id).bind(tid).bind(kind)
+                .fetch_one(&self.pool).await.map_err(|e| e.to_string())?
+        } else {
+            sqlx_core::query_as::query_as(
+                "INSERT INTO sensei.edges(folder_id, source_id, target_name, target_file, kind)
+                 VALUES($1, $2, $3, $4, $5::sensei.edge_kind)
+                 ON CONFLICT (folder_id, source_id, target_name, target_file, kind) WHERE target_id IS NULL
+                   DO UPDATE SET modified_at = now()
+                 RETURNING id"
+            ).bind(folder_id).bind(source_id).bind(target_name).bind(target_file).bind(kind)
+                .fetch_one(&self.pool).await.map_err(|e| e.to_string())?
+        };
         Ok(row.0)
     }
 
@@ -1738,19 +2013,129 @@ impl PgStore {
         }).collect())
     }
 
-    /// Update an unresolved edge with a resolved target_id.
+    /// Promote an unresolved edge to a resolved `target_id` (D1) — conflict-safe
+    /// against `edges_unique_resolved`. If a resolved edge with the same
+    /// `(folder_id, source_id, target_id, kind)` already exists, updating this
+    /// row into it would violate the unique index; instead we MERGE — the UPDATE
+    /// is guarded by a `NOT EXISTS`, and when it changes 0 rows (a dup exists, or
+    /// the edge is already gone) we delete this now-redundant unresolved edge.
+    ///
+    /// The guard-then-delete is not one transaction, which is safe under the
+    /// single-writer-per-folder invariant (W5/D6e): a folder's graph writes run as
+    /// one barrier task at a time and the unique index is folder-scoped — so no
+    /// concurrent resolve can race the `NOT EXISTS`.
     pub async fn resolve_edge(&self, edge_id: &uuid::Uuid, target_id: &uuid::Uuid) -> Result<(), String> {
-        sqlx_core::query::query("UPDATE sensei.edges SET target_id = $2, modified_at = now() WHERE id = $1")
-            .bind(edge_id).bind(target_id)
-            .execute(&self.pool).await.map_err(|e| e.to_string())?;
+        let res = sqlx_core::query::query(
+            "UPDATE sensei.edges e
+                SET target_id = $2, modified_at = now()
+              WHERE e.id = $1
+                AND NOT EXISTS (
+                    SELECT 1 FROM sensei.edges d
+                     WHERE d.folder_id = e.folder_id
+                       AND d.source_id = e.source_id
+                       AND d.target_id = $2
+                       AND d.kind = e.kind
+                       AND d.id <> e.id)"
+        ).bind(edge_id).bind(target_id).execute(&self.pool).await.map_err(|e| e.to_string())?;
+        if res.rows_affected() == 0 {
+            // A resolved edge to the same target already exists (or this edge is
+            // already gone): this unresolved edge is redundant — drop it so the
+            // graph converges to the single resolved edge.
+            sqlx_core::query::query("DELETE FROM sensei.edges WHERE id = $1")
+                .bind(edge_id).execute(&self.pool).await.map_err(|e| e.to_string())?;
+        }
         Ok(())
+    }
+
+    /// Replace a folder's entire edge set of one `kind` with `edges`, in ONE
+    /// transaction (D2): DELETE every edge of that kind for the folder, then
+    /// insert the current set. This makes a derived kind (e.g. `covers`) a pure
+    /// function of the current tree — stale relations vanish instead of
+    /// accumulating — and the single transaction means a crash can't leave the
+    /// folder with a half-replaced (or empty) set: it either fully commits the
+    /// new set or rolls back to the old one. Idempotent: re-running with the same
+    /// set yields the same rows (the per-edge `ON CONFLICT` also absorbs a
+    /// duplicate pair within the input set).
+    pub async fn replace_edges_of_kind(
+        &self, folder_id: &uuid::Uuid, kind: &str, edges: &[EdgeSpec],
+    ) -> Result<(), String> {
+        let mut tx = self.pool.begin().await.map_err(|e| e.to_string())?;
+        sqlx_core::query::query(
+            "DELETE FROM sensei.edges WHERE folder_id = $1 AND kind = $2::sensei.edge_kind"
+        ).bind(folder_id).bind(kind).execute(&mut *tx).await.map_err(|e| e.to_string())?;
+        for e in edges {
+            if let Some(tid) = e.target_id {
+                sqlx_core::query::query(
+                    "INSERT INTO sensei.edges(folder_id, source_id, target_id, kind)
+                     VALUES($1, $2, $3, $4::sensei.edge_kind)
+                     ON CONFLICT (folder_id, source_id, target_id, kind) WHERE target_id IS NOT NULL
+                       DO UPDATE SET modified_at = now()"
+                ).bind(folder_id).bind(e.source_id).bind(tid).bind(kind)
+                    .execute(&mut *tx).await.map_err(|e2| e2.to_string())?;
+            } else {
+                sqlx_core::query::query(
+                    "INSERT INTO sensei.edges(folder_id, source_id, target_name, target_file, kind)
+                     VALUES($1, $2, $3, $4, $5::sensei.edge_kind)
+                     ON CONFLICT (folder_id, source_id, target_name, target_file, kind) WHERE target_id IS NULL
+                       DO UPDATE SET modified_at = now()"
+                ).bind(folder_id).bind(e.source_id).bind(e.target_name.as_deref()).bind(e.target_file.as_deref()).bind(kind)
+                    .execute(&mut *tx).await.map_err(|e2| e2.to_string())?;
+            }
+        }
+        tx.commit().await.map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// Prune a file's nodes that vanished from the latest parse (D3 upsert-then-
+    /// prune): every node for `(folder, file_path)` whose id is NOT in `kept_ids`.
+    /// First unresolve inbound edges pointing at them (clear `target_id`, KEEP
+    /// `target_name` as an honest unresolved residual — the caller re-emits a
+    /// resolved FQN edge when it is next processed, and a full reindex heals it;
+    /// Phase 7.1 retired the `resolve_edges` re-point pass), then delete the nodes
+    /// (their out-edges cascade via the `source_id` FK). One transaction. Returns
+    /// nodes pruned. An empty `kept_ids` prunes ALL of the file's nodes.
+    pub async fn prune_file_nodes(
+        &self, folder_id: &uuid::Uuid, file_path: &str, kept_ids: &[uuid::Uuid],
+    ) -> Result<u64, String> {
+        let mut tx = self.pool.begin().await.map_err(|e| e.to_string())?;
+        sqlx_core::query::query(
+            "UPDATE sensei.edges SET target_id = NULL, modified_at = now()
+              WHERE folder_id = $1
+                AND target_name IS NOT NULL
+                AND target_id IN (
+                    SELECT id FROM sensei.nodes
+                     WHERE folder_id = $1 AND file_path = $2 AND id <> ALL($3))"
+        ).bind(folder_id).bind(file_path).bind(kept_ids).execute(&mut *tx).await.map_err(|e| e.to_string())?;
+        let res = sqlx_core::query::query(
+            "DELETE FROM sensei.nodes WHERE folder_id = $1 AND file_path = $2 AND id <> ALL($3)"
+        ).bind(folder_id).bind(file_path).bind(kept_ids).execute(&mut *tx).await.map_err(|e| e.to_string())?;
+        tx.commit().await.map_err(|e| e.to_string())?;
+        Ok(res.rows_affected())
+    }
+
+    /// Delete every out-edge sourced from `source_ids` in a folder (D3 per-file
+    /// reconcile). A symbol that SURVIVES a re-index keeps its node id, so its
+    /// stale out-edges (e.g. a call it no longer makes) aren't cascade-deleted —
+    /// clear them so the caller can re-insert the current set (replace, not
+    /// append). Returns rows deleted; an empty `source_ids` is a no-op.
+    pub async fn delete_edges_from_sources(
+        &self, folder_id: &uuid::Uuid, source_ids: &[uuid::Uuid],
+    ) -> Result<u64, String> {
+        if source_ids.is_empty() {
+            return Ok(0);
+        }
+        let res = sqlx_core::query::query(
+            "DELETE FROM sensei.edges WHERE folder_id = $1 AND source_id = ANY($2)"
+        ).bind(folder_id).bind(source_ids).execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(res.rows_affected())
     }
 
     /// Un-resolve edges that point INTO a file's nodes: clear `target_id` while
     /// keeping `target_name`. Called before re-indexing a changed file so the
     /// inbound cross-file edges survive (they'd otherwise be cascade-deleted when
-    /// the target nodes are dropped) and are re-pointed by `resolve_edges` once
-    /// the file's new nodes exist. Returns the number of edges un-resolved.
+    /// the target nodes are dropped). They become an honest unresolved residual,
+    /// re-pointed when the calling file is next processed (FQN edges resolve at
+    /// emit — Phase 7.1 retired the resolve_edges pass). Returns edges un-resolved.
     pub async fn unresolve_edges_to_file(&self, folder_id: &uuid::Uuid, file_path: &str) -> Result<u64, String> {
         let res = sqlx_core::query::query(
             "UPDATE sensei.edges SET target_id = NULL, modified_at = now()
@@ -2171,18 +2556,23 @@ impl PgStore {
         Ok(())
     }
 
-    /// List folders that were registered by a scan but never finished
-    /// indexing — i.e. status is `discovered` (scan ran, ProcessGitFolder
-    /// hadn't started) or `queued` (mid-flight when the daemon stopped).
-    /// `indexing`, `indexed`, `failed`, and `deferred` are excluded.
+    /// List folders in a non-terminal (recoverable) index state, for startup
+    /// resume: `discovered` (scan ran, ProcessGitFolder hadn't started),
+    /// `queued` (enqueued, not started), `indexing` (a scan was in-flight when
+    /// the daemon stopped — its in-memory task was lost, D6a), and `failed`
+    /// (errored, should retry). `indexed`, `deferred` (intentionally not indexed
+    /// — sibling/standalone), and `archived` (directory gone) are terminal and
+    /// excluded.
     ///
     /// Called once at daemon startup to rebuild the in-memory queue, which
-    /// otherwise loses every task on restart.
+    /// otherwise loses every task on restart. Re-enqueuing an already-running
+    /// folder is deduped by the single-writer guard (`enqueue_unique`).
     pub async fn list_pending_folders(&self) -> Result<Vec<serde_json::Value>, String> {
         let rows: Vec<(uuid::Uuid, uuid::Uuid, String, String, String, String)> = sqlx_core::query_as::query_as(
             "SELECT id, root_id, kind::text, name, abs_path, status::text \
              FROM sensei.folders \
-             WHERE status IN ('discovered'::sensei.folder_status, 'queued'::sensei.folder_status) \
+             WHERE status IN ('discovered'::sensei.folder_status, 'queued'::sensei.folder_status, \
+                              'indexing'::sensei.folder_status, 'failed'::sensei.folder_status) \
              ORDER BY abs_path"
         ).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(rows.into_iter().map(|(id, root_id, kind, name, abs_path, status)| {
@@ -2609,6 +2999,67 @@ impl PgStore {
         Ok(row.0)
     }
 
+    /// Recompute `nodes.degree` for every node in a folder (D4.5) — the in+out
+    /// count of edges incident to the node (source, plus resolved target). Run at
+    /// the start of the `DetectCommunities` terminal barrier (Phase 7.1 moved it
+    /// there from the retired `ResolveEdges` pass) so degree is fresh before it
+    /// ranks each community's god nodes. Edgeless nodes are set to 0 (not left
+    /// stale/NULL), so a symbol that lost its last edge on a re-scan reflects it.
+    pub async fn recompute_degrees_for_folder(&self, folder_id: &uuid::Uuid) -> Result<(), String> {
+        sqlx_core::query::query(
+            "UPDATE sensei.nodes n
+                SET degree = COALESCE(d.deg, 0), modified_at = now()
+               FROM (SELECT id FROM sensei.nodes WHERE folder_id = $1) an
+               LEFT JOIN (
+                   SELECT node_id, count(*)::int AS deg FROM (
+                       SELECT source_id AS node_id FROM sensei.edges WHERE folder_id = $1
+                       UNION ALL
+                       SELECT target_id AS node_id FROM sensei.edges WHERE folder_id = $1 AND target_id IS NOT NULL
+                   ) inc GROUP BY node_id
+               ) d ON d.node_id = an.id
+              WHERE n.id = an.id"
+        ).bind(folder_id).execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// Replace a folder's ENTIRE community assignment in one transaction (D4):
+    /// delete its community rows, clear every node's `community_id`, then insert
+    /// the new communities and set their members' `community_id`. This makes
+    /// `inference.communities` + `nodes.community_id` a pure function of the
+    /// current graph — no stale community rows, no stranded/orphaned
+    /// `community_id`s (invariant 5) — and atomic (a crash can't leave a
+    /// half-assigned folder). An empty `communities` just clears the folder.
+    pub async fn replace_communities_for_folder(
+        &self, folder_id: &uuid::Uuid, communities: &[CommunityAssignment],
+    ) -> Result<(), String> {
+        let mut tx = self.pool.begin().await.map_err(|e| e.to_string())?;
+        sqlx_core::query::query("DELETE FROM inference.communities WHERE folder_id = $1")
+            .bind(folder_id).execute(&mut *tx).await.map_err(|e| e.to_string())?;
+        sqlx_core::query::query(
+            "UPDATE sensei.nodes SET community_id = NULL, modified_at = now()
+              WHERE folder_id = $1 AND community_id IS NOT NULL"
+        ).bind(folder_id).execute(&mut *tx).await.map_err(|e| e.to_string())?;
+        for c in communities {
+            // Authoritative write: description honest-empty (`props.source='null'`);
+            // enrich_community_descriptions fills real prose later, off-barrier.
+            sqlx_core::query::query(
+                "INSERT INTO inference.communities(folder_id, community_id, label, node_count, god_node_ids, description, props)
+                 VALUES($1, $2, $3, $4, $5, NULL, '{\"source\":\"null\"}'::jsonb)"
+            ).bind(folder_id).bind(c.community_id).bind(&c.label).bind(c.member_node_ids.len() as i32)
+                .bind(&c.god_node_ids)
+                .execute(&mut *tx).await.map_err(|e| e.to_string())?;
+            if !c.member_node_ids.is_empty() {
+                sqlx_core::query::query(
+                    "UPDATE sensei.nodes SET community_id = $2, modified_at = now()
+                      WHERE folder_id = $1 AND id = ANY($3)"
+                ).bind(folder_id).bind(c.community_id).bind(&c.member_node_ids)
+                    .execute(&mut *tx).await.map_err(|e| e.to_string())?;
+            }
+        }
+        tx.commit().await.map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
     pub async fn list_communities(&self, folder_id: &uuid::Uuid) -> Result<Vec<serde_json::Value>, String> {
         let rows: Vec<(uuid::Uuid, String, i32)> = sqlx_core::query_as::query_as(
             "SELECT id, label, node_count FROM inference.communities WHERE folder_id = $1 ORDER BY node_count DESC"
@@ -2630,6 +3081,75 @@ impl PgStore {
         Ok(rows.into_iter().map(|(id, label, count)| {
             serde_json::json!({ "id": id, "label": label, "node_count": count })
         }).collect())
+    }
+
+    /// Communities across a project scope with LIVE membership counts (7.3): the
+    /// `node_count` is computed from the real `nodes.community_id` join, not the
+    /// denormalized `communities.node_count` — so the overview reflects the
+    /// current graph (a node whose community changed since the last detect is
+    /// counted where it actually is now). Also carries `god_node_ids`. Ordered by
+    /// live count desc. This is what turns the flat "scattered circles" overview
+    /// into one sized by real per-community membership.
+    pub async fn list_communities_live_scoped(&self, folder_ids: &[uuid::Uuid]) -> Result<Vec<serde_json::Value>, String> {
+        if folder_ids.is_empty() { return Ok(vec![]); }
+        let rows: Vec<(uuid::Uuid, Option<String>, i64, Vec<uuid::Uuid>)> = sqlx_core::query_as::query_as(
+            "SELECT c.id, c.label, count(n.id) AS live_count, c.god_node_ids
+               FROM inference.communities c
+               LEFT JOIN sensei.nodes n
+                 ON n.folder_id = c.folder_id AND n.community_id = c.community_id
+              WHERE c.folder_id = ANY($1)
+              GROUP BY c.id, c.label, c.god_node_ids
+              ORDER BY live_count DESC, c.id"
+        ).bind(folder_ids).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(id, label, count, gods)| {
+            serde_json::json!({ "id": id, "label": label.unwrap_or_default(), "node_count": count, "god_node_ids": gods })
+        }).collect())
+    }
+
+    /// The folder's communities with their `god_node_ids`, largest first — the
+    /// input to description enrichment (D4.5). Bounded by `limit` so a huge cold
+    /// repo enriches only its most significant clusters per detect run.
+    pub async fn list_communities_with_god_nodes(
+        &self, folder_id: &uuid::Uuid, limit: i64,
+    ) -> Result<Vec<(i32, String, i32, Vec<uuid::Uuid>)>, String> {
+        let rows: Vec<(i32, Option<String>, i32, Vec<uuid::Uuid>)> = sqlx_core::query_as::query_as(
+            "SELECT community_id, label, node_count, god_node_ids
+               FROM inference.communities
+              WHERE folder_id = $1
+              ORDER BY node_count DESC, community_id
+              LIMIT $2"
+        ).bind(folder_id).bind(limit).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(cid, label, n, gods)| (cid, label.unwrap_or_default(), n, gods)).collect())
+    }
+
+    /// `(id, name, kind)` for a set of node ids — builds community description
+    /// facts from the god-node hubs. Empty input is a no-op.
+    pub async fn get_node_name_kind(
+        &self, ids: &[uuid::Uuid],
+    ) -> Result<Vec<(uuid::Uuid, String, String)>, String> {
+        if ids.is_empty() { return Ok(vec![]); }
+        let rows: Vec<(uuid::Uuid, String, String)> = sqlx_core::query_as::query_as(
+            "SELECT id, name, kind::text FROM sensei.nodes WHERE id = ANY($1)"
+        ).bind(ids).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows)
+    }
+
+    /// Stamp a community's model-authored `description` + its provenance
+    /// (`props.source`), replacing the honest-empty placeholder from the
+    /// authoritative write (D4.5). Only called on a successful insight-copy
+    /// generation — a failure leaves the honest-empty NULL/`'null'` as written.
+    pub async fn set_community_description(
+        &self, folder_id: &uuid::Uuid, community_id: i32, description: &str, source: &str,
+    ) -> Result<(), String> {
+        sqlx_core::query::query(
+            "UPDATE inference.communities
+                SET description = $3,
+                    props = props || jsonb_build_object('source', $4::text),
+                    modified_at = now()
+              WHERE folder_id = $1 AND community_id = $2"
+        ).bind(folder_id).bind(community_id).bind(description).bind(source)
+            .execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(())
     }
 
     // ── Reasoning Traces (inference) ─────────────────────────────────
@@ -6646,7 +7166,7 @@ impl PgStore {
             "DELETE FROM sensei.nodes s
                USING sensei.folders sf
               WHERE s.folder_id = sf.id
-                AND sf.kind = 'folder'::sensei.folder_kind
+                AND sf.kind IN ('folder'::sensei.folder_kind, 'workspace_member'::sensei.folder_kind)
                 AND sf.root_id = $1
                 AND EXISTS (
                   SELECT 1
@@ -8741,15 +9261,15 @@ impl PgStore {
     }
 
     pub async fn get_project_repos(&self, project_id: &uuid::Uuid) -> Result<Vec<serde_json::Value>, String> {
-        // Only project ROOTS are repos. `kind='folder'` rows are the navigable
-        // subfolder tree (materialized by process_git_folder) and must NOT be
-        // listed as repos — otherwise a single-repo project with N subfolders
-        // renders as an N+1-repo "multi-repo" project (#62). The data is correct;
-        // this read path was projecting the subfolder tree as repos.
+        // Only project ROOTS are repos. `kind='folder'` (navigable subfolder tree)
+        // AND `kind='workspace_member'` (monorepo members, D5a) are the structural
+        // tree, NOT separate repos — listing them makes a single-repo monorepo with
+        // N members render as an N+1-repo "multi-repo" project (#62). The data is
+        // correct; this read path was projecting the subfolder tree as repos.
         let rows: Vec<(uuid::Uuid, String, String, Option<String>)> =
             sqlx_core::query_as::query_as(
                 "SELECT id, name, abs_path, kind::text FROM sensei.folders
-                 WHERE project_id = $1 AND kind::text <> 'folder' ORDER BY name"
+                 WHERE project_id = $1 AND kind::text NOT IN ('folder', 'workspace_member') ORDER BY name"
             ).bind(project_id)
             .fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
 
@@ -9125,6 +9645,8 @@ impl PgStore {
     // ── Task Executions (activity.task_executions) ──────────────────
 
     /// Insert a running task execution record. Returns the row UUID.
+    /// `retry_number` is the task's attempt count (0 = first attempt), persisted
+    /// so bounded retries (D6c) are observable on the logs/health screen.
     pub async fn start_task_execution(
         &self,
         task_id: i64,
@@ -9132,16 +9654,18 @@ impl PgStore {
         task_kind: &str,
         folder_path: &str,
         path: &str,
+        retry_number: i32,
     ) -> Result<uuid::Uuid, String> {
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
-            "INSERT INTO activity.task_executions(task_id, parent_task_id, task_kind, folder_path, path, status)
-             VALUES($1, $2, $3, $4, $5, 'running') RETURNING id"
+            "INSERT INTO activity.task_executions(task_id, parent_task_id, task_kind, folder_path, path, status, retry_number)
+             VALUES($1, $2, $3, $4, $5, 'running', $6) RETURNING id"
         )
         .bind(task_id)
         .bind(parent_task_id)
         .bind(task_kind)
         .bind(folder_path)
         .bind(path)
+        .bind(retry_number)
         .fetch_one(&self.pool)
         .await
         .map_err(|e| format!("start_task_execution: {}", e))?;
@@ -9188,6 +9712,32 @@ impl PgStore {
         .await
         .map_err(|e| format!("fail_task_execution: {}", e))?;
         Ok(())
+    }
+
+    /// Boot reconcile (D6b/W2): terminate task-execution rows still `running`
+    /// from a prior daemon session. `task_id` resets per session and the queue
+    /// is in-memory, so a `running` row whose `started_at` precedes this
+    /// session's start can never complete — its worker died with the process.
+    /// Mark those `failed` (a terminal state) with a completion time and an
+    /// explanatory `error_message`, so `status='running'` reflects only live
+    /// work. Rows started at/after `session_start` (this session's own
+    /// in-flight tasks) are left untouched. Idempotent. Returns rows reconciled.
+    pub async fn reconcile_orphaned_task_executions(
+        &self,
+        session_start: chrono::DateTime<chrono::Utc>,
+    ) -> Result<u64, String> {
+        let res = sqlx_core::query::query(
+            "UPDATE activity.task_executions
+                SET status = 'failed',
+                    error_message = 'orphaned: daemon restarted while task was running',
+                    completed_at = now()
+              WHERE status = 'running' AND started_at < $1"
+        )
+        .bind(session_start)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| format!("reconcile_orphaned_task_executions: {}", e))?;
+        Ok(res.rows_affected())
     }
 
     // ── Knowledge Sources (federation endpoints) ──────────────────────
@@ -9574,6 +10124,7 @@ impl PgStore {
         let rows: Vec<(uuid::Uuid, String, String, Option<String>, Option<i32>)> = sqlx_core::query_as::query_as(
             "SELECT id, name, file_path, signature, line_start FROM sensei.nodes
              WHERE folder_id = ANY($1) AND kind IN ('function'::sensei.node_kind, 'method'::sensei.node_kind)
+             AND file_path IS NOT NULL
              AND (name ILIKE '%' || $2 || '%' OR signature ILIKE '%' || $2 || '%')
              ORDER BY name LIMIT 50"
         ).bind(folder_ids).bind(query).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
@@ -9587,6 +10138,7 @@ impl PgStore {
         let rows: Vec<(uuid::Uuid, String, String, Option<i32>)> = sqlx_core::query_as::query_as(
             "SELECT id, name, file_path, line_start FROM sensei.nodes
              WHERE folder_id = ANY($1) AND kind IN ('class'::sensei.node_kind, 'struct'::sensei.node_kind, 'interface'::sensei.node_kind, 'enum'::sensei.node_kind, 'type'::sensei.node_kind)
+             AND file_path IS NOT NULL
              AND name ILIKE '%' || $2 || '%'
              ORDER BY name LIMIT 50"
         ).bind(folder_ids).bind(query).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
@@ -9605,21 +10157,52 @@ impl PgStore {
 
     /// Get all nodes across multiple folders (project-scoped variant).
     pub async fn get_nodes_scoped(&self, folder_ids: &[uuid::Uuid]) -> Result<Vec<serde_json::Value>, String> {
-        let rows: Vec<(uuid::Uuid, String, String, String, Option<uuid::Uuid>, Option<i32>, Option<i32>, uuid::Uuid)> = sqlx_core::query_as::query_as(
-            "SELECT id, kind::text, name, file_path, parent_id, line_start, line_end, folder_id FROM sensei.nodes WHERE folder_id = ANY($1) ORDER BY file_path, line_start"
+        // file_path is Option: reference stubs + lib_symbol nodes have none. The
+        // whole-graph projection must decode them without erroring (they serialize
+        // to a null file_path); NULLs sort last under ORDER BY file_path.
+        // `fqn`/`resolved` are projected (7.2) so the Atlas can key symbols by
+        // moniker and distinguish enriched defs from reference stubs. `fqn` is NULL
+        // for pre-FQN/legacy rows; `resolved` is NOT NULL (defaults false).
+        let rows: Vec<(uuid::Uuid, String, String, Option<String>, Option<uuid::Uuid>, Option<i32>, Option<i32>, Option<i32>, Option<i32>, uuid::Uuid, Option<String>, Option<String>, bool)> = sqlx_core::query_as::query_as(
+            "SELECT id, kind::text, name, file_path, parent_id, line_start, line_end, degree, community_id, folder_id, language, fqn, resolved FROM sensei.nodes WHERE folder_id = ANY($1) ORDER BY file_path, line_start, parent_id, id"
         ).bind(folder_ids).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
-        Ok(rows.into_iter().map(|(id, kind, name, fp, pid, ls, le, folder_id)| {
-            serde_json::json!({ "id": id, "kind": kind, "name": name, "file_path": fp, "parent_id": pid, "line_start": ls, "line_end": le, "folder_id": folder_id })
+        Ok(rows.into_iter().map(|(id, kind, name, fp, pid, ls, le, degree, community_id, folder_id, language, fqn, resolved)| {
+            serde_json::json!({ "id": id, "kind": kind, "name": name, "file_path": fp, "parent_id": pid, "line_start": ls, "line_end": le, "degree": degree, "community_id": community_id, "folder_id": folder_id, "language": language, "fqn": fqn, "resolved": resolved })
+        }).collect())
+    }
+
+    /// Folder rows for a set of folder ids (7.2) — the structural skeleton of the
+    /// `/tree` endpoint: `kind`/`role`/`parent_id` drive the folder hierarchy
+    /// (repo root → sub-projects/subtrees → subfolders) that the node subtrees
+    /// hang off.
+    pub async fn get_folders_scoped(&self, folder_ids: &[uuid::Uuid]) -> Result<Vec<serde_json::Value>, String> {
+        if folder_ids.is_empty() { return Ok(vec![]); }
+        let rows: Vec<(uuid::Uuid, String, Option<String>, String, String, Option<uuid::Uuid>)> = sqlx_core::query_as::query_as(
+            "SELECT id, kind::text, role::text, name, abs_path, parent_id FROM sensei.folders
+              WHERE id = ANY($1) ORDER BY abs_path"
+        ).bind(folder_ids).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(id, kind, role, name, abs_path, parent_id)| {
+            serde_json::json!({ "id": id, "kind": kind, "role": role, "name": name, "abs_path": abs_path, "parent_id": parent_id })
         }).collect())
     }
 
     /// Get edges by kind across multiple folders (project-scoped variant).
     pub async fn get_edges_scoped(&self, folder_ids: &[uuid::Uuid], kind: &str) -> Result<Vec<serde_json::Value>, String> {
-        let rows: Vec<(uuid::Uuid, uuid::Uuid, Option<uuid::Uuid>, Option<String>)> = sqlx_core::query_as::query_as(
-            "SELECT id, source_id, target_id, target_name FROM sensei.edges WHERE folder_id = ANY($1) AND kind = $2::sensei.edge_kind"
-        ).bind(folder_ids).bind(kind).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
-        Ok(rows.into_iter().map(|(id, src, tgt, name)| {
-            serde_json::json!({ "id": id, "source_id": src, "target_id": tgt, "target_name": name })
+        self.get_edges_scoped_kinds(folder_ids, &[kind]).await
+    }
+
+    /// Get edges of ANY of `kinds` across multiple folders (7.1) — the graph
+    /// layout set is `calls,imports,extends` (+`implements` once emitted), not the
+    /// single `calls` the node view used to fetch. Each row carries its `kind` so
+    /// the client can style/overlay per relationship type.
+    pub async fn get_edges_scoped_kinds(&self, folder_ids: &[uuid::Uuid], kinds: &[&str]) -> Result<Vec<serde_json::Value>, String> {
+        let kinds_owned: Vec<String> = kinds.iter().map(|k| k.to_string()).collect();
+        let rows: Vec<(uuid::Uuid, uuid::Uuid, Option<uuid::Uuid>, Option<String>, String)> = sqlx_core::query_as::query_as(
+            "SELECT id, source_id, target_id, target_name, kind::text FROM sensei.edges
+              WHERE folder_id = ANY($1) AND kind::text = ANY($2)"
+        ).bind(folder_ids).bind(&kinds_owned).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(id, src, tgt, name, kind)| {
+            serde_json::json!({ "id": id, "source_id": src, "target_id": tgt, "target_name": name, "kind": kind })
         }).collect())
     }
 
@@ -9990,16 +10573,22 @@ impl PgStore {
 
     /// Confirmed+attributed sample size + FTR rate for one exact (lifecycle, intent,
     /// risk, playbook) combo — the auto-select-on-trust gate's evidence lookup.
+    /// Auto-select trust for a `(lifecycle, intent, risk, playbook)` combo,
+    /// scoped to ONE project. A playbook run always happens in a project, so
+    /// trust is "does this playbook earn FTR in THIS project" — never a global
+    /// average across unrelated projects (which would auto-select on the wrong
+    /// signal). Returns `(n confirmed+attributed runs, avg FTR)` for the combo
+    /// within `project_id`.
     pub async fn playbook_combo_trust(
-        &self, lifecycle: &str, intent: &str, risk: &str, playbook: &str,
+        &self, lifecycle: &str, intent: &str, risk: &str, playbook: &str, project_id: &uuid::Uuid,
     ) -> Result<(i64, f64), String> {
         let row: (i64, f64) = sqlx_core::query_as::query_as(
             "SELECT count(*)::int8, coalesce(avg(outcome_ftr::int)::float8, 0.0)
                FROM sensei.playbook_run
               WHERE confirmed AND outcome_ftr IS NOT NULL
                 AND lifecycle=$1::sensei.chunk_lifecycle AND intent=$2::sensei.chunk_intent
-                AND risk=$3::sensei.chunk_risk AND playbook=$4"
-        ).bind(lifecycle).bind(intent).bind(risk).bind(playbook)
+                AND risk=$3::sensei.chunk_risk AND playbook=$4 AND project_id=$5"
+        ).bind(lifecycle).bind(intent).bind(risk).bind(playbook).bind(project_id)
          .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(row)
     }
@@ -10013,17 +10602,17 @@ impl PgStore {
         &self, session_id: Option<uuid::Uuid>, feature: Option<&str>,
         lifecycle: &str, intent: &str, risk: &str,
         rule_id: Option<uuid::Uuid>, playbook: &str, rationale: &str, confirmed: bool,
-        classified_by: Option<&str>, model_fallback: bool,
+        classified_by: Option<&str>, model_fallback: bool, project_id: uuid::Uuid,
     ) -> Result<uuid::Uuid, String> {
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "INSERT INTO sensei.playbook_run
                (session_id, feature, lifecycle, intent, risk, rule_id, playbook, rationale, confirmed,
-                classified_by, model_fallback)
-             VALUES ($1,$2,$3::sensei.chunk_lifecycle,$4::sensei.chunk_intent,$5::sensei.chunk_risk,$6,$7,$8,$9,$10,$11)
+                classified_by, model_fallback, project_id)
+             VALUES ($1,$2,$3::sensei.chunk_lifecycle,$4::sensei.chunk_intent,$5::sensei.chunk_risk,$6,$7,$8,$9,$10,$11,$12)
              RETURNING id"
         ).bind(session_id).bind(feature).bind(lifecycle).bind(intent).bind(risk)
          .bind(rule_id).bind(playbook).bind(rationale).bind(confirmed)
-         .bind(classified_by).bind(model_fallback)
+         .bind(classified_by).bind(model_fallback).bind(project_id)
          .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(row.0)
     }
@@ -10221,6 +10810,89 @@ mod tests {
         assert_eq!(all[&k2], "2");
         s.delete_config(&k1).await.unwrap();
         s.delete_config(&k2).await.unwrap();
+    }
+
+    // ── Task executions — boot reconcile (D6b) ────────────────────────
+
+    #[tokio::test]
+    async fn reconcile_orphaned_task_executions_terminates_only_prior_session_running() {
+        // D6b: on boot, a `running` task_execution row left over from a dead
+        // daemon session (started before this session's start time) can never
+        // complete — its in-memory task is gone. Reconcile flips it to a
+        // terminal `failed`; a row from THIS session (started at/after the
+        // cutoff) and an already-terminal row are both left untouched.
+        let s = pg_store().await;
+        let fp = format!("/_test/reconcile/{}", uuid::Uuid::new_v4());
+
+        // A — orphaned: running, started well before the cutoff (prior session).
+        let a = s.start_task_execution(1, None, "ProcessFile", &fp, "a", 0).await.unwrap();
+        sqlx_core::query::query(
+            "UPDATE activity.task_executions SET started_at = now() - interval '2 hours' WHERE id = $1")
+            .bind(a).execute(s.pool()).await.unwrap();
+        // B — this session: running, started at now() (after the cutoff).
+        let b = s.start_task_execution(2, None, "ProcessFile", &fp, "b", 0).await.unwrap();
+        // C — already terminal from a prior session: must not be re-touched.
+        let c = s.start_task_execution(3, None, "ProcessFile", &fp, "c", 0).await.unwrap();
+        sqlx_core::query::query(
+            "UPDATE activity.task_executions SET status = 'completed', started_at = now() - interval '2 hours' WHERE id = $1")
+            .bind(c).execute(s.pool()).await.unwrap();
+
+        // Cutoff sits between the prior-session rows (−2h) and this session (now).
+        let cutoff = chrono::Utc::now() - chrono::Duration::hours(1);
+        // D — boundary: running, started EXACTLY at the cutoff. The sweep is
+        // exclusive (`started_at < cutoff`), so a row at session_start belongs
+        // to this session and must be left running — locks the `<` vs `<=` line.
+        let d = s.start_task_execution(4, None, "ProcessFile", &fp, "d", 0).await.unwrap();
+        sqlx_core::query::query(
+            "UPDATE activity.task_executions SET started_at = $2 WHERE id = $1")
+            .bind(d).bind(cutoff).execute(s.pool()).await.unwrap();
+
+        let n = s.reconcile_orphaned_task_executions(cutoff).await.unwrap();
+        assert!(n >= 1, "at least the one orphaned running row is reconciled, got {n}");
+
+        let (a_status, a_completed, a_err): (String, Option<chrono::DateTime<chrono::Utc>>, Option<String>) =
+            query_as("SELECT status, completed_at, error_message FROM activity.task_executions WHERE id = $1")
+                .bind(a).fetch_one(s.pool()).await.unwrap();
+        assert_eq!(a_status, "failed", "orphaned running row is marked failed");
+        assert!(a_completed.is_some(), "reconciled row gets a completed_at");
+        assert!(a_err.is_some(), "reconciled row records why it was terminated");
+
+        let (b_status, b_completed): (String, Option<chrono::DateTime<chrono::Utc>>) =
+            query_as("SELECT status, completed_at FROM activity.task_executions WHERE id = $1")
+                .bind(b).fetch_one(s.pool()).await.unwrap();
+        assert_eq!(b_status, "running", "this session's in-flight row is left running");
+        assert!(b_completed.is_none(), "this session's row keeps a null completed_at");
+
+        let (c_status,): (String,) =
+            query_as("SELECT status FROM activity.task_executions WHERE id = $1")
+                .bind(c).fetch_one(s.pool()).await.unwrap();
+        assert_eq!(c_status, "completed", "an already-terminal row is not re-touched");
+
+        let (d_status,): (String,) =
+            query_as("SELECT status FROM activity.task_executions WHERE id = $1")
+                .bind(d).fetch_one(s.pool()).await.unwrap();
+        assert_eq!(d_status, "running", "a row exactly at the cutoff is this session's — left running");
+
+        // Cleanup.
+        sqlx_core::query::query("DELETE FROM activity.task_executions WHERE folder_path = $1")
+            .bind(&fp).execute(s.pool()).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn start_task_execution_records_retry_number() {
+        // D6c: a re-driven task carries its attempt count, and the execution
+        // record must persist it (`task_executions.retry_number`, currently
+        // always 0) so retries are observable on the logs/health screen.
+        let s = pg_store().await;
+        let fp = format!("/_test/retrynum/{}", uuid::Uuid::new_v4());
+        let id = s.start_task_execution(77, None, "ProcessFile", &fp, "a.rs", 2).await.unwrap();
+
+        let (rn,): (i32,) = query_as("SELECT retry_number FROM activity.task_executions WHERE id = $1")
+            .bind(id).fetch_one(s.pool()).await.unwrap();
+        assert_eq!(rn, 2, "the recorded retry_number matches the attempt");
+
+        sqlx_core::query::query("DELETE FROM activity.task_executions WHERE folder_path = $1")
+            .bind(&fp).execute(s.pool()).await.unwrap();
     }
 
     // ── Scan exclusions (per watch root) ──────────────────────────────
@@ -10603,7 +11275,7 @@ mod tests {
         let fid = create_test_folder(&s, &format!("edge_{}", uuid::Uuid::new_v4())).await;
         let fn_a = s.upsert_node(&fid, "function", "a", "a.rs", None, None, Some(1), Some(5)).await.unwrap();
         let fn_b = s.upsert_node(&fid, "function", "b", "b.rs", None, None, Some(1), Some(5)).await.unwrap();
-        s.insert_edge(&fid, &fn_a, Some(&fn_b), None, "calls").await.unwrap();
+        s.insert_edge(&fid, &fn_a, Some(&fn_b), None, None, "calls").await.unwrap();
         let callers = s.get_callers(&fn_b).await.unwrap();
         assert_eq!(callers.len(), 1);
         assert_eq!(callers[0]["caller_id"], fn_a.to_string());
@@ -10612,6 +11284,813 @@ mod tests {
         let by_kind = s.get_edges_by_kind(&fid, "calls").await.unwrap();
         assert_eq!(by_kind.len(), 1);
         s.delete_nodes_by_folder(&fid).await.unwrap(); // cascades edges
+    }
+
+    #[tokio::test]
+    async fn insert_edge_is_idempotent() {
+        // D1: edges have identity — inserting the same edge twice returns the
+        // SAME id and adds no second row, for both resolved and unresolved edges.
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, &format!("edgeidem_{}", uuid::Uuid::new_v4())).await;
+        let a = s.upsert_node(&fid, "function", "a", "a.rs", None, None, Some(1), Some(5)).await.unwrap();
+        let b = s.upsert_node(&fid, "function", "b", "b.rs", None, None, Some(1), Some(5)).await.unwrap();
+
+        // Resolved edge: a repeated identical insert upserts to the same row.
+        let e1 = s.insert_edge(&fid, &a, Some(&b), None, None, "calls").await.unwrap();
+        let e2 = s.insert_edge(&fid, &a, Some(&b), None, None, "calls").await.unwrap();
+        assert_eq!(e1, e2, "a repeated resolved edge returns the same id");
+        assert_eq!(s.get_edges_by_kind(&fid, "calls").await.unwrap().len(), 1, "no duplicate resolved edge");
+
+        // Unresolved edge: a repeated insert (same source, target_name, kind)
+        // upserts to the same row (nulls-not-distinct target_file).
+        let u1 = s.insert_edge(&fid, &a, None, Some("ext_fn"), None, "calls").await.unwrap();
+        let u2 = s.insert_edge(&fid, &a, None, Some("ext_fn"), None, "calls").await.unwrap();
+        assert_eq!(u1, u2, "a repeated unresolved edge returns the same id");
+        assert_eq!(s.get_edges_by_kind(&fid, "calls").await.unwrap().len(), 2,
+            "one resolved (a→b) + one unresolved (a→ext_fn), no dupes");
+
+        s.delete_nodes_by_folder(&fid).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn resolve_edge_merges_into_existing_resolved_edge() {
+        // D1: promoting an unresolved edge to a target that already has a resolved
+        // edge from the same (source, kind) must MERGE (delete the loser), not
+        // throw a unique violation against edges_unique_resolved.
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, &format!("resolvemerge_{}", uuid::Uuid::new_v4())).await;
+        let a = s.upsert_node(&fid, "function", "a", "a.rs", None, None, Some(1), Some(5)).await.unwrap();
+        let b = s.upsert_node(&fid, "function", "b", "b.rs", None, None, Some(1), Some(5)).await.unwrap();
+
+        s.insert_edge(&fid, &a, Some(&b), None, None, "calls").await.unwrap(); // resolved a→b
+        let u = s.insert_edge(&fid, &a, None, Some("b"), None, "calls").await.unwrap(); // unresolved a→"b"
+        // The resolved and unresolved partial indexes are DISJOINT: both edges
+        // coexist (no collision on insert) until resolution merges them.
+        assert_eq!(s.get_edges_by_kind(&fid, "calls").await.unwrap().len(), 2,
+            "resolved a→b and unresolved a→\"b\" coexist as two rows");
+
+        s.resolve_edge(&u, &b).await.unwrap(); // collides with a→b → merge
+
+        assert_eq!(s.get_edges_by_kind(&fid, "calls").await.unwrap().len(), 1,
+            "the redundant edge is merged away, not duplicated");
+        let exists: (bool,) = query_as("SELECT EXISTS(SELECT 1 FROM sensei.edges WHERE id=$1)")
+            .bind(u).fetch_one(s.pool()).await.unwrap();
+        assert!(!exists.0, "the loser unresolved edge is deleted");
+
+        s.delete_nodes_by_folder(&fid).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn replace_communities_for_folder_kills_stale_and_orphans() {
+        // D4 invariant 5: the per-folder replace DELETEs stale community rows,
+        // CLEARs every node's community_id, then writes the new set — no orphaned
+        // rows, no stranded community_ids. Per-folder, sum(node_count) equals the
+        // count of nodes actually carrying a community_id.
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, &format!("comm_{}", uuid::Uuid::new_v4())).await;
+        let a = s.upsert_node(&fid, "function", "a", "a.rs", None, Some("()"), Some(1), Some(2)).await.unwrap();
+        let b = s.upsert_node(&fid, "function", "b", "a.rs", None, Some("()"), Some(3), Some(4)).await.unwrap();
+        let c = s.upsert_node(&fid, "function", "c", "a.rs", None, Some("()"), Some(5), Some(6)).await.unwrap();
+
+        // Stale prior state: community 99 + nodes a & c assigned to it.
+        s.upsert_community(&fid, 99, "stale", 2).await.unwrap();
+        s.update_node_community(&a, 99).await.unwrap();
+        s.update_node_community(&c, 99).await.unwrap();
+
+        // Replace with a single community {1: [a, b]} — c must be orphaned out.
+        s.replace_communities_for_folder(&fid, &[
+            CommunityAssignment { community_id: 1, label: "new".into(), member_node_ids: vec![a, b], god_node_ids: vec![a] },
+        ]).await.unwrap();
+
+        assert_eq!(s.list_communities(&fid).await.unwrap().len(), 1, "stale community 99 is gone");
+        let cid = |id: uuid::Uuid| {
+            let s = &s;
+            async move {
+                let (v,): (Option<i32>,) = query_as("SELECT community_id FROM sensei.nodes WHERE id=$1")
+                    .bind(id).fetch_one(s.pool()).await.unwrap();
+                v
+            }
+        };
+        assert_eq!(cid(a).await, Some(1), "a assigned to the new community");
+        assert_eq!(cid(b).await, Some(1), "b assigned to the new community");
+        assert_eq!(cid(c).await, None, "c's stale community_id is cleared (orphan removed)");
+
+        // Per-folder integrity: claimed node_count == real nodes carrying a community_id.
+        let (claimed,): (i64,) = query_as("SELECT COALESCE(sum(node_count),0) FROM inference.communities WHERE folder_id=$1")
+            .bind(fid).fetch_one(s.pool()).await.unwrap();
+        let (real,): (i64,) = query_as("SELECT count(*) FROM sensei.nodes WHERE folder_id=$1 AND community_id IS NOT NULL")
+            .bind(fid).fetch_one(s.pool()).await.unwrap();
+        assert_eq!(claimed, real, "claimed == real (invariant 5)");
+
+        s.delete_nodes_by_folder(&fid).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn detect_communities_assigns_deterministic_ids_by_natural_key() {
+        // D4 invariant 2: community_id is DETERMINISTIC — communities are ranked
+        // 1..k by the natural key (file_path, line_start, …) of their smallest
+        // member, so an identical graph always yields identical ids. Two disjoint
+        // triangles ⇒ two communities; the one holding the earliest node is #1.
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, &format!("commdet_{}", uuid::Uuid::new_v4())).await;
+        let mut n = std::collections::HashMap::new();
+        for (name, line) in [("a", 10), ("b", 20), ("c", 30), ("d", 40), ("e", 50), ("f", 60)] {
+            let id = s.upsert_node(&fid, "function", name, "a.rs", None, Some("()"), Some(line), Some(line + 1)).await.unwrap();
+            n.insert(name, id);
+        }
+        // Two disjoint triangles: {a,b,c} and {d,e,f} (resolved calls).
+        for (x, y) in [("a","b"),("b","c"),("c","a"),("d","e"),("e","f"),("f","d")] {
+            s.insert_edge(&fid, &n[x], Some(&n[y]), None, None, "calls").await.unwrap();
+        }
+
+        let read_ids = |s: &PgStore, n: &std::collections::HashMap<&str, uuid::Uuid>| {
+            let ids: Vec<uuid::Uuid> = ["a","b","c","d","e","f"].iter().map(|k| n[*k]).collect();
+            let pool = s.pool().clone();
+            async move {
+                let mut out = Vec::new();
+                for id in ids {
+                    let (v,): (Option<i32>,) = query_as("SELECT community_id FROM sensei.nodes WHERE id=$1")
+                        .bind(id).fetch_one(&pool).await.unwrap();
+                    out.push(v);
+                }
+                out
+            }
+        };
+
+        crate::indexer::community::detect_communities_for_folder(&s, &fid).await.unwrap();
+        let first: Vec<Option<i32>> = read_ids(&s, &n).await;
+        // {a,b,c} share a community; {d,e,f} share another; triangle-a (earliest
+        // natural key) is community 1, triangle-d is 2.
+        assert_eq!(&first[0..3], &[Some(1), Some(1), Some(1)], "earliest triangle is community 1");
+        assert_eq!(&first[3..6], &[Some(2), Some(2), Some(2)], "later triangle is community 2");
+
+        // Invariant 5 after a REAL detect run (not just the hand-built replace):
+        // claimed sum(node_count) == real nodes carrying a community_id.
+        let (claimed,): (i64,) = query_as("SELECT COALESCE(sum(node_count),0) FROM inference.communities WHERE folder_id=$1")
+            .bind(fid).fetch_one(s.pool()).await.unwrap();
+        let (real,): (i64,) = query_as("SELECT count(*) FROM sensei.nodes WHERE folder_id=$1 AND community_id IS NOT NULL")
+            .bind(fid).fetch_one(s.pool()).await.unwrap();
+        assert_eq!(claimed, real, "per-folder claimed == real after detect_communities (invariant 5)");
+
+        // Re-running over the identical graph yields the identical assignment.
+        crate::indexer::community::detect_communities_for_folder(&s, &fid).await.unwrap();
+        let second: Vec<Option<i32>> = read_ids(&s, &n).await;
+        assert_eq!(first, second, "identical graph ⇒ identical community ids (deterministic)");
+
+        s.delete_nodes_by_folder(&fid).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn detect_communities_clears_stale_on_empty_folder() {
+        // D4 invariant 5: running detection on a folder that has become empty
+        // clears its stale community rows (the nodes.is_empty() → replace([]) path).
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, &format!("commempty_{}", uuid::Uuid::new_v4())).await;
+        s.upsert_community(&fid, 1, "stale", 3).await.unwrap();
+        assert_eq!(s.list_communities(&fid).await.unwrap().len(), 1, "seeded a stale community");
+
+        // No nodes exist for this folder → detection must clear the stale rows.
+        crate::indexer::community::detect_communities_for_folder(&s, &fid).await.unwrap();
+        assert!(s.list_communities(&fid).await.unwrap().is_empty(),
+            "an empty folder's stale communities are cleared");
+
+        s.delete_nodes_by_folder(&fid).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn community_coverage_full_singletons_inherit_file_community() {
+        // D4.4: every node gets a community_id. A file's symbols with NO call/
+        // import edge still land in a community via `parent_id` containment
+        // (they cluster under the file), and any residual singleton inherits its
+        // enclosing file community — so coverage is ~100% (invariant 5), not just
+        // the nodes that happen to carry a resolved semantic edge.
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, &format!("commcov_{}", uuid::Uuid::new_v4())).await;
+        // A file with a struct + two methods, and NO edges between any of them.
+        let file = s.upsert_node(&fid, "file", "widget.rs", "src/widget.rs", None, None, Some(1), Some(99)).await.unwrap();
+        s.upsert_node(&fid, "struct", "Widget", "src/widget.rs", Some(&file), None, Some(2), Some(2)).await.unwrap();
+        s.upsert_node(&fid, "method", "new", "src/widget.rs", Some(&file), Some("() -> Self"), Some(3), Some(5)).await.unwrap();
+        s.upsert_node(&fid, "method", "render", "src/widget.rs", Some(&file), Some("(&self)"), Some(7), Some(20)).await.unwrap();
+
+        crate::indexer::community::detect_communities_for_folder(&s, &fid).await.unwrap();
+
+        let (total,): (i64,) = query_as("SELECT count(*) FROM sensei.nodes WHERE folder_id=$1")
+            .bind(fid).fetch_one(s.pool()).await.unwrap();
+        let (covered,): (i64,) = query_as("SELECT count(*) FROM sensei.nodes WHERE folder_id=$1 AND community_id IS NOT NULL")
+            .bind(fid).fetch_one(s.pool()).await.unwrap();
+        assert_eq!(total, 4, "seeded 4 nodes");
+        assert_eq!(covered, total, "every node carries a community_id (singletons inherit the file community)");
+
+        // per-folder integrity still holds with the broadened coverage.
+        let (claimed,): (i64,) = query_as("SELECT COALESCE(sum(node_count),0) FROM inference.communities WHERE folder_id=$1")
+            .bind(fid).fetch_one(s.pool()).await.unwrap();
+        assert_eq!(claimed, covered, "claimed == real (invariant 5)");
+
+        s.delete_nodes_by_folder(&fid).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn community_adjacency_includes_extends() {
+        // D4.4: the adjacency set is broadened to calls,imports,extends,references
+        // (the dead `implements` is dropped). Two classes in DIFFERENT files
+        // (so `parent_id` containment does NOT group them) linked only by an
+        // `extends` edge land in the SAME community — before D4b, `extends` was
+        // ignored and they would be separate singletons.
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, &format!("commext_{}", uuid::Uuid::new_v4())).await;
+        let base = s.upsert_node(&fid, "class", "Base", "src/base.rs", None, Some("class Base"), Some(1), Some(5)).await.unwrap();
+        let derived = s.upsert_node(&fid, "class", "Derived", "src/derived.rs", None, Some("class Derived"), Some(1), Some(5)).await.unwrap();
+        s.insert_edge(&fid, &derived, Some(&base), None, None, "extends").await.unwrap();
+
+        crate::indexer::community::detect_communities_for_folder(&s, &fid).await.unwrap();
+
+        let cid = |id: uuid::Uuid| {
+            let pool = s.pool().clone();
+            async move {
+                let (v,): (Option<i32>,) = query_as("SELECT community_id FROM sensei.nodes WHERE id=$1")
+                    .bind(id).fetch_one(&pool).await.unwrap();
+                v
+            }
+        };
+        let cb = cid(base).await;
+        let cd = cid(derived).await;
+        assert!(cb.is_some(), "extends-linked class carries a community");
+        assert_eq!(cb, cd, "extends-linked classes share a community (broadened adjacency)");
+
+        s.delete_nodes_by_folder(&fid).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn recompute_degrees_counts_incident_edges() {
+        // D4.5: nodes.degree = in+out count of edges incident to the node (source,
+        // plus resolved target). An edgeless node is set to 0, not left NULL.
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, &format!("degree_{}", uuid::Uuid::new_v4())).await;
+        let hub = s.upsert_node(&fid, "function", "hub", "a.rs", None, Some("()"), Some(1), Some(2)).await.unwrap();
+        let a = s.upsert_node(&fid, "function", "a", "a.rs", None, Some("()"), Some(3), Some(4)).await.unwrap();
+        let b = s.upsert_node(&fid, "function", "b", "a.rs", None, Some("()"), Some(5), Some(6)).await.unwrap();
+        let lonely = s.upsert_node(&fid, "function", "lonely", "a.rs", None, Some("()"), Some(7), Some(8)).await.unwrap();
+        s.insert_edge(&fid, &a, Some(&hub), None, None, "calls").await.unwrap(); // a→hub
+        s.insert_edge(&fid, &b, Some(&hub), None, None, "calls").await.unwrap(); // b→hub
+
+        s.recompute_degrees_for_folder(&fid).await.unwrap();
+
+        let deg = |id: uuid::Uuid| {
+            let pool = s.pool().clone();
+            async move {
+                let (d,): (Option<i32>,) = query_as("SELECT degree FROM sensei.nodes WHERE id=$1")
+                    .bind(id).fetch_one(&pool).await.unwrap();
+                d
+            }
+        };
+        assert_eq!(deg(hub).await, Some(2), "hub is the resolved target of 2 calls");
+        assert_eq!(deg(a).await, Some(1), "a is the source of 1 call");
+        assert_eq!(deg(b).await, Some(1), "b is the source of 1 call");
+        assert_eq!(deg(lonely).await, Some(0), "an edgeless node has degree 0, not NULL");
+
+        s.delete_nodes_by_folder(&fid).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn god_node_ids_are_top_by_degree() {
+        // D4.5: a community's god_node_ids are its highest-degree members (top-5),
+        // read from nodes.degree; the hub ranks first.
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, &format!("godnode_{}", uuid::Uuid::new_v4())).await;
+        let hub = s.upsert_node(&fid, "function", "hub", "a.rs", None, Some("()"), Some(1), Some(2)).await.unwrap();
+        let a = s.upsert_node(&fid, "function", "a", "a.rs", None, Some("()"), Some(3), Some(4)).await.unwrap();
+        let b = s.upsert_node(&fid, "function", "b", "a.rs", None, Some("()"), Some(5), Some(6)).await.unwrap();
+        let c = s.upsert_node(&fid, "function", "c", "a.rs", None, Some("()"), Some(7), Some(8)).await.unwrap();
+        // a→hub, b→hub, c→hub, a→b (calls). Degrees: hub=3, a=2, b=2, c=1 → one
+        // community {hub,a,b,c}; hub is the clear hub.
+        s.insert_edge(&fid, &a, Some(&hub), None, None, "calls").await.unwrap();
+        s.insert_edge(&fid, &b, Some(&hub), None, None, "calls").await.unwrap();
+        s.insert_edge(&fid, &c, Some(&hub), None, None, "calls").await.unwrap();
+        s.insert_edge(&fid, &a, Some(&b), None, None, "calls").await.unwrap();
+
+        s.recompute_degrees_for_folder(&fid).await.unwrap();
+        crate::indexer::community::detect_communities_for_folder(&s, &fid).await.unwrap();
+
+        let (god,): (Vec<uuid::Uuid>,) = query_as(
+            "SELECT god_node_ids FROM inference.communities WHERE folder_id=$1 ORDER BY community_id LIMIT 1")
+            .bind(fid).fetch_one(s.pool()).await.unwrap();
+        assert_eq!(god.first(), Some(&hub), "the highest-degree node is the first god node");
+        assert!(god.contains(&hub), "hub is a god node");
+        assert!(god.len() <= 5, "at most 5 god nodes per community");
+
+        s.delete_nodes_by_folder(&fid).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn community_description_authoritative_write_is_honest_null() {
+        // D4.5 never-fabricate: the authoritative detection write leaves every
+        // community's description NULL with props.source='null' — honest-empty,
+        // NEVER a static template. (Model prose is stamped later, off-barrier, by
+        // enrich_community_descriptions.) The Done-gate keys on
+        // props.source ∈ {'insight-copy','null'}.
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, &format!("commdesc_{}", uuid::Uuid::new_v4())).await;
+        let a = s.upsert_node(&fid, "function", "a", "a.rs", None, Some("()"), Some(1), Some(2)).await.unwrap();
+        let b = s.upsert_node(&fid, "function", "b", "a.rs", None, Some("()"), Some(3), Some(4)).await.unwrap();
+        s.insert_edge(&fid, &a, Some(&b), None, None, "calls").await.unwrap();
+
+        crate::indexer::community::detect_communities_for_folder(&s, &fid).await.unwrap();
+
+        let rows: Vec<(Option<String>, serde_json::Value)> = query_as(
+            "SELECT description, props FROM inference.communities WHERE folder_id=$1")
+            .bind(fid).fetch_all(s.pool()).await.unwrap();
+        assert!(!rows.is_empty(), "at least one community was written");
+        for (desc, props) in &rows {
+            assert_eq!(*desc, None, "description is honest-NULL without a gateway");
+            let source = props.get("source").and_then(|v| v.as_str());
+            assert_eq!(source, Some("null"), "props.source records the honest-empty provenance");
+            assert_ne!(source, Some("template"), "never a templated description (never-fabricate)");
+        }
+
+        s.delete_nodes_by_folder(&fid).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn graph_nodes_returns_community_and_structural_edges() {
+        // 7.1: get_nodes_scoped exposes community_id, and get_edges_scoped_kinds
+        // returns the full layout set calls,imports,extends — NOT just calls, and
+        // NOT overlay kinds like covers.
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, &format!("gscope_{}", uuid::Uuid::new_v4())).await;
+        let a = s.upsert_node(&fid, "function", "a", "a.rs", None, Some("()"), Some(1), Some(2)).await.unwrap();
+        let b = s.upsert_node(&fid, "class", "B", "a.rs", None, Some("()"), Some(3), Some(4)).await.unwrap();
+        sqlx_core::query::query("UPDATE sensei.nodes SET community_id=5 WHERE id=$1").bind(a).execute(s.pool()).await.unwrap();
+        s.insert_edge(&fid, &a, Some(&b), None, None, "calls").await.unwrap();
+        s.insert_edge(&fid, &a, None, Some("lib"), None, "imports").await.unwrap();
+        s.insert_edge(&fid, &b, Some(&a), None, None, "extends").await.unwrap();
+        s.insert_edge(&fid, &a, Some(&b), None, None, "covers").await.unwrap(); // overlay — excluded
+
+        let nodes = s.get_nodes_scoped(&[fid]).await.unwrap();
+        let a_node = nodes.iter().find(|n| n["name"] == "a").unwrap();
+        assert_eq!(a_node["community_id"].as_i64(), Some(5), "get_nodes_scoped exposes community_id");
+
+        let edges = s.get_edges_scoped_kinds(&[fid], &["calls", "imports", "extends"]).await.unwrap();
+        let kinds: std::collections::HashSet<&str> = edges.iter().filter_map(|e| e["kind"].as_str()).collect();
+        assert_eq!(edges.len(), 3, "exactly the 3 layout edges (covers excluded)");
+        assert!(kinds.contains("calls") && kinds.contains("imports") && kinds.contains("extends"), "all 3 layout kinds present: {kinds:?}");
+        assert!(!kinds.contains("covers"), "covers (overlay) is not a layout edge");
+
+        s.delete_nodes_by_folder(&fid).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn communities_info_uses_live_membership() {
+        // 7.3: list_communities_live_scoped counts from the real nodes.community_id
+        // join, NOT the denormalized communities.node_count — so a stale count
+        // doesn't drive the overview.
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, &format!("livecomm_{}", uuid::Uuid::new_v4())).await;
+        let n1 = s.upsert_node(&fid, "function", "n1", "a.rs", None, Some("()"), Some(1), Some(2)).await.unwrap();
+        let n2 = s.upsert_node(&fid, "function", "n2", "a.rs", None, Some("()"), Some(3), Some(4)).await.unwrap();
+        let n3 = s.upsert_node(&fid, "function", "n3", "a.rs", None, Some("()"), Some(5), Some(6)).await.unwrap();
+        // Community 1 has 2 live members, community 2 has 1 — but seed a STALE count.
+        s.upsert_community(&fid, 1, "c1", 99).await.unwrap(); // stale node_count = 99
+        s.upsert_community(&fid, 2, "c2", 0).await.unwrap();  // stale node_count = 0
+        sqlx_core::query::query("UPDATE sensei.nodes SET community_id=1 WHERE id = ANY($1)")
+            .bind(vec![n1, n2]).execute(s.pool()).await.unwrap();
+        sqlx_core::query::query("UPDATE sensei.nodes SET community_id=2 WHERE id=$1")
+            .bind(n3).execute(s.pool()).await.unwrap();
+
+        let live = s.list_communities_live_scoped(&[fid]).await.unwrap();
+        let count_of = |label: &str| live.iter()
+            .find(|c| c["label"] == label)
+            .and_then(|c| c["node_count"].as_i64());
+        assert_eq!(count_of("c1"), Some(2), "c1 sized by 2 LIVE members, not the stale 99");
+        assert_eq!(count_of("c2"), Some(1), "c2 sized by 1 LIVE member, not the stale 0");
+        // Ordered by live count desc → c1 first.
+        assert_eq!(live.first().and_then(|c| c["label"].as_str()), Some("c1"));
+
+        s.delete_nodes_by_folder(&fid).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn upsert_node_at_same_line_keeps_id_and_renulls_embedding_on_sig_change() {
+        // D3: a re-upsert at the SAME identity (line_start is part of the key)
+        // keeps the id — preserving community_id and degree. The embedding is
+        // PRESERVED when the signature is unchanged, and RE-NULLED (re-embed) when
+        // the signature changed — signature being the only embed input that can
+        // change on a same-identity conflict. A DIFFERENT line is a new identity.
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, &format!("nodeid_{}", uuid::Uuid::new_v4())).await;
+        let id1 = s.upsert_node(&fid, "function", "foo", "a.rs", None, Some("fn foo(x: i32)"), Some(10), Some(20)).await.unwrap();
+
+        // Simulate a prior enrich + embed pass on this node.
+        let zeros = format!("[{}]", vec!["0"; 384].join(","));
+        sqlx_core::query::query("UPDATE sensei.nodes SET community_id = 7, degree = 3, embedding = $2::vector WHERE id = $1")
+            .bind(id1).bind(&zeros).execute(s.pool()).await.unwrap();
+
+        // Re-upsert SAME line, SAME signature, only line_end grew → id kept, all preserved.
+        let id2 = s.upsert_node(&fid, "function", "foo", "a.rs", None, Some("fn foo(x: i32)"), Some(10), Some(25)).await.unwrap();
+        assert_eq!(id1, id2, "a re-upsert at the same identity keeps its id");
+        let (community, degree, has_emb): (Option<i32>, Option<i32>, bool) = query_as(
+            "SELECT community_id, degree, embedding IS NOT NULL FROM sensei.nodes WHERE id = $1")
+            .bind(id1).fetch_one(s.pool()).await.unwrap();
+        assert_eq!((community, degree, has_emb), (Some(7), Some(3), true),
+            "community_id/degree/embedding preserved when signature is unchanged");
+
+        // Re-upsert SAME line, CHANGED signature → id kept, community kept, embedding RE-NULLED.
+        let id3 = s.upsert_node(&fid, "function", "foo", "a.rs", None, Some("fn foo(x: i64)"), Some(10), Some(25)).await.unwrap();
+        assert_eq!(id1, id3, "same identity (line) keeps the id even when signature changes");
+        let (community2, has_emb2): (Option<i32>, bool) = query_as(
+            "SELECT community_id, embedding IS NOT NULL FROM sensei.nodes WHERE id = $1")
+            .bind(id1).fetch_one(s.pool()).await.unwrap();
+        assert_eq!(community2, Some(7), "community_id is still preserved");
+        assert!(!has_emb2, "embedding is re-nulled for re-embedding when the signature changed");
+
+        // A DIFFERENT line is a new identity ⇒ a new node (a moved symbol churns).
+        let id4 = s.upsert_node(&fid, "function", "foo", "a.rs", None, Some("fn foo(x: i32)"), Some(99), Some(105)).await.unwrap();
+        assert_ne!(id1, id4, "a different line_start is a new identity (moved symbol re-mints until D5c nesting)");
+
+        s.delete_nodes_by_folder(&fid).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn upsert_node_by_fqn_merges_ref_and_def() {
+        // FQN get-or-create (SCIP/LSIF moniker model): a REFERENCE creates an
+        // unresolved stub (resolved=false, NULL file_path); a later DEFINITION
+        // with the same (folder_id, fqn) returns the SAME id, flips resolved=true
+        // and fills file/line/signature; a second reference shares the one node
+        // and never downgrades the resolved definition. No "unresolved" state —
+        // the node exists from its first mention.
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, &format!("fqn_{}", uuid::Uuid::new_v4())).await;
+        let fqn = "rust·senseid·widget·Widget·new";
+
+        // 1. Reference-first → a stub.
+        let stub = s.upsert_node_by_fqn(&fid, fqn, "method", "new", Some("rust"), None).await.unwrap();
+        let (resolved, fp): (bool, Option<String>) =
+            query_as("SELECT resolved, file_path FROM sensei.nodes WHERE id=$1")
+            .bind(stub).fetch_one(s.pool()).await.unwrap();
+        assert!(!resolved, "a reference-first node is an unresolved stub");
+        assert_eq!(fp, None, "a stub has no known file");
+
+        // 2. The definition enriches the SAME node in place.
+        let def = s.upsert_node_by_fqn(&fid, fqn, "method", "new", Some("rust"),
+            Some(FqnDef { file_path: "src/widget.rs", signature: Some("fn new() -> Self"),
+                          line_start: Some(10), line_end: Some(12), is_exported: true, parent_id: None })
+        ).await.unwrap();
+        assert_eq!(stub, def, "the definition get-or-creates the SAME node as the reference");
+        let (resolved2, fp2, sig, ls, exported): (bool, Option<String>, Option<String>, Option<i32>, bool) =
+            query_as("SELECT resolved, file_path, signature, line_start, is_exported FROM sensei.nodes WHERE id=$1")
+            .bind(def).fetch_one(s.pool()).await.unwrap();
+        assert!(resolved2, "the node is resolved once its definition is seen");
+        assert_eq!(fp2.as_deref(), Some("src/widget.rs"));
+        assert_eq!(sig.as_deref(), Some("fn new() -> Self"));
+        assert_eq!(ls, Some(10));
+        assert!(exported, "the definition's is_exported is written");
+
+        // 3. A second reference shares the one node and does NOT downgrade it.
+        let ref2 = s.upsert_node_by_fqn(&fid, fqn, "method", "new", Some("rust"), None).await.unwrap();
+        assert_eq!(ref2, def, "a later reference resolves to the same node");
+        let (still_resolved, still_fp): (bool, Option<String>) =
+            query_as("SELECT resolved, file_path FROM sensei.nodes WHERE id=$1")
+            .bind(def).fetch_one(s.pool()).await.unwrap();
+        assert!(still_resolved, "a reference must not downgrade an already-resolved node");
+        assert_eq!(still_fp.as_deref(), Some("src/widget.rs"), "a reference must not clear the definition's file");
+
+        // Exactly one node for this fqn.
+        let (n,): (i64,) = query_as("SELECT count(*) FROM sensei.nodes WHERE folder_id=$1 AND fqn=$2")
+            .bind(fid).bind(fqn).fetch_one(s.pool()).await.unwrap();
+        assert_eq!(n, 1, "ref + def + ref = exactly one node");
+
+        s.delete_nodes_by_folder(&fid).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn lib_node_by_fqn() {
+        // An external reference get-or-creates a first-class `lib_symbol` node:
+        // resolved=true (the external symbol IS its own definition — nothing to
+        // enrich), NULL file_path (no local file), grouped by package in props.
+        // Stable id across repeated references.
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, &format!("lib_{}", uuid::Uuid::new_v4())).await;
+        let fqn = "lib·serde_json·serde_json·from_str";
+
+        let a = s.upsert_lib_node_by_fqn(&fid, fqn, "from_str", "serde_json").await.unwrap();
+        let (kind, resolved, fp, pkg): (String, bool, Option<String>, Option<String>) = query_as(
+            "SELECT kind::text, resolved, file_path, props->>'package' FROM sensei.nodes WHERE id=$1")
+            .bind(a).fetch_one(s.pool()).await.unwrap();
+        assert_eq!(kind, "lib_symbol");
+        assert!(resolved, "a lib symbol is its own definition — resolved");
+        assert_eq!(fp, None, "a lib symbol has no local file");
+        assert_eq!(pkg.as_deref(), Some("serde_json"), "grouped by package in props");
+
+        // A second reference to the same external fqn shares the one node.
+        let b = s.upsert_lib_node_by_fqn(&fid, fqn, "from_str", "serde_json").await.unwrap();
+        assert_eq!(a, b, "repeated external references share one lib node");
+        let (n,): (i64,) = query_as(
+            "SELECT count(*) FROM sensei.nodes WHERE folder_id=$1 AND kind='lib_symbol'::sensei.node_kind")
+            .bind(fid).fetch_one(s.pool()).await.unwrap();
+        assert_eq!(n, 1);
+
+        s.delete_nodes_by_folder(&fid).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn graph_nodes_and_tree_expose_fqn_and_containers() {
+        // Phase 7.2: the graph/nodes projection (get_nodes_scoped) carries `fqn` +
+        // `resolved` so the Atlas can key symbols by moniker, and /tree (build_tree)
+        // nests the Phase-5 type/module containers (file → type → method) via
+        // parent_id. These are the two projections the retrieval endpoints delegate to.
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, &format!("retr_{}", uuid::Uuid::new_v4())).await;
+
+        // file → struct container → method(fqn), nested by parent_id (Phase 5 shape).
+        let file_id = s.upsert_node(&fid, "file", "lib.rs", "src/lib.rs", None, None, Some(1), Some(9)).await.unwrap();
+        let type_id = s.upsert_node(&fid, "struct", "Widget", "src/lib.rs", Some(&file_id), Some("struct Widget"), Some(2), Some(6)).await.unwrap();
+        let method_fqn = "rust·pkg·lib·Widget·render";
+        let method_id = s.upsert_node_by_fqn(&fid, method_fqn, "method", "render", Some("rust"),
+            Some(super::FqnDef { file_path: "src/lib.rs", signature: Some("fn render(&self)"),
+                line_start: Some(3), line_end: Some(5), is_exported: true, parent_id: Some(&type_id) })).await.unwrap();
+
+        // ── graph/nodes exposes fqn + resolved ──
+        let nodes = s.get_nodes_scoped(&[fid]).await.unwrap();
+        let method = nodes.iter().find(|n| n["name"] == "render").expect("method node in projection");
+        assert_eq!(crate::api::util::json_uuid(&method["id"]), Some(method_id), "same method node");
+        assert_eq!(method["fqn"].as_str(), Some(method_fqn), "get_nodes_scoped projects the node's fqn");
+        assert_eq!(method["resolved"].as_bool(), Some(true), "and its resolved flag");
+
+        // ── /tree nests the type container → method (Phase 5 parent_id) ──
+        let folders = s.get_folders_scoped(&[fid]).await.unwrap();
+        let tree = crate::api::handlers::codebase::build_tree_pub(&folders, &nodes);
+        let files = tree["tree"][0]["nodes"].as_array().expect("folder root nodes");
+        let file = files.iter().find(|n| n["name"] == "lib.rs").expect("file node under folder");
+        let widget = file["children"].as_array().unwrap().iter()
+            .find(|n| n["name"] == "Widget").expect("type container nested under file");
+        assert_eq!(widget["kind"], "struct", "the type container carries its kind");
+        let render = widget["children"].as_array().unwrap().iter()
+            .find(|n| n["name"] == "render").expect("method nested under the type container");
+        assert_eq!(render["kind"], "method", "the method nests under the type container (Phase 5)");
+
+        s.delete_nodes_by_folder(&fid).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn two_same_name_stubs_do_not_merge() {
+        // Phase 3.0: with the partial identity index (`where file_path is not null`),
+        // reference stubs (file_path NULL) are governed ONLY by nodes_unique_fqn.
+        // Two references with the same simple name but DIFFERENT fqns must stay two
+        // distinct nodes — the false-merge this rebuild exists to kill. (Under the
+        // old non-partial identity constraint these would collide on
+        // (folder, NULL, kind, name, NULL, NULL).)
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, &format!("stubmerge_{}", uuid::Uuid::new_v4())).await;
+        let a = s.upsert_node_by_fqn(&fid, "rust·pkg·a·A·foo", "method", "foo", Some("rust"), None).await.unwrap();
+        let b = s.upsert_node_by_fqn(&fid, "rust·pkg·b·B·foo", "method", "foo", Some("rust"), None).await.unwrap();
+        assert_ne!(a, b, "same simple name, different fqn → two distinct stub nodes");
+        let (n,): (i64,) = query_as("SELECT count(*) FROM sensei.nodes WHERE folder_id=$1 AND resolved=false")
+            .bind(fid).fetch_one(s.pool()).await.unwrap();
+        assert_eq!(n, 2, "both stubs coexist under the fqn index");
+        s.delete_nodes_by_folder(&fid).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn legacy_upsert_sets_language_from_extension() {
+        // Every node written via the legacy upsert_node/_ex path (all non-Rust +
+        // file/section/rationale nodes, for the whole FQN transition) must carry
+        // `language` derived from its file extension — otherwise the same-language
+        // bare-name fallback filter (plan 0.8) has nothing to match on. Compound
+        // extensions resolve too (.svelte.ts → typescript).
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, &format!("lang_{}", uuid::Uuid::new_v4())).await;
+        let cases = [
+            ("src/a.rs",        "function", Some("fn f()"), "rust"),
+            ("pkg/b.py",        "function", Some("def g()"), "python"),
+            ("app/c.svelte.ts", "function", None,           "typescript"), // compound ext
+            ("docs/e.md",       "doc",      None,           "markdown"),
+        ];
+        for (path, kind, sig, want) in cases {
+            let id = s.upsert_node(&fid, kind, "n", path, None, sig, Some(1), Some(2)).await.unwrap();
+            let (lang,): (Option<String>,) = query_as("SELECT language FROM sensei.nodes WHERE id=$1")
+                .bind(id).fetch_one(s.pool()).await.unwrap();
+            assert_eq!(lang.as_deref(), Some(want), "{path} → language {want}");
+        }
+
+        s.delete_nodes_by_folder(&fid).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn node_locations_tolerates_stub_rows() {
+        // file_path is now nullable (reference stubs + lib_symbol nodes have none).
+        // node_locations decodes file_path as a required String, so a stub id among
+        // the requested ids must NOT error the whole fetch — the stub (no location)
+        // is simply omitted while the real node still resolves.
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, &format!("nodeloc_{}", uuid::Uuid::new_v4())).await;
+        let real = s.upsert_node(&fid, "function", "real", "a.rs", None, Some("fn real()"), Some(3), Some(9)).await.unwrap();
+        let stub = s.upsert_node_by_fqn(&fid, "rust·pkg·m·Missing·gone", "method", "gone", Some("rust"), None).await.unwrap();
+
+        let locs = s.node_locations(&[real, stub]).await.unwrap();
+        assert_eq!(locs.len(), 1, "the stub (NULL file_path) is omitted, not an error");
+        assert_eq!(locs[0].0, real, "the real node still resolves");
+        assert_eq!(locs[0].2, "a.rs", "with its file_path");
+
+        s.delete_nodes_by_folder(&fid).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn prune_file_nodes_deletes_vanished_and_unresolves_inbound() {
+        // D3: a symbol that vanished from the parse is pruned; an inbound
+        // cross-file edge to it is UNRESOLVED (target_id→NULL, target_name kept),
+        // not cascade-deleted (invariant 3). A kept node is untouched.
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, &format!("prune_{}", uuid::Uuid::new_v4())).await;
+        let keep = s.upsert_node(&fid, "function", "keep", "a.rs", None, Some("()"), Some(1), Some(5)).await.unwrap();
+        let gone = s.upsert_node(&fid, "function", "gone", "a.rs", None, Some("()"), Some(6), Some(9)).await.unwrap();
+        let caller = s.upsert_node(&fid, "function", "caller", "b.rs", None, Some("()"), Some(1), Some(3)).await.unwrap();
+        // A resolved inbound edge b.rs::caller → a.rs::gone, carrying target_name.
+        let e = s.insert_edge(&fid, &caller, None, Some("gone"), None, "calls").await.unwrap();
+        s.resolve_edge(&e, &gone).await.unwrap();
+
+        // Re-index of a.rs keeps only `keep`.
+        let pruned = s.prune_file_nodes(&fid, "a.rs", &[keep]).await.unwrap();
+        assert_eq!(pruned, 1, "the vanished `gone` node is pruned");
+
+        let (keep_exists,): (bool,) = query_as("SELECT EXISTS(SELECT 1 FROM sensei.nodes WHERE id=$1)")
+            .bind(keep).fetch_one(s.pool()).await.unwrap();
+        assert!(keep_exists, "the surviving node is untouched");
+        let (gone_exists,): (bool,) = query_as("SELECT EXISTS(SELECT 1 FROM sensei.nodes WHERE id=$1)")
+            .bind(gone).fetch_one(s.pool()).await.unwrap();
+        assert!(!gone_exists, "the vanished node is deleted");
+        // The inbound edge survived, unresolved (target_id NULL, target_name kept).
+        let (tid, tname): (Option<uuid::Uuid>, Option<String>) = query_as(
+            "SELECT target_id, target_name FROM sensei.edges WHERE id = $1")
+            .bind(e).fetch_one(s.pool()).await.unwrap();
+        assert_eq!(tid, None, "inbound edge to the pruned node is unresolved, not deleted");
+        assert_eq!(tname.as_deref(), Some("gone"), "target_name is kept for re-resolution");
+
+        s.delete_nodes_by_folder(&fid).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn delete_edges_from_sources_clears_a_files_out_edges() {
+        // D3 per-file reconcile: a surviving symbol's stale out-edges are cleared
+        // before re-inserting the current set (they don't cascade — the node
+        // lives). Only edges FROM the given sources are removed.
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, &format!("outedge_{}", uuid::Uuid::new_v4())).await;
+        let a = s.upsert_node(&fid, "function", "a", "a.rs", None, Some("()"), Some(1), Some(5)).await.unwrap();
+        let b = s.upsert_node(&fid, "function", "b", "b.rs", None, Some("()"), Some(1), Some(5)).await.unwrap();
+        s.insert_edge(&fid, &a, None, Some("x"), None, "calls").await.unwrap();       // a's out-edge
+        s.insert_edge(&fid, &b, None, Some("y"), None, "calls").await.unwrap();       // b's out-edge (must survive)
+
+        let n = s.delete_edges_from_sources(&fid, &[a]).await.unwrap();
+        assert_eq!(n, 1, "only a's out-edge is deleted");
+        assert_eq!(s.get_edges_by_kind(&fid, "calls").await.unwrap().len(), 1, "b's out-edge survives");
+        // Empty sources is a cheap no-op.
+        assert_eq!(s.delete_edges_from_sources(&fid, &[]).await.unwrap(), 0);
+
+        s.delete_nodes_by_folder(&fid).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn replace_edges_of_kind_swaps_the_full_set() {
+        // D2: replace_edges_of_kind removes STALE edges of a kind and inserts the
+        // current set atomically — the "replaced, not appended" guarantee that
+        // makes a derived kind (covers) a pure function of the current tree.
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, &format!("replkind_{}", uuid::Uuid::new_v4())).await;
+        let doc = s.upsert_node(&fid, "doc", "d", "d.md", None, None, None, None).await.unwrap();
+        let f1 = s.upsert_node(&fid, "file", "f1", "f1.rs", None, None, None, None).await.unwrap();
+        let f2 = s.upsert_node(&fid, "file", "f2", "f2.rs", None, None, None, None).await.unwrap();
+
+        // A STALE covers edge doc→f1 (as if f1 was the covered file last scan).
+        s.insert_edge(&fid, &doc, Some(&f1), None, None, "covers").await.unwrap();
+        assert_eq!(s.get_edges_by_kind(&fid, "covers").await.unwrap().len(), 1);
+
+        // Replace the covers set with {doc→f2}: the stale doc→f1 must vanish.
+        s.replace_edges_of_kind(&fid, "covers", &[
+            EdgeSpec { source_id: doc, target_id: Some(f2), target_name: None, target_file: None },
+        ]).await.unwrap();
+
+        let (tid,): (Option<uuid::Uuid>,) = query_as(
+            "SELECT target_id FROM sensei.edges WHERE folder_id=$1 AND kind='covers'::sensei.edge_kind")
+            .bind(fid).fetch_one(s.pool()).await.unwrap();
+        assert_eq!(s.get_edges_by_kind(&fid, "covers").await.unwrap().len(), 1,
+            "exactly the current set — stale edge removed, not appended");
+        assert_eq!(tid, Some(f2), "the surviving covers edge is the new target");
+
+        // Replacing with an EMPTY set clears the kind for the folder.
+        s.replace_edges_of_kind(&fid, "covers", &[]).await.unwrap();
+        assert!(s.get_edges_by_kind(&fid, "covers").await.unwrap().is_empty(),
+            "an empty set clears every edge of the kind");
+
+        s.delete_nodes_by_folder(&fid).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn replace_edges_of_kind_handles_unresolved_edges() {
+        // The unresolved branch (target_id=None) — the path the per-file reconcile
+        // (D3) will use. Replaces by (target_name, target_file).
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, &format!("replun_{}", uuid::Uuid::new_v4())).await;
+        let a = s.upsert_node(&fid, "function", "a", "a.rs", None, None, Some(1), Some(5)).await.unwrap();
+        s.insert_edge(&fid, &a, None, Some("old"), None, "calls").await.unwrap(); // stale unresolved a→"old"
+
+        s.replace_edges_of_kind(&fid, "calls", &[
+            EdgeSpec { source_id: a, target_id: None, target_name: Some("new".into()), target_file: Some("x.rs".into()) },
+        ]).await.unwrap();
+
+        let (name, file): (Option<String>, Option<String>) = query_as(
+            "SELECT target_name, target_file FROM sensei.edges WHERE folder_id=$1 AND kind='calls'::sensei.edge_kind")
+            .bind(fid).fetch_one(s.pool()).await.unwrap();
+        assert_eq!((name.as_deref(), file.as_deref()), (Some("new"), Some("x.rs")),
+            "unresolved edge replaced by (target_name, target_file)");
+        assert_eq!(s.get_edges_by_kind(&fid, "calls").await.unwrap().len(), 1, "stale unresolved edge removed");
+        s.delete_nodes_by_folder(&fid).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn replace_edges_of_kind_is_atomic_and_rolls_back_on_failure() {
+        // The "one transaction" guarantee: if an insert in the batch fails (a bad
+        // source_id → FK violation), the whole replace rolls back — the OLD set is
+        // intact, never half-deleted (no zero-covers window).
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, &format!("replatomic_{}", uuid::Uuid::new_v4())).await;
+        let doc = s.upsert_node(&fid, "doc", "d", "d.md", None, None, None, None).await.unwrap();
+        let f1 = s.upsert_node(&fid, "file", "f1", "f1.rs", None, None, None, None).await.unwrap();
+        s.insert_edge(&fid, &doc, Some(&f1), None, None, "covers").await.unwrap();
+
+        // A batch whose second edge has a bogus source_id (no such node) → the
+        // FK on edges.source_id fails the insert mid-batch.
+        let bogus = uuid::Uuid::new_v4();
+        let res = s.replace_edges_of_kind(&fid, "covers", &[
+            EdgeSpec { source_id: doc, target_id: Some(f1), target_name: None, target_file: None },
+            EdgeSpec { source_id: bogus, target_id: Some(f1), target_name: None, target_file: None },
+        ]).await;
+        assert!(res.is_err(), "a bad edge fails the replace");
+
+        assert_eq!(s.get_edges_by_kind(&fid, "covers").await.unwrap().len(), 1,
+            "the DELETE rolled back with the failed insert — old set intact, not half-deleted");
+        let (tid,): (Option<uuid::Uuid>,) = query_as(
+            "SELECT target_id FROM sensei.edges WHERE folder_id=$1 AND kind='covers'::sensei.edge_kind")
+            .bind(fid).fetch_one(s.pool()).await.unwrap();
+        assert_eq!(tid, Some(f1), "the surviving edge is the original (rollback)");
+        s.delete_nodes_by_folder(&fid).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn insert_edge_unresolved_dedups_by_target_file() {
+        // D1: the unresolved identity is (folder, source, target_name, target_file,
+        // kind). Same target_name in DIFFERENT files are distinct edges; same
+        // name + same file (incl. nulls-not-distinct) upserts to one row. This is
+        // the whole point of the target_file column — a same-named symbol in two
+        // files must not collapse to one edge.
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, &format!("edgetf_{}", uuid::Uuid::new_v4())).await;
+        let a = s.upsert_node(&fid, "function", "a", "a.rs", None, None, Some(1), Some(5)).await.unwrap();
+
+        let e1 = s.insert_edge(&fid, &a, None, Some("helper"), Some("x.rs"), "calls").await.unwrap();
+        let e2 = s.insert_edge(&fid, &a, None, Some("helper"), Some("y.rs"), "calls").await.unwrap();
+        assert_ne!(e1, e2, "same target_name in different files are distinct unresolved edges");
+        assert_eq!(s.get_edges_by_kind(&fid, "calls").await.unwrap().len(), 2, "two distinct rows");
+
+        let e3 = s.insert_edge(&fid, &a, None, Some("helper"), Some("x.rs"), "calls").await.unwrap();
+        assert_eq!(e1, e3, "same (target_name, target_file) upserts to the same row");
+        assert_eq!(s.get_edges_by_kind(&fid, "calls").await.unwrap().len(), 2, "no new row on re-insert");
+
+        s.delete_nodes_by_folder(&fid).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn resolve_edge_second_call_is_safe() {
+        // resolve_edge is idempotent: resolving the same edge to the same target
+        // twice must be a safe no-op (one edge), not a unique-violation throw.
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, &format!("resolve2x_{}", uuid::Uuid::new_v4())).await;
+        let a = s.upsert_node(&fid, "function", "a", "a.rs", None, None, Some(1), Some(5)).await.unwrap();
+        let b = s.upsert_node(&fid, "function", "b", "b.rs", None, None, Some(1), Some(5)).await.unwrap();
+        let u = s.insert_edge(&fid, &a, None, Some("b"), None, "calls").await.unwrap();
+
+        s.resolve_edge(&u, &b).await.unwrap();
+        s.resolve_edge(&u, &b).await.unwrap(); // second call — must not throw
+
+        assert_eq!(s.get_edges_by_kind(&fid, "calls").await.unwrap().len(), 1,
+            "resolving twice keeps exactly one edge");
+        s.delete_nodes_by_folder(&fid).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn resolve_edge_updates_in_place_when_no_conflict() {
+        // The common case: no existing resolved dup → the unresolved edge is
+        // updated in place to the resolved target (not deleted).
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, &format!("resolveok_{}", uuid::Uuid::new_v4())).await;
+        let a = s.upsert_node(&fid, "function", "a", "a.rs", None, None, Some(1), Some(5)).await.unwrap();
+        let b = s.upsert_node(&fid, "function", "b", "b.rs", None, None, Some(1), Some(5)).await.unwrap();
+        let u = s.insert_edge(&fid, &a, None, Some("b"), None, "calls").await.unwrap();
+
+        s.resolve_edge(&u, &b).await.unwrap();
+
+        let (tid,): (Option<uuid::Uuid>,) = query_as("SELECT target_id FROM sensei.edges WHERE id=$1")
+            .bind(u).fetch_one(s.pool()).await.unwrap();
+        assert_eq!(tid, Some(b), "the edge is resolved in place to the target");
+        s.delete_nodes_by_folder(&fid).await.unwrap();
     }
 
     // ── Extensions tests ───────────────────────────────────────────────
@@ -10667,13 +12146,12 @@ mod tests {
             ("indexed",    "d"),
             ("failed",     "e"),
             ("deferred",   "f"),
+            ("archived",   "g"),
         ] {
             let name = format!("repo_{}", suffix);
             let abs_path = format!("{}/{}", root_path, name);
             let fid = s.upsert_folder(&rid, "git", &name, &name, &abs_path, None, None).await.unwrap();
-            sqlx_core::query::query(
-                "UPDATE sensei.folders SET status = $2::sensei.folder_status WHERE id = $1"
-            ).bind(fid).bind(status).execute(s.pool()).await.unwrap();
+            s.update_folder_status(&fid, status).await.unwrap();
         }
 
         let rows = s.list_pending_folders().await.unwrap();
@@ -10681,16 +12159,18 @@ mod tests {
             .filter(|r| r["abs_path"].as_str().unwrap_or("").starts_with(&root_path))
             .collect();
 
-        // Only `discovered` and `queued` are non-terminal in the resume sense.
-        // `indexing` would mean a worker is still running, which can't be true
-        // at startup since the in-memory queue was just created.
+        // Recoverable = non-terminal. `discovered`/`queued` never started;
+        // `indexing`/`failed` are a scan interrupted mid-flight or errored —
+        // its in-memory task was lost on restart (D6a marks `indexing` at scan
+        // start), so resume MUST re-enqueue them. `indexed`/`deferred`/`archived`
+        // are terminal and never resumed.
         let statuses: std::collections::BTreeSet<&str> = ours.iter()
             .map(|r| r["status"].as_str().unwrap())
             .collect();
         assert_eq!(
             statuses,
-            std::collections::BTreeSet::from(["discovered", "queued"]),
-            "expected only discovered+queued, got {:?}", statuses
+            std::collections::BTreeSet::from(["discovered", "queued", "indexing", "failed"]),
+            "expected discovered+queued+indexing+failed, got {:?}", statuses
         );
 
         // Resume needs enough info to enqueue ProcessGitFolder: id, kind, abs_path.
@@ -10701,6 +12181,45 @@ mod tests {
         }
 
         // cleanup — removing the watch root cascades to folders.
+        s.remove_watch_root(&rid).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn update_folder_status_round_trips() {
+        // D6a: the folder-status lifecycle needs a production setter — before
+        // this, only `indexed` (mark_folder_indexed) and `archived` were
+        // writable, so a scan could never record that it had started.
+        let s = pg_store().await;
+        let root_path = format!("/_test/status_{}", uuid::Uuid::new_v4().simple());
+        let rid = s.add_watch_root(&root_path, "status_root", &serde_json::json!([])).await.unwrap();
+        let fid = s.upsert_folder(&rid, "git", "r", "r", &format!("{root_path}/r"), None, None).await.unwrap();
+
+        s.update_folder_status(&fid, "indexing").await.unwrap();
+
+        let (status,): (String,) = sqlx_core::query_as::query_as(
+            "SELECT status::text FROM sensei.folders WHERE id = $1"
+        ).bind(fid).fetch_one(s.pool()).await.unwrap();
+        assert_eq!(status, "indexing", "update_folder_status writes the enum value");
+
+        s.remove_watch_root(&rid).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn get_folder_status_reads_back_status_and_is_none_for_missing() {
+        // D6d: the fail-closed barrier reads folder status to decide whether to
+        // mark `indexed`. A missing folder must be honest-`None`, never an error
+        // or a fabricated status.
+        let s = pg_store().await;
+        let root_path = format!("/_test/getstatus_{}", uuid::Uuid::new_v4().simple());
+        let rid = s.add_watch_root(&root_path, "getstatus_root", &serde_json::json!([])).await.unwrap();
+        let fid = s.upsert_folder(&rid, "git", "r", "r", &format!("{root_path}/r"), None, None).await.unwrap();
+
+        s.update_folder_status(&fid, "failed").await.unwrap();
+        assert_eq!(s.get_folder_status(&fid).await.unwrap().as_deref(), Some("failed"),
+            "reads back the written status");
+        assert_eq!(s.get_folder_status(&uuid::Uuid::new_v4()).await.unwrap(), None,
+            "a missing folder is None, not an error");
+
         s.remove_watch_root(&rid).await.unwrap();
     }
 
@@ -12534,19 +14053,60 @@ mod tests {
         ).await.unwrap();
         let git_abs = format!("/_test/repos-git-{}", uuid::Uuid::new_v4());
         let sub_abs = format!("/_test/repos-sub-{}", uuid::Uuid::new_v4());
+        let mem_abs = format!("/_test/repos-mem-{}", uuid::Uuid::new_v4());
         sqlx_core::query::query(
             "INSERT INTO sensei.folders(root_id, kind, name, path, abs_path, project_id) VALUES
                ('00000000-0000-0000-0000-000000000001','git'::sensei.folder_kind,'the-repo','the-repo',$1,$3),
-               ('00000000-0000-0000-0000-000000000001','folder'::sensei.folder_kind,'subdir','subdir',$2,$3)"
-        ).bind(&git_abs).bind(&sub_abs).bind(pid).execute(s.pool()).await.unwrap();
+               ('00000000-0000-0000-0000-000000000001','folder'::sensei.folder_kind,'subdir','subdir',$2,$3),
+               ('00000000-0000-0000-0000-000000000001','workspace_member'::sensei.folder_kind,'member','member',$4,$3)"
+        ).bind(&git_abs).bind(&sub_abs).bind(pid).bind(&mem_abs).execute(s.pool()).await.unwrap();
 
         let repos = s.get_project_repos(&pid).await.unwrap();
         let kinds: Vec<String> = repos.iter().filter_map(|r| r["kind"].as_str().map(str::to_string)).collect();
         assert!(kinds.iter().any(|k| k == "git"), "the repo root is listed: {kinds:?}");
         assert!(!kinds.iter().any(|k| k == "folder"), "kind=folder subfolders excluded: {kinds:?}");
+        // D5a: monorepo members are the structural tree, NOT separate repos — else
+        // a monorepo with N members regresses to an N+1-repo project (#62).
+        assert!(!kinds.iter().any(|k| k == "workspace_member"), "kind=workspace_member excluded from repos: {kinds:?}");
 
         sqlx_core::query::query("DELETE FROM sensei.folders WHERE project_id = $1").bind(pid).execute(s.pool()).await.unwrap();
         sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1").bind(pid).execute(s.pool()).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn upsert_subfolder_kind_relabels_structural_but_preserves_root() {
+        // D5a: upsert_subfolder_kind relabels between the two STRUCTURAL kinds
+        // (folder ↔ workspace_member) on conflict, but NEVER reclassifies a path
+        // that is actually a nested project ROOT (git/standalone/subtree).
+        let s = pg_store().await;
+        s.execute_raw(
+            "INSERT INTO sensei.folders_to_watch(id, path, name, status) VALUES('00000000-0000-0000-0000-000000000001', '/_test', '_test', 'watching'::sensei.watch_status) ON CONFLICT DO NOTHING"
+        ).await.unwrap();
+        let rid = uuid::Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap();
+        let kind_at = |s: &PgStore, abs: String| {
+            let pool = s.pool().clone();
+            async move {
+                let (k,): (String,) = query_as("SELECT kind::text FROM sensei.folders WHERE abs_path=$1")
+                    .bind(&abs).fetch_one(&pool).await.unwrap();
+                k
+            }
+        };
+
+        // A plain structural folder → relabel to workspace_member on re-upsert.
+        let a = format!("/_test/sfk-a-{}", uuid::Uuid::new_v4());
+        s.upsert_subfolder(&rid, "a", "a", &a, None, None).await.unwrap();
+        assert_eq!(kind_at(&s, a.clone()).await, "folder", "first upsert is a plain folder");
+        s.upsert_subfolder_kind(&rid, "workspace_member", "a", "a", &a, None, None).await.unwrap();
+        assert_eq!(kind_at(&s, a.clone()).await, "workspace_member", "relabelled folder → workspace_member");
+
+        // A nested project root (subtree) must NOT be reclassified by a member upsert.
+        let b = format!("/_test/sfk-b-{}", uuid::Uuid::new_v4());
+        s.upsert_repo_kind(&rid, "subtree", "b", &b).await.unwrap();
+        s.upsert_subfolder_kind(&rid, "workspace_member", "b", "b", &b, None, None).await.unwrap();
+        assert_eq!(kind_at(&s, b.clone()).await, "subtree", "a nested root is preserved, never reclassified");
+
+        sqlx_core::query::query("DELETE FROM sensei.folders WHERE abs_path IN ($1,$2)")
+            .bind(&a).bind(&b).execute(s.pool()).await.unwrap();
     }
 
     #[tokio::test]
@@ -13694,7 +15254,7 @@ mod tests {
         // Insert a callee node (target) in child folder.
         let tgt_id = s.upsert_node(&child_id, "function", "render_widget", "src/widget.rs", None, Some("fn render_widget()"), Some(12), Some(20)).await.unwrap();
         // Insert resolved edge: widget_builder calls render_widget.
-        s.insert_edge(&child_id, &fn_id, Some(&tgt_id), Some("render_widget"), "calls").await.unwrap();
+        s.insert_edge(&child_id, &fn_id, Some(&tgt_id), Some("render_widget"), None, "calls").await.unwrap();
 
         // Resolve scope.
         let ids = s.scope_folder_ids(&proj_name).await.unwrap();
@@ -14602,10 +16162,11 @@ mod playbook_tests {
         let guide = pg.list_intake_guide().await.unwrap();
         assert!(guide.iter().any(|g| g["kind"] == "frame"));
 
+        let (proj, _) = pg.get_or_create_project_by_name("_test:playbook_roundtrip").await.unwrap();
         let run_id = pg.insert_playbook_run(
             None, None, "greenfield", "feature", "high",
             None, "spec_driven", "hi", true,
-            Some("manual"), false,
+            Some("manual"), false, proj,
         ).await.unwrap();
 
         let row: (String, String, String, String, bool) = sqlx_core::query_as::query_as(
@@ -14655,10 +16216,11 @@ mod playbook_tests {
         let sid = pg.create_session(&fid, "intake test", None).await.unwrap();
         assert!(!pg.session_has_confirmed_run(&sid).await.unwrap());
 
+        let (proj, _) = pg.get_or_create_project_by_name("_test:nudge_gate").await.unwrap();
         pg.insert_playbook_run(
             Some(sid), None, "stable", "bug", "low",
             None, "debug_flow", "r", true,
-            None, false,
+            None, false, proj,
         ).await.unwrap();
         assert!(pg.session_has_confirmed_run(&sid).await.unwrap());
         // clean slate — shared test DB; this combo is also asserted exactly by
@@ -14693,9 +16255,10 @@ mod playbook_tests {
         pg.execute_raw(&format!(
             "update activity.sessions set outcome='completed', ftr=true where id='{sid}'"
         )).await.unwrap();
+        let (proj, _) = pg.get_or_create_project_by_name("_test:attrib").await.unwrap();
         pg.insert_playbook_run(
             Some(sid), None, "stable", "bug", "low",
-            None, "debug_flow", "r", true, Some("manual"), false,
+            None, "debug_flow", "r", true, Some("manual"), false, proj,
         ).await.unwrap();
 
         let n = pg.attribute_playbook_outcomes().await.unwrap();
@@ -14798,20 +16361,32 @@ mod playbook_tests {
     }
 
     #[tokio::test]
-    async fn playbook_combo_trust_counts_ftr() {
+    async fn playbook_combo_trust_is_project_scoped() {
         let Ok(pg) = PgStore::connect_test().await else { return; };
+        let (proj_a, _) = pg.get_or_create_project_by_name("_test:trust_a").await.unwrap();
+        let (proj_b, _) = pg.get_or_create_project_by_name("_test:trust_b").await.unwrap();
         pg.execute_raw("delete from sensei.playbook_run where feature = 'trust-test'").await.ok();
-        // two confirmed+attributed runs for (stable,bug,low, debug_flow): one ftr, one not → n=2, ftr=0.5
+        // project A: two confirmed+attributed runs for (stable,bug,low, debug_flow): one ftr, one not → n=2, ftr=0.5
         for ftr in ["true", "false"] {
             pg.execute_raw(&format!(
-                "insert into sensei.playbook_run (feature, lifecycle, intent, risk, playbook, rationale, confirmed, outcome_ftr) \
-                 values ('trust-test','stable','bug','low','debug_flow','t', true, {ftr})")).await.unwrap();
+                "insert into sensei.playbook_run (feature, lifecycle, intent, risk, playbook, rationale, confirmed, outcome_ftr, project_id) \
+                 values ('trust-test','stable','bug','low','debug_flow','t', true, {ftr}, '{proj_a}')")).await.unwrap();
         }
-        let (n, ftr) = pg.playbook_combo_trust("stable","bug","low","debug_flow").await.unwrap();
-        assert_eq!(n, 2);
-        assert!((ftr - 0.5).abs() < 1e-9);
-        // empty combo → (0, 0.0)
-        let (n0, f0) = pg.playbook_combo_trust("greenfield","ux","high","vibe").await.unwrap();
+        // project B: one confirmed run, ftr true — must NOT bleed into A's trust
+        pg.execute_raw(&format!(
+            "insert into sensei.playbook_run (feature, lifecycle, intent, risk, playbook, rationale, confirmed, outcome_ftr, project_id) \
+             values ('trust-test','stable','bug','low','debug_flow','t', true, true, '{proj_b}')")).await.unwrap();
+
+        // scoped to A: only A's 2 runs → n=2, ftr=0.5 (B's run excluded — trust is per-project, never global)
+        let (na, fa) = pg.playbook_combo_trust("stable","bug","low","debug_flow", &proj_a).await.unwrap();
+        assert_eq!(na, 2, "trust must count only the in-scope project's runs");
+        assert!((fa - 0.5).abs() < 1e-9);
+        // scoped to B: only B's run → n=1, ftr=1.0
+        let (nb, fb) = pg.playbook_combo_trust("stable","bug","low","debug_flow", &proj_b).await.unwrap();
+        assert_eq!(nb, 1);
+        assert!((fb - 1.0).abs() < 1e-9);
+        // empty combo in A → (0, 0.0)
+        let (n0, f0) = pg.playbook_combo_trust("greenfield","ux","high","vibe", &proj_a).await.unwrap();
         assert_eq!(n0, 0); assert_eq!(f0, 0.0);
         pg.execute_raw("delete from sensei.playbook_run where feature = 'trust-test'").await.ok();
     }

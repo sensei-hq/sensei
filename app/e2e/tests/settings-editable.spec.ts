@@ -95,17 +95,25 @@ test.describe('Settings — Inference page', () => {
     await navigateTo(tauriPage, '/settings/inference');
     await tauriPage.waitForSelector('[data-testid="inference-role-picker-inference"]', 15_000);
 
-    // The wrapper's `selectOption` isn't reliable across all envs. Set
-    // the value via evaluate() and dispatch a change event — that's what
-    // the panel's onchange listens for.
+    // The picker is now a rokkit Select (combobox), not a native <select>: open
+    // the trigger, then click the "— none —" option. rokkit's Navigator handles
+    // the click (walks to the nearest data-path) → onchange → pick(role, null).
     await tauriPage.evaluate(`
-      (function() {
-        var sel = document.querySelector('[data-testid="inference-role-picker-inference"]');
-        if (sel) {
-          sel.value = '';
-          sel.dispatchEvent(new Event('change', { bubbles: true }));
+      (function () {
+        var wrap = document.querySelector('[data-testid="inference-role-picker-inference"]');
+        var trigger = wrap && wrap.querySelector('[data-select-trigger]');
+        if (trigger) trigger.click();
+        return !!trigger;
+      })()
+    `);
+    await tauriPage.waitForSelector('[data-select-dropdown] [data-select-option]', 5_000);
+    await tauriPage.evaluate(`
+      (function () {
+        var opts = document.querySelectorAll('[data-select-dropdown] [data-select-option]');
+        for (var i = 0; i < opts.length; i++) {
+          if ((opts[i].textContent || '').indexOf('none') >= 0) { opts[i].click(); return 'clicked'; }
         }
-        return true;
+        return 'not-found';
       })()
     `);
 

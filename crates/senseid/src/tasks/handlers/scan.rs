@@ -127,7 +127,9 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
         }
         let process_task = Task::new(TaskKind::ProcessGitFolder, &path_str, &path_str)
             .with_parent(task.id);
-        ctx.queue.enqueue(process_task).await;
+        // Single-writer (D6e/W5): skip if this folder is already being scanned,
+        // so a concurrent ScanRoot can't fan out a second ProcessGitFolder for it.
+        let _ = ctx.queue.enqueue_unique(process_task).await;
     }
 
     // 4.5 Reconcile: self-heal the index the scan can't fix additively.
@@ -368,8 +370,9 @@ pub(crate) async fn detect_vanished_folders(
 
     let mut ghosts = Vec::new();
     for r in &recorded {
-        // Only non-root subfolders; roots are owned by reconcile_roots.
-        if r["kind"].as_str() != Some("folder") {
+        // Only structural subfolders (`folder` + the monorepo-member `workspace_member`,
+        // D5a); project ROOTS (git/standalone/subtree) are owned by reconcile_roots.
+        if !matches!(r["kind"].as_str(), Some("folder") | Some("workspace_member")) {
             continue;
         }
         let Some(abs) = r["abs_path"].as_str() else { continue };
@@ -474,6 +477,11 @@ pub async fn branch_switch(ctx: &TaskContext, task: &Task) -> Result<u32, String
     let git_task = Task::new(TaskKind::ProcessGitFolder, &task.folder_path, &task.path)
         .with_parent(task.id)
         .with_branch(new_branch);
+    // NOTE: branch_switch deliberately uses plain `enqueue`, NOT the single-writer
+    // `enqueue_unique`. The dedup identity (kind, folder_path, path) omits the
+    // branch, so guarding here could silently drop a branch switch that races an
+    // in-flight plain scan — leaving props.branch stale. Proper single-writer +
+    // branch handling for branch_switch is a tracked follow-up (docs/backlog.md).
     ctx.queue.enqueue(git_task).await;
 
     tracing::info!("branch_switch: {} → {} (incremental)", folder_name, new_branch);
@@ -809,6 +817,31 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn scan_root_does_not_double_enqueue_a_folder_already_scanning() {
+        // Single-writer (D6e/W5): if a git folder is already being scanned, the
+        // ScanRoot fan-out must not enqueue a second ProcessGitFolder for it.
+        // Without the guard the repo shows two ProcessGitFolder tasks.
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("repo/.git")).unwrap();
+        std::fs::write(root.join("repo/Cargo.toml"), "[package]\nname=\"repo\"").unwrap();
+
+        let ctx = make_ctx().await;
+        let repo_path = root.join("repo").to_string_lossy().to_string();
+        // Pre-seed: this repo is already being scanned.
+        ctx.queue.enqueue(Task::new(TaskKind::ProcessGitFolder, &repo_path, &repo_path)).await;
+
+        let task = Task::new(TaskKind::ScanRoot, "", &root.to_string_lossy());
+        scan_root(&ctx, &task).await.unwrap();
+
+        let pgf: Vec<String> = ctx.queue.snapshot().await.into_iter()
+            .filter(|(k, _, p)| *k == TaskKind::ProcessGitFolder && *p == repo_path)
+            .map(|(_, _, p)| p)
+            .collect();
+        assert_eq!(pgf.len(), 1, "the already-scanning repo is not double-enqueued, got {pgf:?}");
+    }
+
+    #[tokio::test]
     async fn scan_reconciles_stale_roots() {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path();
@@ -989,7 +1022,7 @@ mod tests {
         let sub_fid = ctx.pg().upsert_subfolder(&root_id, "sub", "gone/sub", &gone_sub.to_string_lossy(), Some(&gone_fid), None).await.unwrap();
         let ghost_a = ctx.pg().upsert_node(&gone_fid, "struct", "HiveConfig", "gone/config.rs", None, None, None, None).await.unwrap();
         let ghost_b = ctx.pg().upsert_node(&sub_fid, "struct", "HiveStore", "gone/sub/store.rs", None, None, None, None).await.unwrap();
-        let ghost_edge = ctx.pg().insert_edge(&gone_fid, &ghost_a, Some(&ghost_b), None, "references").await.unwrap();
+        let ghost_edge = ctx.pg().insert_edge(&gone_fid, &ghost_a, Some(&ghost_b), None, None, "references").await.unwrap();
         ctx.pg().upsert_scan_state(&gone_fid, "gone/config.rs", 1, "h").await.unwrap();
 
         // Prune: both ghost folder rows go, the live one stays.
@@ -1019,6 +1052,35 @@ mod tests {
 
         // Idempotent: a second run prunes nothing.
         assert_eq!(prune_vanished_folders(ctx.pg(), &root_id).await, 0, "re-run is a no-op");
+    }
+
+    #[tokio::test]
+    async fn prune_vanished_folders_drops_ghost_workspace_member() {
+        // D5a: a monorepo member (kind='workspace_member') whose dir vanished is
+        // ghost-pruned like a structural `folder` — detect_vanished_folders was
+        // extended to include workspace_member so a deleted member doesn't linger.
+        let ctx = make_ctx().await;
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let repo = root.join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        let root_id = ctx.pg().add_watch_root(&root.to_string_lossy(), "pvfwm", &serde_json::json!([])).await.unwrap();
+        let repo_fid = ctx.pg().upsert_repo_kind(&root_id, "git", "repo", &repo.to_string_lossy()).await.unwrap();
+
+        // A LIVE member (dir exists) and a GHOST member (dir never created).
+        let live = repo.join("packages/live");
+        std::fs::create_dir_all(&live).unwrap();
+        ctx.pg().upsert_subfolder_kind(&root_id, "workspace_member", "live", "packages/live", &live.to_string_lossy(), Some(&repo_fid), None).await.unwrap();
+        let gone = repo.join("packages/gone"); // NOT created on disk
+        ctx.pg().upsert_subfolder_kind(&root_id, "workspace_member", "gone", "packages/gone", &gone.to_string_lossy(), Some(&repo_fid), None).await.unwrap();
+
+        let pruned = prune_vanished_folders(ctx.pg(), &root_id).await;
+        assert_eq!(pruned, 1, "the vanished workspace_member is ghost-pruned");
+        let abs_paths: std::collections::HashSet<String> = ctx.pg().list_folders_by_root(&root_id).await.unwrap()
+            .iter().filter_map(|r| r["abs_path"].as_str().map(String::from)).collect();
+        assert!(!abs_paths.contains(&gone.to_string_lossy().to_string()), "ghost member row pruned");
+        assert!(abs_paths.contains(&live.to_string_lossy().to_string()), "live member row kept");
+        assert!(abs_paths.contains(&repo.to_string_lossy().to_string()), "repo root kept");
     }
 
     #[tokio::test]

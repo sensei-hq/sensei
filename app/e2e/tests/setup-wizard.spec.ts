@@ -113,11 +113,11 @@ async function clickAndExpectNav(
 
 /** Drive the wizard from welcome to the scan page with the given corpus path. */
 async function driveToScan(tauriPage: any, corpusPath: string): Promise<void> {
-  await clickAndExpectNav(tauriPage, '.btn-primary', '/setup/assistants');
-  await clickAndExpectNav(tauriPage, '.btn-primary', '/setup/roots');
+  await clickAndExpectNav(tauriPage, '[data-action="next"]', '/setup/assistants');
+  await clickAndExpectNav(tauriPage, '[data-action="next"]', '/setup/roots');
   await tauriPage.locator('.folder-input').fill(corpusPath);
   await tauriPage.click('.btn-solid'); // Add folder
-  await clickAndExpectNav(tauriPage, '.btn-primary', '/setup/scan');
+  await clickAndExpectNav(tauriPage, '[data-action="next"]', '/setup/scan');
 }
 
 // ── Flow A: Empty corpus ──────────────────────────────────────────────────────
@@ -137,16 +137,16 @@ test.describe('Setup Wizard — Flow A: empty corpus', () => {
     await expect(tauriPage.locator('.pillar-title').nth(0)).toContainText('Observe');
     await expect(tauriPage.locator('.pillar-title').nth(1)).toContainText('Teach');
     await expect(tauriPage.locator('.pillar-title').nth(2)).toContainText('Local');
-    await expect(tauriPage.locator('.btn-primary')).toBeEnabled();
+    await expect(tauriPage.locator('[data-action="next"]')).toBeEnabled();
   });
 
   test('welcome → assistants: Continue navigates, no health flash', async ({ tauriPage }) => {
-    await clickAndExpectNav(tauriPage, '.btn-primary', '/setup/assistants');
+    await clickAndExpectNav(tauriPage, '[data-action="next"]', '/setup/assistants');
   });
 
   // ── Assistants ───────────────────────────────────────────────────────────
   test('assistants: cards render or empty state, Continue always enabled', async ({ tauriPage }) => {
-    await clickAndExpectNav(tauriPage, '.btn-primary', '/setup/assistants');
+    await clickAndExpectNav(tauriPage, '[data-action="next"]', '/setup/assistants');
     await expect(tauriPage.locator('.assistants')).toBeVisible({ timeout: 8_000 });
 
     const cardCount = await tauriPage.locator('.card').count();
@@ -158,18 +158,18 @@ test.describe('Setup Wizard — Flow A: empty corpus', () => {
     } else {
       await expect(tauriPage.locator('.empty')).toBeVisible();
     }
-    await expect(tauriPage.locator('.btn-primary')).toBeEnabled();
+    await expect(tauriPage.locator('[data-action="next"]')).toBeEnabled();
   });
 
   test('assistants → roots: navigates, no health flash', async ({ tauriPage }) => {
-    await clickAndExpectNav(tauriPage, '.btn-primary', '/setup/assistants');
-    await clickAndExpectNav(tauriPage, '.btn-primary', '/setup/roots');
+    await clickAndExpectNav(tauriPage, '[data-action="next"]', '/setup/assistants');
+    await clickAndExpectNav(tauriPage, '[data-action="next"]', '/setup/roots');
   });
 
   // ── Roots ────────────────────────────────────────────────────────────────
   test('roots: gate — disabled with no roots, enabled after adding one', async ({ tauriPage }) => {
-    await clickAndExpectNav(tauriPage, '.btn-primary', '/setup/assistants');
-    await clickAndExpectNav(tauriPage, '.btn-primary', '/setup/roots');
+    await clickAndExpectNav(tauriPage, '[data-action="next"]', '/setup/assistants');
+    await clickAndExpectNav(tauriPage, '[data-action="next"]', '/setup/roots');
 
     // Clear any roots accumulated from previous test runs.
     const removes = tauriPage.locator('.btn-remove');
@@ -177,15 +177,15 @@ test.describe('Setup Wizard — Flow A: empty corpus', () => {
       await removes.first().click();
     }
 
-    await expect(tauriPage.locator('.btn-primary')).toBeDisabled();
+    await expect(tauriPage.locator('[data-action="next"]')).toBeDisabled();
     await tauriPage.locator('.folder-input').fill(EMPTY_CORPUS);
     await tauriPage.click('.btn-solid');
-    await expect(tauriPage.locator('.btn-primary')).toBeEnabled();
+    await expect(tauriPage.locator('[data-action="next"]')).toBeEnabled();
   });
 
   test('roots: Enter key adds folder, duplicate is rejected', async ({ tauriPage }) => {
-    await clickAndExpectNav(tauriPage, '.btn-primary', '/setup/assistants');
-    await clickAndExpectNav(tauriPage, '.btn-primary', '/setup/roots');
+    await clickAndExpectNav(tauriPage, '[data-action="next"]', '/setup/assistants');
+    await clickAndExpectNav(tauriPage, '[data-action="next"]', '/setup/roots');
 
     const removes = tauriPage.locator('.btn-remove');
     for (let i = await removes.count(); i > 0; i--) {
@@ -204,7 +204,7 @@ test.describe('Setup Wizard — Flow A: empty corpus', () => {
   test('scan: Begin scan → stats bar, Continue disabled then enabled when idle', async ({ tauriPage }) => {
     await driveToScan(tauriPage, EMPTY_CORPUS);
 
-    await expect(tauriPage.locator('.btn-primary')).toBeDisabled();
+    await expect(tauriPage.locator('[data-action="next"]')).toBeDisabled();
     await expect(tauriPage.locator('.hero-card')).toBeVisible();
 
     await tauriPage.click('.btn-solid'); // Begin scan
@@ -212,18 +212,18 @@ test.describe('Setup Wizard — Flow A: empty corpus', () => {
     await expect(tauriPage.locator('.hero-card')).not.toBeVisible();
     await expect(tauriPage.locator('.stat-label').nth(0)).toContainText('ROOTS');
 
-    await expect(tauriPage.locator('.btn-primary')).toBeEnabled({ timeout: 20_000 });
+    await expect(tauriPage.locator('[data-action="next"]')).toBeEnabled({ timeout: 20_000 });
   });
 
   // ── Scan → Done ──────────────────────────────────────────────────────────
   test('scan → done: Continue reaches the observatory-entry ceremony', async ({ tauriPage }) => {
     await driveToScan(tauriPage, EMPTY_CORPUS);
     await tauriPage.click('.btn-solid');
-    await expect(tauriPage.locator('.btn-primary')).toBeEnabled({ timeout: 20_000 });
+    await expect(tauriPage.locator('[data-action="next"]')).toBeEnabled({ timeout: 20_000 });
 
-    await clickAndExpectNav(tauriPage, '.btn-primary', '/setup/done');
+    await clickAndExpectNav(tauriPage, '[data-action="next"]', '/setup/done');
     await expect(tauriPage.locator('[data-testid="done-summary"]')).toBeVisible();
-    await expect(tauriPage.locator('.btn-primary')).toContainText('Enter observatory');
+    await expect(tauriPage.locator('[data-action="next"]')).toContainText('Enter observatory');
   });
 });
 
@@ -242,7 +242,7 @@ test.describe('Setup Wizard — Flow B: real corpus', () => {
     await tauriPage.click('.btn-solid');
     await expect(tauriPage.locator('.stats-bar')).toBeVisible({ timeout: 5_000 });
     await expect(tauriPage.locator('.stat-label').nth(0)).toContainText('ROOTS');
-    await expect(tauriPage.locator('.btn-primary')).toBeEnabled({ timeout: 60_000 });
+    await expect(tauriPage.locator('[data-action="next"]')).toBeEnabled({ timeout: 60_000 });
   });
 });
 
@@ -266,7 +266,7 @@ test.describe('Setup Wizard — Rail', () => {
   });
 
   test('active stage advances after Continue click', async ({ tauriPage }) => {
-    await clickAndExpectNav(tauriPage, '.btn-primary', '/setup/assistants');
+    await clickAndExpectNav(tauriPage, '[data-action="next"]', '/setup/assistants');
     await expect(tauriPage.locator('[data-rail-item][data-active="true"]')).toContainText('Assistants');
   });
 });

@@ -61,7 +61,7 @@
     <!-- Search -->
     <div class="flex items-center gap-4 mb-6">
         <input
-            class="lib-search flex-1 px-3.5 py-2 border border-paper-mute rounded-md bg-paper-soft text-ink text-sm outline-none"
+            class="lib-search flex-1 px-3.5 py-2 border border-paper-edge rounded-md bg-paper-soft text-ink text-sm outline-none"
             type="text"
             placeholder="Search libraries..."
             bind:value={search}
@@ -79,16 +79,21 @@
     {:else}
         <div class="grid grid-cols-[1fr_340px] gap-6">
             <div class="flex flex-col gap-1">
-                {#each filtered as lib (lib.name)}
+                <!-- Key by id, not name: the same package name exists across
+                     ecosystems (e.g. uuid npm + uuid cargo), so a name-keyed each
+                     throws Svelte's each_key_duplicate and breaks the whole list.
+                     Show the ecosystem so same-named libs are distinguishable. -->
+                {#each filtered as lib (lib.id)}
                     <button
-                        class="lib-card text-left px-4 py-3.5 border border-paper-mute rounded-md bg-paper-soft cursor-pointer transition-colors duration-fast"
-                        class:selected={selectedLib?.name === lib.name}
+                        class="lib-card text-left px-4 py-3.5 border border-paper-edge rounded-md bg-paper-soft cursor-pointer transition-colors duration-fast"
+                        class:selected={selectedLib?.id === lib.id}
                         onclick={() => (selectedLib = lib)}
                     >
                         <div class="flex items-baseline gap-2 mb-1.5">
-                            <span class="text-sm font-medium text-ink"
-                                >{lib.name}</span
-                            >
+                            <span class="text-sm font-medium text-ink">{lib.name}</span>
+                            {#if lib.ecosystem}
+                                <span class="text-xs text-ink-faint">{lib.ecosystem}</span>
+                            {/if}
                             <span class="text-xs text-ink-soft"
                                 >{lib.repoCount} repo{lib.repoCount !== 1
                                     ? "s"
@@ -101,12 +106,13 @@
 
             {#if selectedLib}
                 <div
-                    class="p-6 bg-paper-mute border border-paper-mute rounded-lg sticky top-6"
+                    class="p-6 bg-paper-mute border border-paper-edge rounded-lg sticky top-6"
                 >
                     <h3 class="text-base font-medium m-0 mb-1">
                         {selectedLib.name}
                     </h3>
                     <p class="text-xs text-ink-soft m-0 mb-4">
+                        {#if selectedLib.ecosystem}{selectedLib.ecosystem} · {/if}
                         {selectedLib.repoCount} repo{selectedLib.repoCount !== 1 ? 's' : ''}
                         {#if selectedLib.pageCount}· {selectedLib.pageCount} doc pages{/if}
                     </p>
@@ -128,7 +134,7 @@
                         <div>
                             <p class="m-0 mb-2"><Eyebrow>Usage by folder</Eyebrow></p>
                             {#each usageData as u}
-                                <div class="flex justify-between py-1.5 border-b border-paper-mute text-sm">
+                                <div class="flex justify-between py-1.5 border-b border-paper-edge text-sm">
                                     <div>
                                         <span class="font-mono text-xs">{u.folder}</span>
                                         {#if u.version_used}

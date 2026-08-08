@@ -386,7 +386,7 @@
     height: 16px;
     border-radius: 50%;
     background: var(--paper);
-    box-shadow: 0 1px 2px oklch(0 0 0 / 0.15);
+    box-shadow: 0 1px 2px color-mix(in oklch, var(--shadow-tint) 55%, transparent);
     transition: left 180ms ease;
   }
   .switch-knob.on {

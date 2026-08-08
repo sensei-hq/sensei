@@ -48,10 +48,14 @@ export interface InsightToneClasses {
 /** Map an insight's tone discriminator to named-token utility classes. */
 export function insightToneClasses(tone: ObservatoryInsight['tone']): InsightToneClasses {
   switch (tone) {
+    // Tag chips sit on `bg-paper-mute` (a paper token that FLIPS dark for dark
+    // mode) with a tone-coloured border + text — NOT a `*-soft` fill. The status
+    // softs are single-pole (stay pale ~0.94L in both modes), so tone-coloured
+    // text on them is near-invisible in dark mode (the "[high] barely visible" bug).
     case 'warn':
-      return { glyph: 'text-warning', tag: 'bg-warning-soft text-warning' };
+      return { glyph: 'text-warning', tag: 'bg-paper-mute text-warning border border-warning' };
     case 'good':
-      return { glyph: 'text-success', tag: 'bg-success-soft text-success' };
+      return { glyph: 'text-success', tag: 'bg-paper-mute text-success border border-success' };
     default:
       // 'mute' → ink-mute is the named token for intentionally suppressed
       // content (matches the card body's text-ink-mute); ink-soft is for

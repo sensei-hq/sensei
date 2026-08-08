@@ -71,7 +71,7 @@
             <h3 class="text-sm font-medium m-0 mb-3">Services</h3>
             <ul class="list-none m-0 p-0 flex flex-col gap-1">
                 {#each services as service (service.id)}
-                    <li class="flex items-center gap-3 py-2 px-2 rounded-md border border-paper-mute">
+                    <li class="flex items-center gap-3 py-2 px-2 rounded-md border border-paper-edge">
                         <div class="flex-1 min-w-0">
                             <div class="text-sm font-medium text-ink truncate">{service.displayName}</div>
                             <div class="text-xs text-ink-soft truncate">
@@ -112,7 +112,7 @@
                     class:border-primary={active}
                     class:bg-transparent={!active}
                     class:text-ink-soft={!active}
-                    class:border-paper-mute={!active}
+                    class:border-paper-edge={!active}
                     role="tab"
                     aria-selected={active}
                     onclick={() => (kindFilter = chip.id)}
@@ -132,7 +132,7 @@
                 <span class="text-right">Last used</span>
             </div>
             {#each visibleStats as t (t.id)}
-                <div class="grid grid-cols-[1fr_60px_60px_80px_80px_100px] gap-3 px-3 py-2 border-b border-paper-mute text-sm items-center">
+                <div class="grid grid-cols-[1fr_60px_60px_80px_80px_100px] gap-3 px-3 py-2 border-b border-paper-edge text-sm items-center">
                     <div class="min-w-0">
                         <div class="font-mono text-xs truncate">{t.name}</div>
                         <div class="text-xs text-ink-soft truncate">{t.summary}</div>
@@ -161,7 +161,7 @@
             <h3 class="text-sm font-medium m-0 mb-3">Extensions</h3>
             <ul class="list-none m-0 p-0">
                 {#each data.tools as tool (tool.id)}
-                    <li class="tool-row flex items-center gap-2.5 py-2 border-b border-paper-mute text-sm">
+                    <li class="tool-row flex items-center gap-2.5 py-2 border-b border-paper-edge text-sm">
                         <span class="font-semibold flex-1">{tool.name}</span>
                         <span class="opacity-50 text-xs">{tool.kind}</span>
                         <span class="scope-badge text-xs px-1.5 py-px rounded-md font-mono"

@@ -43,10 +43,13 @@ pub(crate) async fn graph_nodes(
     if ids.is_empty() {
         return Ok(Json(serde_json::json!({"nodes": [], "edges": []})));
     }
+    // 7.1: nodes now carry `community_id` (via get_nodes_scoped), and the edge
+    // set is the full graph-layout set `calls,imports,extends` — not just `calls`,
+    // which was too sparse to lay out a nested map (the "scattered circles").
     let nodes = state.pg.get_nodes_scoped(&ids).await
         .map_err(|e| { tracing::warn!(error = %e, repo_id = %repo_id, "graph_nodes: get_nodes_scoped failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
-    let edges = state.pg.get_edges_scoped(&ids, "calls").await
-        .map_err(|e| { tracing::warn!(error = %e, repo_id = %repo_id, "graph_nodes: get_edges_scoped failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+    let edges = state.pg.get_edges_scoped_kinds(&ids, &["calls", "imports", "extends"]).await
+        .map_err(|e| { tracing::warn!(error = %e, repo_id = %repo_id, "graph_nodes: get_edges_scoped_kinds failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
     Ok(Json(serde_json::json!({"nodes": nodes, "edges": edges})))
 }
 
@@ -195,13 +198,130 @@ pub(crate) async fn community_info(
     State(state): State<AppState>,
     Query(q): Query<GraphQuery>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
+    // 7.3: drive the overview from LIVE per-node membership (nodes.community_id),
+    // scoped to ALL the project's folders — not a single folder's stale
+    // communities.node_count. Communities are usually owned by the repo root, so
+    // a single-folder lookup (repo_folder_id) missed them (#G5a); scope_folder_ids
+    // captures every folder in the project.
     let repo_id = q.repo_id.unwrap_or_default();
-    if let Some(folder_id) = repo_folder_id(&state, &repo_id).await? {
-        let communities = state.pg.list_communities(&folder_id).await
-            .map_err(|e| { tracing::warn!(error = %e, repo_id = %repo_id, "community_info: list_communities failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
-        return Ok(Json(serde_json::json!(communities)));
+    let ids = state.pg.scope_folder_ids(&repo_id).await
+        .map_err(|e| { tracing::warn!(error = %e, repo_id = %repo_id, "community_info: scope_folder_ids failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+    if ids.is_empty() {
+        return Ok(Json(serde_json::json!([])));
     }
-    Ok(Json(serde_json::json!([])))
+    let communities = state.pg.list_communities_live_scoped(&ids).await
+        .map_err(|e| { tracing::warn!(error = %e, repo_id = %repo_id, "community_info: list_communities_live_scoped failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+    Ok(Json(serde_json::json!(communities)))
+}
+
+/// GET /api/graph/{repoId}/tree (7.2) — the hierarchy: folder tree (by
+/// `folders.parent_id`, annotated with `kind`/`role`) → each folder's root-level
+/// nodes → the node `parent_id` chain (file → class → method; doc → section →
+/// subsection). Scoped across all the project's folders.
+pub(crate) async fn graph_tree(
+    State(state): State<AppState>,
+    Path(repo_id): Path<String>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let ids = state.pg.scope_folder_ids(&repo_id).await
+        .map_err(|e| { tracing::warn!(error = %e, repo_id = %repo_id, "graph_tree: scope_folder_ids failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+    if ids.is_empty() {
+        return Ok(Json(serde_json::json!({"tree": []})));
+    }
+    let folders = state.pg.get_folders_scoped(&ids).await
+        .map_err(|e| { tracing::warn!(error = %e, repo_id = %repo_id, "graph_tree: get_folders_scoped failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+    let nodes = state.pg.get_nodes_scoped(&ids).await
+        .map_err(|e| { tracing::warn!(error = %e, repo_id = %repo_id, "graph_tree: get_nodes_scoped failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+    Ok(Json(build_tree(&folders, &nodes)))
+}
+
+/// Recursively build a node subtree from a `parent_id → children` index (7.2).
+/// Depth is bounded by the graph (file→class→method, doc→H1→H2→H3).
+fn build_node_subtree(
+    idx: usize,
+    nodes: &[serde_json::Value],
+    node_children: &std::collections::HashMap<String, Vec<usize>>,
+) -> serde_json::Value {
+    let n = &nodes[idx];
+    let children: Vec<serde_json::Value> = n["id"].as_str()
+        .and_then(|id| node_children.get(id))
+        .into_iter().flatten()
+        .map(|&c| build_node_subtree(c, nodes, node_children))
+        .collect();
+    serde_json::json!({
+        "id": n["id"], "name": n["name"], "kind": n["kind"],
+        "line_start": n["line_start"], "children": children,
+    })
+}
+
+/// Recursively build a folder subtree: nested subfolders + this folder's
+/// root-level node subtrees (7.2).
+#[allow(clippy::too_many_arguments)]
+fn build_folder_subtree(
+    idx: usize,
+    folders: &[serde_json::Value],
+    nodes: &[serde_json::Value],
+    folder_children: &std::collections::HashMap<String, Vec<usize>>,
+    root_nodes_by_folder: &std::collections::HashMap<String, Vec<usize>>,
+    node_children: &std::collections::HashMap<String, Vec<usize>>,
+) -> serde_json::Value {
+    let f = &folders[idx];
+    let id = f["id"].as_str().unwrap_or("");
+    let child_folders: Vec<serde_json::Value> = folder_children.get(id)
+        .into_iter().flatten()
+        .map(|&c| build_folder_subtree(c, folders, nodes, folder_children, root_nodes_by_folder, node_children))
+        .collect();
+    let folder_nodes: Vec<serde_json::Value> = root_nodes_by_folder.get(id)
+        .into_iter().flatten()
+        .map(|&ni| build_node_subtree(ni, nodes, node_children))
+        .collect();
+    serde_json::json!({
+        "id": f["id"], "name": f["name"], "kind": f["kind"], "role": f["role"],
+        "folders": child_folders, "nodes": folder_nodes,
+    })
+}
+
+/// Assemble the hierarchy tree (7.2) from flat folder + node rows. Pure over its
+/// inputs so it's unit-testable without a DB. A node whose `parent_id` falls
+/// outside the scoped set (or is NULL) becomes a root node of its folder — never
+/// silently dropped. A folder whose `parent_id` is outside the scoped set is a
+/// root of the tree.
+fn build_tree(folders: &[serde_json::Value], nodes: &[serde_json::Value]) -> serde_json::Value {
+    use std::collections::{HashMap, HashSet};
+
+    let node_ids: HashSet<&str> = nodes.iter().filter_map(|n| n["id"].as_str()).collect();
+    let mut node_children: HashMap<String, Vec<usize>> = HashMap::new();
+    let mut root_nodes_by_folder: HashMap<String, Vec<usize>> = HashMap::new();
+    for (i, n) in nodes.iter().enumerate() {
+        match n["parent_id"].as_str() {
+            Some(pid) if node_ids.contains(pid) => node_children.entry(pid.to_string()).or_default().push(i),
+            _ => {
+                let fid = n["folder_id"].as_str().unwrap_or("").to_string();
+                root_nodes_by_folder.entry(fid).or_default().push(i);
+            }
+        }
+    }
+
+    let folder_ids: HashSet<&str> = folders.iter().filter_map(|f| f["id"].as_str()).collect();
+    let mut folder_children: HashMap<String, Vec<usize>> = HashMap::new();
+    let mut root_folders: Vec<usize> = Vec::new();
+    for (i, f) in folders.iter().enumerate() {
+        match f["parent_id"].as_str() {
+            Some(pid) if folder_ids.contains(pid) => folder_children.entry(pid.to_string()).or_default().push(i),
+            _ => root_folders.push(i),
+        }
+    }
+
+    let tree: Vec<serde_json::Value> = root_folders.iter()
+        .map(|&i| build_folder_subtree(i, folders, nodes, &folder_children, &root_nodes_by_folder, &node_children))
+        .collect();
+    serde_json::json!({ "tree": tree })
+}
+
+/// Crate-visible wrapper over [`build_tree`] for the whole-graph integration
+/// test (7.5), which asserts the retrieval hierarchy from real scanned data.
+#[cfg(test)]
+pub(crate) fn build_tree_pub(folders: &[serde_json::Value], nodes: &[serde_json::Value]) -> serde_json::Value {
+    build_tree(folders, nodes)
 }
 
 // ── Patterns ────────────────────────────────────────────────────────────────
@@ -393,53 +513,12 @@ fn classify_case(name: &str) -> &'static str {
     "other"
 }
 
-/// Map a file extension to a language label for the structure summary.
-///
-/// For extensions with a `LanguageAdapter`, we consult the adapter directly so
-/// this handler doesn't duplicate the language slug knowledge. For extensions
-/// with no adapter yet (go, ruby, shell, config-file types) we fall through
-/// to the small hardcoded table below.
+/// Map a file extension to a language label for the structure summary. Thin
+/// wrapper over the shared `languages::language_for_ext_slug` (the single source
+/// of truth for adapter-backed + adapterless slugs); an unrecognized extension
+/// passes through as itself so callers can still bucket it.
 fn language_for_ext(ext: &str) -> &str {
-    let dotted = format!(".{ext}");
-    if let Some(adapter) = crate::languages::adapter_for_ext(&dotted) {
-        return adapter_language_static(adapter.language());
-    }
-    match ext {
-        "go" => "go",
-        "rb" => "ruby",
-        "sh" | "bash" => "shell",
-        "md" | "markdown" => "markdown",
-        "toml" => "toml",
-        "yaml" | "yml" => "yaml",
-        "json" => "json",
-        "css" => "css",
-        "html" => "html",
-        other => other,
-    }
-}
-
-/// Return-value adapter: `adapter.language()` yields a `&str` bound to a
-/// short-lived `Box<dyn LanguageAdapter>`, but every impl returns one of a
-/// closed set of static slugs. Map through this table so the caller gets a
-/// `&'static str` and doesn't have to clone on the hot path.
-fn adapter_language_static(slug: &str) -> &'static str {
-    match slug {
-        "rust" => "rust",
-        "typescript" => "typescript",
-        "javascript" => "javascript",
-        "python" => "python",
-        "java" => "java",
-        "kotlin" => "kotlin",
-        "swift" => "swift",
-        "svelte" => "svelte",
-        "vue" => "vue",
-        "sql" => "sql",
-        "c" => "c",
-        // Fallback for any future adapter — treat as unknown so this handler
-        // never surfaces stale labels; add a case above when a new adapter
-        // lands.
-        _ => "other",
-    }
+    crate::languages::language_for_ext_slug(ext).unwrap_or(ext)
 }
 
 /// Aggregate naming conventions (dominant case style per node kind), directory
@@ -581,6 +660,60 @@ pub(crate) async fn project_conventions_handler(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn build_tree_nests_folders_files_symbols_and_sections() {
+        // 7.2: folder tree (kind/role) → file → class → method; doc → section tree.
+        // fol_root (git) contains fol_pkg (workspace_member); the root folder owns
+        // the file/doc nodes; a class has a method child; a doc has a section child.
+        let folders = vec![
+            json!({"id":"fol_root","name":"repo","kind":"git","role":null,"parent_id":null}),
+            json!({"id":"fol_pkg","name":"pkg","kind":"workspace_member","role":"library","parent_id":"fol_root"}),
+        ];
+        let nodes = vec![
+            // A code file with a class → method (parent_id chain).
+            json!({"id":"n_file","name":"lib.rs","kind":"file","parent_id":null,"line_start":1,"folder_id":"fol_root"}),
+            json!({"id":"n_class","name":"Widget","kind":"class","parent_id":"n_file","line_start":2,"folder_id":"fol_root"}),
+            json!({"id":"n_method","name":"render","kind":"method","parent_id":"n_class","line_start":3,"folder_id":"fol_root"}),
+            // A doc file with a section.
+            json!({"id":"n_doc","name":"design.md","kind":"doc","parent_id":null,"line_start":1,"folder_id":"fol_root"}),
+            json!({"id":"n_sec","name":"Overview","kind":"section","parent_id":"n_doc","line_start":3,"folder_id":"fol_root"}),
+        ];
+        let tree = build_tree(&folders, &nodes);
+        let roots = tree["tree"].as_array().unwrap();
+        assert_eq!(roots.len(), 1, "one root folder (fol_root); fol_pkg nests under it");
+        let root = &roots[0];
+        assert_eq!(root["kind"], "git");
+        // subfolder nested by parent_id, carrying kind + role.
+        let subs = root["folders"].as_array().unwrap();
+        assert_eq!(subs.len(), 1);
+        assert_eq!(subs[0]["kind"], "workspace_member");
+        assert_eq!(subs[0]["role"], "library");
+        // the file + doc are root-level nodes of fol_root.
+        let fnodes = root["nodes"].as_array().unwrap();
+        let file = fnodes.iter().find(|n| n["name"] == "lib.rs").unwrap();
+        let class = file["children"].as_array().unwrap().iter().find(|n| n["name"] == "Widget").unwrap();
+        assert_eq!(class["kind"], "class");
+        let method = class["children"].as_array().unwrap()[0].clone();
+        assert_eq!(method["name"], "render");
+        assert_eq!(method["kind"], "method");
+        let doc = fnodes.iter().find(|n| n["name"] == "design.md").unwrap();
+        assert_eq!(doc["children"].as_array().unwrap()[0]["name"], "Overview");
+    }
+
+    #[test]
+    fn build_tree_keeps_node_with_out_of_scope_parent_as_root() {
+        // A node whose parent_id isn't in the scoped set is NOT dropped — it
+        // becomes a root node of its folder (no silent loss).
+        let folders = vec![json!({"id":"f","name":"repo","kind":"git","role":null,"parent_id":null})];
+        let nodes = vec![
+            json!({"id":"orphan","name":"stray","kind":"function","parent_id":"missing","line_start":1,"folder_id":"f"}),
+        ];
+        let tree = build_tree(&folders, &nodes);
+        let fnodes = tree["tree"][0]["nodes"].as_array().unwrap();
+        assert_eq!(fnodes.len(), 1, "a node with an out-of-scope parent survives as a folder root");
+        assert_eq!(fnodes[0]["name"], "stray");
+    }
 
     #[test]
     fn classify_case_covers_common_styles() {

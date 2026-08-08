@@ -63,7 +63,7 @@
             <div class="flex flex-col gap-1">
                 {#each memories as mem (mem.id)}
                     <button
-                        class="memory-card text-left px-4 py-3.5 border border-paper-mute rounded-md bg-paper-soft cursor-pointer transition-colors duration-fast"
+                        class="memory-card text-left px-4 py-3.5 border border-paper-edge rounded-md bg-paper-soft cursor-pointer transition-colors duration-fast"
                         class:selected={selectedMemory?.id === mem.id}
                         onclick={() => (selectedMemory = mem)}
                     >
@@ -94,7 +94,7 @@
             <!-- Detail drawer -->
             {#if selectedMemory}
                 <div
-                    class="p-6 bg-paper-mute border border-paper-mute rounded-lg sticky top-6 flex flex-col gap-5"
+                    class="p-6 bg-paper-mute border border-paper-edge rounded-lg sticky top-6 flex flex-col gap-5"
                 >
                     {#each [{ label: "What", text: selectedMemory.title }, { label: "Why", text: selectedMemory.content }] as section}
                         <div>

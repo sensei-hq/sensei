@@ -30,21 +30,39 @@ pub fn spawn_workers(ctx: Arc<TaskContext>, n: usize) {
             loop {
                 let task = ctx.queue.next_task().await;
                 tracing::debug!("[task-worker-{}] running {} for {} ({})", worker_id, task.kind, task.folder_path, task.path);
-
-                let result = execute_task(&ctx, &task).await;
-
-                match result {
-                    Ok(_items) => {
-                        ctx.queue.complete(task.id).await;
-                        tracing::debug!("[task-worker-{}] completed {} #{}", worker_id, task.kind, task.id);
-                    }
-                    Err(e) => {
-                        ctx.queue.fail(task.id, e.clone()).await;
-                        tracing::warn!("[task-worker-{}] failed {} #{}: {}", worker_id, task.kind, task.id, e);
-                    }
-                }
+                // The retry handle is detached: the bounded retry (if any) runs
+                // on its own timer; the worker moves straight to the next task.
+                let _ = run_task(&ctx, worker_id, task).await;
             }
         });
+    }
+}
+
+/// Handle one dequeued task: dispatch it, record completion/failure, and on
+/// failure schedule a bounded retry (D6c). Returns the spawned retry handle
+/// when one was scheduled — `None` on success or a terminal failure. The worker
+/// loop ignores the handle (the retry runs detached); tests inspect it to prove
+/// the failure→retry wiring without waiting out the real backoff.
+async fn run_task(
+    ctx: &Arc<TaskContext>,
+    worker_id: usize,
+    task: Task,
+) -> Option<tokio::task::JoinHandle<Option<u64>>> {
+    match execute_task(ctx, &task).await {
+        Ok(_items) => {
+            ctx.queue.complete(task.id).await;
+            tracing::debug!("[task-worker-{}] completed {} #{}", worker_id, task.kind, task.id);
+            None
+        }
+        Err(e) => {
+            ctx.queue.fail(task.id, e.clone()).await;
+            tracing::warn!("[task-worker-{}] failed {} #{}: {}", worker_id, task.kind, task.id, e);
+            // D6c: schedule a bounded, backed-off retry for a failed
+            // graph-pipeline task. A no-op for non-retryable kinds and once
+            // MAX_RETRIES is reached (terminal failure). The retry runs detached;
+            // enqueue_unique keeps it single-writer safe.
+            super::retry::schedule_if_retryable(ctx.queue.clone(), &task)
+        }
     }
 }
 
@@ -64,6 +82,7 @@ async fn execute_task(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
         &task.kind.to_string(),
         &task.folder_path,
         &task.path,
+        task.retry_number as i32,
     ).await {
         Ok(id) => Some(id),
         Err(e) => {
@@ -89,12 +108,10 @@ async fn execute_task(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
             TaskKind::ProcessFile => handlers::process_file(ctx, task).await,
             TaskKind::DeleteFile => handlers::delete_file(ctx, task).await,
             TaskKind::DeleteFolder => handlers::delete_folder(ctx, task).await,
-            TaskKind::ResolveEdges => handlers::resolve_edges(ctx, task).await,
             TaskKind::ResolveLibs => handlers::resolve_libs(ctx, task).await,
             TaskKind::ImportLib => handlers::import_lib(ctx, task).await,
             TaskKind::BranchSwitch => handlers::branch_switch(ctx, task).await,
             TaskKind::BuildConnections => handlers::build_connections(ctx, task).await,
-            TaskKind::ReconcileConnections => handlers::reconcile_connections(ctx, task).await,
             TaskKind::EmbedNodes => handlers::embed_nodes(ctx, task).await,
             TaskKind::IndexLibrary => handlers::index_library(ctx, task).await,
             TaskKind::IndexLibraryPage => handlers::index_library_page(ctx, task).await,
@@ -157,27 +174,10 @@ async fn execute_task(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::state::SharedState;
+    
 
     /// Build a TaskContext backed by PgStore and a fresh TaskQueue.
-    async fn make_ctx() -> Arc<TaskContext> {
-        let queue = Arc::new(TaskQueue::new());
-        let gateway = crate::api::gateway_init::init_gateway_test().await;
-        let app_state = Arc::new(SharedState {
-            task_queue: queue.clone(),
-            pg: crate::db::pg_store::PgStore::connect_test().await.unwrap(),
-            gateway,
-            event_tx: { let (tx, _) = tokio::sync::broadcast::channel(16); tx },
-            breaker: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
-            provisioning: None,
-        });
-        Arc::new(TaskContext {
-            queue,
-            app_state,
-            _graph_path: None,
-            logger: sensei_logger::Logger::noop(),
-        })
-    }
+    use crate::tasks::test_support::make_ctx;
 
     #[tokio::test]
     async fn execute_task_dispatches_scan_root() {
@@ -215,18 +215,6 @@ mod tests {
             ctx.pg().upsert_repo(&root_id, "repo", "/tmp/repo").await.unwrap();
         }
         let task = Task::new(TaskKind::DeleteFolder, "repo", "/tmp/repo/src");
-        let result = execute_task(&ctx, &task).await;
-        assert!(result.is_ok());
-    }
-
-    #[tokio::test]
-    async fn execute_task_dispatches_resolve_edges() {
-        let ctx = make_ctx().await;
-        {
-            let root_id = ctx.pg().add_watch_root("/tmp/repo", "test", &serde_json::json!([])).await.unwrap();
-            ctx.pg().upsert_repo(&root_id, "repo", "/tmp/repo").await.unwrap();
-        }
-        let task = Task::new(TaskKind::ResolveEdges, "repo", "");
         let result = execute_task(&ctx, &task).await;
         assert!(result.is_ok());
     }
@@ -340,16 +328,46 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn execute_task_dispatches_reconcile_connections() {
+    async fn run_task_schedules_bounded_retry_on_failed_retryable_kind() {
+        // D6c wiring: a failed graph-pipeline task is re-driven. ProcessGitFolder
+        // on a nonexistent path fails (proven by execute_task_dispatches_*), and
+        // ProcessGitFolder is retryable → run_task returns a scheduled retry.
         let ctx = make_ctx().await;
-        {
-            let root_id = ctx.pg().add_watch_root("/tmp/repo", "test", &serde_json::json!([])).await.unwrap();
-            ctx.pg().upsert_repo(&root_id, "repo", "/tmp/repo").await.unwrap();
-        }
-        // ReconcileConnections with no solutions should succeed (no-op)
-        let task = Task::new(TaskKind::ReconcileConnections, "repo", "");
-        let result = execute_task(&ctx, &task).await;
-        assert!(result.is_ok());
+        let task = Task::new(TaskKind::ProcessGitFolder, "/nonexistent/repo", "/nonexistent/repo");
+        let handle = run_task(&ctx, 0, task).await
+            .expect("a failed retryable task schedules a bounded retry");
+        handle.abort(); // don't wait out the real backoff
+    }
+
+    #[tokio::test]
+    async fn run_task_does_not_retry_a_non_retryable_failure() {
+        // ScanRoot on a nonexistent path fails, but ScanRoot is NOT a retryable
+        // kind (a deleted root is permanent) → terminal, no retry scheduled.
+        let ctx = make_ctx().await;
+        let task = Task::new(TaskKind::ScanRoot, "", "/nonexistent/path");
+        assert!(run_task(&ctx, 0, task).await.is_none(),
+            "a non-retryable kind's failure is terminal");
+    }
+
+    #[tokio::test]
+    async fn run_task_schedules_no_retry_on_success() {
+        // A succeeding task (DeleteFile on an empty graph is a no-op) never
+        // schedules a retry.
+        let ctx = make_ctx().await;
+        let task = Task::new(TaskKind::DeleteFile, "repo", "/some/file.rs");
+        assert!(run_task(&ctx, 0, task).await.is_none(),
+            "a successful task schedules no retry");
+    }
+
+    #[tokio::test]
+    async fn run_task_stops_retrying_once_exhausted() {
+        // A retryable kind that has already hit MAX_RETRIES is terminal — the
+        // bounded cap holds at the worker boundary, not just in the policy.
+        let ctx = make_ctx().await;
+        let mut task = Task::new(TaskKind::ProcessGitFolder, "/nonexistent/repo", "/nonexistent/repo");
+        task.retry_number = super::super::retry::MAX_RETRIES;
+        assert!(run_task(&ctx, 0, task).await.is_none(),
+            "an exhausted retryable task is terminal");
     }
 
     #[tokio::test]

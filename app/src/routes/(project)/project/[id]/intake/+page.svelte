@@ -1,5 +1,6 @@
 <script lang="ts">
   import { untrack } from 'svelte';
+  import { Button } from '@rokkit/ui';
   import { PageHeader } from '$lib/components';
   import { senseiApi } from '$lib/api.js';
   import { appState } from '$lib/appstate.svelte.js';
@@ -8,16 +9,17 @@
   let { data } = $props();
 
   const api = senseiApi(appState.port);
-  // Seed the state once from the loaded guide; the state owns recommend/confirm
-  // thereafter. untrack makes the one-time read explicit (see insights/+page.svelte).
-  const intake = new IntakeState(untrack(() => data.guide));
+  // Seed the state once from the loaded guide + project id; the state owns
+  // recommend/confirm thereafter. untrack makes the one-time read explicit — a
+  // playbook run is always project-scoped, and the id is stable per navigation.
+  const intake = untrack(() => new IntakeState(data.guide, data.projectId));
 
   function recommend(): void { void intake.recommend(api); }
   function confirm(): void { void intake.confirm(api); }
 </script>
 
 <div class="flex flex-col gap-3 p-4 max-w-2xl" data-testid="intake">
-  <PageHeader kanji="門" eyebrow="Sensei" title="Intake" description="Start a chunk of work" variant="h1" />
+  <PageHeader kanji="門" eyebrow="This project" title="Intake" description="Start a chunk of work in this project" variant="h1" />
 
   {#if intake.phase !== 'recorded'}
     <section class="flex flex-col gap-2">
@@ -32,14 +34,15 @@
         data-testid="intake-input"
       ></textarea>
       <div class="flex justify-end">
-        <button
-          class="text-sm bg-ink text-paper rounded-sm py-1 px-3 border-none cursor-pointer disabled:opacity-50"
+        <Button
+          variant="primary"
+          size="sm"
           onclick={recommend}
           disabled={intake.phase === 'loading' || !intake.chunk.trim()}
           data-testid="intake-recommend"
         >
           {intake.phase === 'loading' ? 'Reading…' : 'Recommend a playbook'}
-        </button>
+        </Button>
       </div>
     </section>
   {/if}
@@ -74,15 +77,15 @@
           <p class="text-sm text-success m-0" data-testid="intake-recorded">
             {r.auto_select ? 'Auto-selected and recorded.' : 'Recorded.'}
           </p>
-          <button class="text-xs text-accent bg-transparent border-none cursor-pointer" onclick={() => intake.reset()} data-testid="intake-reset">
+          <Button variant="default" style="ghost" size="sm" onclick={() => intake.reset()} data-testid="intake-reset">
             New intake
-          </button>
+          </Button>
         </div>
       {:else}
         <div class="flex justify-end">
-          <button class="text-sm bg-ink text-paper rounded-sm py-1 px-3 border-none cursor-pointer" onclick={confirm} data-testid="intake-confirm">
+          <Button variant="primary" size="sm" onclick={confirm} data-testid="intake-confirm">
             Use this playbook
-          </button>
+          </Button>
         </div>
       {/if}
     </section>

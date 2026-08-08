@@ -118,6 +118,8 @@ pub enum InsightKind {
     FtrRegression,
     // Sessions
     SessionRetrospective,
+    // Code graph
+    CommunityDescription,
 }
 
 impl InsightKind {
@@ -143,6 +145,7 @@ impl InsightKind {
             InsightKind::FtrLift => "ftr_lift",
             InsightKind::FtrRegression => "ftr_regression",
             InsightKind::SessionRetrospective => "session_retrospective",
+            InsightKind::CommunityDescription => "community_description",
         }
     }
 
@@ -187,6 +190,8 @@ impl InsightKind {
                 "Kind: ftr_regression. Report that first-try resolution dropped. Give the before and after and where to look.",
             InsightKind::SessionRetrospective =>
                 "Kind: session_retrospective. Summarise what this coding session accomplished. The title is a short headline of the main work; the detail states the outcome and any corrections. Ground both in the facts. Write plainly, sentence case.",
+            InsightKind::CommunityDescription =>
+                "Kind: community_description. In one plain sentence, say what this cluster of code is responsible for, grounded in the given hub symbols and their kinds. Name the shared responsibility; do not list every symbol. The title is a short 2-4 word name for the cluster; the detail is the sentence.",
         }
     }
 }

@@ -68,6 +68,15 @@ pub struct IRSection {
     pub content_preview: Option<String>,  // first 200 chars
 }
 
+/// A design-rationale marker (NOTE/WHY/HACK/TODO/IMPORTANT) found in a file's
+/// text — becomes a `rationale` node (D5b), the "why" absent from the graph.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IRRationale {
+    pub marker: String,   // NOTE | WHY | HACK | TODO | IMPORTANT
+    pub text: String,     // marker + trailing text on the line (capped)
+    pub line: u32,        // 1-based source line
+}
+
 /// A code block within a document.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IRCodeBlock {
