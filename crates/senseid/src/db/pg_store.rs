@@ -3022,6 +3022,24 @@ impl PgStore {
         Ok(())
     }
 
+    /// Set `is_test` for every node of a file (folder-scoped) to the file's
+    /// test-ness (`languages::is_test_path`). `is_test` is a FILE-level property —
+    /// all of a file's nodes (file/symbol/section/rationale/fqn-def) share it — so
+    /// this runs once per file after emit rather than threading a param through
+    /// every upsert. Guarded by `IS DISTINCT FROM` so a steady-state re-scan
+    /// changes 0 rows (cheap) while a test↔prod rename flips them. `lib_symbol`/
+    /// `lib_package` nodes (file_path NULL) are never matched (external deps aren't
+    /// test). Returns rows changed.
+    pub async fn set_nodes_is_test_for_file(
+        &self, folder_id: &uuid::Uuid, file_path: &str, is_test: bool,
+    ) -> Result<u64, String> {
+        let res = sqlx_core::query::query(
+            "UPDATE sensei.nodes SET is_test = $3, modified_at = now()
+              WHERE folder_id = $1 AND file_path = $2 AND is_test IS DISTINCT FROM $3"
+        ).bind(folder_id).bind(file_path).bind(is_test).execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(res.rows_affected())
+    }
+
     /// Replace a folder's ENTIRE community assignment in one transaction (D4):
     /// delete its community rows, clear every node's `community_id`, then insert
     /// the new communities and set their members' `community_id`. This makes
@@ -10163,11 +10181,11 @@ impl PgStore {
         // `fqn`/`resolved` are projected (7.2) so the Atlas can key symbols by
         // moniker and distinguish enriched defs from reference stubs. `fqn` is NULL
         // for pre-FQN/legacy rows; `resolved` is NOT NULL (defaults false).
-        let rows: Vec<(uuid::Uuid, String, String, Option<String>, Option<uuid::Uuid>, Option<i32>, Option<i32>, Option<i32>, Option<i32>, uuid::Uuid, Option<String>, Option<String>, bool)> = sqlx_core::query_as::query_as(
-            "SELECT id, kind::text, name, file_path, parent_id, line_start, line_end, degree, community_id, folder_id, language, fqn, resolved FROM sensei.nodes WHERE folder_id = ANY($1) ORDER BY file_path, line_start, parent_id, id"
+        let rows: Vec<(uuid::Uuid, String, String, Option<String>, Option<uuid::Uuid>, Option<i32>, Option<i32>, Option<i32>, Option<i32>, uuid::Uuid, Option<String>, Option<String>, bool, bool)> = sqlx_core::query_as::query_as(
+            "SELECT id, kind::text, name, file_path, parent_id, line_start, line_end, degree, community_id, folder_id, language, fqn, resolved, is_test FROM sensei.nodes WHERE folder_id = ANY($1) ORDER BY file_path, line_start, parent_id, id"
         ).bind(folder_ids).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
-        Ok(rows.into_iter().map(|(id, kind, name, fp, pid, ls, le, degree, community_id, folder_id, language, fqn, resolved)| {
-            serde_json::json!({ "id": id, "kind": kind, "name": name, "file_path": fp, "parent_id": pid, "line_start": ls, "line_end": le, "degree": degree, "community_id": community_id, "folder_id": folder_id, "language": language, "fqn": fqn, "resolved": resolved })
+        Ok(rows.into_iter().map(|(id, kind, name, fp, pid, ls, le, degree, community_id, folder_id, language, fqn, resolved, is_test)| {
+            serde_json::json!({ "id": id, "kind": kind, "name": name, "file_path": fp, "parent_id": pid, "line_start": ls, "line_end": le, "degree": degree, "community_id": community_id, "folder_id": folder_id, "language": language, "fqn": fqn, "resolved": resolved, "is_test": is_test })
         }).collect())
     }
 
@@ -11814,6 +11832,7 @@ mod tests {
         assert_eq!(crate::api::util::json_uuid(&method["id"]), Some(method_id), "same method node");
         assert_eq!(method["fqn"].as_str(), Some(method_fqn), "get_nodes_scoped projects the node's fqn");
         assert_eq!(method["resolved"].as_bool(), Some(true), "and its resolved flag");
+        assert_eq!(method["is_test"].as_bool(), Some(false), "and its is_test flag (default false here)");
 
         // ── /tree nests the type container → method (Phase 5 parent_id) ──
         let folders = s.get_folders_scoped(&[fid]).await.unwrap();
