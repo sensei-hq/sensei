@@ -238,6 +238,7 @@ not yet built (verify against the code before relying on it — see
 | [pipeline/analyzer.md](pipeline/analyzer.md) | **draft** | Scheduler + L0 enrichment + L1 signal derivation |
 | [pipeline/code-graph.md](pipeline/code-graph.md) | **draft** | Idempotent node/edge/community indexing + retrieval contract; fixes the Atlas regression (dedup, incremental re-runs, restored kinds) |
 | [pipeline/ftr.md](pipeline/ftr.md) | **draft** | Correction-signal detection, 14d roll-up, north-star metric |
+| [pipeline/metrics.md](pipeline/metrics.md) | **draft** | Registry-driven metric computation + project/session/date value store + roll-up views + derived health score |
 | [pipeline/memory.md](pipeline/memory.md) | **draft** | LLM-primary consumer + human promotion ladder |
 | [pipeline/traceability.md](pipeline/traceability.md) | **roadmap** | Doc-drift scanner, confidence scoring, auto-fix policy — **only deletion-of-symbol drift is built; `traces_to`=0, drift is file-level, no signature diff** |
 | [pipeline/impact.md](pipeline/impact.md) | **draft** | MeasureVerdicts + regression alerts |
