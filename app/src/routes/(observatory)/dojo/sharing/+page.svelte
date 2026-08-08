@@ -1,8 +1,9 @@
 <script lang="ts">
   import { untrack } from 'svelte';
+  import { invalidateAll } from '$app/navigation';
   import { appState } from '$lib/appstate.svelte.js';
   import { senseiApi } from '$lib/api.js';
-  import { PageHeader, Kanji } from '$lib/components';
+  import { PageHeader, Kanji, ScreenState } from '$lib/components';
   import {
     CollectiveSharing,
     ATTRIBUTION_OPTIONS,
@@ -17,7 +18,10 @@
   // the controller; the api client is injected so this stays a pure template.
   // Seed once from the loaded preferences — the controller owns every save +
   // server-object adoption thereafter. untrack makes the one-time read explicit.
-  const state = new CollectiveSharing(untrack(() => data.preferences), senseiApi(appState.port));
+  // On a LOAD failure `data.preferences` is null (F8) — the controller isn't
+  // built and the screen shows error-with-Retry instead of fabricated defaults.
+  const prefs = untrack(() => data.preferences);
+  const state = prefs ? new CollectiveSharing(prefs, senseiApi(appState.port)) : null;
 </script>
 
 <!-- A small switch rendered as an accessible button — geometry-only inline, all
@@ -29,7 +33,7 @@
     aria-checked={on}
     aria-label={label}
     data-toggle={testid}
-    disabled={state.saving}
+    disabled={state?.saving}
     onclick={onToggle}
     class="relative inline-flex shrink-0 items-center rounded-full cursor-pointer transition-colors disabled:opacity-50 disabled:cursor-not-allowed {on
       ? 'bg-primary'
@@ -60,6 +64,11 @@
   description="Choose where anonymized insight goes, how often batches are prepared, and which categories may leave. Source code, prompts, file paths and project names never leave your machine."
 />
 
+{#if data.error || !state}
+  <div class="max-w-[1060px] mx-auto px-7 pb-10">
+    <ScreenState status="error" error={data.error ?? 'Failed to load sharing preferences'} onretry={invalidateAll} />
+  </div>
+{:else}
 <div class="max-w-[1060px] mx-auto px-7 pb-10" data-collective-destination={state.destination}>
   <!-- meta: last-changed + live save / error feedback -->
   <div class="flex items-center gap-3 mt-5 mb-7 text-xs">
@@ -178,3 +187,4 @@
     </div>
   </section>
 </div>
+{/if}

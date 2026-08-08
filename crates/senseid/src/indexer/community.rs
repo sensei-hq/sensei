@@ -3,19 +3,32 @@ use std::collections::HashMap;
 /// Run label propagation community detection for a folder.
 /// Queries nodes and edges from the database, assigns community IDs,
 /// and persists results to inference.communities + nodes.community_id.
+///
+/// This is the AUTHORITATIVE, deterministic step and the terminal scan barrier's
+/// gate: it makes no model calls and writes each community with an honest-empty
+/// description. The non-authoritative model-authored descriptions are filled in
+/// afterwards, OFF this barrier, by [`enrich_community_descriptions`] — so a slow
+/// or failing model can never block a folder from reaching `indexed` (spec W3).
 pub async fn detect_communities_for_folder(
     pg: &crate::db::pg_store::PgStore,
     folder_id: &uuid::Uuid,
 ) -> Result<u32, String> {
-    // Load all nodes for this folder
-    let nodes = pg.get_nodes_by_folder(folder_id).await
+    // Load all nodes for this folder.
+    let mut nodes = pg.get_nodes_by_folder(folder_id).await
         .map_err(|e| format!("Failed to load nodes: {}", e))?;
 
     if nodes.is_empty() {
+        // Clear any stale communities for a now-empty folder (D4 invariant 5).
+        pg.replace_communities_for_folder(folder_id, &[]).await?;
         return Ok(0);
     }
 
-    // Build node index: uuid -> position
+    // D4: order nodes by a STABLE natural key (independent of the random node
+    // UUID) so both label propagation and the community-id remap below are
+    // deterministic for an identical tree (invariant 2).
+    nodes.sort_by_key(natural_key);
+
+    // Build node index: uuid -> position (in natural-key order).
     let mut id_to_idx: HashMap<String, usize> = HashMap::new();
     let mut node_ids: Vec<String> = Vec::with_capacity(nodes.len());
     for (i, node) in nodes.iter().enumerate() {
@@ -24,47 +37,88 @@ pub async fn detect_communities_for_folder(
         node_ids.push(id);
     }
 
-    // Load resolved edges (calls, implements, imports) for this folder
-    let adjacency = build_adjacency(pg, folder_id, &id_to_idx, nodes.len()).await?;
+    let adjacency = build_adjacency(pg, folder_id, &id_to_idx, &nodes).await?;
+    let mut labels = label_propagation(&adjacency, nodes.len(), 20);
 
-    // Run label propagation
-    let labels = label_propagation(&adjacency, nodes.len(), 20);
-
-    // Group nodes by community label
-    let mut communities: HashMap<u32, Vec<usize>> = HashMap::new();
+    // Group members by raw propagation label.
+    let mut groups: HashMap<u32, Vec<usize>> = HashMap::new();
     for (i, &label) in labels.iter().enumerate() {
-        communities.entry(label).or_default().push(i);
+        groups.entry(label).or_default().push(i);
     }
 
-    // Persist to inference.communities and update nodes.community_id
-    let mut community_count = 0u32;
-    for (community_id, members) in &communities {
-        if members.len() < 2 {
-            continue; // skip singletons
-        }
-
-        // Generate label from most common node kind + first member name
-        let label = generate_community_label(&nodes, members);
-
-        pg.upsert_community(folder_id, *community_id as i32, &label, members.len() as i32).await
-            .map_err(|e| format!("upsert_community failed: {}", e))?;
-
-        // Update nodes.community_id for each member
-        for &idx in members {
-            let node_id = match uuid::Uuid::parse_str(&node_ids[idx]) {
-                Ok(id) => id,
-                Err(e) => {
-                    tracing::warn!(error = %e, node_id = %node_ids[idx], "detect_communities: skipping member with unparseable node id");
-                    continue;
-                }
-            };
-            if let Err(e) = pg.update_node_community(&node_id, *community_id as i32).await {
-                tracing::warn!(error = %e, node_id = %node_id, community_id = *community_id, "detect_communities: failed to update node community_id");
+    // D4.4 singleton assignment: a node the propagation left alone (its label
+    // group has one member — no calls/imports/extends/references edge AND no
+    // parent inside the folder) inherits its enclosing FILE community rather than
+    // being dropped, so coverage is ~100 % of nodes (invariant 5). Re-point each
+    // such singleton's label at its file node's label; a lone file (no children,
+    // no edges) keeps its own label and forms a one-node community.
+    let singletons: Vec<usize> = groups.values()
+        .filter(|members| members.len() == 1)
+        .map(|members| members[0])
+        .collect();
+    if !singletons.is_empty() {
+        let file_idx_by_path: HashMap<&str, usize> = nodes.iter().enumerate()
+            .filter(|(_, node)| node["kind"].as_str() == Some("file"))
+            .filter_map(|(i, node)| node["file_path"].as_str().map(|fp| (fp, i)))
+            .collect();
+        for i in singletons {
+            if nodes[i]["kind"].as_str() == Some("file") {
+                continue; // a lone file forms its own community — nothing to inherit
+            }
+            if let Some(fp) = nodes[i]["file_path"].as_str()
+                && let Some(&f) = file_idx_by_path.get(fp)
+                && f != i
+            {
+                labels[i] = labels[f];
             }
         }
-
-        community_count += 1;
+        // Re-group after folding singletons into their file's label.
+        groups.clear();
+        for (i, &label) in labels.iter().enumerate() {
+            groups.entry(label).or_default().push(i);
+        }
     }
+
+    // D4 deterministic ids: KEEP EVERY group — singletons now belong to their
+    // file community, so every node carries a community_id (invariant 5). Since
+    // nodes are natural-key sorted, a community's MIN member index IS its min
+    // natural key; rank by it and assign community_id = 1..k, so an identical
+    // tree always yields the same ids regardless of raw label values (invariant 2).
+    let mut kept: Vec<(usize, Vec<usize>)> = groups.into_values()
+        .map(|mut members| { members.sort_unstable(); (members[0], members) })
+        .collect();
+    kept.sort_by_key(|(min_idx, _)| *min_idx);
+
+    let mut assignments = Vec::with_capacity(kept.len());
+    for (rank, (_min_idx, members)) in kept.iter().enumerate() {
+        let label = generate_community_label(&nodes, members);
+        let member_node_ids: Vec<uuid::Uuid> = members.iter()
+            .filter_map(|&idx| uuid::Uuid::parse_str(&node_ids[idx]).ok())
+            .collect();
+        // D4.5 god nodes: the community's top-5 members by `degree` (the hubs).
+        // Rank by degree desc, tie-break on member index asc (== natural key, since
+        // nodes are sorted) so the set is deterministic for an unchanged graph.
+        let mut by_degree = members.clone();
+        by_degree.sort_by(|&a, &b| {
+            let da = nodes[a]["degree"].as_i64().unwrap_or(0);
+            let db = nodes[b]["degree"].as_i64().unwrap_or(0);
+            db.cmp(&da).then_with(|| a.cmp(&b))
+        });
+        let god_node_ids: Vec<uuid::Uuid> = by_degree.iter().take(5)
+            .filter_map(|&idx| uuid::Uuid::parse_str(&node_ids[idx]).ok())
+            .collect();
+        assignments.push(crate::db::pg_store::CommunityAssignment {
+            community_id: (rank + 1) as i32,
+            label,
+            member_node_ids,
+            god_node_ids,
+        });
+    }
+
+    // D4 durability: replace the folder's ENTIRE community set in one tx (kills
+    // stale rows + orphaned community_ids — invariant 5).
+    let community_count = assignments.len() as u32;
+    pg.replace_communities_for_folder(folder_id, &assignments).await?;
 
     tracing::info!(
         "detect_communities: folder {} — {} communities from {} nodes",
@@ -73,16 +127,43 @@ pub async fn detect_communities_for_folder(
     Ok(community_count)
 }
 
-/// Build undirected adjacency list from resolved edges.
+/// Stable per-node ordering key so community detection and id assignment are
+/// deterministic for an unchanged tree (D4 invariant 2). `parent_id` then `id` are
+/// the final tiebreak (must-fix #8): once D5c nests symbols under their type/impl,
+/// two symbols can share `(file_path, line_start, kind, name)` under DIFFERENT
+/// parents — `parent_id` separates those, and `id` makes the order TOTAL so the
+/// result never depends on the DB's unspecified row order for a tied key. Node ids
+/// are stable across re-scans (get-or-create by fqn / upsert-then-prune), so this
+/// stays deterministic across re-runs of an unchanged graph.
+fn natural_key(node: &serde_json::Value) -> (String, i64, String, String, String, String) {
+    (
+        node["file_path"].as_str().unwrap_or("").to_string(),
+        node["line_start"].as_i64().unwrap_or(-1),
+        node["kind"].as_str().unwrap_or("").to_string(),
+        node["name"].as_str().unwrap_or("").to_string(),
+        node["parent_id"].as_str().unwrap_or("").to_string(),
+        node["id"].as_str().unwrap_or("").to_string(),
+    )
+}
+
+/// Build the undirected adjacency list community detection runs over.
+///
+/// D4.4 — two adjacency sources:
+/// - **Semantic edges** `calls,imports,extends,references` (resolved only). The
+///   dead `implements` kind (0 rows produced) is dropped.
+/// - **Structural containment** via `parent_id`: a node is adjacent to its
+///   enclosing parent (file/class/module). This clusters a file's symbols
+///   together and gives a symbol with no semantic edge a path into its
+///   container's community (so coverage reaches ~100 %).
 async fn build_adjacency(
     pg: &crate::db::pg_store::PgStore,
     folder_id: &uuid::Uuid,
     id_to_idx: &HashMap<String, usize>,
-    n: usize,
+    nodes: &[serde_json::Value],
 ) -> Result<Vec<Vec<usize>>, String> {
-    let mut adj: Vec<Vec<usize>> = vec![Vec::new(); n];
+    let mut adj: Vec<Vec<usize>> = vec![Vec::new(); nodes.len()];
 
-    for kind in &["calls", "implements", "imports"] {
+    for kind in &["calls", "imports", "extends", "references"] {
         let edges = pg.get_edges_by_kind(folder_id, kind).await
             .map_err(|e| format!("Failed to load {} edges: {}", kind, e))?;
 
@@ -97,6 +178,16 @@ async fn build_adjacency(
                 adj[si].push(ti);
                 adj[ti].push(si); // undirected
             }
+        }
+    }
+
+    // parent_id containment — connect each node to its enclosing parent.
+    for (i, node) in nodes.iter().enumerate() {
+        if let Some(pid) = node["parent_id"].as_str()
+            && let Some(&pi) = id_to_idx.get(pid)
+        {
+            adj[i].push(pi);
+            adj[pi].push(i); // undirected
         }
     }
 
@@ -169,9 +260,99 @@ fn generate_community_label(nodes: &[serde_json::Value], members: &[usize]) -> S
     format!("{} ({})", dominant_kind, dir)
 }
 
+/// How many communities (largest first) a single detect run will attempt to
+/// describe. Bounds the synchronous, off-barrier enrichment so a huge cold repo
+/// can't approach the DetectCommunities watchdog; smaller clusters stay
+/// honest-empty and warm on a later re-detect.
+const DESCRIPTION_ENRICH_CAP: i64 = 25;
+
+/// D4.5 community-description enrichment — NON-authoritative and fail-open (spec
+/// W3). Called AFTER `detect_communities_for_folder` has written the communities
+/// and the folder has reached `indexed`, so nothing here can strand the folder:
+/// every error/timeout is swallowed. For the folder's largest
+/// [`DESCRIPTION_ENRICH_CAP`] communities it generates a one-line model summary
+/// (cache-first, so a re-detect of an unchanged community reuses it) and stamps
+/// `description` + `props.source='insight-copy'`; on any miss the honest-empty
+/// NULL / `'null'` written by the authoritative step is left in place — never a
+/// static template (never-fabricate).
+pub async fn enrich_community_descriptions(
+    pg: &crate::db::pg_store::PgStore,
+    gateway: &gateway::Gateway,
+    folder_id: &uuid::Uuid,
+) {
+    let communities = match pg.list_communities_with_god_nodes(folder_id, DESCRIPTION_ENRICH_CAP).await {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!(error = %e, folder = %folder_id, "enrich_community_descriptions: list failed");
+            return;
+        }
+    };
+
+    for (community_id, label, node_count, god_ids) in communities {
+        // Facts: the cluster's hubs (name + kind, in god-node order) and size.
+        let meta = pg.get_node_name_kind(&god_ids).await.unwrap_or_default();
+        let by_id: HashMap<uuid::Uuid, (String, String)> =
+            meta.into_iter().map(|(id, name, kind)| (id, (name, kind))).collect();
+        let god: Vec<serde_json::Value> = god_ids.iter()
+            .filter_map(|id| by_id.get(id))
+            .map(|(name, kind)| serde_json::json!({ "name": name, "kind": kind }))
+            .collect();
+        let facts = serde_json::json!({ "label": label, "size": node_count, "god_nodes": god });
+
+        // Only overwrite the honest-empty placeholder on a real model success.
+        if let Some((text, source)) = generate_description(pg, gateway, &facts).await
+            && let Err(e) = pg.set_community_description(folder_id, community_id, &text, source).await
+        {
+            tracing::warn!(error = %e, folder = %folder_id, community_id, "enrich_community_descriptions: set failed");
+        }
+    }
+}
+
+/// Generate one community's description via insight-copy, or honest-empty.
+/// Returns `Some((prose, "insight-copy"))` only when the model authored a valid
+/// summary; `None` on cache-miss + model failure / breaker back-off / validation
+/// rejection — NEVER a static template. Cache-first so an unchanged community
+/// reuses its copy (stable text across re-detects).
+async fn generate_description(
+    pg: &crate::db::pg_store::PgStore,
+    gateway: &gateway::Gateway,
+    facts: &serde_json::Value,
+) -> Option<(String, &'static str)> {
+    use crate::analysis::insight_copy::{self, CopyLimits, InsightKind};
+
+    let copy = match insight_copy::read_cached_copy(pg, InsightKind::CommunityDescription, facts).await {
+        Some(c) => Some(c),
+        None => insight_copy::generate_and_cache(
+            pg, gateway, InsightKind::CommunityDescription, facts, CopyLimits::default(),
+        ).await,
+    };
+    copy.map(|c| (c.detail, "insight-copy"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn community_ids_deterministic_under_nesting() {
+        // must-fix #8 (guards D4a): once D5c nests symbols under their type/impl,
+        // two symbols can share (file_path, line_start, kind, name) under DIFFERENT
+        // parents. The natural key — which orders nodes for the deterministic
+        // community-id assignment — must separate them (parent_id) and be TOTAL (id),
+        // so the result never depends on the DB's unspecified row order for a tie.
+        let mk = |parent: &str, id: &str| serde_json::json!({
+            "file_path": "a.rs", "line_start": 5, "kind": "method", "name": "fmt",
+            "parent_id": parent, "id": id,
+        });
+        // Same (file,line,kind,name), different enclosing type → distinct keys.
+        assert_ne!(natural_key(&mk("p-A", "n-1")), natural_key(&mk("p-B", "n-2")),
+            "different parents disambiguate an otherwise-identical key");
+        // Even a full tie on parent is broken by id → the order is total.
+        assert_ne!(natural_key(&mk("p-A", "n-1")), natural_key(&mk("p-A", "n-2")),
+            "id breaks a full tie so the sort order is total (deterministic)");
+        assert!(natural_key(&mk("p-A", "n-1")) < natural_key(&mk("p-A", "n-2")),
+            "when all else ties, ordering is by id");
+    }
 
     #[test]
     fn label_propagation_basic() {

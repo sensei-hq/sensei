@@ -4,6 +4,7 @@
     import { senseiApi } from "$lib/api.js";
     import EmptyState from "$lib/components/EmptyState.svelte";
     import { PageHeader } from "$lib/components";
+    import { Button } from "@rokkit/ui";
     import { KnowledgeSourcesState } from "$lib/knowledge-sources.svelte.js";
 
     const state = new KnowledgeSourcesState();
@@ -19,33 +20,34 @@
 <div class="max-w-[960px] mx-auto px-12 pt-8 pb-16">
 
     <!-- Add a source -->
-    <div class="p-5 border border-paper-mute rounded-lg bg-paper-soft mb-8">
+    <div class="p-5 border border-paper-edge rounded-lg bg-paper-soft mb-8">
         <p class="text-sm font-medium text-ink m-0 mb-3">Add a source</p>
         <div class="flex flex-wrap items-center gap-3">
             <input
-                class="ks-input flex-1 min-w-[220px] px-3.5 py-2 border border-paper-mute rounded-md bg-paper-mute text-ink text-sm outline-none"
+                class="ks-input flex-1 min-w-[220px] px-3.5 py-2 border border-paper-edge rounded-md bg-paper-mute text-ink text-sm outline-none"
                 type="text"
                 placeholder="https://hive.example.com"
                 bind:value={state.url}
             />
             <input
-                class="ks-input w-[180px] px-3.5 py-2 border border-paper-mute rounded-md bg-paper-mute text-ink text-sm outline-none"
+                class="ks-input w-[180px] px-3.5 py-2 border border-paper-edge rounded-md bg-paper-mute text-ink text-sm outline-none"
                 type="password"
                 placeholder="Access key (optional)"
                 bind:value={state.key}
             />
             <input
-                class="ks-input w-[180px] px-3.5 py-2 border border-paper-mute rounded-md bg-paper-mute text-ink text-sm outline-none"
+                class="ks-input w-[180px] px-3.5 py-2 border border-paper-edge rounded-md bg-paper-mute text-ink text-sm outline-none"
                 type="text"
                 placeholder="Name (optional)"
                 bind:value={state.name}
             />
-            <button
-                class="ks-add px-4 py-2 rounded-md border border-ink bg-ink text-paper-soft text-sm cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+            <Button
+                variant="primary"
+                size="sm"
                 data-testid="add-source"
                 disabled={state.adding}
                 onclick={() => state.add(api())}
-            >Add</button>
+            >Add</Button>
         </div>
         {#if state.addError}
             <p class="text-xs text-error m-0 mt-2.5">{state.addError}</p>
@@ -64,7 +66,7 @@
         <div class="flex flex-col gap-2">
             {#each state.sources as source (source.id)}
                 <div
-                    class="px-4 py-3.5 border border-paper-mute rounded-md bg-paper-soft"
+                    class="px-4 py-3.5 border border-paper-edge rounded-md bg-paper-soft"
                     data-testid="source-card"
                 >
                     <div class="flex items-center gap-3">
@@ -77,12 +79,12 @@
                             </p>
                         </div>
                         <button
-                            class="ks-btn px-3 py-1 rounded-md border border-paper-mute bg-transparent text-xs text-ink-mute cursor-pointer"
+                            class="ks-btn px-3 py-1 rounded-md border border-paper-edge bg-transparent text-xs text-ink-mute cursor-pointer"
                             data-testid="sync-{source.id}"
                             onclick={() => state.sync(api(), source.id)}
                         >Sync</button>
                         <button
-                            class="ks-btn px-3 py-1 rounded-md border border-paper-mute bg-transparent text-xs text-error cursor-pointer"
+                            class="ks-btn px-3 py-1 rounded-md border border-paper-edge bg-transparent text-xs text-error cursor-pointer"
                             data-testid="remove-{source.id}"
                             onclick={() => state.remove(api(), source.id)}
                         >Remove</button>
@@ -108,9 +110,5 @@
     }
     .ks-btn:hover {
         background: var(--paper-mute);
-    }
-    .ks-add:hover {
-        background: var(--ink-mute);
-        border-color: var(--ink-mute);
     }
 </style>

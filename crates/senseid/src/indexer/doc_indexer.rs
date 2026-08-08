@@ -220,8 +220,63 @@ pub fn parse_to_ir(content: &str, rel_path: &str, repo_path: &str) -> crate::ir:
     }
 }
 
+/// Public wrapper (D5b): extract a doc's heading sections for the production doc
+/// processor. Each `IRSection` carries the heading text, level, and line span —
+/// the input to the nested `section` node tree written via the D3 upsert/prune path.
+pub fn extract_sections_pub(content: &str) -> Vec<crate::ir::IRSection> {
+    extract_sections(content)
+}
+
+/// D5b: extract design-rationale markers (NOTE/WHY/HACK/TODO/IMPORTANT) from a
+/// file's text — each becomes a `rationale` node (the "why" the graph was
+/// missing). Matches an UPPERCASE marker at a word boundary, so `NOTE_CONST` or
+/// lowercase prose "note" don't trigger it, and captures the marker + trailing
+/// text on that line (trimming comment punctuation).
+pub fn extract_rationale_pub(content: &str) -> Vec<crate::ir::IRRationale> {
+    const MARKERS: [&str; 5] = ["NOTE", "WHY", "HACK", "TODO", "IMPORTANT"];
+    let mut out = Vec::new();
+    for (i, line) in content.lines().enumerate() {
+        // First marker on the line wins (one rationale per line).
+        if let Some((marker, pos)) = MARKERS.iter()
+            .filter_map(|m| find_marker_word(line, m).map(|p| (*m, p)))
+            .min_by_key(|(_, p)| *p)
+        {
+            let text: String = line[pos..]
+                .trim_end_matches(['-', '>', '*', '/', ' '])
+                .chars().take(200).collect();
+            out.push(crate::ir::IRRationale {
+                marker: marker.to_string(),
+                text: text.trim().to_string(),
+                line: (i + 1) as u32,
+            });
+        }
+    }
+    out
+}
+
+/// Byte offset of `marker` in `line` as a standalone word (bounded by non-word
+/// chars), or `None`. Case-sensitive — only an UPPERCASE marker counts.
+fn find_marker_word(line: &str, marker: &str) -> Option<usize> {
+    let bytes = line.as_bytes();
+    let mut start = 0;
+    while let Some(rel) = line[start..].find(marker) {
+        let pos = start + rel;
+        let before_ok = pos == 0 || !is_word_byte(bytes[pos - 1]);
+        let after = pos + marker.len();
+        let after_ok = after >= bytes.len() || !is_word_byte(bytes[after]);
+        if before_ok && after_ok {
+            return Some(pos);
+        }
+        start = pos + marker.len();
+    }
+    None
+}
+
+fn is_word_byte(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b == b'_'
+}
+
 /// Extract sections split by headings.
-#[cfg(test)]
 fn extract_sections(content: &str) -> Vec<crate::ir::IRSection> {
     let lines: Vec<&str> = content.lines().collect();
     let mut sections = Vec::new();
@@ -256,7 +311,6 @@ fn extract_sections(content: &str) -> Vec<crate::ir::IRSection> {
     sections
 }
 
-#[cfg(test)]
 fn parse_heading(line: &str) -> Option<(u8, String)> {
     for (n, prefix) in [(6, "######"), (5, "#####"), (4, "####"), (3, "###"), (2, "##"), (1, "# ")] {
         if let Some(rest) = line.strip_prefix(prefix) {
@@ -266,7 +320,6 @@ fn parse_heading(line: &str) -> Option<(u8, String)> {
     None
 }
 
-#[cfg(test)]
 fn make_preview(lines: &[&str], start: usize, end: usize) -> Option<String> {
     let text: String = lines.get(start..end.min(lines.len()))
         .map(|s| s.join("\n"))
@@ -452,6 +505,27 @@ mod tests {
         assert_eq!(extract_title("# Hello World\nsome text"), Some("Hello World".to_string()));
         assert_eq!(extract_title("no heading here"), None);
         assert_eq!(extract_title("## Not H1"), None);
+    }
+
+    #[test]
+    fn extract_rationale_matches_markers_at_word_boundary() {
+        let content = "\
+// TODO: fix the retry path
+# NOTE: this is a design decision
+<!-- HACK: workaround for #123 -->
+plain prose mentioning todo and notes lowercase
+let NOTE_CONST = 1; // a const, not a marker
+This is IMPORTANT: keep it.
+";
+        let r = extract_rationale_pub(content);
+        let markers: Vec<&str> = r.iter().map(|x| x.marker.as_str()).collect();
+        // TODO, NOTE, HACK, IMPORTANT — the lowercase prose line and NOTE_CONST
+        // (word-boundary + case guard) must NOT match.
+        assert_eq!(markers, vec!["TODO", "NOTE", "HACK", "IMPORTANT"],
+            "only uppercase word-boundary markers match, got {:?}", markers);
+        assert_eq!(r[0].text, "TODO: fix the retry path");
+        assert_eq!(r[0].line, 1);
+        assert_eq!(r[2].text, "HACK: workaround for #123", "trailing --> is trimmed");
     }
 
     #[test]

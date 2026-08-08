@@ -22,11 +22,11 @@ describe('Eyebrow', () => {
     expect(el.className).toMatch(/\buppercase\b/);
   });
 
-  it('applies the wide tracking + xs size by default', () => {
+  it('applies the 0.18em eyebrow tracking + xs size by default', () => {
     const m = mountComponent(EyebrowHarness, { label: 'X' });
     cleanup.push(m.destroy);
     const el = m.container.querySelector('[data-component="eyebrow"]') as HTMLElement;
-    expect(el.className).toMatch(/\btracking-wide\b/);
+    expect(el.className).toMatch(/tracking-\[0\.18em\]/);
     expect(el.className).toMatch(/\btext-xs\b/);
   });
 

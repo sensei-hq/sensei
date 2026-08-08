@@ -1,5 +1,11 @@
 # 紋 · Pipeline · Patterns
 
+> **Status: roadmap (not built).** This describes an intended pattern engine. As of
+> 2026-08-05 the owner files below **do not exist** (`crates/senseid/src/patterns/`), and
+> `inference.detected_patterns` holds behavioral churn (`rework:<path>`, `family` NULL), not
+> architectural patterns. Verify against the code before relying on this. See the
+> [indexer capability roadmap](../../analysis/2026-08-05-indexer-capability-coverage.md).
+
 **Owner files:**
 - Detection: `crates/senseid/src/patterns/detect.rs`
 - Codebase pattern recognisers: `crates/senseid/src/patterns/codebase/`

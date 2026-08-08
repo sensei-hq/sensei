@@ -1,79 +1,12 @@
-//! Resolve phase: resolve edges, build connections, reconcile cross-repo links.
+//! Resolve phase: build doc↔code connections, reconcile cross-repo links.
+//!
+//! Phase 7.1 retired the `resolve_edges` bare-name pass — FQN call/import edges
+//! now resolve to their target node AT EMIT (`source_id → target_id` in
+//! `process_file`), so there is no separate resolution barrier. Node degree is
+//! recomputed at the `DetectCommunities` terminal barrier (its sole consumer).
 
 use super::super::executor::TaskContext;
 use super::super::Task;
-
-// ── Resolve Edges (barrier) ──────────────────────────────────────────────
-
-/// Resolve unresolved edges by matching target_name against existing nodes.
-pub async fn resolve_edges(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
-    let folder = match ctx.pg().get_repo_by_path(&task.folder_path).await {
-        Ok(f) => f,
-        Err(e) => { tracing::warn!(error = %e, path = %task.folder_path, "resolve_edges: get_repo_by_path failed"); None }
-    };
-    let folder_name = folder.as_ref()
-        .and_then(|f| f["name"].as_str())
-        .unwrap_or_else(|| task.folder_name());
-    let folder_id = match folder.as_ref()
-        .and_then(|f| crate::api::util::json_uuid(&f["id"])) {
-        Some(id) => id,
-        None => { tracing::warn!("resolve_edges: {} — folder not found", task.folder_path); return Ok(0); }
-    };
-
-    // Get all unresolved edges (target_id IS NULL, target_name IS NOT NULL)
-    let unresolved: Vec<serde_json::Value> = ctx.pg().execute_raw_query(
-        "SELECT id, source_id, target_name, kind::text FROM sensei.edges WHERE folder_id = $1 AND target_id IS NULL AND target_name IS NOT NULL",
-        &folder_id,
-    ).await.unwrap_or_else(|e| { tracing::warn!(error = %e, folder = %folder_name, "resolve_edges: query unresolved edges failed"); Vec::new() });
-
-    // Get all nodes for name matching
-    let nodes = ctx.pg().get_nodes_by_folder(&folder_id).await.unwrap_or_else(|e| { tracing::warn!(error = %e, folder = %folder_name, "resolve_edges: get_nodes_by_folder failed"); Vec::new() });
-
-    // Build lookup maps
-    let node_by_name: std::collections::HashMap<&str, &serde_json::Value> = nodes.iter()
-        .filter_map(|n| n["name"].as_str().map(|name| (name, n)))
-        .collect();
-
-    let file_by_path: std::collections::HashMap<&str, &serde_json::Value> = nodes.iter()
-        .filter(|n| n["kind"].as_str() == Some("file"))
-        .filter_map(|n| n["file_path"].as_str().map(|fp| (fp, n)))
-        .collect();
-
-    let mut resolved = 0u32;
-    for edge in &unresolved {
-        let target_name = match edge["target_name"].as_str() { Some(n) => n, None => continue };
-        let edge_id = match crate::api::util::json_uuid(&edge["id"]) { Some(id) => id, None => continue };
-        let kind = edge["kind"].as_str().unwrap_or("calls");
-
-        let matched_id = match kind {
-            "imports" => {
-                // Resolve relative import: match against file paths
-                file_by_path.iter()
-                    .find(|(fp, _)| fp.contains(target_name))
-                    .and_then(|(_, n)| crate::api::util::json_uuid(&n["id"]))
-            }
-            "calls" => {
-                // Resolve function call by name
-                node_by_name.get(target_name)
-                    .and_then(|n| crate::api::util::json_uuid(&n["id"]))
-            }
-            _ => {
-                node_by_name.get(target_name)
-                    .and_then(|n| crate::api::util::json_uuid(&n["id"]))
-            }
-        };
-
-        if let Some(target_id) = matched_id {
-            if let Err(e) = ctx.pg().resolve_edge(&edge_id, &target_id).await {
-                tracing::warn!(error = %e, edge_id = %edge_id, "resolve_edges: resolve_edge failed");
-            }
-            resolved += 1;
-        }
-    }
-
-    tracing::info!("resolve_edges: {} — {} unresolved, {} resolved", folder_name, unresolved.len(), resolved);
-    Ok(resolved)
-}
 
 // ── Build Connections ─────────────────────────────────────────────────────
 
@@ -109,15 +42,16 @@ pub async fn build_connections(ctx: &TaskContext, task: &Task) -> Result<u32, St
         .filter_map(|n| n["file_path"].as_str().map(|fp| (fp, n)))
         .collect();
 
-    let mut edges_created = 0u32;
-
-    // For each doc, check if its file_path suggests coverage of code files
+    // Covers = doc-stem × file-stem proximity, a folder-DERIVED set. D2: build
+    // the current set and REPLACE it in one transaction, so a doc that no longer
+    // matches a file (renamed/deleted/moved) drops its stale covers instead of
+    // them accumulating. `covers` becomes a pure function of the current
+    // (docs, files) — idempotent, no duplication (which D1 also prevents).
+    let mut covers: Vec<crate::db::pg_store::EdgeSpec> = Vec::new();
     for doc in &docs {
         let doc_id = match crate::api::util::json_uuid(&doc["id"]) { Some(id) => id, None => continue };
         let doc_path = doc["file_path"].as_str().unwrap_or("");
-
-        // Check if doc covers a code file by path proximity
-        // e.g., docs/api/auth.md → src/api/auth.ts
+        // e.g. docs/api/auth.md → src/api/auth.ts
         let doc_stem = std::path::Path::new(doc_path)
             .file_stem().and_then(|s| s.to_str()).unwrap_or("");
         if doc_stem.is_empty() { continue; }
@@ -127,12 +61,16 @@ pub async fn build_connections(ctx: &TaskContext, task: &Task) -> Result<u32, St
                 .file_stem().and_then(|s| s.to_str()).unwrap_or("");
             if file_stem == doc_stem && file_path != &doc_path
                 && let Some(file_id) = crate::api::util::json_uuid(&file_node["id"]) {
-                    if let Err(e) = ctx.pg().insert_edge(&folder_id, &doc_id, Some(&file_id), None, "covers").await {
-                        tracing::warn!(error = %e, doc_id = %doc_id, file_id = %file_id, "build_connections: insert covers edge failed");
-                    }
-                    edges_created += 1;
+                    covers.push(crate::db::pg_store::EdgeSpec {
+                        source_id: doc_id, target_id: Some(file_id), target_name: None, target_file: None,
+                    });
                 }
         }
+    }
+    let edges_created = covers.len() as u32;
+    // Atomic replace (rolls back to the old set on failure — never zero covers).
+    if let Err(e) = ctx.pg().replace_edges_of_kind(&folder_id, "covers", &covers).await {
+        tracing::warn!(error = %e, folder = %folder_name, "build_connections: replace covers failed");
     }
 
     // Collect libs from detected import targets
@@ -148,125 +86,156 @@ pub async fn build_connections(ctx: &TaskContext, task: &Task) -> Result<u32, St
     }
     let libs: Vec<String> = lib_set.into_iter().collect();
 
-    // Mark as indexed
-    if let Err(e) = ctx.pg().mark_folder_indexed(&folder_id, &libs).await {
-        tracing::warn!(error = %e, folder = %folder_name, "build_connections: mark_folder_indexed failed");
+    // D4.1: build_connections is NO LONGER the terminal barrier — it stamps the
+    // detected libs (folder metadata read by the Observatory/query views) but
+    // does NOT advance `folder_status`. DetectCommunities, chained after this,
+    // is the sole writer of `indexed` (so `indexed` implies communities exist).
+    // Stamping libs on a `failed` folder is harmless — it's metadata, not status.
+    if let Err(e) = ctx.pg().set_folder_props(&folder_id, &serde_json::json!({"libs": libs})).await {
+        tracing::warn!(error = %e, folder = %folder_name, "build_connections: set libs props failed");
     }
 
     tracing::info!("build_connections: {} — {} traceability edges, {} libs detected", folder_name, edges_created, libs.len());
     Ok(edges_created)
 }
 
-// ── Reconcile Connections ──────────────────────────────────────────────────
-
-/// Re-evaluate cross-repo edges after a branch switch or repo update.
-/// Detects shared symbols across repos in the same project.
-pub async fn reconcile_connections(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
-    let folder = match ctx.pg().get_repo_by_path(&task.folder_path).await {
-        Ok(f) => f,
-        Err(e) => { tracing::warn!(error = %e, path = %task.folder_path, "reconcile_connections: get_repo_by_path failed"); None }
-    };
-    let folder_name = folder.as_ref()
-        .and_then(|f| f["name"].as_str())
-        .unwrap_or_else(|| task.folder_name());
-    let folder_id = folder.as_ref()
-        .and_then(|f| crate::api::util::json_uuid(&f["id"]));
-    let project_id = folder.as_ref()
-        .and_then(|f| crate::api::util::json_uuid(&f["project_id"]));
-
-    // Rebuild doc↔code traceability for this repo
-    let mut edges = 0u32;
-    if let Some(ref fid) = folder_id {
-        let nodes = ctx.pg().get_nodes_by_folder(fid).await.unwrap_or_else(|e| { tracing::warn!(error = %e, folder = %folder_name, "reconcile_connections: get_nodes_by_folder failed"); Vec::new() });
-        let docs: Vec<_> = nodes.iter().filter(|n| n["kind"].as_str() == Some("doc")).collect();
-        let code_files: Vec<_> = nodes.iter().filter(|n| n["kind"].as_str() == Some("file")).collect();
-
-        for doc in &docs {
-            let doc_id = match crate::api::util::json_uuid(&doc["id"]) { Some(id) => id, None => continue };
-            let doc_stem = std::path::Path::new(doc["file_path"].as_str().unwrap_or(""))
-                .file_stem().and_then(|s| s.to_str()).unwrap_or("");
-            for code in &code_files {
-                let code_stem = std::path::Path::new(code["file_path"].as_str().unwrap_or(""))
-                    .file_stem().and_then(|s| s.to_str()).unwrap_or("");
-                if !doc_stem.is_empty() && doc_stem == code_stem
-                    && let Some(code_id) = crate::api::util::json_uuid(&code["id"]) {
-                        if let Err(e) = ctx.pg().insert_edge(fid, &doc_id, Some(&code_id), None, "covers").await {
-                            tracing::warn!(error = %e, doc_id = %doc_id, code_id = %code_id, "reconcile_connections: insert covers edge failed");
-                        }
-                        edges += 1;
-                    }
-            }
-        }
-        tracing::info!("reconcile_connections: {} — {} traceability edges", folder_name, edges);
-    }
-
-    // Cross-repo analysis requires a project with 2+ repos
-    if project_id.is_none() {
-        tracing::info!("reconcile_connections: {} not in any project", folder_name);
-        return Ok(edges);
-    }
-
-    let project_id = project_id.unwrap();
-    tracing::info!("reconcile_connections: {} — project {}", folder_name, project_id);
-    Ok(edges)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
-    use crate::tasks::queue::TaskQueue;
+    
+    
     use crate::tasks::{Task, TaskKind};
-    use crate::api::state::SharedState;
-    use super::super::super::executor::TaskContext;
+    
+    
 
     /// Build a TaskContext backed by PgStore and a fresh TaskQueue.
-    async fn make_ctx() -> Arc<TaskContext> {
-        let queue = Arc::new(TaskQueue::new());
-        let gateway = crate::api::gateway_init::init_gateway_test().await;
-        let app_state = Arc::new(SharedState {
-            task_queue: queue.clone(),
-            pg: crate::db::pg_store::PgStore::connect_test().await.unwrap(),
-            gateway,
-            event_tx: { let (tx, _) = tokio::sync::broadcast::channel(16); tx },
-            breaker: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
-            provisioning: None,
-        });
-        Arc::new(TaskContext {
-            queue,
-            app_state,
-            _graph_path: None,
-            logger: sensei_logger::Logger::noop(),
-        })
+    use crate::tasks::test_support::make_ctx;
+
+    #[tokio::test]
+    async fn build_connections_is_fail_closed_on_a_failed_folder() {
+        // D4.1/D6d: build_connections stamps libs but no longer advances the
+        // folder status, so a folder a ProcessFile marked `failed` (D6c-trigger)
+        // stays `failed` — only DetectCommunities (fail-closed) can flip it, and
+        // only from `indexing`.
+        let ctx = make_ctx().await;
+        let folder_path = format!("/tmp/failclosed_{}", uuid::Uuid::new_v4());
+        let root_id = ctx.pg().add_watch_root(&folder_path, "fc", &serde_json::json!([])).await.unwrap();
+        let fid = ctx.pg().upsert_repo(&root_id, "fc-repo", &folder_path).await.unwrap();
+        ctx.pg().update_folder_status(&fid, "failed").await.unwrap();
+
+        let task = Task::new(TaskKind::BuildConnections, &folder_path, &folder_path);
+        build_connections(&ctx, &task).await.unwrap();
+
+        assert_eq!(ctx.pg().get_folder_status(&fid).await.unwrap().as_deref(), Some("failed"),
+            "the barrier must not mark a failed folder indexed");
+        ctx.pg().remove_watch_root(&root_id).await.ok();
     }
 
     #[tokio::test]
-    async fn resolve_edges_succeeds() {
+    async fn build_connections_does_not_flip_status_indexed() {
+        // D4.1: build_connections is NO LONGER the terminal barrier. It stamps
+        // libs (folder metadata) but leaves the folder `indexing`; DetectCommunities
+        // — the new terminal barrier — flips it to `indexed` after communities are
+        // computed, so `indexed` implies communities exist.
         let ctx = make_ctx().await;
-        let folder_name = "test-repo";
-        let folder_path = "/tmp/repo";
+        let folder_path = format!("/tmp/clean_{}", uuid::Uuid::new_v4());
+        let root_id = ctx.pg().add_watch_root(&folder_path, "cl", &serde_json::json!([])).await.unwrap();
+        let fid = ctx.pg().upsert_repo(&root_id, "cl-repo", &folder_path).await.unwrap();
+        ctx.pg().update_folder_status(&fid, "indexing").await.unwrap();
 
-        {
-            let root_id = ctx.pg().add_watch_root(folder_path, "test", &serde_json::json!([])).await.unwrap();
-            ctx.pg().upsert_repo(&root_id, folder_name, folder_path).await.unwrap();
-        }
+        let task = Task::new(TaskKind::BuildConnections, &folder_path, &folder_path);
+        build_connections(&ctx, &task).await.unwrap();
 
-        let task = Task::new(TaskKind::ResolveEdges, folder_path, folder_path);
-        resolve_edges(&ctx, &task).await.unwrap();
+        assert_eq!(ctx.pg().get_folder_status(&fid).await.unwrap().as_deref(), Some("indexing"),
+            "build_connections leaves the folder indexing (D4.1 moved the terminal barrier to DetectCommunities)");
+        ctx.pg().remove_watch_root(&root_id).await.ok();
     }
 
     #[tokio::test]
-    async fn resolve_edges_with_no_refs_is_noop() {
+    async fn resolve_libs_is_fail_closed_on_a_failed_folder() {
+        // D4.1/D6d: resolve_libs stamps the walked libs but no longer advances
+        // the folder status, so a `failed` folder stays `failed` here — the
+        // terminal barrier (DetectCommunities) is the only writer of `indexed`.
         let ctx = make_ctx().await;
-        let folder_name = "test-repo";
-        let folder_path = "/tmp/repo";
+        let tmp = tempfile::tempdir().unwrap(); // empty dir → no libs to walk
+        let folder_path = tmp.path().to_string_lossy().to_string();
+        let root_id = ctx.pg().add_watch_root(&folder_path, "rl_fc", &serde_json::json!([])).await.unwrap();
+        let fid = ctx.pg().upsert_repo(&root_id, "rl-fc-repo", &folder_path).await.unwrap();
+        ctx.pg().update_folder_status(&fid, "failed").await.unwrap();
 
-        {
-            let root_id = ctx.pg().add_watch_root(folder_path, "test", &serde_json::json!([])).await.unwrap();
-            ctx.pg().upsert_repo(&root_id, folder_name, folder_path).await.unwrap();
-        }
+        let task = Task::new(TaskKind::ResolveLibs, &folder_path, &folder_path);
+        super::super::resolve_libs(&ctx, &task).await.unwrap();
 
-        let task = Task::new(TaskKind::ResolveEdges, folder_path, folder_path);
-        resolve_edges(&ctx, &task).await.unwrap();
+        assert_eq!(ctx.pg().get_folder_status(&fid).await.unwrap().as_deref(), Some("failed"),
+            "resolve_libs must not mark a failed folder indexed (fail-closed)");
+        ctx.pg().remove_watch_root(&root_id).await.ok();
+    }
+
+    #[tokio::test]
+    async fn build_connections_replaces_stale_covers() {
+        // D2: covers is REPLACED, not appended. A covers edge whose covered file
+        // no longer matches (renamed/removed) is GONE after build_connections —
+        // the shrink case nothing exercised before. Re-running is idempotent.
+        let ctx = make_ctx().await;
+        let folder_path = format!("/tmp/coversreplace_{}", uuid::Uuid::new_v4());
+        let root_id = ctx.pg().add_watch_root(&folder_path, "cr", &serde_json::json!([])).await.unwrap();
+        let fid = ctx.pg().upsert_repo(&root_id, "cr-repo", &folder_path).await.unwrap();
+        ctx.pg().update_folder_status(&fid, "indexing").await.unwrap();
+
+        // Doc "auth.md" + a matching file "auth.rs" (stem "auth"); plus "other.rs".
+        let doc = ctx.pg().upsert_node(&fid, "doc", "auth", "docs/auth.md", None, None, None, None).await.unwrap();
+        let auth = ctx.pg().upsert_node(&fid, "file", "auth", "src/auth.rs", None, None, None, None).await.unwrap();
+        let other = ctx.pg().upsert_node(&fid, "file", "other", "src/other.rs", None, None, None, None).await.unwrap();
+
+        // A STALE covers edge doc→other (as if a prior scan matched it).
+        ctx.pg().insert_edge(&fid, &doc, Some(&other), None, None, "covers").await.unwrap();
+
+        let covers_count = "SELECT count(*) FROM sensei.edges WHERE folder_id=$1 AND kind='covers'::sensei.edge_kind";
+
+        let task = Task::new(TaskKind::BuildConnections, &folder_path, &folder_path);
+        build_connections(&ctx, &task).await.unwrap();
+
+        let (n,): (i64,) = sqlx_core::query_as::query_as(covers_count).bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
+        assert_eq!(n, 1, "exactly the current covers match — stale one removed");
+        let (tgt,): (Option<uuid::Uuid>,) = sqlx_core::query_as::query_as(
+            "SELECT target_id FROM sensei.edges WHERE folder_id=$1 AND kind='covers'::sensei.edge_kind")
+            .bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
+        assert_eq!(tgt, Some(auth), "the surviving covers edge points at the matching file");
+
+        // Idempotent: a second run yields the same single edge.
+        build_connections(&ctx, &task).await.unwrap();
+        let (n2,): (i64,) = sqlx_core::query_as::query_as(covers_count).bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
+        assert_eq!(n2, 1, "re-running build_connections is idempotent");
+
+        ctx.pg().remove_watch_root(&root_id).await.ok();
+    }
+
+    #[tokio::test]
+    async fn build_connections_does_not_clobber_doc_references() {
+        // Regression (D2): the covers replace is folder-wide BY KIND, so it must
+        // touch only `covers` — never `references`. process_file emits a doc's
+        // explicit file/symbol refs as `references`; before the file-refs→
+        // references fix those were `covers` and build_connections' wholesale
+        // replace destroyed them.
+        let ctx = make_ctx().await;
+        let folder_path = format!("/tmp/coversref_{}", uuid::Uuid::new_v4());
+        let root_id = ctx.pg().add_watch_root(&folder_path, "cx", &serde_json::json!([])).await.unwrap();
+        let fid = ctx.pg().upsert_repo(&root_id, "cx-repo", &folder_path).await.unwrap();
+        ctx.pg().update_folder_status(&fid, "indexing").await.unwrap();
+
+        let doc = ctx.pg().upsert_node(&fid, "doc", "guide", "docs/guide.md", None, None, None, None).await.unwrap();
+        ctx.pg().upsert_node(&fid, "file", "engine", "src/engine.rs", None, None, None, None).await.unwrap();
+        // An explicit doc→file reference, as process_file now emits it: `references`.
+        ctx.pg().insert_edge(&fid, &doc, None, Some("src/engine.rs"), None, "references").await.unwrap();
+
+        let task = Task::new(TaskKind::BuildConnections, &folder_path, &folder_path);
+        build_connections(&ctx, &task).await.unwrap();
+
+        let (refs,): (i64,) = sqlx_core::query_as::query_as(
+            "SELECT count(*) FROM sensei.edges WHERE folder_id=$1 AND kind='references'::sensei.edge_kind")
+            .bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
+        assert_eq!(refs, 1, "build_connections must not wipe doc→file `references` edges");
+
+        ctx.pg().remove_watch_root(&root_id).await.ok();
     }
 }

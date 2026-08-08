@@ -1,12 +1,17 @@
 //! Hierarchical task queue for scanning, indexing, and watching.
 //!
 //! Tasks form a dependency tree:
-//!   scan_root → process_git_folder → process_folder → process_file → resolve_edges → build_connections
+//!   scan_root → process_git_folder → process_folder → process_file → resolve_libs → build_connections → detect_communities
 //!
-//! Barrier tasks (resolve_edges, build_connections) wait for all dependencies to complete.
+//! FQN call/import edges resolve to their target node AT EMIT (Phase 7.1), so
+//! there is no `resolve_edges` pass. Barrier tasks (resolve_libs,
+//! build_connections, detect_communities) wait for all dependencies to complete.
 
 pub mod queue;
 pub mod executor;
+#[cfg(test)]
+pub(crate) mod test_support;
+pub mod retry;
 pub mod handlers;
 pub mod progress;
 pub mod progress_emitter;
@@ -41,12 +46,10 @@ pub enum TaskKind {
     ProcessFile,
     DeleteFile,
     DeleteFolder,
-    ResolveEdges,
     ResolveLibs,
     ImportLib,
     BranchSwitch,
     BuildConnections,
-    ReconcileConnections,
     EmbedNodes,
     IndexLibrary,
     IndexLibraryPage,
@@ -131,12 +134,10 @@ impl std::fmt::Display for TaskKind {
             Self::ProcessFile => write!(f, "process_file"),
             Self::DeleteFile => write!(f, "delete_file"),
             Self::DeleteFolder => write!(f, "delete_folder"),
-            Self::ResolveEdges => write!(f, "resolve_edges"),
             Self::ResolveLibs => write!(f, "resolve_libs"),
             Self::ImportLib => write!(f, "import_lib"),
             Self::BranchSwitch => write!(f, "branch_switch"),
             Self::BuildConnections => write!(f, "build_connections"),
-            Self::ReconcileConnections => write!(f, "reconcile_connections"),
             Self::EmbedNodes => write!(f, "embed_nodes"),
             Self::IndexLibrary => write!(f, "index_library"),
             Self::IndexLibraryPage => write!(f, "index_library_page"),
@@ -209,11 +210,9 @@ impl TaskKind {
             // tasks can legitimately run for minutes on a large repository.
             TaskKind::ScanRoot
             | TaskKind::ProcessGitFolder
-            | TaskKind::ResolveEdges
             | TaskKind::ResolveLibs
             | TaskKind::ImportLib
             | TaskKind::BuildConnections
-            | TaskKind::ReconcileConnections
             | TaskKind::EmbedNodes
             | TaskKind::IndexLibrary
             | TaskKind::IndexLibraryPage
@@ -262,6 +261,7 @@ pub struct Task {
     pub status: TaskStatus,
     pub depends_on: Vec<u64>,            // won't run until these complete
     pub error: Option<String>,
+    pub retry_number: u32,               // 0 = first attempt; bumped per bounded retry (D6c)
     pub _created_at: Instant,
     pub started_at: Option<Instant>,
     pub completed_at: Option<Instant>,
@@ -281,6 +281,31 @@ impl Task {
             status: TaskStatus::Pending,
             depends_on: Vec::new(),
             error: None,
+            retry_number: 0,
+            _created_at: Instant::now(),
+            started_at: None,
+            completed_at: None,
+        }
+    }
+
+    /// The next retry attempt for a failed task (D6c): same identity
+    /// (kind/paths/module/branch/url/parent), `retry_number` incremented, and
+    /// all runtime state reset — the queue assigns a fresh `id` on re-enqueue,
+    /// and a retry carries no inherited deps (a re-driven leaf runs on its own).
+    pub fn retry(&self) -> Self {
+        Self {
+            id: 0,
+            kind: self.kind.clone(),
+            folder_path: self.folder_path.clone(),
+            path: self.path.clone(),
+            parent_task_id: self.parent_task_id,
+            module_id: self.module_id.clone(),
+            branch: self.branch.clone(),
+            url: self.url.clone(),
+            status: TaskStatus::Pending,
+            depends_on: Vec::new(),
+            error: None,
+            retry_number: self.retry_number + 1,
             _created_at: Instant::now(),
             started_at: None,
             completed_at: None,
@@ -331,7 +356,7 @@ impl Task {
 
     #[allow(dead_code)]
     pub fn is_barrier(&self) -> bool {
-        matches!(self.kind, TaskKind::ResolveEdges | TaskKind::ResolveLibs | TaskKind::BuildConnections | TaskKind::ReconcileConnections)
+        matches!(self.kind, TaskKind::ResolveLibs | TaskKind::BuildConnections)
     }
 }
 
@@ -353,12 +378,48 @@ mod tests {
 
     #[test]
     fn blocked_task() {
-        let t = Task::new(TaskKind::ResolveEdges, "/code/myrepo", "/code/myrepo")
+        let t = Task::new(TaskKind::BuildConnections, "/code/myrepo", "/code/myrepo")
             .blocked_by(vec![1, 2, 3]);
         assert_eq!(t.status, TaskStatus::Blocked);
         assert!(!t.is_runnable());
         assert!(t.is_barrier());
         assert_eq!(t.depends_on, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn task_retry_bumps_number_and_resets_runtime() {
+        let mut base = Task::new(TaskKind::ProcessFile, "/code/repo", "/code/repo/src/a.rs")
+            .with_parent(7)
+            .with_module("mod:repo:src")
+            .with_branch("main")
+            .with_url("https://example.test/pkg");
+        base.id = 42;
+        base.retry_number = 1;
+        base.error = Some("boom".into());
+        base.status = TaskStatus::Failed;
+        base.depends_on = vec![1, 2];
+
+        let next = base.retry();
+        // Identity is preserved — every field that names WHAT to run.
+        assert_eq!(next.kind, base.kind);
+        assert_eq!(next.folder_path, base.folder_path);
+        assert_eq!(next.path, base.path);
+        assert_eq!(next.parent_task_id, Some(7));
+        assert_eq!(next.module_id, Some("mod:repo:src".to_string()));
+        assert_eq!(next.branch, Some("main".to_string()), "retry preserves branch identity");
+        assert_eq!(next.url, Some("https://example.test/pkg".to_string()), "retry preserves url identity");
+        // The attempt count advances by exactly one.
+        assert_eq!(next.retry_number, 2, "retry() bumps retry_number");
+        // Runtime state is reset — a fresh, re-enqueueable attempt.
+        assert_eq!(next.id, 0, "queue assigns a new id");
+        assert_eq!(next.status, TaskStatus::Pending);
+        assert!(next.depends_on.is_empty(), "a retry carries no inherited deps");
+        assert!(next.error.is_none());
+    }
+
+    #[test]
+    fn new_task_starts_at_retry_zero() {
+        assert_eq!(Task::new(TaskKind::ProcessFile, "r", "p").retry_number, 0);
     }
 
     #[test]
@@ -374,7 +435,7 @@ mod tests {
     fn task_kind_display() {
         assert_eq!(TaskKind::ScanRoot.to_string(), "scan_root");
         assert_eq!(TaskKind::ProcessFile.to_string(), "process_file");
-        assert_eq!(TaskKind::ResolveEdges.to_string(), "resolve_edges");
+        assert_eq!(TaskKind::ResolveLibs.to_string(), "resolve_libs");
         assert_eq!(TaskKind::IndexLibrary.to_string(), "index_library");
         assert_eq!(TaskKind::IndexLibraryPage.to_string(), "index_library_page");
         assert_eq!(TaskKind::DetectCommunities.to_string(), "detect_communities");
@@ -394,7 +455,7 @@ mod tests {
         let long = std::time::Duration::from_secs(600);
         assert_eq!(TaskKind::ProcessFile.watchdog_timeout(), short);
         assert_eq!(TaskKind::DeleteFile.watchdog_timeout(), short);
-        assert_eq!(TaskKind::ResolveEdges.watchdog_timeout(), long);
+        assert_eq!(TaskKind::ResolveLibs.watchdog_timeout(), long);
         assert_eq!(TaskKind::EmbedNodes.watchdog_timeout(), long);
         assert_eq!(TaskKind::ScanRoot.watchdog_timeout(), long);
         assert_eq!(TaskKind::ScanDocDrift.watchdog_timeout(), long);
@@ -402,8 +463,8 @@ mod tests {
         for k in [
             TaskKind::ScanRoot, TaskKind::ProcessGitFolder, TaskKind::ProcessFolder,
             TaskKind::ProcessFile, TaskKind::DeleteFile, TaskKind::DeleteFolder,
-            TaskKind::ResolveEdges, TaskKind::ResolveLibs, TaskKind::ImportLib,
-            TaskKind::BranchSwitch, TaskKind::BuildConnections, TaskKind::ReconcileConnections,
+            TaskKind::ResolveLibs, TaskKind::ImportLib,
+            TaskKind::BranchSwitch, TaskKind::BuildConnections,
             TaskKind::EmbedNodes, TaskKind::IndexLibrary, TaskKind::IndexLibraryPage,
             TaskKind::DetectCommunities, TaskKind::ExtractDeps, TaskKind::MeasureVerdicts,
             TaskKind::ReconcileIdentity, TaskKind::AnalyzeProject, TaskKind::ScanDocDrift,

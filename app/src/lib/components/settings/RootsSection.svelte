@@ -48,7 +48,7 @@
     <div class="flex gap-2 mb-6">
         <input
             type="text"
-            class="folder-input flex-1 min-w-0 px-3 py-2 text-sm font-mono text-ink bg-paper-mute border border-paper-mute rounded-md outline-none"
+            class="folder-input flex-1 min-w-0 px-3 py-2 text-sm font-mono text-ink bg-paper-mute border border-paper-edge rounded-md outline-none"
             bind:value={wizardState.roots.newPath}
             onkeydown={(e) => {
                 if (e.key === "Enter") addRoot();
@@ -86,7 +86,7 @@
                     >
                 {:else}
                     <span
-                        class="text-xs text-ink-soft border border-paper-mute rounded-md px-2 py-0.5 whitespace-nowrap"
+                        class="text-xs text-ink-soft border border-paper-edge rounded-md px-2 py-0.5 whitespace-nowrap"
                         >recursive</span
                     >
                 {/if}

@@ -40,10 +40,15 @@ test.describe('Project window — Sessions digest (project-scoped)', () => {
   test('renders only this project\'s sessions — no cross-project leak', async ({ tauriPage }) => {
     const project = await pickProject();
     if (!project) { test.skip(true, 'no project'); return; }
-    // Widest window so the rendered 90d slice matches what we fetch.
-    const scoped = await safeJson<Array<{ id: string }>>(
+    // Widest window so the rendered 90d slice matches what we fetch. The endpoint
+    // may return a bare array OR a { sessions: [...] } envelope — normalise both
+    // (a raw array assumption threw `scoped.map is not a function`).
+    const scopedRaw = await safeJson<unknown>(
       `${DAEMON_URL}/api/sessions?project=${project.id}&range=90d`, [],
     );
+    const scoped: Array<{ id: string }> = Array.isArray(scopedRaw)
+      ? (scopedRaw as Array<{ id: string }>)
+      : ((scopedRaw as { sessions?: Array<{ id: string }> })?.sessions ?? []);
     if (scoped.length === 0) { test.skip(true, 'no sessions on project'); return; }
 
     await navigateTo(tauriPage, `/project/${project.id}/sessions`);

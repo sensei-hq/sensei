@@ -1,5 +1,6 @@
 <script lang="ts">
   import { Kanji } from '$lib/components';
+  import { Button } from '@rokkit/ui';
   import { heroProvenance } from './today-view.svelte.js';
   import type { ObservatoryTodayHero } from '$lib/types.js';
 
@@ -37,11 +38,7 @@
 
     <div class="flex items-center gap-4 flex-wrap mt-auto">
       {#if hero.action}
-        <a
-          href={actionHref}
-          data-hero-action
-          class="inline-flex items-center gap-2 py-2 px-4 rounded text-sm bg-ink text-paper"
-        >{hero.action} →</a>
+        <Button href={actionHref} variant="primary" size="sm" data-hero-action>{hero.action} →</Button>
       {/if}
       {#if hero.impact}
         <div data-hero-impact class="flex items-center gap-1 text-sm text-accent">

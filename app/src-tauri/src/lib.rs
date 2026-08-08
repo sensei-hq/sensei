@@ -18,6 +18,97 @@ fn install_tracing() {
     );
 }
 
+/// Build the full application menu. The Window submenu lists the currently-open
+/// project windows (label → focus item) after the standard minimize/maximize, so
+/// the user can raise any of them from the menu bar. macOS does not auto-populate
+/// a Tauri Window menu, so the caller rebuilds this whenever the set changes.
+fn build_app_menu(
+    app: &tauri::AppHandle,
+    windows: &[(String, String)],
+) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
+    // On macOS the FIRST submenu becomes the application menu (shown with the app
+    // name); include it explicitly so File/Edit/etc. appear as separate items.
+    use tauri::menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder};
+
+    let app_submenu = SubmenuBuilder::new(app, "Sensei")
+        .about(None)
+        .separator()
+        .text("check-for-updates", "Check for Updates…")
+        .separator()
+        .text("preferences", "Preferences…")
+        .separator()
+        .services()
+        .separator()
+        .hide()
+        .hide_others()
+        .show_all()
+        .separator()
+        .quit()
+        .build()?;
+
+    let file_menu = SubmenuBuilder::new(app, "File")
+        .text("new-project", "New Project")
+        .separator()
+        .close_window()
+        .build()?;
+
+    let edit_menu = SubmenuBuilder::new(app, "Edit")
+        .undo()
+        .redo()
+        .separator()
+        .cut()
+        .copy()
+        .paste()
+        .select_all()
+        .build()?;
+
+    let logs_item = MenuItemBuilder::with_id("open-logs", "Diagnostic Logs")
+        .accelerator("CmdOrCtrl+Shift+L")
+        .build(app)?;
+    let view_menu = SubmenuBuilder::new(app, "View")
+        .text("toggle-sidebar", "Toggle Sidebar")
+        .separator()
+        .item(&logs_item)
+        .separator()
+        .text("go-health",      "Health")
+        .text("go-upgrade",     "Upgrade")
+        .text("go-observatory", "Observatory")
+        .text("go-setup",       "Setup")
+        .build()?;
+
+    // Window: standard actions, then one focus item per open project window.
+    let mut window_builder = SubmenuBuilder::new(app, "Window").minimize().maximize();
+    let mut win_items = Vec::with_capacity(windows.len());
+    for (label, title) in windows {
+        win_items.push(
+            MenuItemBuilder::with_id(format!("focus-window:{label}"), title).build(app)?,
+        );
+    }
+    if !win_items.is_empty() {
+        window_builder = window_builder.separator();
+        for it in &win_items {
+            window_builder = window_builder.item(it);
+        }
+    }
+    let window_menu = window_builder.build()?;
+
+    let help_menu = SubmenuBuilder::new(app, "Help")
+        .text("shortcuts", "Keyboard Shortcuts")
+        .text("whats-new", "What's New")
+        .separator()
+        .text("report-issue", "Report an Issue")
+        .build()?;
+
+    MenuBuilder::new(app)
+        .item(&app_submenu)   // ← app menu first (shown as "Sensei")
+        .item(&file_menu)
+        .item(&edit_menu)
+        .item(&view_menu)
+        .item(&window_menu)
+        .item(&help_menu)
+        .build()
+}
+
 pub fn run() {
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
@@ -88,78 +179,35 @@ pub fn run() {
             app.manage(LogCollector::new(log_dir));
 
             // ── Menu ──────────────────────────────────────────────────────────
-            // On macOS the FIRST submenu in MenuBuilder becomes the application
-            // menu (the one shown with the app name). We must include it explicitly
-            // so that "File", "Edit", etc. appear as separate menu bar items.
-            use tauri::menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder};
-
-            let app_submenu = SubmenuBuilder::new(app, "Sensei")
-                .about(None)
-                .separator()
-                .text("check-for-updates", "Check for Updates…")
-                .separator()
-                .text("preferences", "Preferences…")
-                .separator()
-                .services()
-                .separator()
-                .hide()
-                .hide_others()
-                .show_all()
-                .separator()
-                .quit()
-                .build()?;
-
-            let file_menu = SubmenuBuilder::new(app, "File")
-                .text("new-project", "New Project")
-                .separator()
-                .close_window()
-                .build()?;
-
-            let edit_menu = SubmenuBuilder::new(app, "Edit")
-                .undo()
-                .redo()
-                .separator()
-                .cut()
-                .copy()
-                .paste()
-                .select_all()
-                .build()?;
-
-            let logs_item = MenuItemBuilder::with_id("open-logs", "Diagnostic Logs")
-                .accelerator("CmdOrCtrl+Shift+L")
-                .build(app)?;
-            let view_menu = SubmenuBuilder::new(app, "View")
-                .text("toggle-sidebar", "Toggle Sidebar")
-                .separator()
-                .item(&logs_item)
-                .separator()
-                .text("go-health",      "Health")
-                .text("go-upgrade",     "Upgrade")
-                .text("go-observatory", "Observatory")
-                .text("go-setup",       "Setup")
-                .build()?;
-
-            let window_menu = SubmenuBuilder::new(app, "Window")
-                .minimize()
-                .maximize()
-                .build()?;
-
-            let help_menu = SubmenuBuilder::new(app, "Help")
-                .text("shortcuts", "Keyboard Shortcuts")
-                .text("whats-new", "What's New")
-                .separator()
-                .text("report-issue", "Report an Issue")
-                .build()?;
-
-            let menu = MenuBuilder::new(app)
-                .item(&app_submenu)   // ← app menu first (shown as "Sensei")
-                .item(&file_menu)
-                .item(&edit_menu)
-                .item(&view_menu)
-                .item(&window_menu)
-                .item(&help_menu)
-                .build()?;
+            // Built by `build_app_menu`; the Window submenu lists open project
+            // windows. Start empty — the store emits `sync-window-menu` as windows
+            // open/close and we rebuild.
+            let menu = build_app_menu(app.handle(), &[])?;
             app.set_menu(menu)?;
+
+            // Rebuild the Window menu whenever the set of open project windows
+            // changes. macOS does NOT auto-populate a Tauri Window menu, so the
+            // app's windows store (windows.svelte.ts) emits the current list and
+            // we swap the whole menu (cheap; happens only on open/close).
+            {
+                use tauri::Listener;
+                let handle = app.handle().clone();
+                app.listen_any("sync-window-menu", move |event| {
+                    #[derive(serde::Deserialize)]
+                    struct WinEntry { label: String, title: String }
+                    match serde_json::from_str::<Vec<WinEntry>>(event.payload()) {
+                        Ok(list) => {
+                            let windows: Vec<(String, String)> =
+                                list.into_iter().map(|w| (w.label, w.title)).collect();
+                            match build_app_menu(&handle, &windows) {
+                                Ok(menu) => { let _ = handle.set_menu(menu); }
+                                Err(e) => flog::log(&format!("sync-window-menu: build failed: {e}")),
+                            }
+                        }
+                        Err(e) => flog::log(&format!("sync-window-menu: bad payload: {e}")),
+                    }
+                });
+            }
             app.on_menu_event(|app, event| {
                 match event.id().as_ref() {
                     "open-logs" => {
@@ -193,6 +241,13 @@ pub fn run() {
                     }
                     "shortcuts" => {
                         // TODO: open help window (Task 19)
+                    }
+                    // Window menu → raise the chosen open project window.
+                    id if id.starts_with("focus-window:") => {
+                        let label = &id["focus-window:".len()..];
+                        if let Some(w) = app.get_webview_window(label) {
+                            let _ = w.set_focus();
+                        }
                     }
                     _ => {}
                 }

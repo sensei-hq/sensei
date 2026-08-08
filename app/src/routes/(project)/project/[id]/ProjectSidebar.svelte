@@ -9,10 +9,12 @@
     let { projectId, ftr14d }: Props = $props();
 
     const SECTIONS = [
+        { id: 'intake',       kanji: '門', label: 'Intake' },
         { id: 'overview',     kanji: '見', label: 'Overview' },
         { id: 'sessions',     kanji: '録', label: 'Sessions' },
         { id: 'memories',     kanji: '憶', label: 'Memories' },
         { id: 'traceability', kanji: '跡', label: 'Traceability' },
+        { id: 'atlas',        kanji: '図', label: 'Atlas' },
         { id: 'libraries',    kanji: '蔵', label: 'Libraries' },
         { id: 'instruments',  kanji: '器', label: 'Instruments' },
         { id: 'patterns',     kanji: '型', label: 'Patterns' },
@@ -29,7 +31,7 @@
 
 <aside
     data-component="project-sidebar"
-    class="w-[180px] shrink-0 border-r border-paper-mute flex flex-col py-3"
+    class="w-[180px] shrink-0 border-r border-paper-edge flex flex-col py-3"
 >
     <div class="px-4 pb-4 pt-2">
         <span class="text-2xl font-bold block">{ftrPct}%</span>

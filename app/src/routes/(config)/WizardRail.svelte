@@ -13,7 +13,7 @@
     let { stages }: Props = $props();
 </script>
 
-<aside class="flex flex-col px-6 py-6 border-r border-paper-mute bg-paper-mute overflow-hidden">
+<aside class="flex flex-col px-6 py-6 border-r border-paper-edge bg-paper-mute overflow-hidden">
     <div class="mb-7">
         <Wordmark size="md" />
     </div>
@@ -58,7 +58,7 @@
         {/each}
     </div>
 
-    <div class="mt-auto border-t border-paper-mute pt-3">
+    <div class="mt-auto border-t border-paper-edge pt-3">
         <div class="flex items-center gap-2.5">
             <StatusDot status="ok" />
             <div class="text-xs text-ink-mute leading-snug">

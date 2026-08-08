@@ -156,7 +156,7 @@
         <div class="max-w-[640px] w-full mx-auto">
 
             <!-- ── Hero card ─────────────────────────────────────────────── -->
-            <div class="hero-card relative overflow-hidden border border-paper-mute rounded-xl bg-paper-mute p-6">
+            <div class="hero-card relative overflow-hidden border border-paper-edge rounded-xl bg-paper-mute p-6">
                 <!-- Progress bar -->
                 {#if !isComplete}
                     <div class="absolute top-0 left-0 right-0 h-0.5 bg-paper-mute">
@@ -213,7 +213,7 @@
                     {#each STEPS as step}
                         {@const s = stepState(step.id)}
                         <div
-                            class="grid grid-cols-[10px_1fr_auto] gap-3 items-center py-2 border-b border-paper-mute transition-opacity duration"
+                            class="grid grid-cols-[10px_1fr_auto] gap-3 items-center py-2 border-b border-paper-edge transition-opacity duration"
                             class:opacity-50={s === "pending"}
                         >
                             <StatusDot status={s === "done" ? "ok" : s === "running" ? "busy" : s === "failed" ? "fail" : "idle"} />
@@ -242,7 +242,7 @@
             </div>
 
             <!-- ── Footer ─────────────────────────────────────────────────── -->
-            <div class="flex justify-between items-center gap-4 mt-8 pt-6 border-t border-paper-mute">
+            <div class="flex justify-between items-center gap-4 mt-8 pt-6 border-t border-paper-edge">
                 <div class="text-xs text-ink-soft leading-normal">
                     Upgrade steps run once after each update. The next launch will be quick.
                 </div>

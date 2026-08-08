@@ -43,8 +43,8 @@ describe('RecCard', () => {
     const apply = m.container.querySelector('[data-verb="apply"]');
     expect(apply?.textContent?.trim()).toBe('Apply');
     expect(apply?.hasAttribute('data-recommended')).toBe(true);
-    // Highlighted = filled bg-ink; the secondary verbs are not.
-    expect(apply?.className).toMatch(/bg-ink/);
+    // Highlighted = the rokkit primary (filled) variant; the secondary verbs are not.
+    expect(apply?.getAttribute('data-variant')).toBe('primary');
     expect(m.container.querySelector('[data-verb="review"]')?.hasAttribute('data-recommended')).toBe(false);
     expect(m.container.querySelector('[data-verb="dismiss"]')?.hasAttribute('data-recommended')).toBe(false);
   });

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { invalidateAll } from '$app/navigation';
-  import { EmptyState, Eyebrow } from '$lib/components';
+  import { EmptyState, Eyebrow, ScreenState } from '$lib/components';
   import { senseiApi } from '$lib/api.js';
   import { appState } from '$lib/appstate.svelte.js';
   import {
@@ -89,7 +89,9 @@
     {/if}
   </div>
 
-  {#if !ruleset}
+  {#if data.error}
+    <ScreenState status="error" error={data.error} onretry={invalidateAll} />
+  {:else if !ruleset}
     <div class="p-6 flex flex-col items-center gap-5">
       <EmptyState
         kanji="結"

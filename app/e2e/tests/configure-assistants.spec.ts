@@ -57,12 +57,12 @@ async function goToAssistants(tauriPage: { evaluate: (s: string) => Promise<unkn
     await navigateTo(tauriPage, '/logs');
     await navigateTo(tauriPage, '/setup/welcome');
     // welcome → preferences
-    await (tauriPage as import('@playwright/test').Page).click('.btn-primary');
+    await (tauriPage as import('@playwright/test').Page).click('[data-action="next"]');
     await expect((tauriPage as import('@playwright/test').Page).locator('.name-input')).toBeVisible({ timeout: 8_000 });
     await (tauriPage as import('@playwright/test').Page).locator('.name-input').fill('Test User');
     // preferences → assistants
-    await (tauriPage as import('@playwright/test').Page).click('.btn-primary');
-    await expect((tauriPage as import('@playwright/test').Page).locator('.btn-primary')).toBeEnabled({ timeout: 10_000 });
+    await (tauriPage as import('@playwright/test').Page).click('[data-action="next"]');
+    await expect((tauriPage as import('@playwright/test').Page).locator('[data-action="next"]')).toBeEnabled({ timeout: 10_000 });
 }
 
 // ── UI tests ──────────────────────────────────────────────────────────────────
@@ -75,7 +75,7 @@ test.describe('Configure Assistants — hook registration', () => {
     test('assistants page is reachable and Continue is always enabled', async ({ tauriPage }) => {
         await goToAssistants(tauriPage);
         // Continue is always enabled on assistants — no required selection
-        await expect(tauriPage.locator('.btn-primary')).toBeEnabled({ timeout: 5_000 });
+        await expect(tauriPage.locator('[data-action="next"]')).toBeEnabled({ timeout: 5_000 });
     });
 
     test('assistants → roots navigates without health flash', async ({ tauriPage }) => {
@@ -83,7 +83,7 @@ test.describe('Configure Assistants — hook registration', () => {
 
         const seen: string[] = [];
         const deadline = Date.now() + 10_000;
-        await tauriPage.click('.btn-primary');
+        await tauriPage.click('[data-action="next"]');
 
         let reached = false;
         while (Date.now() < deadline) {

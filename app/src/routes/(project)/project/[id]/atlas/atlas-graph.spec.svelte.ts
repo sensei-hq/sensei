@@ -13,7 +13,7 @@ import {
   SYMBOL_CAP,
   COLLAPSE_THRESHOLD,
 } from './atlas-graph.svelte.js';
-import type { GraphSymbolNode, GraphCallEdge, CommunityInfo, ProjectListItem } from '$lib/types.js';
+import type { GraphSymbolNode, GraphCallEdge, CommunityInfo } from '$lib/types.js';
 
 const node = (id: string, over: Partial<GraphSymbolNode> = {}): GraphSymbolNode => ({
   id,
@@ -184,15 +184,17 @@ describe('initialLevel', () => {
 });
 
 describe('buildAtlasPage', () => {
-  const projects = [
+  // The project's repo roots (graph is keyed by repo name); the loader passes the
+  // project's own scopes, not every project.
+  const scopes = [
     { id: 'p2', name: 'zeta' },
     { id: 'p1', name: 'alpha' },
-  ] as unknown as ProjectListItem[];
+  ];
 
   it('assembles a compact payload from the four raw responses', () => {
     const page = buildAtlasPage({
       repoId: 'sensei',
-      projects,
+      scopes,
       communities: [
         { id: 'c1', label: 'function (a)', node_count: 10 },
         { id: 'c2', label: 'file (b)', node_count: 5 },
@@ -214,7 +216,7 @@ describe('buildAtlasPage', () => {
   it('defaults the solution roll-up to zeros when absent', () => {
     const page = buildAtlasPage({
       repoId: 'x',
-      projects: [],
+      scopes: [],
       communities: [],
       callFlow: { moduleCount: 0, exportCount: 0, callCount: 0 },
       graph: { nodes: [], edges: [] },

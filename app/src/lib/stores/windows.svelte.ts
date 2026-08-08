@@ -1,4 +1,5 @@
 import { WebviewWindow } from '@tauri-apps/api/webviewWindow';
+import { emit } from '@tauri-apps/api/event';
 
 export interface OpenWindow {
   projectId: string;
@@ -12,6 +13,16 @@ export const openWindows = {
   get all(): OpenWindow[] { return [...openWindowsState.values()]; },
   has(projectId: string): boolean { return openWindowsState.has(projectId); },
 };
+
+/** Push the current open project windows to the native menu (Rust rebuilds the
+ *  Window submenu). macOS doesn't auto-list Tauri windows, so the menu only
+ *  reflects reality if we emit on every open/close. */
+function syncWindowMenu(): void {
+  void emit(
+    'sync-window-menu',
+    openWindows.all.map((w) => ({ label: w.label, title: w.projectName })),
+  );
+}
 
 export async function openProjectWindow(projectId: string, projectName: string): Promise<void> {
   const label = `project-${projectId.replace(/-/g, '')}`;
@@ -47,8 +58,10 @@ export async function openProjectWindow(projectId: string, projectName: string):
     openWindowsState.delete(projectId);
     throw err;
   }
+  syncWindowMenu(); // the window exists now — add it to the native Window menu
 
   await win.once('tauri://destroyed', () => {
     openWindowsState.delete(projectId);
+    syncWindowMenu(); // window gone — drop it from the Window menu
   });
 }

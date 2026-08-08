@@ -84,12 +84,15 @@ pub async fn resolve_libs(ctx: &TaskContext, task: &Task) -> Result<u32, String>
         .filter_map(|p| p["name"].as_str().map(|s| s.to_lowercase()))
         .collect();
 
-    // Update folder libs via PgStore (reusing the folder row from above)
+    // D4.1: resolve_libs stamps the walked libs (folder metadata) but does NOT
+    // advance `folder_status` — the terminal barrier moved to DetectCommunities,
+    // the sole writer of `indexed`. build_connections re-stamps libs from its
+    // import-derived set afterwards (last write wins, as before).
     if let Some(folder) = folder.as_ref()
         && let Some(folder_id) = crate::api::util::json_uuid(&folder["id"])
-            && let Err(e) = ctx.pg().mark_folder_indexed(&folder_id, &libs).await {
-                tracing::warn!(error = %e, folder = %folder_name, "resolve_libs: mark_folder_indexed failed");
-            }
+        && let Err(e) = ctx.pg().set_folder_props(&folder_id, &serde_json::json!({"libs": libs})).await {
+            tracing::warn!(error = %e, folder = %folder_name, "resolve_libs: set libs props failed");
+        }
 
     // Enqueue ExtractDeps to parse manifest files and populate referenced_libraries
     let extract_task = super::super::Task::new(

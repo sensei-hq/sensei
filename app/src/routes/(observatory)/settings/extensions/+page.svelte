@@ -62,12 +62,12 @@
 </script>
 
 <PageHeader kanji="拡" eyebrow="Settings" title="Extensions" />
-<div class="max-w-[720px] mx-auto px-12 pt-8 pb-16">
+<div class="max-w-[720px] mx-auto px-12 pt-8 pb-16" data-testid="settings-extensions">
     {#if loading}
         <p class="text-sm text-ink-soft leading-normal">Loading…</p>
     {:else}
         <div
-            class="px-7 py-7 bg-paper-mute border border-paper-mute rounded-lg"
+            class="px-7 py-7 bg-paper-mute border border-paper-edge rounded-lg"
         >
             <h3 class="text-base m-0 mb-1">Extensions</h3>
             <p class="text-sm text-ink-soft m-0 mb-6">
@@ -82,7 +82,7 @@
                     {#each extensions as ext (ext.kind + "::" + ext.name)}
                         {@const busy = extBusy[ext.kind + "::" + ext.name]}
                         <div
-                            class="extension-row flex items-center gap-3 py-2.5 border-b border-paper-mute"
+                            class="extension-row flex items-center gap-3 py-2.5 border-b border-paper-edge"
                             data-testid={`ext-row-${ext.kind}-${ext.name}`}
                         >
                             <span

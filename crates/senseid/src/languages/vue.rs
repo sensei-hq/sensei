@@ -8,6 +8,10 @@ pub struct VueAdapter;
 impl LanguageAdapter for VueAdapter {
     fn language(&self) -> &str { "vue" }
 
+    fn fqn_output(&self, abs_path: &str, content: &str) -> Option<super::fqn::FqnFileOutput> {
+        super::common::sfc_fqn_output(abs_path, content)
+    }
+
     fn parse_to_ir(&self, source: &str, file_path: &str) -> crate::ir::IRParsedFile {
         parse_to_ir(source, file_path)
     }
@@ -84,6 +88,23 @@ mod tests {
     use super::*;
 
     fn parse(src: &str) -> ParsedFile { VueAdapter.parse(src, "App.vue") }
+
+    #[test]
+    fn vue_script_fqn() {
+        // Phase 6.9: a Vue SFC's <script> block is TypeScript — reuse the TS producer.
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::write(root.join("package.json"), "{\"name\":\"app\"}").unwrap();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        let file = root.join("src/Card.vue");
+        let content = "<script lang=\"ts\">\nimport { helper } from './util';\nexport function build() { helper(); }\n</script>\n<template><div/></template>\n";
+        std::fs::write(&file, content).unwrap();
+        let out = VueAdapter.fqn_output(&file.to_string_lossy(), content).unwrap();
+        assert!(out.defs.iter().any(|d| d.fqn == "typescript·app·Card·build"),
+            "component script def, got: {:?}", out.defs.iter().map(|d| &d.fqn).collect::<Vec<_>>());
+        assert!(out.refs.iter().any(|r| r.target_fqn.as_deref() == Some("typescript·app·util·helper")),
+            "relative import resolved from the Vue SFC, got: {:?}", out.refs);
+    }
 
     #[test]
     fn vue_component_name() {
