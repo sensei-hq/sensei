@@ -224,4 +224,29 @@ describe('buildAtlasPage', () => {
     });
     expect(page.solution).toEqual({ repos: 0, nodes: 0, edges: 0 });
   });
+
+  it('builds a production-only `code` view that excludes test-file nodes', () => {
+    const page = buildAtlasPage({
+      repoId: 'sensei',
+      scopes,
+      communities: [],
+      callFlow: { moduleCount: 0, exportCount: 0, callCount: 0 },
+      graph: {
+        nodes: [
+          node('prod', { file_path: 'src/lib.rs' }),
+          node('helper', { file_path: 'src/lib.rs' }),
+          node('t1', { file_path: 'tests/it.rs', is_test: true }),
+          node('t2', { file_path: 'tests/it.rs', is_test: true }),
+        ],
+        edges: [edge('e1', 'prod', 'helper'), edge('e2', 't1', 't2')],
+      },
+      solution: null,
+    });
+    // Full view keeps all 4; the code view drops both test nodes BEFORE the cap.
+    expect(page.totalSymbols).toBe(4);
+    expect(page.code.totalSymbols).toBe(2);
+    expect(page.code.symbols.map((s) => s.id).sort()).toEqual(['helper', 'prod']);
+    // The test-only edge (t1→t2) is gone; the production edge survives.
+    expect(page.code.links).toEqual([{ source: 'prod', target: 'helper' }]);
+  });
 });
