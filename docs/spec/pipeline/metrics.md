@@ -37,12 +37,15 @@ raw signal. What consolidates onto `project_metrics` is the *roll-up*:
    `ftr_daily` produced (and re-derivable to the 7d/14d windows `project_ftr_metrics`
    served).
 2. **Repoint consumers** to read `project_metrics`: `pg_store::get_ftr_daily` + the
-   14d-FTR getter (`pg_store.rs:7439`); the endpoints `/api/observatory/ftr-daily`,
-   `/api/projects/{id}/ftr-daily`, and the **MCP `get_ftr_daily`** tool (keep the
-   response shape — re-source only); `impact.md`'s `MeasureVerdicts` before/after
-   snapshots; the app's `api.ts` ftr-daily + `overview-view` 14d chip.
-3. Replace the legacy `GET /api/metrics/{project}` with the store-backed endpoint
-   below (removing its fabricated `0`).
+   14d-FTR getter `get_project_ftr` (`pg_store.rs:~7439`, headline path); the
+   endpoints `/api/observatory/ftr-daily`, `/api/projects/{id}/ftr-daily`, and the
+   **MCP `get_ftr_daily`** tool (keep the response shape — re-source only); the
+   app's `api.ts` ftr-daily + `overview-view` 14d chip. **`measure_verdicts` needs
+   no change** — it computes FTR inline from `activity.sessions` (`sessions.ftr`,
+   which stays), not from these views. (`impact.md` is stale on this — a separate
+   doc-fix; see the plan's follow-ups.)
+3. Replace the fabricated-`0` FTR in BOTH the legacy `GET /api/metrics/{project}`
+   handler AND the MCP `get_metrics` tool arm with the store-backed data.
 4. **Only then** drop the `ftr_daily` + `project_ftr_metrics` view DDL and update
    `pipeline/ftr.md` + `pipeline/impact.md` to name `project_metrics` as the FTR
    source. Nothing is dropped before its consumers move (P4 blast-radius rule).
@@ -324,7 +327,8 @@ heatmap, the health dial) is a follow-up once db + api + tasks land.
 ## Related
 
 - [[features/metrics]] · [[features/metrics/catalog]] · [[pipeline/ftr]] (FTR
-  source moves here) · [[pipeline/impact]] (MeasureVerdicts re-sources here) ·
+  source moves here) · [[pipeline/impact]] (unaffected — `measure_verdicts` reads
+  `sessions.ftr` inline; that doc is stale, separate fix) ·
   [[pipeline/signals]] · [[pipeline/analyzer]] (scheduler sibling) ·
   [[analysis/2026-08-04-metrics-catalog]] ·
   [[blueprints/2026-08-06-project-quality-metrics]] (per-module quality family)
