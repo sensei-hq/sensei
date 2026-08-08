@@ -251,6 +251,17 @@ export interface AtlasSolution {
   edges: number;
 }
 
+/** A renderable symbol view (the top-`cap` symbols + their internal links). The
+ *  page carries two: the full graph and the production-only ("hide tests") graph,
+ *  each capped INDEPENDENTLY so hiding tests pulls the next production symbols into
+ *  the top-`cap` rather than just blanking the test ones. */
+export interface AtlasSymbolView {
+  symbols: AtlasSymbol[];
+  links: AtlasLink[];
+  totalSymbols: number;
+  totalInternalEdges: number;
+}
+
 export interface AtlasPageData {
   repoId: string;
   scopes: AtlasScope[];
@@ -261,6 +272,9 @@ export interface AtlasPageData {
   links: AtlasLink[];
   totalSymbols: number;
   totalInternalEdges: number;
+  /** Production-only view (test-file nodes excluded BEFORE the degree cap), for
+   *  the Atlas "hide tests" toggle. */
+  code: AtlasSymbolView;
   cap: number;
   stats: AtlasStats;
   solution: AtlasSolution;
@@ -284,6 +298,11 @@ export function buildAtlasPage(input: BuildAtlasInput): AtlasPageData {
   const cap = input.cap ?? SYMBOL_CAP;
   const communities = buildCommunities(input.communities);
   const sym = buildSymbolGraph(input.graph.nodes, input.graph.edges, cap);
+  // Production-only view: drop test-file nodes BEFORE ranking/capping so the top
+  // `cap` are the highest-degree PRODUCTION symbols (not the full top-cap with
+  // tests merely blanked out — which matters for test-heavy repos).
+  const codeNodes = input.graph.nodes.filter((n) => !n.is_test);
+  const codeSym = buildSymbolGraph(codeNodes, input.graph.edges, cap);
 
   return {
     repoId: input.repoId,
@@ -294,6 +313,12 @@ export function buildAtlasPage(input: BuildAtlasInput): AtlasPageData {
     links: sym.links,
     totalSymbols: sym.totalSymbols,
     totalInternalEdges: sym.totalInternalEdges,
+    code: {
+      symbols: codeSym.symbols,
+      links: codeSym.links,
+      totalSymbols: codeSym.totalSymbols,
+      totalInternalEdges: codeSym.totalInternalEdges,
+    },
     cap,
     stats: {
       modules: input.callFlow.moduleCount,
