@@ -37,6 +37,15 @@
     { label: 'Symbols', value: 'symbols' },
   ];
 
+  // "Hide tests" — swap the symbol view to the production-only one (test-file
+  // nodes excluded before the degree cap; the loader precomputes both).
+  let hideTests = $state(false);
+  const active = $derived(
+    hideTests
+      ? data.code
+      : { symbols: data.symbols, links: data.links, totalSymbols: data.totalSymbols },
+  );
+
   const empty = $derived(data.communities.length === 0 && data.symbols.length === 0);
 
   // ── Render nodes per level ──────────────────────────────────────────────────
@@ -52,9 +61,9 @@
     })),
   );
 
-  const maxDegree = $derived(Math.max(1, ...data.symbols.map((s) => s.degree)));
+  const maxDegree = $derived(Math.max(1, ...active.symbols.map((s) => s.degree)));
   const symbolNodes = $derived<RenderNode[]>(
-    data.symbols.map((s) => ({
+    active.symbols.map((s) => ({
       id: s.id,
       label: s.name,
       kind: s.kind,
@@ -65,12 +74,12 @@
   );
 
   const renderNodes = $derived(view.level === 'communities' ? communityNodes : symbolNodes);
-  const renderLinks = $derived(view.level === 'communities' ? [] : data.links);
+  const renderLinks = $derived(view.level === 'communities' ? [] : active.links);
   const legend = $derived(legendItems(renderNodes.map((n) => n.kind)));
 
   // ── Inspector selection ─────────────────────────────────────────────────────
   const communityById = $derived(new Map(data.communities.map((c) => [c.id, c])));
-  const symbolById = $derived(new Map(data.symbols.map((s) => [s.id, s])));
+  const symbolById = $derived(new Map(active.symbols.map((s) => [s.id, s])));
 
   const selCommunity = $derived(
     view.level === 'communities' && view.selectedId
@@ -97,14 +106,14 @@
 
   const dependsOn = $derived(
     selSymbol
-      ? data.links
+      ? active.links
           .filter((l) => l.source === selSymbol.id)
           .map((l) => symbolById.get(l.target)?.name ?? l.target)
       : [],
   );
   const usedBy = $derived(
     selSymbol
-      ? data.links
+      ? active.links
           .filter((l) => l.target === selSymbol.id)
           .map((l) => symbolById.get(l.source)?.name ?? l.source)
       : [],
@@ -114,8 +123,8 @@
     nodes: renderNodes.length,
     relations: renderLinks.length,
     communities: data.communities.length,
-    shown: view.level === 'symbols' ? data.symbols.length : undefined,
-    total: view.level === 'symbols' ? data.totalSymbols : undefined,
+    shown: view.level === 'symbols' ? active.symbols.length : undefined,
+    total: view.level === 'symbols' ? active.totalSymbols : undefined,
   });
 
   // Scope options for the rokkit Select. When the active repo isn't among the
@@ -178,6 +187,22 @@
 
     <span class="flex-1"></span>
 
+    <!-- hide tests toggle — focus on production code -->
+    <button
+      type="button"
+      class="text-xs rounded py-2 px-3 cursor-pointer border border-paper-edge"
+      class:bg-paper-mute={hideTests}
+      class:text-ink={hideTests}
+      class:font-semibold={hideTests}
+      class:bg-transparent={!hideTests}
+      class:text-ink-mute={!hideTests}
+      data-atlas-hide-tests
+      aria-pressed={hideTests}
+      onclick={() => (hideTests = !hideTests)}
+    >
+      Hide tests
+    </button>
+
     <!-- level segmented control -->
     <div class="inline-flex bg-paper-mute rounded p-1" role="group" aria-label="Granularity">
       {#each LEVELS as l (l.value)}
@@ -218,9 +243,11 @@
           selectedId={view.selectedId}
           onselect={(id) => view.select(id)}
         />
-        {#if view.level === 'symbols' && data.totalSymbols > data.symbols.length}
+        {#if view.level === 'symbols' && active.totalSymbols > active.symbols.length}
           <div class="absolute left-5 top-3 text-xs text-ink-mute font-mono" data-atlas-cap-note>
-            showing {data.symbols.length} of {data.totalSymbols} symbols · by connections
+            showing {active.symbols.length} of {active.totalSymbols} symbols · by connections{hideTests
+              ? ' · tests hidden'
+              : ''}
           </div>
         {/if}
         <div class="absolute left-5 bottom-4">

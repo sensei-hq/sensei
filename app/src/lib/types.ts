@@ -364,6 +364,9 @@ export interface GraphSymbolNode {
   parent_id?: string | null;
   line_start?: number | null;
   line_end?: number | null;
+  /** True when the node belongs to a test file (daemon `is_test_path`). Lets the
+   *  Atlas filter tests out when focusing on production code. */
+  is_test?: boolean;
 }
 
 /**
