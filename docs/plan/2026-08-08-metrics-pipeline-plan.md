@@ -104,8 +104,13 @@ point-in-time metric takes the period end; trend carries prior+delta.
   `throughput`, `churn_rate`, `churn_concentration`, `rework_density`,
   `duplication_ratio`, `interruption_rate`, `false_crash_rate`, `run_completion`,
   `memory_promotion`, `unused_tools`, `project_health` — each with family/type/unit/
-  direction/purpose/how_to_read/formula/task_name/weight/target. Register under the
-  `import.staging` list in `database/design.yaml`.
+  direction/purpose/how_to_read/formula/task_name/weight. **Seed an explicit
+  `target` for the `count`-type metrics** (`throughput`, `churn_rate`,
+  `unused_tools`) so they contribute to `project_health` from day one (a null
+  `target` correctly excludes a count metric from the composite — fine, but here
+  it's unintended). No `design.yaml` change is needed — `import.staging` already
+  covers the whole `staging` schema (`design.yaml:83-85`); the new staging table +
+  import proc are picked up automatically.
 - [ ] **2.4** `dbd import` (or the seed path) into `sensei_test`; verify
   `select count(*) from sensei.metrics` = the seeded set and every row has non-null
   family/type/direction/purpose/how_to_read/task_name.
@@ -180,31 +185,64 @@ task_name); health is a barrier on the base tasks; unknown task_name is inert.
 window and upserts; **no row when no data**. Each sub-task: seed fixture rows in
 `sensei_test` → run the computer → assert the exact `project_metrics` rows.
 
-- [ ] **5.1 `session_outcomes`** — `ftr` (daily = `avg(ftr)`, `props.session_count`
-  + `props.correction_count`), `rework_ratio` (corrected-session tool-calls ÷ all),
-  `throughput` (sessions/day). Test `session_outcomes_writes_ftr_rework_throughput`:
-  3 sessions (2 ftr, 1 corrected) → daily ftr=0.667 with props counts; rework_ratio
-  from turns; throughput=3. Per-session ftr rows too.
-- [ ] **5.2 `churn`** — `churn_rate`, `churn_concentration` (Pareto), `rework_density`
-  (from `detected_patterns`), folder-attributed via `resolve_folder_by_path` (3.3),
-  writing per-module (`folder_id`) + project rows. Test
-  `churn_attributes_to_project_via_folder_path` incl. an aliased folder path.
-- [ ] **5.3 `duplication`** — `duplication_ratio` via `find_duplicates_scoped`
-  (internal fn, not HTTP). Test `duplication_ratio_from_node_matches`, per-module + project.
-- [ ] **5.4 `autonomy`** — `interruption_rate` (Stop ÷ UserPromptSubmit),
-  `false_crash_rate`, `run_completion` (runs done ÷ started). Test
-  `autonomy_metrics_from_events_and_runs` with low-N flag in `props`.
-- [ ] **5.5 `knowledge`** — `memory_promotion` (memories ÷ eligible patterns/
-  corrections, `instance_count≥3`). Test `memory_promotion_rate` (≈0 case writes a
-  real 0-with-denominator row, NOT honest-absent — denominator exists).
-- [ ] **5.6 `tool`** — `unused_tools` (registered tools with 0 outcome-positive
-  calls in window) from `assistant_tools` + `tool_call_verdicts`. Test
-  `unused_tools_count`.
+**⚠ `props` contract (cross-cutting — Phase 1.2's views depend on it).** Every
+row of a `ratio` or `pct` metric MUST write `props.numerator` + `props.denominator`
+(exact keys) — because `project_metric_weekly/_monthly` re-derive as
+`sum((props->>'numerator')::numeric)/nullif(sum((props->>'denominator')::numeric),0)`.
+The `value` is `numerator/denominator` at daily grain; bespoke display fields
+(e.g. `session_count`, `correction_count`) are ADDITIONAL, never a substitute.
+A `ratio`/`pct` row with a real denominator but zero numerator writes `0` (not
+absent); a metric with no data (denominator 0 / no rows) writes nothing.
+
+- [ ] **5.1 `session_outcomes`** — `ftr` (daily `value = numerator/denominator`,
+  `props.numerator` = first-turn sessions, `props.denominator` = `session_count`,
+  `props.correction_count` display), `rework_ratio` (`numerator` = corrected-session
+  tool-calls, `denominator` = all tool-calls), `throughput` (`count`, sessions/day).
+  Test `session_outcomes_writes_ftr_rework_throughput`: 4 sessions (3 ftr, 1
+  corrected; the corrected has 6 tool-calls, the others 2 each = 12 total) → daily
+  `ftr` value 0.75 with `props.numerator=3, denominator=4`; `rework_ratio` value 0.5
+  with `props.numerator=6, denominator=12`; `throughput` value 4. Per-session `ftr`
+  rows (value 1/0) too.
+- [ ] **5.2 `churn`** — `churn_rate` (`count`, process_file execs/day per file),
+  `churn_concentration` (`pct`, top-20%-files share, `numerator`/`denominator` =
+  top-20% churn / total churn), `rework_density` (`ratio`, `numerator` = rework-
+  flagged files, `denominator` = project files, from `detected_patterns`). Folder-
+  attributed via `resolve_folder_by_path` (3.3), writing per-module (`folder_id`) +
+  project rows. **On `None` (unresolved `folder_path`): log a warning and SKIP that
+  execution entirely** — it cannot be attributed to a project/module, so it counts
+  toward neither the module nor the project aggregate (never a mis-attributed row).
+  Test `churn_attributes_to_project_via_folder_path`: an aliased folder path
+  resolves; an unresolvable path is skipped + logged (assert it produced no row).
+  *(Note: `churn_rate`/`concentration` counts are known-inflated by the rescan bug
+  until the version-rescan debounce lands — catalog P0 #4; first live numbers carry
+  that caveat, not a computation bug.)*
+- [ ] **5.3 `duplication`** — `duplication_ratio` (`ratio`, `numerator` = new
+  symbols with a duplicate match, `denominator` = new symbols) via
+  `find_duplicates_scoped` (internal fn, not HTTP). Test
+  `duplication_ratio_from_node_matches`: 5 new symbols, 2 with a match → value 0.4,
+  `props.numerator=2, denominator=5`; per-module + project rows.
+- [ ] **5.4 `autonomy`** — `interruption_rate` (`ratio`, `numerator` = Stop,
+  `denominator` = UserPromptSubmit), `run_completion` (`ratio`, `numerator` = runs
+  `done`, `denominator` = runs started), `false_crash_rate` (`ratio`, killed-at-cap-
+  but-waiting ÷ non-done runs). Test `autonomy_metrics_from_events_and_runs`:
+  24 Stop / 25 UserPromptSubmit → `interruption_rate` 0.96 (`numerator=24,
+  denominator=25`); 5 done of 9 runs → `run_completion` 0.556 (`numerator=5,
+  denominator=9`); `props.low_n=true` when denominator < 10.
+- [ ] **5.5 `knowledge`** — `memory_promotion` (`ratio`, `numerator` = memories
+  created, `denominator` = eligible patterns/corrections with `instance_count≥3`).
+  Test `memory_promotion_rate`: 0 memories, 3 eligible → value 0.0 with
+  `props.numerator=0, denominator=3` (a real 0, NOT absent — the denominator exists,
+  and 0 is the signal that distillation is stalled).
+- [ ] **5.6 `tool`** — `unused_tools` (`count`, registered tools with 0 outcome-
+  positive calls in window) from `assistant_tools` + `tool_call_verdicts`. Test
+  `unused_tools_count`: 3 registered tools, 1 with a positive verdict → value 2.
 - [ ] **5.7** Commit per group (`feat(senseid): metrics — <group> computer`).
 
 **Acceptance:** each group writes exactly the expected rows at the right grains;
-folder attribution is alias-safe; a metric with a real denominator but zero
-numerator writes `0` (not absent), while a metric with no data writes nothing.
+every ratio/pct row carries `props.numerator`+`props.denominator` (so 1.2's views
+re-derive, verified by re-running the Phase 1.4 check on real computed rows); folder
+attribution is alias-safe and un-attributable executions are skipped+logged; a real
+denominator with zero numerator writes `0`, no-data writes nothing.
 
 ---
 
@@ -253,30 +291,54 @@ self-describing facets; honest-empty where a metric has no rows.
 **Precondition:** Phases 5+7 (FTR now in `project_metrics`). This is the
 supersede/retire from the spec — **repoint before dropping** (P4 blast-radius).
 
-- [ ] **8.1 Failing test** `ftr_daily_getter_reads_project_metrics`: `get_ftr_daily`
-  returns the same shape (`project_id, day, ftr_rate, session_count`) sourced from
-  `project_metrics` (`metric='ftr'`, `props.session_count`). FAIL → re-source
-  `PgStore::get_ftr_daily` + the 14d-FTR getter (`pg_store.rs:7439`) from the store.
-  PASS. (Endpoints `/ftr-daily`, `/projects/{id}/ftr`, MCP `get_ftr_daily` unchanged
-  in shape.)
-- [ ] **8.2 Failing test** `legacy_metrics_endpoint_no_fabricated_zero`: the legacy
-  `GET /api/metrics/{project}` (`observatory.rs:575-599`) no longer returns a
-  defaulted `0` — it is replaced by / redirected to the store-backed endpoint. FAIL
-  → replace. PASS.
-- [ ] **8.3** Re-source `impact.md`'s `MeasureVerdicts` before/after FTR from
-  `project_metrics` (test `measure_verdicts_reads_project_metrics_ftr`).
-- [ ] **8.4 Parity check** `ftr_parity_store_vs_endpoints`: for a seeded project,
-  the store's daily FTR equals what the old `ftr_daily` view computed (same
-  `avg(ftr)` over the day). PASS — proves no drift before dropping.
+- [ ] **8.1 Failing test** `ftr_getters_read_project_metrics`: `get_ftr_daily`
+  (reads `sensei.ftr_daily`) and `get_project_ftr`'s **headline** path (reads
+  `sensei.project_ftr_metrics` — `ftr_14d`/`ftr_14d_prev`/`sessions_7d`,
+  `pg_store.rs:~7439`) both re-source from `project_metrics` with the SAME response
+  shape (`project_id, day, ftr_rate, session_count`; 14d/prev re-derived from the
+  daily `props.numerator/denominator`). FAIL → re-source both. PASS.
+  **Note the second read path:** `get_project_ftr`'s inline 14-day *trend* query
+  (`pg_store.rs:~7446-7456`) reads `activity.sessions` **directly** (not a view), so
+  the view retirement doesn't require touching it — re-source it to
+  `project_metric_daily where metric='ftr'` for one source of truth (assert its
+  numbers are unchanged), or leave it and say so explicitly.
+- [ ] **8.2 Failing test** `no_fabricated_zero_ftr_in_metrics_surfaces`: BOTH the
+  legacy HTTP route `GET /api/metrics/{project}` (`observatory.rs:575-599`) AND the
+  **MCP tool arm `"get_metrics"`** (`mcp.rs:255-273`) independently do
+  `if session_count>0 {..} else {0.0}` — a fabricated `0`. FAIL → replace both with
+  the store-backed data (remove the `else {0.0}`); the HTTP route is superseded by
+  the Phase-7 endpoints, the MCP tool re-sources from `project_metrics`. PASS.
+- [ ] **8.3 `measure_verdicts` needs NO repoint (grounded correction).** The real
+  handler is `verdicts.rs::measure_verdicts` → `PgStore::measure_pending_verdicts`
+  (`pg_store.rs:~4730`), which computes "current" FTR **inline from
+  `activity.sessions`** per recommendation (since `acted_at`, `having count(*)>=3`)
+  and stores on `inference.recommendations.{baseline_ftr,current_ftr,verdict}`. It
+  **does not read `ftr_daily`/`project_ftr_metrics`**, so retiring the views does
+  not affect it — no repoint. (The spec's earlier "MeasureVerdicts re-sources here"
+  was based on a stale `impact.md`; corrected.) Two **separate follow-up tickets**
+  (out of scope for this plan, filed in `docs/backlog.md`): (a) `impact.md` is stale
+  — wrong owner file (`measure_verdicts.rs` doesn't exist), wrong tables
+  (`applied_recommendations`/`impact_verdicts` snapshots), wrong enum
+  (`insufficient_data`); (b) a pre-existing **fabricated baseline** bug —
+  `measure_pending_verdicts` reads `coalesce(r.baseline_ftr, 0)` but
+  `accept_recommendation` never sets `baseline_ftr`, so verdicts likely compute
+  against a `0.0` baseline (violates never-fabricate).
+- [ ] **8.4 Parity check** `ftr_parity_store_vs_views`: for a seeded project, the
+  store's daily FTR equals what the old `ftr_daily` view computed (`avg(ftr)` over
+  the day) and the 14d headline equals `project_ftr_metrics`. PASS — proves no drift
+  before dropping.
 - [ ] **8.5** Delete `database/ddl/view/sensei/{ftr_daily,project_ftr_metrics}.ddl`;
-  `grep -r ftr_daily\|project_ftr_metrics crates/ app/` is clean. Update
-  `spec/pipeline/ftr.md` + `impact.md` to name `project_metrics` as the FTR source.
+  `grep -rE "ftr_daily|project_ftr_metrics" crates/ app/` is clean AND
+  `grep -n "else 0.0\|else {0.0}" ` in the two metrics surfaces is gone. Update
+  `spec/pipeline/ftr.md` to name `project_metrics` as the FTR source. (`impact.md`
+  stays untouched here — its fix is the separate 8.3 ticket.)
 - [ ] **8.6** Commit `refactor(senseid): consolidate FTR onto project_metrics; retire
   ftr_daily + project_ftr_metrics`.
 
-**Acceptance:** one FTR number everywhere (store == endpoints == MCP); the legacy
-fabricated-0 endpoint is gone; the two FTR views are dropped with zero dangling
-references; ftr.md/impact.md updated.
+**Acceptance:** one FTR number everywhere (store == `/ftr-daily` == `/projects/{id}/
+ftr` == MCP); both fabricated-`0` sites (HTTP + MCP) are gone; the two FTR views are
+dropped with zero dangling references; ftr.md updated; `measure_verdicts` left
+correctly untouched (with the stale-doc + baseline-bug follow-ups filed).
 
 ---
 
@@ -308,7 +370,11 @@ live DB; health renders; no fabricated values.
 - [ ] `cargo test -p senseid` green (every canonical test above); `clippy
   --all-targets` clean; `make test-fast` green.
 - [ ] One FTR number: store, `/api/projects/{id}/ftr`, `/ftr-daily`, MCP agree.
-- [ ] `grep` shows no references to `ftr_daily`/`project_ftr_metrics`.
+- [ ] `grep -rE "ftr_daily|project_ftr_metrics" crates/ app/` clean.
+- [ ] Neither metrics surface fabricates a `0`: the legacy HTTP route and the MCP
+  `get_metrics` arm are both store-backed (no `else {0.0}`).
+- [ ] Every ratio/pct row carries `props.numerator`+`props.denominator` (rerun the
+  1.4 weekly-rollup check on real computed rows).
 - [ ] A metric with no data writes no row; cost (when built) fails closed.
 
 ## Out of scope (separate specs/plans)
@@ -319,3 +385,17 @@ live DB; health renders; no fabricated values.
 - Blocked metrics (cost/tokens, reopen_rate, effective-velocity, per-module qlty
   quality) — seeded + implemented when their source instrumentation lands (catalog
   P0/P1).
+
+## Separate follow-up tickets (filed in docs/backlog.md, not this plan)
+- **`impact.md` is stale** — names a non-existent `measure_verdicts.rs` owner file,
+  `sensei.applied_recommendations` + snapshot `impact_verdicts` tables that don't
+  match reality, and an `insufficient_data` verdict that isn't in
+  `recommendation_verdict`. Reality: `verdicts.rs::measure_verdicts` →
+  `measure_pending_verdicts` on `inference.recommendations`. Doc-fix only.
+- **Fabricated verdict baseline (pre-existing bug)** — `measure_pending_verdicts`
+  reads `coalesce(r.baseline_ftr, 0)` but `accept_recommendation` never sets
+  `baseline_ftr`; verdicts likely compute against a `0.0` baseline (never-fabricate
+  violation). Fix: stamp `baseline_ftr` at accept time (from the store's current
+  FTR). Separate bug ticket.
+- **Dead `getMetrics()` app wrapper** — `app/src/lib/api.ts:648-649` wraps the
+  legacy `/api/metrics/{project}`; unused in `app/src`. Delete once Phase 8.2 lands.
