@@ -120,12 +120,80 @@ pub(crate) async fn seed_metrics_turn(
     .unwrap();
 }
 
-/// Remove a metric fixture: the project (cascades its `project_metrics`) and, when
-/// given, the folder (cascades its `sessions` → `turns`).
+/// Insert one `activity.task_executions` row — the churn source (Phase 5.2). Churn
+/// counts `process_file` executions, so `task_kind` is usually `"process_file"`;
+/// `folder_path` is the git-folder abs path churn is attributed through
+/// (`resolve_folder_by_path`, alias-aware), and `path` the file the execution
+/// processed (`churn_concentration` keys files on it). `started_at` fixes the day.
+/// `task_id` is a throwaway (bigint, no unique constraint) derived from a fresh
+/// uuid so parallel seeds don't collide. Shared so 5.3 can reuse it.
+pub(crate) async fn seed_task_execution(
+    pg: &PgStore,
+    task_kind: &str,
+    folder_path: &str,
+    path: &str,
+    started_at: chrono::DateTime<chrono::Utc>,
+) {
+    let task_id = uuid::Uuid::new_v4().as_u128() as i64;
+    sqlx_core::query::query(
+        "INSERT INTO activity.task_executions (task_id, task_kind, folder_path, path, status, started_at) \
+         VALUES ($1, $2, $3, $4, 'completed', $5)",
+    )
+    .bind(task_id)
+    .bind(task_kind)
+    .bind(folder_path)
+    .bind(path)
+    .bind(started_at)
+    .execute(pg.pool())
+    .await
+    .unwrap();
+}
+
+/// Insert one `inference.detected_patterns` row via the production upsert (DRY —
+/// reuses [`PgStore::upsert_pattern`] rather than re-implementing the SQL). A
+/// rework signal is `name = "rework: <file>"`, `is_anti = true`, `folder_id` = the
+/// file's folder locus (what `rework_density` counts). Returns the pattern id.
+/// Shared so the churn (5.2) and knowledge (5.3) group tests reuse it.
+pub(crate) async fn seed_detected_pattern(
+    pg: &PgStore,
+    project_id: &uuid::Uuid,
+    folder_id: Option<&uuid::Uuid>,
+    name: &str,
+    is_anti: bool,
+) -> uuid::Uuid {
+    pg.upsert_pattern(project_id, folder_id, name, is_anti, None, &serde_json::json!([]))
+        .await
+        .unwrap()
+}
+
+/// Insert one file-kind `sensei.nodes` row — a "project file" for the
+/// `rework_density` denominator (# project files = # `kind = 'file'` nodes in the
+/// project's folders). `file_path` doubles as the node name and must be unique per
+/// folder (governed by `nodes_unique_identity`); `ON CONFLICT DO NOTHING` keeps
+/// re-seeds idempotent.
+pub(crate) async fn seed_file_node(pg: &PgStore, folder_id: &uuid::Uuid, file_path: &str) {
+    sqlx_core::query::query(
+        "INSERT INTO sensei.nodes (folder_id, kind, name, file_path) \
+         VALUES ($1, 'file'::sensei.node_kind, $2, $2) ON CONFLICT DO NOTHING",
+    )
+    .bind(folder_id)
+    .bind(file_path)
+    .execute(pg.pool())
+    .await
+    .unwrap();
+}
+
+/// Remove a metric fixture: the project (cascades its `project_metrics` and
+/// `detected_patterns`) and, when given, the folder (cascades its `sessions` →
+/// `turns` and its `nodes`). `exec_folder_paths` names the `folder_path`s whose
+/// `activity.task_executions` to purge — that table is path-keyed with NO FK to
+/// the project/folder, so it never cascades and must be cleared explicitly (pass
+/// `&[]` for fixtures that seed no executions).
 pub(crate) async fn cleanup_metrics_fixture(
     pg: &PgStore,
     pid: &uuid::Uuid,
     fid: Option<&uuid::Uuid>,
+    exec_folder_paths: &[&str],
 ) {
     sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
         .bind(pid)
@@ -135,6 +203,14 @@ pub(crate) async fn cleanup_metrics_fixture(
     if let Some(fid) = fid {
         sqlx_core::query::query("DELETE FROM sensei.folders WHERE id = $1")
             .bind(fid)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+    }
+    if !exec_folder_paths.is_empty() {
+        let paths: Vec<String> = exec_folder_paths.iter().map(|s| s.to_string()).collect();
+        sqlx_core::query::query("DELETE FROM activity.task_executions WHERE folder_path = ANY($1)")
+            .bind(&paths)
             .execute(pg.pool())
             .await
             .unwrap();

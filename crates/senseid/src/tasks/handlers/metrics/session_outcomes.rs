@@ -345,7 +345,7 @@ mod tests {
             .unwrap();
         assert_eq!(total, 7, "idempotent upsert — still 7 rows after a second run");
 
-        cleanup_metrics_fixture(pg, &pid, Some(&fid)).await;
+        cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
     }
 
     #[tokio::test]
@@ -370,7 +370,7 @@ mod tests {
             .unwrap();
         assert_eq!(total, 0, "no project_metrics rows for an empty project (never fabricated)");
 
-        cleanup_metrics_fixture(pg, &pid, None).await;
+        cleanup_metrics_fixture(pg, &pid, None, &[]).await;
     }
 
     #[tokio::test]
@@ -403,7 +403,7 @@ mod tests {
         assert_eq!(rework_rows, 0, "no rework_ratio row when total tool-calls is 0 (never a fabricated 0/0)");
         assert_eq!(written, 4, "ftr daily + throughput daily + 2 per-session ftr; rework skipped");
 
-        cleanup_metrics_fixture(pg, &pid, Some(&fid)).await;
+        cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
     }
 
     #[tokio::test]
@@ -429,6 +429,6 @@ mod tests {
         assert_eq!(ftr.2["numerator"].as_i64(), Some(0), "ftr numerator = 0 (no first-try sessions)");
         assert_eq!(ftr.2["denominator"].as_i64(), Some(2), "ftr denominator = 2 (real denominator → row written, not skipped)");
 
-        cleanup_metrics_fixture(pg, &pid, Some(&fid)).await;
+        cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
     }
 }

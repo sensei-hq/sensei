@@ -22,7 +22,9 @@ use super::super::executor::TaskContext;
 use super::super::Task;
 
 /// Per-group computers. `session_outcomes` is the first real one (Phase 5.1) and
-/// the template the remaining groups follow as they land.
+/// the template the remaining groups follow as they land; `churn` (Phase 5.2) is
+/// the second.
+mod churn;
 mod session_outcomes;
 
 /// Test-only routing probe: records WHICH handler last ran on the current thread,
@@ -128,10 +130,10 @@ pub async fn compute(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
                 MetricGroup::SessionOutcomes => {
                     session_outcomes::compute(ctx, &task.folder_path).await
                 }
-                // Phase 5.2–5.6 fill these in; until then a known group is a logged
+                MetricGroup::Churn => churn::compute(ctx, &task.folder_path).await,
+                // Phase 5.3–5.6 fill these in; until then a known group is a logged
                 // no-op returning Ok(0) (never a fabricated value).
-                MetricGroup::Churn
-                | MetricGroup::Duplication
+                MetricGroup::Duplication
                 | MetricGroup::Autonomy
                 | MetricGroup::Knowledge
                 | MetricGroup::Tool => Ok(0),
