@@ -311,26 +311,38 @@ mod tests {
     #[tokio::test]
     async fn execute_task_dispatches_compute_metrics_and_health() {
         // The executor must route ComputeMetrics → handlers::metrics::compute and
-        // ComputeHealth → handlers::metrics::compute_health. In the Phase 4 stub
-        // both return Ok (a known group is a logged no-op; the health barrier is a
-        // logged no-op) — proving the dispatch arms are wired without depending on
-        // Phase 5/6 compute logic.
+        // ComputeHealth → handlers::metrics::compute_health. Both stubs return
+        // Ok(0), so `.is_ok()` alone can't tell the arms apart (swapping them would
+        // stay green). Assert by IDENTITY via the test-only routing probe so a
+        // crossed match arm fails here, not silently in Phase 5/6.
+        use crate::tasks::handlers::metrics::probe;
         let ctx = make_ctx().await;
         let pid = uuid::Uuid::new_v4().to_string();
 
+        // ComputeMetrics (known group) → compute.
+        probe::reset();
         let compute = Task::new(TaskKind::ComputeMetrics, &pid, "session_outcomes");
         assert!(execute_task(&ctx, &compute).await.is_ok(),
             "ComputeMetrics routes to the metrics compute handler");
+        assert_eq!(probe::take(), Some("compute"),
+            "ComputeMetrics must dispatch to compute, not compute_health");
 
-        // An unknown group is still routed and is a logged no-op (never errors the
-        // queue) — the dispatch never panics on an unrecognised task_name.
+        // ComputeMetrics (unknown group) → still compute (routed), logged no-op —
+        // the dispatch never panics on an unrecognised task_name.
+        probe::reset();
         let unknown = Task::new(TaskKind::ComputeMetrics, &pid, "no_such_group");
         assert!(execute_task(&ctx, &unknown).await.is_ok(),
             "an unknown metrics task_name is a logged no-op, not a queue error");
+        assert_eq!(probe::take(), Some("compute"),
+            "an unknown group still routes through compute");
 
+        // ComputeHealth → compute_health.
+        probe::reset();
         let health = Task::new(TaskKind::ComputeHealth, &pid, "");
         assert!(execute_task(&ctx, &health).await.is_ok(),
             "ComputeHealth routes to the metrics health handler");
+        assert_eq!(probe::take(), Some("compute_health"),
+            "ComputeHealth must dispatch to compute_health, not compute");
     }
 
     #[tokio::test]
