@@ -182,9 +182,11 @@ async fn metrics_tick(queue: &TaskQueue, pg: &PgStore) -> Result<u32, String> {
 }
 
 /// Resolve the compute window (days) from config — the shared read the scheduler
-/// (and Phase 5 computers) use. Config-read failure isn't fatal: fall back to the
-/// default and log, like the analyzer scheduler's `interval_secs`.
-async fn window_days(pg: &PgStore) -> u32 {
+/// AND the Phase 5 per-group computers use (e.g.
+/// [`crate::tasks::handlers::metrics::session_outcomes`]), so the config key +
+/// parser + default live in exactly one place. Config-read failure isn't fatal:
+/// fall back to the default and log, like the analyzer scheduler's `interval_secs`.
+pub(crate) async fn window_days(pg: &PgStore) -> u32 {
     let raw = match pg.get_config(WINDOW_DAYS_KEY).await {
         Ok(v) => v,
         Err(e) => {

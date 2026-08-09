@@ -21,6 +21,10 @@
 use super::super::executor::TaskContext;
 use super::super::Task;
 
+/// Per-group computers. `session_outcomes` is the first real one (Phase 5.1) and
+/// the template the remaining groups follow as they land.
+mod session_outcomes;
+
 /// Test-only routing probe: records WHICH handler last ran on the current thread,
 /// so the executor's dispatch test can assert `ComputeMetrics → compute` and
 /// `ComputeHealth → compute_health` by IDENTITY (both stubs return `Ok(0)`, so a
@@ -103,24 +107,35 @@ impl MetricGroup {
 /// `ComputeMetrics` handler: dispatch by the metric group in `task.path` (project
 /// id in `task.folder_path`). A known group runs its computer; an unknown
 /// `task_name` is a logged no-op that returns `Ok` — never a panic, never a queue
-/// error.
+/// error. Returns the number of `project_metrics` rows the group wrote.
 ///
-/// Phase 4 stub: a known group only logs `computing <group>` and returns `Ok(0)`.
-/// `ctx` is unused here but is the seam Phase 5 computes from (`ctx.pg()` + the
-/// configured window → `upsert_project_metric`).
+/// Phase 5.1 wires `session_outcomes` to its real computer
+/// ([`session_outcomes::compute`]); the remaining groups are still Phase-4 stubs
+/// (`Ok(0)`) until 5.2–5.6 land — a stub is an honest no-op, never a fabricated
+/// value.
 pub async fn compute(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
     #[cfg(test)]
     probe::record("compute");
-    let _ = ctx; // Phase 5 seam: read the window + write sensei.project_metrics.
     match MetricGroup::from_task_name(&task.path) {
         Some(group) => {
             tracing::info!(
                 group = group.as_str(),
                 project = %task.folder_path,
-                "compute_metrics: computing {} (stub — Phase 5 fills in)",
+                "compute_metrics: computing {}",
                 group.as_str(),
             );
-            Ok(0)
+            match group {
+                MetricGroup::SessionOutcomes => {
+                    session_outcomes::compute(ctx, &task.folder_path).await
+                }
+                // Phase 5.2–5.6 fill these in; until then a known group is a logged
+                // no-op returning Ok(0) (never a fabricated value).
+                MetricGroup::Churn
+                | MetricGroup::Duplication
+                | MetricGroup::Autonomy
+                | MetricGroup::Knowledge
+                | MetricGroup::Tool => Ok(0),
+            }
         }
         None => {
             // Intentional logged no-op (NOT fabrication): a registry entry whose
@@ -184,12 +199,14 @@ mod tests {
         let ctx = make_ctx().await;
         let pid = uuid::Uuid::new_v4().to_string();
 
-        // A known task_name routes to its computer (stub) and returns Ok.
+        // A known task_name routes to its computer and returns Ok. `pid` is a
+        // random (nonexistent) project, so session_outcomes finds no sessions and
+        // honestly writes 0 rows — the routing is what's under test here.
         let known = Task::new(TaskKind::ComputeMetrics, &pid, "session_outcomes");
         assert_eq!(
             compute(&ctx, &known).await.unwrap(),
             0,
-            "a known group computes (stub) and returns Ok",
+            "a known group routes to its computer and returns Ok (0 rows for an empty project)",
         );
 
         // An UNKNOWN task_name is a logged no-op — Ok, never a panic, never a
