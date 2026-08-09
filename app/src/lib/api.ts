@@ -474,7 +474,7 @@ export function senseiApi(port: number) {
         recentSessions: [],
       }),
 
-    // Projection over sensei.ftr_daily → header chip + 14-bar strip.
+    // Holistic FTR headline (14d / prior / trend / 7d) → Today header chip.
     getObservatoryFtr: () =>
       get<ObservatoryFtr>('/api/observatory/ftr', { ftr14d: 0, ftr14dPrev: 0, ftrTrend: [], sessions7d: 0 }),
 
