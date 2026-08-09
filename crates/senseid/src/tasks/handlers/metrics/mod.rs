@@ -23,7 +23,8 @@ use super::super::Task;
 
 /// Per-group computers. `session_outcomes` is the first real one (Phase 5.1) and
 /// the template the remaining groups follow as they land; `churn` (Phase 5.2) is
-/// the second.
+/// the second; `autonomy` (Phase 5.4) is the third.
+mod autonomy;
 mod churn;
 mod session_outcomes;
 
@@ -111,9 +112,9 @@ impl MetricGroup {
 /// `task_name` is a logged no-op that returns `Ok` — never a panic, never a queue
 /// error. Returns the number of `project_metrics` rows the group wrote.
 ///
-/// Phase 5.1 wires `session_outcomes` to its real computer
-/// ([`session_outcomes::compute`]); the remaining groups are still Phase-4 stubs
-/// (`Ok(0)`) until 5.2–5.6 land — a stub is an honest no-op, never a fabricated
+/// Phases 5.1/5.2/5.4 wire `session_outcomes`, `churn`, and `autonomy` to their
+/// real computers; `duplication`/`knowledge`/`tool` are still Phase-4 stubs
+/// (`Ok(0)`) until 5.3/5.5/5.6 land — a stub is an honest no-op, never a fabricated
 /// value.
 pub async fn compute(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
     #[cfg(test)]
@@ -131,12 +132,10 @@ pub async fn compute(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
                     session_outcomes::compute(ctx, &task.folder_path).await
                 }
                 MetricGroup::Churn => churn::compute(ctx, &task.folder_path).await,
-                // Phase 5.3–5.6 fill these in; until then a known group is a logged
-                // no-op returning Ok(0) (never a fabricated value).
-                MetricGroup::Duplication
-                | MetricGroup::Autonomy
-                | MetricGroup::Knowledge
-                | MetricGroup::Tool => Ok(0),
+                MetricGroup::Autonomy => autonomy::compute(ctx, &task.folder_path).await,
+                // Phase 5.3/5.5/5.6 fill these in; until then a known group is a
+                // logged no-op returning Ok(0) (never a fabricated value).
+                MetricGroup::Duplication | MetricGroup::Knowledge | MetricGroup::Tool => Ok(0),
             }
         }
         None => {
