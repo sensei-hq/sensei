@@ -13,7 +13,8 @@
     const icon = $derived(
         projectIcon(data.project ?? { id: data.projectId, icon: null }, apiBase(appState.port)),
     );
-    const ftr14d = $derived(data.ftrMetrics?.ftr14d ?? 0);
+    // Keep an absent FTR as null (honest no-data → "—" in the sidebar), never 0.
+    const ftr14d = $derived(data.ftrMetrics?.ftr14d ?? null);
 </script>
 
 <div data-component="project-shell" class="flex flex-col h-screen overflow-hidden bg-paper-soft text-ink">

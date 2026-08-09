@@ -1,10 +1,11 @@
 <script lang="ts">
     import { page } from '$app/state';
     import { Eyebrow } from '$lib/components';
+    import { ftrPctLabel } from '$lib/ftr.js';
 
     interface Props {
         projectId: string;
-        ftr14d: number; // 0..1
+        ftr14d: number | null; // 0..1, or null when there's no FTR data
     }
     let { projectId, ftr14d }: Props = $props();
 
@@ -22,7 +23,8 @@
         { id: 'about',        kanji: '情', label: 'About' },
     ];
 
-    const ftrPct = $derived(Math.round(ftr14d * 100));
+    // "NN%" or the "—" no-data marker (never a fabricated 0%).
+    const ftrLabel = $derived(ftrPctLabel(ftr14d));
 
     function isActive(sectionId: string): boolean {
         return page.url.pathname.startsWith(`/project/${projectId}/${sectionId}`);
@@ -34,7 +36,7 @@
     class="w-[180px] shrink-0 border-r border-paper-edge flex flex-col py-3"
 >
     <div class="px-4 pb-4 pt-2">
-        <span class="text-2xl font-bold block">{ftrPct}%</span>
+        <span class="text-2xl font-bold block">{ftrLabel}</span>
         <span class="text-xs text-ink-soft">FTR 14d</span>
     </div>
 

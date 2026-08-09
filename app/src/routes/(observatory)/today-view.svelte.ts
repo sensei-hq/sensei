@@ -4,16 +4,19 @@
 // header chip / strip and maps discriminators (insight tone, hero
 // provenance) to tokens — no screen-side decisions about what to teach.
 import type { ObservatoryFtr, ObservatoryInsight, ObservatoryTodayHero } from '$lib/types.js';
+import { ftrPct } from '$lib/ftr.js';
 
 export type FtrDirection = 'up' | 'down' | 'flat';
 
 export interface FtrChip {
-  /** 14-day FTR as a whole-number percentage (0–100). */
-  value: number;
-  /** Signed change vs the prior 14 days, in percentage points. */
-  delta: number;
+  /** 14-day FTR as a whole-number percentage (0–100), or null when there's no
+   *  FTR data in the window — the chip renders "—", never a fabricated 0%. */
+  value: number | null;
+  /** Signed change vs the prior 14 days, in percentage points — null when either
+   *  window has no data, so no arrow is shown. */
+  delta: number | null;
   direction: FtrDirection;
-  /** Arrow glyph for the direction: ↑ / ↓ / →. */
+  /** Arrow glyph for the direction: ↑ / ↓ / → — empty when there's no delta. */
   arrow: string;
   /** Text-color utility for the delta glyph. */
   toneClass: string;
@@ -21,13 +24,18 @@ export interface FtrChip {
 
 /**
  * Project the raw FTR wire numbers into the header chip. `delta` reflects
- * `ftr14d - ftr14dPrev` (spec), so the arrow reads up / down / flat.
+ * `ftr14d - ftr14dPrev` (spec), so the arrow reads up / down / flat. An absent
+ * 14d rate yields `value: null` (render "—"); an absent prior window yields
+ * `delta: null` (no arrow) — never a fabricated 0.
  */
 export function ftrChip(ftr: ObservatoryFtr): FtrChip {
-  const value = Math.round(ftr.ftr14d * 100);
-  const delta = Math.round((ftr.ftr14d - ftr.ftr14dPrev) * 100);
-  const direction: FtrDirection = delta > 0 ? 'up' : delta < 0 ? 'down' : 'flat';
-  const arrow = direction === 'up' ? '↑' : direction === 'down' ? '↓' : '→';
+  const value = ftrPct(ftr.ftr14d);
+  const delta =
+    ftr.ftr14d == null || ftr.ftr14dPrev == null
+      ? null
+      : Math.round((ftr.ftr14d - ftr.ftr14dPrev) * 100);
+  const direction: FtrDirection = delta == null || delta === 0 ? 'flat' : delta > 0 ? 'up' : 'down';
+  const arrow = delta == null ? '' : direction === 'up' ? '↑' : direction === 'down' ? '↓' : '→';
   const toneClass =
     direction === 'up' ? 'text-success' : direction === 'down' ? 'text-warning' : 'text-ink-soft';
   return { value, delta, direction, arrow, toneClass };

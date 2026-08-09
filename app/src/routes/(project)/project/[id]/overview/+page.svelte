@@ -76,8 +76,12 @@
     <div class="text-right shrink-0">
       <div class="text-xs tracking-wide uppercase text-ink-mute">FTR · 14d</div>
       <div class="flex items-baseline justify-end gap-1 mt-1">
-        <span class="display text-2xl font-normal leading-none {ftr.toneClass}">{ftr.pct}</span>
-        <span class="text-xs text-ink-mute">%</span>
+        {#if ftr.pct === null}
+          <span class="display text-2xl font-normal leading-none text-ink-mute">—</span>
+        {:else}
+          <span class="display text-2xl font-normal leading-none {ftr.toneClass}">{ftr.pct}</span>
+          <span class="text-xs text-ink-mute">%</span>
+        {/if}
       </div>
     </div>
   </header>
