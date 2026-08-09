@@ -184,14 +184,16 @@ buildable source of truth — formulas, source columns, live coverage).
 ## Quality — is the code healthy?
 
 ### Duplication ratio `duplication_ratio`
-- **Facets:** quality · ratio · ▼ · session, project, per-module (folder)
-- **Definition:** new symbols matching an existing symbol/embedding ÷ new symbols.
-- **Calculation:** `count(new symbols with a duplicate match) / count(new symbols)` via `get_duplicates`.
-- **Source:** `sensei.nodes` + `get_duplicates` — live (not enforced at write yet).
+- **Facets:** quality · ratio · ▼ · project, per-module (folder)
+- **Definition:** eligible symbols participating in a duplicate cluster ÷ eligible symbols (point-in-time snapshot).
+- **Calculation:** `count(eligible symbols with a near-duplicate match) / count(eligible symbols)` via `find_duplicates_scoped` — an *eligible* symbol is a `function`/`method` node with an embedding spanning ≥3 lines; a *match* is cosine similarity ≥ 0.92.
+- **Source:** `sensei.nodes` (embeddings) via `find_duplicates_scoped` — live.
 - **How to read:** rising duplication = DRY erosion (the AI-churn signal, measured
-  first-party — not GitClear's inflated "4×"). Catch it at write time.
+  first-party — not GitClear's inflated "4×"). A point-in-time snapshot of how much
+  of the symbol surface is near-duplicated; the new-vs-existing (write-time) split is
+  a deferred follow-up.
 - **Representation:** trend line + a per-module heatmap cell.
-- **Status:** live (compute at write time — not yet wired into the loop).
+- **Status:** live (snapshot; the write-time "new duplicate" version is deferred — needs an immutable `nodes.created_at`).
 
 ### Churn concentration `churn_concentration`
 - **Facets:** quality · pct · ● · project
