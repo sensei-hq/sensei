@@ -187,6 +187,34 @@ pub(crate) async fn seed_file_node(pg: &PgStore, folder_id: &uuid::Uuid, file_pa
     .unwrap();
 }
 
+/// Insert an ADDITIONAL folder wired to an existing project under the `/_test`
+/// watch root and return its id — for multi-module fixtures (a project with >1
+/// folder, e.g. the cross-folder duplication case). `uniq` keeps `abs_path`
+/// collision-free. Companion to [`seed_metrics_project_folder`] (which creates the
+/// project + its FIRST folder and the watch root); call that first. The extra
+/// folder is NOT removed by [`cleanup_metrics_fixture`] (which deletes only one
+/// folder), so delete it explicitly in the test.
+pub(crate) async fn seed_metrics_folder(
+    pg: &PgStore,
+    project_id: &uuid::Uuid,
+    uniq: &uuid::Uuid,
+) -> uuid::Uuid {
+    let name = format!("metrics-{uniq}");
+    let abs = format!("/_test/metrics-{uniq}");
+    let (fid,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
+        "INSERT INTO sensei.folders(root_id, kind, name, path, abs_path, project_id) \
+         VALUES('00000000-0000-0000-0000-000000000001', 'git'::sensei.folder_kind, $1, $1, $2, $3) \
+         ON CONFLICT(abs_path) DO UPDATE SET project_id = EXCLUDED.project_id RETURNING id",
+    )
+    .bind(&name)
+    .bind(&abs)
+    .bind(project_id)
+    .fetch_one(pg.pool())
+    .await
+    .unwrap();
+    fid
+}
+
 /// A 384-dim pgvector literal with every component equal to `val` (a SQL numeric
 /// text, e.g. `"0.1"`). Two such vectors are IDENTICAL → cosine similarity 1.0, a
 /// guaranteed near-duplicate for the `duplication_ratio` fixture. Emitted as a raw

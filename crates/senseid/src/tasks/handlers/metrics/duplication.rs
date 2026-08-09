@@ -123,8 +123,8 @@ mod tests {
     use super::*;
     use crate::db::pg_store::PgStore;
     use crate::tasks::test_support::{
-        cleanup_metrics_fixture, make_ctx, onehot_embedding_sql, seed_metrics_project_folder,
-        seed_symbol_node, uniform_embedding_sql,
+        cleanup_metrics_fixture, make_ctx, onehot_embedding_sql, seed_metrics_folder,
+        seed_metrics_project_folder, seed_symbol_node, uniform_embedding_sql,
     };
     use sqlx_core::query_as::query_as;
 
@@ -190,6 +190,11 @@ mod tests {
         assert!((dr.1 - 0.4).abs() < 1e-9, "value = 2 duplicate-participating / 5 eligible = 0.4");
         assert_eq!(dr.2["numerator"].as_i64(), Some(2), "numerator = # symbols in a duplicate cluster");
         assert_eq!(dr.2["denominator"].as_i64(), Some(5), "denominator = # eligible symbols");
+        // Invariant: participants are a SUBSET of eligible symbols → numerator ≤ denominator.
+        assert!(
+            dr.2["numerator"].as_i64().unwrap() <= dr.2["denominator"].as_i64().unwrap(),
+            "numerator (duplicate participants) must never exceed denominator (eligible symbols)",
+        );
 
         // ── Per-module row (single folder) mirrors the project figure ──
         let modules = module_rows(pg, &pid, "duplication_ratio").await;
@@ -313,5 +318,125 @@ mod tests {
 
         cleanup_metrics_fixture(pg, &pid_a, Some(&fid_a), &[]).await;
         cleanup_metrics_fixture(pg, &pid_b, Some(&fid_b), &[]).await;
+    }
+
+    #[tokio::test]
+    async fn duplication_distinct_counts_participants_not_pairs() {
+        // A cluster of 3 MUTUALLY-similar symbols (all pairwise cosine 1.0) forms 3
+        // ordered pairs / 6 directed pairs — but only 3 DISTINCT participants. The
+        // ratio counts participants, not pairs: numerator = 3 (NOT 6/9), denominator
+        // = 3, value = 1.0. This is the case a single 2-symbol pair can't pin: drop
+        // `DISTINCT` from the `dup` CTE and this test goes red (numerator → 6).
+        let ctx = make_ctx().await;
+        let pg = ctx.pg();
+        let uniq = uuid::Uuid::new_v4();
+        let (pid, fid) = seed_metrics_project_folder(pg, &uniq).await;
+        let base = format!("/_test/metrics-{uniq}");
+        let dup = uniform_embedding_sql("0.1"); // identical vector shared by all three
+
+        for name in ["c1", "c2", "c3"] {
+            seed_symbol_node(pg, &fid, "function", name, &format!("{base}/{name}.rs"), (1, 10), Some(&dup)).await;
+        }
+
+        let written = compute(&ctx, &pid.to_string()).await.unwrap();
+        assert_eq!(written, 2, "project row + one per-module row");
+
+        let daily = daily_rows(pg, &pid).await;
+        let dr = daily.iter().find(|r| r.0 == "duplication_ratio").expect("duplication_ratio project row");
+        let num = dr.2["numerator"].as_i64().unwrap();
+        let den = dr.2["denominator"].as_i64().unwrap();
+        assert_eq!(num, 3, "numerator = 3 DISTINCT participants (NOT 6 directed pairs — the DISTINCT proof)");
+        assert_eq!(den, 3, "denominator = 3 eligible symbols");
+        assert!(num <= den, "numerator (participants) must never exceed denominator (eligible)");
+        assert!((dr.1 - 1.0).abs() < 1e-9, "value = 3/3 = 1.0 (the whole cluster is duplicated)");
+
+        // The single per-module row matches (same folder).
+        let modules = module_rows(pg, &pid, "duplication_ratio").await;
+        assert_eq!(modules.len(), 1, "one per-module row");
+        assert_eq!(modules[0].2["numerator"].as_i64(), Some(3), "module numerator = 3 distinct participants");
+        assert_eq!(modules[0].2["denominator"].as_i64(), Some(3), "module denominator = 3 eligible");
+
+        cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
+    }
+
+    #[tokio::test]
+    async fn duplication_line_span_boundary() {
+        // Eligibility requires `line_end - line_start >= 3`. Pin the cliff exactly: a
+        // node with span 2 (line 1..3) is EXCLUDED; a node with span 3 (line 1..4) is
+        // INCLUDED. Distinct one-hot embeddings so neither is a duplicate. Denominator
+        // must be 1 (the span-3 node only): a `>= 2` mutation would give 2; a `>= 4`
+        // mutation would give 0 (no row).
+        let ctx = make_ctx().await;
+        let pg = ctx.pg();
+        let uniq = uuid::Uuid::new_v4();
+        let (pid, fid) = seed_metrics_project_folder(pg, &uniq).await;
+        let base = format!("/_test/metrics-{uniq}");
+        let below = onehot_embedding_sql(1);
+        let at = onehot_embedding_sql(2);
+        // span 2 (3-1) → below the >=3 cliff → excluded.
+        seed_symbol_node(pg, &fid, "function", "span2", &format!("{base}/span2.rs"), (1, 3), Some(&below)).await;
+        // span 3 (4-1) → exactly at the cliff → included.
+        seed_symbol_node(pg, &fid, "function", "span3", &format!("{base}/span3.rs"), (1, 4), Some(&at)).await;
+
+        let written = compute(&ctx, &pid.to_string()).await.unwrap();
+        assert_eq!(written, 2, "a row IS written (the span-3 node is eligible → real denominator)");
+
+        let daily = daily_rows(pg, &pid).await;
+        let dr = daily.iter().find(|r| r.0 == "duplication_ratio").expect("duplication_ratio project row");
+        assert_eq!(dr.2["denominator"].as_i64(), Some(1), "denominator = 1 (only the span==3 node; span==2 excluded)");
+        assert_eq!(dr.2["numerator"].as_i64(), Some(0), "numerator = 0 (the one eligible node has no duplicate)");
+        assert!(dr.1.abs() < 1e-9, "value = 0/1 = 0.0");
+
+        cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
+    }
+
+    #[tokio::test]
+    async fn duplication_cross_folder_attribution() {
+        // A symbol whose duplicate partner lives in ANOTHER folder still counts as a
+        // participant in ITS OWN folder. Two folders in the SAME project, each with one
+        // eligible symbol; the two symbols are near-duplicates of each other (shared
+        // embedding). Each module row counts its own symbol (numerator 1, denominator
+        // 1); the project row is the union (numerator 2, denominator 2, value 1.0).
+        let ctx = make_ctx().await;
+        let pg = ctx.pg();
+        let uniq_x = uuid::Uuid::new_v4();
+        let uniq_y = uuid::Uuid::new_v4();
+        let (pid, fid_x) = seed_metrics_project_folder(pg, &uniq_x).await;
+        let fid_y = seed_metrics_folder(pg, &pid, &uniq_y).await; // second folder, SAME project
+        let base_x = format!("/_test/metrics-{uniq_x}");
+        let base_y = format!("/_test/metrics-{uniq_y}");
+        let dup = uniform_embedding_sql("0.1"); // the shared, cross-folder duplicate
+
+        seed_symbol_node(pg, &fid_x, "function", "x_sym", &format!("{base_x}/x.rs"), (1, 10), Some(&dup)).await;
+        seed_symbol_node(pg, &fid_y, "function", "y_sym", &format!("{base_y}/y.rs"), (1, 10), Some(&dup)).await;
+
+        let written = compute(&ctx, &pid.to_string()).await.unwrap();
+        assert_eq!(written, 3, "project row + one module row per folder (X and Y)");
+
+        // ── Each module counts ITS OWN symbol as a participant ──
+        let modules = module_rows(pg, &pid, "duplication_ratio").await;
+        assert_eq!(modules.len(), 2, "two per-module rows (one per folder)");
+        let mx = modules.iter().find(|(id, _, _)| *id == fid_x).expect("folder X module row");
+        let my = modules.iter().find(|(id, _, _)| *id == fid_y).expect("folder Y module row");
+        assert_eq!(mx.2["numerator"].as_i64(), Some(1), "X: its own symbol is a participant (partner is in Y)");
+        assert_eq!(mx.2["denominator"].as_i64(), Some(1), "X: 1 eligible symbol");
+        assert_eq!(my.2["numerator"].as_i64(), Some(1), "Y: its own symbol is a participant (partner is in X)");
+        assert_eq!(my.2["denominator"].as_i64(), Some(1), "Y: 1 eligible symbol");
+
+        // ── Project row = union across folders ──
+        let daily = daily_rows(pg, &pid).await;
+        let dr = daily.iter().find(|r| r.0 == "duplication_ratio").expect("project row");
+        assert_eq!(dr.2["numerator"].as_i64(), Some(2), "project numerator = Σ folder participants = 2");
+        assert_eq!(dr.2["denominator"].as_i64(), Some(2), "project denominator = Σ folder eligible = 2");
+        assert!((dr.1 - 1.0).abs() < 1e-9, "project value = 2/2 = 1.0");
+
+        cleanup_metrics_fixture(pg, &pid, Some(&fid_x), &[]).await;
+        // cleanup_metrics_fixture deletes only one folder; remove the second explicitly
+        // (its nodes cascade on the folder delete).
+        sqlx_core::query::query("DELETE FROM sensei.folders WHERE id = $1")
+            .bind(fid_y)
+            .execute(pg.pool())
+            .await
+            .unwrap();
     }
 }
