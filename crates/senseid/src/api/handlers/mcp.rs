@@ -259,11 +259,18 @@ pub(crate) async fn mcp_call_tool(
                     let sessions = state.pg.list_sessions_by_folder(&folder_id, 100).await.map_err(|e| { tracing::warn!(error = %e, %folder_id, "mcp get_metrics: list_sessions_by_folder failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
                     let session_count = sessions.len();
                     let completed = sessions.iter().filter(|s| s["outcome"].as_str() == Some("completed")).count();
+                    // FTR is store-backed (project_metrics, metric='ftr') — the SAME
+                    // number the Phase-7 endpoints serve. Honest-absent (null) when
+                    // the folder has no project or no ftr rows; NEVER a fabricated 0.
+                    let ftr: Option<f64> = match json_uuid(&folder["project_id"]) {
+                        Some(pid) => state.pg.get_project_ftr_rate(&pid).await.map_err(|e| { tracing::warn!(error = %e, repo_id, "mcp get_metrics: get_project_ftr_rate failed"); StatusCode::INTERNAL_SERVER_ERROR })?,
+                        None => None,
+                    };
                     serde_json::json!({
                         "project": repo_id,
                         "sessions": session_count,
                         "completed": completed,
-                        "ftr": if session_count > 0 { completed as f64 / session_count as f64 } else { 0.0 },
+                        "ftr": ftr,
                     })
                 } else {
                     serde_json::json!({"error": "invalid folder id"})

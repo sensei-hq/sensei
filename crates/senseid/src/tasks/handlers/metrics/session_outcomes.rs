@@ -12,11 +12,12 @@
 //!   across all sessions — daily.
 //! - `throughput` (count): sessions per day — daily.
 //!
-//! Parity: the daily `ftr` re-derives `database/ddl/view/sensei/ftr_daily.ddl`'s
-//! `avg(case when s.ftr then 1 else 0 end)` as `ftr_count / session_count`, over
-//! the same session base (`outcome is not null`, project scope via
-//! `sensei.folders.project_id`) — but additionally stores the parts + counts the
-//! roll-up views re-aggregate from.
+//! FTR definition: the daily `ftr` is `avg(case when s.ftr then 1 else 0 end)`
+//! computed as `ftr_count / session_count` over the measurable session base
+//! (`outcome is not null`, project scope via `sensei.folders.project_id`) — and
+//! additionally stores the parts + counts the roll-up views re-aggregate from.
+//! These `ftr` rows are now the single FTR source of truth (Phase 8 retired the
+//! legacy `sensei.ftr_daily` / `sensei.project_ftr_metrics` views).
 //!
 //! Never-fabricate: every DB call propagates `Err`; a day/metric with no data
 //! writes NO row (a `0` value is written only when a real denominator exists).
@@ -48,13 +49,13 @@ type DayAgg = (chrono::NaiveDate, i64, i64, i64);
 type DayRework = (chrono::NaiveDate, i64, i64);
 
 /// One session's first-try signal: `(session_id, day, ftr)`. `ftr` is nullable;
-/// `NULL`/`false` both score 0.0 (matching `ftr_daily`'s `case when s.ftr`).
+/// `NULL`/`false` both score 0.0 (the `case when s.ftr` FTR convention).
 type SessionFtr = (uuid::Uuid, chrono::NaiveDate, Option<bool>);
 
 /// Daily session-level aggregates over the window, project-scoped via
-/// `sensei.folders.project_id` (the linkage `ftr_daily` uses). `outcome is not
-/// null` restricts to measurable (analyzed) sessions — in-flight sessions whose
-/// `ftr`/`outcome` are still `NULL` are excluded, as in `ftr_daily`.
+/// `sensei.folders.project_id`. `outcome is not null` restricts to measurable
+/// (analyzed) sessions — in-flight sessions whose `ftr`/`outcome` are still
+/// `NULL` are excluded from the FTR base.
 async fn daily_session_aggregates(
     pg: &PgStore,
     project_id: &uuid::Uuid,
@@ -277,8 +278,8 @@ mod tests {
         seed_metrics_turn(pg, &corrected, 6, ts).await;
         // An in-flight session (outcome NULL, ftr NULL) on the SAME day, WITH
         // tool-calls — it is not yet measurable and MUST be excluded from every
-        // session_outcomes metric (matching ftr_daily's `outcome is not null`). If
-        // the filter regressed, session_count→5, ftr→3/5, throughput→5, rework→6/17.
+        // session_outcomes metric (the `outcome is not null` FTR base). If the
+        // filter regressed, session_count→5, ftr→3/5, throughput→5, rework→6/17.
         let inflight = seed_metrics_session(pg, &fid, &pid, None, None, 0, ts).await;
         seed_metrics_turn(pg, &inflight, 5, ts).await;
 
@@ -289,7 +290,7 @@ mod tests {
         let daily = daily_rows(pg, &pid).await;
 
         let ftr = daily.iter().find(|r| r.0 == "ftr").expect("ftr daily row present");
-        assert!((ftr.1 - 0.75).abs() < 1e-9, "ftr value = 3/4 = 0.75 (matches ftr_daily's avg(case when ftr))");
+        assert!((ftr.1 - 0.75).abs() < 1e-9, "ftr value = 3/4 = 0.75 (avg(case when ftr) over the measurable base)");
         assert_eq!(ftr.2["numerator"].as_i64(), Some(3), "ftr numerator = # first-try sessions (in-flight excluded)");
         assert_eq!(ftr.2["denominator"].as_i64(), Some(4), "ftr denominator = session_count (in-flight excluded)");
         assert_eq!(ftr.2["correction_count"].as_i64(), Some(2), "correction_count = Σ corrections (display)");
@@ -302,18 +303,24 @@ mod tests {
         let throughput = daily.iter().find(|r| r.0 == "throughput").expect("throughput daily row present");
         assert!((throughput.1 - 4.0).abs() < 1e-9, "throughput value = 4 measurable sessions (in-flight excluded)");
 
-        // ── ftr_daily parity (locks the Phase-8 consolidation check now) ──
+        // ── FTR parity (Phase-8 consolidation check) ──────────────────────
+        // Asserted against the ARITHMETIC the retired `sensei.ftr_daily` view
+        // computed — `avg(case when s.ftr then 1 else 0)` and `count(*)` over the
+        // measurable base — read straight from the base tables, NOT the view
+        // object, so this survives the view being dropped in Phase 8.5.
         let (fd_rate, fd_count): (f64, i64) = query_as(
-            "SELECT ftr_rate::float8, session_count::int8 FROM sensei.ftr_daily WHERE project_id = $1",
+            "SELECT avg(CASE WHEN s.ftr THEN 1.0 ELSE 0.0 END)::float8, count(*)::int8 \
+               FROM activity.sessions s JOIN sensei.folders f ON f.id = s.folder_id \
+              WHERE f.project_id = $1 AND s.outcome IS NOT NULL",
         )
         .bind(pid)
         .fetch_one(pg.pool())
         .await
         .unwrap();
-        assert!((fd_rate - ftr.1).abs() < 1e-9, "computed daily ftr value == sensei.ftr_daily.ftr_rate");
+        assert!((fd_rate - ftr.1).abs() < 1e-9, "computed daily ftr value == avg(case when ftr) over the measurable base (old ftr_daily arithmetic)");
         assert_eq!(
             Some(fd_count), ftr.2["denominator"].as_i64(),
-            "ftr denominator == sensei.ftr_daily.session_count",
+            "ftr denominator == count(*) over the measurable base (old ftr_daily.session_count)",
         );
 
         // ── Per-session ftr rows ─────────────────────────────────────────
@@ -344,6 +351,59 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(total, 7, "idempotent upsert — still 7 rows after a second run");
+
+        cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
+    }
+
+    /// Phase 8.4 parity proof, written as formula-equivalence so it survives the
+    /// `sensei.ftr_daily` / `sensei.project_ftr_metrics` drop: the store-derived
+    /// FTR (from `project_metrics`, read back through the getters) equals the
+    /// ARITHMETIC the retired views computed, expressed directly over the seeded
+    /// sessions — NOT queried from any view object.
+    #[tokio::test]
+    async fn ftr_parity_store_vs_views() {
+        let ctx = make_ctx().await;
+        let pg = ctx.pg();
+        let uniq = uuid::Uuid::new_v4();
+        let (pid, fid) = seed_metrics_project_folder(pg, &uniq).await;
+
+        // Seed a measurable set on ONE day (all `outcome is not null`, so the old
+        // per-session-average view formula and the store's Σnum/Σden coincide):
+        // 3 first-try + 1 corrected. Direct arithmetic over these seeds:
+        //   ftr_daily      : avg(case when ftr) = (1+1+1+0)/4 = 0.75; session_count = 4
+        //   project_ftr    : Σnumerator/Σdenominator = 3/4 = 0.75; sessions_7d = 4
+        let ts = chrono::Utc::now() - chrono::Duration::hours(2);
+        for _ in 0..3 {
+            seed_metrics_session(pg, &fid, &pid, Some("completed"), Some(true), 0, ts).await;
+        }
+        seed_metrics_session(pg, &fid, &pid, Some("corrected"), Some(false), 1, ts).await;
+
+        let written = compute(&ctx, &pid.to_string()).await.unwrap();
+        assert!(written > 0, "compute wrote store rows for the seeded sessions");
+
+        // Store-derived daily FTR (get_ftr_daily reads project_metric_daily) ==
+        // the old ftr_daily arithmetic over the seed.
+        let daily = pg.get_ftr_daily(Some(&pid), 14).await.unwrap();
+        let today = (chrono::Utc::now()).date_naive().to_string();
+        let row = daily.iter().find(|r| r["day"].as_str() == Some(today.as_str()))
+            .expect("today's daily ftr row present");
+        assert!((row["ftr_rate"].as_f64().unwrap() - 0.75).abs() < 1e-9,
+            "store daily ftr_rate == avg(case when ftr) over seeds = 0.75");
+        assert_eq!(row["session_count"].as_i64(), Some(4),
+            "store session_count == count(*) over the measurable base = 4");
+
+        // Store-derived 14d headline (get_project_ftr reads project_metric_daily)
+        // == the old project_ftr_metrics formula (Σnum/Σden over 14d) over the seed.
+        let ftr = pg.get_project_ftr(&pid).await.unwrap();
+        assert!((ftr["ftr14d"].as_f64().unwrap() - 0.75).abs() < 1e-9,
+            "store ftr14d == Σnumerator/Σdenominator over 14d = 3/4 = 0.75");
+        assert_eq!(ftr["sessions7d"].as_i64(), Some(4),
+            "store sessions7d == Σdenominator over 7d = 4");
+
+        // And the shared rate helper the legacy surfaces call agrees.
+        let rate = pg.get_project_ftr_rate(&pid).await.unwrap();
+        assert!((rate.expect("rate present for a project with ftr rows") - 0.75).abs() < 1e-9,
+            "get_project_ftr_rate == the same 14d headline number");
 
         cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
     }

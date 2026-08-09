@@ -1260,8 +1260,9 @@ export interface ProjectOverviewHeader {
   kanji: string;
   client: string | null;
   goal: string | null;
-  /** 14-day rolling FTR, 0..1 — same project_ftr_metrics view the
-   *  projects-index card reads, so the two numbers never disagree. */
+  /** 14-day rolling FTR, 0..1 — the same store-backed FTR number
+   *  (project_metrics, metric='ftr') the projects-index card reads, so the
+   *  two numbers never disagree. */
   ftr: number;
   warn: boolean;
   sessions7d: number;
