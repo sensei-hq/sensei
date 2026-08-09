@@ -414,4 +414,79 @@ mod tests {
         cleanup_metrics_fixture(pg, &pid_a, Some(&fid_a), &[]).await;
         cleanup_metrics_fixture(pg, &pid_b, Some(&fid_b), &[]).await;
     }
+
+    #[tokio::test]
+    async fn project_health_zero_weight_components() {
+        // `metrics.weight` has no CHECK (weight > 0) in the DDL, so a weight-0 component
+        // is a production-reachable input. It must be INCLUDED (normalized, shown in
+        // props) yet contribute NOTHING to the weighted mean — and when EVERY included
+        // component has weight 0, the `sum_weight <= 0` guard must fire (NO row, never a
+        // divide-by-zero or fabricated score). Two projects pin both paths.
+        let ctx = make_ctx().await;
+        let pg = ctx.pg();
+
+        // ── A: weight-1 contributor (value 0.6) + weight-0 component (value 0.9) ──
+        // score = round(100 × (1·0.6 + 0·0.9)/(1+0)) = 60. If the zero weight were
+        // treated as 1, the mean would be (0.6+0.9)/2 → 75.
+        let uniq_a = uuid::Uuid::new_v4();
+        let (pid_a, fid_a) = seed_metrics_project_folder(pg, &uniq_a).await;
+        let contrib_key = format!("_test:health:{uniq_a}:contrib");
+        let zero_key = format!("_test:health:{uniq_a}:zero");
+        let m_contrib = seed_health_metric(pg, &contrib_key, "pct", "higher_better", 1.0, None).await;
+        let m_zero = seed_health_metric(pg, &zero_key, "pct", "higher_better", 0.0, None).await;
+        seed_value(pg, &m_contrib, &pid_a, 0.6).await;
+        seed_value(pg, &m_zero, &pid_a, 0.9).await;
+
+        let written_a = compute(&ctx, &pid_a.to_string()).await.unwrap();
+        assert_eq!(written_a, 1, "A writes one health row");
+        let (a_val, a_props) = health_row(pg, &pid_a).await.expect("A project_health row present");
+        assert!((a_val - 60.0).abs() < 1e-9, "zero-weight contributes nothing → 60 (not 75), got {a_val}");
+        // The zero-weight metric is still INCLUDED (normalized, in props) — inclusion is
+        // not contribution when its weight is 0.
+        assert!((a_props["components"][&zero_key].as_f64().unwrap() - 0.9).abs() < 1e-9,
+            "zero-weight component is still normalized + shown (norm 0.9)");
+
+        // ── B: EVERY included component has weight 0 → guard fires, NO row ──
+        let uniq_b = uuid::Uuid::new_v4();
+        let (pid_b, fid_b) = seed_metrics_project_folder(pg, &uniq_b).await;
+        let z1_key = format!("_test:health:{uniq_b}:z1");
+        let z2_key = format!("_test:health:{uniq_b}:z2");
+        let m_z1 = seed_health_metric(pg, &z1_key, "pct", "higher_better", 0.0, None).await;
+        let m_z2 = seed_health_metric(pg, &z2_key, "ratio", "lower_better", 0.0, None).await;
+        seed_value(pg, &m_z1, &pid_b, 0.5).await; // real values + valid norms …
+        seed_value(pg, &m_z2, &pid_b, 0.2).await; // … but Σweight = 0
+
+        let written_b = compute(&ctx, &pid_b.to_string()).await.unwrap();
+        assert_eq!(written_b, 0, "all-zero-weight → sum_weight guard fires → NO row (no divide-by-zero)");
+        assert!(health_row(pg, &pid_b).await.is_none(), "no project_health row when every weight is 0 (never fabricated)");
+
+        purge_metrics(pg, &[&contrib_key, &zero_key, &z1_key, &z2_key]).await;
+        cleanup_metrics_fixture(pg, &pid_a, Some(&fid_a), &[]).await;
+        cleanup_metrics_fixture(pg, &pid_b, Some(&fid_b), &[]).await;
+    }
+
+    #[tokio::test]
+    async fn project_health_rounds_half_away_from_zero() {
+        // Pin the rounding tie-break at an EXACT x.5. One count component with target 8
+        // and value 1 normalizes to 1/8 = 0.125 (exactly representable), so the weighted
+        // mean is 0.125 and 100 × 0.125 = 12.5 EXACTLY. round-half-away-from-zero → 13;
+        // truncation or banker's rounding (round-half-to-even) would give 12. Asserting
+        // 13 catches a future switch away from `f64::round()`.
+        let ctx = make_ctx().await;
+        let pg = ctx.pg();
+        let uniq = uuid::Uuid::new_v4();
+        let (pid, fid) = seed_metrics_project_folder(pg, &uniq).await;
+        let key = format!("_test:health:{uniq}:half");
+        let m = seed_health_metric(pg, &key, "count", "higher_better", 1.0, Some(8.0)).await;
+        seed_value(pg, &m, &pid, 1.0).await; // 1/8 = 0.125 → 100×0.125 = 12.5 exactly
+
+        compute(&ctx, &pid.to_string()).await.unwrap();
+
+        let (value, props) = health_row(pg, &pid).await.expect("project_health row present");
+        assert!((props["components"][&key].as_f64().unwrap() - 0.125).abs() < 1e-12, "norm is exactly 0.125");
+        assert!((value - 13.0).abs() < 1e-9, "12.5 rounds half away from zero to 13 (not 12), got {value}");
+
+        purge_metrics(pg, &[&key]).await;
+        cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
+    }
 }
