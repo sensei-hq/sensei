@@ -23,14 +23,15 @@ use super::super::Task;
 use crate::db::pg_store::PgStore;
 
 /// Per-group computers. `session_outcomes` is the first real one (Phase 5.1) and
-/// the template the remaining groups follow as they land; `churn` (Phase 5.2),
-/// `duplication` (Phase 5.3), `autonomy` (Phase 5.4), and `knowledge` (Phase 5.5)
-/// are the next.
+/// the template the remaining groups follow: `churn` (Phase 5.2), `duplication`
+/// (Phase 5.3), `autonomy` (Phase 5.4), `knowledge` (Phase 5.5), and `tool`
+/// (Phase 5.6) complete the six v1 base groups.
 mod autonomy;
 mod churn;
 mod duplication;
 mod knowledge;
 mod session_outcomes;
+mod tool;
 
 /// Today's date (DB `current_date`) — the `computed_on` for the SNAPSHOT metrics
 /// (`churn`'s `rework_density`, `duplication`'s `duplication_ratio`) that store a
@@ -130,9 +131,9 @@ impl MetricGroup {
 /// `task_name` is a logged no-op that returns `Ok` — never a panic, never a queue
 /// error. Returns the number of `project_metrics` rows the group wrote.
 ///
-/// Phases 5.1–5.5 wire `session_outcomes`, `churn`, `duplication`, `autonomy`, and
-/// `knowledge` to their real computers; `tool` is still a Phase-4 stub (`Ok(0)`)
-/// until 5.6 lands — a stub is an honest no-op, never a fabricated value.
+/// Phases 5.1–5.6 wire all six v1 base groups — `session_outcomes`, `churn`,
+/// `duplication`, `autonomy`, `knowledge`, and `tool` — to their real computers;
+/// an UNKNOWN `task_name` remains an honest logged no-op, never a fabricated value.
 pub async fn compute(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
     #[cfg(test)]
     probe::record("compute");
@@ -152,9 +153,7 @@ pub async fn compute(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
                 MetricGroup::Duplication => duplication::compute(ctx, &task.folder_path).await,
                 MetricGroup::Autonomy => autonomy::compute(ctx, &task.folder_path).await,
                 MetricGroup::Knowledge => knowledge::compute(ctx, &task.folder_path).await,
-                // Phase 5.6 fills this in; until then a known group is a logged
-                // no-op returning Ok(0) (never a fabricated value).
-                MetricGroup::Tool => Ok(0),
+                MetricGroup::Tool => tool::compute(ctx, &task.folder_path).await,
             }
         }
         None => {
