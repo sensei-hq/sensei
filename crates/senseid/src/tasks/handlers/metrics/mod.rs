@@ -20,13 +20,29 @@
 
 use super::super::executor::TaskContext;
 use super::super::Task;
+use crate::db::pg_store::PgStore;
 
 /// Per-group computers. `session_outcomes` is the first real one (Phase 5.1) and
-/// the template the remaining groups follow as they land; `churn` (Phase 5.2) is
-/// the second; `autonomy` (Phase 5.4) is the third.
+/// the template the remaining groups follow as they land; `churn` (Phase 5.2),
+/// `duplication` (Phase 5.3), and `autonomy` (Phase 5.4) are the next three.
 mod autonomy;
 mod churn;
+mod duplication;
 mod session_outcomes;
+
+/// Today's date (DB `current_date`) — the `computed_on` for the SNAPSHOT metrics
+/// (`churn`'s `rework_density`, `duplication`'s `duplication_ratio`) that store a
+/// point-in-time value rather than a windowed per-day series. Read from the DB so
+/// the day boundary matches the `date_trunc('day', started_at)::date` the windowed
+/// computers use (same session TZ). Shared by every snapshot computer so the day
+/// source can't drift between groups.
+pub(super) async fn today(pg: &PgStore) -> Result<chrono::NaiveDate, String> {
+    let (d,): (chrono::NaiveDate,) = sqlx_core::query_as::query_as("SELECT current_date")
+        .fetch_one(pg.pool())
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(d)
+}
 
 /// Test-only routing probe: records WHICH handler last ran on the current thread,
 /// so the executor's dispatch test can assert `ComputeMetrics → compute` and
@@ -112,9 +128,9 @@ impl MetricGroup {
 /// `task_name` is a logged no-op that returns `Ok` — never a panic, never a queue
 /// error. Returns the number of `project_metrics` rows the group wrote.
 ///
-/// Phases 5.1/5.2/5.4 wire `session_outcomes`, `churn`, and `autonomy` to their
-/// real computers; `duplication`/`knowledge`/`tool` are still Phase-4 stubs
-/// (`Ok(0)`) until 5.3/5.5/5.6 land — a stub is an honest no-op, never a fabricated
+/// Phases 5.1/5.2/5.3/5.4 wire `session_outcomes`, `churn`, `duplication`, and
+/// `autonomy` to their real computers; `knowledge`/`tool` are still Phase-4 stubs
+/// (`Ok(0)`) until 5.5/5.6 land — a stub is an honest no-op, never a fabricated
 /// value.
 pub async fn compute(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
     #[cfg(test)]
@@ -132,10 +148,11 @@ pub async fn compute(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
                     session_outcomes::compute(ctx, &task.folder_path).await
                 }
                 MetricGroup::Churn => churn::compute(ctx, &task.folder_path).await,
+                MetricGroup::Duplication => duplication::compute(ctx, &task.folder_path).await,
                 MetricGroup::Autonomy => autonomy::compute(ctx, &task.folder_path).await,
-                // Phase 5.3/5.5/5.6 fill these in; until then a known group is a
-                // logged no-op returning Ok(0) (never a fabricated value).
-                MetricGroup::Duplication | MetricGroup::Knowledge | MetricGroup::Tool => Ok(0),
+                // Phase 5.5/5.6 fill these in; until then a known group is a logged
+                // no-op returning Ok(0) (never a fabricated value).
+                MetricGroup::Knowledge | MetricGroup::Tool => Ok(0),
             }
         }
         None => {
