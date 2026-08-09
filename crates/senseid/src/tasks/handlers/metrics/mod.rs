@@ -11,12 +11,12 @@
 //! `ComputeMetrics` ids). Its own registry `task_name` is [`HEALTH_TASK_NAME`],
 //! which is therefore NOT a base group.
 //!
-//! Phase 4 is the skeleton: routing + stubs. Each known group logs
-//! `computing <group>` and returns `Ok(0)`; Phase 5 fills in the real per-group
-//! computation (read the window, write `sensei.project_metrics`) and Phase 6
-//! fills in [`compute_health`]. An UNKNOWN `task_name` is an intentional logged
-//! no-op that returns `Ok` — a registry entry the daemon doesn't yet know about
-//! degrades to a warning, never a panic or a stuck queue.
+//! Phase 5 fills in the real per-group computation (read the window, write
+//! `sensei.project_metrics`) for the six base groups; Phase 6 fills in
+//! [`compute_health`] (the derived `project_health` roll-up in [`health`]). An
+//! UNKNOWN `task_name` is an intentional logged no-op that returns `Ok` — a registry
+//! entry the daemon doesn't yet know about degrades to a warning, never a panic or a
+//! stuck queue.
 
 use super::super::executor::TaskContext;
 use super::super::Task;
@@ -29,6 +29,7 @@ use crate::db::pg_store::PgStore;
 mod autonomy;
 mod churn;
 mod duplication;
+mod health;
 mod knowledge;
 mod session_outcomes;
 mod tool;
@@ -170,20 +171,21 @@ pub async fn compute(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
     }
 }
 
-/// `ComputeHealth` handler (Phase 4 stub): the per-project barrier that runs after
-/// the base `ComputeMetrics` tasks land (wired via `blocked_by` in the scheduler).
-/// Phase 6 fills in the derived `project_health` score; the stub logs and returns
-/// `Ok` so the barrier completes and the pipeline is exercised end-to-end. The
-/// project id rides in `task.folder_path`.
+/// `ComputeHealth` handler (Phase 6): the per-project barrier that runs after the
+/// base `ComputeMetrics` tasks land (wired via `blocked_by` in the scheduler). It
+/// rolls the project's latest daily component values into the derived
+/// `project_health` score — see [`health::compute`] for the normalization and the
+/// never-fabricate rules. The project id rides in `task.folder_path`. Returns the
+/// number of `project_metrics` rows written (`1` when ≥1 component is included, else
+/// `0` — no components ⇒ NO row, never a fabricated score).
 pub async fn compute_health(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
     #[cfg(test)]
     probe::record("compute_health");
-    let _ = ctx; // Phase 6 seam: aggregate the project's base metrics into a score.
     tracing::info!(
         project = %task.folder_path,
-        "compute_health: (stub — Phase 6 fills in)",
+        "compute_health: computing project_health",
     );
-    Ok(0)
+    health::compute(ctx, &task.folder_path).await
 }
 
 #[cfg(test)]
