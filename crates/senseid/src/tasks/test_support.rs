@@ -187,6 +187,108 @@ pub(crate) async fn seed_file_node(pg: &PgStore, folder_id: &uuid::Uuid, file_pa
     .unwrap();
 }
 
+/// Insert one `sensei.memories` row for the `memory_promotion` numerator
+/// (knowledge, 5.5) and return its id. `created_at` is set EXPLICITLY (not
+/// defaulted to `now()`) so a test can place a memory inside or outside the
+/// rolling window — memory_promotion windows the numerator on `created_at` (the
+/// stable "learned" timestamp, distinct from `modified_at` which moves on every
+/// reinforcement). Project-attributed via `project_id`; `type`/`title`/`content`
+/// are the row's only other NOT-NULL-without-default columns. Cascades on the
+/// project delete, so [`cleanup_metrics_fixture`] clears it.
+pub(crate) async fn seed_memory(
+    pg: &PgStore,
+    project_id: &uuid::Uuid,
+    created_at: chrono::DateTime<chrono::Utc>,
+) -> uuid::Uuid {
+    let (id,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
+        "INSERT INTO sensei.memories (project_id, type, title, content, created_at) \
+         VALUES ($1, 'decision'::sensei.memory_type, 'test-memory', 'test-content', $2) RETURNING id",
+    )
+    .bind(project_id)
+    .bind(created_at)
+    .fetch_one(pg.pool())
+    .await
+    .unwrap();
+    id
+}
+
+/// Insert one `inference.detected_patterns` row with a CHOSEN `instance_count`
+/// (the `memory_promotion` denominator counts patterns whose `instance_count >=
+/// 3` as "eligible" for distillation). Reuses the production upsert
+/// ([`PgStore::upsert_pattern`], which derives `instance_count` from the
+/// `instances` array length) rather than re-implementing the SQL — so this seeds
+/// an eligible pattern by handing it `instance_count` synthetic instance objects.
+/// Distinct `name`s keep rows apart under `(project_id, name, is_anti_pattern)`.
+/// Returns the pattern id. Companion to [`seed_detected_pattern`] (which always
+/// seeds `instance_count = 0`, i.e. an INELIGIBLE pattern).
+pub(crate) async fn seed_pattern_with_instances(
+    pg: &PgStore,
+    project_id: &uuid::Uuid,
+    folder_id: Option<&uuid::Uuid>,
+    name: &str,
+    is_anti: bool,
+    instance_count: usize,
+) -> uuid::Uuid {
+    let instances: Vec<serde_json::Value> = (0..instance_count)
+        .map(|i| serde_json::json!({ "file": format!("f{i}.rs"), "line": i }))
+        .collect();
+    pg.upsert_pattern(
+        project_id,
+        folder_id,
+        name,
+        is_anti,
+        None,
+        &serde_json::Value::Array(instances),
+    )
+    .await
+    .unwrap()
+}
+
+/// Insert one `inference.corrections` row via the production upsert (DRY —
+/// [`PgStore::upsert_correction`]) for the `memory_promotion` denominator. A
+/// correction is a GLOBAL recurrence cluster keyed by `signature` (unique) with a
+/// `count` recurrence tally and a `project_ids` array naming the projects it
+/// appeared in; it is "eligible" for a project when `count >= 3` AND the project
+/// is a member of `project_ids`. `count`/`project_ids` are the two the metric
+/// reads. Returns the correction id. NOTE: corrections have NO project FK
+/// (membership is the array), so they never cascade on a project delete — clear
+/// them with [`purge_corrections`].
+pub(crate) async fn seed_correction(
+    pg: &PgStore,
+    signature: &str,
+    count: i32,
+    project_ids: &[uuid::Uuid],
+) -> uuid::Uuid {
+    let row = crate::corrections::CorrectionRow {
+        signature: signature.to_string(),
+        text: "test correction".to_string(),
+        suggestion: None,
+        count,
+        project_ids: project_ids.to_vec(),
+        last_seen: chrono::Utc::now(),
+        memory_id: None,
+        instances: serde_json::json!([]),
+    };
+    pg.upsert_correction(&row).await.unwrap()
+}
+
+/// Delete every `inference.corrections` row for the given `signature`s. That
+/// table attributes to projects through a `project_ids` array (NO FK), so it
+/// never cascades on a project delete and must be cleared explicitly. Idempotent
+/// — safe to call at the START of a test (pre-clean against a prior crashed run
+/// that leaked rows) AND at the end. A no-op for an empty slice.
+pub(crate) async fn purge_corrections(pg: &PgStore, signatures: &[&str]) {
+    if signatures.is_empty() {
+        return;
+    }
+    let sigs: Vec<String> = signatures.iter().map(|s| s.to_string()).collect();
+    sqlx_core::query::query("DELETE FROM inference.corrections WHERE signature = ANY($1)")
+        .bind(&sigs)
+        .execute(pg.pool())
+        .await
+        .unwrap();
+}
+
 /// Insert an ADDITIONAL folder wired to an existing project under the `/_test`
 /// watch root and return its id — for multi-module fixtures (a project with >1
 /// folder, e.g. the cross-folder duplication case). `uniq` keeps `abs_path`
