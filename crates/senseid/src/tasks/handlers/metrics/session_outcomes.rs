@@ -38,42 +38,6 @@ const KEY_FTR: &str = "ftr";
 const KEY_REWORK: &str = "rework_ratio";
 const KEY_THROUGHPUT: &str = "throughput";
 
-/// The active `metric_id` for each key this group owns, resolved from the ACTIVE
-/// registry (`active_metrics`) filtered to `task_name = "session_outcomes"`. A key
-/// that is retired / not-yet-effective / not seeded resolves to `None` and is
-/// therefore SKIPPED — the computer never writes a value for an inactive metric.
-struct MetricIds {
-    ftr:        Option<uuid::Uuid>,
-    rework:     Option<uuid::Uuid>,
-    throughput: Option<uuid::Uuid>,
-}
-
-impl MetricIds {
-    /// Resolve key → `metric_id` from the active registry, scoped to this group's
-    /// `task_name`. Propagates the `active_metrics` read error (never masks it).
-    async fn resolve(pg: &PgStore) -> Result<Self, String> {
-        let group = MetricGroup::SessionOutcomes.as_str();
-        let mut ids = MetricIds { ftr: None, rework: None, throughput: None };
-        for m in pg.active_metrics().await? {
-            if m.task_name != group {
-                continue;
-            }
-            match m.key.as_str() {
-                KEY_FTR => ids.ftr = Some(m.id),
-                KEY_REWORK => ids.rework = Some(m.id),
-                KEY_THROUGHPUT => ids.throughput = Some(m.id),
-                _ => {}
-            }
-        }
-        Ok(ids)
-    }
-
-    /// True when none of this group's metrics are active — nothing to compute.
-    fn is_empty(&self) -> bool {
-        self.ftr.is_none() && self.rework.is_none() && self.throughput.is_none()
-    }
-}
-
 /// One day's session-level aggregates for a project: `(day, session_count,
 /// ftr_count, correction_count)`. Only days WITH ≥1 measurable session appear, so
 /// `session_count` (the `ftr` denominator) is always ≥ 1.
@@ -183,20 +147,25 @@ pub(super) async fn compute(ctx: &TaskContext, project_raw: &str) -> Result<u32,
     // Reuse the scheduler's window reader (config key + parser + default) — DRY.
     let window_days = crate::tasks::metrics_scheduler::window_days(pg).await;
 
-    // Resolve which of this group's metrics are active; skip the rest.
-    let ids = MetricIds::resolve(pg).await?;
+    // Resolve key → metric_id for this group's ACTIVE metrics via the shared store
+    // helper. A key absent from the map is inactive (retired / not-yet-effective /
+    // unseeded) → skipped: the computer never writes a value for an inactive metric.
+    let ids = pg.active_metric_ids(MetricGroup::SessionOutcomes.as_str()).await?;
     if ids.is_empty() {
         return Ok(0);
     }
+    let ftr_id = ids.get(KEY_FTR).copied();
+    let rework_id = ids.get(KEY_REWORK).copied();
+    let throughput_id = ids.get(KEY_THROUGHPUT).copied();
 
     let mut written = 0u32;
 
     // Daily session-level metrics: ftr (pct) + throughput (count).
-    if ids.ftr.is_some() || ids.throughput.is_some() {
+    if ftr_id.is_some() || throughput_id.is_some() {
         for (day, session_count, ftr_count, correction_count) in
             daily_session_aggregates(pg, &project_id, window_days).await?
         {
-            if let Some(mid) = ids.ftr {
+            if let Some(mid) = ftr_id {
                 // denominator (session_count) is ≥ 1 for any returned day.
                 let value = ftr_count as f64 / session_count as f64;
                 let props = serde_json::json!({
@@ -210,7 +179,7 @@ pub(super) async fn compute(ctx: &TaskContext, project_raw: &str) -> Result<u32,
                 .await?;
                 written += 1;
             }
-            if let Some(mid) = ids.throughput {
+            if let Some(mid) = throughput_id {
                 // count-type: value IS the count; no numerator/denominator needed.
                 let props = serde_json::json!({});
                 pg.upsert_project_metric(
@@ -224,7 +193,7 @@ pub(super) async fn compute(ctx: &TaskContext, project_raw: &str) -> Result<u32,
     }
 
     // Daily rework_ratio (ratio) — only if active.
-    if let Some(mid) = ids.rework {
+    if let Some(mid) = rework_id {
         for (day, corrected_tool_calls, total_tool_calls) in
             daily_rework(pg, &project_id, window_days).await?
         {
@@ -247,7 +216,7 @@ pub(super) async fn compute(ctx: &TaskContext, project_raw: &str) -> Result<u32,
     }
 
     // Per-session ftr rows (grain=session, session_id set) — only if active.
-    if let Some(mid) = ids.ftr {
+    if let Some(mid) = ftr_id {
         for (session_id, day, ftr) in session_ftr(pg, &project_id, window_days).await? {
             let hit: i64 = if ftr.unwrap_or(false) { 1 } else { 0 };
             // Keep the ratio/pct props contract uniform: value = numerator/denominator
@@ -269,117 +238,15 @@ pub(super) async fn compute(ctx: &TaskContext, project_raw: &str) -> Result<u32,
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tasks::test_support::make_ctx;
-    use sqlx_core::query::query;
+    use crate::tasks::test_support::{
+        cleanup_metrics_fixture, make_ctx, seed_metrics_project_folder, seed_metrics_session,
+        seed_metrics_turn,
+    };
     use sqlx_core::query_as::query_as;
 
-    /// Create a project + a folder wired to it, mirroring the pg_store test
-    /// helpers' fixed `/_test` watch root. Returns `(project_id, folder_id)`.
-    async fn seed_project_folder(pg: &PgStore, uniq: &uuid::Uuid) -> (uuid::Uuid, uuid::Uuid) {
-        let pid = pg
-            .create_project(&format!("_test:so:{uniq}"), None, None)
-            .await
-            .unwrap();
-        pg.execute_raw(
-            "INSERT INTO sensei.folders_to_watch(id, path, name, status) \
-             VALUES('00000000-0000-0000-0000-000000000001', '/_test', '_test', 'watching'::sensei.watch_status) \
-             ON CONFLICT DO NOTHING",
-        )
-        .await
-        .unwrap();
-        let name = format!("so-{uniq}");
-        let abs = format!("/_test/so-{uniq}");
-        let (fid,): (uuid::Uuid,) = query_as(
-            "INSERT INTO sensei.folders(root_id, kind, name, path, abs_path, project_id) \
-             VALUES('00000000-0000-0000-0000-000000000001', 'git'::sensei.folder_kind, $1, $1, $2, $3) \
-             ON CONFLICT(abs_path) DO UPDATE SET project_id = EXCLUDED.project_id RETURNING id",
-        )
-        .bind(&name)
-        .bind(&abs)
-        .bind(pid)
-        .fetch_one(pg.pool())
-        .await
-        .unwrap();
-        (pid, fid)
-    }
-
-    /// Insert one session and return its id.
-    async fn seed_session(
-        pg: &PgStore,
-        fid: &uuid::Uuid,
-        pid: &uuid::Uuid,
-        outcome: &str,
-        ftr: bool,
-        corrections: i32,
-        started_at: chrono::DateTime<chrono::Utc>,
-    ) -> uuid::Uuid {
-        let (id,): (uuid::Uuid,) = query_as(
-            "INSERT INTO activity.sessions (folder_id, project_id, outcome, ftr, corrections, started_at) \
-             VALUES ($1, $2, $3::sensei.session_outcome, $4, $5, $6) RETURNING id",
-        )
-        .bind(fid)
-        .bind(pid)
-        .bind(outcome)
-        .bind(ftr)
-        .bind(corrections)
-        .bind(started_at)
-        .fetch_one(pg.pool())
-        .await
-        .unwrap();
-        id
-    }
-
-    /// Attach one turn (carrying the session's tool-calls) to a session.
-    async fn seed_turn(
-        pg: &PgStore,
-        sid: &uuid::Uuid,
-        tool_calls: i32,
-        started_at: chrono::DateTime<chrono::Utc>,
-    ) {
-        query(
-            "INSERT INTO activity.turns (session_id, turn_number, started_at, ended_at, tool_calls) \
-             VALUES ($1, 1, $2, $2, $3)",
-        )
-        .bind(sid)
-        .bind(started_at)
-        .bind(tool_calls)
-        .execute(pg.pool())
-        .await
-        .unwrap();
-    }
-
-    /// Remove everything a test seeded: the project (cascades its
-    /// `project_metrics`) and the folder (cascades its `sessions` → `turns`).
-    async fn cleanup(pg: &PgStore, pid: &uuid::Uuid, fid: Option<&uuid::Uuid>) {
-        query("DELETE FROM sensei.projects WHERE id = $1").bind(pid).execute(pg.pool()).await.unwrap();
-        if let Some(fid) = fid {
-            query("DELETE FROM sensei.folders WHERE id = $1").bind(fid).execute(pg.pool()).await.unwrap();
-        }
-    }
-
-    #[tokio::test]
-    async fn session_outcomes_writes_ftr_rework_throughput() {
-        let ctx = make_ctx().await;
-        let pg = ctx.pg();
-        let uniq = uuid::Uuid::new_v4();
-        let (pid, fid) = seed_project_folder(pg, &uniq).await;
-
-        // 4 sessions on ONE day (fixed instant so the inserts can't straddle
-        // midnight): 3 first-try (completed, 0 corrections, 2 tool-calls each) and 1
-        // corrected (ftr=false, 2 corrections, 6 tool-calls). Σ tool-calls = 12.
-        let ts = chrono::Utc::now() - chrono::Duration::hours(2);
-        for _ in 0..3 {
-            let sid = seed_session(pg, &fid, &pid, "completed", true, 0, ts).await;
-            seed_turn(pg, &sid, 2, ts).await;
-        }
-        let corrected = seed_session(pg, &fid, &pid, "corrected", false, 2, ts).await;
-        seed_turn(pg, &corrected, 6, ts).await;
-
-        let written = compute(&ctx, &pid.to_string()).await.unwrap();
-        assert_eq!(written, 7, "3 daily rows (ftr, rework_ratio, throughput) + 4 per-session ftr rows");
-
-        // ── Daily rows ────────────────────────────────────────────────────
-        let daily: Vec<(String, f64, serde_json::Value)> = query_as(
+    /// The daily project-scope rows keyed by metric `(key → (value, props))`.
+    async fn daily_rows(pg: &PgStore, pid: &uuid::Uuid) -> Vec<(String, f64, serde_json::Value)> {
+        query_as(
             "SELECT m.key, pm.value::float8, pm.props \
                FROM sensei.project_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
               WHERE pm.project_id = $1 AND pm.grain = 'daily' AND pm.folder_id IS NULL \
@@ -388,21 +255,66 @@ mod tests {
         .bind(pid)
         .fetch_all(pg.pool())
         .await
-        .unwrap();
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn session_outcomes_writes_ftr_rework_throughput() {
+        let ctx = make_ctx().await;
+        let pg = ctx.pg();
+        let uniq = uuid::Uuid::new_v4();
+        let (pid, fid) = seed_metrics_project_folder(pg, &uniq).await;
+
+        // Sessions on ONE day (fixed instant so inserts can't straddle midnight): 3
+        // first-try (completed, 0 corrections, 2 tool-calls each) + 1 corrected
+        // (ftr=false, 2 corrections, 6 tool-calls). Σ measurable tool-calls = 12.
+        let ts = chrono::Utc::now() - chrono::Duration::hours(2);
+        for _ in 0..3 {
+            let sid = seed_metrics_session(pg, &fid, &pid, Some("completed"), Some(true), 0, ts).await;
+            seed_metrics_turn(pg, &sid, 2, ts).await;
+        }
+        let corrected = seed_metrics_session(pg, &fid, &pid, Some("corrected"), Some(false), 2, ts).await;
+        seed_metrics_turn(pg, &corrected, 6, ts).await;
+        // An in-flight session (outcome NULL, ftr NULL) on the SAME day, WITH
+        // tool-calls — it is not yet measurable and MUST be excluded from every
+        // session_outcomes metric (matching ftr_daily's `outcome is not null`). If
+        // the filter regressed, session_count→5, ftr→3/5, throughput→5, rework→6/17.
+        let inflight = seed_metrics_session(pg, &fid, &pid, None, None, 0, ts).await;
+        seed_metrics_turn(pg, &inflight, 5, ts).await;
+
+        let written = compute(&ctx, &pid.to_string()).await.unwrap();
+        assert_eq!(written, 7, "3 daily rows + 4 per-session ftr rows (in-flight session excluded)");
+
+        // ── Daily rows ────────────────────────────────────────────────────
+        let daily = daily_rows(pg, &pid).await;
 
         let ftr = daily.iter().find(|r| r.0 == "ftr").expect("ftr daily row present");
         assert!((ftr.1 - 0.75).abs() < 1e-9, "ftr value = 3/4 = 0.75 (matches ftr_daily's avg(case when ftr))");
-        assert_eq!(ftr.2["numerator"].as_i64(), Some(3), "ftr numerator = # first-try sessions");
-        assert_eq!(ftr.2["denominator"].as_i64(), Some(4), "ftr denominator = session_count");
+        assert_eq!(ftr.2["numerator"].as_i64(), Some(3), "ftr numerator = # first-try sessions (in-flight excluded)");
+        assert_eq!(ftr.2["denominator"].as_i64(), Some(4), "ftr denominator = session_count (in-flight excluded)");
         assert_eq!(ftr.2["correction_count"].as_i64(), Some(2), "correction_count = Σ corrections (display)");
 
         let rework = daily.iter().find(|r| r.0 == "rework_ratio").expect("rework_ratio daily row present");
-        assert!((rework.1 - 0.5).abs() < 1e-9, "rework value = 6/12 = 0.5");
+        assert!((rework.1 - 0.5).abs() < 1e-9, "rework value = 6/12 = 0.5 (in-flight's 5 tool-calls excluded)");
         assert_eq!(rework.2["numerator"].as_i64(), Some(6), "rework numerator = corrected-session tool-calls");
-        assert_eq!(rework.2["denominator"].as_i64(), Some(12), "rework denominator = all tool-calls");
+        assert_eq!(rework.2["denominator"].as_i64(), Some(12), "rework denominator = all measurable tool-calls");
 
         let throughput = daily.iter().find(|r| r.0 == "throughput").expect("throughput daily row present");
-        assert!((throughput.1 - 4.0).abs() < 1e-9, "throughput value = 4 sessions that day");
+        assert!((throughput.1 - 4.0).abs() < 1e-9, "throughput value = 4 measurable sessions (in-flight excluded)");
+
+        // ── ftr_daily parity (locks the Phase-8 consolidation check now) ──
+        let (fd_rate, fd_count): (f64, i64) = query_as(
+            "SELECT ftr_rate::float8, session_count::int8 FROM sensei.ftr_daily WHERE project_id = $1",
+        )
+        .bind(pid)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        assert!((fd_rate - ftr.1).abs() < 1e-9, "computed daily ftr value == sensei.ftr_daily.ftr_rate");
+        assert_eq!(
+            Some(fd_count), ftr.2["denominator"].as_i64(),
+            "ftr denominator == sensei.ftr_daily.session_count",
+        );
 
         // ── Per-session ftr rows ─────────────────────────────────────────
         let sess: Vec<(uuid::Uuid, f64)> = query_as(
@@ -414,7 +326,8 @@ mod tests {
         .fetch_all(pg.pool())
         .await
         .unwrap();
-        assert_eq!(sess.len(), 4, "one per-session ftr row per session");
+        assert_eq!(sess.len(), 4, "one per-session ftr row per MEASURABLE session");
+        assert!(!sess.iter().any(|(id, _)| *id == inflight), "the in-flight session gets NO per-session row");
         let ones = sess.iter().filter(|(_, v)| (*v - 1.0).abs() < 1e-9).count();
         let zeros = sess.iter().filter(|(_, v)| v.abs() < 1e-9).count();
         assert_eq!(ones, 3, "three first-try sessions score 1.0");
@@ -432,7 +345,7 @@ mod tests {
             .unwrap();
         assert_eq!(total, 7, "idempotent upsert — still 7 rows after a second run");
 
-        cleanup(pg, &pid, Some(&fid)).await;
+        cleanup_metrics_fixture(pg, &pid, Some(&fid)).await;
     }
 
     #[tokio::test]
@@ -457,6 +370,65 @@ mod tests {
             .unwrap();
         assert_eq!(total, 0, "no project_metrics rows for an empty project (never fabricated)");
 
-        cleanup(pg, &pid, None).await;
+        cleanup_metrics_fixture(pg, &pid, None).await;
+    }
+
+    #[tokio::test]
+    async fn session_outcomes_zero_tool_calls_writes_no_rework_row() {
+        // A day with measurable sessions whose turns carry ZERO tool-calls has a real
+        // rework denominator of 0 → NO rework_ratio row (a 0/0 would be a fabricated
+        // zero). ftr + throughput still compute (they don't depend on tool-calls).
+        let ctx = make_ctx().await;
+        let pg = ctx.pg();
+        let uniq = uuid::Uuid::new_v4();
+        let (pid, fid) = seed_metrics_project_folder(pg, &uniq).await;
+        let ts = chrono::Utc::now() - chrono::Duration::hours(2);
+        // 2 completed sessions, each with a turn but ZERO tool-calls → the day appears
+        // in the rework aggregate with total_tool_calls = 0 (exercises the skip path).
+        for _ in 0..2 {
+            let sid = seed_metrics_session(pg, &fid, &pid, Some("completed"), Some(true), 0, ts).await;
+            seed_metrics_turn(pg, &sid, 0, ts).await;
+        }
+
+        let written = compute(&ctx, &pid.to_string()).await.unwrap();
+
+        let (rework_rows,): (i64,) = query_as(
+            "SELECT count(*) FROM sensei.project_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
+              WHERE pm.project_id = $1 AND m.key = 'rework_ratio'",
+        )
+        .bind(pid)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        assert_eq!(rework_rows, 0, "no rework_ratio row when total tool-calls is 0 (never a fabricated 0/0)");
+        assert_eq!(written, 4, "ftr daily + throughput daily + 2 per-session ftr; rework skipped");
+
+        cleanup_metrics_fixture(pg, &pid, Some(&fid)).await;
+    }
+
+    #[tokio::test]
+    async fn session_outcomes_all_corrected_writes_zero_ftr() {
+        // A day where EVERY session is corrected → ftr numerator 0 but a REAL
+        // denominator → value 0.0 is WRITTEN (a real zero, never skipped).
+        let ctx = make_ctx().await;
+        let pg = ctx.pg();
+        let uniq = uuid::Uuid::new_v4();
+        let (pid, fid) = seed_metrics_project_folder(pg, &uniq).await;
+        let ts = chrono::Utc::now() - chrono::Duration::hours(2);
+        for _ in 0..2 {
+            let sid = seed_metrics_session(pg, &fid, &pid, Some("corrected"), Some(false), 1, ts).await;
+            seed_metrics_turn(pg, &sid, 3, ts).await;
+        }
+
+        let written = compute(&ctx, &pid.to_string()).await.unwrap();
+        assert_eq!(written, 5, "ftr daily (0.0) + rework daily + throughput daily + 2 per-session ftr");
+
+        let daily = daily_rows(pg, &pid).await;
+        let ftr = daily.iter().find(|r| r.0 == "ftr").expect("ftr daily row present (a real zero is still written)");
+        assert!(ftr.1.abs() < 1e-9, "ftr value is a real 0.0 (0 numerator over a real denominator)");
+        assert_eq!(ftr.2["numerator"].as_i64(), Some(0), "ftr numerator = 0 (no first-try sessions)");
+        assert_eq!(ftr.2["denominator"].as_i64(), Some(2), "ftr denominator = 2 (real denominator → row written, not skipped)");
+
+        cleanup_metrics_fixture(pg, &pid, Some(&fid)).await;
     }
 }
