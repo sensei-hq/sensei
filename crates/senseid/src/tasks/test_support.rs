@@ -501,6 +501,128 @@ pub(crate) async fn purge_task_executions(pg: &PgStore, folder_paths: &[&str]) {
         .unwrap();
 }
 
+/// Insert one `activity.sessions` row carrying BOTH a `client_session_id` (for
+/// tool-verdict attribution) AND an `acp_id` (the assistant-family string) — the
+/// tool (5.6) fixture. `unused_tools` scopes the global `assistant_tools` registry
+/// to the families a project uses, and a project's families are `DISTINCT
+/// sessions.acp_id` (the hook session-recorder stamps the harness family there, so
+/// it aligns with `assistant_tools.assistant_family`). Distinct from
+/// [`seed_metrics_client_session`], which leaves `acp_id` NULL. Returns the id.
+pub(crate) async fn seed_tool_session(
+    pg: &PgStore,
+    fid: &uuid::Uuid,
+    pid: &uuid::Uuid,
+    client_session_id: &str,
+    family: &str,
+    started_at: chrono::DateTime<chrono::Utc>,
+) -> uuid::Uuid {
+    let (id,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
+        "INSERT INTO activity.sessions (folder_id, project_id, client_session_id, acp_id, started_at) \
+         VALUES ($1, $2, $3, $4, $5) RETURNING id",
+    )
+    .bind(fid)
+    .bind(pid)
+    .bind(client_session_id)
+    .bind(family)
+    .bind(started_at)
+    .fetch_one(pg.pool())
+    .await
+    .unwrap();
+    id
+}
+
+/// Register one tool in `sensei.assistant_tools` via the production upsert (DRY —
+/// [`PgStore::upsert_assistant_tool`]) — the `unused_tools` registry (5.6). The
+/// registry is GLOBAL per `assistant_family` (no project id); tests isolate by
+/// using a UNIQUE `family` string per test (matched against `sessions.acp_id`).
+/// `invoked_name` is the harness-qualified name that the verdict/event stream keys
+/// on (`tool_call_verdicts.tool_name` / `assistant_events.tool_name`); use a bare
+/// name for a built-in or an `mcp__…` name for MCP.
+pub(crate) async fn seed_assistant_tool(
+    pg: &PgStore,
+    family: &str,
+    source_type: &str,
+    source_key: &str,
+    tool_name: &str,
+    invoked_name: &str,
+) {
+    pg.upsert_assistant_tool(family, source_type, source_key, tool_name, invoked_name, None, None)
+        .await
+        .unwrap();
+}
+
+/// Record one tool-call OUTCOME for the `unused_tools` fixture (5.6): a
+/// `PostToolUse` event on `client_session_id` for `invoked_name` at time `at`, plus
+/// the `tool_call_verdicts` row that classifies it. `verdict` is `used` (the
+/// positive outcome), `partial`, or `ignored`. The verdict WINDOWS on the CALL time
+/// — the event's `created_at` (set to `at`) reached via `event_id` — NOT
+/// `classified_at`, which a re-classification resets to `now()`; so `at` is what a
+/// test uses to place a call inside or outside the window. No FK cascade on either
+/// table — clear with [`purge_assistant_events`] + [`purge_tool_verdicts`].
+pub(crate) async fn seed_tool_verdict(
+    pg: &PgStore,
+    client_session_id: &str,
+    invoked_name: &str,
+    verdict: &str,
+    at: chrono::DateTime<chrono::Utc>,
+) {
+    let (event_id,): (i64,) = sqlx_core::query_as::query_as(
+        "INSERT INTO activity.assistant_events (session_id, event_type, tool_name, ts, created_at) \
+         VALUES ($1, 'PostToolUse', $2, $3, $4) RETURNING id",
+    )
+    .bind(client_session_id)
+    .bind(invoked_name)
+    .bind(at.timestamp_millis())
+    .bind(at)
+    .fetch_one(pg.pool())
+    .await
+    .unwrap();
+    sqlx_core::query::query(
+        "INSERT INTO sensei.tool_call_verdicts (session_id, event_id, tool_name, verdict) \
+         VALUES ($1, $2, $3, $4)",
+    )
+    .bind(client_session_id)
+    .bind(event_id)
+    .bind(invoked_name)
+    .bind(verdict)
+    .execute(pg.pool())
+    .await
+    .unwrap();
+}
+
+/// Delete every `sensei.assistant_tools` row for the given `assistant_family`s.
+/// The registry has no project/folder FK, so it never cascades and must be cleared
+/// explicitly. Idempotent — safe at the START (pre-clean against a leaked run) and
+/// end of a test. A no-op for an empty slice.
+pub(crate) async fn purge_assistant_tools(pg: &PgStore, families: &[&str]) {
+    if families.is_empty() {
+        return;
+    }
+    let fams: Vec<String> = families.iter().map(|s| s.to_string()).collect();
+    sqlx_core::query::query("DELETE FROM sensei.assistant_tools WHERE assistant_family = ANY($1)")
+        .bind(&fams)
+        .execute(pg.pool())
+        .await
+        .unwrap();
+}
+
+/// Delete every `sensei.tool_call_verdicts` row for the given `session_id`s. The
+/// table's `session_id` is a plain text client id with NO FK, so it never cascades
+/// and must be cleared explicitly. Idempotent — safe at the START (pre-clean) and
+/// end of a test. A no-op for an empty slice. (The paired `assistant_events` are
+/// cleared with [`purge_assistant_events`].)
+pub(crate) async fn purge_tool_verdicts(pg: &PgStore, session_ids: &[&str]) {
+    if session_ids.is_empty() {
+        return;
+    }
+    let ids: Vec<String> = session_ids.iter().map(|s| s.to_string()).collect();
+    sqlx_core::query::query("DELETE FROM sensei.tool_call_verdicts WHERE session_id = ANY($1)")
+        .bind(&ids)
+        .execute(pg.pool())
+        .await
+        .unwrap();
+}
+
 /// Remove a metric fixture: the project (cascades its `project_metrics` and
 /// `detected_patterns`) and, when given, the folder (cascades its `sessions` →
 /// `turns` and its `nodes`). `exec_folder_paths` names the `folder_path`s whose
