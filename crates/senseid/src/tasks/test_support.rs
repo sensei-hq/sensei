@@ -187,6 +187,116 @@ pub(crate) async fn seed_file_node(pg: &PgStore, folder_id: &uuid::Uuid, file_pa
     .unwrap();
 }
 
+/// Insert one `activity.sessions` row carrying a `client_session_id` and return its
+/// id — the autonomy (5.4) fixture. `assistant_events` are attributed to a project
+/// via `sessions.client_session_id = assistant_events.session_id`, so an event
+/// needs a session with this id set to be countable. Distinct from
+/// [`seed_metrics_session`], which leaves `client_session_id` NULL (its outcome/ftr
+/// path is what `session_outcomes` measures, not the hook-event stream).
+pub(crate) async fn seed_metrics_client_session(
+    pg: &PgStore,
+    fid: &uuid::Uuid,
+    pid: &uuid::Uuid,
+    client_session_id: &str,
+    started_at: chrono::DateTime<chrono::Utc>,
+) -> uuid::Uuid {
+    let (id,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
+        "INSERT INTO activity.sessions (folder_id, project_id, client_session_id, started_at) \
+         VALUES ($1, $2, $3, $4) RETURNING id",
+    )
+    .bind(fid)
+    .bind(pid)
+    .bind(client_session_id)
+    .bind(started_at)
+    .fetch_one(pg.pool())
+    .await
+    .unwrap();
+    id
+}
+
+/// Insert one `activity.assistant_events` row — the `interruption_rate` source
+/// (autonomy, 5.4). `session_id` is the assistant's own session id string (matches a
+/// [`seed_metrics_client_session`] `client_session_id`, NOT a DB uuid);
+/// `event_type` is the hook name (`"Stop"` / `"UserPromptSubmit"`). `at` sets BOTH
+/// the server-side `created_at` (the column the computer windows + day-buckets on)
+/// and the client-clock `ts`, so a test can place an event on a chosen day. `family`
+/// defaults to `claude`, `payload` to `{}`.
+pub(crate) async fn seed_assistant_event(
+    pg: &PgStore,
+    session_id: &str,
+    event_type: &str,
+    at: chrono::DateTime<chrono::Utc>,
+) {
+    sqlx_core::query::query(
+        "INSERT INTO activity.assistant_events (session_id, event_type, ts, created_at) \
+         VALUES ($1, $2, $3, $4)",
+    )
+    .bind(session_id)
+    .bind(event_type)
+    .bind(at.timestamp_millis())
+    .bind(at)
+    .execute(pg.pool())
+    .await
+    .unwrap();
+}
+
+/// Insert one `activity.runs` row — the `run_completion` source (autonomy, 5.4).
+/// `status` is a `sensei.run_status` literal (`"done"` = reached completion; any
+/// other value counts toward "started" but not "done"). `started_at` fixes the day
+/// the computer windows + buckets on. Returns the run id.
+pub(crate) async fn seed_run(
+    pg: &PgStore,
+    project_id: &uuid::Uuid,
+    status: &str,
+    started_at: chrono::DateTime<chrono::Utc>,
+) -> uuid::Uuid {
+    let (id,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
+        "INSERT INTO activity.runs (project_id, status, started_at) \
+         VALUES ($1, $2::sensei.run_status, $3) RETURNING id",
+    )
+    .bind(project_id)
+    .bind(status)
+    .bind(started_at)
+    .fetch_one(pg.pool())
+    .await
+    .unwrap();
+    id
+}
+
+/// Delete every `activity.assistant_events` row for the given `session_id`s. That
+/// table's `session_id` is a plain text client id with NO FK to `sessions`, so it
+/// never cascades on a session/folder/project delete and must be cleared explicitly.
+/// Idempotent — safe to call at the START of a test (pre-clean against a prior
+/// crashed run that leaked rows) AND at the end. A no-op for an empty slice.
+pub(crate) async fn purge_assistant_events(pg: &PgStore, session_ids: &[&str]) {
+    if session_ids.is_empty() {
+        return;
+    }
+    let ids: Vec<String> = session_ids.iter().map(|s| s.to_string()).collect();
+    sqlx_core::query::query("DELETE FROM activity.assistant_events WHERE session_id = ANY($1)")
+        .bind(&ids)
+        .execute(pg.pool())
+        .await
+        .unwrap();
+}
+
+/// Delete every `activity.runs` row for the given `project_id`s (cascading their
+/// `run_events`). `runs.project_id` is `ON DELETE SET NULL`, so a project delete
+/// ORPHANS its runs rather than removing them — this must therefore run BEFORE
+/// [`cleanup_metrics_fixture`] deletes the project (afterwards the runs' project_id
+/// is NULL and no longer matches). Idempotent; a no-op for an empty slice.
+pub(crate) async fn purge_runs(pg: &PgStore, project_ids: &[&uuid::Uuid]) {
+    if project_ids.is_empty() {
+        return;
+    }
+    let ids: Vec<uuid::Uuid> = project_ids.iter().map(|p| **p).collect();
+    sqlx_core::query::query("DELETE FROM activity.runs WHERE project_id = ANY($1)")
+        .bind(&ids)
+        .execute(pg.pool())
+        .await
+        .unwrap();
+}
+
 /// Delete every `activity.task_executions` row under the given `folder_path`s. That
 /// table is path-keyed with NO FK to the project/folder, so it never cascades and
 /// must be cleared explicitly. Idempotent — safe to call at the START of a test
