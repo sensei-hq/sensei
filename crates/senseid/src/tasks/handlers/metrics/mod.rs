@@ -21,6 +21,35 @@
 use super::super::executor::TaskContext;
 use super::super::Task;
 
+/// Test-only routing probe: records WHICH handler last ran on the current thread,
+/// so the executor's dispatch test can assert `ComputeMetrics → compute` and
+/// `ComputeHealth → compute_health` by IDENTITY (both stubs return `Ok(0)`, so a
+/// swapped match arm would otherwise stay green until Phase 5/6 make the paths
+/// diverge). Thread-local so it's isolated per `#[tokio::test]` (each runs on its
+/// own current-thread runtime); guarded by `#[cfg(test)]` so it compiles out of
+/// production entirely.
+#[cfg(test)]
+pub(crate) mod probe {
+    use std::cell::Cell;
+
+    thread_local! {
+        static LAST: Cell<Option<&'static str>> = const { Cell::new(None) };
+    }
+
+    /// Record that handler `which` ran on this thread.
+    pub(crate) fn record(which: &'static str) {
+        LAST.with(|c| c.set(Some(which)));
+    }
+    /// Take (and clear) the last-recorded handler identity for this thread.
+    pub(crate) fn take() -> Option<&'static str> {
+        LAST.with(|c| c.take())
+    }
+    /// Clear any prior recording so a fresh assertion starts from a clean slate.
+    pub(crate) fn reset() {
+        LAST.with(|c| c.set(None));
+    }
+}
+
 /// The registry `task_name` of the health barrier. It is computed by the separate
 /// [`ComputeHealth`](crate::tasks::TaskKind::ComputeHealth) kind, NOT dispatched
 /// as a base `ComputeMetrics` group, so the metrics scheduler filters it out of
@@ -80,6 +109,8 @@ impl MetricGroup {
 /// `ctx` is unused here but is the seam Phase 5 computes from (`ctx.pg()` + the
 /// configured window → `upsert_project_metric`).
 pub async fn compute(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
+    #[cfg(test)]
+    probe::record("compute");
     let _ = ctx; // Phase 5 seam: read the window + write sensei.project_metrics.
     match MetricGroup::from_task_name(&task.path) {
         Some(group) => {
@@ -111,6 +142,8 @@ pub async fn compute(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
 /// `Ok` so the barrier completes and the pipeline is exercised end-to-end. The
 /// project id rides in `task.folder_path`.
 pub async fn compute_health(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
+    #[cfg(test)]
+    probe::record("compute_health");
     let _ = ctx; // Phase 6 seam: aggregate the project's base metrics into a score.
     tracing::info!(
         project = %task.folder_path,

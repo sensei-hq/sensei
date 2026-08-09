@@ -87,6 +87,22 @@ fn due_for_run(now_ms: i64, last_run_ms: Option<i64>, run_secs: i64) -> bool {
     }
 }
 
+/// The watermark to carry forward after a tick — the fail-closed core of the
+/// never-mask-a-failure rule, extracted pure so it is directly testable (rather
+/// than true only by inspection of `run`). A successful tick (INCLUDING an
+/// honest-empty `Ok(0)`) advances to `now_ms`; a failed tick HOLDS the prior
+/// watermark so the next tick retries instead of skipping a day of metrics.
+fn next_watermark(
+    now_ms: i64,
+    last_run_ms: Option<i64>,
+    tick_result: &Result<u32, String>,
+) -> Option<i64> {
+    match tick_result {
+        Ok(_) => Some(now_ms),
+        Err(_) => last_run_ms,
+    }
+}
+
 /// The base metric groups to enqueue as `ComputeMetrics`: the ACTIVE registry's
 /// `task_name`s minus the health barrier's own name (`health` is computed by the
 /// separate `ComputeHealth` kind). Kept pure so the filter is unit-testable.
@@ -205,23 +221,26 @@ async fn run(queue: Arc<TaskQueue>, pg: Arc<PgStore>) {
         if !due_for_run(now_ms, last_run_ms, run_secs) {
             continue;
         }
-        match metrics_tick(&queue, &pg).await {
+        let result = metrics_tick(&queue, &pg).await;
+        // Fail-closed watermark (governance-critical): advance on success —
+        // including honest-empty `Ok(0)` — and HOLD on failure so the next tick
+        // retries rather than skipping a day. The decision is [`next_watermark`]
+        // (pure + tested); this arm only owns persistence + logging.
+        let next = next_watermark(now_ms, last_run_ms, &result);
+        match &result {
             Ok(_) => {
-                // Advance the watermark on success (including honest-empty) so the
-                // next run waits a full cadence. Same restart-risk category as the
+                // Persist the advanced watermark. Same restart-risk category as the
                 // analyzer's watermark — log on failure so an operator can see we
                 // may recompute after a reboot; the in-memory value still advances.
-                last_run_ms = Some(now_ms);
                 if let Err(e) = pg.set_config(LAST_RUN_KEY, &now_ms.to_string()).await {
                     tracing::warn!(error = %e, "metrics_scheduler: persisting last_run watermark failed — restart may recompute");
                 }
             }
             Err(e) => {
-                // Fail-closed: a DB fault does NOT advance the watermark, so the
-                // next tick retries rather than skipping a day of metrics.
                 tracing::warn!(error = %e, "metrics_scheduler: tick failed — will retry next tick");
             }
         }
+        last_run_ms = next;
     }
 }
 
@@ -249,11 +268,34 @@ mod tests {
 
     #[test]
     fn parse_window_days_falls_back_on_missing_invalid_or_zero() {
-        assert_eq!(parse_window_days(None), DEFAULT_WINDOW_DAYS);
-        assert_eq!(parse_window_days(Some("nope".into())), DEFAULT_WINDOW_DAYS);
-        assert_eq!(parse_window_days(Some("0".into())), DEFAULT_WINDOW_DAYS);
+        // Pin the DOCUMENTED default to the literal 14 (not just the constant) so
+        // changing DEFAULT_WINDOW_DAYS to another value fails this test instead of
+        // silently violating the "default 14" contract.
+        assert_eq!(DEFAULT_WINDOW_DAYS, 14, "the documented metrics window default is 14 days");
+        assert_eq!(parse_window_days(None), 14);
+        assert_eq!(parse_window_days(Some("nope".into())), 14);
+        assert_eq!(parse_window_days(Some("0".into())), 14);
         assert_eq!(parse_window_days(Some("30".into())), 30);
         assert_eq!(parse_window_days(Some("  7 ".into())), 7);
+    }
+
+    #[test]
+    fn watermark_holds_on_tick_failure() {
+        // Fail-closed: a failed tick keeps the prior watermark so the next tick
+        // retries rather than skipping a day of metrics.
+        let err: Result<u32, String> = Err("db down".into());
+        assert_eq!(next_watermark(5000, Some(1000), &err), Some(1000), "Err holds the prior watermark");
+        // Never-run stays never-run on failure (so the next tick is still due).
+        assert_eq!(next_watermark(5000, None, &err), None, "Err never fabricates a watermark");
+    }
+
+    #[test]
+    fn watermark_advances_on_success_including_honest_empty() {
+        // Ok advances to now — including Ok(0): honest-empty IS success, not a
+        // failure to retry.
+        assert_eq!(next_watermark(5000, Some(1000), &Ok(3)), Some(5000));
+        assert_eq!(next_watermark(5000, Some(1000), &Ok(0)), Some(5000), "honest-empty still advances");
+        assert_eq!(next_watermark(5000, None, &Ok(0)), Some(5000), "first successful run sets the watermark");
     }
 
     #[test]
@@ -364,5 +406,15 @@ mod tests {
         // is still blocked on its two outstanding (running, not completed) metrics.
         let status = queue.status().await;
         assert_eq!(status.blocked, 1, "p2's ComputeHealth stays blocked until its own metrics complete");
+
+        // Barrier IDENTITY, not just count: the ONE unblocked task must be P1's
+        // health barrier. A cross-wire (p1's health blocked on p2's ids) would
+        // leave blocked==1 but release p2's health here — this catches that.
+        let released = queue.next_task().await;
+        assert_eq!(released.kind, TaskKind::ComputeHealth, "the released task is a health barrier");
+        assert_eq!(
+            released.folder_path, owner1,
+            "the released barrier belongs to p1 (whose metrics completed), not p2",
+        );
     }
 }
