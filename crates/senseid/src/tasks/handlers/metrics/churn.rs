@@ -31,10 +31,16 @@
 //! data writes NO row. A ratio/pct with denominator 0 writes NO row (a 0/0 would be
 //! a fabricated zero); a real denominator with 0 numerator writes a real `0.0`.
 //!
-//! Caveat (a known data-quality issue, NOT a bug to fix here): `churn_rate` /
-//! `churn_concentration` counts are inflated by the version-rescan bug until a
-//! debounce lands — the first live numbers carry that caveat (as the catalog's
-//! `how_to_read` says: de-noise before trending).
+//! Retry de-duplication: `activity.task_executions` inserts a NEW row per attempt
+//! (no update-in-place), so a retried file leaves BOTH a `failed` and a `completed`
+//! row. Churn counts only `status = 'completed'` executions — a failed attempt
+//! didn't actually (re)process the file, so it is not churn (and would otherwise
+//! double-count a retry).
+//!
+//! Caveat (a known data-quality issue, NOT a bug to fix here, and SEPARATE from the
+//! retry filter above): `churn_rate` / `churn_concentration` counts are inflated by
+//! the version-rescan bug until a debounce lands — the first live numbers carry
+//! that caveat (as the catalog's `how_to_read` says: de-noise before trending).
 
 use std::collections::HashMap;
 
@@ -55,6 +61,10 @@ const KEY_REWORK_DENSITY: &str = "rework_density";
 
 /// The `activity.task_executions.task_kind` that IS churn — a per-file rewrite pass.
 const PROCESS_FILE_KIND: &str = "process_file";
+/// The `activity.task_executions.status` that means the file was actually
+/// (re)processed. Only completed passes count as churn (see
+/// [`process_file_executions`]); `running`/`failed` do not.
+const STATUS_COMPLETED: &str = "completed";
 
 /// Pareto cut for `churn_concentration`: the busiest 20% of files. `ceil`-rounded
 /// so any day with ≥1 file has ≥1 file in the top set.
@@ -70,6 +80,12 @@ type ExecRow = (String, chrono::NaiveDate, String, i64);
 /// window — EVERY folder_path (attribution to a project happens after resolution).
 /// `path` is the absolute file the execution processed (globally unique, so it is
 /// a safe `churn_concentration` file key).
+///
+/// Restricted to `status = 'completed'`: `task_executions` inserts a NEW row per
+/// attempt (no update-in-place), so a retried file leaves both a `failed` and a
+/// `completed` row — a failed attempt didn't actually (re)process the file, so it
+/// is not churn. Counting only completed passes de-duplicates retries; the
+/// separate version-rescan inflation caveat still applies (see the module doc).
 async fn process_file_executions(
     pg: &PgStore,
     window_days: u32,
@@ -81,10 +97,12 @@ async fn process_file_executions(
               , count(*)::int8                                 AS n
            FROM activity.task_executions
           WHERE task_kind    = $1
-            AND started_at  >= now() - make_interval(days => $2::int)
+            AND status       = $2
+            AND started_at  >= now() - make_interval(days => $3::int)
           GROUP BY folder_path, day, file_path",
     )
     .bind(PROCESS_FILE_KIND)
+    .bind(STATUS_COMPLETED)
     .bind(window_days as i32)
     .fetch_all(pg.pool())
     .await
@@ -322,8 +340,8 @@ pub(super) async fn compute(ctx: &TaskContext, project_raw: &str) -> Result<u32,
 mod tests {
     use super::*;
     use crate::tasks::test_support::{
-        cleanup_metrics_fixture, make_ctx, seed_detected_pattern, seed_file_node,
-        seed_metrics_project_folder, seed_task_execution,
+        cleanup_metrics_fixture, make_ctx, purge_task_executions, seed_detected_pattern,
+        seed_file_node, seed_metrics_project_folder, seed_task_execution,
     };
     use sqlx_core::query_as::query_as;
 
@@ -374,18 +392,24 @@ mod tests {
         let alias = format!("/_test/old-{uniq}"); // an old path aliased to the SAME folder
         let unknown = format!("/_test/unknown-{uniq}"); // resolves to no folder/project
         pg.add_folder_path_alias(&alias, &fid, "rename").await.unwrap();
+        // Idempotent pre-clean: task_executions has no FK/cascade, so purge this
+        // test's paths up front in case a prior crashed run leaked rows.
+        purge_task_executions(pg, &[&abs, &alias, &unknown]).await;
 
         let ts = chrono::Utc::now() - chrono::Duration::hours(2); // fixed day
         // Resolvable churn (all → folder `fid`): a.rs ×2, b.rs ×1 under the live path;
         // c.rs ×1 under the ALIAS path (must resolve to `fid` too). Σ = 4.
-        seed_task_execution(pg, "process_file", &abs, &format!("{abs}/a.rs"), ts).await;
-        seed_task_execution(pg, "process_file", &abs, &format!("{abs}/a.rs"), ts).await;
-        seed_task_execution(pg, "process_file", &abs, &format!("{abs}/b.rs"), ts).await;
-        seed_task_execution(pg, "process_file", &alias, &format!("{abs}/c.rs"), ts).await;
+        seed_task_execution(pg, "process_file", "completed", &abs, &format!("{abs}/a.rs"), ts).await;
+        seed_task_execution(pg, "process_file", "completed", &abs, &format!("{abs}/a.rs"), ts).await;
+        seed_task_execution(pg, "process_file", "completed", &abs, &format!("{abs}/b.rs"), ts).await;
+        seed_task_execution(pg, "process_file", "completed", &alias, &format!("{abs}/c.rs"), ts).await;
         // UNRESOLVABLE folder_path → SKIPPED (must not appear in any aggregate).
-        seed_task_execution(pg, "process_file", &unknown, &format!("{unknown}/e.rs"), ts).await;
+        seed_task_execution(pg, "process_file", "completed", &unknown, &format!("{unknown}/e.rs"), ts).await;
+        // A FAILED process_file under the live path → not actually (re)processed, so
+        // NOT churn (retry-de-dup filter, FIX 4). Must NOT be counted.
+        seed_task_execution(pg, "process_file", "failed", &abs, &format!("{abs}/f.rs"), ts).await;
         // A non-churn task_kind under the live path → must NOT be counted.
-        seed_task_execution(pg, "process_folder", &abs, &abs, ts).await;
+        seed_task_execution(pg, "process_folder", "completed", &abs, &abs, ts).await;
 
         let written = compute(&ctx, &pid.to_string()).await.unwrap();
         // 1 churn_rate module row + 1 churn_rate project row + 1 concentration row.
@@ -396,7 +420,7 @@ mod tests {
         let modules = module_rows(pg, &pid, "churn_rate").await;
         assert_eq!(modules.len(), 1, "exactly one module row (the resolved fixture folder)");
         assert_eq!(modules[0].0, fid, "the module row is attributed to the resolved folder");
-        assert!((modules[0].1 - 4.0).abs() < 1e-9, "module churn = 4 (aliased c.rs counted; unresolvable e.rs and process_folder excluded)");
+        assert!((modules[0].1 - 4.0).abs() < 1e-9, "module churn = 4 (aliased c.rs counted; unresolvable e.rs, FAILED f.rs, and process_folder all excluded)");
 
         // ── churn_rate project daily = Σ folders = 4 (this is the mutation-proof
         // assertion: if the unresolvable exec were mis-attributed to this project it
@@ -500,5 +524,118 @@ mod tests {
 
         cleanup_metrics_fixture(pg, &pid_a, Some(&fid_a), &[]).await;
         cleanup_metrics_fixture(pg, &pid_b, Some(&fid_b), &[]).await;
+    }
+
+    #[tokio::test]
+    async fn churn_excludes_other_projects_execution() {
+        // Cross-project isolation (the module's core governance property): an
+        // execution that resolves to a DIFFERENT real project must NOT leak into the
+        // project under test. A correct impl counts only A's OWN resolvable
+        // executions, which also makes this robust to leftover rows.
+        let ctx = make_ctx().await;
+        let pg = ctx.pg();
+        let uniq_a = uuid::Uuid::new_v4();
+        let uniq_b = uuid::Uuid::new_v4();
+        let (pid_a, fid_a) = seed_metrics_project_folder(pg, &uniq_a).await;
+        let (pid_b, fid_b) = seed_metrics_project_folder(pg, &uniq_b).await; // a real SECOND project
+        let abs_a = format!("/_test/metrics-{uniq_a}");
+        let abs_b = format!("/_test/metrics-{uniq_b}");
+        purge_task_executions(pg, &[&abs_a, &abs_b]).await; // idempotent pre-clean
+
+        let ts = chrono::Utc::now() - chrono::Duration::hours(2);
+        // Project A: 2 completed process_file executions (a.rs ×2) → A churn = 2.
+        seed_task_execution(pg, "process_file", "completed", &abs_a, &format!("{abs_a}/a.rs"), ts).await;
+        seed_task_execution(pg, "process_file", "completed", &abs_a, &format!("{abs_a}/a.rs"), ts).await;
+        // Project B: 3 completed executions across 3 files — they resolve fine, but to
+        // B, so they must NOT touch A's aggregates.
+        for f in ["p.rs", "q.rs", "r.rs"] {
+            seed_task_execution(pg, "process_file", "completed", &abs_b, &format!("{abs_b}/{f}"), ts).await;
+        }
+
+        let written = compute(&ctx, &pid_a.to_string()).await.unwrap();
+        assert_eq!(written, 3, "only A's own executions produce rows (churn_rate module + project + concentration)");
+
+        let modules = module_rows(pg, &pid_a, "churn_rate").await;
+        assert_eq!(modules.len(), 1, "exactly one module row — A's folder only, never B's");
+        assert_eq!(modules[0].0, fid_a, "the module row is A's folder");
+        assert!((modules[0].1 - 2.0).abs() < 1e-9, "A's module churn = 2 (B's 3 excluded)");
+        assert!(!modules.iter().any(|(id, _, _)| *id == fid_b), "B's folder never appears in A's rows");
+
+        let daily = daily_rows(pg, &pid_a).await;
+        let rate = daily.iter().find(|r| r.0 == "churn_rate").expect("churn_rate project row");
+        assert!((rate.1 - 2.0).abs() < 1e-9, "A's project churn = 2 (B's execution excluded — cross-project isolation)");
+        let conc = daily.iter().find(|r| r.0 == "churn_concentration").expect("concentration row");
+        assert_eq!(conc.2["denominator"].as_i64(), Some(2), "concentration denominator = A's total churn only (2, not 5)");
+
+        cleanup_metrics_fixture(pg, &pid_a, Some(&fid_a), &[&abs_a]).await;
+        cleanup_metrics_fixture(pg, &pid_b, Some(&fid_b), &[&abs_b]).await;
+    }
+
+    #[tokio::test]
+    async fn churn_rework_density_writes_real_zero() {
+        // A project with REAL project files but ZERO rework patterns → a rework_density
+        // row IS written with value 0.0 / numerator 0 (a real zero over a real
+        // denominator), never a suppressed row.
+        let ctx = make_ctx().await;
+        let pg = ctx.pg();
+        let uniq = uuid::Uuid::new_v4();
+        let (pid, fid) = seed_metrics_project_folder(pg, &uniq).await;
+        for f in ["a.rs", "b.rs", "c.rs"] {
+            seed_file_node(pg, &fid, &format!("/_test/metrics-{uniq}/{f}")).await;
+        }
+
+        let written = compute(&ctx, &pid.to_string()).await.unwrap();
+        assert_eq!(written, 1, "one rework_density project row (real 0.0); no per-module rows (no folder has a rework signal)");
+
+        let daily = daily_rows(pg, &pid).await;
+        let rd = daily.iter().find(|r| r.0 == "rework_density").expect("rework_density row IS written for a REAL zero");
+        assert!(rd.1.abs() < 1e-9, "value is a real 0.0 (0 rework over 3 real files), not a suppressed row");
+        assert_eq!(rd.2["numerator"].as_i64(), Some(0), "numerator = 0 (no rework-flagged files)");
+        assert_eq!(rd.2["denominator"].as_i64(), Some(3), "denominator = 3 project files (real denominator → row written)");
+
+        cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
+    }
+
+    #[tokio::test]
+    async fn churn_concentration_top_20_percent_rounds_up() {
+        // Pin the ceil(20%) Pareto rule with N=6, where ceil(6×0.2)=2 diverges from a
+        // floor-then-max(1) mutation (=1). The top TWO busiest files' churn must be
+        // the numerator.
+        let ctx = make_ctx().await;
+        let pg = ctx.pg();
+        let uniq = uuid::Uuid::new_v4();
+        let (pid, fid) = seed_metrics_project_folder(pg, &uniq).await;
+        let abs = format!("/_test/metrics-{uniq}");
+        purge_task_executions(pg, &[&abs]).await;
+
+        let ts = chrono::Utc::now() - chrono::Duration::hours(2);
+        // 6 files, churn 4,3,1,1,1,1 (total 11). Top-20% = ceil(6×0.2)=2 → busiest two
+        // (4+3=7). A floor(1.2)=1 rounding would give only the top-1 (4), so
+        // numerator==7 pins ceil; denominator==11 pins "all files".
+        let churn = [("f1.rs", 4), ("f2.rs", 3), ("f3.rs", 1), ("f4.rs", 1), ("f5.rs", 1), ("f6.rs", 1)];
+        for (f, n) in churn {
+            for _ in 0..n {
+                seed_task_execution(pg, "process_file", "completed", &abs, &format!("{abs}/{f}"), ts).await;
+            }
+        }
+
+        compute(&ctx, &pid.to_string()).await.unwrap();
+
+        let daily = daily_rows(pg, &pid).await;
+        let conc = daily.iter().find(|r| r.0 == "churn_concentration").expect("concentration row");
+        assert_eq!(conc.2["denominator"].as_i64(), Some(11), "denominator = total churn (11)");
+        assert_eq!(conc.2["numerator"].as_i64(), Some(7), "numerator = top ceil(6×0.2)=2 files' churn (4+3=7), NOT top-1 (4)");
+        assert!((conc.1 - 7.0 / 11.0).abs() < 1e-9, "value = 7/11");
+        let (fid_present,): (bool,) = query_as(
+            "SELECT EXISTS(SELECT 1 FROM sensei.project_metrics WHERE project_id = $1 AND folder_id = $2)",
+        )
+        .bind(pid)
+        .bind(fid)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        assert!(fid_present, "the churn_rate module row for the folder is present");
+
+        cleanup_metrics_fixture(pg, &pid, Some(&fid), &[&abs]).await;
     }
 }
