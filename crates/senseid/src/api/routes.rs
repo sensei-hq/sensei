@@ -1853,4 +1853,368 @@ mod tests {
 
         state.pg.delete_project(&pid).await.unwrap();
     }
+
+    /// PRE-DEPLOY GATE (P0–P8) — ONE end-to-end pass of the WHOLE metrics pipeline
+    /// on a single seeded project in `sensei_test`, exercised together in sequence:
+    ///
+    ///   scheduler enqueue contract → real `TaskQueue` → real `spawn_workers`
+    ///   executor dispatch (`ComputeMetrics`→compute, `ComputeHealth`→compute_health)
+    ///   → the `blocked_by` health barrier → all six base computers → health roll-up
+    ///   → the three read endpoints → FTR parity.
+    ///
+    /// DRIVE PATH: the strongest feasible one — the FULL worker queue. We replicate
+    /// the metrics scheduler's `enqueue_metrics_pass` (that fn is private) using the
+    /// public `Task`/`TaskKind`/`TaskQueue` API and the REAL active registry
+    /// (`active_task_names()` minus the `health` barrier name), enqueue one
+    /// `ComputeMetrics` per active base group + one `blocked_by` `ComputeHealth`, then
+    /// let real `spawn_workers` drain the graph through the actual executor dispatch.
+    /// This proves the health barrier only releases after its base metrics land.
+    ///
+    /// Seed values are chosen so every component has a clean normalized value and the
+    /// composite `project_health` lands on 68 (well away from any rounding tie):
+    ///   ftr 0.75 · rework_ratio 0.5 · throughput 4/5 · churn_rate 6(→0.5 vs target 3)
+    ///   · churn_concentration 4/6 (neutral → excluded) · rework_density 0.25
+    ///   · duplication_ratio 0.4 · interruption_rate 0.4 · run_completion 0.8
+    ///   · memory_promotion 0.5 · unused_tools 3 (→1.0 vs target 10)
+    ///   → mean of the 10 scored norms = 0.68 → health 68.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn metrics_pipeline_end_to_end() {
+        use crate::tasks::executor::spawn_workers;
+        use crate::tasks::handlers::metrics::HEALTH_TASK_NAME;
+        use crate::tasks::test_support::{
+            cleanup_metrics_fixture, make_ctx, onehot_embedding_sql, purge_assistant_events,
+            purge_assistant_tools, purge_corrections, purge_runs, purge_task_executions,
+            purge_tool_verdicts, seed_assistant_event, seed_assistant_tool, seed_correction,
+            seed_detected_pattern, seed_file_node, seed_memory, seed_metrics_client_session,
+            seed_metrics_project_folder, seed_metrics_session, seed_metrics_turn,
+            seed_pattern_with_instances, seed_run, seed_symbol_node, seed_task_execution,
+            seed_tool_session, seed_tool_verdict, uniform_embedding_sql,
+        };
+        use crate::tasks::{Task, TaskKind};
+        use sqlx_core::query_as::query_as;
+        use std::collections::HashMap;
+
+        // The health-score normalization mirror (hand implementation of
+        // `handlers::metrics::health::normalize`) — the independent computation we
+        // hand-check the stored composite against. `None` ⇒ excluded from the mean.
+        fn norm(mt: &str, dir: &str, v: f64, target: Option<f64>) -> Option<f64> {
+            match (mt, dir) {
+                ("ratio" | "pct", "higher_better") => Some(v.clamp(0.0, 1.0)),
+                ("ratio" | "pct", "lower_better") => Some((1.0 - v).clamp(0.0, 1.0)),
+                ("count" | "duration" | "currency", "higher_better") => {
+                    target.map(|t| (v / t).clamp(0.0, 1.0))
+                }
+                ("count" | "duration" | "currency", "lower_better") => {
+                    target.map(|t| if v <= t { 1.0 } else { (t / v).clamp(0.0, 1.0) })
+                }
+                _ => None,
+            }
+        }
+        let close = |a: f64, b: f64| (a - b).abs() < 1e-9;
+
+        let (app, state) = test_app().await;
+        let pg = &state.pg;
+        let uniq = uuid::Uuid::new_v4();
+        let (pid, fid) = seed_metrics_project_folder(pg, &uniq).await;
+        let folder_abs = format!("/_test/metrics-{uniq}");
+        let pid_str = pid.to_string();
+
+        // no-FK client-session ids / family / correction signatures (explicit purge).
+        let csid_auto = format!("_test:e2e-auto:{uniq}");
+        let csid_tool = format!("_test:e2e-tool:{uniq}");
+        let family = format!("_test-fam-e2e-{uniq}");
+        let sig_a = format!("_test:e2e-corr-a:{uniq}");
+        let sig_b = format!("_test:e2e-corr-b:{uniq}");
+
+        // Idempotent pre-clean of the tables that never cascade (guards a prior
+        // crashed run that leaked rows under these ids).
+        purge_task_executions(pg, &[&folder_abs, &pid_str]).await;
+        purge_assistant_events(pg, &[&csid_auto, &csid_tool]).await;
+        purge_tool_verdicts(pg, &[&csid_tool]).await;
+        purge_assistant_tools(pg, &[&family]).await;
+        purge_corrections(pg, &[&sig_a, &sig_b]).await;
+        purge_runs(pg, &[&pid]).await;
+
+        let ts = chrono::Utc::now() - chrono::Duration::hours(2); // in-window, fixed day
+        let now = chrono::Utc::now();
+
+        // ── session_outcomes: 3 first-try + 1 corrected + 1 in-flight (excluded) ──
+        for _ in 0..3 {
+            let sid = seed_metrics_session(pg, &fid, &pid, Some("completed"), Some(true), 0, ts).await;
+            seed_metrics_turn(pg, &sid, 2, ts).await; // 3×2 = 6 first-try tool-calls
+        }
+        let corrected = seed_metrics_session(pg, &fid, &pid, Some("corrected"), Some(false), 2, ts).await;
+        seed_metrics_turn(pg, &corrected, 6, ts).await; // 6 corrected tool-calls
+        let inflight = seed_metrics_session(pg, &fid, &pid, None, None, 0, ts).await; // outcome NULL
+        seed_metrics_turn(pg, &inflight, 5, ts).await; // must be excluded from every metric
+        // → ftr 3/4 = 0.75 · rework 6/12 = 0.5 · throughput 4
+
+        // ── churn: completed process_file executions + file nodes + a rework flag ──
+        for _ in 0..4 {
+            seed_task_execution(pg, "process_file", "completed", &folder_abs, &format!("{folder_abs}/a.rs"), ts).await;
+        }
+        for _ in 0..2 {
+            seed_task_execution(pg, "process_file", "completed", &folder_abs, &format!("{folder_abs}/b.rs"), ts).await;
+        }
+        for f in ["a.rs", "b.rs", "c.rs", "d.rs"] {
+            seed_file_node(pg, &fid, &format!("{folder_abs}/{f}")).await;
+        }
+        seed_detected_pattern(pg, &pid, Some(&fid), "rework: a.rs", true).await;
+        // → churn_rate 6 · churn_concentration 4/6 · rework_density 1/4 = 0.25
+
+        // ── duplication: 2 near-duplicate functions + 3 orthogonal one-hots ──
+        let dup = uniform_embedding_sql("0.1");
+        seed_symbol_node(pg, &fid, "function", "dup_a", &format!("{folder_abs}/da.rs"), (1, 10), Some(&dup)).await;
+        seed_symbol_node(pg, &fid, "function", "dup_b", &format!("{folder_abs}/db.rs"), (1, 10), Some(&dup)).await;
+        for (i, name) in ["u1", "u2", "u3"].iter().enumerate() {
+            let emb = onehot_embedding_sql((i + 1) as u32);
+            seed_symbol_node(pg, &fid, "function", name, &format!("{folder_abs}/{name}.rs"), (1, 10), Some(&emb)).await;
+        }
+        // → duplication_ratio 2/5 = 0.4
+
+        // ── autonomy: client-session-linked assistant events + runs ──
+        seed_metrics_client_session(pg, &fid, &pid, &csid_auto, ts).await;
+        for _ in 0..4 {
+            seed_assistant_event(pg, &csid_auto, "Stop", ts).await;
+        }
+        for _ in 0..10 {
+            seed_assistant_event(pg, &csid_auto, "UserPromptSubmit", ts).await;
+        }
+        for _ in 0..4 {
+            seed_run(pg, &pid, "done", ts).await;
+        }
+        seed_run(pg, &pid, "crashed", ts).await;
+        // → interruption_rate 4/10 = 0.4 · run_completion 4/5 = 0.8 · false_crash_rate NONE
+
+        // ── knowledge: in-window memories + eligible patterns + eligible corrections ──
+        seed_memory(pg, &pid, now - chrono::Duration::hours(2)).await;
+        seed_memory(pg, &pid, now - chrono::Duration::hours(3)).await;
+        seed_pattern_with_instances(pg, &pid, Some(&fid), &format!("kp1-{uniq}"), true, 3).await;
+        seed_pattern_with_instances(pg, &pid, Some(&fid), &format!("kp2-{uniq}"), true, 4).await;
+        seed_correction(pg, &sig_a, 3, &[pid]).await;
+        seed_correction(pg, &sig_b, 5, &[pid]).await;
+        // → memory_promotion 2/(2 patterns + 2 corrections) = 2/4 = 0.5
+
+        // ── tool: family-scoped registry (4 tools) with one 'used' verdict ──
+        seed_tool_session(pg, &fid, &pid, &csid_tool, &family, ts).await;
+        for t in ["t1", "t2", "t3", "t4"] {
+            seed_assistant_tool(pg, &family, "builtin", "builtin", t, t).await;
+        }
+        seed_tool_verdict(pg, &csid_tool, "t1", "used", ts).await;
+        // → unused_tools 3 (t2/t3/t4 dead; total_tools 4)
+
+        // ── DRIVE: replicate the scheduler's enqueue, run the REAL worker pool ──
+        let ctx = make_ctx().await;
+        let base_names: Vec<String> = pg
+            .active_task_names()
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|t| t != HEALTH_TASK_NAME) // `health` is the ComputeHealth kind, not a base group
+            .collect();
+        for g in ["session_outcomes", "churn", "duplication", "autonomy", "knowledge", "tool"] {
+            assert!(base_names.iter().any(|t| t == g), "base group `{g}` is active in the registry: {base_names:?}");
+        }
+        let mut compute_ids = Vec::with_capacity(base_names.len());
+        for task_name in &base_names {
+            let id = ctx.queue.enqueue(Task::new(TaskKind::ComputeMetrics, &pid_str, task_name)).await;
+            compute_ids.push(id);
+        }
+        ctx.queue
+            .enqueue(Task::new(TaskKind::ComputeHealth, &pid_str, "").blocked_by(compute_ids))
+            .await;
+        let expected_tasks = base_names.len() + 1;
+
+        // The barrier is wired: health is BLOCKED until its base ComputeMetrics land.
+        let pre = ctx.queue.status().await;
+        assert_eq!(pre.pending, base_names.len(), "one ComputeMetrics per active base group pending");
+        assert_eq!(pre.blocked, 1, "the ComputeHealth barrier is blocked on its ComputeMetrics deps");
+
+        spawn_workers(ctx.clone(), 2);
+
+        // Poll until the whole graph drains through the real executor (bounded — a
+        // stuck barrier or a failing handler fails loud instead of hanging forever).
+        let mut drained = false;
+        for _ in 0..800 {
+            let s = ctx.queue.status().await;
+            if s.pending == 0 && s.blocked == 0 && s.running == 0 && s.completed >= expected_tasks {
+                drained = true;
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+        let fs = ctx.queue.status().await;
+        assert!(
+            drained,
+            "metrics graph must drain through the real executor (barrier released after its ComputeMetrics); \
+             pending={} blocked={} running={} completed={}",
+            fs.pending, fs.blocked, fs.running, fs.completed,
+        );
+
+        // ── STORE: every seeded group produced ≥1 project-scope daily row ──
+        let rows = pg.get_project_metrics(&pid).await.unwrap();
+        let mut val: HashMap<String, f64> = HashMap::new();
+        let mut props: HashMap<String, serde_json::Value> = HashMap::new();
+        let mut mtype: HashMap<String, String> = HashMap::new();
+        for r in &rows {
+            val.insert(r.metric.clone(), r.value);
+            props.insert(r.metric.clone(), r.props.clone());
+            mtype.insert(r.metric.clone(), r.metric_type.clone());
+        }
+        let get = |k: &str| {
+            *val.get(k)
+                .unwrap_or_else(|| panic!("BLOCKER: group produced NO project daily row for metric `{k}`"))
+        };
+
+        assert!(close(get("ftr"), 0.75), "ftr = 3/4 = 0.75 (got {})", get("ftr"));
+        assert!(close(get("rework_ratio"), 0.5), "rework_ratio = 6/12 = 0.5 (got {})", get("rework_ratio"));
+        assert!(close(get("throughput"), 4.0), "throughput = 4 measurable sessions (got {})", get("throughput"));
+        assert!(close(get("churn_rate"), 6.0), "churn_rate = 6 completed process_file (got {})", get("churn_rate"));
+        assert!(close(get("churn_concentration"), 4.0 / 6.0), "churn_concentration = 4/6 (got {})", get("churn_concentration"));
+        assert!(close(get("rework_density"), 0.25), "rework_density = 1/4 = 0.25 (got {})", get("rework_density"));
+        assert!(close(get("duplication_ratio"), 0.4), "duplication_ratio = 2/5 = 0.4 (got {})", get("duplication_ratio"));
+        assert!(close(get("interruption_rate"), 0.4), "interruption_rate = 4/10 = 0.4 (got {})", get("interruption_rate"));
+        assert!(close(get("run_completion"), 0.8), "run_completion = 4/5 = 0.8 (got {})", get("run_completion"));
+        assert!(close(get("memory_promotion"), 0.5), "memory_promotion = 2/4 = 0.5 (got {})", get("memory_promotion"));
+        assert!(close(get("unused_tools"), 3.0), "unused_tools = 3 dead tools (got {})", get("unused_tools"));
+
+        // exactly 11 base metrics + project_health (false_crash_rate absent).
+        assert_eq!(rows.len(), 12, "12 latest-per-metric project-scope rows (11 base + project_health)");
+
+        // ── HEALTH: 0..=100, equals the hand-normalized weighted mean, lands on 68 ──
+        let active = pg.active_metrics().await.unwrap();
+        let (mut sum_wn, mut sum_w) = (0.0f64, 0.0f64);
+        let mut included: Vec<String> = Vec::new();
+        for m in &active {
+            if m.key == "project_health" {
+                continue; // never recurse into the composite
+            }
+            let Some(&v) = val.get(&m.key) else { continue }; // honest-absent → excluded
+            let Some(n) = norm(&m.metric_type, &m.direction, v, m.target) else { continue }; // neutral/score → excluded
+            sum_wn += m.weight * n;
+            sum_w += m.weight;
+            included.push(m.key.clone());
+        }
+        assert!(sum_w > 0.0, "at least one component contributes to health");
+        let expected_health = (100.0 * (sum_wn / sum_w)).round();
+        let stored_health = get("project_health");
+        assert!((0.0..=100.0).contains(&stored_health), "0 <= project_health <= 100 (got {stored_health})");
+        assert!(close(stored_health, expected_health),
+            "project_health == hand-normalized weighted mean: stored {stored_health}, expected {expected_health}");
+        assert!(close(stored_health, 68.0), "designed seed → project_health 68 (got {stored_health})");
+        included.sort();
+        assert!(!included.iter().any(|k| k == "churn_concentration"), "neutral churn_concentration is NOT scored");
+        assert!(!included.iter().any(|k| k == "false_crash_rate"), "uncomputed false_crash_rate is NOT scored");
+        assert!(!included.iter().any(|k| k == "project_health"), "the composite never scores itself");
+        assert_eq!(included.len(), 10, "exactly the 10 scored components contribute: {included:?}");
+
+        // ── NEVER-FABRICATE: every ratio/pct row carries numerator + denominator ──
+        for r in &rows {
+            if r.metric_type == "ratio" || r.metric_type == "pct" {
+                assert!(r.props.get("numerator").and_then(|v| v.as_i64()).is_some(),
+                    "ratio/pct `{}` carries props.numerator: {}", r.metric, r.props);
+                assert!(r.props.get("denominator").and_then(|v| v.as_i64()).is_some(),
+                    "ratio/pct `{}` carries props.denominator: {}", r.metric, r.props);
+            }
+        }
+        // Honest-absence spot-check: a metric in a seeded group that is deliberately
+        // NOT computed (autonomy's false_crash_rate — NEEDS_CONTEXT) writes NO row.
+        let (fcr_rows,): (i64,) = query_as(
+            "SELECT count(*) FROM sensei.project_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
+              WHERE pm.project_id = $1 AND m.key = 'false_crash_rate'",
+        )
+        .bind(pid)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        assert_eq!(fcr_rows, 0, "honest-absence: false_crash_rate produced NO row (never fabricated)");
+        assert!(!val.contains_key("false_crash_rate"), "false_crash_rate is not in the read surface");
+
+        // ── ENDPOINT 1: GET /api/metrics/registry serves every seeded metric + facets ──
+        let (st, body) = req(app.clone(), "GET", "/api/metrics/registry", None).await;
+        assert_eq!(st, StatusCode::OK, "{body}");
+        let reg = body["metrics"].as_array().expect("registry metrics array");
+        for k in [
+            "ftr", "rework_ratio", "throughput", "churn_rate", "churn_concentration",
+            "rework_density", "duplication_ratio", "interruption_rate", "run_completion",
+            "memory_promotion", "unused_tools", "project_health",
+        ] {
+            let m = reg.iter().find(|m| m["key"].as_str() == Some(k))
+                .unwrap_or_else(|| panic!("registry endpoint serves `{k}`"));
+            assert!(m["purpose"].as_str().is_some_and(|s| !s.is_empty()), "`{k}` carries a purpose facet");
+            assert!(m["direction"].as_str().is_some_and(|s| !s.is_empty()), "`{k}` carries a direction facet");
+        }
+
+        // ── ENDPOINT 2: GET /api/projects/{id}/metrics returns the seeded data ──
+        let (st, body) = req(app.clone(), "GET", &format!("/api/projects/{pid}/metrics"), None).await;
+        assert_eq!(st, StatusCode::OK, "{body}");
+        let ms = body["metrics"].as_array().expect("project metrics array");
+        assert_eq!(ms.len(), 12, "endpoint returns the 12 latest-per-metric rows");
+        let e_health = ms.iter().find(|m| m["metric"].as_str() == Some("project_health"))
+            .expect("project_health present on the endpoint");
+        assert!(close(e_health["value"].as_f64().unwrap(), 68.0), "endpoint project_health = 68");
+        let e_ftr = ms.iter().find(|m| m["metric"].as_str() == Some("ftr")).expect("ftr present on the endpoint");
+        assert!(close(e_ftr["value"].as_f64().unwrap(), 0.75), "endpoint ftr = 0.75");
+        assert_eq!(e_ftr["direction"].as_str(), Some("higher_better"), "facet: ftr direction attached");
+        assert!(e_ftr["purpose"].as_str().is_some_and(|s| !s.is_empty()), "facet: ftr purpose attached");
+        assert!(e_ftr["props"]["numerator"].as_i64().is_some() && e_ftr["props"]["denominator"].as_i64().is_some(),
+            "endpoint ftr carries numerator/denominator facets");
+        for m in ms {
+            let t = m["metric_type"].as_str().unwrap_or("");
+            if t == "ratio" || t == "pct" {
+                assert!(m["props"]["numerator"].as_i64().is_some(),
+                    "endpoint ratio/pct `{}` carries props.numerator", m["metric"]);
+                assert!(m["props"]["denominator"].as_i64().is_some(),
+                    "endpoint ratio/pct `{}` carries props.denominator", m["metric"]);
+            }
+        }
+
+        // ── ENDPOINT 3: GET /api/projects/{id}/metrics/{key}?grain=weekly re-derives Σnum/Σden ──
+        let (st, body) = req(app.clone(), "GET",
+            &format!("/api/projects/{pid}/metrics/rework_ratio?grain=weekly"), None).await;
+        assert_eq!(st, StatusCode::OK, "{body}");
+        assert_eq!(body["grain"], "weekly");
+        assert_eq!(body["metric"].as_str(), Some("rework_ratio"));
+        let series = body["series"].as_array().expect("weekly series array");
+        assert!(!series.is_empty(), "the weekly series has a point");
+        let wk_val = series.last().unwrap()["value"].as_f64().expect("weekly value");
+        let rr_num = props["rework_ratio"]["numerator"].as_f64().unwrap();
+        let rr_den = props["rework_ratio"]["denominator"].as_f64().unwrap();
+        assert!(close(wk_val, rr_num / rr_den), "weekly rework_ratio re-derives Σnum/Σden = {rr_num}/{rr_den}");
+        assert!(close(wk_val, 0.5), "weekly rework_ratio = 0.5");
+
+        // ── FTR PARITY: store daily == get_ftr_daily == direct base arithmetic; headline == Σnum/Σden ──
+        let (direct_rate, direct_count): (f64, i64) = query_as(
+            "SELECT avg(CASE WHEN s.ftr THEN 1.0 ELSE 0.0 END)::float8, count(*)::int8 \
+               FROM activity.sessions s JOIN sensei.folders f ON f.id = s.folder_id \
+              WHERE f.project_id = $1 AND s.outcome IS NOT NULL",
+        )
+        .bind(pid)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        assert!(close(direct_rate, 0.75) && direct_count == 4, "direct FTR base = 0.75 over 4 measurable sessions");
+        assert!(close(get("ftr"), direct_rate), "store daily ftr == avg(case when ftr) over the measurable base");
+
+        let ftr_daily = pg.get_ftr_daily(Some(&pid), 14).await.unwrap();
+        assert_eq!(ftr_daily.len(), 1, "one daily ftr row for the project");
+        assert!(close(ftr_daily[0]["ftr_rate"].as_f64().unwrap(), 0.75), "get_ftr_daily ftr_rate = 0.75");
+        assert_eq!(ftr_daily[0]["session_count"].as_i64(), Some(4), "get_ftr_daily session_count = 4");
+        assert!(close(ftr_daily[0]["ftr_rate"].as_f64().unwrap(), get("ftr")),
+            "get_ftr_daily (store-backed) == the store daily ftr value");
+
+        let headline = pg.get_project_ftr(&pid).await.unwrap();
+        assert!(close(headline["ftr14d"].as_f64().unwrap(), 0.75), "get_project_ftr ftr14d == Σnum/Σden = 3/4 = 0.75");
+        assert_eq!(headline["sessions7d"].as_i64(), Some(4), "get_project_ftr sessions7d == Σdenominator = 4");
+        let rate = pg.get_project_ftr_rate(&pid).await.unwrap().expect("ftr rate present for a project with ftr rows");
+        assert!(close(rate, 0.75), "get_project_ftr_rate == 0.75 headline");
+
+        // ── CLEANUP: purge the no-FK tables, then the project + folder (cascades) ──
+        purge_runs(pg, &[&pid]).await;
+        purge_assistant_events(pg, &[&csid_auto, &csid_tool]).await;
+        purge_tool_verdicts(pg, &[&csid_tool]).await;
+        purge_assistant_tools(pg, &[&family]).await;
+        purge_corrections(pg, &[&sig_a, &sig_b]).await;
+        cleanup_metrics_fixture(pg, &pid, Some(&fid), &[&folder_abs, &pid_str]).await;
+    }
 }
