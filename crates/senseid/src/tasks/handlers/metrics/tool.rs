@@ -186,10 +186,13 @@ mod tests {
 
     #[tokio::test]
     async fn unused_tools_counts_tools_without_positive_verdicts() {
-        // 3 registered tools; t1 has a 'used' verdict (positive), t2 has only an
-        // 'ignored' verdict (NOT positive), t3 has none → 2 unused (t2, t3). value = 2,
-        // total_tools = 3. The 'ignored' verdict on t2 proves only `verdict='used'`
-        // counts as a positive outcome.
+        // 4 registered tools pin verdict PRECISION — ONLY `verdict='used'` is a
+        // positive outcome: t1 'used' (positive → used), t2 'ignored'-only (NOT
+        // positive → unused), t3 'partial'-only (NOT positive → unused), t4 no verdict
+        // (→ unused) → 3 unused. value = 3, total_tools = 4. The `partial`-only t3 is
+        // load-bearing: broadening the filter to `verdict IN ('used','partial')` would
+        // wrongly count t3 as used (value → 2) and this assertion goes red — a
+        // regression the `ignored`-only case alone can't catch.
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
@@ -202,19 +205,21 @@ mod tests {
 
         let ts = chrono::Utc::now() - chrono::Duration::hours(2); // in-window call time
         seed_tool_session(pg, &fid, &pid, &csid, &fam, ts).await;
-        for t in ["t1", "t2", "t3"] {
+        for t in ["t1", "t2", "t3", "t4"] {
             seed_assistant_tool(pg, &fam, "builtin", "builtin", t, t).await;
         }
-        seed_tool_verdict(pg, &csid, "t1", "used", ts).await; // positive
-        seed_tool_verdict(pg, &csid, "t2", "ignored", ts).await; // NOT positive
+        seed_tool_verdict(pg, &csid, "t1", "used", ts).await; // positive → used
+        seed_tool_verdict(pg, &csid, "t2", "ignored", ts).await; // NOT positive → unused
+        seed_tool_verdict(pg, &csid, "t3", "partial", ts).await; // NOT positive → unused
+        // t4: no verdict at all → unused.
 
         let written = compute(&ctx, &pid.to_string()).await.unwrap();
         assert_eq!(written, 1, "one unused_tools project row");
 
         let daily = daily_rows(pg, &pid).await;
         let ut = daily.iter().find(|r| r.0 == "unused_tools").expect("unused_tools row present");
-        assert!((ut.1 - 2.0).abs() < 1e-9, "value = 2 unused (t2 ignored-only + t3 no-verdict; t1 used excluded)");
-        assert_eq!(ut.2["total_tools"].as_i64(), Some(3), "total_tools = 3 registered in scope");
+        assert!((ut.1 - 3.0).abs() < 1e-9, "value = 3 unused (t2 ignored-only, t3 partial-only, t4 no-verdict; only t1 'used' excluded)");
+        assert_eq!(ut.2["total_tools"].as_i64(), Some(4), "total_tools = 4 registered in scope");
 
         // ── Idempotency: re-run backfills in place, never duplicates ──
         let again = compute(&ctx, &pid.to_string()).await.unwrap();
