@@ -170,18 +170,6 @@ async fn rework_counts(
     Ok((total, rows.into_iter().collect()))
 }
 
-/// Today's date (DB `current_date`) — the `computed_on` for `rework_density`, which
-/// is a point-in-time snapshot (flagged files ÷ project files now), not a windowed
-/// per-day series. Read from the DB so its day boundary matches the
-/// `date_trunc('day', started_at)::date` the churn window uses (same session TZ).
-async fn today(pg: &PgStore) -> Result<chrono::NaiveDate, String> {
-    let (d,): (chrono::NaiveDate,) = sqlx_core::query_as::query_as("SELECT current_date")
-        .fetch_one(pg.pool())
-        .await
-        .map_err(|e| e.to_string())?;
-    Ok(d)
-}
-
 /// Compute the `churn` group for one project over the configured window.
 /// `project_raw` is the project uuid carried in `task.folder_path`. Returns the
 /// number of `project_metrics` rows written (`0` = honest-empty: no churn/rework
@@ -300,7 +288,7 @@ pub(super) async fn compute(ctx: &TaskContext, project_raw: &str) -> Result<u32,
     if let Some(mid) = rework_id {
         let (project_files, folder_files) = project_file_counts(pg, &project_id).await?;
         let (rework_total, folder_rework) = rework_counts(pg, &project_id).await?;
-        let day = today(pg).await?;
+        let day = super::today(pg).await?;
 
         // Project row: rework files ÷ project files. 0 project files → NO row (a real
         // denominator of 0 would be a fabricated 0/0). 0 rework over real files → a

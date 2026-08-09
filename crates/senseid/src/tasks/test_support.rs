@@ -187,6 +187,63 @@ pub(crate) async fn seed_file_node(pg: &PgStore, folder_id: &uuid::Uuid, file_pa
     .unwrap();
 }
 
+/// A 384-dim pgvector literal with every component equal to `val` (a SQL numeric
+/// text, e.g. `"0.1"`). Two such vectors are IDENTICAL → cosine similarity 1.0, a
+/// guaranteed near-duplicate for the `duplication_ratio` fixture. Emitted as a raw
+/// SQL expression because pgvector has no sqlx bind type (inlined by
+/// [`seed_symbol_node`]).
+pub(crate) fn uniform_embedding_sql(val: &str) -> String {
+    format!("(SELECT '['||string_agg('{val}', ',')||']' FROM generate_series(1,384))::vector")
+}
+
+/// A 384-dim ONE-HOT pgvector literal: `1` at 1-based position `pos`, `0` elsewhere
+/// (`ORDER BY` makes the position deterministic). Two one-hots at DIFFERENT
+/// positions are orthogonal (cosine 0), and any one-hot vs a
+/// [`uniform_embedding_sql`] vector sits far below 0.92 — so one-hot symbols never
+/// form a duplicate pair. The dissimilar counterpart to the uniform-vector duplicates.
+pub(crate) fn onehot_embedding_sql(pos: u32) -> String {
+    format!(
+        "(SELECT '['||string_agg(CASE WHEN g = {pos} THEN '1' ELSE '0' END, ',' ORDER BY g)||']' \
+         FROM generate_series(1,384) g)::vector"
+    )
+}
+
+/// Insert one `sensei.nodes` symbol row for the `duplication_ratio` fixture and
+/// return its id. `kind` is a `node_kind` literal (`"function"`/`"method"` are the
+/// eligible kinds; anything else is deliberately ineligible). `embedding_sql`, when
+/// `Some`, is a raw 384-dim pgvector expression (see [`uniform_embedding_sql`] /
+/// [`onehot_embedding_sql`]) inlined into the INSERT; `None` leaves `embedding` NULL
+/// (ineligible). `lines` is the `(line_start, line_end)` span — eligibility requires
+/// `line_end - line_start >= 3`. Distinct `name`s keep rows apart under
+/// `nodes_unique_identity`. Nodes cascade on folder delete, so
+/// [`cleanup_metrics_fixture`] clears them.
+pub(crate) async fn seed_symbol_node(
+    pg: &PgStore,
+    folder_id: &uuid::Uuid,
+    kind: &str,
+    name: &str,
+    file_path: &str,
+    lines: (i32, i32),
+    embedding_sql: Option<&str>,
+) -> uuid::Uuid {
+    let (line_start, line_end) = lines;
+    let embedding = embedding_sql.unwrap_or("NULL");
+    let sql = format!(
+        "INSERT INTO sensei.nodes (folder_id, kind, name, file_path, line_start, line_end, embedding) \
+         VALUES ($1, '{kind}'::sensei.node_kind, $2, $3, $4, $5, {embedding}) RETURNING id"
+    );
+    let (id,): (uuid::Uuid,) = sqlx_core::query_as::query_as(&sql)
+        .bind(folder_id)
+        .bind(name)
+        .bind(file_path)
+        .bind(line_start)
+        .bind(line_end)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+    id
+}
+
 /// Insert one `activity.sessions` row carrying a `client_session_id` and return its
 /// id — the autonomy (5.4) fixture. `assistant_events` are attributed to a project
 /// via `sessions.client_session_id = assistant_events.session_id`, so an event
