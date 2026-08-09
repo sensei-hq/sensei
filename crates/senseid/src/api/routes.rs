@@ -40,6 +40,7 @@ use crate::api::handlers::runs;
 use crate::api::handlers::identity;
 use crate::api::handlers::stance;
 use crate::api::handlers::playbook;
+use crate::api::handlers::metrics;
 
 pub fn create_router(state: AppState) -> Router {
     Router::new()
@@ -131,6 +132,10 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/projects/{id}/sessions",        get(project_detail::get_project_sessions))
         .route("/api/projects/{id}/project-deps",    get(project_detail::get_project_project_deps))
         .route("/api/projects/{id}/commands",        get(project_detail::get_project_commands))
+        // Metrics (Phase 7): latest-per-metric + trend + health for a project, and
+        // one metric's series at a grain (?grain=daily|weekly|monthly|quarterly).
+        .route("/api/projects/{id}/metrics",         get(metrics::get_project_metrics))
+        .route("/api/projects/{id}/metrics/{key}",   get(metrics::get_project_metric_series))
         // G10: user-scope capability→preferred-tool bias for get_commands.
         .route("/api/preferences/commands",          get(project_detail::get_command_preferences).put(project_detail::set_command_preference))
         .route("/api/projects/{id}/library-version-conflicts", get(project_detail::get_project_library_version_conflicts))
@@ -282,6 +287,9 @@ pub fn create_router(state: AppState) -> Router {
         // Observatory · Logs screen.
         .route("/api/logs", post(logs::ingest_log).get(logs::get_logs))
         // Metrics
+        // Phase 7 registry catalog — static `registry` wins over the `{project}`
+        // param below (matchit precedence, same as /api/runs/plan vs /{id}).
+        .route("/api/metrics/registry", get(metrics::get_metrics_registry))
         .route("/api/metrics/{project}", get(observatory::get_metrics))
         // Workflow state
         .route("/api/state/{project}", get(sessions::get_workflow_state).put(sessions::update_workflow_state))
@@ -416,6 +424,196 @@ mod tests {
         let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
         let json = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
         (status, json)
+    }
+
+    /// Seed an ACTIVE `sensei.metrics` registry row for a metrics-endpoint test and
+    /// return its id. `type`/`direction` are the enum text values; the facets are
+    /// fixed known strings so assertions have a stable target. `effective_from`
+    /// defaults to `current_date`, so the row is active today. Cleaned up by caller.
+    async fn seed_metric(
+        pg: &crate::db::pg_store::PgStore, key: &str, mtype: &str, direction: &str,
+    ) -> uuid::Uuid {
+        let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO sensei.metrics
+                (key, name, description, family, type, direction, purpose, how_to_read, formula, task_name)
+             VALUES ($1, $1, 'test metric', 'quality'::sensei.metric_family, $2::sensei.metric_type,
+                     $3::sensei.metric_direction, 'test purpose', 'test how', 'test formula', 'session_outcomes')
+             RETURNING id",
+        )
+        .bind(key).bind(mtype).bind(direction)
+        .fetch_one(pg.pool()).await.unwrap();
+        row.0
+    }
+
+    /// 7.1 `GET /api/metrics/registry` returns the active catalog: 200 + a non-empty
+    /// array in which EVERY row carries the self-describing facets (`purpose` AND
+    /// `direction`) — the endpoint serves the daemon-owned registry, not a stub.
+    #[tokio::test]
+    async fn get_metrics_registry_endpoint() {
+        let (app, state) = test_app().await;
+        let key = format!("_test:reg:{}", uuid::Uuid::new_v4());
+        let mid = seed_metric(&state.pg, &key, "pct", "higher_better").await;
+
+        let (st, body) = req(app, "GET", "/api/metrics/registry", None).await;
+        assert_eq!(st, StatusCode::OK);
+        let metrics = body["metrics"].as_array().expect("metrics is an array");
+        assert!(!metrics.is_empty(), "the active registry is non-empty");
+        for m in metrics {
+            assert!(m["purpose"].as_str().is_some_and(|s| !s.is_empty()),
+                "every metric carries a purpose: {m}");
+            assert!(m["direction"].as_str().is_some_and(|s| !s.is_empty()),
+                "every metric carries a direction: {m}");
+        }
+        let ours = metrics.iter().find(|m| m["key"].as_str() == Some(key.as_str()))
+            .expect("seeded metric is in the active registry");
+        assert_eq!(ours["direction"], "higher_better");
+        assert_eq!(ours["purpose"], "test purpose");
+
+        sqlx_core::query::query("DELETE FROM sensei.metrics WHERE id = $1")
+            .bind(mid).execute(state.pg.pool()).await.unwrap();
+    }
+
+    /// 7.2 `GET /api/projects/{id}/metrics`: latest-per-metric + facets + trend +
+    /// the `project_health` composite. Also pins the never-fabricate cases — a
+    /// project with no rows is honest-empty (200 []), an unknown project is a 404.
+    #[tokio::test]
+    async fn get_project_metrics_endpoint() {
+        let (app, state) = test_app().await;
+        let uniq = uuid::Uuid::new_v4();
+        let pid = state.pg.create_project(&format!("_test:pme:{uniq}"), None, None).await.unwrap();
+
+        // Base metric A (ratio) across TWO ISO weeks → weekly trend has prior/delta.
+        let key_a = format!("_test:pme:{uniq}:cov");
+        let mid_a = seed_metric(&state.pg, &key_a, "ratio", "higher_better").await;
+        let w1 = chrono::NaiveDate::from_ymd_opt(2020, 1, 6).unwrap();  // Monday
+        let w2 = chrono::NaiveDate::from_ymd_opt(2020, 1, 13).unwrap(); // next Monday
+        state.pg.upsert_project_metric(&mid_a, &pid, None, None, w1, "daily", 0.5,
+            &serde_json::json!({"numerator": 1, "denominator": 2}), "measured").await.unwrap();
+        state.pg.upsert_project_metric(&mid_a, &pid, None, None, w2, "daily", 0.75,
+            &serde_json::json!({"numerator": 3, "denominator": 4}), "measured").await.unwrap();
+
+        // Base metric B (ratio) — a SINGLE week → no prior period (trend is null).
+        let key_b = format!("_test:pme:{uniq}:dup");
+        let mid_b = seed_metric(&state.pg, &key_b, "ratio", "lower_better").await;
+        state.pg.upsert_project_metric(&mid_b, &pid, None, None, w1, "daily", 0.25,
+            &serde_json::json!({"numerator": 1, "denominator": 4}), "measured").await.unwrap();
+
+        // The composite: a project_health daily row using the REAL registry metric.
+        let (health_mid,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "SELECT id FROM sensei.metrics WHERE key = 'project_health'")
+            .fetch_one(state.pg.pool()).await.expect("project_health seeded in registry");
+        state.pg.upsert_project_metric(&health_mid, &pid, None, None, w2, "daily", 82.0,
+            &serde_json::json!({"components": 2}), "measured").await.unwrap();
+
+        let (st, body) = req(app.clone(), "GET", &format!("/api/projects/{pid}/metrics"), None).await;
+        assert_eq!(st, StatusCode::OK, "{body}");
+        let metrics = body["metrics"].as_array().expect("metrics array");
+
+        let a = metrics.iter().find(|m| m["metric"].as_str() == Some(key_a.as_str()))
+            .expect("metric A present");
+        assert_eq!(a["value"], 0.75, "latest daily value for A");
+        assert_eq!(a["purpose"], "test purpose", "facet: purpose attached");
+        assert_eq!(a["direction"], "higher_better", "facet: direction attached");
+        assert_eq!(a["how_to_read"], "test how", "facet: how_to_read attached");
+        // Trend attached where available: A has two weekly periods → prior/delta.
+        assert_eq!(a["prior"].as_f64(), Some(0.5), "A weekly prior (Σnum/Σden of week 1)");
+        assert_eq!(a["delta"].as_f64(), Some(0.25), "A weekly delta = value - prior");
+
+        let b = metrics.iter().find(|m| m["metric"].as_str() == Some(key_b.as_str()))
+            .expect("metric B present");
+        assert_eq!(b["value"], 0.25);
+        // Honest-null trend: B has a single week → prior/delta null, never a fake 0.
+        assert!(b["prior"].is_null(), "B has no prior week — null, not a fabricated 0");
+        assert!(b["delta"].is_null());
+
+        let health = metrics.iter().find(|m| m["metric"].as_str() == Some("project_health"))
+            .expect("project_health present");
+        assert_eq!(health["value"], 82.0, "the composite value is present");
+
+        // Honest-empty: a project with NO metric rows → 200 with an empty list.
+        let empty_pid = state.pg.create_project(&format!("_test:pme-empty:{uniq}"), None, None).await.unwrap();
+        let (st, body) = req(app.clone(), "GET", &format!("/api/projects/{empty_pid}/metrics"), None).await;
+        assert_eq!(st, StatusCode::OK);
+        assert_eq!(body["metrics"].as_array().map(|a| a.len()), Some(0),
+            "no rows → honest-empty list, not a fabricated row");
+
+        // Unknown project id → 404 (matches GET /api/projects/{id}/ftr), never a 200-empty.
+        let (st, _) = req(app, "GET", &format!("/api/projects/{}/metrics", uuid::Uuid::new_v4()), None).await;
+        assert_eq!(st, StatusCode::NOT_FOUND, "unknown project → 404, never a fabricated empty");
+
+        // cleanup — project_metrics cascade from the metric + project; the shared
+        // project_health registry row is left intact (its test row cascades w/ pid).
+        sqlx_core::query::query("DELETE FROM sensei.metrics WHERE id = ANY($1)")
+            .bind(vec![mid_a, mid_b]).execute(state.pg.pool()).await.unwrap();
+        sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = ANY($1)")
+            .bind(vec![pid, empty_pid]).execute(state.pg.pool()).await.unwrap();
+    }
+
+    /// 7.3 `GET /api/projects/{id}/metrics/{key}?grain=weekly`: the weekly series
+    /// matches the view's re-derived Σnum/Σden (never the mean of daily ratios).
+    /// Also pins: an invalid grain is a 400; an unknown key is honest-empty (200 []).
+    #[tokio::test]
+    async fn get_project_metric_series_endpoint() {
+        let (app, state) = test_app().await;
+        let uniq = uuid::Uuid::new_v4().simple().to_string();
+        let pid = state.pg.create_project(&format!("_test_pms_{uniq}"), None, None).await.unwrap();
+        let key = format!("_test_pms_{uniq}_cov"); // URL-safe (no colons) — it goes in the path
+        let mid = seed_metric(&state.pg, &key, "ratio", "higher_better").await;
+
+        // Four daily ratio rows across two ISO weeks, with UNEQUAL denominators
+        // within each week so Σnum/Σden differs from the mean of daily ratios —
+        // proving the weekly view re-derives from sums, not by averaging ratios.
+        // (daily value = num/den; the weekly roll-up reads props, not this value.)
+        let days = [
+            (chrono::NaiveDate::from_ymd_opt(2020, 1, 6).unwrap(),  1, 1), // wk 01-06: ratio 1.000
+            (chrono::NaiveDate::from_ymd_opt(2020, 1, 8).unwrap(),  1, 3), //           ratio 0.333
+            (chrono::NaiveDate::from_ymd_opt(2020, 1, 13).unwrap(), 3, 4), // wk 01-13: ratio 0.750
+            (chrono::NaiveDate::from_ymd_opt(2020, 1, 15).unwrap(), 3, 12),//           ratio 0.250
+        ];
+        for (d, num, den) in days {
+            state.pg.upsert_project_metric(&mid, &pid, None, None, d, "daily",
+                num as f64 / den as f64,
+                &serde_json::json!({"numerator": num, "denominator": den}), "measured").await.unwrap();
+        }
+        // Expected weekly values re-derived Σnum/Σden:
+        //   wk1 = (1+1)/(1+3)  = 0.5   [mean of daily ratios would be 0.667 — rejected]
+        //   wk2 = (3+3)/(4+12) = 0.375 [mean of daily ratios would be 0.5   — rejected]
+        let expect = [
+            (chrono::NaiveDate::from_ymd_opt(2020, 1, 6).unwrap(),  0.5_f64),
+            (chrono::NaiveDate::from_ymd_opt(2020, 1, 13).unwrap(), 0.375_f64),
+        ];
+
+        let (st, body) = req(app.clone(), "GET",
+            &format!("/api/projects/{pid}/metrics/{key}?grain=weekly"), None).await;
+        assert_eq!(st, StatusCode::OK, "{body}");
+        assert_eq!(body["grain"], "weekly");
+        assert_eq!(body["metric"].as_str(), Some(key.as_str()));
+        let series = body["series"].as_array().expect("series array");
+        assert_eq!(series.len(), 2, "one point per ISO week");
+        for (point, (period, value)) in series.iter().zip(expect) {
+            assert_eq!(point["period"].as_str(), Some(period.to_string().as_str()),
+                "period is the week start");
+            let got = point["value"].as_f64().expect("numeric value");
+            assert!((got - value).abs() < 1e-9,
+                "weekly value re-derived Σnum/Σden: got {got}, want {value}");
+        }
+
+        // Invalid grain → 400 (never a silent default that would mismeasure).
+        let (st, _) = req(app.clone(), "GET",
+            &format!("/api/projects/{pid}/metrics/{key}?grain=yearly"), None).await;
+        assert_eq!(st, StatusCode::BAD_REQUEST, "invalid grain → 400");
+
+        // Unknown metric key (no rows) → 200 with an empty series (honest-empty).
+        let (st, body) = req(app.clone(), "GET",
+            &format!("/api/projects/{pid}/metrics/{key}_nope?grain=weekly"), None).await;
+        assert_eq!(st, StatusCode::OK);
+        assert_eq!(body["series"].as_array().map(|a| a.len()), Some(0),
+            "unknown key → honest-empty series, not a failure");
+
+        sqlx_core::query::query("DELETE FROM sensei.metrics WHERE id = $1")
+            .bind(mid).execute(state.pg.pool()).await.unwrap();
+        sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
+            .bind(pid).execute(state.pg.pool()).await.unwrap();
     }
 
     /// End-to-end automated-run flow through the REAL router against sensei_test:
