@@ -6458,6 +6458,26 @@ impl PgStore {
         Ok(rows.into_iter().map(|(t,)| t).collect())
     }
 
+    /// `key → metric_id` for every ACTIVE metric whose `task_name` matches — the
+    /// map a per-group compute handler resolves its metrics through (shared by all
+    /// six base groups so each doesn't re-implement the filter-by-task_name loop).
+    /// Built on [`Self::active_metrics`] (same active-window filter), so a retired /
+    /// not-yet-effective / unseeded metric is simply ABSENT from the map and the
+    /// caller skips it (`ids.get(key)` → `None`) — an inactive metric is never
+    /// computed. Propagates the read error; never masks it.
+    pub async fn active_metric_ids(
+        &self,
+        task_name: &str,
+    ) -> Result<std::collections::HashMap<String, uuid::Uuid>, String> {
+        Ok(self
+            .active_metrics()
+            .await?
+            .into_iter()
+            .filter(|m| m.task_name == task_name)
+            .map(|m| (m.key, m.id))
+            .collect())
+    }
+
     /// Resolve an absolute folder path to its `(folder_id, project_id)` for
     /// project-scoped metric attribution. Thin wrapper over
     /// [`Self::get_folder_ids_by_path`] (matches `folders.abs_path`, then falls
@@ -15787,6 +15807,36 @@ mod tests {
 
         sqlx_core::query::query("DELETE FROM sensei.metrics WHERE key IN ($1, $2, $3, $4)")
             .bind(&active_key).bind(&retired_key).bind(&future_key).bind(&today_retire_key)
+            .execute(s.pool()).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn active_metric_ids_maps_active_keys_for_task_name_only() {
+        // active_metric_ids(task) returns key→id for ONLY the active metrics whose
+        // task_name matches: a same-task retired metric and a different-task metric
+        // are both absent, so a compute handler's `ids.get(key)` skips them.
+        let s = pg_store().await;
+        let uniq = uuid::Uuid::new_v4();
+        let task       = format!("ComputeSO_{uniq}");     // unique → no pre-seeded rows share it
+        let other_task = format!("ComputeOther_{uniq}");
+        let k_a       = format!("_test:ami:{uniq}:a");
+        let k_b       = format!("_test:ami:{uniq}:b");
+        let k_other   = format!("_test:ami:{uniq}:other");
+        let k_retired = format!("_test:ami:{uniq}:retired");
+        let id_a = seed_metric(&s, &k_a, &task, 0, None).await;             // active, our task
+        let id_b = seed_metric(&s, &k_b, &task, 0, None).await;             // active, our task
+        seed_metric(&s, &k_other, &other_task, 0, None).await;             // active, DIFFERENT task
+        seed_metric(&s, &k_retired, &task, -10, Some(-1)).await;           // our task but RETIRED
+
+        let ids = s.active_metric_ids(&task).await.unwrap();
+        assert_eq!(ids.len(), 2, "only this task's two ACTIVE keys (task_name is unique to this test)");
+        assert_eq!(ids.get(&k_a).copied(), Some(id_a), "active key → its metric_id");
+        assert_eq!(ids.get(&k_b).copied(), Some(id_b));
+        assert!(!ids.contains_key(&k_other), "a key with a different task_name is excluded");
+        assert!(!ids.contains_key(&k_retired), "a retired (inactive) key is excluded (never computed)");
+
+        sqlx_core::query::query("DELETE FROM sensei.metrics WHERE key IN ($1, $2, $3, $4)")
+            .bind(&k_a).bind(&k_b).bind(&k_other).bind(&k_retired)
             .execute(s.pool()).await.unwrap();
     }
 
