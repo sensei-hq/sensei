@@ -345,6 +345,36 @@ pub struct ProjectMetricRow {
     pub how_to_read: String,
 }
 
+/// The latest weekly trend point for one metric of a project — the shape
+/// [`PgStore::get_project_metric_trend`] returns. Read from
+/// `sensei.project_metric_trend` (the weekly `lag()` over `project_metric_weekly`):
+/// `prior`/`delta` are `None` for a metric's first period (honest-null, never a
+/// fabricated 0). `direction` travels with the row so the UI can colour the delta
+/// (a positive delta on a `lower_better` metric is a regression) without a
+/// registry re-join.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ProjectMetricTrendRow {
+    pub metric:    String,
+    pub period:    chrono::NaiveDate,
+    pub value:     f64,
+    pub prior:     Option<f64>,
+    pub delta:     Option<f64>,
+    pub direction: String,
+}
+
+/// One point in a project metric's time series at a chosen grain — the shape
+/// [`PgStore::get_project_metric_series`] returns. `period` is the grain's bucket
+/// start (`date` for daily; the week/month/quarter start otherwise); `value` is
+/// the view's re-derived value (Σnum/Σden for ratio/pct, Σ for count/currency,
+/// period-end for value/score — NEVER the mean of daily ratios). `direction`
+/// travels with the row so the UI can colour the series without a registry re-join.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ProjectMetricSeriesPoint {
+    pub period:    chrono::NaiveDate,
+    pub value:     f64,
+    pub direction: String,
+}
+
 #[allow(dead_code, clippy::too_many_arguments, clippy::type_complexity)]
 // PgStore API surface — methods wired up incrementally; SQLx tuple return types
 // are inherently verbose and adding an extra layer of type aliases would
@@ -6582,6 +6612,80 @@ impl PgStore {
             )| ProjectMetricRow {
                 metric, date, value, props, name, metric_type, unit, direction, purpose, how_to_read,
             })
+            .collect())
+    }
+
+    /// Latest weekly trend point per metric for a project — reads
+    /// `sensei.project_metric_trend` (the weekly `lag()` view), keeping the newest
+    /// `period` per metric (`DISTINCT ON`). Powers the trend arrow on the project
+    /// metrics endpoint: `prior`/`delta` are `None` for a metric with a single
+    /// weekly period (honest-null, never a fabricated 0). Empty when the project
+    /// has no daily rows yet (honest-empty, not a failure). Propagates the read
+    /// error; never masks it.
+    pub async fn get_project_metric_trend(
+        &self,
+        project_id: &uuid::Uuid,
+    ) -> Result<Vec<ProjectMetricTrendRow>, String> {
+        let rows: Vec<(String, chrono::NaiveDate, f64, Option<f64>, Option<f64>, String)> =
+            sqlx_core::query_as::query_as(
+                "SELECT DISTINCT ON (metric)
+                        metric, period, value::float8, prior::float8, delta::float8, direction::text
+                   FROM sensei.project_metric_trend
+                  WHERE project_id = $1
+                  ORDER BY metric, period DESC",
+            )
+            .bind(project_id)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(rows
+            .into_iter()
+            .map(|(metric, period, value, prior, delta, direction)| ProjectMetricTrendRow {
+                metric, period, value, prior, delta, direction,
+            })
+            .collect())
+    }
+
+    /// The time series for ONE metric of a project at a chosen `grain`, read from
+    /// the matching roll-up view: `daily` → `project_metric_daily` (raw stored
+    /// values); `weekly`/`monthly`/`quarterly` → the roll-up view that re-derives
+    /// each period from sums (Σnum/Σden for ratio/pct — NEVER the mean of daily
+    /// ratios). `grain` MUST be one of `daily`|`weekly`|`monthly`|`quarterly`; any
+    /// other value is an `Err` (the caller 400s) rather than a silent default that
+    /// would mismeasure. An unknown metric key — or a project with no rows — yields
+    /// an empty series (honest-empty, not a failure). Propagates the read error;
+    /// never masks it.
+    pub async fn get_project_metric_series(
+        &self,
+        project_id: &uuid::Uuid,
+        key: &str,
+        grain: &str,
+    ) -> Result<Vec<ProjectMetricSeriesPoint>, String> {
+        // The view + its period column are chosen from a fixed allowlist keyed on
+        // the validated grain — no user-supplied string ever reaches the SQL, so
+        // the `format!` is injection-safe.
+        let (view, period_col) = match grain {
+            "daily"     => ("sensei.project_metric_daily",     "date"),
+            "weekly"    => ("sensei.project_metric_weekly",    "period"),
+            "monthly"   => ("sensei.project_metric_monthly",   "period"),
+            "quarterly" => ("sensei.project_metric_quarterly", "period"),
+            other => return Err(format!("invalid grain: {other:?}")),
+        };
+        let sql = format!(
+            "SELECT {period_col} AS period, value::float8, direction::text
+               FROM {view}
+              WHERE project_id = $1 AND metric = $2
+              ORDER BY {period_col}",
+        );
+        let rows: Vec<(chrono::NaiveDate, f64, String)> = sqlx_core::query_as::query_as(&sql)
+            .bind(project_id)
+            .bind(key)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(rows
+            .into_iter()
+            .map(|(period, value, direction)| ProjectMetricSeriesPoint { period, value, direction })
             .collect())
     }
 

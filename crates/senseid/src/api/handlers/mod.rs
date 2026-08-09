@@ -35,3 +35,4 @@ pub(crate) mod runs;
 pub(crate) mod identity;
 pub(crate) mod stance;
 pub(crate) mod playbook;
+pub(crate) mod metrics;
