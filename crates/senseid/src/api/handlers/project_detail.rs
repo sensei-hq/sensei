@@ -190,7 +190,9 @@ pub(crate) async fn get_project_overview(
 
     let ftr = state.pg.get_project_ftr(&uuid).await
         .map_err(|e| { tracing::warn!(error = %e, project = %uuid, "get_project_overview: get_project_ftr failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
-    let ftr_14d = ftr["ftr14d"].as_f64().unwrap_or(0.0);
+    // Honest-null when the project has no analyzed sessions in the window — the
+    // header renders "—", never a fabricated 0% (`ftr14d` is already null-or-number).
+    let ftr_14d: Option<f64> = ftr["ftr14d"].as_f64();
 
     // The warn rule reads the SAME drift count the stat block displays
     // (`stats.docDrift.open`, status IN drifted/broken) so the warning dot can

@@ -6,6 +6,7 @@
   // lines. Presentational only.
   import type { EnrichedProject } from './buckets.js';
   import { projectStatus, projectIcon, lastSessionLabel } from './buckets.js';
+  import { ftrPctLabel } from '$lib/ftr.js';
   import { apiBase } from '$lib/api.js';
   import { appState } from '$lib/appstate.svelte.js';
   import ProjPill from './ProjPill.svelte';
@@ -25,7 +26,8 @@
   const status = $derived(projectStatus(p));
   // Image icons resolve to the daemon's serve route; kanji icons stay glyphs.
   const icon = $derived(projectIcon(p, apiBase(appState.port)));
-  const ftrPct = $derived(Math.round(p.ftr14d * 100));
+  // "NN%" or the "—" no-data marker (never a fabricated 0%).
+  const ftrLabel = $derived(ftrPctLabel(p.ftr14d));
 </script>
 
 <button
@@ -61,7 +63,7 @@
   <!-- col 3 — signal -->
   <div class="font-mono text-[11px] text-right tabular-nums whitespace-nowrap">
     {#if status === 'active'}
-      <span class:text-warning={p.warn} class:text-ink-soft={!p.warn}>{ftrPct}% ftr</span>
+      <span class:text-warning={p.warn} class:text-ink-soft={!p.warn}>{ftrLabel} ftr</span>
     {:else}
       <span class="text-ink-faint">last · {lastSessionLabel(p.last_session_at)}</span>
     {/if}

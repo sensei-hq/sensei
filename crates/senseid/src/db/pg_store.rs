@@ -4992,14 +4992,15 @@ impl PgStore {
 
     /// Daily FTR sparkline. Re-sourced from the daily `ftr` rows in
     /// `sensei.project_metric_daily` (metric='ftr') — the single FTR source of
-    /// truth after `sensei.ftr_daily` was retired: `ftr_rate` = the stored `value`
-    /// (num/den), `session_count` = `props.denominator`. Per-project rows read
-    /// straight through; the holistic (no project filter) shape averages the
-    /// per-project daily rates and sums the denominators per day, exactly as the
-    /// old view-backed getter did. Response shape unchanged
-    /// (`{day, ftr_rate, session_count}`); `props.correction_count`/`avg_turns`
-    /// are carried in the store but were never part of this getter's shape, so
-    /// they stay unexposed.
+    /// truth: `ftr_rate` = the stored `value` (num/den), `session_count` =
+    /// `props.denominator`. Per-project rows read straight through (one row per
+    /// day). The holistic (no project filter) branch POOLS the parts per day —
+    /// Σnumerator / Σdenominator — so it stays session-weighted and consistent
+    /// with every other rollup, honouring the `project_metrics` invariant that
+    /// ratios re-derive from their parts (never an average-of-averages). Response
+    /// shape unchanged (`{day, ftr_rate, session_count}`);
+    /// `props.correction_count`/`avg_turns` are carried in the store but were
+    /// never part of this getter's shape, so they stay unexposed.
     pub async fn get_ftr_daily(&self, project_id: Option<&uuid::Uuid>, days: i32) -> Result<Vec<serde_json::Value>, String> {
         let rows: Vec<(chrono::NaiveDate, Option<f64>, Option<i64>)> = if let Some(pid) = project_id {
             sqlx_core::query_as::query_as(
@@ -5010,7 +5011,9 @@ impl PgStore {
             ).bind(pid).bind(days).fetch_all(&self.pool).await.map_err(|e| e.to_string())?
         } else {
             sqlx_core::query_as::query_as(
-                "SELECT d.date, AVG(d.value)::float8 AS ftr_rate, SUM((d.props->>'denominator')::int8)::int8 AS session_count
+                "SELECT d.date,
+                        (SUM((d.props->>'numerator')::float8) / NULLIF(SUM((d.props->>'denominator')::float8), 0))::float8 AS ftr_rate,
+                        SUM((d.props->>'denominator')::int8)::int8 AS session_count
                    FROM sensei.project_metric_daily d
                   WHERE d.metric = 'ftr' AND d.date >= (current_date - $1::int)
                   GROUP BY d.date ORDER BY d.date"
@@ -7832,63 +7835,71 @@ impl PgStore {
             }).collect())
     }
 
+    /// Build the FTR headline JSON shared by [`Self::get_project_ftr`] and
+    /// [`Self::get_holistic_ftr`]. `ftr_14d` / `ftr_14d_prev` are honest-null
+    /// when absent — they serialize to JSON `null`, NEVER coerced to a fabricated
+    /// `0.0` a caller can't tell from a real 0%. One place so neither getter can
+    /// re-introduce the fabrication.
+    fn ftr_headline_json(
+        ftr_14d: Option<f64>,
+        ftr_14d_prev: Option<f64>,
+        trend: Vec<f64>,
+        sessions_7d: i64,
+    ) -> serde_json::Value {
+        serde_json::json!({
+            "ftr14d": ftr_14d,
+            "ftr14dPrev": ftr_14d_prev,
+            "ftrTrend": trend,
+            "sessions7d": sessions_7d,
+        })
+    }
+
     pub async fn get_project_ftr(&self, project_id: &uuid::Uuid) -> Result<serde_json::Value, String> {
         // Headline re-derived from the daily `ftr` rows in
         // `sensei.project_metric_daily` (metric='ftr') — the single FTR source of
-        // truth after `sensei.project_ftr_metrics` was retired. `ftr_14d` /
-        // `ftr_14d_prev` are session-weighted (Σ props.numerator / Σ
-        // props.denominator over their day-windows, not an average of daily
-        // ratios); `sessions_7d` is Σ props.denominator over 7d. This scopes to
-        // the analyzed base (`outcome is not null`, the store's denominator) —
-        // the old view counted every session (NULL-outcome scored 0), so the
-        // number can differ where a project has in-flight sessions; the store's
-        // analyzed FTR is the intended consolidated number. `nullif(...,0)` keeps
-        // an empty window honest-null rather than a 0/0.
-        let row: (Option<f64>, Option<f64>, i64) =
+        // truth. `ftr14d` reuses [`Self::get_project_ftr_rate`] (same 14d Σnum/Σden)
+        // so the window can't drift between the two; `ftr14dPrev` is the same
+        // pooled ratio over the prior-14d window and `sessions7d` is Σdenominator
+        // over 7d. Scoped to the analyzed base (`outcome is not null`, the store's
+        // denominator); `nullif(...,0)` keeps an empty window honest-null.
+        let ftr_14d = self.get_project_ftr_rate(project_id).await?;
+        let (ftr_14d_prev, sessions_7d): (Option<f64>, i64) =
             sqlx_core::query_as::query_as(
                 "SELECT
-                   (sum((d.props->>'numerator')::float8) FILTER (WHERE d.date > current_date - 14)
-                      / nullif(sum((d.props->>'denominator')::float8) FILTER (WHERE d.date > current_date - 14), 0))::float8,
-                   (sum((d.props->>'numerator')::float8) FILTER (WHERE d.date > current_date - 28 AND d.date <= current_date - 14)
-                      / nullif(sum((d.props->>'denominator')::float8) FILTER (WHERE d.date > current_date - 28 AND d.date <= current_date - 14), 0))::float8,
-                   coalesce(sum((d.props->>'denominator')::int8) FILTER (WHERE d.date > current_date - 7), 0)::int8
-                 FROM sensei.project_metric_daily d
-                 WHERE d.metric = 'ftr' AND d.project_id = $1"
+                   (sum((props->>'numerator')::float8) FILTER (WHERE date > current_date - 28 AND date <= current_date - 14)
+                      / nullif(sum((props->>'denominator')::float8) FILTER (WHERE date > current_date - 28 AND date <= current_date - 14), 0))::float8,
+                   coalesce(sum((props->>'denominator')::int8) FILTER (WHERE date > current_date - 7), 0)::int8
+                 FROM sensei.project_metric_daily
+                 WHERE metric = 'ftr' AND project_id = $1"
             ).bind(project_id)
             .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
 
-        let (ftr_14d, ftr_14d_prev, sessions_7d) = row;
-
-        // 14-day daily trend array — reads activity.sessions directly (never the
-        // retired view), so the sparkline keeps its exact prior behavior.
+        // 14-day daily trend array — reads activity.sessions directly, filtered to
+        // the SAME analyzed base as the headline (`outcome is not null`) so the
+        // last trend point agrees with `ftr14d` for a day with in-flight sessions.
         let daily: Vec<(chrono::NaiveDate, Option<f64>)> =
             sqlx_core::query_as::query_as(
                 "SELECT date_trunc('day', started_at)::date AS day,
                         AVG(CASE WHEN ftr THEN 1.0 ELSE 0.0 END)::float8 AS daily_ftr
                  FROM activity.sessions
-                 WHERE project_id = $1 AND started_at > now() - interval '14d'
+                 WHERE project_id = $1 AND outcome IS NOT NULL AND started_at > now() - interval '14d'
                  GROUP BY day ORDER BY day"
             ).bind(project_id)
             .fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
 
         let trend: Vec<f64> = daily.into_iter().map(|(_, v)| v.unwrap_or(0.0)).collect();
 
-        Ok(serde_json::json!({
-            "ftr14d": ftr_14d.unwrap_or(0.0),
-            "ftr14dPrev": ftr_14d_prev.unwrap_or(0.0),
-            "ftrTrend": trend,
-            "sessions7d": sessions_7d,
-        }))
+        Ok(Self::ftr_headline_json(ftr_14d, ftr_14d_prev, trend, sessions_7d))
     }
 
     /// The project's 14-day session-weighted FTR — Σ(`props.numerator`) /
     /// Σ(`props.denominator`) over the daily `ftr` rows in
     /// `sensei.project_metric_daily` (metric='ftr'), the single FTR source of
     /// truth. Same 14d window and derivation as [`Self::get_project_ftr`]'s
-    /// `ftr14d`, so both agree. Returns `None` when the project has no `ftr` rows
-    /// in the window — honest-absent, NEVER a fabricated `0`. Shared by the legacy
-    /// `/api/metrics/{project}` route and the MCP `get_metrics` tool so those
-    /// surfaces report the same number instead of re-computing their own.
+    /// `ftr14d` (which calls this), so both agree. Returns `None` when the project
+    /// has no `ftr` rows in the window — honest-absent, NEVER a fabricated `0`.
+    /// Shared by the legacy `/api/metrics/{project}` route and the MCP
+    /// `get_metrics` tool so those surfaces report the same number.
     pub async fn get_project_ftr_rate(&self, project_id: &uuid::Uuid) -> Result<Option<f64>, String> {
         let row: (Option<f64>,) = sqlx_core::query_as::query_as(
             "SELECT (sum((props->>'numerator')::float8)
@@ -7902,9 +7913,9 @@ impl PgStore {
     /// Holistic First-Try-Right rollup across all sessions — powers the
     /// Observatory · Today header. Mirrors [`Self::get_project_ftr`] without the
     /// project filter: the 14d / prior-14d headline is session-weighted
-    /// (fraction of FTR-scored sessions), and the trend is a fixed 14
-    /// calendar-day array (0-filled on empty days) so the sparkline always has
-    /// 14 points.
+    /// (fraction of FTR-scored sessions, honest-null when there are none), and
+    /// the trend is a fixed 14 calendar-day array (0-filled on empty days) so the
+    /// sparkline always has 14 points.
     pub async fn get_holistic_ftr(&self) -> Result<serde_json::Value, String> {
         let row: (Option<f64>, Option<f64>, i64) = sqlx_core::query_as::query_as(
             "SELECT
@@ -7932,12 +7943,7 @@ impl PgStore {
         ).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
         let trend: Vec<f64> = daily.into_iter().map(|(_, v)| v.unwrap_or(0.0)).collect();
 
-        Ok(serde_json::json!({
-            "ftr14d": ftr_14d.unwrap_or(0.0),
-            "ftr14dPrev": ftr_14d_prev.unwrap_or(0.0),
-            "ftrTrend": trend,
-            "sessions7d": sessions_7d,
-        }))
+        Ok(Self::ftr_headline_json(ftr_14d, ftr_14d_prev, trend, sessions_7d))
     }
 
     pub async fn get_project_drift(&self, project_id: &uuid::Uuid) -> Result<serde_json::Value, String> {
@@ -14584,21 +14590,26 @@ mod tests {
 
     #[tokio::test]
     async fn project_ftr_and_quality_decode_numeric_metrics() {
-        // Regression: ftr_14d / ftr_7d / daily AVG(...) / avg_duration_ms are all
-        // NUMERIC; without ::float8 casts sqlx fails to decode into f64 and the
-        // endpoint 500s (masked by the client's default-on-error). The project
-        // must have an ENRICHED session in the 14d window — an empty project
-        // yields NULLs that short-circuit decode and hide the bug (which is how
-        // the first cut of this test passed while the live endpoint still 500'd).
+        // Regression: the headline (Σ props / value) and the daily AVG(...) trend /
+        // ftr_7d / avg_duration_ms are all NUMERIC; without ::float8 casts sqlx
+        // fails to decode into f64 and the endpoint 500s (masked by the client's
+        // default-on-error). The project must have BOTH a stored `ftr` row (so the
+        // headline decodes a real number, not a short-circuiting NULL) AND an
+        // analyzed session in the window (so the inline trend decodes a numeric row).
         let s = pg_store().await;
         let pid = s.create_project(&format!("_test:ftr-{}", uuid::Uuid::new_v4()), None, None).await.unwrap();
         let fid = create_test_folder(&s, &format!("ftr-{}", uuid::Uuid::new_v4())).await;
         let sid = format!("_test-sid-{}", uuid::Uuid::new_v4());
         let session_id = s.record_session_event(&sid, &fid, Some(&pid), "claude", true).await.unwrap();
         s.update_session_metrics(&session_id, 3, 0, "completed", true, 1000, None, &serde_json::json!({})).await.unwrap();
+        // Stored daily ftr row in the 14d window → the headline decodes a real value.
+        let (ftr_mid,): (uuid::Uuid,) =
+            query_as("SELECT id FROM sensei.metrics WHERE key = 'ftr'").fetch_one(s.pool()).await.unwrap();
+        s.upsert_project_metric(&ftr_mid, &pid, None, None, chrono::Utc::now().date_naive(), "daily", 1.0,
+            &serde_json::json!({"numerator": 1, "denominator": 1}), "measured").await.unwrap();
 
         let ftr = s.get_project_ftr(&pid).await.expect("get_project_ftr decodes numeric metrics");
-        assert!(ftr["ftr14d"].as_f64().is_some(), "ftr14d present");
+        assert!(ftr["ftr14d"].as_f64().is_some(), "ftr14d decodes a real number from the stored row");
         assert!(ftr["ftrTrend"].as_array().is_some_and(|a| !a.is_empty()), "daily trend decodes a numeric row");
         s.get_quality_signals(&pid).await.expect("get_quality_signals decodes numeric metrics");
         s.get_tool_usage_stats().await.expect("get_tool_usage_stats decodes numeric avg_duration_ms");
@@ -16178,6 +16189,100 @@ mod tests {
 
         // cleanup — project_metrics rows cascade from the project (ftr metric kept).
         sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1").bind(pid).execute(s.pool()).await.unwrap();
+    }
+
+    /// FIX 1 (DB-free): the shared headline builder serializes an absent 14d /
+    /// prior-14d FTR as JSON `null` — NEVER a fabricated `0.0`. Covers BOTH
+    /// `get_project_ftr` and `get_holistic_ftr`, which share this builder.
+    /// Mutation guard: reverting the builder to `.unwrap_or(0.0)` fails this.
+    #[test]
+    fn ftr_headline_json_absent_serializes_null_not_zero() {
+        let absent = PgStore::ftr_headline_json(None, None, vec![], 0);
+        assert!(absent["ftr14d"].is_null(), "absent ftr14d → JSON null, not 0.0");
+        assert!(absent["ftr14dPrev"].is_null(), "absent ftr14dPrev → JSON null, not 0.0");
+        assert_eq!(absent["sessions7d"].as_i64(), Some(0), "sessions7d is an honest count");
+        let present = PgStore::ftr_headline_json(Some(0.5), Some(0.25), vec![0.5], 3);
+        assert_eq!(present["ftr14d"].as_f64(), Some(0.5), "a present value still serializes as a number");
+        assert_eq!(present["ftr14dPrev"].as_f64(), Some(0.25));
+    }
+
+    /// FIX 1 (end-to-end): a project with zero stored `ftr` rows reports honest
+    /// `null` for the headline through `get_project_ftr` — never a fabricated 0%.
+    #[tokio::test]
+    async fn get_project_ftr_absent_is_null_not_zero() {
+        let s = pg_store().await;
+        let pid = s.create_project(&format!("_test:ftrnull:{}", uuid::Uuid::new_v4()), None, None).await.unwrap();
+        let ftr = s.get_project_ftr(&pid).await.unwrap();
+        assert!(ftr["ftr14d"].is_null(), "no ftr rows → ftr14d is null, NOT 0.0");
+        assert!(ftr["ftr14dPrev"].is_null(), "no ftr rows → ftr14dPrev is null, NOT 0.0");
+        assert_eq!(ftr["sessions7d"].as_i64(), Some(0), "sessions7d is an honest 0 (a count)");
+        assert!(ftr["ftrTrend"].as_array().is_some_and(|a| a.is_empty()), "no sessions → empty trend");
+        assert_eq!(s.get_project_ftr_rate(&pid).await.unwrap(), None, "rate helper is None on no data");
+        sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1").bind(pid).execute(s.pool()).await.unwrap();
+    }
+
+    /// FIX 5 (window mutation guard): `ftr14d` must reach back the full 14 days.
+    /// The only stored row is 10 days old — inside 14d, outside 7d — so `ftr14d`
+    /// is 1.0 while `sessions7d` (7d) excludes it. Narrowing the 14d window to 7d
+    /// would make `ftr14d` null, failing the `.expect` below.
+    #[tokio::test]
+    async fn ftr14d_window_reaches_the_8_to_13_day_band() {
+        let s = pg_store().await;
+        let pid = s.create_project(&format!("_test:ftrwin:{}", uuid::Uuid::new_v4()), None, None).await.unwrap();
+        let (ftr_mid,): (uuid::Uuid,) =
+            query_as("SELECT id FROM sensei.metrics WHERE key = 'ftr'").fetch_one(s.pool()).await.unwrap();
+        let d10 = chrono::Utc::now().date_naive() - chrono::Duration::days(10); // 8–13d band
+        s.upsert_project_metric(&ftr_mid, &pid, None, None, d10, "daily", 1.0,
+            &serde_json::json!({"numerator": 2, "denominator": 2}), "measured").await.unwrap();
+
+        let ftr = s.get_project_ftr(&pid).await.unwrap();
+        assert!((ftr["ftr14d"].as_f64().expect("ftr14d includes the 10-day-old row (14d window)") - 1.0).abs() < 1e-9,
+            "only row is 10d old → ftr14d = 1.0; a 7d-narrowed window would make this null");
+        assert_eq!(ftr["sessions7d"].as_i64(), Some(0),
+            "sessions7d (7d window) excludes the 10-day-old row — proves 14d ≠ 7d");
+        assert_eq!(s.get_project_ftr_rate(&pid).await.unwrap(), Some(1.0), "rate helper (14d) includes it too");
+
+        sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1").bind(pid).execute(s.pool()).await.unwrap();
+    }
+
+    /// FIX 3: the holistic (no-project) `get_ftr_daily` branch POOLS Σnum/Σden per
+    /// day — it must NOT average per-project daily rates (the `project_metrics`
+    /// ratio invariant). Two projects on one day with unequal denominators make
+    /// pooled ≠ avg-of-rates; the getter must match the pooled value.
+    #[tokio::test]
+    async fn holistic_ftr_daily_pools_not_average_of_rates() {
+        let s = pg_store().await;
+        let (ftr_mid,): (uuid::Uuid,) =
+            query_as("SELECT id FROM sensei.metrics WHERE key = 'ftr'").fetch_one(s.pool()).await.unwrap();
+        // A day off the busy 'today' (compute-writing tests seed today) but inside 14d.
+        let day = chrono::Utc::now().date_naive() - chrono::Duration::days(6);
+        let p1 = s.create_project(&format!("_test:ftrpool1:{}", uuid::Uuid::new_v4()), None, None).await.unwrap();
+        let p2 = s.create_project(&format!("_test:ftrpool2:{}", uuid::Uuid::new_v4()), None, None).await.unwrap();
+        // P1: 1/1 = 1.0 ; P2: 0/3 = 0.0 → avg-of-rates 0.5, pooled 1/4 = 0.25.
+        s.upsert_project_metric(&ftr_mid, &p1, None, None, day, "daily", 1.0,
+            &serde_json::json!({"numerator": 1, "denominator": 1}), "measured").await.unwrap();
+        s.upsert_project_metric(&ftr_mid, &p2, None, None, day, "daily", 0.0,
+            &serde_json::json!({"numerator": 0, "denominator": 3}), "measured").await.unwrap();
+
+        let holistic = s.get_ftr_daily(None, 14).await.unwrap();
+        let row = holistic.iter().find(|r| r["day"].as_str() == Some(day.to_string().as_str()))
+            .expect("holistic row for the seeded day");
+
+        // Compare to the DIRECT pooled + avg over whatever exists globally for that
+        // day (robust to other rows), and assert the getter matches POOLED, not avg.
+        let (sum_num, sum_den, avg_rate): (f64, i64, f64) = query_as(
+            "SELECT SUM((props->>'numerator')::float8), SUM((props->>'denominator')::int8)::int8, AVG(value)::float8 \
+               FROM sensei.project_metric_daily WHERE metric = 'ftr' AND date = $1",
+        ).bind(day).fetch_one(s.pool()).await.unwrap();
+        let pooled = sum_num / sum_den as f64;
+        assert!((row["ftr_rate"].as_f64().unwrap() - pooled).abs() < 1e-9,
+            "holistic ftr_rate is pooled Σnum/Σden, not an average of per-project rates");
+        assert_eq!(row["session_count"].as_i64(), Some(sum_den), "holistic session_count is Σdenominator");
+        assert!((pooled - avg_rate).abs() > 1e-9,
+            "seed makes pooled ({pooled}) differ from avg-of-rates ({avg_rate}) — so the check above is a real discriminator");
+
+        sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = ANY($1)")
+            .bind(vec![p1, p2]).execute(s.pool()).await.unwrap();
     }
 }
 
