@@ -6,6 +6,7 @@
   // derivation is a pure helper from buckets.ts.
   import type { EnrichedProject } from './buckets.js';
   import { projectStatus, projectIcon, lastSessionLabel } from './buckets.js';
+  import { ftrPct } from '$lib/ftr.js';
   import { apiBase } from '$lib/api.js';
   import { appState } from '$lib/appstate.svelte.js';
   import ProjPill from './ProjPill.svelte';
@@ -23,7 +24,9 @@
   const status = $derived(projectStatus(p));
   // Image icons resolve to the daemon's serve route; kanji icons stay glyphs.
   const icon = $derived(projectIcon(p, apiBase(appState.port)));
-  const ftrPct = $derived(Math.round(p.ftr14d * 100));
+  // Bare percentage number for the stat cell, or "—" when there's no FTR data
+  // (honest no-data; never a fabricated 0).
+  const ftrStat = $derived<number | string>(ftrPct(p.ftr14d) ?? '—');
 </script>
 
 {#snippet stat(label: string, value: string | number, tone: 'default' | 'mute' | 'warn')}
@@ -67,7 +70,7 @@
   <!-- Stat grid -->
   {#if status === 'active'}
     <div class="grid grid-cols-3 gap-2 pt-2 border-t border-paper-edge">
-      {@render stat('ftr', ftrPct, p.warn ? 'warn' : 'default')}
+      {@render stat('ftr', ftrStat, p.warn ? 'warn' : 'default')}
       {@render stat('repos', p.repos_count, 'default')}
       {@render stat('libs', p.libs_count, 'default')}
     </div>

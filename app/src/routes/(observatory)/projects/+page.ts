@@ -18,7 +18,7 @@ export const load: PageLoad = async () => {
     (projects as ProjectListItem[]).map(async (p) => {
       const base: EnrichedProject = {
         ...p,
-        ftr14d: 0,
+        ftr14d: null,
         sessions7d: p.sessions7d ?? 0,
         warn: false,
         repos_count: p.repos_count ?? 0,

@@ -13,22 +13,25 @@ import type {
   ProjectOverviewStats,
   ProjectOverviewSession,
 } from '$lib/types.js';
+import { ftrPct } from '$lib/ftr.js';
 
 // ── Header FTR chip ─────────────────────────────────────────────────────────
 
 export interface FtrDisplay {
-  /** 14-day FTR as a whole-number percentage (0–100). */
-  pct: number;
+  /** 14-day FTR as a whole-number percentage (0–100), or null when the project
+   *  has no analyzed sessions in the window — the chip renders "—", never 0%. */
+  pct: number | null;
   /** Text-color utility — warning when the project is flagged, else ink. */
   toneClass: string;
 }
 
 /** Project the header FTR chip. Reads `project.ftr` (the same store-backed FTR
  *  number — project_metrics, metric='ftr' — the projects-index card uses) so the
- *  two numbers never disagree. Warn tone is driven by `project.warn`, not by the rate. */
+ *  two numbers never disagree. `pct` is null (render "—") when there's no FTR
+ *  data — never a fabricated 0%. Warn tone is driven by `project.warn`, not the rate. */
 export function ftrDisplay(project: Pick<ProjectOverviewHeader, 'ftr' | 'warn'>): FtrDisplay {
   return {
-    pct: Math.round((project.ftr ?? 0) * 100),
+    pct: ftrPct(project.ftr),
     toneClass: project.warn ? 'text-warning' : 'text-ink',
   };
 }

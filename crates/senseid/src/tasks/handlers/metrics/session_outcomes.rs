@@ -408,6 +408,40 @@ mod tests {
         cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
     }
 
+    /// FIX 2: `get_project_ftr`'s inline trend must use the same analyzed base as
+    /// the headline (`outcome is not null`), so the sparkline's last point agrees
+    /// with `ftr14d` even when the day has in-flight sessions. Before the fix the
+    /// unfiltered trend scored the in-flight session as 0 and dragged the point
+    /// below the headline (last=0.5 vs ftr14d=2/3). Mutation guard: dropping the
+    /// `outcome is not null` filter from the trend query fails the last assert.
+    #[tokio::test]
+    async fn trend_last_point_matches_headline_with_inflight_sessions() {
+        let ctx = make_ctx().await;
+        let pg = ctx.pg();
+        let uniq = uuid::Uuid::new_v4();
+        let (pid, fid) = seed_metrics_project_folder(pg, &uniq).await;
+        let ts = chrono::Utc::now() - chrono::Duration::hours(2);
+        // 2 first-try + 1 corrected (measurable) + 1 in-flight (outcome NULL) today.
+        for _ in 0..2 {
+            seed_metrics_session(pg, &fid, &pid, Some("completed"), Some(true), 0, ts).await;
+        }
+        seed_metrics_session(pg, &fid, &pid, Some("corrected"), Some(false), 1, ts).await;
+        seed_metrics_session(pg, &fid, &pid, None, None, 0, ts).await; // in-flight, excluded
+
+        compute(&ctx, &pid.to_string()).await.unwrap();
+
+        let ftr = pg.get_project_ftr(&pid).await.unwrap();
+        let headline = ftr["ftr14d"].as_f64().expect("ftr14d present");
+        assert!((headline - 2.0 / 3.0).abs() < 1e-9,
+            "headline = 2/3 over the 3 measurable sessions (in-flight excluded)");
+        let last = ftr["ftrTrend"].as_array().and_then(|a| a.last()).and_then(|v| v.as_f64())
+            .expect("trend has a last point");
+        assert!((last - headline).abs() < 1e-9,
+            "trend's last point agrees with the headline (same `outcome is not null` base)");
+
+        cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
+    }
+
     #[tokio::test]
     async fn session_outcomes_no_data_writes_zero_rows() {
         // Never-fabricate: a project with zero sessions in the window writes NO rows

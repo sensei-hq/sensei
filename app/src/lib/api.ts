@@ -253,9 +253,10 @@ export function senseiApi(port: number) {
 
     // ── Project detail (new multi-window endpoints) ───────────────────
     getProjectFtr: (id: string) =>
-      get<{ ftr14d: number; ftr14dPrev: number; ftrTrend: number[]; sessions7d: number }>(
+      get<{ ftr14d: number | null; ftr14dPrev: number | null; ftrTrend: number[]; sessions7d: number }>(
         `/api/projects/${enc(id)}/ftr`,
-        { ftr14d: 0, ftr14dPrev: 0, ftrTrend: [], sessions7d: 0 }
+        // Fallback on a fetch error is honest no-data (null), never a fabricated 0%.
+        { ftr14d: null, ftr14dPrev: null, ftrTrend: [], sessions7d: 0 }
       ),
 
     getProjectRepos: (id: string) =>
@@ -476,7 +477,7 @@ export function senseiApi(port: number) {
 
     // Holistic FTR headline (14d / prior / trend / 7d) → Today header chip.
     getObservatoryFtr: () =>
-      get<ObservatoryFtr>('/api/observatory/ftr', { ftr14d: 0, ftr14dPrev: 0, ftrTrend: [], sessions7d: 0 }),
+      get<ObservatoryFtr>('/api/observatory/ftr', { ftr14d: null, ftr14dPrev: null, ftrTrend: [], sessions7d: 0 }),
 
     // ── Observatory chart data ──────────────────────────────────────────
 

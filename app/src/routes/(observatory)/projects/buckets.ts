@@ -6,7 +6,9 @@ import type { ProjectListItem } from '$lib/types.js';
  *  vision). Counts are normalized to numbers in `+page.ts` so the pure
  *  components never have to reach for a fallback. */
 export interface EnrichedProject extends ProjectListItem {
-  ftr14d: number;
+  /** 14-day FTR, 0..1 — null when the project has no analyzed sessions in the
+   *  window (honest no-data, rendered "—"; never a fabricated 0%). */
+  ftr14d: number | null;
   sessions7d: number;
   /** True when a quality signal is red (open drift, or FTR7d below 60%).
    *  Drives the amber dot the mockup shows next to the project name. */

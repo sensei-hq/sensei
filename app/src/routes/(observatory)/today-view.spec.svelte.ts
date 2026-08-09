@@ -44,6 +44,20 @@ describe('ftrChip', () => {
     expect(chip.arrow).toBe('→');
     expect(chip.toneClass).toBe('text-ink-soft');
   });
+
+  it('yields a null value (render "—") when there is no FTR data — never a fabricated 0', () => {
+    const chip = ftrChip(ftr({ ftr14d: null, ftr14dPrev: null }));
+    expect(chip.value).toBeNull();
+    expect(chip.delta).toBeNull();
+    expect(chip.arrow).toBe('');
+  });
+
+  it('shows the value but no arrow when the prior window has no data', () => {
+    const chip = ftrChip(ftr({ ftr14d: 0.82, ftr14dPrev: null }));
+    expect(chip.value).toBe(82);
+    expect(chip.delta).toBeNull();
+    expect(chip.arrow).toBe('');
+  });
 });
 
 describe('ftrBars', () => {

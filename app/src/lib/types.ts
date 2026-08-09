@@ -595,8 +595,11 @@ export interface ObservatoryToday {
 }
 
 export interface ObservatoryFtr {
-  ftr14d: number;
-  ftr14dPrev: number;
+  /** 14-day FTR, 0..1 — null when there are no analyzed sessions in the window
+   *  (honest no-data, rendered "—"; never a fabricated 0%). */
+  ftr14d: number | null;
+  /** Prior-14d FTR for the trend arrow — null when the prior window is empty. */
+  ftr14dPrev: number | null;
   ftrTrend: number[];
   sessions7d: number;
 }
@@ -1262,8 +1265,9 @@ export interface ProjectOverviewHeader {
   goal: string | null;
   /** 14-day rolling FTR, 0..1 — the same store-backed FTR number
    *  (project_metrics, metric='ftr') the projects-index card reads, so the
-   *  two numbers never disagree. */
-  ftr: number;
+   *  two numbers never disagree. Null when the project has no analyzed sessions
+   *  in the window (honest no-data, rendered "—"; never a fabricated 0%). */
+  ftr: number | null;
   warn: boolean;
   sessions7d: number;
   folders: ProjectOverviewFolder[];

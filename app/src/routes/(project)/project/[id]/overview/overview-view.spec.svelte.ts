@@ -62,6 +62,10 @@ describe('ftrDisplay', () => {
     expect(ftrDisplay({ ftr: 0.2, warn: true }).toneClass).toBe('text-warning');
     expect(ftrDisplay({ ftr: 0.9, warn: false }).toneClass).toBe('text-ink');
   });
+
+  it('yields a null pct (render "—") when there is no FTR data — never a fabricated 0%', () => {
+    expect(ftrDisplay({ ftr: null, warn: false }).pct).toBeNull();
+  });
 });
 
 describe('projectEyebrow', () => {

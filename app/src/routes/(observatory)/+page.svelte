@@ -30,15 +30,21 @@
       <div>
         <p class="m-0 mb-1"><Eyebrow>First-Try-Right · 14d</Eyebrow></p>
         <div class="flex items-baseline gap-2 justify-end">
-          <span
-            class="display text-3xl font-normal"
-            class:text-ink={mode === 'mature'}
-            class:text-ink-mute={mode === 'early'}
-          >{chip.value}</span>
-          <span class="text-xs text-ink-soft">%</span>
-          <span data-ftr-arrow={chip.direction} class="font-mono text-xs {chip.toneClass}">
-            {chip.arrow} {Math.abs(chip.delta)}%
-          </span>
+          {#if chip.value === null}
+            <span class="display text-3xl font-normal text-ink-mute">—</span>
+          {:else}
+            <span
+              class="display text-3xl font-normal"
+              class:text-ink={mode === 'mature'}
+              class:text-ink-mute={mode === 'early'}
+            >{chip.value}</span>
+            <span class="text-xs text-ink-soft">%</span>
+            {#if chip.delta !== null}
+              <span data-ftr-arrow={chip.direction} class="font-mono text-xs {chip.toneClass}">
+                {chip.arrow} {Math.abs(chip.delta)}%
+              </span>
+            {/if}
+          {/if}
         </div>
       </div>
       <FtrStrip data={bars} width={168} height={56} dim={mode === 'early'} />
