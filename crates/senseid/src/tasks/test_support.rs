@@ -121,15 +121,18 @@ pub(crate) async fn seed_metrics_turn(
 }
 
 /// Insert one `activity.task_executions` row — the churn source (Phase 5.2). Churn
-/// counts `process_file` executions, so `task_kind` is usually `"process_file"`;
-/// `folder_path` is the git-folder abs path churn is attributed through
-/// (`resolve_folder_by_path`, alias-aware), and `path` the file the execution
-/// processed (`churn_concentration` keys files on it). `started_at` fixes the day.
-/// `task_id` is a throwaway (bigint, no unique constraint) derived from a fresh
-/// uuid so parallel seeds don't collide. Shared so 5.3 can reuse it.
+/// counts `status = 'completed'` `process_file` executions, so `task_kind` is
+/// usually `"process_file"` and `status` usually `"completed"` (pass `"failed"` to
+/// exercise the retry-de-dup filter). `folder_path` is the git-folder abs path
+/// churn is attributed through (`resolve_folder_by_path`, alias-aware), and `path`
+/// the file the execution processed (`churn_concentration` keys files on it).
+/// `started_at` fixes the day. `task_id` is a throwaway (bigint, no unique
+/// constraint) derived from a fresh uuid so parallel seeds don't collide. Shared so
+/// 5.3 can reuse it.
 pub(crate) async fn seed_task_execution(
     pg: &PgStore,
     task_kind: &str,
+    status: &str,
     folder_path: &str,
     path: &str,
     started_at: chrono::DateTime<chrono::Utc>,
@@ -137,12 +140,13 @@ pub(crate) async fn seed_task_execution(
     let task_id = uuid::Uuid::new_v4().as_u128() as i64;
     sqlx_core::query::query(
         "INSERT INTO activity.task_executions (task_id, task_kind, folder_path, path, status, started_at) \
-         VALUES ($1, $2, $3, $4, 'completed', $5)",
+         VALUES ($1, $2, $3, $4, $5, $6)",
     )
     .bind(task_id)
     .bind(task_kind)
     .bind(folder_path)
     .bind(path)
+    .bind(status)
     .bind(started_at)
     .execute(pg.pool())
     .await
@@ -183,12 +187,28 @@ pub(crate) async fn seed_file_node(pg: &PgStore, folder_id: &uuid::Uuid, file_pa
     .unwrap();
 }
 
+/// Delete every `activity.task_executions` row under the given `folder_path`s. That
+/// table is path-keyed with NO FK to the project/folder, so it never cascades and
+/// must be cleared explicitly. Idempotent — safe to call at the START of a test
+/// (pre-clean against a prior crashed run that leaked rows) AND at the end. A no-op
+/// for an empty slice.
+pub(crate) async fn purge_task_executions(pg: &PgStore, folder_paths: &[&str]) {
+    if folder_paths.is_empty() {
+        return;
+    }
+    let paths: Vec<String> = folder_paths.iter().map(|s| s.to_string()).collect();
+    sqlx_core::query::query("DELETE FROM activity.task_executions WHERE folder_path = ANY($1)")
+        .bind(&paths)
+        .execute(pg.pool())
+        .await
+        .unwrap();
+}
+
 /// Remove a metric fixture: the project (cascades its `project_metrics` and
 /// `detected_patterns`) and, when given, the folder (cascades its `sessions` →
 /// `turns` and its `nodes`). `exec_folder_paths` names the `folder_path`s whose
-/// `activity.task_executions` to purge — that table is path-keyed with NO FK to
-/// the project/folder, so it never cascades and must be cleared explicitly (pass
-/// `&[]` for fixtures that seed no executions).
+/// `activity.task_executions` to purge (see [`purge_task_executions`]) — pass `&[]`
+/// for fixtures that seed no executions.
 pub(crate) async fn cleanup_metrics_fixture(
     pg: &PgStore,
     pid: &uuid::Uuid,
@@ -207,12 +227,5 @@ pub(crate) async fn cleanup_metrics_fixture(
             .await
             .unwrap();
     }
-    if !exec_folder_paths.is_empty() {
-        let paths: Vec<String> = exec_folder_paths.iter().map(|s| s.to_string()).collect();
-        sqlx_core::query::query("DELETE FROM activity.task_executions WHERE folder_path = ANY($1)")
-            .bind(&paths)
-            .execute(pg.pool())
-            .await
-            .unwrap();
-    }
+    purge_task_executions(pg, exec_folder_paths).await;
 }
