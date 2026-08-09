@@ -590,11 +590,20 @@ pub(crate) async fn get_metrics(
         .map_err(|e| { tracing::warn!(error = %e, project = %project, "get_metrics: list_sessions_by_folder failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
     let session_count = sessions.len();
     let completed = sessions.iter().filter(|s| s["outcome"].as_str() == Some("completed")).count();
+    // FTR is store-backed (project_metrics, metric='ftr') — the SAME number the
+    // Phase-7 endpoints serve. Honest-absent (null) when the folder isn't
+    // attached to a project or the project has no ftr rows in the window; NEVER a
+    // fabricated 0. A read error is a 500, never masked.
+    let ftr: Option<f64> = match crate::api::util::json_uuid(&folder["project_id"]) {
+        Some(pid) => state.pg.get_project_ftr_rate(&pid).await
+            .map_err(|e| { tracing::warn!(error = %e, project = %project, "get_metrics: get_project_ftr_rate failed"); StatusCode::INTERNAL_SERVER_ERROR })?,
+        None => None,
+    };
     Ok(Json(serde_json::json!({
         "project": project,
         "sessions": session_count,
         "completed": completed,
-        "ftr": if session_count > 0 { completed as f64 / session_count as f64 } else { 0.0 },
+        "ftr": ftr,
     })))
 }
 

@@ -23,9 +23,9 @@ export interface FtrDisplay {
   toneClass: string;
 }
 
-/** Project the header FTR chip. Reads `project.ftr` (the same
- *  project_ftr_metrics view the projects-index card uses) so the two numbers
- *  never disagree. Warn tone is driven by `project.warn`, not by the rate. */
+/** Project the header FTR chip. Reads `project.ftr` (the same store-backed FTR
+ *  number — project_metrics, metric='ftr' — the projects-index card uses) so the
+ *  two numbers never disagree. Warn tone is driven by `project.warn`, not by the rate. */
 export function ftrDisplay(project: Pick<ProjectOverviewHeader, 'ftr' | 'warn'>): FtrDisplay {
   return {
     pct: Math.round((project.ftr ?? 0) * 100),

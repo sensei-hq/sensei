@@ -549,6 +549,63 @@ mod tests {
             .bind(vec![pid, empty_pid]).execute(state.pg.pool()).await.unwrap();
     }
 
+    /// 8.2: the legacy FTR surfaces — the HTTP route `GET /api/metrics/{project}`
+    /// and the MCP `get_metrics` tool — are store-backed and NEVER fabricate a `0`
+    /// FTR on a miss. A project WITH `ftr` rows reports the store number (the same
+    /// Σnum/Σden `/projects/{id}/ftr` serves); a project WITHOUT any is honest
+    /// `null`, not `0.0`. Both surfaces are pinned.
+    #[tokio::test]
+    async fn no_fabricated_zero_ftr_in_metrics_surfaces() {
+        let (app, state) = test_app().await;
+        let (ftr_mid,): (uuid::Uuid,) =
+            sqlx_core::query_as::query_as("SELECT id FROM sensei.metrics WHERE key = 'ftr'")
+                .fetch_one(state.pg.pool()).await.expect("ftr metric seeded in registry");
+        let today = chrono::Utc::now().date_naive();
+
+        // Project WITH ftr data — folder name is what both surfaces resolve on.
+        let uniq_has = uuid::Uuid::new_v4();
+        let (pid_has, fid_has) =
+            crate::tasks::test_support::seed_metrics_project_folder(&state.pg, &uniq_has).await;
+        let name_has = format!("metrics-{uniq_has}");
+        state.pg.upsert_project_metric(&ftr_mid, &pid_has, None, None, today, "daily", 0.75,
+            &serde_json::json!({"numerator": 3, "denominator": 4}), "measured").await.unwrap();
+
+        // Project WITHOUT any ftr data.
+        let uniq_no = uuid::Uuid::new_v4();
+        let (pid_no, fid_no) =
+            crate::tasks::test_support::seed_metrics_project_folder(&state.pg, &uniq_no).await;
+        let name_no = format!("metrics-{uniq_no}");
+
+        // ── HTTP surface: GET /api/metrics/{project} ──────────────────────
+        let (st, body) = req(app.clone(), "GET", &format!("/api/metrics/{name_has}"), None).await;
+        assert_eq!(st, StatusCode::OK, "{body}");
+        assert!((body["ftr"].as_f64().expect("ftr is a number when data exists") - 0.75).abs() < 1e-9,
+            "HTTP ftr = store Σnum/Σden (0.75), not a re-computed completion rate");
+
+        let (st, body) = req(app.clone(), "GET", &format!("/api/metrics/{name_no}"), None).await;
+        assert_eq!(st, StatusCode::OK, "{body}");
+        assert!(body["ftr"].is_null(),
+            "HTTP ftr is honest-null with no data — NEVER a fabricated 0.0; got {}", body["ftr"]);
+
+        // ── MCP surface: POST /api/mcp/call get_metrics ───────────────────
+        let call = |name: &str| serde_json::json!({"tool": "get_metrics", "params": {"repoId": name}});
+        let (st, body) = req(app.clone(), "POST", "/api/mcp/call", Some(call(&name_has))).await;
+        assert_eq!(st, StatusCode::OK, "{body}");
+        assert!((body["ftr"].as_f64().expect("mcp ftr is a number when data exists") - 0.75).abs() < 1e-9,
+            "MCP ftr = store Σnum/Σden (0.75)");
+
+        let (st, body) = req(app.clone(), "POST", "/api/mcp/call", Some(call(&name_no))).await;
+        assert_eq!(st, StatusCode::OK, "{body}");
+        assert!(body["ftr"].is_null(),
+            "MCP ftr is honest-null with no data — NEVER a fabricated 0.0; got {}", body["ftr"]);
+
+        // cleanup — sessions (none) + folders + projects; project_metrics cascade.
+        sqlx_core::query::query("DELETE FROM sensei.folders WHERE id = ANY($1)")
+            .bind(vec![fid_has, fid_no]).execute(state.pg.pool()).await.unwrap();
+        sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = ANY($1)")
+            .bind(vec![pid_has, pid_no]).execute(state.pg.pool()).await.unwrap();
+    }
+
     /// 7.3 `GET /api/projects/{id}/metrics/{key}?grain=weekly`: the weekly series
     /// matches the view's re-derived Σnum/Σden (never the mean of daily ratios).
     /// Also pins: an invalid grain is a 400; an unknown key is honest-empty (200 []).

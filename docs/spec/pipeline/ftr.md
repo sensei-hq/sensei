@@ -1,7 +1,11 @@
 # 率 · Pipeline · FTR (first-turn resolution)
 
-**Source of truth:** `activity.sessions.ftr` (boolean per session)
-**Roll-ups:** `sensei.project_ftr_metrics` view
+**Source of truth:** per-session boolean `activity.sessions.ftr`; the daily
+FTR **aggregation** source of truth is `sensei.project_metrics` (metric='ftr')
+**Roll-ups:** `sensei.project_metrics` daily `ftr` rows, read via
+`sensei.project_metric_daily` and the weekly/monthly/quarterly roll-up views.
+_(The legacy `sensei.ftr_daily` and `sensei.project_ftr_metrics` views were
+retired in Phase 8 — FTR is now sourced entirely from `project_metrics`.)_
 **Read endpoint:** `GET /api/projects/{id}/ftr` (per-project) · `GET /api/observatory/ftr` (across all active projects)
 **Owner file:** `crates/senseid/src/tasks/handlers/analyze.rs` (per-session boolean derivation)
 
@@ -33,13 +37,25 @@ Kanji is 率 — *rate*.
 - `correction_signal()` is **precision-favouring** — a false positive
   wrongly tanks FTR, so only unambiguous phrases trip it (unit-tested
   list in `analyze.rs` `correction_prompt_drops_ftr_and_marks_corrected`).
-- `sensei.project_ftr_metrics` view exposes:
-  - `sessions_7d` — count of sessions in the last 7 days
-  - `ftr_14d` — mean FTR (0..1) over the last 14 days
-  - `ftr_14d_prev` — mean FTR over the 14–28d window (comparison anchor)
-- The 14-day daily trend for the sparkline is computed inline in
-  `get_project_ftr` — `date_trunc('day', started_at)` grouped, then
-  `AVG(CASE WHEN ftr THEN 1.0 ELSE 0.0 END)` per bucket.
+- The daily `ftr` rows in `sensei.project_metrics` (project scope,
+  `grain='daily'`, `folder_id` null) are the aggregation source of truth,
+  written by the `session_outcomes` computer over the measurable base
+  (`outcome is not null`): `value` = num/den, `props.numerator` = first-try
+  sessions, `props.denominator` = session_count, `props.correction_count` =
+  Σ corrections.
+- `get_project_ftr` re-derives its headline from those rows (read via
+  `sensei.project_metric_daily`, metric='ftr'):
+  - `sessions_7d` — Σ `props.denominator` over the last 7 days
+  - `ftr_14d` — Σ `props.numerator` / Σ `props.denominator` over the last
+    14 days (session-weighted — the sum of the parts, never a mean of daily
+    ratios)
+  - `ftr_14d_prev` — same Σnum/Σden over the 14–28d window (comparison anchor)
+  Because the store scopes to analyzed sessions (`outcome is not null`), the
+  number can differ from the retired view (which scored in-flight sessions as
+  0); the analyzed-base number is the intended consolidated FTR.
+- The 14-day daily trend for the sparkline is still computed inline in
+  `get_project_ftr` from `activity.sessions` — `date_trunc('day', started_at)`
+  grouped, then `AVG(CASE WHEN ftr THEN 1.0 ELSE 0.0 END)` per bucket.
 - **Ownership** of `sessions.ftr` and `sessions.corrections` sits with
   the enrichment task, not the writer. Raw session inserts leave
   those columns null; the analyzer fills them.
@@ -48,10 +64,10 @@ Kanji is 率 — *rate*.
 
 | Signal | Source | Shape | Consumed by |
 |---|---|---|---|
-| `ftr14d` | view | float 0.0–1.0 | Today FTR chip, Projects card, Project overview, Impact before/after |
-| `ftr14dPrev` | view | float 0.0–1.0 | Today FTR arrow (up/down/flat vs prior window) |
-| `ftrTrend` | inline query | array of 14 floats | Today sparkline |
-| `sessions7d` | view | integer | Today session count line, Projects card `7d` stat |
+| `ftr14d` | `project_metrics` (metric='ftr') | float 0.0–1.0 | Today FTR chip, Projects card, Project overview, Impact before/after |
+| `ftr14dPrev` | `project_metrics` (metric='ftr') | float 0.0–1.0 | Today FTR arrow (up/down/flat vs prior window) |
+| `ftrTrend` | inline query (`activity.sessions`) | array of 14 floats | Today sparkline |
+| `sessions7d` | `project_metrics` (metric='ftr') | integer | Today session count line, Projects card `7d` stat |
 | `sessions.ftr` | table | bool per session | Sessions list FTR badge, Replay session-level badge |
 | `sessions.corrections` | table | int per session | Sessions list "N corrections" chip, per-session detail pane |
 | `correction_signal(prompt)` | function | Option<&str> ("correction"/"revert"/…) | tags the specific corrective turn in the Replay timeline |
@@ -74,7 +90,8 @@ Kanji is 率 — *rate*.
   or the analogous positive test.
 - The Today screen's FTR chip and the Projects card FTR stat show
   the **same number** for the same project on the same day
-  (both read the same view — but drift here has been a real bug).
+  (both re-derive from the same `project_metrics` `ftr` rows — but drift
+  here has been a real bug).
 
 Optional check:
 ```
@@ -85,10 +102,10 @@ curl -s http://localhost:7744/api/projects/sensei/ftr | jq
 
 ## Wrong gate
 
-- **`ftr14d` is 0 despite the sessions view showing FTR-true sessions
-  in the last 14 days.** The view's `FILTER (WHERE s.started_at > now()
-  - interval '14d')` didn't fire — likely `started_at` type or NULL
-  join.
+- **`ftr14d` is 0 despite FTR-true sessions in the last 14 days.** Either
+  the `session_outcomes` computer never wrote the daily `ftr` rows, or the
+  14d window filter (`d.date > current_date - 14`) didn't fire — likely a
+  date-type mismatch or missing `props.numerator/denominator`.
 - **Trend array has 14 entries with all zeros while `ftr14d > 0`.**
   The daily rollup is casting the boolean wrong; `CASE WHEN ftr THEN
   1.0 ELSE 0.0 END` must accept the actual boolean column type.
