@@ -398,6 +398,61 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn autonomy_low_n_threshold_boundary() {
+        // Pin the low_n threshold at EXACTLY denominator == 10: a denominator of 10 is
+        // NOT low_n (the rule is `denominator < 10`), while 9 IS. The 10-vs-9 pair
+        // kills a `< 10` → `<= 10` mutation in `ratio_props` (which would flip the
+        // den-10 row to low_n) that every other test's off-boundary denominator (25,
+        // 9, 5, 3, 2) misses. Driven through interruption_rate (denominator = #
+        // UserPromptSubmit), one exact-denominator project each.
+        let ctx = make_ctx().await;
+        let pg = ctx.pg();
+        let ts = chrono::Utc::now() - chrono::Duration::hours(2);
+
+        // ── denominator == 10 → low_n = false (at the threshold, not below it) ──
+        let uniq_10 = uuid::Uuid::new_v4();
+        let (pid_10, fid_10) = seed_metrics_project_folder(pg, &uniq_10).await;
+        let csid_10 = format!("_test:autonomy-lown10:{uniq_10}");
+        purge_assistant_events(pg, &[&csid_10]).await;
+        seed_metrics_client_session(pg, &fid_10, &pid_10, &csid_10, ts).await;
+        for _ in 0..2 {
+            seed_assistant_event(pg, &csid_10, "Stop", ts).await;
+        }
+        for _ in 0..10 {
+            seed_assistant_event(pg, &csid_10, "UserPromptSubmit", ts).await;
+        }
+
+        compute(&ctx, &pid_10.to_string()).await.unwrap();
+        let daily_10 = daily_rows(pg, &pid_10).await;
+        let ir_10 = daily_10.iter().find(|r| r.0 == "interruption_rate").expect("interruption_rate row (den 10)");
+        assert_eq!(ir_10.2["denominator"].as_i64(), Some(10), "denominator is exactly 10");
+        assert_eq!(ir_10.2["low_n"].as_bool(), Some(false), "denominator == 10 is NOT low_n (rule is `< 10`)");
+
+        // ── denominator == 9 → low_n = true (one below the threshold) ──
+        let uniq_9 = uuid::Uuid::new_v4();
+        let (pid_9, fid_9) = seed_metrics_project_folder(pg, &uniq_9).await;
+        let csid_9 = format!("_test:autonomy-lown9:{uniq_9}");
+        purge_assistant_events(pg, &[&csid_9]).await;
+        seed_metrics_client_session(pg, &fid_9, &pid_9, &csid_9, ts).await;
+        for _ in 0..2 {
+            seed_assistant_event(pg, &csid_9, "Stop", ts).await;
+        }
+        for _ in 0..9 {
+            seed_assistant_event(pg, &csid_9, "UserPromptSubmit", ts).await;
+        }
+
+        compute(&ctx, &pid_9.to_string()).await.unwrap();
+        let daily_9 = daily_rows(pg, &pid_9).await;
+        let ir_9 = daily_9.iter().find(|r| r.0 == "interruption_rate").expect("interruption_rate row (den 9)");
+        assert_eq!(ir_9.2["denominator"].as_i64(), Some(9), "denominator is exactly 9");
+        assert_eq!(ir_9.2["low_n"].as_bool(), Some(true), "denominator == 9 IS low_n (one below the threshold)");
+
+        purge_assistant_events(pg, &[&csid_10, &csid_9]).await;
+        cleanup_metrics_fixture(pg, &pid_10, Some(&fid_10), &[]).await;
+        cleanup_metrics_fixture(pg, &pid_9, Some(&fid_9), &[]).await;
+    }
+
+    #[tokio::test]
     async fn autonomy_excludes_other_projects_events_and_runs() {
         // Cross-project isolation: a second real project's events + runs must NOT
         // leak into the project under test. Mutation-proof denominators: if B leaked,
