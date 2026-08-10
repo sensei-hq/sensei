@@ -677,3 +677,44 @@ pub(crate) async fn cleanup_metrics_fixture(
     }
     purge_task_executions(pg, exec_folder_paths).await;
 }
+
+/// Daily project-scope metric rows (`folder_id IS NULL`) for `pid`, keyed by
+/// metric `key`: `(key, value, props)` ordered by key. The read-back the six
+/// metric compute-handler test modules assert against — was copy-pasted verbatim
+/// into each group's `#[cfg(test)]` module (a qlty duplication finding).
+pub(crate) async fn daily_project_metric_rows(
+    pg: &PgStore,
+    pid: &uuid::Uuid,
+) -> Vec<(String, f64, serde_json::Value)> {
+    sqlx_core::query_as::query_as(
+        "SELECT m.key, pm.value::float8, pm.props \
+           FROM sensei.project_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
+          WHERE pm.project_id = $1 AND pm.grain = 'daily' AND pm.folder_id IS NULL \
+          ORDER BY m.key",
+    )
+    .bind(pid)
+    .fetch_all(pg.pool())
+    .await
+    .unwrap()
+}
+
+/// Per-module daily rows (`folder_id` set) for one metric `key`:
+/// `(folder_id, value, props)` ordered by `folder_id`. Shared by the churn and
+/// duplication test modules (identical copies).
+pub(crate) async fn module_metric_rows(
+    pg: &PgStore,
+    pid: &uuid::Uuid,
+    key: &str,
+) -> Vec<(uuid::Uuid, f64, serde_json::Value)> {
+    sqlx_core::query_as::query_as(
+        "SELECT pm.folder_id, pm.value::float8, pm.props \
+           FROM sensei.project_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
+          WHERE pm.project_id = $1 AND pm.grain = 'daily' AND pm.folder_id IS NOT NULL \
+            AND m.key = $2 ORDER BY pm.folder_id",
+    )
+    .bind(pid)
+    .bind(key)
+    .fetch_all(pg.pool())
+    .await
+    .unwrap()
+}

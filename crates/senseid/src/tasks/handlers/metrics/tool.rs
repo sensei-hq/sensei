@@ -164,25 +164,11 @@ pub(super) async fn compute(ctx: &TaskContext, project_raw: &str) -> Result<u32,
 mod tests {
     use super::*;
     use crate::tasks::test_support::{
-        cleanup_metrics_fixture, make_ctx, purge_assistant_events, purge_assistant_tools,
-        purge_tool_verdicts, seed_assistant_tool, seed_metrics_project_folder, seed_tool_session,
-        seed_tool_verdict,
+        cleanup_metrics_fixture, daily_project_metric_rows as daily_rows, make_ctx,
+        purge_assistant_events, purge_assistant_tools, purge_tool_verdicts, seed_assistant_tool,
+        seed_metrics_project_folder, seed_tool_session, seed_tool_verdict,
     };
     use sqlx_core::query_as::query_as;
-
-    /// The daily project-scope rows (`folder_id IS NULL`) keyed by metric `key`.
-    async fn daily_rows(pg: &PgStore, pid: &uuid::Uuid) -> Vec<(String, f64, serde_json::Value)> {
-        query_as(
-            "SELECT m.key, pm.value::float8, pm.props \
-               FROM sensei.project_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
-              WHERE pm.project_id = $1 AND pm.grain = 'daily' AND pm.folder_id IS NULL \
-              ORDER BY m.key",
-        )
-        .bind(pid)
-        .fetch_all(pg.pool())
-        .await
-        .unwrap()
-    }
 
     #[tokio::test]
     async fn unused_tools_counts_tools_without_positive_verdicts() {
