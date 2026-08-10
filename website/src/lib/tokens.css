@@ -44,8 +44,10 @@
   --sumi-2:  var(--ink-soft);
   --sumi-3:  var(--ink-mute);
   --sumi-4:  var(--ink-faint);
-  --shu:       var(--primary);
-  --shu-soft:  color-mix(in oklch, var(--primary) 10%, transparent);
+  /* --shu is the vermillion used for TEXT/highlights on the sensei page, so it
+     aliases the WCAG-AA-tuned --accent (not the vibrant --primary button fill). */
+  --shu:       var(--accent);
+  --shu-soft:  color-mix(in oklch, var(--accent) 10%, transparent);
   --jade:      var(--success);
   --jade-soft: color-mix(in oklch, var(--success) 14%, transparent);
   --amber:      var(--warning);

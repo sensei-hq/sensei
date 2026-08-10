@@ -47,7 +47,7 @@
       <div class="flex items-center justify-between flex-wrap gap-4">
         <div class="flex flex-wrap gap-2">
           {#each p.meta as m (m)}
-            <span class="mono text-ink-mute border border-paper-edge rounded-sm text-xs" style="padding:4px 8px;white-space:nowrap">{m}</span>
+            <span class="mono text-ink-mute border border-paper-edge rounded-sm text-xs px-2 py-1" style="white-space:nowrap">{m}</span>
           {/each}
         </div>
         <span class="text-{p.id} text-sm font-medium">Explore {p.name} →</span>
@@ -70,7 +70,7 @@
         <span class="mono text-ink-faint text-xs">{p.index}</span>
         <span class="mono rounded-sm px-2 py-0 {statusClass(p.status)} text-xs" style="white-space:nowrap">{p.status}</span>
       </div>
-      <span class="kanji text-{p.id} text-4xl" style="line-height:1;margin:20px 0 16px">{p.kanji}</span>
+      <span class="kanji text-{p.id} text-4xl mt-5 mb-4" style="line-height:1">{p.kanji}</span>
       <div class="flex items-baseline gap-2 mb-1">
         <span class="display text-ink text-xl" style="font-weight:400;letter-spacing:-0.02em">{p.name}</span>
       </div>
@@ -80,7 +80,7 @@
       <div style="flex:1"></div>
       <div class="mt-5 mb-4 flex flex-wrap gap-2">
         {#each p.meta as m (m)}
-          <span class="mono text-ink-mute border border-paper-edge rounded-sm text-xs" style="padding:4px 8px;white-space:nowrap">{m}</span>
+          <span class="mono text-ink-mute border border-paper-edge rounded-sm text-xs px-2 py-1" style="white-space:nowrap">{m}</span>
         {/each}
       </div>
       <div class="border-t border-paper-edge pt-4 flex items-center justify-between">
