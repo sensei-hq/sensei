@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "prepare": "svelte-kit sync || echo ''",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.check.json",
+    "test:unit": "vitest run",
     "test:e2e": "playwright test",
     "icons:bundle": "rokkit-cli bundle -i icons -o src/lib/icons"
   },
@@ -23,7 +24,8 @@
     "svelte": "^5.55.4",
     "svelte-check": "^4.4.6",
     "typescript": "^6.0.2",
-    "vite": "^8.0.8"
+    "vite": "^8.0.8",
+    "vitest": "^4.1.10"
   },
   "dependencies": {
     "@iconify-json/solar": "^1.2.5",

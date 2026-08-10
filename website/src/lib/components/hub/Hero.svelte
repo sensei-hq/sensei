@@ -1,17 +1,16 @@
 <script lang="ts">
+  import { Button } from '@rokkit/ui';
   import { base } from '$app/paths';
   import { PRODUCTS } from '$lib/hub-data.js';
 
-  const meta = ['Independent studio', 'Est. 2026', 'Four tools in the workshop'];
+  const meta = ['Independent studio', 'Est. 2024', 'Three products · four libraries'];
+  const workshopCount = String(PRODUCTS.length).padStart(2, '0');
 
-  function productHref(p: typeof PRODUCTS[number]): string {
-    if (p.id === 'sensei') return `${base}/sensei`;
-    return p.href;
-  }
-
-  function isExternal(p: typeof PRODUCTS[number]): boolean {
-    return p.id !== 'sensei';
-  }
+  // Internal routes (/sensei, /torii-seiki) get the base prefix and open in place;
+  // the library sites (absolute https URLs) open in a new tab.
+  const isExternal = (p: typeof PRODUCTS[number]): boolean => p.href.startsWith('http');
+  const productHref = (p: typeof PRODUCTS[number]): string =>
+    isExternal(p) ? p.href : `${base}${p.href}`;
 </script>
 
 <header id="top" class="hero-wrap mx-auto px-7 pt-7 pb-9">
@@ -26,15 +25,15 @@
         We build quiet, sharp tools for the people who build software.
       </h1>
       <p class="text-ink-soft mt-5 text-lg" style="line-height:1.6;max-width:540px">
-        Sensei HQ is a small workshop of developer tools — four instruments,
-        one temperament. Restraint over noise, craft over scale, and a deep
-        respect for the person on the other side of the screen.
+        Sensei HQ is a small workshop of developer tools — three products you
+        open, four libraries you build on. Restraint over noise, craft over
+        scale, and a deep respect for the person on the other side of the screen.
       </p>
       <div class="flex items-center flex-wrap gap-3 mt-6">
-        <a href="#products" class="bg-primary text-on-primary rounded-md px-5 py-3 font-medium flex items-center gap-3 no-underline text-base">
+        <Button href="#products" variant="primary" size="lg">
           <span class="kanji text-base" style="line-height:1">見</span>
           See the tools
-        </a>
+        </Button>
         <a href="#approach" class="text-ink-soft text-sm no-underline">How we work ↓</a>
       </div>
       <div class="flex flex-wrap gap-4 mt-7">
@@ -48,7 +47,7 @@
     <aside class="border border-paper-edge rounded-lg bg-paper-soft" style="overflow:hidden">
       <div class="px-5 py-4 border-b border-paper-edge flex items-center justify-between">
         <span class="mono text-ink-mute text-xs" style="letter-spacing:0.12em;text-transform:uppercase">In the workshop</span>
-        <span class="mono text-ink-faint text-xs">04</span>
+        <span class="mono text-ink-faint text-xs">{workshopCount}</span>
       </div>
       <div class="divide-y divide-paper-edge">
         {#each PRODUCTS as p (p.id)}
