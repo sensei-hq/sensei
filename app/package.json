@@ -10,7 +10,7 @@
     "tauri": "tauri",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
-    "test:unit": "vitest run",
+    "test:unit": "svelte-kit sync && vitest run",
     "test:e2e": "playwright test --config e2e/playwright.config.ts --project=tauri",
     "test:e2e:cold": "playwright test --config e2e/playwright.cold.config.ts --project=cold-start"
   },
