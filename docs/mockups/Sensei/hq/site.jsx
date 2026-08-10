@@ -16,6 +16,9 @@ const ACCENTS = {
     dbd:    'oklch(0.560 0.130 255)',
     rokkit: 'oklch(0.560 0.110 162)',
     kavach: 'oklch(0.520 0.150 305)',
+    torii:   'oklch(0.560 0.140 15)',
+    seiki:   'oklch(0.560 0.130 255)',
+    gateway: 'oklch(0.560 0.120 85)',
     magpie: 'oklch(0.560 0.110 200)',
     kata:   'oklch(0.560 0.120 145)',
     burne:  'oklch(0.580 0.140 50)',
@@ -25,6 +28,9 @@ const ACCENTS = {
     dbd:    'oklch(0.700 0.130 255)',
     rokkit: 'oklch(0.730 0.110 162)',
     kavach: 'oklch(0.700 0.150 305)',
+    torii:   'oklch(0.700 0.140 15)',
+    seiki:   'oklch(0.700 0.130 255)',
+    gateway: 'oklch(0.720 0.120 85)',
     magpie: 'oklch(0.720 0.110 200)',
     kata:   'oklch(0.720 0.120 145)',
     burne:  'oklch(0.730 0.140 50)',
@@ -34,34 +40,58 @@ const ACCENTS = {
 // ─── Content ──────────────────────────────────────────────────────────
 const PRODUCTS = [
   {
-    id: 'sensei', index: '01', kanji: '観', name: 'Sensei',
+    id: 'sensei', kind: 'product', index: '01', kanji: '観', name: 'Sensei',
     category: 'Desktop · Observability',
     tagline: 'A quiet companion for AI-assisted work.',
     blurb: 'Observes your sessions with AI assistants and surfaces the patterns you are too close to see. Local-first, no account, speaks only when it has something to say.',
-    meta: ['macOS · Windows · Linux', 'Tauri', 'Local-first'],
+    meta: ['macOS · Windows · Linux', 'Tauri', 'Dōjō for teams'],
     status: 'Available', href: 'Sensei.html',
     featured: true,
     highlights: ['Watches sessions locally', 'Surfaces recurring patterns', 'Adopts memories on your terms'],
   },
   {
-    id: 'dbd', index: '02', kanji: '構', name: 'DBD',
-    category: 'CLI · Schema design',
-    tagline: 'Schema design that lives in your terminal.',
-    blurb: 'Model your database in DBML, then generate, diff and sync it across Postgres, SQLite, Convex and Supabase — all from the command line.',
-    meta: ['CLI · DBML', 'Postgres · SQLite', 'Convex · Supabase'],
-    status: 'Stable', href: '#dbd',
+    id: 'torii', kind: 'product', index: '02', kanji: '門', name: 'Torii',
+    category: 'Desktop · Member workspace',
+    tagline: 'The gate your team walks through.',
+    blurb: 'One client for every model your organization has signed with. Ask, keep a library, try things in the playground — and always see whether the answer ran on your device or through the gate.',
+    meta: ['macOS · Windows · Linux', 'Tauri', 'Works offline'],
+    status: 'Beta', href: 'Torii - Seiki.html',
   },
   {
-    id: 'rokkit', index: '03', kanji: '速', name: 'Rokkit',
-    category: 'Svelte · Components',
+    id: 'seiki', kind: 'product', index: '03', kanji: '社', name: 'Seiki',
+    category: 'Web · Governance plane',
+    tagline: 'The sanctuary behind the gate.',
+    blurb: 'Where the rules are kept: every request, every provider, routing and fallback chains, and budgets that cascade down your real org structure.',
+    meta: ['Self-hosted', 'SSO · SCIM', 'Full audit trail'],
+    status: 'Beta', href: 'Torii - Seiki.html#seiki',
+  },
+  {
+    id: 'gateway', kind: 'library', index: '01', kanji: '関', name: 'Gateway', lang: 'Rust',
+    category: 'AI gateway',
+    tagline: 'Fallback chains and budgets, in one crate.',
+    blurb: 'Talk to every model provider through one Rust interface. Order your fallbacks, cap the spend, and embed it in your own service rather than adding another hop.',
+    meta: ['Rust crate', 'MIT licensed', 'Budget control'],
+    status: 'Open source', href: 'https://gateway.sensei-hq.com',
+  },
+  {
+    id: 'dbd', kind: 'library', index: '02', kanji: '構', name: 'DBD', lang: 'Rust',
+    category: 'Schema design · CLI',
+    tagline: 'Schema design that lives in your terminal.',
+    blurb: 'Model your database in DBML, then generate, diff and sync it across Postgres, SQLite, Convex and Supabase — all from the command line.',
+    meta: ['Rust CLI · DBML', 'MIT licensed', 'Postgres · SQLite · Convex'],
+    status: 'Open source', href: '#dbd',
+  },
+  {
+    id: 'rokkit', kind: 'library', index: '03', kanji: '速', name: 'Rokkit', lang: 'Svelte',
+    category: 'Svelte components',
     tagline: 'Data-driven components for Svelte.',
     blurb: 'Bind a source and get a table, chart or form that just works. Headless where you need control, batteries-included where you do not.',
     meta: ['Svelte 5', 'MIT licensed', 'Open source'],
     status: 'Open source', href: '#rokkit',
   },
   {
-    id: 'kavach', index: '04', kanji: '守', name: 'Kavach',
-    category: 'Svelte · Authentication',
+    id: 'kavach', kind: 'library', index: '04', kanji: '守', name: 'Kavach', lang: 'TypeScript',
+    category: 'Authentication',
     tagline: 'Auth for Svelte, without the ceremony.',
     blurb: 'Sessions, providers and route guards in a few lines. Sane defaults, escape hatches everywhere, and no vendor lock-in.',
     meta: ['SvelteKit', 'OAuth · Passkeys', 'MIT licensed'],
@@ -126,6 +156,7 @@ const MAXW = 1120;
 function Nav() {
   const links = [
     ['#products', 'Products'],
+    ['#libraries', 'Libraries'],
     ['#incubation', 'Incubation'],
     ['#approach', 'Approach'],
     ['#open', 'Open source'],
@@ -185,9 +216,9 @@ function Hero() {
             We build quiet, sharp tools for the people who build software.
           </h1>
           <p className="text-ink-soft mt-6" style={{ fontSize: 17, lineHeight: 1.6, maxWidth: 540 }}>
-            Sensei HQ is a small workshop of developer tools — four instruments,
-            one temperament. Restraint over noise, craft over scale, and a deep
-            respect for the person on the other side of the screen.
+            Sensei HQ is a small workshop of developer tools — three products you
+            open, four libraries you build on. Restraint over noise, craft over
+            scale, and a deep respect for the person on the other side of the screen.
           </p>
           <div 
  className="gap-3 mt-8 flex items-center flex-wrap">
@@ -198,7 +229,7 @@ function Hero() {
             <a href="#approach" className="text-ink-soft text-sm">How we work ↓</a>
           </div>
           <div className="gap-4 mt-12 flex flex-wrap">
-            {['Independent studio', 'Est. 2024', 'Four tools in the workshop'].map((m) => (
+            {['Independent studio', 'Est. 2024', 'Three products · four libraries'].map((m) => (
               <span key={m} className="mono text-ink-mute" style={{ fontSize: 11 }}>{m}</span>
             ))}
           </div>
@@ -210,7 +241,7 @@ function Hero() {
           <div className="px-6 py-4 border-b border-paper-edge flex items-center justify-between"
  >
             <Eyebrow>In the workshop</Eyebrow>
-            <span className="mono text-ink-faint" style={{ fontSize: 11 }}>04</span>
+            <span className="mono text-ink-faint" style={{ fontSize: 11 }}>07</span>
           </div>
           <div className="divide-y">
             {PRODUCTS.map((p) => (
@@ -334,9 +365,35 @@ function ProductCard({ p }) {
   );
 }
 
+function LibraryRow({ p }) {
+  const external = p.href.startsWith('http');
+  return (
+    <a href={p.href}
+ style={{ gridTemplateColumns: 'auto 150px 1fr auto auto', '--accent': `var(--acc-${p.id})`,
+ borderTop: 'var(--hairline)', transition: 'background .15s' }}
+ className="gap-6 px-6 py-5 grid items-center"
+ onMouseEnter={(e) => e.currentTarget.style.background = 'var(--paper-mute)'}
+ onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}>
+      <span className="kanji text-accent text-center" style={{ fontSize: 28, lineHeight: 1, width: 34 }}>{p.kanji}</span>
+      <span>
+        <span className="display text-ink block" style={{ fontSize: 17, letterSpacing: '-0.01em' }}>{p.name}</span>
+        <span className="mono text-ink-faint" style={{ fontSize: 11 }}>{p.lang}</span>
+      </span>
+      <span>
+        <span className="text-ink block text-sm">{p.tagline}</span>
+        <span className="text-ink-mute text-xs">{p.category}</span>
+      </span>
+      <StatusBadge status={p.status} />
+      <span className="text-accent text-sm">{external ? '↗' : '→'}</span>
+    </a>
+  );
+}
+
 function Portfolio() {
-  const featured = PRODUCTS.find((p) => p.featured);
-  const rest = PRODUCTS.filter((p) => !p.featured);
+  const products = PRODUCTS.filter((p) => p.kind === 'product');
+  const libraries = PRODUCTS.filter((p) => p.kind === 'library');
+  const featured = products.find((p) => p.featured);
+  const rest = products.filter((p) => !p.featured);
   return (
     <section id="products" className="bg-paper-soft">
       <div style={{ maxWidth: MAXW }} className="mx-auto px-12 sec">
@@ -344,19 +401,41 @@ function Portfolio() {
           <div>
             <Eyebrow style={{ marginBottom: 12 }}>The portfolio</Eyebrow>
             <h2 className="display text-ink m-0 font-light" style={{ fontSize: 40, letterSpacing: '-0.02em' }}>
-              Four tools, one workshop.
+              Three products. Four libraries.
             </h2>
           </div>
           <p className="text-ink-soft" style={{ fontSize: 14, lineHeight: 1.6, maxWidth: 360 }}>
-            Each carries its own mark and its own accent — but they share a
-            temperament, a type system, and a refusal to get in your way.
+            The products are things you open. The libraries are things you build
+            on. Both carry the same temperament and the same refusal to get in
+            your way.
           </p>
         </div>
 
         <div className="mb-6"><FeaturedCard p={featured} /></div>
 
-        <div style={{ gridTemplateColumns: 'repeat(3, 1fr)' }} className="gap-6 grid">
+        <div style={{ gridTemplateColumns: 'repeat(2, 1fr)' }} className="gap-6 grid">
           {rest.map((p) => <ProductCard key={p.id} p={p} />)}
+        </div>
+
+        <div id="libraries" className="mt-24">
+          <div className="gap-4 mb-8 flex items-end justify-between flex-wrap">
+            <div>
+              <div className="gap-3 mb-3 flex items-baseline">
+                <span className="kanji text-accent" style={{ fontSize: 28, lineHeight: 1 }}>礎</span>
+                <Eyebrow>Soseki · the foundation stones</Eyebrow>
+              </div>
+              <h2 className="display text-ink m-0 font-light" style={{ fontSize: 28, letterSpacing: '-0.02em' }}>
+                What our products stand on.
+              </h2>
+            </div>
+            <p className="text-ink-soft" style={{ fontSize: 14, lineHeight: 1.6, maxWidth: 340 }}>
+              Written for our own tools first, then published — so the thing you
+              install is the thing we depend on.
+            </p>
+          </div>
+          <div className="border-b border-paper-edge rounded-lg overflow-hidden bg-paper">
+            {libraries.map((p) => <LibraryRow key={p.id} p={p} />)}
+          </div>
         </div>
       </div>
     </section>
@@ -468,6 +547,8 @@ function Approach() {
 // ═══════════════════════════════════════════════════════════════════════
 function OpenSource() {
   const repos = [
+    { name: 'sensei-hq/gateway', dot: 'var(--acc-gateway)', lang: 'Rust', note: 'Fallback chains and budgets' },
+    { name: 'sensei-hq/dbd', dot: 'var(--acc-dbd)', lang: 'Rust', note: 'Schema design, library and CLI' },
     { name: 'sensei-hq/rokkit', dot: 'var(--acc-rokkit)', lang: 'Svelte', note: 'Data-driven components' },
     { name: 'sensei-hq/kavach', dot: 'var(--acc-kavach)', lang: 'TypeScript', note: 'Auth for SvelteKit' },
   ];
@@ -480,11 +561,11 @@ function OpenSource() {
             <Eyebrow>Kō · in the open</Eyebrow>
           </div>
           <h2 className="display text-ink m-0 font-normal" style={{ fontSize: 28, letterSpacing: '-0.015em', lineHeight: 1.3 }}>
-            Two of our tools are built in the open.
+            All four libraries are built in the open.
           </h2>
           <p className="text-ink-soft mt-4" style={{ fontSize: 14, lineHeight: 1.7, maxWidth: 420 }}>
-            Rokkit and Kavach are MIT-licensed and developed in public. Read the
-            source, file an issue, or send a pull request — the workshop door is open.
+            Gateway, DBD, Rokkit and Kavach are MIT-licensed and developed in public.
+            Read the source, file an issue, or send a pull request — the workshop door is open.
           </p>
           <a href="#github" className="zs-btn zs-btn-secondary mt-6">
             <span className="kanji text-ink-soft" style={{ fontSize: 14, lineHeight: 1 }}>叉</span>
@@ -548,14 +629,15 @@ function Contact() {
 
 function Footer() {
   const cols = [
-    ['Products', [['Sensei', 'Sensei.html'], ['DBD', '#dbd'], ['Rokkit', '#rokkit'], ['Kavach', '#kavach']]],
+    ['Products', [['Sensei', 'Sensei.html'], ['Torii', 'Torii - Seiki.html'], ['Seiki', 'Torii - Seiki.html#seiki']]],
+    ['Libraries', [['Gateway', 'https://gateway.sensei-hq.com'], ['DBD', '#dbd'], ['Rokkit', '#rokkit'], ['Kavach', '#kavach']]],
     ['Studio', [['Approach', '#approach'], ['Open source', '#open'], ['Contact', '#contact']]],
     ['Connect', [['GitHub', '#github'], ['Twitter', '#twitter'], ['hi@sensei-hq.com', 'mailto:hi@sensei-hq.com']]],
   ];
   return (
     <footer>
       <div style={{ maxWidth: MAXW }} className="mx-auto px-12 py-16">
-        <div style={{ gridTemplateColumns: '1.4fr 1fr 1fr 1fr' }} className="gap-12 grid items-start">
+        <div style={{ gridTemplateColumns: '1.4fr 1fr 1fr 1fr 1fr' }} className="gap-10 grid items-start">
           <div>
             <div className="gap-3 mb-3 flex items-center">
               <Enso size={24} stroke="var(--accent)" />
