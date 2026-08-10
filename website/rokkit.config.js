@@ -81,7 +81,7 @@ export default {
     'paper-edge': { light: 'oklch(0.22 0.012 50 / 0.10)', dark: 'oklch(0.94 0.008 85 / 0.12)' },
   },
 
-  themes: ['rokkit'],
+  themes: ['zen-sumi'],
   typography: {
     sans: "'Inter', system-ui, -apple-system, sans-serif",
     mono: "'JetBrains Mono', 'SF Mono', Menlo, monospace",
