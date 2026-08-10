@@ -3,9 +3,9 @@
 </script>
 
 <PageShell title="Terms of Use">
-  <div class="section-tag">Terms of use</div>
-  <h1 class="display page-title">Simple terms.</h1>
-  <p class="updated">Last updated: April 2026</p>
+  <div class="section-tag mb-4">Terms of use</div>
+  <h1 class="display page-title mb-3">Simple terms.</h1>
+  <p class="updated mb-14">Last updated: April 2026</p>
 
   <div class="prose">
     <h2>The short version</h2>
@@ -72,19 +72,16 @@
     letter-spacing: 0.22em;
     color: var(--sumi-3);
     text-transform: uppercase;
-    margin-bottom: 16px;
   }
   .page-title {
     font-size: var(--text-3xl);
     font-weight: 300;
-    margin: 0 0 12px;
     letter-spacing: -0.025em;
     line-height: 1.1;
   }
   .updated {
     font-size: var(--text-xs);
     color: var(--sumi-3);
-    margin: 0 0 56px;
   }
   .prose {
     font-size: var(--text-base);
