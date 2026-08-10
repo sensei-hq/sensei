@@ -1,23 +1,53 @@
-import { sumiPalette } from './sumi-palette.js';
+import { sumiPalette } from '../packages/sumi-palette/index.js';
 
+/**
+ * Marketing site — Rokkit named-token config.
+ *
+ * Shares the one Zen/Sumi OKLCH palette with the desktop app + dōjō console
+ * (packages/sumi-palette) so all three surfaces read as one brand. The palette
+ * is two-pole, so it needs `colorSpace: 'oklch'` + the explicit paper/ink stop
+ * overrides below (the same mapping app/dojo use) — the default skin mapping
+ * would pick the wrong surface shades. Site-specific pieces kept: the per-product
+ * accent tokens for the hub cards, the translucent `paper-edge`, and the brand
+ * icon collection.
+ */
 export default {
+  palettes: sumiPalette,
+  colorSpace: 'oklch',
+
   skin: {
-    surface:   { light: 'sumi', dark: 'sumiDark' },
-    ink:       { light: 'sumi', dark: 'sumiDark' },
+    surface:   { light: 'kami', dark: 'sumi' },
+    ink:       { light: 'kami', dark: 'sumi' },
     primary:   'shu',
     secondary: 'murasaki',
-    accent:    'shu',  // HQ/root brand accent = vermillion (purple is reserved for Kavach)
-    success:   'jade',
-    warning:   'amber',
+    accent:    'shu', // HQ/root brand accent = vermillion (purple is reserved for Kavach)
+    success:   'hisui',
+    warning:   'kohaku',
     danger:    'beni',
     error:     'beni',
     info:      'ai',
   },
-  palettes: sumiPalette,
-  // Per-product accent hues (from docs/mockups/Sensei/hq/site.jsx ACCENTS).
-  // Custom tokens — each emits a --<product> var + bg-/text-/border- utilities,
-  // flipping light↔dark automatically. Used on the hub's product cards.
+
   overrides: {
+    // ── Surface (paper) / Ink — explicit stop mapping the two-pole sumi palette
+    //    needs; shared verbatim with the desktop app + dōjō console. ──
+    paper:        { light: 'kami.100', dark: 'sumi.50'  },
+    'paper-soft': { light: 'kami.200', dark: 'sumi.100' },
+    'paper-mute': { light: 'kami.300', dark: 'sumi.200' },
+    ink:          { light: 'kami.900', dark: 'sumi.900' },
+    'ink-soft':   { light: 'kami.700', dark: 'sumi.800' },
+    'ink-mute':   { light: 'kami.600', dark: 'sumi.700' },
+    'ink-faint':  { light: 'kami.500', dark: 'sumi.600' },
+
+    // ── Status — lighten in dark mode for legibility (shared treatment). ──
+    success: { light: 'hisui.500', dark: 'hisui.400' },
+    warning: { light: 'kohaku.500', dark: 'kohaku.400' },
+    danger:  { light: 'beni.500', dark: 'beni.400' },
+    info:    { light: 'ai.500', dark: 'ai.400' },
+
+    // ── Per-product accent hues (from docs/mockups/Sensei/hq/site.jsx ACCENTS).
+    // Custom tokens — each emits a --<product> var + bg-/text-/border- utilities,
+    // flipping light↔dark automatically. Used on the hub's product cards. ──
     sensei: { light: 'oklch(0.580 0.150 35)',  dark: 'oklch(0.700 0.150 35)'  },
     dbd:    { light: 'oklch(0.560 0.130 255)', dark: 'oklch(0.700 0.130 255)' },
     rokkit: { light: 'oklch(0.560 0.110 162)', dark: 'oklch(0.730 0.110 162)' },
@@ -25,10 +55,12 @@ export default {
     magpie: { light: 'oklch(0.560 0.110 200)', dark: 'oklch(0.720 0.110 200)' },
     kata:   { light: 'oklch(0.560 0.120 145)', dark: 'oklch(0.720 0.120 145)' },
     burne:  { light: 'oklch(0.580 0.140 50)',  dark: 'oklch(0.730 0.140 50)'  },
+
     // Retune the reserved paper-edge token to a faint translucent hairline that
     // clearly flips per mode (default skin shade reads too heavy on the cards).
     'paper-edge': { light: 'oklch(0.22 0.012 50 / 0.10)', dark: 'oklch(0.94 0.008 85 / 0.12)' },
   },
+
   themes: ['rokkit'],
   typography: {
     sans: "'Inter', system-ui, -apple-system, sans-serif",

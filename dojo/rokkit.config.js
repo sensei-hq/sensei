@@ -1,4 +1,4 @@
-import { sumiPalette } from './sumi-palette.js';
+import { sumiPalette } from '../packages/sumi-palette/index.js';
 
 // Logical icon names the dojo2 kit renders (bare Solar names from the mockup's
 // K2Icon). Each becomes an `icons.overrides` bare-name shortcut → the full
