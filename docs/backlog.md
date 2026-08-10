@@ -104,6 +104,17 @@ The 2026-07-14 mockup-gap pass is closed. Details in [`spec/MOCKUP-INDEX.md`](sp
 
 ## Cleanup / tech-debt
 
+### Quality pass (qlty.sh) — 2026-08-10 status + follow-ups
+
+A qlty pass ran on 2026-08-10 (commits `2bd4dc2b`..`992c7256`). Landed: excluded vendored tree-sitter grammars (qlty smells 427→394); deduped the metrics test read-back helpers into `test_support` (→386); fixed two pipeline blockers (the bootstrap `brew`-shelling hang, and the app suite failing 98/98 on a missing generated tsconfig — app coverage was silently 0, now runs at ~45%); excluded generated `paraglide` from dojo coverage; added rulepacks-data DB-wrapper tests; and brought **senseid's pure (DB-free) modules** into CI coverage (`scripts/senseid-pure-coverage.sh` + a `senseid` job) — lifting the Rust+dojo aggregate from 75.8% to a locally-projected ~80.7%. Open follow-ups:
+
+| Item | Summary |
+|------|---------|
+| _(file issue)_ | **Security: the 28 osv advisories stay tracked in [#120](https://github.com/sensei-hq/sensei/issues/120)** (all `medium`, transitive, none code-fixable). Left un-allowlisted per owner decision — the dashboard keeps showing them as known/accepted rather than suppressed. |
+| _(file issue)_ | **sumi-palette → shared design-tokens package (APPROVED).** `sumi-palette.js` is 213 identical lines ×3 (app/dojo/website), the single largest duplication (mass 467). Owner chose the shared-package fix over exclusion: stand up a bun workspace + `packages/sumi-palette` (or equivalent), convert each app's `rokkit.config.js` to import it, verify all three builds (Tauri app / CF Worker dojo / SvelteKit site). Not yet done. |
+| _(file issue)_ | **Remaining high/medium smells (386 after the pass).** Biggest real hotspot: `dojo/src/lib/triage/view.ts` (29 smells — dup + high complexity + deep nesting). Also: senseid api-handler duplication (`project_detail`/`query`/`workspace`/`codebase`, `gateway_embedded`, `insight_copy`, `installer/install`, `cli/doctor`); `many-parameters` on the language `make_sym`/`resolve_call`/`collect_calls` (bundle into a param struct). Language tree-walkers (`rust_lang`/`python`/etc.) are inherently complex + well-tested — low-value to refactor for the metric. |
+| _(file issue)_ | **Coverage follow-ups to push past ~80.7%.** (a) The DB-coupled senseid remainder still isn't measured — needs a CI Postgres service (the documented parallel-DB flakiness must be handled first: per-test schema/txn isolation). (b) Longer-term, extracting the pure senseid modules into their own crate would drop the hand-maintained allowlist in `scripts/senseid-pure-coverage.sh`. (c) app coverage is now runnable (~45%) but stays OUT of the aggregate — the CI `--coverage` job still hits a linux-only rolldown `node:module` crash; fixing that would upload app at ~45% and *drop* the aggregate, so improve app coverage first. |
+
 | Item | Summary |
 |------|---------|
 | _(file issue)_ | **Rename `setup` remnants after the entry-gate simplification.** The entry gate was simplified to health-gate → folder-scan → dōjō-auto-discover; everything else moved to a separate Configuration surface (see [`features/changes.md`](features/changes.md)). The config routes still live under `app/src/routes/(config)/setup/` and share `setup`-named modules (`app/src/lib/setup/*`, `stages.ts`). Rename/reorganize so the code reflects Setup (the gate) vs Configuration, and drop the leftover wizard-only stages. |
