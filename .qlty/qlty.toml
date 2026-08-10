@@ -16,6 +16,8 @@ config_version = "0"
 exclude_patterns = [
   # Mockups are prototype JSX we don't control the quality of (design source of truth).
   "docs/mockups/**",
+  # Vendored tree-sitter parsers (generated scanner.c/parser.c/parser.h) — not our code.
+  "crates/senseid/grammars/**",
   "*_min.*",
   "*-min.*",
   "*.min.*",
