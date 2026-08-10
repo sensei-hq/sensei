@@ -27,7 +27,7 @@
   <section id="contact" class="bg-paper-soft">
     <div class="contact-inner mx-auto px-7 py-24" style="text-align:center">
       <div class="flex justify-center mb-5">
-        <span class="i-brand:sensei-hq text-primary block" style="width:40px;height:40px" aria-hidden="true"></span>
+        <span class="i-brand:sensei-hq text-accent block" style="width:40px;height:40px" aria-hidden="true"></span>
       </div>
       <h2 class="display text-ink m-0 text-2xl" style="font-weight:300;letter-spacing:-0.02em;line-height:1.2">
         Building something quiet and sharp?

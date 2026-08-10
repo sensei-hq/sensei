@@ -23,7 +23,7 @@
 <div class="ts-nav-wrap sticky top-0 z-50">
   <nav class="ts-inner mx-auto px-7 py-4 flex items-center justify-between">
     <a href="{base}/" class="flex items-center gap-3 no-underline">
-      <span class="i-brand:sensei-hq text-primary block flex-shrink-0" style="width:26px;height:26px" aria-hidden="true"></span>
+      <span class="i-brand:sensei-hq text-accent block flex-shrink-0" style="width:26px;height:26px" aria-hidden="true"></span>
       <span class="flex items-baseline gap-2">
         <span class="display text-ink text-lg" style="letter-spacing:-0.01em">Torii · Seiki</span>
         <span class="mono text-ink-mute text-xs" style="letter-spacing:0.08em">SENSEI HQ</span>
@@ -43,7 +43,7 @@
   <div class="ts-hero-grid gap-16">
     <div>
       <div class="flex items-baseline gap-3 mb-6">
-        <span class="kanji text-primary" style="font-size:44px;line-height:1">門</span>
+        <span class="kanji text-accent" style="font-size:44px;line-height:1">門</span>
         <span class="mono text-ink-mute text-xs" style="letter-spacing:0.12em;text-transform:uppercase">Torii · Seiki — the gate and what stands behind it</span>
       </div>
       <h1 class="display text-ink m-0" style="font-size:56px;font-weight:300;line-height:1.08;letter-spacing:-0.025em;max-width:640px">
@@ -99,7 +99,7 @@
   <div class="ts-inner mx-auto px-7">
     <div class="mb-12">
       <div class="flex items-baseline gap-3 mb-4">
-        <span class="kanji text-primary text-2xl" style="line-height:1">分</span>
+        <span class="kanji text-accent text-2xl" style="line-height:1">分</span>
         <span class="mono text-ink-mute text-xs" style="letter-spacing:0.12em;text-transform:uppercase">Bun · to divide</span>
       </div>
       <h2 class="display text-ink m-0 text-3xl" style="font-weight:300;line-height:1.15;letter-spacing:-0.022em;max-width:720px">
@@ -113,7 +113,7 @@
       {#each PLANES as p (p.label)}
         <div class="border border-paper-edge rounded-lg bg-paper-soft p-7">
           <div class="flex items-center gap-3 mb-4">
-            <span class="kanji text-primary text-xl" style="line-height:1">{p.kanji}</span>
+            <span class="kanji text-accent text-xl" style="line-height:1">{p.kanji}</span>
             <span class="mono text-ink border border-paper-edge rounded-full text-xs px-2.5 py-1">{p.label}</span>
           </div>
           <p class="text-ink-soft m-0 text-base" style="line-height:1.65">{p.text}</p>
@@ -128,7 +128,7 @@
   <div class="ts-inner mx-auto px-7">
     <div class="mb-12">
       <div class="flex items-baseline gap-3 mb-4">
-        <span class="kanji text-primary text-2xl" style="line-height:1">二</span>
+        <span class="kanji text-accent text-2xl" style="line-height:1">二</span>
         <span class="mono text-ink-mute text-xs" style="letter-spacing:0.12em;text-transform:uppercase">Ni · two</span>
       </div>
       <h2 class="display text-ink m-0 text-3xl" style="font-weight:300;line-height:1.15;letter-spacing:-0.022em;max-width:720px">
@@ -179,7 +179,7 @@
   <div class="ts-inner mx-auto px-7">
     <div class="mb-12">
       <div class="flex items-baseline gap-3 mb-4">
-        <span class="kanji text-primary text-2xl" style="line-height:1">具</span>
+        <span class="kanji text-accent text-2xl" style="line-height:1">具</span>
         <span class="mono text-ink-mute text-xs" style="letter-spacing:0.12em;text-transform:uppercase">Gu · the instruments</span>
       </div>
       <h2 class="display text-ink m-0 text-3xl" style="font-weight:300;line-height:1.15;letter-spacing:-0.022em;max-width:720px">
@@ -189,7 +189,7 @@
     <div class="ts-cap-grid gap-x-12 gap-y-12">
       {#each CAPABILITIES as c (c.title)}
         <div>
-          <span class="kanji text-primary block mb-4" style="font-size:32px;line-height:1">{c.kanji}</span>
+          <span class="kanji text-accent block mb-4" style="font-size:32px;line-height:1">{c.kanji}</span>
           <h3 class="display text-ink m-0 text-lg" style="font-weight:400;letter-spacing:-0.01em">{c.title}</h3>
           <p class="text-ink-soft mt-2 m-0 text-sm" style="line-height:1.65">{c.text}</p>
         </div>
@@ -204,7 +204,7 @@
     <div class="ts-split gap-16">
       <div>
         <div class="flex items-baseline gap-3 mb-4">
-          <span class="kanji text-primary text-2xl" style="line-height:1">蔵</span>
+          <span class="kanji text-accent text-2xl" style="line-height:1">蔵</span>
           <span class="mono text-ink-mute text-xs" style="letter-spacing:0.12em;text-transform:uppercase">Zō · to keep</span>
         </div>
         <h2 class="display text-ink m-0 text-3xl" style="font-weight:300;line-height:1.15;letter-spacing:-0.022em;max-width:460px">
@@ -270,7 +270,7 @@
 <!-- ── Contact ───────────────────────────────────────────────────────── -->
 <section id="contact" class="border-t border-paper-edge py-24">
   <div class="mx-auto px-7 text-center" style="max-width:720px">
-    <span class="kanji text-primary block mb-5 text-3xl" style="line-height:1">入</span>
+    <span class="kanji text-accent block mb-5 text-3xl" style="line-height:1">入</span>
     <h2 class="display text-ink m-0 text-3xl" style="font-weight:300;line-height:1.15;letter-spacing:-0.022em">
       Torii and Seiki are in private beta.
     </h2>
@@ -292,7 +292,7 @@
 <footer class="border-t border-paper-edge">
   <div class="ts-inner mx-auto px-7 py-16 flex items-center justify-between flex-wrap gap-4">
     <a href="{base}/" class="flex items-center gap-3 no-underline">
-      <span class="i-brand:sensei-hq text-primary block flex-shrink-0" style="width:24px;height:24px" aria-hidden="true"></span>
+      <span class="i-brand:sensei-hq text-accent block flex-shrink-0" style="width:24px;height:24px" aria-hidden="true"></span>
       <span class="flex items-baseline gap-2">
         <span class="display text-ink text-base">Sensei</span>
         <span class="mono text-ink-mute text-xs" style="letter-spacing:0.08em">HQ</span>
