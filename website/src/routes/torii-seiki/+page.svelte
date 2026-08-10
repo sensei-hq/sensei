@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Button } from '@rokkit/ui';
   import { base } from '$app/paths';
   import {
     CLIENTS,
@@ -32,7 +33,7 @@
       {#each TS_NAV_LINKS as [href, label] (href)}
         <a {href} class="ts-nav-link text-ink-soft text-sm no-underline">{label}</a>
       {/each}
-      <a href="#contact" class="zs-btn zs-btn-primary zs-btn-sm" style="margin-left:4px">Request access</a>
+      <Button href="#contact" variant="primary" size="sm" label="Request access" class="ml-1" />
     </div>
   </nav>
 </div>
@@ -54,10 +55,10 @@
         our Rust library for fallback chains and budget control.
       </p>
       <div class="flex items-center flex-wrap gap-3 mt-8">
-        <a href="mailto:hi@sensei-hq.com" class="zs-btn zs-btn-primary zs-btn-lg">
-          <span class="kanji text-on-primary" style="font-size:15px;line-height:1">入</span>
+        <Button href="mailto:hi@sensei-hq.com" variant="primary" size="lg">
+          <span class="kanji text-on-primary text-base" style="line-height:1">入</span>
           Request access
-        </a>
+        </Button>
         <a href="#clients" class="text-ink-soft text-sm no-underline">Meet Torii and Seiki ↓</a>
       </div>
       <div class="flex flex-wrap gap-4 mt-12">
@@ -113,7 +114,7 @@
         <div class="border border-paper-edge rounded-lg bg-paper-soft p-7">
           <div class="flex items-center gap-3 mb-4">
             <span class="kanji text-primary text-xl" style="line-height:1">{p.kanji}</span>
-            <span class="mono text-ink border border-paper-edge rounded-full text-xs" style="padding:3px 10px">{p.label}</span>
+            <span class="mono text-ink border border-paper-edge rounded-full text-xs px-2.5 py-1">{p.label}</span>
           </div>
           <p class="text-ink-soft m-0 text-base" style="line-height:1.65">{p.text}</p>
         </div>
@@ -154,12 +155,12 @@
             <p class="text-ink-soft mt-3 text-base" style="line-height:1.65;max-width:460px">{c.blurb}</p>
             <div class="flex flex-wrap gap-2 mt-6 mb-8">
               {#each c.surfaces as s (s)}
-                <span class="text-ink-soft text-sm border border-paper-edge rounded-full" style="padding:4px 12px;white-space:nowrap">{s}</span>
+                <span class="text-ink-soft text-sm border border-paper-edge rounded-full px-3 py-1" style="white-space:nowrap">{s}</span>
               {/each}
             </div>
             <div class="flex flex-wrap gap-2">
               {#each c.meta as m (m)}
-                <span class="mono text-ink-mute border border-paper-edge rounded-sm text-xs" style="padding:2px 7px;white-space:nowrap">{m}</span>
+                <span class="mono text-ink-mute border border-paper-edge rounded-sm text-xs px-2 py-0.5" style="white-space:nowrap">{m}</span>
               {/each}
             </div>
           </div>
@@ -188,7 +189,7 @@
     <div class="ts-cap-grid gap-x-12 gap-y-12">
       {#each CAPABILITIES as c (c.title)}
         <div>
-          <span class="kanji text-primary block" style="font-size:32px;line-height:1;margin-bottom:16px">{c.kanji}</span>
+          <span class="kanji text-primary block mb-4" style="font-size:32px;line-height:1">{c.kanji}</span>
           <h3 class="display text-ink m-0 text-lg" style="font-weight:400;letter-spacing:-0.01em">{c.title}</h3>
           <p class="text-ink-soft mt-2 m-0 text-sm" style="line-height:1.65">{c.text}</p>
         </div>
@@ -249,7 +250,7 @@
           are what it looks like with a face on it — but the library stands alone, and
           you can build your own client on it.
         </p>
-        <a href={GATEWAY_URL} target="_blank" rel="noopener" class="zs-btn zs-btn-secondary mt-6">gateway.sensei-hq.com →</a>
+        <Button href={GATEWAY_URL} target="_blank" rel="noopener" style="outline" size="md" class="mt-6" label="gateway.sensei-hq.com →" />
       </div>
       <div class="border border-paper-edge rounded-lg bg-paper-soft p-7">
         <span class="mono text-ink-mute block mb-4 text-xs" style="letter-spacing:0.12em;text-transform:uppercase">What Gateway handles</span>
@@ -269,7 +270,7 @@
 <!-- ── Contact ───────────────────────────────────────────────────────── -->
 <section id="contact" class="border-t border-paper-edge py-24">
   <div class="mx-auto px-7 text-center" style="max-width:720px">
-    <span class="kanji text-primary block" style="font-size:40px;line-height:1;margin-bottom:20px">入</span>
+    <span class="kanji text-primary block mb-5 text-3xl" style="line-height:1">入</span>
     <h2 class="display text-ink m-0 text-3xl" style="font-weight:300;line-height:1.15;letter-spacing:-0.022em">
       Torii and Seiki are in private beta.
     </h2>
@@ -277,11 +278,11 @@
       Tell us how your organization works and we will tell you honestly whether the gate fits yet.
     </p>
     <div class="flex items-center justify-center flex-wrap gap-3 mt-8">
-      <a href="mailto:hi@sensei-hq.com" class="zs-btn zs-btn-primary zs-btn-lg">
-        <span class="kanji text-on-primary" style="font-size:15px;line-height:1">文</span>
+      <Button href="mailto:hi@sensei-hq.com" variant="primary" size="lg">
+        <span class="kanji text-on-primary text-base" style="line-height:1">文</span>
         Request access
-      </a>
-      <a href="{base}/" class="zs-btn zs-btn-secondary zs-btn-lg">See the whole workshop</a>
+      </Button>
+      <Button href="{base}/" style="outline" size="lg" label="See the whole workshop" />
     </div>
     <a href="mailto:hi@sensei-hq.com" class="mono text-ink-mute mt-4 inline-block text-sm" style="letter-spacing:0.02em;white-space:nowrap">hi@sensei-hq.com</a>
   </div>
