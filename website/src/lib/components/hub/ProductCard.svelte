@@ -26,7 +26,7 @@
     <div class="p-7">
       <div class="flex items-center justify-between mb-5">
         <span class="mono text-ink-faint text-xs">{p.index}</span>
-        <span class="mono rounded-sm px-2 py-0 {statusClass(p.status)} text-xs" style="white-space:nowrap">{p.status}</span>
+        <span class="mono rounded-sm px-2 py-0.5 {statusClass(p.status)} text-xs" style="white-space:nowrap">{p.status}</span>
       </div>
       <div class="flex items-baseline gap-3 mb-2">
         <span class="display text-ink text-2xl" style="font-weight:400;letter-spacing:-0.02em">{p.name}</span>
@@ -68,7 +68,7 @@
     <div class="p-6 flex flex-col" style="flex:1">
       <div class="flex items-center justify-between">
         <span class="mono text-ink-faint text-xs">{p.index}</span>
-        <span class="mono rounded-sm px-2 py-0 {statusClass(p.status)} text-xs" style="white-space:nowrap">{p.status}</span>
+        <span class="mono rounded-sm px-2 py-0.5 {statusClass(p.status)} text-xs" style="white-space:nowrap">{p.status}</span>
       </div>
       <span class="kanji text-{p.id} text-4xl mt-5 mb-4" style="line-height:1">{p.kanji}</span>
       <div class="flex items-baseline gap-2 mb-1">

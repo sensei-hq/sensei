@@ -1,6 +1,7 @@
 <script lang="ts">
   import { Button } from '@rokkit/ui';
   import { base } from '$app/paths';
+  import SiteNav from '$lib/components/SiteNav.svelte';
   import {
     CLIENTS,
     PLANES,
@@ -20,8 +21,10 @@
 </svelte:head>
 
 <!-- ── Nav ───────────────────────────────────────────────────────────── -->
-<div class="ts-nav-wrap sticky top-0 z-50">
-  <nav class="ts-inner mx-auto px-7 py-4 flex items-center justify-between">
+<SiteNav
+  links={TS_NAV_LINKS}
+  cta={{ href: 'https://seiki.sensei-hq.com', target: '_blank', rel: 'noopener', variant: 'primary', label: 'Request access' }}>
+  {#snippet brand()}
     <a href="{base}/" class="flex items-center gap-3 no-underline">
       <span class="i-brand:sensei-hq text-accent block flex-shrink-0" style="width:26px;height:26px" aria-hidden="true"></span>
       <span class="flex items-baseline gap-2">
@@ -29,14 +32,8 @@
         <span class="mono text-ink-mute text-xs" style="letter-spacing:0.08em">SENSEI HQ</span>
       </span>
     </a>
-    <div class="flex items-center gap-8">
-      {#each TS_NAV_LINKS as [href, label] (href)}
-        <a {href} class="ts-nav-link text-ink-soft text-sm no-underline">{label}</a>
-      {/each}
-      <Button href="#contact" variant="primary" size="sm" label="Request access" class="ml-1" />
-    </div>
-  </nav>
-</div>
+  {/snippet}
+</SiteNav>
 
 <!-- ── Hero ──────────────────────────────────────────────────────────── -->
 <header id="top" class="ts-inner mx-auto px-7 pt-12 pb-24">
@@ -55,7 +52,7 @@
         our Rust library for fallback chains and budget control.
       </p>
       <div class="flex items-center flex-wrap gap-3 mt-8">
-        <Button href="mailto:hi@sensei-hq.com" variant="primary" size="lg">
+        <Button href="https://seiki.sensei-hq.com" target="_blank" rel="noopener" variant="primary" size="lg">
           <span class="kanji text-on-primary text-base" style="line-height:1">入</span>
           Request access
         </Button>
@@ -145,7 +142,7 @@
           <div class="ts-client-body p-10">
             <div class="mb-6 flex items-center justify-between">
               <span class="mono text-ink-faint text-sm">{String(i + 1).padStart(2, '0')}</span>
-              <span class="mono rounded-sm px-2 py-0 text-warning bg-warning-soft text-xs" style="white-space:nowrap">{c.status}</span>
+              <span class="mono rounded-sm px-2 py-0.5 text-warning bg-warning-soft text-xs" style="white-space:nowrap">{c.status}</span>
             </div>
             <div class="flex items-baseline flex-wrap gap-3 mb-2">
               <span class="display text-ink text-2xl" style="font-weight:400;letter-spacing:-0.02em">{c.name}</span>
@@ -250,7 +247,7 @@
           are what it looks like with a face on it — but the library stands alone, and
           you can build your own client on it.
         </p>
-        <Button href={GATEWAY_URL} target="_blank" rel="noopener" style="outline" size="md" class="mt-6" label="gateway.sensei-hq.com →" />
+        <Button href={GATEWAY_URL} target="_blank" rel="noopener" style="outline" size="md" class="mt-6" label="Visit Gateway →" />
       </div>
       <div class="border border-paper-edge rounded-lg bg-paper-soft p-7">
         <span class="mono text-ink-mute block mb-4 text-xs" style="letter-spacing:0.12em;text-transform:uppercase">What Gateway handles</span>
@@ -278,7 +275,7 @@
       Tell us how your organization works and we will tell you honestly whether the gate fits yet.
     </p>
     <div class="flex items-center justify-center flex-wrap gap-3 mt-8">
-      <Button href="mailto:hi@sensei-hq.com" variant="primary" size="lg">
+      <Button href="https://seiki.sensei-hq.com" target="_blank" rel="noopener" variant="primary" size="lg">
         <span class="kanji text-on-primary text-base" style="line-height:1">文</span>
         Request access
       </Button>
@@ -305,20 +302,6 @@
 <style>
   .ts-inner {
     max-width: 1120px;
-  }
-  .ts-nav-wrap {
-    background: color-mix(in oklch, var(--paper) 80%, transparent);
-    backdrop-filter: blur(14px) saturate(150%);
-    -webkit-backdrop-filter: blur(14px) saturate(150%);
-    -webkit-mask-image: linear-gradient(to bottom, #000 72%, transparent);
-    mask-image: linear-gradient(to bottom, #000 72%, transparent);
-    padding-bottom: 6px;
-  }
-  .ts-nav-link {
-    transition: color 0.15s;
-  }
-  .ts-nav-link:hover {
-    color: var(--ink);
   }
   .ts-hero-grid {
     display: grid;

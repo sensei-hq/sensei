@@ -112,6 +112,16 @@ html { scroll-behavior: smooth; }
 /* Button styles now come from rokkit's <Button> component (@rokkit/ui) +
    @rokkit/themes button.css — see app.css imports. */
 
+/* Outline (default-variant) button — the theme rests its border on --paper-mute,
+   which is ~L0.25 sitting on the ~L0.17 dark canvas: too faint to read as an
+   edge. Lift it to a mid-tone in dark mode only (light mode's paper-mute edge is
+   fine). data-mode + data-style are both on <body>, so this compound out-specifies
+   the theme's 4-attribute rule. */
+[data-mode='dark'][data-style='zen-sumi'] [data-button][data-style='outline'][data-variant='default'],
+[data-mode='dark'][data-style='zen-sumi'] [data-button][data-style='outline']:not([data-variant]) {
+  border-color: color-mix(in oklch, var(--ink-faint) 40%, var(--paper-mute));
+}
+
 /* ── Details/summary reset ────────────────────────────────── */
 details summary { list-style: none; }
 details summary::-webkit-details-marker { display: none; }
