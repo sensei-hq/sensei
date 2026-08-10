@@ -3,11 +3,20 @@
   import { base } from '$app/paths';
   import { vibe } from '@rokkit/states';
   import { Button } from '@rokkit/ui';
-  import MockToday from '$lib/components/mock/MockToday.svelte';
-  import MockSessions from '$lib/components/mock/MockSessions.svelte';
-  import MockInsights from '$lib/components/mock/MockInsights.svelte';
-  import MockMemory from '$lib/components/mock/MockMemory.svelte';
-  import MockInstruments from '$lib/components/mock/MockInstruments.svelte';
+  import { heroBrief, surfaces } from '$lib/sensei-surfaces-data';
+  import type {
+    AnatomyRowsMech,
+    CardsMech,
+    ChipsMech,
+    FlowMech,
+    HeroBrief,
+    LanesMech,
+    Mechanic,
+    ModesMech,
+    PillsMech,
+    Surface,
+    Tone
+  } from '$lib/sensei-surfaces-data';
 
   const GITHUB = 'https://github.com/sensei-hq/sensei';
   const RELEASES = 'https://github.com/sensei-hq/sensei-releases';
@@ -33,7 +42,7 @@
   // ── Data ────────────────────────────────────────────────────
   const navLinks = [
     ['#how', 'How'],
-    ['#gallery', 'Screens'],
+    ['#gallery', 'Surfaces'],
     ['#philosophy', 'Philosophy'],
     ['#privacy', 'Privacy'],
     ['#faq', 'FAQ'],
@@ -51,18 +60,28 @@
       sub: 'Adopt, refine, or dismiss. Always your call.' },
   ];
 
-  const screens = [
-    { caption: 'Today', num: '01',
-      sub: 'The morning briefing. One observation that\'s worth your attention. Everything else stays out of sight.' },
-    { caption: 'Sessions', num: '02',
-      sub: 'The week in review. Going well, not going well, things noticed — three lanes, no charts to decode.' },
-    { caption: 'Insights', num: '03',
-      sub: 'What sensei has noticed. Patterns with confidence and provenance. You decide which become memories.' },
-    { caption: 'Memories', num: '04',
-      sub: 'Adopted teachings. Each one named, dated, and traceable to the sessions it came from. No black box.' },
-    { caption: 'Instruments', num: '05',
-      sub: 'Your tools, observed. Try them in isolation, replay what the assistant did, watch toolset health over time.' },
-  ];
+  // ── Surface colour maps ─────────────────────────────────────
+  // Tone keys → text-<token> classes (literal strings so UnoCSS emits them)
+  // and → var(--<token>) for the data-driven accent borders on the lanes.
+  const toneText: Record<Tone, string> = {
+    accent: 'text-accent',
+    success: 'text-success',
+    warning: 'text-warning',
+    'ink-soft': 'text-ink-soft',
+    'ink-mute': 'text-ink-mute',
+  };
+  const toneVar: Record<Tone, string> = {
+    accent: 'var(--accent)',
+    success: 'var(--success)',
+    warning: 'var(--warning)',
+    'ink-soft': 'var(--ink-soft)',
+    'ink-mute': 'var(--ink-mute)',
+  };
+  const priorityTone: Record<'P0' | 'P1' | 'P2', Tone> = {
+    P0: 'accent',
+    P1: 'warning',
+    P2: 'ink-mute',
+  };
 
   const privacyItems = [
     { k: '蔵', title: 'Local storage only',
@@ -160,7 +179,7 @@
       <div class="hero-note">Free preview · Local-first · No account required</div>
     </div>
     <div class="hero-screen">
-      <MockToday width={1040} height={620} />
+      {@render heroBriefCard(heroBrief)}
     </div>
   </section>
 
@@ -230,38 +249,21 @@
     </div>
   </section>
 
-  <!-- ═══ Gallery ═══ -->
+  <!-- ═══ Surfaces (#gallery) ═══ -->
   <section id="gallery" class="gallery pt-30 px-12 pb-16">
     <div class="gallery-inner">
-      <div class="section-tag">The screens</div>
+      <div class="section-tag">The screens · 面</div>
       <h2 class="display gallery-heading mb-4">
-        Five surfaces, one rhythm.
+        Five surfaces,<br/>one rhythm.
       </h2>
-      <p class="gallery-sub display mb-20">
-        Every screen answers one question and stays quiet otherwise.
+      <p class="gallery-sub display mb-8">
+        Each surface answers one question and stays quiet otherwise. The pixels will keep
+        changing; what they're <em>for</em> won't. So here is what each one does, why it's
+        shaped that way, and how its flow moves.
       </p>
-      <div class="gallery-list gap-25">
-        {#each screens as s, i}
-          <div class="gallery-item gap-16" class:reverse={i % 2 !== 0}>
-            <div class="gallery-screen">
-              {#if s.caption === 'Today'}
-                <MockToday width={920} height={580} />
-              {:else if s.caption === 'Sessions'}
-                <MockSessions width={920} height={580} />
-              {:else if s.caption === 'Insights'}
-                <MockInsights width={920} height={580} />
-              {:else if s.caption === 'Memories'}
-                <MockMemory width={920} height={580} />
-              {:else}
-                <MockInstruments width={920} height={580} />
-              {/if}
-            </div>
-            <div class="gallery-caption">
-              <div class="mono gallery-num" style="color: var(--shu);">{s.num}</div>
-              <div class="display gallery-name">{s.caption}</div>
-              <div class="gallery-desc">{s.sub}</div>
-            </div>
-          </div>
+      <div class="surfaces">
+        {#each surfaces as surf (surf.n)}
+          {@render surfaceBlock(surf)}
         {/each}
       </div>
     </div>
@@ -408,6 +410,220 @@
   </footer>
 
 </div>
+
+<!-- ═══ Hero brief — the product's voice, not a screenshot ═══ -->
+{#snippet heroBriefCard(h: HeroBrief)}
+  <div class="hero-card w-full py-12 px-16 bg-paper-soft border border-paper-edge rounded-lg shadow-lg">
+    <div class="mb-6 flex items-center justify-between">
+      <span class="mono text-xs text-ink-mute">{h.meta}</span>
+      <span class="surf-eyebrow text-xs text-ink-faint font-semibold">{h.metaRight}</span>
+    </div>
+
+    <div class="hero-focal gap-8 items-start">
+      <div class="kanji text-accent hero-focal-kanji">{h.focalKanji}</div>
+      <div>
+        <div class="surf-eyebrow text-xs text-ink-mute mb-2">{h.eyebrow}</div>
+        <div class="display text-2xl font-light text-ink hero-headline">{h.headline}</div>
+        <p class="mt-3 mb-4 text-base text-ink-soft hero-lead">
+          {h.leadBefore}<span class="mono text-sm">{h.leadCode}</span>{h.leadAfter}
+        </p>
+        <div class="gap-4 flex items-center flex-wrap">
+          <span class="inline-flex items-center gap-2 text-sm text-accent">
+            <span class="hero-dot rounded-full bg-accent"></span>
+            {h.projected}
+          </span>
+          <span class="flex-1"></span>
+          <span class="mono text-xs text-ink-faint">{h.provenance}</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="mt-8 pt-6 border-t border-paper-edge">
+      <div class="surf-eyebrow text-xs text-ink-faint font-semibold mb-3">{h.secondaryLabel}</div>
+      <div class="grid-3 gap-3">
+        {#each h.secondary as s (s.label)}
+          <div class="flex items-start gap-2">
+            <span class="kanji text-base hero-sec-kanji {toneText[s.tone]}">{s.kanji}</span>
+            <div class="min-w-0">
+              <div class="surf-eyebrow text-xs text-ink-mute">{s.label}</div>
+              <div class="mt-1 text-sm text-ink-soft">{s.text}</div>
+              <span class="mono text-xs {toneText[s.tone]}">{s.tag}</span>
+            </div>
+          </div>
+        {/each}
+      </div>
+    </div>
+  </div>
+{/snippet}
+
+<!-- ═══ Surface block — identity → rationale → mechanic ═══ -->
+{#snippet surfaceBlock(s: Surface)}
+  <div class="surf-block pt-16 pb-16 border-t border-paper-edge">
+    <div class="surf-grid gap-16 items-start">
+      <div>
+        <div class="gap-3 mb-4 flex items-baseline">
+          <span class="mono text-accent text-sm surf-n">{s.n}</span>
+          <span class="kanji text-accent text-2xl surf-id-kanji">{s.kanji}</span>
+          <div class="gap-1 flex flex-col">
+            <span class="display font-normal text-2xl surf-name">{s.name}</span>
+            <span class="surf-eyebrow text-xs text-ink-mute font-semibold">{s.role}</span>
+          </div>
+        </div>
+        <h3 class="display m-0 font-light text-ink text-xl surf-headline">{s.headline}</h3>
+      </div>
+      <div>
+        <p class="display mt-0 mb-4 text-base text-ink-soft font-light surf-lead">
+          {#each s.lead as seg (seg.t)}{#if seg.em}<span class="text-ink">{seg.t}</span>{:else}{seg.t}{/if}{/each}
+        </p>
+        <div class="surf-why pl-3 flex items-start gap-2.5">
+          <span class="surf-eyebrow text-xs text-ink-mute font-semibold">Why</span>
+          <span class="text-sm text-ink-soft italic surf-why-note">{s.why}</span>
+        </div>
+      </div>
+    </div>
+    <div class="mt-12 flex flex-col gap-6">
+      {#each s.mechanics as mech (mech.kind)}
+        {@render mechanic(mech)}
+      {/each}
+    </div>
+  </div>
+{/snippet}
+
+{#snippet mechLabel(text: string)}
+  <div class="surf-eyebrow text-xs text-ink-mute font-semibold mb-3">{text}</div>
+{/snippet}
+
+{#snippet mechanic(m: Mechanic)}
+  {#if m.kind === 'anatomy-rows'}
+    {@render anatomyRows(m)}
+  {:else if m.kind === 'lanes'}
+    {@render lanes(m)}
+  {:else if m.kind === 'chips'}
+    {@render chips(m)}
+  {:else if m.kind === 'flow'}
+    {@render flow(m)}
+  {:else if m.kind === 'cards'}
+    {@render cards(m)}
+  {:else if m.kind === 'pills'}
+    {@render pills(m)}
+  {:else if m.kind === 'modes'}
+    {@render modes(m)}
+  {/if}
+{/snippet}
+
+{#snippet anatomyRows(m: AnatomyRowsMech)}
+  <div>
+    {@render mechLabel(m.label)}
+    <div class="flex flex-col gap-2">
+      {#each m.rows as r (r.label)}
+        <div class="today-row gap-4 py-3 px-4 items-baseline bg-paper border border-paper-edge rounded-lg">
+          <span class="kanji text-accent text-lg today-row-kanji">{r.kanji}</span>
+          <div class="flex items-baseline gap-2">
+            <span class="mono font-semibold text-xs {toneText[priorityTone[r.priority]]}">{r.priority}</span>
+            <span class="display font-medium text-ink text-base">{r.label}</span>
+          </div>
+          <span class="text-sm text-ink-soft today-row-desc">{r.desc}</span>
+        </div>
+      {/each}
+    </div>
+  </div>
+{/snippet}
+
+{#snippet lanes(m: LanesMech)}
+  <div>
+    {@render mechLabel(m.label)}
+    <div class="grid-3 gap-3">
+      {#each m.lanes as l (l.title)}
+        <div class="lane py-4 px-4 bg-paper rounded-lg" style="border-top-color: {toneVar[l.tone]}">
+          <div class="gap-2 mb-2 flex items-baseline">
+            <span class="kanji text-lg {toneText[l.tone]}">{l.kanji}</span>
+            <span class="surf-eyebrow text-xs text-ink-mute font-semibold">{l.title}</span>
+          </div>
+          <div class="text-sm text-ink-soft lane-desc">{l.desc}</div>
+        </div>
+      {/each}
+    </div>
+  </div>
+{/snippet}
+
+{#snippet chips(m: ChipsMech)}
+  <div>
+    {@render mechLabel(m.label)}
+    <div class="flex flex-wrap gap-2">
+      {#each m.chips as c (c.title)}
+        <div class="chip py-3 px-4 flex items-start gap-2.5 bg-paper border border-paper-edge rounded-lg">
+          <span class="kanji text-accent text-base chip-kanji">{c.kanji}</span>
+          <div>
+            <div class="display font-medium text-ink text-base">{c.title}</div>
+            <div class="mt-1 text-xs text-ink-mute chip-desc">{c.desc}</div>
+          </div>
+        </div>
+      {/each}
+    </div>
+  </div>
+{/snippet}
+
+{#snippet flow(m: FlowMech)}
+  <div>
+    {@render mechLabel(m.label)}
+    <div class="flex items-stretch">
+      {#each m.steps as st, i (st.title)}
+        {#if i > 0}
+          <div class="flex items-center text-accent mono text-sm px-1.5">→</div>
+        {/if}
+        <div class="flow-step py-4 px-4 flex-1 bg-paper border border-paper-edge rounded-lg flex flex-col gap-1.5">
+          <span class="mono text-accent text-xs">{(i + 1).toString().padStart(2, '0')}</span>
+          <span class="display font-medium text-ink text-lg flow-step-title">{st.title}</span>
+          <span class="surf-eyebrow text-xs text-ink-mute font-semibold">{st.who}</span>
+          <span class="text-xs text-ink-soft flow-step-desc">{st.desc}</span>
+        </div>
+      {/each}
+    </div>
+  </div>
+{/snippet}
+
+{#snippet cards(m: CardsMech)}
+  <div>
+    {@render mechLabel(m.label)}
+    <div class="grid-3 gap-3">
+      {#each m.cards as c (c.title)}
+        <div class="py-4 px-4 bg-paper border border-paper-edge rounded-lg">
+          <div class="display font-medium text-ink text-base card-title">{c.title}</div>
+          <div class="mt-2 text-xs text-ink-mute card-desc">{c.desc}</div>
+        </div>
+      {/each}
+    </div>
+  </div>
+{/snippet}
+
+{#snippet pills(m: PillsMech)}
+  <div>
+    {@render mechLabel(m.label)}
+    <div class="flex flex-wrap gap-2 items-center">
+      {#each m.pills as p (p.label)}
+        <span class="py-2 px-4 inline-flex items-center gap-1.5 text-sm text-ink-soft bg-paper border border-paper-edge rounded-full">
+          <span class="kanji text-accent text-base">{p.kanji}</span>{p.label}
+        </span>
+      {/each}
+      <span class="pl-2 inline-flex items-center text-xs text-ink-mute italic">{m.note}</span>
+    </div>
+  </div>
+{/snippet}
+
+{#snippet modes(m: ModesMech)}
+  <div>
+    {@render mechLabel(m.label)}
+    <div class="grid-3 gap-3">
+      {#each m.modes as md (md.title)}
+        <div class="py-6 px-4 bg-paper border border-paper-edge rounded-lg">
+          <div class="kanji text-accent text-2xl mode-kanji">{md.kanji}</div>
+          <div class="display mt-3 font-medium text-ink text-lg mode-title">{md.title}</div>
+          <div class="mt-2 text-sm text-ink-soft mode-desc">{md.desc}</div>
+        </div>
+      {/each}
+    </div>
+  </div>
+{/snippet}
 
 <style>
   /* ── Base ──────────────────────────────────────────── */
@@ -659,7 +875,7 @@
     border-top: var(--hairline);
   }
 
-  /* ── Gallery ───────────────────────────────────────── */
+  /* ── Surfaces (#gallery) ───────────────────────────── */
   .gallery-inner { max-width: 1200px; margin: 0 auto; }
   .gallery-heading {
     font-size: var(--text-4xl);
@@ -670,40 +886,62 @@
   .gallery-sub {
     font-size: var(--text-lg);
     color: var(--sumi-2);
-    max-width: 600px;
+    max-width: 640px;
     line-height: 1.6;
     font-weight: 300;
   }
-  .gallery-list {
-    display: flex;
-    flex-direction: column;
-  }
-  .gallery-item {
-    display: grid;
-    grid-template-columns: 1fr 320px;
-    align-items: center;
-  }
-  .gallery-item.reverse {
-    grid-template-columns: 320px 1fr;
-  }
-  .gallery-item.reverse .gallery-screen { order: 1; }
-  .gallery-item.reverse .gallery-caption { order: 0; }
-  .gallery-screen { overflow-x: auto; }
-  .gallery-num {
-    font-size: var(--text-xs);
-    margin-bottom: 8px;
-  }
-  .gallery-name {
-    font-size: var(--text-2xl);
-    font-weight: 400;
-    margin-bottom: 14px;
-    letter-spacing: -0.015em;
-  }
-  .gallery-desc {
-    font-size: var(--text-sm);
-    color: var(--sumi-2);
-    line-height: 1.65;
-  }
+
+  /* Shared 3-up grid used by lanes / cards / modes / hero secondary. */
+  .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); }
+
+  /* Recurring uppercase tracked label look (roles, mech labels, eyebrows). */
+  .surf-eyebrow { text-transform: uppercase; letter-spacing: 0.16em; }
+
+  /* Block frame: identity column + rationale column. */
+  .surf-grid { display: grid; grid-template-columns: 1fr 1.25fr; }
+  .surf-n { letter-spacing: 0.06em; }
+  .surf-id-kanji { line-height: 1; }
+  .surf-name { letter-spacing: -0.015em; line-height: 1; }
+  .surf-headline { line-height: 1.25; letter-spacing: -0.01em; max-width: 380px; }
+  .surf-lead { line-height: 1.65; }
+  .surf-why { border-left: 2px solid var(--accent-soft); }
+  .surf-why-note { line-height: 1.55; }
+
+  /* Today — priority anatomy rows. */
+  .today-row { display: grid; grid-template-columns: auto 200px 1fr; }
+  .today-row-kanji { width: 22px; }
+  .today-row-desc { line-height: 1.5; }
+
+  /* Sessions — lanes (2px accent top edge, set inline per lane). */
+  .lane { border: 1px solid var(--paper-edge); border-top-width: 2px; }
+  .lane-desc { line-height: 1.55; }
+
+  /* Sessions — how-a-session-is-read chips. */
+  .chip { flex: 1 1 220px; }
+  .chip-kanji { line-height: 1.2; }
+  .chip-desc { line-height: 1.45; }
+
+  /* Insights — flow steps. */
+  .flow-step-title { letter-spacing: -0.01em; }
+  .flow-step-desc { line-height: 1.5; }
+
+  /* Memories — anatomy cards. */
+  .card-title { letter-spacing: -0.005em; }
+  .card-desc { line-height: 1.5; }
+
+  /* Instruments — modes. */
+  .mode-kanji { line-height: 1; }
+  .mode-title { letter-spacing: -0.01em; }
+  .mode-desc { line-height: 1.55; }
+
+  /* Hero brief card. */
+  .hero-card { max-width: 920px; }
+  .hero-focal { display: grid; grid-template-columns: auto 1fr; }
+  .hero-focal-kanji { font-size: 72px; line-height: 0.9; }
+  .hero-headline { line-height: 1.15; }
+  .hero-lead { line-height: 1.6; max-width: 560px; }
+  .hero-dot { width: 5px; height: 5px; }
+  .hero-sec-kanji { line-height: 1.2; }
 
   /* ── Philosophy ────────────────────────────────────── */
   .philosophy {
@@ -932,9 +1170,12 @@
     .steps-grid { grid-template-columns: 1fr; gap: 24px; }
     .gallery { padding: 64px 24px 32px; }
     .gallery-heading { font-size: var(--text-3xl); }
-    .gallery-item, .gallery-item.reverse { grid-template-columns: 1fr; }
-    .gallery-item.reverse .gallery-screen { order: 0; }
-    .gallery-item.reverse .gallery-caption { order: 1; }
+    .surf-grid { grid-template-columns: 1fr; gap: 40px; }
+    .surf-headline { max-width: none; }
+    .today-row { grid-template-columns: 1fr; gap: 8px; }
+    .grid-3 { grid-template-columns: 1fr; }
+    .hero-focal { grid-template-columns: 1fr; gap: 24px; }
+    .hero-focal-kanji { font-size: var(--text-4xl); }
     .philosophy { padding: 96px 24px; }
     .philosophy-kanji { font-size: 280px; }
     .philosophy-heading { font-size: var(--text-2xl); }
