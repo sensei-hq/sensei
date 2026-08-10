@@ -95,10 +95,7 @@ pub(crate) async fn get_project_ftr(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let uuid = crate::api::util::resolve_project_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
-    state.pg.get_project(&uuid).await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::NOT_FOUND)?;
+    let uuid = crate::api::util::resolve_existing_project(&state, &id).await?;
     let data = state.pg.get_project_ftr(&uuid).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(data))
@@ -273,10 +270,7 @@ pub(crate) async fn get_project_repos(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let uuid = crate::api::util::resolve_project_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
-    state.pg.get_project(&uuid).await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::NOT_FOUND)?;
+    let uuid = crate::api::util::resolve_existing_project(&state, &id).await?;
     let repos = state.pg.get_project_repos(&uuid).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(serde_json::json!({ "repos": repos })))
@@ -286,10 +280,7 @@ pub(crate) async fn get_project_drift(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let uuid = crate::api::util::resolve_project_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
-    state.pg.get_project(&uuid).await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::NOT_FOUND)?;
+    let uuid = crate::api::util::resolve_existing_project(&state, &id).await?;
     let data = state.pg.get_project_drift(&uuid).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(data))
@@ -299,10 +290,7 @@ pub(crate) async fn get_project_patterns(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let uuid = crate::api::util::resolve_project_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
-    state.pg.get_project(&uuid).await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::NOT_FOUND)?;
+    let uuid = crate::api::util::resolve_existing_project(&state, &id).await?;
     let data = state.pg.get_project_patterns(&uuid).await
         .map_err(|e| { tracing::error!(error = %e, project = %uuid, "get_project_patterns failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
     Ok(Json(data))
@@ -312,10 +300,7 @@ pub(crate) async fn get_project_libraries(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let uuid = crate::api::util::resolve_project_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
-    state.pg.get_project(&uuid).await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::NOT_FOUND)?;
+    let uuid = crate::api::util::resolve_existing_project(&state, &id).await?;
     let libs = state.pg.get_project_libraries(&uuid).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(serde_json::json!({ "libraries": libs })))
@@ -325,10 +310,7 @@ pub(crate) async fn get_project_instruments(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let uuid = crate::api::util::resolve_project_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
-    state.pg.get_project(&uuid).await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::NOT_FOUND)?;
+    let uuid = crate::api::util::resolve_existing_project(&state, &id).await?;
     let tools = state.pg.get_project_extensions(&uuid, Some(&["skill", "command", "agent"])).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(serde_json::json!({ "tools": tools })))
@@ -342,10 +324,7 @@ pub(crate) async fn get_project_mcp_tool_stats(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let uuid = crate::api::util::resolve_project_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
-    state.pg.get_project(&uuid).await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::NOT_FOUND)?;
+    let uuid = crate::api::util::resolve_existing_project(&state, &id).await?;
 
     let stats = state.pg.get_project_mcp_tool_stats(&uuid).await
         .map_err(|e| {
@@ -388,10 +367,7 @@ pub(crate) async fn get_project_memories(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let uuid = crate::api::util::resolve_project_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
-    state.pg.get_project(&uuid).await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::NOT_FOUND)?;
+    let uuid = crate::api::util::resolve_existing_project(&state, &id).await?;
     let data = state.pg.get_project_memories(&uuid).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(data))
@@ -405,10 +381,7 @@ pub(crate) async fn get_project_recommendations(
     use crate::analysis::insight_copy::{copy_or_warm, CopyLimits};
     use crate::insights;
 
-    let uuid = crate::api::util::resolve_project_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
-    state.pg.get_project(&uuid).await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::NOT_FOUND)?;
+    let uuid = crate::api::util::resolve_existing_project(&state, &id).await?;
     let mut recs = state.pg.get_project_recommendations(&uuid, q.status.as_deref()).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
@@ -452,10 +425,7 @@ pub(crate) async fn get_project_library_version_conflicts(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let uuid = crate::api::util::resolve_project_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
-    state.pg.get_project(&uuid).await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::NOT_FOUND)?;
+    let uuid = crate::api::util::resolve_existing_project(&state, &id).await?;
     let conflicts = state.pg.list_project_library_version_conflicts(&uuid).await
         .map_err(|e| { tracing::error!(error = %e, project = %uuid, "list_project_library_version_conflicts failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
     Ok(Json(serde_json::json!({ "conflicts": conflicts })))
@@ -469,10 +439,7 @@ pub(crate) async fn get_project_project_deps(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let uuid = crate::api::util::resolve_project_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
-    state.pg.get_project(&uuid).await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::NOT_FOUND)?;
+    let uuid = crate::api::util::resolve_existing_project(&state, &id).await?;
     let deps = state.pg.list_project_dependencies(&uuid).await
         .map_err(|e| { tracing::error!(error = %e, project = %uuid, "list_project_dependencies failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
     Ok(Json(serde_json::json!({ "dependencies": deps })))
@@ -483,10 +450,7 @@ pub(crate) async fn get_project_sessions(
     Path(id): Path<String>,
     Query(q): Query<SessionsQuery>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let uuid = crate::api::util::resolve_project_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
-    state.pg.get_project(&uuid).await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::NOT_FOUND)?;
+    let uuid = crate::api::util::resolve_existing_project(&state, &id).await?;
     let limit = q.limit.unwrap_or(50);
     let sessions = state.pg.list_sessions_by_project(&uuid, limit).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -552,10 +516,7 @@ pub(crate) async fn scan_project_doc_drift(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let uuid = crate::api::util::resolve_project_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
-    state.pg.get_project(&uuid).await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::NOT_FOUND)?;
+    let uuid = crate::api::util::resolve_existing_project(&state, &id).await?;
     let summary = state.pg.scan_project_doc_drift(&uuid).await
         .map_err(|e| {
             tracing::error!(error = %e, project = %uuid, "scan_project_doc_drift failed");
@@ -577,10 +538,7 @@ pub(crate) async fn list_project_services(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let uuid = crate::api::util::resolve_project_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
-    state.pg.get_project(&uuid).await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::NOT_FOUND)?;
+    let uuid = crate::api::util::resolve_existing_project(&state, &id).await?;
     let services = state.pg.list_services_with_project_scope(&uuid).await
         .map_err(|e| {
             tracing::error!(error = %e, project = %uuid, "list_services_with_project_scope failed");
@@ -636,10 +594,7 @@ pub(crate) async fn list_memory_share_batches(
     Path(id): Path<String>,
     Query(q): Query<BatchListQuery>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let uuid = crate::api::util::resolve_project_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
-    state.pg.get_project(&uuid).await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::NOT_FOUND)?;
+    let uuid = crate::api::util::resolve_existing_project(&state, &id).await?;
     let batches = state.pg.list_memory_share_batches(&uuid, q.status.as_deref()).await
         .map_err(|e| {
             tracing::error!(error = %e, project = %uuid, "list_memory_share_batches failed");
@@ -654,10 +609,7 @@ pub(crate) async fn create_memory_share_batch(
     Path(id): Path<String>,
     Json(body): Json<BatchCreateBody>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let uuid = crate::api::util::resolve_project_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
-    state.pg.get_project(&uuid).await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::NOT_FOUND)?;
+    let uuid = crate::api::util::resolve_existing_project(&state, &id).await?;
     if body.memory_ids.is_empty() {
         return Err(StatusCode::BAD_REQUEST);
     }
@@ -697,10 +649,7 @@ pub(crate) async fn list_impact_verdicts(
     Path(id): Path<String>,
     Query(q): Query<ImpactListQuery>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let uuid = crate::api::util::resolve_project_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
-    state.pg.get_project(&uuid).await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::NOT_FOUND)?;
+    let uuid = crate::api::util::resolve_existing_project(&state, &id).await?;
     let verdicts = state.pg.list_impact_verdicts(&uuid, q.verdict.as_deref()).await
         .map_err(|e| {
             tracing::error!(error = %e, project = %uuid, "list_impact_verdicts failed");
@@ -715,10 +664,7 @@ pub(crate) async fn create_impact_verdict(
     Path(id): Path<String>,
     Json(body): Json<ImpactCreateBody>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let uuid = crate::api::util::resolve_project_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
-    state.pg.get_project(&uuid).await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::NOT_FOUND)?;
+    let uuid = crate::api::util::resolve_existing_project(&state, &id).await?;
     let verdict_id = state.pg
         .create_impact_verdict(&uuid, &body.title, body.note.as_deref(), body.session_id.as_ref())
         .await

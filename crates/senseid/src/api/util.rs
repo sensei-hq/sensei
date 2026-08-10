@@ -85,6 +85,27 @@ pub(crate) async fn resolve_project_uuid(
     Ok(row.and_then(|r| json_uuid(&r["id"])))
 }
 
+/// Resolve `{id}` to its project uuid AND confirm the project row exists — the
+/// two-step guard the `/api/projects/{id}/…` handlers repeat: [`resolve_project_uuid`]
+/// (404 on an unknown name/uuid) then `get_project` (500 on a DB error, 404 if the
+/// row is gone). Returns the uuid on success. Fail-closed on the DB error — never a
+/// masked 404 (same discipline as [`resolve_project_uuid`]; see the #109 audit).
+pub(crate) async fn resolve_existing_project(
+    state: &crate::api::state::AppState,
+    id: &str,
+) -> Result<uuid::Uuid, axum::http::StatusCode> {
+    let uuid = resolve_project_uuid(state, id)
+        .await?
+        .ok_or(axum::http::StatusCode::NOT_FOUND)?;
+    state
+        .pg
+        .get_project(&uuid)
+        .await
+        .map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(axum::http::StatusCode::NOT_FOUND)?;
+    Ok(uuid)
+}
+
 #[cfg(test)]
 mod tests {
     /// #100 guard: a `{id}` on an `/api/projects/{id}/*` route is name-or-uuid
@@ -124,5 +145,54 @@ mod tests {
              resolve_project_uuid (name-or-uuid), not raw Uuid::parse_str:\n{}",
             offenders.join("\n")
         );
+    }
+
+    /// Build a minimal [`AppState`](crate::api::state::AppState) for the DB-backed
+    /// helper tests; `None` when `sensei_test` is unreachable (test skips).
+    async fn make_state() -> Option<crate::api::state::AppState> {
+        let pg = crate::db::pg_store::PgStore::connect_test().await.ok()?;
+        Some(std::sync::Arc::new(crate::api::state::SharedState {
+            task_queue: std::sync::Arc::new(crate::tasks::queue::TaskQueue::new()),
+            pg,
+            gateway: crate::api::gateway_init::init_gateway_test().await,
+            event_tx: { let (tx, _) = tokio::sync::broadcast::channel(16); tx },
+            breaker: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+            provisioning: None,
+        }))
+    }
+
+    #[tokio::test]
+    async fn resolve_existing_project_unknown_uuid_is_not_found() {
+        let Some(state) = make_state().await else { return };
+        // A well-formed but nonexistent uuid resolves (parses) yet `get_project`
+        // misses → 404. The fail-closed guard, never a masked success.
+        let unknown = uuid::Uuid::new_v4().to_string();
+        let err = super::resolve_existing_project(&state, &unknown).await.unwrap_err();
+        assert_eq!(err, axum::http::StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn resolve_existing_project_resolves_by_uuid_and_name() {
+        let Some(state) = make_state().await else { return };
+        let uniq = uuid::Uuid::new_v4();
+        let name = format!("_test:util:{uniq}");
+        let pid = state.pg.create_project(&name, None, None).await.unwrap();
+
+        // Both the uuid and the project NAME resolve to the same existing id
+        // (the name-or-uuid contract, then the get_project existence check).
+        assert_eq!(
+            super::resolve_existing_project(&state, &pid.to_string()).await.unwrap(),
+            pid,
+        );
+        assert_eq!(
+            super::resolve_existing_project(&state, &name).await.unwrap(),
+            pid,
+        );
+
+        sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
+            .bind(pid)
+            .execute(state.pg.pool())
+            .await
+            .unwrap();
     }
 }
