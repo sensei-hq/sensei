@@ -23,7 +23,9 @@ export default defineConfig({
 			reporter: ['text', 'lcov'],
 			reportsDirectory: './coverage',
 			include: ['src/**'],
-			exclude: ['src/**/*.{test,spec}.*', 'src/**/test-stubs/**']
+			// paraglide/** is gitignored, generated i18n output (paraglide-js compile);
+			// it's on disk at test time but isn't ours to cover.
+			exclude: ['src/**/*.{test,spec}.*', 'src/**/test-stubs/**', 'src/lib/paraglide/**']
 		}
 	},
 	resolve: {
