@@ -121,45 +121,12 @@ pub(super) async fn compute(ctx: &TaskContext, project_raw: &str) -> Result<u32,
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::pg_store::PgStore;
     use crate::tasks::test_support::{
-        cleanup_metrics_fixture, make_ctx, onehot_embedding_sql, seed_metrics_folder,
+        cleanup_metrics_fixture, daily_project_metric_rows as daily_rows, make_ctx,
+        module_metric_rows as module_rows, onehot_embedding_sql, seed_metrics_folder,
         seed_metrics_project_folder, seed_symbol_node, uniform_embedding_sql,
     };
     use sqlx_core::query_as::query_as;
-
-    /// Daily project-scope rows (`folder_id IS NULL`) keyed by metric `key`.
-    async fn daily_rows(pg: &PgStore, pid: &uuid::Uuid) -> Vec<(String, f64, serde_json::Value)> {
-        query_as(
-            "SELECT m.key, pm.value::float8, pm.props \
-               FROM sensei.project_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
-              WHERE pm.project_id = $1 AND pm.grain = 'daily' AND pm.folder_id IS NULL \
-              ORDER BY m.key",
-        )
-        .bind(pid)
-        .fetch_all(pg.pool())
-        .await
-        .unwrap()
-    }
-
-    /// Per-module rows (`folder_id` set) for one metric `key`: `(folder_id, value, props)`.
-    async fn module_rows(
-        pg: &PgStore,
-        pid: &uuid::Uuid,
-        key: &str,
-    ) -> Vec<(uuid::Uuid, f64, serde_json::Value)> {
-        query_as(
-            "SELECT pm.folder_id, pm.value::float8, pm.props \
-               FROM sensei.project_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
-              WHERE pm.project_id = $1 AND pm.grain = 'daily' AND pm.folder_id IS NOT NULL \
-                AND m.key = $2 ORDER BY pm.folder_id",
-        )
-        .bind(pid)
-        .bind(key)
-        .fetch_all(pg.pool())
-        .await
-        .unwrap()
-    }
 
     #[tokio::test]
     async fn duplication_ratio_snapshot_from_clusters() {
