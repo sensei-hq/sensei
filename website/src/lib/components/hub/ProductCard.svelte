@@ -4,8 +4,10 @@
 
   let { p }: { p: Product } = $props();
 
-  const isExternal = $derived(p.id !== 'sensei');
-  const href = $derived(p.id === 'sensei' ? `${base}/sensei` : p.href);
+  // Internal routes are authored as `/sensei`, `/torii-seiki`; everything else
+  // (the library sites) is an absolute https URL opened in a new tab.
+  const isExternal = $derived(p.href.startsWith('http'));
+  const href = $derived(isExternal ? p.href : `${base}${p.href}`);
 
   function statusClass(status: string): string {
     if (status === 'Available') return 'text-accent bg-accent-soft';
@@ -48,7 +50,7 @@
             <span class="mono text-ink-mute border border-paper-edge rounded-sm text-xs" style="padding:4px 8px;white-space:nowrap">{m}</span>
           {/each}
         </div>
-        <span class="text-{p.id} text-sm font-medium">Explore Sensei →</span>
+        <span class="text-{p.id} text-sm font-medium">Explore {p.name} →</span>
       </div>
     </div>
     <!-- Kanji panel -->

@@ -106,31 +106,26 @@ test.describe('Dark mode switching', () => {
     });
     expect(sameElement).toBe(true);
 
-    // Force dark via attribute (bypasses toggle)
-    await page.evaluate(() => { document.body.dataset.mode = 'dark'; });
+    // Force dark via attribute (bypasses the toggle UI). The named tokens flip in
+    // the `[data-mode="dark"]` block on the root element, so set it there; measure
+    // the page surface itself (`body` is `bg-paper`) — the element that carries a
+    // solid, always-present themed background.
+    const setMode = (mode: string) =>
+      page.evaluate((m) => {
+        document.documentElement.dataset.mode = m;
+        document.body.dataset.mode = m;
+      }, mode);
+    const bodyBg = () =>
+      page.evaluate(() => getComputedStyle(document.body).backgroundColor);
 
-    // Check that ANY themed element changes — use a broad check on the page background
-    const darkBg = await page.evaluate(() => {
-      // Check a themed element that's always visible
-      const navBar = document.querySelector('nav');
-      if (!navBar) return 'no-nav';
-      const bg = getComputedStyle(navBar).backgroundColor;
-      return bg;
-    });
+    await setMode('dark');
+    const darkBg = await bodyBg();
 
-    // Switch back to light
-    await page.evaluate(() => { document.body.dataset.mode = 'light'; });
+    await setMode('light');
+    const lightBg = await bodyBg();
 
-    const lightBg = await page.evaluate(() => {
-      const navBar = document.querySelector('nav');
-      if (!navBar) return 'no-nav';
-      return getComputedStyle(navBar).backgroundColor;
-    });
-
-    // Dark and light backgrounds must differ — if they're the same,
-    // the dark mode CSS selectors aren't matching
-    if (darkBg !== 'no-nav') {
-      expect(darkBg).not.toBe(lightBg);
-    }
+    // Dark and light surfaces must differ — if they're the same, the dark-mode
+    // tokens aren't flipping.
+    expect(darkBg).not.toBe(lightBg);
   });
 });
