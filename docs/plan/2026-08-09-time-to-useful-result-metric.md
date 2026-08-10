@@ -1,6 +1,8 @@
 # Plan — `time_to_useful_result` metric
 
-> Status: **ready to implement, pending one design decision** (see §2).
+> Status: **IMPLEMENTED 2026-08-10** with definition (B) (see §2). Registry seed,
+> computer (`session_outcomes`), `duration` roll-up arm, and tests all landed;
+> verified read-only against live data. Deploy note in §6.
 > Created 2026-08-09. Emerged from a metrics discussion (three candidate metrics);
 > two are derivable and dropped, this one is genuinely new. See §5 for the other two.
 
@@ -35,9 +37,11 @@ derivable** from existing metrics but **is computable** from data we already sto
   speed to the first usable output, not total session length. Slightly more SQL;
   needs a per-session "first useful turn" pick.
 
-Recommendation: ship **(A)** first (simple, honest, improvable), and if the idle-time
-caveat bites, add **(B)** as a second metric (`time_to_first_useful`) rather than
-redefining (A). **Decision needed from Jerry before coding.**
+Recommendation was **(A)** first; **Jerry chose (B)** — truer to "useful result". The
+shipped computer implements (B): the inner `JOIN LATERAL ... WHERE is_correction =
+false ORDER BY turn_number LIMIT 1` picks the first usable turn; sessions whose only
+turns are corrections (or that have no turns) produce nothing and are excluded — never
+a fabricated 0.
 
 ## 3. Implementation steps (TDD)
 
@@ -108,3 +112,15 @@ redefining (A). **Decision needed from Jerry before coding.**
   `sessions.corrections` (raw), `rework_ratio`, `rework_density`, and FTR itself
   (= zero-revision rate). A `corrections_per_session` mean would be cosmetic and
   redundant with `rework_ratio`.
+
+## 6. Deploy status (as of 2026-08-10)
+
+Landed in code + tested; `sensei_test` seeded and the 3 roll-up views applied there.
+**Not yet live in the running daemon.** To activate in production:
+1. `dbd import metrics` against the live `sensei` DB (loads the new `metrics.jsonl`
+   row via `import_metrics()` — timestamp-guarded upsert) and apply the 3 updated
+   `project_metric_*` views.
+2. Redeploy the daemon (`make install-service`) so the `session_outcomes` computer
+   ships the new query. The daily metrics scheduler then backfills on its next tick.
+Verified read-only against live data before deploy (kavach ~2367s, sensei ~711s,
+rokkit ~37s median first-useful latency — plausible).

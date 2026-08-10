@@ -11,6 +11,8 @@ select project_id
                 / nullif(sum((props->>'denominator')::numeric), 0)
          when type in ('count', 'currency')
            then sum(value)
+         when type = 'duration'
+           then avg(value)
          else (array_agg(value order by date desc))[1]
        end                            as value
      , direction
@@ -22,6 +24,8 @@ comment on view project_metric_weekly is
 - ratio/pct: re-derive sum(numerator)/nullif(sum(denominator),0) — NEVER the mean
   of daily ratios (3 of 4 across a week reads 0.75, not the average of the dailies)
 - count/currency: sum(value)
+- duration: avg(value) — the mean of the daily medians (a true cross-day median is
+  not recoverable from daily rows, so the mean is the pragmatic latency roll-up)
 - value/score (point-in-time): the period-end value via
   (array_agg(value order by date desc))[1]
 Grouped by project_id, metric, period (week start), type, direction.';
