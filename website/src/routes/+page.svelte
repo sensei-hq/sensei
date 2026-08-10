@@ -37,11 +37,11 @@
         are working on, or follow along as the workshop grows.
       </p>
       <div class="flex items-center justify-center flex-wrap gap-3 mt-6">
-        <Button href="mailto:hi@sensei-hq.com" variant="primary" size="md">
-          <span class="kanji text-base" style="line-height:1">文</span>
+        <Button href="mailto:hi@sensei-hq.com" variant="primary" size="lg">
+          <span class="kanji text-on-primary text-base" style="line-height:1">文</span>
           Leave a note
         </Button>
-        <Button href="mailto:hi@sensei-hq.com" variant="default" size="md" label="Join the newsletter" />
+        <Button href="mailto:hi@sensei-hq.com" style="outline" size="lg" label="Join the newsletter" />
       </div>
       <a href="mailto:hi@sensei-hq.com"
          class="mono text-ink-mute mt-4 no-underline text-xs" style="display:inline-block;letter-spacing:0.02em;white-space:nowrap">

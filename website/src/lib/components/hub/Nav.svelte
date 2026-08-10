@@ -20,7 +20,7 @@
         <a {href} class="text-ink-soft text-sm nav-link no-underline">{label}</a>
       {/each}
       <Button href="https://github.com/sensei-hq" target="_blank" rel="noopener"
-              variant="default" size="sm" label="GitHub" class="ml-1" />
+              style="outline" size="sm" label="GitHub" class="ml-1" />
     </div>
   </nav>
 </div>
