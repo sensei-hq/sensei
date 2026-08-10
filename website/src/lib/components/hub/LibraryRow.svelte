@@ -27,7 +27,7 @@
     <span class="text-ink block text-sm">{p.tagline}</span>
     <span class="text-ink-mute text-xs">{p.category}</span>
   </span>
-  <span class="mono rounded-sm px-2 py-0 {statusClass(p.status)} text-xs" style="white-space:nowrap">{p.status}</span>
+  <span class="mono rounded-sm px-2 py-0.5 {statusClass(p.status)} text-xs" style="white-space:nowrap">{p.status}</span>
   <span class="text-{p.id} text-sm">{isExternal ? '↗' : '→'}</span>
 </a>
 
