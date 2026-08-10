@@ -1,6 +1,7 @@
 pub mod server;
 pub mod routes;
 pub mod state;
+pub(crate) mod resilience;
 pub mod events;
 pub(crate) mod handlers;
 pub(crate) mod util;

@@ -31,6 +31,7 @@ fn mock_payload(status: HealthStatus, with_remedy: bool) -> HealthPayload {
         remedy: if with_remedy {
             Some(Remedy { message: "msg".into(), script: "cmd".into(), url: None })
         } else { None },
+        daemon_db_mode: None,
     }
 }
 

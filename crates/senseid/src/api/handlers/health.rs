@@ -24,6 +24,11 @@ pub(crate) async fn health() -> Json<HealthPayload> {
         bootstrap::check(env!("CARGO_PKG_VERSION"))
     }).await.expect("health check task panicked");
     payload.uptime_seconds = uptime_seconds();
+    // Report the daemon's own DB-connection mode. The component probe above only
+    // says whether Postgres is reachable; this says whether *this* daemon has a
+    // working pool — the two diverge when the daemon lost the cold-boot race and
+    // is degraded while Postgres is up (until the background self-heal reconnects).
+    payload.daemon_db_mode = Some(crate::api::resilience::db_mode());
     Json(payload)
 }
 
