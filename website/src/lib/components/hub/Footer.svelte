@@ -6,6 +6,14 @@
       title: 'Products',
       items: [
         { label: 'Sensei', href: `${base}/sensei`, external: false },
+        { label: 'Torii', href: `${base}/torii-seiki`, external: false },
+        { label: 'Seiki', href: `${base}/torii-seiki#seiki`, external: false },
+      ],
+    },
+    {
+      title: 'Libraries',
+      items: [
+        { label: 'Gateway', href: 'https://gateway.sensei-hq.com', external: true },
         { label: 'DBD', href: 'https://dbd.sensei-hq.com', external: true },
         { label: 'Rokkit', href: 'https://rokkit.sensei-hq.com', external: true },
         { label: 'Kavach', href: 'https://kavach.sensei-hq.com', external: true },
@@ -77,7 +85,7 @@
   }
   .footer-grid {
     display: grid;
-    grid-template-columns: 1.4fr 1fr 1fr 1fr;
+    grid-template-columns: 1.4fr 1fr 1fr 1fr 1fr;
     align-items: start;
   }
   .footer-link {
