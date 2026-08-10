@@ -1,6 +1,6 @@
 @import '@unocss/reset/tailwind.css';
 @import '@rokkit/themes/base.css';
-@import '@rokkit/themes/rokkit.css';
+@import '@rokkit/themes/zen-sumi.css';
 @import '$lib/tokens.css';
 
 html, body {
