@@ -4,9 +4,9 @@
 
 <PageShell title="Docs">
   <!-- Philosophy -->
-  <section class="doc-section">
-    <div class="section-tag">Philosophy</div>
-    <h1 class="display page-title">
+  <section class="doc-section mb-25">
+    <div class="section-tag mb-4">Philosophy</div>
+    <h1 class="display page-title mb-8">
       The master observes before teaching.
     </h1>
     <div class="prose">
@@ -32,9 +32,9 @@
   </section>
 
   <!-- Objective -->
-  <section class="doc-section">
-    <div class="section-tag">Objective</div>
-    <h2 class="display section-title">
+  <section class="doc-section mb-25">
+    <div class="section-tag mb-4">Objective</div>
+    <h2 class="display section-title mb-7">
       Make AI-assisted development measurably better.
     </h2>
     <div class="prose">
@@ -53,43 +53,43 @@
   </section>
 
   <!-- What you get -->
-  <section class="doc-section">
-    <div class="section-tag">What you get</div>
-    <h2 class="display section-title">
+  <section class="doc-section mb-25">
+    <div class="section-tag mb-4">What you get</div>
+    <h2 class="display section-title mb-7">
       The full toolkit.
     </h2>
 
-    <div class="toolkit-grid">
-      <div class="toolkit-card">
-        <div class="kanji toolkit-kanji">令</div>
-        <h3 class="display toolkit-title">20 Commands</h3>
+    <div class="toolkit-grid gap-6 mt-2">
+      <div class="toolkit-card p-6">
+        <div class="kanji toolkit-kanji mb-3.5">令</div>
+        <h3 class="display toolkit-title mb-3">20 Commands</h3>
         <p class="toolkit-desc">
           Phased development workflow from <code>/idea</code> through <code>/validate</code>.
           Cross-cutting commands for brainstorming, review, and session management.
           Utility commands for checkpoints, commits, mockups, and library docs.
         </p>
       </div>
-      <div class="toolkit-card">
-        <div class="kanji toolkit-kanji">士</div>
-        <h3 class="display toolkit-title">8 Agents</h3>
+      <div class="toolkit-card p-6">
+        <div class="kanji toolkit-kanji mb-3.5">士</div>
+        <h3 class="display toolkit-title mb-3">8 Agents</h3>
         <p class="toolkit-desc">
           Specialist perspectives that run autonomously: analyst, developer, acceptance tester,
           security reviewer, performance engineer, DevOps/SRE, UX designer, and
           a generic persona reviewer for project-specific roles.
         </p>
       </div>
-      <div class="toolkit-card">
-        <div class="kanji toolkit-kanji">具</div>
-        <h3 class="display toolkit-title">MCP Tools</h3>
+      <div class="toolkit-card p-6">
+        <div class="kanji toolkit-kanji mb-3.5">具</div>
+        <h3 class="display toolkit-title mb-3">MCP Tools</h3>
         <p class="toolkit-desc">
           Hybrid code search (full-text + semantic + structural), call graph analysis,
           pattern detection and matching, duplicate detection, library doc fetching,
           and session management with token-budgeted context packing.
         </p>
       </div>
-      <div class="toolkit-card">
-        <div class="kanji toolkit-kanji">技</div>
-        <h3 class="display toolkit-title">Skills & Hooks</h3>
+      <div class="toolkit-card p-6">
+        <div class="kanji toolkit-kanji mb-3.5">技</div>
+        <h3 class="display toolkit-title mb-3">Skills & Hooks</h3>
         <p class="toolkit-desc">
           Pattern-based development, unknown library detection, doc drift detection,
           TDD enforcement, code review automation, and session hooks for quality gates
@@ -100,9 +100,9 @@
   </section>
 
   <!-- Architecture -->
-  <section class="doc-section">
-    <div class="section-tag">Architecture</div>
-    <h2 class="display section-title">
+  <section class="doc-section mb-25">
+    <div class="section-tag mb-4">Architecture</div>
+    <h2 class="display section-title mb-7">
       How it's built.
     </h2>
     <div class="prose">
@@ -127,9 +127,9 @@
   </section>
 
   <!-- Local inference -->
-  <section class="doc-section">
-    <div class="section-tag">Local inference</div>
-    <h2 class="display section-title">
+  <section class="doc-section mb-25">
+    <div class="section-tag mb-4">Local inference</div>
+    <h2 class="display section-title mb-7">
       On-device intelligence.
     </h2>
     <div class="prose">
@@ -142,24 +142,24 @@
         Hardware-aware model selection recommends the right models for your machine:
       </p>
     </div>
-    <div class="hw-grid">
-      <div class="hw-card">
-        <div class="mono hw-spec">8 GB</div>
+    <div class="hw-grid gap-5 mt-5">
+      <div class="hw-card p-4">
+        <div class="mono hw-spec mb-1.5">8 GB</div>
         <div class="hw-model">Gemma3:12b</div>
-        <div class="hw-note">Minimum viable</div>
+        <div class="hw-note mt-1">Minimum viable</div>
       </div>
-      <div class="hw-card">
-        <div class="mono hw-spec">16 GB</div>
+      <div class="hw-card p-4">
+        <div class="mono hw-spec mb-1.5">16 GB</div>
         <div class="hw-model">Gemma3:27b</div>
-        <div class="hw-note">Recommended</div>
+        <div class="hw-note mt-1">Recommended</div>
       </div>
-      <div class="hw-card">
-        <div class="mono hw-spec">16 GB + GPU</div>
+      <div class="hw-card p-4">
+        <div class="mono hw-spec mb-1.5">16 GB + GPU</div>
         <div class="hw-model">MOE panel</div>
-        <div class="hw-note">Multi-model consensus</div>
+        <div class="hw-note mt-1">Multi-model consensus</div>
       </div>
     </div>
-    <div class="prose" style="margin-top: 32px;">
+    <div class="prose mt-8">
       <p>
         When multiple models are available, sensei runs a consensus panel — models debate insights
         for root cause analysis and impact prediction. The reasoning is transparent and visible
@@ -175,24 +175,18 @@
     letter-spacing: 0.22em;
     color: var(--sumi-3);
     text-transform: uppercase;
-    margin-bottom: 16px;
   }
   .page-title {
     font-size: var(--text-3xl);
     font-weight: 300;
-    margin: 0 0 32px;
     letter-spacing: -0.025em;
     line-height: 1.15;
   }
   .section-title {
     font-size: var(--text-3xl);
     font-weight: 300;
-    margin: 0 0 28px;
     letter-spacing: -0.02em;
     line-height: 1.15;
-  }
-  .doc-section {
-    margin-bottom: 100px;
   }
   .prose {
     font-size: var(--text-base);
@@ -211,11 +205,8 @@
   .toolkit-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 24px;
-    margin-top: 8px;
   }
   .toolkit-card {
-    padding: 24px;
     border: var(--hairline);
     border-radius: 12px;
     background: var(--paper-2);
@@ -223,12 +214,10 @@
   .toolkit-kanji {
     font-size: var(--text-2xl);
     color: var(--shu);
-    margin-bottom: 14px;
   }
   .toolkit-title {
     font-size: var(--text-xl);
     font-weight: 400;
-    margin: 0 0 12px;
     letter-spacing: -0.01em;
   }
   .toolkit-desc {
@@ -247,18 +236,15 @@
   .hw-grid {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
-    gap: 20px;
-    margin-top: 20px;
   }
   .hw-card {
-    padding: 16px;
     border: var(--hairline);
     border-radius: 10px;
     text-align: center;
   }
-  .hw-spec { font-size: var(--text-sm); color: var(--sumi-3); margin-bottom: 6px; }
+  .hw-spec { font-size: var(--text-sm); color: var(--sumi-3); }
   .hw-model { font-size: var(--text-base); font-weight: 500; color: var(--sumi); }
-  .hw-note { font-size: var(--text-xs); color: var(--sumi-3); margin-top: 4px; }
+  .hw-note { font-size: var(--text-xs); color: var(--sumi-3); }
   @media (max-width: 900px) {
     .page-title { font-size: var(--text-2xl); }
     .section-title { font-size: var(--text-2xl); }
