@@ -257,7 +257,7 @@ pub(crate) async fn update_session_handler(
 pub(crate) async fn ingest_hook_event(
     State(state): State<AppState>,
     Json(mut payload): Json<serde_json::Value>,
-) -> StatusCode {
+) -> (StatusCode, Json<serde_json::Value>) {
     // Strip NULs Postgres jsonb can't store, so a stray NUL byte in captured
     // output doesn't make the insert fail and silently lose the event (the same
     // hazard the drain quarantines). Do this before mapping so the fields agree.
@@ -308,7 +308,12 @@ pub(crate) async fn ingest_hook_event(
             }
         }
 
-    StatusCode::OK
+    // Return a small JSON body (not a bare 200). The MCP proxy that routes
+    // `log_event` here decodes every 2xx as JSON; an empty body surfaces as
+    // "unreadable success response" and drops the capture event. Claude Code's
+    // hook script ignores the body (it checks only curl's exit), so this ack is
+    // backward-compatible.
+    (StatusCode::OK, Json(serde_json::json!({ "ok": true })))
 }
 
 // ── Hook gate (relay-engine feature B) ───────────────────────────────────────
