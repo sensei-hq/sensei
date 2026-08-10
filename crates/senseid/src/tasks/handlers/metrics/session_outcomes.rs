@@ -303,24 +303,10 @@ pub(super) async fn compute(ctx: &TaskContext, project_raw: &str) -> Result<u32,
 mod tests {
     use super::*;
     use crate::tasks::test_support::{
-        cleanup_metrics_fixture, make_ctx, seed_metrics_project_folder, seed_metrics_session,
-        seed_metrics_turn, seed_metrics_turn_ex,
+        cleanup_metrics_fixture, daily_project_metric_rows as daily_rows, make_ctx,
+        seed_metrics_project_folder, seed_metrics_session, seed_metrics_turn, seed_metrics_turn_ex,
     };
     use sqlx_core::query_as::query_as;
-
-    /// The daily project-scope rows keyed by metric `(key → (value, props))`.
-    async fn daily_rows(pg: &PgStore, pid: &uuid::Uuid) -> Vec<(String, f64, serde_json::Value)> {
-        query_as(
-            "SELECT m.key, pm.value::float8, pm.props \
-               FROM sensei.project_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
-              WHERE pm.project_id = $1 AND pm.grain = 'daily' AND pm.folder_id IS NULL \
-              ORDER BY m.key",
-        )
-        .bind(pid)
-        .fetch_all(pg.pool())
-        .await
-        .unwrap()
-    }
 
     #[tokio::test]
     async fn session_outcomes_writes_ftr_rework_throughput() {
