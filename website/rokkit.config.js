@@ -46,11 +46,12 @@ export default {
     //    the lighter .400 shades. The `-soft` fills are translucent tints
     //    (color-mix) so they composite over the surface and flip per mode instead
     //    of the default solid pale shade that fails contrast in dark mode. ──
-    // Primary = the vermillion CTA button fill. Darkened to L0.485 so white
-    // (on-primary) button text clears WCAG AA (the skin default shu.500 gave
-    // only 4.41:1); kept mode-invariant since the button doesn't flip.
-    primary:        { light: 'oklch(0.485 0.150 35)',  dark: 'oklch(0.485 0.150 35)' },
-    'on-primary':   { light: 'oklch(0.985 0.005 85)',  dark: 'oklch(0.985 0.005 85)' },
+    // Primary = the ink-on-paper CTA button (design system: --primary = ink):
+    // a near-black fill in light mode, near-white in dark, with paper-coloured
+    // text. Vermillion is the rationed ACCENT (kanji, marks, highlights), never
+    // the primary button.
+    primary:        { light: 'kami.900', dark: 'sumi.900' },
+    'on-primary':   { light: 'kami.100', dark: 'sumi.50' },
     accent:         { light: 'oklch(0.485 0.150 35)',  dark: 'shu.400' },
     success:        { light: 'oklch(0.475 0.080 160)', dark: 'hisui.400' },
     warning:        { light: 'oklch(0.480 0.102 75)',  dark: 'kohaku.400' },

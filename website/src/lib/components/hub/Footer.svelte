@@ -45,7 +45,7 @@
       <div>
         <div class="flex items-center gap-3 mb-3">
           <!-- Sensei HQ brushed-ensō mark (i-brand:sensei-hq), tinted to the brand vermillion -->
-          <span class="i-brand:sensei-hq text-primary block flex-shrink-0" style="width:26px;height:26px" aria-hidden="true"></span>
+          <span class="i-brand:sensei-hq text-accent block flex-shrink-0" style="width:26px;height:26px" aria-hidden="true"></span>
           <span class="flex items-baseline gap-2">
             <span class="display text-ink text-base">Sensei</span>
             <span class="mono text-ink-mute text-xs" style="letter-spacing:0.08em">HQ</span>

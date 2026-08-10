@@ -7,7 +7,7 @@
   <div class="opensource-grid gap-8">
     <div>
       <div class="flex items-baseline gap-3 mb-4">
-        <span class="kanji text-primary text-3xl" style="line-height:1">公</span>
+        <span class="kanji text-accent text-3xl" style="line-height:1">公</span>
         <span class="mono text-ink-mute text-xs" style="letter-spacing:0.12em;text-transform:uppercase">Kō · in the open</span>
       </div>
       <h2 class="display text-ink m-0 text-2xl" style="font-weight:400;letter-spacing:-0.015em;line-height:1.3">

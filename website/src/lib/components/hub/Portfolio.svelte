@@ -38,7 +38,7 @@
       <div class="flex items-end justify-between flex-wrap gap-4 mb-8">
         <div>
           <div class="flex items-baseline gap-3 mb-3">
-            <span class="kanji text-primary text-2xl" style="line-height:1">礎</span>
+            <span class="kanji text-accent text-2xl" style="line-height:1">礎</span>
             <span class="mono text-ink-mute text-xs" style="letter-spacing:0.12em;text-transform:uppercase">Soseki · the foundation stones</span>
           </div>
           <h2 class="display text-ink m-0 text-2xl" style="font-weight:300;letter-spacing:-0.02em">

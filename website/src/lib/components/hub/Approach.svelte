@@ -21,7 +21,7 @@
         {#each PRINCIPLES as pr, i (pr.title)}
           <div class="principle-row gap-5 py-5" class:border-t={i > 0} class:border-paper-edge={i > 0}>
             <div style="width:56px">
-              <span class="kanji text-primary text-3xl" style="line-height:1">{pr.kanji}</span>
+              <span class="kanji text-accent text-3xl" style="line-height:1">{pr.kanji}</span>
             </div>
             <div>
               <div class="flex items-baseline gap-3 mb-1">

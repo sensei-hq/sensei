@@ -6,7 +6,7 @@
   <div class="flex items-end justify-between flex-wrap gap-4 mb-7">
     <div>
       <div class="flex items-baseline gap-3 mb-3">
-        <span class="kanji text-primary text-3xl" style="line-height:1">育</span>
+        <span class="kanji text-accent text-3xl" style="line-height:1">育</span>
         <span class="mono text-ink-mute text-xs" style="letter-spacing:0.12em;text-transform:uppercase">Iku · to nurture — in incubation</span>
       </div>
       <h2 class="display text-ink m-0 text-3xl" style="font-weight:300;letter-spacing:-0.02em">
