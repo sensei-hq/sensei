@@ -426,6 +426,31 @@ mod tests {
         (status, json)
     }
 
+    /// `/hook/event` must answer with a decodable JSON body. The MCP proxy
+    /// (`crates/mcp` `daemon_result`) decodes every 2xx as JSON, so a bare
+    /// `StatusCode::OK` (empty body) makes `log_event` report "unreadable
+    /// success response" and silently drop the capture event.
+    #[tokio::test]
+    async fn hook_event_returns_decodable_json_ack() {
+        let (app, _state) = test_app().await;
+        let (status, body) = req(
+            app,
+            "POST",
+            "/hook/event",
+            Some(serde_json::json!({
+                "hook_event_name": "PostToolUse",
+                "session_id": "t-hook-ack",
+                "tool_name": "Bash",
+            })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            body["ok"], true,
+            "empty 2xx body breaks the MCP JSON decoder that log_event relies on",
+        );
+    }
+
     /// Seed an ACTIVE `sensei.metrics` registry row for a metrics-endpoint test and
     /// return its id. `type`/`direction` are the enum text values; the facets are
     /// fixed known strings so assertions have a stable target. `effective_from`
