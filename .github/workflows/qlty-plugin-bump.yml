@@ -1,0 +1,58 @@
+name: qlty plugin bump
+
+# Keeps the pinned qlty plugin versions in marketplace/.qlty/qlty.toml current.
+#
+# Lives in the monorepo (not the marketplace subtree) on purpose: `make
+# marketplace-push` rsync --deletes the standalone sensei-hq/marketplace repo
+# from marketplace/, so a bump workflow that opened PRs downstream would be
+# overwritten on the next sync. The pinned config's source of truth is here.
+# After a bump PR merges, `make marketplace-push` propagates the new pin.
+
+on:
+  schedule:
+    - cron: "0 9 * * 1" # Mondays 09:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  bump-zizmor:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Bump pinned zizmor to latest
+        id: bump
+        env:
+          CONFIG: marketplace/.qlty/qlty.toml
+        run: |
+          latest="$(python3 -c 'import json,urllib.request; print(json.load(urllib.request.urlopen("https://pypi.org/pypi/zizmor/json"))["info"]["version"])')"
+          current="$(python3 -c 'import re,sys; t=open(sys.argv[1]).read(); m=re.search(r"name = \"zizmor\".*?version = \"([^\"]+)\"", t, re.S); print(m.group(1) if m else "")' "$CONFIG")"
+          echo "current=$current latest=$latest"
+          if [ -n "$latest" ] && [ "$latest" != "$current" ]; then
+            python3 -c 'import sys; p,c,n=sys.argv[1:4]; t=open(p).read(); open(p,"w").write(t.replace("version = \""+c+"\"","version = \""+n+"\"",1))' "$CONFIG" "$current" "$latest"
+            { echo "changed=true"; echo "latest=$latest"; } >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Open bump PR
+        if: steps.bump.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        with:
+          branch: chore/qlty-zizmor-bump
+          title: "chore(qlty): bump pinned zizmor to ${{ steps.bump.outputs.latest }}"
+          commit-message: "chore(qlty): bump pinned zizmor to ${{ steps.bump.outputs.latest }}"
+          body: |
+            Automated bump of the pinned zizmor version in
+            `marketplace/.qlty/qlty.toml`.
+
+            Before merging, review the qlty analysis on this PR for any **new**
+            findings the newer zizmor introduces (newer versions add audits — a
+            bump is exactly when a fresh finding surfaces). After merge, run
+            `make marketplace-push` to propagate the pin to sensei-hq/marketplace.
