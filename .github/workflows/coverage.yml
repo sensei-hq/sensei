@@ -32,8 +32,9 @@ jobs:
       - uses: taiki-e/install-action@c44f6b046f1c29ae5918b1e0bfdbb2f1813836fd # v2
         with:
           tool: cargo-llvm-cov
-      # Covers every crate that tests with NO external infra. senseid is excluded:
-      # it needs an external sensei_test with the full schema (test-infra work).
+      # Covers every crate that tests with NO external infra. senseid's DB-coupled
+      # suite is excluded here (needs an external sensei_test); its PURE, DB-free
+      # modules are measured separately by the `senseid` job below.
       # llvm-cov emits absolute paths, so strip the workspace prefix to repo-root.
       - name: Rust coverage (no-DB crates)
         run: cargo llvm-cov -p sensei-bootstrap -p sensei-cli -p sensei-mcp -p sensei-config -p sensei-logger -p dojo-protocol --lcov --output-path target/lcov.info
@@ -44,6 +45,38 @@ jobs:
         with:
           token: ${{ secrets.QLTY_COVERAGE_TOKEN }}
           files: target/lcov.info
+
+  # senseid's pure (DB-free) modules — language parsers, config adapters, assistant
+  # transcript parsing, ranking/classifiers/plan-graph/etc. Their tests run with NO
+  # Postgres, so we measure them here and fold the coverage into the qlty aggregate
+  # (the DB-coupled remainder still needs test-infra work — see the `rust` job note).
+  senseid:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+        with:
+          toolchain: stable
+          components: llvm-tools-preview
+      - uses: taiki-e/install-action@c44f6b046f1c29ae5918b1e0bfdbb2f1813836fd # v2
+        with:
+          tool: cargo-llvm-cov
+      # Selects the pure modules' tests explicitly (green run, no DB test invoked)
+      # and keeps only their source files in the lcov. The 15-min cap turns a stray
+      # DB test (were one ever pulled in by a name collision) into a visible failure
+      # rather than a silent stall. See scripts/senseid-pure-coverage.sh.
+      - name: senseid pure-module coverage (no DB)
+        timeout-minutes: 15
+        run: scripts/senseid-pure-coverage.sh target/senseid-pure.lcov
+      - name: Normalize paths to repo root
+        run: sed -i "s|^SF:${GITHUB_WORKSPACE}/|SF:|" target/senseid-pure.lcov
+      - name: Upload senseid pure coverage
+        uses: qltysh/qlty-action/coverage@08a0a862c159eae9b9003081da6663d96efef637 # v2
+        with:
+          token: ${{ secrets.QLTY_COVERAGE_TOKEN }}
+          files: target/senseid-pure.lcov
 
   app:
     runs-on: ubuntu-latest
