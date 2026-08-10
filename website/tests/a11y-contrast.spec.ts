@@ -10,12 +10,17 @@ const MODES = ['light', 'dark'] as const;
 for (const path of PAGES) {
   for (const mode of MODES) {
     test(`no WCAG AA colour-contrast violations on ${path} (${mode})`, async ({ page }) => {
+      // Set the mode the way a real visitor does — a persisted theme applied at
+      // load — so the theme CSS is fully resolved before axe measures. (Toggling
+      // data-mode via runtime JS leaves component-layer colours on stale values.)
+      await page.addInitScript((m) => {
+        localStorage.setItem(
+          'sensei-site-theme',
+          JSON.stringify({ mode: m, style: 'zen-sumi', density: 'comfortable', skin: 'default', direction: 'ltr' })
+        );
+      }, mode);
       await page.goto(path);
       await page.waitForLoadState('networkidle');
-      await page.evaluate((m) => {
-        document.documentElement.dataset.mode = m;
-        document.body.dataset.mode = m;
-      }, mode);
 
       const results = await new AxeBuilder({ page }).withRules(['color-contrast']).analyze();
 

@@ -18,7 +18,7 @@
     <!-- Statement -->
     <div>
       <div class="flex items-baseline gap-3 mb-5">
-        <span class="kanji text-primary text-3xl" style="line-height:1">道</span>
+        <span class="kanji text-accent text-3xl" style="line-height:1">道</span>
         <span class="mono text-ink-mute text-xs" style="letter-spacing:0.12em;text-transform:uppercase">Dō · the way — an independent studio</span>
       </div>
       <h1 class="display text-ink m-0 hero-h1">
