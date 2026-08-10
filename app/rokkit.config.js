@@ -1,11 +1,11 @@
-import { sumiPalette } from "./sumi-palette.js";
+import { sumiPalette } from "../packages/sumi-palette/index.js";
 
 export default {
   /**
    * Zen/Sumi palettes — OKLCH bare-component format.
    * colorSpace: 'oklch' is required so Rokkit stores CSS vars as
    * bare L C H triplets, consumed via oklch(var(--color-*) / alpha).
-   * See sumi-palette.js for full scale definitions.
+   * See packages/sumi-palette for full scale definitions.
    */
   palettes: sumiPalette,
   colorSpace: "oklch",
