@@ -120,6 +120,35 @@ pub(crate) async fn seed_metrics_turn(
     .unwrap();
 }
 
+/// Attach one turn with EXPLICIT timing + correction flag — for latency metrics
+/// (`time_to_useful_result`), where `ended_at`, `turn_number`, and `is_correction`
+/// all matter. The plain [`seed_metrics_turn`] fixes `ended_at = started_at`,
+/// `turn_number = 1`, and `is_correction = false`, so it can't exercise them.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn seed_metrics_turn_ex(
+    pg: &PgStore,
+    sid: &uuid::Uuid,
+    turn_number: i32,
+    started_at: chrono::DateTime<chrono::Utc>,
+    ended_at: chrono::DateTime<chrono::Utc>,
+    is_correction: bool,
+    tool_calls: i32,
+) {
+    sqlx_core::query::query(
+        "INSERT INTO activity.turns (session_id, turn_number, started_at, ended_at, is_correction, tool_calls) \
+         VALUES ($1, $2, $3, $4, $5, $6)",
+    )
+    .bind(sid)
+    .bind(turn_number)
+    .bind(started_at)
+    .bind(ended_at)
+    .bind(is_correction)
+    .bind(tool_calls)
+    .execute(pg.pool())
+    .await
+    .unwrap();
+}
+
 /// Insert one `activity.task_executions` row — the churn source (Phase 5.2). Churn
 /// counts `status = 'completed'` `process_file` executions, so `task_kind` is
 /// usually `"process_file"` and `status` usually `"completed"` (pass `"failed"` to
