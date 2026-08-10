@@ -53,6 +53,21 @@ pub enum PackageManagerId {
     Winget,
 }
 
+/// The daemon's own database-connection mode, as reported by the daemon that
+/// served this payload. Distinct from the Postgres *component* status: the
+/// component probe answers "is Postgres reachable / is the schema deployed",
+/// while this answers "does the running daemon currently have a working pool".
+/// A daemon that lost the cold-boot race can have `Postgres: ready` yet be
+/// `Degraded` here until its background self-heal reconnects. `None` on a
+/// payload produced outside a daemon (e.g. the app's bootstrap sidecar check),
+/// where the notion doesn't apply.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DaemonDbMode {
+    Full,
+    Degraded,
+}
+
 // Component & Remedy
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -95,6 +110,10 @@ pub struct HealthPayload {
     pub components: Vec<Component>,
     pub status: HealthStatus,
     pub remedy: Option<Remedy>,
+    /// The daemon's DB-connection mode. Set by the daemon's `/health` handler;
+    /// `None` (omitted from the wire) when the payload isn't daemon-produced.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub daemon_db_mode: Option<DaemonDbMode>,
 }
 
 impl HealthPayload {
@@ -337,6 +356,7 @@ mod tests {
             ],
             status: HealthStatus::Ok,
             remedy: None,
+            daemon_db_mode: None,
         }
     }
 
@@ -351,6 +371,21 @@ mod tests {
             json.get("uptime_seconds").is_none(),
             "snake_case must NOT appear"
         );
+    }
+
+    #[test]
+    fn daemon_db_mode_omitted_when_none_and_camel_case_when_set() {
+        let mut p = mock_ok_payload();
+        // None → field absent from the wire (skip_serializing_if).
+        let json: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&p).unwrap()).unwrap();
+        assert!(json.get("daemonDbMode").is_none(), "None must be omitted");
+
+        // Some(Degraded) → camelCase key, lowercase variant.
+        p.daemon_db_mode = Some(DaemonDbMode::Degraded);
+        let json: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&p).unwrap()).unwrap();
+        assert_eq!(json["daemonDbMode"], "degraded");
     }
 
     // ── validate() invariants ──
