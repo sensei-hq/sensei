@@ -56,11 +56,26 @@ impl UpgradeEvent {
 /// one step does not skip subsequent steps — the schema may still need to
 /// land even if brew couldn't update the bottle.
 pub fn run<F: Fn(UpgradeEvent)>(emit: F) -> bool {
+    run_with(emit, brew_upgrade_sensei, || {
+        database::deploy(&SenseiConfig::from_env().db_name, APP_VERSION)
+    })
+}
+
+/// Orchestration core: emit the canonical event stream around two injected
+/// steps — prereqs, then db_deploy. Split out from [`run`] so the event
+/// ordering is unit-testable without spawning `brew` (network) or opening a
+/// Postgres connection: those real calls used to hang the pre-commit hook.
+fn run_with<F, P, D>(emit: F, prereqs: P, db_deploy: D) -> bool
+where
+    F: Fn(UpgradeEvent),
+    P: FnOnce() -> Result<(), String>,
+    D: FnOnce() -> Result<(), String>,
+{
     let mut any_failed = false;
 
     // ── Step 1: brew upgrade sensei ───────────────────────────────────────
     emit(UpgradeEvent::running("prereqs"));
-    match brew_upgrade_sensei() {
+    match prereqs() {
         Ok(()) => emit(UpgradeEvent::done("prereqs")),
         Err(e) => {
             any_failed = true;
@@ -70,8 +85,7 @@ pub fn run<F: Fn(UpgradeEvent)>(emit: F) -> bool {
 
     // ── Step 2: dbd deploy ────────────────────────────────────────────────
     emit(UpgradeEvent::running("db_deploy"));
-    let cfg = SenseiConfig::from_env();
-    match database::deploy(&cfg.db_name, APP_VERSION) {
+    match db_deploy() {
         Ok(()) => emit(UpgradeEvent::done("db_deploy")),
         Err(e) => {
             any_failed = true;
@@ -85,9 +99,9 @@ pub fn run<F: Fn(UpgradeEvent)>(emit: F) -> bool {
 
 fn brew_upgrade_sensei() -> Result<(), String> {
     let formula = SenseiConfig::from_env().sensei_tap_formula();
-    // Silence the network-hitting "brew update" auto-refresh so the pre-commit
-    // hook (which drives `test-fast` → this test) can't hang for minutes on a
-    // slow homebrew CDN. The command's actual upgrade path still runs.
+    // Silence the network-hitting "brew update" auto-refresh so a real upgrade
+    // can't hang for minutes on a slow homebrew CDN. The command's actual
+    // upgrade path still runs.
     let output = Command::new("brew")
         .args(["upgrade", formula])
         .env("HOMEBREW_NO_AUTO_UPDATE", "1")
@@ -118,6 +132,19 @@ mod tests {
     use super::*;
     use std::sync::Mutex;
 
+    /// Collect the event stream from a `run_with` invocation with injected
+    /// step outcomes — no `brew`, no Postgres, so it can never hang.
+    fn steps_for(prereqs: Result<(), String>, db: Result<(), String>) -> (bool, Vec<&'static str>) {
+        let events: Mutex<Vec<UpgradeEvent>> = Mutex::new(Vec::new());
+        let ok = run_with(
+            |e| events.lock().unwrap().push(e),
+            move || prereqs,
+            move || db,
+        );
+        let steps = events.into_inner().unwrap().iter().map(|e| e.step).collect();
+        (ok, steps)
+    }
+
     #[test]
     fn upgrade_event_helpers_set_expected_fields() {
         let r = UpgradeEvent::running("prereqs");
@@ -141,50 +168,38 @@ mod tests {
 
     #[test]
     fn run_emits_in_canonical_order() {
-        // We run against a system that almost certainly fails both steps
-        // (CI without brew formula + without postgres), so the assertion
-        // focuses on the *shape* of the event stream, not the outcomes.
-        //
-        // The pre-commit hook drives this test; if `brew upgrade` can hit a
-        // slow homebrew CDN or the network is flaky, the whole hook stalls
-        // for minutes. Route the actual network-hitting `brew`/`dbd` calls
-        // through the test-only PATH override so they resolve to `true` (a
-        // no-op that exits 0) and the event stream comes back instantly.
-        let dir = tempfile::tempdir().unwrap();
-        for name in ["brew", "dbd", "createdb", "psql"] {
-            let bin = dir.path().join(name);
-            std::os::unix::fs::symlink("/usr/bin/true", &bin).unwrap();
-        }
-        let orig_path = std::env::var("PATH").unwrap_or_default();
-        // SAFETY: single-thread test using set_var; other tests do not read PATH.
-        unsafe {
-            std::env::set_var(
-                "PATH",
-                format!("{}:{}", dir.path().display(), orig_path),
-            );
-        }
-
-        let events: Mutex<Vec<UpgradeEvent>> = Mutex::new(Vec::new());
-        let _ = run(|e| events.lock().unwrap().push(e));
-
-        // SAFETY: single-thread test cleanup.
-        unsafe { std::env::set_var("PATH", orig_path); }
-
-        let events = events.into_inner().unwrap();
-
-        // Must emit at least: prereqs running → prereqs (done|failed)
-        //                  → db_deploy running → db_deploy (done|failed)
-        //                  → complete
-        let steps: Vec<&str> = events.iter().map(|e| e.step).collect();
+        // Inject step outcomes so the ordering assertion needs no real `brew`
+        // (network) or Postgres — the flaky/slow calls that used to hang the
+        // pre-commit hook. We assert the *shape* of the stream: all prereqs
+        // events precede all db_deploy events, which precede complete.
+        let (_ok, steps) = steps_for(Ok(()), Err("no database in test".into()));
         assert_eq!(steps.first(), Some(&"prereqs"));
         assert_eq!(steps.last(),  Some(&"complete"));
         assert!(steps.contains(&"db_deploy"), "must emit db_deploy step");
-        // Ordering: prereqs events all precede db_deploy events; db_deploy
-        // events all precede complete.
         let first_db = steps.iter().position(|s| *s == "db_deploy").unwrap();
         let last_prereq = steps.iter().rposition(|s| *s == "prereqs").unwrap();
         let complete = steps.iter().position(|s| *s == "complete").unwrap();
         assert!(last_prereq < first_db, "all prereqs events before db_deploy");
         assert!(first_db < complete,    "all db_deploy events before complete");
+    }
+
+    #[test]
+    fn run_all_steps_succeed_returns_true() {
+        let (ok, steps) = steps_for(Ok(()), Ok(()));
+        assert!(ok, "both steps Ok → run returns true");
+        // Success path emits done (not failed) for each step, ending in complete.
+        assert_eq!(
+            steps,
+            vec!["prereqs", "prereqs", "db_deploy", "db_deploy", "complete"]
+        );
+    }
+
+    #[test]
+    fn run_prereqs_failure_does_not_skip_db_deploy() {
+        // A brew failure must NOT skip the schema deploy — the migration may
+        // still need to land even if the bottle couldn't update.
+        let (ok, steps) = steps_for(Err("brew boom".into()), Ok(()));
+        assert!(!ok, "any failure → run returns false");
+        assert!(steps.contains(&"db_deploy"), "db_deploy runs despite prereqs failure");
     }
 }
