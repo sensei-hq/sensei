@@ -38,6 +38,7 @@ const SOURCE_MEASURED: &str = "measured";
 const KEY_FTR: &str = "ftr";
 const KEY_REWORK: &str = "rework_ratio";
 const KEY_THROUGHPUT: &str = "throughput";
+const KEY_TTUR: &str = "time_to_useful_result";
 
 /// One day's session-level aggregates for a project: `(day, session_count,
 /// ftr_count, correction_count)`. Only days WITH ≥1 measurable session appear, so
@@ -51,6 +52,10 @@ type DayRework = (chrono::NaiveDate, i64, i64);
 /// One session's first-try signal: `(session_id, day, ftr)`. `ftr` is nullable;
 /// `NULL`/`false` both score 0.0 (the `case when s.ftr` FTR convention).
 type SessionFtr = (uuid::Uuid, chrono::NaiveDate, Option<bool>);
+
+/// One day's `time_to_useful_result`: `(day, median_seconds, n)`. `n` = the number
+/// of sessions that contributed a first-useful latency that day.
+type DayTtur = (chrono::NaiveDate, f64, i64);
 
 /// Daily session-level aggregates over the window, project-scoped via
 /// `sensei.folders.project_id`. `outcome is not null` restricts to measurable
@@ -135,6 +140,50 @@ async fn session_ftr(
     .map_err(|e| e.to_string())
 }
 
+/// Daily median `time_to_useful_result` (seconds) per project. For each measurable
+/// session, the latency is `started_at → ended_at of the FIRST non-correction turn`
+/// (the first usable output). `percentile_cont(0.5)` medians those per-session
+/// latencies within each day. Sessions whose only turns are corrections — or that
+/// have no turns — produce no usable output and are dropped by the inner `LIMIT 1`
+/// join (never a fabricated 0). `n` is the contributing session count that day.
+async fn daily_time_to_useful(
+    pg: &PgStore,
+    project_id: &uuid::Uuid,
+    window_days: u32,
+) -> Result<Vec<DayTtur>, String> {
+    sqlx_core::query_as::query_as(
+        "WITH first_useful AS ( \
+             SELECT date_trunc('day', s.started_at)::date                        AS day \
+                  , EXTRACT(EPOCH FROM (fu.ended_at - s.started_at))::float8      AS secs \
+               FROM activity.sessions s \
+               JOIN sensei.folders    f ON f.id = s.folder_id \
+               JOIN LATERAL ( \
+                      SELECT t.ended_at \
+                        FROM activity.turns t \
+                       WHERE t.session_id     = s.id \
+                         AND t.is_correction  = false \
+                       ORDER BY t.turn_number \
+                       LIMIT 1 \
+                    ) fu ON true \
+              WHERE f.project_id  = $1 \
+                AND s.outcome    IS NOT NULL \
+                AND s.started_at >= now() - make_interval(days => $2::int) \
+         ) \
+         SELECT day \
+              , percentile_cont(0.5) WITHIN GROUP (ORDER BY secs)::float8         AS median_secs \
+              , count(*)::int8                                                     AS n \
+           FROM first_useful \
+          WHERE secs >= 0 \
+          GROUP BY day \
+          ORDER BY day",
+    )
+    .bind(project_id)
+    .bind(window_days as i32)
+    .fetch_all(pg.pool())
+    .await
+    .map_err(|e| e.to_string())
+}
+
 /// Compute the `session_outcomes` group for one project over the configured window.
 /// `project_raw` is the project uuid carried in `task.folder_path`. Returns the
 /// number of `project_metrics` rows written (`0` = honest-empty: no measurable
@@ -158,6 +207,7 @@ pub(super) async fn compute(ctx: &TaskContext, project_raw: &str) -> Result<u32,
     let ftr_id = ids.get(KEY_FTR).copied();
     let rework_id = ids.get(KEY_REWORK).copied();
     let throughput_id = ids.get(KEY_THROUGHPUT).copied();
+    let ttur_id = ids.get(KEY_TTUR).copied();
 
     let mut written = 0u32;
 
@@ -216,6 +266,19 @@ pub(super) async fn compute(ctx: &TaskContext, project_raw: &str) -> Result<u32,
         }
     }
 
+    // Daily time_to_useful_result (duration, median seconds) — only if active. A day
+    // with no session that produced a usable turn writes NO row (honest-empty).
+    if let Some(mid) = ttur_id {
+        for (day, median_secs, n) in daily_time_to_useful(pg, &project_id, window_days).await? {
+            let props = serde_json::json!({ "n": n });
+            pg.upsert_project_metric(
+                &mid, &project_id, None, None, day, GRAIN_DAILY, median_secs, &props, SOURCE_MEASURED,
+            )
+            .await?;
+            written += 1;
+        }
+    }
+
     // Per-session ftr rows (grain=session, session_id set) — only if active.
     if let Some(mid) = ftr_id {
         for (session_id, day, ftr) in session_ftr(pg, &project_id, window_days).await? {
@@ -241,7 +304,7 @@ mod tests {
     use super::*;
     use crate::tasks::test_support::{
         cleanup_metrics_fixture, make_ctx, seed_metrics_project_folder, seed_metrics_session,
-        seed_metrics_turn,
+        seed_metrics_turn, seed_metrics_turn_ex,
     };
     use sqlx_core::query_as::query_as;
 
@@ -284,7 +347,7 @@ mod tests {
         seed_metrics_turn(pg, &inflight, 5, ts).await;
 
         let written = compute(&ctx, &pid.to_string()).await.unwrap();
-        assert_eq!(written, 7, "3 daily rows + 4 per-session ftr rows (in-flight session excluded)");
+        assert_eq!(written, 8, "4 daily rows (ftr, rework, throughput, time_to_useful) + 4 per-session ftr rows (in-flight excluded)");
 
         // ── Daily rows ────────────────────────────────────────────────────
         let daily = daily_rows(pg, &pid).await;
@@ -344,13 +407,13 @@ mod tests {
 
         // ── Idempotency: re-run backfills in place, never duplicates ──────
         let again = compute(&ctx, &pid.to_string()).await.unwrap();
-        assert_eq!(again, 7, "re-run recomputes the same rows");
+        assert_eq!(again, 8, "re-run recomputes the same rows");
         let (total,): (i64,) = query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
             .bind(pid)
             .fetch_one(pg.pool())
             .await
             .unwrap();
-        assert_eq!(total, 7, "idempotent upsert — still 7 rows after a second run");
+        assert_eq!(total, 8, "idempotent upsert — still 8 rows after a second run");
 
         cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
     }
@@ -495,7 +558,7 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(rework_rows, 0, "no rework_ratio row when total tool-calls is 0 (never a fabricated 0/0)");
-        assert_eq!(written, 4, "ftr daily + throughput daily + 2 per-session ftr; rework skipped");
+        assert_eq!(written, 5, "ftr daily + throughput daily + time_to_useful daily + 2 per-session ftr; rework skipped");
 
         cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
     }
@@ -515,13 +578,86 @@ mod tests {
         }
 
         let written = compute(&ctx, &pid.to_string()).await.unwrap();
-        assert_eq!(written, 5, "ftr daily (0.0) + rework daily + throughput daily + 2 per-session ftr");
+        assert_eq!(written, 6, "ftr daily (0.0) + rework daily + throughput daily + time_to_useful daily + 2 per-session ftr");
 
         let daily = daily_rows(pg, &pid).await;
         let ftr = daily.iter().find(|r| r.0 == "ftr").expect("ftr daily row present (a real zero is still written)");
         assert!(ftr.1.abs() < 1e-9, "ftr value is a real 0.0 (0 numerator over a real denominator)");
         assert_eq!(ftr.2["numerator"].as_i64(), Some(0), "ftr numerator = 0 (no first-try sessions)");
         assert_eq!(ftr.2["denominator"].as_i64(), Some(2), "ftr denominator = 2 (real denominator → row written, not skipped)");
+
+        cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
+    }
+
+    #[tokio::test]
+    async fn time_to_useful_result_is_median_of_first_non_correction_turn_latency() {
+        // Definition (B): latency = session.started_at → ended_at of the FIRST turn
+        // that is not a correction. Median over the day's measurable sessions.
+        let ctx = make_ctx().await;
+        let pg = ctx.pg();
+        let uniq = uuid::Uuid::new_v4();
+        let (pid, fid) = seed_metrics_project_folder(pg, &uniq).await;
+
+        let t = chrono::Utc::now() - chrono::Duration::hours(2);
+        let at = |n: i64| t + chrono::Duration::seconds(n);
+
+        // A: only turn is useful at +10s → 10s.
+        let a = seed_metrics_session(pg, &fid, &pid, Some("completed"), Some(true), 0, t).await;
+        seed_metrics_turn_ex(pg, &a, 1, t, at(10), false, 1).await;
+        // B: turn 1 is a correction (+3s), turn 2 is the first useful one (+30s) → 30s.
+        let b = seed_metrics_session(pg, &fid, &pid, Some("completed"), Some(true), 0, t).await;
+        seed_metrics_turn_ex(pg, &b, 1, t, at(3), true, 1).await;
+        seed_metrics_turn_ex(pg, &b, 2, at(3), at(30), false, 1).await;
+        // C: session-outcome 'corrected' but its first TURN is useful at +20s → 20s
+        // (session-level correction != turn-level correction).
+        let c = seed_metrics_session(pg, &fid, &pid, Some("corrected"), Some(false), 1, t).await;
+        seed_metrics_turn_ex(pg, &c, 1, t, at(20), false, 1).await;
+        // D: ONLY a correction turn → produced no usable output → excluded.
+        let d = seed_metrics_session(pg, &fid, &pid, Some("completed"), Some(true), 0, t).await;
+        seed_metrics_turn_ex(pg, &d, 1, t, at(5), true, 1).await;
+        // In-flight (outcome NULL) with a useful turn → not measurable → excluded.
+        let inflight = seed_metrics_session(pg, &fid, &pid, None, None, 0, t).await;
+        seed_metrics_turn_ex(pg, &inflight, 1, t, at(1), false, 1).await;
+
+        compute(&ctx, &pid.to_string()).await.unwrap();
+
+        let daily = daily_rows(pg, &pid).await;
+        let ttur = daily.iter().find(|r| r.0 == "time_to_useful_result")
+            .expect("time_to_useful_result daily row present");
+        // median([10, 20, 30]) = 20; D (correction-only) + in-flight excluded.
+        assert!((ttur.1 - 20.0).abs() < 1e-6,
+            "median first-useful latency = median(10,20,30) = 20s, got {}", ttur.1);
+        assert_eq!(ttur.2["n"].as_i64(), Some(3),
+            "n = 3 sessions with a usable turn (correction-only + in-flight excluded)");
+
+        cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
+    }
+
+    #[tokio::test]
+    async fn time_to_useful_result_no_usable_turn_writes_no_row() {
+        // Never-fabricate: if every measurable session's only turn is a correction,
+        // no session produced a usable output → NO time_to_useful_result row (not a 0).
+        let ctx = make_ctx().await;
+        let pg = ctx.pg();
+        let uniq = uuid::Uuid::new_v4();
+        let (pid, fid) = seed_metrics_project_folder(pg, &uniq).await;
+        let t = chrono::Utc::now() - chrono::Duration::hours(2);
+        for _ in 0..2 {
+            let s = seed_metrics_session(pg, &fid, &pid, Some("corrected"), Some(false), 1, t).await;
+            seed_metrics_turn_ex(pg, &s, 1, t, t + chrono::Duration::seconds(4), true, 1).await;
+        }
+
+        compute(&ctx, &pid.to_string()).await.unwrap();
+
+        let (rows,): (i64,) = query_as(
+            "SELECT count(*) FROM sensei.project_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
+              WHERE pm.project_id = $1 AND m.key = 'time_to_useful_result'",
+        )
+        .bind(pid)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        assert_eq!(rows, 0, "no usable turn in any session → no time_to_useful_result row (never a fabricated 0)");
 
         cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
     }
