@@ -113,12 +113,12 @@
 
   <!-- ═══ Nav ═══ -->
   <nav class="nav">
-    <div class="nav-inner">
-      <a href="{base}/sensei" class="logo-link">
+    <div class="nav-inner py-6 px-12">
+      <a href="{base}/sensei" class="logo-link gap-2.5">
         <span class="i-brand:sensei text-sensei logo-mark" aria-hidden="true"></span>
         <span class="display logo-text">Sensei</span>
       </a>
-      <div class="nav-links">
+      <div class="nav-links gap-8">
         {#each navLinks as [href, label]}
           <a {href} class="nav-link">{label}</a>
         {/each}
@@ -134,10 +134,10 @@
   </nav>
 
   <!-- ═══ Hero ═══ -->
-  <section class="hero">
+  <section class="hero pt-16 px-12 pb-8">
     <div class="hero-kanji kanji">観</div>
     <div class="hero-content">
-      <div class="hero-tagline">
+      <div class="hero-tagline gap-3.5">
         <span class="ink-dot" style="width: 8px; height: 8px;"></span>
         <div class="hero-tag-text">Sensei · the patient observer</div>
       </div>
@@ -150,7 +150,7 @@
         then surfaces the patterns you're too close to see. Not a
         chatbot. Not a copilot. A patient observer.
       </p>
-      <div class="hero-actions">
+      <div class="hero-actions gap-4">
         <Button href="{RELEASE_BASE}/{dlFile}" variant="primary" size="lg">
           <span class="kanji text-lg" style="line-height: 1">下</span>
           Download for {os}
@@ -165,8 +165,8 @@
   </section>
 
   <!-- ═══ Stats ═══ -->
-  <section class="stats">
-    <div class="stats-inner">
+  <section class="stats py-8 px-12">
+    <div class="stats-inner gap-8">
       {#each [
         { v: '0', k: 'external requests' },
         { v: '<60MB', k: 'memory footprint' },
@@ -182,8 +182,8 @@
   </section>
 
   <!-- ═══ What it is ═══ -->
-  <section class="what-it-is">
-    <div class="what-inner">
+  <section class="what-it-is py-30 px-12">
+    <div class="what-inner gap-20">
       <div>
         <div class="section-tag">What it is</div>
         <h2 class="display what-heading">
@@ -209,19 +209,19 @@
   </section>
 
   <!-- ═══ How it works ═══ -->
-  <section id="how" class="how-it-works">
+  <section id="how" class="how-it-works py-30 px-12">
     <div class="how-inner">
       <div class="section-tag">How it works</div>
-      <h2 class="display how-heading">
+      <h2 class="display how-heading mb-18">
         <span style="color: var(--shu);">観 · 察 · 覚</span><br/>
         Watch, notice, adopt.
       </h2>
-      <div class="steps-grid">
+      <div class="steps-grid gap-16">
         {#each steps as s}
-          <div class="step-card">
+          <div class="step-card py-8 px-6">
             <div class="kanji step-kanji">{s.kanji}</div>
             <div class="step-phase">{s.phase}</div>
-            <h3 class="display step-title">{s.title}</h3>
+            <h3 class="display step-title mb-4">{s.title}</h3>
             <div class="step-text">{s.text}</div>
             <div class="step-sub">{s.sub}</div>
           </div>
@@ -231,18 +231,18 @@
   </section>
 
   <!-- ═══ Gallery ═══ -->
-  <section id="gallery" class="gallery">
+  <section id="gallery" class="gallery pt-30 px-12 pb-16">
     <div class="gallery-inner">
       <div class="section-tag">The screens</div>
-      <h2 class="display gallery-heading">
+      <h2 class="display gallery-heading mb-4">
         Five surfaces, one rhythm.
       </h2>
-      <p class="gallery-sub display">
+      <p class="gallery-sub display mb-20">
         Every screen answers one question and stays quiet otherwise.
       </p>
-      <div class="gallery-list">
+      <div class="gallery-list gap-25">
         {#each screens as s, i}
-          <div class="gallery-item" class:reverse={i % 2 !== 0}>
+          <div class="gallery-item gap-16" class:reverse={i % 2 !== 0}>
             <div class="gallery-screen">
               {#if s.caption === 'Today'}
                 <MockToday width={920} height={580} />
@@ -268,14 +268,14 @@
   </section>
 
   <!-- ═══ Philosophy ═══ -->
-  <section id="philosophy" class="philosophy">
+  <section id="philosophy" class="philosophy py-40 px-12">
     <div class="philosophy-kanji kanji">静</div>
     <div class="philosophy-inner">
       <div class="section-tag">Sei · stillness</div>
-      <h2 class="display philosophy-heading">
+      <h2 class="display philosophy-heading mb-9">
         The master observes for a long time before teaching.
       </h2>
-      <p class="philosophy-body display">
+      <p class="philosophy-body display mb-5">
         AI tools are getting louder. More suggestions, more autocompletes,
         more interrupting. Sensei moves the other way. It speaks rarely,
         and only when it has something specific to say. Most days it is
@@ -291,18 +291,18 @@
   </section>
 
   <!-- ═══ Privacy ═══ -->
-  <section id="privacy" class="privacy">
-    <div class="privacy-inner">
+  <section id="privacy" class="privacy py-30 px-12">
+    <div class="privacy-inner gap-16">
       <div class="privacy-left">
         <span class="kanji text-4xl" style="color: var(--shu)">蔵</span>
-        <div class="section-tag" style="margin-top: 16px;">Privacy & local-first</div>
+        <div class="section-tag mt-4">Privacy & local-first</div>
         <h2 class="display privacy-heading">
           Your sessions stay on your machine.
         </h2>
       </div>
-      <div class="privacy-items">
+      <div class="privacy-items gap-8">
         {#each privacyItems as it, i}
-          <div class="privacy-item" class:bordered={i < 2}>
+          <div class="privacy-item gap-5" class:bordered={i < 2}>
             <span class="kanji privacy-kanji">{it.k}</span>
             <div>
               <div class="display privacy-title">{it.title}</div>
@@ -315,10 +315,10 @@
   </section>
 
   <!-- ═══ Pricing ═══ -->
-  <section class="pricing">
+  <section class="pricing py-30 px-12">
     <div class="pricing-inner">
       <div class="section-tag">Pricing</div>
-      <h2 class="display pricing-heading">
+      <h2 class="display pricing-heading mb-6">
         Free during preview.
       </h2>
       <p class="pricing-body display">
@@ -327,7 +327,7 @@
         tier, early adopters and supporters get a permanent discount.
         No surprises.
       </p>
-      <div style="margin-top: 44px;">
+      <div class="mt-11">
         <Button href="{RELEASE_BASE}/{dlFile}" variant="primary" size="lg">
           <span class="kanji text-lg" style="line-height: 1">下</span>
           Download for {os}
@@ -337,20 +337,20 @@
   </section>
 
   <!-- ═══ FAQ Summary ═══ -->
-  <section id="faq" class="faq">
+  <section id="faq" class="faq py-30 px-12">
     <div class="faq-inner">
       <div class="section-tag">Quick answers</div>
-      <h2 class="display faq-heading">
+      <h2 class="display faq-heading mb-12">
         The essentials.
       </h2>
-      <div class="faq-cards">
+      <div class="faq-cards gap-6">
         {#each [
           { q: 'What platforms?', a: 'Claude Code, Cursor, Windsurf, Copilot, Codex, Aider — anything that speaks MCP.' },
           { q: 'What\'s included?', a: '20 commands, 8 agents, skills, hooks, and MCP tools for code search, patterns, and call graph analysis.' },
           { q: 'Will it slow me down?', a: 'Rust daemon, event-driven. Ollama is optional and hardware-aware — it degrades gracefully.' },
           { q: 'Is it free?', a: 'Free during preview. If we move to a paid tier, early adopters get a permanent discount.' },
         ] as card}
-          <div class="faq-card">
+          <div class="faq-card p-6">
             <div class="display faq-card-q">{card.q}</div>
             <div class="faq-card-a">{card.a}</div>
           </div>
@@ -361,14 +361,14 @@
   </section>
 
   <!-- ═══ Support ═══ -->
-  <section class="support">
+  <section class="support py-24 px-12">
     <div class="support-inner">
       <span class="kanji text-4xl" style="color: var(--shu)">志</span>
-      <div class="section-tag" style="margin-top: 14px;">Support development</div>
-      <h2 class="display support-heading">
+      <div class="section-tag mt-3.5">Support development</div>
+      <h2 class="display support-heading mb-5">
         If sensei has earned a place in your practice, you can help keep it growing.
       </h2>
-      <p class="support-body">
+      <p class="support-body mb-8">
         Sensei is built by a small team. A sponsorship funds the focused hours
         that keep it sharp.
       </p>
@@ -379,10 +379,10 @@
   </section>
 
   <!-- ═══ Footer ═══ -->
-  <footer class="footer">
-    <div class="footer-inner">
+  <footer class="footer p-12">
+    <div class="footer-inner gap-16">
       <div class="footer-brand">
-        <div class="footer-logo">
+        <div class="footer-logo gap-2.5">
           <span class="i-brand:sensei text-sensei" style="width:22px;height:22px;flex-shrink:0" aria-hidden="true"></span>
           <span class="display text-base" style="color: var(--sumi-2)">Sensei</span>
         </div>
@@ -392,11 +392,11 @@
         </div>
         <div class="mono footer-version">v{__APP_VERSION__}</div>
       </div>
-      <div class="footer-cols">
+      <div class="footer-cols gap-14">
         {#each footerCols as col}
           <div>
             <div class="footer-col-title">{col.title}</div>
-            <div class="footer-col-links">
+            <div class="footer-col-links gap-2">
               {#each col.links as link}
                 <a href={link.href} class="footer-link">{link.label}</a>
               {/each}
@@ -439,7 +439,6 @@
   .nav-inner {
     max-width: 1200px;
     margin: 0 auto;
-    padding: 24px 48px;
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -447,7 +446,6 @@
   .logo-link {
     display: flex;
     align-items: center;
-    gap: 10px;
     text-decoration: none;
   }
   .logo-mark {
@@ -462,7 +460,6 @@
   }
   .nav-links {
     display: flex;
-    gap: 32px;
     font-size: var(--text-sm);
     align-items: center;
   }
@@ -489,7 +486,6 @@
 
   /* ── Hero ──────────────────────────────────────────── */
   .hero {
-    padding: 64px 48px 32px;
     max-width: 1200px;
     margin: 0 auto;
     position: relative;
@@ -507,7 +503,6 @@
   .hero-tagline {
     display: flex;
     align-items: baseline;
-    gap: 14px;
     margin-bottom: 24px;
   }
   .hero-tag-text {
@@ -538,7 +533,6 @@
   }
   .hero-actions {
     display: flex;
-    gap: 18px;
     align-items: center;
     margin-top: 40px;
   }
@@ -565,7 +559,6 @@
   .stats {
     border-top: var(--hairline);
     border-bottom: var(--hairline);
-    padding: 32px 48px;
     background: var(--paper-2);
   }
   .stats-inner {
@@ -573,7 +566,6 @@
     margin: 0 auto;
     display: grid;
     grid-template-columns: repeat(4, 1fr);
-    gap: 32px;
   }
   .stat { text-align: center; }
   .stat-value {
@@ -590,13 +582,11 @@
   }
 
   /* ── What it is ────────────────────────────────────── */
-  .what-it-is { padding: 120px 48px; }
   .what-inner {
     max-width: 1200px;
     margin: 0 auto;
     display: grid;
     grid-template-columns: 1fr 1.6fr;
-    gap: 80px;
     align-items: start;
   }
   .what-heading {
@@ -618,24 +608,20 @@
   .how-it-works {
     border-top: var(--hairline);
     border-bottom: var(--hairline);
-    padding: 120px 48px;
     background: var(--paper-2);
   }
   .how-inner { max-width: 1200px; margin: 0 auto; }
   .how-heading {
     font-size: var(--text-4xl);
     font-weight: 300;
-    margin: 0 0 72px;
     letter-spacing: -0.025em;
     line-height: 1.05;
   }
   .steps-grid {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
-    gap: 64px;
   }
   .step-card {
-    padding: 32px 24px;
     background: var(--paper);
     border: var(--hairline);
     border-radius: 12px;
@@ -657,7 +643,6 @@
   .step-title {
     font-size: var(--text-xl);
     font-weight: 400;
-    margin: 0 0 16px;
     letter-spacing: -0.01em;
   }
   .step-text {
@@ -675,12 +660,10 @@
   }
 
   /* ── Gallery ───────────────────────────────────────── */
-  .gallery { padding: 120px 48px 64px; }
   .gallery-inner { max-width: 1200px; margin: 0 auto; }
   .gallery-heading {
     font-size: var(--text-4xl);
     font-weight: 300;
-    margin: 0 0 16px;
     letter-spacing: -0.025em;
     line-height: 1.05;
   }
@@ -690,17 +673,14 @@
     max-width: 600px;
     line-height: 1.6;
     font-weight: 300;
-    margin: 0 0 80px;
   }
   .gallery-list {
     display: flex;
     flex-direction: column;
-    gap: 100px;
   }
   .gallery-item {
     display: grid;
     grid-template-columns: 1fr 320px;
-    gap: 64px;
     align-items: center;
   }
   .gallery-item.reverse {
@@ -729,7 +709,6 @@
   .philosophy {
     border-top: var(--hairline);
     border-bottom: var(--hairline);
-    padding: 160px 48px;
     background: var(--paper-2);
     position: relative;
     overflow: hidden;
@@ -753,7 +732,6 @@
   .philosophy-heading {
     font-size: var(--text-3xl);
     font-weight: 300;
-    margin: 0 0 36px;
     letter-spacing: -0.025em;
     line-height: 1.18;
   }
@@ -762,7 +740,6 @@
     color: var(--sumi-2);
     font-weight: 300;
     line-height: 1.7;
-    margin: 0 0 22px;
   }
   .philosophy-note {
     font-size: var(--text-base);
@@ -772,13 +749,12 @@
   }
 
   /* ── Privacy ───────────────────────────────────────── */
-  .privacy { padding: 120px 48px; background: var(--paper); }
+  .privacy { background: var(--paper); }
   .privacy-inner {
     max-width: 1200px;
     margin: 0 auto;
     display: grid;
     grid-template-columns: 1fr 1.5fr;
-    gap: 64px;
     align-items: start;
   }
   .privacy-heading {
@@ -791,12 +767,10 @@
   .privacy-items {
     display: flex;
     flex-direction: column;
-    gap: 32px;
   }
   .privacy-item {
     display: grid;
     grid-template-columns: auto 1fr;
-    gap: 22px;
     padding-bottom: 32px;
   }
   .privacy-item.bordered { border-bottom: var(--hairline); }
@@ -816,7 +790,6 @@
   .pricing {
     border-top: var(--hairline);
     border-bottom: var(--hairline);
-    padding: 120px 48px;
     background: var(--paper-2);
     text-align: center;
   }
@@ -824,7 +797,6 @@
   .pricing-heading {
     font-size: var(--text-4xl);
     font-weight: 300;
-    margin: 0 0 24px;
     letter-spacing: -0.025em;
     line-height: 1.05;
   }
@@ -837,22 +809,18 @@
   }
 
   /* ── FAQ ────────────────────────────────────────────── */
-  .faq { padding: 120px 48px; }
   .faq-inner { max-width: 960px; margin: 0 auto; }
   .faq-heading {
     font-size: var(--text-3xl);
     font-weight: 300;
-    margin: 0 0 48px;
     letter-spacing: -0.025em;
     line-height: 1.1;
   }
   .faq-cards {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 24px;
   }
   .faq-card {
-    padding: 24px;
     border: var(--hairline);
     border-radius: 12px;
     background: var(--paper-2);
@@ -882,14 +850,12 @@
   .support {
     border-top: var(--hairline);
     background: var(--paper-2);
-    padding: 96px 48px;
     text-align: center;
   }
   .support-inner { max-width: 720px; margin: 0 auto; }
   .support-heading {
     font-size: var(--text-2xl);
     font-weight: 300;
-    margin: 0 0 22px;
     letter-spacing: -0.02em;
     line-height: 1.25;
   }
@@ -897,12 +863,10 @@
     font-size: var(--text-sm);
     color: var(--sumi-2);
     line-height: 1.7;
-    margin: 0 0 32px;
   }
 
   /* ── Footer ────────────────────────────────────────── */
   .footer {
-    padding: 48px;
     font-size: var(--text-xs);
     color: var(--sumi-3);
     border-top: var(--hairline);
@@ -913,12 +877,10 @@
     display: flex;
     align-items: flex-start;
     justify-content: space-between;
-    gap: 64px;
   }
   .footer-logo {
     display: flex;
     align-items: center;
-    gap: 10px;
     margin-bottom: 12px;
   }
   .footer-desc {
@@ -934,7 +896,6 @@
   }
   .footer-cols {
     display: flex;
-    gap: 56px;
   }
   .footer-col-title {
     font-size: var(--text-xs);
@@ -946,7 +907,6 @@
   .footer-col-links {
     display: flex;
     flex-direction: column;
-    gap: 8px;
   }
   .footer-link {
     font-size: var(--text-xs);
