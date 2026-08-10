@@ -6,6 +6,8 @@
     import { hasTauri } from "$lib/bootstrap.js";
     import { appState } from "$lib/appstate.svelte.js";
     import { healthState } from "$lib/health-state.svelte.js";
+    import { daemonHealth } from "$lib/daemon-health.svelte.js";
+    import { DaemonStatusBanner } from "$lib/components";
 
     let { children } = $props();
 
@@ -32,7 +34,12 @@
     // into goto() so the routing guard in hooks.reroute applies the same
     // way as in-app navigation.
     onMount(() => {
-        if (!hasTauri()) return;
+        // Watch the daemon's own DB-connection mode so a degraded → recovering
+        // window (cold-boot race, self-healing) shows a banner. Cheap when the
+        // daemon is healthy: it stops after the first `full` reading.
+        daemonHealth.start();
+
+        if (!hasTauri()) return () => daemonHealth.stop();
         const unlistens: Array<() => void> = [];
         // eslint-disable-next-line @typescript-eslint/no-floating-promises
         import("@tauri-apps/api/event").then(({ listen }) => {
@@ -45,8 +52,10 @@
         });
         return () => {
             for (const fn of unlistens) fn();
+            daemonHealth.stop();
         };
     });
 </script>
 
+<DaemonStatusBanner mode={daemonHealth.dbMode} />
 {@render children()}

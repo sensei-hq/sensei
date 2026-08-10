@@ -10,6 +10,13 @@ export type ComponentStatus =
 export type ComponentId      = 'postgres' | 'ollama' | 'sensei' | 'database' | 'daemon';
 export type PackageManagerId = 'homebrew' | 'winget';
 
+/** The daemon's own DB-connection mode, reported by the daemon that served the
+ *  payload. Distinct from the Postgres component status: 'degraded' means the
+ *  daemon has no working pool yet (e.g. it lost the cold-boot race) and is
+ *  self-healing, even if Postgres itself probes 'ready'. Absent when the payload
+ *  wasn't produced by a daemon. */
+export type DaemonDbMode = 'full' | 'degraded';
+
 export const COMPONENT_ORDER: readonly ComponentId[] =
   ['postgres', 'ollama', 'sensei', 'database', 'daemon'] as const;
 
@@ -50,6 +57,8 @@ type PayloadBase = {
   platform: Platform;
   packageManager: Component;
   components: Component[];
+  /** Present only on daemon-served payloads; omitted by the bootstrap sidecar. */
+  daemonDbMode?: DaemonDbMode;
 };
 
 export type HealthPayload =

@@ -128,6 +128,9 @@ pub trait PlatformProvider: Send + Sync {
             components,
             status,
             remedy,
+            // The machine probe doesn't know a daemon's pool state; the daemon's
+            // own /health handler sets this. None → omitted from the wire.
+            daemon_db_mode: None,
         };
         payload.validate().expect("PlatformProvider::check produced an invalid payload");
         payload

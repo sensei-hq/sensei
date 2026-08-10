@@ -18,6 +18,7 @@ embedded-ort = ["local-engine/ort", "local-providers/ort"]
 [dependencies]
 # HTTP server
 axum = { version = "0.8", features = ["json"] }
+tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.6", features = ["cors"] }
 tokio = { version = "1", features = ["full"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
@@ -125,7 +126,6 @@ cc = "1"
 [dev-dependencies]
 tempfile = "3"
 tokio-test = "0.4"
-tower = { version = "0.5", features = ["util"] }
 # Contract test only — cross the MCP↔daemon seam by shaping requests with the
 # real proxy code and issuing them against the in-process router. senseid has no
 # runtime dependency on mcp, so this stays acyclic.

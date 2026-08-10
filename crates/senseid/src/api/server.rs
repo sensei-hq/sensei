@@ -96,26 +96,65 @@ pub async fn start_server(port: u16) -> std::io::Result<()> {
             axum::http::header::AUTHORIZATION,
         ]);
 
-    // Try DB connect. Branch on result: full router on success, degraded
-    // router (health endpoint + 503 catch-all) on failure.
+    // Connect to the DB, retrying briefly so a cold-boot race — the daemon
+    // coming up before Postgres accepts connections (both start together as
+    // brew/launchd services) — is absorbed and we reach full mode without ever
+    // serving degraded. Branch: full router on success; on a persistent failure
+    // serve a hot-swappable degraded router and self-heal in the background
+    // (no restart) once the DB returns. See `api::resilience`.
     let (app, watcher_queue): (axum::Router, Option<Arc<TaskQueue>>) =
-        match crate::db::pg_store::PgStore::connect(&database_url).await {
+        match crate::api::resilience::connect_with_retry(
+            || {
+                let url = database_url.clone();
+                async move { crate::db::pg_store::PgStore::connect(&url).await }
+            },
+            &crate::api::resilience::RetryPolicy::startup(),
+        )
+        .await
+        {
             Ok(pg) => {
                 clear_startup_error();
+                crate::api::resilience::mark_full();
                 tracing::info!("senseid listening on :{} (full mode)", port);
                 let (router, queue) = build_full_app(pg).await;
                 (router.layer(cors), Some(queue))
             }
             Err(e) => {
                 let msg = format!(
-                    "[senseid] Database connection failed — daemon staying alive in degraded mode.\n  URL: {}\n  Error: {}\n  Hint: run `sensei bootstrap` (or `dbd reset`) to (re)provision the database, then restart.",
+                    "[senseid] Database connection failed after startup retries — daemon staying alive in degraded mode; it will self-heal automatically when the DB becomes reachable.\n  URL: {}\n  Error: {}\n  Hint: run `sensei bootstrap` (or `dbd reset`) to (re)provision the database.",
                     database_url, e
                 );
                 eprintln!("{}", msg);
                 write_startup_error(&msg);
-                tracing::warn!("senseid listening on :{} (degraded — DB unavailable)", port);
-                let router = create_degraded_router(database_url.clone(), e.clone()).layer(cors);
-                (router, None)
+                crate::api::resilience::mark_degraded();
+                tracing::warn!("senseid listening on :{} (degraded — DB unavailable; self-heal armed)", port);
+
+                // Serve the degraded router through a swappable handle so the
+                // background task below can replace it in place once the DB is up.
+                let handle = crate::api::resilience::RouterHandle::new(
+                    create_degraded_router(database_url.clone(), e.clone()),
+                );
+
+                let bg_handle = handle.clone();
+                let bg_url = database_url.clone();
+                tokio::spawn(async move {
+                    let upgraded = crate::api::resilience::reconnect_and_upgrade(
+                        bg_handle,
+                        || {
+                            let url = bg_url.clone();
+                            async move { crate::db::pg_store::PgStore::connect(&url).await }
+                        },
+                        |pg| async move { build_full_app(pg).await.0 },
+                        &crate::api::resilience::RetryPolicy::background(),
+                    )
+                    .await;
+                    if upgraded {
+                        clear_startup_error();
+                        crate::api::resilience::mark_full();
+                    }
+                });
+
+                (handle.serving_router().layer(cors), None)
             }
         };
 
