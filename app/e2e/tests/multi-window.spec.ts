@@ -187,57 +187,61 @@ test.describe('Project window — PerspectiveChrome layout', () => {
     projectId = await getFirstProjectId();
   });
 
-  test('accent stripe, titlebar and sidebar are present', async ({ tauriPage }) => {
+  test('titlebar and sidebar identity are present', async ({ tauriPage }) => {
     if (!projectId) {
       test.skip(true, 'No projects in dev database — skipping project window tests');
       return;
     }
     await navigateTo(tauriPage, `/project/${projectId}/overview`);
-    await expect(tauriPage.locator('.project-shell')).toBeVisible({ timeout: 10_000 });
+    await expect(tauriPage.locator('[data-component="project-shell"]')).toBeVisible({ timeout: 10_000 });
 
-    // 2px shu accent stripe at top
-    await expect(tauriPage.locator('.accent-stripe')).toBeVisible();
-
-    // Titlebar: kanji, project name, "· project window" sub-label
-    await expect(tauriPage.locator('.titlebar')).toBeVisible();
+    // Titlebar: project name + "· project window" sub-label
+    await expect(tauriPage.locator('[data-component="project-titlebar"]')).toBeVisible();
     const sub = await tauriPage.evaluate(
-      `document.querySelector('.proj-sub')?.textContent?.trim()`,
+      `document.querySelector('[data-component="project-titlebar"] span:last-child')?.textContent?.trim()`,
     ) as string;
     expect(sub).toBe('· project window');
 
-    // Sidebar present
-    await expect(tauriPage.locator('.proj-sidebar')).toBeVisible();
-
-    // FTR stat block in sidebar
-    await expect(tauriPage.locator('.sidebar-stats')).toBeVisible();
-    const statLabel = await tauriPage.evaluate(
-      `document.querySelector('.stat-label')?.textContent?.trim()`,
+    // Sidebar leads with the project identity (icon + name), not a bare FTR number.
+    await expect(tauriPage.locator('[data-component="project-sidebar"]')).toBeVisible();
+    const sidebarName = await tauriPage.evaluate(
+      `document.querySelector('[data-component="sidebar-project-name"]')?.textContent?.trim()`,
     ) as string;
-    expect(statLabel).toBe('FTR 14d');
+    expect(Boolean(sidebarName && sidebarName.length > 0)).toBe(true);
+
+    // FTR is demoted into the Health readout at the foot of the sidebar.
+    await expect(tauriPage.locator('[data-component="project-health"]')).toBeVisible();
+    const healthText = await tauriPage.evaluate(
+      `document.querySelector('[data-component="project-health"]')?.textContent?.replace(/\\s+/g, ' ').trim()`,
+    ) as string;
+    expect(healthText).toContain('FTR · 14d');
   });
 
-  test('sidebar nav has exactly 9 items with correct kanji', async ({ tauriPage }) => {
+  test('sidebar nav lists every section with correct kanji, including Metrics', async ({ tauriPage }) => {
     if (!projectId) {
       test.skip(true, 'No projects in dev database — skipping project window tests');
       return;
     }
     await navigateTo(tauriPage, `/project/${projectId}/overview`);
-    await expect(tauriPage.locator('.proj-nav')).toBeVisible({ timeout: 10_000 });
+    await expect(
+      tauriPage.locator('[data-component="project-sidebar"] .proj-nav-item').first(),
+    ).toBeVisible({ timeout: 10_000 });
 
     const navItems = await tauriPage.evaluate(
-      `Array.from(document.querySelectorAll('.proj-nav-item')).map(el => ({
+      `Array.from(document.querySelectorAll('[data-component="project-sidebar"] .proj-nav-item')).map(el => ({
         kanji: el.querySelector('.kanji')?.textContent?.trim(),
-        label: el.querySelector('.label')?.textContent?.trim(),
+        label: el.querySelector('span:not(.kanji)')?.textContent?.trim(),
       }))`,
     ) as Array<{ kanji: string; label: string }>;
 
-    expect(navItems).toHaveLength(9);
-
     const expected = [
+      { kanji: '門', label: 'Intake'       },
       { kanji: '見', label: 'Overview'     },
+      { kanji: '計', label: 'Metrics'      },
       { kanji: '録', label: 'Sessions'     },
       { kanji: '憶', label: 'Memories'     },
       { kanji: '跡', label: 'Traceability' },
+      { kanji: '図', label: 'Atlas'        },
       { kanji: '蔵', label: 'Libraries'    },
       { kanji: '器', label: 'Instruments'  },
       { kanji: '型', label: 'Patterns'     },
@@ -245,6 +249,7 @@ test.describe('Project window — PerspectiveChrome layout', () => {
       { kanji: '情', label: 'About'        },
     ];
 
+    expect(navItems).toHaveLength(expected.length);
     expected.forEach(({ kanji, label }, i) => {
       expect(navItems[i].kanji).toBe(kanji);
       expect(navItems[i].label).toBe(label);
@@ -257,10 +262,12 @@ test.describe('Project window — PerspectiveChrome layout', () => {
       return;
     }
     await navigateTo(tauriPage, `/project/${projectId}/overview`);
-    await expect(tauriPage.locator('.proj-nav')).toBeVisible({ timeout: 10_000 });
+    await expect(
+      tauriPage.locator('[data-component="project-sidebar"] .proj-nav-item').first(),
+    ).toBeVisible({ timeout: 10_000 });
 
     const activeItem = await tauriPage.evaluate(
-      `document.querySelector('.proj-nav-item.active')?.querySelector('.label')?.textContent?.trim()`,
+      `document.querySelector('.proj-nav-item.active span:not(.kanji)')?.textContent?.trim()`,
     ) as string;
     expect(activeItem).toBe('Overview');
   });

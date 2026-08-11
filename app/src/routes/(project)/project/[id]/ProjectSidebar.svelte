@@ -1,50 +1,46 @@
 <script lang="ts">
     import { page } from '$app/state';
     import { Eyebrow } from '$lib/components';
-    import { ftrPctLabel } from '$lib/ftr.js';
+    import ProjectGlyph from '../../../(observatory)/projects/ProjectGlyph.svelte';
+    import type { ProjectIcon } from '../../../(observatory)/projects/buckets.js';
+    import { SECTIONS, isSectionActive, healthRows } from './project-sidebar-view.js';
 
     interface Props {
         projectId: string;
+        name: string;
+        client?: string | null;
+        icon: ProjectIcon;
         ftr14d: number | null; // 0..1, or null when there's no FTR data
+        sessions7d?: number | null;
     }
-    let { projectId, ftr14d }: Props = $props();
+    let { projectId, name, client = null, icon, ftr14d, sessions7d = null }: Props = $props();
 
-    const SECTIONS = [
-        { id: 'intake',       kanji: '門', label: 'Intake' },
-        { id: 'overview',     kanji: '見', label: 'Overview' },
-        { id: 'sessions',     kanji: '録', label: 'Sessions' },
-        { id: 'memories',     kanji: '憶', label: 'Memories' },
-        { id: 'traceability', kanji: '跡', label: 'Traceability' },
-        { id: 'atlas',        kanji: '図', label: 'Atlas' },
-        { id: 'libraries',    kanji: '蔵', label: 'Libraries' },
-        { id: 'instruments',  kanji: '器', label: 'Instruments' },
-        { id: 'patterns',     kanji: '型', label: 'Patterns' },
-        { id: 'impact',       kanji: '響', label: 'Impact' },
-        { id: 'about',        kanji: '情', label: 'About' },
-    ];
-
-    // "NN%" or the "—" no-data marker (never a fabricated 0%).
-    const ftrLabel = $derived(ftrPctLabel(ftr14d));
-
-    function isActive(sectionId: string): boolean {
-        return page.url.pathname.startsWith(`/project/${projectId}/${sectionId}`);
-    }
+    // FTR moves out of the identity slot and into the Health readout below —
+    // the sidebar now leads with the project, matching the mock.
+    const health = $derived(healthRows(ftr14d, sessions7d));
 </script>
 
 <aside
     data-component="project-sidebar"
     class="w-[180px] shrink-0 border-r border-paper-edge flex flex-col py-3"
 >
-    <div class="px-4 pb-4 pt-2">
-        <span class="text-2xl font-bold block">{ftrLabel}</span>
-        <span class="text-xs text-ink-soft">FTR 14d</span>
+    <!-- Identity: project icon + name (was a bare FTR number) -->
+    <div data-component="project-identity" class="px-4 pb-4 pt-2 flex flex-col gap-1.5">
+        <div class="flex items-center gap-2">
+            <ProjectGlyph {icon} />
+            <Eyebrow>Project</Eyebrow>
+        </div>
+        <span data-component="sidebar-project-name" class="text-sm font-semibold leading-tight">{name}</span>
+        {#if client}
+            <span class="mono text-xs text-ink-mute">{client}</span>
+        {/if}
     </div>
 
     <div class="px-4 pb-2"><Eyebrow>This project</Eyebrow></div>
 
     <nav class="flex flex-col" aria-label="Project sections">
         {#each SECTIONS as section (section.id)}
-            {@const active = isActive(section.id)}
+            {@const active = isSectionActive(page.url.pathname, projectId, section.id)}
             <a
                 href="/project/{projectId}/{section.id}"
                 class="proj-nav-item flex items-center gap-2.5 px-4 py-2 no-underline text-inherit text-sm transition-colors duration-fast"
@@ -55,6 +51,17 @@
             </a>
         {/each}
     </nav>
+
+    <!-- Health readout: FTR (demoted here) + recent sessions -->
+    <div data-component="project-health" class="mt-auto px-4 pt-3 flex flex-col gap-1.5 border-t border-paper-edge">
+        <Eyebrow>Health</Eyebrow>
+        {#each health as row (row.label)}
+            <div class="flex items-center justify-between text-xs">
+                <span class="text-ink-soft">{row.label}</span>
+                <span class="mono text-ink">{row.value}</span>
+            </div>
+        {/each}
+    </div>
 </aside>
 
 <style>
