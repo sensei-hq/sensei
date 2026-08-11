@@ -8,25 +8,22 @@
  * /health is a hard failure (this catches the kind of flash bug that URL
  * injection hides entirely).
  *
- * The wizard is 5 stages after the wizard → Preferences arch change:
- *   welcome → assistants → roots → scan → done
+ * Selectors are the app's stable semantic hooks (data-action / data-testid /
+ * data-component / data-rail-item) or stable copy — never utility classes — so
+ * they survive styling churn and are shared with the inspect harness.
  *
- * Everything else (Preferences, Projects, Libraries, Instruments, Providers,
- * Inference, Assignments) lives in Settings and has its own coverage.
+ * The wizard is 5 stages: welcome → assistants → roots → scan → done.
  *
  * Two flows:
  *   Flow A — Empty corpus (/tmp/sensei-e2e-empty): a folder with no git repos.
- *            Scan completes instantly.
- *
- *   Flow B — Real corpus (/tmp/sensei-e2e-corpus): a minimal git repo with a
- *            package.json.
+ *   Flow B — Real corpus (/tmp/sensei-e2e-corpus): a minimal git repo.
  *
  * Health gate: seeded via sessionStorage before each flow, matching the state
  * a real user has after passing the health screen once in the same session.
  */
 
 import { test, expect } from '../fixtures';
-import { navigateTo, DAEMON_URL } from '../helpers';
+import { navigateTo, navigateToScreen, DAEMON_URL } from '../helpers';
 import { execFileSync } from 'child_process';
 import { mkdirSync, writeFileSync, existsSync } from 'fs';
 
@@ -60,23 +57,26 @@ function createRealCorpus(): void {
 
 // ── Navigation helpers ────────────────────────────────────────────────────────
 
-async function seedHealth(tauriPage: any): Promise<void> {
-  await tauriPage.evaluate(`
-    (function() {
-      sessionStorage.setItem('sensei:health', 'ready');
-      localStorage.removeItem('sensei:setup-complete');
-    })()
-  `);
+async function bodyText(tauriPage: any): Promise<string> {
+  return (await tauriPage.evaluate(`document.body.textContent ?? ''`)) as string;
 }
 
+// `?force=1` is REQUIRED in e2e: the (config) layout's onMount redirects to the
+// observatory when `appState.setupOk` (setup already complete) unless the URL
+// carries `force=1` — the "re-run setup" escape hatch. globalSetup seeds
+// setup-complete so the observatory specs work, so without force the wizard
+// bounces to / and the rail never mounts.
+const WELCOME = '/setup/welcome?force=1';
+
 async function startAtWelcome(tauriPage: any): Promise<void> {
-  await seedHealth(tauriPage);
-  // /logs is HEALTH_EXEMPT — always reachable regardless of gate state.
-  // Visiting it unmounts the (config) layout so the next navigation remounts
-  // it fresh, triggering onMount → loadWizardData with the reset daemon.
+  // /logs is ALWAYS_REACHABLE — visiting it unmounts the (config) layout so the
+  // next navigation remounts fresh (onMount → loadWizardData with the reset
+  // daemon).
   await navigateTo(tauriPage, '/logs');
-  await navigateTo(tauriPage, '/setup/welcome');
-  await expect(tauriPage.locator('[data-testid="rail"]')).toBeVisible({ timeout: 12_000 });
+  // /setup/* is gated behind healthOk (hooks.ts::reroute); on a cold e2e DB the
+  // health probe takes ~50s to reach 'ok', so RE-navigate until the rail mounts.
+  // Mirrors the observatory shell's navigateToScreen.
+  await navigateToScreen(tauriPage, WELCOME, '[data-testid="rail"]');
 }
 
 async function clickAndExpectNav(
@@ -111,18 +111,37 @@ async function clickAndExpectNav(
   }
 }
 
-/** Drive the wizard from welcome to the scan page with the given corpus path. */
+/** Clear any roots accumulated from previous runs (idempotent). */
+async function clearRoots(tauriPage: any): Promise<void> {
+  const removes = tauriPage.locator('[data-testid="root-remove"]');
+  // Remove one at a time, waiting for EACH removal (api + state update) to land
+  // before the next click — clicking all at once races the async removals and
+  // leaves a residual root, which then fails a "no roots" assertion.
+  for (let n = await removes.count(); n > 0; n--) {
+    await removes.first().click();
+    await expect(removes).toHaveCount(n - 1, { timeout: 10_000 });
+  }
+}
+
+/** Drive the wizard from welcome to the scan page with the given corpus path.
+ *  The scan stage auto-starts on mount, so no "Begin scan" click is needed. */
 async function driveToScan(tauriPage: any, corpusPath: string): Promise<void> {
   await clickAndExpectNav(tauriPage, '[data-action="next"]', '/setup/assistants');
   await clickAndExpectNav(tauriPage, '[data-action="next"]', '/setup/roots');
   await tauriPage.locator('.folder-input').fill(corpusPath);
   await tauriPage.click('.btn-solid'); // Add folder
+  // Adding a root is async; Continue gates on roots.length > 0. Wait for it to
+  // enable before clicking, or the click lands while disabled and we're stuck.
+  await expect(tauriPage.locator('[data-action="next"]')).toBeEnabled({ timeout: 10_000 });
   await clickAndExpectNav(tauriPage, '[data-action="next"]', '/setup/scan');
 }
 
 // ── Flow A: Empty corpus ──────────────────────────────────────────────────────
 
 test.describe('Setup Wizard — Flow A: empty corpus', () => {
+  // /setup/* is health-gated; a cold e2e boot takes ~50s, longer than the
+  // default 60s per-test timeout (matches the multi-window gated-route budget).
+  test.describe.configure({ timeout: 150_000 });
   test.beforeAll(() => { createEmptyCorpus(); });
 
   test.beforeEach(async ({ tauriPage }) => {
@@ -132,11 +151,10 @@ test.describe('Setup Wizard — Flow A: empty corpus', () => {
 
   // ── Welcome ─────────────────────────────────────────────────────────────
   test('welcome: hero text, three pillars, Continue enabled', async ({ tauriPage }) => {
-    await expect(tauriPage.locator('.hero')).toContainText('A teacher does not');
-    await expect(tauriPage.locator('.hero-accent')).toContainText('write the code');
-    await expect(tauriPage.locator('.pillar-title').nth(0)).toContainText('Observe');
-    await expect(tauriPage.locator('.pillar-title').nth(1)).toContainText('Teach');
-    await expect(tauriPage.locator('.pillar-title').nth(2)).toContainText('Local');
+    const text = await bodyText(tauriPage);
+    expect(text).toContain('A teacher does not');
+    expect(text).toContain('write the code');
+    for (const pillar of ['Observe', 'Teach', 'Local']) expect(text).toContain(pillar);
     await expect(tauriPage.locator('[data-action="next"]')).toBeEnabled();
   });
 
@@ -147,16 +165,23 @@ test.describe('Setup Wizard — Flow A: empty corpus', () => {
   // ── Assistants ───────────────────────────────────────────────────────────
   test('assistants: cards render or empty state, Continue always enabled', async ({ tauriPage }) => {
     await clickAndExpectNav(tauriPage, '[data-action="next"]', '/setup/assistants');
-    await expect(tauriPage.locator('.assistants')).toBeVisible({ timeout: 8_000 });
 
-    const cardCount = await tauriPage.locator('.card').count();
-    if (cardCount > 0) {
-      const names = await tauriPage.evaluate(
-        `Array.from(document.querySelectorAll('.card-name')).map(el => el.textContent?.trim() ?? '')`
-      ) as string[];
-      for (const name of names) expect(name.length).toBeGreaterThan(0);
+    const cards = tauriPage.locator('[data-testid^="assistant-card-"]');
+    // The SSE-driven list is async — wait until it settles into ONE of the two
+    // honest outcomes (a card is present, or the explicit empty message), then
+    // assert that outcome specifically.
+    await expect
+      .poll(
+        async () =>
+          (await cards.count()) > 0 ||
+          (await bodyText(tauriPage)).includes('No AI coding assistants detected'),
+        { timeout: 8_000 },
+      )
+      .toBe(true);
+    if ((await cards.count()) === 0) {
+      expect(await bodyText(tauriPage)).toContain('No AI coding assistants detected');
     } else {
-      await expect(tauriPage.locator('.empty')).toBeVisible();
+      await expect(cards.first()).toBeVisible();
     }
     await expect(tauriPage.locator('[data-action="next"]')).toBeEnabled();
   });
@@ -170,12 +195,7 @@ test.describe('Setup Wizard — Flow A: empty corpus', () => {
   test('roots: gate — disabled with no roots, enabled after adding one', async ({ tauriPage }) => {
     await clickAndExpectNav(tauriPage, '[data-action="next"]', '/setup/assistants');
     await clickAndExpectNav(tauriPage, '[data-action="next"]', '/setup/roots');
-
-    // Clear any roots accumulated from previous test runs.
-    const removes = tauriPage.locator('.btn-remove');
-    for (let i = await removes.count(); i > 0; i--) {
-      await removes.first().click();
-    }
+    await clearRoots(tauriPage);
 
     await expect(tauriPage.locator('[data-action="next"]')).toBeDisabled();
     await tauriPage.locator('.folder-input').fill(EMPTY_CORPUS);
@@ -186,31 +206,25 @@ test.describe('Setup Wizard — Flow A: empty corpus', () => {
   test('roots: Enter key adds folder, duplicate is rejected', async ({ tauriPage }) => {
     await clickAndExpectNav(tauriPage, '[data-action="next"]', '/setup/assistants');
     await clickAndExpectNav(tauriPage, '[data-action="next"]', '/setup/roots');
+    await clearRoots(tauriPage);
 
-    const removes = tauriPage.locator('.btn-remove');
-    for (let i = await removes.count(); i > 0; i--) {
-      await removes.first().click();
-    }
-
+    const rootPath = tauriPage.locator('[data-component="root-path"]').filter({ hasText: EMPTY_CORPUS });
     await tauriPage.locator('.folder-input').fill(EMPTY_CORPUS);
     await tauriPage.locator('.folder-input').press('Enter');
-    await expect(tauriPage.locator('.folder-path').filter({ hasText: EMPTY_CORPUS })).toBeVisible();
+    await expect(rootPath).toBeVisible();
     await tauriPage.locator('.folder-input').fill(EMPTY_CORPUS);
     await tauriPage.click('.btn-solid');
-    await expect(tauriPage.locator('.folder-path').filter({ hasText: EMPTY_CORPUS })).toHaveCount(1);
+    await expect(rootPath).toHaveCount(1);
   });
 
   // ── Scan (empty corpus) ──────────────────────────────────────────────────
-  test('scan: Begin scan → stats bar, Continue disabled then enabled when idle', async ({ tauriPage }) => {
+  test('scan: auto-starts → stats + tasks panel, Continue enables when idle', async ({ tauriPage }) => {
     await driveToScan(tauriPage, EMPTY_CORPUS);
 
-    await expect(tauriPage.locator('[data-action="next"]')).toBeDisabled();
-    await expect(tauriPage.locator('.hero-card')).toBeVisible();
-
-    await tauriPage.click('.btn-solid'); // Begin scan
-    await expect(tauriPage.locator('.stats-bar')).toBeVisible({ timeout: 5_000 });
-    await expect(tauriPage.locator('.hero-card')).not.toBeVisible();
-    await expect(tauriPage.locator('.stat-label').nth(0)).toContainText('ROOTS');
+    // Scan engages on mount — the started view (stats bar + tasks panel) renders
+    // without a manual Begin-scan click.
+    await expect(tauriPage.locator('[data-testid="scan-tasks-panel"]')).toBeVisible({ timeout: 8_000 });
+    expect(await bodyText(tauriPage)).toContain('ROOTS');
 
     await expect(tauriPage.locator('[data-action="next"]')).toBeEnabled({ timeout: 20_000 });
   });
@@ -218,7 +232,6 @@ test.describe('Setup Wizard — Flow A: empty corpus', () => {
   // ── Scan → Done ──────────────────────────────────────────────────────────
   test('scan → done: Continue reaches the observatory-entry ceremony', async ({ tauriPage }) => {
     await driveToScan(tauriPage, EMPTY_CORPUS);
-    await tauriPage.click('.btn-solid');
     await expect(tauriPage.locator('[data-action="next"]')).toBeEnabled({ timeout: 20_000 });
 
     await clickAndExpectNav(tauriPage, '[data-action="next"]', '/setup/done');
@@ -230,6 +243,7 @@ test.describe('Setup Wizard — Flow A: empty corpus', () => {
 // ── Flow B: Real corpus ───────────────────────────────────────────────────────
 
 test.describe('Setup Wizard — Flow B: real corpus', () => {
+  test.describe.configure({ timeout: 150_000 });
   test.beforeAll(() => { createRealCorpus(); });
 
   test.beforeEach(async ({ tauriPage }) => {
@@ -239,9 +253,8 @@ test.describe('Setup Wizard — Flow B: real corpus', () => {
 
   test('scan: real corpus scan starts, stats visible, Continue enables when idle', async ({ tauriPage }) => {
     await driveToScan(tauriPage, REAL_CORPUS);
-    await tauriPage.click('.btn-solid');
-    await expect(tauriPage.locator('.stats-bar')).toBeVisible({ timeout: 5_000 });
-    await expect(tauriPage.locator('.stat-label').nth(0)).toContainText('ROOTS');
+    await expect(tauriPage.locator('[data-testid="scan-tasks-panel"]')).toBeVisible({ timeout: 8_000 });
+    expect(await bodyText(tauriPage)).toContain('ROOTS');
     await expect(tauriPage.locator('[data-action="next"]')).toBeEnabled({ timeout: 60_000 });
   });
 });
@@ -249,14 +262,12 @@ test.describe('Setup Wizard — Flow B: real corpus', () => {
 // ── Rail structure (fast standalone checks) ───────────────────────────────────
 
 test.describe('Setup Wizard — Rail', () => {
+  test.describe.configure({ timeout: 150_000 });
   test.beforeEach(async ({ tauriPage }) => {
-    await seedHealth(tauriPage);
-    await navigateTo(tauriPage, '/setup/welcome');
-    await expect(tauriPage.locator('[data-testid="rail"]')).toBeVisible({ timeout: 12_000 });
+    await navigateToScreen(tauriPage, WELCOME, '[data-testid="rail"]');
   });
 
-  // The rail iterates every entry in STAGES (5 after the wizard →
-  // Preferences arch change).
+  // The rail iterates every entry in STAGES (5 stages).
   test('shows 5 stages in the rail', async ({ tauriPage }) => {
     await expect(tauriPage.locator('[data-rail-item]')).toHaveCount(5);
   });
