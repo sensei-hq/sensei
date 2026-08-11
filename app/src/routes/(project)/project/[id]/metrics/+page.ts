@@ -1,11 +1,13 @@
 import type { PageLoad } from './$types.js';
 import { senseiApi } from '$lib/api.js';
 import { appState } from '$lib/appstate.svelte.js';
-import { seriesValues } from '$lib/metrics/metric-view.js';
+import { seriesValues, type MetricsNarrative } from '$lib/metrics/metric-view.js';
 
-// The metrics pane joins two daemon surfaces: the per-project *values*
-// (/metrics) and the *catalog* (/metrics/registry) that alone carries each
-// metric's `family` for grouping — plus a per-metric series for the sparklines.
+// The metrics pane joins three daemon surfaces: the per-project *values*
+// (/metrics) — which now also carry an optional daemon-generated `narrative`
+// (headline + per-signal insights, from the local ollama insight-copy pipeline;
+// absent when the model is unavailable) — the *catalog* (/metrics/registry) that
+// alone carries each metric's `family`, and a per-metric series for sparklines.
 export const load: PageLoad = async ({ params }) => {
     const api = senseiApi(appState.port);
     const [metricsRes, registryRes] = await Promise.all([
@@ -17,12 +19,18 @@ export const load: PageLoad = async ({ params }) => {
     // hides a broken daemon (no-fabrication). Honest-empty (a project with no
     // computed metrics yet) returns error: null with an empty rows array.
     if (!metricsRes.ok) {
-        const series: Record<string, number[]> = {};
-        return { rows: [], registry: [], series, error: metricsRes.error.message };
+        return {
+            rows: [],
+            registry: [],
+            series: {} as Record<string, number[]>,
+            narrative: null as MetricsNarrative | null,
+            error: metricsRes.error.message,
+        };
     }
 
     const rows = metricsRes.data.metrics ?? [];
     const registry = registryRes.ok ? (registryRes.data.metrics ?? []) : [];
+    const narrative = metricsRes.data.narrative ?? null;
 
     // One series per metric, fetched in parallel. A missing/failed series just
     // omits that card's sparkline — the value + trend still render.
@@ -34,5 +42,5 @@ export const load: PageLoad = async ({ params }) => {
     );
 
     const series: Record<string, number[]> = Object.fromEntries(seriesPairs);
-    return { rows, registry, series, error: null };
+    return { rows, registry, series, narrative, error: null };
 };

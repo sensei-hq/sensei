@@ -6,6 +6,14 @@ import {
     toMetricCard,
     groupByFamily,
     METRIC_NONE,
+    toneColor,
+    toSignal,
+    buildSignals,
+    healthSignal,
+    pickMovers,
+    orderSignals,
+    deterministicHeadline,
+    seriesDistribution,
     type ProjectMetricRow,
     type MetricFamily,
 } from './metric-view.js';
@@ -169,5 +177,167 @@ describe('groupByFamily', () => {
         expect(sections).toHaveLength(1);
         expect(sections[0].family).toBe('tool');
         expect(sections[0].cards[0].key).toBe('brand_new_metric');
+    });
+});
+
+// ── "The merge" UX signal view-model ────────────────────────────────────────
+
+const famOf = (key: string): MetricFamily | undefined =>
+    ({
+        project_health: 'composite',
+        churn_concentration: 'quality',
+        time_to_useful_result: 'velocity',
+        unused_tools: 'tool',
+    })[key] as MetricFamily | undefined;
+
+describe('toneColor', () => {
+    it('maps good→success, bad→accent, neutral/absent→ink-faint (the grid legend)', () => {
+        expect(toneColor('good')).toBe('success');
+        expect(toneColor('bad')).toBe('accent');
+        expect(toneColor('neutral')).toBe('ink-faint');
+        expect(toneColor(null)).toBe('ink-faint');
+    });
+});
+
+describe('toSignal', () => {
+    it('reframes unused_tools as "N of M relevant tools used" from props', () => {
+        const s = toSignal(
+            row({
+                metric: 'unused_tools',
+                metric_type: 'count',
+                direction: 'lower_better',
+                value: 3, // unused = M - N
+                props: { total_tools: 106, relevant_tools: 12, used_tools: 9 },
+                name: 'Unused-tool count',
+            }),
+            famOf,
+        );
+        expect(s.name).toBe('Tools used');
+        expect(s.value).toBe('9 of 12');
+        expect(s.sub).toContain('relevant');
+        expect(s.sub).toContain('106 registered');
+        expect(s.insight).toContain('9 of 12 relevant tools');
+        expect(s.insight).toContain('106 registered');
+    });
+
+    it('worsening lower_better metric (value rose) is accent-colored + a mover', () => {
+        const s = toSignal(
+            row({
+                metric: 'churn_concentration',
+                metric_type: 'pct',
+                direction: 'higher_better',
+                value: 0.57,
+                prior: 0.36,
+                delta: 0.21,
+            }),
+            famOf,
+        );
+        // higher_better and rose → improving → success. Flip the direction:
+        expect(s.color).toBe('success');
+        expect(s.moved).toBe(true);
+        const worse = toSignal(
+            row({
+                metric: 'time_to_useful_result',
+                metric_type: 'duration',
+                direction: 'lower_better',
+                value: 796,
+                prior: 273,
+                delta: 523,
+            }),
+            famOf,
+        );
+        expect(worse.color).toBe('accent'); // duration rose on a lower_better metric
+        expect(worse.moved).toBe(true);
+    });
+
+    it('deterministic insight states value, num/den, and change — no invented data', () => {
+        const s = toSignal(
+            row({
+                metric: 'churn_concentration',
+                name: 'Churn concentration',
+                metric_type: 'pct',
+                direction: 'higher_better',
+                value: 0.57,
+                props: { numerator: 190, denominator: 333 },
+                prior: 0.36,
+                delta: 0.21,
+            }),
+            famOf,
+        );
+        expect(s.insight).toBe('Churn concentration is 57% (190 / 333), +21 pt vs the prior period.');
+    });
+
+    it('an ollama insight overrides the deterministic sentence when present', () => {
+        const s = toSignal(
+            row({ metric: 'churn_concentration', metric_type: 'pct', value: 0.57, delta: 0.21 }),
+            famOf,
+            { insights: { churn_concentration: 'Work is circling the same files.' } },
+        );
+        expect(s.insight).toBe('Work is circling the same files.');
+    });
+
+    it('no prior → no trend chip, first-period insight, not a mover', () => {
+        const s = toSignal(row({ metric: 'churn_concentration', value: 0.5, delta: null }), famOf);
+        expect(s.trend).toBeNull();
+        expect(s.moved).toBe(false);
+        expect(s.insight).toContain('first period on record');
+    });
+});
+
+describe('movers + ordering', () => {
+    const rows: ProjectMetricRow[] = [
+        row({ metric: 'project_health', metric_type: 'score', value: 44, prior: 46, delta: -2 }),
+        row({ metric: 'churn_concentration', metric_type: 'pct', value: 0.57, prior: 0.36, delta: 0.21 }),
+        row({ metric: 'time_to_useful_result', metric_type: 'duration', direction: 'lower_better', value: 796, prior: 273, delta: 523 }),
+        row({ metric: 'unused_tools', metric_type: 'count', direction: 'lower_better', value: 3, prior: 3, delta: 0, props: { total_tools: 106, relevant_tools: 12, used_tools: 9 } }),
+    ];
+    const signals = buildSignals(rows, famOf);
+
+    it('health is the hero, never a mover', () => {
+        expect(healthSignal(signals)?.key).toBe('project_health');
+        expect(pickMovers(signals).some((s) => s.key === 'project_health')).toBe(false);
+    });
+
+    it('movers exclude the flat signal and rank by relative magnitude', () => {
+        const movers = pickMovers(signals);
+        expect(movers.map((s) => s.key)).not.toContain('unused_tools'); // flat (delta 0)
+        // time_to_useful (523/273 ≈ 1.92) outranks churn_concentration (0.21/0.36 ≈ 0.58)
+        expect(movers[0].key).toBe('time_to_useful_result');
+        expect(movers[1].key).toBe('churn_concentration');
+    });
+
+    it('grid order is composite first, then movers, then the rest', () => {
+        const ordered = orderSignals(signals).map((s) => s.key);
+        expect(ordered[0]).toBe('project_health');
+        expect(ordered.indexOf('time_to_useful_result')).toBeLessThan(ordered.indexOf('unused_tools'));
+    });
+});
+
+describe('deterministicHeadline', () => {
+    it('counts movers and their direction', () => {
+        const signals = buildSignals(
+            [
+                row({ metric: 'project_health', metric_type: 'score', value: 44, prior: 46, delta: -2 }),
+                row({ metric: 'churn_concentration', metric_type: 'pct', direction: 'higher_better', value: 0.57, prior: 0.36, delta: 0.21 }),
+                row({ metric: 'time_to_useful_result', metric_type: 'duration', direction: 'lower_better', value: 796, prior: 273, delta: 523 }),
+            ],
+            famOf,
+        );
+        const h = deterministicHeadline(signals);
+        expect(h).toContain('2 signals moved');
+        expect(h).toContain('1 worsening');
+        expect(h).toContain('1 improving');
+    });
+
+    it('says nothing moved when all are flat', () => {
+        const signals = buildSignals([row({ metric: 'churn_concentration', delta: 0 })], famOf);
+        expect(deterministicHeadline(signals)).toContain('Nothing moved');
+    });
+});
+
+describe('seriesDistribution', () => {
+    it('returns high/mean/low, or null for an empty series', () => {
+        expect(seriesDistribution([])).toBeNull();
+        expect(seriesDistribution([0.25, 0.61, 0.43])).toEqual({ high: 0.61, mean: 0.43, low: 0.25 });
     });
 });

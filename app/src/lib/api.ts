@@ -27,7 +27,7 @@ import type {
   ConsolidatedRuleset, ConsolidateResult,
 } from '../routes/(observatory)/consolidation/consolidation-view.js';
 import type {
-  ProjectMetricRow, RegistryMetric, MetricSeriesPoint,
+  ProjectMetricRow, RegistryMetric, MetricSeriesPoint, MetricsNarrative,
 } from './metrics/metric-view.js';
 
 export type ApiError = { status: number; message: string } | { status: 0; message: string };
@@ -267,7 +267,9 @@ export function senseiApi(port: number) {
     // project with no computed metrics yet, so the screen shows an error state
     // rather than an empty grid that hides a broken daemon (no-fabrication).
     getProjectMetrics: (id: string) =>
-      tryGet<{ metrics: ProjectMetricRow[]; count: number }>(`/api/projects/${enc(id)}/metrics`),
+      tryGet<{ metrics: ProjectMetricRow[]; count: number; narrative?: MetricsNarrative | null }>(
+        `/api/projects/${enc(id)}/metrics`,
+      ),
 
     // The catalog — the only surface that carries each metric's `family`, joined
     // client-side to group the per-project values into sections.

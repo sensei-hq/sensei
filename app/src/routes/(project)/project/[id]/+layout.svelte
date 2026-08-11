@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { page } from '$app/state';
     import ProjectSidebar from './ProjectSidebar.svelte';
     import ProjectGlyph from '../../../(observatory)/projects/ProjectGlyph.svelte';
     import { projectIcon } from '../../../(observatory)/projects/buckets.js';
@@ -6,6 +7,11 @@
     import { appState } from '$lib/appstate.svelte.js';
 
     let { data, children } = $props();
+
+    // The active section id from /project/{id}/{section} — exposed as a stable
+    // data-section hook on <main> so e2e + the inspect harness can target any
+    // section page by name without depending on per-page markup.
+    const section = $derived(page.url.pathname.split('/')[3] ?? 'overview');
 
     // Resolve the icon the same way the project cards do: an image icon (e.g. a
     // repo logo .svg) renders as an <img>, a kanji icon as a glyph, else the 場
@@ -42,7 +48,7 @@
             sessions7d={data.ftrMetrics?.sessions7d ?? null}
         />
 
-        <main class="flex-1 overflow-y-auto">
+        <main data-component="project-main" data-section={section} class="flex-1 overflow-y-auto">
             {@render children()}
         </main>
     </div>
