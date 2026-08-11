@@ -14,7 +14,9 @@
 //! dev. Compile-time decision; no env vars involved.
 
 use dbd_core::adapter::postgres::PostgresAdapter;
+use dbd_core::design::Progress;
 use dbd_core::{deploy::resolve_source, Design};
+use std::sync::{Arc, Mutex};
 
 use crate::config::SenseiConfig;
 
@@ -114,7 +116,7 @@ pub fn deploy(db_name: &str, app_version: &str) -> Result<(), String> {
         .map_err(|e| format!("tokio runtime error: {e}"))?;
 
     rt.block_on(async {
-        let project_dir = resolve_source(&source)
+        let project_dir = resolve_source(&source, false)
             .await
             .map_err(|e| format!("dbd source resolution failed ({source}): {e}"))?;
         tracing::debug!(project_dir = %project_dir.display(), "dbd source resolved");
@@ -135,38 +137,66 @@ pub fn deploy(db_name: &str, app_version: &str) -> Result<(), String> {
             .await
             .map_err(|e| format!("dbd database connection failed: {e}"))?;
 
-        // Call apply + import_data directly (what design.deploy does
-        // under the hood in dbd-core v0.3.x) so we can wire the
-        // on_start/on_done callbacks into tracing. Without these, the
-        // single error string at the end gives no hint about which
-        // entity / migration / staging table actually failed.
+        // Apply schema + import seed data (dbd v0.10.x). We drive the two phases
+        // via `apply`/`import_data` rather than the silent `design.deploy()` so
+        // per-item failures surface through the Progress callbacks — a seed
+        // rejected by a constraint becomes a WARN naming the table AND a hard
+        // Err, never a swallowed silent failure. Each phase runs in its own
+        // transaction and rolls back cleanly on error.
+        let apply_failures: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let import_failures: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+
         tracing::info!("dbd phase: apply");
-        design.apply(
-            &adapter,
-            None,           // entity-name filter
-            false,          // dry_run
-            Some(&scope),   // scope: the `default` scope — everything except the dojo service schema
-            |desc: &str| tracing::debug!(dbd_step = "apply", desc, "starting"),
-            |desc: &str, err: Option<&str>| match err {
-                Some(e) => tracing::warn!(dbd_step = "apply", desc, error = e, "failed"),
-                None    => tracing::debug!(dbd_step = "apply", desc, "done"),
-            },
-            |_summary| tracing::info!("dbd apply complete"),
-        ).await.map_err(|e| format!("dbd apply failed: {e}"))?;
+        design
+            .apply(
+                &adapter,
+                None,
+                false,
+                Some(&scope),
+                Progress {
+                    on_start: |desc: &str| tracing::debug!(dbd_step = "apply", desc, "starting"),
+                    on_done: {
+                        let f = apply_failures.clone();
+                        move |desc: &str, err: Option<&str>| match err {
+                            Some(e) => {
+                                tracing::warn!(dbd_step = "apply", desc, error = e, "failed");
+                                f.lock().expect("apply-failure mutex poisoned").push(format!("{desc}: {e}"));
+                            }
+                            None => tracing::debug!(dbd_step = "apply", desc, "done"),
+                        }
+                    },
+                    on_complete: |_summary| tracing::info!("dbd apply complete"),
+                },
+            )
+            .await
+            .map_err(|e| format!("dbd apply failed: {e}"))?;
+        surface_step_failures("apply", &apply_failures)?;
 
         tracing::info!("dbd phase: import_data");
-        design.import_data(
-            &adapter,
-            None,
-            false,
-            Some(&scope),   // scope: the `default` scope — everything except the dojo service schema
-            |desc: &str| tracing::debug!(dbd_step = "import", desc, "starting"),
-            |desc: &str, err: Option<&str>| match err {
-                Some(e) => tracing::warn!(dbd_step = "import", desc, error = e, "failed"),
-                None    => tracing::debug!(dbd_step = "import", desc, "done"),
-            },
-            |_summary| tracing::info!("dbd import complete"),
-        ).await.map_err(|e| format!("dbd import failed: {e}"))?;
+        design
+            .import_data(
+                &adapter,
+                None,
+                false,
+                Some(&scope),
+                Progress {
+                    on_start: |desc: &str| tracing::debug!(dbd_step = "import", desc, "starting"),
+                    on_done: {
+                        let f = import_failures.clone();
+                        move |desc: &str, err: Option<&str>| match err {
+                            Some(e) => {
+                                tracing::warn!(dbd_step = "import", desc, error = e, "failed");
+                                f.lock().expect("import-failure mutex poisoned").push(format!("{desc}: {e}"));
+                            }
+                            None => tracing::debug!(dbd_step = "import", desc, "done"),
+                        }
+                    },
+                    on_complete: |_summary| tracing::info!("dbd import complete"),
+                },
+            )
+            .await
+            .map_err(|e| format!("dbd import failed: {e}"))?;
+        surface_step_failures("import", &import_failures)?;
 
         tracing::info!("dbd deploy complete");
         Ok::<(), String>(())
@@ -180,6 +210,24 @@ pub fn deploy(db_name: &str, app_version: &str) -> Result<(), String> {
         tracing::warn!(error = %e, "bundled-pack seed skipped (non-fatal)");
     }
     Ok(())
+}
+
+/// Fold per-item failures captured from dbd's `apply`/`import_data` Progress
+/// callbacks into one hard error naming the offending item(s) — so a partial
+/// deploy surfaces its cause instead of passing silently.
+fn surface_step_failures(
+    phase: &str,
+    failures: &Arc<Mutex<Vec<String>>>,
+) -> Result<(), String> {
+    let failures = failures.lock().expect("dbd-failure mutex poisoned");
+    if failures.is_empty() {
+        return Ok(());
+    }
+    Err(format!(
+        "dbd {phase} reported {} failed item(s): {}",
+        failures.len(),
+        failures.join("; ")
+    ))
 }
 
 /// CALL the bundled-pack seed procedures (D-SEED / D-LOCAL-PACKS): the default
