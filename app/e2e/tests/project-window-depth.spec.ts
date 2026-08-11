@@ -11,7 +11,7 @@
  */
 
 import { test, expect } from '../fixtures';
-import { navigateTo, DAEMON_URL } from '../helpers';
+import { navigateToScreen, DAEMON_URL } from '../helpers';
 
 type Project = { id: string; name: string };
 
@@ -38,13 +38,15 @@ test.describe('Project window — Sessions depth', () => {
     if (!project) { test.skip(true, 'no projects registered'); return; }
     // Project Sessions now shares the Observatory digest rows; scope by the
     // widest window so the rendered 90d slice matches this fetch.
-    const scoped = await safeJson<Array<{ id: string }>>(
-      `${DAEMON_URL}/api/sessions?project=${project.id}&range=90d`, [],
+    // /api/sessions returns a digest object { stats, sessions: [...], … } — read
+    // the nested array so the existence-guard skips honestly on a 0-session
+    // project (a bare `.length` on the object is undefined → never skips).
+    const scoped = await safeJson<{ sessions: Array<{ id: string }> }>(
+      `${DAEMON_URL}/api/sessions?project=${project.id}&range=90d`, { sessions: [] },
     );
-    if (scoped.length === 0) { test.skip(true, 'no sessions on this project'); return; }
+    if (scoped.sessions.length === 0) { test.skip(true, 'no sessions on this project'); return; }
 
-    await navigateTo(tauriPage, `/project/${project.id}/sessions`);
-    await tauriPage.waitForSelector('[data-testid="project-sessions"]', 15_000);
+    await navigateToScreen(tauriPage, `/project/${project.id}/sessions`, '[data-testid="project-sessions"]');
     await tauriPage.locator('[data-testid="range-90d"]').click();
     await tauriPage.waitForSelector('[data-session-row]', 15_000);
 
@@ -88,7 +90,7 @@ test.describe('Project window — Memories anatomy', () => {
     expect(seededId).toMatch(/[0-9a-f-]{36}/);
 
     try {
-      await navigateTo(tauriPage, `/project/${project.id}/memories`);
+      await navigateToScreen(tauriPage, `/project/${project.id}/memories`, '[data-component="project-main"][data-section="memories"]');
       await tauriPage.waitForSelector(`[data-testid="memory-open-${seededId}"]`, 15_000);
       await tauriPage.locator(`[data-testid="memory-open-${seededId}"]`).click();
       const anatomy = tauriPage.locator('[data-testid="memory-anatomy"]');
@@ -146,7 +148,7 @@ test.describe('Project window — Traceability diff', () => {
     expect(driftId).toMatch(/[0-9a-f-]{36}/);
 
     try {
-      await navigateTo(tauriPage, `/project/${project.id}/traceability`);
+      await navigateToScreen(tauriPage, `/project/${project.id}/traceability`, '[data-component="project-main"][data-section="traceability"]');
       await tauriPage.waitForSelector(`[data-testid="drift-toggle-${driftId}"]`, 15_000);
       await tauriPage.locator(`[data-testid="drift-toggle-${driftId}"]`).click();
       const diff = tauriPage.locator(`[data-testid="drift-diff-${driftId}"]`);
@@ -178,7 +180,7 @@ test.describe('Project window — Patterns FTR delta', () => {
     const all = [...patterns.followed, ...patterns.antiPatterns];
     if (all.length === 0) { test.skip(true, 'no patterns detected on this project'); return; }
 
-    await navigateTo(tauriPage, `/project/${project.id}/patterns`);
+    await navigateToScreen(tauriPage, `/project/${project.id}/patterns`, '[data-component="project-main"][data-section="patterns"]');
     const first = all[0];
     await tauriPage.waitForSelector(`[data-testid="pattern-ftr-delta-${first.id}"]`, 15_000);
     const text = await tauriPage.evaluate(`

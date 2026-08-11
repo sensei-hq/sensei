@@ -1,7 +1,7 @@
 /**
- * Inspect the REAL project Metrics pane for live projects (sensei, dbd, rokkit).
- * Not a regression gate — captures /tmp/sensei-shots/metrics-<project>.png and
- * logs the rendered cards so the wired /project/[id]/metrics screen can be
+ * Inspect the REAL project Metrics screens for live projects (sensei, dbd,
+ * rokkit). Not a regression gate — captures /tmp/sensei-shots/*.png and logs the
+ * rendered signals so the "merge" landing + the master-detail drill-down can be
  * eyeballed against live data. Run: `bun run test:inspect`.
  */
 import { test } from '../fixtures';
@@ -32,6 +32,7 @@ test.describe('inspect real project metrics', () => {
         return;
       }
 
+      // ── Landing: interpreted headline + movers + uniform grid ──
       await navigateToScreen(
         tauriPage,
         `/project/${id}/metrics`,
@@ -39,18 +40,45 @@ test.describe('inspect real project metrics', () => {
       );
       await settle();
 
-      const cards = (await tauriPage.evaluate(`
-        Array.from(document.querySelectorAll('[data-component="metric-card"]')).map(c => ({
-          name: c.querySelector('span.text-xs')?.textContent?.trim(),
-          value: c.querySelector('[data-component="metric-value"]')?.textContent?.trim(),
-          trend: c.querySelector('[data-component="metric-trend"]')?.textContent?.replace(/\\s+/g,' ').trim() || null,
-        }))
-      `)) as Array<{ name?: string; value?: string; trend: string | null }>;
+      const landing = (await tauriPage.evaluate(`
+        (() => {
+          const txt = (sel) => document.querySelector(sel)?.textContent?.replace(/\\s+/g,' ').trim() ?? null;
+          const cells = Array.from(document.querySelectorAll('[data-component="signal-cell"]')).map(c => ({
+            key: c.getAttribute('data-signal'),
+            moved: c.getAttribute('data-moved'),
+            value: c.querySelector('[data-component="signal-value"]')?.textContent?.trim(),
+            delta: c.querySelector('[data-component="signal-delta"]')?.textContent?.trim() || null,
+          }));
+          const movers = Array.from(document.querySelectorAll('[data-component="mover-card"]')).map(m => m.getAttribute('data-signal'));
+          const tools = document.querySelector('[data-component="signal-cell"][data-signal="unused_tools"] [data-component="signal-value"]')?.textContent?.trim() ?? null;
+          return { headline: txt('[data-component="metrics-headline"]'), movers, tools, cells };
+        })()
+      `)) as { headline: string | null; movers: string[]; tools: string | null; cells: Array<{ key: string; moved: string; value?: string; delta: string | null }> };
 
-      console.log(`\n[inspect] ${name} — ${cards.length} metric cards:`);
-      for (const c of cards) console.log(`  ${(c.value ?? '').padEnd(9)} ${c.name ?? ''}${c.trend ? '  ' + c.trend : ''}`);
-
+      console.log(`\n[inspect] ${name} — headline: ${landing.headline ?? '(none)'}`);
+      console.log(`[inspect] ${name} — movers: ${landing.movers.join(', ') || '(none)'}`);
+      console.log(`[inspect] ${name} — tools cell (N of M): ${landing.tools ?? '(n/a)'}`);
+      console.log(`[inspect] ${name} — ${landing.cells.length} signal cells:`);
+      for (const c of landing.cells) {
+        console.log(`  ${(c.value ?? '').padEnd(11)} ${(c.key ?? '').padEnd(24)} moved=${c.moved}${c.delta ? '  ' + c.delta : ''}`);
+      }
       await tauriPage.screenshot({ path: `${DIR}/metrics-${name}.png` });
+
+      // ── Detail: drill into the first signal (a mover if any, else the first cell) ──
+      const drillKey = landing.movers[0] ?? landing.cells[0]?.key;
+      if (drillKey) {
+        await navigateToScreen(
+          tauriPage,
+          `/project/${id}/metrics/${drillKey}`,
+          '[data-component="signal-detail"]',
+        );
+        await settle();
+        const insight = (await tauriPage.evaluate(
+          `document.querySelector('[data-component="signal-insight"]')?.textContent?.replace(/\\s+/g,' ').trim() ?? null`,
+        )) as string | null;
+        console.log(`[inspect] ${name} — detail(${drillKey}) insight: ${insight ?? '(none)'}`);
+        await tauriPage.screenshot({ path: `${DIR}/metrics-${name}-detail.png` });
+      }
     });
   }
 });

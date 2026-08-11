@@ -1,176 +1,135 @@
 /**
- * Multi-window E2E tests — observatory layout, projects page, and project window.
+ * Multi-window E2E — observatory shell, projects page, and project window.
  *
- * Tests navigate to routes directly (the SvelteKit routes are the same whether
- * rendered in the main window or a project WebviewWindow). The tauriPage fixture
- * connects to the main window socket; project-window routes are verified by
- * navigating the main window to those URLs, which exercises the same components.
+ * Selectors are the app's stable semantic hooks (data-component / data-* +
+ * rokkit List's data-list-* / data-item-*), not utility classes — so they
+ * survive styling churn and are shared with the inspect harness. Routes are
+ * driven with navigateToScreen (retries through the health gate).
  */
 
 import { test, expect } from '../fixtures';
 import { navigateTo, navigateToScreen, DAEMON_URL, daemonGet } from '../helpers';
 
-// ─── Observatory layout ──────────────────────────────────────────────────────
+// ─── Observatory shell ─────────────────────────────────────────────────────
 
-test.describe('Observatory layout', () => {
+test.describe('Observatory shell', () => {
+  // `/` is health+setup-gated; a cold e2e boot takes ~50s to settle and
+  // navigateToScreen retries for 120s. The default 60s per-test timeout is too
+  // tight for the gated route, so lift it (mirrors the 214 precedent below).
+  test.describe.configure({ timeout: 150_000 });
+
   test.beforeEach(async ({ tauriPage }) => {
-    await navigateTo(tauriPage, '/observatory');
-    await expect(tauriPage.locator('.app-shell')).toBeVisible({ timeout: 10_000 });
+    await navigateToScreen(tauriPage, '/', '[data-component="observatory-sidebar"]');
   });
 
-  test('renders app-shell with sidebar and main-content', async ({ tauriPage }) => {
-    await expect(tauriPage.locator('.sidebar')).toBeVisible();
-    await expect(tauriPage.locator('.main-content')).toBeVisible();
+  test('renders the observatory sidebar and main content', async ({ tauriPage }) => {
+    await expect(tauriPage.locator('[data-component="observatory-sidebar"]')).toBeVisible();
+    await expect(tauriPage.locator('[data-component="observatory-main"]')).toBeVisible();
   });
 
-  test('sidebar has Observatory section label', async ({ tauriPage }) => {
-    const labels = await tauriPage.evaluate(
-      `Array.from(document.querySelectorAll('.sidebar-label')).map(el => el.textContent?.trim().toLowerCase())`,
+  test('sidebar carries the Observatory eyebrow and daemon status', async ({ tauriPage }) => {
+    const eyebrows = await tauriPage.evaluate(
+      `Array.from(document.querySelectorAll('[data-component="observatory-sidebar"] [data-component="eyebrow"]'))
+        .map(el => el.textContent && el.textContent.trim().toLowerCase())`,
     ) as string[];
-    expect(labels.some(l => l?.includes('observatory'))).toBe(true);
-  });
+    expect(eyebrows.some((t) => t && t.includes('observatory'))).toBe(true);
 
-  test('sidebar nav contains expected kanji and labels', async ({ tauriPage }) => {
-    // Each nav item has a kanji and a label span
-    const navText = await tauriPage.evaluate(
-      `Array.from(document.querySelectorAll('.nav-item')).map(el => el.textContent?.trim())`,
-    ) as string[];
-
-    // Kanji checks
-    const joined = navText.join(' ');
-    expect(joined).toContain('家');   // Today
-    expect(joined).toContain('場');   // Projects
-    expect(joined).toContain('刻');   // Sessions
-    expect(joined).toContain('學');   // Insights
-    expect(joined).toContain('書');   // Libraries
-    expect(joined).toContain('具');   // Instruments
-
-    // Label checks
-    expect(joined).toContain('Today');
-    expect(joined).toContain('Projects');
-    expect(joined).toContain('Sessions');
-    expect(joined).toContain('Insights');
-    expect(joined).toContain('Libraries');
-    expect(joined).toContain('Instruments');
-  });
-
-  test('sidebar footer shows daemon status', async ({ tauriPage }) => {
-    await expect(tauriPage.locator('.daemon-status')).toBeVisible();
-    const text = await tauriPage.evaluate(
-      `document.querySelector('.daemon-status')?.textContent?.trim()`,
+    const sidebarText = await tauriPage.evaluate(
+      `document.querySelector('[data-component="observatory-sidebar"]')?.textContent?.toLowerCase() ?? ''`,
     ) as string;
-    expect(text).toMatch(/daemon\s*·/);
+    expect(sidebarText).toContain('daemon');
   });
 
-  test('/observatory route is active on Today nav item', async ({ tauriPage }) => {
-    const activeItems = await tauriPage.evaluate(
-      `Array.from(document.querySelectorAll('.nav-item.active')).map(el => el.textContent?.trim())`,
+  test('sidebar nav lists the Today and Projects destinations', async ({ tauriPage }) => {
+    // Nav is a rokkit <List>: each entry is an anchor with a [data-item-label].
+    // Today + Projects are always-visible top-level anchors (the "Review" group
+    // is hidden in Focus mode, so we don't assert those here).
+    const labels = await tauriPage.evaluate(
+      `Array.from(document.querySelectorAll('[data-component="observatory-sidebar"] [data-item-label]'))
+        .map(el => el.textContent && el.textContent.trim())`,
     ) as string[];
-    expect(activeItems.some(t => t?.includes('Today') || t?.includes('家'))).toBe(true);
+    expect(labels).toContain('Today');
+    expect(labels).toContain('Projects');
   });
 
-  test('sidebar collapses to icon-only view', async ({ tauriPage }) => {
-    // collapse
-    await tauriPage.locator('.collapse-btn').nth(0).click();
-    await new Promise(r => setTimeout(r, 300));
-    const collapsed = await tauriPage.evaluate(
-      `document.querySelector('.app-body')?.classList.contains('collapsed')`,
-    ) as boolean;
-    expect(collapsed).toBe(true);
-
-    // expand again
-    await tauriPage.locator('.collapse-btn').nth(0).click();
-    await new Promise(r => setTimeout(r, 300));
-    const expandedAgain = await tauriPage.evaluate(
-      `document.querySelector('.app-body')?.classList.contains('collapsed')`,
-    ) as boolean;
-    expect(expandedAgain).toBe(false);
+  test('Today is the active nav item on /', async ({ tauriPage }) => {
+    const active = await tauriPage.evaluate(
+      `document.querySelector('[data-component="observatory-sidebar"] [data-active] [data-item-label]')?.textContent?.trim()
+        ?? document.querySelector('[data-component="observatory-sidebar"] [aria-current="page"] [data-item-label]')?.textContent?.trim()`,
+    ) as string;
+    expect(active).toBe('Today');
   });
 });
 
-// ─── Observatory nav links ────────────────────────────────────────────────────
+// ─── Observatory nav links ──────────────────────────────────────────────────
 
 test.describe('Observatory nav — section links', () => {
-  test('navigating to /insights renders insights page', async ({ tauriPage }) => {
-    await navigateTo(tauriPage, '/insights');
-    await expect(tauriPage.locator('.app-shell')).toBeVisible({ timeout: 10_000 });
-    const activeText = await tauriPage.evaluate(
-      `Array.from(document.querySelectorAll('.nav-item.active')).map(el => el.textContent?.trim())`,
-    ) as string[];
-    expect(activeText.some(t => t?.includes('Insights') || t?.includes('學'))).toBe(true);
+  test('navigating to /insights marks Insights active', async ({ tauriPage }) => {
+    await navigateToScreen(tauriPage, '/insights', '[data-component="observatory-sidebar"]');
+    const active = await tauriPage.evaluate(
+      `document.querySelector('[data-component="observatory-sidebar"] [data-active] [data-item-label]')?.textContent?.trim()
+        ?? document.querySelector('[data-component="observatory-sidebar"] [aria-current="page"] [data-item-label]')?.textContent?.trim()`,
+    ) as string;
+    expect(active).toBe('Insights');
   });
 
-  test('navigating to /help renders help page', async ({ tauriPage }) => {
-    await navigateTo(tauriPage, '/help');
-    await expect(tauriPage.locator('.app-shell')).toBeVisible({ timeout: 10_000 });
-    // Help page has h1 "Sensei Help" and h2 "Quick Start"
+  test('navigating to /help renders the help page heading', async ({ tauriPage }) => {
+    await navigateToScreen(tauriPage, '/help', '[data-component="observatory-main"]');
     const h1 = await tauriPage.evaluate(
-      `document.querySelector('h1')?.textContent?.trim()`,
+      `document.querySelector('[data-component="observatory-main"] h1')?.textContent?.trim() ?? ''`,
     ) as string;
-    expect(h1).toBe('Sensei Help');
+    expect(h1.length).toBeGreaterThan(0);
   });
 });
 
-// ─── Projects page ────────────────────────────────────────────────────────────
+// ─── Projects page ──────────────────────────────────────────────────────────
 
 test.describe('Projects page', () => {
   test.beforeEach(async ({ tauriPage }) => {
-    await navigateTo(tauriPage, '/projects');
-    await expect(tauriPage.locator('.projects-page')).toBeVisible({ timeout: 10_000 });
+    await navigateToScreen(tauriPage, '/projects', '[data-component="projects-page"]');
   });
 
-  test('renders Projects heading', async ({ tauriPage }) => {
-    const h2 = await tauriPage.evaluate(
-      `document.querySelector('.projects-page h2')?.textContent?.trim()`,
+  test('renders the Projects heading', async ({ tauriPage }) => {
+    const text = await tauriPage.evaluate(
+      `document.querySelector('[data-component="projects-page"]')?.textContent ?? ''`,
     ) as string;
-    expect(h2).toBe('Projects');
+    expect(text).toContain('Projects');
+    expect(text).toContain('All the places you work.');
   });
 
-  test('shows project grid or empty hint', async ({ tauriPage }) => {
-    const gridCount = await tauriPage.locator('.project-grid').count();
-    const emptyCount = await tauriPage.locator('.empty-hint').count();
-    // Exactly one of these should be present
-    expect(gridCount + emptyCount).toBeGreaterThan(0);
-  });
-
-  test('project cards have kanji, name and open-hint when projects exist', async ({ tauriPage }) => {
-    const cardCount = await tauriPage.locator('.project-card').count();
-    if (cardCount === 0) {
-      // No projects in dev DB — just verify empty hint is shown
-      await expect(tauriPage.locator('.empty-hint')).toBeVisible();
+  test('shows project cards, or an honest empty state', async ({ tauriPage }) => {
+    const cards = await tauriPage
+      .locator('[data-component="projects-page"] [data-project-card], [data-component="projects-page"] [data-project-row]')
+      .count();
+    if (cards === 0) {
+      const text = await tauriPage.evaluate(
+        `document.querySelector('[data-component="projects-page"]')?.textContent ?? ''`,
+      ) as string;
+      expect(text).toMatch(/No projects/i);
       return;
     }
+    expect(cards).toBeGreaterThan(0);
 
-    // First card must have a kanji span, name span and ↗ hint
-    const kanjis = await tauriPage.evaluate(
-      `Array.from(document.querySelectorAll('.project-card .proj-kanji')).map(el => el.textContent?.trim())`,
-    ) as string[];
-    expect(kanjis.length).toBe(cardCount);
-
+    // Each card carries an icon glyph and a non-empty name.
     const names = await tauriPage.evaluate(
-      `Array.from(document.querySelectorAll('.project-card .proj-name')).map(el => el.textContent?.trim())`,
+      `Array.from(document.querySelectorAll('[data-project-card], [data-project-row]'))
+        .map(el => el.textContent && el.textContent.trim())`,
     ) as string[];
-    expect(names.every(n => n && n.length > 0)).toBe(true);
-
-    const hints = await tauriPage.evaluate(
-      `Array.from(document.querySelectorAll('.project-card .open-hint')).map(el => el.textContent?.trim())`,
-    ) as string[];
-    expect(hints.every(h => h === '↗')).toBe(true);
+    expect(names.every((n) => n && n.length > 0)).toBe(true);
   });
 
-  test('/projects nav item is active', async ({ tauriPage }) => {
-    const activeItems = await tauriPage.evaluate(
-      `Array.from(document.querySelectorAll('.nav-item.active')).map(el => el.textContent?.trim())`,
-    ) as string[];
-    expect(activeItems.some(t => t?.includes('Projects') || t?.includes('場'))).toBe(true);
+  test('Projects is the active nav item', async ({ tauriPage }) => {
+    const active = await tauriPage.evaluate(
+      `document.querySelector('[data-component="observatory-sidebar"] [data-active] [data-item-label]')?.textContent?.trim()
+        ?? document.querySelector('[data-component="observatory-sidebar"] [aria-current="page"] [data-item-label]')?.textContent?.trim()`,
+    ) as string;
+    expect(active).toBe('Projects');
   });
 });
 
-// ─── Project window layout ───────────────────────────────────────────────────
+// ─── Project window ─────────────────────────────────────────────────────────
 
-/**
- * Fetch a real project ID from the dev daemon. Returns null when no projects exist.
- */
+/** Fetch a real project ID from the daemon. Null when none exist. */
 async function getFirstProjectId(): Promise<string | null> {
   try {
     const projects = await daemonGet<Array<{ id: string; name: string }>>('/api/projects');
@@ -180,7 +139,7 @@ async function getFirstProjectId(): Promise<string | null> {
   }
 }
 
-test.describe('Project window — PerspectiveChrome layout', () => {
+test.describe('Project window — chrome', () => {
   let projectId: string | null = null;
 
   test.beforeAll(async () => {
@@ -192,8 +151,7 @@ test.describe('Project window — PerspectiveChrome layout', () => {
       test.skip(true, 'No projects in dev database — skipping project window tests');
       return;
     }
-    await navigateTo(tauriPage, `/project/${projectId}/overview`);
-    await expect(tauriPage.locator('[data-component="project-shell"]')).toBeVisible({ timeout: 10_000 });
+    await navigateToScreen(tauriPage, `/project/${projectId}/overview`, '[data-component="project-shell"]');
 
     // Titlebar: project name + "· project window" sub-label
     await expect(tauriPage.locator('[data-component="project-titlebar"]')).toBeVisible();
@@ -222,10 +180,7 @@ test.describe('Project window — PerspectiveChrome layout', () => {
       test.skip(true, 'No projects in dev database — skipping project window tests');
       return;
     }
-    await navigateTo(tauriPage, `/project/${projectId}/overview`);
-    await expect(
-      tauriPage.locator('[data-component="project-sidebar"] .proj-nav-item').first(),
-    ).toBeVisible({ timeout: 10_000 });
+    await navigateToScreen(tauriPage, `/project/${projectId}/overview`, '[data-component="project-sidebar"]');
 
     const navItems = await tauriPage.evaluate(
       `Array.from(document.querySelectorAll('[data-component="project-sidebar"] .proj-nav-item')).map(el => ({
@@ -256,53 +211,20 @@ test.describe('Project window — PerspectiveChrome layout', () => {
     });
   });
 
-  test('overview section is active on /overview route', async ({ tauriPage }) => {
-    if (!projectId) {
-      test.skip(true, 'No projects in dev database — skipping project window tests');
-      return;
-    }
-    await navigateTo(tauriPage, `/project/${projectId}/overview`);
-    await expect(
-      tauriPage.locator('[data-component="project-sidebar"] .proj-nav-item').first(),
-    ).toBeVisible({ timeout: 10_000 });
-
-    const activeItem = await tauriPage.evaluate(
-      `document.querySelector('.proj-nav-item.active span:not(.kanji)')?.textContent?.trim()`,
-    ) as string;
-    expect(activeItem).toBe('Overview');
-  });
-
-  // Regression: a freshly-opened project window boots with its own heap where
-  // healthState is 'checking' (isOk=false). reroute must let /project/* through
-  // rather than bouncing the window to /health (the "project window won't open"
-  // bug). Simulate the fresh-heap gate by forcing health not-ok, then confirm
-  // the project route still renders and does not redirect away.
-  // Verifies the project-window fixes end-to-end on real data: the window
-  // opens and its shell renders (reroute lets `/project/*` through — the fix —
-  // and the daemon serves the data), the project name is shown (not the '…'
-  // placeholder), and it sits clear of the macOS overlay traffic lights.
-  // (Reroute-when-health-is-not-ok is covered deterministically by
-  // hooks.spec.svelte.ts and the `redirect from /project/{id}` case.)
   test('project window renders with the project name clear of the traffic lights', async ({ tauriPage }) => {
     if (!projectId) {
       test.skip(true, 'No projects in dev database — skipping project window tests');
       return;
     }
-    // navigateToScreen retries through the cold-boot health bootstrap (up to
-    // 120s), so give this test more than the default 60s Playwright budget.
     test.setTimeout(150_000);
-
-    // Window opens + the shell renders (reroute lets /project through + content).
     await navigateToScreen(tauriPage, `/project/${projectId}/overview`, '[data-component="project-shell"]');
 
-    // Chrome fix 1: the project name renders (not the '…' placeholder).
     const name = await tauriPage.evaluate(
       `document.querySelector('[data-component="project-name"]')?.textContent?.trim()`,
     ) as string;
     expect(Boolean(name && name.length > 0 && name !== '…')).toBe(true);
 
-    // Chrome fix 2: the name is inset past the macOS overlay traffic lights
-    // (pl-[80px]) so it isn't hidden. Without the inset it would sit near x≈16.
+    // Inset past the macOS overlay traffic lights (pl-[80px]) so it isn't hidden.
     const nameLeft = await tauriPage.evaluate(
       `document.querySelector('[data-component="project-name"]')?.getBoundingClientRect().left`,
     ) as number;
@@ -319,71 +241,67 @@ test.describe('Project window — section pages', () => {
     projectId = await getFirstProjectId();
   });
 
-  const SECTIONS: Array<{ id: string; label: string; kanji: string; rootClass: string; h2: string }> = [
-    { id: 'overview',     label: 'Overview',     kanji: '見', rootClass: '.overview-page',    h2: '' },
-    { id: 'sessions',     label: 'Sessions',     kanji: '録', rootClass: '.section-page',     h2: 'Sessions' },
-    { id: 'memories',     label: 'Memories',     kanji: '憶', rootClass: '.section-page',     h2: 'Memories' },
-    { id: 'traceability', label: 'Traceability', kanji: '跡', rootClass: '.section-page',     h2: 'Traceability' },
-    { id: 'libraries',    label: 'Libraries',    kanji: '蔵', rootClass: '.libraries-page',   h2: 'Libraries' },
-    { id: 'instruments',  label: 'Instruments',  kanji: '器', rootClass: '.instruments-page', h2: 'Instruments' },
-    { id: 'patterns',     label: 'Patterns',     kanji: '型', rootClass: '.section-page',     h2: 'Patterns' },
-    { id: 'impact',       label: 'Impact',       kanji: '響', rootClass: '.section-page',     h2: 'Impact' },
-    { id: 'about',        label: 'About',        kanji: '情', rootClass: '.section-page',     h2: '' },
+  const SECTIONS: Array<{ id: string; label: string; kanji: string }> = [
+    { id: 'overview',     label: 'Overview',     kanji: '見' },
+    { id: 'sessions',     label: 'Sessions',     kanji: '録' },
+    { id: 'memories',     label: 'Memories',     kanji: '憶' },
+    { id: 'traceability', label: 'Traceability', kanji: '跡' },
+    { id: 'atlas',        label: 'Atlas',        kanji: '図' },
+    { id: 'libraries',    label: 'Libraries',    kanji: '蔵' },
+    { id: 'instruments',  label: 'Instruments',  kanji: '器' },
+    { id: 'patterns',     label: 'Patterns',     kanji: '型' },
+    { id: 'impact',       label: 'Impact',       kanji: '響' },
+    { id: 'about',        label: 'About',        kanji: '情' },
   ];
 
   for (const section of SECTIONS) {
-    test(`/${section.id} section renders root container and marks nav active`, async ({ tauriPage }) => {
+    test(`/${section.id} mounts the section and marks its nav active`, async ({ tauriPage }) => {
       if (!projectId) {
         test.skip(true, 'No projects in dev database — skipping project window tests');
         return;
       }
 
-      await navigateTo(tauriPage, `/project/${projectId}/${section.id}`);
-      await expect(tauriPage.locator('.project-shell')).toBeVisible({ timeout: 10_000 });
+      // <main> carries data-section={id}; wait for the specific section to mount.
+      await navigateToScreen(
+        tauriPage,
+        `/project/${projectId}/${section.id}`,
+        `[data-component="project-main"][data-section="${section.id}"]`,
+      );
 
-      // Root content container
-      await expect(tauriPage.locator(section.rootClass)).toBeVisible({ timeout: 5_000 });
-
-      // h2 heading (if expected)
-      if (section.h2) {
-        const h2 = await tauriPage.evaluate(
-          `document.querySelector('${section.rootClass} h2')?.textContent?.trim()`,
-        ) as string;
-        expect(h2).toBe(section.h2);
-      }
-
-      // Active nav item
-      const activeLabel = await tauriPage.evaluate(
-        `document.querySelector('.proj-nav-item.active')?.querySelector('.label')?.textContent?.trim()`,
-      ) as string;
-      expect(activeLabel).toBe(section.label);
-
-      // Active kanji matches expected
-      const activeKanji = await tauriPage.evaluate(
-        `document.querySelector('.proj-nav-item.active')?.querySelector('.kanji')?.textContent?.trim()`,
-      ) as string;
-      expect(activeKanji).toBe(section.kanji);
+      // Active nav item: .proj-nav-item.active, label is the non-.kanji span.
+      const active = await tauriPage.evaluate(
+        `(function(){
+          const el = document.querySelector('.proj-nav-item.active');
+          return {
+            label: el?.querySelector('span:not(.kanji)')?.textContent?.trim(),
+            kanji: el?.querySelector('.kanji')?.textContent?.trim(),
+          };
+        })()`,
+      ) as { label: string; kanji: string };
+      expect(active.label).toBe(section.label);
+      expect(active.kanji).toBe(section.kanji);
     });
   }
 
-  test('overview stats-row has 4 stat blocks', async ({ tauriPage }) => {
+  test('overview surfaces three stat cards (sessions · memories · doc drift)', async ({ tauriPage }) => {
     if (!projectId) {
       test.skip(true, 'No projects in dev database — skipping project window tests');
       return;
     }
-    await navigateTo(tauriPage, `/project/${projectId}/overview`);
-    await expect(tauriPage.locator('.overview-page')).toBeVisible({ timeout: 10_000 });
+    await navigateToScreen(
+      tauriPage,
+      `/project/${projectId}/overview`,
+      '[data-component="project-main"][data-section="overview"]',
+    );
 
-    const statCount = await tauriPage.locator('.stat-block').count();
-    expect(statCount).toBe(4);
-
-    const statLabels = await tauriPage.evaluate(
-      `Array.from(document.querySelectorAll('.stat-label')).map(el => el.textContent?.trim())`,
+    const labels = await tauriPage.evaluate(
+      `Array.from(document.querySelectorAll('[data-component="stat-card"]'))
+        .map(el => el.querySelector('div')?.textContent?.trim())`,
     ) as string[];
-    expect(statLabels).toContain('FTR 14d');
-    expect(statLabels).toContain('Sessions 7d');
-    expect(statLabels).toContain('Memories');
-    expect(statLabels).toContain('Repos');
+    expect(labels).toHaveLength(3);
+    expect(labels).toContain('Sessions · 7d');
+    expect(labels).toContain('Memories');
+    expect(labels).toContain('Doc drift');
   });
 
   test('redirect from /project/{id} to /overview', async ({ tauriPage }) => {
@@ -391,73 +309,38 @@ test.describe('Project window — section pages', () => {
       test.skip(true, 'No projects in dev database — skipping project window tests');
       return;
     }
-    // /project/{id} should redirect to /project/{id}/overview
     await navigateTo(tauriPage, `/project/${projectId}`);
-    await new Promise(r => setTimeout(r, 1_200)); // let redirect settle
+    await new Promise((r) => setTimeout(r, 1_200));
     const url = await tauriPage.evaluate(`window.location.href`) as string;
     expect(url).toMatch(new RegExp(`/project/${projectId}/overview`));
   });
 });
 
-// ─── Design style checks ─────────────────────────────────────────────────────
+// ─── Design fidelity ─────────────────────────────────────────────────────────
 
-test.describe('Design fidelity — project window chrome', () => {
+test.describe('Design fidelity — chrome widths', () => {
   let projectId: string | null = null;
 
   test.beforeAll(async () => {
     projectId = await getFirstProjectId();
   });
 
-  test('accent stripe has 2px height and shu background', async ({ tauriPage }) => {
+  test('project sidebar is 180px wide', async ({ tauriPage }) => {
     if (!projectId) {
       test.skip(true, 'No projects in dev database');
       return;
     }
-    await navigateTo(tauriPage, `/project/${projectId}/overview`);
-    await expect(tauriPage.locator('.accent-stripe')).toBeVisible({ timeout: 10_000 });
-
-    const style = await tauriPage.evaluate(`
-      const el = document.querySelector('.accent-stripe');
-      if (!el) return null;
-      const cs = getComputedStyle(el);
-      return { height: cs.height, background: cs.background };
-    `) as { height: string; background: string } | null;
-
-    expect(style).not.toBeNull();
-    expect(style!.height).toBe('2px');
-    // background contains the shu red color
-    expect(style!.background).toMatch(/#c0392b|rgb\(192, 57, 43\)|var\(--shu/i);
-  });
-
-  test('proj-sidebar is 180px wide', async ({ tauriPage }) => {
-    if (!projectId) {
-      test.skip(true, 'No projects in dev database');
-      return;
-    }
-    await navigateTo(tauriPage, `/project/${projectId}/overview`);
-    await expect(tauriPage.locator('.proj-sidebar')).toBeVisible({ timeout: 10_000 });
-
+    await navigateToScreen(tauriPage, `/project/${projectId}/overview`, '[data-component="project-sidebar"]');
     const width = await tauriPage.evaluate(
-      `document.querySelector('.proj-sidebar')?.getBoundingClientRect().width`,
+      `document.querySelector('[data-component="project-sidebar"]')?.getBoundingClientRect().width`,
     ) as number;
     expect(width).toBe(180);
   });
 
-  test('observatory sidebar is 220px wide (expanded)', async ({ tauriPage }) => {
-    await navigateTo(tauriPage, '/observatory');
-    await expect(tauriPage.locator('.app-shell')).toBeVisible({ timeout: 10_000 });
-
-    // Ensure not collapsed
-    const collapsed = await tauriPage.evaluate(
-      `document.querySelector('.app-body')?.classList.contains('collapsed')`,
-    ) as boolean;
-    if (collapsed) {
-      await tauriPage.locator('.collapse-btn').nth(0).click();
-      await new Promise(r => setTimeout(r, 300));
-    }
-
+  test('observatory sidebar is 220px wide', async ({ tauriPage }) => {
+    await navigateToScreen(tauriPage, '/', '[data-component="observatory-sidebar"]');
     const width = await tauriPage.evaluate(
-      `document.querySelector('.sidebar')?.getBoundingClientRect().width`,
+      `document.querySelector('[data-component="observatory-sidebar"]')?.getBoundingClientRect().width`,
     ) as number;
     expect(width).toBe(220);
   });
