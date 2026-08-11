@@ -1,24 +1,19 @@
 /**
  * Observatory daily-view coverage — the post-T3 mockup-gap slice:
- *   • Today: FtrStrip bar strip + "first-try" / "N× rework" corrections
- *     column on Recent Sessions.
- *   • Projects list: segmented Active / Recent / Archived cards.
- *   • Insights: Now / Soon / Settled triage columns.
- *   • Upgrades: real installable-recommendation buckets (or honest empty state).
- *   • Observatory Impact: measured verdict buckets (or honest empty state).
+ *   • Today: FtrStrip bar strip + "first-try" / "N× rework" corrections column.
+ *   • Projects list: renders project cards (filtered by status).
+ *   • Insights: Now / Soon / Settled triage columns (or honest empty).
+ *   • Upgrades / Impact: real buckets (or honest empty state).
  *
- * Each test walks the DOM the real user hits — the tone matches how the
- * observatory renders on an early-mode install (mode="early") vs a
- * mature install. On a fresh sensei_e2e DB the observatory is early —
- * mockup-gap tests still assert the structural pieces we control.
+ * Gated routes are driven with navigateToScreen (retries through the health
+ * gate); selectors are the app's stable data-* hooks.
  */
 
 import { test, expect } from '../fixtures';
-import { navigateTo, DAEMON_URL } from '../helpers';
+import { navigateToScreen, DAEMON_URL } from '../helpers';
 
-/** Fetch and JSON-parse defensively — the E2E daemon returns 0-byte
- *  bodies for some empty-state endpoints. Same helper the T3 flows spec
- *  uses. */
+/** Fetch and JSON-parse defensively — the E2E daemon returns 0-byte bodies for
+ *  some empty-state endpoints. */
 async function safeJson<T>(url: string, fallback: T): Promise<T> {
   try {
     const res = await fetch(url);
@@ -33,10 +28,6 @@ async function safeJson<T>(url: string, fallback: T): Promise<T> {
 
 test.describe('Observatory — Today', () => {
   test('Recent Sessions column formats corrections as first-try / N× rework', async ({ tauriPage }) => {
-    await navigateTo(tauriPage, '/');
-    // The wide layout may be either the mature hero or the early listening
-    // hero; both include RecentSessions when at least one session lands.
-    // Poll the endpoint so the test isn't order-dependent with capture.
     const sessions = await safeJson<{ sessions: Array<unknown> }>(
       `${DAEMON_URL}/api/sessions`, { sessions: [] },
     );
@@ -44,20 +35,17 @@ test.describe('Observatory — Today', () => {
       test.skip(true, 'no sessions captured yet on this daemon');
       return;
     }
-    // At least one session row should render the label vocabulary.
+    await navigateToScreen(tauriPage, '/', '[data-component="observatory-main"]');
     await tauriPage.waitForSelector('[data-session-row]', 15_000);
     const text = await tauriPage.evaluate(`
       Array.from(document.querySelectorAll('[data-session-row] [data-corrections]'))
         .map(el => el.textContent?.trim() ?? '')
         .join('|')
     `) as string;
-    // Every row should carry EITHER "first-try", "N× rework", or "—".
     expect(text).toMatch(/first-try|× rework|—/);
   });
 
   test('mature-mode FTR header renders the FtrStrip bar strip', async ({ tauriPage }) => {
-    // Only assert the strip when the daemon has FTR data. Otherwise the
-    // early hero is expected instead — that's a legitimate empty state.
     const ftr = await safeJson<{ ftr_daily: Array<{ ftr_rate: number }> }>(
       `${DAEMON_URL}/api/observatory/ftr-daily`, { ftr_daily: [] },
     );
@@ -65,7 +53,7 @@ test.describe('Observatory — Today', () => {
       test.skip(true, 'FtrStrip is only rendered in mature mode (≥ 2 daily buckets)');
       return;
     }
-    await navigateTo(tauriPage, '/');
+    await navigateToScreen(tauriPage, '/', '[data-component="observatory-main"]');
     await tauriPage.waitForSelector('[data-component="ftr-strip"]', 15_000);
     const todayBar = await tauriPage.locator('[data-testid="ftr-bar-today"]').count();
     expect(todayBar).toBeGreaterThan(0);
@@ -73,54 +61,43 @@ test.describe('Observatory — Today', () => {
 });
 
 test.describe('Observatory — Projects list', () => {
-  test('renders segmented Active / Recent / Archived sections', async ({ tauriPage }) => {
+  test('renders project cards (filtered by status), or an honest empty state', async ({ tauriPage }) => {
     const projects = await safeJson<Array<unknown>>(`${DAEMON_URL}/api/projects`, []);
     if (projects.length === 0) {
       test.skip(true, 'no projects registered on this daemon');
       return;
     }
-    await navigateTo(tauriPage, '/projects');
-    // At LEAST one bucket should be visible (typically Recent on a fresh
-    // e2e DB where no sessions have landed in the last 7 days).
-    await tauriPage.waitForSelector('[data-bucket]', 15_000);
-    const buckets = await tauriPage.evaluate(`
-      Array.from(document.querySelectorAll('[data-bucket]')).map(el => el.getAttribute('data-bucket'))
-    `) as string[];
-    // All present buckets must be one of the three legal values.
-    for (const b of buckets) expect(['active', 'recent', 'archived']).toContain(b);
-    expect(buckets.length).toBeGreaterThan(0);
+    await navigateToScreen(tauriPage, '/projects', '[data-component="projects-page"]');
+    // Segmentation is now a status FILTER (All/Active/Dormant/Archived); the
+    // list renders project cards/rows. With ≥1 project registered, at least one
+    // card is visible (default filter is All).
+    const cards = await tauriPage
+      .locator('[data-project-card], [data-project-row]')
+      .count();
+    expect(cards).toBeGreaterThan(0);
   });
 });
 
 test.describe('Observatory — Insights triage', () => {
   test('renders Now / Soon / Settled columns (or an honest empty state)', async ({ tauriPage }) => {
-    await navigateTo(tauriPage, '/insights');
-    // Wait for either the triage grid OR the empty-state kanji before
-    // asserting — one of the two ALWAYS renders. `data-empty` is on the
-    // shared EmptyState component when triage.total === 0.
+    await navigateToScreen(tauriPage, '/insights', '[data-component="observatory-main"]');
     await tauriPage.waitForSelector('[data-triage-grid], [data-empty]', 15_000);
     const columns = await tauriPage.evaluate(`
       Array.from(document.querySelectorAll('[data-triage-column]')).map(el => el.getAttribute('data-triage-column'))
     `) as string[];
-    if (columns.length === 0) {
-      // Legit empty state — nothing more to check.
-      return;
-    }
-    // All three columns must be present in mature mode.
+    if (columns.length === 0) return; // Legit empty state.
     for (const c of ['now', 'soon', 'settled']) expect(columns).toContain(c);
   });
 });
 
 test.describe('Observatory — Upgrades', () => {
   test('renders installable-recommendation buckets or an honest empty state', async ({ tauriPage }) => {
-    await navigateTo(tauriPage, '/upgrades');
-    // Either the buckets container carries the total, or EmptyState renders.
+    await navigateToScreen(tauriPage, '/upgrades', '[data-component="observatory-main"]');
     await tauriPage.waitForSelector('[data-upgrades-total], [data-empty]', 15_000);
     const total = await tauriPage.evaluate(`
       document.querySelector('[data-upgrades-total]')?.getAttribute('data-upgrades-total')
     `) as string | null;
     if (total == null || total === '0') return; // Honest empty state.
-    // At least one bucket in the ordered set must be present.
     const buckets = await tauriPage.evaluate(`
       Array.from(document.querySelectorAll('[data-upgrade-bucket]')).map(el => el.getAttribute('data-upgrade-bucket'))
     `) as string[];
@@ -131,7 +108,7 @@ test.describe('Observatory — Upgrades', () => {
 
 test.describe('Observatory — Impact', () => {
   test('renders verdict buckets or an honest empty state', async ({ tauriPage }) => {
-    await navigateTo(tauriPage, '/impact');
+    await navigateToScreen(tauriPage, '/impact', '[data-component="observatory-main"]');
     await tauriPage.waitForSelector('[data-impact-total], [data-empty]', 15_000);
     const total = await tauriPage.evaluate(`
       document.querySelector('[data-impact-total]')?.getAttribute('data-impact-total')
