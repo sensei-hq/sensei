@@ -5,5 +5,6 @@
 
 pub mod doc_drift;
 pub mod insight_copy;
+pub mod metric_narrative;
 pub mod project_icon;
 pub mod rule_consolidation;
