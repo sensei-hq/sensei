@@ -26,6 +26,9 @@ import type {
 import type {
   ConsolidatedRuleset, ConsolidateResult,
 } from '../routes/(observatory)/consolidation/consolidation-view.js';
+import type {
+  ProjectMetricRow, RegistryMetric, MetricSeriesPoint,
+} from './metrics/metric-view.js';
 
 export type ApiError = { status: number; message: string } | { status: 0; message: string };
 
@@ -257,6 +260,28 @@ export function senseiApi(port: number) {
         `/api/projects/${enc(id)}/ftr`,
         // Fallback on a fetch error is honest no-data (null), never a fabricated 0%.
         { ftr14d: null, ftr14dPrev: null, ftrTrend: [], sessions7d: 0 }
+      ),
+
+    // ── Project metrics (registry-driven) ─────────────────────────────
+    // Error-propagating (tryGet): a fetch failure must be distinguishable from a
+    // project with no computed metrics yet, so the screen shows an error state
+    // rather than an empty grid that hides a broken daemon (no-fabrication).
+    getProjectMetrics: (id: string) =>
+      tryGet<{ metrics: ProjectMetricRow[]; count: number }>(`/api/projects/${enc(id)}/metrics`),
+
+    // The catalog — the only surface that carries each metric's `family`, joined
+    // client-side to group the per-project values into sections.
+    getMetricsRegistry: () =>
+      tryGet<{ metrics: RegistryMetric[]; count: number }>(`/api/metrics/registry`),
+
+    // Per-metric time series for the card sparklines / trend view.
+    getProjectMetricSeries: (
+      id: string,
+      key: string,
+      grain: 'daily' | 'weekly' | 'monthly' | 'quarterly' = 'daily',
+    ) =>
+      tryGet<{ metric: string; grain: string; series: MetricSeriesPoint[]; count: number }>(
+        `/api/projects/${enc(id)}/metrics/${enc(key)}?grain=${grain}`,
       ),
 
     getProjectRepos: (id: string) =>
