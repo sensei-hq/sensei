@@ -35,7 +35,7 @@
 
 <PageShell title="FAQ">
   <div class="section-tag mb-4">Frequently asked</div>
-  <h1 class="display page-title mb-5">Questions & answers.</h1>
+  <h1 class="display page-title text-2xl lg:text-3xl mb-5">Questions & answers.</h1>
   <p class="page-intro display mb-16">
     Everything you might want to know before downloading.
   </p>
@@ -54,18 +54,6 @@
 </PageShell>
 
 <style>
-  .section-tag {
-    font-size: var(--text-xs);
-    letter-spacing: 0.22em;
-    color: var(--sumi-3);
-    text-transform: uppercase;
-  }
-  .page-title {
-    font-size: var(--text-3xl);
-    font-weight: 300;
-    letter-spacing: -0.025em;
-    line-height: 1.1;
-  }
   .page-intro {
     font-size: var(--text-lg);
     color: var(--sumi-2);
@@ -92,8 +80,5 @@
     color: var(--sumi-2);
     line-height: 1.7;
     max-width: 720px;
-  }
-  @media (max-width: 900px) {
-    .page-title { font-size: var(--text-2xl); }
   }
 </style>
