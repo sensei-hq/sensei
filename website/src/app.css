@@ -9,3 +9,42 @@ html, body {
   min-height: 100%;
   font-family: var(--font-ui);
 }
+
+/* Shared editorial chrome for the legal / docs / faq pages — one definition
+   (DRY) instead of a duplicated <style> block per page. The title's responsive
+   size is a utility on each heading (`text-2xl lg:text-3xl`), per the md:/lg:
+   breakpoint convention, so there is no page-level @media for it. */
+.section-tag {
+  font-size: var(--text-xs);
+  letter-spacing: 0.22em;
+  color: var(--sumi-3);
+  text-transform: uppercase;
+}
+.page-title {
+  font-weight: 300;
+  letter-spacing: -0.025em;
+  line-height: 1.1;
+}
+.updated {
+  font-size: var(--text-xs);
+  color: var(--sumi-3);
+}
+.prose {
+  font-size: var(--text-base);
+  color: var(--sumi-2);
+  line-height: 1.75;
+}
+.prose h2 {
+  font-family: var(--font-display);
+  font-size: var(--text-xl);
+  font-weight: 400;
+  color: var(--sumi);
+  margin: 48px 0 16px;
+  letter-spacing: -0.01em;
+}
+.prose h2:first-child { margin-top: 0; }
+.prose p { margin: 0 0 16px; }
+.prose ul { margin: 0 0 16px; padding-left: 16px; }
+.prose li { margin-bottom: 8px; }
+.prose a { color: var(--shu); text-decoration: none; }
+.prose a:hover { text-decoration: underline; }
