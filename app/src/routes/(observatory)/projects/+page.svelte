@@ -58,7 +58,7 @@
   ];
 </script>
 
-<div class="w-full h-full flex flex-col bg-paper overflow-hidden">
+<div data-component="projects-page" class="w-full h-full flex flex-col bg-paper overflow-hidden">
   <!-- Header -->
   <div class="pt-5 pb-4 px-7 border-b border-paper-edge flex items-center gap-5">
     <span class="kanji text-[28px] text-accent">場</span>

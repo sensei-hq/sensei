@@ -51,7 +51,7 @@
 </script>
 
 {#snippet statBlock(s: StatBlock)}
-  <div class="bg-paper-soft border border-paper-edge rounded-lg px-4 py-3">
+  <div data-component="stat-card" class="bg-paper-soft border border-paper-edge rounded-lg px-4 py-3">
     <div class="text-xs tracking-wide uppercase text-ink-mute mb-1">{s.label}</div>
     <div class="display text-2xl font-normal leading-none {s.toneClass}">{s.value}</div>
     <div class="text-xs text-ink-mute mt-1">{s.sub}</div>
