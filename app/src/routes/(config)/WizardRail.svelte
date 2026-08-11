@@ -13,7 +13,7 @@
     let { stages }: Props = $props();
 </script>
 
-<aside class="flex flex-col px-6 py-6 border-r border-paper-edge bg-paper-mute overflow-hidden">
+<aside class="flex flex-col px-6 py-6 border-r border-paper-edge bg-paper overflow-hidden">
     <div class="mb-7">
         <Wordmark size="md" />
     </div>

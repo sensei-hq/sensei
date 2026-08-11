@@ -78,7 +78,7 @@
             projectCount={appState.projectCount ?? undefined}
         />
 
-        <main class="flex-1 overflow-auto">
+        <main data-component="observatory-main" class="flex-1 overflow-auto">
             {@render children()}
         </main>
     </div>
