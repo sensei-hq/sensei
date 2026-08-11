@@ -96,7 +96,19 @@ pub(crate) async fn get_project_metrics(
         }
         metrics.push(value);
     }
-    Ok(Json(serde_json::json!({ "metrics": metrics, "count": metrics.len() })))
+
+    // Interpreted layer: the local-model headline + per-signal "what sensei
+    // noticed" prose, read from cache (a cold miss is warmed in the background
+    // and omitted — the app renders its own deterministic sentence in the gap).
+    // Inference never runs on this request path (see metric_narrative).
+    let narrative =
+        crate::analysis::metric_narrative::build_narrative(&state.pg, &state.gateway, &metrics).await;
+
+    Ok(Json(serde_json::json!({
+        "metrics": metrics,
+        "count": metrics.len(),
+        "narrative": narrative,
+    })))
 }
 
 /// Query for `GET /api/projects/{id}/metrics/{key}`.

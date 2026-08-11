@@ -120,6 +120,9 @@ pub enum InsightKind {
     SessionRetrospective,
     // Code graph
     CommunityDescription,
+    // Project metrics narrative (the metrics screen)
+    MetricNarrativeHeadline,
+    MetricSignalInsight,
 }
 
 impl InsightKind {
@@ -146,6 +149,8 @@ impl InsightKind {
             InsightKind::FtrRegression => "ftr_regression",
             InsightKind::SessionRetrospective => "session_retrospective",
             InsightKind::CommunityDescription => "community_description",
+            InsightKind::MetricNarrativeHeadline => "metric_narrative_headline",
+            InsightKind::MetricSignalInsight => "metric_signal_insight",
         }
     }
 
@@ -192,6 +197,10 @@ impl InsightKind {
                 "Kind: session_retrospective. Summarise what this coding session accomplished. The title is a short headline of the main work; the detail states the outcome and any corrections. Ground both in the facts. Write plainly, sentence case.",
             InsightKind::CommunityDescription =>
                 "Kind: community_description. In one plain sentence, say what this cluster of code is responsible for, grounded in the given hub symbols and their kinds. Name the shared responsibility; do not list every symbol. The title is a short 2-4 word name for the cluster; the detail is the sentence.",
+            InsightKind::MetricNarrativeHeadline =>
+                "Kind: metric_narrative_headline. These are software-engineering signals about a code repository — its files, sessions, and tools — never business, sales, or customer metrics (e.g. \"churn\" here means code churn, not customers leaving). Summarise how the project's signals moved this period, reading the facts as a whole. The title is one plain sentence naming how many signals moved and the overall direction; the detail is one sentence naming the most important shifts and what they suggest. Ground both strictly in the given facts — never invent a number.",
+            InsightKind::MetricSignalInsight =>
+                "Kind: metric_signal_insight. This is a software-engineering signal about a code repository — its files, sessions, and tools — never a business or customer metric (e.g. \"churn\" here means code churn, not customers leaving). Read the given `meaning` field for what it actually measures. In one or two plain sentences, say what this metric's movement means for the project this period, stating the direction and size of its `change` from the facts. Use only the given value, numerator, denominator, and change — never invent a number, and never call it unchanged when a change is given. The title is a 2-4 word label; the detail is the observation.",
         }
     }
 }
@@ -611,6 +620,21 @@ pub async fn copy_or_warm(
     }
     spawn_warm(store.clone(), gateway.clone(), kind, facts.clone(), limits);
     fallback.into()
+}
+
+/// Fire-and-forget warm for callers that read the cache themselves and render
+/// their OWN deterministic copy on a miss (so they need no returned fallback).
+/// The caller does `read_cached_copy` → on `None`, `warm(...)` to populate the
+/// cache for the next load. No-op if the breaker is tripped or a warm for this
+/// `facts_hash` is already in flight. Inference stays off the wire (detached).
+pub fn warm(
+    store: &PgStore,
+    gateway: &std::sync::Arc<gateway::Gateway>,
+    kind: InsightKind,
+    facts: &serde_json::Value,
+    limits: CopyLimits,
+) {
+    spawn_warm(store.clone(), gateway.clone(), kind, facts.clone(), limits);
 }
 
 #[cfg(test)]
