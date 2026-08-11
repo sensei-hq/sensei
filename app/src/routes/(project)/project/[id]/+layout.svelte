@@ -33,7 +33,14 @@
     </div>
 
     <div class="flex flex-1 overflow-hidden">
-        <ProjectSidebar projectId={data.projectId} {ftr14d} />
+        <ProjectSidebar
+            projectId={data.projectId}
+            {icon}
+            name={data.project?.name ?? '…'}
+            client={data.project?.client ?? null}
+            {ftr14d}
+            sessions7d={data.ftrMetrics?.sessions7d ?? null}
+        />
 
         <main class="flex-1 overflow-y-auto">
             {@render children()}
