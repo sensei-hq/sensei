@@ -261,3 +261,224 @@ export function familyLookup(
 export function seriesValues(points: MetricSeriesPoint[]): number[] {
     return points.map((p) => p.value).filter((v): v is number => v != null);
 }
+
+// ── "The merge" UX: interpreted landing + master-detail drill-down ──────────
+// A single richer view-model per metric (a "signal") carries everything the
+// landing (health hero + movers + uniform grid) and the detail view need, so
+// the components stay dumb. Trend → color follows the mockup legend:
+//   improving → success · worsening → accent · flat → ink-faint
+// honoring each metric's own `direction` (a rising `lower_better` metric is
+// worsening). Nothing here fabricates: the deterministic insight is built
+// strictly from the row's real value/props; an ollama-generated sentence, when
+// present, overrides it, and its absence falls back — never a made-up number.
+
+/** Named-token stem for a trend rule / sparkline stroke (see legend above). */
+export type TrendColor = 'success' | 'accent' | 'ink-faint';
+
+/** Optional daemon-generated prose (headline + per-signal insight). Absent when
+ *  the model was unavailable — the UI then shows the deterministic sentence. */
+export interface MetricsNarrative {
+    headline?: string | null;
+    /** A secondary sentence under the headline (generated only; no fabricated
+     *  fallback — the headline stands alone when this is absent). */
+    subhead?: string | null;
+    /** metric key → one "what sensei noticed" sentence. */
+    insights?: Record<string, string> | null;
+}
+
+export interface SignalVM {
+    key: string;
+    name: string; // display name (the tools signal is relabelled "Tools used")
+    family: MetricFamily;
+    familyLabel: string;
+    type: MetricType;
+    direction: MetricDirection;
+    value: string; // formatted headline value, or METRIC_NONE
+    sub: string; // numerator/denominator or unit context under the value
+    trend: MetricTrend | null;
+    color: TrendColor; // rule + sparkline tone
+    moved: boolean; // a non-flat trend → a "mover"
+    magnitude: number; // unit-free rank key for ordering movers
+    insight: string; // one data-grounded sentence (ollama override when present)
+    rawValue: number | null;
+    rawDelta: number | null;
+}
+
+/** The registry key of the tool-relevance metric — relabelled to a "used" framing. */
+const KEY_UNUSED_TOOLS = 'unused_tools';
+
+/** Map a trend tone to its rule/sparkline color token. */
+export function toneColor(tone: TrendTone | null | undefined): TrendColor {
+    if (tone === 'good') return 'success';
+    if (tone === 'bad') return 'accent';
+    return 'ink-faint';
+}
+
+// Literal class maps — UnoCSS extracts utilities by scanning source statically,
+// so a dynamic `text-{color}` would never be generated. Keeping the full class
+// strings here (one place, scanned) lets components index by TrendColor.
+export const TREND_TEXT: Record<TrendColor, string> = {
+    success: 'text-success',
+    accent: 'text-accent',
+    'ink-faint': 'text-ink-faint',
+};
+/** Top-rule per signal: movers carry their colour, flat signals a hairline. */
+export const TREND_RULE: Record<TrendColor, string> = {
+    success: 'border-t-success',
+    accent: 'border-t-accent',
+    'ink-faint': 'border-t-paper-edge',
+};
+
+/** Unit-free magnitude for ranking movers: relative change vs the prior, so
+ *  metrics in different units are comparable. Falls back to |delta| when there's
+ *  no usable prior, and 0 when there's no delta at all (never a mover). */
+function moverMagnitude(delta: number | null, prior: number | null): number {
+    if (delta == null || Number.isNaN(delta)) return 0;
+    if (prior != null && Math.abs(prior) > 1e-9) return Math.abs(delta) / Math.abs(prior);
+    return Math.abs(delta);
+}
+
+/** The tools signal is shown as "N of M relevant tools used" — flipping the
+ *  stored `unused` value (M − N) into the adoption framing the user asked for.
+ *  Returns null for every other metric (they use the generic formatting). */
+function toolsDisplay(
+    props: Record<string, unknown> | null,
+): { name: string; value: string; sub: string; insight: string } | null {
+    const relevant = numProp(props, 'relevant_tools');
+    const used = numProp(props, 'used_tools');
+    if (relevant == null || used == null) return null;
+    const total = numProp(props, 'total_tools');
+    const totalNote = total != null ? ` · ${formatCount(total)} registered` : '';
+    return {
+        name: 'Tools used',
+        value: `${formatCount(used)} of ${formatCount(relevant)}`,
+        sub: `relevant${totalNote}`,
+        insight:
+            `${formatCount(used)} of ${formatCount(relevant)} relevant tools were used` +
+            (total != null ? `, of ${formatCount(total)} registered in scope.` : '.'),
+    };
+}
+
+/** A deterministic, data-grounded sentence for a signal — the honest fallback
+ *  when no ollama narrative is available. Never invents a noun or a number: it
+ *  states the metric's own value, its numerator/denominator when present, and
+ *  its change vs the prior period. */
+function deterministicInsight(row: ProjectMetricRow, value: string, sub: string): string {
+    if (value === METRIC_NONE) return `${row.name} has no reading for this period yet.`;
+    const base = sub ? `${row.name} is ${value} (${sub})` : `${row.name} is ${value}`;
+    const t = metricTrend(row.metric_type, row.direction, row.delta);
+    if (t == null) return `${base} — the first period on record.`;
+    if (t.dir === 'flat') return `${base}, unchanged from the prior period.`;
+    return `${base}, ${t.label} vs the prior period.`;
+}
+
+/** Map one wire row (+ registry family + optional narrative) to a signal VM. */
+export function toSignal(
+    row: ProjectMetricRow,
+    familyOf: (key: string) => MetricFamily | undefined,
+    narrative?: MetricsNarrative | null,
+): SignalVM {
+    const family = familyOf(row.metric) ?? 'tool';
+    const trend = metricTrend(row.metric_type, row.direction, row.delta);
+    const tools = row.metric === KEY_UNUSED_TOOLS ? toolsDisplay(row.props) : null;
+
+    const value = tools ? tools.value : formatMetricValue(row.metric_type, row.value);
+    const sub = tools ? tools.sub : metricSub(row);
+    const name = tools ? tools.name : row.name;
+
+    const generated = narrative?.insights?.[row.metric];
+    const insight = generated ?? tools?.insight ?? deterministicInsight(row, value, sub);
+
+    return {
+        key: row.metric,
+        name,
+        family,
+        familyLabel: FAMILY_LABEL[family],
+        type: row.metric_type,
+        direction: row.direction,
+        value,
+        sub,
+        trend,
+        color: toneColor(trend?.tone),
+        moved: trend != null && trend.dir !== 'flat',
+        magnitude: moverMagnitude(row.delta, row.prior),
+        insight,
+        rawValue: row.value,
+        rawDelta: row.delta,
+    };
+}
+
+/** Build every signal VM. The composite/health signal is the hero, so it is not
+ *  a "mover"; everything else is ordered movers-first for the uniform grid. */
+export function buildSignals(
+    rows: ProjectMetricRow[],
+    familyOf: (key: string) => MetricFamily | undefined,
+    narrative?: MetricsNarrative | null,
+): SignalVM[] {
+    return rows.map((r) => toSignal(r, familyOf, narrative));
+}
+
+/** The health (composite) signal, promoted to the hero. Null when absent. */
+export function healthSignal(signals: SignalVM[]): SignalVM | null {
+    return signals.find((s) => s.family === 'composite') ?? null;
+}
+
+/** The top-N movers (non-flat), most-moved first — excludes the composite/health
+ *  signal (it is the hero, not a mover). */
+export function pickMovers(signals: SignalVM[], n = 4): SignalVM[] {
+    return signals
+        .filter((s) => s.moved && s.family !== 'composite')
+        .sort((a, b) => b.magnitude - a.magnitude)
+        .slice(0, n);
+}
+
+/** Grid order for "all signals": composite/health first, then movers (by
+ *  magnitude), then the rest by family order — so what moved reads first. */
+export function orderSignals(signals: SignalVM[]): SignalVM[] {
+    const rank = (s: SignalVM): number => {
+        if (s.family === 'composite') return 0;
+        if (s.moved) return 1;
+        return 2;
+    };
+    return [...signals].sort((a, b) => {
+        const ra = rank(a);
+        const rb = rank(b);
+        if (ra !== rb) return ra - rb;
+        if (ra === 1) return b.magnitude - a.magnitude; // movers: biggest first
+        return FAMILY_ORDER.indexOf(a.family) - FAMILY_ORDER.indexOf(b.family);
+    });
+}
+
+/** A one-line deterministic summary headline — the honest fallback when no
+ *  ollama headline is present. States how many signals moved and which way. */
+export function deterministicHeadline(signals: SignalVM[]): string {
+    const movers = signals.filter((s) => s.moved && s.family !== 'composite');
+    if (movers.length === 0) return 'Nothing moved this period — the signals are holding steady.';
+    const worse = movers.filter((s) => s.color === 'accent').length;
+    const better = movers.filter((s) => s.color === 'success').length;
+    // A neutral-direction metric can move without being better or worse — count it
+    // as "mixed" so the breakdown sums to the mover total (no 6-≠-3+2 mismatch).
+    const mixed = movers.length - worse - better;
+    const parts: string[] = [];
+    if (worse) parts.push(`${worse} worsening`);
+    if (better) parts.push(`${better} improving`);
+    if (mixed) parts.push(`${mixed} mixed`);
+    const n = movers.length;
+    const noun = n === 1 ? 'signal' : 'signals';
+    return `${n} ${noun} moved this period — ${parts.join(', ')}.`;
+}
+
+/** Distribution of a series for the detail "In this period" readout + y-axis. */
+export interface SeriesDistribution {
+    high: number;
+    mean: number;
+    low: number;
+}
+
+export function seriesDistribution(values: number[]): SeriesDistribution | null {
+    if (values.length === 0) return null;
+    const high = Math.max(...values);
+    const low = Math.min(...values);
+    const mean = values.reduce((a, b) => a + b, 0) / values.length;
+    return { high, mean, low };
+}
