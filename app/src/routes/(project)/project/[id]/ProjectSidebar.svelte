@@ -22,7 +22,7 @@
 
 <aside
     data-component="project-sidebar"
-    class="w-[180px] shrink-0 border-r border-paper-edge flex flex-col py-3"
+    class="w-[180px] shrink-0 border-r border-paper-edge bg-paper flex flex-col py-3"
 >
     <!-- Identity: project icon + name (was a bare FTR number) -->
     <div data-component="project-identity" class="px-4 pb-4 pt-2 flex flex-col gap-1.5">
@@ -66,10 +66,10 @@
 
 <style>
     .proj-nav-item:hover {
-        background: var(--paper-mute);
+        background: var(--paper-soft);
     }
     .proj-nav-item.active {
-        background: var(--paper);
+        background: var(--accent-soft);
         color: var(--accent);
     }
 </style>

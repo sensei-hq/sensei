@@ -64,11 +64,13 @@
     <div class="flex flex-col gap-3 mb-8">
         {#each roots as r (r.id)}
             <div
+                data-component="root-item"
                 class="flex items-center gap-3 px-5 py-4 bg-paper-mute rounded-lg"
             >
                 <span class="text-xs text-ink-soft">&#9656;</span>
                 <div class="flex-1 min-w-0">
                     <div
+                        data-component="root-path"
                         class="text-sm font-mono whitespace-nowrap overflow-hidden text-ellipsis"
                     >
                         {r.path}
@@ -91,6 +93,7 @@
                     >
                 {/if}
                 <button
+                    data-testid="root-remove"
                     class="text-base text-ink-soft bg-none border-none cursor-pointer px-1 leading-none hover:text-accent"
                     onclick={() => removeRoot(r.id)}>×</button
                 >
