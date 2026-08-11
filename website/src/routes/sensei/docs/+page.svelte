@@ -6,7 +6,7 @@
   <!-- Philosophy -->
   <section class="doc-section mb-25">
     <div class="section-tag mb-4">Philosophy</div>
-    <h1 class="display page-title mb-8">
+    <h1 class="display page-title text-2xl lg:text-3xl mb-8">
       The master observes before teaching.
     </h1>
     <div class="prose">
@@ -170,29 +170,13 @@
 </PageShell>
 
 <style>
-  .section-tag {
-    font-size: var(--text-xs);
-    letter-spacing: 0.22em;
-    color: var(--sumi-3);
-    text-transform: uppercase;
-  }
-  .page-title {
-    font-size: var(--text-3xl);
-    font-weight: 300;
-    letter-spacing: -0.025em;
-    line-height: 1.15;
-  }
   .section-title {
     font-size: var(--text-3xl);
     font-weight: 300;
     letter-spacing: -0.02em;
     line-height: 1.15;
   }
-  .prose {
-    font-size: var(--text-base);
-    color: var(--sumi-2);
-    line-height: 1.75;
-  }
+  /* Base .prose is global (app.css); docs overrides only what differs. */
   .prose p { margin: 0 0 18px; }
   .prose strong { color: var(--sumi); font-weight: 500; }
   .prose code {
@@ -246,7 +230,6 @@
   .hw-model { font-size: var(--text-base); font-weight: 500; color: var(--sumi); }
   .hw-note { font-size: var(--text-xs); color: var(--sumi-3); }
   @media (max-width: 900px) {
-    .page-title { font-size: var(--text-2xl); }
     .section-title { font-size: var(--text-2xl); }
     .toolkit-grid { grid-template-columns: 1fr; }
     .hw-grid { grid-template-columns: 1fr; }
