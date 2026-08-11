@@ -8,11 +8,26 @@
 //! dead tool surface over the rolling window.
 //!
 //! v1 registry key (`task_name = "tool"`):
-//! - `unused_tools` (count, lower_better): the number of REGISTERED tools with ZERO
+//! - `unused_tools` (count, lower_better): the number of RELEVANT tools with ZERO
 //!   outcome-positive calls attributable to this project in the window — the "dead
-//!   surface area" signal. Reported as a SINGLE aggregate count (never one row per
-//!   tool). `count` type ⇒ the `value` IS the count; no numerator/denominator. The
-//!   display prop `total_tools` carries the in-scope registry size for context.
+//!   surface area" signal, scoped to tools this repo has actually engaged. Reported
+//!   as a SINGLE aggregate count (never one row per tool). `count` type ⇒ the `value`
+//!   IS the count; no numerator/denominator. Display props carry the framing:
+//!   `relevant_tools` (the honest denominator M), `used_tools` (N, the in-window
+//!   positive-outcome count → the UI reads "N of M relevant tools used"), and
+//!   `total_tools` (T, the full in-scope registry size, for context on how much of
+//!   the family inventory is even relevant to this repo).
+//!
+//! ## Relevance (why the denominator is NOT the whole registry)
+//! A family's tool inventory is GLOBAL (e.g. a Claude install exposes ~100 tools);
+//! most are irrelevant to any one repo. Counting all of them as "dead surface"
+//! punishes a project for tools it never had reason to touch. So relevance is
+//! evidence-based: a registered-in-scope tool is RELEVANT to this project iff the
+//! project has actually INVOKED it — i.e. there is a `tool_call_verdicts` row (ANY
+//! verdict, all-time) attributable to the project for that tool. Relevance is a
+//! STANDING property (all-time invocation), usage is a ROLLING-window positive
+//! outcome. A registered tool the repo has never invoked is neither relevant nor
+//! counted — it drops out of both M and the `value`, never fabricated as "dead".
 //!
 //! ## Project scoping of a GLOBAL registry (the design decision)
 //! `sensei.assistant_tools` is the tool REGISTRY and is GLOBAL per
@@ -68,17 +83,21 @@ const KEY_UNUSED_TOOLS: &str = "unused_tools";
 /// assistant actually consumed the tool's response. `partial`/`ignored` do not.
 const VERDICT_USED: &str = "used";
 
-/// `(total_tools, unused)` for a project over the window:
-/// - `total_tools` = # registered tools in the project's family scope (the display
-///   denominator; `0` ⇒ the caller writes NO row).
-/// - `unused` = of those, how many have NO in-window `used` verdict attributable to
-///   the project (the metric `value`).
-async fn unused_tool_counts(
+/// `(total_tools, relevant_tools, used_tools)` for a project over the window:
+/// - `total_tools` (T) = # registered tools in the project's family scope (context
+///   only; the full inventory, most of which may be irrelevant to this repo).
+/// - `relevant_tools` (M) = of those, how many the project has ever INVOKED (a
+///   `tool_call_verdicts` row of any verdict, all-time) — the honest denominator.
+///   `0` ⇒ no relevance evidence ⇒ the caller writes NO row.
+/// - `used_tools` (N) = of the M relevant, how many have an in-window `used` verdict
+///   attributable to the project. The metric `value` (dead relevant surface) is
+///   `M - N`; `N ≤ M` always (a `used` verdict is itself an invocation).
+async fn tool_usage_counts(
     pg: &PgStore,
     project_id: &uuid::Uuid,
     window_days: u32,
-) -> Result<(i64, i64), String> {
-    let (total_tools, unused): (i64, i64) = sqlx_core::query_as::query_as(
+) -> Result<(i64, i64, i64), String> {
+    let (total_tools, relevant_tools, used_tools): (i64, i64, i64) = sqlx_core::query_as::query_as(
         "WITH proj_fam AS (
              -- assistant families this project uses (aligns with assistant_family)
              SELECT DISTINCT s.acp_id AS family
@@ -92,6 +111,14 @@ async fn unused_tool_counts(
                FROM sensei.assistant_tools at
                JOIN proj_fam pf ON pf.family = at.assistant_family
          ),
+         invoked AS (
+             -- RELEVANCE evidence: tools this project has ever invoked (any verdict,
+             -- ALL-TIME — relevance is a standing property, not a rolling window).
+             SELECT DISTINCT v.tool_name AS invoked_name
+               FROM sensei.tool_call_verdicts v
+               JOIN activity.sessions s ON s.client_session_id = v.session_id
+              WHERE s.project_id = $1
+         ),
          used AS (
              -- invoked_names with an in-window 'used' verdict attributable to $1,
              -- windowed on the CALL time (assistant_events.created_at via event_id)
@@ -102,11 +129,19 @@ async fn unused_tool_counts(
               WHERE s.project_id  = $1
                 AND v.verdict     = $2
                 AND ae.created_at >= now() - make_interval(days => $3::int)
+         ),
+         relevant AS (
+             -- registered ∩ invoked: the honest denominator (M). Registered tools the
+             -- repo never invoked are excluded — never counted as dead surface.
+             SELECT r.invoked_name
+               FROM registered r
+               JOIN invoked i ON i.invoked_name = r.invoked_name
          )
-         SELECT count(*)::int8                                        AS total_tools
-              , count(*) FILTER (WHERE u.invoked_name IS NULL)::int8  AS unused
-           FROM registered r
-           LEFT JOIN used u ON u.invoked_name = r.invoked_name",
+         SELECT (SELECT count(*) FROM registered)::int8 AS total_tools
+              , (SELECT count(*) FROM relevant)::int8   AS relevant_tools
+              , (SELECT count(*)
+                   FROM relevant rel
+                   JOIN used u ON u.invoked_name = rel.invoked_name)::int8 AS used_tools",
     )
     .bind(project_id)
     .bind(VERDICT_USED)
@@ -114,14 +149,14 @@ async fn unused_tool_counts(
     .fetch_one(pg.pool())
     .await
     .map_err(|e| e.to_string())?;
-    Ok((total_tools, unused))
+    Ok((total_tools, relevant_tools, used_tools))
 }
 
 /// Compute the `tool` group for one project as a snapshot as of today.
 /// `project_raw` is the project uuid carried in `task.folder_path`. Returns the
-/// number of `project_metrics` rows written (`0` = honest-empty: no registered tools
-/// in the project's scope, or the metric is inactive). Idempotent — re-running
-/// backfills in place via the upsert identity.
+/// number of `project_metrics` rows written (`0` = honest-empty: no RELEVANT tools —
+/// the project has invoked none of its registered-in-scope tools — or the metric is
+/// inactive). Idempotent — re-running backfills in place via the upsert identity.
 pub(super) async fn compute(ctx: &TaskContext, project_raw: &str) -> Result<u32, String> {
     let project_id = uuid::Uuid::parse_str(project_raw)
         .map_err(|e| format!("tool: bad project id {project_raw:?}: {e}"))?;
@@ -138,19 +173,29 @@ pub(super) async fn compute(ctx: &TaskContext, project_raw: &str) -> Result<u32,
         return Ok(0);
     };
 
-    let (total_tools, unused) = unused_tool_counts(pg, &project_id, window_days).await?;
+    let (total_tools, relevant_tools, used_tools) =
+        tool_usage_counts(pg, &project_id, window_days).await?;
 
-    if total_tools == 0 {
-        // 0 registered tools in the project's scope → nothing to measure → NO row (a
-        // written 0 would fabricate a "0 dead tools" reading where there is no
-        // registry to measure against).
+    if relevant_tools == 0 {
+        // No relevant tools — the project has never invoked any registered-in-scope
+        // tool, so there is no honest denominator → NO row. A written value here
+        // would fabricate a "0 dead tools" reading where there is no relevance
+        // evidence to measure against (covers the empty-registry case too, since an
+        // empty registry can have no invocations).
         return Ok(0);
     }
 
-    // A real registry with every tool used gives `unused = 0` — a REAL written zero
-    // (0 dead tools), never suppressed. `count` type: value IS the count, no
-    // numerator/denominator; `total_tools` rides along as a display prop.
-    let props = serde_json::json!({ "total_tools": total_tools });
+    // `value` = dead RELEVANT surface = M - N. Every relevant tool used in-window
+    // gives `unused = 0` — a REAL written zero (0 dead relevant tools), never
+    // suppressed. `count` type: value IS the count, no numerator/denominator; the
+    // framing (`relevant_tools` M, `used_tools` N, `total_tools` T) rides along as
+    // display props → the UI shows "N of M relevant tools used".
+    let unused = relevant_tools - used_tools;
+    let props = serde_json::json!({
+        "total_tools": total_tools,
+        "relevant_tools": relevant_tools,
+        "used_tools": used_tools,
+    });
     let day = super::today(pg).await?;
     pg.upsert_project_metric(
         &mid, &project_id, None, None, day, GRAIN_DAILY, unused as f64, &props, SOURCE_MEASURED,
@@ -172,13 +217,16 @@ mod tests {
 
     #[tokio::test]
     async fn unused_tools_counts_tools_without_positive_verdicts() {
-        // 4 registered tools pin verdict PRECISION — ONLY `verdict='used'` is a
-        // positive outcome: t1 'used' (positive → used), t2 'ignored'-only (NOT
-        // positive → unused), t3 'partial'-only (NOT positive → unused), t4 no verdict
-        // (→ unused) → 3 unused. value = 3, total_tools = 4. The `partial`-only t3 is
-        // load-bearing: broadening the filter to `verdict IN ('used','partial')` would
-        // wrongly count t3 as used (value → 2) and this assertion goes red — a
-        // regression the `ignored`-only case alone can't catch.
+        // 4 registered tools pin verdict PRECISION *and* relevance. ONLY
+        // `verdict='used'` is a positive outcome: t1 'used' (invoked+used), t2
+        // 'ignored'-only (invoked → relevant, NOT used → dead), t3 'partial'-only
+        // (invoked → relevant, NOT used → dead), t4 NO verdict (never invoked → NOT
+        // relevant, drops out of the denominator entirely). So total_tools=4 (registry
+        // scope), relevant_tools=3 (t1,t2,t3 invoked), used_tools=1 (t1), value = M-N =
+        // 2 dead relevant tools. The `partial`-only t3 is load-bearing: broadening the
+        // used filter to `verdict IN ('used','partial')` would count t3 as used
+        // (value → 1) and this goes red. t4 is load-bearing for relevance: counting
+        // never-invoked tools as dead would push value → 3 and relevant → 4.
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
@@ -194,18 +242,20 @@ mod tests {
         for t in ["t1", "t2", "t3", "t4"] {
             seed_assistant_tool(pg, &fam, "builtin", "builtin", t, t).await;
         }
-        seed_tool_verdict(pg, &csid, "t1", "used", ts).await; // positive → used
-        seed_tool_verdict(pg, &csid, "t2", "ignored", ts).await; // NOT positive → unused
-        seed_tool_verdict(pg, &csid, "t3", "partial", ts).await; // NOT positive → unused
-        // t4: no verdict at all → unused.
+        seed_tool_verdict(pg, &csid, "t1", "used", ts).await; // invoked + used → not dead
+        seed_tool_verdict(pg, &csid, "t2", "ignored", ts).await; // invoked, NOT used → dead
+        seed_tool_verdict(pg, &csid, "t3", "partial", ts).await; // invoked, NOT used → dead
+        // t4: no verdict at all → never invoked → NOT relevant (drops out of M).
 
         let written = compute(&ctx, &pid.to_string()).await.unwrap();
         assert_eq!(written, 1, "one unused_tools project row");
 
         let daily = daily_rows(pg, &pid).await;
         let ut = daily.iter().find(|r| r.0 == "unused_tools").expect("unused_tools row present");
-        assert!((ut.1 - 3.0).abs() < 1e-9, "value = 3 unused (t2 ignored-only, t3 partial-only, t4 no-verdict; only t1 'used' excluded)");
+        assert!((ut.1 - 2.0).abs() < 1e-9, "value = M-N = 2 dead relevant tools (t2 ignored, t3 partial; t1 used, t4 irrelevant)");
         assert_eq!(ut.2["total_tools"].as_i64(), Some(4), "total_tools = 4 registered in scope");
+        assert_eq!(ut.2["relevant_tools"].as_i64(), Some(3), "relevant_tools = 3 (t1,t2,t3 invoked; t4 never invoked → excluded)");
+        assert_eq!(ut.2["used_tools"].as_i64(), Some(1), "used_tools = 1 (only t1 has an in-window 'used' verdict)");
 
         // ── Idempotency: re-run backfills in place, never duplicates ──
         let again = compute(&ctx, &pid.to_string()).await.unwrap();
@@ -225,8 +275,8 @@ mod tests {
 
     #[tokio::test]
     async fn unused_tools_all_used_writes_real_zero() {
-        // Every registered tool has an in-window 'used' verdict → 0 unused → value 0.0
-        // is WRITTEN (a real zero: "0 dead tools"), never suppressed.
+        // Every relevant tool (both invoked + used in-window) → 0 dead → value 0.0 is
+        // WRITTEN (a real zero: "0 dead relevant tools"), never suppressed. M=N=2.
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
@@ -249,8 +299,10 @@ mod tests {
 
         let daily = daily_rows(pg, &pid).await;
         let ut = daily.iter().find(|r| r.0 == "unused_tools").expect("unused_tools row present");
-        assert!(ut.1.abs() < 1e-9, "value is a real 0.0 (every registered tool used in-window)");
+        assert!(ut.1.abs() < 1e-9, "value is a real 0.0 (every relevant tool used in-window)");
         assert_eq!(ut.2["total_tools"].as_i64(), Some(2), "total_tools = 2 registered in scope");
+        assert_eq!(ut.2["relevant_tools"].as_i64(), Some(2), "relevant_tools = 2 (both invoked)");
+        assert_eq!(ut.2["used_tools"].as_i64(), Some(2), "used_tools = 2 (both used in-window)");
 
         purge_tool_verdicts(pg, &[&csid]).await;
         purge_assistant_events(pg, &[&csid]).await;
@@ -317,10 +369,12 @@ mod tests {
 
     #[tokio::test]
     async fn unused_tools_positive_verdict_outside_window_counts_as_unused() {
-        // Window boundary: a tool whose ONLY 'used' verdict fired OUTSIDE the window
-        // counts as UNUSED. 1 registered tool t1 with a single 'used' verdict whose
-        // call time is 30 days ago → value 1 (t1 dead in-window). A missing/broken
-        // window filter would give value 0 (t1 seen as used).
+        // Window boundary + relevance interplay: a tool whose ONLY 'used' verdict fired
+        // OUTSIDE the usage window is still RELEVANT (relevance is all-time invocation,
+        // and a 'used' verdict is an invocation) but NOT used in-window → dead relevant
+        // surface. 1 registered t1, single 'used' verdict 30 days ago → relevant M=1,
+        // used N=0, value = 1 (t1 dead in-window). A missing/broken usage-window filter
+        // would give N=1 → value 0 (t1 wrongly seen as used).
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
@@ -342,8 +396,10 @@ mod tests {
 
         let daily = daily_rows(pg, &pid).await;
         let ut = daily.iter().find(|r| r.0 == "unused_tools").expect("unused_tools row present");
-        assert!((ut.1 - 1.0).abs() < 1e-9, "value = 1 (t1's only 'used' verdict is out of window → unused)");
+        assert!((ut.1 - 1.0).abs() < 1e-9, "value = 1 (t1 relevant but its only 'used' verdict is out of window)");
         assert_eq!(ut.2["total_tools"].as_i64(), Some(1), "total_tools = 1 registered in scope");
+        assert_eq!(ut.2["relevant_tools"].as_i64(), Some(1), "relevant_tools = 1 (t1 invoked all-time → relevant)");
+        assert_eq!(ut.2["used_tools"].as_i64(), Some(0), "used_tools = 0 (no in-window 'used' verdict)");
 
         purge_tool_verdicts(pg, &[&csid]).await;
         purge_assistant_events(pg, &[&csid]).await;
@@ -353,10 +409,12 @@ mod tests {
 
     #[tokio::test]
     async fn unused_tools_excludes_other_projects() {
-        // Cross-project isolation (mutation-proof): project B uses a DIFFERENT family
-        // with its own 3 registered tools, all 'used'. A's scope must see only A's 3
-        // family-A tools (total_tools = 3, not 6), and B's 'used' verdicts must not
-        // mark A's tools used (A unused = 2, not fewer).
+        // Cross-project isolation (mutation-proof) + relevance: project B uses a
+        // DIFFERENT family with its own 3 registered tools, all 'used'. A registers 3
+        // family-A tools: a1 'used' (invoked+used), a2 'ignored' (invoked → relevant,
+        // not used), a3 no verdict (never invoked → irrelevant). A's scope must see
+        // total_tools = 3 (family A only, not 6), relevant = 2 (a1,a2; a3 excluded),
+        // used = 1 (a1 only — B's 'used' verdicts must not mark A's tools), value = 1.
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq_a = uuid::Uuid::new_v4();
@@ -372,12 +430,13 @@ mod tests {
         purge_assistant_events(pg, &[&csid_a, &csid_b]).await;
 
         let ts = chrono::Utc::now() - chrono::Duration::hours(2);
-        // Project A: 3 family-A tools; only a1 used → A unused = 2.
+        // Project A: 3 family-A tools; a1 used, a2 invoked-not-used, a3 never invoked.
         seed_tool_session(pg, &fid_a, &pid_a, &csid_a, &fam_a, ts).await;
         for t in ["a1", "a2", "a3"] {
             seed_assistant_tool(pg, &fam_a, "builtin", "builtin", t, t).await;
         }
-        seed_tool_verdict(pg, &csid_a, "a1", "used", ts).await;
+        seed_tool_verdict(pg, &csid_a, "a1", "used", ts).await; // invoked + used
+        seed_tool_verdict(pg, &csid_a, "a2", "ignored", ts).await; // invoked, not used → relevant
         // Project B: 3 family-B tools, ALL used — must NOT touch A's counts.
         seed_tool_session(pg, &fid_b, &pid_b, &csid_b, &fam_b, ts).await;
         for t in ["b1", "b2", "b3"] {
@@ -391,7 +450,9 @@ mod tests {
         let daily = daily_rows(pg, &pid_a).await;
         let ut = daily.iter().find(|r| r.0 == "unused_tools").expect("A's unused_tools row");
         assert_eq!(ut.2["total_tools"].as_i64(), Some(3), "A's total_tools = 3 (family A only, not 6)");
-        assert!((ut.1 - 2.0).abs() < 1e-9, "A unused = 2 (a2, a3; a1 used — B's usage excluded)");
+        assert_eq!(ut.2["relevant_tools"].as_i64(), Some(2), "A relevant = 2 (a1,a2 invoked; a3 never invoked → excluded)");
+        assert_eq!(ut.2["used_tools"].as_i64(), Some(1), "A used = 1 (a1; B's usage never marks A's tools)");
+        assert!((ut.1 - 1.0).abs() < 1e-9, "A unused = M-N = 1 (a2 invoked-not-used; a3 irrelevant, B excluded)");
 
         purge_tool_verdicts(pg, &[&csid_a, &csid_b]).await;
         purge_assistant_events(pg, &[&csid_a, &csid_b]).await;
