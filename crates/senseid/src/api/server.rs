@@ -295,17 +295,25 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
         Arc::new(state.pg.clone()),
     );
 
-    // First-install / boot transcript backfill (history recovery): recover MONTHS
-    // of metric history, not ~2 weeks. Dispatch the transcript importer (first
-    // install = full history; forward = new transcripts, smart-skipped) so the
-    // day-keyed sources (sessions/events) exist, then re-attach any orphaned
-    // sessions. Per-day metric planning is NOT kicked off here on a boot timer —
-    // it is driven by ANALYSIS completion: each `AnalyzeProject` success enqueues an
-    // overlap-guarded `PlanMetricDays` for its project, so backfilled sessions are
-    // planned only once the analyzer has made them measurable (synthesizer →
-    // analyzer → PlanMetricDays), with the daily metrics scheduler as the self-heal
-    // backstop. A fixed sleep is not a real dependency, so it was removed. Runs from
-    // a spawn so the initial scan + transcript ingestion don't block boot.
+    // First-install / boot metric-history recovery. Two complementary triggers,
+    // because they cover different boot shapes:
+    //   1. Dispatch the transcript importer (first install = full history; forward =
+    //      new transcripts, smart-skipped) so day-keyed sources exist, then re-attach
+    //      orphaned sessions. FRESHLY-synthesized sessions become measurable after the
+    //      analyzer runs, and each `AnalyzeProject` success enqueues an
+    //      overlap-guarded `PlanMetricDays` for its project (the synthesizer →
+    //      analyzer → PlanMetricDays chain).
+    //   2. UNCONDITIONALLY enqueue the per-project metric plan on boot
+    //      (`enqueue_backfill_all`). This is the trigger for a PERSIST-boot: when the
+    //      daemon restarts and its sessions already exist AND are already analyzed
+    //      (measurable), nothing re-synthesizes, so the analysis-completion hook never
+    //      fires — without this the historical days would never be planned. Overlap-
+    //      guarded (`has_pending_kind`) so it never stacks with the daily scheduler,
+    //      idempotent (per-day upserts), and the metric-lane priority lets these
+    //      preempt the boot re-index instead of starving behind it. No fixed sleep —
+    //      persist-boot data is already measurable, and fresh-synthesis days are
+    //      caught by trigger #1's hook.
+    // Runs from a spawn so the initial scan + transcript ingestion don't block boot.
     {
         let pg = state.pg.clone();
         let queue = task_queue.clone();
@@ -318,6 +326,16 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
                 Ok(n) if n > 0 => tracing::info!(repaired = n, "startup: re-attached orphaned sessions"),
                 Ok(_) => {}
                 Err(e) => tracing::warn!(error = %e, "startup: repair_orphaned_sessions failed"),
+            }
+            // Persist-boot trigger: plan the per-day metric backfill for every project
+            // (guarded + idempotent). On a fresh install this runs before synthesis
+            // completes and finds little — trigger #1's analysis hook re-plans as
+            // sessions become measurable; on a persist-boot the sessions are already
+            // measurable, so THIS is what backfills their history.
+            match crate::tasks::metrics_scheduler::enqueue_backfill_all(&queue, &pg).await {
+                Ok(0) => tracing::debug!("startup: metric backfill skipped (a plan wave is already in flight)"),
+                Ok(n) => tracing::info!(projects = n, "startup: enqueued metric backfill (PlanMetricDays per project)"),
+                Err(e) => tracing::warn!(error = %e, "startup: metric backfill enqueue failed"),
             }
         });
     }
