@@ -184,6 +184,7 @@ pub fn create_router(state: AppState) -> Router {
         // Project analysis
         .route("/api/projects/{id}/analyze", post(observatory::analyze_solution))
         .route("/api/transcripts/backfill", post(observatory::backfill_transcripts))
+        .route("/api/metrics/backfill", post(observatory::backfill_metrics))
         .route("/api/projects/{id}/graph", get(observatory::solution_graph))
         .route("/api/projects/{id}/roles", get(observatory::solution_roles))
         // Folder mutations (setup wizard — Projects stage)
@@ -2026,7 +2027,9 @@ mod tests {
             seed_assistant_tool(pg, &family, "builtin", "builtin", t, t).await;
         }
         seed_tool_verdict(pg, &csid_tool, "t1", "used", ts).await;
-        // → unused_tools 3 (t2/t3/t4 dead; total_tools 4)
+        // → unused_tools 0: relevance-based (M−N). Only t1 was ever invoked →
+        //   relevant=1, used=1 → 0 dead. t2/t3/t4 were never invoked → NOT relevant,
+        //   so they are not "dead surface" (never fabricated as dead). total_tools=4.
 
         // ── DRIVE: replicate the scheduler's enqueue, run the REAL worker pool ──
         let ctx = make_ctx().await;
@@ -2101,10 +2104,15 @@ mod tests {
         assert!(close(get("interruption_rate"), 0.4), "interruption_rate = 4/10 = 0.4 (got {})", get("interruption_rate"));
         assert!(close(get("run_completion"), 0.8), "run_completion = 4/5 = 0.8 (got {})", get("run_completion"));
         assert!(close(get("memory_promotion"), 0.5), "memory_promotion = 2/4 = 0.5 (got {})", get("memory_promotion"));
-        assert!(close(get("unused_tools"), 3.0), "unused_tools = 3 dead tools (got {})", get("unused_tools"));
+        // Relevance-based denominator: a tool is RELEVANT only if this project has
+        // ever invoked it (a tool_call_verdicts row). The seed gives ONE verdict
+        // (t1 'used'), so relevant=1, used=1 → dead = M - N = 0. t2/t3/t4 were never
+        // invoked → not relevant → not "dead surface" (never fabricated as dead).
+        assert!(close(get("unused_tools"), 0.0), "unused_tools = 0 dead RELEVANT tools (relevant=1, used=1; t2/t3/t4 never invoked → not relevant) (got {})", get("unused_tools"));
 
-        // exactly 11 base metrics + project_health (false_crash_rate absent).
-        assert_eq!(rows.len(), 12, "12 latest-per-metric project-scope rows (11 base + project_health)");
+        // exactly 12 base metrics + project_health (false_crash_rate absent). The
+        // 12th base is session_outcomes' `time_to_useful_result` project row.
+        assert_eq!(rows.len(), 13, "13 latest-per-metric project-scope rows (12 base + project_health)");
 
         // ── HEALTH: 0..=100, equals the hand-normalized weighted mean, lands on 68 ──
         let active = pg.active_metrics().await.unwrap();
@@ -2160,9 +2168,9 @@ mod tests {
         assert_eq!(st, StatusCode::OK, "{body}");
         let reg = body["metrics"].as_array().expect("registry metrics array");
         for k in [
-            "ftr", "rework_ratio", "throughput", "churn_rate", "churn_concentration",
-            "rework_density", "duplication_ratio", "interruption_rate", "run_completion",
-            "memory_promotion", "unused_tools", "project_health",
+            "ftr", "rework_ratio", "throughput", "time_to_useful_result", "churn_rate",
+            "churn_concentration", "rework_density", "duplication_ratio", "interruption_rate",
+            "run_completion", "memory_promotion", "unused_tools", "project_health",
         ] {
             let m = reg.iter().find(|m| m["key"].as_str() == Some(k))
                 .unwrap_or_else(|| panic!("registry endpoint serves `{k}`"));
@@ -2174,7 +2182,7 @@ mod tests {
         let (st, body) = req(app.clone(), "GET", &format!("/api/projects/{pid}/metrics"), None).await;
         assert_eq!(st, StatusCode::OK, "{body}");
         let ms = body["metrics"].as_array().expect("project metrics array");
-        assert_eq!(ms.len(), 12, "endpoint returns the 12 latest-per-metric rows");
+        assert_eq!(ms.len(), 13, "endpoint returns the 13 latest-per-metric rows");
         let e_health = ms.iter().find(|m| m["metric"].as_str() == Some("project_health"))
             .expect("project_health present on the endpoint");
         assert!(close(e_health["value"].as_f64().unwrap(), 68.0), "endpoint project_health = 68");

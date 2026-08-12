@@ -157,10 +157,24 @@ async fn tool_usage_counts(
 /// number of `project_metrics` rows written (`0` = honest-empty: no RELEVANT tools —
 /// the project has invoked none of its registered-in-scope tools — or the metric is
 /// inactive). Idempotent — re-running backfills in place via the upsert identity.
-pub(super) async fn compute(ctx: &TaskContext, project_raw: &str) -> Result<u32, String> {
+/// This is a FORWARD-ONLY snapshot (Phase 3): the tool registry + relevance reflect
+/// current state and cannot be reconstructed for a past day, so a historical `as_of`
+/// (`Some(D)`, `D != today`) writes NO row (see [`super::is_historical`]);
+/// `None`/today keep the current snapshot-on-today behavior.
+pub(super) async fn compute(
+    ctx: &TaskContext,
+    project_raw: &str,
+    as_of: Option<chrono::NaiveDate>,
+) -> Result<u32, String> {
     let project_id = uuid::Uuid::parse_str(project_raw)
         .map_err(|e| format!("tool: bad project id {project_raw:?}: {e}"))?;
     let pg = ctx.pg();
+
+    // Forward-only: the registry + relevance are a current snapshot and cannot be
+    // reconstructed for a past day, so a historical `as_of` writes NO row.
+    if super::is_historical(pg, as_of).await? {
+        return Ok(0);
+    }
 
     // Reuse the scheduler's window reader (config key + parser + default) — DRY.
     let window_days = crate::tasks::metrics_scheduler::window_days(pg).await;
@@ -247,7 +261,7 @@ mod tests {
         seed_tool_verdict(pg, &csid, "t3", "partial", ts).await; // invoked, NOT used → dead
         // t4: no verdict at all → never invoked → NOT relevant (drops out of M).
 
-        let written = compute(&ctx, &pid.to_string()).await.unwrap();
+        let written = compute(&ctx, &pid.to_string(), None).await.unwrap();
         assert_eq!(written, 1, "one unused_tools project row");
 
         let daily = daily_rows(pg, &pid).await;
@@ -258,7 +272,7 @@ mod tests {
         assert_eq!(ut.2["used_tools"].as_i64(), Some(1), "used_tools = 1 (only t1 has an in-window 'used' verdict)");
 
         // ── Idempotency: re-run backfills in place, never duplicates ──
-        let again = compute(&ctx, &pid.to_string()).await.unwrap();
+        let again = compute(&ctx, &pid.to_string(), None).await.unwrap();
         assert_eq!(again, 1, "re-run recomputes the same row");
         let (total,): (i64,) = query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
             .bind(pid)
@@ -294,7 +308,7 @@ mod tests {
             seed_tool_verdict(pg, &csid, t, "used", ts).await;
         }
 
-        let written = compute(&ctx, &pid.to_string()).await.unwrap();
+        let written = compute(&ctx, &pid.to_string(), None).await.unwrap();
         assert_eq!(written, 1, "a real-zero unused_tools row IS written (not suppressed)");
 
         let daily = daily_rows(pg, &pid).await;
@@ -328,7 +342,7 @@ mod tests {
         seed_tool_session(pg, &fid, &pid, &csid, &fam, ts).await; // active project, but…
         // …no seed_assistant_tool for `fam` → 0 registered in scope.
 
-        let written = compute(&ctx, &pid.to_string()).await.unwrap();
+        let written = compute(&ctx, &pid.to_string(), None).await.unwrap();
         assert_eq!(written, 0, "0 registered tools in scope → NO row (never a fabricated 0)");
 
         let (total,): (i64,) = query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
@@ -354,7 +368,7 @@ mod tests {
             .await
             .unwrap();
 
-        let written = compute(&ctx, &pid.to_string()).await.unwrap();
+        let written = compute(&ctx, &pid.to_string(), None).await.unwrap();
         assert_eq!(written, 0, "no sessions/tools in scope → zero rows written");
 
         let (total,): (i64,) = query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
@@ -391,7 +405,7 @@ mod tests {
         // The only positive verdict is 30 days old — outside the 14-day window.
         seed_tool_verdict(pg, &csid, "t1", "used", now - chrono::Duration::days(30)).await;
 
-        let written = compute(&ctx, &pid.to_string()).await.unwrap();
+        let written = compute(&ctx, &pid.to_string(), None).await.unwrap();
         assert_eq!(written, 1, "one unused_tools row (t1 is registered in scope)");
 
         let daily = daily_rows(pg, &pid).await;
@@ -444,7 +458,7 @@ mod tests {
             seed_tool_verdict(pg, &csid_b, t, "used", ts).await;
         }
 
-        let written = compute(&ctx, &pid_a.to_string()).await.unwrap();
+        let written = compute(&ctx, &pid_a.to_string(), None).await.unwrap();
         assert_eq!(written, 1, "only A's own family scope produces a row");
 
         let daily = daily_rows(pg, &pid_a).await;
@@ -459,5 +473,45 @@ mod tests {
         purge_assistant_tools(pg, &[&fam_a, &fam_b]).await;
         cleanup_metrics_fixture(pg, &pid_a, Some(&fid_a), &[]).await;
         cleanup_metrics_fixture(pg, &pid_b, Some(&fid_b), &[]).await;
+    }
+
+    #[tokio::test]
+    async fn unused_tools_historical_as_of_skips() {
+        // Forward-only guard (Phase 3): `unused_tools` is a snapshot of the CURRENT
+        // tool registry + relevance and cannot be reconstructed for a past day, so a
+        // historical `as_of` (Some(D), D != today) writes ZERO rows — never a
+        // fabricated historical snapshot. The SAME fixture writes a row with
+        // `as_of = None` (see `unused_tools_counts_tools_without_positive_verdicts`),
+        // so a 0 here is the guard, not empty data.
+        let ctx = make_ctx().await;
+        let pg = ctx.pg();
+        let uniq = uuid::Uuid::new_v4();
+        let (pid, fid) = seed_metrics_project_folder(pg, &uniq).await;
+        let fam = format!("_test-fam-{uniq}");
+        let csid = format!("_test:tool:{uniq}");
+        purge_assistant_tools(pg, &[&fam]).await;
+        purge_tool_verdicts(pg, &[&csid]).await;
+        purge_assistant_events(pg, &[&csid]).await;
+
+        let ts = chrono::Utc::now() - chrono::Duration::hours(2);
+        seed_tool_session(pg, &fid, &pid, &csid, &fam, ts).await;
+        seed_assistant_tool(pg, &fam, "builtin", "builtin", "t1", "t1").await;
+        seed_tool_verdict(pg, &csid, "t1", "used", ts).await;
+
+        let past = chrono::NaiveDate::from_ymd_opt(2020, 1, 1).unwrap();
+        let written = compute(&ctx, &pid.to_string(), Some(past)).await.unwrap();
+        assert_eq!(written, 0, "historical as_of → forward-only skip → zero rows");
+
+        let (total,): (i64,) = query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
+            .bind(pid)
+            .fetch_one(pg.pool())
+            .await
+            .unwrap();
+        assert_eq!(total, 0, "no project_metrics rows for a historical as_of (never a fabricated snapshot)");
+
+        purge_tool_verdicts(pg, &[&csid]).await;
+        purge_assistant_events(pg, &[&csid]).await;
+        purge_assistant_tools(pg, &[&fam]).await;
+        cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
     }
 }

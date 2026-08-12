@@ -174,8 +174,15 @@ async fn rework_counts(
 /// `project_raw` is the project uuid carried in `task.folder_path`. Returns the
 /// number of `project_metrics` rows written (`0` = honest-empty: no churn/rework
 /// data, or none of the group's metrics active). Idempotent — re-running backfills
-/// in place via the upsert identity.
-pub(super) async fn compute(ctx: &TaskContext, project_raw: &str) -> Result<u32, String> {
+/// in place via the upsert identity. `as_of` is the target `computed_on` day; only
+/// the FORWARD-ONLY `rework_density` snapshot honors it in this phase (a historical
+/// `as_of` skips it — see [`super::is_historical`]). `churn_rate`/`churn_concentration`
+/// keep their current window behavior (a later phase wires their per-day git path).
+pub(super) async fn compute(
+    ctx: &TaskContext,
+    project_raw: &str,
+    as_of: Option<chrono::NaiveDate>,
+) -> Result<u32, String> {
     let project_id = uuid::Uuid::parse_str(project_raw)
         .map_err(|e| format!("churn: bad project id {project_raw:?}: {e}"))?;
     let pg = ctx.pg();
@@ -285,7 +292,14 @@ pub(super) async fn compute(ctx: &TaskContext, project_raw: &str) -> Result<u32,
     }
 
     // ── rework_density (ratio): per-module + project snapshot as of today ──
+    // Forward-only: a rework snapshot reflects the CURRENT signal vs current project
+    // files and cannot be reconstructed for a past day, so a historical `as_of`
+    // (Some(D), D != today) skips it entirely — no fabricated historical snapshot.
+    // This is the LAST block, so a `return` here is equivalent to skipping it.
     if let Some(mid) = rework_id {
+        if super::is_historical(pg, as_of).await? {
+            return Ok(written);
+        }
         let (project_files, folder_files) = project_file_counts(pg, &project_id).await?;
         let (rework_total, folder_rework) = rework_counts(pg, &project_id).await?;
         let day = super::today(pg).await?;
@@ -367,7 +381,7 @@ mod tests {
         // A non-churn task_kind under the live path → must NOT be counted.
         seed_task_execution(pg, "process_folder", "completed", &abs, &abs, ts).await;
 
-        let written = compute(&ctx, &pid.to_string()).await.unwrap();
+        let written = compute(&ctx, &pid.to_string(), None).await.unwrap();
         // 1 churn_rate module row + 1 churn_rate project row + 1 concentration row.
         // (No file nodes / rework patterns seeded → rework_density writes nothing.)
         assert_eq!(written, 3, "churn_rate module + project + concentration; rework_density empty");
@@ -393,7 +407,7 @@ mod tests {
         assert_eq!(conc.2["denominator"].as_i64(), Some(4), "concentration denominator = total churn");
 
         // ── Idempotency: re-run backfills in place, never duplicates ──
-        let again = compute(&ctx, &pid.to_string()).await.unwrap();
+        let again = compute(&ctx, &pid.to_string(), None).await.unwrap();
         assert_eq!(again, 3, "re-run recomputes the same rows");
         let (total,): (i64,) = query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
             .bind(pid)
@@ -417,7 +431,7 @@ mod tests {
             .await
             .unwrap();
 
-        let written = compute(&ctx, &pid.to_string()).await.unwrap();
+        let written = compute(&ctx, &pid.to_string(), None).await.unwrap();
         assert_eq!(written, 0, "no churn/rework data in the window → zero rows written");
 
         let (total,): (i64,) = query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
@@ -448,7 +462,7 @@ mod tests {
         // A non-rework anti-pattern must NOT be counted.
         seed_detected_pattern(pg, &pid_a, Some(&fid_a), "correction-prone", true).await;
 
-        let written_a = compute(&ctx, &pid_a.to_string()).await.unwrap();
+        let written_a = compute(&ctx, &pid_a.to_string(), None).await.unwrap();
         assert_eq!(written_a, 2, "rework_density project row + one per-module row (no executions → no churn rows)");
 
         let daily_a = daily_rows(pg, &pid_a).await;
@@ -469,7 +483,7 @@ mod tests {
         let (pid_b, fid_b) = seed_metrics_project_folder(pg, &uniq_b).await;
         seed_detected_pattern(pg, &pid_b, Some(&fid_b), "rework: x.rs", true).await;
 
-        let written_b = compute(&ctx, &pid_b.to_string()).await.unwrap();
+        let written_b = compute(&ctx, &pid_b.to_string(), None).await.unwrap();
         assert_eq!(written_b, 0, "0 project files → no denominator → NO rework_density row (never a fabricated 0/0)");
         let (total_b,): (i64,) = query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
             .bind(pid_b)
@@ -508,7 +522,7 @@ mod tests {
             seed_task_execution(pg, "process_file", "completed", &abs_b, &format!("{abs_b}/{f}"), ts).await;
         }
 
-        let written = compute(&ctx, &pid_a.to_string()).await.unwrap();
+        let written = compute(&ctx, &pid_a.to_string(), None).await.unwrap();
         assert_eq!(written, 3, "only A's own executions produce rows (churn_rate module + project + concentration)");
 
         let modules = module_rows(pg, &pid_a, "churn_rate").await;
@@ -540,7 +554,7 @@ mod tests {
             seed_file_node(pg, &fid, &format!("/_test/metrics-{uniq}/{f}")).await;
         }
 
-        let written = compute(&ctx, &pid.to_string()).await.unwrap();
+        let written = compute(&ctx, &pid.to_string(), None).await.unwrap();
         assert_eq!(written, 1, "one rework_density project row (real 0.0); no per-module rows (no folder has a rework signal)");
 
         let daily = daily_rows(pg, &pid).await;
@@ -575,7 +589,7 @@ mod tests {
             }
         }
 
-        compute(&ctx, &pid.to_string()).await.unwrap();
+        compute(&ctx, &pid.to_string(), None).await.unwrap();
 
         let daily = daily_rows(pg, &pid).await;
         let conc = daily.iter().find(|r| r.0 == "churn_concentration").expect("concentration row");
@@ -593,5 +607,38 @@ mod tests {
         assert!(fid_present, "the churn_rate module row for the folder is present");
 
         cleanup_metrics_fixture(pg, &pid, Some(&fid), &[&abs]).await;
+    }
+
+    #[tokio::test]
+    async fn churn_rework_density_historical_as_of_skips() {
+        // Forward-only guard (Phase 3): `rework_density` is a snapshot of the CURRENT
+        // rework signal vs current project files and cannot be reconstructed for a
+        // past day, so a historical `as_of` (Some(D), D != today) writes NO
+        // rework_density row — never a fabricated historical snapshot. Seeds ONLY
+        // rework data (no executions) so the row count isolates rework_density; the
+        // SAME fixture writes rows with `as_of = None` (see
+        // `churn_rework_density_ratio_and_zero_project_files`).
+        let ctx = make_ctx().await;
+        let pg = ctx.pg();
+        let uniq = uuid::Uuid::new_v4();
+        let (pid, fid) = seed_metrics_project_folder(pg, &uniq).await;
+        for f in ["a.rs", "b.rs", "c.rs", "d.rs"] {
+            seed_file_node(pg, &fid, &format!("/_test/metrics-{uniq}/{f}")).await;
+        }
+        seed_detected_pattern(pg, &pid, Some(&fid), "rework: a.rs", true).await;
+        seed_detected_pattern(pg, &pid, Some(&fid), "rework: b.rs", true).await;
+
+        let past = chrono::NaiveDate::from_ymd_opt(2020, 1, 1).unwrap();
+        let written = compute(&ctx, &pid.to_string(), Some(past)).await.unwrap();
+        assert_eq!(written, 0, "historical as_of → rework_density (forward-only) skipped → zero rows");
+
+        let (total,): (i64,) = query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
+            .bind(pid)
+            .fetch_one(pg.pool())
+            .await
+            .unwrap();
+        assert_eq!(total, 0, "no project_metrics rows for a historical as_of (never a fabricated snapshot)");
+
+        cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
     }
 }

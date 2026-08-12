@@ -94,15 +94,66 @@ tasks drain slowly (queued behind remap-triggered re-scans); a sampled orphaned
 ready to synthesize + attribute via the new aliases once the queue reaches it.
 `backfilled` session count was still 0 at checkpoint time (queue not yet drained).
 
+## Backfill drain — VERIFIED against live data (2026-08-11)
+
+The queue has since drained. Per-project spans now:
+
+| project | sessions | backfilled | earliest | latest |
+|---|---|---|---|---|
+| **dbd** | 38 | **15** | **2025-06-05** | 2026-08-11 |
+| torii | 12 | 0 | 2026-07-23 | 2026-08-05 |
+| gateway | 11 | 0 | 2026-07-30 | 2026-08-09 |
+
+- **dbd — recovered.** 15 backfilled sessions; history reaches **June 2025**. The
+  `dbd-rs→dbd` alias + synthesis machinery works end-to-end.
+- **torii / gateway — "0 backfilled" is mostly a FALSE ALARM.** Their July sessions
+  *are* attributed (torii 4 @ 7/23–27; gateway 5 @ 7/31), just live-captured
+  (post-7/13 capture start), so `backfilled=false` is correct. The strategos
+  transcripts span 7/13–29 — all after live capture — so their sessions already had
+  events, `needs_synth` was false (`transcript/mod.rs:163`), and synthesis correctly
+  skipped them. All 21,117 strategos-cwd events map to a session row → nothing for
+  `repair_orphaned_sessions` to do either.
+- **Real residual gap — 4 sessions stranded on the defunct `strategos` project.**
+  Their resolving cwd is the **bare** `/Users/Jerry/Developer/strategos`, which has
+  **no alias** (only `/strategos/monorepo`→torii and `/strategos/gateway`→gateway
+  are aliased) and still resolves to the old `strategos` project (**161 live folder
+  rows**). The stranded sessions:
+  - `zed-45a8…` 2026-03-20 (backfilled, Zed) — bare `/…/strategos`
+  - `1e0f9d7e…` 2026-06-17 (backfilled) — bare `/…/strategos`
+  - `83b57e52…` 2026-07-17 (live) — bare `/…/strategos` + gateway subpaths
+  - `e57060ae…` 2026-07-23 (live) — bare `/…/strategos`
+
+  The two backfilled ones (Mar 20, Jun 17) are exactly the deep history that would
+  extend **torii** back to March.
+
+  **RESOLVED 2026-08-11 — decision: "remap root → torii (minimal)".** The
+  `sensei folder remap` CLI was the WRONG tool: `remap_folder` (pg_store.rs:2626)
+  calls `delete_folder_tree`, which `DELETE`s the old folder with parent_id CASCADE
+  — remapping the bare `/…/strategos` root would have cascade-deleted strategos's
+  other ~160 folders (the "retire" outcome, not "minimal"), and it never updates
+  `sessions.project_id` anyway. Also note the metrics scope by **`folders.project_id`
+  via `sessions.folder_id`** (session_outcomes.rs:76), not `sessions.project_id`, and
+  `record_session_event` sets `project_id` **sticky** (`COALESCE(existing, new)`).
+  So the minimal, correct fix was a targeted, transactional re-point of just the 4
+  sessions (`folder_id → ea644f90` torii-root, `project_id → 945702a2` torii),
+  leaving the strategos folder/project and the on-disk dir intact. Verified:
+  torii's metrics span moved **7/23→8/05 (12) ⇒ 3/20→8/05 (16)**; strategos residual
+  via the metrics join = 0. NOTE: session `83b57e52` (7/17) is actually gateway work
+  (cwds are gateway subpaths) but was lumped to torii per the minimal choice —
+  reassign its `folder_id`/`project_id` to gateway if that precision matters.
+  CAVEAT: raw session span now reaches March, but the *charts* still won't render
+  those months until §5 (historical snapshots + window-anchor) lands — the
+  session-anchored 14-day window still excludes these historical rows.
+
 ## Remaining gaps → Course of action
 
 Ordered. Each is independently resumable.
 
-1. **Verify the backfill drained.** After the queue settles, confirm
-   `SELECT count(*) FROM activity.sessions WHERE backfilled` > 0 and that
-   dbd/torii/gateway `min(started_at)` moved back to May/July. If synthesis is
-   still skipped, check the `session_has_events()` gate vs the freshly-enqueued
-   files and the alias resolution inside `synthesize_session` (`mod.rs:222–240`).
+1. **Verify the backfill drained.** ✅ DONE 2026-08-11 — see "Backfill drain —
+   VERIFIED" above. dbd recovered to June 2025; torii/gateway July sessions are
+   correctly attributed (live, not backfilled). Residual: 4 sessions stranded on the
+   defunct `strategos` project → blocked on the identity decision, then a
+   `folder remap` of the bare `/…/strategos` root.
 
 2. **Auto-schedule the backfill (missing seam).** Today it only runs on the
    manual endpoint and competes with other tasks. Add a scheduler that enqueues
@@ -139,6 +190,49 @@ Ordered. Each is independently resumable.
    daily series, not just forward), and align the session-vs-event window anchor
    (prefer session `started_at`/event call-time consistently). Only then do the
    charts render real months.
+
+   ### §5 AGREED ARCHITECTURE (2026-08-11) — unified backfill + incremental
+
+   Verified mechanism (live data): the daily computers already key each row by the
+   session's **own day** (`computed_on = date_trunc('day', started_at)::date`) and
+   upsert idempotently per `(project, metric, day, grain)`. dbd's `ftr` daily rows
+   start exactly 14 days back while 15 dbd sessions (2025-06 → 2026-06) produced
+   zero daily rows — so the ONLY thing hiding history is the
+   `started_at >= now() - 14d` emit filter. There is **no need for an "as-of"
+   recompute of point-in-time state per past day** for the day-keyed series.
+
+   **Design (unify backfill + incremental as ONE mechanism):** every metric value is
+   computed for a specific `computed_on` DAY and upserted per `(project, metric,
+   day, grain)`. Backfill and incremental are the same operation over different
+   day-sets. Three processors:
+   1. **Transcript importer** (EXISTS — `BackfillTranscripts` → `BackfillTranscriptFile`):
+      synthesizes sessions/events with historical timestamps. First install = full;
+      forward = new transcripts.
+   2. **Timeline→day-task planner** (NEW): per project, derive the data-day span from
+      the feed (`min..max` of session `started_at` / event `ts`), diff against the
+      `computed_on` days already in `project_metrics`, and enqueue one per-day compute
+      task per **(project, metric-group, missing/stale day)**. First install → all
+      days (backfill); daily → just the new day (incremental); gaps self-heal.
+   3. **Per-day computer** (MODIFY the existing computers): a task computes its target
+      day D and upserts `computed_on=D`. Per-day granularity so one bad day can't
+      block the rest (same rationale as `BackfillTranscriptFile`).
+
+   **Honesty constraints (firm):**
+   - Anchor on true occurrence time — session `started_at` / event client `ts` —
+     NEVER `created_at` (insert-time = now for synthesized rows), else all backfilled
+     events collapse onto "today". (Event-anchored computers keying `created_at`
+     must switch to `ts`.)
+   - **Code-graph-state metrics** (`duplication_ratio`, and any "current state"
+     snapshot that can't be reconstructed as-of a past day — no historical code
+     graph exists) get a **today-only** task; the planner does NOT fabricate
+     historical days for them. Session/event-derived state (e.g. `rework_density`
+     over a trailing window) CAN backfill.
+   - Idempotent upsert per `(project, metric, day, grain)`; a day's compute failure
+     propagates `Err` (task retries), never a fabricated value; honest-empty day →
+     no row.
+
+   Per-metric classification (day-keyed backfillable vs forward-only point-in-time)
+   is being finalized against the full computer map before implementation.
 
 ## Done-when
 

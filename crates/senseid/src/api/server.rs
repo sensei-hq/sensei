@@ -295,6 +295,40 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
         Arc::new(state.pg.clone()),
     );
 
+    // First-install / boot metric backfill (Phase 5 — history recovery): recover
+    // MONTHS of metric history, not ~2 weeks. First dispatch the transcript importer
+    // (first install = full history; forward = new transcripts, smart-skipped) so the
+    // day-keyed sources (sessions/events) exist, then enqueue ONE PlanMetricDays per
+    // project — the planner backfills every data day its sources reach. Overlap-
+    // guarded (`has_pending_kind`) so it never stacks with the daily scheduler's own
+    // boot tick, and idempotent (per-day upserts), so a re-run is safe. Runs from a
+    // spawn with a small delay so the initial scan + transcript ingestion make
+    // progress first; any day the planner can't cover yet self-heals on a later daily
+    // pass as more transcripts land.
+    {
+        let pg = state.pg.clone();
+        let queue = task_queue.clone();
+        tokio::spawn(async move {
+            let (_seen, dispatched) = crate::transcript::dispatch(&queue).await;
+            if dispatched > 0 {
+                tracing::info!(dispatched, "startup: dispatched transcript backfill for metric history");
+            }
+            match pg.repair_orphaned_sessions().await {
+                Ok(n) if n > 0 => tracing::info!(repaired = n, "startup: re-attached orphaned sessions"),
+                Ok(_) => {}
+                Err(e) => tracing::warn!(error = %e, "startup: repair_orphaned_sessions failed"),
+            }
+            // Let transcript ingestion make progress before planning the per-day
+            // compute so first install captures the most history in the first wave.
+            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+            match crate::tasks::metrics_scheduler::enqueue_backfill_all(&queue, &pg).await {
+                Ok(0) => tracing::debug!("startup: metric backfill skipped (a plan wave is already in flight)"),
+                Ok(n) => tracing::info!(projects = n, "startup: enqueued metric backfill (PlanMetricDays per project)"),
+                Err(e) => tracing::warn!(error = %e, "startup: metric backfill enqueue failed"),
+            }
+        });
+    }
+
     // Relay-engine (P3.2): drive daemon-owned autonomous runs. Each tick (15s)
     // auto-resumes due pauses and enqueues an AdvanceRun per active run. P3.2
     // only heartbeats + logs housekeeping; the agent spawn/drive is P3.3. DB

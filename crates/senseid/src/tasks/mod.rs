@@ -137,6 +137,16 @@ pub enum TaskKind {
     /// `ComputeMetrics` ids (project id in `task.folder_path`); dispatched to
     /// `handlers::metrics::compute_health` (Phase 6 fills in the derived score).
     ComputeHealth,
+    /// Metrics pipeline (Phase 4 — the historical-snapshot planner): the
+    /// per-project timeline → day-task planner. The project id rides in
+    /// `task.folder_path`. For each ACTIVE day-keyed group (`session_outcomes`,
+    /// `autonomy`) it diffs the project's DATA-day set (distinct true-occurrence
+    /// day over the group's source) against the COVERED-day set (distinct
+    /// `computed_on` already in `sensei.project_metrics` for that group's active
+    /// metrics) and enqueues one `ComputeMetrics{as_of=Some(D)}` per missing day
+    /// PLUS today — so first-install backfills every day and the daily run fills
+    /// only today + any gaps. Dispatched to `handlers::metrics::plan_metric_days`.
+    PlanMetricDays,
 }
 
 impl std::fmt::Display for TaskKind {
@@ -174,6 +184,7 @@ impl std::fmt::Display for TaskKind {
             Self::PublishRun => write!(f, "publish_run"),
             Self::ComputeMetrics => write!(f, "compute_metrics"),
             Self::ComputeHealth => write!(f, "compute_health"),
+            Self::PlanMetricDays => write!(f, "plan_metric_days"),
         }
     }
 }
@@ -221,7 +232,11 @@ impl TaskKind {
             // a bounded number of UPDATE/UPSERT statements off the (small)
             // playbook_rules table — same order of cost as the tool-insights
             // snapshot.
-            | TaskKind::LearnPlaybooks => Duration::from_secs(180),
+            | TaskKind::LearnPlaybooks
+            // Metrics day-planner: a handful of per-project distinct-day
+            // aggregates + a bounded burst of enqueues (no compute of its own) —
+            // light and DB-bound, so it shares the short cap.
+            | TaskKind::PlanMetricDays => Duration::from_secs(180),
             // Whole-repo, barrier, embedding and network-bound doc-indexing
             // tasks can legitimately run for minutes on a large repository.
             TaskKind::ScanRoot
@@ -286,6 +301,12 @@ pub struct Task {
     pub module_id: Option<String>,       // for process_file: which module this file belongs to
     pub branch: Option<String>,          // git branch name (for branch-aware indexing)
     pub url: Option<String>,             // for import_lib: library docs URL
+    /// Target `computed_on` day for a metrics compute (`ComputeMetrics`). `None` =
+    /// the incremental "today" run (rolling-window behavior preserved). `Some(D)` =
+    /// compute the single historical day `D` (the backfill/gap-fill path) — see
+    /// `handlers::metrics`. Carried through `retry()` so an interrupted backfill
+    /// resumes on the same day.
+    pub as_of: Option<chrono::NaiveDate>,
     pub status: TaskStatus,
     pub depends_on: Vec<u64>,            // won't run until these complete
     pub error: Option<String>,
@@ -306,6 +327,7 @@ impl Task {
             module_id: None,
             branch: None,
             url: None,
+            as_of: None,
             status: TaskStatus::Pending,
             depends_on: Vec::new(),
             error: None,
@@ -330,6 +352,7 @@ impl Task {
             module_id: self.module_id.clone(),
             branch: self.branch.clone(),
             url: self.url.clone(),
+            as_of: self.as_of,
             status: TaskStatus::Pending,
             depends_on: Vec::new(),
             error: None,
@@ -358,6 +381,16 @@ impl Task {
     #[allow(dead_code)]
     pub fn with_url(mut self, url: &str) -> Self {
         self.url = Some(url.to_string());
+        self
+    }
+
+    /// Set the target `computed_on` day for a metrics compute (`ComputeMetrics`).
+    /// `None` (the default) is the incremental "today" run; `Some(D)` targets the
+    /// single historical day `D`. Used by the timeline → day-task planner to
+    /// enqueue one compute per missing/stale day.
+    #[allow(dead_code)]
+    pub fn with_as_of(mut self, as_of: chrono::NaiveDate) -> Self {
+        self.as_of = Some(as_of);
         self
     }
 
@@ -426,6 +459,7 @@ mod tests {
         base.error = Some("boom".into());
         base.status = TaskStatus::Failed;
         base.depends_on = vec![1, 2];
+        base.as_of = chrono::NaiveDate::from_ymd_opt(2025, 6, 1);
 
         let next = base.retry();
         // Identity is preserved — every field that names WHAT to run.
@@ -436,6 +470,8 @@ mod tests {
         assert_eq!(next.module_id, Some("mod:repo:src".to_string()));
         assert_eq!(next.branch, Some("main".to_string()), "retry preserves branch identity");
         assert_eq!(next.url, Some("https://example.test/pkg".to_string()), "retry preserves url identity");
+        assert_eq!(next.as_of, chrono::NaiveDate::from_ymd_opt(2025, 6, 1),
+            "retry preserves the target computed_on day so an interrupted backfill resumes");
         // The attempt count advances by exactly one.
         assert_eq!(next.retry_number, 2, "retry() bumps retry_number");
         // Runtime state is reset — a fresh, re-enqueueable attempt.
@@ -475,6 +511,7 @@ mod tests {
         assert_eq!(TaskKind::PublishRelaySegments.to_string(), "publish_relay_segments");
         assert_eq!(TaskKind::ComputeMetrics.to_string(), "compute_metrics");
         assert_eq!(TaskKind::ComputeHealth.to_string(), "compute_health");
+        assert_eq!(TaskKind::PlanMetricDays.to_string(), "plan_metric_days");
     }
 
     #[test]
@@ -514,6 +551,7 @@ mod tests {
             TaskKind::PublishRelaySegments, TaskKind::AdvanceRun,
             TaskKind::PublishRun,
             TaskKind::ComputeMetrics, TaskKind::ComputeHealth,
+            TaskKind::PlanMetricDays,
         ] {
             assert!(k.watchdog_timeout().as_secs() > 0, "{k} must have a positive cap");
         }

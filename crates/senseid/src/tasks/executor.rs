@@ -132,6 +132,7 @@ async fn execute_task(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
             TaskKind::PublishRun => handlers::publish_run(ctx, task).await,
             TaskKind::ComputeMetrics => handlers::metrics::compute(ctx, task).await,
             TaskKind::ComputeHealth => handlers::metrics::compute_health(ctx, task).await,
+            TaskKind::PlanMetricDays => handlers::metrics::plan_metric_days(ctx, task).await,
             TaskKind::BackfillTranscripts => crate::transcript::run_backfill(ctx, task).await,
             TaskKind::BackfillTranscriptFile => crate::transcript::run_backfill_file(ctx, task).await,
         }
@@ -343,6 +344,15 @@ mod tests {
             "ComputeHealth routes to the metrics health handler");
         assert_eq!(probe::take(), Some("compute_health"),
             "ComputeHealth must dispatch to compute_health, not compute");
+
+        // PlanMetricDays → plan_metric_days (the day-task planner), NOT a base
+        // compute or the health barrier.
+        probe::reset();
+        let plan = Task::new(TaskKind::PlanMetricDays, &pid, "");
+        assert!(execute_task(&ctx, &plan).await.is_ok(),
+            "PlanMetricDays routes to the metrics planner handler");
+        assert_eq!(probe::take(), Some("plan_metric_days"),
+            "PlanMetricDays must dispatch to plan_metric_days");
     }
 
     #[tokio::test]

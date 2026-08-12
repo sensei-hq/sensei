@@ -58,11 +58,23 @@ const DUP_MIN_SIMILARITY: f64 = 0.92;
 /// `project_raw` is the project uuid carried in `task.folder_path`. Returns the
 /// number of `project_metrics` rows written (`0` = honest-empty: no eligible
 /// symbols, or the metric is inactive). Idempotent — re-running backfills in place
-/// via the upsert identity.
-pub(super) async fn compute(ctx: &TaskContext, project_raw: &str) -> Result<u32, String> {
+/// via the upsert identity. This is a FORWARD-ONLY snapshot (Phase 3): a historical
+/// `as_of` (`Some(D)`, `D != today`) writes NO row (see [`super::is_historical`]);
+/// `None`/today keep the current snapshot-on-today behavior.
+pub(super) async fn compute(
+    ctx: &TaskContext,
+    project_raw: &str,
+    as_of: Option<chrono::NaiveDate>,
+) -> Result<u32, String> {
     let project_id = uuid::Uuid::parse_str(project_raw)
         .map_err(|e| format!("duplication: bad project id {project_raw:?}: {e}"))?;
     let pg = ctx.pg();
+
+    // Forward-only: this snapshot reflects the CURRENT symbol graph and cannot be
+    // reconstructed for a past day, so a historical `as_of` writes NO row.
+    if super::is_historical(pg, as_of).await? {
+        return Ok(0);
+    }
 
     // Resolve key → metric_id for this group's ACTIVE metrics. An absent key is
     // inactive (retired / not-yet-effective / unseeded) → skipped: the computer
@@ -148,7 +160,7 @@ mod tests {
             seed_symbol_node(pg, &fid, "function", name, &format!("{base}/{name}.rs"), (1, 10), Some(&emb)).await;
         }
 
-        let written = compute(&ctx, &pid.to_string()).await.unwrap();
+        let written = compute(&ctx, &pid.to_string(), None).await.unwrap();
         assert_eq!(written, 2, "one project row + one per-module row (single folder)");
 
         // ── Project row: 2/5 = 0.4 ──
@@ -172,7 +184,7 @@ mod tests {
         assert_eq!(modules[0].2["denominator"].as_i64(), Some(5), "module denominator = folder eligible symbols");
 
         // ── Idempotency: re-run backfills in place, never duplicates ──
-        let again = compute(&ctx, &pid.to_string()).await.unwrap();
+        let again = compute(&ctx, &pid.to_string(), None).await.unwrap();
         assert_eq!(again, 2, "re-run recomputes the same rows");
         let (total,): (i64,) = query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
             .bind(pid)
@@ -201,7 +213,7 @@ mod tests {
         // Eligible span but NO embedding → ineligible.
         seed_symbol_node(pg, &fid, "function", "no_embed", &format!("{base}/n.rs"), (1, 10), None).await;
 
-        let written = compute(&ctx, &pid.to_string()).await.unwrap();
+        let written = compute(&ctx, &pid.to_string(), None).await.unwrap();
         assert_eq!(written, 0, "no eligible symbols → no denominator → zero rows written");
 
         let (total,): (i64,) = query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
@@ -229,7 +241,7 @@ mod tests {
             seed_symbol_node(pg, &fid, "function", name, &format!("{base}/{name}.rs"), (1, 10), Some(&emb)).await;
         }
 
-        let written = compute(&ctx, &pid.to_string()).await.unwrap();
+        let written = compute(&ctx, &pid.to_string(), None).await.unwrap();
         assert_eq!(written, 2, "project row + one per-module row (a real 0.0 is still written)");
 
         let daily = daily_rows(pg, &pid).await;
@@ -269,7 +281,7 @@ mod tests {
             seed_symbol_node(pg, &fid_b, "function", name, &format!("{base_b}/{name}.rs"), (1, 10), Some(&dup)).await;
         }
 
-        let written = compute(&ctx, &pid_a.to_string()).await.unwrap();
+        let written = compute(&ctx, &pid_a.to_string(), None).await.unwrap();
         assert_eq!(written, 2, "only A's own folder produces rows (project + one module)");
 
         let daily = daily_rows(pg, &pid_a).await;
@@ -305,7 +317,7 @@ mod tests {
             seed_symbol_node(pg, &fid, "function", name, &format!("{base}/{name}.rs"), (1, 10), Some(&dup)).await;
         }
 
-        let written = compute(&ctx, &pid.to_string()).await.unwrap();
+        let written = compute(&ctx, &pid.to_string(), None).await.unwrap();
         assert_eq!(written, 2, "project row + one per-module row");
 
         let daily = daily_rows(pg, &pid).await;
@@ -345,7 +357,7 @@ mod tests {
         // span 3 (4-1) → exactly at the cliff → included.
         seed_symbol_node(pg, &fid, "function", "span3", &format!("{base}/span3.rs"), (1, 4), Some(&at)).await;
 
-        let written = compute(&ctx, &pid.to_string()).await.unwrap();
+        let written = compute(&ctx, &pid.to_string(), None).await.unwrap();
         assert_eq!(written, 2, "a row IS written (the span-3 node is eligible → real denominator)");
 
         let daily = daily_rows(pg, &pid).await;
@@ -377,7 +389,7 @@ mod tests {
         seed_symbol_node(pg, &fid_x, "function", "x_sym", &format!("{base_x}/x.rs"), (1, 10), Some(&dup)).await;
         seed_symbol_node(pg, &fid_y, "function", "y_sym", &format!("{base_y}/y.rs"), (1, 10), Some(&dup)).await;
 
-        let written = compute(&ctx, &pid.to_string()).await.unwrap();
+        let written = compute(&ctx, &pid.to_string(), None).await.unwrap();
         assert_eq!(written, 3, "project row + one module row per folder (X and Y)");
 
         // ── Each module counts ITS OWN symbol as a participant ──
@@ -405,5 +417,36 @@ mod tests {
             .execute(pg.pool())
             .await
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn duplication_historical_as_of_skips() {
+        // Forward-only guard (Phase 3): `duplication_ratio` is a snapshot of the
+        // CURRENT symbol graph and cannot be reconstructed for a past day, so a
+        // historical `as_of` (Some(D), D != today) writes ZERO rows — never a
+        // fabricated historical snapshot. The SAME fixture writes rows with
+        // `as_of = None` (see `duplication_ratio_snapshot_from_clusters`), so a 0 here
+        // is the guard firing, not empty data.
+        let ctx = make_ctx().await;
+        let pg = ctx.pg();
+        let uniq = uuid::Uuid::new_v4();
+        let (pid, fid) = seed_metrics_project_folder(pg, &uniq).await;
+        let base = format!("/_test/metrics-{uniq}");
+        let dup = uniform_embedding_sql("0.1");
+        seed_symbol_node(pg, &fid, "function", "dup_a", &format!("{base}/a.rs"), (1, 10), Some(&dup)).await;
+        seed_symbol_node(pg, &fid, "function", "dup_b", &format!("{base}/b.rs"), (1, 10), Some(&dup)).await;
+
+        let past = chrono::NaiveDate::from_ymd_opt(2020, 1, 1).unwrap();
+        let written = compute(&ctx, &pid.to_string(), Some(past)).await.unwrap();
+        assert_eq!(written, 0, "historical as_of → forward-only skip → zero rows");
+
+        let (total,): (i64,) = query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
+            .bind(pid)
+            .fetch_one(pg.pool())
+            .await
+            .unwrap();
+        assert_eq!(total, 0, "no project_metrics rows for a historical as_of (never a fabricated snapshot)");
+
+        cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
     }
 }

@@ -2,20 +2,20 @@
 //!
 //! A long-lived tokio task (mirroring [`crate::tasks::analyzer_scheduler`] /
 //! [`crate::tasks::reconcile_scheduler`]) that wakes on an interval and, at most
-//! once per `metrics.run_secs` (default daily), enqueues the metrics-compute
-//! graph for every project:
+//! once per `metrics.run_secs` (default daily), enqueues ONE
+//! [`TaskKind::PlanMetricDays`] per project (project id in `task.folder_path`).
 //!
-//! - one [`TaskKind::ComputeMetrics`] per (project, active base `task_name`) — the
-//!   group rides in `task.path`, the project id in `task.folder_path`; then
-//! - one [`TaskKind::ComputeHealth`] barrier per project, `blocked_by` that
-//!   project's `ComputeMetrics` ids, so health is derived only after the base
-//!   metrics land (Phase 6).
+//! The per-project planner ([`crate::tasks::handlers::metrics::plan_metric_days`])
+//! then owns the whole compute graph — it diffs each day-keyed group's data-day set
+//! against the already-computed days and enqueues a per-day
+//! [`TaskKind::ComputeMetrics`] for every missing day plus today (backfill +
+//! incremental in ONE mechanism), enqueues a today-only `ComputeMetrics` for each
+//! snapshot group, and enqueues the [`TaskKind::ComputeHealth`] barrier `blocked_by`
+//! the pass's today computes. So a daily run is "plan → compute today + any gap".
 //!
-//! The base `task_name`s come from the ACTIVE registry
-//! ([`PgStore::active_task_names`]) with the health barrier's own name
-//! ([`HEALTH_TASK_NAME`]) filtered out (`health` is the `ComputeHealth` kind, not
-//! a base group). A genuinely-unknown group is still enqueued so the handler logs
-//! it (see `handlers::metrics::compute`).
+//! The active base `task_name`s from the registry ([`PgStore::active_task_names`])
+//! — with the health barrier's own name ([`HEALTH_TASK_NAME`]) filtered out — gate
+//! the pass: an empty base set means there is nothing to plan (honest-empty).
 //!
 //! Cadence + honesty:
 //! - **Watermarked** — the last run is persisted to `sensei.config`
@@ -110,43 +110,78 @@ fn base_task_names(active: Vec<String>) -> Vec<String> {
     active.into_iter().filter(|t| t != HEALTH_TASK_NAME).collect()
 }
 
-/// Enqueue the metrics-compute graph for one pass. For each project: one
-/// `ComputeMetrics` per base group (`task_name` in `path`, project id in
-/// `folder_path`), then one `ComputeHealth` barrier (project id in `folder_path`)
-/// `blocked_by` that project's `ComputeMetrics` ids so health is computed only
-/// after the base metrics land. Returns the number of tasks enqueued.
+/// Enqueue the daily metrics pass: exactly ONE [`TaskKind::PlanMetricDays`] per
+/// project (project id in `folder_path`). The planner
+/// ([`crate::tasks::handlers::metrics::plan_metric_days`]) then owns the whole
+/// per-project graph — day-keyed groups backfilled/incremented per-day, snapshot
+/// groups computed today-only, and the `ComputeHealth` barrier — so a daily run is
+/// "plan → compute today + any gap". Returns the number of tasks enqueued.
 ///
 /// Extracted (like [`crate::tasks::analyzer_scheduler`]'s `enqueue_due_project`)
 /// so the enqueue contract is unit-testable against a real queue without driving
 /// `run`. Honest-empty: an empty `task_names` (no active base metrics) or empty
-/// `project_ids` enqueues nothing.
+/// `project_ids` enqueues nothing — there is nothing to plan.
+///
+/// Overlap-guarded via [`TaskQueue::has_pending_kind`] (like [`enqueue_backfill_all`]):
+/// if a `PlanMetricDays` wave is already in flight — e.g. a first-install/boot
+/// backfill — the daily tick enqueues nothing rather than stacking a second
+/// per-project plan wave on top of it.
 async fn enqueue_metrics_pass(
     queue: &TaskQueue,
     project_ids: &[uuid::Uuid],
     task_names: &[String],
 ) -> u32 {
     if task_names.is_empty() {
-        return 0; // no active base metrics → nothing to compute for anyone
+        return 0; // no active base metrics → nothing to plan for anyone
     }
+    if queue.has_pending_kind(TaskKind::PlanMetricDays).await {
+        // A plan wave (boot backfill or a prior tick) is still pending/blocked/running
+        // — don't stack a second. The in-flight wave already covers every project.
+        return 0;
+    }
+    enqueue_plan_per_project(queue, project_ids).await
+}
+
+/// Enqueue one [`TaskKind::PlanMetricDays`] per project (project id in
+/// `folder_path`, empty `path`). The shared enqueue core of the daily pass and the
+/// backfill wave (so the "one plan per project" shape lives in ONE place). Returns
+/// the number enqueued.
+async fn enqueue_plan_per_project(queue: &TaskQueue, project_ids: &[uuid::Uuid]) -> u32 {
     let mut enqueued = 0u32;
     for pid in project_ids {
-        let owner = pid.to_string();
-        let mut compute_ids = Vec::with_capacity(task_names.len());
-        for task_name in task_names {
-            let id = queue
-                .enqueue(Task::new(TaskKind::ComputeMetrics, &owner, task_name))
-                .await;
-            compute_ids.push(id);
-            enqueued += 1;
-        }
-        // The per-project health barrier: blocked on THIS project's base compute
-        // ids, so it runs only after they complete (Phase 6 derives the score).
         queue
-            .enqueue(Task::new(TaskKind::ComputeHealth, &owner, "").blocked_by(compute_ids))
+            .enqueue(Task::new(TaskKind::PlanMetricDays, &pid.to_string(), ""))
             .await;
         enqueued += 1;
     }
     enqueued
+}
+
+/// Enqueue a one-time full-backfill wave — one [`TaskKind::PlanMetricDays`] per
+/// project — for first-install / boot and the manual `POST /api/metrics/backfill`
+/// re-plan. Overlap-guarded via [`TaskQueue::has_pending_kind`] so it never stacks a
+/// second wave while one is still in flight. Returns the number enqueued (`0` when a
+/// plan wave is already pending, or there are no projects). Reads the project set via
+/// [`PgStore::list_projects`] and propagates a read failure as `Err` — never a masked
+/// empty success that would read as "no projects to backfill".
+pub async fn enqueue_backfill_all(queue: &TaskQueue, pg: &PgStore) -> Result<u32, String> {
+    if queue.has_pending_kind(TaskKind::PlanMetricDays).await {
+        // A plan wave is already pending/blocked/running — don't stack a second.
+        return Ok(0);
+    }
+    let project_ids: Vec<uuid::Uuid> = pg
+        .list_projects()
+        .await?
+        .iter()
+        .filter_map(|p| crate::api::util::json_uuid(&p["id"]))
+        .collect();
+    let enqueued = enqueue_plan_per_project(queue, &project_ids).await;
+    tracing::info!(
+        projects = project_ids.len(),
+        enqueued,
+        "metrics backfill: PlanMetricDays enqueued for all projects",
+    );
+    Ok(enqueued)
 }
 
 /// One metrics run: read the active base `task_name`s + the project set, then
@@ -325,54 +360,63 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn metrics_scheduler_enqueues_active_task_names_per_project() {
-        // Given 2 projects and an active base registry spanning {session_outcomes,
-        // churn}, one pass enqueues exactly one ComputeMetrics per (project,
-        // task_name) — the task_name in `path`, the project id in `folder_path` —
-        // plus one ComputeHealth per project that is blocked_by that project's
-        // ComputeMetrics ids.
+    async fn metrics_scheduler_enqueues_one_plan_metric_days_per_project() {
+        // Given 2 projects and a non-empty active base registry, one pass enqueues
+        // EXACTLY one PlanMetricDays per project (project id in `folder_path`, empty
+        // `path`) and nothing else — the per-project planner owns the rest of the
+        // graph (per-day computes, snapshot computes, the health barrier).
         let queue = TaskQueue::with_max_repos(64);
         let p1 = uuid::Uuid::new_v4();
         let p2 = uuid::Uuid::new_v4();
         let task_names = vec!["session_outcomes".to_string(), "churn".to_string()];
 
         let enqueued = enqueue_metrics_pass(&queue, &[p1, p2], &task_names).await;
-        // 2 projects × (2 ComputeMetrics + 1 ComputeHealth) = 6.
-        assert_eq!(enqueued, 6, "one ComputeMetrics per (project, task_name) + one ComputeHealth per project");
+        assert_eq!(enqueued, 2, "exactly one PlanMetricDays per project");
 
-        // The health barriers are BLOCKED (each on its project's 2 compute ids),
-        // the compute tasks are pending — proving blocked_by is wired.
+        // All PlanMetricDays are immediately runnable (no cross-project blocking).
         let status = queue.status().await;
-        assert_eq!(status.pending, 4, "4 ComputeMetrics pending (2 projects × 2 groups)");
-        assert_eq!(status.blocked, 2, "2 ComputeHealth barriers blocked on their project's ComputeMetrics");
+        assert_eq!(status.pending, 2, "2 PlanMetricDays pending (one per project)");
+        assert_eq!(status.blocked, 0, "the scheduler enqueues no barriers itself");
 
-        // Per project: exactly one ComputeMetrics per task_name (task_name in
-        // path, project id in folder_path) and exactly one ComputeHealth.
+        // Per project: exactly one PlanMetricDays, and no ComputeMetrics/ComputeHealth
+        // (those are the planner's job now, not the scheduler's).
         let snap = queue.snapshot().await;
         for pid in [p1, p2] {
             let owner = pid.to_string();
-            let mut compute_paths: Vec<String> = snap
+            let plans = snap
                 .iter()
-                .filter(|(k, f, _)| *k == TaskKind::ComputeMetrics && *f == owner)
-                .map(|(_, _, p)| p.clone())
-                .collect();
-            compute_paths.sort();
-            assert_eq!(
-                compute_paths,
-                vec!["churn".to_string(), "session_outcomes".to_string()],
-                "one ComputeMetrics per (project, task_name), task_name carried in path",
-            );
-            let health = snap
-                .iter()
-                .filter(|(k, f, p)| *k == TaskKind::ComputeHealth && *f == owner && p.is_empty())
+                .filter(|(k, f, p)| *k == TaskKind::PlanMetricDays && *f == owner && p.is_empty())
                 .count();
-            assert_eq!(health, 1, "exactly one ComputeHealth barrier per project");
+            assert_eq!(plans, 1, "exactly one PlanMetricDays per project");
         }
+        assert!(
+            !snap.iter().any(|(k, _, _)| *k == TaskKind::ComputeMetrics || *k == TaskKind::ComputeHealth),
+            "the scheduler enqueues ONLY PlanMetricDays — computes + the health barrier are the planner's",
+        );
+    }
+
+    #[tokio::test]
+    async fn metrics_pass_is_guarded_against_a_second_wave() {
+        // LOW-1: the daily pass is overlap-guarded like the backfill wave — a
+        // PlanMetricDays already in flight means the pass enqueues nothing, so a
+        // first-install/boot backfill and a scheduler tick can't double-enqueue the
+        // per-project plans.
+        let queue = TaskQueue::with_max_repos(64);
+        let p1 = uuid::Uuid::new_v4();
+        // A plan wave is already pending (e.g. the boot backfill).
+        queue
+            .enqueue(Task::new(TaskKind::PlanMetricDays, &uuid::Uuid::new_v4().to_string(), ""))
+            .await;
+        let task_names = vec!["session_outcomes".to_string()];
+
+        let enqueued = enqueue_metrics_pass(&queue, &[p1], &task_names).await;
+        assert_eq!(enqueued, 0, "a pending PlanMetricDays guards the daily pass against a second wave");
+        assert_eq!(queue.status().await.pending, 1, "still just the one pre-existing plan — none stacked");
     }
 
     #[tokio::test]
     async fn empty_active_registry_enqueues_nothing() {
-        // Honest-empty: no active base metrics → no tasks for any project.
+        // Honest-empty: no active base metrics → nothing to plan for any project.
         let queue = TaskQueue::with_max_repos(64);
         let p1 = uuid::Uuid::new_v4();
         let enqueued = enqueue_metrics_pass(&queue, &[p1], &[]).await;
@@ -383,40 +427,30 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn health_barrier_unblocks_only_after_its_project_metrics_complete() {
-        // The barrier is per-project: completing p1's ComputeMetrics releases p1's
-        // ComputeHealth while p2's health stays blocked on its own (still-pending)
-        // metrics — proving blocked_by targets THAT project's ids.
-        let queue = TaskQueue::with_max_repos(64);
-        let p1 = uuid::Uuid::new_v4();
-        let p2 = uuid::Uuid::new_v4();
-        let task_names = vec!["session_outcomes".to_string(), "churn".to_string()];
-        enqueue_metrics_pass(&queue, &[p1, p2], &task_names).await;
-
-        // Drain all four pending ComputeMetrics, completing ONLY p1's (the rest
-        // are left running so p2's deps never complete). Bounded by the four
-        // compute tasks, so next_task never blocks waiting for more.
-        let owner1 = p1.to_string();
-        for _ in 0..4 {
-            let t = queue.next_task().await;
-            if t.kind == TaskKind::ComputeMetrics && t.folder_path == owner1 {
-                queue.complete(t.id).await;
-            }
-        }
-
-        // p1's health barrier is now released (both its metrics completed); p2's
-        // is still blocked on its two outstanding (running, not completed) metrics.
-        let status = queue.status().await;
-        assert_eq!(status.blocked, 1, "p2's ComputeHealth stays blocked until its own metrics complete");
-
-        // Barrier IDENTITY, not just count: the ONE unblocked task must be P1's
-        // health barrier. A cross-wire (p1's health blocked on p2's ids) would
-        // leave blocked==1 but release p2's health here — this catches that.
-        let released = queue.next_task().await;
-        assert_eq!(released.kind, TaskKind::ComputeHealth, "the released task is a health barrier");
-        assert_eq!(
-            released.folder_path, owner1,
-            "the released barrier belongs to p1 (whose metrics completed), not p2",
+    async fn backfill_enqueues_one_plan_per_project() {
+        // The boot / on-demand backfill enqueues one PlanMetricDays per project (empty
+        // path) and nothing else — the same per-project shape as the daily pass.
+        let ctx = crate::tasks::test_support::make_ctx().await;
+        let enqueued = enqueue_backfill_all(&ctx.queue, ctx.pg()).await.unwrap();
+        let snap = ctx.queue.snapshot().await;
+        let plans = snap.iter().filter(|(k, _, _)| *k == TaskKind::PlanMetricDays).count() as u32;
+        assert_eq!(plans, enqueued, "every enqueued task is a PlanMetricDays (one per project)");
+        assert!(
+            snap.iter().all(|(k, _, p)| *k == TaskKind::PlanMetricDays && p.is_empty()),
+            "backfill enqueues ONLY PlanMetricDays with an empty path",
         );
+    }
+
+    #[tokio::test]
+    async fn backfill_is_guarded_against_a_second_wave() {
+        // Dedupe guard: a PlanMetricDays already in flight means the backfill enqueues
+        // nothing (never stacks a second wave). Deterministic regardless of the shared
+        // test DB's project count.
+        let ctx = crate::tasks::test_support::make_ctx().await;
+        ctx.queue
+            .enqueue(Task::new(TaskKind::PlanMetricDays, &uuid::Uuid::new_v4().to_string(), ""))
+            .await;
+        let enqueued = enqueue_backfill_all(&ctx.queue, ctx.pg()).await.unwrap();
+        assert_eq!(enqueued, 0, "a pending PlanMetricDays guards against a second backfill wave");
     }
 }

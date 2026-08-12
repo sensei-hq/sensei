@@ -117,14 +117,16 @@ see [history-recovery.md](./history-recovery.md).
 
 ## C. Metric semantics + new metrics (design decisions)
 
-### C1. Throughput redesign — **needs definition**
+### C1. Throughput redesign — **DECIDED (2026-08-11): FTR-weighted turns**
 - **Symptom:** throughput = sessions/day is counterintuitive (stop working → it
   drops). dbd = 1.
-- **Direction:** measure value/output per session-*time*, not session count — e.g.
-  features/tasks completed per session-hour, or net accepted change per hour, so a
-  short high-yield session scores well.
-- **Open question for resume:** what is the ground-truth "output" unit? (completed
-  tasks? accepted diffs? FTR-weighted turns?)
+- **Decision:** output unit = **FTR-weighted turns** — credit turns/interactions
+  weighted by first-time-right, normalized per session-*time* (per session-hour),
+  so a short high-yield session scores well and churny rework doesn't inflate it.
+  Ties throughput to the FTR north star (see C4).
+- **Open (implementation):** confirm the per-turn FTR signal source (session `ftr`
+  bool vs per-turn correction markers) and the time denominator (session
+  `duration`, populated once C3/backfill land).
 - **Files:** `metrics/session_outcomes.rs` (throughput lives here), `health.rs`
   (composite weight), `features/metrics/catalog.md`.
 
@@ -133,27 +135,37 @@ see [history-recovery.md](./history-recovery.md).
   once durations are available on sessions.
 - **Files:** new computer under `metrics/` + `features/metrics/catalog.md` + registry.
 
-### C3. Token usage metrics — **needs capture first**
-- **Finding:** `activity.assistant_events` has **no** token/cost columns — tokens are
-  not captured anywhere today. BUT Claude transcripts DO carry per-turn usage:
-  `input_tokens`, `output_tokens`, `cache_creation_input_tokens`,
-  `cache_read_input_tokens` (confirmed in `~/.claude/projects/*/*.jsonl`).
-- **Course:** capture tokens during transcript synthesis (`transcript/claude.rs`
-  `parse_claude_*`) → persist on events/sessions (new columns or a usage table) →
-  add token metrics (tokens/session, tokens/useful-result, cost). Gateway usage is a
-  second source for live sessions.
-- **Files:** `transcript/claude.rs`, `activity/assistant_events.ddl` (or a new
-  `activity/token_usage.ddl`), new `metrics/` computer, `catalog.md`.
+### C3. Token usage metrics — **DECIDED (2026-08-11): backfill from transcripts**
+- **Findings (verified 2026-08-11):**
+  - `activity.assistant_events` has **no** token columns (payload is raw jsonb),
+    and Claude Code's PreToolUse/PostToolUse/Stop hook payloads don't carry
+    per-turn token counts — so the live event stream never had tokens to capture.
+    ("Hooks were supposed to capture" is a mis-expectation; hooks can't.)
+  - A session-level seam already exists but is **unfed**: `complete_session(…,
+    tokens_in, tokens_out)` reads `body["tokensIn"]/["tokensOut"]` on the
+    session-complete hook (`api/handlers/sessions.rs:236`), and `activity.sessions`
+    already has `tokens_in`, `tokens_out`, `duration` columns.
+  - Claude transcripts DO carry per-turn usage (`input_tokens`, `output_tokens`,
+    `cache_creation_input_tokens`, `cache_read_input_tokens`), but
+    `transcript/claude.rs` does **not** parse it today.
+- **Decision:** transcripts are the authoritative source — **yes, backfill from
+  transcripts.** Extend the parser to read each turn's `usage` block and sum it
+  onto the session (`tokens_in`/`tokens_out` + a cache-tokens field) during
+  synthesis; this backfills history AND fills the gap the live hook leaves.
+  Follow-up: feed `tokensIn/Out` on the session-complete hook for live sessions.
+  Then add token metrics (tokens/session, tokens/useful-result, cost).
+- **Files:** `transcript/claude.rs` (parse `usage`), `transcript/mod.rs` (persist
+  onto session at synthesis), maybe `database/ddl/table/activity/sessions.ddl` (add
+  a cache-tokens column), new `metrics/` computer, `catalog.md`; follow-up on the
+  session-complete hook script.
 
-### C4. Health score → consider qlty.sh grades — **needs decision + integration**
-- **Symptom:** composite health score (mean of normalized metrics) may not be a
-  meaningful measure.
-- **Direction:** augment/replace with **qlty.sh** grades — maintainability,
-  coverage, security as letter grades (A/B/C) + numbers.
-- **Open question for resume:** keep the composite AND add qlty grades, or replace?
-  Need a qlty.sh data path (CLI/API) + a new metric family + badge UI.
-- **Files:** `metrics/health.rs`, `features/metrics/catalog.md`, new integration +
-  UI (`HealthHero.svelte` / new badges).
+### C4. Health score → qlty.sh grades — **DECIDED (2026-08-11): dropped; FTR is the north star**
+- **Decision:** do **not** integrate qlty.sh. FTR is the single north-star headline
+  metric (throughput now derives from it — see C1). No qlty data path, no letter-
+  grade badge UI.
+- **Composite health score:** left as-is for now (secondary), not the headline;
+  revisit only if it proves misleading in practice.
+- **Files:** n/a (no work) — `HealthHero.svelte` keeps rendering the existing composite.
 
 ---
 
@@ -190,5 +202,6 @@ Remaining UI (B3/B4 + A2) ships in the next metrics-UI batch.
 1. History recovery §5 (historical snapshots) + verify backfill — unlocks real charts.
 2. A1 (FTR single-source) + A2 (sessions-in-period scoping) + A4 (grain verify).
 3. B3/B4 (scroll + locked header) — batch with B1/B2.
-4. C1/C3/C4 (throughput / tokens / health-vs-qlty) — after the open questions are answered.
+4. C3 (token backfill from transcripts) + C1 (FTR-weighted throughput) — decisions
+   locked 2026-08-11; C4 dropped (FTR is the north star, no qlty.sh).
 5. D (prompt-in-table).

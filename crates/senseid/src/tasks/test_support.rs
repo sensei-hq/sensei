@@ -434,14 +434,32 @@ pub(crate) async fn seed_metrics_client_session(
 /// (autonomy, 5.4). `session_id` is the assistant's own session id string (matches a
 /// [`seed_metrics_client_session`] `client_session_id`, NOT a DB uuid);
 /// `event_type` is the hook name (`"Stop"` / `"UserPromptSubmit"`). `at` sets BOTH
-/// the server-side `created_at` (the column the computer windows + day-buckets on)
-/// and the client-clock `ts`, so a test can place an event on a chosen day. `family`
-/// defaults to `claude`, `payload` to `{}`.
+/// the client-clock `ts` (the true occurrence time the computer day-buckets on) and
+/// the server-side insert `created_at`, so a test can place an event on a chosen day.
+/// `family` defaults to `claude`, `payload` to `{}`.
 pub(crate) async fn seed_assistant_event(
     pg: &PgStore,
     session_id: &str,
     event_type: &str,
     at: chrono::DateTime<chrono::Utc>,
+) {
+    seed_assistant_event_ex(pg, session_id, event_type, at, at).await;
+}
+
+/// Insert one `activity.assistant_events` row with the client-clock `ts` and the
+/// server-side `created_at` set INDEPENDENTLY. This is how a test reproduces a
+/// synthesized/back-dated event — a true occurrence time in the past (`ts`) that was
+/// only inserted now (`created_at = now`). The autonomy anchor fix buckets
+/// `interruption_rate` on `ts` (the occurrence time), NOT `created_at` (the insert
+/// time), so a historical `ts` must file the row on its historical day even when
+/// `created_at` is today. [`seed_assistant_event`] is the common case where the two
+/// coincide.
+pub(crate) async fn seed_assistant_event_ex(
+    pg: &PgStore,
+    session_id: &str,
+    event_type: &str,
+    ts: chrono::DateTime<chrono::Utc>,
+    created_at: chrono::DateTime<chrono::Utc>,
 ) {
     sqlx_core::query::query(
         "INSERT INTO activity.assistant_events (session_id, event_type, ts, created_at) \
@@ -449,8 +467,8 @@ pub(crate) async fn seed_assistant_event(
     )
     .bind(session_id)
     .bind(event_type)
-    .bind(at.timestamp_millis())
-    .bind(at)
+    .bind(ts.timestamp_millis())
+    .bind(created_at)
     .execute(pg.pool())
     .await
     .unwrap();

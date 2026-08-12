@@ -31,6 +31,7 @@ mod churn;
 mod duplication;
 mod health;
 mod knowledge;
+pub(crate) mod planner;
 mod session_outcomes;
 mod tool;
 
@@ -46,6 +47,54 @@ pub(super) async fn today(pg: &PgStore) -> Result<chrono::NaiveDate, String> {
         .await
         .map_err(|e| e.to_string())?;
     Ok(d)
+}
+
+/// Whether a forward-only SNAPSHOT computer must SKIP for this `as_of` (Phase 3).
+/// The snapshot metrics (`churn`'s `rework_density`, `duplication`, `knowledge`,
+/// `tool`, `health`) reflect CURRENT state — they cannot be reconstructed for a past
+/// day from present data — so a historical target day (`Some(D)` with `D != today`)
+/// has no honest value: the computer writes NO row (never a fabricated historical
+/// snapshot). `None` (today's incremental run) or `Some(today)` → compute as normal.
+/// Shared so the "past day → skip" rule (and its `today` source) can't drift between
+/// the forward-only groups.
+pub(super) async fn is_historical(
+    pg: &PgStore,
+    as_of: Option<chrono::NaiveDate>,
+) -> Result<bool, String> {
+    match as_of {
+        Some(d) => Ok(d != today(pg).await?),
+        None => Ok(false),
+    }
+}
+
+/// The `$2`-anchored single-day-or-window SQL filter shared by the per-day base
+/// computers. `anchor` is the group's occurrence-time expression — the timestamptz
+/// it buckets/windows on (`s.started_at`, `r.started_at`,
+/// `to_timestamp(ae.ts / 1000.0)`, …). `as_of = None` → the rolling window
+/// (`$2 = window_days::int`, the incremental behavior); `Some(_)` → a single
+/// historical day (`$2 = D::date`, the backfill/gap-fill path). Kept in ONE place so
+/// the window/day SQL (and its `$2` contract with [`bind_day`]) can't drift between
+/// groups. The `day` SELECT column each computer emits must use the SAME `anchor`
+/// (`date_trunc('day', <anchor>)::date`) so `computed_on` matches the filter.
+pub(super) fn day_filter(anchor: &str, as_of: Option<chrono::NaiveDate>) -> String {
+    match as_of {
+        Some(_) => format!("date_trunc('day', {anchor})::date = $2::date"),
+        None => format!("{anchor} >= now() - make_interval(days => $2::int)"),
+    }
+}
+
+/// Bind `$2` for [`day_filter`]: the target day on the `Some` path, else the window
+/// length. Consumes and returns the query so callers stay one-liners. Anchor-agnostic
+/// — the same for every per-day computer, so the `$2` binding lives in ONE place.
+pub(super) fn bind_day<'q, O>(
+    q: sqlx_core::query_as::QueryAs<'q, sqlx_postgres::Postgres, O, sqlx_postgres::PgArguments>,
+    window_days: u32,
+    as_of: Option<chrono::NaiveDate>,
+) -> sqlx_core::query_as::QueryAs<'q, sqlx_postgres::Postgres, O, sqlx_postgres::PgArguments> {
+    match as_of {
+        Some(d) => q.bind(d),
+        None => q.bind(window_days as i32),
+    }
 }
 
 /// Test-only routing probe: records WHICH handler last ran on the current thread,
@@ -146,15 +195,22 @@ pub async fn compute(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
                 "compute_metrics: computing {}",
                 group.as_str(),
             );
+            // `task.as_of` is the target `computed_on` day: `None` = today's
+            // incremental (rolling-window) run, `Some(D)` = the single historical
+            // day D (backfill/gap-fill). Threaded into every computer so the crate
+            // compiles uniformly; only `session_outcomes` implements per-day
+            // behavior in this phase — the rest accept the param and keep their
+            // current behavior (later phases wire them up).
+            let as_of = task.as_of;
             match group {
                 MetricGroup::SessionOutcomes => {
-                    session_outcomes::compute(ctx, &task.folder_path).await
+                    session_outcomes::compute(ctx, &task.folder_path, as_of).await
                 }
-                MetricGroup::Churn => churn::compute(ctx, &task.folder_path).await,
-                MetricGroup::Duplication => duplication::compute(ctx, &task.folder_path).await,
-                MetricGroup::Autonomy => autonomy::compute(ctx, &task.folder_path).await,
-                MetricGroup::Knowledge => knowledge::compute(ctx, &task.folder_path).await,
-                MetricGroup::Tool => tool::compute(ctx, &task.folder_path).await,
+                MetricGroup::Churn => churn::compute(ctx, &task.folder_path, as_of).await,
+                MetricGroup::Duplication => duplication::compute(ctx, &task.folder_path, as_of).await,
+                MetricGroup::Autonomy => autonomy::compute(ctx, &task.folder_path, as_of).await,
+                MetricGroup::Knowledge => knowledge::compute(ctx, &task.folder_path, as_of).await,
+                MetricGroup::Tool => tool::compute(ctx, &task.folder_path, as_of).await,
             }
         }
         None => {
@@ -185,7 +241,27 @@ pub async fn compute_health(ctx: &TaskContext, task: &Task) -> Result<u32, Strin
         project = %task.folder_path,
         "compute_health: computing project_health",
     );
-    health::compute(ctx, &task.folder_path).await
+    // Thread the target day through the barrier too (accepted now, per-day wiring
+    // in a later phase); `None` keeps the current snapshot-on-today behavior.
+    health::compute(ctx, &task.folder_path, task.as_of).await
+}
+
+/// `PlanMetricDays` handler (Phase 4): the per-project timeline → day-task planner.
+/// The project id rides in `task.folder_path`. Delegates to [`planner::plan`],
+/// which — for each ACTIVE day-keyed group — diffs the project's data-day set
+/// against the already-covered `computed_on` days and enqueues one
+/// `ComputeMetrics{as_of=Some(D)}` per missing day plus today. Returns the number
+/// of `ComputeMetrics` tasks enqueued (`0` = honest-empty: no active day-keyed
+/// groups). Never fabricates: a day with no source data simply yields no task
+/// (and the downstream compute would write no row).
+pub async fn plan_metric_days(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
+    #[cfg(test)]
+    probe::record("plan_metric_days");
+    tracing::info!(
+        project = %task.folder_path,
+        "plan_metric_days: planning per-day metric compute",
+    );
+    planner::plan(ctx, &task.folder_path).await
 }
 
 #[cfg(test)]

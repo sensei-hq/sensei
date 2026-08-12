@@ -79,11 +79,26 @@ fn normalize(metric_type: &str, direction: &str, value: f64, target: Option<f64>
 /// project-scope daily row. `project_raw` is the project uuid carried in
 /// `task.folder_path`. Returns the number of rows written: `1` when at least one
 /// component is included, else `0` (never-fabricate: no components ⇒ NO row, not a
-/// phantom 100/0). Idempotent — re-running backfills the row in place.
-pub(super) async fn compute(ctx: &TaskContext, project_raw: &str) -> Result<u32, String> {
+/// phantom 100/0). Idempotent — re-running backfills the row in place. This is a
+/// FORWARD-ONLY roll-up (Phase 3): it reads each component's LATEST daily value (a
+/// current snapshot), which cannot be reconstructed for a past day, so a historical
+/// `as_of` (`Some(D)`, `D != today`) writes NO row (see [`super::is_historical`]);
+/// `None`/today keep the current snapshot-on-today behavior.
+pub(super) async fn compute(
+    ctx: &TaskContext,
+    project_raw: &str,
+    as_of: Option<chrono::NaiveDate>,
+) -> Result<u32, String> {
     let project_id = uuid::Uuid::parse_str(project_raw)
         .map_err(|e| format!("health: bad project id {project_raw:?}: {e}"))?;
     let pg = ctx.pg();
+
+    // Forward-only: the roll-up reads each component's LATEST daily value (a current
+    // snapshot) and cannot be reconstructed for a past day, so a historical `as_of`
+    // writes NO row.
+    if super::is_historical(pg, as_of).await? {
+        return Ok(0);
+    }
 
     // Resolve the composite metric's id via the active registry (task_name "health").
     // Inactive/unseeded ⇒ nothing to write (honest-absent, never fabricated).
@@ -263,7 +278,7 @@ mod tests {
         seed_value(pg, &m_ftr, &pid, 0.8).await;
         seed_value(pg, &m_rework, &pid, 0.3).await;
 
-        let written = compute(&ctx, &pid.to_string()).await.unwrap();
+        let written = compute(&ctx, &pid.to_string(), None).await.unwrap();
         assert_eq!(written, 1, "one project_health row written");
 
         let (value, props) = health_row(pg, &pid).await.expect("project_health row present");
@@ -288,7 +303,7 @@ mod tests {
             .await
             .unwrap();
 
-        let written = compute(&ctx, &pid.to_string()).await.unwrap();
+        let written = compute(&ctx, &pid.to_string(), None).await.unwrap();
         assert_eq!(written, 0, "no components → no health row written");
         assert!(health_row(pg, &pid).await.is_none(), "no project_health row exists (never fabricated)");
 
@@ -322,7 +337,7 @@ mod tests {
         seed_value(pg, &m_cr, &pid, 6.0).await;
         seed_value(pg, &m_null, &pid, 99.0).await;
 
-        let written = compute(&ctx, &pid.to_string()).await.unwrap();
+        let written = compute(&ctx, &pid.to_string(), None).await.unwrap();
         assert_eq!(written, 1, "one project_health row written");
 
         let (value, props) = health_row(pg, &pid).await.expect("project_health row present");
@@ -351,7 +366,7 @@ mod tests {
         seed_value(pg, &m_a, &pid, 0.6).await;
         seed_value(pg, &m_neutral, &pid, 0.9).await;
 
-        compute(&ctx, &pid.to_string()).await.unwrap();
+        compute(&ctx, &pid.to_string(), None).await.unwrap();
 
         let (value, props) = health_row(pg, &pid).await.expect("project_health row present");
         assert!((value - 60.0).abs() < 1e-9, "neutral excluded → score reflects only the contributor (60), got {value}");
@@ -376,7 +391,7 @@ mod tests {
         let _m_absent = seed_health_metric(pg, &absent_key, "pct", "higher_better", 1.0, None).await;
         seed_value(pg, &m_a, &pid, 0.5).await; // NB: no value seeded for the absent metric
 
-        compute(&ctx, &pid.to_string()).await.unwrap();
+        compute(&ctx, &pid.to_string(), None).await.unwrap();
 
         let (value, props) = health_row(pg, &pid).await.expect("project_health row present");
         assert!((value - 50.0).abs() < 1e-9, "absent component skipped → score 50 (not dragged to 25), got {value}");
@@ -402,8 +417,8 @@ mod tests {
         seed_value(pg, &m, &pid_a, 0.9).await;
         seed_value(pg, &m, &pid_b, 0.1).await;
 
-        compute(&ctx, &pid_a.to_string()).await.unwrap();
-        compute(&ctx, &pid_b.to_string()).await.unwrap();
+        compute(&ctx, &pid_a.to_string(), None).await.unwrap();
+        compute(&ctx, &pid_b.to_string(), None).await.unwrap();
 
         let (a_val, _) = health_row(pg, &pid_a).await.expect("A project_health row present");
         let (b_val, _) = health_row(pg, &pid_b).await.expect("B project_health row present");
@@ -437,7 +452,7 @@ mod tests {
         seed_value(pg, &m_contrib, &pid_a, 0.6).await;
         seed_value(pg, &m_zero, &pid_a, 0.9).await;
 
-        let written_a = compute(&ctx, &pid_a.to_string()).await.unwrap();
+        let written_a = compute(&ctx, &pid_a.to_string(), None).await.unwrap();
         assert_eq!(written_a, 1, "A writes one health row");
         let (a_val, a_props) = health_row(pg, &pid_a).await.expect("A project_health row present");
         assert!((a_val - 60.0).abs() < 1e-9, "zero-weight contributes nothing → 60 (not 75), got {a_val}");
@@ -456,7 +471,7 @@ mod tests {
         seed_value(pg, &m_z1, &pid_b, 0.5).await; // real values + valid norms …
         seed_value(pg, &m_z2, &pid_b, 0.2).await; // … but Σweight = 0
 
-        let written_b = compute(&ctx, &pid_b.to_string()).await.unwrap();
+        let written_b = compute(&ctx, &pid_b.to_string(), None).await.unwrap();
         assert_eq!(written_b, 0, "all-zero-weight → sum_weight guard fires → NO row (no divide-by-zero)");
         assert!(health_row(pg, &pid_b).await.is_none(), "no project_health row when every weight is 0 (never fabricated)");
 
@@ -480,11 +495,40 @@ mod tests {
         let m = seed_health_metric(pg, &key, "count", "higher_better", 1.0, Some(8.0)).await;
         seed_value(pg, &m, &pid, 1.0).await; // 1/8 = 0.125 → 100×0.125 = 12.5 exactly
 
-        compute(&ctx, &pid.to_string()).await.unwrap();
+        compute(&ctx, &pid.to_string(), None).await.unwrap();
 
         let (value, props) = health_row(pg, &pid).await.expect("project_health row present");
         assert!((props["components"][&key].as_f64().unwrap() - 0.125).abs() < 1e-12, "norm is exactly 0.125");
         assert!((value - 13.0).abs() < 1e-9, "12.5 rounds half away from zero to 13 (not 12), got {value}");
+
+        purge_metrics(pg, &[&key]).await;
+        cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
+    }
+
+    #[tokio::test]
+    async fn project_health_historical_as_of_skips() {
+        // Forward-only guard (Phase 3): the health score rolls up each component's
+        // LATEST daily value — a snapshot of current state that cannot be
+        // reconstructed for a past day, so a historical `as_of` (Some(D), D != today)
+        // writes NO health row (never a fabricated historical score). The SAME fixture
+        // writes a score with `as_of = None` (see
+        // `project_health_normalizes_by_direction_and_weight`), so the absence here is
+        // the guard, not missing components.
+        let ctx = make_ctx().await;
+        let pg = ctx.pg();
+        let uniq = uuid::Uuid::new_v4();
+        let (pid, fid) = seed_metrics_project_folder(pg, &uniq).await;
+        let key = format!("_test:health:{uniq}:fwd");
+        let m = seed_health_metric(pg, &key, "pct", "higher_better", 1.0, None).await;
+        seed_value(pg, &m, &pid, 0.8).await;
+
+        let past = chrono::NaiveDate::from_ymd_opt(2020, 1, 1).unwrap();
+        let written = compute(&ctx, &pid.to_string(), Some(past)).await.unwrap();
+        assert_eq!(written, 0, "historical as_of → forward-only skip → no health row");
+        assert!(
+            health_row(pg, &pid).await.is_none(),
+            "no project_health row for a historical as_of (never a fabricated score)",
+        );
 
         purge_metrics(pg, &[&key]).await;
         cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
