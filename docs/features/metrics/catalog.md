@@ -368,7 +368,7 @@ buildable source of truth — formulas, source columns, live coverage).
 
 ## Composite — overall health
 
-### Project health score `project_health`
+### Project health score `project_health` — RETIRED
 - **Facets:** composite · score · ▲ · daily
 - **Definition:** a single 0–100 roll-up of the project's active metrics.
 - **Calculation:** each active metric's latest daily value normalized to [0,1] by
@@ -380,7 +380,17 @@ buildable source of truth — formulas, source columns, live coverage).
   components to see what's dragging it. Not a substitute for FTR — a summary of it
   and its companions.
 - **Representation:** **health dial** + a component breakdown; trend line.
-- **Status:** live once ≥1 component metric is live (FTR alone suffices for a v1 score).
+- **Status:** **retired** (`effective_until: 2026-08-12`). A plain mean of ~9
+  normalized components is not a meaningful signal — it moved 46→44 purely because
+  `throughput` dipped on a quiet day and it was dragged by a bogus `churn_rate`
+  proxy while FTR/rework were perfect. **`retire_reason`:** *composite mean is not a
+  meaningful signal; FTR is the north star, and a qlty-based code-quality family
+  replaces the code-health role.* The metric's schema + handler are kept — it is
+  revivable by clearing `effective_until` in the seed. Retirement takes effect via
+  the registry's `effective_until` window (seeded from this catalog through
+  `staging.metrics` + `import_metrics()`); once inactive it is not scheduled, and
+  `compute_health` writes no `project_health` row (honest-empty, never fabricated).
+  Historical rows already in `sensei.project_metrics` are left intact.
 
 ---
 

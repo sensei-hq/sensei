@@ -78,12 +78,19 @@ fn normalize(metric_type: &str, direction: &str, value: f64, target: Option<f64>
 /// Compute the derived `project_health` score for one project and write its single
 /// project-scope daily row. `project_raw` is the project uuid carried in
 /// `task.folder_path`. Returns the number of rows written: `1` when at least one
-/// component is included, else `0` (never-fabricate: no components ⇒ NO row, not a
-/// phantom 100/0). Idempotent — re-running backfills the row in place. This is a
-/// FORWARD-ONLY roll-up (Phase 3): it reads each component's LATEST daily value (a
-/// current snapshot), which cannot be reconstructed for a past day, so a historical
-/// `as_of` (`Some(D)`, `D != today`) writes NO row (see [`super::is_historical`]);
-/// `None`/today keep the current snapshot-on-today behavior.
+/// component is included, else `0`.
+///
+/// This resolves the composite metric's id via the ACTIVE registry (task_name
+/// "health"), then delegates the roll-up to [`roll_up`]. **The metric's RETIREMENT
+/// acts through this resolve step:** `project_health` carries a past `effective_until`
+/// in `sensei.metrics` (retired 2026-08-12; seeded from the catalog via
+/// `import_metrics`), so it drops out of [`PgStore::active_metric_ids`] and this
+/// returns `Ok(0)` — writing NO row (honest-absent, never a fabricated score). The
+/// `ComputeHealth` barrier is still enqueued by the scheduler; while the metric is
+/// retired it lands as a clean no-op. Clearing `effective_until` in the seed revives
+/// it — the handler is unchanged.
+///
+/// [`PgStore::active_metric_ids`]: crate::db::pg_store::PgStore::active_metric_ids
 pub(super) async fn compute(
     ctx: &TaskContext,
     project_raw: &str,
@@ -93,6 +100,38 @@ pub(super) async fn compute(
         .map_err(|e| format!("health: bad project id {project_raw:?}: {e}"))?;
     let pg = ctx.pg();
 
+    // Resolve the composite metric's id via the active registry (task_name "health").
+    // RETIRED / not-yet-effective / unseeded ⇒ absent from the active map ⇒ nothing
+    // to write (honest-absent, never fabricated). This is the retirement seam.
+    let health_ids = pg.active_metric_ids(super::HEALTH_TASK_NAME).await?;
+    let Some(&health_id) = health_ids.get(KEY_PROJECT_HEALTH) else {
+        return Ok(0);
+    };
+
+    roll_up(ctx, &project_id, health_id, as_of).await
+}
+
+/// Roll the project's latest daily component values into the composite score and
+/// write its single project-scope daily row under the already-resolved composite
+/// metric id `health_id`. Returns the number of rows written: `1` when at least one
+/// component is included, else `0` (never-fabricate: no components ⇒ NO row, not a
+/// phantom 100/0). Idempotent — re-running backfills the row in place. This is a
+/// FORWARD-ONLY roll-up (Phase 3): it reads each component's LATEST daily value (a
+/// current snapshot), which cannot be reconstructed for a past day, so a historical
+/// `as_of` (`Some(D)`, `D != today`) writes NO row (see [`super::is_historical`]);
+/// `None`/today keep the current snapshot-on-today behavior.
+///
+/// Split out from [`compute`] so the roll-up math is exercised against a caller-
+/// supplied ACTIVE composite metric, independent of whether the shipped
+/// `project_health` registry row is active (it is retired — see [`compute`]).
+async fn roll_up(
+    ctx: &TaskContext,
+    project_id: &uuid::Uuid,
+    health_id: uuid::Uuid,
+    as_of: Option<chrono::NaiveDate>,
+) -> Result<u32, String> {
+    let pg = ctx.pg();
+
     // Forward-only: the roll-up reads each component's LATEST daily value (a current
     // snapshot) and cannot be reconstructed for a past day, so a historical `as_of`
     // writes NO row.
@@ -100,20 +139,13 @@ pub(super) async fn compute(
         return Ok(0);
     }
 
-    // Resolve the composite metric's id via the active registry (task_name "health").
-    // Inactive/unseeded ⇒ nothing to write (honest-absent, never fabricated).
-    let health_ids = pg.active_metric_ids(super::HEALTH_TASK_NAME).await?;
-    let Some(&health_id) = health_ids.get(KEY_PROJECT_HEALTH) else {
-        return Ok(0);
-    };
-
     // Every active component metric carries the weight/target/direction/type the
     // roll-up needs; the project's latest daily project-scope value per metric key
     // supplies the value. A metric with no latest value is simply absent from the map
     // (honest-absent) and skipped below.
     let active = pg.active_metrics().await?;
     let latest: std::collections::HashMap<String, f64> = pg
-        .get_project_metrics(&project_id)
+        .get_project_metrics(project_id)
         .await?
         .into_iter()
         .map(|r| (r.metric, r.value))
@@ -152,7 +184,7 @@ pub(super) async fn compute(
     let props = serde_json::json!({ "components": serde_json::Value::Object(components) });
     let day = super::today(pg).await?;
     pg.upsert_project_metric(
-        &health_id, &project_id, None, None, day, GRAIN_DAILY, score, &props, SOURCE_MEASURED,
+        &health_id, project_id, None, None, day, GRAIN_DAILY, score, &props, SOURCE_MEASURED,
     )
     .await?;
     Ok(1)
@@ -206,16 +238,36 @@ mod tests {
             .unwrap();
     }
 
-    /// The stored `project_health` daily score for a project (project scope), or
-    /// `None` when no health row was written.
-    async fn health_row(pg: &PgStore, pid: &uuid::Uuid) -> Option<(f64, serde_json::Value)> {
+    /// Seed a dedicated ACTIVE composite metric (`type = score`, unique key/task_name)
+    /// and return its id — the `health_id` the roll-up writes under. This decouples
+    /// the roll-up math tests from the shipped `project_health` registry row, which is
+    /// RETIRED (inactive) and so is never resolved by [`compute`]; a per-test composite
+    /// with a unique key keeps them parallel-safe. `score`/`composite` is what the real
+    /// metric is, and a `score`-type row never self-contributes (see [`normalize`]).
+    async fn seed_composite(pg: &PgStore, uniq: &uuid::Uuid) -> uuid::Uuid {
+        seed_health_metric(pg, &composite_key(uniq), "score", "higher_better", 1.0, None).await
+    }
+
+    /// The unique registry `key` of a test's composite metric (also its `task_name`).
+    fn composite_key(uniq: &uuid::Uuid) -> String {
+        format!("_test:health:{uniq}:composite")
+    }
+
+    /// The stored composite daily score for a project written under composite metric
+    /// `mid` (project scope), or `None` when no row was written.
+    async fn health_row(
+        pg: &PgStore,
+        pid: &uuid::Uuid,
+        mid: &uuid::Uuid,
+    ) -> Option<(f64, serde_json::Value)> {
         query_as(
             "SELECT pm.value::float8, pm.props \
-               FROM sensei.project_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
-              WHERE pm.project_id = $1 AND m.key = 'project_health' \
+               FROM sensei.project_metrics pm \
+              WHERE pm.project_id = $1 AND pm.metric_id = $2 \
                 AND pm.grain = 'daily' AND pm.folder_id IS NULL",
         )
         .bind(pid)
+        .bind(mid)
         .fetch_optional(pg.pool())
         .await
         .unwrap()
@@ -277,17 +329,21 @@ mod tests {
         let m_rework = seed_health_metric(pg, &rework_key, "ratio", "lower_better", 1.0, None).await;
         seed_value(pg, &m_ftr, &pid, 0.8).await;
         seed_value(pg, &m_rework, &pid, 0.3).await;
+        // Drive the roll-up against a per-test ACTIVE composite (the shipped
+        // `project_health` metric is retired, so `compute` no-ops — see
+        // `project_health_retired_compute_writes_no_row`).
+        let composite = seed_composite(pg, &uniq).await;
 
-        let written = compute(&ctx, &pid.to_string(), None).await.unwrap();
-        assert_eq!(written, 1, "one project_health row written");
+        let written = roll_up(&ctx, &pid, composite, None).await.unwrap();
+        assert_eq!(written, 1, "one composite row written");
 
-        let (value, props) = health_row(pg, &pid).await.expect("project_health row present");
+        let (value, props) = health_row(pg, &pid, &composite).await.expect("composite row present");
         assert!((value - 77.0).abs() < 1e-9, "weighted, direction-normalized score = 77, got {value}");
         // props.components carries the included keys → their norms.
         assert!((props["components"][&ftr_key].as_f64().unwrap() - 0.8).abs() < 1e-9, "ftr norm 0.8");
         assert!((props["components"][&rework_key].as_f64().unwrap() - 0.7).abs() < 1e-9, "rework norm 0.7");
 
-        purge_metrics(pg, &[&ftr_key, &rework_key]).await;
+        purge_metrics(pg, &[&ftr_key, &rework_key, &composite_key(&uniq)]).await;
         cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
     }
 
@@ -302,10 +358,11 @@ mod tests {
             .create_project(&format!("_test:health-empty:{uniq}"), None, None)
             .await
             .unwrap();
+        let composite = seed_composite(pg, &uniq).await;
 
-        let written = compute(&ctx, &pid.to_string(), None).await.unwrap();
-        assert_eq!(written, 0, "no components → no health row written");
-        assert!(health_row(pg, &pid).await.is_none(), "no project_health row exists (never fabricated)");
+        let written = roll_up(&ctx, &pid, composite, None).await.unwrap();
+        assert_eq!(written, 0, "no components → no composite row written");
+        assert!(health_row(pg, &pid, &composite).await.is_none(), "no composite row exists (never fabricated)");
 
         let (total,): (i64,) = query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
             .bind(pid)
@@ -314,6 +371,7 @@ mod tests {
             .unwrap();
         assert_eq!(total, 0, "no project_metrics rows at all for an empty project");
 
+        purge_metrics(pg, &[&composite_key(&uniq)]).await;
         cleanup_metrics_fixture(pg, &pid, None, &[]).await;
     }
 
@@ -336,17 +394,18 @@ mod tests {
         seed_value(pg, &m_tp, &pid, 10.0).await;
         seed_value(pg, &m_cr, &pid, 6.0).await;
         seed_value(pg, &m_null, &pid, 99.0).await;
+        let composite = seed_composite(pg, &uniq).await;
 
-        let written = compute(&ctx, &pid.to_string(), None).await.unwrap();
-        assert_eq!(written, 1, "one project_health row written");
+        let written = roll_up(&ctx, &pid, composite, None).await.unwrap();
+        assert_eq!(written, 1, "one composite row written");
 
-        let (value, props) = health_row(pg, &pid).await.expect("project_health row present");
+        let (value, props) = health_row(pg, &pid, &composite).await.expect("composite row present");
         assert!((value - 75.0).abs() < 1e-9, "count-normalized score = 75 (target-null excluded), got {value}");
         assert!((props["components"][&tp_key].as_f64().unwrap() - 1.0).abs() < 1e-9, "throughput norm 1.0 (clamped)");
         assert!((props["components"][&cr_key].as_f64().unwrap() - 0.5).abs() < 1e-9, "churn norm 0.5");
         assert!(props["components"].get(&null_key).is_none(), "target-null count is not a component");
 
-        purge_metrics(pg, &[&tp_key, &cr_key, &null_key]).await;
+        purge_metrics(pg, &[&tp_key, &cr_key, &null_key, &composite_key(&uniq)]).await;
         cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
     }
 
@@ -365,14 +424,15 @@ mod tests {
         let m_neutral = seed_health_metric(pg, &neutral_key, "pct", "neutral", 1.0, None).await;
         seed_value(pg, &m_a, &pid, 0.6).await;
         seed_value(pg, &m_neutral, &pid, 0.9).await;
+        let composite = seed_composite(pg, &uniq).await;
 
-        compute(&ctx, &pid.to_string(), None).await.unwrap();
+        roll_up(&ctx, &pid, composite, None).await.unwrap();
 
-        let (value, props) = health_row(pg, &pid).await.expect("project_health row present");
+        let (value, props) = health_row(pg, &pid, &composite).await.expect("composite row present");
         assert!((value - 60.0).abs() < 1e-9, "neutral excluded → score reflects only the contributor (60), got {value}");
         assert!(props["components"].get(&neutral_key).is_none(), "neutral metric is not a component");
 
-        purge_metrics(pg, &[&a_key, &neutral_key]).await;
+        purge_metrics(pg, &[&a_key, &neutral_key, &composite_key(&uniq)]).await;
         cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
     }
 
@@ -390,14 +450,15 @@ mod tests {
         let m_a = seed_health_metric(pg, &a_key, "pct", "higher_better", 1.0, None).await;
         let _m_absent = seed_health_metric(pg, &absent_key, "pct", "higher_better", 1.0, None).await;
         seed_value(pg, &m_a, &pid, 0.5).await; // NB: no value seeded for the absent metric
+        let composite = seed_composite(pg, &uniq).await;
 
-        compute(&ctx, &pid.to_string(), None).await.unwrap();
+        roll_up(&ctx, &pid, composite, None).await.unwrap();
 
-        let (value, props) = health_row(pg, &pid).await.expect("project_health row present");
+        let (value, props) = health_row(pg, &pid, &composite).await.expect("composite row present");
         assert!((value - 50.0).abs() < 1e-9, "absent component skipped → score 50 (not dragged to 25), got {value}");
         assert!(props["components"].get(&absent_key).is_none(), "the value-less metric is not a component");
 
-        purge_metrics(pg, &[&a_key, &absent_key]).await;
+        purge_metrics(pg, &[&a_key, &absent_key, &composite_key(&uniq)]).await;
         cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
     }
 
@@ -416,16 +477,19 @@ mod tests {
         let m = seed_health_metric(pg, &shared_key, "pct", "higher_better", 1.0, None).await;
         seed_value(pg, &m, &pid_a, 0.9).await;
         seed_value(pg, &m, &pid_b, 0.1).await;
+        // One composite metric written under for both projects (distinct rows keyed by
+        // project_id) — proves per-project isolation, not a shared composite row.
+        let composite = seed_composite(pg, &uniq_a).await;
 
-        compute(&ctx, &pid_a.to_string(), None).await.unwrap();
-        compute(&ctx, &pid_b.to_string(), None).await.unwrap();
+        roll_up(&ctx, &pid_a, composite, None).await.unwrap();
+        roll_up(&ctx, &pid_b, composite, None).await.unwrap();
 
-        let (a_val, _) = health_row(pg, &pid_a).await.expect("A project_health row present");
-        let (b_val, _) = health_row(pg, &pid_b).await.expect("B project_health row present");
+        let (a_val, _) = health_row(pg, &pid_a, &composite).await.expect("A composite row present");
+        let (b_val, _) = health_row(pg, &pid_b, &composite).await.expect("B composite row present");
         assert!((a_val - 90.0).abs() < 1e-9, "A reflects only A's value (90, not 50 if B leaked), got {a_val}");
         assert!((b_val - 10.0).abs() < 1e-9, "B reflects only B's value (10), got {b_val}");
 
-        purge_metrics(pg, &[&shared_key]).await;
+        purge_metrics(pg, &[&shared_key, &composite_key(&uniq_a)]).await;
         cleanup_metrics_fixture(pg, &pid_a, Some(&fid_a), &[]).await;
         cleanup_metrics_fixture(pg, &pid_b, Some(&fid_b), &[]).await;
     }
@@ -451,10 +515,11 @@ mod tests {
         let m_zero = seed_health_metric(pg, &zero_key, "pct", "higher_better", 0.0, None).await;
         seed_value(pg, &m_contrib, &pid_a, 0.6).await;
         seed_value(pg, &m_zero, &pid_a, 0.9).await;
+        let composite_a = seed_composite(pg, &uniq_a).await;
 
-        let written_a = compute(&ctx, &pid_a.to_string(), None).await.unwrap();
-        assert_eq!(written_a, 1, "A writes one health row");
-        let (a_val, a_props) = health_row(pg, &pid_a).await.expect("A project_health row present");
+        let written_a = roll_up(&ctx, &pid_a, composite_a, None).await.unwrap();
+        assert_eq!(written_a, 1, "A writes one composite row");
+        let (a_val, a_props) = health_row(pg, &pid_a, &composite_a).await.expect("A composite row present");
         assert!((a_val - 60.0).abs() < 1e-9, "zero-weight contributes nothing → 60 (not 75), got {a_val}");
         // The zero-weight metric is still INCLUDED (normalized, in props) — inclusion is
         // not contribution when its weight is 0.
@@ -470,12 +535,13 @@ mod tests {
         let m_z2 = seed_health_metric(pg, &z2_key, "ratio", "lower_better", 0.0, None).await;
         seed_value(pg, &m_z1, &pid_b, 0.5).await; // real values + valid norms …
         seed_value(pg, &m_z2, &pid_b, 0.2).await; // … but Σweight = 0
+        let composite_b = seed_composite(pg, &uniq_b).await;
 
-        let written_b = compute(&ctx, &pid_b.to_string(), None).await.unwrap();
+        let written_b = roll_up(&ctx, &pid_b, composite_b, None).await.unwrap();
         assert_eq!(written_b, 0, "all-zero-weight → sum_weight guard fires → NO row (no divide-by-zero)");
-        assert!(health_row(pg, &pid_b).await.is_none(), "no project_health row when every weight is 0 (never fabricated)");
+        assert!(health_row(pg, &pid_b, &composite_b).await.is_none(), "no composite row when every weight is 0 (never fabricated)");
 
-        purge_metrics(pg, &[&contrib_key, &zero_key, &z1_key, &z2_key]).await;
+        purge_metrics(pg, &[&contrib_key, &zero_key, &z1_key, &z2_key, &composite_key(&uniq_a), &composite_key(&uniq_b)]).await;
         cleanup_metrics_fixture(pg, &pid_a, Some(&fid_a), &[]).await;
         cleanup_metrics_fixture(pg, &pid_b, Some(&fid_b), &[]).await;
     }
@@ -494,14 +560,15 @@ mod tests {
         let key = format!("_test:health:{uniq}:half");
         let m = seed_health_metric(pg, &key, "count", "higher_better", 1.0, Some(8.0)).await;
         seed_value(pg, &m, &pid, 1.0).await; // 1/8 = 0.125 → 100×0.125 = 12.5 exactly
+        let composite = seed_composite(pg, &uniq).await;
 
-        compute(&ctx, &pid.to_string(), None).await.unwrap();
+        roll_up(&ctx, &pid, composite, None).await.unwrap();
 
-        let (value, props) = health_row(pg, &pid).await.expect("project_health row present");
+        let (value, props) = health_row(pg, &pid, &composite).await.expect("composite row present");
         assert!((props["components"][&key].as_f64().unwrap() - 0.125).abs() < 1e-12, "norm is exactly 0.125");
         assert!((value - 13.0).abs() < 1e-9, "12.5 rounds half away from zero to 13 (not 12), got {value}");
 
-        purge_metrics(pg, &[&key]).await;
+        purge_metrics(pg, &[&key, &composite_key(&uniq)]).await;
         cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
     }
 
@@ -510,10 +577,11 @@ mod tests {
         // Forward-only guard (Phase 3): the health score rolls up each component's
         // LATEST daily value — a snapshot of current state that cannot be
         // reconstructed for a past day, so a historical `as_of` (Some(D), D != today)
-        // writes NO health row (never a fabricated historical score). The SAME fixture
-        // writes a score with `as_of = None` (see
+        // writes NO composite row (never a fabricated historical score). The SAME
+        // fixture writes a score with `as_of = None` (see
         // `project_health_normalizes_by_direction_and_weight`), so the absence here is
-        // the guard, not missing components.
+        // the forward-only guard, not missing components. Driven via `roll_up` against a
+        // per-test active composite (the shipped `project_health` metric is retired).
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
@@ -521,14 +589,63 @@ mod tests {
         let key = format!("_test:health:{uniq}:fwd");
         let m = seed_health_metric(pg, &key, "pct", "higher_better", 1.0, None).await;
         seed_value(pg, &m, &pid, 0.8).await;
+        let composite = seed_composite(pg, &uniq).await;
 
         let past = chrono::NaiveDate::from_ymd_opt(2020, 1, 1).unwrap();
-        let written = compute(&ctx, &pid.to_string(), Some(past)).await.unwrap();
-        assert_eq!(written, 0, "historical as_of → forward-only skip → no health row");
+        let written = roll_up(&ctx, &pid, composite, Some(past)).await.unwrap();
+        assert_eq!(written, 0, "historical as_of → forward-only skip → no composite row");
         assert!(
-            health_row(pg, &pid).await.is_none(),
-            "no project_health row for a historical as_of (never a fabricated score)",
+            health_row(pg, &pid, &composite).await.is_none(),
+            "no composite row for a historical as_of (never a fabricated score)",
         );
+
+        purge_metrics(pg, &[&key, &composite_key(&uniq)]).await;
+        cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
+    }
+
+    /// RETIREMENT (the point of this change): `project_health` carries a past
+    /// `effective_until` in `sensei.metrics` (seeded from the catalog via
+    /// `import_metrics`), so it is INACTIVE and drops out of
+    /// `active_metric_ids("health")`. `compute` therefore resolves no composite id and
+    /// writes NO row — honest-empty, never a fabricated score — even for a project that
+    /// HAS a fresh component value. This pins the retirement guard (the roll-up math is
+    /// covered against a per-test ACTIVE composite via `roll_up`). If the precondition
+    /// fails, this DB's seed predates the retirement — re-import it (`dbd import`).
+    #[tokio::test]
+    async fn project_health_retired_compute_writes_no_row() {
+        let ctx = make_ctx().await;
+        let pg = ctx.pg();
+
+        // Precondition: the seeded registry has retired project_health (effective_until
+        // ≤ today), so the composite is absent from the active `health` task.
+        let health_ids = pg.active_metric_ids(super::super::HEALTH_TASK_NAME).await.unwrap();
+        assert!(
+            !health_ids.contains_key(KEY_PROJECT_HEALTH),
+            "project_health must be RETIRED (absent from active_metric_ids(\"health\")); \
+             re-import the seed (dbd import) if this fails — got {health_ids:?}",
+        );
+
+        let uniq = uuid::Uuid::new_v4();
+        let (pid, fid) = seed_metrics_project_folder(pg, &uniq).await;
+        // A live component value present — so a 0-row result is the retirement taking
+        // effect, NOT missing data.
+        let key = format!("_test:health:{uniq}:ftr");
+        let m = seed_health_metric(pg, &key, "pct", "higher_better", 1.0, None).await;
+        seed_value(pg, &m, &pid, 0.8).await;
+
+        let written = compute(&ctx, &pid.to_string(), None).await.unwrap();
+        assert_eq!(written, 0, "retired composite → compute writes 0 rows (never a fabricated score)");
+
+        // No project_health row exists for this project (honest-empty).
+        let (ph_rows,): (i64,) = query_as(
+            "SELECT count(*) FROM sensei.project_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
+              WHERE pm.project_id = $1 AND m.key = 'project_health'",
+        )
+        .bind(pid)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        assert_eq!(ph_rows, 0, "no project_health row written (retired → honest-empty)");
 
         purge_metrics(pg, &[&key]).await;
         cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
