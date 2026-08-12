@@ -1,6 +1,8 @@
 //! Metrics read endpoints (Phase 7): the active registry catalog, a project's
-//! latest-per-metric values (with trend + the `project_health` composite), and
-//! one metric's series at a chosen grain. All three are pure reads over
+//! latest-per-metric values (with trend + the `project_health` composite), one
+//! metric's series at a chosen grain (carrying the metric's `formula`), and the
+//! measurable sessions behind one daily datapoint (`{key}/sessions?day=`). The
+//! reads are pure reads over
 //! [`PgStore::active_metrics`] / [`PgStore::get_project_metrics`] /
 //! [`PgStore::get_project_metric_trend`] / [`PgStore::get_project_metric_series`]
 //! and the `sensei.project_metric_*` views (the views own the aggregation — the
@@ -173,7 +175,65 @@ pub(crate) async fn get_project_metric_series(
     Ok(Json(serde_json::json!({
         "metric": key,
         "grain": grain,
-        "series": series,
-        "count": series.len(),
+        // The metric's `formula` (the registry's "how it's calculated" facet)
+        // travels with the series so the detail screen renders it beside the chart.
+        // Honest-null when the key names no registered metric; present even when the
+        // series is empty (a valid metric with no data yet).
+        "formula": series.formula,
+        "series": series.points,
+        "count": series.points.len(),
+    })))
+}
+
+/// Query for `GET /api/projects/{id}/metrics/{key}/sessions`.
+#[derive(Deserialize)]
+pub(crate) struct DaySessionsQuery {
+    /// The calendar day to drill into, `YYYY-MM-DD`. Required: without a day there
+    /// is no datapoint to scope to, so an absent or unparseable value is a 400
+    /// (never a silent default that would return the wrong day's sessions).
+    day: Option<String>,
+}
+
+/// `GET /api/projects/{id}/metrics/{key}/sessions?day=YYYY-MM-DD` — the measurable
+/// sessions behind one daily metric datapoint (the datapoint→sessions drill-down).
+/// Each session carries the structural fields the client renders a one-liner from
+/// (`outcome` + `ftr` + `turns` + `corrections`) plus the `client_session_id`
+/// reference, `started_at`, `task`, and the existing `summary` column. `{id}` is
+/// name-or-uuid; `{key}` is contextual (which datapoint) — the measurable-session
+/// base is the same per day across the daily metrics, so the set is key-independent.
+///
+/// Fail-closed: a lookup error is a 500; a project that does not exist is a 404; an
+/// absent or malformed `day` is a 400; a day with no measurable session is a 200
+/// with an empty list (honest-empty, never a fabricated row).
+pub(crate) async fn get_project_metric_day_sessions(
+    State(state): State<AppState>,
+    Path((id, key)): Path<(String, String)>,
+    Query(q): Query<DaySessionsQuery>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let day = q
+        .day
+        .as_deref()
+        .and_then(|d| chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d").ok())
+        .ok_or(StatusCode::BAD_REQUEST)?;
+    let uuid = crate::api::util::resolve_project_uuid(&state, &id)
+        .await?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    state
+        .pg
+        .get_project(&uuid)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    let sessions = state
+        .pg
+        .get_project_sessions_for_day(&uuid, day)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(serde_json::json!({
+        "metric": key,
+        "day": day.to_string(),
+        "sessions": sessions,
+        "count": sessions.len(),
     })))
 }

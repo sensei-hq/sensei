@@ -5080,6 +5080,83 @@
         sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1").bind(pid).execute(s.pool()).await.unwrap();
     }
 
+    /// The datapoint→sessions drill-down returns ONLY that day's MEASURABLE sessions
+    /// for the project, scoped through the folder-join (`sensei.folders.project_id`),
+    /// newest-first, carrying the structural one-liner fields + summary. Guards the
+    /// three exclusions the old un-scoped digest got wrong: a different day, an
+    /// in-flight (`outcome IS NULL`) session, and a session whose FOLDER belongs to
+    /// another project (even when its own `project_id` column points here — proving
+    /// the scope is the folder-join, not `sessions.project_id`).
+    #[tokio::test]
+    async fn get_project_sessions_for_day_scopes_day_and_measurable() {
+        let s = pg_store().await;
+        let uniq = uuid::Uuid::new_v4();
+        let other = uuid::Uuid::new_v4();
+        let (pid, fid) = crate::tasks::test_support::seed_metrics_project_folder(&s, &uniq).await;
+        let (other_pid, other_fid) =
+            crate::tasks::test_support::seed_metrics_project_folder(&s, &other).await;
+
+        let day = chrono::NaiveDate::from_ymd_opt(2020, 6, 15).unwrap();
+        let utc = |ts: &str| chrono::DateTime::parse_from_rfc3339(ts).unwrap().with_timezone(&chrono::Utc);
+        let noon    = utc("2020-06-15T12:00:00Z"); // in-day, earlier
+        let evening = utc("2020-06-15T20:00:00Z"); // in-day, later → newest-first
+        let prev    = utc("2020-06-14T12:00:00Z"); // different day → excluded
+
+        #[allow(clippy::too_many_arguments)]
+        async fn ins(
+            s: &PgStore, fid: uuid::Uuid, pid: uuid::Uuid, cs: &str, task: &str,
+            outcome: Option<&str>, ftr: Option<bool>, turns: i32, corr: i32,
+            summary: Option<&str>, at: chrono::DateTime<chrono::Utc>,
+        ) {
+            sqlx_core::query::query(
+                "INSERT INTO activity.sessions
+                    (folder_id, project_id, client_session_id, task, outcome, ftr, turns, corrections, summary, started_at)
+                 VALUES ($1, $2, $3, $4, $5::sensei.session_outcome, $6, $7, $8, $9, $10)")
+                .bind(fid).bind(pid).bind(cs).bind(task).bind(outcome).bind(ftr)
+                .bind(turns).bind(corr).bind(summary).bind(at)
+                .execute(s.pool()).await.unwrap();
+        }
+
+        // `client_session_id` is GLOBALLY unique (sessions_client_session_id_uniq),
+        // so scope the ids to this run's uniq — otherwise a re-run collides.
+        let sid = |n: &str| format!("cs-{n}-{}", uniq.simple());
+        // The two measurable, in-day, in-project sessions we expect back.
+        ins(&s, fid, pid, &sid("noon"), "task-a", Some("completed"), Some(true), 3, 0, Some("sum-a"), noon).await;
+        ins(&s, fid, pid, &sid("eve"),  "task-b", Some("corrected"), Some(false), 5, 2, None, evening).await;
+        // Exclusions:
+        ins(&s, fid, pid, &sid("inflight"), "task-x", None, None, 0, 0, None, noon).await;      // not measurable
+        ins(&s, fid, pid, &sid("prevday"),  "task-y", Some("completed"), Some(true), 1, 0, None, prev).await; // other day
+        // Folder in ANOTHER project, but its own project_id column points at pid —
+        // folder-join scope must still exclude it.
+        ins(&s, other_fid, pid, &sid("otherproj"), "task-z", Some("completed"), Some(true), 1, 0, None, noon).await;
+
+        let rows = s.get_project_sessions_for_day(&pid, day).await.unwrap();
+        assert_eq!(rows.len(), 2, "only the two measurable, in-day, in-project (folder-join) sessions");
+        // Newest-first: evening then noon.
+        assert_eq!(rows[0]["client_session_id"].as_str(), Some(sid("eve").as_str()), "ordered newest-first");
+        assert_eq!(rows[1]["client_session_id"].as_str(), Some(sid("noon").as_str()));
+        // Structural one-liner fields + summary on the corrected (evening) session.
+        let eve = &rows[0];
+        assert_eq!(eve["outcome"], "corrected");
+        assert_eq!(eve["ftr"], serde_json::json!(false));
+        assert_eq!(eve["turns"], 5);
+        assert_eq!(eve["corrections"], 2);
+        assert_eq!(eve["task"], "task-b");
+        assert!(eve["summary"].is_null(), "backfilled/absent summary is honest-null");
+        assert!(eve["started_at"].as_str().is_some(), "started_at is an rfc3339 string");
+        assert_eq!(rows[1]["summary"], "sum-a", "the existing summary column is returned when present");
+
+        // Honest-empty: a day with no measurable session → [] (not a failure).
+        let empty = s.get_project_sessions_for_day(&pid, chrono::NaiveDate::from_ymd_opt(2019, 1, 1).unwrap()).await.unwrap();
+        assert!(empty.is_empty(), "no sessions that day → honest-empty list");
+
+        // cleanup — sessions FK to the folder; drop them, then the projects (folders cascade).
+        sqlx_core::query::query("DELETE FROM activity.sessions WHERE folder_id = ANY($1)")
+            .bind(vec![fid, other_fid]).execute(s.pool()).await.unwrap();
+        sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = ANY($1)")
+            .bind(vec![pid, other_pid]).execute(s.pool()).await.unwrap();
+    }
+
     /// Phase 8.1: both FTR getters read `project_metrics` (via
     /// `project_metric_daily`), NOT the retired `sensei.ftr_daily` /
     /// `sensei.project_ftr_metrics` views. Seeds daily `ftr` rows across the 14d,
