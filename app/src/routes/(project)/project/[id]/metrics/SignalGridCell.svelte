@@ -14,7 +14,7 @@
     data-component="signal-cell"
     data-signal={signal.key}
     data-moved={signal.moved}
-    class="signal-cell bg-paper p-4 flex flex-col gap-2 border-t-2 {TREND_RULE[signal.color]} no-underline text-inherit transition-colors duration-fast"
+    class="signal-cell bg-paper p-4 flex flex-col gap-2 border-t {TREND_RULE[signal.color]} no-underline text-inherit transition-colors duration-fast"
 >
     <div class="text-xs text-ink-mute leading-snug">{signal.name}</div>
     <div class="flex items-baseline gap-2">

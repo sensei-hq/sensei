@@ -94,8 +94,14 @@ function formatDuration(seconds: number): string {
         return rem ? `${m}m ${rem}s` : `${m}m`;
     }
     const h = Math.floor(m / 60);
-    const remM = m % 60;
-    return remM ? `${h}h ${remM}m` : `${h}h`;
+    if (h < 24) {
+        const remM = m % 60;
+        return remM ? `${h}h ${remM}m` : `${h}h`;
+    }
+    // Large durations read as days/hours (e.g. "2025m" → "1d 9h"), not raw hours.
+    const d = Math.floor(h / 24);
+    const remH = h % 24;
+    return remH ? `${d}d ${remH}h` : `${d}d`;
 }
 
 function formatCount(value: number): string {
