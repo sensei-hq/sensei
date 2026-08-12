@@ -387,6 +387,19 @@ pub struct ProjectMetricSeries {
     pub points:  Vec<ProjectMetricSeriesPoint>,
 }
 
+/// The descriptive facets of ONE metric by registry key — its display `name` and
+/// its `how_to_read` "what this measures" line. The shape
+/// [`PgStore::get_metric_meaning`] returns, read from `sensei.metrics` by key (the
+/// same by-key path [`PgStore::get_project_metric_series`] reads `formula`
+/// through). Grounds the drill-down's per-session observation in the metric's real
+/// meaning. `None` from the reader when the key names no registered metric
+/// (honest-null, never a fabricated meaning).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct MetricMeaning {
+    pub name:        String,
+    pub how_to_read: String,
+}
+
 
 mod commands;
 mod config;
