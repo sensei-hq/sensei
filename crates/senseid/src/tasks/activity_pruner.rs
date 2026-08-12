@@ -64,8 +64,17 @@ pub fn spawn(pg: Arc<PgStore>) {
 async fn run(pg: Arc<PgStore>) {
     let secs = parse_interval(pg.get_config("activity.prune_interval_secs").await.ok().flatten());
     let mut ticker = tokio::time::interval(Duration::from_secs(secs));
+    // Skip the immediate boot tick — do NOT prune the instant the daemon starts.
+    // On boot the history synthesizer → analyzer → metric planner are re-capturing
+    // backfilled history into durable snapshots; pruning immediately would reclaim
+    // sessions older than the capture backstop BEFORE their session-anchored metrics
+    // (ftr/throughput) are captured, since capture-before-reclaim can't protect a
+    // session past the backstop. Waiting one interval lets capture win the race; the
+    // backstop still bounds anything that is never captured (retention isn't urgent
+    // at boot — one interval's delay retains at most one extra window of activity).
+    ticker.tick().await;
     loop {
-        ticker.tick().await; // first tick fires immediately → prune on startup
+        ticker.tick().await; // subsequent ticks wait a full interval before pruning
         // Re-read retention each tick so config changes take effect without a restart.
         let days = parse_retention(pg.get_config("activity.retention_days").await.ok().flatten());
         let backstop = parse_backstop(
