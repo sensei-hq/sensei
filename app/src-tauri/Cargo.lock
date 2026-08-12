@@ -3922,7 +3922,7 @@ dependencies = [
 
 [[package]]
 name = "sensei-bootstrap"
-version = "0.7.2"
+version = "0.7.3"
 dependencies = [
  "chrono",
  "dbd-core",
@@ -3938,7 +3938,7 @@ dependencies = [
 
 [[package]]
 name = "sensei-desktop"
-version = "0.7.2"
+version = "0.7.3"
 dependencies = [
  "chrono",
  "sensei-bootstrap",
