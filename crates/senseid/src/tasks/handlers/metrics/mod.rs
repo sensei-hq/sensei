@@ -29,6 +29,7 @@ use crate::db::pg_store::PgStore;
 /// superseded the former own-graph `duplication` snapshot.
 mod autonomy;
 mod churn;
+mod explainer;
 mod health;
 mod knowledge;
 pub(crate) mod planner;
@@ -203,7 +204,7 @@ pub async fn compute(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
             // behavior in this phase — the rest accept the param and keep their
             // current behavior (later phases wire them up).
             let as_of = task.as_of;
-            match group {
+            let written = match group {
                 MetricGroup::SessionOutcomes => {
                     session_outcomes::compute(ctx, &task.folder_path, as_of).await
                 }
@@ -212,7 +213,24 @@ pub async fn compute(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
                 MetricGroup::Autonomy => autonomy::compute(ctx, &task.folder_path, as_of).await,
                 MetricGroup::Knowledge => knowledge::compute(ctx, &task.folder_path, as_of).await,
                 MetricGroup::Tool => tool::compute(ctx, &task.folder_path, as_of).await,
+            }?;
+            // Compute-time per-datapoint EXPLAINER enrichment: generate each
+            // datapoint's "why this day's value is what it is" line WITH the value
+            // and merge it into props.explainer. Best-effort — the value is already
+            // persisted, so a failed/absent-model explainer never fails the compute.
+            // Cache-guarded (unchanged value ⇒ no model call). Rides the planner's
+            // per-day Some(D) tasks; a bare None (rolling) run enriches today.
+            // Decision record: docs/analysis/metric-explainability-generation.md.
+            if let Ok(project_id) = uuid::Uuid::parse_str(&task.folder_path) {
+                let day = match as_of {
+                    Some(d) => Some(d),
+                    None => today(ctx.pg()).await.ok(),
+                };
+                if let Some(day) = day {
+                    explainer::enrich_day(ctx, &project_id, group.as_str(), day).await;
+                }
             }
+            Ok(written)
         }
         None => {
             // Intentional logged no-op (NOT fabrication): a registry entry whose
