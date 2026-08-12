@@ -6704,6 +6704,36 @@ impl PgStore {
             .collect())
     }
 
+    /// The full daily series (chronological) for EVERY metric of a project, in a
+    /// single query — reads `sensei.project_metric_daily` (project scope) and
+    /// groups the values by metric, keeping each metric's points in `date` order.
+    /// Powers the narrative's overall-trend fact: the direction the daily
+    /// sparkline shows, so a rising `lower_better` metric reads as worsening even
+    /// when its most-recent weekly step dipped. Empty when the project has no
+    /// daily rows yet (honest-empty, not a failure). Propagates the read error;
+    /// never masks it.
+    pub async fn get_project_metric_daily_series_all(
+        &self,
+        project_id: &uuid::Uuid,
+    ) -> Result<std::collections::HashMap<String, Vec<f64>>, String> {
+        let rows: Vec<(String, f64)> = sqlx_core::query_as::query_as(
+            "SELECT metric, value::float8
+               FROM sensei.project_metric_daily
+              WHERE project_id = $1
+              ORDER BY metric, date",
+        )
+        .bind(project_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        let mut by_metric: std::collections::HashMap<String, Vec<f64>> =
+            std::collections::HashMap::new();
+        for (metric, value) in rows {
+            by_metric.entry(metric).or_default().push(value);
+        }
+        Ok(by_metric)
+    }
+
     /// Re-attach orphaned sessions: `activity.assistant_events` rows whose session
     /// no longer has an `activity.sessions` row (its folder was cascade-deleted on a
     /// repo delete/rename, but the events — session-id-keyed, no FK — survived). For

@@ -97,12 +97,27 @@ pub(crate) async fn get_project_metrics(
         metrics.push(value);
     }
 
+    // The full daily series per metric — the narrative reads the OVERALL trend
+    // from this (the direction the sparkline shows), so a one-week dip can't be
+    // reported as the trend. A read error is a 500 (fail-closed), never a
+    // fabricated-empty that would silently drop the trend fact.
+    let series_by_metric = state
+        .pg
+        .get_project_metric_daily_series_all(&uuid)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
     // Interpreted layer: the local-model headline + per-signal "what sensei
     // noticed" prose, read from cache (a cold miss is warmed in the background
     // and omitted — the app renders its own deterministic sentence in the gap).
     // Inference never runs on this request path (see metric_narrative).
-    let narrative =
-        crate::analysis::metric_narrative::build_narrative(&state.pg, &state.gateway, &metrics).await;
+    let narrative = crate::analysis::metric_narrative::build_narrative(
+        &state.pg,
+        &state.gateway,
+        &metrics,
+        &series_by_metric,
+    )
+    .await;
 
     Ok(Json(serde_json::json!({
         "metrics": metrics,
