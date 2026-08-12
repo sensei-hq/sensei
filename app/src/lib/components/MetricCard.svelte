@@ -5,7 +5,7 @@
     // A single metric tile — the overview stat-block anatomy (eyebrow · big
     // display value · sub) plus a trend chip and an optional sparkline. Pure
     // template: the value/trend/sub are already formatted by metric-view.
-    let { card, series = [] }: { card: MetricCardVM; series?: number[] } = $props();
+    let { card, series = [] }: { card: MetricCardVM; series?: (number | null)[] } = $props();
 
     const trendClass: Record<'good' | 'bad' | 'neutral', string> = {
         good: 'text-success',

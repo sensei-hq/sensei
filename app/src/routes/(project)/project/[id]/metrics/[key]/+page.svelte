@@ -7,6 +7,9 @@
         orderSignals,
         seriesValues,
         seriesDistribution,
+        densifySeries,
+        metricYDomain,
+        historyNote,
         formatMetricValue,
         TREND_TEXT,
     } from '$lib/metrics/metric-view.js';
@@ -22,21 +25,21 @@
     const selected = $derived(signals.find((s) => s.key === data.selectedKey) ?? null);
 
     const values = $derived(seriesValues(data.series));
-    const periods = $derived(data.series.map((p) => shortDate(p.period)));
     const distribution = $derived(seriesDistribution(values));
     const format = $derived((v: number) => formatMetricValue(selected?.type ?? 'count', v));
+
+    // Densified {date,value|null}[] for the chart (absent periods → gaps) and a
+    // fixed y-domain per metric type (a flat series stays flat, not a mountain).
+    const chartSeries = $derived(densifySeries(data.series, data.grain));
+    const yDomain = $derived(metricYDomain(selected?.type ?? 'count', values));
+    const note = $derived(historyNote(chartSeries));
+    const caption = $derived(note ? `${note} · ${data.grain}` : '');
 
     const GRAINS = [
         { id: 'daily', label: 'Daily' },
         { id: 'weekly', label: 'Weekly' },
         { id: 'monthly', label: 'Monthly' },
     ];
-
-    function shortDate(iso: string): string {
-        // 'YYYY-MM-DD…' → 'MM-DD'; leave anything else untouched (honest, no guess).
-        const m = iso.match(/^(\d{4})-(\d{2})-(\d{2})/);
-        return m ? `${m[2]}-${m[3]}` : iso;
-    }
 
     function sessionMeta(s: ProjectSession): string {
         const mins =
@@ -97,12 +100,11 @@
                     </div>
 
                     <DetailChart
-                        {values}
-                        {periods}
-                        {distribution}
+                        series={chartSeries}
+                        {yDomain}
                         {format}
                         color={selected.color}
-                        caption={`${values.length} points · ${data.grain}`}
+                        {caption}
                     />
 
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
