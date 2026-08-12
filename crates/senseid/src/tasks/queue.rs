@@ -185,12 +185,22 @@ impl TaskQueue {
         loop {
             {
                 let mut state = self.inner.lock().await;
-                // Find a pending task whose repo isn't at the concurrency limit
+                // Among the pending tasks whose repo isn't at the concurrency
+                // limit, pick the one with the best (lowest) `kind_priority` so
+                // the light metric-backfill chain preempts a bulk boot re-index
+                // instead of starving behind it. The per-repo cap
+                // (`count < max_repos`) is the SAME gate as before — priority
+                // only reorders selection among already-startable tasks, it
+                // never bypasses the cap. Tie-break by index so FIFO order is
+                // preserved *within* a priority band (deterministic).
                 let max_repos = self.max_concurrent_repos.load(Ordering::SeqCst);
-                let pos = state.pending.iter().position(|t| {
-                    let count = state.folder_running_count.get(&t.folder_path).copied().unwrap_or(0);
-                    count < max_repos
-                });
+                let pos = state.pending.iter().enumerate()
+                    .filter(|(_, t)| {
+                        let count = state.folder_running_count.get(&t.folder_path).copied().unwrap_or(0);
+                        count < max_repos
+                    })
+                    .min_by_key(|(idx, t)| (kind_priority(&t.kind), *idx))
+                    .map(|(idx, _)| idx);
 
                 if let Some(idx) = pos {
                     let mut task = state.pending.remove(idx).unwrap();
@@ -425,6 +435,26 @@ pub struct QueueStatus {
     pub running: usize,
     pub completed: usize,
     pub repos_active: usize,
+}
+
+/// Scheduling priority of a task kind for [`TaskQueue::next_task`] — LOWER runs
+/// first. The metric-backfill chain (`AnalyzeProject` → `PlanMetricDays` →
+/// `ComputeMetrics` → `ComputeHealth`) is HIGH priority (`0`) so a light metric
+/// compute preempts a bulk boot re-index (heavy per-file / graph tasks) that
+/// would otherwise saturate the small worker pool and leave the backfill
+/// `pending` indefinitely. Everything else is NORMAL (`1`). Kept as a small,
+/// explicit, pure match so the HIGH set is obvious and unit-testable. This only
+/// reorders *selection among already-startable tasks*; it never bypasses the
+/// per-repo concurrency cap (that gate is applied first in `next_task`).
+fn kind_priority(kind: &super::TaskKind) -> u8 {
+    use super::TaskKind;
+    match kind {
+        TaskKind::AnalyzeProject
+        | TaskKind::PlanMetricDays
+        | TaskKind::ComputeMetrics
+        | TaskKind::ComputeHealth => 0,
+        _ => 1,
+    }
 }
 
 /// Best-effort resolver: for each unmet-dependency id, produce a
@@ -742,5 +772,85 @@ mod tests {
         let t = q.next_task().await;
         let progress = q.progress().await;
         assert_eq!(progress[&t.folder_path].running, 1);
+    }
+
+    #[test]
+    fn kind_priority_ranks_metric_backfill_above_everything_else() {
+        // Lock the exact HIGH-priority set (the metric-backfill chain) so a
+        // future edit can't silently drop a member into the NORMAL band.
+        for k in [
+            TaskKind::AnalyzeProject,
+            TaskKind::PlanMetricDays,
+            TaskKind::ComputeMetrics,
+            TaskKind::ComputeHealth,
+        ] {
+            assert_eq!(kind_priority(&k), 0, "{k} is high priority (metric backfill)");
+        }
+        // A representative spread of the bulk / barrier / global kinds are NORMAL.
+        for k in [
+            TaskKind::ScanRoot,
+            TaskKind::ProcessGitFolder,
+            TaskKind::ProcessFile,
+            TaskKind::BuildConnections,
+            TaskKind::DetectCommunities,
+            TaskKind::EmbedNodes,
+            TaskKind::AggregateCorrections,
+        ] {
+            assert_eq!(kind_priority(&k), 1, "{k} is normal priority");
+        }
+    }
+
+    #[tokio::test]
+    async fn next_task_prioritizes_metric_backfill_over_bulk_indexing() {
+        // Root cause (live): a boot re-index (heavy per-file / graph tasks)
+        // saturates the small worker pool, so the light metric-backfill chain
+        // sits `pending` indefinitely under pure FIFO. `next_task` must let a
+        // high-priority metric compute PREEMPT a bulk index that was enqueued
+        // earlier — while preserving FIFO *within* a priority band.
+        let q = TaskQueue::new();
+
+        // A bulk re-index task lands FIRST (folder A) …
+        q.enqueue(Task::new(TaskKind::ScanRoot, "A", "A")).await;
+        // … then two metric computes for folder B (the backfill chain).
+        q.enqueue(Task::new(TaskKind::ComputeMetrics, "B", "group1")).await;
+        q.enqueue(Task::new(TaskKind::ComputeMetrics, "B", "group2")).await;
+
+        // Priority preempts FIFO: both ComputeMetrics come out before the
+        // earlier-enqueued ScanRoot, and the two computes keep enqueue order
+        // (FIFO tie-break within the high-priority band).
+        let t1 = q.next_task().await;
+        assert_eq!(t1.kind, TaskKind::ComputeMetrics);
+        assert_eq!(t1.path, "group1", "FIFO preserved within the high-priority band");
+        let t2 = q.next_task().await;
+        assert_eq!(t2.kind, TaskKind::ComputeMetrics);
+        assert_eq!(t2.path, "group2", "second ComputeMetrics keeps enqueue order");
+        // … and only then the bulk index.
+        let t3 = q.next_task().await;
+        assert_eq!(t3.kind, TaskKind::ScanRoot);
+    }
+
+    #[tokio::test]
+    async fn next_task_priority_never_bypasses_per_repo_cap() {
+        // Priority reorders *selection among startable tasks*; it must NOT
+        // bypass the per-repo concurrency cap. A folder already at `max_repos`
+        // running is skipped even for a HIGH-priority task, and a startable
+        // NORMAL-priority task in another folder is returned instead.
+        let q = TaskQueue::with_max_repos(1);
+
+        // Fill folder A to its cap (1 running).
+        q.enqueue(Task::new(TaskKind::ProcessGitFolder, "A", "A")).await;
+        let running_a = q.next_task().await;
+        assert_eq!(running_a.folder_path, "A");
+
+        // A HIGH-priority task for the capped folder A, plus a NORMAL task for
+        // the free folder B.
+        q.enqueue(Task::new(TaskKind::ComputeMetrics, "A", "group")).await;
+        q.enqueue(Task::new(TaskKind::ProcessFile, "B", "b.ts")).await;
+
+        // Folder A is full, so its high-priority task is NOT startable; the
+        // startable normal-priority task in folder B is returned instead.
+        let next = q.next_task().await;
+        assert_eq!(next.folder_path, "B");
+        assert_eq!(next.kind, TaskKind::ProcessFile);
     }
 }
