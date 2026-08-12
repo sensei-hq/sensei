@@ -498,58 +498,6 @@ impl PgStore {
         }).collect())
     }
 
-    /// Per-folder duplication stats for a project: `(folder_id, eligible_count,
-    /// duplicate_count)`, one row per folder that has ≥1 eligible symbol. Powers the
-    /// snapshot `duplication_ratio` metric (per-module + project).
-    ///
-    /// An *eligible* symbol is exactly the population [`Self::find_duplicates_scoped`]
-    /// compares — a `function`/`method` node with an embedding whose body spans ≥3
-    /// lines. A *duplicate* is an eligible symbol that has ≥1 near-duplicate partner
-    /// anywhere in the project: another eligible symbol within cosine similarity
-    /// `min_similarity` (cosine distance `<=> <= 1 - min_similarity`). BOTH members of
-    /// every matched pair are counted (the join is `a.id <> b.id`, then `DISTINCT`),
-    /// so `duplicate_count` is the number of distinct symbols participating in a
-    /// cluster — the `duplication_ratio` numerator, with `eligible_count` its
-    /// denominator. Scoped to the project via `folders.project_id` (folders with no
-    /// eligible symbol cannot contribute a pair, so they are correctly absent).
-    /// On-demand review query, not a hot path.
-    pub async fn duplication_stats_scoped(
-        &self,
-        project_id: &uuid::Uuid,
-        min_similarity: f64,
-    ) -> Result<Vec<(uuid::Uuid, i64, i64)>, String> {
-        let max_distance = 1.0 - min_similarity;
-        sqlx_core::query_as::query_as(
-            "WITH eligible AS (
-                 SELECT n.id, n.folder_id, n.embedding
-                   FROM sensei.nodes   n
-                   JOIN sensei.folders f ON f.id = n.folder_id
-                  WHERE f.project_id = $1
-                    AND n.kind IN ('function'::sensei.node_kind, 'method'::sensei.node_kind)
-                    AND n.embedding IS NOT NULL
-                    AND (n.line_end - n.line_start) >= 3
-             ),
-             dup AS (
-                 SELECT DISTINCT a.id, a.folder_id
-                   FROM eligible a
-                   JOIN eligible b
-                     ON a.id <> b.id
-                    AND (a.embedding <=> b.embedding) <= $2
-             )
-             SELECT e.folder_id                          AS folder_id
-                  , count(*)::int8                       AS eligible_count
-                  , count(d.id)::int8                    AS duplicate_count
-               FROM eligible e
-               LEFT JOIN dup d ON d.id = e.id
-              GROUP BY e.folder_id",
-        )
-        .bind(project_id)
-        .bind(max_distance)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| e.to_string())
-    }
-
     /// Abs paths of folders that still have embeddable nodes without an
     /// embedding. Used by the backfill endpoint to enqueue `EmbedNodes` for
     /// already-indexed folders (which a normal incremental scan won't revisit).

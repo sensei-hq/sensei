@@ -7,8 +7,8 @@
 //!
 //! The `seed_metrics_*` / `cleanup_metrics_fixture` helpers are the shared metric
 //! fixture the per-group compute-handler tests build on (`session_outcomes` and
-//! the churn/duplication/autonomy/knowledge/tool groups that copy its template),
-//! so the six groups don't each re-implement project/folder/session/turn seeding.
+//! the churn/quality/autonomy/knowledge/tool groups that copy its template),
+//! so the groups don't each re-implement project/folder/session/turn seeding.
 
 use std::sync::Arc;
 
@@ -369,91 +369,6 @@ pub(crate) async fn purge_corrections(pg: &PgStore, signatures: &[&str]) {
         .execute(pg.pool())
         .await
         .unwrap();
-}
-
-/// Insert an ADDITIONAL folder wired to an existing project under the `/_test`
-/// watch root and return its id — for multi-module fixtures (a project with >1
-/// folder, e.g. the cross-folder duplication case). `uniq` keeps `abs_path`
-/// collision-free. Companion to [`seed_metrics_project_folder`] (which creates the
-/// project + its FIRST folder and the watch root); call that first. The extra
-/// folder is NOT removed by [`cleanup_metrics_fixture`] (which deletes only one
-/// folder), so delete it explicitly in the test.
-pub(crate) async fn seed_metrics_folder(
-    pg: &PgStore,
-    project_id: &uuid::Uuid,
-    uniq: &uuid::Uuid,
-) -> uuid::Uuid {
-    let name = format!("metrics-{uniq}");
-    let abs = format!("/_test/metrics-{uniq}");
-    let (fid,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
-        "INSERT INTO sensei.folders(root_id, kind, name, path, abs_path, project_id) \
-         VALUES('00000000-0000-0000-0000-000000000001', 'git'::sensei.folder_kind, $1, $1, $2, $3) \
-         ON CONFLICT(abs_path) DO UPDATE SET project_id = EXCLUDED.project_id RETURNING id",
-    )
-    .bind(&name)
-    .bind(&abs)
-    .bind(project_id)
-    .fetch_one(pg.pool())
-    .await
-    .unwrap();
-    fid
-}
-
-/// A 384-dim pgvector literal with every component equal to `val` (a SQL numeric
-/// text, e.g. `"0.1"`). Two such vectors are IDENTICAL → cosine similarity 1.0, a
-/// guaranteed near-duplicate for the `duplication_ratio` fixture. Emitted as a raw
-/// SQL expression because pgvector has no sqlx bind type (inlined by
-/// [`seed_symbol_node`]).
-pub(crate) fn uniform_embedding_sql(val: &str) -> String {
-    format!("(SELECT '['||string_agg('{val}', ',')||']' FROM generate_series(1,384))::vector")
-}
-
-/// A 384-dim ONE-HOT pgvector literal: `1` at 1-based position `pos`, `0` elsewhere
-/// (`ORDER BY` makes the position deterministic). Two one-hots at DIFFERENT
-/// positions are orthogonal (cosine 0), and any one-hot vs a
-/// [`uniform_embedding_sql`] vector sits far below 0.92 — so one-hot symbols never
-/// form a duplicate pair. The dissimilar counterpart to the uniform-vector duplicates.
-pub(crate) fn onehot_embedding_sql(pos: u32) -> String {
-    format!(
-        "(SELECT '['||string_agg(CASE WHEN g = {pos} THEN '1' ELSE '0' END, ',' ORDER BY g)||']' \
-         FROM generate_series(1,384) g)::vector"
-    )
-}
-
-/// Insert one `sensei.nodes` symbol row for the `duplication_ratio` fixture and
-/// return its id. `kind` is a `node_kind` literal (`"function"`/`"method"` are the
-/// eligible kinds; anything else is deliberately ineligible). `embedding_sql`, when
-/// `Some`, is a raw 384-dim pgvector expression (see [`uniform_embedding_sql`] /
-/// [`onehot_embedding_sql`]) inlined into the INSERT; `None` leaves `embedding` NULL
-/// (ineligible). `lines` is the `(line_start, line_end)` span — eligibility requires
-/// `line_end - line_start >= 3`. Distinct `name`s keep rows apart under
-/// `nodes_unique_identity`. Nodes cascade on folder delete, so
-/// [`cleanup_metrics_fixture`] clears them.
-pub(crate) async fn seed_symbol_node(
-    pg: &PgStore,
-    folder_id: &uuid::Uuid,
-    kind: &str,
-    name: &str,
-    file_path: &str,
-    lines: (i32, i32),
-    embedding_sql: Option<&str>,
-) -> uuid::Uuid {
-    let (line_start, line_end) = lines;
-    let embedding = embedding_sql.unwrap_or("NULL");
-    let sql = format!(
-        "INSERT INTO sensei.nodes (folder_id, kind, name, file_path, line_start, line_end, embedding) \
-         VALUES ($1, '{kind}'::sensei.node_kind, $2, $3, $4, $5, {embedding}) RETURNING id"
-    );
-    let (id,): (uuid::Uuid,) = sqlx_core::query_as::query_as(&sql)
-        .bind(folder_id)
-        .bind(name)
-        .bind(file_path)
-        .bind(line_start)
-        .bind(line_end)
-        .fetch_one(pg.pool())
-        .await
-        .unwrap();
-    id
 }
 
 /// Insert one `activity.sessions` row carrying a `client_session_id` and return its
