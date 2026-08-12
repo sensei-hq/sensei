@@ -419,14 +419,20 @@ impl PgStore {
     /// ratios). `grain` MUST be one of `daily`|`weekly`|`monthly`|`quarterly`; any
     /// other value is an `Err` (the caller 400s) rather than a silent default that
     /// would mismeasure. An unknown metric key — or a project with no rows — yields
-    /// an empty series (honest-empty, not a failure). Propagates the read error;
-    /// never masks it.
+    /// an empty `points` list (honest-empty, not a failure). Propagates the read
+    /// error; never masks it.
+    ///
+    /// The metric's `formula` (the registry's "how it's calculated" facet) travels
+    /// with the series so the detail screen renders it beside the chart. It is read
+    /// from `sensei.metrics` by key — independent of the view — so it is present
+    /// even when `points` is empty (a valid metric with no data yet) and is `None`
+    /// only when the key names no registered metric (honest-null).
     pub async fn get_project_metric_series(
         &self,
         project_id: &uuid::Uuid,
         key: &str,
         grain: &str,
-    ) -> Result<Vec<ProjectMetricSeriesPoint>, String> {
+    ) -> Result<ProjectMetricSeries, String> {
         // The view + its period column are chosen from a fixed allowlist keyed on
         // the validated grain — no user-supplied string ever reaches the SQL, so
         // the `format!` is injection-safe.
@@ -449,10 +455,21 @@ impl PgStore {
             .fetch_all(&self.pool)
             .await
             .map_err(|e| e.to_string())?;
-        Ok(rows
+        let points = rows
             .into_iter()
             .map(|(period, value, direction)| ProjectMetricSeriesPoint { period, value, direction })
-            .collect())
+            .collect();
+        // `formula` is a metric-level facet, read by key from the registry so it
+        // survives an empty series and stays honest-null for an unknown key.
+        let formula: Option<String> = sqlx_core::query_as::query_as::<_, (String,)>(
+            "SELECT formula FROM sensei.metrics WHERE key = $1",
+        )
+        .bind(key)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?
+        .map(|(f,)| f);
+        Ok(ProjectMetricSeries { formula, points })
     }
 
     /// The full daily series (chronological) for EVERY metric of a project, in a

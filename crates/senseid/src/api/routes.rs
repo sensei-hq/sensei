@@ -136,6 +136,10 @@ pub fn create_router(state: AppState) -> Router {
         // one metric's series at a grain (?grain=daily|weekly|monthly|quarterly).
         .route("/api/projects/{id}/metrics",         get(metrics::get_project_metrics))
         .route("/api/projects/{id}/metrics/{key}",   get(metrics::get_project_metric_series))
+        // Datapoint→sessions drill-down: the measurable sessions behind one daily
+        // metric point (?day=YYYY-MM-DD).
+        .route("/api/projects/{id}/metrics/{key}/sessions",
+               get(metrics::get_project_metric_day_sessions))
         // G10: user-scope capability→preferred-tool bias for get_commands.
         .route("/api/preferences/commands",          get(project_detail::get_command_preferences).put(project_detail::set_command_preference))
         .route("/api/projects/{id}/library-version-conflicts", get(project_detail::get_project_library_version_conflicts))
@@ -671,6 +675,8 @@ mod tests {
         assert_eq!(st, StatusCode::OK, "{body}");
         assert_eq!(body["grain"], "weekly");
         assert_eq!(body["metric"].as_str(), Some(key.as_str()));
+        assert_eq!(body["formula"].as_str(), Some("test formula"),
+            "series carries the metric's formula facet (how it's calculated)");
         let series = body["series"].as_array().expect("series array");
         assert_eq!(series.len(), 2, "one point per ISO week");
         for (point, (period, value)) in series.iter().zip(expect) {
@@ -686,15 +692,86 @@ mod tests {
             &format!("/api/projects/{pid}/metrics/{key}?grain=yearly"), None).await;
         assert_eq!(st, StatusCode::BAD_REQUEST, "invalid grain → 400");
 
-        // Unknown metric key (no rows) → 200 with an empty series (honest-empty).
+        // Unknown metric key (no rows) → 200 with an empty series (honest-empty)
+        // and an honest-null formula (the key names no registered metric).
         let (st, body) = req(app.clone(), "GET",
             &format!("/api/projects/{pid}/metrics/{key}_nope?grain=weekly"), None).await;
         assert_eq!(st, StatusCode::OK);
         assert_eq!(body["series"].as_array().map(|a| a.len()), Some(0),
             "unknown key → honest-empty series, not a failure");
+        assert!(body["formula"].is_null(), "unknown key → honest-null formula, not a fabricated string");
 
         sqlx_core::query::query("DELETE FROM sensei.metrics WHERE id = $1")
             .bind(mid).execute(state.pg.pool()).await.unwrap();
+        sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
+            .bind(pid).execute(state.pg.pool()).await.unwrap();
+    }
+
+    /// `GET /api/projects/{id}/metrics/{key}/sessions?day=YYYY-MM-DD`: the
+    /// datapoint→sessions drill-down returns that day's measurable sessions
+    /// (folder-join scope) with the structural one-liner fields; an absent or
+    /// malformed `day` is a 400; a day with none is honest-empty (200 []).
+    #[tokio::test]
+    async fn get_project_metric_day_sessions_endpoint() {
+        let (app, state) = test_app().await;
+        let uniq = uuid::Uuid::new_v4();
+        let (pid, fid) = crate::tasks::test_support::seed_metrics_project_folder(&state.pg, &uniq).await;
+        let key = format!("_test_pmds_{}", uniq.simple()); // URL-safe (no colons) — it goes in the path
+
+        let utc = |ts: &str| chrono::DateTime::parse_from_rfc3339(ts).unwrap().with_timezone(&chrono::Utc);
+        // `client_session_id` is globally unique — scope the ids to this run's uniq.
+        let sid = |n: &str| format!("cs-{n}-{}", uniq.simple());
+        // Two measurable sessions on the target day + one in-flight (excluded).
+        for (cs, task, outcome, ftr, turns, corr, at) in [
+            (sid("1"), "task-a", Some("completed"), Some(true),  3, 0, "2020-06-15T12:00:00Z"),
+            (sid("2"), "task-b", Some("corrected"), Some(false), 5, 2, "2020-06-15T20:00:00Z"),
+            (sid("x"), "task-x", None,              None,        0, 0, "2020-06-15T13:00:00Z"),
+        ] {
+            sqlx_core::query::query(
+                "INSERT INTO activity.sessions
+                    (folder_id, project_id, client_session_id, task, outcome, ftr, turns, corrections, started_at)
+                 VALUES ($1, $2, $3, $4, $5::sensei.session_outcome, $6, $7, $8, $9)")
+                .bind(fid).bind(pid).bind(cs).bind(task).bind(outcome).bind(ftr)
+                .bind(turns).bind(corr).bind(utc(at))
+                .execute(state.pg.pool()).await.unwrap();
+        }
+
+        // Happy path: 200 + the two measurable sessions (newest-first), each with the
+        // structural fields the client renders its one-liner from.
+        let (st, body) = req(app.clone(), "GET",
+            &format!("/api/projects/{pid}/metrics/{key}/sessions?day=2020-06-15"), None).await;
+        assert_eq!(st, StatusCode::OK, "{body}");
+        assert_eq!(body["day"], "2020-06-15");
+        assert_eq!(body["metric"].as_str(), Some(key.as_str()));
+        assert_eq!(body["count"].as_u64(), Some(2), "two measurable sessions that day (in-flight excluded)");
+        let sessions = body["sessions"].as_array().expect("sessions array");
+        assert_eq!(sessions.len(), 2);
+        let s0 = &sessions[0];
+        assert_eq!(s0["client_session_id"].as_str(), Some(sid("2").as_str()), "newest-first");
+        for field in ["outcome", "ftr", "turns", "corrections", "task", "summary", "started_at"] {
+            assert!(s0.get(field).is_some(), "structural field {field} present");
+        }
+        assert_eq!(s0["outcome"], "corrected");
+        assert_eq!(s0["ftr"], serde_json::json!(false));
+        assert_eq!(s0["turns"], 5);
+        assert_eq!(s0["corrections"], 2);
+
+        // Absent day → 400 (no datapoint to scope to).
+        let (st, _) = req(app.clone(), "GET",
+            &format!("/api/projects/{pid}/metrics/{key}/sessions"), None).await;
+        assert_eq!(st, StatusCode::BAD_REQUEST, "absent day → 400");
+        // Malformed day → 400 (never a silent default).
+        let (st, _) = req(app.clone(), "GET",
+            &format!("/api/projects/{pid}/metrics/{key}/sessions?day=nope"), None).await;
+        assert_eq!(st, StatusCode::BAD_REQUEST, "malformed day → 400");
+        // A day with no measurable session → honest-empty (200 []).
+        let (st, body) = req(app.clone(), "GET",
+            &format!("/api/projects/{pid}/metrics/{key}/sessions?day=2019-01-01"), None).await;
+        assert_eq!(st, StatusCode::OK);
+        assert_eq!(body["count"].as_u64(), Some(0), "no sessions that day → honest-empty");
+
+        sqlx_core::query::query("DELETE FROM activity.sessions WHERE folder_id = $1")
+            .bind(fid).execute(state.pg.pool()).await.unwrap();
         sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
             .bind(pid).execute(state.pg.pool()).await.unwrap();
     }
@@ -1903,7 +1980,7 @@ mod tests {
     /// row — the barrier lands as a harmless no-op (honest-empty, never fabricated).
     /// So exactly the 12 base rows are stored, and the registry/values endpoints do NOT
     /// carry a composite. Seed values (still exercised by the base computers):
-    ///   ftr 0.75 · rework_ratio 0.5 · throughput 4 · churn_rate 6 · churn_concentration
+    ///   ftr 0.75 · rework_ratio 0.5 · throughput 4 · churn_rate 2 · churn_concentration
     ///   4/6 · rework_density 0.25 · duplication_ratio 0.4 · interruption_rate 0.4 ·
     ///   run_completion 0.8 · memory_promotion 0.5 · unused_tools 0 · time_to_useful_result.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1911,13 +1988,13 @@ mod tests {
         use crate::tasks::executor::spawn_workers;
         use crate::tasks::handlers::metrics::HEALTH_TASK_NAME;
         use crate::tasks::test_support::{
-            cleanup_metrics_fixture, make_ctx, onehot_embedding_sql, purge_assistant_events,
-            purge_assistant_tools, purge_corrections, purge_runs, purge_task_executions,
+            cleanup_metrics_fixture, git_commit_on_day, make_ctx, onehot_embedding_sql,
+            purge_assistant_events, purge_assistant_tools, purge_corrections, purge_runs,
             purge_tool_verdicts, seed_assistant_event, seed_assistant_tool, seed_correction,
-            seed_detected_pattern, seed_file_node, seed_memory, seed_metrics_client_session,
-            seed_metrics_project_folder, seed_metrics_session, seed_metrics_turn,
-            seed_pattern_with_instances, seed_run, seed_symbol_node, seed_task_execution,
-            seed_tool_session, seed_tool_verdict, uniform_embedding_sql,
+            seed_detected_pattern, seed_file_node, seed_git_project_folder, seed_memory,
+            seed_metrics_client_session, seed_metrics_session, seed_metrics_turn,
+            seed_pattern_with_instances, seed_run, seed_symbol_node, seed_tool_session,
+            seed_tool_verdict, uniform_embedding_sql,
         };
         use crate::tasks::{Task, TaskKind};
         use sqlx_core::query_as::query_as;
@@ -1928,8 +2005,11 @@ mod tests {
         let (app, state) = test_app().await;
         let pg = &state.pg;
         let uniq = uuid::Uuid::new_v4();
-        let (pid, fid) = seed_metrics_project_folder(pg, &uniq).await;
-        let folder_abs = format!("/_test/metrics-{uniq}");
+        // The folder's abs_path is a REAL on-disk git repo so the git-sourced churn
+        // computer (via project_root_path) has a repo to read. KEEP `repo` bound —
+        // dropping the TempDir would delete the repo mid-test.
+        let (pid, fid, repo) = seed_git_project_folder(pg, &uniq).await;
+        let folder_abs = repo.path().to_string_lossy().to_string();
         let pid_str = pid.to_string();
 
         // no-FK client-session ids / family / correction signatures (explicit purge).
@@ -1941,7 +2021,6 @@ mod tests {
 
         // Idempotent pre-clean of the tables that never cascade (guards a prior
         // crashed run that leaked rows under these ids).
-        purge_task_executions(pg, &[&folder_abs, &pid_str]).await;
         purge_assistant_events(pg, &[&csid_auto, &csid_tool]).await;
         purge_tool_verdicts(pg, &[&csid_tool]).await;
         purge_assistant_tools(pg, &[&family]).await;
@@ -1962,18 +2041,16 @@ mod tests {
         seed_metrics_turn(pg, &inflight, 5, ts).await; // must be excluded from every metric
         // → ftr 3/4 = 0.75 · rework 6/12 = 0.5 · throughput 4
 
-        // ── churn: completed process_file executions + file nodes + a rework flag ──
-        for _ in 0..4 {
-            seed_task_execution(pg, "process_file", "completed", &folder_abs, &format!("{folder_abs}/a.rs"), ts).await;
-        }
-        for _ in 0..2 {
-            seed_task_execution(pg, "process_file", "completed", &folder_abs, &format!("{folder_abs}/b.rs"), ts).await;
-        }
+        // ── churn: a git commit today (the git-sourced churn source) + file nodes
+        //    + a rework flag. One commit changing a.rs (+4 lines) and b.rs (+2 lines)
+        //    → 2 distinct files (churn_rate), line-churn a=4/b=2 (concentration). ──
+        let churn_day = ts.format("%Y-%m-%d").to_string(); // today (in the rolling window)
+        git_commit_on_day(repo.path(), &churn_day, &[("a.rs", "1\n2\n3\n4\n"), ("b.rs", "1\n2\n")]);
         for f in ["a.rs", "b.rs", "c.rs", "d.rs"] {
             seed_file_node(pg, &fid, &format!("{folder_abs}/{f}")).await;
         }
         seed_detected_pattern(pg, &pid, Some(&fid), "rework: a.rs", true).await;
-        // → churn_rate 6 · churn_concentration 4/6 · rework_density 1/4 = 0.25
+        // → churn_rate 2 (a.rs,b.rs) · churn_concentration 4/6 (top-1 a.rs=4 / total 6) · rework_density 1/4 = 0.25
 
         // ── duplication: 2 near-duplicate functions + 3 orthogonal one-hots ──
         let dup = uniform_embedding_sql("0.1");
@@ -2084,8 +2161,8 @@ mod tests {
         assert!(close(get("ftr"), 0.75), "ftr = 3/4 = 0.75 (got {})", get("ftr"));
         assert!(close(get("rework_ratio"), 0.5), "rework_ratio = 6/12 = 0.5 (got {})", get("rework_ratio"));
         assert!(close(get("throughput"), 4.0), "throughput = 4 measurable sessions (got {})", get("throughput"));
-        assert!(close(get("churn_rate"), 6.0), "churn_rate = 6 completed process_file (got {})", get("churn_rate"));
-        assert!(close(get("churn_concentration"), 4.0 / 6.0), "churn_concentration = 4/6 (got {})", get("churn_concentration"));
+        assert!(close(get("churn_rate"), 2.0), "churn_rate = 2 distinct files changed by the day's commit (got {})", get("churn_rate"));
+        assert!(close(get("churn_concentration"), 4.0 / 6.0), "churn_concentration = top-file line-churn 4 / total 6 (got {})", get("churn_concentration"));
         assert!(close(get("rework_density"), 0.25), "rework_density = 1/4 = 0.25 (got {})", get("rework_density"));
         assert!(close(get("duplication_ratio"), 0.4), "duplication_ratio = 2/5 = 0.4 (got {})", get("duplication_ratio"));
         assert!(close(get("interruption_rate"), 0.4), "interruption_rate = 4/10 = 0.4 (got {})", get("interruption_rate"));
@@ -2232,6 +2309,6 @@ mod tests {
         purge_tool_verdicts(pg, &[&csid_tool]).await;
         purge_assistant_tools(pg, &[&family]).await;
         purge_corrections(pg, &[&sig_a, &sig_b]).await;
-        cleanup_metrics_fixture(pg, &pid, Some(&fid), &[&folder_abs, &pid_str]).await;
+        cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
     }
 }

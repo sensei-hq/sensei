@@ -197,22 +197,32 @@ buildable source of truth — formulas, source columns, live coverage).
 
 ### Churn concentration `churn_concentration`
 - **Facets:** quality · pct · ● · project
-- **Definition:** share of churn from the busiest 20% of files (Pareto).
-- **Calculation:** `Σ churn(top 20% files) / Σ churn(all files)`.
-- **Source:** `activity.task_executions` — live (**94%** today).
-- **How to read:** high concentration = a few hotspots absorb the rework — the
+- **Definition:** share of the day's line-churn absorbed by the busiest 20% of files (Pareto).
+- **Calculation:** `Σ line-churn(top 20% files) / Σ line-churn(all files)` per commit-day,
+  where a file's daily line-churn is `Σ(added + deleted)` across that day's commits
+  (git `--numstat`). Top set = the busiest `ceil(20%)` files. A commit-day with zero
+  line-churn (only binary/mode changes) has no denominator ⇒ NO row (never a 0/0).
+- **Source:** `git log --numstat` per commit-day for the project's git-root
+  (`folders.abs_path` via `project_root_path`) — live.
+- **How to read:** high concentration = a few hotspots absorb the change — the
   files to refactor first. Neutral in isolation; actionable as a target list.
 - **Representation:** **Pareto bar** + the hotspot file list ("refactor these first").
-- **Status:** live (churn count inflated by the rescan bug until debounced — P0 #4).
+- **Status:** live (git-sourced, backfilled per commit-day; the earlier
+  rescan-inflation caveat no longer applies — git, not the indexing feed, is the source).
 
 ### Churn rate `churn_rate`
-- **Facets:** quality · count · ▼ · daily, project, per-module (folder)
-- **Definition:** `process_file` executions/day per source file (reverted-or-rewritten proxy).
-- **Calculation:** `count(process_file task_executions) per file per day`.
-- **Source:** `activity.task_executions` — live (inflated by rescan bug).
-- **How to read:** GitClear's churn *definition*, our value. Pair with duplication.
-- **Representation:** module heatmap; trend line.
-- **Status:** live (needs version-rescan debounce to de-noise — P0 #4).
+- **Facets:** quality · count · ▼ · daily, project
+- **Definition:** distinct source files changed per day (files-changed-over-time, from git).
+- **Calculation:** `count(distinct file paths touched by the day's commits)` via
+  `git log --no-merges --numstat` per commit-day (committer date, `--date=short`).
+- **Source:** `git log` for the project's git-root (`folders.abs_path` via
+  `project_root_path`) — live. Non-git project / no commits that day → no row (honest-empty).
+- **How to read:** GitClear's churn *definition*, measured first-party from git.
+  Pair with duplication. A per-day count; a real files-changed timeline, backfilled
+  over the whole git history.
+- **Representation:** trend line.
+- **Status:** live (git-sourced, per commit-day; the version-rescan inflation no
+  longer applies — the old `activity.task_executions` indexing-feed source is retired).
 
 ### Rework density `rework_density`
 - **Facets:** quality · ratio · ▼ · project, per-module (folder)

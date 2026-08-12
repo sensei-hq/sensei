@@ -375,6 +375,18 @@ pub struct ProjectMetricSeriesPoint {
     pub direction: String,
 }
 
+/// A project metric's series at a grain bundled with the metric's `formula` — the
+/// "how it's calculated" facet the metric-detail screen surfaces beside the chart.
+/// The shape [`PgStore::get_project_metric_series`] returns. `formula` is read from
+/// the `sensei.metrics` registry by key, so it is present even when `points` is
+/// empty (a valid metric with no data yet) and is `None` only when the key names no
+/// registered metric (honest-null, never a fabricated string).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ProjectMetricSeries {
+    pub formula: Option<String>,
+    pub points:  Vec<ProjectMetricSeriesPoint>,
+}
+
 
 mod commands;
 mod config;
