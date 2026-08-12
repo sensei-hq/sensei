@@ -23,21 +23,22 @@ use super::super::Task;
 use crate::db::pg_store::PgStore;
 
 /// Per-group computers. `session_outcomes` is the first real one (Phase 5.1) and
-/// the template the remaining groups follow: `churn` (Phase 5.2), `duplication`
-/// (Phase 5.3), `autonomy` (Phase 5.4), `knowledge` (Phase 5.5), and `tool`
-/// (Phase 5.6) complete the six v1 base groups.
+/// the template the remaining groups follow: `churn` (Phase 5.2), `autonomy`
+/// (Phase 5.4), `knowledge` (Phase 5.5), and `tool` (Phase 5.6) complete the base
+/// groups; `quality` (Phase 8) is the git-worktree + `qlty` code-quality group that
+/// superseded the former own-graph `duplication` snapshot.
 mod autonomy;
 mod churn;
-mod duplication;
 mod health;
 mod knowledge;
 pub(crate) mod planner;
+mod quality;
 mod session_outcomes;
 mod tool;
 
 /// Today's date (DB `current_date`) — the `computed_on` for the SNAPSHOT metrics
-/// (`churn`'s `rework_density`, `duplication`'s `duplication_ratio`) that store a
-/// point-in-time value rather than a windowed per-day series. Read from the DB so
+/// (`churn`'s `rework_density`) that store a point-in-time value rather than a
+/// windowed per-day series. Read from the DB so
 /// the day boundary matches the `date_trunc('day', started_at)::date` the windowed
 /// computers use (same session TZ). Shared by every snapshot computer so the day
 /// source can't drift between groups.
@@ -50,8 +51,8 @@ pub(super) async fn today(pg: &PgStore) -> Result<chrono::NaiveDate, String> {
 }
 
 /// Whether a forward-only SNAPSHOT computer must SKIP for this `as_of` (Phase 3).
-/// The snapshot metrics (`churn`'s `rework_density`, `duplication`, `knowledge`,
-/// `tool`, `health`) reflect CURRENT state — they cannot be reconstructed for a past
+/// The snapshot metrics (`churn`'s `rework_density`, `knowledge`, `tool`, `health`)
+/// reflect CURRENT state — they cannot be reconstructed for a past
 /// day from present data — so a historical target day (`Some(D)` with `D != today`)
 /// has no honest value: the computer writes NO row (never a fabricated historical
 /// snapshot). `None` (today's incremental run) or `Some(today)` → compute as normal.
@@ -142,7 +143,7 @@ pub(crate) const HEALTH_TASK_NAME: &str = "health";
 pub(crate) enum MetricGroup {
     SessionOutcomes,
     Churn,
-    Duplication,
+    Quality,
     Autonomy,
     Knowledge,
     Tool,
@@ -155,7 +156,7 @@ impl MetricGroup {
         match task_name {
             "session_outcomes" => Some(Self::SessionOutcomes),
             "churn" => Some(Self::Churn),
-            "duplication" => Some(Self::Duplication),
+            "quality" => Some(Self::Quality),
             "autonomy" => Some(Self::Autonomy),
             "knowledge" => Some(Self::Knowledge),
             "tool" => Some(Self::Tool),
@@ -168,7 +169,7 @@ impl MetricGroup {
         match self {
             Self::SessionOutcomes => "session_outcomes",
             Self::Churn => "churn",
-            Self::Duplication => "duplication",
+            Self::Quality => "quality",
             Self::Autonomy => "autonomy",
             Self::Knowledge => "knowledge",
             Self::Tool => "tool",
@@ -207,7 +208,7 @@ pub async fn compute(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
                     session_outcomes::compute(ctx, &task.folder_path, as_of).await
                 }
                 MetricGroup::Churn => churn::compute(ctx, &task.folder_path, as_of).await,
-                MetricGroup::Duplication => duplication::compute(ctx, &task.folder_path, as_of).await,
+                MetricGroup::Quality => quality::compute(ctx, &task.folder_path, as_of).await,
                 MetricGroup::Autonomy => autonomy::compute(ctx, &task.folder_path, as_of).await,
                 MetricGroup::Knowledge => knowledge::compute(ctx, &task.folder_path, as_of).await,
                 MetricGroup::Tool => tool::compute(ctx, &task.folder_path, as_of).await,
@@ -276,7 +277,7 @@ mod tests {
         // dispatch relies on.
         assert_eq!(MetricGroup::from_task_name("session_outcomes"), Some(MetricGroup::SessionOutcomes));
         assert_eq!(MetricGroup::from_task_name("churn"), Some(MetricGroup::Churn));
-        assert_eq!(MetricGroup::from_task_name("duplication"), Some(MetricGroup::Duplication));
+        assert_eq!(MetricGroup::from_task_name("quality"), Some(MetricGroup::Quality));
         assert_eq!(MetricGroup::from_task_name("autonomy"), Some(MetricGroup::Autonomy));
         assert_eq!(MetricGroup::from_task_name("knowledge"), Some(MetricGroup::Knowledge));
         assert_eq!(MetricGroup::from_task_name("tool"), Some(MetricGroup::Tool));

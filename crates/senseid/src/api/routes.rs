@@ -1978,23 +1978,26 @@ mod tests {
     /// `ComputeHealth` barrier is still enqueued + blocked + released, but
     /// `compute_health` resolves no active composite id and writes NO `project_health`
     /// row — the barrier lands as a harmless no-op (honest-empty, never fabricated).
-    /// So exactly the 12 base rows are stored, and the registry/values endpoints do NOT
-    /// carry a composite. Seed values (still exercised by the base computers):
+    /// So exactly the 11 base rows are stored, and the registry/values endpoints do NOT
+    /// carry a composite. The `quality` group (`duplication_ratio`/`module_quality`) is
+    /// GIT-worktree + `qlty`-sourced: the seed repo has no committed `.qlty` config, so
+    /// the scan misses → honest-empty (no quality rows) — the group is exercised end-to-
+    /// end but writes nothing here (its computer is unit-tested with an injected scan).
+    /// Seed values (still exercised by the base computers):
     ///   ftr 0.75 · rework_ratio 0.5 · throughput 4 · churn_rate 2 · churn_concentration
-    ///   4/6 · rework_density 0.25 · duplication_ratio 0.4 · interruption_rate 0.4 ·
+    ///   4/6 · rework_density 0.25 · interruption_rate 0.4 ·
     ///   run_completion 0.8 · memory_promotion 0.5 · unused_tools 0 · time_to_useful_result.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn metrics_pipeline_end_to_end() {
         use crate::tasks::executor::spawn_workers;
         use crate::tasks::handlers::metrics::HEALTH_TASK_NAME;
         use crate::tasks::test_support::{
-            cleanup_metrics_fixture, git_commit_on_day, make_ctx, onehot_embedding_sql,
-            purge_assistant_events, purge_assistant_tools, purge_corrections, purge_runs,
-            purge_tool_verdicts, seed_assistant_event, seed_assistant_tool, seed_correction,
-            seed_detected_pattern, seed_file_node, seed_git_project_folder, seed_memory,
-            seed_metrics_client_session, seed_metrics_session, seed_metrics_turn,
-            seed_pattern_with_instances, seed_run, seed_symbol_node, seed_tool_session,
-            seed_tool_verdict, uniform_embedding_sql,
+            cleanup_metrics_fixture, git_commit_on_day, make_ctx, purge_assistant_events,
+            purge_assistant_tools, purge_corrections, purge_runs, purge_tool_verdicts,
+            seed_assistant_event, seed_assistant_tool, seed_correction, seed_detected_pattern,
+            seed_file_node, seed_git_project_folder, seed_memory, seed_metrics_client_session,
+            seed_metrics_session, seed_metrics_turn, seed_pattern_with_instances, seed_run,
+            seed_tool_session, seed_tool_verdict,
         };
         use crate::tasks::{Task, TaskKind};
         use sqlx_core::query_as::query_as;
@@ -2052,15 +2055,10 @@ mod tests {
         seed_detected_pattern(pg, &pid, Some(&fid), "rework: a.rs", true).await;
         // → churn_rate 2 (a.rs,b.rs) · churn_concentration 4/6 (top-1 a.rs=4 / total 6) · rework_density 1/4 = 0.25
 
-        // ── duplication: 2 near-duplicate functions + 3 orthogonal one-hots ──
-        let dup = uniform_embedding_sql("0.1");
-        seed_symbol_node(pg, &fid, "function", "dup_a", &format!("{folder_abs}/da.rs"), (1, 10), Some(&dup)).await;
-        seed_symbol_node(pg, &fid, "function", "dup_b", &format!("{folder_abs}/db.rs"), (1, 10), Some(&dup)).await;
-        for (i, name) in ["u1", "u2", "u3"].iter().enumerate() {
-            let emb = onehot_embedding_sql((i + 1) as u32);
-            seed_symbol_node(pg, &fid, "function", name, &format!("{folder_abs}/{name}.rs"), (1, 10), Some(&emb)).await;
-        }
-        // → duplication_ratio 2/5 = 0.4
+        // ── quality (duplication_ratio / module_quality): GIT-worktree + qlty-sourced.
+        //    The seed repo has no committed `.qlty` config, so the scan misses →
+        //    honest-empty (no quality rows). The group still runs end-to-end below; its
+        //    real compute path is unit-tested with an injected scan in `quality.rs`. ──
 
         // ── autonomy: client-session-linked assistant events + runs ──
         seed_metrics_client_session(pg, &fid, &pid, &csid_auto, ts).await;
@@ -2104,7 +2102,7 @@ mod tests {
             .into_iter()
             .filter(|t| t != HEALTH_TASK_NAME) // `health` is the ComputeHealth kind, not a base group
             .collect();
-        for g in ["session_outcomes", "churn", "duplication", "autonomy", "knowledge", "tool"] {
+        for g in ["session_outcomes", "churn", "quality", "autonomy", "knowledge", "tool"] {
             assert!(base_names.iter().any(|t| t == g), "base group `{g}` is active in the registry: {base_names:?}");
         }
         let mut compute_ids = Vec::with_capacity(base_names.len());
@@ -2164,7 +2162,9 @@ mod tests {
         assert!(close(get("churn_rate"), 2.0), "churn_rate = 2 distinct files changed by the day's commit (got {})", get("churn_rate"));
         assert!(close(get("churn_concentration"), 4.0 / 6.0), "churn_concentration = top-file line-churn 4 / total 6 (got {})", get("churn_concentration"));
         assert!(close(get("rework_density"), 0.25), "rework_density = 1/4 = 0.25 (got {})", get("rework_density"));
-        assert!(close(get("duplication_ratio"), 0.4), "duplication_ratio = 2/5 = 0.4 (got {})", get("duplication_ratio"));
+        // duplication_ratio / module_quality (quality group) are GIT-worktree + qlty-
+        // sourced and honest-empty here (no committed `.qlty` config) — asserted absent
+        // below, alongside the row count.
         assert!(close(get("interruption_rate"), 0.4), "interruption_rate = 4/10 = 0.4 (got {})", get("interruption_rate"));
         assert!(close(get("run_completion"), 0.8), "run_completion = 4/5 = 0.8 (got {})", get("run_completion"));
         assert!(close(get("memory_promotion"), 0.5), "memory_promotion = 2/4 = 0.5 (got {})", get("memory_promotion"));
@@ -2174,10 +2174,15 @@ mod tests {
         // invoked → not relevant → not "dead surface" (never fabricated as dead).
         assert!(close(get("unused_tools"), 0.0), "unused_tools = 0 dead RELEVANT tools (relevant=1, used=1; t2/t3/t4 never invoked → not relevant) (got {})", get("unused_tools"));
 
-        // exactly 12 base metric rows; no composite. The 12th base is
-        // session_outcomes' `time_to_useful_result` project row. project_health is
-        // RETIRED, so the health barrier wrote no composite row (see below).
-        assert_eq!(rows.len(), 12, "12 latest-per-metric project-scope rows (base only; project_health retired)");
+        // exactly 11 base metric rows; no composite. The quality group
+        // (duplication_ratio/module_quality) is honest-empty here (no committed `.qlty`
+        // config → scan miss), so it contributes no row; project_health is RETIRED, so
+        // the health barrier wrote no composite row (see below).
+        assert_eq!(rows.len(), 11, "11 latest-per-metric project-scope rows (base only; quality honest-empty; project_health retired)");
+        // Honest-empty spot-check: the qlty-sourced quality metrics wrote NO row (the
+        // seed repo has no `.qlty` config), never a fabricated score.
+        assert!(!val.contains_key("duplication_ratio"), "duplication_ratio honest-empty (qlty scan missed — no fabricated value)");
+        assert!(!val.contains_key("module_quality"), "module_quality honest-empty (qlty scan missed — no fabricated value)");
 
         // ── RETIRED HEALTH: the barrier ran (drained above) but wrote NO composite ──
         // project_health carries a past effective_until in the registry, so it is
@@ -2243,7 +2248,7 @@ mod tests {
         let (st, body) = req(app.clone(), "GET", &format!("/api/projects/{pid}/metrics"), None).await;
         assert_eq!(st, StatusCode::OK, "{body}");
         let ms = body["metrics"].as_array().expect("project metrics array");
-        assert_eq!(ms.len(), 12, "endpoint returns the 12 latest-per-metric rows (no retired composite)");
+        assert_eq!(ms.len(), 11, "endpoint returns the 11 latest-per-metric rows (quality honest-empty; no retired composite)");
         // … nor the values endpoint: the retired project_health has no row to serve.
         assert!(!ms.iter().any(|m| m["metric"].as_str() == Some("project_health")),
             "values endpoint does NOT carry the retired project_health");
