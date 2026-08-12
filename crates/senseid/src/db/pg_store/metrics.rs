@@ -472,6 +472,27 @@ impl PgStore {
         Ok(ProjectMetricSeries { formula, points })
     }
 
+    /// The descriptive meaning of ONE metric by registry key — its display `name`
+    /// and `how_to_read` line — for grounding the drill-down's per-session
+    /// observation. Reads `sensei.metrics` by key (the same by-key path
+    /// [`Self::get_project_metric_series`] reads `formula` through), independent of
+    /// any project rows. `None` when the key names no registered metric
+    /// (honest-null, never a fabricated meaning). Propagates the read error; never
+    /// masks it.
+    pub async fn get_metric_meaning(
+        &self,
+        key: &str,
+    ) -> Result<Option<crate::db::pg_store::MetricMeaning>, String> {
+        let row: Option<(String, String)> = sqlx_core::query_as::query_as(
+            "SELECT name, how_to_read FROM sensei.metrics WHERE key = $1",
+        )
+        .bind(key)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(row.map(|(name, how_to_read)| crate::db::pg_store::MetricMeaning { name, how_to_read }))
+    }
+
     /// The full daily series (chronological) for EVERY metric of a project, in a
     /// single query — reads `sensei.project_metric_daily` (project scope) and
     /// groups the values by metric, keeping each metric's points in `date` order.

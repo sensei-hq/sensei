@@ -776,6 +776,90 @@ mod tests {
             .bind(pid).execute(state.pg.pool()).await.unwrap();
     }
 
+    /// The drill-down attaches a per-session, per-metric `observation` (the "why
+    /// this session moved this metric" line). On a CACHE HIT it serves the stored
+    /// model copy; on a MISS it serves the deterministic, row-derived fallback
+    /// (title = metric label, detail = a structural line) — never blank, never
+    /// fabricated. Seeds one `insight_copy` row for one session's exact
+    /// `facts_hash` and leaves a second session uncached to pin both paths.
+    #[tokio::test]
+    async fn get_project_metric_day_sessions_attaches_observation() {
+        use crate::analysis::insight_copy::{facts_hash, InsightKind};
+        use crate::analysis::session_metric_note::SessionMetricFacts;
+
+        let (app, state) = test_app().await;
+        let uniq = uuid::Uuid::new_v4();
+        let (pid, fid) = crate::tasks::test_support::seed_metrics_project_folder(&state.pg, &uniq).await;
+        // URL-safe key (goes in the path). seed_metric sets name = key and
+        // how_to_read = 'test how', so label = key and meaning = "test how".
+        let key = format!("_test_smo_{}", uniq.simple());
+        let mid = seed_metric(&state.pg, &key, "ratio", "higher_better").await;
+
+        let utc = |ts: &str| chrono::DateTime::parse_from_rfc3339(ts).unwrap().with_timezone(&chrono::Utc);
+        let sid = |n: &str| format!("cs-{n}-{}", uniq.simple());
+        // Two measurable sessions on the target day. The MISS one is newer → first.
+        for (cs, task, summary, outcome, ftr, turns, corr, at) in [
+            (sid("hit"),  "task-hit",  "did the hit thing",  "completed", true,  3, 0, "2020-06-15T12:00:00Z"),
+            (sid("miss"), "task-miss", "did the miss thing", "corrected", false, 5, 2, "2020-06-15T20:00:00Z"),
+        ] {
+            sqlx_core::query::query(
+                "INSERT INTO activity.sessions
+                    (folder_id, project_id, client_session_id, task, summary, outcome, ftr, turns, corrections, started_at)
+                 VALUES ($1, $2, $3, $4, $5, $6::sensei.session_outcome, $7, $8, $9, $10)")
+                .bind(fid).bind(pid).bind(cs).bind(task).bind(summary).bind(outcome).bind(ftr)
+                .bind(turns).bind(corr).bind(utc(at))
+                .execute(state.pg.pool()).await.unwrap();
+        }
+
+        // Seed the cache for exactly the HIT session's facts (label is display-only
+        // and NOT hashed, so the meaning + session signals are what the hash keys on).
+        let hit_row = serde_json::json!({
+            "outcome": "completed", "ftr": true, "turns": 3, "corrections": 0,
+            "task": "task-hit", "summary": "did the hit thing",
+        });
+        let hit_facts = SessionMetricFacts::from_session_row(&hit_row, &key, &key, "test how");
+        let hit_hash = facts_hash(InsightKind::SessionMetricObservation, &hit_facts.to_facts_json());
+        state.pg.upsert_insight_copy(
+            "session_metric_observation", &hit_hash,
+            "first-try win", "this session resolved on the first attempt, lifting the rate",
+            None, None,
+        ).await;
+
+        let (st, body) = req(app.clone(), "GET",
+            &format!("/api/projects/{pid}/metrics/{key}/sessions?day=2020-06-15"), None).await;
+        assert_eq!(st, StatusCode::OK, "{body}");
+        let sessions = body["sessions"].as_array().expect("sessions array");
+        assert_eq!(sessions.len(), 2);
+
+        let by_id = |cs: &str| sessions.iter()
+            .find(|s| s["client_session_id"].as_str() == Some(cs))
+            .unwrap_or_else(|| panic!("session {cs} present"));
+
+        // HIT: the stored model copy is served verbatim.
+        let hit = by_id(&sid("hit"));
+        assert_eq!(hit["observation"]["title"], "first-try win", "cache hit → stored model title");
+        assert_eq!(hit["observation"]["detail"],
+            "this session resolved on the first attempt, lifting the rate",
+            "cache hit → stored model detail");
+
+        // MISS: the deterministic, row-derived fallback — title = metric label
+        // (the seeded name == key), detail = the structural line from the row.
+        let miss = by_id(&sid("miss"));
+        assert_eq!(miss["observation"]["title"], key, "cache miss → metric label as title");
+        assert_eq!(miss["observation"]["detail"], "outcome corrected; 2 corrections; 5 turns",
+            "cache miss → deterministic row-derived line, never blank or fabricated");
+
+        sqlx_core::query::query(
+            "DELETE FROM sensei.insight_copy WHERE kind = 'session_metric_observation' AND facts_hash = $1")
+            .bind(&hit_hash).execute(state.pg.pool()).await.unwrap();
+        sqlx_core::query::query("DELETE FROM activity.sessions WHERE folder_id = $1")
+            .bind(fid).execute(state.pg.pool()).await.unwrap();
+        sqlx_core::query::query("DELETE FROM sensei.metrics WHERE id = $1")
+            .bind(mid).execute(state.pg.pool()).await.unwrap();
+        sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
+            .bind(pid).execute(state.pg.pool()).await.unwrap();
+    }
+
     /// End-to-end automated-run flow through the REAL router against sensei_test:
     /// register a plan graph, flip both tasks, read nudges, mark the run done.
     /// Proves the AR routes dispatch to their handlers — including the static

@@ -118,6 +118,9 @@ pub enum InsightKind {
     FtrRegression,
     // Sessions
     SessionRetrospective,
+    // Metric drill-down — one "why this session moved this metric" line per
+    // (session, metric), grounded in the session row + the metric's meaning.
+    SessionMetricObservation,
     // Code graph
     CommunityDescription,
     // Project metrics narrative (the metrics screen)
@@ -148,6 +151,7 @@ impl InsightKind {
             InsightKind::FtrLift => "ftr_lift",
             InsightKind::FtrRegression => "ftr_regression",
             InsightKind::SessionRetrospective => "session_retrospective",
+            InsightKind::SessionMetricObservation => "session_metric_observation",
             InsightKind::CommunityDescription => "community_description",
             InsightKind::MetricNarrativeHeadline => "metric_narrative_headline",
             InsightKind::MetricSignalInsight => "metric_signal_insight",
@@ -195,6 +199,8 @@ impl InsightKind {
                 "Kind: ftr_regression. Report that first-try resolution dropped. Give the before and after and where to look.",
             InsightKind::SessionRetrospective =>
                 "Kind: session_retrospective. Summarise what this coding session accomplished. The title is a short headline of the main work; the detail states the outcome and any corrections. Ground both in the facts. Write plainly, sentence case.",
+            InsightKind::SessionMetricObservation =>
+                "Kind: session_metric_observation. These are software-engineering signals about a code repository — its files, sessions, and tools — never business or customer metrics (e.g. \"churn\" here means code churn, not customers leaving). Read the given `meaning` field for what this metric measures. In one plain line, say what THIS coding session contributed to THIS metric, grounded strictly in the given facts (outcome, first-try, corrections, turns, task, summary) — never invent a number. The title is a 2-4 word label; the detail is the one-line observation.",
             InsightKind::CommunityDescription =>
                 "Kind: community_description. In one plain sentence, say what this cluster of code is responsible for, grounded in the given hub symbols and their kinds. Name the shared responsibility; do not list every symbol. The title is a short 2-4 word name for the cluster; the detail is the sentence.",
             InsightKind::MetricNarrativeHeadline =>
@@ -760,6 +766,20 @@ mod tests {
         assert_eq!(InsightKind::ToolDormant.as_str(), "tool_dormant");
         assert_eq!(InsightKind::HeroKoanEarly.as_str(), "hero_koan_early");
         assert_eq!(InsightKind::FtrRegression.as_str(), "ftr_regression");
+        // A NEW stable key — never reuse an existing one (a change orphans cache rows).
+        assert_eq!(InsightKind::SessionMetricObservation.as_str(), "session_metric_observation");
+    }
+
+    #[test]
+    fn session_metric_observation_task_line_is_grounded() {
+        let t = InsightKind::SessionMetricObservation.task_line();
+        assert!(t.starts_with("Kind: session_metric_observation."), "anchors on the card key");
+        // The line must steer the model to read the meaning, stay software-eng, and
+        // not invent a number — the drill-down grounding contract.
+        assert!(t.contains("meaning"), "reads the metric's meaning");
+        assert!(t.contains("software-engineering"), "software-eng signals, not business/customer");
+        assert!(t.contains("never invent a number"), "no fabricated numbers");
+        assert!(t.contains("title is a 2-4 word label"), "title shape stated");
     }
 
     #[test]
