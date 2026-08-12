@@ -26,8 +26,9 @@ use crate::db::pg_store::PgStore;
 
 /// Prune daily by default.
 const DEFAULT_INTERVAL_SECS: u64 = 86_400;
-/// Keep raw activity for 30 days by default.
-const DEFAULT_RETENTION_DAYS: i32 = 30;
+/// Keep raw activity for 90 days by default (raw sessions/events/turns; the
+/// distilled metric snapshots in `sensei.project_metrics` are the long-term store).
+const DEFAULT_RETENTION_DAYS: i32 = 90;
 /// Hard backstop floor: never let a session linger longer than this even when
 /// its day never got captured into `sensei.project_metrics`.
 const BACKSTOP_FLOOR_DAYS: i32 = 90;
@@ -88,6 +89,12 @@ async fn run(pg: Arc<PgStore>) {
                         "activity_pruner: pruned {total} rows older than {days}d",
                     );
                 }
+                // Reclaim dead tuples + refresh planner stats once per daily tick,
+                // after the prune ("after all processing"). Best-effort: a VACUUM
+                // failure is logged, never fatal to the loop.
+                if let Err(e) = pg.vacuum_activity().await {
+                    tracing::warn!(error = %e, "activity_pruner: VACUUM (ANALYZE) failed");
+                }
             }
             Err(e) => tracing::warn!(error = %e, days, "activity_pruner: prune failed"),
         }
@@ -109,6 +116,9 @@ mod tests {
 
     #[test]
     fn parse_retention_falls_back_on_missing_invalid_or_nonpositive() {
+        // Pin the documented default to the literal 90 so changing the const trips
+        // this test instead of silently altering the retention window.
+        assert_eq!(DEFAULT_RETENTION_DAYS, 90, "documented raw-activity retention default is 90 days");
         assert_eq!(parse_retention(None), DEFAULT_RETENTION_DAYS);
         assert_eq!(parse_retention(Some("x".into())), DEFAULT_RETENTION_DAYS);
         assert_eq!(parse_retention(Some("0".into())), DEFAULT_RETENTION_DAYS);
@@ -119,8 +129,10 @@ mod tests {
 
     #[test]
     fn parse_backstop_defaults_to_max_floor_or_twice_retention() {
-        // Default at the 30-day retention → max(90, 60) = 90 (the floor wins).
-        assert_eq!(parse_backstop(None, DEFAULT_RETENTION_DAYS), BACKSTOP_FLOOR_DAYS);
+        // Default at the 90-day retention → max(90, 180) = 180 (2× beats the floor).
+        assert_eq!(parse_backstop(None, DEFAULT_RETENTION_DAYS), 180);
+        // The floor still wins at short retentions.
+        assert_eq!(parse_backstop(None, 30), BACKSTOP_FLOOR_DAYS);
         // With a long retention 2× beats the floor.
         assert_eq!(parse_backstop(None, 60), 120);
         assert_eq!(parse_backstop(None, 45), 90);

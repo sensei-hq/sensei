@@ -10008,6 +10008,24 @@ impl PgStore {
         })
     }
 
+    /// Reclaim dead tuples + refresh planner stats on the activity tables after the
+    /// daily prune (`VACUUM (ANALYZE)`, once per prune tick — "once a day after
+    /// processing"). Uses the SIMPLE query protocol via `raw_sql` because VACUUM
+    /// cannot run through the prepared/extended protocol nor inside a transaction.
+    /// Plain `VACUUM (ANALYZE)` ONLY — never `VACUUM FULL`, which takes an ACCESS
+    /// EXCLUSIVE lock and rewrites the table (it would block the daemon). Autovacuum
+    /// still runs continuously; this is an explicit post-bulk-delete reclaim.
+    pub async fn vacuum_activity(&self) -> Result<(), String> {
+        sqlx_core::raw_sql::raw_sql(
+            "VACUUM (ANALYZE) activity.sessions, activity.turns, \
+             activity.assistant_events, activity.transcript_turns",
+        )
+        .execute(&self.pool)
+        .await
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+    }
+
     /// Wall-clock cutoff in unix-ms for `days` back — used by prune_activity's
     /// ts-based paths (assistant_events.ts is bigint ms).
     fn cutoff_millis(&self, days: i32) -> i64 {
@@ -13906,6 +13924,16 @@ mod tests {
             .bind(vec![uncaptured, snapshot_only]).execute(s.pool()).await.ok();
         sqlx_core::query::query("DELETE FROM sensei.project_metrics WHERE project_id = $1")
             .bind(pid).execute(s.pool()).await.ok();
+    }
+
+    #[tokio::test]
+    async fn vacuum_activity_runs_via_simple_protocol() {
+        // VACUUM cannot run through the prepared/extended protocol or inside a
+        // transaction; vacuum_activity uses raw_sql (simple protocol). Assert it
+        // executes without error against the activity tables (guards against a
+        // regression to query()/extended protocol, which would fail at runtime).
+        let s = pg_store().await;
+        s.vacuum_activity().await.expect("VACUUM (ANALYZE) on activity tables succeeds");
     }
 
     #[tokio::test]
