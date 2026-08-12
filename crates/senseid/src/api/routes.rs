@@ -1885,8 +1885,8 @@ mod tests {
     ///
     ///   scheduler enqueue contract → real `TaskQueue` → real `spawn_workers`
     ///   executor dispatch (`ComputeMetrics`→compute, `ComputeHealth`→compute_health)
-    ///   → the `blocked_by` health barrier → all six base computers → health roll-up
-    ///   → the three read endpoints → FTR parity.
+    ///   → the `blocked_by` health barrier → all six base computers → the retired
+    ///   health barrier no-ops → the three read endpoints → FTR parity.
     ///
     /// DRIVE PATH: the strongest feasible one — the FULL worker queue. We replicate
     /// the metrics scheduler's `enqueue_metrics_pass` (that fn is private) using the
@@ -1896,13 +1896,16 @@ mod tests {
     /// let real `spawn_workers` drain the graph through the actual executor dispatch.
     /// This proves the health barrier only releases after its base metrics land.
     ///
-    /// Seed values are chosen so every component has a clean normalized value and the
-    /// composite `project_health` lands on 68 (well away from any rounding tie):
-    ///   ftr 0.75 · rework_ratio 0.5 · throughput 4/5 · churn_rate 6(→0.5 vs target 3)
-    ///   · churn_concentration 4/6 (neutral → excluded) · rework_density 0.25
-    ///   · duplication_ratio 0.4 · interruption_rate 0.4 · run_completion 0.8
-    ///   · memory_promotion 0.5 · unused_tools 3 (→1.0 vs target 10)
-    ///   → mean of the 10 scored norms = 0.68 → health 68.
+    /// RETIRED composite: `project_health` carries a past `effective_until` in the
+    /// registry (seeded from the catalog via `import_metrics`), so it is inactive. The
+    /// `ComputeHealth` barrier is still enqueued + blocked + released, but
+    /// `compute_health` resolves no active composite id and writes NO `project_health`
+    /// row — the barrier lands as a harmless no-op (honest-empty, never fabricated).
+    /// So exactly the 12 base rows are stored, and the registry/values endpoints do NOT
+    /// carry a composite. Seed values (still exercised by the base computers):
+    ///   ftr 0.75 · rework_ratio 0.5 · throughput 4 · churn_rate 6 · churn_concentration
+    ///   4/6 · rework_density 0.25 · duplication_ratio 0.4 · interruption_rate 0.4 ·
+    ///   run_completion 0.8 · memory_promotion 0.5 · unused_tools 0 · time_to_useful_result.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn metrics_pipeline_end_to_end() {
         use crate::tasks::executor::spawn_workers;
@@ -1920,22 +1923,6 @@ mod tests {
         use sqlx_core::query_as::query_as;
         use std::collections::HashMap;
 
-        // The health-score normalization mirror (hand implementation of
-        // `handlers::metrics::health::normalize`) — the independent computation we
-        // hand-check the stored composite against. `None` ⇒ excluded from the mean.
-        fn norm(mt: &str, dir: &str, v: f64, target: Option<f64>) -> Option<f64> {
-            match (mt, dir) {
-                ("ratio" | "pct", "higher_better") => Some(v.clamp(0.0, 1.0)),
-                ("ratio" | "pct", "lower_better") => Some((1.0 - v).clamp(0.0, 1.0)),
-                ("count" | "duration" | "currency", "higher_better") => {
-                    target.map(|t| (v / t).clamp(0.0, 1.0))
-                }
-                ("count" | "duration" | "currency", "lower_better") => {
-                    target.map(|t| if v <= t { 1.0 } else { (t / v).clamp(0.0, 1.0) })
-                }
-                _ => None,
-            }
-        }
         let close = |a: f64, b: f64| (a - b).abs() < 1e-9;
 
         let (app, state) = test_app().await;
@@ -2110,36 +2097,30 @@ mod tests {
         // invoked → not relevant → not "dead surface" (never fabricated as dead).
         assert!(close(get("unused_tools"), 0.0), "unused_tools = 0 dead RELEVANT tools (relevant=1, used=1; t2/t3/t4 never invoked → not relevant) (got {})", get("unused_tools"));
 
-        // exactly 12 base metrics + project_health (false_crash_rate absent). The
-        // 12th base is session_outcomes' `time_to_useful_result` project row.
-        assert_eq!(rows.len(), 13, "13 latest-per-metric project-scope rows (12 base + project_health)");
+        // exactly 12 base metric rows; no composite. The 12th base is
+        // session_outcomes' `time_to_useful_result` project row. project_health is
+        // RETIRED, so the health barrier wrote no composite row (see below).
+        assert_eq!(rows.len(), 12, "12 latest-per-metric project-scope rows (base only; project_health retired)");
 
-        // ── HEALTH: 0..=100, equals the hand-normalized weighted mean, lands on 68 ──
+        // ── RETIRED HEALTH: the barrier ran (drained above) but wrote NO composite ──
+        // project_health carries a past effective_until in the registry, so it is
+        // inactive: absent from the active `health` task, and `compute_health` no-ops.
         let active = pg.active_metrics().await.unwrap();
-        let (mut sum_wn, mut sum_w) = (0.0f64, 0.0f64);
-        let mut included: Vec<String> = Vec::new();
-        for m in &active {
-            if m.key == "project_health" {
-                continue; // never recurse into the composite
-            }
-            let Some(&v) = val.get(&m.key) else { continue }; // honest-absent → excluded
-            let Some(n) = norm(&m.metric_type, &m.direction, v, m.target) else { continue }; // neutral/score → excluded
-            sum_wn += m.weight * n;
-            sum_w += m.weight;
-            included.push(m.key.clone());
-        }
-        assert!(sum_w > 0.0, "at least one component contributes to health");
-        let expected_health = (100.0 * (sum_wn / sum_w)).round();
-        let stored_health = get("project_health");
-        assert!((0.0..=100.0).contains(&stored_health), "0 <= project_health <= 100 (got {stored_health})");
-        assert!(close(stored_health, expected_health),
-            "project_health == hand-normalized weighted mean: stored {stored_health}, expected {expected_health}");
-        assert!(close(stored_health, 68.0), "designed seed → project_health 68 (got {stored_health})");
-        included.sort();
-        assert!(!included.iter().any(|k| k == "churn_concentration"), "neutral churn_concentration is NOT scored");
-        assert!(!included.iter().any(|k| k == "false_crash_rate"), "uncomputed false_crash_rate is NOT scored");
-        assert!(!included.iter().any(|k| k == "project_health"), "the composite never scores itself");
-        assert_eq!(included.len(), 10, "exactly the 10 scored components contribute: {included:?}");
+        assert!(
+            !active.iter().any(|m| m.key == "project_health"),
+            "project_health is retired → absent from the active registry",
+        );
+        assert!(!val.contains_key("project_health"),
+            "no project_health value row: the retired composite is never computed (honest-empty, not a fabricated score)");
+        let (ph_rows,): (i64,) = query_as(
+            "SELECT count(*) FROM sensei.project_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
+              WHERE pm.project_id = $1 AND m.key = 'project_health'",
+        )
+        .bind(pid)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        assert_eq!(ph_rows, 0, "retired project_health wrote no project_metrics row");
 
         // ── NEVER-FABRICATE: every ratio/pct row carries numerator + denominator ──
         for r in &rows {
@@ -2163,29 +2144,32 @@ mod tests {
         assert_eq!(fcr_rows, 0, "honest-absence: false_crash_rate produced NO row (never fabricated)");
         assert!(!val.contains_key("false_crash_rate"), "false_crash_rate is not in the read surface");
 
-        // ── ENDPOINT 1: GET /api/metrics/registry serves every seeded metric + facets ──
+        // ── ENDPOINT 1: GET /api/metrics/registry serves every ACTIVE metric + facets ──
         let (st, body) = req(app.clone(), "GET", "/api/metrics/registry", None).await;
         assert_eq!(st, StatusCode::OK, "{body}");
         let reg = body["metrics"].as_array().expect("registry metrics array");
         for k in [
             "ftr", "rework_ratio", "throughput", "time_to_useful_result", "churn_rate",
             "churn_concentration", "rework_density", "duplication_ratio", "interruption_rate",
-            "run_completion", "memory_promotion", "unused_tools", "project_health",
+            "run_completion", "memory_promotion", "unused_tools",
         ] {
             let m = reg.iter().find(|m| m["key"].as_str() == Some(k))
                 .unwrap_or_else(|| panic!("registry endpoint serves `{k}`"));
             assert!(m["purpose"].as_str().is_some_and(|s| !s.is_empty()), "`{k}` carries a purpose facet");
             assert!(m["direction"].as_str().is_some_and(|s| !s.is_empty()), "`{k}` carries a direction facet");
         }
+        // The retired composite is served by NEITHER the registry (active-only) …
+        assert!(!reg.iter().any(|m| m["key"].as_str() == Some("project_health")),
+            "registry endpoint does NOT serve the retired project_health");
 
         // ── ENDPOINT 2: GET /api/projects/{id}/metrics returns the seeded data ──
         let (st, body) = req(app.clone(), "GET", &format!("/api/projects/{pid}/metrics"), None).await;
         assert_eq!(st, StatusCode::OK, "{body}");
         let ms = body["metrics"].as_array().expect("project metrics array");
-        assert_eq!(ms.len(), 13, "endpoint returns the 13 latest-per-metric rows");
-        let e_health = ms.iter().find(|m| m["metric"].as_str() == Some("project_health"))
-            .expect("project_health present on the endpoint");
-        assert!(close(e_health["value"].as_f64().unwrap(), 68.0), "endpoint project_health = 68");
+        assert_eq!(ms.len(), 12, "endpoint returns the 12 latest-per-metric rows (no retired composite)");
+        // … nor the values endpoint: the retired project_health has no row to serve.
+        assert!(!ms.iter().any(|m| m["metric"].as_str() == Some("project_health")),
+            "values endpoint does NOT carry the retired project_health");
         let e_ftr = ms.iter().find(|m| m["metric"].as_str() == Some("ftr")).expect("ftr present on the endpoint");
         assert!(close(e_ftr["value"].as_f64().unwrap(), 0.75), "endpoint ftr = 0.75");
         assert_eq!(e_ftr["direction"].as_str(), Some("higher_better"), "facet: ftr direction attached");
