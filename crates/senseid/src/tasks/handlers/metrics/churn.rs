@@ -1,48 +1,64 @@
-//! `churn` metric group computer (Phase 5.2).
+//! `churn` metric group computer.
 //!
-//! The SECOND real base-metric computer; it follows the `session_outcomes`
-//! template (read the rolling window, resolve `key → metric_id` via the active
-//! registry, write daily + per-module rows to `sensei.project_metrics` via
-//! [`PgStore::upsert_project_metric`]) for ONE project.
+//! Follows the `session_outcomes` template (resolve `key → metric_id` via the
+//! active registry, write daily rows to `sensei.project_metrics` via
+//! [`PgStore::upsert_project_metric`]) for ONE project, but its two churn metrics
+//! are sourced from **git**, not the file-indexing feed:
 //!
-//! v1 registry keys (all `task_name = "churn"`):
-//! - `churn_rate` (count): # `process_file` executions attributed to a folder that
-//!   day — per-module rows (grain `daily`, `folder_id` set) AND a project-level
-//!   daily row (`folder_id` NULL) = Σ over folders.
-//! - `churn_concentration` (pct, project daily): share of churn from the busiest
-//!   20% of files — `numerator` = churn of the top-20% files, `denominator` = total
-//!   churn (per day). No churn that day ⇒ NO row.
-//! - `rework_density` (ratio, per-module + project): `numerator` = # rework-flagged
-//!   files (`inference.detected_patterns` where `name LIKE 'rework: %'`),
-//!   `denominator` = # project files (`kind = 'file'` `sensei.nodes`). 0 project
-//!   files ⇒ NO row.
+//! - `churn_rate` (count, project daily): the number of DISTINCT source files
+//!   touched by that day's commits — the real files-changed-over-time signal
+//!   (GitClear's churn *definition*, measured first-party from `git log`). One
+//!   project-level row per commit-day.
+//! - `churn_concentration` (pct, project daily): the share of the day's line-churn
+//!   absorbed by the busiest 20% of files (Pareto) — `numerator` = line-churn of
+//!   the top-20% files, `denominator` = total line-churn. A day with commits but
+//!   zero line-churn (only binary/mode changes) has no denominator ⇒ NO
+//!   concentration row (never a fabricated 0/0), though `churn_rate` still counts
+//!   the touched files.
+//! - `rework_density` (ratio, per-module + project): UNCHANGED — a forward-only
+//!   snapshot of `inference.detected_patterns` (`name LIKE 'rework: %'`) over
+//!   `sensei.nodes` project files. Out of scope for the git re-sourcing; it keeps
+//!   its DB source and its historical-`as_of`-skips behavior.
 //!
-//! ## Governance property (non-negotiable — this is why churn is reviewed hard)
-//! `activity.task_executions` carries only a `folder_path` (no project/folder id).
-//! Every execution is attributed via [`PgStore::resolve_folder_by_path`]
-//! (alias-aware). When it returns `None` — the `folder_path` can't be resolved to a
-//! project/module — the execution is `warn!`-logged and SKIPPED: it counts toward
-//! NEITHER the module NOR the project aggregate, and produces no row on its
-//! account. An execution that resolves to a DIFFERENT project is simply not ours
-//! (that project's own churn task counts it). NEVER mis-attribute an unresolvable
-//! execution to a fallback/default project (see the #109 fail-closed audit).
+//! ## Git sourcing (why + how)
+//! The two churn metrics were previously counted from `activity.task_executions`
+//! (the file-INDEXING feed), so a re-index spiked `churn_rate` and only recent
+//! history existed. Real churn is files-changed-over-time from GIT, so they now
+//! read `git log` for the project's repo root — resolved via
+//! [`PgStore::project_root_path`] (the shortest repo-root `folders.abs_path`). A
+//! project with no repo-root folder, a root that is not a git repo, git being
+//! absent, or a repo with no commits on the selected day all produce NO row: an
+//! honest "no git churn data", never a fabricated value. This mirrors the git
+//! discipline already used by `indexer/cross_repo` and `tasks/handlers/scan`
+//! (shell out to git, tolerate its absence).
 //!
-//! Never-fabricate: every DB call propagates `Err`; a metric/day/module with no
-//! data writes NO row. A ratio/pct with denominator 0 writes NO row (a 0/0 would be
-//! a fabricated zero); a real denominator with 0 numerator writes a real `0.0`.
+//! Commits bucket on the COMMITTER date (`%cd --date=short`); both the planner's
+//! per-day discovery ([`git_commit_days`]) and this computer read that same field,
+//! so a planned commit-day maps to the day the compute buckets it under. Merges
+//! are excluded (`--no-merges`).
 //!
-//! Retry de-duplication: `activity.task_executions` inserts a NEW row per attempt
-//! (no update-in-place), so a retried file leaves BOTH a `failed` and a `completed`
-//! row. Churn counts only `status = 'completed'` executions — a failed attempt
-//! didn't actually (re)process the file, so it is not churn (and would otherwise
-//! double-count a retry).
+//! ## `as_of` (per-day, mirrors `session_outcomes`/`autonomy`)
+//! `churn` is a PER-DAY planned group: the planner enqueues one
+//! `ComputeMetrics{as_of=Some(D)}` per git-commit-day plus the trailing window, so
+//! churn backfills over real git history.
+//! - `Some(D)` — compute ONLY day `D` from that day's commits, `computed_on = D`.
+//! - `None` — the rolling window: every commit-day in the trailing
+//!   [`metrics.window_days`] window through today.
 //!
-//! Caveat (a known data-quality issue, NOT a bug to fix here, and SEPARATE from the
-//! retry filter above): `churn_rate` / `churn_concentration` counts are inflated by
-//! the version-rescan bug until a debounce lands — the first live numbers carry
-//! that caveat (as the catalog's `how_to_read` says: de-noise before trending).
+//! ## Capture-scope split (governance, #3)
+//! Churn is GIT-derived, so its day-set must NOT authorize the activity pruner's
+//! capture-before-reclaim: a git-churn row for a day must never green-light
+//! reclaiming that day's sessions before their session-anchored metrics (ftr /
+//! throughput) are captured. The planner backfills churn per-day, but
+//! `planner::day_keyed_task_names()` (the pruner's capture scope) stays
+//! SESSION-derived only (`session_outcomes`, `autonomy`) and EXCLUDES churn.
+//!
+//! Never-fabricate: every DB call propagates `Err`; a git failure/miss produces NO
+//! row (honest-empty). A ratio/pct with denominator 0 writes NO row.
 
 use std::collections::HashMap;
+
+use chrono::NaiveDate;
 
 use crate::db::pg_store::PgStore;
 use crate::tasks::executor::TaskContext;
@@ -59,54 +75,124 @@ const KEY_CHURN_RATE: &str = "churn_rate";
 const KEY_CHURN_CONCENTRATION: &str = "churn_concentration";
 const KEY_REWORK_DENSITY: &str = "rework_density";
 
-/// The `activity.task_executions.task_kind` that IS churn — a per-file rewrite pass.
-const PROCESS_FILE_KIND: &str = "process_file";
-/// The `activity.task_executions.status` that means the file was actually
-/// (re)processed. Only completed passes count as churn (see
-/// [`process_file_executions`]); `running`/`failed` do not.
-const STATUS_COMPLETED: &str = "completed";
-
 /// Pareto cut for `churn_concentration`: the busiest 20% of files. `ceil`-rounded
 /// so any day with ≥1 file has ≥1 file in the top set.
 const CONCENTRATION_TOP_FRACTION: f64 = 0.20;
 
-/// One `(folder_path, day, file_path, count)` churn tuple from `task_executions` —
-/// resolution (`folder_path → project/folder`) and project-filtering happen in
-/// Rust so the load-bearing alias-aware attribution goes through the shared
-/// [`PgStore::resolve_folder_by_path`], not a hand-rolled join.
-type ExecRow = (String, chrono::NaiveDate, String, i64);
+/// The date format `git log --date=short` emits (`%cd`) and both this computer and
+/// the planner parse — the single place the committer-day format lives.
+const GIT_DATE_FMT: &str = "%Y-%m-%d";
+/// Sentinel byte prefixed to each commit's date line in `git log` output so header
+/// lines are unambiguously separable from `--numstat` body lines (SOH never
+/// appears in a file path or an ISO date). See [`parse_numstat_log`].
+const COMMIT_MARK: char = '\u{1}';
 
-/// Raw per-`(folder_path, day, file)` counts of `process_file` executions over the
-/// window — EVERY folder_path (attribution to a project happens after resolution).
-/// `path` is the absolute file the execution processed (globally unique, so it is
-/// a safe `churn_concentration` file key).
-///
-/// Restricted to `status = 'completed'`: `task_executions` inserts a NEW row per
-/// attempt (no update-in-place), so a retried file leaves both a `failed` and a
-/// `completed` row — a failed attempt didn't actually (re)process the file, so it
-/// is not churn. Counting only completed passes de-duplicates retries; the
-/// separate version-rescan inflation caveat still applies (see the module doc).
-async fn process_file_executions(
-    pg: &PgStore,
+/// Run `git log` in `root` with `args` and return stdout, or `None` when git is
+/// unavailable, `root` is not a git repo / does not exist, the repo has no commits,
+/// or the command otherwise fails. A `None` is an honest "no git churn data" (the
+/// caller writes no row), never a fabricated value — matching the git discipline in
+/// `indexer/cross_repo` and `tasks/handlers/scan` (shell out, tolerate absence).
+fn run_git(root: &str, args: &[&str]) -> Option<String> {
+    let out = std::process::Command::new("git")
+        .args(args)
+        .current_dir(root)
+        .output()
+        .ok()?;
+    out.status
+        .success()
+        .then(|| String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+/// Parse `git log --numstat --date=short --pretty=format:'\x01%cd'` output into
+/// per-`(day, file)` line-churn. Each commit contributes a header line
+/// `\x01YYYY-MM-DD` followed by `--numstat` rows `added\tdeleted\tpath`
+/// (`added`/`deleted` are `-` for binary files). A file touched with only binary or
+/// zero-line diffs still appears (weight 0) so it counts toward `churn_rate`'s
+/// distinct-file total. Pure over the captured text so it is unit-testable without a
+/// git subprocess. A day appears ONLY when ≥1 numstat body line was seen (so an
+/// empty commit contributes no day → no fabricated churn).
+fn parse_numstat_log(stdout: &str) -> HashMap<NaiveDate, HashMap<String, i64>> {
+    let mut by_day: HashMap<NaiveDate, HashMap<String, i64>> = HashMap::new();
+    let mut current: Option<NaiveDate> = None;
+    for line in stdout.lines() {
+        if let Some(rest) = line.strip_prefix(COMMIT_MARK) {
+            current = NaiveDate::parse_from_str(rest.trim(), GIT_DATE_FMT).ok();
+            continue;
+        }
+        let Some(day) = current else { continue };
+        // numstat body: added \t deleted \t path (path may itself contain tabs).
+        let mut parts = line.splitn(3, '\t');
+        let (Some(add), Some(del), Some(path)) = (parts.next(), parts.next(), parts.next())
+        else {
+            continue;
+        };
+        if path.is_empty() {
+            continue;
+        }
+        // Binary files report '-' for both counts → 0 line-churn, still a touched file.
+        let weight = add.parse::<i64>().unwrap_or(0) + del.parse::<i64>().unwrap_or(0);
+        *by_day.entry(day).or_default().entry(path.to_string()).or_insert(0) += weight;
+    }
+    by_day
+}
+
+/// Distinct committer-days (`%cd --date=short`) across `root`'s whole history — the
+/// churn DATA-day set the planner backfills over. Empty on a non-git root, an absent
+/// git, or an empty repo (honest "no git churn", never a fabricated day). Shared with
+/// the planner (`DayKeyedGroup::Churn::data_days`) so its per-day discovery and this
+/// module's per-day compute read the SAME committer-day field and can't drift.
+pub(super) fn git_commit_days(root: &str) -> Vec<NaiveDate> {
+    let Some(out) = run_git(
+        root,
+        &["log", "--no-merges", "--date=short", "--pretty=format:%cd"],
+    ) else {
+        return Vec::new();
+    };
+    let mut days: std::collections::BTreeSet<NaiveDate> = std::collections::BTreeSet::new();
+    for line in out.lines() {
+        if let Ok(d) = NaiveDate::parse_from_str(line.trim(), GIT_DATE_FMT) {
+            days.insert(d);
+        }
+    }
+    days.into_iter().collect()
+}
+
+/// Per-`(day, file)` line-churn for the compute's day-set, read from `git log`.
+/// `as_of = Some(D)` → the single committer-day `D`; `None` → the trailing
+/// `window_days` window through `today`. The scan is bounded with `--since`/`--until`
+/// (a ±2-day buffer that comfortably absorbs a commit's timezone offset, which is
+/// < 1 day) and then filtered to the EXACT `[lo, hi]` committer-day range on the
+/// parsed `%cd` date — so the bucketing matches [`git_commit_days`] regardless of
+/// git's date-boundary interpretation. Empty on a non-git root / absent git / no
+/// commits on the range (honest-empty).
+fn git_day_file_churn(
+    root: &str,
     window_days: u32,
-) -> Result<Vec<ExecRow>, String> {
-    sqlx_core::query_as::query_as(
-        "SELECT folder_path                                   AS folder_path
-              , date_trunc('day', started_at)::date           AS day
-              , path                                           AS file_path
-              , count(*)::int8                                 AS n
-           FROM activity.task_executions
-          WHERE task_kind    = $1
-            AND status       = $2
-            AND started_at  >= now() - make_interval(days => $3::int)
-          GROUP BY folder_path, day, file_path",
-    )
-    .bind(PROCESS_FILE_KIND)
-    .bind(STATUS_COMPLETED)
-    .bind(window_days as i32)
-    .fetch_all(pg.pool())
-    .await
-    .map_err(|e| e.to_string())
+    today: NaiveDate,
+    as_of: Option<NaiveDate>,
+) -> HashMap<NaiveDate, HashMap<String, i64>> {
+    let (lo, hi) = match as_of {
+        Some(d) => (d, d),
+        None => (
+            today - chrono::Duration::days((window_days.max(1) - 1) as i64),
+            today,
+        ),
+    };
+    let since = (lo - chrono::Duration::days(2)).format(GIT_DATE_FMT).to_string();
+    let until = (hi + chrono::Duration::days(2)).format(GIT_DATE_FMT).to_string();
+    let pretty = format!("--pretty=format:{COMMIT_MARK}%cd");
+    let Some(out) = run_git(
+        root,
+        &[
+            "log", "--no-merges", "--numstat", "--date=short", &pretty, "--since", &since,
+            "--until", &until,
+        ],
+    ) else {
+        return HashMap::new();
+    };
+    let mut by_day = parse_numstat_log(&out);
+    by_day.retain(|d, _| *d >= lo && *d <= hi);
+    by_day
 }
 
 /// `(project_file_count, per-folder file counts)` — "project files" are
@@ -170,18 +256,21 @@ async fn rework_counts(
     Ok((total, rows.into_iter().collect()))
 }
 
-/// Compute the `churn` group for one project over the configured window.
-/// `project_raw` is the project uuid carried in `task.folder_path`. Returns the
-/// number of `project_metrics` rows written (`0` = honest-empty: no churn/rework
-/// data, or none of the group's metrics active). Idempotent — re-running backfills
-/// in place via the upsert identity. `as_of` is the target `computed_on` day; only
-/// the FORWARD-ONLY `rework_density` snapshot honors it in this phase (a historical
-/// `as_of` skips it — see [`super::is_historical`]). `churn_rate`/`churn_concentration`
-/// keep their current window behavior (a later phase wires their per-day git path).
+/// Compute the `churn` group for one project. `project_raw` is the project uuid
+/// carried in `task.folder_path`. `as_of` is the target `computed_on` day:
+/// - `churn_rate` / `churn_concentration` (git-sourced): `Some(D)` computes ONLY
+///   day `D`'s commits (`computed_on = D`, the backfill/gap-fill path); `None`
+///   computes every commit-day in the trailing window.
+/// - `rework_density` (forward-only snapshot): a historical `as_of` (`Some(D)`,
+///   `D != today`) skips it (see [`super::is_historical`]).
+///
+/// Returns the number of `project_metrics` rows written (`0` = honest-empty: no git
+/// churn on the day-set, no rework/file data, or none of the group's metrics
+/// active). Idempotent — re-running backfills in place via the upsert identity.
 pub(super) async fn compute(
     ctx: &TaskContext,
     project_raw: &str,
-    as_of: Option<chrono::NaiveDate>,
+    as_of: Option<NaiveDate>,
 ) -> Result<u32, String> {
     let project_id = uuid::Uuid::parse_str(project_raw)
         .map_err(|e| format!("churn: bad project id {project_raw:?}: {e}"))?;
@@ -202,91 +291,51 @@ pub(super) async fn compute(
 
     let mut written = 0u32;
 
-    // ── churn_rate + churn_concentration (both read process_file executions) ──
+    // ── churn_rate + churn_concentration (git-sourced, per-day) ──────────────
     if churn_rate_id.is_some() || concentration_id.is_some() {
-        // Per-(folder_id, day) churn for the per-module rows; per-day totals for the
-        // project rows; per-(day, file) churn for concentration's Pareto cut.
-        let mut by_folder_day: HashMap<(uuid::Uuid, chrono::NaiveDate), i64> = HashMap::new();
-        let mut by_day_total: HashMap<chrono::NaiveDate, i64> = HashMap::new();
-        let mut by_day_file: HashMap<chrono::NaiveDate, HashMap<String, i64>> = HashMap::new();
-        // folder_path → resolution, cached so each distinct path resolves once and
-        // an unresolvable path is warned about exactly once.
-        let mut resolved: HashMap<String, Option<(uuid::Uuid, uuid::Uuid)>> = HashMap::new();
-
-        for (folder_path, day, file_path, n) in process_file_executions(pg, window_days).await? {
-            if !resolved.contains_key(&folder_path) {
-                let r = pg.resolve_folder_by_path(&folder_path).await?;
-                if r.is_none() {
-                    // GOVERNANCE: unresolvable folder_path → skip entirely (counts
-                    // toward NEITHER module nor project). Never fall back to a
-                    // default project id.
-                    tracing::warn!(
-                        folder_path = %folder_path,
-                        group = "churn",
-                        "compute_churn: folder_path does not resolve to a project — \
-                         skipping execution (attributed to no module and no project)",
-                    );
+        // The project's git-root working dir (shortest repo-root abs_path). No
+        // repo-root folder → no git churn source → honest-empty (no rows).
+        if let Some(root) = pg.project_root_path(&project_id).await? {
+            let today = super::today(pg).await?;
+            for (day, files) in git_day_file_churn(&root, window_days, today, as_of) {
+                // churn_rate (count): # distinct files touched that day. A returned
+                // day always carries ≥1 file (the parser records a day only for a
+                // real numstat line), so this is ≥ 1 — never a fabricated 0.
+                if let Some(mid) = churn_rate_id {
+                    let no_props = serde_json::json!({});
+                    pg.upsert_project_metric(
+                        &mid, &project_id, None, None, day, GRAIN_DAILY, files.len() as f64,
+                        &no_props, SOURCE_MEASURED,
+                    )
+                    .await?;
+                    written += 1;
                 }
-                resolved.insert(folder_path.clone(), r);
-            }
-            // Only executions resolving to THIS project count. `None` (unresolvable)
-            // and other projects both skip; only `None` was warned above.
-            let Some((folder_id, resolved_project)) = resolved[&folder_path] else {
-                continue;
-            };
-            if resolved_project != project_id {
-                continue;
-            }
-
-            *by_folder_day.entry((folder_id, day)).or_insert(0) += n;
-            *by_day_total.entry(day).or_insert(0) += n;
-            *by_day_file.entry(day).or_default().entry(file_path).or_insert(0) += n;
-        }
-
-        // churn_rate (count): per-module rows (folder_id set) + project daily rows.
-        if let Some(mid) = churn_rate_id {
-            let no_props = serde_json::json!({});
-            for ((folder_id, day), count) in &by_folder_day {
-                pg.upsert_project_metric(
-                    &mid, &project_id, Some(folder_id), None, *day, GRAIN_DAILY,
-                    *count as f64, &no_props, SOURCE_MEASURED,
-                )
-                .await?;
-                written += 1;
-            }
-            for (day, count) in &by_day_total {
-                pg.upsert_project_metric(
-                    &mid, &project_id, None, None, *day, GRAIN_DAILY,
-                    *count as f64, &no_props, SOURCE_MEASURED,
-                )
-                .await?;
-                written += 1;
-            }
-        }
-
-        // churn_concentration (pct, project daily): Σ top-20% files / Σ all files.
-        if let Some(mid) = concentration_id {
-            for (day, files) in &by_day_file {
-                let total: i64 = files.values().sum();
-                if total == 0 {
-                    // No churn that day → no denominator → NO row (never a 0/0).
-                    continue;
+                // churn_concentration (pct): Σ top-20% files' line-churn / Σ all.
+                if let Some(mid) = concentration_id {
+                    let total: i64 = files.values().sum();
+                    if total == 0 {
+                        // Commits touched files but with zero line-churn (all
+                        // binary/mode) → no denominator → NO row (never a 0/0).
+                        continue;
+                    }
+                    // Rank files by churn desc, path asc (deterministic ties), take
+                    // the busiest ceil(20%) — ≥1 whenever there is ≥1 file.
+                    let mut ranked: Vec<(&String, i64)> =
+                        files.iter().map(|(p, &c)| (p, c)).collect();
+                    ranked.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(b.0)));
+                    let top_k = ((ranked.len() as f64) * CONCENTRATION_TOP_FRACTION).ceil() as usize;
+                    let top_k = top_k.max(1);
+                    let numerator: i64 = ranked.iter().take(top_k).map(|(_, c)| *c).sum();
+                    let value = numerator as f64 / total as f64;
+                    let props =
+                        serde_json::json!({ "numerator": numerator, "denominator": total });
+                    pg.upsert_project_metric(
+                        &mid, &project_id, None, None, day, GRAIN_DAILY, value, &props,
+                        SOURCE_MEASURED,
+                    )
+                    .await?;
+                    written += 1;
                 }
-                // Rank files by churn desc, path asc (deterministic ties), take the
-                // busiest ceil(20%) — ≥1 whenever there is ≥1 file.
-                let mut ranked: Vec<(&String, i64)> =
-                    files.iter().map(|(p, &c)| (p, c)).collect();
-                ranked.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(b.0)));
-                let top_k = ((ranked.len() as f64) * CONCENTRATION_TOP_FRACTION).ceil() as usize;
-                let top_k = top_k.max(1);
-                let numerator: i64 = ranked.iter().take(top_k).map(|(_, c)| *c).sum();
-                let value = numerator as f64 / total as f64;
-                let props = serde_json::json!({ "numerator": numerator, "denominator": total });
-                pg.upsert_project_metric(
-                    &mid, &project_id, None, None, *day, GRAIN_DAILY, value, &props, SOURCE_MEASURED,
-                )
-                .await?;
-                written += 1;
             }
         }
     }
@@ -342,87 +391,167 @@ pub(super) async fn compute(
 mod tests {
     use super::*;
     use crate::tasks::test_support::{
-        cleanup_metrics_fixture, daily_project_metric_rows as daily_rows, make_ctx,
-        module_metric_rows as module_rows, purge_task_executions, seed_detected_pattern,
-        seed_file_node, seed_metrics_project_folder, seed_task_execution,
+        cleanup_metrics_fixture, daily_project_metric_rows as daily_rows, git_commit_on_day,
+        make_ctx, module_metric_rows as module_rows, seed_detected_pattern, seed_file_node,
+        seed_git_project_folder, seed_metrics_project_folder,
     };
     use sqlx_core::query_as::query_as;
 
+    // ── Pure: numstat parser ─────────────────────────────────────────────────
+
+    #[test]
+    fn parse_numstat_log_buckets_line_churn_by_day_and_file() {
+        // Two commits on 2020-01-01 (a.rs +3/-1, b.rs +0/-2) and one on 2020-01-02
+        // (a.rs +5/-0, bin -/- binary). Per-(day,file) weight = added + deleted; a
+        // binary file (`-`/`-`) still appears with weight 0 (a touched file).
+        let m = '\u{1}';
+        let log = format!(
+            "{m}2020-01-01\n3\t1\ta.rs\n0\t2\tb.rs\n{m}2020-01-01\n2\t0\ta.rs\n{m}2020-01-02\n5\t0\ta.rs\n-\t-\tbin.png\n"
+        );
+        let by_day = parse_numstat_log(&log);
+        let d1 = NaiveDate::from_ymd_opt(2020, 1, 1).unwrap();
+        let d2 = NaiveDate::from_ymd_opt(2020, 1, 2).unwrap();
+        assert_eq!(by_day[&d1]["a.rs"], 6, "a.rs day-1 churn = (3+1)+(2+0) = 6");
+        assert_eq!(by_day[&d1]["b.rs"], 2, "b.rs day-1 churn = 0+2 = 2");
+        assert_eq!(by_day[&d1].len(), 2, "two distinct files touched on day 1");
+        assert_eq!(by_day[&d2]["a.rs"], 5, "a.rs day-2 churn = 5+0 = 5");
+        assert_eq!(by_day[&d2]["bin.png"], 0, "binary file counts as a touched file (weight 0)");
+        assert_eq!(by_day[&d2].len(), 2, "a.rs + bin.png distinct on day 2");
+    }
+
+    // ── Git-sourced churn (temp repo fixtures) ───────────────────────────────
+
     #[tokio::test]
-    async fn churn_attributes_to_project_via_folder_path() {
-        // THE load-bearing governance test: churn is attributed via
-        // resolve_folder_by_path — a live path resolves, an ALIASED old path resolves
-        // to the same folder, and an UNRESOLVABLE path is skipped (no row, warned) and
-        // mis-attributes to NOTHING.
+    async fn churn_git_single_day_as_of_over_seeded_commits() {
+        // THE re-sourcing test: churn_rate + churn_concentration come from `git log`
+        // for the project's repo root, computed for a SINGLE historical day D via
+        // as_of=Some(D), stamped computed_on=D (mirrors session_outcomes/autonomy).
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
-        let (pid, fid) = seed_metrics_project_folder(pg, &uniq).await;
-        let abs = format!("/_test/metrics-{uniq}"); // the fixture folder's abs_path (resolves)
-        let alias = format!("/_test/old-{uniq}"); // an old path aliased to the SAME folder
-        let unknown = format!("/_test/unknown-{uniq}"); // resolves to no folder/project
-        pg.add_folder_path_alias(&alias, &fid, "rename").await.unwrap();
-        // Idempotent pre-clean: task_executions has no FK/cascade, so purge this
-        // test's paths up front in case a prior crashed run leaked rows.
-        purge_task_executions(pg, &[&abs, &alias, &unknown]).await;
+        let (pid, fid, repo) = seed_git_project_folder(pg, &uniq).await;
 
-        let ts = chrono::Utc::now() - chrono::Duration::hours(2); // fixed day
-        // Resolvable churn (all → folder `fid`): a.rs ×2, b.rs ×1 under the live path;
-        // c.rs ×1 under the ALIAS path (must resolve to `fid` too). Σ = 4.
-        seed_task_execution(pg, "process_file", "completed", &abs, &format!("{abs}/a.rs"), ts).await;
-        seed_task_execution(pg, "process_file", "completed", &abs, &format!("{abs}/a.rs"), ts).await;
-        seed_task_execution(pg, "process_file", "completed", &abs, &format!("{abs}/b.rs"), ts).await;
-        seed_task_execution(pg, "process_file", "completed", &alias, &format!("{abs}/c.rs"), ts).await;
-        // UNRESOLVABLE folder_path → SKIPPED (must not appear in any aggregate).
-        seed_task_execution(pg, "process_file", "completed", &unknown, &format!("{unknown}/e.rs"), ts).await;
-        // A FAILED process_file under the live path → not actually (re)processed, so
-        // NOT churn (retry-de-dup filter, FIX 4). Must NOT be counted.
-        seed_task_execution(pg, "process_file", "failed", &abs, &format!("{abs}/f.rs"), ts).await;
-        // A non-churn task_kind under the live path → must NOT be counted.
-        seed_task_execution(pg, "process_folder", "completed", &abs, &abs, ts).await;
+        // A commit on D (60 days ago, well outside the default 14-day window):
+        // a.rs +4 lines, b.rs +2 lines. Line-churn a=4, b=2 (total 6); 2 files.
+        let d = (chrono::Utc::now() - chrono::Duration::days(60)).date_naive();
+        let day = d.format("%Y-%m-%d").to_string();
+        git_commit_on_day(repo.path(), &day, &[("a.rs", "1\n2\n3\n4\n"), ("b.rs", "1\n2\n")]);
 
-        let written = compute(&ctx, &pid.to_string(), None).await.unwrap();
-        // 1 churn_rate module row + 1 churn_rate project row + 1 concentration row.
-        // (No file nodes / rework patterns seeded → rework_density writes nothing.)
-        assert_eq!(written, 3, "churn_rate module + project + concentration; rework_density empty");
+        // Incremental (as_of=None): D is outside the rolling window → NO churn rows
+        // (honest-empty for the recent window, never a fabricated backfill).
+        let incr = compute(&ctx, &pid.to_string(), None).await.unwrap();
+        assert_eq!(incr, 0, "the 60-day-old commit-day is outside the rolling window → no incremental churn rows");
 
-        // ── churn_rate per-module: one folder (fid), count 4 (a×2 + b×1 + c×1) ──
-        let modules = module_rows(pg, &pid, "churn_rate").await;
-        assert_eq!(modules.len(), 1, "exactly one module row (the resolved fixture folder)");
-        assert_eq!(modules[0].0, fid, "the module row is attributed to the resolved folder");
-        assert!((modules[0].1 - 4.0).abs() < 1e-9, "module churn = 4 (aliased c.rs counted; unresolvable e.rs, FAILED f.rs, and process_folder all excluded)");
+        // Backfill (as_of=Some(D)): computes exactly that day's churn.
+        let written = compute(&ctx, &pid.to_string(), Some(d)).await.unwrap();
+        assert_eq!(written, 2, "churn_rate + churn_concentration for day D (no file nodes/rework seeded)");
 
-        // ── churn_rate project daily = Σ folders = 4 (this is the mutation-proof
-        // assertion: if the unresolvable exec were mis-attributed to this project it
-        // would be 5) ──
         let daily = daily_rows(pg, &pid).await;
         let rate = daily.iter().find(|r| r.0 == "churn_rate").expect("churn_rate project row");
-        assert!((rate.1 - 4.0).abs() < 1e-9, "project churn = 4 (unresolvable execution skipped, not mis-attributed)");
-
-        // ── churn_concentration: files a=2,b=1,c=1 (total 4); top ceil(20% of 3)=1
-        // busiest file is a (2) → 2/4 = 0.5 ──
+        assert!((rate.1 - 2.0).abs() < 1e-9, "churn_rate = 2 distinct files changed (a.rs, b.rs)");
         let conc = daily.iter().find(|r| r.0 == "churn_concentration").expect("churn_concentration row");
-        assert!((conc.1 - 0.5).abs() < 1e-9, "concentration = top-file churn 2 / total 4 = 0.5");
-        assert_eq!(conc.2["numerator"].as_i64(), Some(2), "concentration numerator = busiest-20% churn");
-        assert_eq!(conc.2["denominator"].as_i64(), Some(4), "concentration denominator = total churn");
+        // top ceil(20% of 2) = 1 busiest file = a.rs (4) / total line-churn 6.
+        assert!((conc.1 - 4.0 / 6.0).abs() < 1e-9, "concentration = top-file line-churn 4 / total 6");
+        assert_eq!(conc.2["numerator"].as_i64(), Some(4), "concentration numerator = busiest-20% line-churn");
+        assert_eq!(conc.2["denominator"].as_i64(), Some(6), "concentration denominator = total line-churn");
 
-        // ── Idempotency: re-run backfills in place, never duplicates ──
-        let again = compute(&ctx, &pid.to_string(), None).await.unwrap();
-        assert_eq!(again, 3, "re-run recomputes the same rows");
+        // computed_on is stamped to the true commit day D (60 days ago).
+        let (rate_on_d,): (i64,) = query_as(
+            "SELECT count(*) FROM sensei.project_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
+              WHERE pm.project_id = $1 AND pm.grain = 'daily' AND m.key = 'churn_rate' AND pm.computed_on = $2",
+        )
+        .bind(pid)
+        .bind(d)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        assert_eq!(rate_on_d, 1, "the churn_rate row is stamped computed_on = the commit's day D");
+
+        // Idempotent: re-backfilling the same day upserts in place.
+        let again = compute(&ctx, &pid.to_string(), Some(d)).await.unwrap();
+        assert_eq!(again, 2, "re-running the same day backfills in place");
         let (total,): (i64,) = query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
             .bind(pid)
             .fetch_one(pg.pool())
             .await
             .unwrap();
-        assert_eq!(total, 3, "idempotent upsert — still 3 rows after a second run");
+        assert_eq!(total, 2, "idempotent upsert — still 2 rows after a second backfill");
 
-        cleanup_metrics_fixture(pg, &pid, Some(&fid), &[&abs, &alias, &unknown]).await;
+        cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
     }
 
     #[tokio::test]
+    async fn churn_concentration_top_20_percent_rounds_up_over_git() {
+        // Pin the ceil(20%) Pareto rule with N=6 files, where ceil(6×0.2)=2 diverges
+        // from a floor-then-max(1) mutation (=1). One commit on day D with per-file
+        // line-churn 4,3,1,1,1,1 (total 11); the top TWO busiest files (4+3=7) are
+        // the numerator, NOT the top-1 (4).
+        let ctx = make_ctx().await;
+        let pg = ctx.pg();
+        let uniq = uuid::Uuid::new_v4();
+        let (pid, fid, repo) = seed_git_project_folder(pg, &uniq).await;
+
+        let d = (chrono::Utc::now() - chrono::Duration::days(30)).date_naive();
+        let day = d.format("%Y-%m-%d").to_string();
+        let lines = |n: usize| (0..n).map(|i| format!("{i}")).collect::<Vec<_>>().join("\n") + "\n";
+        git_commit_on_day(
+            repo.path(),
+            &day,
+            &[
+                ("f1.rs", &lines(4)),
+                ("f2.rs", &lines(3)),
+                ("f3.rs", &lines(1)),
+                ("f4.rs", &lines(1)),
+                ("f5.rs", &lines(1)),
+                ("f6.rs", &lines(1)),
+            ],
+        );
+
+        compute(&ctx, &pid.to_string(), Some(d)).await.unwrap();
+
+        let daily = daily_rows(pg, &pid).await;
+        let rate = daily.iter().find(|r| r.0 == "churn_rate").expect("churn_rate row");
+        assert!((rate.1 - 6.0).abs() < 1e-9, "churn_rate = 6 distinct files changed");
+        let conc = daily.iter().find(|r| r.0 == "churn_concentration").expect("concentration row");
+        assert_eq!(conc.2["denominator"].as_i64(), Some(11), "denominator = total line-churn (11)");
+        assert_eq!(conc.2["numerator"].as_i64(), Some(7), "numerator = top ceil(6×0.2)=2 files (4+3=7), NOT top-1 (4)");
+        assert!((conc.1 - 7.0 / 11.0).abs() < 1e-9, "value = 7/11");
+
+        cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
+    }
+
+    #[tokio::test]
+    async fn churn_non_git_project_writes_no_churn_rows_but_rework_still_computes() {
+        // A project whose repo-root folder is NOT a git repo (the synthetic
+        // `/_test/metrics-*` path) → git churn source misses → NO churn_rate /
+        // churn_concentration rows (honest-empty, never a fabricated 0). rework_density
+        // is DB-sourced and unaffected — it still computes its real 0.0 over real files.
+        let ctx = make_ctx().await;
+        let pg = ctx.pg();
+        let uniq = uuid::Uuid::new_v4();
+        let (pid, fid) = seed_metrics_project_folder(pg, &uniq).await; // synthetic, non-git path
+        for f in ["a.rs", "b.rs", "c.rs"] {
+            seed_file_node(pg, &fid, &format!("/_test/metrics-{uniq}/{f}")).await;
+        }
+
+        let written = compute(&ctx, &pid.to_string(), None).await.unwrap();
+        assert_eq!(written, 1, "only the rework_density project row (0.0 over 3 files); no git churn rows");
+
+        let daily = daily_rows(pg, &pid).await;
+        assert!(!daily.iter().any(|r| r.0 == "churn_rate"), "no churn_rate row for a non-git root (honest-empty)");
+        assert!(!daily.iter().any(|r| r.0 == "churn_concentration"), "no churn_concentration row for a non-git root");
+        let rd = daily.iter().find(|r| r.0 == "rework_density").expect("rework_density row IS written (DB-sourced)");
+        assert!(rd.1.abs() < 1e-9, "rework_density = 0 rework over 3 real files = 0.0");
+
+        cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
+    }
+
+    // ── rework_density (unchanged — DB-sourced, out of scope for the git re-source) ──
+
+    #[tokio::test]
     async fn churn_no_data_writes_zero_rows() {
-        // Never-fabricate: a project with no executions / patterns / files writes NO
-        // rows (not a defaulted 0).
+        // Never-fabricate: a project with no repo-root folder, no patterns, and no
+        // files writes NO rows (not a defaulted 0).
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
@@ -432,7 +561,7 @@ mod tests {
             .unwrap();
 
         let written = compute(&ctx, &pid.to_string(), None).await.unwrap();
-        assert_eq!(written, 0, "no churn/rework data in the window → zero rows written");
+        assert_eq!(written, 0, "no git churn / rework / files → zero rows written");
 
         let (total,): (i64,) = query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
             .bind(pid)
@@ -463,7 +592,7 @@ mod tests {
         seed_detected_pattern(pg, &pid_a, Some(&fid_a), "correction-prone", true).await;
 
         let written_a = compute(&ctx, &pid_a.to_string(), None).await.unwrap();
-        assert_eq!(written_a, 2, "rework_density project row + one per-module row (no executions → no churn rows)");
+        assert_eq!(written_a, 2, "rework_density project row + one per-module row (non-git root → no churn rows)");
 
         let daily_a = daily_rows(pg, &pid_a).await;
         let rd = daily_a.iter().find(|r| r.0 == "rework_density").expect("rework_density project row");
@@ -497,51 +626,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn churn_excludes_other_projects_execution() {
-        // Cross-project isolation (the module's core governance property): an
-        // execution that resolves to a DIFFERENT real project must NOT leak into the
-        // project under test. A correct impl counts only A's OWN resolvable
-        // executions, which also makes this robust to leftover rows.
-        let ctx = make_ctx().await;
-        let pg = ctx.pg();
-        let uniq_a = uuid::Uuid::new_v4();
-        let uniq_b = uuid::Uuid::new_v4();
-        let (pid_a, fid_a) = seed_metrics_project_folder(pg, &uniq_a).await;
-        let (pid_b, fid_b) = seed_metrics_project_folder(pg, &uniq_b).await; // a real SECOND project
-        let abs_a = format!("/_test/metrics-{uniq_a}");
-        let abs_b = format!("/_test/metrics-{uniq_b}");
-        purge_task_executions(pg, &[&abs_a, &abs_b]).await; // idempotent pre-clean
-
-        let ts = chrono::Utc::now() - chrono::Duration::hours(2);
-        // Project A: 2 completed process_file executions (a.rs ×2) → A churn = 2.
-        seed_task_execution(pg, "process_file", "completed", &abs_a, &format!("{abs_a}/a.rs"), ts).await;
-        seed_task_execution(pg, "process_file", "completed", &abs_a, &format!("{abs_a}/a.rs"), ts).await;
-        // Project B: 3 completed executions across 3 files — they resolve fine, but to
-        // B, so they must NOT touch A's aggregates.
-        for f in ["p.rs", "q.rs", "r.rs"] {
-            seed_task_execution(pg, "process_file", "completed", &abs_b, &format!("{abs_b}/{f}"), ts).await;
-        }
-
-        let written = compute(&ctx, &pid_a.to_string(), None).await.unwrap();
-        assert_eq!(written, 3, "only A's own executions produce rows (churn_rate module + project + concentration)");
-
-        let modules = module_rows(pg, &pid_a, "churn_rate").await;
-        assert_eq!(modules.len(), 1, "exactly one module row — A's folder only, never B's");
-        assert_eq!(modules[0].0, fid_a, "the module row is A's folder");
-        assert!((modules[0].1 - 2.0).abs() < 1e-9, "A's module churn = 2 (B's 3 excluded)");
-        assert!(!modules.iter().any(|(id, _, _)| *id == fid_b), "B's folder never appears in A's rows");
-
-        let daily = daily_rows(pg, &pid_a).await;
-        let rate = daily.iter().find(|r| r.0 == "churn_rate").expect("churn_rate project row");
-        assert!((rate.1 - 2.0).abs() < 1e-9, "A's project churn = 2 (B's execution excluded — cross-project isolation)");
-        let conc = daily.iter().find(|r| r.0 == "churn_concentration").expect("concentration row");
-        assert_eq!(conc.2["denominator"].as_i64(), Some(2), "concentration denominator = A's total churn only (2, not 5)");
-
-        cleanup_metrics_fixture(pg, &pid_a, Some(&fid_a), &[&abs_a]).await;
-        cleanup_metrics_fixture(pg, &pid_b, Some(&fid_b), &[&abs_b]).await;
-    }
-
-    #[tokio::test]
     async fn churn_rework_density_writes_real_zero() {
         // A project with REAL project files but ZERO rework patterns → a rework_density
         // row IS written with value 0.0 / numerator 0 (a real zero over a real
@@ -567,57 +651,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn churn_concentration_top_20_percent_rounds_up() {
-        // Pin the ceil(20%) Pareto rule with N=6, where ceil(6×0.2)=2 diverges from a
-        // floor-then-max(1) mutation (=1). The top TWO busiest files' churn must be
-        // the numerator.
-        let ctx = make_ctx().await;
-        let pg = ctx.pg();
-        let uniq = uuid::Uuid::new_v4();
-        let (pid, fid) = seed_metrics_project_folder(pg, &uniq).await;
-        let abs = format!("/_test/metrics-{uniq}");
-        purge_task_executions(pg, &[&abs]).await;
-
-        let ts = chrono::Utc::now() - chrono::Duration::hours(2);
-        // 6 files, churn 4,3,1,1,1,1 (total 11). Top-20% = ceil(6×0.2)=2 → busiest two
-        // (4+3=7). A floor(1.2)=1 rounding would give only the top-1 (4), so
-        // numerator==7 pins ceil; denominator==11 pins "all files".
-        let churn = [("f1.rs", 4), ("f2.rs", 3), ("f3.rs", 1), ("f4.rs", 1), ("f5.rs", 1), ("f6.rs", 1)];
-        for (f, n) in churn {
-            for _ in 0..n {
-                seed_task_execution(pg, "process_file", "completed", &abs, &format!("{abs}/{f}"), ts).await;
-            }
-        }
-
-        compute(&ctx, &pid.to_string(), None).await.unwrap();
-
-        let daily = daily_rows(pg, &pid).await;
-        let conc = daily.iter().find(|r| r.0 == "churn_concentration").expect("concentration row");
-        assert_eq!(conc.2["denominator"].as_i64(), Some(11), "denominator = total churn (11)");
-        assert_eq!(conc.2["numerator"].as_i64(), Some(7), "numerator = top ceil(6×0.2)=2 files' churn (4+3=7), NOT top-1 (4)");
-        assert!((conc.1 - 7.0 / 11.0).abs() < 1e-9, "value = 7/11");
-        let (fid_present,): (bool,) = query_as(
-            "SELECT EXISTS(SELECT 1 FROM sensei.project_metrics WHERE project_id = $1 AND folder_id = $2)",
-        )
-        .bind(pid)
-        .bind(fid)
-        .fetch_one(pg.pool())
-        .await
-        .unwrap();
-        assert!(fid_present, "the churn_rate module row for the folder is present");
-
-        cleanup_metrics_fixture(pg, &pid, Some(&fid), &[&abs]).await;
-    }
-
-    #[tokio::test]
     async fn churn_rework_density_historical_as_of_skips() {
-        // Forward-only guard (Phase 3): `rework_density` is a snapshot of the CURRENT
-        // rework signal vs current project files and cannot be reconstructed for a
-        // past day, so a historical `as_of` (Some(D), D != today) writes NO
-        // rework_density row — never a fabricated historical snapshot. Seeds ONLY
-        // rework data (no executions) so the row count isolates rework_density; the
-        // SAME fixture writes rows with `as_of = None` (see
-        // `churn_rework_density_ratio_and_zero_project_files`).
+        // Forward-only guard: `rework_density` is a snapshot of the CURRENT rework
+        // signal vs current project files and cannot be reconstructed for a past day,
+        // so a historical `as_of` (Some(D), D != today) writes NO rework_density row —
+        // never a fabricated historical snapshot. Seeds ONLY rework data (a non-git
+        // root, so no git churn) so the row count isolates rework_density.
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
@@ -630,7 +669,7 @@ mod tests {
 
         let past = chrono::NaiveDate::from_ymd_opt(2020, 1, 1).unwrap();
         let written = compute(&ctx, &pid.to_string(), Some(past)).await.unwrap();
-        assert_eq!(written, 0, "historical as_of → rework_density (forward-only) skipped → zero rows");
+        assert_eq!(written, 0, "historical as_of → rework_density (forward-only) skipped, non-git root → no churn → zero rows");
 
         let (total,): (i64,) = query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
             .bind(pid)

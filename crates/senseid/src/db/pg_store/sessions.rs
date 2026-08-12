@@ -581,6 +581,60 @@ impl PgStore {
         Ok(rows)
     }
 
+    /// The MEASURABLE sessions that ran on `day` for a project — the data behind a
+    /// daily metric datapoint (the datapoint→sessions drill-down). Project scope is
+    /// the folder-join (`sensei.folders.project_id`), matching how the daily metrics
+    /// are computed (`session_outcomes`), so the set here is exactly the base a daily
+    /// point was measured over — the fix for the old un-scoped digest that returned a
+    /// fixed, project-agnostic three. `outcome IS NOT NULL` restricts to measurable
+    /// (analyzed) sessions; `date_trunc('day', started_at)::date = day` pins the
+    /// calendar day. Each row carries the structural fields the client renders a
+    /// one-liner from (`outcome` + `ftr` + `turns` + `corrections`) plus the
+    /// `client_session_id` reference, `started_at`, `task`, and the existing
+    /// `summary` column (may be empty for backfilled sessions — the LLM per-session
+    /// summary is a separate workstream). Newest-first. Empty when no measurable
+    /// session ran that day (honest-empty, not a failure); propagates the read error.
+    pub async fn get_project_sessions_for_day(
+        &self,
+        project_id: &uuid::Uuid,
+        day: chrono::NaiveDate,
+    ) -> Result<Vec<serde_json::Value>, String> {
+        type Row = (
+            Option<String>, chrono::DateTime<chrono::Utc>, Option<String>,
+            Option<bool>, i32, i32, String, Option<String>,
+        );
+        let rows: Vec<Row> = sqlx_core::query_as::query_as(
+            "SELECT s.client_session_id, s.started_at, s.outcome::text, s.ftr,
+                    s.turns, s.corrections, s.task, s.summary
+               FROM activity.sessions s
+               JOIN sensei.folders  f ON f.id = s.folder_id
+              WHERE f.project_id = $1
+                AND s.outcome   IS NOT NULL
+                AND date_trunc('day', s.started_at)::date = $2
+              ORDER BY s.started_at DESC",
+        )
+        .bind(project_id)
+        .bind(day)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(rows
+            .into_iter()
+            .map(|(client_session_id, started_at, outcome, ftr, turns, corrections, task, summary)| {
+                serde_json::json!({
+                    "client_session_id": client_session_id,
+                    "started_at":        started_at.to_rfc3339(),
+                    "outcome":           outcome,
+                    "ftr":               ftr,
+                    "turns":             turns,
+                    "corrections":       corrections,
+                    "task":              task,
+                    "summary":           summary,
+                })
+            })
+            .collect())
+    }
+
     /// `(project_id, latest_session_activity)` for every project with attributed
     /// sessions — drives the analyzer scheduler's "what changed since last run"
     /// check (#67).

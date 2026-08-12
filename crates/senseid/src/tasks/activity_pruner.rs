@@ -137,6 +137,24 @@ mod tests {
     }
 
     #[test]
+    fn capture_scope_is_session_derived_only_and_excludes_git_churn() {
+        // The pruner scopes `prune_activity`'s capture-before-reclaim EXISTS to
+        // `planner::day_keyed_task_names()`. That scope must stay SESSION-derived only
+        // (`session_outcomes`, `autonomy`) and EXCLUDE git-derived `churn`: a churn row
+        // for a day must NOT green-light reclaiming that day's sessions before their
+        // session-anchored metrics (ftr/throughput) are captured — that would reopen
+        // the earlier data-loss bug. Churn is still backfilled per-day by the planner;
+        // it is only the capture authorization it must not carry (the #3 split).
+        let scope = crate::tasks::handlers::metrics::planner::day_keyed_task_names();
+        assert!(scope.contains(&"session_outcomes"), "session_outcomes authorizes capture");
+        assert!(scope.contains(&"autonomy"), "autonomy authorizes capture");
+        assert!(
+            !scope.contains(&"churn"),
+            "git-derived churn must NOT authorize capture-before-reclaim (pruner capture scope excludes churn)",
+        );
+    }
+
+    #[test]
     fn parse_backstop_defaults_to_max_floor_or_twice_retention() {
         // Default at the 90-day retention → max(90, 180) = 180 (2× beats the floor).
         assert_eq!(parse_backstop(None, DEFAULT_RETENTION_DAYS), 180);

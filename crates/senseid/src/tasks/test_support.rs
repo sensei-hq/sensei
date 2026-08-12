@@ -38,17 +38,10 @@ pub(crate) async fn make_ctx() -> Arc<crate::tasks::executor::TaskContext> {
 
 // ── Metrics compute fixtures ────────────────────────────────────────────────
 
-/// Create a project + a folder wired to it under the fixed `/_test` watch root
-/// (the same root-id convention the pg_store tests use). Returns
-/// `(project_id, folder_id)`. `uniq` keeps `abs_path` collision-free across tests.
-pub(crate) async fn seed_metrics_project_folder(
-    pg: &PgStore,
-    uniq: &uuid::Uuid,
-) -> (uuid::Uuid, uuid::Uuid) {
-    let pid = pg
-        .create_project(&format!("_test:metrics:{uniq}"), None, None)
-        .await
-        .unwrap();
+/// Ensure the fixed `/_test` watch root exists (idempotent) — the root every
+/// metric-fixture folder hangs off (the same root-id convention the pg_store
+/// tests use). Extracted so the synthetic- and git-path folder seeders share it.
+async fn ensure_test_watch_root(pg: &PgStore) {
     pg.execute_raw(
         "INSERT INTO sensei.folders_to_watch(id, path, name, status) \
          VALUES('00000000-0000-0000-0000-000000000001', '/_test', '_test', 'watching'::sensei.watch_status) \
@@ -56,20 +49,113 @@ pub(crate) async fn seed_metrics_project_folder(
     )
     .await
     .unwrap();
+}
+
+/// Create a project + a git-kind folder wired to it at an EXPLICIT `abs_path`
+/// under the fixed `/_test` watch root. The generalized core of
+/// [`seed_metrics_project_folder`] (which passes the synthetic `/_test/metrics-*`
+/// path): churn's git tests pass a REAL temp-repo path so `project_root_path`
+/// (the git churn source resolves the repo through it) points at an on-disk repo.
+/// Returns `(project_id, folder_id)`.
+pub(crate) async fn seed_project_folder_at(
+    pg: &PgStore,
+    uniq: &uuid::Uuid,
+    abs_path: &str,
+) -> (uuid::Uuid, uuid::Uuid) {
+    let pid = pg
+        .create_project(&format!("_test:metrics:{uniq}"), None, None)
+        .await
+        .unwrap();
+    ensure_test_watch_root(pg).await;
     let name = format!("metrics-{uniq}");
-    let abs = format!("/_test/metrics-{uniq}");
     let (fid,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
         "INSERT INTO sensei.folders(root_id, kind, name, path, abs_path, project_id) \
          VALUES('00000000-0000-0000-0000-000000000001', 'git'::sensei.folder_kind, $1, $1, $2, $3) \
          ON CONFLICT(abs_path) DO UPDATE SET project_id = EXCLUDED.project_id RETURNING id",
     )
     .bind(&name)
-    .bind(&abs)
+    .bind(abs_path)
     .bind(pid)
     .fetch_one(pg.pool())
     .await
     .unwrap();
     (pid, fid)
+}
+
+/// Create a project + a folder wired to it under the fixed `/_test` watch root
+/// (the same root-id convention the pg_store tests use). Returns
+/// `(project_id, folder_id)`. `uniq` keeps `abs_path` collision-free across tests.
+pub(crate) async fn seed_metrics_project_folder(
+    pg: &PgStore,
+    uniq: &uuid::Uuid,
+) -> (uuid::Uuid, uuid::Uuid) {
+    seed_project_folder_at(pg, uniq, &format!("/_test/metrics-{uniq}")).await
+}
+
+/// Create a project + a git-kind folder whose `abs_path` is a REAL on-disk git
+/// repo (a fresh [`tempfile::TempDir`]), returning
+/// `(project_id, folder_id, TempDir)`. The git-sourced churn computer resolves the
+/// repo via `project_root_path`, so churn tests need the folder to point at an
+/// actual repo. KEEP the returned `TempDir` bound for the test's duration —
+/// dropping it removes the repo. The repo carries a local `user.name`/`user.email`
+/// so commits succeed with no ambient git identity (CI).
+pub(crate) async fn seed_git_project_folder(
+    pg: &PgStore,
+    uniq: &uuid::Uuid,
+) -> (uuid::Uuid, uuid::Uuid, tempfile::TempDir) {
+    let dir = tempfile::tempdir().unwrap();
+    git_init_repo(dir.path());
+    let root = dir.path().to_string_lossy().to_string();
+    let (pid, fid) = seed_project_folder_at(pg, uniq, &root).await;
+    (pid, fid, dir)
+}
+
+/// `git init` a fresh repo at `dir` with a local commit identity and signing
+/// disabled — the shared bootstrap for the git-sourced churn fixtures. Panics on
+/// any git failure so a broken fixture fails loud rather than silently producing
+/// no churn.
+pub(crate) fn git_init_repo(dir: &std::path::Path) {
+    for args in [
+        &["init", "-q"][..],
+        &["config", "user.email", "test@sensei.test"][..],
+        &["config", "user.name", "Sensei Test"][..],
+        &["config", "commit.gpgsign", "false"][..],
+    ] {
+        let ok = std::process::Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .status()
+            .unwrap()
+            .success();
+        assert!(ok, "git {args:?} failed initializing the churn fixture repo");
+    }
+}
+
+/// Commit `files` (name → content) into the repo at `dir` with the author AND
+/// committer date pinned to `day` (`YYYY-MM-DD`), so `git log`'s committer-day
+/// (`%cd --date=short` — the field churn buckets on) lands on `day`. Writes each
+/// file, `git add -A`, then commits with `GIT_*_DATE` fixed to noon on `day`. Use
+/// distinct content across commits so `--numstat` reflects real per-file line churn.
+pub(crate) fn git_commit_on_day(dir: &std::path::Path, day: &str, files: &[(&str, &str)]) {
+    for (name, content) in files {
+        std::fs::write(dir.join(name), content).unwrap();
+    }
+    let add = std::process::Command::new("git")
+        .args(["add", "-A"])
+        .current_dir(dir)
+        .status()
+        .unwrap();
+    assert!(add.success(), "git add -A failed in the churn fixture repo");
+    let stamp = format!("{day}T12:00:00");
+    let ok = std::process::Command::new("git")
+        .args(["commit", "-q", "-m", "churn fixture"])
+        .current_dir(dir)
+        .env("GIT_AUTHOR_DATE", &stamp)
+        .env("GIT_COMMITTER_DATE", &stamp)
+        .status()
+        .unwrap()
+        .success();
+    assert!(ok, "git commit failed in the churn fixture repo (day {day})");
 }
 
 /// Insert one `activity.sessions` row and return its id. `outcome`/`ftr` are
@@ -144,39 +230,6 @@ pub(crate) async fn seed_metrics_turn_ex(
     .bind(ended_at)
     .bind(is_correction)
     .bind(tool_calls)
-    .execute(pg.pool())
-    .await
-    .unwrap();
-}
-
-/// Insert one `activity.task_executions` row — the churn source (Phase 5.2). Churn
-/// counts `status = 'completed'` `process_file` executions, so `task_kind` is
-/// usually `"process_file"` and `status` usually `"completed"` (pass `"failed"` to
-/// exercise the retry-de-dup filter). `folder_path` is the git-folder abs path
-/// churn is attributed through (`resolve_folder_by_path`, alias-aware), and `path`
-/// the file the execution processed (`churn_concentration` keys files on it).
-/// `started_at` fixes the day. `task_id` is a throwaway (bigint, no unique
-/// constraint) derived from a fresh uuid so parallel seeds don't collide. Shared so
-/// 5.3 can reuse it.
-pub(crate) async fn seed_task_execution(
-    pg: &PgStore,
-    task_kind: &str,
-    status: &str,
-    folder_path: &str,
-    path: &str,
-    started_at: chrono::DateTime<chrono::Utc>,
-) {
-    let task_id = uuid::Uuid::new_v4().as_u128() as i64;
-    sqlx_core::query::query(
-        "INSERT INTO activity.task_executions (task_id, task_kind, folder_path, path, status, started_at) \
-         VALUES ($1, $2, $3, $4, $5, $6)",
-    )
-    .bind(task_id)
-    .bind(task_kind)
-    .bind(folder_path)
-    .bind(path)
-    .bind(status)
-    .bind(started_at)
     .execute(pg.pool())
     .await
     .unwrap();
