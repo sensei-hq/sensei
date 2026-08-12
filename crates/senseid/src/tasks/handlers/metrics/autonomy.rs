@@ -42,9 +42,13 @@
 //!   project, are simply not counted for this project.
 //! - `run_completion`: `activity.runs.project_id` is a direct FK — scope by it.
 //!
-//! Windowing/day-bucketing uses the server-side timestamp of each source row
-//! (`assistant_events.created_at`, `runs.started_at`), matching the `now() -
-//! make_interval` window the churn/session_outcomes computers use.
+//! Windowing/day-bucketing uses each source row's TRUE occurrence time — the
+//! event's client clock `assistant_events.ts` (epoch ms →
+//! `to_timestamp(ts / 1000.0)`) for `interruption_rate`, and `runs.started_at` for
+//! `run_completion` — never an insert-time `created_at` (which is `now` for
+//! synthesized/back-dated rows). `as_of=None` keeps the rolling `now() -
+//! make_interval` window; `as_of=Some(D)` selects the single day `D` (backfill) via
+//! the shared [`super::day_filter`] / [`super::bind_day`] `$2` contract.
 //!
 //! Never-fabricate: every DB call propagates `Err`; a metric/day with no data
 //! writes NO row. A ratio with denominator 0 writes NO row (a 0/0 would be a
@@ -83,37 +87,52 @@ type DayInterruption = (chrono::NaiveDate, i64, i64);
 /// `started_count` (every run started that day) is the `run_completion` denominator.
 type DayRunCompletion = (chrono::NaiveDate, i64, i64);
 
-/// Daily `Stop` / `UserPromptSubmit` counts over the window, attributed to the
+/// This group's occurrence-time anchors for the shared [`super::day_filter`] /
+/// [`super::bind_day`] `$2` day-set contract. `interruption_rate` buckets/windows on
+/// the event's CLIENT clock `ts` (epoch ms → `to_timestamp(ts / 1000.0)`, the same
+/// `ae.ts / 1000.0` convention `get_project_sessions_needing_enrichment` uses), NOT
+/// the server insert `created_at` — a synthesized/back-dated event carries its true
+/// occurrence time in `ts` while `created_at` is `now`. `run_completion` buckets on
+/// `runs.started_at`.
+const ANCHOR_INTERRUPTION: &str = "to_timestamp(ae.ts / 1000.0)";
+const ANCHOR_RUN_COMPLETION: &str = "r.started_at";
+
+/// Daily `Stop` / `UserPromptSubmit` counts over the selected day-set (rolling
+/// window when `as_of=None`, the single day `D` when `Some(D)`), attributed to the
 /// project via `sessions.client_session_id = assistant_events.session_id` (events
 /// with no matching session, or a session in another project, are excluded).
-/// Bucketed by the server-side `created_at`.
+/// Bucketed by the event's CLIENT `ts` (its true occurrence day), not the insert
+/// `created_at`.
 async fn daily_interruption(
     pg: &PgStore,
     project_id: &uuid::Uuid,
     window_days: u32,
+    as_of: Option<chrono::NaiveDate>,
 ) -> Result<Vec<DayInterruption>, String> {
-    sqlx_core::query_as::query_as(
-        "SELECT date_trunc('day', ae.created_at)::date                     AS day
-              , count(*) FILTER (WHERE ae.event_type = $2)::int8           AS stop_count
-              , count(*) FILTER (WHERE ae.event_type = $3)::int8           AS prompt_count
+    let sql = format!(
+        "SELECT date_trunc('day', to_timestamp(ae.ts / 1000.0))::date      AS day
+              , count(*) FILTER (WHERE ae.event_type = $3)::int8           AS stop_count
+              , count(*) FILTER (WHERE ae.event_type = $4)::int8           AS prompt_count
            FROM activity.assistant_events ae
            JOIN activity.sessions        s ON s.client_session_id = ae.session_id
           WHERE s.project_id   = $1
-            AND ae.event_type IN ($2, $3)
-            AND ae.created_at >= now() - make_interval(days => $4::int)
+            AND ae.event_type IN ($3, $4)
+            AND {}
           GROUP BY 1
           ORDER BY 1",
-    )
-    .bind(project_id)
-    .bind(EVENT_STOP)
-    .bind(EVENT_USER_PROMPT)
-    .bind(window_days as i32)
-    .fetch_all(pg.pool())
-    .await
-    .map_err(|e| e.to_string())
+        super::day_filter(ANCHOR_INTERRUPTION, as_of),
+    );
+    let q = sqlx_core::query_as::query_as::<_, DayInterruption>(&sql).bind(project_id);
+    super::bind_day(q, window_days, as_of)
+        .bind(EVENT_STOP)
+        .bind(EVENT_USER_PROMPT)
+        .fetch_all(pg.pool())
+        .await
+        .map_err(|e| e.to_string())
 }
 
-/// Daily run-completion counts over the window, project-scoped via the direct
+/// Daily run-completion counts over the selected day-set (rolling window when
+/// `as_of=None`, the single day `D` when `Some(D)`), project-scoped via the direct
 /// `runs.project_id` FK. `done_count` is runs whose terminal `status = 'done'`;
 /// `started_count` is every run started that day (the denominator). Bucketed by
 /// `started_at` — a run counts on the day it started, regardless of when it finished.
@@ -121,22 +140,24 @@ async fn daily_run_completion(
     pg: &PgStore,
     project_id: &uuid::Uuid,
     window_days: u32,
+    as_of: Option<chrono::NaiveDate>,
 ) -> Result<Vec<DayRunCompletion>, String> {
-    sqlx_core::query_as::query_as(
+    let sql = format!(
         "SELECT date_trunc('day', r.started_at)::date                          AS day
               , count(*) FILTER (WHERE r.status = 'done'::sensei.run_status)::int8 AS done_count
               , count(*)::int8                                                  AS started_count
            FROM activity.runs r
           WHERE r.project_id  = $1
-            AND r.started_at >= now() - make_interval(days => $2::int)
+            AND {}
           GROUP BY 1
           ORDER BY 1",
-    )
-    .bind(project_id)
-    .bind(window_days as i32)
-    .fetch_all(pg.pool())
-    .await
-    .map_err(|e| e.to_string())
+        super::day_filter(ANCHOR_RUN_COMPLETION, as_of),
+    );
+    let q = sqlx_core::query_as::query_as::<_, DayRunCompletion>(&sql).bind(project_id);
+    super::bind_day(q, window_days, as_of)
+        .fetch_all(pg.pool())
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// Build the ratio props for a row: exact `numerator` + `denominator` and the
@@ -150,13 +171,29 @@ fn ratio_props(numerator: i64, denominator: i64) -> serde_json::Value {
     })
 }
 
-/// Compute the `autonomy` group for one project over the configured window.
-/// `project_raw` is the project uuid carried in `task.folder_path`. Returns the
-/// number of `project_metrics` rows written (`0` = honest-empty: no events/runs, or
-/// none of the group's computed metrics active). Idempotent — re-running backfills
-/// in place via the upsert identity. `false_crash_rate` is never written (see the
-/// module doc).
-pub(super) async fn compute(ctx: &TaskContext, project_raw: &str) -> Result<u32, String> {
+/// Compute the `autonomy` group for one project.
+///
+/// `project_raw` is the project uuid carried in `task.folder_path`. `as_of` selects
+/// the day-set (same contract as `session_outcomes`):
+/// - `None` — the incremental run: every day in the rolling
+///   [`metrics.window_days`] window (default 14), `computed_on` = the source day.
+/// - `Some(D)` — the backfill/gap-fill run: ONLY the single day `D`, `computed_on` =
+///   `D`. This is how a past day reaches the roll-up views (which bucket on
+///   `computed_on` with no recent-window filter).
+///
+/// Both metrics bucket on their TRUE occurrence time — `interruption_rate` on the
+/// event's client `ts`, `run_completion` on `runs.started_at` — never an insert-time
+/// `created_at`, so a synthesized/back-dated row files on its historical day.
+///
+/// Returns the number of `project_metrics` rows written (`0` = honest-empty: no
+/// events/runs on the selected day-set, or none of the group's computed metrics
+/// active). Idempotent — re-running backfills in place via the upsert identity.
+/// `false_crash_rate` is never written (see the module doc).
+pub(super) async fn compute(
+    ctx: &TaskContext,
+    project_raw: &str,
+    as_of: Option<chrono::NaiveDate>,
+) -> Result<u32, String> {
     let project_id = uuid::Uuid::parse_str(project_raw)
         .map_err(|e| format!("autonomy: bad project id {project_raw:?}: {e}"))?;
     let pg = ctx.pg();
@@ -179,7 +216,7 @@ pub(super) async fn compute(ctx: &TaskContext, project_raw: &str) -> Result<u32,
     // ── interruption_rate: # Stop / # UserPromptSubmit, per day ──
     if let Some(mid) = interruption_id {
         for (day, stop_count, prompt_count) in
-            daily_interruption(pg, &project_id, window_days).await?
+            daily_interruption(pg, &project_id, window_days, as_of).await?
         {
             if prompt_count == 0 {
                 // No UserPromptSubmit that day → no denominator → NO row (a 0/0, e.g.
@@ -199,7 +236,7 @@ pub(super) async fn compute(ctx: &TaskContext, project_raw: &str) -> Result<u32,
     // ── run_completion: # runs done / # runs started, per day ──
     if let Some(mid) = run_completion_id {
         for (day, done_count, started_count) in
-            daily_run_completion(pg, &project_id, window_days).await?
+            daily_run_completion(pg, &project_id, window_days, as_of).await?
         {
             if started_count == 0 {
                 // Defensive: GROUP BY only returns days with ≥1 run, so this never
@@ -224,8 +261,8 @@ mod tests {
     use super::*;
     use crate::tasks::test_support::{
         cleanup_metrics_fixture, daily_project_metric_rows as daily_rows, make_ctx,
-        purge_assistant_events, purge_runs, seed_assistant_event, seed_metrics_client_session,
-        seed_metrics_project_folder, seed_run,
+        purge_assistant_events, purge_runs, seed_assistant_event, seed_assistant_event_ex,
+        seed_metrics_client_session, seed_metrics_project_folder, seed_run,
     };
     use sqlx_core::query_as::query_as;
 
@@ -258,7 +295,7 @@ mod tests {
             seed_run(pg, &pid, "crashed", ts).await;
         }
 
-        let written = compute(&ctx, &pid.to_string()).await.unwrap();
+        let written = compute(&ctx, &pid.to_string(), None).await.unwrap();
         assert_eq!(written, 2, "interruption_rate daily + run_completion daily (false_crash_rate skipped)");
 
         let daily = daily_rows(pg, &pid).await;
@@ -282,7 +319,7 @@ mod tests {
         );
 
         // ── Idempotency: re-run backfills in place, never duplicates ──
-        let again = compute(&ctx, &pid.to_string()).await.unwrap();
+        let again = compute(&ctx, &pid.to_string(), None).await.unwrap();
         assert_eq!(again, 2, "re-run recomputes the same rows");
         let (total,): (i64,) = query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
             .bind(pid)
@@ -307,7 +344,7 @@ mod tests {
             .await
             .unwrap();
 
-        let written = compute(&ctx, &pid.to_string()).await.unwrap();
+        let written = compute(&ctx, &pid.to_string(), None).await.unwrap();
         assert_eq!(written, 0, "no events/runs in the window → zero rows written");
 
         let (total,): (i64,) = query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
@@ -339,7 +376,7 @@ mod tests {
         }
         // No Stop events and no runs.
 
-        let written = compute(&ctx, &pid.to_string()).await.unwrap();
+        let written = compute(&ctx, &pid.to_string(), None).await.unwrap();
         assert_eq!(written, 1, "interruption_rate real-zero row; run_completion has no runs → no row");
 
         let daily = daily_rows(pg, &pid).await;
@@ -370,7 +407,7 @@ mod tests {
             seed_assistant_event(pg, &csid, "Stop", ts).await;
         }
 
-        let written = compute(&ctx, &pid.to_string()).await.unwrap();
+        let written = compute(&ctx, &pid.to_string(), None).await.unwrap();
         assert_eq!(written, 0, "denominator 0 (no UserPromptSubmit) → no interruption_rate row (never a fabricated 0/0)");
 
         let (total,): (i64,) = query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
@@ -409,7 +446,7 @@ mod tests {
             seed_assistant_event(pg, &csid_10, "UserPromptSubmit", ts).await;
         }
 
-        compute(&ctx, &pid_10.to_string()).await.unwrap();
+        compute(&ctx, &pid_10.to_string(), None).await.unwrap();
         let daily_10 = daily_rows(pg, &pid_10).await;
         let ir_10 = daily_10.iter().find(|r| r.0 == "interruption_rate").expect("interruption_rate row (den 10)");
         assert_eq!(ir_10.2["denominator"].as_i64(), Some(10), "denominator is exactly 10");
@@ -428,7 +465,7 @@ mod tests {
             seed_assistant_event(pg, &csid_9, "UserPromptSubmit", ts).await;
         }
 
-        compute(&ctx, &pid_9.to_string()).await.unwrap();
+        compute(&ctx, &pid_9.to_string(), None).await.unwrap();
         let daily_9 = daily_rows(pg, &pid_9).await;
         let ir_9 = daily_9.iter().find(|r| r.0 == "interruption_rate").expect("interruption_rate row (den 9)");
         assert_eq!(ir_9.2["denominator"].as_i64(), Some(9), "denominator is exactly 9");
@@ -478,7 +515,7 @@ mod tests {
             seed_run(pg, &pid_b, "done", ts).await;
         }
 
-        let written = compute(&ctx, &pid_a.to_string()).await.unwrap();
+        let written = compute(&ctx, &pid_a.to_string(), None).await.unwrap();
         assert_eq!(written, 2, "only A's own events/runs produce rows (interruption + run_completion)");
 
         let daily = daily_rows(pg, &pid_a).await;
@@ -495,5 +532,144 @@ mod tests {
         purge_assistant_events(pg, &[&csid_a, &csid_b]).await;
         cleanup_metrics_fixture(pg, &pid_a, Some(&fid_a), &[]).await;
         cleanup_metrics_fixture(pg, &pid_b, Some(&fid_b), &[]).await;
+    }
+
+    #[tokio::test]
+    async fn autonomy_backfills_a_historical_day_when_as_of_is_set() {
+        // Phase 2: `as_of = Some(D)` computes the SINGLE historical day D and stamps
+        // `computed_on = D` for BOTH autonomy metrics, so a past day reaches the
+        // roll-up views (which bucket on `computed_on` with no recent-window filter).
+        // The incremental (`None`) run omits the day because it is outside the rolling
+        // window — that omission is exactly what the backfill path fixes.
+        let ctx = make_ctx().await;
+        let pg = ctx.pg();
+        let uniq = uuid::Uuid::new_v4();
+        let (pid, fid) = seed_metrics_project_folder(pg, &uniq).await;
+        let csid = format!("_test:autonomy-asof:{uniq}");
+        purge_assistant_events(pg, &[&csid]).await;
+        purge_runs(pg, &[&pid]).await;
+
+        // Events + runs 60 days ago — well outside the default 14-day window.
+        let ts = chrono::Utc::now() - chrono::Duration::days(60);
+        let day = ts.date_naive();
+        seed_metrics_client_session(pg, &fid, &pid, &csid, ts).await;
+        for _ in 0..2 {
+            seed_assistant_event(pg, &csid, "Stop", ts).await;
+        }
+        for _ in 0..5 {
+            seed_assistant_event(pg, &csid, "UserPromptSubmit", ts).await;
+        }
+        seed_run(pg, &pid, "done", ts).await;
+        seed_run(pg, &pid, "crashed", ts).await;
+
+        // Incremental run (as_of=None): the 60-day-old day is out of window → NO rows.
+        let incr = compute(&ctx, &pid.to_string(), None).await.unwrap();
+        assert_eq!(incr, 0, "the 60-day-old day is outside the rolling window → no incremental rows");
+
+        // Backfill run (as_of=Some(day)): computes exactly that day's metrics.
+        let written = compute(&ctx, &pid.to_string(), Some(day)).await.unwrap();
+        assert_eq!(written, 2, "as_of=Some(D) computes the historical day (interruption_rate + run_completion)");
+
+        // Both daily rows are stamped `computed_on = day` (the true occurrence day,
+        // 60 days ago) — proof the past-dated rows reach the daily roll-up.
+        let (days,): (i64,) = query_as(
+            "SELECT count(*) FROM sensei.project_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
+              WHERE pm.project_id = $1 AND pm.grain = 'daily' AND pm.computed_on = $2 \
+                AND m.key IN ('interruption_rate', 'run_completion')",
+        )
+        .bind(pid)
+        .bind(day)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        assert_eq!(days, 2, "interruption_rate + run_completion daily rows stamped computed_on = the historical day");
+
+        let daily = daily_rows(pg, &pid).await;
+        let ir = daily.iter().find(|r| r.0 == "interruption_rate").expect("interruption_rate row present");
+        assert!((ir.1 - 2.0 / 5.0).abs() < 1e-9, "interruption_rate value = 2/5 = 0.4");
+        let rc = daily.iter().find(|r| r.0 == "run_completion").expect("run_completion row present");
+        assert!((rc.1 - 0.5).abs() < 1e-9, "run_completion value = 1/2 = 0.5");
+
+        // Idempotent: re-backfilling the same day upserts in place (no duplicate rows).
+        let again = compute(&ctx, &pid.to_string(), Some(day)).await.unwrap();
+        assert_eq!(again, 2, "re-running the same day backfills in place");
+        let (total,): (i64,) = query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
+            .bind(pid)
+            .fetch_one(pg.pool())
+            .await
+            .unwrap();
+        assert_eq!(total, 2, "idempotent upsert — still 2 rows after a second backfill of the same day");
+
+        purge_runs(pg, &[&pid]).await;
+        purge_assistant_events(pg, &[&csid]).await;
+        cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
+    }
+
+    #[tokio::test]
+    async fn autonomy_interruption_rate_anchors_on_client_ts_not_created_at() {
+        // Anchor-fix mutation guard: `interruption_rate` must bucket on the event's
+        // CLIENT `ts` (true occurrence time), NOT the server `created_at` (insert
+        // time = now for synthesized/back-dated rows). Seed events whose `ts` is 45
+        // days ago but whose `created_at` is NOW, then backfill that historical day.
+        //
+        // Old `created_at` path: `as_of=Some(historical_day)` filtering/bucketing on
+        // `created_at` (= now) matches NOTHING on the historical day → 0 rows (and the
+        // pre-fix as_of-ignored window path would file the row on TODAY instead). Only
+        // a `ts`-anchored computer files the row on its true historical day.
+        let ctx = make_ctx().await;
+        let pg = ctx.pg();
+        let uniq = uuid::Uuid::new_v4();
+        let (pid, fid) = seed_metrics_project_folder(pg, &uniq).await;
+        let csid = format!("_test:autonomy-tsanchor:{uniq}");
+        purge_assistant_events(pg, &[&csid]).await;
+
+        let now = chrono::Utc::now();
+        let occurred = now - chrono::Duration::days(45); // true occurrence time (client ts)
+        let historical_day = occurred.date_naive();
+        assert_ne!(historical_day, now.date_naive(), "the occurrence day differs from today");
+
+        seed_metrics_client_session(pg, &fid, &pid, &csid, occurred).await;
+        // ts = 45 days ago, created_at = now → a synthesized/back-dated event.
+        for _ in 0..2 {
+            seed_assistant_event_ex(pg, &csid, "Stop", occurred, now).await;
+        }
+        for _ in 0..5 {
+            seed_assistant_event_ex(pg, &csid, "UserPromptSubmit", occurred, now).await;
+        }
+
+        let written = compute(&ctx, &pid.to_string(), Some(historical_day)).await.unwrap();
+        assert_eq!(written, 1, "the back-dated events land on their historical day (interruption_rate only; no runs)");
+
+        // The daily row is stamped `computed_on = the client-ts day`, NOT today.
+        let (hist_rows,): (i64,) = query_as(
+            "SELECT count(*) FROM sensei.project_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
+              WHERE pm.project_id = $1 AND m.key = 'interruption_rate' AND pm.grain = 'daily' \
+                AND pm.computed_on = $2",
+        )
+        .bind(pid)
+        .bind(historical_day)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        assert_eq!(hist_rows, 1, "interruption_rate row filed on the client-ts day (created_at path would misfile/miss it)");
+
+        // Nothing filed on today (the created_at day) — the anchor is the ts, period.
+        let (today_rows,): (i64,) = query_as(
+            "SELECT count(*) FROM sensei.project_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
+              WHERE pm.project_id = $1 AND m.key = 'interruption_rate' AND pm.grain = 'daily' \
+                AND pm.computed_on = current_date",
+        )
+        .bind(pid)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        assert_eq!(today_rows, 0, "no row on today's date — created_at (insert time) is NOT the anchor");
+
+        let daily = daily_rows(pg, &pid).await;
+        let ir = daily.iter().find(|r| r.0 == "interruption_rate").expect("interruption_rate row present");
+        assert!((ir.1 - 2.0 / 5.0).abs() < 1e-9, "interruption_rate value = 2/5 = 0.4");
+
+        purge_assistant_events(pg, &[&csid]).await;
+        cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
     }
 }
