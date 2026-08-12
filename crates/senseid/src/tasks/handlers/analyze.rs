@@ -18,7 +18,7 @@
 //! handle the I/O.
 
 use super::super::executor::TaskContext;
-use super::super::Task;
+use super::super::{Task, TaskKind};
 use super::prompt_classify::{classify_batch, PromptClass};
 
 /// Idle gap (ms) that separates "still working" from "came back later" — turns
@@ -414,6 +414,20 @@ pub async fn analyze_project(ctx: &TaskContext, task: &Task) -> Result<u32, Stri
     if let Err(e) = super::rank::rank_for_project(ctx, &project_id).await {
         tracing::warn!(error = %e, project = %project_id, "analyze_project: rank failed");
     }
+    // Analysis completion makes this project's (re)synthesized sessions
+    // MEASURABLE — a `session_outcomes` day is only countable once the analyzer has
+    // set each session's `outcome` — so analysis drives the per-day metric plan
+    // (synthesizer → analyzer → PlanMetricDays), with the daily metrics scheduler
+    // as the self-heal backstop. Project id rides in `folder_path` (empty `path`),
+    // matching the metrics scheduler's enqueue shape. `enqueue_unique` guards
+    // against a plan storm: analyze runs often, so a PlanMetricDays already
+    // pending/blocked/running for this project coalesces — the `None` return is
+    // intentionally ignored (the in-flight plan already covers this project) and
+    // never fails the analyze result.
+    let _ = ctx
+        .queue
+        .enqueue_unique(Task::new(TaskKind::PlanMetricDays, &project_id.to_string(), ""))
+        .await;
     Ok(enriched)
 }
 
@@ -840,6 +854,61 @@ mod tests {
         // cleanup
         let pool = pg.pool();
         sqlx_core::query::query("DELETE FROM inference.detected_patterns WHERE project_id = $1").bind(pid).execute(pool).await.ok();
+        sqlx_core::query::query("DELETE FROM activity.assistant_events WHERE session_id = $1").bind(&csid).execute(pool).await.ok();
+        sqlx_core::query::query("DELETE FROM activity.sessions WHERE id = $1").bind(sid).execute(pool).await.ok();
+        sqlx_core::query::query("DELETE FROM sensei.folders WHERE root_id = $1").bind(root).execute(pool).await.ok();
+        sqlx_core::query::query("DELETE FROM sensei.folders_to_watch WHERE id = $1").bind(root).execute(pool).await.ok();
+        sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1").bind(pid).execute(pool).await.ok();
+    }
+
+    #[tokio::test]
+    async fn analyze_project_enqueues_one_plan_metric_days_and_guards_storms() {
+        // Analysis completion is what makes a project's (re)synthesized sessions
+        // MEASURABLE — `session_outcomes` days become countable only once the
+        // analyzer sets each session's `outcome` — so a successful analyze pass
+        // drives the per-day metric plan (synthesizer → analyzer → PlanMetricDays).
+        // Because analyze runs often, the enqueue is `enqueue_unique`-guarded: a
+        // second pass while the first PlanMetricDays is still in flight must NOT
+        // stack a duplicate (the plan-storm guard).
+        let ctx = make_ctx().await;
+        let pg = ctx.pg();
+        let pid = pg.create_project(&format!("_test:analyze-plan-{}", uuid::Uuid::new_v4()), None, None).await.unwrap();
+        let root = pg.add_watch_root(&format!("/_test/ana-plan-root-{}", uuid::Uuid::new_v4()), "t", &serde_json::json!([])).await.unwrap();
+        let fid = pg.upsert_repo(&root, "ana-plan-repo", &format!("/_test/ana-plan-{}", uuid::Uuid::new_v4())).await.unwrap();
+        let csid = format!("_test-sid-{}", uuid::Uuid::new_v4());
+        let sid = pg.record_session_event(&csid, &fid, Some(&pid), "claude", true).await.unwrap();
+
+        // A minimal enrichable session (a prompt + a Stop) so analyze_project
+        // reaches its success path.
+        let prompt = |t: &str| serde_json::json!({ "prompt": t });
+        pg.insert_hook_event(&csid, "claude", "UserPromptSubmit", None, None, 1000, None, &prompt("build the thing")).await.unwrap();
+        pg.insert_hook_event(&csid, "claude", "Stop", None, None, 2000, None, &serde_json::json!({})).await.unwrap();
+
+        // Count PlanMetricDays enqueued for THIS project (id in folder_path, empty path).
+        let owner = pid.to_string();
+        let count_plans = |snap: &[(TaskKind, String, String)]| -> usize {
+            snap.iter()
+                .filter(|(k, f, p)| *k == TaskKind::PlanMetricDays && *f == owner && p.is_empty())
+                .count()
+        };
+
+        let task = Task::new(TaskKind::AnalyzeProject, "", &pid.to_string());
+        analyze_project(&ctx, &task).await.unwrap();
+        assert_eq!(
+            count_plans(&ctx.queue.snapshot().await), 1,
+            "analysis completion enqueues exactly one PlanMetricDays for the project",
+        );
+
+        // A second pass while the first PlanMetricDays is still pending coalesces —
+        // enqueue_unique dedups on (kind, folder_path, path), so no second stacks.
+        analyze_project(&ctx, &task).await.unwrap();
+        assert_eq!(
+            count_plans(&ctx.queue.snapshot().await), 1,
+            "a re-run while the plan is still in flight does not stack a duplicate (enqueue_unique)",
+        );
+
+        // cleanup
+        let pool = pg.pool();
         sqlx_core::query::query("DELETE FROM activity.assistant_events WHERE session_id = $1").bind(&csid).execute(pool).await.ok();
         sqlx_core::query::query("DELETE FROM activity.sessions WHERE id = $1").bind(sid).execute(pool).await.ok();
         sqlx_core::query::query("DELETE FROM sensei.folders WHERE root_id = $1").bind(root).execute(pool).await.ok();
