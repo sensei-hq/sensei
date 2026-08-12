@@ -5,6 +5,7 @@
 
 pub mod doc_drift;
 pub mod insight_copy;
+pub mod metric_day_explainer;
 pub mod metric_narrative;
 pub mod project_icon;
 pub mod session_metric_note;

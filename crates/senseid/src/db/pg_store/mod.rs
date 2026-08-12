@@ -373,6 +373,11 @@ pub struct ProjectMetricSeriesPoint {
     pub period:    chrono::NaiveDate,
     pub value:     f64,
     pub direction: String,
+    /// The per-datapoint explainer — the one-line "why this day's value is what it
+    /// is" companion (`props->>'explainer'`), present only at DAILY grain and only
+    /// once its day has been computed. `None` at coarser grains (the explainer is a
+    /// per-day artifact) and for a day not yet enriched. Never fabricated.
+    pub explainer: Option<String>,
 }
 
 /// A project metric's series at a grain bundled with the metric's `formula` — the
