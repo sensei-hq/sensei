@@ -19,7 +19,45 @@ fn clear_startup_error() {
     let _ = std::fs::remove_file(dir.join("startup-error.log"));
 }
 
-const DEFAULT_WORKERS: usize = 3;
+/// Never run fewer workers than this — preserves the historical baseline so a
+/// small (1–2 core) machine sees no regression from the old hardcoded pool.
+const WORKER_FLOOR: usize = 3;
+
+/// Connections held back from the worker pool for the daemon's non-worker DB
+/// users — the schedulers (metrics/analyzer/reconcile/pruners/advance_run/
+/// watchdog/contribute), the relay loop, and transient HTTP handlers. The
+/// worker cap is `DB_POOL_MAX_CONNECTIONS - WORKER_DB_RESERVE` so a saturated
+/// pool always leaves this reserve for them.
+const WORKER_DB_RESERVE: usize = 8;
+
+/// Resolve the task-worker count from the detected core count and an optional
+/// operator override (`SENSEI_WORKERS`). Pure and unit-testable — no env / core
+/// reads happen here.
+///
+/// The pool can't serve more concurrent workers than
+/// `DB_POOL_MAX_CONNECTIONS - WORKER_DB_RESERVE`, so that is the hard cap for
+/// both the cores path and an operator override (an override still can't starve
+/// the non-worker DB users). A positive `env` value is used, clamped to
+/// `[WORKER_FLOOR, cap]`; a zero/invalid `env` falls back to the cores path,
+/// which is likewise clamped to `[WORKER_FLOOR, cap]`.
+fn resolve_worker_count(cores: usize, env: Option<String>) -> usize {
+    let cap = (sensei_bootstrap::DB_POOL_MAX_CONNECTIONS as usize)
+        .saturating_sub(WORKER_DB_RESERVE);
+    let requested = env
+        .and_then(|s| s.trim().parse::<usize>().ok())
+        .filter(|&n| n > 0)
+        .unwrap_or(cores);
+    requested.clamp(WORKER_FLOOR, cap)
+}
+
+/// Detect logical cores and the `SENSEI_WORKERS` override, then resolve the
+/// worker count. Thin impure wrapper over [`resolve_worker_count`].
+fn worker_count() -> usize {
+    resolve_worker_count(
+        std::thread::available_parallelism().map(|n| n.get()).unwrap_or(WORKER_FLOOR),
+        std::env::var("SENSEI_WORKERS").ok(),
+    )
+}
 
 /// Resolve the daemon's TCP bind host. **Loopback-only (`127.0.0.1`) by
 /// default** — the daemon's control-plane routes (`/hook/*`, `/api/runs*`)
@@ -248,7 +286,14 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
         Err(e) => tracing::warn!(error = %e, "startup: reconcile_orphaned_task_executions failed"),
     }
 
-    spawn_workers(task_ctx, DEFAULT_WORKERS);
+    // Scale the worker pool to the machine's logical cores (bounded by the DB
+    // pool headroom), rather than the old hardcoded 3 — on a many-core host the
+    // metric backfill/index lane was starving behind a 3-wide pool with 1500+
+    // pending. `SENSEI_WORKERS` overrides, still clamped to the pool headroom.
+    let cores = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(WORKER_FLOOR);
+    let n = worker_count();
+    tracing::info!(workers = n, cores, "spawning task workers");
+    spawn_workers(task_ctx, n);
 
     crate::tasks::progress_emitter::spawn(
         task_queue.sender().subscribe(),
@@ -592,5 +637,67 @@ mod bind_host_tests {
         let (host, is_loopback) = resolve_bind_host(Some(" 192.168.1.5 ".to_string()));
         assert_eq!(host, "192.168.1.5");
         assert!(!is_loopback, "a LAN host must be flagged non-loopback so the warning fires");
+    }
+}
+
+#[cfg(test)]
+mod worker_count_tests {
+    use super::{resolve_worker_count, WORKER_DB_RESERVE, WORKER_FLOOR};
+
+    /// The cap is derived from the DB pool size, not hardcoded — assert it so a
+    /// future change to `DB_POOL_MAX_CONNECTIONS` (or the reserve) is caught here
+    /// instead of silently letting workers exhaust the pool.
+    fn cap() -> usize {
+        (sensei_bootstrap::DB_POOL_MAX_CONNECTIONS as usize) - WORKER_DB_RESERVE
+    }
+
+    #[test]
+    fn cap_tracks_the_pool_size_minus_reserve() {
+        assert_eq!(cap(), 16, "cap = pool 24 − reserve 8; update if the pool changes");
+    }
+
+    #[test]
+    fn small_machine_holds_the_floor() {
+        // A 1-core host must not regress below the historical baseline of 3.
+        assert_eq!(resolve_worker_count(1, None), WORKER_FLOOR);
+        assert_eq!(resolve_worker_count(1, None), 3);
+        assert_eq!(resolve_worker_count(2, None), 3, "2 cores still clamps up to the floor");
+    }
+
+    #[test]
+    fn mid_range_cores_pass_through_untouched() {
+        assert_eq!(resolve_worker_count(8, None), 8, "under the cap → use the core count");
+    }
+
+    #[test]
+    fn many_cores_are_clamped_to_the_pool_cap() {
+        assert_eq!(resolve_worker_count(64, None), cap());
+        assert_eq!(resolve_worker_count(64, None), 16);
+    }
+
+    #[test]
+    fn valid_env_override_is_honoured() {
+        assert_eq!(resolve_worker_count(8, Some("12".to_string())), 12);
+    }
+
+    #[test]
+    fn env_override_is_still_clamped_to_the_cap() {
+        // An operator override can't exceed the pool headroom.
+        assert_eq!(resolve_worker_count(8, Some("999".to_string())), cap());
+        assert_eq!(resolve_worker_count(8, Some("999".to_string())), 16);
+    }
+
+    #[test]
+    fn env_override_below_floor_is_clamped_up() {
+        assert_eq!(resolve_worker_count(8, Some("1".to_string())), WORKER_FLOOR);
+    }
+
+    #[test]
+    fn zero_or_invalid_env_falls_back_to_cores() {
+        // A zero/garbage override is ignored and the cores path (clamped) is used.
+        assert_eq!(resolve_worker_count(8, Some("0".to_string())), 8);
+        assert_eq!(resolve_worker_count(8, Some("nope".to_string())), 8);
+        assert_eq!(resolve_worker_count(64, Some("0".to_string())), cap());
+        assert_eq!(resolve_worker_count(1, Some("nope".to_string())), WORKER_FLOOR);
     }
 }

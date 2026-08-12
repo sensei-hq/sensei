@@ -82,10 +82,15 @@ pub const POSTGRES_PORT: u16 = 5432;
 
 /// Maximum number of connections in the pool.
 ///
-/// Scan operations are I/O-bound and batched, so a small pool keeps pressure
-/// on the DB low while still supporting concurrent tasks. Individual tasks
-/// acquire a connection for a single query and release it immediately.
-pub const DB_POOL_MAX_CONNECTIONS: u32 = 10;
+/// Sized to support a cores-scaled task-worker pool (see `senseid`'s
+/// `resolve_worker_count`) plus headroom for the daemon's non-worker DB users —
+/// the schedulers (metrics/analyzer/reconcile/pruners/advance_run/watchdog/
+/// contribute), the relay loop, and transient HTTP handlers. Workers are capped
+/// at `DB_POOL_MAX_CONNECTIONS - WORKER_DB_RESERVE`, leaving the reserve free for
+/// those callers. sqlx opens connections lazily (min_connections defaults to 0),
+/// so this is harmless on small machines, and it stays well under Postgres's
+/// default `max_connections = 100`.
+pub const DB_POOL_MAX_CONNECTIONS: u32 = 24;
 
 /// How long (in seconds) a caller waits for a connection before giving up.
 ///
