@@ -313,6 +313,31 @@ FIX SCOPE (orchestration hardening, separate focused pass):
 Until then, deep backfill on big repos is best-effort/eventual (self-heals only when the
 queue is genuinely idle AND no stuck plan holds the guard).
 
+### BLOCKER 4 RESOLVED (2026-08-12) — deep backfill delivered + verified live
+
+Two more fixes closed the orchestration gaps:
+- **Metric-lane priority** (`queue.rs::next_task`): the metric-backfill chain
+  (AnalyzeProject/PlanMetricDays/ComputeMetrics/ComputeHealth) preempts bulk indexing
+  (per-repo cap + FIFO-within-band preserved), so the light computes don't starve
+  behind a huge boot re-index.
+- **Restored the unconditional boot trigger** (`server.rs` `enqueue_backfill_all`): the
+  regression was removing it when the analysis-hook landed — the hook only fires for
+  freshly SYNTHESIZED sessions, so a PERSIST-boot (restart with already-analyzed
+  sessions) had NO trigger. Restored (guarded, idempotent, no sleep).
+
+**VERIFIED LIVE (undisturbed restart):** every project's daily `ftr` now reaches its
+full session-history floor —
+- dbd: ftr floor **2025-06-05**, 15 daily points (~14 months) = session floor exactly
+- torii: ftr floor **2026-07-17**, 8 points = session floor
+- sensei: ftr floor 2026-07-08, 17 points
+- gateway: ftr floor 2026-07-30 (correct — no deeper history)
+Completed within ~1 min of the restart (priority lane preempted the re-index).
+Snapshots persist in `sensei.project_metrics` (untouched by prune) → durable;
+`interruption_rate` separately verified surviving a prune (14 months).
+
+Feature COMPLETE. NOTE: leaving the daemon undisturbed matters — each restart re-runs
+the boot backfill (now fast via the boot-trigger + priority lane), so it self-heals.
+
 ### Retention window + vacuum (2026-08-12, user request)
 
 - **`activity.retention_days` default 30 → 90** (`activity_pruner.rs`
