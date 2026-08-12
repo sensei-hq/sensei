@@ -295,16 +295,17 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
         Arc::new(state.pg.clone()),
     );
 
-    // First-install / boot metric backfill (Phase 5 — history recovery): recover
-    // MONTHS of metric history, not ~2 weeks. First dispatch the transcript importer
-    // (first install = full history; forward = new transcripts, smart-skipped) so the
-    // day-keyed sources (sessions/events) exist, then enqueue ONE PlanMetricDays per
-    // project — the planner backfills every data day its sources reach. Overlap-
-    // guarded (`has_pending_kind`) so it never stacks with the daily scheduler's own
-    // boot tick, and idempotent (per-day upserts), so a re-run is safe. Runs from a
-    // spawn with a small delay so the initial scan + transcript ingestion make
-    // progress first; any day the planner can't cover yet self-heals on a later daily
-    // pass as more transcripts land.
+    // First-install / boot transcript backfill (history recovery): recover MONTHS
+    // of metric history, not ~2 weeks. Dispatch the transcript importer (first
+    // install = full history; forward = new transcripts, smart-skipped) so the
+    // day-keyed sources (sessions/events) exist, then re-attach any orphaned
+    // sessions. Per-day metric planning is NOT kicked off here on a boot timer —
+    // it is driven by ANALYSIS completion: each `AnalyzeProject` success enqueues an
+    // overlap-guarded `PlanMetricDays` for its project, so backfilled sessions are
+    // planned only once the analyzer has made them measurable (synthesizer →
+    // analyzer → PlanMetricDays), with the daily metrics scheduler as the self-heal
+    // backstop. A fixed sleep is not a real dependency, so it was removed. Runs from
+    // a spawn so the initial scan + transcript ingestion don't block boot.
     {
         let pg = state.pg.clone();
         let queue = task_queue.clone();
@@ -317,14 +318,6 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
                 Ok(n) if n > 0 => tracing::info!(repaired = n, "startup: re-attached orphaned sessions"),
                 Ok(_) => {}
                 Err(e) => tracing::warn!(error = %e, "startup: repair_orphaned_sessions failed"),
-            }
-            // Let transcript ingestion make progress before planning the per-day
-            // compute so first install captures the most history in the first wave.
-            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
-            match crate::tasks::metrics_scheduler::enqueue_backfill_all(&queue, &pg).await {
-                Ok(0) => tracing::debug!("startup: metric backfill skipped (a plan wave is already in flight)"),
-                Ok(n) => tracing::info!(projects = n, "startup: enqueued metric backfill (PlanMetricDays per project)"),
-                Err(e) => tracing::warn!(error = %e, "startup: metric backfill enqueue failed"),
             }
         });
     }
