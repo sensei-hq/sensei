@@ -1,6 +1,6 @@
 [package]
 name = "sensei-config"
-version = "0.7.3"
+version = "0.7.4"
 edition = "2024"
 description = "Shared config types for sensei — no heavy runtime dependencies"
 
