@@ -277,6 +277,42 @@ install and re-delays on every restart. Consider giving `ComputeMetrics`/
 `PlanMetricDays` priority over bulk indexing, or deferring the boot re-scan. This is
 a queue-priority change (affects everything) — raise separately, do not fold in here.
 
+### BLOCKER 4 (post-ship, 2026-08-12) — deep backfill orchestration is fragile
+
+v0.7.3 shipped (code correct, merged to main, daemon+app on 0.7.3). Mechanism proven
+(sensei ftr 17 days beyond window; interruption_rate 14 months). BUT deep ftr/
+throughput backfill for BIG projects (dbd/torii) does NOT reliably land — I merged
+prematurely calling it done. Root causes (compounding, ORCHESTRATION not compute
+logic — the per-day computer + planner are correct + tested):
+
+1. **Analysis-hook doesn't fire on a persist-boot.** The analysis-completion →
+   PlanMetricDays hook only fires when AnalyzeProject runs, which on boot only happens
+   via transcript SYNTHESIS. When sessions already persist (pruner now delayed, so the
+   prior daemon's sessions survive the restart), synthesis SKIPS them (needs_synth=false)
+   → no AnalyzeProject → no hook → no plan. On this daemon dbd had ZERO
+   analyze/plan/compute in 15 min.
+2. **A stuck/pending PlanMetricDays jams the enqueue guard.** `POST /api/metrics/backfill`
+   returns `enqueued=0` even on an idle queue because `has_pending_kind(PlanMetricDays)`
+   is true — a PlanMetricDays is pending/blocked in the in-memory queue but never runs
+   (not in task_executions). The overlap guard then blocks every new backfill wave, and
+   the analysis-hook's `enqueue_unique` coalesces into the stuck one. Likely per-repo
+   concurrency / a wedged task holding a slot (relates to the known "drain > max_repos
+   same-project tasks blocks" harness note + orphaned-on-restart tasks).
+3. **Boot re-index starvation + restart-orphaning** (earlier): the heavy boot re-index
+   monopolizes the queue and each restart orphans in-flight computes.
+
+NET: the compute is right; the *triggering/scheduling* of PlanMetricDays is not robust.
+FIX SCOPE (orchestration hardening, separate focused pass):
+- Make the metrics scheduler reliably (re)plan post-analysis even when sessions persist
+  (don't depend solely on the synthesis→analyze hook; the daily scheduler must not be
+  coalesced/starved out).
+- Fix the enqueue-guard wedge: a stuck/blocked PlanMetricDays must not permanently block
+  new plans (guard on RUNNING only, or clear stale pending; investigate why it never runs
+  — per-repo cap / blocked_by / orphan).
+- Consider metric-compute priority over bulk indexing (starvation).
+Until then, deep backfill on big repos is best-effort/eventual (self-heals only when the
+queue is genuinely idle AND no stuck plan holds the guard).
+
 ### Retention window + vacuum (2026-08-12, user request)
 
 - **`activity.retention_days` default 30 → 90** (`activity_pruner.rs`
