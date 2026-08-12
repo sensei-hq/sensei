@@ -23,7 +23,7 @@ function card(over: Partial<MetricCardVM> = {}): MetricCardVM {
     };
 }
 
-function mount(c: MetricCardVM, series: number[] = []) {
+function mount(c: MetricCardVM, series: (number | null)[] = []) {
     const m = mountComponent(MetricCardHarness, { card: c, series });
     cleanup.push(m.destroy);
     return m.container;
@@ -67,5 +67,18 @@ describe('MetricCard', () => {
     it('draws a sparkline only when given two or more points', () => {
         expect(q(mount(card(), [1]), '[data-component="metric-sparkline"]')).toBeNull();
         expect(q(mount(card(), [1, 2, 3]), '[data-component="metric-sparkline"]')).not.toBeNull();
+    });
+
+    // #6: an absent period (null) must break the line, not connect / zero-fill
+    // across it. A break shows up as a second `moveTo` (M) in the SVG path.
+    const linePath = (root: HTMLElement) =>
+        q(root, '[data-component="metric-sparkline"] path[data-plot-element="line"]')?.getAttribute(
+            'd',
+        ) ?? '';
+    const moveCount = (d: string) => (d.match(/M/g) ?? []).length;
+
+    it('breaks the line at an absent period (a gap), not a connected segment', () => {
+        expect(moveCount(linePath(mount(card(), [1, 2, 3, 4])))).toBe(1);
+        expect(moveCount(linePath(mount(card(), [1, 2, null, 4, 5])))).toBe(2);
     });
 });

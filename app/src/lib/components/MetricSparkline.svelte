@@ -1,11 +1,14 @@
 <script lang="ts">
+    import { Plot } from '@rokkit/chart';
+    import ChartCanvas from './ChartCanvas.svelte';
     import type { TrendTone, TrendColor } from '$lib/metrics/metric-view.js';
 
-    // A tiny normalized line sparkline for a metric's recent series. Scale-free:
-    // it maps min..max of the given points onto the box, so any metric family
-    // (pct, count, duration…) reads at a glance. Colour follows the trend tone
-    // via a named token — matching the metrics legend (worsening → accent, not
-    // danger). No <style> colour blocks (app CLAUDE.md §1).
+    // A tiny line sparkline for a metric's recent series, drawn with
+    // @rokkit/chart's composable Plot.Line. Scale-free by design (min..max onto
+    // the box) so any metric family reads at a glance. A `null` in the series is
+    // an absent period and breaks the line (a real gap, never zero-filled); a
+    // genuine 0 still plots. Colour follows the trend tone via currentColor +
+    // a named token — no <style> colour blocks (app CLAUDE §1).
     let {
         series,
         tone = 'neutral',
@@ -14,9 +17,9 @@
         fill = false,
         endDot = null,
     }: {
-        series: number[];
+        /** Recent values, one per period; `null` marks an absent period (a gap). */
+        series: (number | null)[];
         tone?: TrendTone;
-        /** Viewbox width; ignored for layout when `fill` (stretches to parent). */
         width?: number;
         height?: number;
         /** Stretch to the parent's width (grid cells). */
@@ -31,51 +34,46 @@
         bad: 'text-accent',
         neutral: 'text-ink-faint',
     };
-    const dotClass: Record<TrendColor, string> = {
-        success: 'fill-success',
-        accent: 'fill-accent',
-        'ink-faint': 'fill-ink-faint',
+    const DOT_FILL: Record<TrendColor, string> = {
+        success: 'var(--success)',
+        accent: 'var(--accent)',
+        'ink-faint': 'var(--ink-faint)',
     };
 
-    const coords = $derived(buildCoords(series, width, height));
-    const points = $derived(coords.map((c) => `${c.x},${c.y}`).join(' '));
-    const last = $derived(coords.at(-1) ?? null);
+    const rows = $derived(series.map((v, i) => ({ i, v })));
+    // A null element is a gap: @rokkit's Plot.Line breaks the path there via
+    // d3's `.defined`. Its published `data` type omits null, so cast at the prop.
+    const line = $derived(series.map((v, i) => (v == null ? null : { i, v })));
+    const definedCount = $derived(series.filter((v) => v != null).length);
+    const lastPt = $derived.by(() => {
+        for (let i = series.length - 1; i >= 0; i--) {
+            const v = series[i];
+            if (v != null) return { i, v };
+        }
+        return null;
+    });
 
-    function buildCoords(data: number[], w: number, h: number): { x: number; y: number }[] {
-        if (data.length < 2) return [];
-        const min = Math.min(...data);
-        const max = Math.max(...data);
-        const span = max - min || 1;
-        const pad = 2;
-        return data.map((v, i) => ({
-            x: +((i / (data.length - 1)) * w).toFixed(1),
-            y: +(pad + (1 - (v - min) / span) * (h - pad * 2)).toFixed(1),
-        }));
-    }
+    const MARGIN = { top: 2, right: 2, bottom: 2, left: 2 };
 </script>
 
-{#if points}
-    <svg
-        data-component="metric-sparkline"
-        data-tone={tone}
-        height={fill ? height : undefined}
-        width={fill ? undefined : width}
-        viewBox="0 0 {width} {height}"
-        preserveAspectRatio={fill ? 'none' : 'xMidYMid meet'}
-        fill="none"
-        aria-hidden="true"
+{#if definedCount >= 2}
+    <ChartCanvas
+        {rows}
+        x="i"
+        y="v"
+        {width}
+        {height}
+        margin={MARGIN}
+        dataComponent="metric-sparkline"
+        dataTone={tone}
         class="{fill ? 'w-full' : 'shrink-0'} {toneClass[tone]}"
+        preserveAspectRatio={fill ? 'none' : 'xMidYMid meet'}
+        svgWidth={fill ? undefined : width}
+        svgHeight={fill ? height : undefined}
     >
-        <polyline
-            {points}
-            stroke="currentColor"
-            stroke-width="1.5"
-            stroke-linejoin="round"
-            stroke-linecap="round"
-            vector-effect="non-scaling-stroke"
-        />
-        {#if endDot && last}
-            <circle cx={last.x} cy={last.y} r="3" class={dotClass[endDot]} stroke="none" />
+        <Plot.Line data={line as { i: number; v: number }[]} x="i" y="v" stroke="currentColor" strokeWidth={1.5} />
+        {#if endDot && lastPt}
+            <Plot.Point data={[lastPt]} x="i" y="v" fill={DOT_FILL[endDot]} r={3} />
         {/if}
-    </svg>
+    </ChartCanvas>
 {/if}

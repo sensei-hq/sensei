@@ -14,8 +14,12 @@ import {
     orderSignals,
     deterministicHeadline,
     seriesDistribution,
+    densifySeries,
+    metricYDomain,
+    historyNote,
     type ProjectMetricRow,
     type MetricFamily,
+    type MetricSeriesPoint,
 } from './metric-view.js';
 
 function row(over: Partial<ProjectMetricRow>): ProjectMetricRow {
@@ -339,5 +343,98 @@ describe('seriesDistribution', () => {
     it('returns high/mean/low, or null for an empty series', () => {
         expect(seriesDistribution([])).toBeNull();
         expect(seriesDistribution([0.25, 0.61, 0.43])).toEqual({ high: 0.61, mean: 0.43, low: 0.25 });
+    });
+});
+
+// ── Chart series shape ───────────────────────────────────────────────────────
+
+function pt(period: string, value: number | null): MetricSeriesPoint {
+    return { period, value, direction: 'higher_better' };
+}
+
+describe('densifySeries', () => {
+    it('is empty for no points', () => {
+        expect(densifySeries([], 'daily')).toEqual([]);
+    });
+
+    it('keeps consecutive daily points as-is, preserving a genuine 0', () => {
+        expect(densifySeries([pt('2025-01-01', 0), pt('2025-01-02', 3)], 'daily')).toEqual([
+            { date: '2025-01-01', value: 0 },
+            { date: '2025-01-02', value: 3 },
+        ]);
+    });
+
+    it('inserts a null for every absent day so a gap is not connected or zero-filled', () => {
+        expect(densifySeries([pt('2025-01-01', 5), pt('2025-01-04', 7)], 'daily')).toEqual([
+            { date: '2025-01-01', value: 5 },
+            { date: '2025-01-02', value: null },
+            { date: '2025-01-03', value: null },
+            { date: '2025-01-04', value: 7 },
+        ]);
+    });
+
+    it('renders a multi-month lull as a run of gaps, not a line to 0', () => {
+        const out = densifySeries([pt('2025-06-05', 1), pt('2025-09-04', 1)], 'daily');
+        expect(out.at(0)).toEqual({ date: '2025-06-05', value: 1 });
+        expect(out.at(-1)).toEqual({ date: '2025-09-04', value: 1 });
+        // Every interior slot is an absent day (a gap), never a fabricated 0.
+        expect(out.slice(1, -1).every((p) => p.value === null)).toBe(true);
+        expect(out.length).toBe(92); // Jun 5 → Sep 4 inclusive
+    });
+
+    it('steps by week / month for coarser grains', () => {
+        expect(densifySeries([pt('2025-01-06', 1), pt('2025-01-20', 2)], 'weekly')).toEqual([
+            { date: '2025-01-06', value: 1 },
+            { date: '2025-01-13', value: null },
+            { date: '2025-01-20', value: 2 },
+        ]);
+        expect(densifySeries([pt('2025-01-01', 1), pt('2025-04-01', 2)], 'monthly')).toEqual([
+            { date: '2025-01-01', value: 1 },
+            { date: '2025-02-01', value: null },
+            { date: '2025-03-01', value: null },
+            { date: '2025-04-01', value: 2 },
+        ]);
+    });
+});
+
+describe('metricYDomain', () => {
+    it('pins a rate to a full 0–1 axis so a flat pct looks flat', () => {
+        expect(metricYDomain('pct', [0.417, 0.42, 0.41])).toEqual([0, 1]);
+    });
+    it('pins a near-flat ratio to 0-based [0,1] (no 0.128–0.130 mountain)', () => {
+        expect(metricYDomain('ratio', [0.128, 0.13, 0.129])).toEqual([0, 1]);
+    });
+    it('extends a ratio ceiling only when the data exceeds 1 (never clips)', () => {
+        expect(metricYDomain('ratio', [0.5, 2.5])).toEqual([0, 2.5]);
+    });
+    it('uses a 0–100 scale for a score', () => {
+        expect(metricYDomain('score', [44, 46])).toEqual([0, 100]);
+    });
+    it('is 0-based to the data max for counts and durations', () => {
+        expect(metricYDomain('count', [3, 7, 4])).toEqual([0, 7]);
+        expect(metricYDomain('duration', [796, 273])).toEqual([0, 796]);
+    });
+    it('falls back to a unit ceiling for an all-zero / empty series', () => {
+        expect(metricYDomain('count', [0, 0])).toEqual([0, 1]);
+        expect(metricYDomain('count', [])).toEqual([0, 1]);
+    });
+});
+
+describe('historyNote', () => {
+    it('captions the first reading as the metric horizon', () => {
+        expect(historyNote([{ date: '2025-06-05', value: 1 }, { date: '2025-06-06', value: 2 }])).toBe(
+            'history from 2025-06-05 — no earlier data for this signal',
+        );
+    });
+    it('skips leading gaps to the first real reading', () => {
+        expect(
+            historyNote([
+                { date: '2025-06-05', value: null },
+                { date: '2025-06-06', value: 4 },
+            ]),
+        ).toBe('history from 2025-06-06 — no earlier data for this signal');
+    });
+    it('is empty when there is no reading yet', () => {
+        expect(historyNote([])).toBe('');
     });
 });

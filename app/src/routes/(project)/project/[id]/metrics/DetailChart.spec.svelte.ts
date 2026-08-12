@@ -1,0 +1,77 @@
+// @vitest-environment jsdom
+import { describe, it, expect, afterEach } from 'vitest';
+import { mountComponent } from '$lib/test-mount.js';
+import DetailChart from './DetailChart.svelte';
+import type { ChartPoint } from '$lib/metrics/metric-view.js';
+
+// Verifies the @rokkit/chart migration renders at runtime: the detail chart
+// draws an area + line + endpoint via Plot geoms, breaks the line at an absent
+// period (#6), and keeps the "not enough history" empty state.
+
+let cleanup: Array<() => void> = [];
+afterEach(() => {
+    cleanup.forEach((fn) => fn());
+    cleanup = [];
+});
+
+function mount(series: ChartPoint[], yDomain: [number, number] = [0, 10]) {
+    const m = mountComponent(DetailChart, {
+        series,
+        yDomain,
+        format: (v: number) => String(v),
+        color: 'accent',
+        caption: 'history from 2025-01-01 — no earlier data for this signal',
+    });
+    cleanup.push(m.destroy);
+    return m.container;
+}
+
+const q = (root: HTMLElement, sel: string) => root.querySelector(sel) as HTMLElement | null;
+const linePath = (root: HTMLElement) =>
+    q(root, '[data-component="detail-chart"] path[data-plot-element="line"]')?.getAttribute('d') ?? '';
+const moveCount = (d: string) => (d.match(/M/g) ?? []).length;
+
+describe('DetailChart', () => {
+    it('shows the empty state with fewer than two readings', () => {
+        const root = mount([{ date: '2025-01-01', value: 1 }]);
+        expect(root.textContent).toContain('Not enough history to chart yet.');
+        expect(q(root, 'svg')).toBeNull();
+    });
+
+    it('renders an area, line and endpoint via @rokkit/chart Plot geoms', () => {
+        const root = mount([
+            { date: '2025-01-01', value: 1 },
+            { date: '2025-01-02', value: 3 },
+            { date: '2025-01-03', value: 2 },
+        ]);
+        expect(q(root, '[data-component="detail-chart"] path[data-plot-element="line"]')).not.toBeNull();
+        expect(q(root, '[data-component="detail-chart"] path[data-plot-element="area"]')).not.toBeNull();
+        expect(q(root, '[data-component="detail-chart"] circle[data-plot-element="point"]')).not.toBeNull();
+    });
+
+    it('breaks the line at an absent period (#6), not a connected segment', () => {
+        const connected = mount([
+            { date: '2025-01-01', value: 1 },
+            { date: '2025-01-02', value: 2 },
+            { date: '2025-01-03', value: 3 },
+        ]);
+        expect(moveCount(linePath(connected))).toBe(1);
+
+        const gapped = mount([
+            { date: '2025-01-01', value: 1 },
+            { date: '2025-01-02', value: 2 },
+            { date: '2025-01-03', value: null },
+            { date: '2025-01-04', value: 4 },
+            { date: '2025-01-05', value: 5 },
+        ]);
+        expect(moveCount(linePath(gapped))).toBe(2);
+    });
+
+    it('renders the horizon caption', () => {
+        const root = mount([
+            { date: '2025-01-01', value: 1 },
+            { date: '2025-01-02', value: 2 },
+        ]);
+        expect(root.textContent).toContain('history from 2025-01-01');
+    });
+});
