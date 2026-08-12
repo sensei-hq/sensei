@@ -276,6 +276,130 @@ impl PgStore {
         Ok(row.0)
     }
 
+    // ── Per-datapoint explainer enrichment (compute-time) ─────────────────
+
+    /// The project-scope DAILY rows one metric GROUP wrote for `day` — `(row_id,
+    /// metric_key, value)` — the datapoints the compute-time explainer enrichment
+    /// (see [`crate::tasks::handlers::metrics::explainer`]) annotates. Scoped to the
+    /// group via the metric's `task_name`, to project scope via `folder_id IS NULL`
+    /// (the same scope [`Self::get_project_metric_series`]'s daily view reads), and
+    /// to daily grain — so per-module (`folder_id` set) and per-session rows are
+    /// excluded. Empty when the group wrote no project-scope daily row that day
+    /// (honest-empty). Propagates the read error; never masks it.
+    pub async fn get_group_daily_metrics_for_day(
+        &self,
+        project_id: &uuid::Uuid,
+        task_name: &str,
+        day: chrono::NaiveDate,
+    ) -> Result<Vec<(uuid::Uuid, String, f64)>, String> {
+        let rows: Vec<(uuid::Uuid, String, f64)> = sqlx_core::query_as::query_as(
+            "SELECT pm.id, m.key, pm.value::float8
+               FROM sensei.project_metrics pm
+               JOIN sensei.metrics         m ON m.id = pm.metric_id
+              WHERE pm.project_id = $1
+                AND m.task_name   = $2
+                AND pm.grain      = 'daily'
+                AND pm.folder_id  IS NULL
+                AND pm.session_id IS NULL
+                AND pm.computed_on = $3
+              ORDER BY m.key",
+        )
+        .bind(project_id)
+        .bind(task_name)
+        .bind(day)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(rows)
+    }
+
+    /// The immediately-prior day's project-scope daily value for one metric — the
+    /// `prev_value` the explainer's `delta` is measured against. Reads the most
+    /// recent daily row (project scope, `folder_id IS NULL`) with `computed_on < day`
+    /// for that metric key. `None` when this is the metric's first day (honest-null,
+    /// never a fabricated 0). Propagates the read error; never masks it.
+    pub async fn get_prev_daily_metric_value(
+        &self,
+        project_id: &uuid::Uuid,
+        key: &str,
+        day: chrono::NaiveDate,
+    ) -> Result<Option<f64>, String> {
+        let row: Option<(f64,)> = sqlx_core::query_as::query_as(
+            "SELECT pm.value::float8
+               FROM sensei.project_metrics pm
+               JOIN sensei.metrics         m ON m.id = pm.metric_id
+              WHERE pm.project_id = $1
+                AND m.key         = $2
+                AND pm.grain      = 'daily'
+                AND pm.folder_id  IS NULL
+                AND pm.session_id IS NULL
+                AND pm.computed_on < $3
+              ORDER BY pm.computed_on DESC
+              LIMIT 1",
+        )
+        .bind(project_id)
+        .bind(key)
+        .bind(day)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(row.map(|(v,)| v))
+    }
+
+    /// One day's measurable session-outcome counts for a project — `(total,
+    /// completed, first_try)` — the day context the explainer grounds in. Same
+    /// measurable base as [`Self::get_project_sessions_for_day`] (folder-join scope,
+    /// `outcome IS NOT NULL`, day pinned on `date_trunc('day', started_at)`), read as
+    /// one cheap COUNT-by-outcome. All-zero when no measurable session ran that day
+    /// (honest, never fabricated). Propagates the read error; never masks it.
+    pub async fn get_day_session_outcome_counts(
+        &self,
+        project_id: &uuid::Uuid,
+        day: chrono::NaiveDate,
+    ) -> Result<(i64, i64, i64), String> {
+        let row: (i64, i64, i64) = sqlx_core::query_as::query_as(
+            "SELECT count(*)::int8                                                                  AS total
+                  , count(*) FILTER (WHERE s.outcome = 'completed'::sensei.session_outcome)::int8   AS completed
+                  , count(*) FILTER (WHERE s.ftr)::int8                                             AS first_try
+               FROM activity.sessions s
+               JOIN sensei.folders    f ON f.id = s.folder_id
+              WHERE f.project_id = $1
+                AND s.outcome   IS NOT NULL
+                AND date_trunc('day', s.started_at)::date = $2",
+        )
+        .bind(project_id)
+        .bind(day)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(row)
+    }
+
+    /// MERGE the per-datapoint `explainer` into one project_metrics row's `props`,
+    /// preserving every other key (`props || jsonb_build_object('explainer', …)` —
+    /// so `numerator`/`denominator`/`n`/… survive). Runs AFTER the value upsert
+    /// (whose `ON CONFLICT` overwrites `props` wholesale), so the merge is the last
+    /// writer. Idempotent: re-merging the same string is a no-op change. Propagates
+    /// the write error; never masks it.
+    pub async fn merge_metric_explainer(
+        &self,
+        row_id: &uuid::Uuid,
+        explainer: &str,
+    ) -> Result<(), String> {
+        sqlx_core::query::query(
+            "UPDATE sensei.project_metrics
+                SET props       = props || jsonb_build_object('explainer', $2::text),
+                    modified_at = now()
+              WHERE id = $1",
+        )
+        .bind(row_id)
+        .bind(explainer)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
     /// The ACTIVE metric registry: rows that live on `current_date` (see
     /// [`Self::ACTIVE_METRIC_PREDICATE`]) — retired (past/at `effective_until`) and
     /// not-yet-effective (future `effective_from`) rows are excluded. Drives the
@@ -436,20 +560,24 @@ impl PgStore {
         // The view + its period column are chosen from a fixed allowlist keyed on
         // the validated grain — no user-supplied string ever reaches the SQL, so
         // the `format!` is injection-safe.
-        let (view, period_col) = match grain {
-            "daily"     => ("sensei.project_metric_daily",     "date"),
-            "weekly"    => ("sensei.project_metric_weekly",    "period"),
-            "monthly"   => ("sensei.project_metric_monthly",   "period"),
-            "quarterly" => ("sensei.project_metric_quarterly", "period"),
+        // `explainer_col` is chosen from the same validated-grain allowlist: only the
+        // daily base view carries `props` (the per-datapoint explainer lives there),
+        // so coarser grains select a literal NULL — the explainer is a per-day
+        // artifact and is never rolled up. No user string reaches the SQL.
+        let (view, period_col, explainer_col) = match grain {
+            "daily"     => ("sensei.project_metric_daily",     "date",   "props->>'explainer'"),
+            "weekly"    => ("sensei.project_metric_weekly",    "period", "null::text"),
+            "monthly"   => ("sensei.project_metric_monthly",   "period", "null::text"),
+            "quarterly" => ("sensei.project_metric_quarterly", "period", "null::text"),
             other => return Err(format!("invalid grain: {other:?}")),
         };
         let sql = format!(
-            "SELECT {period_col} AS period, value::float8, direction::text
+            "SELECT {period_col} AS period, value::float8, direction::text, {explainer_col} AS explainer
                FROM {view}
               WHERE project_id = $1 AND metric = $2
               ORDER BY {period_col}",
         );
-        let rows: Vec<(chrono::NaiveDate, f64, String)> = sqlx_core::query_as::query_as(&sql)
+        let rows: Vec<(chrono::NaiveDate, f64, String, Option<String>)> = sqlx_core::query_as::query_as(&sql)
             .bind(project_id)
             .bind(key)
             .fetch_all(&self.pool)
@@ -457,7 +585,7 @@ impl PgStore {
             .map_err(|e| e.to_string())?;
         let points = rows
             .into_iter()
-            .map(|(period, value, direction)| ProjectMetricSeriesPoint { period, value, direction })
+            .map(|(period, value, direction, explainer)| ProjectMetricSeriesPoint { period, value, direction, explainer })
             .collect();
         // `formula` is a metric-level facet, read by key from the registry so it
         // survives an empty series and stays honest-null for an unknown key.
