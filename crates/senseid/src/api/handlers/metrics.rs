@@ -198,9 +198,19 @@ pub(crate) struct DaySessionsQuery {
 /// sessions behind one daily metric datapoint (the datapoint→sessions drill-down).
 /// Each session carries the structural fields the client renders a one-liner from
 /// (`outcome` + `ftr` + `turns` + `corrections`) plus the `client_session_id`
-/// reference, `started_at`, `task`, and the existing `summary` column. `{id}` is
-/// name-or-uuid; `{key}` is contextual (which datapoint) — the measurable-session
-/// base is the same per day across the daily metrics, so the set is key-independent.
+/// reference, `started_at`, `task`, the existing `summary` column (the "what was
+/// achieved" half), and an `observation` (`{ title, detail }`) — the per-session,
+/// per-metric "why this session moved this metric" line (the drill-down's other
+/// half). `{id}` is name-or-uuid; `{key}` names the drilled-into metric — it
+/// selects which metric the observation is written against (the meaning it reads),
+/// though the measurable-session *base* is the same per day across the daily
+/// metrics.
+///
+/// The observation is a wire-path read via
+/// [`session_metric_observation`](crate::analysis::session_metric_note::session_metric_observation):
+/// INTENDED (not a bug) — the FIRST drill-down for a (session, metric) returns the
+/// deterministic, row-derived fallback line and warms the model copy off-wire; the
+/// NEXT load returns the model copy. Inference never blocks this request path.
 ///
 /// Fail-closed: a lookup error is a 500; a project that does not exist is a 404; an
 /// absent or malformed `day` is a 400; a day with no measurable session is a 200
@@ -225,15 +235,52 @@ pub(crate) async fn get_project_metric_day_sessions(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    let sessions = state
+    let mut sessions = state
         .pg
         .get_project_sessions_for_day(&uuid, day)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let count = sessions.len();
+
+    // The metric's meaning, looked up ONCE per request from the registry by key
+    // (fail-closed on a read error). Honest-null for an unregistered key → the
+    // observation label falls back to the key and the meaning stays empty.
+    let (label, how_to_read) = match state
+        .pg
+        .get_metric_meaning(&key)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    {
+        Some(m) => (m.name, m.how_to_read),
+        None => (key.clone(), String::new()),
+    };
+
+    // Per-session, per-metric observation — grounded strictly in the session ROW
+    // + the metric's meaning, never fabricated. copy_or_warm returns the cached
+    // model copy on a hit or the deterministic fallback on a miss (see the doc
+    // comment above — the warm is off-wire, never on this request path).
+    for session in &mut sessions {
+        let facts = crate::analysis::session_metric_note::SessionMetricFacts::from_session_row(
+            session, &key, &label, &how_to_read,
+        );
+        let obs = crate::analysis::session_metric_note::session_metric_observation(
+            &state.pg,
+            &state.gateway,
+            &facts,
+        )
+        .await;
+        if let Some(obj) = session.as_object_mut() {
+            obj.insert(
+                "observation".into(),
+                serde_json::json!({ "title": obs.title, "detail": obs.detail }),
+            );
+        }
+    }
+
     Ok(Json(serde_json::json!({
         "metric": key,
         "day": day.to_string(),
         "sessions": sessions,
-        "count": sessions.len(),
+        "count": count,
     })))
 }
