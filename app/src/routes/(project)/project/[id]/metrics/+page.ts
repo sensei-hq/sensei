@@ -1,7 +1,7 @@
 import type { PageLoad } from './$types.js';
 import { senseiApi } from '$lib/api.js';
 import { appState } from '$lib/appstate.svelte.js';
-import { seriesValues, type MetricsNarrative } from '$lib/metrics/metric-view.js';
+import { densifySeries, type MetricsNarrative } from '$lib/metrics/metric-view.js';
 
 // The metrics pane joins three daemon surfaces: the per-project *values*
 // (/metrics) — which now also carry an optional daemon-generated `narrative`
@@ -22,7 +22,7 @@ export const load: PageLoad = async ({ params }) => {
         return {
             rows: [],
             registry: [],
-            series: {} as Record<string, number[]>,
+            series: {} as Record<string, (number | null)[]>,
             narrative: null as MetricsNarrative | null,
             error: metricsRes.error.message,
         };
@@ -33,14 +33,18 @@ export const load: PageLoad = async ({ params }) => {
     const narrative = metricsRes.data.narrative ?? null;
 
     // One series per metric, fetched in parallel. A missing/failed series just
-    // omits that card's sparkline — the value + trend still render.
+    // omits that card's sparkline — the value + trend still render. The daemon
+    // series is sparse (present periods only), so densify to per-day slots with
+    // `null` for absent days: the sparkline breaks the line at a gap rather than
+    // connecting or zero-filling across it.
     const seriesPairs = await Promise.all(
         rows.map(async (row) => {
             const res = await api.getProjectMetricSeries(params.id, row.metric, 'daily');
-            return [row.metric, res.ok ? seriesValues(res.data.series) : []] as const;
+            const points = res.ok ? densifySeries(res.data.series, 'daily').map((p) => p.value) : [];
+            return [row.metric, points] as const;
         }),
     );
 
-    const series: Record<string, number[]> = Object.fromEntries(seriesPairs);
+    const series: Record<string, (number | null)[]> = Object.fromEntries(seriesPairs);
     return { rows, registry, series, narrative, error: null };
 };

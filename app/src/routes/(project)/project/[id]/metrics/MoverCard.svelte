@@ -6,7 +6,7 @@
     // one baseline and the interpretive sentence beneath. The sentence is the
     // ollama-generated insight when present, else the data-grounded fallback —
     // both already resolved onto signal.insight by metric-view.
-    let { signal, series = [] }: { signal: SignalVM; series?: number[] } = $props();
+    let { signal, series = [] }: { signal: SignalVM; series?: (number | null)[] } = $props();
 </script>
 
 <div

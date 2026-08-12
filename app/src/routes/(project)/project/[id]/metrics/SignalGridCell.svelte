@@ -6,7 +6,7 @@
     // (mover → accent/success, flat → hairline), the metric name, its value +
     // delta, and a full-width sparkline. The whole cell links to the signal's
     // detail view. Pure template.
-    let { signal, series = [], href }: { signal: SignalVM; series?: number[]; href: string } = $props();
+    let { signal, series = [], href }: { signal: SignalVM; series?: (number | null)[]; href: string } = $props();
 </script>
 
 <a

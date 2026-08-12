@@ -268,6 +268,111 @@ export function seriesValues(points: MetricSeriesPoint[]): number[] {
     return points.map((p) => p.value).filter((v): v is number => v != null);
 }
 
+// ── Chart series shape (consumed by @rokkit/chart) ──────────────────────────
+// The daemon returns a *sparse* series — one row per period that has data (see
+// PgStore::get_project_metric_series). Absent periods are simply missing, so a
+// naïve line connects across a multi-month lull as if it were one segment (or a
+// dive to 0). To render that lull as a real GAP, we densify the calendar at the
+// series' grain and mark every absent period `value: null`. @rokkit/chart's
+// Plot.Line / Plot.Area break the path on a null datum (d3 `.defined`), so a
+// null reads as a broken line — while a genuine `0` (a period that had data,
+// e.g. ftr 0/1) stays a plotted point. Never zero-fill an absent period.
+
+/** The grains a series can be read at (matches the daemon allowlist). */
+export type SeriesGrain = 'daily' | 'weekly' | 'monthly' | 'quarterly';
+
+/** One densified point: an ISO date and its value, or `null` for an absent period. */
+export interface ChartPoint {
+    date: string;
+    value: number | null;
+}
+
+/** The next period boundary after `iso` at the given grain (UTC, no locale). */
+function nextPeriod(iso: string, grain: SeriesGrain): string {
+    const [y, m, d] = iso.slice(0, 10).split('-').map(Number);
+    const dt = new Date(Date.UTC(y, (m ?? 1) - 1, d ?? 1));
+    switch (grain) {
+        case 'weekly':
+            dt.setUTCDate(dt.getUTCDate() + 7);
+            break;
+        case 'monthly':
+            dt.setUTCMonth(dt.getUTCMonth() + 1);
+            break;
+        case 'quarterly':
+            dt.setUTCMonth(dt.getUTCMonth() + 3);
+            break;
+        default:
+            dt.setUTCDate(dt.getUTCDate() + 1);
+    }
+    return dt.toISOString().slice(0, 10);
+}
+
+/**
+ * Densify a sparse series into one point per period, inserting `value: null`
+ * for every absent period between two present ones — so a lull renders as a gap
+ * (proportional to its length) rather than a connected segment. Present points
+ * are preserved exactly, including genuine `0` values.
+ */
+export function densifySeries(points: MetricSeriesPoint[], grain: SeriesGrain): ChartPoint[] {
+    const clean = points.filter((p) => typeof p.period === 'string' && p.period.length >= 10);
+    if (clean.length === 0) return [];
+    const CAP = 1000; // never expand a malformed range unboundedly
+    const out: ChartPoint[] = [];
+    for (let i = 0; i < clean.length; i++) {
+        const date = clean[i].period.slice(0, 10);
+        out.push({ date, value: clean[i].value });
+        const next = i + 1 < clean.length ? clean[i + 1].period.slice(0, 10) : null;
+        if (!next) continue;
+        let cursor = nextPeriod(date, grain);
+        let guard = 0;
+        while (cursor < next && guard < CAP) {
+            out.push({ date: cursor, value: null });
+            cursor = nextPeriod(cursor, grain);
+            guard++;
+        }
+    }
+    return out;
+}
+
+/**
+ * A sensible y-domain per metric type so a flat series looks flat (never a
+ * mountain from auto-scaling to a 0.002 spread). Always 0-based (a floor of 0,
+ * or below only when the data itself goes negative so a real value is never
+ * clipped); bounded metrics read against their natural full scale.
+ *   pct   → [0, 1]        (a rate on a full 0–100% axis)
+ *   score → [0, 100]      (a 0–100 index)
+ *   ratio → [0, 1]        (extended past 1 only when the data exceeds it)
+ *   count / duration → [0, data max]
+ */
+export function metricYDomain(type: MetricType, values: number[]): [number, number] {
+    const nums = values.filter((v) => Number.isFinite(v));
+    const max = nums.length ? Math.max(...nums) : 0;
+    const min = nums.length ? Math.min(...nums) : 0;
+    const lo = Math.min(0, min);
+    switch (type) {
+        case 'pct':
+            return [lo, Math.max(1, max)];
+        case 'score':
+            return [lo, Math.max(100, max)];
+        case 'ratio':
+            return [lo, Math.max(1, max)];
+        case 'count':
+        case 'duration':
+        default:
+            return [lo, max > lo ? max : lo + 1];
+    }
+}
+
+/**
+ * A small horizon annotation for the detail chart: a metric whose source has no
+ * earlier data starts its series late, so we caption the first reading rather
+ * than leaving a bare late start. Empty string when there is no reading yet.
+ */
+export function historyNote(series: ChartPoint[]): string {
+    const first = series.find((p) => p.value != null)?.date;
+    return first ? `history from ${first} — no earlier data for this signal` : '';
+}
+
 // ── "The merge" UX: interpreted landing + master-detail drill-down ──────────
 // A single richer view-model per metric (a "signal") carries everything the
 // landing (health hero + movers + uniform grid) and the detail view need, so

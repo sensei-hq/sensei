@@ -9,7 +9,7 @@
         signal,
         series = [],
         periodLabel = 'last fourteen days',
-    }: { signal: SignalVM; series?: number[]; periodLabel?: string } = $props();
+    }: { signal: SignalVM; series?: (number | null)[]; periodLabel?: string } = $props();
 </script>
 
 <div data-component="health-hero" class="flex flex-col items-end gap-1 shrink-0">

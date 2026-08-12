@@ -14,6 +14,9 @@ export default defineConfig({
   },
   test: {
     include: ['src/**/*.spec.ts', 'src/**/*.spec.svelte.ts'],
+    // jsdom lacks window.matchMedia, which @rokkit/chart's barrel needs at load
+    // (AnimatedPlot → svelte/motion). Stub it so chart component tests can run.
+    setupFiles: ['./tests/stubs/match-media.ts'],
     // Route component tests run in jsdom; lib tests run in node
     environmentMatchGlobs: [
       ['src/routes/**/*.spec.svelte.ts', 'jsdom'],
