@@ -205,3 +205,46 @@ Remaining UI (B3/B4 + A2) ships in the next metrics-UI batch.
 4. C3 (token backfill from transcripts) + C1 (FTR-weighted throughput) — decisions
    locked 2026-08-11; C4 dropped (FTR is the north star, no qlty.sh).
 5. D (prompt-in-table).
+
+## 2026-08-12 execution backlog (post detailed-chart review)
+
+**CORRECTION to C4:** the user REVERSED it — KEEP qlty (build maintainability /
+duplication / coverage over git history), and instead DROP the consolidated
+`project_health` composite (a plain mean dragged by the churn proxy + throughput
+noise → misleading). FTR stays the north star.
+
+### Epic A — metric data/correctness
+- [DONE, committed] #4 narrative reports the OVERALL series trend, not a one-week step
+  (was calling a rising lower_better metric "improving").
+- [DONE] #5 purged stale old-definition `unused_tools` rows (106→relevance-based; the
+  cliff was two definitions in one series).
+- [IN FLIGHT] #2 retire the `project_health` composite (daemon: catalog+registry
+  retire, compute_health no-ops; then drop/rework HealthHero in the UI).
+- [QUEUED] Phase 7 — churn from `git log --name-only` per day (fixes #3 noisy 532/day
+  task_executions proxy). NOTE: churn becomes a per-day PLANNED group but must NOT join
+  the pruner's capture-before-reclaim scope (that stays session-derived only).
+- [QUEUED] Phase 8 — qlty maintainability/duplication/coverage via `git worktree` @
+  past commit + `qlty` scan (the metrics #8 the user is missing; supersedes the
+  own-graph duplication_ratio).
+
+### Epic B — metric detail screen: explain · correlate · advise
+- [DONE, committed] charts → `@rokkit/chart`: #6 gaps-as-gaps, #7 y-domain, #1
+  per-metric horizon caption. (Found + patched @rokkit/chart@1.3.1's missing
+  palette.json — upstream fix belongs in the rokkit repo.)
+- [QUEUED] (a) surface `purpose` / `how_to_read` / `formula` on the detail screen
+  ("About this metric"). Registry already stores them; API already serves
+  purpose/how_to_read (add `formula`); mostly a FRONTEND render.
+- [QUEUED] Session drill-down per datapoint (supersedes A2): click a chart point →
+  the day's sessions with ref · timestamp · outcome/ftr/turns · summary + that
+  session's contribution. DECISION PENDING: session summary source — structural
+  (outcome+first-try+turns+files, no LLM) for v1 vs LLM-generated over
+  `transcript_turns` (richer; `sessions.summary` is empty for backfilled sessions).
+- [QUEUED] (b) per-metric inference guidance in the registry (item D `insight_prompt`)
+  — static "how to interpret a move," surfaced on screen.
+- [QUEUED] (c) action items paired with observations — an actionable "how to improve
+  this metric," hung on the existing `inference.recommendations` lifecycle
+  (title/why/impact/action_type/action_detail).
+
+Deploy: one v0.7.5 bump + merge + `make install` for the whole batch (incl. the
+committed worker-pool scaling) once the sequence lands green. No per-fix installs
+(each restarts the daemon + resets the backfill drain).
