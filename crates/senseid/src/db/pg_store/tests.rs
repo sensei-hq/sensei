@@ -2625,12 +2625,14 @@
 
     /// Capture-before-reclaim (2026-08-12 retention decision): an analyzed
     /// session past retention is reclaimable ONLY when its day is captured by a
-    /// DAY-KEYED (delivery) metric in sensei.project_metrics OR it is older than
-    /// the hard backstop. This proves all four arms with retention=30, backstop=60
-    /// on four same-project sessions dated: 40d + captured by a day-keyed `ftr`
-    /// row (prune), 45d + uncaptured (KEEP), 50d + covered ONLY by a forward-only
-    /// snapshot `duplication_ratio` row (KEEP — a snapshot row must NOT mark the
-    /// day captured), 90d + uncaptured (prune via backstop).
+    /// CAPTURE-AUTHORIZING (session-derived delivery) metric in
+    /// sensei.project_metrics OR it is older than the hard backstop. This proves all
+    /// four arms with retention=30, backstop=60 on four same-project sessions dated:
+    /// 40d + captured by a session-derived day-keyed `ftr` row (prune), 45d +
+    /// uncaptured (KEEP), 50d + covered ONLY by a `duplication_ratio` row
+    /// (task_name='quality', a GIT/qlty-derived day-keyed metric that — like churn —
+    /// is EXCLUDED from the capture scope, so it must NOT mark the day captured)
+    /// (KEEP), 90d + uncaptured (prune via backstop).
     #[tokio::test]
     async fn prune_activity_captures_before_reclaim() {
         let s = pg_store().await;
@@ -2668,14 +2670,15 @@
         //     (capture is scoped per project-day, not per session).
         let uncaptured = aged_session(&s, &fid, &suffix, "uncaptured", 45).await;
 
-        // (c) covered ONLY by a FORWARD-ONLY snapshot metric (`duplication_ratio`,
-        //     task_name='duplication'), past retention, inside backstop → KEPT.
-        //     This is the load-bearing case for the scoped guard: a snapshot
-        //     computer stamps a grain='daily' row on its own day on every run, so
-        //     an UNscoped EXISTS would treat this day as "captured" and reclaim the
-        //     session before its DELIVERY (day-keyed) metric ever computed —
-        //     reintroducing the data loss. The scoped guard requires a day-keyed
-        //     metric, so this session stays until one lands (or the backstop).
+        // (c) covered ONLY by a GIT/qlty-derived day-keyed metric (`duplication_ratio`,
+        //     task_name='quality'), past retention, inside backstop → KEPT.
+        //     This is the load-bearing case for the scoped guard: a git/qlty-sourced
+        //     computer stamps a grain='daily' row on a day independent of the session
+        //     stream, so an UNscoped EXISTS would treat this day as "captured" and
+        //     reclaim the session before its session-derived DELIVERY metric ever
+        //     computed — reintroducing the data loss. The scoped guard requires a
+        //     CAPTURE-AUTHORIZING (session-derived) metric, so this session stays
+        //     until one lands (or the backstop). `quality`, like `churn`, is excluded.
         let snapshot_only = aged_session(&s, &fid, &suffix, "snaponly", 50).await;
         let day50: (chrono::NaiveDate,) = sqlx_core::query_as::query_as(
             "SELECT (date_trunc('day', now() - interval '50 days'))::date"

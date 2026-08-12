@@ -184,16 +184,18 @@ buildable source of truth — formulas, source columns, live coverage).
 ## Quality — is the code healthy?
 
 ### Duplication ratio `duplication_ratio`
-- **Facets:** quality · ratio · ▼ · project, per-module (folder)
-- **Definition:** eligible symbols participating in a duplicate cluster ÷ eligible symbols (point-in-time snapshot).
-- **Calculation:** `count(eligible symbols with a near-duplicate match) / count(eligible symbols)` via `find_duplicates_scoped` — an *eligible* symbol is a `function`/`method` node with an embedding spanning ≥3 lines; a *match* is cosine similarity ≥ 0.92.
-- **Source:** `sensei.nodes` (embeddings) via `find_duplicates_scoped` — live.
-- **How to read:** rising duplication = DRY erosion (the AI-churn signal, measured
-  first-party — not GitClear's inflated "4×"). A point-in-time snapshot of how much
-  of the symbol surface is near-duplicated; the new-vs-existing (write-time) split is
+- **Facets:** quality · ratio · ▼ · project, sampled/date
+- **Definition:** distinct duplicated source lines ÷ total source lines, from a `qlty` scan at each sampled commit.
+- **Calculation:** `Σ distinct duplicated lines / total physical source lines` at a `git worktree` checked out to the commit as-of each sampled day. The numerator is the union (deduped per file, so the ratio stays in `[0,1]`) of the physical line ranges `qlty smells --sarif` flags as `identical-code`/`similar-code`; the denominator is the `qlty metrics --all` TOTAL `lines`. Task group `quality`.
+- **Source:** a `git worktree` at the commit as-of the sampled day + `qlty smells` (numerator) & `qlty metrics` (denominator). **Supersedes** the former own-graph `find_duplicates_scoped` embedding snapshot (retired — no second live source for this key).
+- **How to read:** rising duplication = DRY erosion, now measured over REAL history
+  (backfilled per sampled commit-day) rather than a current-graph snapshot. Sampled
+  ~weekly (one commit-day per ISO week) to bound scan cost. A non-git project, an
+  absent `qlty` CLI, or a commit predating the repo's `.qlty` config → no row
+  (honest-empty, never fabricated). Project-level; per-module (folder) attribution is
   a deferred follow-up.
-- **Representation:** trend line + a per-module heatmap cell.
-- **Status:** live (snapshot; the write-time "new duplicate" version is deferred — needs an immutable `nodes.created_at`).
+- **Representation:** trend line over sampled commit-days.
+- **Status:** live (git-worktree + qlty, sampled cadence; superseded the own-graph symbol snapshot). `qlty` is an OPTIONAL tool — absent → honest-empty.
 
 ### Churn concentration `churn_concentration`
 - **Facets:** quality · pct · ● · project
@@ -250,17 +252,25 @@ buildable source of truth — formulas, source columns, live coverage).
 - **Representation:** per-session delta chip (green/red); trend.
 - **Status:** blocked (P2 #10; see the quality-metrics blueprint).
 
-### Per-module code quality `module_quality`
-- **Facets:** quality · mixed · ● · project, per-module (folder), snapshot/date
-- **Definition:** coverage %, maintainability (A–F), cyclomatic complexity, LCOM,
-  duplication — per `workspace_member`/module, via `qlty`.
-- **Calculation:** run `qlty` per module; store one row per (module, metric, date).
-- **Source:** `qlty` integration → the generalized value store keyed on `folder_id`.
-- **How to read:** the folder-scoped health map; **the reason the value store carries
-  a nullable `folder_id`.** Combine with sensei's graph metrics (god-nodes, cycles).
-- **Representation:** **module × metric heatmap** + per-module drill (grade badges).
-- **Status:** blocked (qlty integration — 2026-08-06 quality-metrics blueprint; the
-  per-module scope is the open scanner question in `feature.md`).
+### Maintainability `module_quality`
+- **Facets:** quality · ratio · ▼ · project, sampled/date
+- **Definition:** maintainability-smell burden ÷ total source lines, from a `qlty` scan at each sampled commit.
+- **Calculation:** `count(qlty non-duplication smells) / total physical source lines`
+  at a `git worktree` checked out to the commit as-of each sampled day — the smells are
+  `qlty`'s file/function-complexity, deep-nesting, long-parameter-list, … findings
+  (`qlty smells --sarif` minus the duplication findings); the denominator is the
+  `qlty metrics --all` TOTAL `lines`. Task group `quality`, alongside `duplication_ratio`.
+- **Source:** a `git worktree` at the sampled commit + `qlty smells` & `qlty metrics`.
+- **How to read:** higher = more maintainability smells per line (lower is better),
+  backfilled over real history at a sampled (~weekly) cadence. **Coverage is
+  deliberately OUT of scope here:** a historical worktree has no coverage artifact
+  (lcov), so coverage is left honest-empty (no row) — never a synthesized number (we do
+  NOT run tests per-worktree). History rows are project-level; per-module (folder)
+  attribution and an A–F grade mapping are deferred follow-ups.
+- **Representation:** trend line over sampled commit-days; (future) module × metric heatmap.
+- **Status:** live for maintainability (git-worktree + qlty, sampled cadence); coverage
+  stays out-of-history-scope (honest-empty); per-module attribution deferred. `qlty` is
+  an OPTIONAL tool — absent → honest-empty.
 
 ---
 
@@ -411,7 +421,7 @@ buildable source of truth — formulas, source columns, live coverage).
 | Outcome | FTR, rework ratio, run-completion | reopen (module attribution), regression (drift upsert) |
 | Cost | (cost-of-rework 71% recoverable) | tokens/price/cache/cost-per-FTR — transcript capture + price table (P0) |
 | Velocity | throughput (sessions) | effective velocity (`degree`+delta), feature-completion (runs) |
-| Quality | duplication, churn, churn-concentration, rework-density | drift-MTTR (drift upsert), quality-delta (scanner), per-module quality (qlty) |
+| Quality | duplication (qlty), maintainability (qlty), churn, churn-concentration, rework-density | drift-MTTR (drift upsert), quality-delta (scanner), module_quality coverage + per-module (out-of-history-scope / deferred) |
 | Autonomy | interruption, false-crash | resume-success, autonomy-ratio |
 | Knowledge | memory-promotion (≈0 = the signal) | recall-hit (memory_loads), repeat-mistake (extractor), guidance-adherence |
 | Tool | unused-tools | outcome-utility, registry-coverage, leak-scan |

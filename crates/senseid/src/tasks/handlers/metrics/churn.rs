@@ -87,12 +87,14 @@ const GIT_DATE_FMT: &str = "%Y-%m-%d";
 /// appears in a file path or an ISO date). See [`parse_numstat_log`].
 const COMMIT_MARK: char = '\u{1}';
 
-/// Run `git log` in `root` with `args` and return stdout, or `None` when git is
+/// Run `git` in `root` with `args` and return stdout, or `None` when git is
 /// unavailable, `root` is not a git repo / does not exist, the repo has no commits,
-/// or the command otherwise fails. A `None` is an honest "no git churn data" (the
-/// caller writes no row), never a fabricated value — matching the git discipline in
+/// or the command otherwise fails. A `None` is an honest "no git data" (the caller
+/// writes no row), never a fabricated value — matching the git discipline in
 /// `indexer/cross_repo` and `tasks/handlers/scan` (shell out, tolerate absence).
-fn run_git(root: &str, args: &[&str]) -> Option<String> {
+/// Shared with the `quality` group (worktree/commit resolution) so the git shell-out
+/// helper lives in exactly one place.
+pub(super) fn run_git(root: &str, args: &[&str]) -> Option<String> {
     let out = std::process::Command::new("git")
         .args(args)
         .current_dir(root)

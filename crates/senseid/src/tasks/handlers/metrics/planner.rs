@@ -32,7 +32,11 @@
 //!     `churn`'s forward-only `rework_density` snapshot. Churn is GIT-derived, so it
 //!     is EXCLUDED from the pruner's capture scope — see [`day_keyed_task_names`] and
 //!     [`DayKeyedGroup::authorizes_capture`] (the capture-scope split, #3).
-//! - **Snapshot / forward-only groups** (`duplication`, `knowledge`, `tool`) reflect
+//!   - `quality` — the SAMPLED GIT commit-days (one anchor per ISO week), so the
+//!     heavy `git worktree` + `qlty` scan that sources `duplication_ratio`/
+//!     `module_quality` runs at a bounded cadence over real history. Also GIT-derived,
+//!     so likewise EXCLUDED from the pruner's capture scope.
+//! - **Snapshot / forward-only groups** (`knowledge`, `tool`) reflect
 //!   CURRENT state and have no honest historical source, so they are NOT backfilled —
 //!   each gets ONE today-only `ComputeMetrics` (`as_of = None`, the rolling-window
 //!   incremental compute). A historical `as_of` would make them skip anyway (see
@@ -70,12 +74,22 @@ pub(super) enum DayKeyedGroup {
     /// commit-day, but — unlike the session-derived groups — it does NOT authorize
     /// the pruner's capture-before-reclaim (see [`Self::authorizes_capture`]).
     Churn,
+    /// GIT-worktree + `qlty`-derived code quality (`duplication_ratio`/`module_quality`):
+    /// backfilled per SAMPLED commit-day (one anchor per ISO week — see
+    /// [`super::quality::sample_commit_days`]) to bound the heavy scan cost. Like
+    /// churn it is git/source-derived, so it does NOT authorize the pruner's
+    /// capture-before-reclaim (see [`Self::authorizes_capture`]).
+    Quality,
 }
 
 impl DayKeyedGroup {
     /// Every day-keyed group, in a stable order.
-    pub(super) const ALL: [DayKeyedGroup; 3] =
-        [DayKeyedGroup::SessionOutcomes, DayKeyedGroup::Autonomy, DayKeyedGroup::Churn];
+    pub(super) const ALL: [DayKeyedGroup; 4] = [
+        DayKeyedGroup::SessionOutcomes,
+        DayKeyedGroup::Autonomy,
+        DayKeyedGroup::Churn,
+        DayKeyedGroup::Quality,
+    ];
 
     /// The base [`MetricGroup`] this day-keyed group plans compute tasks for — the
     /// single source of the group's registry `task_name` (reused so the label can't
@@ -85,6 +99,7 @@ impl DayKeyedGroup {
             DayKeyedGroup::SessionOutcomes => MetricGroup::SessionOutcomes,
             DayKeyedGroup::Autonomy => MetricGroup::Autonomy,
             DayKeyedGroup::Churn => MetricGroup::Churn,
+            DayKeyedGroup::Quality => MetricGroup::Quality,
         }
     }
 
@@ -102,7 +117,9 @@ impl DayKeyedGroup {
     fn authorizes_capture(self) -> bool {
         match self {
             DayKeyedGroup::SessionOutcomes | DayKeyedGroup::Autonomy => true,
-            DayKeyedGroup::Churn => false,
+            // GIT/source-derived groups: their days come from `git log`, independent
+            // of the session stream, so they must NEVER mark a session's day captured.
+            DayKeyedGroup::Churn | DayKeyedGroup::Quality => false,
         }
     }
 
@@ -130,16 +147,26 @@ impl DayKeyedGroup {
     ///   is exactly why it does NOT authorize pruning (see [`Self::authorizes_capture`]).
     ///   A project with no repo-root folder / a non-git root has no git churn days →
     ///   honest-empty (no backfill, no fabricated day).
+    /// - `quality` — the SAMPLED git commit-days (one anchor per ISO week, via
+    ///   [`super::quality::sample_commit_days`] over `git_commit_days`), so the heavy
+    ///   per-worktree `qlty` scan runs at a bounded cadence rather than every
+    ///   commit-day. Also git-derived → does NOT authorize pruning.
     async fn data_days(
         self,
         pg: &PgStore,
         project_id: &uuid::Uuid,
     ) -> Result<Vec<NaiveDate>, String> {
-        if let DayKeyedGroup::Churn = self {
+        if matches!(self, DayKeyedGroup::Churn | DayKeyedGroup::Quality) {
             let Some(root) = pg.project_root_path(project_id).await? else {
                 return Ok(Vec::new());
             };
-            return Ok(super::churn::git_commit_days(&root));
+            let commit_days = super::churn::git_commit_days(&root);
+            return Ok(match self {
+                // Quality samples the commit-days (weekly anchor) to bound scan cost;
+                // churn backfills every commit-day.
+                DayKeyedGroup::Quality => super::quality::sample_commit_days(&commit_days),
+                _ => commit_days,
+            });
         }
         let sql = match self {
             DayKeyedGroup::SessionOutcomes => {
@@ -162,8 +189,10 @@ impl DayKeyedGroup {
                         AND ae.event_type  = 'UserPromptSubmit'
                  ) u"
             }
-            // Handled by the git early-return above (churn is not a SQL day-set).
-            DayKeyedGroup::Churn => unreachable!("churn data_days is git-sourced above"),
+            // Handled by the git early-return above (churn/quality are not SQL day-sets).
+            DayKeyedGroup::Churn | DayKeyedGroup::Quality => {
+                unreachable!("churn/quality data_days are git-sourced above")
+            }
         };
         let rows: Vec<(NaiveDate,)> = sqlx_core::query_as::query_as(sql)
             .bind(project_id)
@@ -205,9 +234,9 @@ pub(super) fn day_keyed_active(active: &[String]) -> Vec<DayKeyedGroup> {
 }
 
 /// The ACTIVE base groups that are NOT day-keyed — the snapshot / forward-only
-/// groups (`duplication`, `knowledge`, `tool`) that reflect CURRENT state and get
-/// ONE today-only `ComputeMetrics` (`as_of = None`) rather than a per-day backfill.
-/// (`churn` is now day-keyed — backfilled per git commit-day — so it is NOT here.)
+/// groups (`knowledge`, `tool`) that reflect CURRENT state and get ONE today-only
+/// `ComputeMetrics` (`as_of = None`) rather than a per-day backfill. (`churn` and
+/// `quality` are day-keyed — backfilled per git commit-day — so they are NOT here.)
 /// Derived from the scheduler's active `task_name`s via
 /// [`MetricGroup::from_task_name`] (so the health barrier's own name and any unknown
 /// group are excluded) minus the day-keyed groups. Pure so the day-keyed/snapshot
@@ -501,14 +530,15 @@ mod tests {
 
     #[test]
     fn day_keyed_active_keeps_only_active_day_keyed_groups() {
-        // The three day-keyed groups active alongside a snapshot group (duplication)
-        // and the health barrier: session_outcomes + autonomy + churn are returned
-        // (churn is now day-keyed — git-backfilled), duplication/health excluded.
+        // The four day-keyed groups active alongside a snapshot group (knowledge) and
+        // the health barrier: session_outcomes + autonomy + churn + quality are
+        // returned (churn + quality are git-backfilled), knowledge/health excluded.
         let active = vec![
             "session_outcomes".to_string(),
-            "duplication".to_string(),
+            "knowledge".to_string(),
             "autonomy".to_string(),
             "churn".to_string(),
+            "quality".to_string(),
             "health".to_string(),
         ];
         let groups = day_keyed_active(&active);
@@ -518,6 +548,7 @@ mod tests {
                 DayKeyedGroup::SessionOutcomes,
                 DayKeyedGroup::Autonomy,
                 DayKeyedGroup::Churn,
+                DayKeyedGroup::Quality,
             ],
         );
 
@@ -530,7 +561,7 @@ mod tests {
         // Honest-empty: an empty active registry yields no day-keyed groups.
         assert!(day_keyed_active(&[]).is_empty());
         // A registry with only snapshot groups + health yields nothing to plan.
-        assert!(day_keyed_active(&["duplication".to_string(), "health".to_string()]).is_empty());
+        assert!(day_keyed_active(&["knowledge".to_string(), "health".to_string()]).is_empty());
     }
 
     #[test]
@@ -546,6 +577,10 @@ mod tests {
         assert!(
             !scope.contains(&"churn"),
             "git-derived churn must NOT authorize capture-before-reclaim (would reopen the data-loss bug)",
+        );
+        assert!(
+            !scope.contains(&"quality"),
+            "git/qlty-derived quality must NOT authorize capture-before-reclaim either",
         );
         // Exactly the two session-derived groups, nothing else.
         assert_eq!(scope.len(), 2, "capture scope = the session-derived day-keyed groups only");
@@ -796,12 +831,13 @@ mod tests {
     #[test]
     fn snapshot_active_keeps_only_active_non_day_keyed_base_groups() {
         // The snapshot partition is the active base groups MINUS the day-keyed ones
-        // (session_outcomes, autonomy, churn) and MINUS the health barrier's own name.
+        // (session_outcomes, autonomy, churn, quality) and MINUS the health barrier's
+        // own name.
         let active = vec![
             "session_outcomes".to_string(), // day-keyed → excluded
-            "churn".to_string(),            // now day-keyed (git-backfilled) → excluded
-            "duplication".to_string(),
-            "autonomy".to_string(), // day-keyed → excluded
+            "churn".to_string(),            // day-keyed (git-backfilled) → excluded
+            "quality".to_string(),          // day-keyed (git worktree + qlty) → excluded
+            "autonomy".to_string(),         // day-keyed → excluded
             "knowledge".to_string(),
             "tool".to_string(),
             "health".to_string(), // the ComputeHealth barrier's name → not a base group
@@ -809,12 +845,8 @@ mod tests {
         let snap = snapshot_active(&active);
         assert_eq!(
             snap,
-            vec![
-                MetricGroup::Duplication,
-                MetricGroup::Knowledge,
-                MetricGroup::Tool,
-            ],
-            "snapshot = duplication/knowledge/tool; day-keyed (incl. churn) + health excluded",
+            vec![MetricGroup::Knowledge, MetricGroup::Tool],
+            "snapshot = knowledge/tool; day-keyed (incl. churn + quality) + health excluded",
         );
 
         // Honest-empty: only day-keyed + health active → no snapshot groups.
@@ -822,6 +854,7 @@ mod tests {
             "session_outcomes".to_string(),
             "autonomy".to_string(),
             "churn".to_string(),
+            "quality".to_string(),
             "health".to_string(),
         ])
         .is_empty());
@@ -831,7 +864,7 @@ mod tests {
 
     #[tokio::test]
     async fn enqueue_compute_plan_snapshot_groups_are_today_only() {
-        // A snapshot group (duplication) with historical session data is NOT
+        // A snapshot group (knowledge) with historical session data is NOT
         // backfilled per day: it gets exactly ONE today-only ComputeMetrics
         // (as_of = None), and its id is a health-barrier dep. (Contrast the day-keyed
         // session_outcomes test above, which enqueues one per historical day.)
@@ -850,7 +883,7 @@ mod tests {
         }
 
         let queue = crate::tasks::queue::TaskQueue::new();
-        let computes = enqueue_compute_plan(&queue, pg, &pid, &[], &[MetricGroup::Duplication], today, 14)
+        let computes = enqueue_compute_plan(&queue, pg, &pid, &[], &[MetricGroup::Knowledge], today, 14)
             .await
             .unwrap();
         assert_eq!(computes.total, 1, "a snapshot group is today-only regardless of history");
@@ -858,8 +891,56 @@ mod tests {
 
         let t = queue.next_task().await;
         assert_eq!(t.kind, TaskKind::ComputeMetrics);
-        assert_eq!(t.path, "duplication", "snapshot group task_name in path");
+        assert_eq!(t.path, "knowledge", "snapshot group task_name in path");
         assert_eq!(t.as_of, None, "snapshot compute is the today-only rolling-window run (as_of None)");
+
+        cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
+    }
+
+    #[tokio::test]
+    async fn plan_backfills_quality_per_sampled_commit_day_not_every_commit() {
+        // Quality is day-keyed but SAMPLED: enqueue_compute_plan plans one
+        // ComputeMetrics{as_of=Some(D)} per ISO-WEEK anchor (the week's first
+        // commit-day) plus today — NOT one per commit-day. Two commits in the SAME
+        // ISO week collapse to one anchor; a commit in an earlier week is its own
+        // anchor. This is the bounded-cadence contract that keeps qlty scans cheap.
+        use chrono::Datelike;
+        use crate::tasks::test_support::{git_commit_on_day, seed_git_project_folder};
+        let ctx = make_ctx().await;
+        let pg = ctx.pg();
+        let uniq = uuid::Uuid::new_v4();
+        let (pid, fid, repo) = seed_git_project_folder(pg, &uniq).await;
+
+        // Three commits: two in one ISO week (Mon + Wed) → one anchor (the Monday),
+        // and one in a much earlier week → its own anchor. Anchored on real past
+        // Mondays so the ISO-week bucketing is deterministic and well outside the
+        // 1-day window.
+        let today = chrono::Utc::now().date_naive();
+        let this_monday = today - chrono::Duration::days(today.weekday().num_days_from_monday() as i64);
+        let wk_mon = this_monday - chrono::Duration::weeks(10); // a Monday 10 weeks ago
+        let early = wk_mon - chrono::Duration::weeks(6); // a Monday 6 weeks earlier still
+        let wk_wed = wk_mon + chrono::Duration::days(2); // same ISO week as wk_mon
+        for (day, file) in [(early, "e.rs"), (wk_mon, "a.rs"), (wk_wed, "b.rs")] {
+            git_commit_on_day(repo.path(), &day.format("%Y-%m-%d").to_string(), &[(file, "1\n2\n3\n")]);
+        }
+
+        let queue = crate::tasks::queue::TaskQueue::new();
+        let computes = enqueue_compute_plan(&queue, pg, &pid, &[DayKeyedGroup::Quality], &[], today, 1)
+            .await
+            .unwrap();
+
+        let mut days = Vec::new();
+        for _ in 0..computes.total {
+            let t = queue.next_task().await;
+            assert_eq!(t.path, "quality", "quality group task_name in path");
+            days.push(t.as_of.expect("planner stamps as_of on every quality compute"));
+        }
+        days.sort();
+        assert_eq!(
+            days,
+            vec![early, wk_mon, today],
+            "one anchor per ISO week (wk_mon, NOT wk_wed) + the earlier week + today — sampled, not every commit",
+        );
 
         cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
     }
