@@ -9868,11 +9868,21 @@ impl PgStore {
     }
 
     /// Prune raw activity older than `days` days, respecting the analyzer's
-    /// value-extraction guard (#74):
+    /// value-extraction guard (#74) AND the capture-before-reclaim guard
+    /// (2026-08-12 retention decision):
     ///
     /// - Sessions are eligible only when `analyzed_at IS NOT NULL` AND
     ///   `started_at < now() - days` — a session whose insights the analyzer
     ///   never derived is kept even if it is old (would lose signal).
+    /// - AND (capture-before-reclaim) the session's day must EITHER already be
+    ///   captured in the durable metric store — an `EXISTS` daily
+    ///   `sensei.project_metrics` row for the session's project (via
+    ///   `folders.project_id`) with `computed_on = date_trunc('day',
+    ///   s.started_at)::date` — OR the session must be older than a hard
+    ///   backstop (`backstop_days`) so nothing lingers forever if metrics never
+    ///   compute. Backfilled history is thus durable regardless of
+    ///   prune/compute ordering: a day's sessions are only reclaimed once that
+    ///   day's snapshot exists (or the backstop forces it).
     /// - The eligible sessions' \`activity.turns\` cascade (FK ON DELETE
     ///   CASCADE) so `turns` deletes are counted via a preflight
     ///   `COUNT(*) WHERE session_id IN (…)` for observability.
@@ -9891,18 +9901,39 @@ impl PgStore {
     ///
     /// Ordering respects FKs: children first (transcript_turns / assistant_events
     /// keyed by client_session_id), then sessions (which cascades turns).
-    pub async fn prune_activity(&self, days: i32) -> Result<ActivityPruneCounts, String> {
+    pub async fn prune_activity(&self, days: i32, backstop_days: i32, day_keyed_groups: &[&str]) -> Result<ActivityPruneCounts, String> {
+        // Owned copy for the text[] bind (sqlx encodes `&[String]`, not `&[&str]`).
+        let day_keyed_owned: Vec<String> = day_keyed_groups.iter().map(|g| g.to_string()).collect();
         let mut tx = self.pool.begin().await.map_err(|e| e.to_string())?;
 
         // (1) Snapshot eligible sessions once — used for every child delete
-        //     so we don't re-scan the guard SQL four times.
+        //     so we don't re-scan the guard SQL four times. Capture-before-
+        //     reclaim: a session is eligible only when its day is already
+        //     captured by a DAY-KEYED (delivery) metric in sensei.project_metrics
+        //     (daily grain, same project via the folder join, and the metric's
+        //     task_name is one of the day-keyed groups) OR it is older than the
+        //     hard backstop. Scoping to day-keyed metrics is load-bearing:
+        //     forward-only SNAPSHOT computers stamp a grain='daily' row on their
+        //     own day every run, so an unscoped EXISTS would let a session be
+        //     reclaimed before its delivery metric ever computed.
         let eligible: Vec<(uuid::Uuid, String)> = sqlx_core::query_as::query_as(
-            "SELECT id, client_session_id
-               FROM activity.sessions
-              WHERE analyzed_at IS NOT NULL
-                AND started_at < now() - (interval '1 day' * $1)"
+            "SELECT s.id, s.client_session_id
+               FROM activity.sessions s
+               JOIN sensei.folders f ON f.id = s.folder_id
+              WHERE s.analyzed_at IS NOT NULL
+                AND s.started_at < now() - (interval '1 day' * $1)
+                AND (EXISTS (SELECT 1
+                               FROM sensei.project_metrics pm
+                               JOIN sensei.metrics m ON m.id = pm.metric_id
+                              WHERE pm.project_id = f.project_id
+                                AND pm.grain = 'daily'
+                                AND pm.computed_on = date_trunc('day', s.started_at)::date
+                                AND m.task_name = ANY($3))
+                     OR s.started_at < now() - (interval '1 day' * $2))"
         )
             .bind(days)
+            .bind(backstop_days)
+            .bind(&day_keyed_owned)
             .fetch_all(&mut *tx).await.map_err(|e| e.to_string())?;
         if eligible.is_empty() {
             // Even with no eligible sessions, orphan assistant_events by ts
@@ -13717,8 +13748,11 @@ mod tests {
         ).bind(sid).execute(s.pool()).await.unwrap();
 
         // Other tests may seed analyzed sessions, so the global count is not
-        // useful — verify OUR session specifically survives.
-        s.prune_activity(30).await.unwrap();
+        // useful — verify OUR session specifically survives. The analyzed-only
+        // guard keeps it regardless of the capture-before-reclaim backstop
+        // (backstop=60 here), so this assertion is unaffected by that guard.
+        let day_keyed = crate::tasks::handlers::metrics::planner::day_keyed_task_names();
+        s.prune_activity(30, 60, &day_keyed).await.unwrap();
 
         let exists: (bool,) = sqlx_core::query_as::query_as(
             "SELECT EXISTS(SELECT 1 FROM activity.sessions WHERE id = $1)"
@@ -13733,16 +13767,30 @@ mod tests {
     async fn prune_activity_deletes_analyzed_sessions_past_cutoff_and_children() {
         let s = pg_store().await;
         let suffix = format!("prune_del_{}", uuid::Uuid::new_v4());
-        let (_pid, fid) = create_test_project_and_folder(&s, &suffix).await;
+        let (pid, fid) = create_test_project_and_folder(&s, &suffix).await;
         let csid = format!("{}-csid", suffix);
         let sid = s.record_session_event(&csid, &fid, None, "claude", true).await.unwrap();
-        // Age + mark analyzed.
+        // Age to 40 days: past the 30-day retention window but INSIDE the 60-day
+        // backstop, so the ONLY thing that makes it prune-eligible is the
+        // capture path — its day must already exist in sensei.project_metrics.
+        // (Previously aged 90 days, which pruned unconditionally; now the test
+        // exercises capture-before-reclaim directly.)
         sqlx_core::query::query(
             "UPDATE activity.sessions
-                SET started_at = now() - interval '90 days',
-                    analyzed_at = now() - interval '60 days'
+                SET started_at = date_trunc('day', now() - interval '40 days'),
+                    analyzed_at = now() - interval '39 days'
               WHERE id = $1"
         ).bind(sid).execute(s.pool()).await.unwrap();
+        // Seed a covering daily project_metrics row for the session's day so the
+        // capture-before-reclaim guard is satisfied (the durable snapshot exists).
+        let day40: (chrono::NaiveDate,) = sqlx_core::query_as::query_as(
+            "SELECT (date_trunc('day', now() - interval '40 days'))::date"
+        ).fetch_one(s.pool()).await.unwrap();
+        let ftr_id: (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "SELECT id FROM sensei.metrics WHERE key = 'ftr'"
+        ).fetch_one(s.pool()).await.unwrap();
+        s.upsert_project_metric(&ftr_id.0, &pid, None, None, day40.0, "daily", 1.0,
+            &serde_json::json!({}), "measured").await.unwrap();
         // Seed a child transcript_turn keyed on client_session_id (no FK).
         sqlx_core::query::query(
             "INSERT INTO activity.transcript_turns(session_id, source, turn_index, assistant_text)
@@ -13754,8 +13802,12 @@ mod tests {
 
         // Counts include any leftover analyzed+old data from other tests, so
         // don't assert exact numbers — assert OUR session (and its child
-        // rows) are gone after the prune.
-        s.prune_activity(30).await.unwrap();
+        // rows) are gone after the prune. backstop=60 > 40d age, so the capture
+        // row (not the backstop) is what enables the prune. The covering row is
+        // an `ftr` (session_outcomes = DAY-KEYED) metric, so it still counts as
+        // captured under the scoped guard.
+        let day_keyed = crate::tasks::handlers::metrics::planner::day_keyed_task_names();
+        s.prune_activity(30, 60, &day_keyed).await.unwrap();
 
         let exists: (bool,) = sqlx_core::query_as::query_as(
             "SELECT EXISTS(SELECT 1 FROM activity.sessions WHERE id = $1)"
@@ -13766,6 +13818,94 @@ mod tests {
             "SELECT COUNT(*) FROM activity.transcript_turns WHERE session_id = $1"
         ).bind(&csid).fetch_one(s.pool()).await.unwrap();
         assert_eq!(tt.0, 0, "transcript_turns keyed on this session must be gone");
+    }
+
+    /// Capture-before-reclaim (2026-08-12 retention decision): an analyzed
+    /// session past retention is reclaimable ONLY when its day is captured by a
+    /// DAY-KEYED (delivery) metric in sensei.project_metrics OR it is older than
+    /// the hard backstop. This proves all four arms with retention=30, backstop=60
+    /// on four same-project sessions dated: 40d + captured by a day-keyed `ftr`
+    /// row (prune), 45d + uncaptured (KEEP), 50d + covered ONLY by a forward-only
+    /// snapshot `duplication_ratio` row (KEEP — a snapshot row must NOT mark the
+    /// day captured), 90d + uncaptured (prune via backstop).
+    #[tokio::test]
+    async fn prune_activity_captures_before_reclaim() {
+        let s = pg_store().await;
+        let suffix = format!("prune_cbr_{}", uuid::Uuid::new_v4());
+        let (pid, fid) = create_test_project_and_folder(&s, &suffix).await;
+        let ftr_id: (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "SELECT id FROM sensei.metrics WHERE key = 'ftr'"
+        ).fetch_one(s.pool()).await.unwrap();
+
+        // Helper: an analyzed session dated `age_days` ago in this folder.
+        async fn aged_session(s: &PgStore, fid: &uuid::Uuid, suffix: &str, tag: &str, age_days: i32) -> uuid::Uuid {
+            let csid = format!("{suffix}-{tag}");
+            let sid = s.record_session_event(&csid, fid, None, "claude", true).await.unwrap();
+            sqlx_core::query::query(
+                "UPDATE activity.sessions
+                    SET started_at = date_trunc('day', now() - (interval '1 day' * $2)),
+                        analyzed_at = now() - (interval '1 day' * ($2 - 1))
+                  WHERE id = $1"
+            ).bind(sid).bind(age_days).execute(s.pool()).await.unwrap();
+            sid
+        }
+
+        // (a) captured + past retention, inside backstop → PRUNED via capture. The
+        //     covering row is `ftr` = session_outcomes, a DAY-KEYED metric, so it
+        //     satisfies the scoped capture guard.
+        let captured = aged_session(&s, &fid, &suffix, "captured", 40).await;
+        let day40: (chrono::NaiveDate,) = sqlx_core::query_as::query_as(
+            "SELECT (date_trunc('day', now() - interval '40 days'))::date"
+        ).fetch_one(s.pool()).await.unwrap();
+        s.upsert_project_metric(&ftr_id.0, &pid, None, None, day40.0, "daily", 1.0,
+            &serde_json::json!({}), "measured").await.unwrap();
+
+        // (b) uncaptured + past retention, inside backstop → KEPT. A DIFFERENT
+        //     day (45d) than the captured one so its day is genuinely uncovered
+        //     (capture is scoped per project-day, not per session).
+        let uncaptured = aged_session(&s, &fid, &suffix, "uncaptured", 45).await;
+
+        // (c) covered ONLY by a FORWARD-ONLY snapshot metric (`duplication_ratio`,
+        //     task_name='duplication'), past retention, inside backstop → KEPT.
+        //     This is the load-bearing case for the scoped guard: a snapshot
+        //     computer stamps a grain='daily' row on its own day on every run, so
+        //     an UNscoped EXISTS would treat this day as "captured" and reclaim the
+        //     session before its DELIVERY (day-keyed) metric ever computed —
+        //     reintroducing the data loss. The scoped guard requires a day-keyed
+        //     metric, so this session stays until one lands (or the backstop).
+        let snapshot_only = aged_session(&s, &fid, &suffix, "snaponly", 50).await;
+        let day50: (chrono::NaiveDate,) = sqlx_core::query_as::query_as(
+            "SELECT (date_trunc('day', now() - interval '50 days'))::date"
+        ).fetch_one(s.pool()).await.unwrap();
+        let dup_id: (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "SELECT id FROM sensei.metrics WHERE key = 'duplication_ratio'"
+        ).fetch_one(s.pool()).await.unwrap();
+        s.upsert_project_metric(&dup_id.0, &pid, None, None, day50.0, "daily", 0.4,
+            &serde_json::json!({}), "measured").await.unwrap();
+
+        // (d) uncaptured + past the backstop (90d > 60) → PRUNED via backstop.
+        let past_backstop = aged_session(&s, &fid, &suffix, "backstop", 90).await;
+
+        let day_keyed = crate::tasks::handlers::metrics::planner::day_keyed_task_names();
+        s.prune_activity(30, 60, &day_keyed).await.unwrap();
+
+        async fn alive(s: &PgStore, sid: uuid::Uuid) -> bool {
+            let r: (bool,) = sqlx_core::query_as::query_as(
+                "SELECT EXISTS(SELECT 1 FROM activity.sessions WHERE id = $1)"
+            ).bind(sid).fetch_one(s.pool()).await.unwrap();
+            r.0
+        }
+        assert!(!alive(&s, captured).await, "day captured by a day-keyed metric → pruned");
+        assert!(alive(&s, uncaptured).await, "uncaptured day inside backstop → kept (durable until snapshot exists)");
+        assert!(alive(&s, snapshot_only).await,
+            "day covered ONLY by a forward-only snapshot metric is NOT captured → kept (a snapshot row must not mask the missing delivery metric)");
+        assert!(!alive(&s, past_backstop).await, "uncaptured but past backstop → pruned so nothing lingers forever");
+
+        // Clean up the survivors + their covering metric rows.
+        sqlx_core::query::query("DELETE FROM activity.sessions WHERE id = ANY($1::uuid[])")
+            .bind(vec![uncaptured, snapshot_only]).execute(s.pool()).await.ok();
+        sqlx_core::query::query("DELETE FROM sensei.project_metrics WHERE project_id = $1")
+            .bind(pid).execute(s.pool()).await.ok();
     }
 
     #[tokio::test]
@@ -13780,8 +13920,11 @@ mod tests {
         // prune_activity's returned count is GLOBAL across the shared test DB — a
         // sibling db-gated test may prune this row concurrently, so don't assert on
         // the count. The per-row check below deterministically proves our orphan
-        // (unique csid) was pruned.
-        s.prune_activity(30).await.unwrap();
+        // (unique csid) was pruned. Session-less orphan events are pruned by ts
+        // alone (no capture-before-reclaim guard), so the backstop + day-keyed args
+        // are inert.
+        let day_keyed = crate::tasks::handlers::metrics::planner::day_keyed_task_names();
+        s.prune_activity(30, 60, &day_keyed).await.unwrap();
 
         let orphaned: (i64,) = sqlx_core::query_as::query_as(
             "SELECT COUNT(*) FROM activity.assistant_events WHERE session_id = $1"

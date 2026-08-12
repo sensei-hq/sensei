@@ -57,7 +57,13 @@ type SessionFtr = (uuid::Uuid, chrono::NaiveDate, Option<bool>);
 /// of sessions that contributed a first-useful latency that day.
 type DayTtur = (chrono::NaiveDate, f64, i64);
 
-/// Daily session-level aggregates over the window, project-scoped via
+/// This group's occurrence-time anchor for the shared [`super::day_filter`] /
+/// [`super::bind_day`] `$2` day-set contract: sessions bucket/window on
+/// `s.started_at`.
+const DAY_ANCHOR: &str = "s.started_at";
+
+/// Daily session-level aggregates over the selected day-set (rolling window when
+/// `as_of=None`, the single day `D` when `Some(D)`), project-scoped via
 /// `sensei.folders.project_id`. `outcome is not null` restricts to measurable
 /// (analyzed) sessions — in-flight sessions whose `ftr`/`outcome` are still
 /// `NULL` are excluded from the FTR base.
@@ -65,8 +71,9 @@ async fn daily_session_aggregates(
     pg: &PgStore,
     project_id: &uuid::Uuid,
     window_days: u32,
+    as_of: Option<chrono::NaiveDate>,
 ) -> Result<Vec<DayAgg>, String> {
-    sqlx_core::query_as::query_as(
+    let sql = format!(
         "SELECT date_trunc('day', s.started_at)::date              AS day
               , count(*)::int8                                     AS session_count
               , count(*) FILTER (WHERE s.ftr)::int8                AS ftr_count
@@ -75,15 +82,16 @@ async fn daily_session_aggregates(
            JOIN sensei.folders    f ON f.id = s.folder_id
           WHERE f.project_id  = $1
             AND s.outcome    IS NOT NULL
-            AND s.started_at >= now() - make_interval(days => $2::int)
+            AND {}
           GROUP BY 1
           ORDER BY 1",
-    )
-    .bind(project_id)
-    .bind(window_days as i32)
-    .fetch_all(pg.pool())
-    .await
-    .map_err(|e| e.to_string())
+        super::day_filter(DAY_ANCHOR, as_of),
+    );
+    let q = sqlx_core::query_as::query_as::<_, DayAgg>(&sql).bind(project_id);
+    super::bind_day(q, window_days, as_of)
+        .fetch_all(pg.pool())
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// Daily tool-call sums for `rework_ratio`: `corrected_tool_calls` (numerator) over
@@ -94,8 +102,9 @@ async fn daily_rework(
     pg: &PgStore,
     project_id: &uuid::Uuid,
     window_days: u32,
+    as_of: Option<chrono::NaiveDate>,
 ) -> Result<Vec<DayRework>, String> {
-    sqlx_core::query_as::query_as(
+    let sql = format!(
         "SELECT date_trunc('day', s.started_at)::date                                         AS day
               , coalesce(sum(t.tool_calls) FILTER (WHERE s.outcome = 'corrected'::sensei.session_outcome), 0)::int8 AS corrected_tool_calls
               , coalesce(sum(t.tool_calls), 0)::int8                                           AS total_tool_calls
@@ -104,15 +113,16 @@ async fn daily_rework(
            JOIN activity.turns    t ON t.session_id = s.id
           WHERE f.project_id  = $1
             AND s.outcome    IS NOT NULL
-            AND s.started_at >= now() - make_interval(days => $2::int)
+            AND {}
           GROUP BY 1
           ORDER BY 1",
-    )
-    .bind(project_id)
-    .bind(window_days as i32)
-    .fetch_all(pg.pool())
-    .await
-    .map_err(|e| e.to_string())
+        super::day_filter(DAY_ANCHOR, as_of),
+    );
+    let q = sqlx_core::query_as::query_as::<_, DayRework>(&sql).bind(project_id);
+    super::bind_day(q, window_days, as_of)
+        .fetch_all(pg.pool())
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// Per-session first-try rows over the window, project-scoped, same measurable
@@ -121,8 +131,9 @@ async fn session_ftr(
     pg: &PgStore,
     project_id: &uuid::Uuid,
     window_days: u32,
+    as_of: Option<chrono::NaiveDate>,
 ) -> Result<Vec<SessionFtr>, String> {
-    sqlx_core::query_as::query_as(
+    let sql = format!(
         "SELECT s.id                                       AS session_id
               , date_trunc('day', s.started_at)::date      AS day
               , s.ftr                                      AS ftr
@@ -130,14 +141,15 @@ async fn session_ftr(
            JOIN sensei.folders    f ON f.id = s.folder_id
           WHERE f.project_id  = $1
             AND s.outcome    IS NOT NULL
-            AND s.started_at >= now() - make_interval(days => $2::int)
+            AND {}
           ORDER BY s.started_at",
-    )
-    .bind(project_id)
-    .bind(window_days as i32)
-    .fetch_all(pg.pool())
-    .await
-    .map_err(|e| e.to_string())
+        super::day_filter(DAY_ANCHOR, as_of),
+    );
+    let q = sqlx_core::query_as::query_as::<_, SessionFtr>(&sql).bind(project_id);
+    super::bind_day(q, window_days, as_of)
+        .fetch_all(pg.pool())
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// Daily median `time_to_useful_result` (seconds) per project. For each measurable
@@ -150,8 +162,9 @@ async fn daily_time_to_useful(
     pg: &PgStore,
     project_id: &uuid::Uuid,
     window_days: u32,
+    as_of: Option<chrono::NaiveDate>,
 ) -> Result<Vec<DayTtur>, String> {
-    sqlx_core::query_as::query_as(
+    let sql = format!(
         "WITH first_useful AS ( \
              SELECT date_trunc('day', s.started_at)::date                        AS day \
                   , EXTRACT(EPOCH FROM (fu.ended_at - s.started_at))::float8      AS secs \
@@ -167,7 +180,7 @@ async fn daily_time_to_useful(
                     ) fu ON true \
               WHERE f.project_id  = $1 \
                 AND s.outcome    IS NOT NULL \
-                AND s.started_at >= now() - make_interval(days => $2::int) \
+                AND {} \
          ) \
          SELECT day \
               , percentile_cont(0.5) WITHIN GROUP (ORDER BY secs)::float8         AS median_secs \
@@ -176,25 +189,40 @@ async fn daily_time_to_useful(
           WHERE secs >= 0 \
           GROUP BY day \
           ORDER BY day",
-    )
-    .bind(project_id)
-    .bind(window_days as i32)
-    .fetch_all(pg.pool())
-    .await
-    .map_err(|e| e.to_string())
+        super::day_filter(DAY_ANCHOR, as_of),
+    );
+    let q = sqlx_core::query_as::query_as::<_, DayTtur>(&sql).bind(project_id);
+    super::bind_day(q, window_days, as_of)
+        .fetch_all(pg.pool())
+        .await
+        .map_err(|e| e.to_string())
 }
 
-/// Compute the `session_outcomes` group for one project over the configured window.
-/// `project_raw` is the project uuid carried in `task.folder_path`. Returns the
-/// number of `project_metrics` rows written (`0` = honest-empty: no measurable
-/// sessions, or none of the group's metrics active). Idempotent — re-running
-/// backfills in place via the upsert identity.
-pub(super) async fn compute(ctx: &TaskContext, project_raw: &str) -> Result<u32, String> {
+/// Compute the `session_outcomes` group for one project.
+///
+/// `project_raw` is the project uuid carried in `task.folder_path`. `as_of`
+/// selects the day-set:
+/// - `None` — the incremental run: every measurable day in the rolling
+///   [`metrics.window_days`] window (default 14), `computed_on` = the session's day.
+/// - `Some(D)` — the backfill/gap-fill run: ONLY sessions whose day is exactly `D`
+///   (`date_trunc('day', started_at)::date = D`), `computed_on` = `D`. This is how
+///   a past day reaches the roll-up views (which bucket on `computed_on` with no
+///   recent-window filter).
+///
+/// Returns the number of `project_metrics` rows written (`0` = honest-empty: no
+/// measurable sessions on the selected day-set, or none of the group's metrics
+/// active). Idempotent — re-running backfills in place via the upsert identity.
+pub(super) async fn compute(
+    ctx: &TaskContext,
+    project_raw: &str,
+    as_of: Option<chrono::NaiveDate>,
+) -> Result<u32, String> {
     let project_id = uuid::Uuid::parse_str(project_raw)
         .map_err(|e| format!("session_outcomes: bad project id {project_raw:?}: {e}"))?;
     let pg = ctx.pg();
 
     // Reuse the scheduler's window reader (config key + parser + default) — DRY.
+    // Unused on the `as_of=Some` single-day path; the day filter replaces it.
     let window_days = crate::tasks::metrics_scheduler::window_days(pg).await;
 
     // Resolve key → metric_id for this group's ACTIVE metrics via the shared store
@@ -214,7 +242,7 @@ pub(super) async fn compute(ctx: &TaskContext, project_raw: &str) -> Result<u32,
     // Daily session-level metrics: ftr (pct) + throughput (count).
     if ftr_id.is_some() || throughput_id.is_some() {
         for (day, session_count, ftr_count, correction_count) in
-            daily_session_aggregates(pg, &project_id, window_days).await?
+            daily_session_aggregates(pg, &project_id, window_days, as_of).await?
         {
             if let Some(mid) = ftr_id {
                 // denominator (session_count) is ≥ 1 for any returned day.
@@ -246,7 +274,7 @@ pub(super) async fn compute(ctx: &TaskContext, project_raw: &str) -> Result<u32,
     // Daily rework_ratio (ratio) — only if active.
     if let Some(mid) = rework_id {
         for (day, corrected_tool_calls, total_tool_calls) in
-            daily_rework(pg, &project_id, window_days).await?
+            daily_rework(pg, &project_id, window_days, as_of).await?
         {
             if total_tool_calls == 0 {
                 // No tool-call data that day → no denominator → NO row (a 0/0 would
@@ -269,7 +297,7 @@ pub(super) async fn compute(ctx: &TaskContext, project_raw: &str) -> Result<u32,
     // Daily time_to_useful_result (duration, median seconds) — only if active. A day
     // with no session that produced a usable turn writes NO row (honest-empty).
     if let Some(mid) = ttur_id {
-        for (day, median_secs, n) in daily_time_to_useful(pg, &project_id, window_days).await? {
+        for (day, median_secs, n) in daily_time_to_useful(pg, &project_id, window_days, as_of).await? {
             let props = serde_json::json!({ "n": n });
             pg.upsert_project_metric(
                 &mid, &project_id, None, None, day, GRAIN_DAILY, median_secs, &props, SOURCE_MEASURED,
@@ -281,7 +309,7 @@ pub(super) async fn compute(ctx: &TaskContext, project_raw: &str) -> Result<u32,
 
     // Per-session ftr rows (grain=session, session_id set) — only if active.
     if let Some(mid) = ftr_id {
-        for (session_id, day, ftr) in session_ftr(pg, &project_id, window_days).await? {
+        for (session_id, day, ftr) in session_ftr(pg, &project_id, window_days, as_of).await? {
             let hit: i64 = if ftr.unwrap_or(false) { 1 } else { 0 };
             // Keep the ratio/pct props contract uniform: value = numerator/denominator
             // = hit/1. (Session-grain rows are excluded from the daily roll-up views,
@@ -332,7 +360,7 @@ mod tests {
         let inflight = seed_metrics_session(pg, &fid, &pid, None, None, 0, ts).await;
         seed_metrics_turn(pg, &inflight, 5, ts).await;
 
-        let written = compute(&ctx, &pid.to_string()).await.unwrap();
+        let written = compute(&ctx, &pid.to_string(), None).await.unwrap();
         assert_eq!(written, 8, "4 daily rows (ftr, rework, throughput, time_to_useful) + 4 per-session ftr rows (in-flight excluded)");
 
         // ── Daily rows ────────────────────────────────────────────────────
@@ -392,7 +420,7 @@ mod tests {
         assert_eq!(zero_sid, Some(corrected), "the 0.0 per-session row is the corrected session");
 
         // ── Idempotency: re-run backfills in place, never duplicates ──────
-        let again = compute(&ctx, &pid.to_string()).await.unwrap();
+        let again = compute(&ctx, &pid.to_string(), None).await.unwrap();
         assert_eq!(again, 8, "re-run recomputes the same rows");
         let (total,): (i64,) = query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
             .bind(pid)
@@ -427,7 +455,7 @@ mod tests {
         }
         seed_metrics_session(pg, &fid, &pid, Some("corrected"), Some(false), 1, ts).await;
 
-        let written = compute(&ctx, &pid.to_string()).await.unwrap();
+        let written = compute(&ctx, &pid.to_string(), None).await.unwrap();
         assert!(written > 0, "compute wrote store rows for the seeded sessions");
 
         // Store-derived daily FTR (get_ftr_daily reads project_metric_daily) ==
@@ -477,7 +505,7 @@ mod tests {
         seed_metrics_session(pg, &fid, &pid, Some("corrected"), Some(false), 1, ts).await;
         seed_metrics_session(pg, &fid, &pid, None, None, 0, ts).await; // in-flight, excluded
 
-        compute(&ctx, &pid.to_string()).await.unwrap();
+        compute(&ctx, &pid.to_string(), None).await.unwrap();
 
         let ftr = pg.get_project_ftr(&pid).await.unwrap();
         let headline = ftr["ftr14d"].as_f64().expect("ftr14d present");
@@ -503,7 +531,7 @@ mod tests {
             .await
             .unwrap();
 
-        let written = compute(&ctx, &pid.to_string()).await.unwrap();
+        let written = compute(&ctx, &pid.to_string(), None).await.unwrap();
         assert_eq!(written, 0, "no sessions in the window → zero rows written");
 
         let (total,): (i64,) = query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
@@ -533,7 +561,7 @@ mod tests {
             seed_metrics_turn(pg, &sid, 0, ts).await;
         }
 
-        let written = compute(&ctx, &pid.to_string()).await.unwrap();
+        let written = compute(&ctx, &pid.to_string(), None).await.unwrap();
 
         let (rework_rows,): (i64,) = query_as(
             "SELECT count(*) FROM sensei.project_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
@@ -563,7 +591,7 @@ mod tests {
             seed_metrics_turn(pg, &sid, 3, ts).await;
         }
 
-        let written = compute(&ctx, &pid.to_string()).await.unwrap();
+        let written = compute(&ctx, &pid.to_string(), None).await.unwrap();
         assert_eq!(written, 6, "ftr daily (0.0) + rework daily + throughput daily + time_to_useful daily + 2 per-session ftr");
 
         let daily = daily_rows(pg, &pid).await;
@@ -605,7 +633,7 @@ mod tests {
         let inflight = seed_metrics_session(pg, &fid, &pid, None, None, 0, t).await;
         seed_metrics_turn_ex(pg, &inflight, 1, t, at(1), false, 1).await;
 
-        compute(&ctx, &pid.to_string()).await.unwrap();
+        compute(&ctx, &pid.to_string(), None).await.unwrap();
 
         let daily = daily_rows(pg, &pid).await;
         let ttur = daily.iter().find(|r| r.0 == "time_to_useful_result")
@@ -633,7 +661,7 @@ mod tests {
             seed_metrics_turn_ex(pg, &s, 1, t, t + chrono::Duration::seconds(4), true, 1).await;
         }
 
-        compute(&ctx, &pid.to_string()).await.unwrap();
+        compute(&ctx, &pid.to_string(), None).await.unwrap();
 
         let (rows,): (i64,) = query_as(
             "SELECT count(*) FROM sensei.project_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
@@ -644,6 +672,54 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(rows, 0, "no usable turn in any session → no time_to_useful_result row (never a fabricated 0)");
+
+        cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
+    }
+
+    #[tokio::test]
+    async fn session_outcomes_backfills_a_historical_day_when_as_of_is_set() {
+        // Phase 1: `as_of = Some(D)` computes the SINGLE historical day D and stamps
+        // `computed_on = D`, so a past day reaches the roll-up views (which bucket on
+        // `computed_on` with no recent-window filter). The incremental (`None`) run
+        // omits the day because it is outside the rolling window — that omission is
+        // exactly what the backfill path fixes.
+        let ctx = make_ctx().await;
+        let pg = ctx.pg();
+        let uniq = uuid::Uuid::new_v4();
+        let (pid, fid) = seed_metrics_project_folder(pg, &uniq).await;
+
+        // One measurable session 60 days ago — well outside the default 14-day
+        // window. `date_naive()` is its true occurrence day.
+        let ts = chrono::Utc::now() - chrono::Duration::days(60);
+        let day = ts.date_naive();
+        let sid = seed_metrics_session(pg, &fid, &pid, Some("completed"), Some(true), 0, ts).await;
+        seed_metrics_turn(pg, &sid, 2, ts).await;
+
+        // Incremental run (as_of=None): the 60-day-old day is out of window → NO rows
+        // (honest-empty for the recent window, never a fabricated backfill).
+        let incr = compute(&ctx, &pid.to_string(), None).await.unwrap();
+        assert_eq!(incr, 0, "the 60-day-old day is outside the rolling window → no incremental rows");
+
+        // Backfill run (as_of=Some(day)): computes exactly that day's metrics.
+        let written = compute(&ctx, &pid.to_string(), Some(day)).await.unwrap();
+        assert!(written > 0, "as_of=Some(D) computes the historical day D (window-only behavior would still write 0)");
+
+        // The daily `ftr` row is stamped `computed_on = day` (the true occurrence
+        // day, 60 days ago) — proof the past-dated row reaches the daily roll-up.
+        let (ftr_days,): (i64,) = query_as(
+            "SELECT count(*) FROM sensei.project_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
+              WHERE pm.project_id = $1 AND pm.grain = 'daily' AND m.key = 'ftr' AND pm.computed_on = $2",
+        )
+        .bind(pid)
+        .bind(day)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        assert_eq!(ftr_days, 1, "a daily ftr row is stamped computed_on = the session's true day (60 days ago)");
+
+        // Idempotent: re-backfilling the same day upserts in place (no duplicate row).
+        let again = compute(&ctx, &pid.to_string(), Some(day)).await.unwrap();
+        assert_eq!(again, written, "re-running the same day backfills in place");
 
         cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
     }

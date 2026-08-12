@@ -337,6 +337,22 @@ pub(crate) async fn backfill_transcripts(State(state): State<AppState>) -> Json<
     Json(serde_json::json!({ "ok": true, "files_seen": files_seen, "enqueued": enqueued, "sessions_repaired": repaired }))
 }
 
+/// Enqueue a metrics backfill (Phase 5 — history recovery): one `PlanMetricDays` per
+/// project. The planner then backfills every data day its sources reach and recomputes
+/// today, so the metric charts render months of history. Overlap-guarded
+/// (`has_pending_kind`), so this is safe to call repeatedly; a re-plan is idempotent
+/// (per-day upserts). Mirrors [`backfill_transcripts`]. A project-list read failure is
+/// a 500 — never masked into a fake `enqueued: 0` (which would read as "no projects").
+pub(crate) async fn backfill_metrics(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let enqueued =
+        crate::tasks::metrics_scheduler::enqueue_backfill_all(&state.task_queue, &state.pg)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(serde_json::json!({ "ok": true, "enqueued": enqueued })))
+}
+
 // ── Per-Repo Summary ────────────────────────────────────────────────────────
 
 pub(crate) async fn project_summary(
