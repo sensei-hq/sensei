@@ -226,6 +226,57 @@ updated to reflect capture-before-reclaim. This makes backfilled history durable
 regardless of prune/compute timing. Fix F1 (recompute last N unsettled days) +
 confirm the pre-existing `metrics_pipeline_end_to_end` red before ship.
 
+### BLOCKER 3 (live-verify 2026-08-12) — plan runs before data is measurable
+
+Deployed v0.7.2+code and drove the live backfill. Sessions re-synthesized fine
+(dbd → 2025-06-05, 179 backfilled), and the planner's data-day discovery is correct
+(dbd: **16 measurable session-days + 30 event-days, both back to 2025-06**). BUT the
+daily snapshots stayed clipped (dbd `ftr` floor 07-30, `interruption_rate` 07-28) —
+**no historical days computed**. Root cause is ORCHESTRATION ORDERING, not logic:
+- The boot sequence enqueues `PlanMetricDays` on a fixed **30s sleep** after the
+  transcript backfill *starts* — but re-synthesis takes ~5 min, and `session_outcomes`
+  days are only "measurable" after the **analyzer** sets `outcome`. So the plan ran
+  before the data was plan-ready and enqueued only recent days.
+- Manual `POST /api/metrics/backfill` re-triggers are **overlap-guarded**
+  (`has_pending_kind(PlanMetricDays)`) → `enqueued=0`, so they can't force a fresh wave.
+- The real dependency chain is **synthesizer → analyzer → PlanMetricDays** (a sleep is
+  not a dependency; the queue's `depends_on`/`blocked_by` is the right tool). A trigger
+  on *synthesis* completion still misses `ftr` (analyzer hasn't set `outcome`); it must
+  hang on **analysis** completion.
+- FIX (pending): drive `PlanMetricDays(project)` off **analysis completion** (guarded
+  against storms), keeping the daily scheduler as the self-heal backstop. Then re-verify
+  live. Holding bump/merge until historical snapshots land AND survive a prune cycle.
+
+### BLOCKER 3 RESOLVED + live-verify status (2026-08-12)
+
+Fixes landed (committed on develop): analysis-completion → PlanMetricDays trigger
+(synthesizer→analyzer→metrics; enqueue_unique-guarded; boot 30s-sleep removed);
+activity-pruner boot-tick delayed (capture beats reclaim; backstop kept). Deployed
+via `make install`.
+
+**Live verification (decisive):**
+- ✅ MECHANISM PROVEN: `interruption_rate` (autonomy) durably backfilled
+  **2025-06-05 → 2026-08-11 (31 daily points, 14 months)** — the per-day
+  plan→compute→snapshot chain works end-to-end on live data AND survives prune
+  (project_metrics untouched by the pruner).
+- ✅ pruner-delay works: dbd's deep sessions survived (16 measurable session-days
+  back to 2025-06, not re-pruned on boot).
+- ⏳ `ftr`/`throughput` (session_outcomes) NOT yet showing months: NOT a logic bug.
+  A PlanMetricDays(dbd) ran post-analysis (data_days=16, covered=6 → ~10 historical
+  days planned) and enqueued the historical computes, but they are STARVED behind
+  the boot code-graph re-index (`build_connections`/`extract_deps` monopolize the
+  worker pool on this 130-project machine — no session_outcomes compute for dbd ran
+  in 30 min). They land once the re-index drains; the daily scheduler +
+  analysis-hook re-plan are the self-heal. session_outcomes' data-days require the
+  analyzer's `outcome` (autonomy's event-ts days don't), which is why interruption
+  won its computes in an earlier, less-contended window.
+
+**FOLLOW-UP (operational, pre-existing, not this feature's defect):** the boot
+re-index starves metric computes → historical backfill is slow-to-appear on a large
+install and re-delays on every restart. Consider giving `ComputeMetrics`/
+`PlanMetricDays` priority over bulk indexing, or deferring the boot re-scan. This is
+a queue-priority change (affects everything) — raise separately, do not fold in here.
+
 ### Retention window + vacuum (2026-08-12, user request)
 
 - **`activity.retention_days` default 30 → 90** (`activity_pruner.rs`
