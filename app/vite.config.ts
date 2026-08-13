@@ -72,8 +72,17 @@ const senseiNamespace = 'sensei';
 import { readFileSync } from 'node:fs';
 const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf-8')) as { version: string };
 
-export default defineConfig({
-  plugins: [webkitNodeReexportFix(), UnoCSS(), sveltekit()],
+export default defineConfig(({ command }) => ({
+  // The WebKit ES-module TDZ workaround (webkitNodeReexportFix) is only needed
+  // for the Tauri WebKit webview — production builds and `tauri dev` (which sets
+  // TAURI_DEV_HOST). A plain-browser `vite dev` (used for fast visual review in
+  // Chromium/Firefox) doesn't need the generated-module rewrite, and a non-WebKit
+  // parser trips on it, so skip it there; builds and tauri-dev still apply it.
+  plugins: [
+    ...(command === 'build' || process.env.TAURI_DEV_HOST ? [webkitNodeReexportFix()] : []),
+    UnoCSS(),
+    sveltekit(),
+  ],
 
   // Force postcss transformer over lightningcss. Vite 8 picks lightningcss
   // by default when `build.target` is set, which makes it choke on the
@@ -126,4 +135,4 @@ export default defineConfig({
   optimizeDeps: {
     exclude: ['@rokkit/ui', '@rokkit/states', '@rokkit/actions', '@rokkit/core', '@rokkit/app'],
   },
-});
+}));
