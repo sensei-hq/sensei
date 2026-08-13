@@ -10,6 +10,7 @@ import {
     toSignal,
     buildSignals,
     healthSignal,
+    heroSignal,
     pickMovers,
     orderSignals,
     deterministicHeadline,
@@ -17,9 +18,11 @@ import {
     densifySeries,
     metricYDomain,
     historyNote,
+    linkifyMetrics,
     type ProjectMetricRow,
     type MetricFamily,
     type MetricSeriesPoint,
+    type RegistryMetric,
 } from './metric-view.js';
 
 function row(over: Partial<ProjectMetricRow>): ProjectMetricRow {
@@ -285,6 +288,74 @@ describe('toSignal', () => {
         expect(s.trend).toBeNull();
         expect(s.moved).toBe(false);
         expect(s.insight).toContain('first period on record');
+    });
+});
+
+describe('linkifyMetrics', () => {
+    const reg = (key: string, name: string): RegistryMetric => ({
+        key,
+        name,
+        family: 'outcome',
+        metric_type: 'ratio',
+        unit: null,
+        direction: 'higher_better',
+    });
+    const registry: RegistryMetric[] = [
+        reg('rework_ratio', 'Rework ratio'),
+        reg('ftr', 'First-turn resolution (FTR)'),
+        reg('churn_rate', 'Churn rate'),
+    ];
+
+    it('links another metric named in the text (case-insensitive), keeping the prose', () => {
+        const segs = linkifyMetrics('Never read alone. Companion: rework ratio.', registry, 'ftr');
+        expect(segs.map((s) => s.text).join('')).toBe('Never read alone. Companion: rework ratio.');
+        const linked = segs.find((s) => s.key);
+        expect(linked?.key).toBe('rework_ratio');
+        expect(linked?.text).toBe('rework ratio');
+    });
+
+    it('never links the current metric to itself', () => {
+        const segs = linkifyMetrics('Rework ratio rises when work is deferred.', registry, 'rework_ratio');
+        expect(segs.every((s) => s.key == null)).toBe(true);
+    });
+
+    it('returns a single plain segment when nothing matches', () => {
+        const segs = linkifyMetrics('no companion mentioned here', registry, 'ftr');
+        expect(segs).toEqual([{ text: 'no companion mentioned here' }]);
+    });
+
+    it('does not match a name embedded inside a larger word', () => {
+        // "Churn rate" must not link inside "churn rated" (word-boundary guard).
+        const segs = linkifyMetrics('the churn rated poorly', registry, 'ftr');
+        expect(segs.every((s) => s.key == null)).toBe(true);
+    });
+});
+
+describe('heroSignal', () => {
+    it('leads with FTR (the north star) over the composite when both are present', () => {
+        const signals = buildSignals(
+            [row({ metric: 'ftr', value: 1 }), row({ metric: 'project_health', metric_type: 'score', value: 44 })],
+            famOf,
+        );
+        expect(heroSignal(signals)?.key).toBe('ftr');
+    });
+
+    it('is FTR when the composite is retired (no composite row)', () => {
+        const signals = buildSignals(
+            [row({ metric: 'ftr', value: 1 }), row({ metric: 'churn_concentration', metric_type: 'pct', value: 0.5 })],
+            famOf,
+        );
+        expect(heroSignal(signals)?.key).toBe('ftr');
+    });
+
+    it('falls back to the composite only when FTR is absent (legacy data)', () => {
+        const signals = buildSignals([row({ metric: 'project_health', metric_type: 'score', value: 44 })], famOf);
+        expect(heroSignal(signals)?.key).toBe('project_health');
+    });
+
+    it('is null when neither FTR nor a composite exists', () => {
+        const signals = buildSignals([row({ metric: 'churn_concentration', metric_type: 'pct', value: 0.5 })], famOf);
+        expect(heroSignal(signals)).toBeNull();
     });
 });
 

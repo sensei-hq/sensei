@@ -11,6 +11,7 @@
         metricYDomain,
         historyNote,
         metricAbout,
+        linkifyMetrics,
         formatMetricValue,
         TREND_TEXT,
     } from '$lib/metrics/metric-view.js';
@@ -29,6 +30,11 @@
     // from the selected metric's registry row + the series' formula facet.
     const selectedRow = $derived(data.rows.find((r) => r.metric === data.selectedKey));
     const about = $derived(metricAbout(selectedRow, data.formula));
+    // Linkify any companion metric named in `how_to_read` (e.g. FTR's
+    // "Companion: rework ratio") to that metric's detail.
+    const howToReadSegments = $derived(
+        about ? linkifyMetrics(about.howToRead, data.registry, data.selectedKey) : [],
+    );
 
     const values = $derived(seriesValues(data.series));
     const distribution = $derived(seriesDistribution(values));
@@ -114,7 +120,7 @@
                     />
 
                     {#if about}
-                        <AboutMetric {about} />
+                        <AboutMetric {about} {howToReadSegments} {projectId} />
                     {/if}
 
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-6">

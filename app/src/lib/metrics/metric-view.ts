@@ -286,6 +286,72 @@ export function metricAbout(
     return { purpose, howToRead, formula: f };
 }
 
+/** One run of `how_to_read` text: plain, or (when `key` is set) a mention of
+ *  another metric that should render as a link to that metric's detail. */
+export interface TextSegment {
+    text: string;
+    key?: string;
+}
+
+/**
+ * Split `text` into segments, tagging any run that matches ANOTHER metric's
+ * display name (case-insensitive, whole-word) with that metric's key — so the
+ * "how to read it" copy can link its companion metric (e.g. FTR's "Companion:
+ * rework ratio" links "rework ratio" to the rework_ratio detail). Never links
+ * the current metric to itself. Longest names are matched first so a longer name
+ * isn't shadowed by a shorter substring. Returns a single plain segment when
+ * nothing matches — never fabricates a link.
+ */
+export function linkifyMetrics(
+    text: string,
+    registry: RegistryMetric[],
+    selfKey: string,
+): TextSegment[] {
+    const targets = registry
+        .filter((m) => m.key !== selfKey && (m.name?.trim().length ?? 0) >= 3)
+        .map((m) => {
+            const name = m.name.trim();
+            return { key: m.key, name, lower: name.toLowerCase() };
+        })
+        .sort((a, b) => b.name.length - a.name.length); // longest first
+    if (!text || targets.length === 0) return [{ text }];
+
+    // Scan by hand (no dynamic RegExp — that's a ReDoS-class pattern, and these
+    // names come from the catalog anyway). At each index, try to match the
+    // longest target name whose word-ish ends don't sit inside a larger word.
+    const lower = text.toLowerCase();
+    const isWordChar = (c: string | undefined) => c != null && /[a-z0-9]/i.test(c);
+    const segments: TextSegment[] = [];
+    let i = 0;
+    let plainStart = 0;
+    while (i < text.length) {
+        let hitKey: string | null = null;
+        let hitLen = 0;
+        for (const t of targets) {
+            if (!lower.startsWith(t.lower, i)) continue;
+            const before = i > 0 ? text[i - 1] : undefined;
+            const after = text[i + t.name.length];
+            const leftOk = !isWordChar(t.name[0]) || !isWordChar(before);
+            const rightOk = !isWordChar(t.name[t.name.length - 1]) || !isWordChar(after);
+            if (leftOk && rightOk) {
+                hitKey = t.key;
+                hitLen = t.name.length;
+                break; // targets are longest-first, so the first hit is the longest
+            }
+        }
+        if (hitKey) {
+            if (i > plainStart) segments.push({ text: text.slice(plainStart, i) });
+            segments.push({ text: text.slice(i, i + hitLen), key: hitKey });
+            i += hitLen;
+            plainStart = i;
+        } else {
+            i++;
+        }
+    }
+    if (plainStart < text.length) segments.push({ text: text.slice(plainStart) });
+    return segments.length ? segments : [{ text }];
+}
+
 /** Build a key→family resolver from the registry catalog (the values endpoint
  *  omits `family`, so grouping needs this join). */
 export function familyLookup(
@@ -564,6 +630,22 @@ export function buildSignals(
 /** The health (composite) signal, promoted to the hero. Null when absent. */
 export function healthSignal(signals: SignalVM[]): SignalVM | null {
     return signals.find((s) => s.family === 'composite') ?? null;
+}
+
+/** The registry key of the north-star outcome metric. */
+const KEY_FTR = 'ftr';
+
+/** The hero signal for the metrics landing. FTR is the north star, so it leads;
+ *  the retired `project_health` composite is a fallback only for legacy data that
+ *  still carries it. Null when neither is present. (The composite was retired —
+ *  a rising-then-falling amalgam that obscured FTR — so the hero leads on the
+ *  metric everything is judged by.) */
+export function heroSignal(signals: SignalVM[]): SignalVM | null {
+    return (
+        signals.find((s) => s.key === KEY_FTR) ??
+        signals.find((s) => s.family === 'composite') ??
+        null
+    );
 }
 
 /** The top-N movers (non-flat), most-moved first — excludes the composite/health

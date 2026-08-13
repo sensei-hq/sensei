@@ -1,8 +1,12 @@
 <script lang="ts">
     import AboutMetric from './AboutMetric.svelte';
-    import type { MetricAbout } from '$lib/metrics/metric-view.js';
+    import type { MetricAbout, TextSegment } from '$lib/metrics/metric-view.js';
 
-    let { about }: { about: MetricAbout } = $props();
+    let {
+        about,
+        howToReadSegments = [],
+        projectId = '',
+    }: { about: MetricAbout; howToReadSegments?: TextSegment[]; projectId?: string } = $props();
 </script>
 
-<AboutMetric {about} />
+<AboutMetric {about} {howToReadSegments} {projectId} />

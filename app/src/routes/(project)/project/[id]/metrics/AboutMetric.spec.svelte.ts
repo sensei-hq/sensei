@@ -2,7 +2,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { mountComponent } from '$lib/test-mount.js';
 import AboutMetricHarness from './AboutMetric.harness.svelte';
-import type { MetricAbout } from '$lib/metrics/metric-view.js';
+import type { MetricAbout, TextSegment } from '$lib/metrics/metric-view.js';
 
 let cleanup: Array<() => void> = [];
 afterEach(() => {
@@ -19,8 +19,8 @@ function about(over: Partial<MetricAbout> = {}): MetricAbout {
     };
 }
 
-function mount(a: MetricAbout) {
-    const m = mountComponent(AboutMetricHarness, { about: a });
+function mount(a: MetricAbout, howToReadSegments: TextSegment[] = [], projectId = '') {
+    const m = mountComponent(AboutMetricHarness, { about: a, howToReadSegments, projectId });
     cleanup.push(m.destroy);
     return m.container;
 }
@@ -45,5 +45,26 @@ describe('AboutMetric', () => {
 
     it('omits a row whose copy is absent rather than rendering a blank label', () => {
         expect(q(mount(about({ howToRead: '' })), '[data-row="how"]')).toBeNull();
+    });
+
+    it('renders a companion metric in how-to-read as a link to its detail', () => {
+        const segs: TextSegment[] = [
+            { text: 'read with ' },
+            { text: 'rework ratio', key: 'rework_ratio' },
+            { text: ' to catch deferred work' },
+        ];
+        const root = mount(about(), segs, 'proj-1');
+        const link = q(root, '[data-row="how"] a[data-companion="rework_ratio"]');
+        expect(link?.getAttribute('href')).toBe('/project/proj-1/metrics/rework_ratio');
+        expect(link?.textContent).toBe('rework ratio');
+        // The surrounding prose is preserved verbatim.
+        expect(q(root, '[data-row="how"]')?.textContent).toBe('read with rework ratio to catch deferred work');
+    });
+
+    it('does not link when no projectId is available (plain text, no anchor)', () => {
+        const segs: TextSegment[] = [{ text: 'rework ratio', key: 'rework_ratio' }];
+        const root = mount(about(), segs, '');
+        expect(q(root, '[data-row="how"] a')).toBeNull();
+        expect(q(root, '[data-row="how"]')?.textContent).toBe('rework ratio');
     });
 });

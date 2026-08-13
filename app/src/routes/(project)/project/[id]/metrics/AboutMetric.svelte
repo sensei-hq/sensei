@@ -1,8 +1,12 @@
 <script lang="ts">
     import { Eyebrow, Kanji } from '$lib/components';
-    import type { MetricAbout } from '$lib/metrics/metric-view.js';
+    import type { MetricAbout, TextSegment } from '$lib/metrics/metric-view.js';
 
-    let { about }: { about: MetricAbout } = $props();
+    let {
+        about,
+        howToReadSegments = [],
+        projectId = '',
+    }: { about: MetricAbout; howToReadSegments?: TextSegment[]; projectId?: string } = $props();
 
     // Only the fields that carry copy — a metric with no formula shows two rows,
     // never an empty "How it's computed". `metricAbout` returns null when nothing
@@ -29,7 +33,10 @@
                 class="m-0 text-sm leading-relaxed text-pretty {r.mono
                     ? 'mono text-ink-mute'
                     : 'text-ink-soft'}"
-            >{r.text}</dd>
+            >{#if r.key === 'how' && howToReadSegments.length}{#each howToReadSegments as seg, si (si)}{#if seg.key && projectId}<a
+                            data-companion={seg.key}
+                            href={`/project/${projectId}/metrics/${seg.key}`}
+                            class="text-accent no-underline hover:underline">{seg.text}</a>{:else}{seg.text}{/if}{/each}{:else}{r.text}{/if}</dd>
         {/each}
     </dl>
 </section>
