@@ -15,10 +15,12 @@
         formatMetricValue,
         TREND_TEXT,
     } from '$lib/metrics/metric-view.js';
-    import type { ProjectSession } from '$lib/types.js';
     import SignalRail from '../SignalRail.svelte';
     import DetailChart from '../DetailChart.svelte';
     import AboutMetric from '../AboutMetric.svelte';
+    import DatapointDrilldown from '../DatapointDrilldown.svelte';
+    import ActionItems from '../ActionItems.svelte';
+    import { buildActionItems } from '../action-items.js';
 
     let { data } = $props();
 
@@ -47,22 +49,16 @@
     const note = $derived(historyNote(chartSeries));
     const caption = $derived(note ? `${note} · ${data.grain}` : '');
 
+    // Project-scoped action items — the pending recommendations, score-ranked by
+    // the wire and mapped to view-models by the pure helper (honest-empty when
+    // none). Not keyed on the selected metric: the panel is project-level.
+    const actionItems = $derived(buildActionItems(data.recommendations));
+
     const GRAINS = [
         { id: 'daily', label: 'Daily' },
         { id: 'weekly', label: 'Weekly' },
         { id: 'monthly', label: 'Monthly' },
     ];
-
-    function sessionMeta(s: ProjectSession): string {
-        const mins =
-            s.completedAt && s.startedAt
-                ? Math.max(1, Math.round((Date.parse(s.completedAt) - Date.parse(s.startedAt)) / 60000))
-                : null;
-        const dur = mins != null ? `${mins}m` : '—';
-        const c = s.corrections;
-        const corr = c === 0 ? 'no corrections' : c === 1 ? '1 correction' : `${c} corrections`;
-        return `${dur} · ${corr}`;
-    }
 </script>
 
 <div class="pt-8 px-6 md:px-10 pb-12 max-w-[1040px]">
@@ -111,43 +107,44 @@
                         </div>
                     </div>
 
-                    <DetailChart
-                        series={chartSeries}
-                        {yDomain}
-                        {format}
-                        color={selected.color}
-                        {caption}
-                    />
+                    {#if data.seriesError}
+                        <p data-component="chart-error" class="bg-paper border border-paper-edge rounded-md px-4 py-6 text-sm text-ink-mute">
+                            Couldn’t load this signal’s history — {data.seriesError}
+                        </p>
+                    {:else}
+                        <DetailChart
+                            series={chartSeries}
+                            {yDomain}
+                            {format}
+                            color={selected.color}
+                            {caption}
+                        />
+                    {/if}
 
                     {#if about}
                         <AboutMetric {about} {howToReadSegments} {projectId} />
                     {/if}
 
-                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        <div class="flex flex-col gap-2">
-                            <div class="flex items-center gap-2">
-                                <Kanji char="察" size="sm" tone="accent" />
-                                <Eyebrow>What sensei noticed</Eyebrow>
-                            </div>
-                            <p data-component="signal-insight" class="text-sm text-ink-soft leading-relaxed text-pretty">
-                                {selected.insight}
-                            </p>
+                    <div class="flex flex-col gap-2">
+                        <div class="flex items-center gap-2">
+                            <Kanji char="察" size="sm" tone="accent" />
+                            <Eyebrow>What sensei noticed</Eyebrow>
                         </div>
-
-                        <div class="flex flex-col gap-2">
-                            <Eyebrow>Sessions in this period</Eyebrow>
-                            {#if data.sessions.length}
-                                {#each data.sessions.slice(0, 3) as s (s.id)}
-                                    <div class="flex justify-between gap-3 py-2 border-t border-paper-edge text-sm text-ink-soft">
-                                        <span class="mono truncate">{s.id.slice(0, 8)}</span>
-                                        <span class="shrink-0">{sessionMeta(s)}</span>
-                                    </div>
-                                {/each}
-                            {:else}
-                                <p class="text-sm text-ink-faint">No sessions recorded for this project yet.</p>
-                            {/if}
-                        </div>
+                        <p data-component="signal-insight" class="text-sm text-ink-soft leading-relaxed text-pretty">
+                            {selected.insight}
+                        </p>
                     </div>
+
+                    {#key data.selectedKey}
+                        <DatapointDrilldown
+                            series={data.dailySeries}
+                            seriesError={data.dailySeriesError}
+                            projectId={projectId}
+                            metricKey={data.selectedKey}
+                        />
+                    {/key}
+
+                    <ActionItems items={actionItems} error={data.recommendationsError} />
                 {:else}
                     <div class="text-sm text-ink-mute py-8">
                         That signal isn’t computed for this project — pick one from the list.

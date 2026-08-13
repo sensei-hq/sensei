@@ -19,10 +19,17 @@ import {
     metricYDomain,
     historyNote,
     linkifyMetrics,
+    mostRecentDayWithValue,
+    recentDaysWithData,
+    explainerForDay,
+    sessionOneLiner,
+    shortSessionId,
+    formatDayLabel,
     type ProjectMetricRow,
     type MetricFamily,
     type MetricSeriesPoint,
     type RegistryMetric,
+    type DrilldownSession,
 } from './metric-view.js';
 
 function row(over: Partial<ProjectMetricRow>): ProjectMetricRow {
@@ -414,6 +421,104 @@ describe('seriesDistribution', () => {
     it('returns high/mean/low, or null for an empty series', () => {
         expect(seriesDistribution([])).toBeNull();
         expect(seriesDistribution([0.25, 0.61, 0.43])).toEqual({ high: 0.61, mean: 0.43, low: 0.25 });
+    });
+});
+
+// ── Datapoint drill-down helpers ─────────────────────────────────────────────
+
+function dp(period: string, value: number | null, explainer?: string | null): MetricSeriesPoint {
+    return { period, value, direction: 'higher_better', explainer };
+}
+
+describe('mostRecentDayWithValue', () => {
+    it('is the latest day carrying a value, ignoring null (gap) points', () => {
+        expect(
+            mostRecentDayWithValue([dp('2026-08-09', 0.5), dp('2026-08-11', null), dp('2026-08-10', 1)]),
+        ).toBe('2026-08-10');
+    });
+    it('is null when no point has a value (a genuinely empty series)', () => {
+        expect(mostRecentDayWithValue([dp('2026-08-10', null)])).toBeNull();
+        expect(mostRecentDayWithValue([])).toBeNull();
+    });
+});
+
+describe('recentDaysWithData', () => {
+    it('lists only days with a value, ascending and de-duplicated', () => {
+        expect(
+            recentDaysWithData([dp('2026-08-11', 1), dp('2026-08-10', null), dp('2026-08-09', 0.5)]),
+        ).toEqual(['2026-08-09', '2026-08-11']);
+    });
+    it('caps to the most-recent `limit` days', () => {
+        const series = ['05', '06', '07', '08', '09'].map((d) => dp(`2026-08-${d}`, 1));
+        expect(recentDaysWithData(series, 2)).toEqual(['2026-08-08', '2026-08-09']);
+    });
+    it('is empty for a series with no values (never a fabricated day)', () => {
+        expect(recentDaysWithData([dp('2026-08-10', null)])).toEqual([]);
+    });
+});
+
+describe('explainerForDay', () => {
+    const series = [dp('2026-08-11', 1, '  both sessions landed first-try  '), dp('2026-08-10', 0.5, '')];
+    it('returns the point explainer for the day, trimmed', () => {
+        expect(explainerForDay(series, '2026-08-11')).toBe('both sessions landed first-try');
+    });
+    it('is null for a day with no point, no explainer, or no day', () => {
+        expect(explainerForDay(series, '2026-08-10')).toBeNull(); // empty explainer
+        expect(explainerForDay(series, '2026-08-01')).toBeNull(); // no point
+        expect(explainerForDay(series, null)).toBeNull();
+        expect(explainerForDay([dp('2026-08-11', 1)], '2026-08-11')).toBeNull(); // no explainer field
+    });
+});
+
+describe('sessionOneLiner', () => {
+    function s(over: Partial<DrilldownSession> = {}): DrilldownSession {
+        return {
+            client_session_id: 'abc',
+            started_at: '2026-08-11T09:00:00Z',
+            outcome: 'completed',
+            ftr: true,
+            turns: 3,
+            corrections: 0,
+            task: 't',
+            summary: null,
+            observation: { title: 'x', detail: 'y' },
+            ...over,
+        };
+    }
+    it('reads a first-try session as "outcome · first-try · N turns"', () => {
+        expect(sessionOneLiner(s())).toBe('completed · first-try · 3 turns');
+    });
+    it('reads a corrected session as its correction count (pluralized)', () => {
+        expect(sessionOneLiner(s({ ftr: false, corrections: 2, turns: 4, outcome: 'corrected' }))).toBe(
+            'corrected · 2 corrections · 4 turns',
+        );
+        expect(sessionOneLiner(s({ ftr: false, corrections: 1, turns: 1 }))).toBe(
+            'completed · 1 correction · 1 turn',
+        );
+        expect(sessionOneLiner(s({ ftr: false, corrections: 0 }))).toContain('no corrections');
+    });
+    it('omits the outcome segment when the outcome is absent', () => {
+        expect(sessionOneLiner(s({ outcome: null }))).toBe('first-try · 3 turns');
+    });
+});
+
+describe('shortSessionId', () => {
+    it('is the first 8 chars of the id', () => {
+        expect(shortSessionId('abcdef1234567890')).toBe('abcdef12');
+    });
+    it('is the em dash for an absent id (never a fabricated id)', () => {
+        expect(shortSessionId(null)).toBe(METRIC_NONE);
+        expect(shortSessionId('')).toBe(METRIC_NONE);
+    });
+});
+
+describe('formatDayLabel', () => {
+    it('renders a compact, locale-free label', () => {
+        expect(formatDayLabel('2026-08-11')).toBe('Aug 11');
+        expect(formatDayLabel('2026-01-01T00:00:00Z')).toBe('Jan 1');
+    });
+    it('falls back to the raw ISO when unparseable', () => {
+        expect(formatDayLabel('not-a-date')).toBe('not-a-date');
     });
 });
 

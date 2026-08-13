@@ -28,7 +28,10 @@ import type {
 } from '../routes/(observatory)/consolidation/consolidation-view.js';
 import type {
   ProjectMetricRow, RegistryMetric, MetricSeriesPoint, MetricsNarrative,
+  DaySessions, DrilldownSession,
 } from './metrics/metric-view.js';
+
+export type { DaySessions, DrilldownSession };
 
 export type ApiError = { status: number; message: string } | { status: 0; message: string };
 
@@ -292,6 +295,16 @@ export function senseiApi(port: number) {
         count: number;
       }>(`/api/projects/${enc(id)}/metrics/${enc(key)}?grain=${grain}`),
 
+    // The measurable sessions behind ONE daily datapoint (the datapoint→sessions
+    // drill-down). Error-propagating (tryGet): a fetch failure — including a 404
+    // on a daemon that predates the endpoint — surfaces as `{ ok: false, error }`
+    // so the drill-down renders an explicit "not available"/error STATE, never a
+    // fabricated session list. `day` is `YYYY-MM-DD`.
+    getProjectMetricDaySessions: (id: string, key: string, day: string) =>
+      tryGet<DaySessions>(
+        `/api/projects/${enc(id)}/metrics/${enc(key)}/sessions?day=${enc(day)}`,
+      ),
+
     getProjectRepos: (id: string) =>
       get<{ repos: Array<{ id: string; name: string; path: string; kind: string; role?: string }> }>(
         `/api/projects/${enc(id)}/repos`, { repos: [] }
@@ -428,6 +441,16 @@ export function senseiApi(port: number) {
     getProjectRecommendations: (id: string, status?: string) =>
       get<Recommendation[]>(
         `/api/projects/${enc(id)}/recommendations${status ? `?status=${enc(status)}` : ''}`, []
+      ),
+
+    // Result-based variant: a recommendations-only fetch failure (the /metrics
+    // leg can succeed independently) must SURFACE, not collapse to [] — otherwise
+    // a 500/timeout is indistinguishable from a genuinely-empty list on a
+    // governance-facing screen. Callers that tolerate the legacy swallow keep
+    // getProjectRecommendations above.
+    tryGetProjectRecommendations: (id: string, status?: string) =>
+      tryGet<Recommendation[]>(
+        `/api/projects/${enc(id)}/recommendations${status ? `?status=${enc(status)}` : ''}`,
       ),
 
     // Gap 1 fix — expose the accept/reject flow so MeasureVerdicts has
