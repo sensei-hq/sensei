@@ -258,6 +258,136 @@ export interface MetricSeriesPoint {
     period: string;
     value: number | null;
     direction: MetricDirection;
+    /** The daily series carries a short, row-derived "why this datapoint reads
+     *  the way it does" line (from `props->>'explainer'`) — the day-scoped
+     *  drill-down shows it beside that day's sessions. Absent on a pre-explainer
+     *  daemon (undefined) or when a point genuinely has no explainer (null). */
+    explainer?: string | null;
+}
+
+/** The per-session, per-metric "why this session moved this metric" note behind
+ *  a daily datapoint. Both fields are the daemon's own copy — never fabricated. */
+export interface SessionObservation {
+    title: string;
+    detail: string;
+}
+
+/** One measurable session behind a daily datapoint — the wire shape of
+ *  `GET /api/projects/{id}/metrics/{key}/sessions?day=YYYY-MM-DD`'s `sessions[]`.
+ *  Carries the structural fields the one-liner reads (`outcome` + `ftr` +
+ *  `turns` + `corrections`), the `client_session_id` reference, `started_at`,
+ *  the `task`, the `summary` (may be empty for backfilled sessions), and the
+ *  per-metric `observation`. */
+export interface DrilldownSession {
+    client_session_id: string | null;
+    started_at: string;
+    outcome: string | null;
+    ftr: boolean | null;
+    turns: number;
+    corrections: number;
+    task: string;
+    summary: string | null;
+    observation: SessionObservation;
+}
+
+/** The response of `GET /api/projects/{id}/metrics/{key}/sessions?day=…` — the
+ *  measurable sessions behind ONE daily datapoint. `sessions` is honest-empty
+ *  (`[]`, `count` 0) when no measurable session ran that day, never fabricated. */
+export interface DaySessions {
+    metric: string;
+    day: string;
+    sessions: DrilldownSession[];
+    count: number;
+}
+
+/** Normalize a series `period` to a `YYYY-MM-DD` day, or null when it is too
+ *  short to be a date (defensive — the daily series always carries a date). */
+function dayOf(period: string | null | undefined): string | null {
+    return typeof period === 'string' && period.length >= 10 ? period.slice(0, 10) : null;
+}
+
+/**
+ * The most recent day (`YYYY-MM-DD`) in a daily series that carries a real
+ * value — the drill-down's default selected day. Null when no point has a value
+ * (a genuinely empty series). Never fabricates a day.
+ */
+export function mostRecentDayWithValue(series: MetricSeriesPoint[]): string | null {
+    let best: string | null = null;
+    for (const p of series) {
+        if (p.value == null) continue;
+        const day = dayOf(p.period);
+        if (day && (best === null || day > best)) best = day;
+    }
+    return best;
+}
+
+/**
+ * The recent days (`YYYY-MM-DD`) in a daily series that carry a value, ascending
+ * (oldest → newest) and de-duplicated, capped to the `limit` most-recent — the
+ * day selector's set. Empty for a series with no values (never a fabricated day).
+ */
+export function recentDaysWithData(series: MetricSeriesPoint[], limit = 7): string[] {
+    const days = series
+        .filter((p) => p.value != null)
+        .map((p) => dayOf(p.period))
+        .filter((d): d is string => d != null);
+    const unique = [...new Set(days)].sort(); // ascending ISO (lexicographic == chronological)
+    return unique.slice(Math.max(0, unique.length - limit));
+}
+
+/**
+ * The explainer attached to the series point for `day`, or null when the day has
+ * no point / no explainer (a pre-explainer daemon, or an empty explainer). Never
+ * fabricates copy.
+ */
+export function explainerForDay(series: MetricSeriesPoint[], day: string | null): string | null {
+    if (!day) return null;
+    const point = series.find((p) => dayOf(p.period) === day);
+    const text = point?.explainer?.trim();
+    return text ? text : null;
+}
+
+/** "no corrections" / "1 correction" / "N corrections" — a session's rework count. */
+function correctionsPhrase(n: number): string {
+    if (n <= 0) return 'no corrections';
+    return n === 1 ? '1 correction' : `${formatCount(n)} corrections`;
+}
+
+/** "1 turn" / "N turns" — a session's turn count. */
+function turnsPhrase(n: number): string {
+    return n === 1 ? '1 turn' : `${formatCount(n)} turns`;
+}
+
+/**
+ * The structural one-liner for a drill-down session:
+ * `outcome · first-try|N corrections · N turns`. A first-try session reads
+ * "first-try"; otherwise its correction count. States only the session's own
+ * fields — never an invented number. Omits the outcome segment when absent.
+ */
+export function sessionOneLiner(s: DrilldownSession): string {
+    const parts: string[] = [];
+    if (s.outcome && s.outcome.trim()) parts.push(s.outcome.trim());
+    parts.push(s.ftr === true ? 'first-try' : correctionsPhrase(s.corrections));
+    parts.push(turnsPhrase(s.turns));
+    return parts.join(' · ');
+}
+
+/** The short reference for a session — the first 8 chars of its
+ *  `client_session_id`, or the em dash when the id is absent (never a fake id). */
+export function shortSessionId(id: string | null | undefined): string {
+    return id && id.trim() ? id.trim().slice(0, 8) : METRIC_NONE;
+}
+
+const DAY_MONTHS = [
+    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+];
+
+/** Compact, locale-free day label for the selector, e.g. `2026-08-11` → "Aug 11".
+ *  Falls back to the raw ISO when it can't be parsed. */
+export function formatDayLabel(iso: string): string {
+    const [, m, d] = iso.slice(0, 10).split('-').map(Number);
+    if (!m || !d || m < 1 || m > 12) return iso;
+    return `${DAY_MONTHS[m - 1]} ${d}`;
 }
 
 /**
