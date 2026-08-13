@@ -8,12 +8,18 @@
     let {
         signal,
         series = [],
+        label = 'Health',
         periodLabel = 'last fourteen days',
-    }: { signal: SignalVM; series?: (number | null)[]; periodLabel?: string } = $props();
+    }: {
+        signal: SignalVM;
+        series?: (number | null)[];
+        label?: string;
+        periodLabel?: string;
+    } = $props();
 </script>
 
 <div data-component="health-hero" class="flex flex-col items-end gap-1 shrink-0">
-    <Eyebrow>Health</Eyebrow>
+    <Eyebrow>{label}</Eyebrow>
     <div class="flex items-baseline gap-2">
         <span data-component="health-value" class="display text-4xl font-light leading-none text-ink tabular-nums tracking-tight">
             {signal.value}

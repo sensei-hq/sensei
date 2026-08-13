@@ -4,7 +4,7 @@
     import {
         buildSignals,
         familyLookup,
-        healthSignal,
+        heroSignal,
         pickMovers,
         orderSignals,
         deterministicHeadline,
@@ -18,7 +18,7 @@
 
     const projectId = $derived(page.params.id ?? '');
     const signals = $derived(buildSignals(data.rows, familyLookup(data.registry), data.narrative));
-    const health = $derived(healthSignal(signals));
+    const hero = $derived(heroSignal(signals));
     const movers = $derived(pickMovers(signals));
     const ordered = $derived(orderSignals(signals));
     const headline = $derived(data.narrative?.headline ?? deterministicHeadline(signals));
@@ -55,8 +55,12 @@
                     <p class="text-sm text-ink-soft leading-relaxed text-pretty">{data.narrative.subhead}</p>
                 {/if}
             </div>
-            {#if health}
-                <HealthHero signal={health} series={data.series[health.key] ?? []} />
+            {#if hero}
+                <HealthHero
+                    signal={hero}
+                    label={hero.key === 'ftr' ? 'First-turn resolution' : 'Health'}
+                    series={data.series[hero.key] ?? []}
+                />
             {/if}
         </header>
 
