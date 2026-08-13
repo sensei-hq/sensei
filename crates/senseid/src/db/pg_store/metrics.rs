@@ -479,18 +479,26 @@ impl PgStore {
         &self,
         project_id: &uuid::Uuid,
     ) -> Result<Vec<ProjectMetricRow>, String> {
-        let rows: Vec<(
-            String, chrono::NaiveDate, f64, serde_json::Value, String, String,
-            Option<String>, String, String, String,
-        )> = sqlx_core::query_as::query_as(
+        // Only ACTIVE metrics: a RETIRED metric (past `effective_until`, e.g.
+        // project_health) leaves durable rows in project_metrics — retirement is
+        // "in place, never hand-delete a row" — so the values read must exclude
+        // them by the active window, or the stale rows keep rendering as a card.
+        // Same predicate the registry endpoint uses (effective_from/until resolve
+        // to `m` — only sensei.metrics carries them).
+        let sql = format!(
             "SELECT DISTINCT ON (d.metric)
                     d.metric, d.date, d.value::float8, d.props,
                     m.name, m.type::text, m.unit, m.direction::text, m.purpose, m.how_to_read
                FROM sensei.project_metric_daily d
                JOIN sensei.metrics m ON m.key = d.metric
-              WHERE d.project_id = $1
+              WHERE d.project_id = $1 AND {}
               ORDER BY d.metric, d.date DESC",
-        )
+            Self::ACTIVE_METRIC_PREDICATE,
+        );
+        let rows: Vec<(
+            String, chrono::NaiveDate, f64, serde_json::Value, String, String,
+            Option<String>, String, String, String,
+        )> = sqlx_core::query_as::query_as(&sql)
         .bind(project_id)
         .fetch_all(&self.pool)
         .await
