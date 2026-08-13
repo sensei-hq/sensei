@@ -54,6 +54,14 @@ fn change_word(direction: &str, delta: f64) -> &'static str {
 /// "increasing"/"decreasing" trend.
 const SLOPE_EPS: f64 = 1e-9;
 
+/// A whole-series drift smaller than this FRACTION of the metric's own level
+/// reads as flat/steady. Relative (not absolute) so it holds across magnitudes
+/// (ftr 0–1, churn_rate in thousands, ttr in seconds). Without it, a sub-percent
+/// wobble the chart shows as a flat line — e.g. rework_density 0.2571 → 0.2569
+/// (~0.08%) — gets narrated as a real "decreasing" trend, so the prose contradicts
+/// the sparkline. 2% is comfortably below "visible on the chart".
+const REL_DRIFT_EPS: f64 = 0.02;
+
 /// The whole-series trend of a metric — the direction the chart (the daily
 /// sparkline) actually shows, so the narrative can't present a one-week dip as
 /// the overall trend. `direction` is the raw numeric direction over the window;
@@ -104,8 +112,16 @@ fn series_trend(values: &[f64], direction: &str) -> Option<SeriesTrend> {
     let slope = least_squares_slope(values)?;
     let first = *values.first()?;
     let last = *values.last()?;
-    let window = format!("the full {}-point series", values.len());
-    if slope.abs() <= SLOPE_EPS {
+    let n = values.len();
+    let window = format!("the full {n}-point series");
+    // Flat when the slope is ~zero OR the fitted end-to-end drift (slope × span)
+    // is a negligible fraction of the metric's own level — a sub-threshold wobble
+    // the chart renders as a flat line must read "steady", never a fabricated
+    // direction. Relative to the level so it holds across metric magnitudes.
+    let drift = slope.abs() * (n as f64 - 1.0);
+    let level = values.iter().map(|v| v.abs()).sum::<f64>() / n as f64;
+    let negligible = slope.abs() <= SLOPE_EPS || (level > SLOPE_EPS && drift / level < REL_DRIFT_EPS);
+    if negligible {
         return Some(SeriesTrend { direction: "flat", assessment: "steady", window, first, last });
     }
     let numeric = if slope > 0.0 { "increasing" } else { "decreasing" };
@@ -352,6 +368,19 @@ mod tests {
         let t = series_trend(&vals, "lower_better").expect("trend");
         assert_eq!(t.direction, "flat");
         assert_eq!(t.assessment, "steady");
+    }
+
+    #[test]
+    fn series_trend_sub_threshold_wobble_reads_steady_not_a_trend() {
+        // The live rework_density case: a monotone but microscopic decline
+        // (0.2571 → 0.2562, ~0.35% of the level) that the chart renders as a flat
+        // line. Its slope is far above the old absolute SLOPE_EPS (1e-9), so the
+        // old logic narrated it "decreasing / becoming more efficient" — prose the
+        // sparkline contradicts. The relative dead-band reads it "steady".
+        let vals = vec![0.2571, 0.2568, 0.2565, 0.2562];
+        let t = series_trend(&vals, "lower_better").expect("trend");
+        assert_eq!(t.direction, "flat", "a sub-2%-of-level drift is flat");
+        assert_eq!(t.assessment, "steady", "never narrated as a real trend the chart doesn't show");
     }
 
     #[test]
