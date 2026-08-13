@@ -10,12 +10,14 @@
         densifySeries,
         metricYDomain,
         historyNote,
+        metricAbout,
         formatMetricValue,
         TREND_TEXT,
     } from '$lib/metrics/metric-view.js';
     import type { ProjectSession } from '$lib/types.js';
     import SignalRail from '../SignalRail.svelte';
     import DetailChart from '../DetailChart.svelte';
+    import AboutMetric from '../AboutMetric.svelte';
 
     let { data } = $props();
 
@@ -23,6 +25,10 @@
     const signals = $derived(buildSignals(data.rows, familyLookup(data.registry), data.narrative));
     const ordered = $derived(orderSignals(signals));
     const selected = $derived(signals.find((s) => s.key === data.selectedKey) ?? null);
+    // The static "about this metric" reference (purpose / how-to-read / formula),
+    // from the selected metric's registry row + the series' formula facet.
+    const selectedRow = $derived(data.rows.find((r) => r.metric === data.selectedKey));
+    const about = $derived(metricAbout(selectedRow, data.formula));
 
     const values = $derived(seriesValues(data.series));
     const distribution = $derived(seriesDistribution(values));
@@ -106,6 +112,10 @@
                         color={selected.color}
                         {caption}
                     />
+
+                    {#if about}
+                        <AboutMetric {about} />
+                    {/if}
 
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
                         <div class="flex flex-col gap-2">
