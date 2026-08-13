@@ -282,9 +282,15 @@ export function senseiApi(port: number) {
       key: string,
       grain: 'daily' | 'weekly' | 'monthly' | 'quarterly' = 'daily',
     ) =>
-      tryGet<{ metric: string; grain: string; series: MetricSeriesPoint[]; count: number }>(
-        `/api/projects/${enc(id)}/metrics/${enc(key)}?grain=${grain}`,
-      ),
+      tryGet<{
+        metric: string;
+        grain: string;
+        // The metric's `formula` (registry "how it's calculated") — travels with the
+        // series so the detail screen renders it. Honest-null for an unknown key.
+        formula: string | null;
+        series: MetricSeriesPoint[];
+        count: number;
+      }>(`/api/projects/${enc(id)}/metrics/${enc(key)}?grain=${grain}`),
 
     getProjectRepos: (id: string) =>
       get<{ repos: Array<{ id: string; name: string; path: string; kind: string; role?: string }> }>(

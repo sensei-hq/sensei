@@ -237,7 +237,10 @@ export function groupByFamily(
     }));
 }
 
-/** One row of `GET /api/metrics/registry` — the catalog that carries `family`. */
+/** One row of `GET /api/metrics/registry` — the catalog that carries `family`
+ *  and the metric-definition reference facets (`purpose`/`how_to_read`/`formula`)
+ *  the "about this metric" block reads. The facets are optional here only so the
+ *  type tolerates a pre-facets daemon; the current daemon always sends them. */
 export interface RegistryMetric {
     key: string;
     family: MetricFamily;
@@ -245,6 +248,9 @@ export interface RegistryMetric {
     metric_type: MetricType;
     unit: string | null;
     direction: MetricDirection;
+    purpose?: string;
+    how_to_read?: string;
+    formula?: string | null;
 }
 
 /** One point of `GET /api/projects/{id}/metrics/{key}?grain=…`. */
@@ -252,6 +258,32 @@ export interface MetricSeriesPoint {
     period: string;
     value: number | null;
     direction: MetricDirection;
+}
+
+/**
+ * The static "about this metric" reference block for the detail screen: what it
+ * tells you (`purpose`), how to read it (`how_to_read` — interpretation + the
+ * companion metric + the read-it-alone gotcha), and how it's computed
+ * (`formula`). `purpose`/`how_to_read` ride the per-project row; `formula` rides
+ * the series response. Returns `null` when the metric carries no reference text
+ * at all — the section then renders nothing rather than an empty shell. Never
+ * fabricated: every field is the registry's own copy or absent.
+ */
+export interface MetricAbout {
+    purpose: string;
+    howToRead: string;
+    formula: string | null;
+}
+
+export function metricAbout(
+    row: ProjectMetricRow | undefined,
+    formula: string | null | undefined,
+): MetricAbout | null {
+    const purpose = row?.purpose?.trim() ?? '';
+    const howToRead = row?.how_to_read?.trim() ?? '';
+    const f = formula?.trim() ? formula.trim() : null;
+    if (!purpose && !howToRead && !f) return null;
+    return { purpose, howToRead, formula: f };
 }
 
 /** Build a key→family resolver from the registry catalog (the values endpoint

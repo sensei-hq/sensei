@@ -31,6 +31,7 @@ export const load: PageLoad = async ({ params, url }) => {
         selectedKey: params.key,
         grain,
         series: [] as MetricSeriesPoint[],
+        formula: null as string | null,
         sessions: [] as ProjectSession[],
     };
     if (!metricsRes.ok) return { ...empty, error: metricsRes.error.message };
@@ -51,6 +52,10 @@ export const load: PageLoad = async ({ params, url }) => {
         selectedKey: params.key,
         grain,
         series: seriesRes.ok ? seriesRes.data.series : [],
+        // The metric's `formula` is a definition-level facet — read it from the
+        // registry catalog (which always carries it) rather than the series, so
+        // the "about this metric" block is complete regardless of the series.
+        formula: registry.find((r) => r.key === params.key)?.formula ?? null,
         sessions: sessionsRes.sessions ?? [],
         error: null,
     };
