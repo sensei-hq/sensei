@@ -28,4 +28,6 @@ firebase-debug.log
 
 # dbd-generated artifacts (do not commit — generated from ddl/ on apply)
 database/init.sql
-docs/mockups/Sensei/.thumbnail
+# Mockups are a LOCAL design reference (visual source of truth) — no code imports
+# them (only comments point at them), so they're kept out of version control.
+docs/mockups/
