@@ -3,7 +3,7 @@
     import { Eyebrow } from '$lib/components';
     import ProjectGlyph from '../../../(observatory)/projects/ProjectGlyph.svelte';
     import type { ProjectIcon } from '../../../(observatory)/projects/buckets.js';
-    import { SECTIONS, isSectionActive, healthRows } from './project-sidebar-view.js';
+    import { SECTIONS, isSectionActive, healthRows, APP_VERSION } from './project-sidebar-view.js';
 
     interface Props {
         projectId: string;
@@ -61,6 +61,15 @@
                 <span class="mono text-ink">{row.value}</span>
             </div>
         {/each}
+    </div>
+
+    <!-- Build version — so it's obvious which app version is in front of you. -->
+    <div
+        data-component="sidebar-version"
+        class="px-4 pt-2 flex items-center justify-between text-xs text-ink-faint"
+    >
+        <span>Version</span>
+        <span class="mono">v{APP_VERSION}</span>
     </div>
 </aside>
 
