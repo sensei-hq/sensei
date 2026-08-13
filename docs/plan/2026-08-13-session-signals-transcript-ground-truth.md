@@ -124,6 +124,28 @@ Re-source the per-session signals from the transcript, hooks corroborating:
   every metric — redundant with Impact) with **metric-specific** actions or the
   per-metric inference guidance. (Confirmed direction; mechanism TBD in §6.)
 
+### Phase F — Final screens (per the updated mockups)
+Done LAST, after A–E enhance the data — the screens render the improved signals.
+Visual source of truth: the **local** (now-gitignored) mockups at
+`docs/mockups/Sensei/lib/*.jsx` (updated 2026-08-13).
+- **Drop `project_health` from the UI.** The updated mock still draws it, but the
+  composite is retired and "a mean of metrics isn't really indicative of health"
+  — so the final screens do NOT surface it (keep the retirement; do not revive
+  unless a genuinely-indicative health metric replaces it). Already enforced by
+  the active-window read filter (`c788fb9b`).
+- **Project card** (project-window sidebar) — updated layout per the mock.
+- **Bottom health card** (project sidebar) — updated per the mock (and reconciled
+  with the FTR-led, no-composite direction).
+- **Interactive detail chart** — each datapoint is **clickable** to reveal that
+  point's **observation / evidence / insight** (this is the per-point drill-down
+  that Phase C's evidence field feeds — the chart-point click deferred in the
+  first pass is now required, not optional).
+- **Independent scroll** on the detail page (the detail column scrolls
+  independently of the signal rail).
+- Rebuild against the mock at the simplest Rokkit customization tier that works;
+  tokens-only; harness+spec per component; verify with a build + a Playwright
+  render against the enhanced live data.
+
 ## 5. Acceptance criteria (observable)
 - `792d7ce4` reads `turns=94` and outcome ≠ `abandoned`.
 - `9E219F05` reads as **resumed/continued** (linked to its resume), not abandoned.
@@ -148,5 +170,8 @@ Re-source the per-session signals from the transcript, hooks corroborating:
 
 ## 7. Sequencing (forward-only — no earlier phase depends on a later one)
 A (transcript-first derivation + taxonomy) → B (lineage) → C (evidence field) →
-D (trouble-signals) → E (metric-specific actions). A is the foundation: correct
-outcomes + transcript-sourced turns unblock everything downstream.
+D (trouble-signals) → E (metric-specific actions) → **F (final screens per the
+updated mockups)**. A is the foundation: correct outcomes + transcript-sourced
+turns unblock everything downstream. F is last — the screens render the improved
+data (clickable datapoints → the evidence field from C, no project_health,
+updated project/health cards, independent detail scroll).
