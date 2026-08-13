@@ -5083,6 +5083,37 @@
         sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1").bind(pid).execute(s.pool()).await.unwrap();
     }
 
+    #[tokio::test]
+    async fn get_project_metrics_excludes_a_retired_metric() {
+        // A retired metric (past `effective_until`, e.g. project_health) keeps its
+        // durable project_metrics rows — retirement is "in place, never hand-delete
+        // a row" — so the values read MUST exclude it by the active window, or its
+        // stale rows keep rendering as a signal card.
+        let s = pg_store().await;
+        let uniq = uuid::Uuid::new_v4();
+        let pid = s.create_project(&format!("_test:gpm-ret:{uniq}"), None, None).await.unwrap();
+        let active_key = format!("_test:gpm-ret:{uniq}:active");
+        let retired_key = format!("_test:gpm-ret:{uniq}:retired");
+        let active_mid = seed_metric(&s, &active_key, "ComputeActive", 0, None).await; // active, no end
+        let retired_mid = seed_metric(&s, &retired_key, "ComputeRetired", -10, Some(-1)).await; // ended yesterday
+        let d = chrono::NaiveDate::from_ymd_opt(2020, 1, 1).unwrap();
+        s.upsert_project_metric(&active_mid, &pid, None, None, d, "daily", 0.5, &serde_json::json!({}), "measured").await.unwrap();
+        // The retired metric HAS a durable row — it just must not be read as active.
+        s.upsert_project_metric(&retired_mid, &pid, None, None, d, "daily", 0.9, &serde_json::json!({}), "measured").await.unwrap();
+
+        let keys: Vec<String> =
+            s.get_project_metrics(&pid).await.unwrap().into_iter().map(|r| r.metric).collect();
+        assert!(keys.contains(&active_key), "the active metric is returned");
+        assert!(
+            !keys.contains(&retired_key),
+            "the retired metric is excluded from the values read — its stale rows must not render",
+        );
+
+        sqlx_core::query::query("DELETE FROM sensei.metrics WHERE id = ANY($1)")
+            .bind(vec![active_mid, retired_mid]).execute(s.pool()).await.unwrap();
+        sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1").bind(pid).execute(s.pool()).await.unwrap();
+    }
+
     /// The datapoint→sessions drill-down returns ONLY that day's MEASURABLE sessions
     /// for the project, scoped through the folder-join (`sensei.folders.project_id`),
     /// newest-first, carrying the structural one-liner fields + summary. Guards the
