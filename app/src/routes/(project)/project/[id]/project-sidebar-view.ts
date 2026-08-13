@@ -31,6 +31,11 @@ export function isSectionActive(pathname: string, projectId: string, sectionId: 
     return pathname.startsWith(`/project/${projectId}/${sectionId}`);
 }
 
+/** The running build's app version (Vite `define` from package.json), surfaced
+ *  in the sidebar footer so it's obvious which version is in front of you — and
+ *  whether it matches the daemon after a deploy. */
+export const APP_VERSION: string = __SENSEI_APP_VERSION__;
+
 export interface HealthRow {
     label: string;
     value: string;
