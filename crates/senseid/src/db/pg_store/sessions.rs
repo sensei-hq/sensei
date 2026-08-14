@@ -610,6 +610,7 @@ impl PgStore {
                JOIN sensei.folders  f ON f.id = s.folder_id
               WHERE f.project_id = $1
                 AND s.outcome   IS NOT NULL
+                AND s.outcome   <> 'empty'::sensei.session_outcome
                 AND date_trunc('day', s.started_at)::date = $2
               ORDER BY s.started_at DESC",
         )

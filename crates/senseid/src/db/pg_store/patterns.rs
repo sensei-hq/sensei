@@ -918,7 +918,8 @@ impl PgStore {
                         pp.confidence::float8, pp.instance_count,
                         (SELECT avg(CASE WHEN s.ftr THEN 1.0 ELSE 0.0 END)::float8
                            FROM activity.sessions s
-                          WHERE s.folder_id = pp.folder_id AND s.ftr IS NOT NULL) AS folder_ftr,
+                          WHERE s.folder_id = pp.folder_id AND s.ftr IS NOT NULL
+                            AND s.outcome <> 'empty'::sensei.session_outcome) AS folder_ftr,
                         pp.description, pp.example, pp.enforcement
                  FROM sensei.project_patterns pp WHERE pp.project_id = $1
                  ORDER BY pp.is_anti_pattern, pp.name"
