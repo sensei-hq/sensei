@@ -871,12 +871,19 @@ impl PgStore {
     /// summaries with the analyzer-derived narrative without ever clobbering an
     /// existing one. Idempotent and safe to re-run — a populated summary is left
     /// untouched. Called from `analyze::enrich_session` on each analysis pass.
-    pub async fn set_session_summary_if_empty(&self, session_id: &uuid::Uuid, summary: &str) -> Result<(), String> {
-        sqlx_core::query::query(
+    /// Write a session's derived `summary`, REFRESHING it when the facts changed
+    /// (guarded by `IS DISTINCT FROM`, so a steady-state re-enrich is a no-op). The
+    /// summary is derived from the session's own facts + a facts-hash-cached copy,
+    /// so a re-derivation (e.g. the transcript-ground-truth backfill) must be able
+    /// to correct a now-stale line — a session whose outcome flipped
+    /// `abandoned → completed` can't keep an "abandoned" summary. Nothing else
+    /// writes `summary`, so this never clobbers a non-sensei value.
+    pub async fn set_session_summary(&self, session_id: &uuid::Uuid, summary: &str) -> Result<u64, String> {
+        let res = sqlx_core::query::query(
             "UPDATE activity.sessions SET summary = $2
-              WHERE id = $1 AND (summary IS NULL OR btrim(summary) = '')"
+              WHERE id = $1 AND summary IS DISTINCT FROM $2"
         ).bind(session_id).bind(summary).execute(&self.pool).await.map_err(|e| e.to_string())?;
-        Ok(())
+        Ok(res.rows_affected())
     }
 
     /// Replace a session's per-turn rows (#66). Deletes the session's existing

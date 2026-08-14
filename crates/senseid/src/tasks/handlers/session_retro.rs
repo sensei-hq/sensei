@@ -12,9 +12,9 @@
 //! Graceful by construction: [`generate_session_summary`] never errors and
 //! always returns a non-empty string — a gateway miss falls back to a plain
 //! deterministic one-line summary ([`SessionFacts::fallback_summary`]) so
-//! enrichment always has something useful to persist. The write itself is
-//! guarded (only-if-empty) so an assistant-authored checkpoint summary is
-//! never clobbered — see [`crate::db::pg_store::PgStore::set_session_summary_if_empty`].
+//! enrichment always has something useful to persist. The write REFRESHES on a
+//! facts change (so a re-derivation can correct a now-stale line) but is a no-op
+//! when unchanged — see [`crate::db::pg_store::PgStore::set_session_summary`].
 
 use super::analyze::{parent_dir, HookEvent, SessionMetrics};
 use crate::analysis::insight_copy::{generate_and_cache, CopyLimits, InsightCopy, InsightKind};

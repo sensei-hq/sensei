@@ -3494,26 +3494,31 @@
     }
 
     #[tokio::test]
-    async fn set_session_summary_if_empty_writes_then_preserves() {
-        // The retrospective producer fills an empty summary, but must never
-        // clobber one that already exists (assistant checkpoint summaries).
+    async fn set_session_summary_refreshes_when_changed() {
+        // The retro producer REFRESHES a session's summary when it changes — so a
+        // re-derivation (the transcript backfill) corrects a now-stale line, e.g.
+        // an outcome that flipped abandoned → completed. An identical write is a
+        // guarded no-op.
         let s = pg_store().await;
         let pid = s.create_project(&format!("_test:sum-{}", uuid::Uuid::new_v4()), None, None).await.unwrap();
         let fid = create_test_folder(&s, &format!("sum-{}", uuid::Uuid::new_v4())).await;
         let sid = format!("_test-sid-{}", uuid::Uuid::new_v4());
         let session_id = s.record_session_event(&sid, &fid, Some(&pid), "claude", true).await.unwrap();
 
-        // Fresh session → summary NULL → the guarded write persists.
-        s.set_session_summary_if_empty(&session_id, "touched 2 files; outcome completed").await.unwrap();
-        let first: (Option<String>,) = sqlx_core::query_as::query_as("SELECT summary FROM activity.sessions WHERE id = $1")
-            .bind(session_id).fetch_one(s.pool()).await.unwrap();
-        assert_eq!(first.0.as_deref(), Some("touched 2 files; outcome completed"));
+        // Fresh session → summary NULL → the write persists (1 row).
+        let n1 = s.set_session_summary(&session_id, "touched 2 files; outcome abandoned").await.unwrap();
+        assert_eq!(n1, 1, "first write persists");
 
-        // Second write with a populated summary must be a no-op (not clobbered).
-        s.set_session_summary_if_empty(&session_id, "a different summary").await.unwrap();
-        let second: (Option<String>,) = sqlx_core::query_as::query_as("SELECT summary FROM activity.sessions WHERE id = $1")
+        // A CHANGED summary is refreshed (the backfill correcting a stale line).
+        let n2 = s.set_session_summary(&session_id, "touched 2 files; outcome completed").await.unwrap();
+        assert_eq!(n2, 1, "a changed summary is refreshed, not preserved");
+        let cur: (Option<String>,) = sqlx_core::query_as::query_as("SELECT summary FROM activity.sessions WHERE id = $1")
             .bind(session_id).fetch_one(s.pool()).await.unwrap();
-        assert_eq!(second.0.as_deref(), Some("touched 2 files; outcome completed"), "populated summary preserved");
+        assert_eq!(cur.0.as_deref(), Some("touched 2 files; outcome completed"), "stale summary corrected");
+
+        // An identical write is a guarded no-op (0 rows).
+        let n3 = s.set_session_summary(&session_id, "touched 2 files; outcome completed").await.unwrap();
+        assert_eq!(n3, 0, "unchanged summary is a no-op");
 
         sqlx_core::query::query("DELETE FROM activity.sessions WHERE id = $1").bind(session_id).execute(s.pool()).await.ok();
         sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1").bind(pid).execute(s.pool()).await.ok();
