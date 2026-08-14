@@ -49,10 +49,42 @@
     const note = $derived(historyNote(chartSeries));
     const caption = $derived(note ? `${note} · ${data.grain}` : '');
 
-    // Project-scoped action items — the pending recommendations, score-ranked by
-    // the wire and mapped to view-models by the pure helper (honest-empty when
-    // none). Not keyed on the selected metric: the panel is project-level.
-    const actionItems = $derived(buildActionItems(data.recommendations));
+    // The selected datapoint index — defaults to the latest defined point, and a
+    // chart click moves it. Drives the highlight + the evidence panel's day.
+    let selectedIndex = $state<number | null>(null);
+    $effect(() => {
+        // Re-default when the series changes (metric / grain switch): last point.
+        let last: number | null = null;
+        for (let i = chartSeries.length - 1; i >= 0; i--) {
+            if (chartSeries[i].value != null) { last = i; break; }
+        }
+        selectedIndex = last;
+    });
+    // The selected point's day — only at daily grain, where a chart slot IS a day
+    // the drill-down can load; at coarser grains the drill-down keeps its own
+    // day selector (a week/month start isn't a daily session date).
+    const selectedDay = $derived(
+        data.grain === 'daily' && selectedIndex != null
+            ? (chartSeries[selectedIndex]?.date ?? null)
+            : null,
+    );
+
+    // Phase E: metric-specific actions — the pending recommendations relevant to
+    // THIS metric (heuristic keyword match on its key / name / family), replacing
+    // the old project-wide panel that duplicated Impact. Honest-empty when none
+    // are specific to this metric.
+    const metricTerms = $derived(
+        [data.selectedKey, selected?.name, selected?.familyLabel]
+            .filter((t): t is string => !!t)
+            .map((t) => t.toLowerCase()),
+    );
+    const relevantRecs = $derived(
+        data.recommendations.filter((r) => {
+            const hay = `${r.title ?? ''} ${r.why ?? ''} ${r.impact ?? ''}`.toLowerCase();
+            return metricTerms.some((t) => hay.includes(t));
+        }),
+    );
+    const actionItems = $derived(buildActionItems(relevantRecs));
 
     const GRAINS = [
         { id: 'daily', label: 'Daily' },
@@ -118,7 +150,21 @@
                             {format}
                             color={selected.color}
                             {caption}
+                            {selectedIndex}
+                            onselect={(i) => (selectedIndex = i)}
                         />
+
+                        <!-- Directly below the chart: the clicked point's sessions,
+                             observation, and transcript evidence (Phase C/F). -->
+                        {#key data.selectedKey}
+                            <DatapointDrilldown
+                                series={data.dailySeries}
+                                seriesError={data.dailySeriesError}
+                                projectId={projectId}
+                                metricKey={data.selectedKey}
+                                {selectedDay}
+                            />
+                        {/key}
                     {/if}
 
                     {#if about}
@@ -134,15 +180,6 @@
                             {selected.insight}
                         </p>
                     </div>
-
-                    {#key data.selectedKey}
-                        <DatapointDrilldown
-                            series={data.dailySeries}
-                            seriesError={data.dailySeriesError}
-                            projectId={projectId}
-                            metricKey={data.selectedKey}
-                        />
-                    {/key}
 
                     <ActionItems items={actionItems} error={data.recommendationsError} />
                 {:else}
