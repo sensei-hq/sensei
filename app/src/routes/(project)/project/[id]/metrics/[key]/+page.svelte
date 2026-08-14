@@ -93,10 +93,13 @@
     ];
 </script>
 
-<div class="pt-8 px-6 md:px-10 pb-12 max-w-[1040px]">
+<!-- Fills <main> and owns its own scroll: the signal rail and the detail column
+     scroll INDEPENDENTLY (min-h-0 + overflow-auto), so a long evidence panel never
+     drags the rail off-screen. -->
+<div class="h-full flex flex-col overflow-hidden pt-8 px-6 md:px-10 pb-6 max-w-[1040px]">
     <a
         href={`/project/${projectId}/metrics`}
-        class="inline-flex items-center gap-1 text-xs text-ink-mute hover:text-accent no-underline mb-4"
+        class="inline-flex items-center gap-1 text-xs text-ink-mute hover:text-accent no-underline mb-4 shrink-0"
     >← All signals</a>
 
     {#if data.error}
@@ -107,11 +110,13 @@
         <div
             data-component="signal-detail"
             data-signal={data.selectedKey}
-            class="grid grid-cols-1 md:grid-cols-[260px_1fr] bg-paper-soft border border-paper-edge rounded-lg overflow-hidden"
+            class="flex-1 min-h-0 grid grid-cols-1 md:grid-cols-[260px_1fr] bg-paper-soft border border-paper-edge rounded-lg overflow-hidden"
         >
-            <SignalRail signals={ordered} selectedKey={data.selectedKey} {projectId} {distribution} {format} />
+            <div class="overflow-auto min-h-0">
+                <SignalRail signals={ordered} selectedKey={data.selectedKey} {projectId} {distribution} {format} />
+            </div>
 
-            <div class="p-6 md:p-8 flex flex-col gap-6">
+            <div class="overflow-auto min-h-0 p-6 md:p-8 flex flex-col gap-6">
                 {#if selected}
                     <div class="flex items-start justify-between gap-6 flex-wrap">
                         <div class="flex flex-col gap-1">

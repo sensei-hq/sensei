@@ -45,6 +45,8 @@
             name={data.project?.name ?? '…'}
             client={data.project?.client ?? null}
             {ftr14d}
+            ftr14dPrev={data.ftrMetrics?.ftr14dPrev ?? null}
+            ftrTrend={data.ftrMetrics?.ftrTrend ?? []}
             sessions7d={data.ftrMetrics?.sessions7d ?? null}
         />
 

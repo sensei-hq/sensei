@@ -36,6 +36,38 @@ export function isSectionActive(pathname: string, projectId: string, sectionId: 
  *  whether it matches the daemon after a deploy. */
 export const APP_VERSION: string = __SENSEI_APP_VERSION__;
 
+export type FtrBand = 'success' | 'accent' | 'warning' | 'ink-faint';
+
+/** FTR-band token for the identity status dot + health tint. ≥0.8 success,
+ *  ≥0.6 accent, <0.6 warning, null (no data) ink-faint — never a fabricated band. */
+export function ftrBand(ftr14d: number | null): FtrBand {
+    if (ftr14d == null) return 'ink-faint';
+    if (ftr14d >= 0.8) return 'success';
+    if (ftr14d >= 0.6) return 'accent';
+    return 'warning';
+}
+
+/** FTR delta chip vs the prior 14d window: "+N pt" / "−N pt" / "steady", or "—"
+ *  when either window is absent (never a fabricated 0). */
+export function ftrDelta(ftr14d: number | null, ftr14dPrev: number | null): string {
+    if (ftr14d == null || ftr14dPrev == null) return '—';
+    const pts = Math.round((ftr14d - ftr14dPrev) * 100);
+    if (pts === 0) return 'steady';
+    return pts > 0 ? `+${pts} pt` : `−${Math.abs(pts)} pt`;
+}
+
+/** Spark tone from the FTR trend direction: improving good, declining bad, else
+ *  neutral (also when there's no prior window to compare). */
+export function ftrSparkTone(
+    ftr14d: number | null,
+    ftr14dPrev: number | null,
+): 'good' | 'bad' | 'neutral' {
+    if (ftr14d == null || ftr14dPrev == null) return 'neutral';
+    if (ftr14d > ftr14dPrev) return 'good';
+    if (ftr14d < ftr14dPrev) return 'bad';
+    return 'neutral';
+}
+
 export interface HealthRow {
     label: string;
     value: string;
