@@ -277,6 +277,20 @@ impl PgStore {
         ).bind(client_session_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())
     }
 
+    /// Merge `props.resumed = true` onto a session (Phase B): it carried an
+    /// in-session `command_invoked{action:resume}` marker, so it was reopened /
+    /// continued — the read path shows "resumed" and never treats it as abandoned.
+    /// Idempotent; guarded so a steady-state re-enrich changes 0 rows.
+    pub async fn set_session_resumed(&self, session_id: &uuid::Uuid, resumed: bool) -> Result<u64, String> {
+        let res = sqlx_core::query::query(
+            "UPDATE activity.sessions
+                SET props = coalesce(props, '{}'::jsonb) || jsonb_build_object('resumed', $2::bool)
+              WHERE id = $1
+                AND coalesce((props->>'resumed')::bool, false) IS DISTINCT FROM $2"
+        ).bind(session_id).bind(resumed).execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(res.rows_affected())
+    }
+
     /// The most recent `TodoWrite` event for a session: its `(payload, cwd)`.
     /// `None` when the session has no `TodoWrite` yet. Feeds the relay
     /// segment-publish path (P2) — `payload` holds the todo list

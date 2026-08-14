@@ -265,6 +265,7 @@ mod tests {
             prompt: None,
             file_path: fp.map(str::to_string),
             tool_failed: false,
+            action: None,
         };
         let events = vec![
             ev("UserPromptSubmit", None, 1000, None),
