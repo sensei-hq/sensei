@@ -482,6 +482,8 @@ describe('sessionOneLiner', () => {
             task: 't',
             summary: null,
             observation: { title: 'x', detail: 'y' },
+            evidence: null,
+            resumed: false,
             ...over,
         };
     }

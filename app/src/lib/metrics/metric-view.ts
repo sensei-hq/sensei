@@ -272,6 +272,23 @@ export interface SessionObservation {
     detail: string;
 }
 
+/** One quoted transcript moment (Phase C evidence) — a real turn grounding the
+ *  session's signal, never an invented causal "why". `kind` marks the special
+ *  ones (e.g. `"correction"`, the FTR detractor). */
+export interface EvidenceMoment {
+    turn: number;
+    who: 'you' | 'sensei';
+    text: string;
+    kind?: string;
+}
+
+/** Deterministic transcript-sourced evidence for a session (Phase C). `null` when
+ *  the session had no captured transcript (honest-empty). */
+export interface SessionEvidence {
+    source: 'transcript';
+    moments: EvidenceMoment[];
+}
+
 /** One measurable session behind a daily datapoint — the wire shape of
  *  `GET /api/projects/{id}/metrics/{key}/sessions?day=YYYY-MM-DD`'s `sessions[]`.
  *  Carries the structural fields the one-liner reads (`outcome` + `ftr` +
@@ -288,6 +305,11 @@ export interface DrilldownSession {
     task: string;
     summary: string | null;
     observation: SessionObservation;
+    /** Deterministic transcript-sourced evidence (Phase C) — quoted real moments
+     *  behind the signal. `null` when the session had no captured transcript. */
+    evidence: SessionEvidence | null;
+    /** The session was reopened/continued (Phase B in-session resume marker). */
+    resumed: boolean;
 }
 
 /** The response of `GET /api/projects/{id}/metrics/{key}/sessions?day=…` — the

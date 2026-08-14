@@ -18,6 +18,7 @@ create table if not exists sessions (
 , provider                 text
 , model                    text
 , props                    jsonb       not null default '{}'
+, evidence                 jsonb       -- Phase C: deterministic transcript-sourced evidence (moments) grounding the drill-down; NULL until enriched
 , started_at               timestamptz not null default now()
 , completed_at             timestamptz
 , analyzed_at              timestamptz
