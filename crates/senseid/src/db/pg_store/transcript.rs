@@ -59,22 +59,27 @@ impl PgStore {
     }
 
     /// All transcript turns for a session (by client `session_id`), ordered by
-    /// `turn_index`. The transcript is the GROUND-TRUTH source the analyzer
-    /// derives session signals from (turns / corrections / outcome); hook events
-    /// only corroborate. Empty when a session has no captured transcript, in
-    /// which case the analyzer falls back to the sparse hook stream.
+    /// `turn_index`, plus the session's assistant `family` (the ACP — e.g.
+    /// `claude` — the transcript actually came from; `None` when unknown). The
+    /// transcript is the GROUND-TRUTH source the analyzer derives session signals
+    /// from (turns / corrections / outcome); hook events only corroborate. Empty
+    /// when a session has no captured transcript, in which case the analyzer falls
+    /// back to the sparse hook stream.
     pub async fn get_transcript_turns_for_session(
         &self, client_session_id: &str,
-    ) -> Result<Vec<crate::transcript::TranscriptTurn>, String> {
-        let rows: Vec<(i32, Option<String>, String, Option<chrono::DateTime<chrono::Utc>>)> =
+    ) -> Result<(Vec<crate::transcript::TranscriptTurn>, Option<String>), String> {
+        let rows: Vec<(i32, Option<String>, String, Option<chrono::DateTime<chrono::Utc>>, Option<String>)> =
             sqlx_core::query_as::query_as(
-                "SELECT turn_index, user_text, assistant_text, started_at
+                "SELECT turn_index, user_text, assistant_text, started_at, family
                    FROM activity.transcript_turns
                   WHERE session_id = $1 ORDER BY turn_index"
             ).bind(client_session_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
-        Ok(rows.into_iter().map(|(turn_index, user_text, assistant_text, started_at)| {
+        // family is uniform per session — take the first non-empty one.
+        let family = rows.iter().find_map(|r| r.4.clone().filter(|f| !f.trim().is_empty()));
+        let turns = rows.into_iter().map(|(turn_index, user_text, assistant_text, started_at, _family)| {
             crate::transcript::TranscriptTurn { turn_index, user_text, assistant_text, started_at }
-        }).collect())
+        }).collect();
+        Ok((turns, family))
     }
 
     // ── Historical-bootstrap import (#75) ────────────────────────────────────

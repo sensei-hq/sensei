@@ -277,7 +277,9 @@ export interface SessionObservation {
  *  ones (e.g. `"correction"`, the FTR detractor). */
 export interface EvidenceMoment {
     turn: number;
-    who: 'you' | 'sensei';
+    /** `"you"` for the developer's turn, else the ACP the transcript came from
+     *  (e.g. `"claude"`) — never "sensei". */
+    who: string;
     text: string;
     kind?: string;
 }
