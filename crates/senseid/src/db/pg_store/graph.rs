@@ -836,8 +836,18 @@ impl PgStore {
     /// there from the retired `ResolveEdges` pass) so degree is fresh before it
     /// ranks each community's god nodes. Edgeless nodes are set to 0 (not left
     /// stale/NULL), so a symbol that lost its last edge on a re-scan reflects it.
-    pub async fn recompute_degrees_for_folder(&self, folder_id: &uuid::Uuid) -> Result<(), String> {
-        sqlx_core::query::query(
+    ///
+    /// Guarded by `degree IS DISTINCT FROM` the freshly-counted value (same shape
+    /// as `set_nodes_is_test_for_file` and `tag_file_nodes_by_framework_kind`) so
+    /// a steady-state re-scan changes 0 rows: it locks no rows and creates no dead
+    /// tuples. Without this guard the barrier rewrote every node in the folder on
+    /// EVERY indexing pass, so re-scans piled up full-table rewrites; concurrent
+    /// same-folder passes then blocked on each other's row locks, held hours-long
+    /// transactions that pinned the xmin horizon, and autovacuum could never
+    /// reclaim the dead tuples → `sensei.nodes` bloated unboundedly. Returns rows
+    /// changed.
+    pub async fn recompute_degrees_for_folder(&self, folder_id: &uuid::Uuid) -> Result<u64, String> {
+        let res = sqlx_core::query::query(
             "UPDATE sensei.nodes n
                 SET degree = COALESCE(d.deg, 0), modified_at = now()
                FROM (SELECT id FROM sensei.nodes WHERE folder_id = $1) an
@@ -848,9 +858,10 @@ impl PgStore {
                        SELECT target_id AS node_id FROM sensei.edges WHERE folder_id = $1 AND target_id IS NOT NULL
                    ) inc GROUP BY node_id
                ) d ON d.node_id = an.id
-              WHERE n.id = an.id"
+              WHERE n.id = an.id
+                AND n.degree IS DISTINCT FROM COALESCE(d.deg, 0)"
         ).bind(folder_id).execute(&self.pool).await.map_err(|e| e.to_string())?;
-        Ok(())
+        Ok(res.rows_affected())
     }
 
     /// Set `is_test` for every node of a file (folder-scoped) to the file's
@@ -880,14 +891,22 @@ impl PgStore {
     /// half-assigned folder). An empty `communities` just clears the folder.
     pub async fn replace_communities_for_folder(
         &self, folder_id: &uuid::Uuid, communities: &[CommunityAssignment],
-    ) -> Result<(), String> {
+    ) -> Result<u64, String> {
         let mut tx = self.pool.begin().await.map_err(|e| e.to_string())?;
         sqlx_core::query::query("DELETE FROM inference.communities WHERE folder_id = $1")
             .bind(folder_id).execute(&mut *tx).await.map_err(|e| e.to_string())?;
-        sqlx_core::query::query(
-            "UPDATE sensei.nodes SET community_id = NULL, modified_at = now()
-              WHERE folder_id = $1 AND community_id IS NOT NULL"
-        ).bind(folder_id).execute(&mut *tx).await.map_err(|e| e.to_string())?;
+        // Assign members FIRST, each guarded by `IS DISTINCT FROM`, THEN NULL only
+        // the leftovers (nodes that had a community but are in none of the new ones)
+        // — instead of null-all-then-reset. `community_id` is deterministic for an
+        // identical graph (indexer::community, invariant 2), so an unchanged
+        // re-detect rewrites 0 node rows. The committed state is identical to the
+        // old clear-all-then-reset — a pure function of the graph (invariant 5),
+        // atomic in one tx — but a steady-state re-scan no longer rewrites every
+        // community node twice, which (like the unguarded degree recompute) piled
+        // dead tuples into sensei.nodes on every DetectCommunities pass. Returns the
+        // node rows actually changed.
+        let mut changed: u64 = 0;
+        let mut all_members: Vec<uuid::Uuid> = Vec::new();
         for c in communities {
             // Authoritative write: description honest-empty (`props.source='null'`);
             // enrich_community_descriptions fills real prose later, off-barrier.
@@ -898,15 +917,26 @@ impl PgStore {
                 .bind(&c.god_node_ids)
                 .execute(&mut *tx).await.map_err(|e| e.to_string())?;
             if !c.member_node_ids.is_empty() {
-                sqlx_core::query::query(
+                let res = sqlx_core::query::query(
                     "UPDATE sensei.nodes SET community_id = $2, modified_at = now()
-                      WHERE folder_id = $1 AND id = ANY($3)"
+                      WHERE folder_id = $1 AND id = ANY($3) AND community_id IS DISTINCT FROM $2"
                 ).bind(folder_id).bind(c.community_id).bind(&c.member_node_ids)
                     .execute(&mut *tx).await.map_err(|e| e.to_string())?;
+                changed += res.rows_affected();
+                all_members.extend_from_slice(&c.member_node_ids);
             }
         }
+        // Clear any node still carrying a community_id but no longer a member of any
+        // community (removed/renamed symbols, or an empty `communities` that clears
+        // the whole folder). `id <> ALL('{}')` is TRUE for every row, so an empty
+        // member set nulls all assigned nodes — matching the old clear-all.
+        let cleared = sqlx_core::query::query(
+            "UPDATE sensei.nodes SET community_id = NULL, modified_at = now()
+              WHERE folder_id = $1 AND community_id IS NOT NULL AND id <> ALL($2)"
+        ).bind(folder_id).bind(&all_members).execute(&mut *tx).await.map_err(|e| e.to_string())?;
+        changed += cleared.rows_affected();
         tx.commit().await.map_err(|e| e.to_string())?;
-        Ok(())
+        Ok(changed)
     }
 
     pub async fn list_communities(&self, folder_id: &uuid::Uuid) -> Result<Vec<serde_json::Value>, String> {
