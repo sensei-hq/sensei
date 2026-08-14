@@ -274,7 +274,7 @@ mod tests {
             ev("PostToolUse", Some("Edit"), 1400, Some("src/db/c.rs")),
             ev("Stop", None, 2000, None),
         ];
-        let m = derive_session_metrics(&events).unwrap();
+        let m = derive_session_metrics(&events, &[]).unwrap();
         let f = gather_session_facts(&events, &m);
         assert_eq!(f.files_touched, 3, "a.rs, b.rs, c.rs distinct");
         assert_eq!(f.modules_touched, 2, "src/api and src/db");
