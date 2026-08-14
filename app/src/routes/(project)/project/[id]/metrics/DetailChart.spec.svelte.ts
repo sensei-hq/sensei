@@ -14,13 +14,18 @@ afterEach(() => {
     cleanup = [];
 });
 
-function mount(series: ChartPoint[], yDomain: [number, number] = [0, 10]) {
+function mount(
+    series: ChartPoint[],
+    yDomain: [number, number] = [0, 10],
+    over: Record<string, unknown> = {},
+) {
     const m = mountComponent(DetailChart, {
         series,
         yDomain,
         format: (v: number) => String(v),
         color: 'accent',
         caption: 'history from 2025-01-01 — no earlier data for this signal',
+        ...over,
     });
     cleanup.push(m.destroy);
     return m.container;
@@ -38,7 +43,7 @@ describe('DetailChart', () => {
         expect(q(root, 'svg')).toBeNull();
     });
 
-    it('renders an area, line and endpoint via @rokkit/chart Plot geoms', () => {
+    it('renders an area, line and clickable datapoints via Plot geoms + overlay', () => {
         const root = mount([
             { date: '2025-01-01', value: 1 },
             { date: '2025-01-02', value: 3 },
@@ -46,7 +51,28 @@ describe('DetailChart', () => {
         ]);
         expect(q(root, '[data-component="detail-chart"] path[data-plot-element="line"]')).not.toBeNull();
         expect(q(root, '[data-component="detail-chart"] path[data-plot-element="area"]')).not.toBeNull();
-        expect(q(root, '[data-component="detail-chart"] circle[data-plot-element="point"]')).not.toBeNull();
+        // A dot per defined datapoint + a transparent click-target per slot.
+        expect(root.querySelectorAll('[data-component="detail-chart"] circle[data-point-dot]').length).toBe(3);
+        expect(root.querySelectorAll('[data-component="detail-chart"] rect[data-hit]').length).toBe(3);
+    });
+
+    it('highlights the selected datapoint and emits the slot index on click', () => {
+        let picked: number | null = null;
+        const root = mount(
+            [
+                { date: '2025-01-01', value: 1 },
+                { date: '2025-01-02', value: 3 },
+                { date: '2025-01-03', value: 2 },
+            ],
+            [0, 10],
+            { selectedIndex: 2, onselect: (i: number) => (picked = i) },
+        );
+        // The selected point is marked (drives the accent highlight + vertical guide).
+        expect(q(root, 'circle[data-point-dot="2"]')?.getAttribute('data-selected')).toBe('true');
+        expect(q(root, '[data-guide]')).not.toBeNull();
+        // Clicking a datapoint's hit-target emits its slot index.
+        (q(root, 'rect[data-hit="0"]') as HTMLElement).dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        expect(picked).toBe(0);
     });
 
     it('breaks the line at an absent period (#6), not a connected segment', () => {

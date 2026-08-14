@@ -22,6 +22,7 @@
         projectId,
         metricKey,
         seriesError = null,
+        selectedDay = null,
         controller = new DatapointDrilldownState(senseiApi(appState.port)),
     }: {
         series: MetricSeriesPoint[];
@@ -30,6 +31,10 @@
         /** The loader's daily-series fetch failure, if any — surfaced as an
          *  error state instead of masking it as honest-empty. */
         seriesError?: string | null;
+        /** Day driven by the chart selection (`YYYY-MM-DD`). When it changes, the
+         *  drill-down follows the clicked datapoint. `null` leaves the controller's
+         *  own default / day-selector in charge. */
+        selectedDay?: string | null;
         controller?: DatapointDrilldownState;
     } = $props();
 
@@ -37,6 +42,15 @@
         void controller.init(series, projectId, metricKey, seriesError);
     });
     onDestroy(() => controller.dispose());
+
+    // Follow the chart: when the parent's selected datapoint day changes, load it.
+    // Guarded (only a real, different day) so it never fights the controller's own
+    // default or re-loads the same day.
+    $effect(() => {
+        if (selectedDay && selectedDay !== controller.selectedDay) {
+            void controller.select(selectedDay);
+        }
+    });
 </script>
 
 <section
@@ -99,9 +113,15 @@
                         <span class="font-mono text-xs text-ink-mute truncate"
                             >{shortSessionId(s.client_session_id)}</span
                         >
-                        <span data-session-meta class="text-xs text-ink-faint shrink-0"
-                            >{sessionOneLiner(s)}</span
-                        >
+                        <span class="flex items-center gap-2 shrink-0">
+                            {#if s.resumed}
+                                <span data-session-resumed class="text-xs text-info">resumed</span>
+                            {/if}
+                            {#if s.trouble}
+                                <span data-session-trouble class="text-xs text-warning">{s.trouble.hint}</span>
+                            {/if}
+                            <span data-session-meta class="text-xs text-ink-faint">{sessionOneLiner(s)}</span>
+                        </span>
                     </div>
                     <div class="text-sm text-ink text-pretty">{s.task}</div>
                     {#if s.summary && s.summary.trim()}
@@ -114,6 +134,20 @@
                         <span class="text-xs text-ink-faint">{s.observation.title}</span>
                         <span class="text-sm text-ink-soft text-pretty">{s.observation.detail}</span>
                     </div>
+                    {#if s.evidence && s.evidence.moments.length}
+                        <div data-session-evidence class="flex flex-col gap-1 mt-1">
+                            <span class="text-xs text-ink-faint">Evidence</span>
+                            {#each s.evidence.moments as m (m.turn)}
+                                <div data-evidence-moment class="flex gap-2 text-xs text-pretty">
+                                    <span
+                                        class="shrink-0 {m.who === 'you' ? 'text-accent' : 'text-ink-mute'}"
+                                        >{m.who}{#if m.kind === 'correction'} · correction{/if}</span
+                                    >
+                                    <span class="text-ink-soft italic">“{m.text}”</span>
+                                </div>
+                            {/each}
+                        </div>
+                    {/if}
                 </div>
             {/each}
         </div>
