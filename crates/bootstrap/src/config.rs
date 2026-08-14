@@ -87,10 +87,20 @@ pub const POSTGRES_PORT: u16 = 5432;
 /// the schedulers (metrics/analyzer/reconcile/pruners/advance_run/watchdog/
 /// contribute), the relay loop, and transient HTTP handlers. Workers are capped
 /// at `DB_POOL_MAX_CONNECTIONS - WORKER_DB_RESERVE`, leaving the reserve free for
-/// those callers. sqlx opens connections lazily (min_connections defaults to 0),
-/// so this is harmless on small machines, and it stays well under Postgres's
-/// default `max_connections = 100`.
+/// those callers. The pool keeps `DB_POOL_MIN_CONNECTIONS` open at rest and grows
+/// to this ceiling only under load, so it is modest when idle and stays well
+/// under Postgres's default `max_connections = 100`.
 pub const DB_POOL_MAX_CONNECTIONS: u32 = 24;
+
+/// The warm floor: connections the pool keeps open at all times, even when fully
+/// idle. The pool starts here, grows to [`DB_POOL_MAX_CONNECTIONS`] under load,
+/// then reaps the extras back down to this floor after `DB_POOL_IDLE_TIMEOUT_SECS`
+/// (sqlx never reaps below `min_connections`). A small floor avoids cold-connect
+/// latency on the first queries after an idle spell while keeping the at-rest
+/// process/memory count low — each idle backend maps `shared_buffers`, so fewer
+/// idle backends means fewer postgres processes at rest. Must be ≤
+/// `DB_POOL_MAX_CONNECTIONS`.
+pub const DB_POOL_MIN_CONNECTIONS: u32 = 8;
 
 /// How long (in seconds) a caller waits for a connection before giving up.
 ///
@@ -261,6 +271,18 @@ impl SenseiLocalConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pool_warm_floor_is_below_the_ceiling() {
+        // sqlx rejects a pool with min_connections > max_connections at build
+        // time, and a floor that swallows the whole pool would leave no elastic
+        // headroom. Keep the warm floor a strict, non-zero fraction of the max.
+        assert!(DB_POOL_MIN_CONNECTIONS >= 1, "keep a warm floor so first queries don't cold-connect");
+        assert!(
+            DB_POOL_MIN_CONNECTIONS < DB_POOL_MAX_CONNECTIONS,
+            "warm floor ({DB_POOL_MIN_CONNECTIONS}) must leave room to grow up to the ceiling ({DB_POOL_MAX_CONNECTIONS})"
+        );
+    }
 
     #[test]
     fn config_instance_override_and_defaults() {
