@@ -421,23 +421,62 @@ fn was_resumed(events: &[HookEvent]) -> bool {
     })
 }
 
-/// Phase C: DETERMINISTIC drill-down evidence — the real transcript turns that
-/// ground a session's signals, quoted verbatim (truncated), with NO invented
-/// causality. Selects the opening ask, the first correction (the FTR detractor),
-/// and the closing result. A session with no transcript yields `null`
-/// (honest-empty). Shape:
-/// `{ "source": "transcript", "moments": [{ "turn", "who": "you"|"sensei", "text", "kind"? }] }`
-/// — the "moments" the drill-down renders instead of the confabulated observation.
-pub fn build_session_evidence(transcript: &[TranscriptTurn]) -> serde_json::Value {
-    const MAX: usize = 240;
-    let clip = |s: &str| -> String {
-        let t = s.trim();
-        if t.chars().count() > MAX {
-            format!("{}…", t.chars().take(MAX).collect::<String>())
-        } else {
-            t.to_string()
+/// Tidy a raw transcript turn for a one-line quote: drop fenced code blocks
+/// (noise in a quote), strip inline markdown emphasis/heading/bullet markers, and
+/// collapse all whitespace to single spaces. Deterministic — no summarisation
+/// model, so the quote stays the user's/assistant's real words, just neater.
+fn clean_prose(s: &str) -> String {
+    let mut kept = String::new();
+    let mut in_fence = false;
+    for line in s.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("```") {
+            in_fence = !in_fence;
+            continue;
         }
-    };
+        if in_fence {
+            continue;
+        }
+        // Strip a leading markdown marker (heading #, quote >, bullet -/*/+).
+        let stripped = trimmed
+            .trim_start_matches(['#', '>', '-', '*', '+', ' '])
+            .to_string();
+        kept.push_str(&stripped);
+        kept.push(' ');
+    }
+    let no_emphasis = kept.replace("**", "").replace("__", "").replace('`', "");
+    no_emphasis.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Cap a cleaned quote at ~`max` chars, ending on a sentence boundary (`.!?`) when
+/// one is near, else a word boundary — so the "important action" reads as a whole
+/// thought, never a mid-word truncation. Appends `…` only when it actually cut.
+fn clip_sentence(s: &str, max: usize) -> String {
+    let s = s.trim();
+    if s.chars().count() <= max {
+        return s.to_string();
+    }
+    let head: String = s.chars().take(max).collect();
+    // Prefer the last sentence end past the halfway mark, else the last space.
+    let cut = head
+        .rmatch_indices(['.', '!', '?'])
+        .map(|(i, m)| i + m.len())
+        .find(|&i| i > max / 2)
+        .or_else(|| head.rfind(' '))
+        .unwrap_or(head.len());
+    format!("{}…", head[..cut].trim())
+}
+
+/// Phase C: DETERMINISTIC drill-down evidence — the real transcript turns that
+/// ground a session's signals, cleaned (markdown/code stripped, sentence-capped)
+/// but never summarised by a model, with NO invented causality. Selects the
+/// opening ask, the first correction (the FTR detractor), and the closing result.
+/// `assistant_label` is the ACP the transcript came from (e.g. `claude`) — the
+/// assistant `who`, NEVER "sensei". A session with no transcript yields `null`.
+/// Shape: `{ "source": "transcript", "moments": [{ "turn", "who", "text", "kind"? }] }`.
+pub fn build_session_evidence(transcript: &[TranscriptTurn], assistant_label: &str) -> serde_json::Value {
+    const MAX: usize = 220;
+    let tidy = |s: &str| clip_sentence(&clean_prose(s), MAX);
     let mut moments: Vec<serde_json::Value> = Vec::new();
     let mut first_turn: Option<i32> = None;
 
@@ -449,7 +488,7 @@ pub fn build_session_evidence(transcript: &[TranscriptTurn]) -> serde_json::Valu
         first_turn = Some(first.turn_index);
         moments.push(serde_json::json!({
             "turn": first.turn_index, "who": "you",
-            "text": clip(first.user_text.as_deref().unwrap_or("")),
+            "text": tidy(first.user_text.as_deref().unwrap_or("")),
         }));
     }
     // First correction — the FTR detractor, quoted from the user turn that flags it
@@ -461,15 +500,15 @@ pub fn build_session_evidence(transcript: &[TranscriptTurn]) -> serde_json::Valu
     {
         moments.push(serde_json::json!({
             "turn": corr.turn_index, "who": "you", "kind": "correction",
-            "text": clip(corr.user_text.as_deref().unwrap_or("")),
+            "text": tidy(corr.user_text.as_deref().unwrap_or("")),
         }));
     }
-    // Closing result — the last non-empty assistant turn (what the session produced).
+    // Closing result — the last non-empty assistant turn, labelled with the ACP.
     if let Some(last) = transcript.iter().rev().find(|t| !t.assistant_text.trim().is_empty())
         && Some(last.turn_index) != first_turn
     {
         moments.push(serde_json::json!({
-            "turn": last.turn_index, "who": "sensei", "text": clip(&last.assistant_text),
+            "turn": last.turn_index, "who": assistant_label, "text": tidy(&last.assistant_text),
         }));
     }
 
@@ -536,7 +575,9 @@ pub async fn enrich_session(
     let rows = ctx.pg().get_hook_events_for_session(client_session_id).await?;
     let events: Vec<HookEvent> = rows.iter().map(hook_event_from_row).collect();
     // Transcript is ground truth (turns/corrections/outcome); hooks corroborate.
-    let transcript = ctx.pg().get_transcript_turns_for_session(client_session_id).await?;
+    // `family` is the ACP the transcript came from (e.g. claude) — the evidence's
+    // assistant label, never "sensei".
+    let (transcript, family) = ctx.pg().get_transcript_turns_for_session(client_session_id).await?;
     match derive_session_metrics(&events, &transcript) {
         Some(m) => {
             ctx.pg()
@@ -554,7 +595,7 @@ pub async fn enrich_session(
             }
             // Phase C: deterministic transcript-sourced evidence for the drill-down
             // (real quoted moments, no invented causality). Non-fatal; guarded.
-            let evidence = build_session_evidence(&transcript);
+            let evidence = build_session_evidence(&transcript, family.as_deref().unwrap_or("assistant"));
             if let Err(e) = ctx.pg().set_session_evidence(session_id, &evidence).await {
                 tracing::warn!(error = %e, session = %session_id, "enrich_session: set_session_evidence failed");
             }
@@ -567,16 +608,16 @@ pub async fn enrich_session(
 
             // Retrospective narrative → activity.sessions.summary. Deterministic
             // facts stay code-owned; only the prose routes through insight-copy,
-            // which degrades to a deterministic fallback on a gateway miss. The
-            // write is guarded (only-if-empty), so this is non-fatal and never
-            // clobbers an assistant-authored checkpoint summary — a failure is
-            // logged, not propagated (it must not abort enrichment).
+            // which degrades to a deterministic fallback on a gateway miss. Written
+            // with a refresh-if-changed guard so a re-derivation (the backfill)
+            // corrects a now-stale line (e.g. an outcome that flipped
+            // abandoned → completed) — non-fatal, logged not propagated.
             let facts = super::session_retro::gather_session_facts(&events, &m);
             let summary = super::session_retro::generate_session_summary(
                 ctx.pg(), &ctx.app_state.gateway, &facts,
             ).await;
-            if let Err(e) = ctx.pg().set_session_summary_if_empty(session_id, &summary).await {
-                tracing::warn!(error = %e, session = %session_id, "enrich_session: set_session_summary_if_empty failed");
+            if let Err(e) = ctx.pg().set_session_summary(session_id, &summary).await {
+                tracing::warn!(error = %e, session = %session_id, "enrich_session: set_session_summary failed");
             }
             Ok(true)
         }
@@ -922,13 +963,13 @@ mod tests {
         // Phase C: evidence is the REAL transcript turns — opening ask, the
         // correction (FTR detractor), and the closing result — never an invented
         // causal "why". Empty transcript → null (honest-empty).
-        assert!(build_session_evidence(&[]).is_null(), "no transcript ⇒ no evidence");
+        assert!(build_session_evidence(&[], "claude").is_null(), "no transcript ⇒ no evidence");
         let transcript = vec![
             tt(0, "implement the cache layer", "on it"),
             tt(1, "no, that's wrong — revert it", "reverted"),
-            tt(2, "thanks", "done, cache added"),
+            tt(2, "thanks", "**Done** — cache added.\n```rust\nlet x = 1;\n```\nShipped it."),
         ];
-        let ev = build_session_evidence(&transcript);
+        let ev = build_session_evidence(&transcript, "claude");
         let moments = ev["moments"].as_array().expect("moments present");
         assert_eq!(ev["source"], "transcript");
         assert_eq!(moments[0]["who"], "you");
@@ -936,7 +977,13 @@ mod tests {
         let corr = moments.iter().find(|m| m["kind"] == "correction").expect("correction moment present");
         assert_eq!(corr["turn"], 1, "the correction quotes the real detractor turn");
         assert!(corr["text"].as_str().unwrap().contains("revert"), "quotes the actual user text");
-        assert!(moments.iter().any(|m| m["who"] == "sensei"), "closing result from the assistant");
+        // The assistant side is labelled with the ACP (claude), never "sensei",
+        // and its text is cleaned (code fences + markdown emphasis stripped).
+        let closing = moments.iter().find(|m| m["who"] == "claude")
+            .expect("closing result is labelled with the ACP, not 'sensei'");
+        let text = closing["text"].as_str().unwrap();
+        assert!(text.contains("Done") && text.contains("Shipped"), "keeps the real words");
+        assert!(!text.contains("```") && !text.contains("**"), "strips code fences + markdown");
     }
 
     #[test]

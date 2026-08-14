@@ -128,10 +128,18 @@ impl SessionMetricFacts {
         } else {
             format!("{} turns", self.turns)
         };
-        FallbackCopy {
-            title: self.metric_label.clone(),
-            detail: format!("outcome {}; {}; {turns}", self.outcome, self.effort_phrase()),
-        }
+        // FTR / rework are effort metrics → lead with the effort (first-try / N
+        // corrections). Other metrics (latency, throughput, …) are NOT about
+        // first-try, so a neutral "outcome · turns" line avoids implying an
+        // effort relevance the metric doesn't have (e.g. "first-try" on
+        // time_to_useful_result read as a non-sequitur).
+        let is_effort = matches!(self.metric_key.as_str(), "ftr" | "rework_ratio");
+        let detail = if is_effort {
+            format!("outcome {}; {}; {turns}", self.outcome, self.effort_phrase())
+        } else {
+            format!("outcome {}; {turns}", self.outcome)
+        };
+        FallbackCopy { title: self.metric_label.clone(), detail }
     }
 }
 
@@ -247,10 +255,11 @@ mod tests {
     #[test]
     fn fallback_falls_back_to_key_label_when_metric_unregistered() {
         // An unregistered key → label defaults to the key, meaning empty; the
-        // fallback still reads honestly (never blank), never fabricated.
+        // fallback still reads honestly (never blank), never fabricated. A
+        // non-effort key omits the first-try phrasing (that's FTR/rework only).
         let f = SessionMetricFacts::from_session_row(&row("completed", Some(true), 0, 1), "_test_key", "_test_key", "");
         let fb = f.fallback();
         assert_eq!(fb.title, "_test_key");
-        assert_eq!(fb.detail, "outcome completed; first-try; 1 turn");
+        assert_eq!(fb.detail, "outcome completed; 1 turn");
     }
 }
