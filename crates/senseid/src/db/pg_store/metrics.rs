@@ -58,6 +58,7 @@ impl PgStore {
                   AND r.verdict = 'pending'
                   AND r.acted_at < now() - interval '3 days'
                   AND s.outcome IS NOT NULL
+                  AND s.outcome <> 'empty'::sensei.session_outcome
                 GROUP BY r.id
                 HAVING COUNT(*) >= 3
              )
@@ -365,6 +366,7 @@ impl PgStore {
                JOIN sensei.folders    f ON f.id = s.folder_id
               WHERE f.project_id = $1
                 AND s.outcome   IS NOT NULL
+                AND s.outcome   <> 'empty'::sensei.session_outcome
                 AND date_trunc('day', s.started_at)::date = $2",
         )
         .bind(project_id)
@@ -740,7 +742,7 @@ impl PgStore {
                 "SELECT date_trunc('day', started_at)::date AS day,
                         AVG(CASE WHEN ftr THEN 1.0 ELSE 0.0 END)::float8 AS daily_ftr
                  FROM activity.sessions
-                 WHERE project_id = $1 AND outcome IS NOT NULL AND started_at > now() - interval '14d'
+                 WHERE project_id = $1 AND outcome IS NOT NULL AND outcome <> 'empty'::sensei.session_outcome AND started_at > now() - interval '14d'
                  GROUP BY day ORDER BY day"
             ).bind(project_id)
             .fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
@@ -795,7 +797,8 @@ impl PgStore {
                     (SELECT avg(CASE WHEN s.ftr THEN 1.0 ELSE 0.0 END)::float8
                        FROM activity.sessions s
                       WHERE date_trunc('day', s.started_at)::date = d::date
-                        AND s.ftr IS NOT NULL)
+                        AND s.ftr IS NOT NULL
+                        AND s.outcome <> 'empty'::sensei.session_outcome)
              FROM generate_series(current_date - 13, current_date, interval '1 day') d
              ORDER BY d"
         ).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
