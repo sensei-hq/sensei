@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { SECTIONS, isSectionActive, healthRows } from './project-sidebar-view.js';
+import {
+    SECTIONS,
+    isSectionActive,
+    healthRows,
+    ftrBand,
+    ftrDelta,
+    ftrSparkTone,
+} from './project-sidebar-view.js';
 
 describe('project-sidebar-view', () => {
     describe('isSectionActive', () => {
@@ -48,6 +55,34 @@ describe('project-sidebar-view', () => {
             const ids = SECTIONS.map((s) => s.id);
             expect(new Set(ids).size).toBe(ids.length);
             expect(SECTIONS.every((s) => s.kanji.length >= 1)).toBe(true);
+        });
+    });
+
+    describe('ftrBand', () => {
+        it('bands FTR by threshold, and null → ink-faint (no fabricated band)', () => {
+            expect(ftrBand(null)).toBe('ink-faint');
+            expect(ftrBand(0.85)).toBe('success');
+            expect(ftrBand(0.7)).toBe('accent');
+            expect(ftrBand(0.4)).toBe('warning');
+        });
+    });
+
+    describe('ftrDelta', () => {
+        it('renders the point delta, steady, or an em dash when a window is absent', () => {
+            expect(ftrDelta(0.72, 0.6)).toBe('+12 pt');
+            expect(ftrDelta(0.6, 0.72)).toBe('−12 pt');
+            expect(ftrDelta(0.6, 0.6)).toBe('steady');
+            expect(ftrDelta(0.6, null)).toBe('—');
+            expect(ftrDelta(null, 0.6)).toBe('—');
+        });
+    });
+
+    describe('ftrSparkTone', () => {
+        it('maps the trend direction to a spark tone (neutral without a prior)', () => {
+            expect(ftrSparkTone(0.7, 0.6)).toBe('good');
+            expect(ftrSparkTone(0.6, 0.7)).toBe('bad');
+            expect(ftrSparkTone(0.6, 0.6)).toBe('neutral');
+            expect(ftrSparkTone(0.6, null)).toBe('neutral');
         });
     });
 });
