@@ -189,12 +189,12 @@ exports[`ObservatorySidebar > hides the Review group and Settings when Focus is 
       
       <!---->
       <button
-        aria-expanded="true"
-        data-accordion-trigger=""
+        aria-disabled="true"
+        data-disabled="true"
         data-level="1"
         data-list-group=""
         data-path="2"
-        disabled=""
+        tabindex="-1"
         type="button"
       >
         <!---->
@@ -422,12 +422,12 @@ exports[`ObservatorySidebar > hides the Review group and Settings when Focus is 
       
       <!---->
       <button
-        aria-expanded="true"
-        data-accordion-trigger=""
+        aria-disabled="true"
+        data-disabled="true"
         data-level="1"
         data-list-group=""
         data-path="3"
-        disabled=""
+        tabindex="-1"
         type="button"
       >
         <!---->
