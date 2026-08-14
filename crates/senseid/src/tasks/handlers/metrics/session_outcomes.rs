@@ -81,7 +81,7 @@ async fn daily_session_aggregates(
            FROM activity.sessions s
            JOIN sensei.folders    f ON f.id = s.folder_id
           WHERE f.project_id  = $1
-            AND s.outcome    IS NOT NULL
+            AND s.outcome    IS NOT NULL AND s.outcome <> 'empty'::sensei.session_outcome
             AND {}
           GROUP BY 1
           ORDER BY 1",
@@ -112,7 +112,7 @@ async fn daily_rework(
            JOIN sensei.folders    f ON f.id = s.folder_id
            JOIN activity.turns    t ON t.session_id = s.id
           WHERE f.project_id  = $1
-            AND s.outcome    IS NOT NULL
+            AND s.outcome    IS NOT NULL AND s.outcome <> 'empty'::sensei.session_outcome
             AND {}
           GROUP BY 1
           ORDER BY 1",
@@ -140,7 +140,7 @@ async fn session_ftr(
            FROM activity.sessions s
            JOIN sensei.folders    f ON f.id = s.folder_id
           WHERE f.project_id  = $1
-            AND s.outcome    IS NOT NULL
+            AND s.outcome    IS NOT NULL AND s.outcome <> 'empty'::sensei.session_outcome
             AND {}
           ORDER BY s.started_at",
         super::day_filter(DAY_ANCHOR, as_of),
@@ -179,7 +179,7 @@ async fn daily_time_to_useful(
                        LIMIT 1 \
                     ) fu ON true \
               WHERE f.project_id  = $1 \
-                AND s.outcome    IS NOT NULL \
+                AND s.outcome    IS NOT NULL AND s.outcome <> 'empty'::sensei.session_outcome \
                 AND {} \
          ) \
          SELECT day \
@@ -515,6 +515,36 @@ mod tests {
             .expect("trend has a last point");
         assert!((last - headline).abs() < 1e-9,
             "trend's last point agrees with the headline (same `outcome is not null` base)");
+
+        cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
+    }
+
+    #[tokio::test]
+    async fn empty_sessions_excluded_from_ftr_and_throughput() {
+        // Phase A (transcript-ground-truth): an `empty` session (0 turns, nothing
+        // attempted) is NOT measurable — it must not count toward ftr or throughput.
+        // Seed 1 completed(ftr) + 1 corrected + 1 EMPTY(ftr=true) on one day: ftr must
+        // be 1/2 (not 2/3) and throughput 2 (not 3). Mutation guard: if the
+        // `outcome <> 'empty'` filter regresses, the empty ftr=true session drags
+        // ftr→2/3 and throughput→3.
+        let ctx = make_ctx().await;
+        let pg = ctx.pg();
+        let uniq = uuid::Uuid::new_v4();
+        let (pid, fid) = seed_metrics_project_folder(pg, &uniq).await;
+        let ts = chrono::Utc::now() - chrono::Duration::hours(2);
+        let a = seed_metrics_session(pg, &fid, &pid, Some("completed"), Some(true), 0, ts).await;
+        seed_metrics_turn(pg, &a, 2, ts).await;
+        let b = seed_metrics_session(pg, &fid, &pid, Some("corrected"), Some(false), 1, ts).await;
+        seed_metrics_turn(pg, &b, 2, ts).await;
+        let _empty = seed_metrics_session(pg, &fid, &pid, Some("empty"), Some(true), 0, ts).await;
+
+        compute(&ctx, &pid.to_string(), None).await.unwrap();
+        let daily = daily_rows(pg, &pid).await;
+        let ftr = daily.iter().find(|r| r.0 == "ftr").expect("ftr daily row present");
+        assert!((ftr.1 - 0.5).abs() < 1e-9, "ftr = 1/2 — the empty session is excluded (not 2/3)");
+        assert_eq!(ftr.2["denominator"].as_i64(), Some(2), "ftr denominator excludes the empty session");
+        let throughput = daily.iter().find(|r| r.0 == "throughput").expect("throughput daily row present");
+        assert!((throughput.1 - 2.0).abs() < 1e-9, "throughput = 2 measurable sessions (empty excluded)");
 
         cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
     }
