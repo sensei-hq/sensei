@@ -1,7 +1,0 @@
-diff --git a/node_modules/@rokkit/chart/src/lib/palette.json b/src/lib/palette.json
-new file mode 100644
-index 0000000000000000000000000000000000000000..0967ef424bce6791893e9a57bb952f80fd536e93
---- /dev/null
-+++ b/src/lib/palette.json
-@@ -0,0 +1 @@
-+{}
