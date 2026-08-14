@@ -58,6 +58,25 @@ impl PgStore {
         Ok(())
     }
 
+    /// All transcript turns for a session (by client `session_id`), ordered by
+    /// `turn_index`. The transcript is the GROUND-TRUTH source the analyzer
+    /// derives session signals from (turns / corrections / outcome); hook events
+    /// only corroborate. Empty when a session has no captured transcript, in
+    /// which case the analyzer falls back to the sparse hook stream.
+    pub async fn get_transcript_turns_for_session(
+        &self, client_session_id: &str,
+    ) -> Result<Vec<crate::transcript::TranscriptTurn>, String> {
+        let rows: Vec<(i32, Option<String>, String, Option<chrono::DateTime<chrono::Utc>>)> =
+            sqlx_core::query_as::query_as(
+                "SELECT turn_index, user_text, assistant_text, started_at
+                   FROM activity.transcript_turns
+                  WHERE session_id = $1 ORDER BY turn_index"
+            ).bind(client_session_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(turn_index, user_text, assistant_text, started_at)| {
+            crate::transcript::TranscriptTurn { turn_index, user_text, assistant_text, started_at }
+        }).collect())
+    }
+
     // ── Historical-bootstrap import (#75) ────────────────────────────────────
 
 }

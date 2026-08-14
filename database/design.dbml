@@ -359,6 +359,8 @@ Enum "sensei"."service_protocol" {
 }
 
 Enum "sensei"."session_outcome" {
+  "empty"
+  "incomplete"
   "completed"
   "corrected"
   "blocked"

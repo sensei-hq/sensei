@@ -20,6 +20,7 @@
 use super::super::executor::TaskContext;
 use super::super::{Task, TaskKind};
 use super::prompt_classify::{classify_batch, PromptClass};
+use crate::transcript::TranscriptTurn;
 
 /// Idle gap (ms) that separates "still working" from "came back later" — turns
 /// further apart than this start a new segment, and the gap is excluded from
@@ -69,7 +70,14 @@ pub struct Turn {
 /// detail written to `activity.turns`).
 #[derive(Debug, Clone, PartialEq)]
 pub struct SessionMetrics {
+    /// Per-turn detail rows (hook-derived — timings + tool calls), written to
+    /// `activity.turns`. May be SHORTER than `turn_count` when the transcript is
+    /// richer than the captured hook stream (the drill-down uses `turn_count`).
     pub turns: Vec<Turn>,
+    /// The session-level turn COUNT — transcript turn count (ground truth) when a
+    /// transcript exists, else the hook turn count. This is what the metric reads
+    /// (e.g. `792d7ce4` = 94, not the sparse hooks' 1).
+    pub turn_count: i32,
     pub corrections: i32,
     pub outcome: &'static str, // a `sensei.session_outcome` label
     pub ftr: bool,
@@ -123,6 +131,28 @@ pub fn principle_signal(prompt: &str) -> Option<&'static str> {
         "you should", "you must", "please always", "please never",
     ];
     CUES.iter().copied().find(|s| p.contains(*s))
+}
+
+/// A POSITIVE, explicit "this session is being given up / paused" cue — the user
+/// abandoning, or Claude advising a stop / resume-later / fresh session. This is
+/// the ONLY thing that marks a session `abandoned`: a missing end event is an
+/// absence, never abandonment (see `derive_outcome`). PRECISION-favoring — only
+/// unambiguous phrasings, so ordinary work is never mislabeled. Reads both the
+/// user turn and Claude's reply (Phase D mines these hints further).
+pub fn abandonment_signal(user_text: &str, assistant_text: &str) -> bool {
+    let u = user_text.trim().to_lowercase();
+    let a = assistant_text.trim().to_lowercase();
+    const USER: &[&str] = &[
+        "i give up", "let's abandon", "lets abandon", "abandon this", "give up on this",
+        "forget it", "forget this", "let's stop here", "lets stop here", "stop working on this",
+        "i'll come back to this later", "come back to this later", "let's scrap", "lets scrap",
+    ];
+    const CLAUDE: &[&str] = &[
+        "start a new session", "start a fresh session", "running low on context",
+        "low on context", "resume this later", "let's resume later", "pick this up later",
+        "continue in a new session", "out of context",
+    ];
+    USER.iter().any(|s| u.contains(s)) || CLAUDE.iter().any(|s| a.contains(s))
 }
 
 /// Sum of consecutive-event gaps below the idle threshold — active time, with
@@ -190,10 +220,35 @@ fn trailing_failures(events: &[HookEvent]) -> usize {
         .count()
 }
 
-/// `session_outcome` label. Clean end (Stop/SessionEnd) → `corrected` if the
-/// user had to correct, else `completed`. No end → `blocked` on a tail error
-/// cluster, else `abandoned`.
-fn derive_outcome(events: &[HookEvent], corrections: i32) -> &'static str {
+/// `session_outcome` label under the transcript-ground-truth taxonomy. `real_turns`
+/// is the max of transcript and hook turn counts (0 ⇒ nothing was attempted).
+///
+/// - **empty** — 0 turns: not a measured outcome (the read path excludes it from
+///   throughput/ftr). Never a signal card.
+/// - **abandoned** — ONLY on a POSITIVE transcript abandonment signal (user gave
+///   up, or Claude advised stop/resume-later). Phase B additionally spares any
+///   session later resumed. NEVER inferred from a missing end event.
+/// - **completed / corrected** — a clean end (Stop/SessionEnd); `corrected` if the
+///   user had to correct.
+/// - **blocked** — no clean end but a tail error cluster.
+/// - **incomplete** — real work, no clean end, no abandonment signal: a neutral
+///   crash/close, NOT a failure and NOT abandoned (this is what ~42% of sessions
+///   with a missing `SessionEnd` actually are).
+fn derive_outcome(
+    events: &[HookEvent],
+    transcript: &[TranscriptTurn],
+    real_turns: usize,
+    corrections: i32,
+) -> &'static str {
+    if real_turns == 0 {
+        return "empty";
+    }
+    let abandoned = transcript.iter().any(|t| {
+        abandonment_signal(t.user_text.as_deref().unwrap_or(""), &t.assistant_text)
+    });
+    if abandoned {
+        return "abandoned";
+    }
     let has_end = events
         .iter()
         .any(|e| e.event_type == "Stop" || e.event_type == "SessionEnd");
@@ -202,7 +257,7 @@ fn derive_outcome(events: &[HookEvent], corrections: i32) -> &'static str {
     } else if trailing_failures(events) >= 2 {
         "blocked"
     } else {
-        "abandoned"
+        "incomplete"
     }
 }
 
@@ -252,21 +307,42 @@ fn tally_tool_usage(events: &[HookEvent]) -> serde_json::Value {
     serde_json::Value::Object(obj)
 }
 
-/// Derive metrics for one session from its hook events. `None` for an empty
-/// stream (don't fabricate an outcome for a session we saw nothing of).
-pub fn derive_session_metrics(events: &[HookEvent]) -> Option<SessionMetrics> {
-    if events.is_empty() {
+/// Derive metrics for one session. The **transcript is ground truth** for the
+/// turn count and corrections (hooks are frequently sparse/incomplete — a session
+/// can miss `SessionEnd` or undercount turns); the hook stream corroborates and
+/// supplies per-turn timing + tool usage. Falls back to hooks only when no
+/// transcript was captured. `None` only when BOTH streams are empty (don't
+/// fabricate an outcome for a session we saw nothing of).
+pub fn derive_session_metrics(
+    events: &[HookEvent],
+    transcript: &[TranscriptTurn],
+) -> Option<SessionMetrics> {
+    if events.is_empty() && transcript.is_empty() {
         return None;
     }
+    // Hook-derived per-turn detail (timings, tool calls) — supplementary rows.
     let turns = split_into_turns(events, IDLE_GAP_MS);
-    let corrections = turns.iter().filter(|t| t.is_correction).count() as i32;
+    // Transcript-first turn count + corrections; hooks are the fallback only when
+    // no transcript exists. Corrections reuse `correction_signal` over the real
+    // `user_text`, so `792d7ce4` reads its 94 turns rather than the hooks' 1.
+    let (turn_count, corrections) = if transcript.is_empty() {
+        (turns.len() as i32, turns.iter().filter(|t| t.is_correction).count() as i32)
+    } else {
+        let c = transcript
+            .iter()
+            .filter(|t| t.user_text.as_deref().is_some_and(|u| correction_signal(u).is_some()))
+            .count() as i32;
+        (transcript.len() as i32, c)
+    };
+    let real_turns = (turn_count as usize).max(turns.len());
     Some(SessionMetrics {
-        outcome: derive_outcome(events, corrections),
+        outcome: derive_outcome(events, transcript, real_turns, corrections),
         ftr: corrections == 0,
         duration_ms: active_duration_ms(events, IDLE_GAP_MS),
         module: dominant_module(events),
         tool_usage: tally_tool_usage(events),
         corrections,
+        turn_count,
         turns,
     })
 }
@@ -330,11 +406,13 @@ pub async fn enrich_session(
 ) -> Result<bool, String> {
     let rows = ctx.pg().get_hook_events_for_session(client_session_id).await?;
     let events: Vec<HookEvent> = rows.iter().map(hook_event_from_row).collect();
-    match derive_session_metrics(&events) {
+    // Transcript is ground truth (turns/corrections/outcome); hooks corroborate.
+    let transcript = ctx.pg().get_transcript_turns_for_session(client_session_id).await?;
+    match derive_session_metrics(&events, &transcript) {
         Some(m) => {
             ctx.pg()
                 .update_session_metrics(
-                    session_id, m.turns.len() as i32, m.corrections, m.outcome, m.ftr,
+                    session_id, m.turn_count, m.corrections, m.outcome, m.ftr,
                     m.duration_ms, m.module.as_deref(), &m.tool_usage,
                 )
                 .await?;
@@ -576,7 +654,7 @@ mod tests {
 
     #[test]
     fn empty_stream_yields_no_metrics() {
-        assert!(derive_session_metrics(&[]).is_none());
+        assert!(derive_session_metrics(&[], &[]).is_none());
     }
 
     #[test]
@@ -587,7 +665,7 @@ mod tests {
             prompt_ev("ship it", 3000),
             ev("Stop", 4000),
         ];
-        let m = derive_session_metrics(&events).unwrap();
+        let m = derive_session_metrics(&events, &[]).unwrap();
         assert_eq!(m.turns.len(), 3);
         assert_eq!(m.corrections, 0);
         assert!(m.ftr);
@@ -602,7 +680,7 @@ mod tests {
             prompt_ev("actually, revert that — wrong approach", 2000),
             ev("Stop", 3000),
         ];
-        let m = derive_session_metrics(&events).unwrap();
+        let m = derive_session_metrics(&events, &[]).unwrap();
         assert_eq!(m.turns.len(), 2);
         assert_eq!(m.corrections, 1);
         assert!(!m.ftr);
@@ -620,9 +698,13 @@ mod tests {
     }
 
     #[test]
-    fn no_end_event_is_abandoned() {
+    fn no_end_no_signal_is_incomplete_not_abandoned() {
+        // Regression (transcript-ground-truth): a missing end event is an ABSENCE,
+        // not abandonment. With no transcript abandonment signal, real work without
+        // a clean end is neutral `incomplete` (crash/window-close) — never
+        // `abandoned` (the old classifier's bug that mislabeled ~42% of sessions).
         let events = vec![prompt_ev("start something", 1000), tool_ev("PostToolUse", "Edit", 2000, false)];
-        assert_eq!(derive_session_metrics(&events).unwrap().outcome, "abandoned");
+        assert_eq!(derive_session_metrics(&events, &[]).unwrap().outcome, "incomplete");
     }
 
     #[test]
@@ -632,7 +714,55 @@ mod tests {
             tool_ev("PostToolUse", "Bash", 2000, true),
             tool_ev("PostToolUse", "Bash", 3000, true),
         ];
-        assert_eq!(derive_session_metrics(&events).unwrap().outcome, "blocked");
+        assert_eq!(derive_session_metrics(&events, &[]).unwrap().outcome, "blocked");
+    }
+
+    /// A minimal transcript turn for the transcript-first derivation tests.
+    fn tt(idx: i32, user: &str, assistant: &str) -> TranscriptTurn {
+        TranscriptTurn { turn_index: idx, user_text: Some(user.into()), assistant_text: assistant.into(), started_at: None }
+    }
+
+    #[test]
+    fn zero_turn_session_is_empty() {
+        // Only a SessionStart, no prompts, no transcript → nothing was attempted:
+        // `empty` (excluded from throughput/ftr by the read path), never `abandoned`.
+        let events = vec![ev("SessionStart", 1000)];
+        assert_eq!(derive_session_metrics(&events, &[]).unwrap().outcome, "empty");
+    }
+
+    #[test]
+    fn transcript_turn_count_overrides_sparse_hooks() {
+        // The `792d7ce4` case: hooks captured 1 prompt, the transcript has 94 real
+        // turns. turn_count comes from the transcript, and a missing end with no
+        // abandonment signal is `incomplete`, not `abandoned`.
+        let events = vec![prompt_ev("scan is a read operation", 1000)];
+        let transcript: Vec<TranscriptTurn> = (0..94).map(|i| tt(i, "keep going", "done")).collect();
+        let m = derive_session_metrics(&events, &transcript).unwrap();
+        assert_eq!(m.turn_count, 94, "turn count is the transcript's, not the sparse hooks'");
+        assert_eq!(m.outcome, "incomplete");
+    }
+
+    #[test]
+    fn abandoned_only_on_positive_transcript_signal() {
+        let events = vec![prompt_ev("try the migration", 1000)];
+        let quit = vec![tt(0, "let's abandon this approach", "ok")];
+        assert_eq!(derive_session_metrics(&events, &quit).unwrap().outcome, "abandoned", "explicit user give-up");
+        let claude = vec![tt(0, "continue", "we're running low on context, start a new session")];
+        assert_eq!(derive_session_metrics(&events, &claude).unwrap().outcome, "abandoned", "Claude advised a fresh session");
+        let ordinary = vec![tt(0, "add the endpoint", "added")];
+        assert_eq!(derive_session_metrics(&events, &ordinary).unwrap().outcome, "incomplete", "no cue ⇒ not abandoned");
+    }
+
+    #[test]
+    fn corrections_come_from_transcript_user_text() {
+        let events = vec![prompt_ev("noise", 1000)]; // the hook prompt is not a correction
+        let transcript = vec![
+            tt(0, "implement the parser", "done"),
+            tt(1, "actually, that's wrong — revert it", "reverted"),
+        ];
+        let m = derive_session_metrics(&events, &transcript).unwrap();
+        assert_eq!(m.corrections, 1, "correction is detected in transcript user_text, not the hooks");
+        assert!(!m.ftr);
     }
 
     #[test]
@@ -647,7 +777,7 @@ mod tests {
             prompt_ev("c", 123 * MIN),
             ev("Stop", 124 * MIN),
         ];
-        let m = derive_session_metrics(&events).unwrap();
+        let m = derive_session_metrics(&events, &[]).unwrap();
         assert_eq!(m.turns.len(), 3);
         assert_eq!(
             m.turns.iter().map(|t| t.segment).collect::<Vec<_>>(),
@@ -668,7 +798,7 @@ mod tests {
             tool_ev("PostToolUse", "Bash", 2100, true),
             ev("Stop", 3000),
         ];
-        let m = derive_session_metrics(&events).unwrap();
+        let m = derive_session_metrics(&events, &[]).unwrap();
         assert_eq!(m.tool_usage["Edit"], serde_json::json!({ "pre": 1, "post": 1, "failed": 0 }));
         assert_eq!(m.tool_usage["Bash"], serde_json::json!({ "pre": 1, "post": 1, "failed": 1 }));
     }
@@ -681,7 +811,7 @@ mod tests {
             HookEvent { file_path: Some("README.md".into()), ..tool_ev("PostToolUse", "Edit", 1200, false) },
             ev("Stop", 2000),
         ];
-        assert_eq!(derive_session_metrics(&events).unwrap().module.as_deref(), Some("src/api/handlers"));
+        assert_eq!(derive_session_metrics(&events, &[]).unwrap().module.as_deref(), Some("src/api/handlers"));
     }
 
     #[test]
