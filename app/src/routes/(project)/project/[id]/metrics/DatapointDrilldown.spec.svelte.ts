@@ -32,6 +32,8 @@ function session(over: Partial<DrilldownSession> = {}): DrilldownSession {
         task: 'Add the day-scoped drill-down',
         summary: 'Wired the datapoint drill-down end to end.',
         observation: { title: 'First-try rate', detail: 'outcome completed; first-try; 3 turns' },
+        evidence: null,
+        resumed: false,
         ...over,
     };
 }

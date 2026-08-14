@@ -291,6 +291,18 @@ impl PgStore {
         Ok(res.rows_affected())
     }
 
+    /// Store a session's deterministic drill-down `evidence` (Phase C) — the real
+    /// transcript moments grounding its signals. Computed off-wire during
+    /// enrichment; the drill-down reads it back verbatim. Guarded so a steady-state
+    /// re-enrich changes 0 rows.
+    pub async fn set_session_evidence(&self, session_id: &uuid::Uuid, evidence: &serde_json::Value) -> Result<u64, String> {
+        let res = sqlx_core::query::query(
+            "UPDATE activity.sessions SET evidence = $2
+              WHERE id = $1 AND evidence IS DISTINCT FROM $2"
+        ).bind(session_id).bind(evidence).execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(res.rows_affected())
+    }
+
     /// The most recent `TodoWrite` event for a session: its `(payload, cwd)`.
     /// `None` when the session has no `TodoWrite` yet. Feeds the relay
     /// segment-publish path (P2) — `payload` holds the todo list
@@ -616,10 +628,12 @@ impl PgStore {
         type Row = (
             Option<String>, chrono::DateTime<chrono::Utc>, Option<String>,
             Option<bool>, i32, i32, String, Option<String>,
+            Option<serde_json::Value>, Option<bool>,
         );
         let rows: Vec<Row> = sqlx_core::query_as::query_as(
             "SELECT s.client_session_id, s.started_at, s.outcome::text, s.ftr,
-                    s.turns, s.corrections, s.task, s.summary
+                    s.turns, s.corrections, s.task, s.summary,
+                    s.evidence, (s.props->>'resumed')::bool AS resumed
                FROM activity.sessions s
                JOIN sensei.folders  f ON f.id = s.folder_id
               WHERE f.project_id = $1
@@ -635,7 +649,7 @@ impl PgStore {
         .map_err(|e| e.to_string())?;
         Ok(rows
             .into_iter()
-            .map(|(client_session_id, started_at, outcome, ftr, turns, corrections, task, summary)| {
+            .map(|(client_session_id, started_at, outcome, ftr, turns, corrections, task, summary, evidence, resumed)| {
                 serde_json::json!({
                     "client_session_id": client_session_id,
                     "started_at":        started_at.to_rfc3339(),
@@ -645,6 +659,8 @@ impl PgStore {
                     "corrections":       corrections,
                     "task":              task,
                     "summary":           summary,
+                    "evidence":          evidence,
+                    "resumed":           resumed.unwrap_or(false),
                 })
             })
             .collect())

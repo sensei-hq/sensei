@@ -421,6 +421,64 @@ fn was_resumed(events: &[HookEvent]) -> bool {
     })
 }
 
+/// Phase C: DETERMINISTIC drill-down evidence — the real transcript turns that
+/// ground a session's signals, quoted verbatim (truncated), with NO invented
+/// causality. Selects the opening ask, the first correction (the FTR detractor),
+/// and the closing result. A session with no transcript yields `null`
+/// (honest-empty). Shape:
+/// `{ "source": "transcript", "moments": [{ "turn", "who": "you"|"sensei", "text", "kind"? }] }`
+/// — the "moments" the drill-down renders instead of the confabulated observation.
+pub fn build_session_evidence(transcript: &[TranscriptTurn]) -> serde_json::Value {
+    const MAX: usize = 240;
+    let clip = |s: &str| -> String {
+        let t = s.trim();
+        if t.chars().count() > MAX {
+            format!("{}…", t.chars().take(MAX).collect::<String>())
+        } else {
+            t.to_string()
+        }
+    };
+    let mut moments: Vec<serde_json::Value> = Vec::new();
+    let mut first_turn: Option<i32> = None;
+
+    // Opening ask — the first non-empty user turn (what was asked of this session).
+    if let Some(first) = transcript
+        .iter()
+        .find(|t| t.user_text.as_deref().is_some_and(|u| !u.trim().is_empty()))
+    {
+        first_turn = Some(first.turn_index);
+        moments.push(serde_json::json!({
+            "turn": first.turn_index, "who": "you",
+            "text": clip(first.user_text.as_deref().unwrap_or("")),
+        }));
+    }
+    // First correction — the FTR detractor, quoted from the user turn that flags it
+    // (skip when it IS the opening turn, to avoid a duplicate moment).
+    if let Some(corr) = transcript
+        .iter()
+        .find(|t| t.user_text.as_deref().is_some_and(|u| correction_signal(u).is_some()))
+        && Some(corr.turn_index) != first_turn
+    {
+        moments.push(serde_json::json!({
+            "turn": corr.turn_index, "who": "you", "kind": "correction",
+            "text": clip(corr.user_text.as_deref().unwrap_or("")),
+        }));
+    }
+    // Closing result — the last non-empty assistant turn (what the session produced).
+    if let Some(last) = transcript.iter().rev().find(|t| !t.assistant_text.trim().is_empty())
+        && Some(last.turn_index) != first_turn
+    {
+        moments.push(serde_json::json!({
+            "turn": last.turn_index, "who": "sensei", "text": clip(&last.assistant_text),
+        }));
+    }
+
+    if moments.is_empty() {
+        return serde_json::Value::Null;
+    }
+    serde_json::json!({ "source": "transcript", "moments": moments })
+}
+
 /// Enrich one session in place: write the session aggregates and replace its
 /// turn rows. Returns `true` if metrics were written, `false` if the session
 /// had no hook events (left untouched). Idempotent — recompute overwrites.
@@ -447,6 +505,12 @@ pub async fn enrich_session(
             // unchanged (guarded), so a steady-state re-enrich writes nothing.
             if let Err(e) = ctx.pg().set_session_resumed(session_id, m.resumed).await {
                 tracing::warn!(error = %e, session = %session_id, "enrich_session: set_session_resumed failed");
+            }
+            // Phase C: deterministic transcript-sourced evidence for the drill-down
+            // (real quoted moments, no invented causality). Non-fatal; guarded.
+            let evidence = build_session_evidence(&transcript);
+            if let Err(e) = ctx.pg().set_session_evidence(session_id, &evidence).await {
+                tracing::warn!(error = %e, session = %session_id, "enrich_session: set_session_evidence failed");
             }
 
             // Retrospective narrative → activity.sessions.summary. Deterministic
@@ -799,6 +863,28 @@ mod tests {
         let m = derive_session_metrics(&events, &quit).unwrap();
         assert!(m.resumed, "the resume marker sets resumed");
         assert_ne!(m.outcome, "abandoned", "a resumed session is continued, not abandoned");
+    }
+
+    #[test]
+    fn evidence_quotes_real_transcript_turns_no_confabulation() {
+        // Phase C: evidence is the REAL transcript turns — opening ask, the
+        // correction (FTR detractor), and the closing result — never an invented
+        // causal "why". Empty transcript → null (honest-empty).
+        assert!(build_session_evidence(&[]).is_null(), "no transcript ⇒ no evidence");
+        let transcript = vec![
+            tt(0, "implement the cache layer", "on it"),
+            tt(1, "no, that's wrong — revert it", "reverted"),
+            tt(2, "thanks", "done, cache added"),
+        ];
+        let ev = build_session_evidence(&transcript);
+        let moments = ev["moments"].as_array().expect("moments present");
+        assert_eq!(ev["source"], "transcript");
+        assert_eq!(moments[0]["who"], "you");
+        assert_eq!(moments[0]["turn"], 0, "opening ask is the first user turn");
+        let corr = moments.iter().find(|m| m["kind"] == "correction").expect("correction moment present");
+        assert_eq!(corr["turn"], 1, "the correction quotes the real detractor turn");
+        assert!(corr["text"].as_str().unwrap().contains("revert"), "quotes the actual user text");
+        assert!(moments.iter().any(|m| m["who"] == "sensei"), "closing result from the assistant");
     }
 
     #[test]
