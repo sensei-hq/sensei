@@ -1,6 +1,6 @@
 use std::time::Duration;
 use sqlx_postgres::{PgPool, PgPoolOptions};
-use sensei_bootstrap::{DB_POOL_MAX_CONNECTIONS, DB_POOL_ACQUIRE_TIMEOUT_SECS, DB_POOL_IDLE_TIMEOUT_SECS};
+use sensei_bootstrap::{DB_POOL_MAX_CONNECTIONS, DB_POOL_MIN_CONNECTIONS, DB_POOL_ACQUIRE_TIMEOUT_SECS, DB_POOL_IDLE_TIMEOUT_SECS};
 use dojo_protocol::relay::RelayRunStatus;
 use crate::runs::{NewRun, Run, RunEvent, RunEventKind};
 
@@ -442,10 +442,15 @@ mod pack_resolution_tests;
 // not improve readability at the call sites.
 impl PgStore {
     /// Connect to a PostgreSQL database using the shared pool defaults from
-    /// [`sensei_bootstrap`] (`DB_POOL_MAX_CONNECTIONS`, `DB_POOL_ACQUIRE_TIMEOUT_SECS`,
-    /// `DB_POOL_IDLE_TIMEOUT_SECS`).
+    /// [`sensei_bootstrap`] (`DB_POOL_MIN_CONNECTIONS`, `DB_POOL_MAX_CONNECTIONS`,
+    /// `DB_POOL_ACQUIRE_TIMEOUT_SECS`, `DB_POOL_IDLE_TIMEOUT_SECS`).
+    ///
+    /// The pool is elastic: it keeps `DB_POOL_MIN_CONNECTIONS` warm, grows to
+    /// `DB_POOL_MAX_CONNECTIONS` under load, and reaps the extras back to the warm
+    /// floor once they sit idle past `DB_POOL_IDLE_TIMEOUT_SECS`.
     pub async fn connect(database_url: &str) -> Result<Self, String> {
         let pool = PgPoolOptions::new()
+            .min_connections(DB_POOL_MIN_CONNECTIONS)
             .max_connections(DB_POOL_MAX_CONNECTIONS)
             .acquire_timeout(Duration::from_secs(DB_POOL_ACQUIRE_TIMEOUT_SECS))
             .idle_timeout(Duration::from_secs(DB_POOL_IDLE_TIMEOUT_SECS))
