@@ -680,6 +680,37 @@
     }
 
     #[tokio::test]
+    async fn replace_communities_reruns_change_zero_rows() {
+        // Same class of fix as the degree guard: community_id is deterministic for
+        // an identical graph (invariant 2), so re-applying the SAME assignment must
+        // rewrite 0 node rows. The old null-all-then-reset rewrote every community
+        // node TWICE per DetectCommunities pass — dead-tuple churn on every re-scan.
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, &format!("comm_norerun_{}", uuid::Uuid::new_v4())).await;
+        let a = s.upsert_node(&fid, "function", "a", "a.rs", None, Some("()"), Some(1), Some(2)).await.unwrap();
+        let b = s.upsert_node(&fid, "function", "b", "a.rs", None, Some("()"), Some(3), Some(4)).await.unwrap();
+        let assignment = vec![
+            CommunityAssignment { community_id: 1, label: "one".into(), member_node_ids: vec![a, b], god_node_ids: vec![a] },
+        ];
+
+        let first = s.replace_communities_for_folder(&fid, &assignment).await.unwrap();
+        assert_eq!(first, 2, "first assignment sets community_id on both members");
+
+        // Re-detect with the SAME (deterministic) assignment → 0 node rows change.
+        let second = s.replace_communities_for_folder(&fid, &assignment).await.unwrap();
+        assert_eq!(second, 0, "an unchanged re-detect rewrites 0 nodes (no dead tuples)");
+
+        // A real change (b moves to its own community 2) still writes only what moved.
+        let moved = s.replace_communities_for_folder(&fid, &[
+            CommunityAssignment { community_id: 1, label: "one".into(), member_node_ids: vec![a], god_node_ids: vec![a] },
+            CommunityAssignment { community_id: 2, label: "two".into(), member_node_ids: vec![b], god_node_ids: vec![b] },
+        ]).await.unwrap();
+        assert_eq!(moved, 1, "only b changed community (a stays in 1)");
+
+        s.delete_nodes_by_folder(&fid).await.unwrap();
+    }
+
+    #[tokio::test]
     async fn detect_communities_assigns_deterministic_ids_by_natural_key() {
         // D4 invariant 2: community_id is DETERMINISTIC — communities are ranked
         // 1..k by the natural key (file_path, line_start, …) of their smallest
@@ -841,6 +872,33 @@
         assert_eq!(deg(a).await, Some(1), "a is the source of 1 call");
         assert_eq!(deg(b).await, Some(1), "b is the source of 1 call");
         assert_eq!(deg(lonely).await, Some(0), "an edgeless node has degree 0, not NULL");
+
+        s.delete_nodes_by_folder(&fid).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn recompute_degrees_reruns_change_zero_rows() {
+        // Regression (bloat incident): the degree barrier runs on EVERY indexing
+        // pass (build_connections). Without the `IS DISTINCT FROM` guard it rewrote
+        // every node in the folder each time, so a steady-state re-scan produced a
+        // full table's worth of dead tuples. Concurrent same-folder passes then
+        // blocked on each other's row locks, held hours-long transactions that
+        // pinned the xmin horizon, and autovacuum could never reclaim them —
+        // sensei.nodes reached 99% dead / 155 GB. A re-scan with no graph change
+        // MUST touch 0 rows.
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, &format!("degree_norerun_{}", uuid::Uuid::new_v4())).await;
+        let hub = s.upsert_node(&fid, "function", "hub", "a.rs", None, Some("()"), Some(1), Some(2)).await.unwrap();
+        let a = s.upsert_node(&fid, "function", "a", "a.rs", None, Some("()"), Some(3), Some(4)).await.unwrap();
+        s.insert_edge(&fid, &a, Some(&hub), None, None, "calls").await.unwrap();
+
+        // First pass sets degree on the nodes whose degree changed (NULL → value).
+        let first = s.recompute_degrees_for_folder(&fid).await.unwrap();
+        assert_eq!(first, 2, "first pass sets degree on the 2 incident nodes");
+
+        // Steady state: nothing changed → the guarded UPDATE must rewrite 0 rows.
+        let second = s.recompute_degrees_for_folder(&fid).await.unwrap();
+        assert_eq!(second, 0, "a re-scan with no graph change rewrites 0 nodes (no dead tuples)");
 
         s.delete_nodes_by_folder(&fid).await.unwrap();
     }
