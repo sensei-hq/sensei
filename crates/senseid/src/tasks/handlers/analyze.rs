@@ -51,6 +51,9 @@ pub struct HookEvent {
     pub prompt: Option<String>,
     pub file_path: Option<String>,
     pub tool_failed: bool,
+    /// `command_invoked.payload.action` (e.g. `"resume"`) — the in-session marker
+    /// that a session was reopened/continued (Phase B). `None` for other events.
+    pub action: Option<String>,
 }
 
 /// One turn: a `UserPromptSubmit` and the work until the next prompt.
@@ -81,6 +84,9 @@ pub struct SessionMetrics {
     pub corrections: i32,
     pub outcome: &'static str, // a `sensei.session_outcome` label
     pub ftr: bool,
+    /// The session carried an in-session `command_invoked{action:resume}` marker —
+    /// it was reopened/continued (Phase B). Written to `sessions.props.resumed`.
+    pub resumed: bool,
     pub duration_ms: i64, // session-level gap-aware active time
     pub module: Option<String>,
     pub tool_usage: serde_json::Value, // { "<tool>": { "pre", "post", "failed" } }
@@ -239,13 +245,17 @@ fn derive_outcome(
     transcript: &[TranscriptTurn],
     real_turns: usize,
     corrections: i32,
+    resumed: bool,
 ) -> &'static str {
     if real_turns == 0 {
         return "empty";
     }
-    let abandoned = transcript.iter().any(|t| {
-        abandonment_signal(t.user_text.as_deref().unwrap_or(""), &t.assistant_text)
-    });
+    // `abandoned` requires a positive signal AND no resume-link: a session that was
+    // reopened/continued is never abandoned (Phase B), even if a turn said "stop".
+    let abandoned = !resumed
+        && transcript.iter().any(|t| {
+            abandonment_signal(t.user_text.as_deref().unwrap_or(""), &t.assistant_text)
+        });
     if abandoned {
         return "abandoned";
     }
@@ -335,8 +345,9 @@ pub fn derive_session_metrics(
         (transcript.len() as i32, c)
     };
     let real_turns = (turn_count as usize).max(turns.len());
+    let resumed = was_resumed(events);
     Some(SessionMetrics {
-        outcome: derive_outcome(events, transcript, real_turns, corrections),
+        outcome: derive_outcome(events, transcript, real_turns, corrections, resumed),
         ftr: corrections == 0,
         duration_ms: active_duration_ms(events, IDLE_GAP_MS),
         module: dominant_module(events),
@@ -344,6 +355,7 @@ pub fn derive_session_metrics(
         corrections,
         turn_count,
         turns,
+        resumed,
     })
 }
 
@@ -375,6 +387,7 @@ fn turns_to_json(turns: &[Turn]) -> serde_json::Value {
 fn hook_event_from_row(row: &serde_json::Value) -> HookEvent {
     let payload = row.get("payload").cloned().unwrap_or(serde_json::Value::Null);
     let prompt = payload.get("prompt").and_then(|v| v.as_str()).map(str::to_string);
+    let action = payload.get("action").and_then(|v| v.as_str()).map(str::to_string);
     let file_path = payload
         .get("file_path")
         .and_then(|v| v.as_str())
@@ -393,7 +406,19 @@ fn hook_event_from_row(row: &serde_json::Value) -> HookEvent {
         prompt,
         file_path,
         tool_failed,
+        action,
     }
+}
+
+/// Whether the session was reopened/continued: it carries an in-session
+/// `command_invoked{action:resume…}` marker (the resume event is logged under the
+/// resumed session's own id). Such a session is NEVER abandoned — it was
+/// continued (Phase B).
+fn was_resumed(events: &[HookEvent]) -> bool {
+    events.iter().any(|e| {
+        e.event_type == "command_invoked"
+            && e.action.as_deref().is_some_and(|a| a.trim().to_lowercase().starts_with("resume"))
+    })
 }
 
 /// Enrich one session in place: write the session aggregates and replace its
@@ -417,6 +442,12 @@ pub async fn enrich_session(
                 )
                 .await?;
             ctx.pg().replace_session_turns(session_id, &turns_to_json(&m.turns)).await?;
+            // Phase B: record the in-session resume marker so the read path shows
+            // "resumed" and never treats it as abandoned. Non-fatal; a no-op when
+            // unchanged (guarded), so a steady-state re-enrich writes nothing.
+            if let Err(e) = ctx.pg().set_session_resumed(session_id, m.resumed).await {
+                tracing::warn!(error = %e, session = %session_id, "enrich_session: set_session_resumed failed");
+            }
 
             // Retrospective narrative → activity.sessions.summary. Deterministic
             // facts stay code-owned; only the prose routes through insight-copy,
@@ -642,7 +673,12 @@ mod tests {
             prompt: None,
             file_path: None,
             tool_failed: false,
+            action: None,
         }
+    }
+    /// A `command_invoked` event carrying an action (e.g. a resume marker).
+    fn cmd_ev(action: &str, ts: i64) -> HookEvent {
+        HookEvent { action: Some(action.into()), ..ev("command_invoked", ts) }
     }
     fn prompt_ev(text: &str, ts: i64) -> HookEvent {
         HookEvent { prompt: Some(text.into()), ..ev("UserPromptSubmit", ts) }
@@ -751,6 +787,18 @@ mod tests {
         assert_eq!(derive_session_metrics(&events, &claude).unwrap().outcome, "abandoned", "Claude advised a fresh session");
         let ordinary = vec![tt(0, "add the endpoint", "added")];
         assert_eq!(derive_session_metrics(&events, &ordinary).unwrap().outcome, "incomplete", "no cue ⇒ not abandoned");
+    }
+
+    #[test]
+    fn resumed_session_is_never_abandoned() {
+        // Phase B: a session with an in-session `command_invoked{action:resume}`
+        // marker was reopened/continued — even with an explicit abandonment cue it
+        // is NOT abandoned, and `resumed` is flagged for the read path.
+        let events = vec![prompt_ev("keep going", 1000), cmd_ev("resume", 1500)];
+        let quit = vec![tt(0, "let's abandon this approach", "ok")];
+        let m = derive_session_metrics(&events, &quit).unwrap();
+        assert!(m.resumed, "the resume marker sets resumed");
+        assert_ne!(m.outcome, "abandoned", "a resumed session is continued, not abandoned");
     }
 
     #[test]
