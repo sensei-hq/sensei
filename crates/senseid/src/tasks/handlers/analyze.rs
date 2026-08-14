@@ -479,6 +479,52 @@ pub fn build_session_evidence(transcript: &[TranscriptTurn]) -> serde_json::Valu
     serde_json::json!({ "source": "transcript", "moments": moments })
 }
 
+/// A "something's going wrong" hint in Claude's reply — it flagged context
+/// pressure, advised a restart, or reported being stuck. Precision-favoring, and
+/// DISTINCT from `abandonment_signal` (which decides the Phase-A outcome): a
+/// session can complete yet still show trouble. Returns the category. (Phase D)
+pub fn trouble_hint(assistant_text: &str) -> Option<&'static str> {
+    let a = assistant_text.trim().to_lowercase();
+    if a.contains("running low on context") || a.contains("low on context")
+        || a.contains("out of context") || a.contains("running out of context")
+        || a.contains("context window is") || a.contains("hitting the context")
+    {
+        return Some("context-pressure");
+    }
+    if a.contains("start a new session") || a.contains("start a fresh session")
+        || a.contains("continue in a new session") || a.contains("resume this later")
+        || a.contains("pick this up later")
+    {
+        return Some("suggested-restart");
+    }
+    if a.contains("i'm stuck") || a.contains("i am stuck") || a.contains("going in circles")
+        || a.contains("unable to resolve") || a.contains("keep hitting the same")
+    {
+        return Some("stuck");
+    }
+    None
+}
+
+/// Phase D: a trouble CASE for a session — the first trouble hint in Claude's
+/// replies, correlated with context-pressure signals (`PreCompact` count, turns,
+/// active duration). `null` when no hint fired. A new signal *family* (a case
+/// list surfaced on the drill-down), never a metric value. Shape:
+/// `{ "hint", "precompact", "turns", "duration_ms" }`.
+fn detect_session_trouble(
+    events: &[HookEvent], transcript: &[TranscriptTurn], turn_count: i32, duration_ms: i64,
+) -> serde_json::Value {
+    let Some(hint) = transcript.iter().find_map(|t| trouble_hint(&t.assistant_text)) else {
+        return serde_json::Value::Null;
+    };
+    let precompact = events.iter().filter(|e| e.event_type == "PreCompact").count() as i64;
+    serde_json::json!({
+        "hint": hint,
+        "precompact": precompact,
+        "turns": turn_count,
+        "duration_ms": duration_ms,
+    })
+}
+
 /// Enrich one session in place: write the session aggregates and replace its
 /// turn rows. Returns `true` if metrics were written, `false` if the session
 /// had no hook events (left untouched). Idempotent — recompute overwrites.
@@ -511,6 +557,12 @@ pub async fn enrich_session(
             let evidence = build_session_evidence(&transcript);
             if let Err(e) = ctx.pg().set_session_evidence(session_id, &evidence).await {
                 tracing::warn!(error = %e, session = %session_id, "enrich_session: set_session_evidence failed");
+            }
+            // Phase D: a trouble case (Claude struggle/context-pressure hint) with
+            // its PreCompact/turns/duration correlation, or cleared when none.
+            let trouble = detect_session_trouble(&events, &transcript, m.turn_count, m.duration_ms);
+            if let Err(e) = ctx.pg().set_session_trouble(session_id, &trouble).await {
+                tracing::warn!(error = %e, session = %session_id, "enrich_session: set_session_trouble failed");
             }
 
             // Retrospective narrative → activity.sessions.summary. Deterministic
@@ -885,6 +937,21 @@ mod tests {
         assert_eq!(corr["turn"], 1, "the correction quotes the real detractor turn");
         assert!(corr["text"].as_str().unwrap().contains("revert"), "quotes the actual user text");
         assert!(moments.iter().any(|m| m["who"] == "sensei"), "closing result from the assistant");
+    }
+
+    #[test]
+    fn trouble_case_correlates_context_pressure() {
+        // Phase D: a Claude trouble hint is collected WITH its PreCompact/turns/
+        // duration correlation; a clean session yields null (no case).
+        let events = vec![prompt_ev("do the migration", 0), ev("PreCompact", 1000), ev("PreCompact", 2000)];
+        let transcript = vec![tt(0, "do the migration", "we're running low on context, let's start a new session")];
+        let trouble = detect_session_trouble(&events, &transcript, 12, 5000);
+        assert_eq!(trouble["hint"], "context-pressure", "the earliest matching category wins");
+        assert_eq!(trouble["precompact"], 2, "correlates the PreCompact count");
+        assert_eq!(trouble["turns"], 12);
+        assert_eq!(trouble["duration_ms"], 5000);
+        let clean = detect_session_trouble(&[], &[tt(0, "add a test", "done")], 3, 100);
+        assert!(clean.is_null(), "a clean session is not a trouble case");
     }
 
     #[test]

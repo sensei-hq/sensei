@@ -289,6 +289,15 @@ export interface SessionEvidence {
     moments: EvidenceMoment[];
 }
 
+/** A Phase-D trouble case: a Claude struggle/context-pressure hint correlated with
+ *  context signals. `null` on a session with no trouble. */
+export interface SessionTrouble {
+    hint: 'context-pressure' | 'suggested-restart' | 'stuck';
+    precompact: number;
+    turns: number;
+    duration_ms: number;
+}
+
 /** One measurable session behind a daily datapoint — the wire shape of
  *  `GET /api/projects/{id}/metrics/{key}/sessions?day=YYYY-MM-DD`'s `sessions[]`.
  *  Carries the structural fields the one-liner reads (`outcome` + `ftr` +
@@ -310,6 +319,8 @@ export interface DrilldownSession {
     evidence: SessionEvidence | null;
     /** The session was reopened/continued (Phase B in-session resume marker). */
     resumed: boolean;
+    /** A Phase-D trouble case, or `null` when the session showed no trouble. */
+    trouble: SessionTrouble | null;
 }
 
 /** The response of `GET /api/projects/{id}/metrics/{key}/sessions?day=…` — the

@@ -34,6 +34,7 @@ function session(over: Partial<DrilldownSession> = {}): DrilldownSession {
         observation: { title: 'First-try rate', detail: 'outcome completed; first-try; 3 turns' },
         evidence: null,
         resumed: false,
+        trouble: null,
         ...over,
     };
 }
