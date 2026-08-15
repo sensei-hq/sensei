@@ -28,10 +28,10 @@ import type {
 } from '../routes/(observatory)/consolidation/consolidation-view.js';
 import type {
   ProjectMetricRow, RegistryMetric, MetricSeriesPoint, MetricsNarrative,
-  DaySessions, DrilldownSession,
+  DaySessions, DrilldownSession, ToolUsage,
 } from './metrics/metric-view.js';
 
-export type { DaySessions, DrilldownSession };
+export type { DaySessions, DrilldownSession, ToolUsage };
 
 export type ApiError = { status: number; message: string } | { status: 0; message: string };
 
@@ -304,6 +304,14 @@ export function senseiApi(port: number) {
       tryGet<DaySessions>(
         `/api/projects/${enc(id)}/metrics/${enc(key)}/sessions?day=${enc(day)}`,
       ),
+
+    // Per-tool usage breakdown (which tools the ACPs invoked) — the tool-usage
+    // bubble view. Honest-empty ({tools:[]}) on a fetch error, never fabricated.
+    getProjectTools: (id: string) =>
+      get<{ tools: ToolUsage[]; count: number }>(`/api/projects/${enc(id)}/tools`, {
+        tools: [],
+        count: 0,
+      }),
 
     getProjectRepos: (id: string) =>
       get<{ repos: Array<{ id: string; name: string; path: string; kind: string; role?: string }> }>(
