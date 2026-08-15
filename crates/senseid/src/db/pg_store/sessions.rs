@@ -277,6 +277,35 @@ impl PgStore {
         ).bind(client_session_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())
     }
 
+    /// Per-tool usage breakdown for a project (Pass 2c) — the tools the ACPs
+    /// actually invoked, summed from `sessions.props.tool_usage`
+    /// (`{tool: {pre, post, failed}}`) across the project's sessions. This is the
+    /// "which tools were used" view behind the tool-usage bubble + evidence — a
+    /// RAW-invocation count, distinct from the `unused_tools` metric's
+    /// verdict-based `used_tools`. Ordered by calls desc; capped by `limit`.
+    pub async fn get_project_tool_breakdown(
+        &self, project_id: &uuid::Uuid, limit: i64,
+    ) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(String, i64, i64, i64)> = sqlx_core::query_as::query_as(
+            "SELECT e.tool,
+                    coalesce(sum((e.v->>'post')::int), 0)::int8   AS calls,
+                    coalesce(sum((e.v->>'failed')::int), 0)::int8 AS failed,
+                    count(*)::int8                                AS sessions
+               FROM activity.sessions s
+               JOIN sensei.folders f ON f.id = s.folder_id,
+                    jsonb_each(s.props->'tool_usage') AS e(tool, v)
+              WHERE f.project_id = $1
+                AND s.props ? 'tool_usage'
+                AND jsonb_typeof(s.props->'tool_usage') = 'object'
+              GROUP BY e.tool
+              ORDER BY calls DESC, e.tool
+              LIMIT $2"
+        ).bind(project_id).bind(limit).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(tool, calls, failed, sessions)| {
+            serde_json::json!({ "tool": tool, "calls": calls, "failed": failed, "sessions": sessions })
+        }).collect())
+    }
+
     /// Merge `props.resumed = true` onto a session (Phase B): it carried an
     /// in-session `command_invoked{action:resume}` marker, so it was reopened /
     /// continued — the read path shows "resumed" and never treats it as abandoned.

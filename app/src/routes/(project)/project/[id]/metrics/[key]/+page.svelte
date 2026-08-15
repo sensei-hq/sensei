@@ -21,6 +21,7 @@
     import DetailChart from '../DetailChart.svelte';
     import AboutMetric from '../AboutMetric.svelte';
     import DatapointDrilldown from '../DatapointDrilldown.svelte';
+    import ToolBubbles from '../ToolBubbles.svelte';
     import ActionItems from '../ActionItems.svelte';
     import { buildActionItems } from '../action-items.js';
 
@@ -231,6 +232,19 @@
                                             ? 'months'
                                             : 'periods'}</span
                                 >
+                            </div>
+                        {/if}
+
+                        {#if selected.family === 'tool' && data.tools.length}
+                            <!-- Tool metrics: which tools the ACPs actually used,
+                                 as bubbles sized by call count (Pass 2c) — the
+                                 answer a single unused-count line can't give. -->
+                            <div class="flex flex-col gap-3">
+                                <div class="flex items-center gap-2">
+                                    <Kanji char="具" size="sm" tone="accent" />
+                                    <Eyebrow>Tools used</Eyebrow>
+                                </div>
+                                <ToolBubbles tools={data.tools} />
                             </div>
                         {/if}
 

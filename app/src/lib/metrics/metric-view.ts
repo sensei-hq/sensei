@@ -300,6 +300,16 @@ export interface SessionTrouble {
     duration_ms: number;
 }
 
+/** One tool's usage across a project (Pass 2c) — which tools the ACPs invoked,
+ *  from `GET /api/projects/{id}/tools`. `calls` = post-tool events (sized in the
+ *  bubble view); `failed` = of those, how many errored. */
+export interface ToolUsage {
+    tool: string;
+    calls: number;
+    failed: number;
+    sessions: number;
+}
+
 /** One measurable session behind a daily datapoint — the wire shape of
  *  `GET /api/projects/{id}/metrics/{key}/sessions?day=YYYY-MM-DD`'s `sessions[]`.
  *  Carries the structural fields the one-liner reads (`outcome` + `ftr` +
