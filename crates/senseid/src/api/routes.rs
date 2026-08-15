@@ -140,6 +140,7 @@ pub fn create_router(state: AppState) -> Router {
         // metric point (?day=YYYY-MM-DD).
         .route("/api/projects/{id}/metrics/{key}/sessions",
                get(metrics::get_project_metric_day_sessions))
+        .route("/api/projects/{id}/tools",           get(metrics::get_project_tools))
         // G10: user-scope capability→preferred-tool bias for get_commands.
         .route("/api/preferences/commands",          get(project_detail::get_command_preferences).put(project_detail::set_command_preference))
         .route("/api/projects/{id}/library-version-conflicts", get(project_detail::get_project_library_version_conflicts))

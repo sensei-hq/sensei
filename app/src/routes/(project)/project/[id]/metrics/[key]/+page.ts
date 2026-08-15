@@ -1,7 +1,7 @@
 import type { PageLoad } from './$types.js';
 import { senseiApi } from '$lib/api.js';
 import { appState } from '$lib/appstate.svelte.js';
-import type { MetricSeriesPoint, MetricsNarrative } from '$lib/metrics/metric-view.js';
+import type { MetricSeriesPoint, MetricsNarrative, ToolUsage } from '$lib/metrics/metric-view.js';
 import type { Recommendation } from '$lib/types.js';
 
 // Master-detail drill-down for one signal. Reads `?grain=daily|weekly|monthly`
@@ -20,7 +20,7 @@ export const load: PageLoad = async ({ params, url }) => {
         ? (requested as Grain)
         : 'daily';
 
-    const [metricsRes, registryRes, recsRes] = await Promise.all([
+    const [metricsRes, registryRes, recsRes, toolsRes] = await Promise.all([
         api.getProjectMetrics(params.id),
         api.getMetricsRegistry(),
         // Pending recommendations → the project-scoped "action items" panel.
@@ -28,6 +28,8 @@ export const load: PageLoad = async ({ params, url }) => {
         // /metrics succeeds) surfaces as recommendationsError → an error STATE,
         // never "No action items yet" masking a failure (fail-closed governance).
         api.tryGetProjectRecommendations(params.id, 'pending'),
+        // Per-tool usage for the tool-usage bubble view (honest-empty on failure).
+        api.getProjectTools(params.id),
     ]);
 
     const empty = {
@@ -43,6 +45,7 @@ export const load: PageLoad = async ({ params, url }) => {
         dailySeriesError: null as string | null,
         recommendations: [] as Recommendation[],
         recommendationsError: null as string | null,
+        tools: [] as ToolUsage[],
     };
     if (!metricsRes.ok) return { ...empty, error: metricsRes.error.message };
 
@@ -98,6 +101,7 @@ export const load: PageLoad = async ({ params, url }) => {
         dailySeriesError,
         recommendations,
         recommendationsError,
+        tools: toolsRes.tools ?? [],
         error: null,
     };
 };

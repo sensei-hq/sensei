@@ -215,6 +215,33 @@ pub(crate) struct DaySessionsQuery {
 /// Fail-closed: a lookup error is a 500; a project that does not exist is a 404; an
 /// absent or malformed `day` is a 400; a day with no measurable session is a 200
 /// with an empty list (honest-empty, never a fabricated row).
+/// `GET /api/projects/{id}/tools`: the per-tool usage breakdown (which tools the
+/// project's ACPs actually invoked, with call/failure counts) behind the
+/// tool-usage bubble view + "which tools were used" evidence. Fail-closed: 500 on
+/// a read error, 404 for an unknown project, 200 with an empty list when no tool
+/// usage was captured (honest-empty).
+pub(crate) async fn get_project_tools(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let uuid = crate::api::util::resolve_project_uuid(&state, &id)
+        .await?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    state
+        .pg
+        .get_project(&uuid)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    let tools = state
+        .pg
+        .get_project_tool_breakdown(&uuid, 24)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let count = tools.len();
+    Ok(Json(serde_json::json!({ "tools": tools, "count": count })))
+}
+
 pub(crate) async fn get_project_metric_day_sessions(
     State(state): State<AppState>,
     Path((id, key)): Path<(String, String)>,
