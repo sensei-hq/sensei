@@ -1,7 +1,7 @@
 <script lang="ts">
     import { Plot } from '@rokkit/chart';
     import ChartCanvas from '$lib/components/ChartCanvas.svelte';
-    import type { TrendColor, ChartPoint } from '$lib/metrics/metric-view.js';
+    import { movingAverage, type TrendColor, type ChartPoint, type ChartKind } from '$lib/metrics/metric-view.js';
 
     // The drill-down trend chart: an area + line over the selected metric's
     // series, drawn with @rokkit/chart's composable Plot geoms, plus an
@@ -18,6 +18,7 @@
         format,
         color = 'accent',
         caption = '',
+        kind = 'line',
         selectedIndex = null,
         onselect = undefined,
     }: {
@@ -26,6 +27,9 @@
         format: (v: number) => string;
         color?: TrendColor;
         caption?: string;
+        /** `bar` (discrete counts, with a moving-average trend line) or `line`
+         *  (rates / scores / durations, area + line). */
+        kind?: ChartKind;
         /** Index into `series` of the highlighted datapoint (null = none). */
         selectedIndex?: number | null;
         /** Called with the slot index when a datapoint is clicked. */
@@ -82,6 +86,28 @@
     );
     // Half a slot's width, so a click anywhere nearest a point selects it.
     const slotW = $derived(n > 1 ? innerW / (n - 1) : innerW);
+
+    // Bar mode (discrete counts): manual bars in the inner coord space (adaptive
+    // width, capped) rising from the 0 baseline, plus a moving-average trend line
+    // drawn with Plot.Line (same scales, so it lands on the bars).
+    const barW = $derived(Math.min(slotW * 0.62, 30));
+    type Bar = { i: number; x: number; y: number; w: number; h: number };
+    const bars = $derived(
+        kind === 'bar'
+            ? series
+                  .map((p, i): Bar | null =>
+                      p.value == null
+                          ? null
+                          : { i, x: xPix(i) - barW / 2, y: yPix(p.value), w: barW, h: innerH - yPix(p.value) },
+                  )
+                  .filter((b): b is Bar => b != null)
+            : [],
+    );
+    const trendLine = $derived(
+        kind === 'bar'
+            ? movingAverage(series).map((v, i) => (v == null ? null : { t: i, v }))
+            : [],
+    );
 </script>
 
 <div data-component="detail-chart" class="bg-paper border border-paper-edge rounded-md p-4 flex flex-col gap-2">
@@ -98,8 +124,25 @@
             class="w-full text-ink-faint"
         >
             <Plot.Grid />
-            <Plot.Area data={line as { t: number; v: number }[]} x="t" y="v" fill={AREA_FILL[color]} opacity={0.6} />
-            <Plot.Line data={line as { t: number; v: number }[]} x="t" y="v" stroke="var(--ink)" strokeWidth={1.5} />
+            {#if kind === 'bar'}
+                <!-- Discrete counts: bars from the 0 baseline + a moving-avg trend. -->
+                {#each bars as b (b.i)}
+                    <rect
+                        data-bar={b.i}
+                        data-selected={b.i === selectedIndex}
+                        x={b.x}
+                        y={b.y}
+                        width={b.w}
+                        height={b.h}
+                        rx="1"
+                        fill={b.i === selectedIndex ? 'var(--accent)' : AREA_FILL[color]}
+                    />
+                {/each}
+                <Plot.Line data={trendLine as { t: number; v: number }[]} x="t" y="v" stroke="var(--ink)" strokeWidth={1.5} />
+            {:else}
+                <Plot.Area data={line as { t: number; v: number }[]} x="t" y="v" fill={AREA_FILL[color]} opacity={0.6} />
+                <Plot.Line data={line as { t: number; v: number }[]} x="t" y="v" stroke="var(--ink)" strokeWidth={1.5} />
+            {/if}
             <Plot.Axis type="y" ticks={4} format={fmtY} showLine={false} showTicks={false} />
 
             <!-- Interactive overlay (same inner coord space as the geoms). -->
@@ -116,16 +159,18 @@
                     opacity="0.6"
                 />
             {/if}
-            {#each dots as d (d.i)}
-                <circle
-                    data-point-dot={d.i}
-                    data-selected={d.i === selectedIndex}
-                    cx={d.cx}
-                    cy={d.cy}
-                    r={d.i === selectedIndex ? 4.5 : 2}
-                    fill={d.i === selectedIndex ? 'var(--accent)' : DOT_FILL[color]}
-                />
-            {/each}
+            {#if kind !== 'bar'}
+                {#each dots as d (d.i)}
+                    <circle
+                        data-point-dot={d.i}
+                        data-selected={d.i === selectedIndex}
+                        cx={d.cx}
+                        cy={d.cy}
+                        r={d.i === selectedIndex ? 4.5 : 2}
+                        fill={d.i === selectedIndex ? 'var(--accent)' : DOT_FILL[color]}
+                    />
+                {/each}
+            {/if}
             {#each series as _p, i (i)}
                 <!-- svelte-ignore a11y_click_events_have_key_events -->
                 <rect

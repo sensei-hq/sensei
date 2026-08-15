@@ -75,6 +75,25 @@ describe('DetailChart', () => {
         expect(picked).toBe(0);
     });
 
+    it('renders bars + a moving-average trend for a count metric (kind=bar)', () => {
+        const root = mount(
+            [
+                { date: '2025-01-01', value: 4 },
+                { date: '2025-01-02', value: 2 },
+                { date: '2025-01-03', value: 6 },
+            ],
+            [0, 10],
+            { kind: 'bar', selectedIndex: 2 },
+        );
+        // Bars, not line dots.
+        expect(root.querySelectorAll('[data-component="detail-chart"] rect[data-bar]').length).toBe(3);
+        expect(q(root, 'circle[data-point-dot]')).toBeNull();
+        expect(q(root, 'rect[data-bar="2"]')?.getAttribute('data-selected')).toBe('true');
+        // The moving-average trend line + the per-slot hit-targets are still there.
+        expect(q(root, '[data-component="detail-chart"] path[data-plot-element="line"]')).not.toBeNull();
+        expect(root.querySelectorAll('[data-component="detail-chart"] rect[data-hit]').length).toBe(3);
+    });
+
     it('breaks the line at an absent period (#6), not a connected segment', () => {
         const connected = mount([
             { date: '2025-01-01', value: 1 },
