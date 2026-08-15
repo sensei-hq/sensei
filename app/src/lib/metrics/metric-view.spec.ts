@@ -17,6 +17,9 @@ import {
     seriesDistribution,
     densifySeries,
     metricYDomain,
+    chartKindForType,
+    defaultWindowForGrain,
+    movingAverage,
     historyNote,
     linkifyMetrics,
     mostRecentDayWithValue,
@@ -615,5 +618,36 @@ describe('historyNote', () => {
     });
     it('is empty when there is no reading yet', () => {
         expect(historyNote([])).toBe('');
+    });
+
+    describe('chart geom + window helpers', () => {
+        it('picks bars for counts and a line for everything else', () => {
+            expect(chartKindForType('count')).toBe('bar');
+            expect(chartKindForType('pct')).toBe('line');
+            expect(chartKindForType('ratio')).toBe('line');
+            expect(chartKindForType('duration')).toBe('line');
+            expect(chartKindForType('score')).toBe('line');
+        });
+
+        it('defaults the window per grain (7d / 4w / 3mo, else all)', () => {
+            expect(defaultWindowForGrain('daily')).toBe(7);
+            expect(defaultWindowForGrain('weekly')).toBe(4);
+            expect(defaultWindowForGrain('monthly')).toBe(3);
+            expect(defaultWindowForGrain('quarterly')).toBeNull();
+        });
+
+        it('moving-averages the trend, keeping nulls as gaps', () => {
+            const s = [
+                { date: 'a', value: 2 },
+                { date: 'b', value: 4 },
+                { date: 'c', value: null },
+                { date: 'd', value: 6 },
+            ];
+            const ma = movingAverage(s, 3);
+            expect(ma[0]).toBe(3); // (2+4)/2
+            expect(ma[1]).toBe(3); // (2+4)/2 (c is null, skipped)
+            expect(ma[2]).toBeNull(); // the gap stays a gap
+            expect(ma[3]).toBe(6); // (6)/1
+        });
     });
 });
