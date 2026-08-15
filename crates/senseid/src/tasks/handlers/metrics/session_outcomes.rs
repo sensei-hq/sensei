@@ -39,6 +39,7 @@ const KEY_FTR: &str = "ftr";
 const KEY_REWORK: &str = "rework_ratio";
 const KEY_THROUGHPUT: &str = "throughput";
 const KEY_TTUR: &str = "time_to_useful_result";
+const KEY_CONTEXT_PRESSURE: &str = "context_pressure_rate";
 
 /// One day's session-level aggregates for a project: `(day, session_count,
 /// ftr_count, correction_count)`. Only days WITH ≥1 measurable session appear, so
@@ -198,6 +199,36 @@ async fn daily_time_to_useful(
         .map_err(|e| e.to_string())
 }
 
+/// Daily context-pressure counts: `(day, pressured, total)` — sessions carrying a
+/// context-pressure trouble signal (Phase D `props.trouble.hint` ∈
+/// {context-pressure, suggested-restart}) over the measurable base. The rate is
+/// `pressured / total`; a day with a real denominator writes a row (even a 0).
+async fn daily_context_pressure(
+    pg: &PgStore,
+    project_id: &uuid::Uuid,
+    window_days: u32,
+    as_of: Option<chrono::NaiveDate>,
+) -> Result<Vec<(chrono::NaiveDate, i64, i64)>, String> {
+    let sql = format!(
+        "SELECT date_trunc('day', s.started_at)::date                                          AS day
+              , count(*) FILTER (WHERE s.props->'trouble'->>'hint' IN ('context-pressure','suggested-restart'))::int8 AS pressured
+              , count(*)::int8                                                                  AS total
+           FROM activity.sessions s
+           JOIN sensei.folders    f ON f.id = s.folder_id
+          WHERE f.project_id  = $1
+            AND s.outcome    IS NOT NULL AND s.outcome <> 'empty'::sensei.session_outcome
+            AND {}
+          GROUP BY 1
+          ORDER BY 1",
+        super::day_filter(DAY_ANCHOR, as_of),
+    );
+    let q = sqlx_core::query_as::query_as::<_, (chrono::NaiveDate, i64, i64)>(&sql).bind(project_id);
+    super::bind_day(q, window_days, as_of)
+        .fetch_all(pg.pool())
+        .await
+        .map_err(|e| e.to_string())
+}
+
 /// Compute the `session_outcomes` group for one project.
 ///
 /// `project_raw` is the project uuid carried in `task.folder_path`. `as_of`
@@ -236,6 +267,7 @@ pub(super) async fn compute(
     let rework_id = ids.get(KEY_REWORK).copied();
     let throughput_id = ids.get(KEY_THROUGHPUT).copied();
     let ttur_id = ids.get(KEY_TTUR).copied();
+    let context_id = ids.get(KEY_CONTEXT_PRESSURE).copied();
 
     let mut written = 0u32;
 
@@ -307,6 +339,24 @@ pub(super) async fn compute(
         }
     }
 
+    // Daily context_pressure_rate (pct) — only if active. A day with a real
+    // denominator writes a row (even a 0); a day with no measurable session is
+    // skipped (honest-empty, never a fabricated 0/0).
+    if let Some(mid) = context_id {
+        for (day, pressured, total) in daily_context_pressure(pg, &project_id, window_days, as_of).await? {
+            if total == 0 {
+                continue;
+            }
+            let value = pressured as f64 / total as f64;
+            let props = serde_json::json!({ "numerator": pressured, "denominator": total });
+            pg.upsert_project_metric(
+                &mid, &project_id, None, None, day, GRAIN_DAILY, value, &props, SOURCE_MEASURED,
+            )
+            .await?;
+            written += 1;
+        }
+    }
+
     // Per-session ftr rows (grain=session, session_id set) — only if active.
     if let Some(mid) = ftr_id {
         for (session_id, day, ftr) in session_ftr(pg, &project_id, window_days, as_of).await? {
@@ -361,7 +411,7 @@ mod tests {
         seed_metrics_turn(pg, &inflight, 5, ts).await;
 
         let written = compute(&ctx, &pid.to_string(), None).await.unwrap();
-        assert_eq!(written, 8, "4 daily rows (ftr, rework, throughput, time_to_useful) + 4 per-session ftr rows (in-flight excluded)");
+        assert_eq!(written, 9, "5 daily rows (ftr, rework, throughput, time_to_useful, context_pressure) + 4 per-session ftr rows (in-flight excluded)");
 
         // ── Daily rows ────────────────────────────────────────────────────
         let daily = daily_rows(pg, &pid).await;
@@ -421,13 +471,13 @@ mod tests {
 
         // ── Idempotency: re-run backfills in place, never duplicates ──────
         let again = compute(&ctx, &pid.to_string(), None).await.unwrap();
-        assert_eq!(again, 8, "re-run recomputes the same rows");
+        assert_eq!(again, 9, "re-run recomputes the same rows");
         let (total,): (i64,) = query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
             .bind(pid)
             .fetch_one(pg.pool())
             .await
             .unwrap();
-        assert_eq!(total, 8, "idempotent upsert — still 8 rows after a second run");
+        assert_eq!(total, 9, "idempotent upsert — still 9 rows after a second run");
 
         cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
     }
@@ -602,7 +652,7 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(rework_rows, 0, "no rework_ratio row when total tool-calls is 0 (never a fabricated 0/0)");
-        assert_eq!(written, 5, "ftr daily + throughput daily + time_to_useful daily + 2 per-session ftr; rework skipped");
+        assert_eq!(written, 6, "ftr + throughput + time_to_useful + context_pressure daily + 2 per-session ftr; rework skipped");
 
         cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
     }
@@ -622,7 +672,7 @@ mod tests {
         }
 
         let written = compute(&ctx, &pid.to_string(), None).await.unwrap();
-        assert_eq!(written, 6, "ftr daily (0.0) + rework daily + throughput daily + time_to_useful daily + 2 per-session ftr");
+        assert_eq!(written, 7, "ftr (0.0) + rework + throughput + time_to_useful + context_pressure daily + 2 per-session ftr");
 
         let daily = daily_rows(pg, &pid).await;
         let ftr = daily.iter().find(|r| r.0 == "ftr").expect("ftr daily row present (a real zero is still written)");

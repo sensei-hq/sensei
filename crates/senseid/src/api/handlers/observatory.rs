@@ -324,6 +324,39 @@ pub(crate) async fn analyze_solution(
     })))
 }
 
+/// `POST /api/projects/{id}/backfill` — RE-DERIVE this project's session signals
+/// from scratch: clear `analyzed_at` (so every captured session re-enriches with
+/// the CURRENT transcript-ground-truth logic) and enqueue `AnalyzeProject` (which
+/// re-enriches them and chains a metrics recompute). Distinct from
+/// [`backfill_metrics`] (day-history recovery) — this refreshes the SESSION
+/// derivations, so it is the button to press after a metric-definition change.
+/// Returns `{ reset, queued }`. Fail-closed: 404 for an unknown project, 500 on a
+/// read/write error.
+pub(crate) async fn backfill_project_sessions(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let uuid = resolve_project_uuid(&state, &id)
+        .await?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    state
+        .pg
+        .get_project(&uuid)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    let reset = state
+        .pg
+        .reset_project_sessions_for_reenrichment(&uuid)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    state
+        .task_queue
+        .enqueue(crate::tasks::Task::new(crate::tasks::TaskKind::AnalyzeProject, "", &uuid.to_string()))
+        .await;
+    Ok(Json(serde_json::json!({ "reset": reset, "queued": true })))
+}
+
 /// Enqueue a transcript backfill (#73) — ingest assistant/user prose from the
 /// agent transcript caches into activity.transcript_turns. Resumable, so this
 /// is safe to call repeatedly; only changed transcripts do work.
