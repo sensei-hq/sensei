@@ -277,6 +277,20 @@ impl PgStore {
         ).bind(client_session_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())
     }
 
+    /// Mark a project's captured sessions for RE-enrichment (a backfill request) —
+    /// clears `analyzed_at` so the next `AnalyzeProject` re-derives every session
+    /// from scratch with the current logic (used while metrics are being refined).
+    /// Only sessions with a `client_session_id` (hook/transcript-captured) are
+    /// reset. Returns the number of sessions marked.
+    pub async fn reset_project_sessions_for_reenrichment(&self, project_id: &uuid::Uuid) -> Result<u64, String> {
+        let res = sqlx_core::query::query(
+            "UPDATE activity.sessions s SET analyzed_at = NULL
+               FROM sensei.folders f
+              WHERE f.id = s.folder_id AND f.project_id = $1 AND s.client_session_id IS NOT NULL"
+        ).bind(project_id).execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(res.rows_affected())
+    }
+
     /// Per-tool usage breakdown for a project (Pass 2c) — the tools the ACPs
     /// actually invoked, summed from `sessions.props.tool_usage`
     /// (`{tool: {pre, post, failed}}`) across the project's sessions. This is the
