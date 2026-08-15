@@ -138,7 +138,7 @@
                     width={slotW}
                     height={innerH}
                     fill="transparent"
-                    style="cursor: pointer"
+                    style="cursor: pointer; outline: none"
                     onclick={() => onselect?.(i)}
                 />
             {/each}
