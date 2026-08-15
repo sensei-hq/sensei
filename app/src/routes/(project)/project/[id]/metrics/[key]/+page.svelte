@@ -10,6 +10,7 @@
         densifySeries,
         metricYDomain,
         chartKindForType,
+        defaultWindowForGrain,
         historyNote,
         metricAbout,
         linkifyMetrics,
@@ -45,9 +46,26 @@
 
     // Densified {date,value|null}[] for the chart (absent periods → gaps) and a
     // fixed y-domain per metric type (a flat series stays flat, not a mountain).
-    const chartSeries = $derived(densifySeries(data.series, data.grain));
+    const fullChartSeries = $derived(densifySeries(data.series, data.grain));
+    // Per-grain window: default to the last N periods (daily 7 / weekly 4 /
+    // monthly 3), with a movable start. Empty periods stay as gaps (densified
+    // nulls). Reset to the grain default when the metric or grain changes.
+    let windowStart = $state<number | null>(null);
+    $effect(() => {
+        void data.grain;
+        void data.selectedKey;
+        windowStart = null;
+    });
+    const defaultStart = $derived.by(() => {
+        const w = defaultWindowForGrain(data.grain);
+        return w == null ? 0 : Math.max(0, fullChartSeries.length - w);
+    });
+    const effectiveStart = $derived(windowStart ?? defaultStart);
+    const maxStart = $derived(Math.max(0, fullChartSeries.length - 2));
+    const chartSeries = $derived(fullChartSeries.slice(effectiveStart));
+
     const yDomain = $derived(metricYDomain(selected?.type ?? 'count', values));
-    const note = $derived(historyNote(chartSeries));
+    const note = $derived(historyNote(fullChartSeries));
     const caption = $derived(note ? `${note} · ${data.grain}` : '');
 
     // "About this metric" is a popover (info button), not interleaved with the
@@ -188,6 +206,33 @@
                             {selectedIndex}
                             onselect={(i) => (selectedIndex = i)}
                         />
+
+                        {#if fullChartSeries.length > 2}
+                            <div class="flex items-center gap-3 text-xs text-ink-mute px-1">
+                                <span class="shrink-0">Start</span>
+                                <input
+                                    type="range"
+                                    min="0"
+                                    max={maxStart}
+                                    value={effectiveStart}
+                                    oninput={(e) => (windowStart = Number(e.currentTarget.value))}
+                                    class="flex-1 h-1 cursor-pointer"
+                                    style="accent-color: var(--accent)"
+                                    aria-label="Chart start period"
+                                    data-component="chart-window"
+                                />
+                                <span class="shrink-0 tabular-nums"
+                                    >{chartSeries.length} of {fullChartSeries.length}
+                                    {data.grain === 'daily'
+                                        ? 'days'
+                                        : data.grain === 'weekly'
+                                          ? 'weeks'
+                                          : data.grain === 'monthly'
+                                            ? 'months'
+                                            : 'periods'}</span
+                                >
+                            </div>
+                        {/if}
 
                         <!-- Directly below the chart: the clicked point's sessions,
                              observation, and transcript evidence (Phase C/F). -->
