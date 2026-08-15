@@ -449,9 +449,17 @@ impl PgStore {
     /// `DB_POOL_MAX_CONNECTIONS` under load, and reaps the extras back to the warm
     /// floor once they sit idle past `DB_POOL_IDLE_TIMEOUT_SECS`.
     pub async fn connect(database_url: &str) -> Result<Self, String> {
+        Self::connect_with(database_url, DB_POOL_MIN_CONNECTIONS, DB_POOL_MAX_CONNECTIONS).await
+    }
+
+    /// Connect with explicit pool bounds. The daemon uses the warm-floor defaults
+    /// via [`connect`](Self::connect); tests use a tiny floorless pool (many test
+    /// pools run in parallel — a warm floor of 8 each would exhaust Postgres's
+    /// connection limit).
+    async fn connect_with(database_url: &str, min: u32, max: u32) -> Result<Self, String> {
         let pool = PgPoolOptions::new()
-            .min_connections(DB_POOL_MIN_CONNECTIONS)
-            .max_connections(DB_POOL_MAX_CONNECTIONS)
+            .min_connections(min)
+            .max_connections(max)
             .acquire_timeout(Duration::from_secs(DB_POOL_ACQUIRE_TIMEOUT_SECS))
             .idle_timeout(Duration::from_secs(DB_POOL_IDLE_TIMEOUT_SECS))
             // Put `extensions` on the search_path so unqualified references to
@@ -475,11 +483,14 @@ impl PgStore {
         Ok(Self { pool })
     }
 
-    /// Connect to the test database. Uses TEST_DATABASE_URL or defaults to sensei_test.
+    /// Connect to the test database. Uses TEST_DATABASE_URL or defaults to
+    /// sensei_test. A tiny floorless pool (min 0, max 4): the handler/pg_store test
+    /// suites spin up many `PgStore`s in parallel, so a warm floor of 8 each would
+    /// blow past Postgres's connection limit.
     pub async fn connect_test() -> Result<Self, String> {
         let url = std::env::var("TEST_DATABASE_URL")
             .unwrap_or_else(|_| format!("postgresql://localhost:{}/sensei_test", sensei_bootstrap::POSTGRES_PORT));
-        Self::connect(&url).await
+        Self::connect_with(&url, 0, 4).await
     }
 
     /// Get a reference to the connection pool.
