@@ -550,6 +550,33 @@ export interface ChartPoint {
     value: number | null;
 }
 
+/** How a metric's series reads best: discrete COUNTS (throughput, unused tools)
+ *  as bars with a trend overlay; rates / scores / durations as a line+area. */
+export type ChartKind = 'line' | 'bar';
+export function chartKindForType(type: MetricType): ChartKind {
+    return type === 'count' ? 'bar' : 'line';
+}
+
+/** A centered moving average over a densified series (window `w`, odd), skipping
+ *  `null` gaps — the trend line drawn over the bars. One value per slot; `null`
+ *  where the slot itself has no reading (so the trend breaks across a real gap). */
+export function movingAverage(series: ChartPoint[], w = 3): (number | null)[] {
+    const k = Math.floor(w / 2);
+    return series.map((p, i) => {
+        if (p.value == null) return null;
+        let sum = 0;
+        let cnt = 0;
+        for (let j = Math.max(0, i - k); j <= Math.min(series.length - 1, i + k); j++) {
+            const v = series[j].value;
+            if (v != null) {
+                sum += v;
+                cnt += 1;
+            }
+        }
+        return cnt ? sum / cnt : null;
+    });
+}
+
 /** The next period boundary after `iso` at the given grain (UTC, no locale). */
 function nextPeriod(iso: string, grain: SeriesGrain): string {
     const [y, m, d] = iso.slice(0, 10).split('-').map(Number);

@@ -9,6 +9,7 @@
         seriesDistribution,
         densifySeries,
         metricYDomain,
+        chartKindForType,
         historyNote,
         metricAbout,
         linkifyMetrics,
@@ -183,6 +184,7 @@
                             {format}
                             color={selected.color}
                             {caption}
+                            kind={chartKindForType(selected.type)}
                             {selectedIndex}
                             onselect={(i) => (selectedIndex = i)}
                         />
