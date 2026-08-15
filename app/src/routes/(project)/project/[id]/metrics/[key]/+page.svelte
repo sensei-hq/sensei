@@ -49,6 +49,10 @@
     const note = $derived(historyNote(chartSeries));
     const caption = $derived(note ? `${note} · ${data.grain}` : '');
 
+    // "About this metric" is a popover (info button), not interleaved with the
+    // real content — it's reference material, opened on demand.
+    let aboutOpen = $state(false);
+
     // The selected datapoint index — defaults to the latest defined point, and a
     // chart click moves it. Drives the highlight + the evidence panel's day.
     let selectedIndex = $state<number | null>(null);
@@ -118,10 +122,25 @@
 
             <div class="overflow-auto min-h-0 p-6 md:p-8 flex flex-col gap-6">
                 {#if selected}
-                    <div class="flex items-start justify-between gap-6 flex-wrap">
+                    <div class="relative flex items-start justify-between gap-6 flex-wrap">
                         <div class="flex flex-col gap-1">
                             <Eyebrow>{selected.familyLabel}</Eyebrow>
-                            <div class="display text-2xl font-light leading-tight text-ink">{selected.name}</div>
+                            <div class="flex items-center gap-2">
+                                <div class="display text-2xl font-light leading-tight text-ink">{selected.name}</div>
+                                {#if about}
+                                    <button
+                                        type="button"
+                                        data-component="about-toggle"
+                                        aria-expanded={aboutOpen}
+                                        aria-label="About this metric"
+                                        title="About this metric"
+                                        onclick={() => (aboutOpen = !aboutOpen)}
+                                        class="w-5 h-5 shrink-0 rounded-full border text-xs leading-none transition-colors duration-fast {aboutOpen
+                                            ? 'border-accent text-accent'
+                                            : 'border-paper-edge text-ink-mute hover:text-accent hover:border-accent'}"
+                                    >i</button>
+                                {/if}
+                            </div>
                             <div class="flex items-baseline gap-3 pt-1">
                                 <span class="text-ink tabular-nums">{selected.value}</span>
                                 {#if selected.trend}
@@ -142,6 +161,15 @@
                                 >{g.label}</a>
                             {/each}
                         </div>
+
+                        {#if aboutOpen && about}
+                            <div
+                                data-component="about-popover"
+                                class="absolute right-0 top-full mt-2 z-20 w-[22rem] max-w-[90vw] bg-paper border border-paper-edge rounded-lg shadow-md p-4"
+                            >
+                                <AboutMetric {about} {howToReadSegments} {projectId} />
+                            </div>
+                        {/if}
                     </div>
 
                     {#if data.seriesError}
@@ -170,10 +198,6 @@
                                 {selectedDay}
                             />
                         {/key}
-                    {/if}
-
-                    {#if about}
-                        <AboutMetric {about} {howToReadSegments} {projectId} />
                     {/if}
 
                     <div class="flex flex-col gap-2">
