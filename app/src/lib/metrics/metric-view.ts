@@ -557,6 +557,22 @@ export function chartKindForType(type: MetricType): ChartKind {
     return type === 'count' ? 'bar' : 'line';
 }
 
+/** The default number of most-recent periods a detail chart shows per grain —
+ *  daily 7 days, weekly 4 weeks, monthly 3 months. `null` = show everything
+ *  (quarterly / anything else). The user can move the start off this default. */
+export function defaultWindowForGrain(grain: string): number | null {
+    switch (grain) {
+        case 'daily':
+            return 7;
+        case 'weekly':
+            return 4;
+        case 'monthly':
+            return 3;
+        default:
+            return null;
+    }
+}
+
 /** A centered moving average over a densified series (window `w`, odd), skipping
  *  `null` gaps — the trend line drawn over the bars. One value per slot; `null`
  *  where the slot itself has no reading (so the trend breaks across a real gap). */
