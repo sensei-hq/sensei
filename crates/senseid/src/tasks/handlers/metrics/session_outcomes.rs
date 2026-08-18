@@ -80,8 +80,7 @@ async fn daily_session_aggregates(
               , count(*) FILTER (WHERE s.ftr)::int8                AS ftr_count
               , coalesce(sum(s.corrections), 0)::int8              AS correction_count
            FROM activity.sessions s
-           JOIN sensei.folders    f ON f.id = s.folder_id
-          WHERE f.project_id  = $1
+          WHERE s.project_id  = $1
             AND s.outcome    IS NOT NULL AND s.outcome <> 'empty'::sensei.session_outcome
             AND {}
           GROUP BY 1
@@ -110,9 +109,8 @@ async fn daily_rework(
               , coalesce(sum(t.tool_calls) FILTER (WHERE s.outcome = 'corrected'::sensei.session_outcome), 0)::int8 AS corrected_tool_calls
               , coalesce(sum(t.tool_calls), 0)::int8                                           AS total_tool_calls
            FROM activity.sessions s
-           JOIN sensei.folders    f ON f.id = s.folder_id
            JOIN activity.turns    t ON t.session_id = s.id
-          WHERE f.project_id  = $1
+          WHERE s.project_id  = $1
             AND s.outcome    IS NOT NULL AND s.outcome <> 'empty'::sensei.session_outcome
             AND {}
           GROUP BY 1
@@ -139,8 +137,7 @@ async fn session_ftr(
               , date_trunc('day', s.started_at)::date      AS day
               , s.ftr                                      AS ftr
            FROM activity.sessions s
-           JOIN sensei.folders    f ON f.id = s.folder_id
-          WHERE f.project_id  = $1
+          WHERE s.project_id  = $1
             AND s.outcome    IS NOT NULL AND s.outcome <> 'empty'::sensei.session_outcome
             AND {}
           ORDER BY s.started_at",
@@ -170,7 +167,6 @@ async fn daily_time_to_useful(
              SELECT date_trunc('day', s.started_at)::date                        AS day \
                   , EXTRACT(EPOCH FROM (fu.ended_at - s.started_at))::float8      AS secs \
                FROM activity.sessions s \
-               JOIN sensei.folders    f ON f.id = s.folder_id \
                JOIN LATERAL ( \
                       SELECT t.ended_at \
                         FROM activity.turns t \
@@ -179,7 +175,7 @@ async fn daily_time_to_useful(
                        ORDER BY t.turn_number \
                        LIMIT 1 \
                     ) fu ON true \
-              WHERE f.project_id  = $1 \
+              WHERE s.project_id  = $1 \
                 AND s.outcome    IS NOT NULL AND s.outcome <> 'empty'::sensei.session_outcome \
                 AND {} \
          ) \
@@ -214,8 +210,7 @@ async fn daily_context_pressure(
               , count(*) FILTER (WHERE s.props->'trouble'->>'hint' IN ('context-pressure','suggested-restart'))::int8 AS pressured
               , count(*)::int8                                                                  AS total
            FROM activity.sessions s
-           JOIN sensei.folders    f ON f.id = s.folder_id
-          WHERE f.project_id  = $1
+          WHERE s.project_id  = $1
             AND s.outcome    IS NOT NULL AND s.outcome <> 'empty'::sensei.session_outcome
             AND {}
           GROUP BY 1
@@ -437,8 +432,8 @@ mod tests {
         // object, so this survives the view being dropped in Phase 8.5.
         let (fd_rate, fd_count): (f64, i64) = query_as(
             "SELECT avg(CASE WHEN s.ftr THEN 1.0 ELSE 0.0 END)::float8, count(*)::int8 \
-               FROM activity.sessions s JOIN sensei.folders f ON f.id = s.folder_id \
-              WHERE f.project_id = $1 AND s.outcome IS NOT NULL",
+               FROM activity.sessions s \
+              WHERE s.project_id = $1 AND s.outcome IS NOT NULL",
         )
         .bind(pid)
         .fetch_one(pg.pool())

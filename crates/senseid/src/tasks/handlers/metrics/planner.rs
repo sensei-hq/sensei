@@ -172,8 +172,7 @@ impl DayKeyedGroup {
             DayKeyedGroup::SessionOutcomes => {
                 "SELECT DISTINCT date_trunc('day', s.started_at)::date AS day
                    FROM activity.sessions s
-                   JOIN sensei.folders    f ON f.id = s.folder_id
-                  WHERE f.project_id = $1
+                  WHERE s.project_id = $1
                     AND s.outcome   IS NOT NULL"
             }
             DayKeyedGroup::Autonomy => {
