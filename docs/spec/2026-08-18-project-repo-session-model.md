@@ -187,6 +187,10 @@ Each is an isolated, DB-backed unit test with a fixed fixture; all must pass bef
 
 ---
 
+## 8a. Implementation status (2026-08-18)
+Shipped on `develop`/`main`: **P0** `62572552` (mapper) · **P1** `0fe08806` (session→repo anchoring + schema) · **P2** `193fdfa2` (archive/remap anchor-aware) · **P3a** `e889b494` (`projects.root_abs_path`) · **P4** `cf69d283` (metrics/scheduler key on the anchor). Plus symptom fix `2680ae2e`.
+Invariants I1–I7 are enforced by committed tests (mapper 9 cases, anchor/prune/repair 17–19, archive/remap, metrics repoint). **Deferred (scoped follow-ups):** P3b the collection-grouping ENGINE (auto-promote `~/Work/Alert`; needs shared-parent-not-a-watch-root + shared-remote-org gate + UI-reversible flow — the detection is proven, the safe auto-run is the remaining work); a standalone (no-git-remote) move auto-remap; the golden-fixture commit form (raw vs redacted); the app-side metric polish (#2 x-axis/window/sparkline-bars, #3 FTR value/delta+low-N). None block the core model.
+
 ## 9. Rollout phases
 1. **P0 — Mapper (no schema):** implement `resolve_repo_anchor` (Rust + SQL) + tests 1–9; repoint attribution/import/synthesis/repair/watcher to it. Ship behind parity with the golden reference. (No FK change yet — `repo_folder_id` derived on read.)
 2. **P1 — Session durability:** `sessions.folder_id → SET NULL` + add `repo_folder_id`/`repo_key`; backfill from events via the mapper; tests 17–19. Manual `ALTER` migration (dbd `create table if not exists` won't alter — apply via `psql`, mirror in DDL source, per `[[reference_dbd_reconcile_incremental]]`).
