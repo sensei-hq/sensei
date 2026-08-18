@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
     formatMetricValue,
     metricTrend,
+    isLowN,
     metricSub,
     toMetricCard,
     groupByFamily,
@@ -106,6 +107,14 @@ describe('metricTrend', () => {
     it('returns null when there is no prior to compare (delta null)', () => {
         expect(metricTrend('pct', 'higher_better', null)).toBeNull();
     });
+    it('shows a "low n" marker instead of a precise swing for a thin sample (#3)', () => {
+        // FTR over one scored session: the −50 pt week-over-week delta is noise.
+        expect(metricTrend('pct', 'higher_better', -0.5, true)).toEqual({
+            label: 'low n',
+            dir: 'flat',
+            tone: 'neutral',
+        });
+    });
     it('reads an exact-zero delta as flat/neutral', () => {
         expect(metricTrend('ratio', 'lower_better', 0)).toEqual({
             label: '0',
@@ -122,6 +131,18 @@ describe('metricTrend', () => {
         });
         // a duration delta under half a second
         expect(metricTrend('duration', 'lower_better', 0.3)?.dir).toBe('flat');
+    });
+});
+
+describe('isLowN', () => {
+    it('flags a thin denominator, clears an adequate one', () => {
+        expect(isLowN({ props: { numerator: 1, denominator: 1 } } as unknown as ProjectMetricRow)).toBe(true);
+        expect(isLowN({ props: { numerator: 6, denominator: 12 } } as unknown as ProjectMetricRow)).toBe(false);
+    });
+    it('respects the daemon low_n flag and the n fallback; null props is not low-n', () => {
+        expect(isLowN({ props: { low_n: true, denominator: 50 } } as unknown as ProjectMetricRow)).toBe(true);
+        expect(isLowN({ props: { n: 3 } } as unknown as ProjectMetricRow)).toBe(true);
+        expect(isLowN({ props: null } as unknown as ProjectMetricRow)).toBe(false);
     });
 });
 
@@ -150,13 +171,13 @@ describe('toMetricCard', () => {
             row({
                 metric: 'ftr',
                 value: 1,
-                props: { numerator: 2, denominator: 2 },
+                props: { numerator: 12, denominator: 12 },
                 delta: 0.2857,
             }),
         );
         expect(card.key).toBe('ftr');
         expect(card.value).toBe('100%');
-        expect(card.sub).toBe('2 / 2');
+        expect(card.sub).toBe('12 / 12');
         expect(card.trend?.tone).toBe('good');
     });
     it('renders time_to_useful_result as the em dash when the value is absent', () => {
