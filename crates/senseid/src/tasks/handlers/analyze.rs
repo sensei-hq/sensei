@@ -639,7 +639,9 @@ pub async fn analyze_project(ctx: &TaskContext, task: &Task) -> Result<u32, Stri
         match enrich_session(ctx, &id, &client_session_id).await {
             Ok(true) => {
                 enriched += 1;
-                affected.insert(folder_id);
+                if let Some(fid) = folder_id {
+                    affected.insert(fid);
+                }
             }
             Ok(false) => {}
             Err(e) => tracing::warn!(error = %e, session = %id, "analyze_project: enrich_session failed"),
