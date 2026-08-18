@@ -31,3 +31,6 @@ database/init.sql
 # Mockups are a LOCAL design reference (visual source of truth) — no code imports
 # them (only comments point at them), so they're kept out of version control.
 docs/mockups/
+
+# Golden baseline reference data — contains local absolute paths + client project names (see spec 2026-08-18)
+docs/spec/baseline/
