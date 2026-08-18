@@ -15,6 +15,14 @@ create table if not exists fallback_chain_models (
 create index if not exists fallback_chain_models_chain_id_idx
     on fallback_chain_models(chain_id);
 
+-- Covering indexes for the router_id / model_id FKs — a router or model delete
+-- cascades here, seq-scanning this table to enforce the FK without them.
+create index if not exists fallback_chain_models_router_id_idx
+    on fallback_chain_models(router_id);
+
+create index if not exists fallback_chain_models_model_id_idx
+    on fallback_chain_models(model_id);
+
 comment on table fallback_chain_models is
 'Ordered model entries within a fallback chain.
 sequence_order defines the try-order: 1 = first attempt, 2 = first fallback, etc.

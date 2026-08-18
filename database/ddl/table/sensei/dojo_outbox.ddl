@@ -40,6 +40,10 @@ create table if not exists dojo_outbox (
 
 create index if not exists dojo_outbox_state_idx on dojo_outbox(state);
 create index if not exists dojo_outbox_batch_idx on dojo_outbox(batch_id);
+-- Covering index for the memory_id FK (nullable) — avoids a seq-scan when the
+-- source memory is deleted (on delete set null). membership_id is already covered
+-- by the unique (membership_id, signature) key.
+create index if not exists dojo_outbox_memory_idx on dojo_outbox(memory_id) where memory_id is not null;
 
 comment on table dojo_outbox is
 'Durable upstream-contribution ledger (C6). One row per (destination membership,

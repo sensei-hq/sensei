@@ -10,6 +10,12 @@ create table if not exists federated_memories (
 , primary key (knowledge_source_id, remote_rule_id)
 );
 
+-- Covering index for the memory_id FK (nullable) — avoids a seq-scan when the
+-- linked memory is hard-deleted (on delete set null). knowledge_source_id is the
+-- PK's leading column, so its FK is already covered.
+create index if not exists federated_memories_memory_id_idx
+    on federated_memories(memory_id) where memory_id is not null;
+
 comment on table federated_memories is
 'Local↔remote rule mapping + per-rule cursor (federation sync bookkeeping — NOT
 a parallel rules table). Pull upserts by (knowledge_source_id, remote_rule_id),

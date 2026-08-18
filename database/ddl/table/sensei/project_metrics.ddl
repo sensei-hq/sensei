@@ -24,6 +24,11 @@ create unique index if not exists project_metrics_identity
 create index if not exists project_metrics_lookup
     on project_metrics (project_id, metric_id, computed_on);
 
+-- Covering index for the folder_id FK (nullable) — a folder delete cascades here;
+-- folder_id is only the 3rd column of project_metrics_identity, so it needs its own.
+create index if not exists project_metrics_folder_idx
+    on project_metrics (folder_id) where folder_id is not null;
+
 comment on table project_metrics is
 'The value store — the single source of truth for every computed metric value, at
 project + (module) + (session) + date grain. All aggregation (week/month/quarter/

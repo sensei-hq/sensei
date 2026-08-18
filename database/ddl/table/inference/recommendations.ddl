@@ -38,6 +38,11 @@ create index if not exists recommendations_verdict_idx
     on recommendations(verdict)
  where verdict != 'pending';
 
+-- Covering index for the reasoning_trace_id FK (nullable) — avoids a seq-scan when
+-- a referenced reasoning trace is deleted (on delete set null).
+create index if not exists recommendations_reasoning_trace_id_idx
+    on recommendations(reasoning_trace_id) where reasoning_trace_id is not null;
+
 comment on table recommendations is
 'The full lifecycle: insight → recommendation → action → measurement.
 

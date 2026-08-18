@@ -45,6 +45,9 @@ create table if not exists dojo_inbox (
 
 create index if not exists dojo_inbox_state_idx on dojo_inbox(state);
 create index if not exists dojo_inbox_membership_idx on dojo_inbox(membership_id);
+-- Covering index for the applied_memory_id FK (nullable) — avoids a seq-scan when
+-- the landed memory is deleted (on delete set null).
+create index if not exists dojo_inbox_applied_memory_idx on dojo_inbox(applied_memory_id) where applied_memory_id is not null;
 
 comment on table dojo_inbox is
 'Daemon-local downstream inbox (C7). One row per (source membership, pulled

@@ -16,6 +16,11 @@ create index if not exists memory_loads_memory_id_idx
 create index if not exists memory_loads_session_idx
     on memory_loads(session_id, loaded_at desc);
 
+-- Covering index for the project_id FK (nullable) — avoids a seq-scan of this
+-- high-volume table when a project is deleted (on delete set null).
+create index if not exists memory_loads_project_id_idx
+    on memory_loads(project_id) where project_id is not null;
+
 comment on table memory_loads is
 'Per-memory load log — one row per (memory, delivery) event. Written when a
 memory is injected into an assistant''s context (e.g. get_layered_context /

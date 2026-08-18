@@ -26,6 +26,12 @@ create table if not exists sensei.stances (
 create unique index if not exists stances_user_default
     on sensei.stances(user_key) where namespace_id is null;
 
+-- Covering index for the namespace_id FK (nullable) — a namespace delete cascades
+-- here; the unique (user_key, namespace_id) leads with user_key, so namespace_id
+-- needs its own index.
+create index if not exists stances_namespace_idx
+    on sensei.stances(namespace_id) where namespace_id is not null;
+
 comment on table sensei.stances is
 'A user''s behavioural stance at a scope — autonomy (how far a run goes before
 asking), sharing (what surfaces to the dōjō), review (approvers before a rule

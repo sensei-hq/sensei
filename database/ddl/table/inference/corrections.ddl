@@ -20,6 +20,11 @@ create index if not exists corrections_project_ids_idx
 create index if not exists corrections_count_idx
     on corrections(count desc);
 
+-- Covering index for the memory_id FK (nullable) — avoids a seq-scan when a
+-- referenced memory is deleted (on delete set null).
+create index if not exists corrections_memory_id_idx
+    on corrections(memory_id) where memory_id is not null;
+
 comment on table corrections is
 'Recurring developer corrections, clustered globally across projects (analyzer #65 step 5).
 One row per recurring correction cluster: similar corrective prompts grouped by
