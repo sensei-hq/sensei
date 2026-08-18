@@ -161,7 +161,12 @@ export function metricTrend(
     type: MetricType,
     direction: MetricDirection,
     delta: number | null | undefined,
+    lowN = false,
 ): MetricTrend | null {
+    // Thin sample (e.g. FTR over a single scored session): a week-over-week delta is
+    // noise — one 0/1 vs 1/1 day swings ±100 pt. Show an honest "low n" marker beside
+    // the value instead of a precise, misleading change (spec 2026-08-18 #3).
+    if (lowN) return { label: 'low n', dir: 'flat', tone: 'neutral' };
     if (delta == null || Number.isNaN(delta)) return null;
     if (delta === 0) return { label: '0', dir: 'flat', tone: 'neutral' };
 
@@ -188,6 +193,20 @@ function numProp(props: Record<string, unknown> | null, key: string): number | n
     return typeof v === 'number' ? v : null;
 }
 
+/** Sample-size threshold below which a ratio/pct row's delta is noise, matching the
+ *  daemon's autonomy `low_n` convention (denominator < 10). */
+const LOW_N = 10;
+
+/** True when a metric row is too thin for its delta to mean anything — the daemon's
+ *  `props.low_n` flag (autonomy metrics) OR a denominator/`n` below LOW_N (FTR and the
+ *  other session ratios don't carry the flag, so it's computed from the sample). A
+ *  low-n row shows a "low n" marker instead of a ±100 pt swing (spec 2026-08-18 #3). */
+export function isLowN(row: ProjectMetricRow): boolean {
+    if (row.props?.low_n === true) return true;
+    const denom = numProp(row.props, 'denominator') ?? numProp(row.props, 'n');
+    return denom != null && denom < LOW_N;
+}
+
 /** A short context line under the value — surfaced from `props`/`unit`. */
 export function metricSub(row: ProjectMetricRow): string {
     const numerator = numProp(row.props, 'numerator');
@@ -208,7 +227,7 @@ export function toMetricCard(row: ProjectMetricRow): MetricCardVM {
         name: row.name,
         value: formatMetricValue(row.metric_type, row.value),
         sub: metricSub(row),
-        trend: metricTrend(row.metric_type, row.direction, row.delta),
+        trend: metricTrend(row.metric_type, row.direction, row.delta, isLowN(row)),
         howToRead: row.how_to_read,
         purpose: row.purpose,
     };
@@ -794,7 +813,7 @@ function toolsDisplay(
 function deterministicInsight(row: ProjectMetricRow, value: string, sub: string): string {
     if (value === METRIC_NONE) return `${row.name} has no reading for this period yet.`;
     const base = sub ? `${row.name} is ${value} (${sub})` : `${row.name} is ${value}`;
-    const t = metricTrend(row.metric_type, row.direction, row.delta);
+    const t = metricTrend(row.metric_type, row.direction, row.delta, isLowN(row));
     if (t == null) return `${base} — the first period on record.`;
     if (t.dir === 'flat') return `${base}, unchanged from the prior period.`;
     return `${base}, ${t.label} vs the prior period.`;
@@ -807,7 +826,7 @@ export function toSignal(
     narrative?: MetricsNarrative | null,
 ): SignalVM {
     const family = familyOf(row.metric) ?? 'tool';
-    const trend = metricTrend(row.metric_type, row.direction, row.delta);
+    const trend = metricTrend(row.metric_type, row.direction, row.delta, isLowN(row));
     const tools = row.metric === KEY_UNUSED_TOOLS ? toolsDisplay(row.props) : null;
 
     const value = tools ? tools.value : formatMetricValue(row.metric_type, row.value);
