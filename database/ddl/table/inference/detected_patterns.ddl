@@ -39,6 +39,11 @@ create index if not exists detected_patterns_anti_pattern_idx
 create index if not exists detected_patterns_tags_idx
     on detected_patterns using gin(tags);
 
+-- Covering index for the self-referential fix_pattern_id FK (nullable) — avoids a
+-- seq-scan when a referenced pattern is deleted (on delete set null).
+create index if not exists detected_patterns_fix_pattern_id_idx
+    on detected_patterns(fix_pattern_id) where fix_pattern_id is not null;
+
 comment on table detected_patterns is
 'Code patterns detected during indexing and analysis, scoped to a project.
 - project_id: the scoping key. Uniqueness is (project_id, name, is_anti_pattern)

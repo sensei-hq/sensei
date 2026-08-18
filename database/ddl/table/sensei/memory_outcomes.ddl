@@ -12,6 +12,11 @@ create table if not exists memory_outcomes (
 create index if not exists memory_outcomes_memory_id_idx
     on memory_outcomes(memory_id, recorded_at desc);
 
+-- Covering index for the session_id FK (nullable) — avoids a seq-scan when a
+-- referenced session is deleted (on delete set null).
+create index if not exists memory_outcomes_session_id_idx
+    on memory_outcomes(session_id) where session_id is not null;
+
 comment on table memory_outcomes is
 'Per-memory event log: applied/consulted/violated/ignored.
 Insert triggers update memories.reinforced_count / violated_count / strength / status.';
