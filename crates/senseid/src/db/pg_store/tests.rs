@@ -3130,12 +3130,14 @@
             "the session row now exists and points at the current folder (resolved via the alias)");
         // The repaired row must carry the event's REAL historical timestamp, not now() —
         // else a long-dead session masquerades as "today" and pollutes recency + FTR windows.
-        let (started, backfilled): (chrono::DateTime<chrono::Utc>, bool) = sqlx_core::query_as::query_as(
-            "SELECT started_at, backfilled FROM activity.sessions WHERE client_session_id = $1",
-        ).bind(sess).fetch_one(&s.pool).await.unwrap();
+        let (started, backfilled, repo_anchor): (chrono::DateTime<chrono::Utc>, bool, Option<uuid::Uuid>) =
+            sqlx_core::query_as::query_as(
+                "SELECT started_at, backfilled, repo_folder_id FROM activity.sessions WHERE client_session_id = $1",
+            ).bind(sess).fetch_one(&s.pool).await.unwrap();
         assert!(backfilled, "a repaired historical session is marked backfilled");
         assert!(started < chrono::Utc::now() - chrono::Duration::days(365),
             "started_at is backfilled to the event's historical ts (1_700_000_000ms), not now(); got {started}");
+        assert_eq!(repo_anchor, Some(fid), "the repaired session anchors to its repo (P1)");
     }
 
     #[tokio::test]
@@ -3260,6 +3262,46 @@
         let a = s.resolve_repo_anchor(&format!("{b}/x")).await.unwrap().unwrap();
         assert_eq!(a.repo_folder_id, live, "a live abs_path beats an equal-length alias");
         assert_eq!(a.matched_via, "live");
+    }
+
+    #[tokio::test]
+    async fn session_anchors_to_repo_not_the_cwd_subfolder() {
+        // 17: a hook event whose cwd is deep in a repo anchors the session to the REPO
+        // (repo_folder_id), while folder_id keeps the raw cwd folder for provenance.
+        let s = pg_store().await;
+        let b = "/_test/p1_anchor";
+        let repo = mk_anchor_folder(&s, &format!("{b}/repo"), "git", None).await;
+        let sub = mk_anchor_folder(&s, &format!("{b}/repo/src"), "folder", None).await;
+        let sess = "_test-p1-anchor";
+        clear_test_session(&s, sess).await;
+        s.record_session_event(sess, &sub, None, "claude", false).await.unwrap();
+        let (folder_id, repo_folder_id): (Option<uuid::Uuid>, Option<uuid::Uuid>) =
+            sqlx_core::query_as::query_as(
+                "SELECT folder_id, repo_folder_id FROM activity.sessions WHERE client_session_id = $1",
+            ).bind(sess).fetch_one(&s.pool).await.unwrap();
+        assert_eq!(folder_id, Some(sub), "folder_id keeps the raw cwd folder (provenance)");
+        assert_eq!(repo_folder_id, Some(repo), "repo_folder_id anchors to the enclosing repo, not the subfolder");
+    }
+
+    #[tokio::test]
+    async fn folder_prune_nulls_folder_id_but_session_and_repo_survive() {
+        // 18 (I2): pruning the raw cwd folder SET-NULLs folder_id but never deletes the
+        // session; the repo anchor survives.
+        let s = pg_store().await;
+        let b = "/_test/p1_prune";
+        let repo = mk_anchor_folder(&s, &format!("{b}/repo"), "git", None).await;
+        let sub = mk_anchor_folder(&s, &format!("{b}/repo/src"), "folder", None).await;
+        let sess = "_test-p1-prune";
+        clear_test_session(&s, sess).await;
+        s.record_session_event(sess, &sub, None, "claude", false).await.unwrap();
+        sqlx_core::query::query("DELETE FROM sensei.folders WHERE id = $1")
+            .bind(sub).execute(&s.pool).await.unwrap();
+        let row: Option<(Option<uuid::Uuid>, Option<uuid::Uuid>)> = sqlx_core::query_as::query_as(
+            "SELECT folder_id, repo_folder_id FROM activity.sessions WHERE client_session_id = $1",
+        ).bind(sess).fetch_optional(&s.pool).await.unwrap();
+        let (folder_id, repo_folder_id) = row.expect("session survives the folder prune (no cascade delete)");
+        assert_eq!(folder_id, None, "the pruned raw folder SET-NULLs folder_id");
+        assert_eq!(repo_folder_id, Some(repo), "the repo anchor survives the prune");
     }
 
     async fn set_folder_remotes(s: &PgStore, id: &uuid::Uuid, urls: &[&str]) {

@@ -1,7 +1,9 @@
 set search_path to activity, sensei, extensions;
 create table if not exists sessions (
   id                       uuid        primary key default gen_random_uuid()
-, folder_id                uuid        not null references sensei.folders(id) on delete cascade
+, folder_id                uuid        references sensei.folders(id) on delete set null   -- raw cwd provenance (nullable): a folder prune must NEVER delete a session (spec 2026-08-18 I2)
+, repo_folder_id           uuid        references sensei.folders(id) on delete set null   -- the DURABLE repo anchor: nearest repo-kind ancestor via sensei.repo_anchor_for
+, repo_key                 text                                                           -- repo identity (primary git remote, else abs_path) — survives a full folder-row rebuild
 , project_id               uuid        references sensei.projects(id) on delete set null
 , task                     text        not null default ''
 , acp_id                   text
@@ -32,6 +34,10 @@ create index if not exists sessions_project_id_idx
     on sessions(project_id, started_at desc)
  where project_id is not null;
 
+create index if not exists sessions_repo_folder_id_idx
+    on sessions(repo_folder_id, started_at desc)
+ where repo_folder_id is not null;
+
 create index if not exists sessions_ftr_idx
     on sessions(ftr)
  where ftr is not null;
@@ -52,9 +58,18 @@ comment on table sessions is
 comment on column sessions.id
      is 'Surrogate primary key (UUID).';
 comment on column sessions.folder_id
-     is 'Foreign key to folders — which folder this session ran in.';
+     is 'Raw cwd provenance — the exact folder the session ran in. Nullable + ON DELETE
+SET NULL so pruning that folder can never delete the session (spec 2026-08-18, I2).
+Attribution keys off repo_folder_id, not this.';
+comment on column sessions.repo_folder_id
+     is 'The DURABLE repo anchor: the nearest repo-kind ancestor (git/subtree/standalone
+project-root) resolved by sensei.repo_anchor_for. Recency, FTR, metrics, and the
+project rollup key off this so a session belongs to a repo, never a transient folder.';
+comment on column sessions.repo_key
+     is 'Stable repo identity — the primary git remote URL (else the repo abs_path). Lets
+attribution survive a full folder-row rebuild (spec 2026-08-18, D2).';
 comment on column sessions.project_id
-     is 'Foreign key to projects — derived from folder.';
+     is 'Foreign key to projects — derived from the repo anchor.';
 comment on column sessions.task
      is 'Task description passed at get_session_context.';
 comment on column sessions.acp_id
