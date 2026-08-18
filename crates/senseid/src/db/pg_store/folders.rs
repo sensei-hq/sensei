@@ -1,5 +1,17 @@
 use super::*;
 
+/// A resolved repo anchor for an absolute path (spec 2026-08-18): the durable repo a
+/// session/transcript attaches to — the nearest repo-kind ancestor (git/subtree/
+/// standalone-project-root), alias-aware, deepest+live wins.
+#[derive(Debug, Clone)]
+pub struct RepoAnchor {
+    pub repo_folder_id: uuid::Uuid,
+    pub project_id: Option<uuid::Uuid>,
+    pub repo_abs_path: String,
+    /// "live" (a current abs_path) or "alias" (a former path, after a move/rename).
+    pub matched_via: String,
+}
+
 #[allow(dead_code, clippy::too_many_arguments, clippy::type_complexity)]
 impl PgStore {
     /// The absolute-path exclusion prefixes for a watch root — each `excluded`
@@ -689,6 +701,34 @@ impl PgStore {
              LIMIT 1"
         ).bind(abs_path).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(row)
+    }
+
+    /// THE shared repo-anchor mapper (spec 2026-08-18): resolve an absolute path to its
+    /// owning repo via the canonical `sensei.repo_anchor_for` SQL function — the ONE
+    /// implementation, shared by hook attribution, transcript import, cold-start
+    /// synthesis, orphan repair, and the file watcher, so per-event attribution and
+    /// batch backfills can never diverge. Nearest repo-kind ancestor (git/subtree/
+    /// standalone-project-root; monorepo members roll up to the git root), alias-aware,
+    /// deepest+live wins. `None` for a path under no tracked repo (a container dir, an
+    /// untracked repo, or a foreign cwd) — the caller decides the unattached policy; it
+    /// never fabricates a repo. Retires find_folder_for_path / repo_root_for_path /
+    /// get_folder_ids_by_path for attribution.
+    pub async fn resolve_repo_anchor(&self, abs_path: &str) -> Result<Option<RepoAnchor>, String> {
+        let row: Option<(uuid::Uuid, Option<uuid::Uuid>, String, String)> =
+            sqlx_core::query_as::query_as(
+                "SELECT repo_folder_id, project_id, repo_abs_path, matched_via \
+                 FROM sensei.repo_anchor_for($1)",
+            )
+            .bind(abs_path)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(row.map(|(repo_folder_id, project_id, repo_abs_path, matched_via)| RepoAnchor {
+            repo_folder_id,
+            project_id,
+            repo_abs_path,
+            matched_via,
+        }))
     }
 
     /// Register a former absolute path for a folder (`folder_path_aliases`), so a
