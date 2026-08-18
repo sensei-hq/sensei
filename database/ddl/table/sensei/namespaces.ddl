@@ -38,3 +38,8 @@ comment on column namespaces.visibility
      is 'private | public. For project-scope namespaces this is the project''s visibility; a member consumes a tenant billing seat only through a `private` project. Other scopes carry the default and are ignored by billing. Defaults to private (opt into public, never accidentally out).';
 comment on column namespaces.modified_at
      is 'Timestamp of the last modification to this row.';
+
+-- Dōjō (Supabase) plane: read by the security_invoker views dojo.pack_adoption and
+-- dojo.tenant_seat_usage as service_role (server-only; service_role bypasses RLS). Inert on
+-- the local daemon (owner connection; never queries as service_role via PostgREST).
+grant select on namespaces to service_role;

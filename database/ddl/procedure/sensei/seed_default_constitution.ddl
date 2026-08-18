@@ -25,6 +25,7 @@ set search_path to sensei, extensions;
 -- search_path, not this file's (the same lesson as seed_ponytail_pack).
 create or replace procedure sensei.seed_default_constitution()
 language plpgsql
+set search_path = sensei, extensions
 as $$
 begin
   -- The general/user always-on scopes are seeded by import_scopes (staging).

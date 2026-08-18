@@ -10,9 +10,13 @@ enabled = true
 port = 54321
 # Schemas to expose in your API. Tables, views and stored procedures in this schema will get API
 # endpoints. `public` and `graphql_public` schemas are included by default.
-schemas = ["public", "graphql_public", "dojo", "sensei"]
+# `sensei` is NOT exposed: it is the daemon's schema, reached only via `dojo` views/functions
+# (which qualify sensei.* internally) — keeping its RLS-disabled daemon tables off PostgREST
+# (no rls_disabled advisor findings) and off the attack surface. See dojo.namespaces / the
+# dojo.rule_pack_* views + dojo.set_pack_adoption for the sanctioned cross-schema reads.
+schemas = ["public", "graphql_public", "dojo"]
 # Extra schemas to add to the search_path of every request.
-extra_search_path = ["public", "extensions", "dojo", "sensei"]
+extra_search_path = ["public", "extensions", "dojo"]
 # The maximum number of rows returns from a view, table, or stored procedure. Limits payload size
 # for accidental or malicious requests.
 max_rows = 1000

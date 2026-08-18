@@ -11,7 +11,9 @@ set search_path to staging, sensei, extensions;
 -- (updated_at bumped past the datafile) is never clobbered — mirrors import_models'
 -- guard, tightened to `>` so unchanged rows are skipped outright.
 create or replace procedure import_rule_packs()
-language plpgsql as $$
+language plpgsql
+set search_path = staging, sensei, extensions
+as $$
 begin
   insert into sensei.rule_packs (
       slug, name, kanji, area, source, summary,

@@ -30,7 +30,11 @@ as $$
     );
 $$;
 
--- The client-direct read path connects as role `authenticated`; only it needs to
--- execute the predicate. Revoke the public default, grant to authenticated.
+-- The relay RLS policies (relay_sessions/inbox/segments) call this predicate as the
+-- querying role, so `authenticated` MUST have EXECUTE for those policies to evaluate.
+-- Revoke the public default, grant to authenticated.
+-- NOTE (advisor "SECURITY DEFINER RPC callable by authenticated"): INTENTIONAL and safe —
+-- the EXECUTE grant is required for RLS, and a direct RPC call only reveals whether the
+-- CALLER owns the passed membership id (their own fact), never another user's data. Keep.
 revoke all on function dojo.owns_membership(uuid) from public;
 grant execute on function dojo.owns_membership(uuid) to authenticated;

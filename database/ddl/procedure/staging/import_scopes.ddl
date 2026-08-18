@@ -2,6 +2,7 @@ set search_path to staging, sensei, extensions;
 
 create or replace procedure import_scopes()
 language plpgsql
+set search_path = staging, sensei, extensions
 as $$
 begin
   insert into sensei.scopes (

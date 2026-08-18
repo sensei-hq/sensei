@@ -7,6 +7,7 @@ set search_path to dojo, extensions;
 -- the dojo tables are applied (the dojo service will invoke it on boot).
 create or replace procedure dojo.seed_global_dojo()
 language plpgsql
+set search_path = dojo, extensions
 as $$
 begin
   insert into dojo.tenants (
