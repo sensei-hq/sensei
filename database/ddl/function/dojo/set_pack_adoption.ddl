@@ -58,5 +58,11 @@ begin
 end;
 $$;
 
-revoke all on function dojo.set_pack_adoption(text, text, text, boolean) from public;
-grant execute on function dojo.set_pack_adoption(text, text, text, boolean) to authenticated, service_role;
+-- Revoke from `authenticated` too (not just PUBLIC): CREATE OR REPLACE FUNCTION preserves
+-- prior grants, so a stale `to authenticated` grant from an earlier deploy must be revoked
+-- explicitly, or the anon/authenticated-callable-definer-RPC advisor persists.
+revoke all on function dojo.set_pack_adoption(text, text, text, boolean) from public, authenticated;
+-- service_role only: the dōjō /v1 route calls this via the service_role client (see
+-- rulepacks-data.ts setPackAdoption). NOT granted to `authenticated` — no client calls it,
+-- so it isn't exposed as an anon/authenticated-callable SECURITY DEFINER RPC (advisor 0016xx).
+grant execute on function dojo.set_pack_adoption(text, text, text, boolean) to service_role;

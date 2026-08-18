@@ -51,3 +51,20 @@ comment on column dojo.seats.last_active_at
      is 'Timestamp of the user''s last sensei activity on this project. Drives the "actively using sensei" distinction; a route may require recency within the billing window before counting the seat.';
 comment on column dojo.seats.ended_at
      is 'NULL = active seat (counts toward billing). Set to the removal time when the user leaves the project — the row is retained for audit, never deleted.';
+
+-- Read by the security_invoker view dojo.tenant_seat_usage as service_role (billing route,
+-- server-only; service_role bypasses RLS). Not exposed to authenticated.
+grant select on dojo.seats to service_role;
+
+-- RLS deny-by-default: server-only table (the dōjō Worker uses service_role, which
+-- bypasses RLS; no client authenticated/anon grant). Locks out any direct PostgREST
+-- access while service_role keeps full access; clears the Supabase rls_disabled advisor.
+alter table dojo.seats enable row level security;
+
+-- No client access: authenticated/anon are denied all rows + writes; the dōjō Worker
+-- reads/writes as service_role, which bypasses RLS. Explicit deny-all so RLS has a
+-- policy (clears the rls_enabled_no_policy advisor). Idempotent.
+drop policy if exists seats_service_only on dojo.seats;
+create policy seats_service_only on dojo.seats
+    for all to authenticated, anon
+    using (false) with check (false);
