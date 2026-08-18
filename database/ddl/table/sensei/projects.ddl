@@ -2,6 +2,7 @@ set search_path to sensei, extensions;
 create table if not exists projects (
   id                       uuid             primary key default gen_random_uuid()
 , name                     text             not null
+, root_abs_path            text                              -- the project's collection root on disk (spec 2026-08-18): the shallowest member repo's abs_path; a project knows where it lives
 , description              text
 , client                   text
 , maturity                 project_maturity not null default 'discovery'
@@ -46,6 +47,10 @@ comment on column projects.id
      is 'Surrogate primary key (UUID).';
 comment on column projects.name
      is 'Project display name — initially derived from parent folder name or git remote.';
+comment on column projects.root_abs_path
+     is 'The project''s collection root on disk — the shallowest member repo''s abs_path (spec
+2026-08-18). Lets a project own a repo-collection boundary (e.g. ~/Work/Alert spanning
+many repos) and drive grouping. Single-repo projects: the repo''s abs_path.';
 comment on column projects.description
      is 'Optional project description.';
 comment on column projects.client
