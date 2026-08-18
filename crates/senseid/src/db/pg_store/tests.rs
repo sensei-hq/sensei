@@ -3159,6 +3159,109 @@
         assert_ne!(session_row_folder(&s, sess).await, Some(parent));
     }
 
+    // ── resolve_repo_anchor / sensei.repo_anchor_for (spec 2026-08-18) ────────
+    /// Create an anchor-test folder at `abs_path` with an explicit kind + optional project.
+    async fn mk_anchor_folder(
+        s: &PgStore, abs_path: &str, kind: &str, project_id: Option<uuid::Uuid>,
+    ) -> uuid::Uuid {
+        use sqlx_core::query_as::query_as;
+        s.execute_raw("INSERT INTO sensei.folders_to_watch(id, path, name, status) VALUES('00000000-0000-0000-0000-000000000001', '/_test', '_test', 'watching'::sensei.watch_status) ON CONFLICT DO NOTHING").await.unwrap();
+        let name = abs_path.rsplit('/').next().unwrap_or(abs_path);
+        let row: (uuid::Uuid,) = query_as(
+            "INSERT INTO sensei.folders(root_id, kind, name, path, abs_path, project_id) \
+             VALUES('00000000-0000-0000-0000-000000000001', $1::sensei.folder_kind, $2, $2, $3, $4) \
+             ON CONFLICT(abs_path) DO UPDATE SET kind = EXCLUDED.kind, project_id = EXCLUDED.project_id RETURNING id"
+        ).bind(kind).bind(name).bind(abs_path).bind(project_id).fetch_one(s.pool()).await.unwrap();
+        row.0
+    }
+
+    #[tokio::test]
+    async fn repo_anchor_repo_subdirs_and_plain_folders() {
+        // 1,2,5: repo self; deep subdir → repo; under a plain `folder` row → repo (never the folder).
+        let s = pg_store().await;
+        let b = "/_test/anchor_a";
+        let repo = mk_anchor_folder(&s, &format!("{b}/repo"), "git", None).await;
+        mk_anchor_folder(&s, &format!("{b}/repo/src"), "folder", None).await; // must be invisible
+        assert_eq!(s.resolve_repo_anchor(&format!("{b}/repo")).await.unwrap().unwrap().repo_folder_id, repo,
+            "cwd == repo abs_path");
+        let a = s.resolve_repo_anchor(&format!("{b}/repo/src/deep/x.ts")).await.unwrap().unwrap();
+        assert_eq!(a.repo_folder_id, repo, "deep cwd under a plain folder resolves to the repo, never the folder");
+        assert_eq!(a.matched_via, "live");
+    }
+
+    #[tokio::test]
+    async fn repo_anchor_rolls_monorepo_member_to_git_root() {
+        // 3 (E6/D6): a cwd inside a workspace_member rolls up to the enclosing git root.
+        let s = pg_store().await;
+        let b = "/_test/anchor_mono";
+        let root = mk_anchor_folder(&s, &format!("{b}/mono"), "git", None).await;
+        mk_anchor_folder(&s, &format!("{b}/mono/packages/pkg"), "workspace_member", None).await;
+        let a = s.resolve_repo_anchor(&format!("{b}/mono/packages/pkg/lib.ts")).await.unwrap().unwrap();
+        assert_eq!(a.repo_folder_id, root, "monorepo member rolls up to the git root, not the member");
+    }
+
+    #[tokio::test]
+    async fn repo_anchor_prefers_deepest_subtree() {
+        // 4 (E7): a subtree nested in a git root wins for cwds inside it (deepest anchor).
+        let s = pg_store().await;
+        let b = "/_test/anchor_sub";
+        mk_anchor_folder(&s, &format!("{b}/outer"), "git", None).await;
+        let sub = mk_anchor_folder(&s, &format!("{b}/outer/vendor/sub"), "subtree", None).await;
+        let a = s.resolve_repo_anchor(&format!("{b}/outer/vendor/sub/y.rs")).await.unwrap().unwrap();
+        assert_eq!(a.repo_folder_id, sub, "deepest anchor (the subtree) beats the outer git root");
+    }
+
+    #[tokio::test]
+    async fn repo_anchor_standalone_project_root_anchors_but_bare_does_not() {
+        // D1/E8: a standalone dir anchors only when it is a tracked project root (project_id set).
+        let s = pg_store().await;
+        let b = "/_test/anchor_std";
+        let pid = s.create_project("_test:anchor_std", None, None).await.unwrap();
+        let proj = mk_anchor_folder(&s, &format!("{b}/proj"), "standalone", Some(pid)).await;
+        mk_anchor_folder(&s, &format!("{b}/bare"), "standalone", None).await; // not a project root
+        assert_eq!(s.resolve_repo_anchor(&format!("{b}/proj/file")).await.unwrap().unwrap().repo_folder_id, proj,
+            "a standalone project root anchors");
+        assert!(s.resolve_repo_anchor(&format!("{b}/bare/file")).await.unwrap().is_none(),
+            "a project-less standalone dir is NOT an anchor");
+    }
+
+    #[tokio::test]
+    async fn repo_anchor_follows_alias_after_move() {
+        // 6 (E3/E4): a path recorded under a repo's OLD (moved) location resolves to the current repo.
+        let s = pg_store().await;
+        let b = "/_test/anchor_alias";
+        let repo = mk_anchor_folder(&s, &format!("{b}/new-home/repo"), "git", None).await;
+        s.add_folder_path_alias(&format!("{b}/old-home/repo"), &repo, "detected").await.unwrap();
+        let a = s.resolve_repo_anchor(&format!("{b}/old-home/repo/src/x.ts")).await.unwrap().unwrap();
+        assert_eq!(a.repo_folder_id, repo, "old path resolves to the current repo via alias");
+        assert_eq!(a.matched_via, "alias");
+    }
+
+    #[tokio::test]
+    async fn repo_anchor_none_for_foreign_and_container() {
+        // 7,8 (E5): a foreign cwd and a container dir above repos both resolve to None (no phantom).
+        let s = pg_store().await;
+        let b = "/_test/anchor_none";
+        mk_anchor_folder(&s, &format!("{b}/holder/repo"), "git", None).await;
+        assert!(s.resolve_repo_anchor("/tmp/_test_foreign_zzz").await.unwrap().is_none(),
+            "a foreign cwd never fabricates a repo");
+        assert!(s.resolve_repo_anchor(&format!("{b}/holder")).await.unwrap().is_none(),
+            "a container dir above a repo is not itself an anchor");
+    }
+
+    #[tokio::test]
+    async fn repo_anchor_live_beats_equal_length_alias() {
+        // 9: determinism — when a live abs_path and an alias of equal length both match, live wins.
+        let s = pg_store().await;
+        let b = "/_test/anchor_dup";
+        let live = mk_anchor_folder(&s, &format!("{b}/x"), "git", None).await;
+        let other = mk_anchor_folder(&s, &format!("{b}/other"), "git", None).await;
+        s.add_folder_path_alias(&format!("{b}/x"), &other, "rename").await.unwrap(); // alias collides with a live path
+        let a = s.resolve_repo_anchor(&format!("{b}/x")).await.unwrap().unwrap();
+        assert_eq!(a.repo_folder_id, live, "a live abs_path beats an equal-length alias");
+        assert_eq!(a.matched_via, "live");
+    }
+
     async fn set_folder_remotes(s: &PgStore, id: &uuid::Uuid, urls: &[&str]) {
         let json = serde_json::Value::Array(
             urls.iter().map(|u| serde_json::json!({"name": "origin", "url": u})).collect(),
