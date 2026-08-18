@@ -64,6 +64,7 @@ DB. For iterating on DDL without publishing a release tag, set
 ## Rules
 
 - Always start with `docs/backlog.md`
+- **Code navigation** — prefer the sensei MCP tools (`search`, `get_callers`/`get_callees`, `get_patterns`, `get_rules`, `get_project_conventions`, `get_project_summary`) over `grep`/`glob` for finding symbols and understanding structure: they use the indexed code graph and return richer, ranked results. Fall back to grep/glob only when a tool errors or returns empty, and say so.
 - Create a todo list for complex tasks
 - TDD — always use zero-errors-policy before starting work
 - Commit and push when a logical chunk is complete
