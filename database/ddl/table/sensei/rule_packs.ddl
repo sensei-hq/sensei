@@ -56,3 +56,16 @@ comment on column rule_packs.enforcement
      is 'The pack''s DEFAULT enforcement tier. Each rule (rule_pack_rules.enforcement) may set its own; an adoption may override per-namespace (rule_pack_adoptions.enforcement).';
 comment on column rule_packs.version
      is 'Pack version, bumped on any change to its rules/membership. An adoption pins the version it adopted (rule_pack_adoptions.pinned_version); re-adopt to take an update.';
+
+-- ── Dōjō (Supabase) plane: security_invoker read path ───────────────────────────────────
+-- dojo.rule_pack_library runs with security_invoker, so the CALLING role reads this table
+-- directly. Grant + RLS limit `authenticated` to the GLOBAL curated library
+-- (owner_namespace_id NULL, active) — private/org packs stay invisible even on a direct
+-- PostgREST query. Inert on the local daemon (pure Postgres): it connects as the object
+-- owner, which bypasses RLS, and never queries as `authenticated`. Idempotent for reconcile.
+grant select on rule_packs to authenticated, service_role;
+alter table rule_packs enable row level security;
+drop policy if exists rule_packs_global_read on rule_packs;
+create policy rule_packs_global_read on rule_packs
+    for select to authenticated
+    using (owner_namespace_id is null and status = 'active');

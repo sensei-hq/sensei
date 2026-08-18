@@ -10,7 +10,13 @@ set search_path to dojo, sensei, extensions;
 -- seat opened on active use and closed on removal/inactivity. A route may tighten
 -- this to last_active_at within the billing window; the raw open-seat count is the
 -- defensible floor.
-create or replace view dojo.tenant_seat_usage as
+-- SECURITY: `security_invoker = on` — runs as the calling role, not the owner (Supabase lint
+-- security_definer_view). Read only server-side as service_role (granted SELECT on dojo.seats +
+-- sensei.namespaces; service_role bypasses RLS); NOT granted to any client role, so billing
+-- seat counts are never exposed via PostgREST.
+create or replace view dojo.tenant_seat_usage
+with (security_invoker = on)
+as
 select s.tenant_id
      , count(distinct s.user_id) as seats_used
   from dojo.seats s

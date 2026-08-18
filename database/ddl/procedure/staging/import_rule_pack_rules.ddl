@@ -11,7 +11,9 @@ set search_path to staging, sensei, extensions;
 -- when the datafile's modified_at is STRICTLY newer than the live row — incremental,
 -- never a full reload, never clobbers a prod edit.
 create or replace procedure import_rule_pack_rules()
-language plpgsql as $$
+language plpgsql
+set search_path = staging, sensei, extensions
+as $$
 begin
   insert into sensei.rule_pack_rules (
       pack_id, ordinal, statement, body, rationale,

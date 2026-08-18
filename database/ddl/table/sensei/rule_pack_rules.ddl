@@ -52,3 +52,19 @@ comment on column rule_pack_rules.applies_to
      is 'Applicability predicate finer than scope — e.g. {"path_globs":["**/auth/**"],"languages":["ts"]}. Empty = applies wherever the adopting namespace applies.';
 comment on column rule_pack_rules.evidence
      is 'Grounding for a learned rule — e.g. {"corrections":4,"incidents":["INC-12"],"cite":"OWASP A02"}. Ties governance to the correction/incident data sensei already captures.';
+
+-- ── Dōjō (Supabase) plane: security_invoker read path ───────────────────────────────────
+-- Read by the security_invoker view dojo.rule_pack_library as the CALLING role. Grant + RLS
+-- limit `authenticated` to the rules of GLOBAL library packs only (parent pack
+-- owner_namespace_id NULL + active). Inert on the local daemon (owner connection bypasses
+-- RLS; never queries as `authenticated`). Idempotent for reconcile.
+grant select on rule_pack_rules to authenticated;
+alter table rule_pack_rules enable row level security;
+drop policy if exists rule_pack_rules_global_read on rule_pack_rules;
+create policy rule_pack_rules_global_read on rule_pack_rules
+    for select to authenticated
+    using (exists (
+        select 1 from rule_packs p
+         where p.id = pack_id
+           and p.owner_namespace_id is null
+           and p.status = 'active'));

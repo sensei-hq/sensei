@@ -82,9 +82,9 @@ export function summarizeSeatUsage(rows: SeatRow[]): SeatUsage {
 }
 
 /** Load a tenant's ACTIVE seats (ended_at IS NULL) joined to their project
- *  namespace (visibility + name). Cross-schema (dojo.seats → sensei.namespaces),
- *  so it joins in two queries rather than a PostgREST embed. Orphan seats (the
- *  namespace was deleted) are dropped. */
+ *  namespace (visibility + name). Cross-schema (dojo.seats → dojo.namespaces, a
+ *  dojo view over sensei.namespaces), so it joins in two queries rather than a
+ *  PostgREST embed. Orphan seats (the namespace was deleted) are dropped. */
 export async function loadActiveSeatRows(db: DojoClient, tenantId: string): Promise<SeatRow[]> {
 	const { data: seats, error } = await db
 		.from('seats')
@@ -97,7 +97,6 @@ export async function loadActiveSeatRows(db: DojoClient, tenantId: string): Prom
 
 	const ids = [...new Set(rows.map((s) => s.namespace_id))];
 	const { data: ns, error: nsErr } = await db
-		.schema('sensei')
 		.from('namespaces')
 		.select('id, name, slug, visibility')
 		.in('id', ids);
@@ -146,7 +145,6 @@ export async function resolveProjectNamespaceId(
 	slug: string
 ): Promise<string | null> {
 	const { data, error } = await db
-		.schema('sensei')
 		.from('namespaces')
 		.select('id')
 		.eq('scope_key', 'project')

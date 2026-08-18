@@ -9,6 +9,7 @@ set search_path to dojo, extensions;
 create or replace function dojo.relay_inbox_bump_seq()
 returns trigger
 language plpgsql
+set search_path = dojo, extensions
 as $$
 begin
   new.seq := nextval('dojo.relay_inbox_seq');

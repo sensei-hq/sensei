@@ -21,6 +21,7 @@ set search_path to sensei, extensions;
 -- WHERE (pack_id = pack_id → always true → wipes every pack's rules).
 create or replace procedure sensei.seed_ponytail_pack()
 language plpgsql
+set search_path = sensei, extensions
 as $$
 declare
   v_pack_id uuid;

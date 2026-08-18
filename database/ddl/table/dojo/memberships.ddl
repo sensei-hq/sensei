@@ -53,3 +53,16 @@ relay routes authenticate a machine caller by hashing the presented Bearer and
 matching this per (tenant, membership). Set by the seed / pairing; rotate via
 re-pairing. The stronger signed-payload path (device_key above, plane B) is a
 security-hardening follow-up before real/prod tokens.';
+
+-- RLS deny-by-default: server-only table (the dōjō Worker uses service_role, which
+-- bypasses RLS; no client authenticated/anon grant). Locks out any direct PostgREST
+-- access while service_role keeps full access; clears the Supabase rls_disabled advisor.
+alter table dojo.memberships enable row level security;
+
+-- No client access: authenticated/anon are denied all rows + writes; the dōjō Worker
+-- reads/writes as service_role, which bypasses RLS. Explicit deny-all so RLS has a
+-- policy (clears the rls_enabled_no_policy advisor). Idempotent.
+drop policy if exists memberships_service_only on dojo.memberships;
+create policy memberships_service_only on dojo.memberships
+    for all to authenticated, anon
+    using (false) with check (false);

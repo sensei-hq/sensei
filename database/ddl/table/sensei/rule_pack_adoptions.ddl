@@ -31,3 +31,8 @@ every repo whose namespace set includes namespace_id. Pins a pack version; a per
 adoption enforcement override can raise (or lower) the whole pack''s tier locally.';
 comment on column rule_pack_adoptions.namespace_id
      is 'The adopting namespace — a concrete sensei.namespaces instance, polymorphic over the scope ladder (organization / project / stack / …). Org-level adoption uses the org''s namespace id.';
+
+-- Dōjō (Supabase) plane: read by the security_invoker view dojo.pack_adoption as service_role
+-- (server-only; service_role bypasses RLS, and the per-caller filter lives in the route).
+-- Inert on the local daemon (owner connection; never queries as service_role via PostgREST).
+grant select on rule_pack_adoptions to service_role;

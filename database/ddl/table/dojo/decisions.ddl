@@ -16,6 +16,9 @@ create table if not exists dojo.decisions (
 
 create index if not exists decisions_tenant_idx on dojo.decisions(tenant_id);
 create index if not exists decisions_artifact_idx on dojo.decisions(artifact_id);
+-- Covering index for the triage_id FK (nullable) — avoids a seq-scan on
+-- dojo.triage_queue deletes (Supabase unindexed_foreign_keys).
+create index if not exists decisions_triage_idx on dojo.decisions(triage_id) where triage_id is not null;
 
 comment on table dojo.decisions is
 'A named triage verdict (approve/revise/decline) with a clear trail. Approve
@@ -35,3 +38,16 @@ comment on column dojo.decisions.regression_note
      is 'The regression note published alongside an approval.';
 comment on column dojo.decisions.automated
      is 'True when the automated trust process auto-approved this (no human maintainer).';
+
+-- RLS deny-by-default: server-only table (the dōjō Worker uses service_role, which
+-- bypasses RLS; no client authenticated/anon grant). Locks out any direct PostgREST
+-- access while service_role keeps full access; clears the Supabase rls_disabled advisor.
+alter table dojo.decisions enable row level security;
+
+-- No client access: authenticated/anon are denied all rows + writes; the dōjō Worker
+-- reads/writes as service_role, which bypasses RLS. Explicit deny-all so RLS has a
+-- policy (clears the rls_enabled_no_policy advisor). Idempotent.
+drop policy if exists decisions_service_only on dojo.decisions;
+create policy decisions_service_only on dojo.decisions
+    for all to authenticated, anon
+    using (false) with check (false);

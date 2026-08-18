@@ -16,6 +16,9 @@ create table if not exists dojo.engagements (
 );
 
 create index if not exists engagements_tenant_idx on dojo.engagements(tenant_id);
+-- Covering index for the client_tenant_id FK (nullable) — avoids a seq-scan when a
+-- referenced dojo.tenants row is deleted (Supabase unindexed_foreign_keys).
+create index if not exists engagements_client_tenant_idx on dojo.engagements(client_tenant_id) where client_tenant_id is not null;
 
 comment on table dojo.engagements is
 'A registered client engagement, owned by a lead. Binds client work to
@@ -33,3 +36,16 @@ comment on column dojo.engagements.policy_overrides
      is 'Engagement-specific overrides on the tenant policy (retention, confidentiality pack, etc.).';
 comment on column dojo.engagements.status
      is 'active (in force, routes + dereferences) or ended (closed, retained for audit).';
+
+-- RLS deny-by-default: server-only table (the dōjō Worker uses service_role, which
+-- bypasses RLS; no client authenticated/anon grant). Locks out any direct PostgREST
+-- access while service_role keeps full access; clears the Supabase rls_disabled advisor.
+alter table dojo.engagements enable row level security;
+
+-- No client access: authenticated/anon are denied all rows + writes; the dōjō Worker
+-- reads/writes as service_role, which bypasses RLS. Explicit deny-all so RLS has a
+-- policy (clears the rls_enabled_no_policy advisor). Idempotent.
+drop policy if exists engagements_service_only on dojo.engagements;
+create policy engagements_service_only on dojo.engagements
+    for all to authenticated, anon
+    using (false) with check (false);

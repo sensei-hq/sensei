@@ -162,8 +162,8 @@ describe('loadActiveSeatRows', () => {
 			['eq', 'tenant_id', 'tenant-1'],
 			['is', 'ended_at', null]
 		]);
-		// namespaces query: sensei schema, filtered by the deduped ids
-		expect(db.calls[1]).toMatchObject({ schema: 'sensei', table: 'namespaces' });
+		// namespaces query: base (dojo) schema via the dojo.namespaces view, filtered by the deduped ids
+		expect(db.calls[1]).toMatchObject({ schema: undefined, table: 'namespaces' });
 		expect(db.calls[1].filters).toEqual([['in', 'id', ['n1', 'n2', 'gone']]]);
 		// join result: orphan (namespace 'gone') dropped
 		expect(rows).toEqual([
@@ -224,12 +224,12 @@ describe('refreshSeatsUsed', () => {
 });
 
 describe('resolveProjectNamespaceId', () => {
-	it('looks up a project-scope namespace by slug in the sensei schema', async () => {
+	it('looks up a project-scope namespace by slug via the dojo.namespaces view', async () => {
 		const db = makeDb();
 		db.queue({ data: { id: 'ns-1' }, error: null });
 		const id = await resolveProjectNamespaceId(db.client, 'my-proj');
 		expect(id).toBe('ns-1');
-		expect(db.calls[0]).toMatchObject({ schema: 'sensei', table: 'namespaces' });
+		expect(db.calls[0]).toMatchObject({ schema: undefined, table: 'namespaces' });
 		expect(db.calls[0].filters).toEqual([
 			['eq', 'scope_key', 'project'],
 			['eq', 'slug', 'my-proj']
