@@ -19,6 +19,14 @@ create index if not exists drift_items_status_idx
     on drift_items(status)
  where status != 'current';
 
+-- Covering indexes for the node FKs — a node delete cascades (doc_node_id) or
+-- nulls (code_node_id); without these it seq-scans drift_items to enforce the FK.
+create index if not exists drift_items_doc_node_id_idx
+    on drift_items(doc_node_id);
+
+create index if not exists drift_items_code_node_id_idx
+    on drift_items(code_node_id) where code_node_id is not null;
+
 comment on table drift_items is
 'Doc-to-code drift tracking. One row per reference from a doc node to a code node.
 - current: reference is valid, signatures match

@@ -13,6 +13,11 @@ create table if not exists knowledge_sources (
 , created_at     timestamptz not null default now()
 );
 
+-- Covering index for the namespace_id FK (nullable) — avoids a seq-scan when a
+-- referenced namespace is deleted (on delete set null).
+create index if not exists knowledge_sources_namespace_id_idx
+    on knowledge_sources(namespace_id) where namespace_id is not null;
+
 comment on table knowledge_sources is
 'Registered rules-federation endpoints (governance P4). Mirrors gateway-router
 registration: the row holds connection metadata; the credential is in the OS

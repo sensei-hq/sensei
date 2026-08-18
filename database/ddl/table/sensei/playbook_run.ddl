@@ -19,3 +19,7 @@ create table if not exists playbook_run (
 );
 create index if not exists playbook_run_session_idx on playbook_run(session_id);
 create index if not exists playbook_run_project_idx on playbook_run(project_id);
+-- Covering indexes for the playbook (→ playbooks.name) and rule_id FKs. rule_id is
+-- nullable (on delete set null), so a partial index on the referencing rows.
+create index if not exists playbook_run_playbook_idx on playbook_run(playbook);
+create index if not exists playbook_run_rule_idx on playbook_run(rule_id) where rule_id is not null;

@@ -13,6 +13,11 @@ create table if not exists benchmark_reports (
 , modified_at              timestamptz not null default now()
 );
 
+-- Covering index for the folder_id FK (nullable) — avoids a seq-scan when a
+-- referenced folder is deleted (on delete set null).
+create index if not exists benchmark_reports_folder_id_idx
+    on benchmark_reports(folder_id) where folder_id is not null;
+
 comment on table benchmark_reports is
 'Benchmark reports — results from strategy comparison runs.';
 
