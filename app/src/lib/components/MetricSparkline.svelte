@@ -17,6 +17,7 @@
         height = 26,
         fill = false,
         endDot = null,
+        kind = 'line',
     }: {
         /** Recent values, one per period; `null` marks an absent period (a gap). */
         series: (number | null)[];
@@ -27,6 +28,9 @@
         fill?: boolean;
         /** Draw a dot at the last point in this colour (health hero endpoint). */
         endDot?: TrendColor | null;
+        /** `bar` for discrete/sporadic COUNT metrics (work happens in bursts, so a line
+         *  implies a continuity that isn't there); `line` for rates/scores/durations. */
+        kind?: 'line' | 'bar';
     } = $props();
 
     // Legend colours: improving → success, worsening → accent, flat → ink-faint.
@@ -72,9 +76,15 @@
         svgHeight={fill ? height : undefined}
         style={endDot ? `--chart-highlight-color: ${DOT_FILL[endDot]}; --chart-highlight-radius: 3` : undefined}
     >
-        <Plot.Line x="i" y="v" color="currentColor" options={{ strokeWidth: 1.5 }} />
-        {#if endDot && lastIndex != null}
-            <Plot.Highlight x="i" y="v" highlight={lastIndex} />
+        {#if kind === 'bar'}
+            <!-- Discrete counts as gap-aware bars (a null period draws no bar), so
+                 sporadic work reads as bursts, not a misleading continuous line. -->
+            <Plot.Bar x="i" y="v" fill="currentColor" />
+        {:else}
+            <Plot.Line x="i" y="v" color="currentColor" options={{ strokeWidth: 1.5 }} />
+            {#if endDot && lastIndex != null}
+                <Plot.Highlight x="i" y="v" highlight={lastIndex} />
+            {/if}
         {/if}
     </ChartCanvas>
 {/if}

@@ -64,6 +64,21 @@ describe('DetailChart', () => {
         expect(root.querySelectorAll('[data-component="detail-chart"] rect[data-hit]').length).toBe(3);
     });
 
+    it('renders x-axis date ticks labelling the time span', () => {
+        const root = mount([
+            { date: '2025-01-01', value: 1 },
+            { date: '2025-01-02', value: 3 },
+            { date: '2025-01-03', value: 2 },
+        ]);
+        const ticks = [...root.querySelectorAll('[data-component="detail-chart"] text[data-xtick]')];
+        expect(ticks.length).toBeGreaterThanOrEqual(2);
+        // First + last ticks carry the endpoint dates (formatDayLabel: "Jan 1" … "Jan 3") —
+        // the readable time axis, so a window isn't mistaken for "no earlier history".
+        const labels = ticks.map((t) => t.textContent);
+        expect(labels[0]).toBe('Jan 1');
+        expect(labels[labels.length - 1]).toBe('Jan 3');
+    });
+
     it('highlights the selected datapoint and emits the slot index on click', () => {
         let picked: number | null = null;
         const root = mount(
