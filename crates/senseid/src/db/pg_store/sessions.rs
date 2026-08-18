@@ -108,13 +108,35 @@ impl PgStore {
         &self, client_session_id: &str, folder_id: &uuid::Uuid,
         project_id: Option<&uuid::Uuid>, family: &str, is_end: bool,
     ) -> Result<uuid::Uuid, String> {
+        // Derive the durable repo anchor from folder_id in the SAME write (spec 2026-08-18):
+        // repo_anchor_for walks folder_id's abs_path up to its owning repo, so the session
+        // attaches to a repo (repo_folder_id + repo_key) no matter which subfolder the cwd
+        // landed in — and survives a prune of that folder (folder_id is SET NULL). folder_id
+        // stays raw cwd provenance. This is how every caller (live hooks, repair, synthesis)
+        // routes through the one shared mapper without a signature change.
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
-            "INSERT INTO activity.sessions (client_session_id, folder_id, project_id, acp_id, completed_at)
-             VALUES ($1, $2, $3, $4, CASE WHEN $5 THEN now() ELSE NULL END)
+            "WITH anchor AS (
+                 SELECT a.repo_folder_id,
+                        a.project_id AS anchor_project,
+                        COALESCE(rf.remote_urls->0->>'url', a.repo_abs_path) AS repo_key
+                   FROM sensei.folders f
+                   JOIN LATERAL sensei.repo_anchor_for(f.abs_path) a ON true
+                   JOIN sensei.folders rf ON rf.id = a.repo_folder_id
+                  WHERE f.id = $2
+             )
+             INSERT INTO activity.sessions
+                 (client_session_id, folder_id, project_id, acp_id, completed_at, repo_folder_id, repo_key)
+             SELECT $1, $2,
+                    COALESCE((SELECT anchor_project FROM anchor), $3), $4,
+                    CASE WHEN $5 THEN now() ELSE NULL END,
+                    (SELECT repo_folder_id FROM anchor),
+                    (SELECT repo_key FROM anchor)
              ON CONFLICT (client_session_id) WHERE client_session_id IS NOT NULL
              DO UPDATE SET
-               completed_at = CASE WHEN $5 THEN now() ELSE activity.sessions.completed_at END,
-               project_id   = COALESCE(activity.sessions.project_id, EXCLUDED.project_id)
+                 completed_at   = CASE WHEN $5 THEN now() ELSE activity.sessions.completed_at END,
+                 project_id     = COALESCE(activity.sessions.project_id, EXCLUDED.project_id),
+                 repo_folder_id = COALESCE(activity.sessions.repo_folder_id, EXCLUDED.repo_folder_id),
+                 repo_key       = COALESCE(activity.sessions.repo_key, EXCLUDED.repo_key)
              RETURNING id"
         ).bind(client_session_id).bind(folder_id).bind(project_id).bind(family).bind(is_end)
          .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
@@ -134,7 +156,9 @@ impl PgStore {
     }
 
     pub async fn get_session(&self, id: &uuid::Uuid) -> Result<Option<serde_json::Value>, String> {
-        let row: Option<(uuid::Uuid, uuid::Uuid, String, Option<String>, Option<String>, Option<bool>, i32, i32, chrono::DateTime<chrono::Utc>, Option<chrono::DateTime<chrono::Utc>>)> =
+        // folder_id is nullable since P1 (a pruned raw-cwd folder SET-NULLs it; the session
+        // survives via repo_folder_id) — decode as Option so a pruned row doesn't error.
+        let row: Option<(uuid::Uuid, Option<uuid::Uuid>, String, Option<String>, Option<String>, Option<bool>, i32, i32, chrono::DateTime<chrono::Utc>, Option<chrono::DateTime<chrono::Utc>>)> =
             sqlx_core::query_as::query_as(
                 "SELECT id, folder_id, task, acp_id, outcome::text, ftr, turns, corrections, started_at, completed_at FROM activity.sessions WHERE id = $1"
             ).bind(id).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
@@ -658,9 +682,12 @@ impl PgStore {
     /// assistant_events newer than the last analysis. Lets the scheduler skip
     /// unchanged sessions so enrichment cost scales with NEW activity, not total
     /// history (#67 incremental).
-    pub async fn get_project_sessions_needing_enrichment(&self, project_id: &uuid::Uuid) -> Result<Vec<(uuid::Uuid, String, uuid::Uuid)>, String> {
-        let rows: Vec<(uuid::Uuid, String, uuid::Uuid)> = sqlx_core::query_as::query_as(
-            "SELECT s.id, s.client_session_id, s.folder_id FROM activity.sessions s
+    pub async fn get_project_sessions_needing_enrichment(&self, project_id: &uuid::Uuid) -> Result<Vec<(uuid::Uuid, String, Option<uuid::Uuid>)>, String> {
+        // coalesce to the repo anchor so a session whose raw folder was pruned (folder_id
+        // SET NULL) still reports a folder to scope pattern derivation to; Option-decoded
+        // in case both are null (a fully unattached session).
+        let rows: Vec<(uuid::Uuid, String, Option<uuid::Uuid>)> = sqlx_core::query_as::query_as(
+            "SELECT s.id, s.client_session_id, coalesce(s.folder_id, s.repo_folder_id) FROM activity.sessions s
              WHERE s.project_id = $1 AND s.client_session_id IS NOT NULL
                AND (s.analyzed_at IS NULL
                     OR EXISTS (SELECT 1 FROM activity.assistant_events e
