@@ -372,8 +372,12 @@ impl PgStore {
     /// Whether a folder carries history worth keeping — i.e. any `activity.sessions`
     /// row is attached to it. Drives archive-not-delete on a vanished root.
     pub async fn folder_has_sessions(&self, folder_id: &uuid::Uuid) -> Result<bool, String> {
+        // Check BOTH the durable repo anchor and the raw cwd folder (spec 2026-08-18):
+        // post-P1 a repo's sessions attach via repo_folder_id, so keying on folder_id
+        // alone would report a history-bearing repo as empty → the reconcile would
+        // hard-delete it instead of archiving it (I3). This gates archive-not-delete.
         let row: Option<(i32,)> = sqlx_core::query_as::query_as(
-            "SELECT 1 FROM activity.sessions WHERE folder_id = $1 LIMIT 1",
+            "SELECT 1 FROM activity.sessions WHERE repo_folder_id = $1 OR folder_id = $1 LIMIT 1",
         )
         .bind(folder_id)
         .fetch_optional(&self.pool)
@@ -396,8 +400,14 @@ impl PgStore {
         new_folder_id: &uuid::Uuid,
     ) -> Result<(), String> {
         self.add_folder_path_alias(old_abs_path, new_folder_id, "rename").await?;
+        // Repoint BOTH the durable anchor and the raw folder to the moved repo BEFORE the
+        // old row is deleted — otherwise delete_folder_tree would SET NULL repo_folder_id
+        // and orphan the session from its repo (spec 2026-08-18, move/rename edge E3).
         sqlx_core::query::query(
-            "UPDATE activity.sessions SET folder_id = $2 WHERE folder_id = $1",
+            "UPDATE activity.sessions
+                SET folder_id      = CASE WHEN folder_id      = $1 THEN $2 ELSE folder_id END,
+                    repo_folder_id = CASE WHEN repo_folder_id = $1 THEN $2 ELSE repo_folder_id END
+              WHERE folder_id = $1 OR repo_folder_id = $1",
         )
         .bind(old_folder_id)
         .bind(new_folder_id)

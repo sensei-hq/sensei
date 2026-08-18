@@ -3339,6 +3339,13 @@
         assert!(!s.folder_has_sessions(&fid).await.unwrap(), "no sessions yet");
         s.record_session_event(sess, &fid, None, "claude", true).await.unwrap();
         assert!(s.folder_has_sessions(&fid).await.unwrap(), "session attached → has history");
+        // The archive gate keys on the durable anchor too (P2): null the raw folder (as a
+        // prune would) and the repo still reports history via repo_folder_id — so a
+        // history-bearing repo is archived, never hard-deleted.
+        sqlx_core::query::query("UPDATE activity.sessions SET folder_id = NULL WHERE client_session_id = $1")
+            .bind(sess).execute(&s.pool).await.unwrap();
+        assert!(s.folder_has_sessions(&fid).await.unwrap(),
+            "history still detected via repo_folder_id after the raw folder is pruned");
     }
 
     #[tokio::test]
@@ -3353,6 +3360,11 @@
         s.remap_folder(&old, "/_test/remap-old", &new).await.unwrap();
 
         assert_eq!(session_row_folder(&s, sess).await, Some(new), "history moved onto the new folder");
+        let (repo_anchor,): (Option<uuid::Uuid>,) = sqlx_core::query_as::query_as(
+            "SELECT repo_folder_id FROM activity.sessions WHERE client_session_id = $1",
+        ).bind(sess).fetch_one(&s.pool).await.unwrap();
+        assert_eq!(repo_anchor, Some(new),
+            "the repo anchor is repointed to the moved folder, not nulled by the old-row delete (P2)");
         assert_eq!(s.find_folder_for_path("/_test/remap-old").await.unwrap().map(|(f, _)| f), Some(new),
             "the old path now aliases forward to the new folder");
         let old_still_there: Option<(uuid::Uuid,)> = sqlx_core::query_as::query_as("SELECT id FROM sensei.folders WHERE id = $1")
