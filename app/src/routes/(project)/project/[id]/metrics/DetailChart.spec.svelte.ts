@@ -51,6 +51,14 @@ describe('DetailChart', () => {
         ]);
         expect(q(root, '[data-component="detail-chart"] path[data-plot-element="line"]')).not.toBeNull();
         expect(q(root, '[data-component="detail-chart"] path[data-plot-element="area"]')).not.toBeNull();
+        // Token colours flow straight to the geom stroke/fill (not the #888 palette fallback)
+        // — proves the var(--…) pass-through end to end (color='accent' → area = accent-soft).
+        expect(
+            q(root, '[data-component="detail-chart"] path[data-plot-element="line"]')?.getAttribute('stroke'),
+        ).toBe('var(--ink)');
+        expect(
+            q(root, '[data-component="detail-chart"] path[data-plot-element="area"]')?.getAttribute('fill'),
+        ).toBe('var(--accent-soft)');
         // A dot per defined datapoint + a transparent click-target per slot.
         expect(root.querySelectorAll('[data-component="detail-chart"] circle[data-point-dot]').length).toBe(3);
         expect(root.querySelectorAll('[data-component="detail-chart"] rect[data-hit]').length).toBe(3);
@@ -67,9 +75,11 @@ describe('DetailChart', () => {
             [0, 10],
             { selectedIndex: 2, onselect: (i: number) => (picked = i) },
         );
-        // The selected point is marked (drives the accent highlight + vertical guide).
+        // The selected point is marked (accent dot + a vertical Plot.Rule guide at its slot).
         expect(q(root, 'circle[data-point-dot="2"]')?.getAttribute('data-selected')).toBe('true');
-        expect(q(root, '[data-guide]')).not.toBeNull();
+        const rules = [...root.querySelectorAll('[data-plot-element="rule"]')];
+        const hasVerticalGuide = rules.some((r) => r.getAttribute('x1') === r.getAttribute('x2'));
+        expect(hasVerticalGuide).toBe(true);
         // Clicking a datapoint's hit-target emits its slot index.
         (q(root, 'rect[data-hit="0"]') as HTMLElement).dispatchEvent(new MouseEvent('click', { bubbles: true }));
         expect(picked).toBe(0);
@@ -89,9 +99,21 @@ describe('DetailChart', () => {
         expect(root.querySelectorAll('[data-component="detail-chart"] rect[data-bar]').length).toBe(3);
         expect(q(root, 'circle[data-point-dot]')).toBeNull();
         expect(q(root, 'rect[data-bar="2"]')?.getAttribute('data-selected')).toBe('true');
-        // The moving-average trend line + the per-slot hit-targets are still there.
-        expect(q(root, '[data-component="detail-chart"] path[data-plot-element="line"]')).not.toBeNull();
+        // The moving-average trend path + the per-slot hit-targets are still there.
+        expect(q(root, '[data-component="detail-chart"] path[data-trend]')).not.toBeNull();
         expect(root.querySelectorAll('[data-component="detail-chart"] rect[data-hit]').length).toBe(3);
+    });
+
+    it('draws a horizontal mean reference line (Plot.Rule) over the series', () => {
+        const root = mount([
+            { date: '2025-01-01', value: 2 },
+            { date: '2025-01-02', value: 4 },
+            { date: '2025-01-03', value: 6 },
+        ]);
+        // A horizontal rule (spans x, constant y) sits at the window mean.
+        const rules = [...root.querySelectorAll('[data-plot-element="rule"]')];
+        const horizontal = rules.filter((r) => r.getAttribute('y1') === r.getAttribute('y2'));
+        expect(horizontal.length).toBeGreaterThanOrEqual(1);
     });
 
     it('breaks the line at an absent period (#6), not a connected segment', () => {

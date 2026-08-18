@@ -27,6 +27,7 @@
         svgHeight = undefined,
         dataComponent = undefined,
         dataTone = undefined,
+        style = undefined,
         children,
     }: {
         /** Scale-defining rows — one object per slot, `y` may be null (filtered). */
@@ -46,6 +47,8 @@
         svgHeight?: number;
         dataComponent?: string;
         dataTone?: string;
+        /** Inline style on the <svg> — used to pass chart CSS vars (e.g. --chart-highlight-color). */
+        style?: string;
         children: Snippet;
     } = $props();
 
@@ -71,6 +74,7 @@
     viewBox="0 0 {width} {height}"
     {preserveAspectRatio}
     class={klass}
+    {style}
     aria-hidden="true"
 >
     <g transform="translate({margin.left}, {margin.top})">
