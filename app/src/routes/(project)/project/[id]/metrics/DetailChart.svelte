@@ -1,17 +1,27 @@
 <script lang="ts">
     import { Plot } from '@rokkit/chart';
     import ChartCanvas from '$lib/components/ChartCanvas.svelte';
-    import { movingAverage, type TrendColor, type ChartPoint, type ChartKind } from '$lib/metrics/metric-view.js';
+    import {
+        movingAverage,
+        seriesDistribution,
+        type TrendColor,
+        type ChartPoint,
+        type ChartKind,
+    } from '$lib/metrics/metric-view.js';
 
-    // The drill-down trend chart: an area + line over the selected metric's
-    // series, drawn with @rokkit/chart's composable Plot geoms, plus an
-    // INTERACTIVE overlay — every datapoint is clickable to drive the evidence
-    // panel below, and the selected point is highlighted with a vertical guide.
-    // The series is already densified by metric-view — absent periods carry
-    // `value: null`, so Plot.Line / Plot.Area break the path there (a real gap,
-    // never zero-filled) while a genuine 0 still plots. The overlay geometry uses
-    // the SAME linear scales rokkit builds (slot index → x, fixed y-domain → y),
-    // so the manual marks land exactly on the rokkit path. Pure template.
+    // The drill-down trend chart: an area + line over the selected metric's series, drawn
+    // with @rokkit/chart's composable Plot geoms, plus an INTERACTIVE overlay — every
+    // datapoint is clickable to drive the evidence panel below, and the selected point is
+    // marked with a vertical Plot.Rule guide. A dashed Plot.Rule at the window mean gives
+    // each datapoint a baseline to read against. The series is densified by metric-view —
+    // absent periods carry `value: null`, so Plot.Line / Plot.Area break the path there (a
+    // real gap via d3 `.defined`, never zero-filled) while a genuine 0 still plots. Geom
+    // colours are named tokens (var(--…)) passed straight through the color channel.
+    //
+    // Bars (discrete counts) and the small point dots stay hand-drawn: they need the linear
+    // slot scale + per-datum selected state that the overlay is aligned to, so they're
+    // raw SVG in the SAME inner coord space rokkit builds (slot index → x, fixed y-domain
+    // → y). The manual marks land exactly on the rokkit geoms. Pure template.
     let {
         series,
         yDomain,
@@ -36,7 +46,8 @@
         onselect?: ((index: number) => void) | undefined;
     } = $props();
 
-    // Named-token fills (never raw hex): area by trend tone, dots likewise.
+    // Named-token fills (never raw hex): area by trend tone, dots likewise. Passed as the
+    // geom color/fill channel — @rokkit treats a var() literal as one fixed colour.
     const AREA_FILL: Record<TrendColor, string> = {
         success: 'var(--success-soft)',
         accent: 'var(--accent-soft)',
@@ -48,13 +59,19 @@
         'ink-faint': 'var(--ink-faint)',
     };
 
-    // x is the slot index (one per densified period) → a continuous scale whose
-    // spacing is proportional to time, so a long lull reads as a wide gap.
+    // x is the slot index (one per densified period) → a continuous scale whose spacing is
+    // proportional to time, so a long lull reads as a wide gap. @rokkit reads these rows
+    // from the canvas' PlotState; a null v breaks the line/area at that slot.
     const rows = $derived(series.map((p, i) => ({ t: i, v: p.value })));
-    const line = $derived(series.map((p, i) => (p.value == null ? null : { t: i, v: p.value })));
     const definedCount = $derived(series.filter((p) => p.value != null).length);
 
     const fmtY = (v: unknown): string => format(Number(v));
+
+    // The window mean — a dashed reference line so each datapoint reads against the average.
+    const meanVal = $derived.by(() => {
+        const vals = series.map((p) => p.value).filter((v): v is number => v != null);
+        return seriesDistribution(vals)?.mean ?? null;
+    });
 
     // Logical plot box; CSS scales it responsively (aspect-preserving, no distortion).
     const W = 720;
@@ -79,17 +96,11 @@
             .map((p, i): Dot | null => (p.value == null ? null : { i, cx: xPix(i), cy: yPix(p.value) }))
             .filter((d): d is Dot => d != null),
     );
-    const selDot = $derived(
-        selectedIndex != null && series[selectedIndex]?.value != null
-            ? { cx: xPix(selectedIndex), cy: yPix(series[selectedIndex]!.value as number) }
-            : null,
-    );
     // Half a slot's width, so a click anywhere nearest a point selects it.
     const slotW = $derived(n > 1 ? innerW / (n - 1) : innerW);
 
-    // Bar mode (discrete counts): manual bars in the inner coord space (adaptive
-    // width, capped) rising from the 0 baseline, plus a moving-average trend line
-    // drawn with Plot.Line (same scales, so it lands on the bars).
+    // Bar mode (discrete counts): manual bars in the inner coord space (adaptive width,
+    // capped) rising from the 0 baseline.
     const barW = $derived(Math.min(slotW * 0.62, 30));
     type Bar = { i: number; x: number; y: number; w: number; h: number };
     const bars = $derived(
@@ -103,11 +114,22 @@
                   .filter((b): b is Bar => b != null)
             : [],
     );
-    const trendLine = $derived(
-        kind === 'bar'
-            ? movingAverage(series).map((v, i) => (v == null ? null : { t: i, v }))
-            : [],
-    );
+    // The moving-average trend over the bars — a broken SVG path (a `null` restarts it with
+    // a new `M`, so the trend breaks across a real gap rather than diving to 0).
+    const trendPath = $derived.by(() => {
+        if (kind !== 'bar') return '';
+        let d = '';
+        let pen = false;
+        movingAverage(series).forEach((v, i) => {
+            if (v == null) {
+                pen = false;
+                return;
+            }
+            d += `${pen ? 'L' : 'M'}${xPix(i)},${yPix(v)}`;
+            pen = true;
+        });
+        return d;
+    });
 </script>
 
 <div data-component="detail-chart" class="bg-paper border border-paper-edge rounded-md p-4 flex flex-col gap-2">
@@ -124,6 +146,12 @@
             class="w-full text-ink-faint"
         >
             <Plot.Grid />
+
+            <!-- Window-mean reference line — a datapoint reads above/below the average. -->
+            {#if meanVal != null}
+                <Plot.Rule y={meanVal} stroke="var(--ink-faint)" dash="2 4" strokeWidth={1} label="avg" />
+            {/if}
+
             {#if kind === 'bar'}
                 <!-- Discrete counts: bars from the 0 baseline + a moving-avg trend. -->
                 {#each bars as b (b.i)}
@@ -138,26 +166,26 @@
                         fill={b.i === selectedIndex ? 'var(--accent)' : AREA_FILL[color]}
                     />
                 {/each}
-                <Plot.Line data={trendLine as { t: number; v: number }[]} x="t" y="v" stroke="var(--ink)" strokeWidth={1.5} />
+                {#if trendPath}
+                    <path
+                        data-trend
+                        d={trendPath}
+                        fill="none"
+                        stroke="var(--ink)"
+                        stroke-width="1.5"
+                        stroke-linejoin="round"
+                        stroke-linecap="round"
+                    />
+                {/if}
             {:else}
-                <Plot.Area data={line as { t: number; v: number }[]} x="t" y="v" fill={AREA_FILL[color]} opacity={0.6} />
-                <Plot.Line data={line as { t: number; v: number }[]} x="t" y="v" stroke="var(--ink)" strokeWidth={1.5} />
+                <Plot.Area x="t" y="v" fill={AREA_FILL[color]} alpha={0.6} />
+                <Plot.Line x="t" y="v" color="var(--ink)" options={{ strokeWidth: 1.5 }} />
             {/if}
             <Plot.Axis type="y" ticks={4} format={fmtY} showLine={false} showTicks={false} />
 
             <!-- Interactive overlay (same inner coord space as the geoms). -->
-            {#if selDot}
-                <line
-                    data-guide
-                    x1={selDot.cx}
-                    y1={0}
-                    x2={selDot.cx}
-                    y2={innerH}
-                    stroke="var(--accent)"
-                    stroke-width="1"
-                    stroke-dasharray="3 3"
-                    opacity="0.6"
-                />
+            {#if selectedIndex != null && series[selectedIndex]?.value != null}
+                <Plot.Rule x={selectedIndex} stroke="var(--accent)" dash="3 3" strokeWidth={1} />
             {/if}
             {#if kind !== 'bar'}
                 {#each dots as d (d.i)}

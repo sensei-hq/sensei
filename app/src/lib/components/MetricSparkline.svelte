@@ -3,12 +3,13 @@
     import ChartCanvas from './ChartCanvas.svelte';
     import type { TrendTone, TrendColor } from '$lib/metrics/metric-view.js';
 
-    // A tiny line sparkline for a metric's recent series, drawn with
-    // @rokkit/chart's composable Plot.Line. Scale-free by design (min..max onto
-    // the box) so any metric family reads at a glance. A `null` in the series is
-    // an absent period and breaks the line (a real gap, never zero-filled); a
-    // genuine 0 still plots. Colour follows the trend tone via currentColor +
-    // a named token — no <style> colour blocks (app CLAUDE §1).
+    // A tiny line sparkline for a metric's recent series, drawn with @rokkit/chart's
+    // composable Plot.Line. Scale-free by design (min..max onto the box) so any metric
+    // family reads at a glance. A `null` in the series is an absent period and breaks
+    // the line (a real gap, never zero-filled — @rokkit's line builder skips a null y via
+    // d3 `.defined`); a genuine 0 still plots. Colour follows the trend tone via
+    // currentColor + a named token — no <style> colour blocks (app CLAUDE §1). The
+    // endpoint dot (health hero) is drawn with Plot.Highlight, tinted by a chart CSS var.
     let {
         series,
         tone = 'neutral',
@@ -40,15 +41,14 @@
         'ink-faint': 'var(--ink-faint)',
     };
 
+    // @rokkit/chart reads the series from the canvas' PlotState. A null v is a gap: the
+    // line builder breaks the path there (d3 `.defined`) instead of diving to 0.
     const rows = $derived(series.map((v, i) => ({ i, v })));
-    // A null element is a gap: @rokkit's Plot.Line breaks the path there via
-    // d3's `.defined`. Its published `data` type omits null, so cast at the prop.
-    const line = $derived(series.map((v, i) => (v == null ? null : { i, v })));
     const definedCount = $derived(series.filter((v) => v != null).length);
-    const lastPt = $derived.by(() => {
+    // The last defined slot — the endpoint the health-hero dot marks (never a trailing gap).
+    const lastIndex = $derived.by(() => {
         for (let i = series.length - 1; i >= 0; i--) {
-            const v = series[i];
-            if (v != null) return { i, v };
+            if (series[i] != null) return i;
         }
         return null;
     });
@@ -70,10 +70,11 @@
         preserveAspectRatio={fill ? 'none' : 'xMidYMid meet'}
         svgWidth={fill ? undefined : width}
         svgHeight={fill ? height : undefined}
+        style={endDot ? `--chart-highlight-color: ${DOT_FILL[endDot]}; --chart-highlight-radius: 3` : undefined}
     >
-        <Plot.Line data={line as { i: number; v: number }[]} x="i" y="v" stroke="currentColor" strokeWidth={1.5} />
-        {#if endDot && lastPt}
-            <Plot.Point data={[lastPt]} x="i" y="v" fill={DOT_FILL[endDot]} r={3} />
+        <Plot.Line x="i" y="v" color="currentColor" options={{ strokeWidth: 1.5 }} />
+        {#if endDot && lastIndex != null}
+            <Plot.Highlight x="i" y="v" highlight={lastIndex} />
         {/if}
     </ChartCanvas>
 {/if}

@@ -1,4 +1,4 @@
-import { mount, unmount } from 'svelte';
+import { mount, unmount, flushSync } from 'svelte';
 import type { Component } from 'svelte';
 
 export interface MountResult {
@@ -19,6 +19,11 @@ export function mountComponent<P extends Record<string, unknown>>(
   const container = document.createElement('div');
   document.body.appendChild(container);
   const instance = mount(comp, { target: container, props });
+  // Flush onMount + effects synchronously so components whose output depends on
+  // post-mount registration (e.g. @rokkit/chart geoms that register then derive marks
+  // from the shared PlotState) are fully rendered before assertions — mirrors the
+  // browser flushing effects before the first paint.
+  flushSync();
   return {
     container,
     destroy: () => { unmount(instance); container.remove(); },
