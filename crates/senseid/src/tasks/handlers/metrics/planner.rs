@@ -260,11 +260,39 @@ async fn covered_days(
     if metric_ids.is_empty() {
         return Ok(Vec::new());
     }
+    // Coverage is keyed on (metric, project, day) at the PROJECT-DAILY grain
+    // (folder_id IS NULL, grain='daily') — the same scope the compute writes, so
+    // per-session (grain='session') / module-scoped rows never mask a missing project row.
+    //
+    // A day is covered UNLESS some active metric is missing BECAUSE it was activated
+    // AFTER the group last computed that day. That distinguishes the two reasons a
+    // metric can be absent:
+    //  - ADDED-LATER (must backfill): module_quality joined the `quality` group on its
+    //    effective_from, after duplication_ratio had already backfilled the history →
+    //    those days' rows predate module_quality → it is uncovered → re-scan adds it.
+    //  - LEGITIMATELY-EMPTY (must NOT re-run): a session_outcomes day with no tool calls
+    //    writes no `rework` row, but rework was active when the day ran → its absence is
+    //    real, not a gap → covered (else 137/184 partial days would re-enqueue forever).
+    // `effective_from > max(modified_at)::date` is the "activated after this day last ran"
+    // test; once the day is re-scanned the new metric gets a row (or a legit skip) and the
+    // day settles.
     let rows: Vec<(NaiveDate,)> = sqlx_core::query_as::query_as(
-        "SELECT DISTINCT computed_on
-           FROM sensei.project_metrics
-          WHERE project_id = $1
-            AND metric_id = ANY($2)",
+        "WITH gr AS (
+             SELECT computed_on, metric_id, modified_at
+               FROM sensei.project_metrics
+              WHERE project_id = $1 AND metric_id = ANY($2)
+                AND folder_id IS NULL AND grain = 'daily'
+         ),
+         recency AS (SELECT computed_on, max(modified_at) AS last_run FROM gr GROUP BY computed_on)
+         SELECT r.computed_on
+           FROM recency r
+          WHERE NOT EXISTS (
+                  SELECT 1 FROM sensei.metrics m
+                   WHERE m.id = ANY($2)
+                     AND m.effective_from > r.last_run::date
+                     AND NOT EXISTS (
+                           SELECT 1 FROM gr
+                            WHERE gr.computed_on = r.computed_on AND gr.metric_id = m.id))",
     )
     .bind(project_id)
     .bind(metric_ids)
@@ -656,6 +684,56 @@ mod tests {
         days.sort();
         assert_eq!(days, vec![d2, today], "one compute per missing day + today");
         assert!(!days.contains(&d1), "the already-covered day is not re-enqueued");
+
+        cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
+    }
+
+    #[tokio::test]
+    async fn covered_days_backfills_a_metric_activated_after_a_day_was_last_computed() {
+        // THE module_quality-join case: a metric ADDED to a group after it already
+        // backfilled must backfill its history (uncovered), while a metric that is
+        // legitimately empty on a day (present sibling, active all along) must NOT
+        // re-run (covered). Both hinge on effective_from vs the day's last-run time.
+        let ctx = make_ctx().await;
+        let pg = ctx.pg();
+        let uniq = uuid::Uuid::new_v4();
+        let (pid, fid) = seed_metrics_project_folder(pg, &uniq).await;
+
+        let ids = pg.active_metric_ids("quality").await.unwrap();
+        let dup = *ids.get("duplication_ratio").expect("active duplication_ratio");
+        let mq = *ids.get("module_quality").expect("active module_quality");
+        let (mq_eff,): (NaiveDate,) = sqlx_core::query_as::query_as(
+            "SELECT effective_from FROM sensei.metrics WHERE id = $1",
+        ).bind(mq).fetch_one(pg.pool()).await.unwrap();
+
+        let day = mq_eff - chrono::Duration::days(30);
+        // A duplication_ratio row for `day`, whose last-run predates module_quality's join.
+        pg.upsert_project_metric(&dup, &pid, None, None, day, "daily", 0.1,
+            &serde_json::json!({}), "measured").await.unwrap();
+        let set_modified = |offset: i64| {
+            let (pid, dup, day) = (pid, dup, day);
+            async move {
+                sqlx_core::query::query(
+                    "UPDATE sensei.project_metrics SET modified_at = ($3::date + $5::int)::timestamptz \
+                      WHERE project_id=$1 AND metric_id=$2 AND computed_on=$4 AND folder_id IS NULL AND grain='daily'",
+                ).bind(pid).bind(dup).bind(mq_eff).bind(day).bind(offset)
+                 .execute(pg.pool()).await.unwrap();
+            }
+        };
+
+        // last-run BEFORE module_quality's effective_from → mq is missing because it did
+        // not exist yet → the day is UNCOVERED (backfills).
+        set_modified(-1).await;
+        let covered = covered_days(pg, &pid, &[dup, mq]).await.unwrap();
+        assert!(!covered.contains(&day),
+            "a metric activated after the day was last computed leaves it UNCOVERED → backfills");
+
+        // last-run AFTER module_quality's effective_from → mq was active when the group
+        // ran, so its absence is legitimate-empty → the day is COVERED (never re-run).
+        set_modified(1).await;
+        let covered2 = covered_days(pg, &pid, &[dup, mq]).await.unwrap();
+        assert!(covered2.contains(&day),
+            "a day last computed WITH the metric active is covered (its absence is real, not a gap)");
 
         cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
     }
