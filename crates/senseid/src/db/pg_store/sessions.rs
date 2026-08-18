@@ -811,10 +811,14 @@ impl PgStore {
         // deeper — and thus stronger — signal than a still-live parent (`…/strategos`)
         // that would otherwise shadow it and misattribute. find_folder_for_path is
         // alias-aware, so the longest matching path wins via its alias.
-        let orphans: Vec<(String, Vec<String>, String)> = sqlx_core::query_as::query_as(
+        // min/max event ts (ms) per orphan → the session's REAL historical start/end,
+        // so a repaired row carries its true timestamps instead of masquerading as today.
+        let orphans: Vec<(String, Vec<String>, String, i64, i64)> = sqlx_core::query_as::query_as(
             "SELECT e.session_id,
                     COALESCE(array_agg(DISTINCT e.cwd) FILTER (WHERE e.cwd IS NOT NULL), '{}') AS cwds,
-                    (array_agg(e.family::text))[1] AS family
+                    (array_agg(e.family::text))[1] AS family,
+                    min(e.ts) AS started_ms,
+                    max(e.ts) AS completed_ms
                FROM activity.assistant_events e
               WHERE e.session_id <> ''
                 AND NOT EXISTS (
@@ -825,7 +829,7 @@ impl PgStore {
         .await
         .map_err(|e| e.to_string())?;
         let mut repaired = 0u32;
-        for (session_id, mut cwds, family) in orphans {
+        for (session_id, mut cwds, family, started_ms, completed_ms) in orphans {
             cwds.sort_by_key(|c| std::cmp::Reverse(c.len())); // most-specific first
             let mut resolved = None;
             for cwd in &cwds {
@@ -842,6 +846,13 @@ impl PgStore {
                 .await
                 .is_ok()
             {
+                // record_session_event defaults started_at/completed_at to now(); backfill the
+                // REAL start/end from the surviving events, or a historical repaired session
+                // masquerades as "today" and pollutes the recency ordering + FTR/quality time
+                // windows (mirrors set_session_history in the #75 cold-start synthesis path).
+                if let Err(e) = self.set_session_history(&session_id, started_ms, completed_ms).await {
+                    tracing::warn!(error = %e, session = %session_id, "repair_orphaned_sessions: set_session_history failed");
+                }
                 repaired += 1;
             }
         }

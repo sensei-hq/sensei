@@ -3128,6 +3128,14 @@
         assert!(repaired >= 1, "at least this orphaned session is re-attached; got {repaired}");
         assert_eq!(session_row_folder(&s, sess).await, Some(fid),
             "the session row now exists and points at the current folder (resolved via the alias)");
+        // The repaired row must carry the event's REAL historical timestamp, not now() —
+        // else a long-dead session masquerades as "today" and pollutes recency + FTR windows.
+        let (started, backfilled): (chrono::DateTime<chrono::Utc>, bool) = sqlx_core::query_as::query_as(
+            "SELECT started_at, backfilled FROM activity.sessions WHERE client_session_id = $1",
+        ).bind(sess).fetch_one(&s.pool).await.unwrap();
+        assert!(backfilled, "a repaired historical session is marked backfilled");
+        assert!(started < chrono::Utc::now() - chrono::Duration::days(365),
+            "started_at is backfilled to the event's historical ts (1_700_000_000ms), not now(); got {started}");
     }
 
     #[tokio::test]
