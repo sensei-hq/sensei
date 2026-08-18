@@ -629,10 +629,10 @@ describe('historyNote', () => {
             expect(chartKindForType('score')).toBe('line');
         });
 
-        it('defaults the window per grain (7d / 4w / 3mo, else all)', () => {
-            expect(defaultWindowForGrain('daily')).toBe(7);
-            expect(defaultWindowForGrain('weekly')).toBe(4);
-            expect(defaultWindowForGrain('monthly')).toBe(3);
+        it('defaults the window per grain (14d / 8w / 6mo, else all)', () => {
+            expect(defaultWindowForGrain('daily')).toBe(14);
+            expect(defaultWindowForGrain('weekly')).toBe(8);
+            expect(defaultWindowForGrain('monthly')).toBe(6);
             expect(defaultWindowForGrain('quarterly')).toBeNull();
         });
 
