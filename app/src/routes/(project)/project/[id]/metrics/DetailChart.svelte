@@ -4,6 +4,7 @@
     import {
         movingAverage,
         seriesDistribution,
+        formatDayLabel,
         type TrendColor,
         type ChartPoint,
         type ChartKind,
@@ -76,7 +77,7 @@
     // Logical plot box; CSS scales it responsively (aspect-preserving, no distortion).
     const W = 720;
     const H = 200;
-    const MARGIN = { top: 12, right: 14, bottom: 14, left: 48 };
+    const MARGIN = { top: 12, right: 14, bottom: 30, left: 48 };
     const innerW = W - MARGIN.left - MARGIN.right;
     const innerH = H - MARGIN.top - MARGIN.bottom;
 
@@ -98,6 +99,23 @@
     );
     // Half a slot's width, so a click anywhere nearest a point selects it.
     const slotW = $derived(n > 1 ? innerW / (n - 1) : innerW);
+
+    // x-axis date ticks: up to 5 evenly-spaced slots, each labelled by its period date,
+    // so the time span (and where the movable window sits) is legible — the axis the geom
+    // migration never carried. Hand-drawn in the same inner coord space as the marks.
+    const xTicks = $derived.by((): { i: number; x: number; label: string }[] => {
+        if (n < 2) return [];
+        const count = Math.min(n, 5);
+        const seen = new Set<number>();
+        const out: { i: number; x: number; label: string }[] = [];
+        for (let k = 0; k < count; k++) {
+            const i = Math.round((k / (count - 1)) * (n - 1));
+            if (seen.has(i)) continue;
+            seen.add(i);
+            out.push({ i, x: xPix(i), label: formatDayLabel(series[i]?.date ?? '') });
+        }
+        return out;
+    });
 
     // Bar mode (discrete counts): manual bars in the inner coord space (adaptive width,
     // capped) rising from the 0 baseline.
@@ -214,6 +232,18 @@
                     style="cursor: pointer; outline: none"
                     onclick={() => onselect?.(i)}
                 />
+            {/each}
+
+            <!-- x-axis: date labels at evenly-spaced slots — the readable time axis. -->
+            {#each xTicks as tk (tk.i)}
+                <text
+                    data-xtick={tk.i}
+                    x={tk.x}
+                    y={innerH + 16}
+                    text-anchor={tk.i === 0 ? 'start' : tk.i === n - 1 ? 'end' : 'middle'}
+                    fill="var(--ink-faint)"
+                    style="font-size: 9px"
+                >{tk.label}</text>
             {/each}
         </ChartCanvas>
     {:else}

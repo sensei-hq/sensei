@@ -568,16 +568,17 @@ export function chartKindForType(type: MetricType): ChartKind {
 }
 
 /** The default number of most-recent periods a detail chart shows per grain —
- *  daily 7 days, weekly 4 weeks, monthly 3 months. `null` = show everything
- *  (quarterly / anything else). The user can move the start off this default. */
+ *  daily 14 days, weekly 8 weeks, monthly 6 months: enough span to read a trend
+ *  (with the x-axis dates now legible), not just the last few points. `null` =
+ *  show everything. The user can move the start off this default. */
 export function defaultWindowForGrain(grain: string): number | null {
     switch (grain) {
         case 'daily':
-            return 7;
+            return 14;
         case 'weekly':
-            return 4;
+            return 8;
         case 'monthly':
-            return 3;
+            return 6;
         default:
             return null;
     }

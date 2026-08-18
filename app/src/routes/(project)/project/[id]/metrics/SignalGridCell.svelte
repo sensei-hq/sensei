@@ -1,6 +1,6 @@
 <script lang="ts">
     import { MetricSparkline } from '$lib/components';
-    import { TREND_TEXT, TREND_RULE, type SignalVM } from '$lib/metrics/metric-view.js';
+    import { TREND_TEXT, TREND_RULE, chartKindForType, type SignalVM } from '$lib/metrics/metric-view.js';
 
     // One cell of the uniform "all signals" grid: a top rule coloured by trend
     // (mover → accent/success, flat → hairline), the metric name, its value +
@@ -24,7 +24,7 @@
         {/if}
     </div>
     {#if series.length > 1}
-        <MetricSparkline {series} tone={signal.trend?.tone ?? 'neutral'} fill height={28} />
+        <MetricSparkline {series} tone={signal.trend?.tone ?? 'neutral'} fill height={28} kind={chartKindForType(signal.type)} />
     {/if}
 </a>
 
