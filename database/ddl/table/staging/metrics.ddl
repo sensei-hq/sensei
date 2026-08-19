@@ -24,6 +24,8 @@ create table metrics (
 , how_to_read     text
 , formula         text
 , task_name       text
+, cadence         text        -- cast to sensei.metric_cadence on import
+, capture_source  text        -- cast to sensei.metric_capture on import
 , weight          numeric
 , target          numeric
 , effective_until date        -- null = active; a past/today date = retired

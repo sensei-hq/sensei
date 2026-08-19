@@ -5579,3 +5579,46 @@
         sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = ANY($1)")
             .bind(vec![p1, p2]).execute(s.pool()).await.unwrap();
     }
+
+    // ── P-A.2: canonical sensei.repositories schema invariants ───────────
+    /// The repo-grain foundation: repositories are keyed on a normalized remote
+    /// (unique repo_key), a remote-less repo is NULL (multiple coexist), and a
+    /// folder's repository_id is SET NULL when its repository is deleted (I10) so
+    /// the checkout survives while the metric grain is re-resolved. Locks the
+    /// schema P-A.3's compute + upsert depend on.
+    #[tokio::test]
+    async fn repositories_schema_invariants() {
+        let s = PgStore::connect(&test_db_url()).await.unwrap();
+        let tag = uuid::Uuid::new_v4();
+        let key = format!("host/{tag}/repo");
+
+        // NULL repo_key = local-only, no remote: MANY coexist (nulls distinct).
+        let (n1,): (uuid::Uuid,) = query_as("INSERT INTO sensei.repositories (repo_key, name) VALUES (NULL, 'local-a') RETURNING id")
+            .fetch_one(s.pool()).await.unwrap();
+        let (n2,): (uuid::Uuid,) = query_as("INSERT INTO sensei.repositories (repo_key, name) VALUES (NULL, 'local-b') RETURNING id")
+            .fetch_one(s.pool()).await.expect("two NULL repo_keys must coexist");
+
+        // A non-null repo_key is UNIQUE: the second insert of the same key fails.
+        let (r1,): (uuid::Uuid,) = query_as("INSERT INTO sensei.repositories (repo_key, name) VALUES ($1, 'canon') RETURNING id")
+            .bind(&key).fetch_one(s.pool()).await.unwrap();
+        let dup = sqlx_core::query::query("INSERT INTO sensei.repositories (repo_key, name) VALUES ($1, 'dup')")
+            .bind(&key).execute(s.pool()).await;
+        assert!(dup.is_err(), "duplicate repo_key must violate the unique constraint");
+
+        // folders.repository_id → ON DELETE SET NULL: deleting the repository
+        // leaves the checkout folder but clears its (now-stale) repository_id.
+        let root_id = s.add_watch_root(&format!("/tmp/repo-inv-{tag}"), "inv", &serde_json::json!([])).await.unwrap();
+        let fid = s.upsert_repo_kind(&root_id, "git", "co", &format!("/tmp/repo-inv-{tag}/co")).await.unwrap();
+        sqlx_core::query::query("UPDATE sensei.folders SET repository_id = $1 WHERE id = $2")
+            .bind(r1).bind(fid).execute(s.pool()).await.unwrap();
+        sqlx_core::query::query("DELETE FROM sensei.repositories WHERE id = $1")
+            .bind(r1).execute(s.pool()).await.unwrap();
+        let (after,): (Option<uuid::Uuid>,) = query_as("SELECT repository_id FROM sensei.folders WHERE id = $1")
+            .bind(fid).fetch_one(s.pool()).await.unwrap();
+        assert!(after.is_none(), "deleting a repository must SET NULL folders.repository_id, not delete the folder");
+
+        // cleanup (shared test DB)
+        sqlx_core::query::query("DELETE FROM sensei.folders_to_watch WHERE id = $1").bind(root_id).execute(s.pool()).await.ok();
+        sqlx_core::query::query("DELETE FROM sensei.repositories WHERE id = ANY($1)")
+            .bind(vec![n1, n2]).execute(s.pool()).await.ok();
+    }

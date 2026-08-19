@@ -22,8 +22,8 @@ language plpgsql as $$
 begin
   insert into sensei.metrics (
       key, name, description, family, type, unit, direction,
-      purpose, how_to_read, formula, task_name, weight, target,
-      effective_until, retire_reason, modified_at
+      purpose, how_to_read, formula, task_name, cadence, capture_source,
+      weight, target, effective_until, retire_reason, modified_at
   )
   select
       stg.key
@@ -37,6 +37,8 @@ begin
     , stg.how_to_read
     , stg.formula
     , stg.task_name
+    , coalesce(stg.cadence, 'day')::sensei.metric_cadence
+    , coalesce(stg.capture_source, 'snapshot')::sensei.metric_capture
     , coalesce(stg.weight, 1)
     , stg.target
     , stg.effective_until
@@ -56,6 +58,8 @@ begin
     , how_to_read     = excluded.how_to_read
     , formula         = excluded.formula
     , task_name       = excluded.task_name
+    , cadence         = excluded.cadence
+    , capture_source  = excluded.capture_source
     , weight          = excluded.weight
     , target          = excluded.target
     , effective_until = excluded.effective_until
