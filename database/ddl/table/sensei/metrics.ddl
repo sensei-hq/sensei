@@ -12,6 +12,8 @@ create table if not exists metrics (
 , how_to_read       text             not null
 , formula           text             not null
 , task_name         text             not null
+, cadence           metric_cadence   not null default 'day'
+, capture_source    metric_capture   not null default 'snapshot'
 , weight            numeric          not null default 1
 , target            numeric
 , effective_from    date             not null default current_date
@@ -57,6 +59,10 @@ comment on column metrics.formula
      is 'Human-readable computation.';
 comment on column metrics.task_name
      is 'Maps to the compiled TaskKind that computes this metric. Indexed (metrics_task_idx) for the scheduler''s distinct-active-task_name read.';
+comment on column metrics.cadence
+     is 'How the metric''s group advances against its watermark: commit (immutable, new commits only) vs day (calendar-day, reopens the trailing day). Groups are (repository, task_name, cadence) so a mixed-cadence task like churn splits (churn-rate/concentration=commit, rework_density=day).';
+comment on column metrics.capture_source
+     is 'Whether this metric AUTHORIZES the activity-pruner to reclaim a day''s raw sessions (invariant I20). session = session_outcomes/autonomy (authorizes); git = churn/quality; snapshot = knowledge/tool/health + rework_density (never authorize). Defaults to snapshot (fail-closed: a new metric never wrongly authorizes reclaim).';
 comment on column metrics.weight
      is 'Contribution to the composite health score.';
 comment on column metrics.target

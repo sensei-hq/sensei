@@ -15,6 +15,8 @@ create table if not exists folders (
 , icons                    jsonb         not null default '{}'
 , props                    jsonb         not null default '{}'
 , tags                     text[]        not null default '{}'
+, repository_id            uuid          references sensei.repositories(id) on delete set null
+, branch                   text
 , modified_at              timestamptz   not null default now()
 );
 
@@ -35,6 +37,11 @@ create index if not exists folders_project_id_idx
 
 create index if not exists folders_tags_idx
     on folders using gin(tags);
+
+-- Covering index for the repository_id FK (nullable): a repository delete cascades
+-- to SET NULL here, and the repo-grain compute joins folders → repository.
+create index if not exists folders_repository_id_idx
+    on folders(repository_id) where repository_id is not null;
 
 comment on table folders is
 'Content: discovered filesystem tree. Every entry was found by scanning a watched root.
@@ -76,5 +83,9 @@ comment on column folders.props
      is 'Extensible JSON metadata. For git/subtree: {role, lang, files, loc, stack:{languages,frameworks,runtimes}, libs, indexed_at, last_error, duplicate_of, label}.';
 comment on column folders.tags
      is 'Array of tag strings for quick filtering. Vocabulary controlled by sensei.tags table.';
+comment on column folders.repository_id
+     is 'FK to sensei.repositories — the global repository this checkout belongs to. Set ONLY on the repo-root/checkout folder (I16); subfolders resolve via nearest ancestor (repo_anchor_for). NULL until the scanner resolves the remote. ON DELETE SET NULL.';
+comment on column folders.branch
+     is 'The checked-out branch for this checkout folder (develop vs main = two folders, one repository). Metrics-only seam — does NOT make the code graph branch-aware.';
 comment on column folders.modified_at
      is 'Timestamp of the last modification to this row.';
