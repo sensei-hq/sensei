@@ -239,31 +239,49 @@ impl PgStore {
     /// conflict target is the column list — Postgres infers the arbiter index
     /// (honouring its `nulls not distinct`); `ON CONFLICT ON CONSTRAINT <name>`
     /// would not resolve against an index.
-    pub async fn upsert_project_metric(
+    #[allow(clippy::too_many_arguments)]
+    pub async fn upsert_project_metric_repo(
         &self,
-        metric_id:   &uuid::Uuid,
-        project_id:  &uuid::Uuid,
-        folder_id:   Option<&uuid::Uuid>,
-        session_id:  Option<&uuid::Uuid>,
-        computed_on: chrono::NaiveDate,
-        grain:       &str,
-        value:       f64,
-        props:       &serde_json::Value,
-        source:      &str,
+        metric_id:     &uuid::Uuid,
+        project_id:    &uuid::Uuid,
+        repository_id: Option<&uuid::Uuid>,
+        scope:         &str,
+        identity:      Option<&str>,
+        commit_sha:    Option<&str>,
+        folder_id:     Option<&uuid::Uuid>,
+        session_id:    Option<&uuid::Uuid>,
+        computed_on:   chrono::NaiveDate,
+        grain:         &str,
+        value:         f64,
+        props:         &serde_json::Value,
+        source:        &str,
     ) -> Result<uuid::Uuid, String> {
+        // project_id is stored for lookup but is OUT of the conflict target — the
+        // same repository's value is shared across the projects that include it, so
+        // on conflict we refresh the lookup columns (project_id/folder_id/session_id)
+        // to the latest writer alongside value/props/source.
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "INSERT INTO sensei.project_metrics
-                (metric_id, project_id, folder_id, session_id, computed_on, grain, value, props, source)
-             VALUES ($1, $2, $3, $4, $5, $6::sensei.metric_grain, $7::float8::numeric, $8, $9::sensei.metric_source)
-             ON CONFLICT (metric_id, project_id, folder_id, session_id, computed_on, grain) DO UPDATE
+                (metric_id, project_id, repository_id, scope, identity, commit_sha,
+                 folder_id, session_id, computed_on, grain, value, props, source)
+             VALUES ($1, $2, $3, $4::sensei.metric_scope, $5, $6, $7, $8, $9,
+                     $10::sensei.metric_grain, $11::float8::numeric, $12, $13::sensei.metric_source)
+             ON CONFLICT (metric_id, repository_id, scope, identity, commit_sha, computed_on, grain) DO UPDATE
                 SET value       = EXCLUDED.value,
                     props       = EXCLUDED.props,
                     source      = EXCLUDED.source,
+                    project_id  = EXCLUDED.project_id,
+                    folder_id   = EXCLUDED.folder_id,
+                    session_id  = EXCLUDED.session_id,
                     modified_at = now()
              RETURNING id",
         )
         .bind(metric_id)
         .bind(project_id)
+        .bind(repository_id)
+        .bind(scope)
+        .bind(identity)
+        .bind(commit_sha)
         .bind(folder_id)
         .bind(session_id)
         .bind(computed_on)
@@ -277,16 +295,43 @@ impl PgStore {
         Ok(row.0)
     }
 
+    /// Project-grain convenience wrapper — `repository_id = NULL`, `scope = 'user'`.
+    /// Under the repo-grain identity a null-repository row is unique per
+    /// `(metric, day, grain)`, so this is for callers keyed on a unique `metric_id`
+    /// (tests); production computers call [`Self::upsert_project_metric_repo`] with a
+    /// resolved `repository_id`.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn upsert_project_metric(
+        &self,
+        metric_id:   &uuid::Uuid,
+        project_id:  &uuid::Uuid,
+        folder_id:   Option<&uuid::Uuid>,
+        session_id:  Option<&uuid::Uuid>,
+        computed_on: chrono::NaiveDate,
+        grain:       &str,
+        value:       f64,
+        props:       &serde_json::Value,
+        source:      &str,
+    ) -> Result<uuid::Uuid, String> {
+        self.upsert_project_metric_repo(
+            metric_id, project_id, None, "user", None, None,
+            folder_id, session_id, computed_on, grain, value, props, source,
+        )
+        .await
+    }
+
     // ── Per-datapoint explainer enrichment (compute-time) ─────────────────
 
-    /// The project-scope DAILY rows one metric GROUP wrote for `day` — `(row_id,
+    /// The scope=`user` DAILY rows one metric GROUP wrote for `day` — `(row_id,
     /// metric_key, value)` — the datapoints the compute-time explainer enrichment
     /// (see [`crate::tasks::handlers::metrics::explainer`]) annotates. Scoped to the
-    /// group via the metric's `task_name`, to project scope via `folder_id IS NULL`
-    /// (the same scope [`Self::get_project_metric_series`]'s daily view reads), and
-    /// to daily grain — so per-module (`folder_id` set) and per-session rows are
-    /// excluded. Empty when the group wrote no project-scope daily row that day
-    /// (honest-empty). Propagates the read error; never masks it.
+    /// group via the metric's `task_name`, to the local-user value via `scope =
+    /// 'user'` (the same rows `sensei.project_metric_daily` pools to the project),
+    /// and to daily grain. Under the repo grain the `_v2` identity carries no
+    /// `folder_id`/`session_id`, so this now returns one row PER REPOSITORY the
+    /// group wrote for the day (each row_id gets its own explainer). Empty when the
+    /// group wrote no scope=`user` daily row that day (honest-empty). Propagates the
+    /// read error; never masks it.
     pub async fn get_group_daily_metrics_for_day(
         &self,
         project_id: &uuid::Uuid,
@@ -300,8 +345,7 @@ impl PgStore {
               WHERE pm.project_id = $1
                 AND m.task_name   = $2
                 AND pm.grain      = 'daily'
-                AND pm.folder_id  IS NULL
-                AND pm.session_id IS NULL
+                AND pm.scope      = 'user'
                 AND pm.computed_on = $3
               ORDER BY m.key",
         )
@@ -314,11 +358,13 @@ impl PgStore {
         Ok(rows)
     }
 
-    /// The immediately-prior day's project-scope daily value for one metric — the
+    /// The immediately-prior day's POOLED project value for one metric — the
     /// `prev_value` the explainer's `delta` is measured against. Reads the most
-    /// recent daily row (project scope, `folder_id IS NULL`) with `computed_on < day`
-    /// for that metric key. `None` when this is the metric's first day (honest-null,
-    /// never a fabricated 0). Propagates the read error; never masks it.
+    /// recent row of the `sensei.project_metric_daily` VIEW (the repo-grain rows
+    /// already pooled to the project) with `date < day` for that metric key, so the
+    /// delta compares like-for-like against today's pooled value rather than a
+    /// single repository's base row. `None` when this is the metric's first day
+    /// (honest-null, never a fabricated 0). Propagates the read error; never masks it.
     pub async fn get_prev_daily_metric_value(
         &self,
         project_id: &uuid::Uuid,
@@ -326,16 +372,12 @@ impl PgStore {
         day: chrono::NaiveDate,
     ) -> Result<Option<f64>, String> {
         let row: Option<(f64,)> = sqlx_core::query_as::query_as(
-            "SELECT pm.value::float8
-               FROM sensei.project_metrics pm
-               JOIN sensei.metrics         m ON m.id = pm.metric_id
-              WHERE pm.project_id = $1
-                AND m.key         = $2
-                AND pm.grain      = 'daily'
-                AND pm.folder_id  IS NULL
-                AND pm.session_id IS NULL
-                AND pm.computed_on < $3
-              ORDER BY pm.computed_on DESC
+            "SELECT d.value::float8
+               FROM sensei.project_metric_daily d
+              WHERE d.project_id = $1
+                AND d.metric     = $2
+                AND d.date       < $3
+              ORDER BY d.date DESC
               LIMIT 1",
         )
         .bind(project_id)
@@ -805,6 +847,108 @@ impl PgStore {
         let trend: Vec<f64> = daily.into_iter().map(|(_, v)| v.unwrap_or(0.0)).collect();
 
         Ok(Self::ftr_headline_json(ftr_14d, ftr_14d_prev, trend, sessions_7d))
+    }
+
+    // ── Metric watermarks (repo-grain compute cursor) ──────────────
+
+    /// The `sealed_through` cursor for one (repository, metric_group) row of
+    /// `sensei.metric_watermarks` — how far this group's calendar days are settled
+    /// for the repo. `None` when no watermark row exists yet (the group has never
+    /// been sealed for this repo → full-history fill), and equally `None` when the
+    /// row exists but `sealed_through` is still NULL (never a fabricated date).
+    /// Propagates the read error; never masks it.
+    pub async fn metric_watermark_sealed_through(
+        &self,
+        repository_id: &uuid::Uuid,
+        group: &str,
+    ) -> Result<Option<chrono::NaiveDate>, String> {
+        let row: Option<(Option<chrono::NaiveDate>,)> = sqlx_core::query_as::query_as(
+            "SELECT sealed_through
+               FROM sensei.metric_watermarks
+              WHERE repository_id = $1 AND metric_group = $2",
+        )
+        .bind(repository_id)
+        .bind(group)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        // No row → None; a row with NULL sealed_through → None (both = unset).
+        Ok(row.and_then(|(d,)| d))
+    }
+
+    /// The MIN `sealed_through` across `repository_ids` for one metric group — the
+    /// project-level cursor the day-keyed engine plans from (a project's group is
+    /// only settled through the least-sealed of its repos). Honest full-fill signal:
+    /// returns `None` if ANY requested repo is unset — no watermark row, or a row
+    /// whose `sealed_through` is still NULL — so the engine refills the full history
+    /// (spec test 1, min_date fill); otherwise `Some(min)`. Propagates the read
+    /// error; never masks it.
+    pub async fn min_sealed_through_for_repos(
+        &self,
+        repository_ids: &[uuid::Uuid],
+        group: &str,
+    ) -> Result<Option<chrono::NaiveDate>, String> {
+        // No repos → nothing sealed → honest None (full fill / no-op upstream).
+        if repository_ids.is_empty() {
+            return Ok(None);
+        }
+        // Count the DISTINCT repos that have a non-null sealed_through and the MIN of
+        // those dates in one read. A duplicate id in the input can't inflate the
+        // count (COUNT DISTINCT), so the comparison against the distinct requested
+        // set is exact.
+        let row: (i64, Option<chrono::NaiveDate>) = sqlx_core::query_as::query_as(
+            "SELECT count(DISTINCT repository_id) FILTER (WHERE sealed_through IS NOT NULL)::int8,
+                    min(sealed_through)
+               FROM sensei.metric_watermarks
+              WHERE repository_id = ANY($1) AND metric_group = $2",
+        )
+        .bind(repository_ids)
+        .bind(group)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        let (sealed_repos, min_sealed) = row;
+        let distinct_requested = {
+            let mut ids = repository_ids.to_vec();
+            ids.sort();
+            ids.dedup();
+            ids.len() as i64
+        };
+        // Any repo unset → min is undefined at the project level → full fill.
+        if sealed_repos < distinct_requested {
+            Ok(None)
+        } else {
+            Ok(min_sealed)
+        }
+    }
+
+    /// Advance one (repository, metric_group) watermark to `sealed_through` (upsert).
+    /// Called ONLY after a group's compute succeeds for the repo, so a failed group
+    /// holds its cursor and retries next run (fail-closed — spec test 6). Today is
+    /// never sealed: the caller passes `as_of - 1` (spec test 2). `last_sha` is left
+    /// untouched — reserved for a future per-commit optimization; the day-bucketed
+    /// churn + sampled quality groups seal by commit-DAY via `sealed_through`.
+    /// Propagates the write error; never masks it.
+    pub async fn advance_metric_watermark(
+        &self,
+        repository_id: &uuid::Uuid,
+        group: &str,
+        sealed_through: chrono::NaiveDate,
+    ) -> Result<(), String> {
+        sqlx_core::query::query(
+            "INSERT INTO sensei.metric_watermarks (repository_id, metric_group, sealed_through, updated_at)
+             VALUES ($1, $2, $3, now())
+             ON CONFLICT (repository_id, metric_group) DO UPDATE
+                SET sealed_through = EXCLUDED.sealed_through,
+                    updated_at     = now()",
+        )
+        .bind(repository_id)
+        .bind(group)
+        .bind(sealed_through)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(())
     }
 
 }

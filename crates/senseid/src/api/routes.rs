@@ -514,6 +514,14 @@ mod tests {
         let (app, state) = test_app().await;
         let uniq = uuid::Uuid::new_v4();
         let pid = state.pg.create_project(&format!("_test:pme:{uniq}"), None, None).await.unwrap();
+        // Repo-grain (_v2): `project_health` is a SHARED registry metric — a
+        // NULL-repository write is unique only per (metric,day,grain), so concurrent
+        // test projects collide on the fixed `w2` day. Pin its durable row to a
+        // per-test repository so the retirement-exclusion assertion can't be poisoned
+        // by another run's write.
+        let (rid,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO sensei.repositories (repo_key, name) VALUES ($1, $1) RETURNING id")
+            .bind(format!("test/{uniq}")).fetch_one(state.pg.pool()).await.unwrap();
 
         // Base metric A (ratio) across TWO ISO weeks → weekly trend has prior/delta.
         let key_a = format!("_test:pme:{uniq}:cov");
@@ -537,7 +545,8 @@ mod tests {
         let (health_mid,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "SELECT id FROM sensei.metrics WHERE key = 'project_health'")
             .fetch_one(state.pg.pool()).await.expect("project_health seeded in registry");
-        state.pg.upsert_project_metric(&health_mid, &pid, None, None, w2, "daily", 82.0,
+        state.pg.upsert_project_metric_repo(&health_mid, &pid, Some(&rid), "user", None, None,
+            None, None, w2, "daily", 82.0,
             &serde_json::json!({"components": 2}), "measured").await.unwrap();
 
         let (st, body) = req(app.clone(), "GET", &format!("/api/projects/{pid}/metrics"), None).await;
@@ -584,6 +593,10 @@ mod tests {
             .bind(vec![mid_a, mid_b]).execute(state.pg.pool()).await.unwrap();
         sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = ANY($1)")
             .bind(vec![pid, empty_pid]).execute(state.pg.pool()).await.unwrap();
+        // Repo-grain: drop the per-test repository (its uniq-derived repo_key must not
+        // leak — the health_mid row already cascaded with `pid`).
+        sqlx_core::query::query("DELETE FROM sensei.repositories WHERE id = $1")
+            .bind(rid).execute(state.pg.pool()).await.unwrap();
     }
 
     /// 8.2: the legacy FTR surfaces — the HTTP route `GET /api/metrics/{project}`
@@ -604,7 +617,13 @@ mod tests {
         let (pid_has, fid_has) =
             crate::tasks::test_support::seed_metrics_project_folder(&state.pg, &uniq_has).await;
         let name_has = format!("metrics-{uniq_has}");
-        state.pg.upsert_project_metric(&ftr_mid, &pid_has, None, None, today, "daily", 0.75,
+        // Repo-grain (_v2): `ftr` is a SHARED registry metric — a NULL-repository write
+        // is unique only per (metric,day,grain), so concurrent test projects writing
+        // `today` collide and steal each other's project_id. Pin it to the fixture's
+        // repository (scope=user) so this project's row is its own.
+        let rid_has = crate::tasks::test_support::repository_for_folder(&state.pg, &fid_has).await;
+        state.pg.upsert_project_metric_repo(&ftr_mid, &pid_has, Some(&rid_has), "user", None, None,
+            None, None, today, "daily", 0.75,
             &serde_json::json!({"numerator": 3, "denominator": 4}), "measured").await.unwrap();
 
         // Project WITHOUT any ftr data.
@@ -612,6 +631,7 @@ mod tests {
         let (pid_no, fid_no) =
             crate::tasks::test_support::seed_metrics_project_folder(&state.pg, &uniq_no).await;
         let name_no = format!("metrics-{uniq_no}");
+        let rid_no = crate::tasks::test_support::repository_for_folder(&state.pg, &fid_no).await;
 
         // ── HTTP surface: GET /api/metrics/{project} ──────────────────────
         let (st, body) = req(app.clone(), "GET", &format!("/api/metrics/{name_has}"), None).await;
@@ -641,6 +661,10 @@ mod tests {
             .bind(vec![fid_has, fid_no]).execute(state.pg.pool()).await.unwrap();
         sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = ANY($1)")
             .bind(vec![pid_has, pid_no]).execute(state.pg.pool()).await.unwrap();
+        // Repo-grain: drop the per-fixture repositories (folders.repository_id is
+        // ON DELETE SET NULL, and the ftr row already cascaded with its project).
+        sqlx_core::query::query("DELETE FROM sensei.repositories WHERE id = ANY($1)")
+            .bind(vec![rid_has, rid_no]).execute(state.pg.pool()).await.unwrap();
     }
 
     /// 7.3 `GET /api/projects/{id}/metrics/{key}?grain=weekly`: the weekly series
@@ -2055,7 +2079,7 @@ mod tests {
     /// on a single seeded project in `sensei_test`, exercised together in sequence:
     ///
     ///   scheduler enqueue contract → real `TaskQueue` → real `spawn_workers`
-    ///   executor dispatch (`ComputeMetrics`→compute, `ComputeHealth`→compute_health)
+    ///   executor dispatch (`ComputeGroupMetrics`→compute, `ComputeHealth`→compute_health)
     ///   → the `blocked_by` health barrier → all six base computers → the retired
     ///   health barrier no-ops → the three read endpoints → FTR parity.
     ///
@@ -2063,7 +2087,7 @@ mod tests {
     /// the metrics scheduler's `enqueue_metrics_pass` (that fn is private) using the
     /// public `Task`/`TaskKind`/`TaskQueue` API and the REAL active registry
     /// (`active_task_names()` minus the `health` barrier name), enqueue one
-    /// `ComputeMetrics` per active base group + one `blocked_by` `ComputeHealth`, then
+    /// `ComputeGroupMetrics` per active base group + one `blocked_by` `ComputeHealth`, then
     /// let real `spawn_workers` drain the graph through the actual executor dispatch.
     /// This proves the health barrier only releases after its base metrics land.
     ///
@@ -2150,9 +2174,9 @@ mod tests {
         // → churn_rate 2 (a.rs,b.rs) · churn_concentration 4/6 (top-1 a.rs=4 / total 6) · rework_density 1/4 = 0.25
 
         // ── quality (duplication_ratio / module_quality): GIT-worktree + qlty-sourced.
-        //    The seed repo has no committed `.qlty` config, so the scan misses →
-        //    honest-empty (no quality rows). The group still runs end-to-end below; its
-        //    real compute path is unit-tested with an injected scan in `quality.rs`. ──
+        //    Config-pinning (P-B) injects the fixed ruler into the scanned worktree, so
+        //    the seed repo's committed files ARE measured when the qlty CLI is present
+        //    (real rows) and honest-empty when it is absent — asserted (qlty-gated) below. ──
 
         // ── autonomy: client-session-linked assistant events + runs ──
         seed_metrics_client_session(pg, &fid, &pid, &csid_auto, ts).await;
@@ -2199,20 +2223,17 @@ mod tests {
         for g in ["session_outcomes", "churn", "quality", "autonomy", "knowledge", "tool"] {
             assert!(base_names.iter().any(|t| t == g), "base group `{g}` is active in the registry: {base_names:?}");
         }
-        let mut compute_ids = Vec::with_capacity(base_names.len());
-        for task_name in &base_names {
-            let id = ctx.queue.enqueue(Task::new(TaskKind::ComputeMetrics, &pid_str, task_name)).await;
-            compute_ids.push(id);
-        }
-        ctx.queue
-            .enqueue(Task::new(TaskKind::ComputeHealth, &pid_str, "").blocked_by(compute_ids))
-            .await;
-        let expected_tasks = base_names.len() + 1;
+        // Enqueue the per-project PARENT only: ComputeProjectMetrics freezes one
+        // frozen as_of, fans out one ComputeGroupMetrics per active base group, and
+        // enqueues the ComputeHealth barrier blocked on them — the whole engine graph.
+        ctx.queue.enqueue(Task::new(TaskKind::ComputeProjectMetrics, &pid_str, "")).await;
+        // parent (1) + one child per active base group + the health barrier (1).
+        let expected_tasks = base_names.len() + 2;
 
-        // The barrier is wired: health is BLOCKED until its base ComputeMetrics land.
+        // Only the parent is runnable up front; the group children + the health
+        // barrier are enqueued when the parent runs.
         let pre = ctx.queue.status().await;
-        assert_eq!(pre.pending, base_names.len(), "one ComputeMetrics per active base group pending");
-        assert_eq!(pre.blocked, 1, "the ComputeHealth barrier is blocked on its ComputeMetrics deps");
+        assert_eq!(pre.pending, 1, "just the ComputeProjectMetrics parent is pending up front");
 
         spawn_workers(ctx.clone(), 2);
 
@@ -2230,7 +2251,7 @@ mod tests {
         let fs = ctx.queue.status().await;
         assert!(
             drained,
-            "metrics graph must drain through the real executor (barrier released after its ComputeMetrics); \
+            "metrics graph must drain through the real executor (barrier released after its ComputeGroupMetrics); \
              pending={} blocked={} running={} completed={}",
             fs.pending, fs.blocked, fs.running, fs.completed,
         );
@@ -2257,8 +2278,8 @@ mod tests {
         assert!(close(get("churn_concentration"), 4.0 / 6.0), "churn_concentration = top-file line-churn 4 / total 6 (got {})", get("churn_concentration"));
         assert!(close(get("rework_density"), 0.25), "rework_density = 1/4 = 0.25 (got {})", get("rework_density"));
         // duplication_ratio / module_quality (quality group) are GIT-worktree + qlty-
-        // sourced and honest-empty here (no committed `.qlty` config) — asserted absent
-        // below, alongside the row count.
+        // sourced; config-pinning measures them when the qlty CLI is present — asserted
+        // (qlty-gated) below, alongside the row count.
         assert!(close(get("interruption_rate"), 0.4), "interruption_rate = 4/10 = 0.4 (got {})", get("interruption_rate"));
         assert!(close(get("run_completion"), 0.8), "run_completion = 4/5 = 0.8 (got {})", get("run_completion"));
         assert!(close(get("memory_promotion"), 0.5), "memory_promotion = 2/4 = 0.5 (got {})", get("memory_promotion"));
@@ -2271,18 +2292,30 @@ mod tests {
         // pressure trouble signal → 0/4 = 0.0 (an honest zero — a real row, not fabricated).
         assert!(close(get("context_pressure_rate"), 0.0), "context_pressure_rate = 0/4 = 0.0 (no pressure signals seeded) (got {})", get("context_pressure_rate"));
 
-        // exactly 12 base metric rows; no composite. The five session_outcomes metrics
+        // 12 base metric rows; no composite. The five session_outcomes metrics
         // (ftr, rework_ratio, throughput, time_to_useful_result, context_pressure_rate),
         // churn's three (churn_rate, churn_concentration, rework_density), autonomy's two
         // (interruption_rate, run_completion; false_crash_rate is declared-but-uncomputed),
-        // memory_promotion, and unused_tools. The quality group (duplication_ratio/
-        // module_quality) is honest-empty (no committed `.qlty` config → scan miss);
-        // project_health is RETIRED, so the health barrier wrote no composite row.
-        assert_eq!(rows.len(), 12, "12 latest-per-metric project-scope rows (base only; quality honest-empty; project_health retired)");
-        // Honest-empty spot-check: the qlty-sourced quality metrics wrote NO row (the
-        // seed repo has no `.qlty` config), never a fabricated score.
-        assert!(!val.contains_key("duplication_ratio"), "duplication_ratio honest-empty (qlty scan missed — no fabricated value)");
-        assert!(!val.contains_key("module_quality"), "module_quality honest-empty (qlty scan missed — no fabricated value)");
+        // memory_promotion, and unused_tools. project_health is RETIRED, so the health
+        // barrier wrote no composite row.
+        //
+        // The quality group (duplication_ratio/module_quality) is now CONFIG-PINNED
+        // (P-B): the pinned ruler is injected into the scanned worktree, so on a host
+        // WITH the qlty CLI it measures the seed repo's committed files (2 more rows);
+        // WITHOUT qlty it is honest-empty. Gate on qlty so the E2E passes both locally
+        // and on a bare CI — never a fabricated score either way.
+        let base_rows = 12;
+        let qlty_present = std::process::Command::new("qlty").arg("--version").output()
+            .map(|o| o.status.success()).unwrap_or(false);
+        if qlty_present {
+            assert_eq!(rows.len(), base_rows + 2, "base metrics + config-pinned duplication_ratio + module_quality");
+            assert!(val.contains_key("duplication_ratio"), "config-pinning → duplication_ratio measured (qlty present)");
+            assert!(val.contains_key("module_quality"), "config-pinning → module_quality measured (qlty present)");
+        } else {
+            assert_eq!(rows.len(), base_rows, "base metrics only (quality honest-empty without the qlty CLI)");
+            assert!(!val.contains_key("duplication_ratio"), "duplication_ratio honest-empty (no qlty CLI — never fabricated)");
+            assert!(!val.contains_key("module_quality"), "module_quality honest-empty (no qlty CLI — never fabricated)");
+        }
 
         // ── RETIRED HEALTH: the barrier ran (drained above) but wrote NO composite ──
         // project_health carries a past effective_until in the registry, so it is
@@ -2348,7 +2381,8 @@ mod tests {
         let (st, body) = req(app.clone(), "GET", &format!("/api/projects/{pid}/metrics"), None).await;
         assert_eq!(st, StatusCode::OK, "{body}");
         let ms = body["metrics"].as_array().expect("project metrics array");
-        assert_eq!(ms.len(), 12, "endpoint returns the 12 latest-per-metric rows (quality honest-empty; no retired composite)");
+        assert_eq!(ms.len(), if qlty_present { base_rows + 2 } else { base_rows },
+            "endpoint returns the latest-per-metric rows (base + config-pinned quality when qlty present; no retired composite)");
         // … nor the values endpoint: the retired project_health has no row to serve.
         assert!(!ms.iter().any(|m| m["metric"].as_str() == Some("project_health")),
             "values endpoint does NOT carry the retired project_health");

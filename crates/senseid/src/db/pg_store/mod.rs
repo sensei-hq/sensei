@@ -421,9 +421,11 @@ mod metrics;
 mod patterns;
 mod playbook;
 mod projects;
+mod repo_key;
 mod runs;
 mod sessions;
 mod transcript;
+pub(crate) use repo_key::normalize_repo_key;
 
 #[cfg(test)]
 mod tests;
