@@ -147,6 +147,18 @@ without redundant compute.
   Client-direct RLS (`owns_membership`/`is_repo_member`) is defense-in-depth for the phone/
   console read path. Sync is OPT-IN; local-only / unenrolled repos never sync; pulled rows are
   tagged with their source tenant so multi-dōjō data never cross-renders.
+- **D17 — Git-cadence metrics floor at the first AI transcript (pre-AI history is opt-in).**
+  `churn`/`quality` measure the *user + AI* interaction, so by DEFAULT a repository's
+  git-cadence metrics start at its **first captured AI-transcript day** (`repo_ai_start` =
+  `least(min(sessions.started_at), min(assistant_events.ts))` anchored to the repository) — NOT
+  the repo's whole (years-of, all-authors) git history. A repository with **no** captured AI
+  activity computes **nothing** for these metrics (honest-empty; there is nothing to measure).
+  A single **global** opt-in config `metrics.baseline_history` widens the floor for
+  before/after comparison: `off` (default) = first-AI-day; `full` = the entire git history;
+  `N` (a positive integer) = **N commits before** the first AI commit. The floor is applied per
+  repository to BOTH `scope='repo'` and `scope='user'` derivations (D7). Existing pre-AI rows
+  already stored are left in place — the rule applies going forward. Session-cadence metrics are
+  unaffected (they only exist where sessions exist).
 
 ---
 

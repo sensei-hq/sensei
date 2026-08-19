@@ -130,7 +130,41 @@ pub(crate) async fn seed_git_project_folder(
     git_init_repo(dir.path());
     let root = dir.path().to_string_lossy().to_string();
     let (pid, fid) = seed_project_folder_at(pg, uniq, &root).await;
+    // Anchor an early AI-transcript start (2000-01-01) on the repository. The
+    // git-cadence metrics (churn/quality) floor at the repository's first AI
+    // transcript day by DEFAULT (spec D17, `metrics.baseline_history = off`), so a
+    // git fixture with NO AI activity would compute nothing. This synthetic
+    // early session represents "a repo the user has worked on with AI since
+    // forever" — placing the floor before every fixture commit-day so the
+    // churn-math tests stay floor-inclusive. A floor-behaviour test that needs a
+    // LATER `repo_ai_start` deletes this row (`DELETE … WHERE repo_folder_id = fid`)
+    // and seeds its own. Orphans harmlessly at cleanup (repo_folder_id → NULL).
+    seed_repo_ai_start(pg, &fid, &pid, "2000-01-01T00:00:00Z").await;
     (pid, fid, dir)
+}
+
+/// Seed ONE `activity.sessions` row anchored to the repository (`repo_folder_id =
+/// fid`) at `started_at_rfc3339` — the earliest captured AI activity, the day
+/// [`PgStore::repo_ai_start`] resolves and the git-cadence metrics floor at (spec
+/// D17). Carries no turns/outcome; it exists purely as the AI-start anchor.
+pub(crate) async fn seed_repo_ai_start(
+    pg: &PgStore,
+    fid: &uuid::Uuid,
+    pid: &uuid::Uuid,
+    started_at_rfc3339: &str,
+) -> uuid::Uuid {
+    let started_at: chrono::DateTime<chrono::Utc> = started_at_rfc3339.parse().unwrap();
+    let (id,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
+        "INSERT INTO activity.sessions (folder_id, repo_folder_id, project_id, started_at) \
+         VALUES ($1, $1, $2, $3) RETURNING id",
+    )
+    .bind(fid)
+    .bind(pid)
+    .bind(started_at)
+    .fetch_one(pg.pool())
+    .await
+    .unwrap();
+    id
 }
 
 /// Read a folder's resolved `repository_id` — the repo-grain key the fixture seeded
