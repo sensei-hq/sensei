@@ -555,6 +555,31 @@ impl PgStore {
         Ok(rows)
     }
 
+    /// The repository's FIRST AI-transcript day — the earliest captured activity
+    /// anchored to it: `least(min(sessions.started_at), min(assistant_events.ts))`,
+    /// both resolved to the repository via a session's `repo_folder_id →
+    /// folders.repository_id`. This is the floor the git-cadence metrics
+    /// (`churn`/`quality`) start at by DEFAULT (spec D17: measure the user+AI
+    /// interaction, not the repo's whole pre-AI git history). `None` when the
+    /// repository has NO captured AI activity — those metrics are then honest-empty
+    /// for it (nothing to measure), unless a pre-AI baseline is opted in. Propagates
+    /// the read error; never masks it.
+    pub async fn repo_ai_start(&self, repository_id: &uuid::Uuid) -> Result<Option<chrono::NaiveDate>, String> {
+        let row: (Option<chrono::NaiveDate>,) = sqlx_core::query_as::query_as(
+            "SELECT least( \
+               (SELECT min(date_trunc('day', s.started_at)::date) \
+                  FROM activity.sessions s \
+                  JOIN sensei.folders    f ON f.id = s.repo_folder_id \
+                 WHERE f.repository_id = $1), \
+               (SELECT min(date_trunc('day', to_timestamp(ae.ts / 1000.0))::date) \
+                  FROM activity.assistant_events ae \
+                  JOIN activity.sessions        s ON s.client_session_id = ae.session_id \
+                  JOIN sensei.folders           f ON f.id = s.repo_folder_id \
+                 WHERE f.repository_id = $1))"
+        ).bind(repository_id).fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row.0)
+    }
+
     /// List folders in a non-terminal (recoverable) index state, for startup
     /// resume: `discovered` (scan ran, ProcessGitFolder hadn't started),
     /// `queued` (enqueued, not started), `indexing` (a scan was in-flight when

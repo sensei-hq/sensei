@@ -216,6 +216,56 @@ pub(crate) async fn window_days(pg: &PgStore) -> u32 {
     parse_window_days(raw)
 }
 
+/// `sensei.config` key for the pre-AI baseline policy of the git-cadence groups.
+const BASELINE_HISTORY_KEY: &str = "metrics.baseline_history";
+
+/// How far BEFORE a repository's first AI transcript the git-cadence groups
+/// (`churn`/`quality`) compute. These metrics measure the user+AI interaction, so by
+/// DEFAULT they start at the first-transcript day — NOT the repo's whole git history
+/// (which spans years of pre-AI, all-authors commits). Pre-AI history is opt-in for a
+/// before/after baseline. Configured via `metrics.baseline_history`:
+/// - `off` / absent → [`Self::Off`]: floor at the first-transcript day (default).
+/// - `full`         → [`Self::Full`]: the repository's entire git history.
+/// - `<N>`          → [`Self::Commits`]: the N commits before the first AI commit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BaselineHistory {
+    /// Default: no pre-AI history — floor at the first-transcript day.
+    Off,
+    /// Opt-in: the repository's entire git history.
+    Full,
+    /// Opt-in: N committer-days' worth of commits before the first AI commit.
+    Commits(u32),
+}
+
+/// Parse [`BaselineHistory`] from config — `off`/empty/unparseable → `Off`, `full` →
+/// `Full`, a positive integer → `Commits(N)` (a `0` is `Off`). Pure — testable.
+fn parse_baseline_history(cfg: Option<String>) -> BaselineHistory {
+    match cfg.map(|v| v.trim().to_ascii_lowercase()) {
+        Some(v) if v == "full" => BaselineHistory::Full,
+        Some(v) if !v.is_empty() && v != "off" => v
+            .parse::<u32>()
+            .ok()
+            .filter(|n| *n > 0)
+            .map(BaselineHistory::Commits)
+            .unwrap_or(BaselineHistory::Off),
+        _ => BaselineHistory::Off,
+    }
+}
+
+/// The pre-AI baseline policy for the git-cadence groups — read once per compute.
+/// Config-read failure falls back to the safe default (`Off`) + logs, mirroring
+/// [`window_days`].
+pub(crate) async fn baseline_history(pg: &PgStore) -> BaselineHistory {
+    let raw = match pg.get_config(BASELINE_HISTORY_KEY).await {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::debug!(error = %e, "metrics_scheduler: baseline_history config read failed — using default (off)");
+            None
+        }
+    };
+    parse_baseline_history(raw)
+}
+
 /// Spawn the metrics scheduler for the daemon's lifetime.
 pub fn spawn(queue: Arc<TaskQueue>, pg: Arc<PgStore>) {
     tokio::spawn(run(queue, pg));
@@ -265,6 +315,20 @@ mod tests {
         assert_eq!(parse_window_days(Some("0".into())), 14);
         assert_eq!(parse_window_days(Some("30".into())), 30);
         assert_eq!(parse_window_days(Some("  7 ".into())), 7);
+    }
+
+    #[test]
+    fn parse_baseline_history_defaults_off_and_reads_full_or_n_commits() {
+        // Default (absent / off / empty / unparseable / 0) → Off: no pre-AI history.
+        assert_eq!(parse_baseline_history(None), BaselineHistory::Off);
+        assert_eq!(parse_baseline_history(Some("off".into())), BaselineHistory::Off);
+        assert_eq!(parse_baseline_history(Some("  ".into())), BaselineHistory::Off);
+        assert_eq!(parse_baseline_history(Some("nope".into())), BaselineHistory::Off);
+        assert_eq!(parse_baseline_history(Some("0".into())), BaselineHistory::Off);
+        // `full` → the whole git history; `<N>` → N commits before the first AI commit.
+        assert_eq!(parse_baseline_history(Some("FULL".into())), BaselineHistory::Full);
+        assert_eq!(parse_baseline_history(Some("50".into())), BaselineHistory::Commits(50));
+        assert_eq!(parse_baseline_history(Some(" 7 ".into())), BaselineHistory::Commits(7));
     }
 
     #[test]
