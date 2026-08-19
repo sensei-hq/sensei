@@ -22,7 +22,7 @@
 //!   per-repository git grain, so it is written ONCE per project against
 //!   [`PgStore::primary_repository_for_project`] (`scope = 'user'`, `folder_id =
 //!   NULL`). The former per-module (`folder_id`-set) rows are RETIRED — under the
-//!   repo-grain identity (`project_metrics_identity_v2`, which does NOT include
+//!   repo-grain identity (`project_metrics_identity`, which does NOT include
 //!   `folder_id`) they would collide. It keeps its DB source and its
 //!   historical-`as_of`-skip behavior.
 //!
@@ -289,7 +289,7 @@ async fn rework_count(pg: &PgStore, project_id: &uuid::Uuid) -> Result<i64, Stri
 /// Returns the number of `project_metrics` rows written (`0` = honest-empty: no git
 /// churn on the day-set, no rework/file data, no resolvable repository, or none of
 /// the group's metrics active). Idempotent — re-running backfills in place via the
-/// upsert identity (`project_metrics_identity_v2`).
+/// upsert identity (`project_metrics_identity`).
 pub(super) async fn compute(
     ctx: &TaskContext,
     project_raw: &str,
@@ -401,7 +401,7 @@ pub(super) async fn compute(
         // written ONCE (scope=user, identity=NULL: attributing a project-wide value
         // to a single author would be a fabricated attribution, I-C/I-E). No
         // repository → honest-empty (no row). The former per-module (folder_id-set)
-        // rows are retired (they collide under project_metrics_identity_v2).
+        // rows are retired (they collide under project_metrics_identity).
         if let Some(repository_id) = pg.primary_repository_for_project(&project_id).await? {
             let project_files = project_file_count(pg, &project_id).await?;
             // 0 project files → no denominator → NO row (a real denominator of 0

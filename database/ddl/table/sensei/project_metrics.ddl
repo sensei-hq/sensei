@@ -22,11 +22,7 @@ create table if not exists project_metrics (
 -- the identity, kept only as a lookup column). NULLS NOT DISTINCT so the null
 -- identity/commit_sha (day-grain, scope=repo) rows collide rather than duplicate —
 -- the upsert target the compute tasks conflict on (idempotent re-run backfills).
--- Named _v2 deliberately: a `create unique index if not exists` with the OLD name
--- would SILENTLY no-op against the existing differently-columned index (G4), so the
--- old `project_metrics_identity` is dropped MANUALLY (dbd can't drop indexes) after
--- the old-grain rows are deleted, then this one is created.
-create unique index if not exists project_metrics_identity_v2
+create unique index if not exists project_metrics_identity
     on project_metrics (metric_id, repository_id, scope, identity, commit_sha, computed_on, grain)
     nulls not distinct;
 
@@ -39,10 +35,7 @@ create index if not exists project_metrics_folder_idx
     on project_metrics (folder_id) where folder_id is not null;
 
 -- Covering index for the repository_id FK (nullable): a repository delete cascades
--- here, and repo-grain reads filter by repository. (The identity-index swap that
--- adds repository_id/scope/identity/commit_sha to the uniqueness key — replacing
--- project_id — is applied in the metrics-engine step, in lockstep with the Rust
--- upsert's ON CONFLICT and after the old-grain rows are deleted.)
+-- here, and repo-grain reads filter by repository.
 create index if not exists project_metrics_repository_idx
     on project_metrics (repository_id) where repository_id is not null;
 
