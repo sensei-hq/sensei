@@ -2174,9 +2174,9 @@ mod tests {
         // → churn_rate 2 (a.rs,b.rs) · churn_concentration 4/6 (top-1 a.rs=4 / total 6) · rework_density 1/4 = 0.25
 
         // ── quality (duplication_ratio / module_quality): GIT-worktree + qlty-sourced.
-        //    The seed repo has no committed `.qlty` config, so the scan misses →
-        //    honest-empty (no quality rows). The group still runs end-to-end below; its
-        //    real compute path is unit-tested with an injected scan in `quality.rs`. ──
+        //    Config-pinning (P-B) injects the fixed ruler into the scanned worktree, so
+        //    the seed repo's committed files ARE measured when the qlty CLI is present
+        //    (real rows) and honest-empty when it is absent — asserted (qlty-gated) below. ──
 
         // ── autonomy: client-session-linked assistant events + runs ──
         seed_metrics_client_session(pg, &fid, &pid, &csid_auto, ts).await;
@@ -2278,8 +2278,8 @@ mod tests {
         assert!(close(get("churn_concentration"), 4.0 / 6.0), "churn_concentration = top-file line-churn 4 / total 6 (got {})", get("churn_concentration"));
         assert!(close(get("rework_density"), 0.25), "rework_density = 1/4 = 0.25 (got {})", get("rework_density"));
         // duplication_ratio / module_quality (quality group) are GIT-worktree + qlty-
-        // sourced and honest-empty here (no committed `.qlty` config) — asserted absent
-        // below, alongside the row count.
+        // sourced; config-pinning measures them when the qlty CLI is present — asserted
+        // (qlty-gated) below, alongside the row count.
         assert!(close(get("interruption_rate"), 0.4), "interruption_rate = 4/10 = 0.4 (got {})", get("interruption_rate"));
         assert!(close(get("run_completion"), 0.8), "run_completion = 4/5 = 0.8 (got {})", get("run_completion"));
         assert!(close(get("memory_promotion"), 0.5), "memory_promotion = 2/4 = 0.5 (got {})", get("memory_promotion"));
@@ -2292,18 +2292,30 @@ mod tests {
         // pressure trouble signal → 0/4 = 0.0 (an honest zero — a real row, not fabricated).
         assert!(close(get("context_pressure_rate"), 0.0), "context_pressure_rate = 0/4 = 0.0 (no pressure signals seeded) (got {})", get("context_pressure_rate"));
 
-        // exactly 12 base metric rows; no composite. The five session_outcomes metrics
+        // 12 base metric rows; no composite. The five session_outcomes metrics
         // (ftr, rework_ratio, throughput, time_to_useful_result, context_pressure_rate),
         // churn's three (churn_rate, churn_concentration, rework_density), autonomy's two
         // (interruption_rate, run_completion; false_crash_rate is declared-but-uncomputed),
-        // memory_promotion, and unused_tools. The quality group (duplication_ratio/
-        // module_quality) is honest-empty (no committed `.qlty` config → scan miss);
-        // project_health is RETIRED, so the health barrier wrote no composite row.
-        assert_eq!(rows.len(), 12, "12 latest-per-metric project-scope rows (base only; quality honest-empty; project_health retired)");
-        // Honest-empty spot-check: the qlty-sourced quality metrics wrote NO row (the
-        // seed repo has no `.qlty` config), never a fabricated score.
-        assert!(!val.contains_key("duplication_ratio"), "duplication_ratio honest-empty (qlty scan missed — no fabricated value)");
-        assert!(!val.contains_key("module_quality"), "module_quality honest-empty (qlty scan missed — no fabricated value)");
+        // memory_promotion, and unused_tools. project_health is RETIRED, so the health
+        // barrier wrote no composite row.
+        //
+        // The quality group (duplication_ratio/module_quality) is now CONFIG-PINNED
+        // (P-B): the pinned ruler is injected into the scanned worktree, so on a host
+        // WITH the qlty CLI it measures the seed repo's committed files (2 more rows);
+        // WITHOUT qlty it is honest-empty. Gate on qlty so the E2E passes both locally
+        // and on a bare CI — never a fabricated score either way.
+        let base_rows = 12;
+        let qlty_present = std::process::Command::new("qlty").arg("--version").output()
+            .map(|o| o.status.success()).unwrap_or(false);
+        if qlty_present {
+            assert_eq!(rows.len(), base_rows + 2, "base metrics + config-pinned duplication_ratio + module_quality");
+            assert!(val.contains_key("duplication_ratio"), "config-pinning → duplication_ratio measured (qlty present)");
+            assert!(val.contains_key("module_quality"), "config-pinning → module_quality measured (qlty present)");
+        } else {
+            assert_eq!(rows.len(), base_rows, "base metrics only (quality honest-empty without the qlty CLI)");
+            assert!(!val.contains_key("duplication_ratio"), "duplication_ratio honest-empty (no qlty CLI — never fabricated)");
+            assert!(!val.contains_key("module_quality"), "module_quality honest-empty (no qlty CLI — never fabricated)");
+        }
 
         // ── RETIRED HEALTH: the barrier ran (drained above) but wrote NO composite ──
         // project_health carries a past effective_until in the registry, so it is
@@ -2369,7 +2381,8 @@ mod tests {
         let (st, body) = req(app.clone(), "GET", &format!("/api/projects/{pid}/metrics"), None).await;
         assert_eq!(st, StatusCode::OK, "{body}");
         let ms = body["metrics"].as_array().expect("project metrics array");
-        assert_eq!(ms.len(), 12, "endpoint returns the 12 latest-per-metric rows (quality honest-empty; no retired composite)");
+        assert_eq!(ms.len(), if qlty_present { base_rows + 2 } else { base_rows },
+            "endpoint returns the latest-per-metric rows (base + config-pinned quality when qlty present; no retired composite)");
         // … nor the values endpoint: the retired project_health has no row to serve.
         assert!(!ms.iter().any(|m| m["metric"].as_str() == Some("project_health")),
             "values endpoint does NOT carry the retired project_health");
