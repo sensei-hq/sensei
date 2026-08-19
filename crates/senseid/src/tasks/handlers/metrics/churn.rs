@@ -144,6 +144,69 @@ fn local_identities(root: &str) -> Vec<String> {
         .collect()
 }
 
+/// The pre-AI history floor for one repository's git-cadence metrics — how far back a
+/// commit-day may be computed. Shared by `churn` + `quality` so the baseline rule
+/// lives in ONE place.
+#[derive(Clone, Copy)]
+pub(super) enum RepoFloor {
+    /// No captured AI activity for this repository under the `off` policy → compute
+    /// NOTHING (the git-cadence metrics measure the user+AI interaction).
+    Skip,
+    /// No floor — the repository's entire git history (`baseline = full`).
+    All,
+    /// Compute only commit-days on/after this floor day.
+    From(NaiveDate),
+}
+
+/// Resolve the [`RepoFloor`] for `repository_id`/`root` under the `baseline` policy
+/// (spec D17): by DEFAULT (`off`) the git-cadence metrics start at the repository's
+/// first AI-transcript day ([`PgStore::repo_ai_start`]) — not its whole pre-AI git
+/// history. `full` lifts the floor entirely; `N` extends it back N commits before the
+/// first AI commit (a before/after baseline). A repository with no AI activity is
+/// `Skip` under `off`/`N` (no reference point) and `All` under `full`. Never
+/// fabricates a date; propagates the read error.
+pub(super) async fn repo_history_floor(
+    pg: &PgStore,
+    repository_id: &uuid::Uuid,
+    root: &str,
+    baseline: crate::tasks::metrics_scheduler::BaselineHistory,
+) -> Result<RepoFloor, String> {
+    use crate::tasks::metrics_scheduler::BaselineHistory as B;
+    if baseline == B::Full {
+        return Ok(RepoFloor::All);
+    }
+    // `off` / `N` both anchor on the first AI transcript; no AI activity → no anchor.
+    let Some(ai_start) = pg.repo_ai_start(repository_id).await? else {
+        return Ok(RepoFloor::Skip);
+    };
+    Ok(match baseline {
+        B::Off => RepoFloor::From(ai_start),
+        // Extend the floor back N commits before the first AI commit; fewer than N
+        // pre-AI commits (or git absent) → floor at the AI-start (no fabricated day).
+        B::Commits(n) => RepoFloor::From(nth_commit_day_before(root, ai_start, n).unwrap_or(ai_start)),
+        B::Full => RepoFloor::All, // handled above; kept exhaustive.
+    })
+}
+
+/// The committer-day of the Nth commit strictly before `day` (first-parent,
+/// no-merges) — the pre-AI baseline floor for `baseline = N`. `None` when git is
+/// unavailable, `root` is not a git repo, or there are fewer than 1 commit before
+/// `day` (the caller then floors at `day`, never a fabricated earlier date).
+fn nth_commit_day_before(root: &str, day: NaiveDate, n: u32) -> Option<NaiveDate> {
+    let before = format!("{} 00:00:00", day.format(GIT_DATE_FMT));
+    let out = run_git(
+        root,
+        &[
+            "log", "--first-parent", "--no-merges", "--before", &before, "-n",
+            &n.to_string(), "--date=short", "--pretty=format:%cd",
+        ],
+    )?;
+    // The last line is the oldest of the (up to) N commits before `day` — the floor.
+    out.lines()
+        .last()
+        .and_then(|l| NaiveDate::parse_from_str(l.trim(), GIT_DATE_FMT).ok())
+}
+
 /// Parse `git log --numstat --date=short --pretty=format:'\x01%cd'` output into
 /// per-`(day, file)` line-churn. Each commit contributes a header line
 /// `\x01YYYY-MM-DD` followed by `--numstat` rows `added\tdeleted\tpath`
@@ -322,7 +385,17 @@ pub(super) async fn compute(
         // repository-linked checkout yields no roots → honest-empty (no rows). A
         // repository is NEVER fabricated (I-E).
         let today = super::today(pg).await?;
+        // Pre-AI baseline policy (spec D17): by DEFAULT the git-cadence metrics start
+        // at each repository's first AI-transcript day — not its whole (years of,
+        // all-authors) git history. `full`/`N` opt into pre-AI history.
+        let baseline = crate::tasks::metrics_scheduler::baseline_history(pg).await;
         for (repository_id, root) in pg.repository_roots_for_project(&project_id).await? {
+            // Resolve this repository's history floor. A repo with no captured AI
+            // activity is SKIPPED under the default (nothing to measure).
+            let floor = repo_history_floor(pg, &repository_id, &root, baseline).await?;
+            if matches!(floor, RepoFloor::Skip) {
+                continue;
+            }
             // Dual derivation (I-B): the whole-tree twin (scope=repo, ALL authors,
             // identity=NULL) then one author-filtered row per local git identity
             // (scope=user, identity=that email — the value the project view pools).
@@ -339,6 +412,13 @@ pub(super) async fn compute(
                 // contract_decisions note). folder_id/session_id are always NULL and
                 // grain is always daily (I-A).
                 for (day, files) in git_day_file_churn(&root, window_days, today, as_of, author) {
+                    // Baseline floor (spec D17): skip a commit-day before this
+                    // repository's history floor — pre-AI history is opt-in.
+                    if let RepoFloor::From(f) = floor
+                        && day < f
+                    {
+                        continue;
+                    }
                     // churn_rate (count): # distinct files touched that day. A
                     // returned day always carries ≥1 file (the parser records a day
                     // only for a real numstat line), so this is ≥ 1 — never a
@@ -429,12 +509,23 @@ pub(super) async fn compute(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tasks::metrics_scheduler::BaselineHistory;
     use crate::tasks::test_support::{
         cleanup_metrics_fixture, daily_project_metric_rows as daily_rows, git_commit_on_day,
         make_ctx, repository_for_folder, seed_detected_pattern, seed_file_node,
-        seed_git_project_folder, seed_metrics_project_folder,
+        seed_git_project_folder, seed_metrics_project_folder, seed_repo_ai_start,
     };
     use sqlx_core::query_as::query_as;
+
+    /// Delete the fixture's default (2000-01-01) AI-start session so a floor test can
+    /// install its OWN `repo_ai_start` — otherwise `least(...)` pins the floor to 2000.
+    async fn clear_ai_sessions(pg: &PgStore, fid: &uuid::Uuid) {
+        sqlx_core::query::query("DELETE FROM activity.sessions WHERE repo_folder_id = $1")
+            .bind(fid)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+    }
 
     // ── Pure: numstat parser ─────────────────────────────────────────────────
 
@@ -792,6 +883,139 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(total, 0, "no project_metrics rows for a historical as_of (never a fabricated snapshot)");
+
+        cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
+    }
+
+    // ── Pre-AI baseline floor (spec D17) ──────────────────────────────────────
+
+    #[tokio::test]
+    async fn repo_ai_start_resolves_earliest_ai_day_and_none_when_absent() {
+        // repo_ai_start = the EARLIEST captured AI day for the repository (least of the
+        // session + assistant-event mins), or None when the repo has no AI activity.
+        let ctx = make_ctx().await;
+        let pg = ctx.pg();
+        let uniq = uuid::Uuid::new_v4();
+        let (pid, fid, _repo) = seed_git_project_folder(pg, &uniq).await;
+        let rid = repository_for_folder(pg, &fid).await;
+
+        // The fixture seeds one AI-start session at 2000-01-01.
+        let epoch = NaiveDate::from_ymd_opt(2000, 1, 1).unwrap();
+        assert_eq!(
+            pg.repo_ai_start(&rid).await.unwrap(),
+            Some(epoch),
+            "the fixture's default AI-start day is resolved",
+        );
+
+        // A LATER session never moves the floor forward (least = earliest).
+        seed_repo_ai_start(pg, &fid, &pid, "2025-06-15T12:00:00Z").await;
+        assert_eq!(
+            pg.repo_ai_start(&rid).await.unwrap(),
+            Some(epoch),
+            "repo_ai_start = the EARLIEST captured AI day, not the latest",
+        );
+
+        // Every AI session removed → None (honest-empty; no reference point).
+        clear_ai_sessions(pg, &fid).await;
+        assert_eq!(pg.repo_ai_start(&rid).await.unwrap(), None, "no AI activity → no AI-start day");
+
+        cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
+    }
+
+    #[tokio::test]
+    async fn repo_history_floor_off_full_commits_and_skip() {
+        // The floor resolver: off → first AI day; full → no floor; N → N commits before
+        // the first AI day (clamped to the oldest commit); no AI activity → Skip (off/N)
+        // but still All under full.
+        let ctx = make_ctx().await;
+        let pg = ctx.pg();
+        let uniq = uuid::Uuid::new_v4();
+        let (pid, fid, repo) = seed_git_project_folder(pg, &uniq).await;
+        let rid = repository_for_folder(pg, &fid).await;
+        let root = repo.path().to_string_lossy().to_string();
+
+        // Three commits BEFORE a known AI-start day (2025-03-10), newest-last.
+        clear_ai_sessions(pg, &fid).await;
+        for (d, f) in [("2025-03-01", "f0.rs"), ("2025-03-03", "f1.rs"), ("2025-03-05", "f2.rs")] {
+            git_commit_on_day(repo.path(), d, &[(f, "x\n")]);
+        }
+        seed_repo_ai_start(pg, &fid, &pid, "2025-03-10T00:00:00Z").await;
+        let ai_day = NaiveDate::from_ymd_opt(2025, 3, 10).unwrap();
+
+        // off → floor at the first AI day.
+        match repo_history_floor(pg, &rid, &root, BaselineHistory::Off).await.unwrap() {
+            RepoFloor::From(d) => assert_eq!(d, ai_day, "off floors at the first AI transcript day"),
+            _ => panic!("off → From(ai_start)"),
+        }
+        // full → no floor.
+        assert!(
+            matches!(repo_history_floor(pg, &rid, &root, BaselineHistory::Full).await.unwrap(), RepoFloor::All),
+            "full → All (no floor)",
+        );
+        // Commits(2) → the 2nd-newest commit before the AI day (2025-03-03).
+        match repo_history_floor(pg, &rid, &root, BaselineHistory::Commits(2)).await.unwrap() {
+            RepoFloor::From(d) => assert_eq!(
+                d, NaiveDate::from_ymd_opt(2025, 3, 3).unwrap(),
+                "N=2 → 2 commits before the AI day",
+            ),
+            _ => panic!("Commits(2) → From(nth-before)"),
+        }
+        // Commits(50), only 3 pre-AI commits → clamp to the OLDEST commit (never fabricated earlier).
+        match repo_history_floor(pg, &rid, &root, BaselineHistory::Commits(50)).await.unwrap() {
+            RepoFloor::From(d) => assert_eq!(
+                d, NaiveDate::from_ymd_opt(2025, 3, 1).unwrap(),
+                "N beyond history → the oldest commit day",
+            ),
+            _ => panic!("Commits(50) → oldest commit"),
+        }
+
+        // No AI activity: off/N → Skip, full → All.
+        clear_ai_sessions(pg, &fid).await;
+        assert!(
+            matches!(repo_history_floor(pg, &rid, &root, BaselineHistory::Off).await.unwrap(), RepoFloor::Skip),
+            "no AI + off → Skip",
+        );
+        assert!(
+            matches!(repo_history_floor(pg, &rid, &root, BaselineHistory::Commits(3)).await.unwrap(), RepoFloor::Skip),
+            "no AI + N → Skip",
+        );
+        assert!(
+            matches!(repo_history_floor(pg, &rid, &root, BaselineHistory::Full).await.unwrap(), RepoFloor::All),
+            "no AI + full → All",
+        );
+
+        cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
+    }
+
+    #[tokio::test]
+    async fn churn_default_floors_pre_ai_commit_days() {
+        // End-to-end: with the default (`off`) policy, backfilling a commit-day BEFORE
+        // the repository's first AI transcript writes NOTHING, while a day on/after the
+        // AI-start computes churn normally. (Same 60-day commit the re-sourcing test
+        // computes when its AI-start is 2000 — here the floor is later, so it's excluded.)
+        let ctx = make_ctx().await;
+        let pg = ctx.pg();
+        let uniq = uuid::Uuid::new_v4();
+        let (pid, fid, repo) = seed_git_project_folder(pg, &uniq).await;
+
+        // Replace the fixture's 2000 AI-start with a MID anchor 40 days ago.
+        clear_ai_sessions(pg, &fid).await;
+        let ai_day = (chrono::Utc::now() - chrono::Duration::days(40)).date_naive();
+        seed_repo_ai_start(pg, &fid, &pid, &format!("{}T00:00:00Z", ai_day.format("%Y-%m-%d"))).await;
+
+        // A commit BEFORE the AI-start (60 days ago) and one AFTER (20 days ago).
+        let pre = (chrono::Utc::now() - chrono::Duration::days(60)).date_naive();
+        let post = (chrono::Utc::now() - chrono::Duration::days(20)).date_naive();
+        git_commit_on_day(repo.path(), &pre.format("%Y-%m-%d").to_string(), &[("a.rs", "1\n2\n")]);
+        git_commit_on_day(repo.path(), &post.format("%Y-%m-%d").to_string(), &[("b.rs", "1\n2\n3\n")]);
+
+        // Default (off): the PRE-AI day is floored out → nothing written.
+        let pre_written = compute(&ctx, &pid.to_string(), Some(pre)).await.unwrap();
+        assert_eq!(pre_written, 0, "a commit-day before the first AI transcript is floored out by default");
+
+        // The POST-AI day computes normally (dual scope repo + user = 4 rows).
+        let post_written = compute(&ctx, &pid.to_string(), Some(post)).await.unwrap();
+        assert_eq!(post_written, 4, "a commit-day on/after the AI-start computes churn (repo + user scope)");
 
         cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
     }

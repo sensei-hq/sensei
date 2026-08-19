@@ -560,9 +560,17 @@ where
     }
     let today = super::today(pg).await?;
     let window_days = crate::tasks::metrics_scheduler::window_days(pg).await;
+    // Pre-AI baseline policy (spec D17) — same rule as churn.
+    let baseline = crate::tasks::metrics_scheduler::baseline_history(pg).await;
 
     let mut written = 0u32;
     for (repository_id, abs_path) in repos {
+        // Baseline floor (spec D17): by default quality starts at this repository's
+        // first AI-transcript day; a repo with no captured AI activity is skipped.
+        let floor = super::churn::repo_history_floor(pg, &repository_id, &abs_path, baseline).await?;
+        if matches!(floor, super::churn::RepoFloor::Skip) {
+            continue;
+        }
         // The LOCAL git author for this checkout — the identity the `scope = user`
         // rows carry (I-C). `None` when git resolves no `user.email` → NO `scope =
         // user` rows for this repo (the whole-tree twin is still written); never a
@@ -597,6 +605,13 @@ where
             // Only sampled anchors are scanned; a non-anchor day (e.g. a trailing-window
             // calendar day with no anchor) is a cheap no-op — never a scan.
             if !sampled_set.contains(&day) {
+                continue;
+            }
+            // Baseline floor (spec D17): skip a sampled day before this repository's
+            // history floor — pre-AI history is opt-in.
+            if let super::churn::RepoFloor::From(f) = floor
+                && day < f
+            {
                 continue;
             }
             // A past day already covered (per repository) by EVERY active quality metric
