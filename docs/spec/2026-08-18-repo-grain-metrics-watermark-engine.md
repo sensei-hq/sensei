@@ -55,9 +55,13 @@ without redundant compute.
   is keyed `(repository_id, metric_group)` so cadences seal independently and a failing group
   can't stall or re-do healthy ones. Retires `covered_days`/`effective_from` and the global
   `metrics.last_run`.
-- **D5 — Cadence per metric group.** `day` (session_outcomes, autonomy, tool, knowledge,
-  health) reopens the trailing/open day; `commit` (quality, churn) is immutable-once-scanned
-  and only adds new commits. `session` is reserved (collapses to `day` for storage today).
+- **D5 — Cadence per metric.** `day` (session_outcomes, autonomy, tool, knowledge, health)
+  reopens the trailing/open day; `commit` (quality, churn) is immutable-once-scanned and only
+  adds new commits. Cadence is a registry enum `metrics.cadence ('commit','day')` (data-driven,
+  handles intra-group variance); `rework_density` splits out of `churn` into its own day-cadence
+  group so every group is single-cadence for the watermark. **No stored `session`-grain rows** —
+  per-session values are *derived on demand from granular activity data* via a view (G11); the
+  drill-down re-sources from there, not from a stored metric row.
 - **D6 — Quality/churn attributed to the local user.** Enumerate only commits authored by
   the local user's git identity; within each, scope the metric to the files that commit
   touched (file-level for v1; line/hunk intersection is a v2 refinement). Numerator **and**
@@ -383,25 +387,26 @@ relay tables.
 Consumers read only these. Every view carries `(repository_id/project_id, metric, scope,
 period, grain, value, numerator, denominator, source)` so the app can label provenance.
 
-**Local (`sensei`):**
-- `v_metric_point` — atomic reading normalizer over `project_metrics`.
-- `v_metric_me` / `v_metric_repo` — scope filters (`user` with local identity / `repo`).
-- `v_project_metric` — D2 aggregation across a project's repositories (pooled).
-- `v_metric_daily` / `v_metric_weekly` / `v_metric_monthly` — time-rollup snapshots per
-  `(repository, metric, scope)`: pool `Σnum/Σden` for ratios, sum for counts (extends the
-  existing `project_metric_weekly/monthly`).
-- `v_metric_compare` — me vs repo (+ team when federated rows present), aligned on period →
+**Local (`sensei`) — NO `v_` prefix; match the existing `project_metric_*` house naming:**
+- `metric_point` — atomic reading normalizer over `project_metrics`.
+- `metric_me` / `metric_repo` — scope filters (`user` with local identity / `repo`).
+- `project_metric_daily` / `_weekly` / `_monthly` / `_quarterly` — the **existing** rollup views,
+  *re-keyed* to aggregate repo-grain rows per `(repository, metric, scope)` then pool to project
+  (Σnum/Σden for ratios, sum for counts). The project number is derived here — **no stored
+  project-scope rows** (D2). `project_metric_trend` re-keyed likewise; `session`-grain values are
+  a view over granular activity data (D5), not stored.
+- `metric_compare` — me vs repo (+ team when federated rows present), aligned on period →
   the overlay/comparison UI.
-- `v_metric_distribution` — quantiles `(min, q1, median, q3, max, outlier-fence)` via
+- `metric_distribution` — quantiles `(min, q1, median, q3, max, outlier-fence)` via
   `percentile_cont` over the raw commit-/session-grain readings in a window. **Defined only
   for D13 families** (many readings per period); empty for pooled daily ratios.
 
-**Dōjō (`dojo`):**
-- `v_team_session_metric` — pooled per-user (session-family) across the tenant.
+**Dōjō (`dojo`) — same no-`v_` convention:**
+- `team_session_metric` — pooled per-user (session-family) across the tenant.
 - `repo_metrics` — the git-family team series directly (no view needed).
-- `v_member_vs_team` — a member's series vs the team aggregate (D9-gated: own + team only).
-- `v_repo_snapshot_weekly` / `v_repo_snapshot_monthly` — team rollups for console/phone.
-- `v_metric_distribution_team` — quantiles across members/commits for team box/violin (D13).
+- `member_vs_team` — a member's series vs the team aggregate (D9-gated: own + team only).
+- `repo_snapshot_weekly` / `repo_snapshot_monthly` — team rollups for console/phone.
+- `metric_distribution_team` — quantiles across members/commits for team box/violin (D13).
 
 **Wrappers (API/MCP).** Metric read endpoints take a uniform shape:
 `scope ∈ {me, repo, team}`, `period ∈ {daily, weekly, monthly}`, `view ∈ {series, snapshot,
@@ -422,9 +427,13 @@ compare, distribution}`. One contract for local and federated reads.
   folder, `repo_key` = normalized origin; multiple checkouts of one remote collapse).
 - Add `project_metrics` columns + enums + watermark table + dōjō `repositories`/`member_metrics`/
   `repo_metrics` (dbd reconcile for additive cols; manual index drop/recreate — dbd can't drop).
-- Backfill `project_metrics.repository_id` via `folder_id` → covers only folder-scoped + session
-  rows. **Project-scope rows (`folder_id IS NULL`) have no derivable repository → DELETE them and
-  recompute from `min_date`** (per D2 they become a view; never stamp a fabricated primary repo).
+- **Delete the old-grain rows, then repopulate at repo grain.** The existing project-scope
+  (15,697), per-module (1,043), and session (486) rows are superseded — and once the index drops
+  `project_id`, two projects' same-metric/same-date rows with `repository_id = NULL` **collide**
+  under the new unique index (build fails). So DELETE them **before** the index swap. Project /
+  module / session numbers become **views** (D2/D5, no project-scope recompute); repo-grain
+  *history* repopulates via the watermark engine's normal `min_date` fill — source data (sessions,
+  git) is intact → **lossless**. Never stamp a fabricated primary repo (no-fabrication rule).
 - Identity-index swap is manual (`create index if not exists` silently no-ops on a name match):
   `DROP INDEX` old, create the new (recommend `project_metrics_identity_v2`), and update the Rust
   `upsert_project_metric` `ON CONFLICT` list **in lockstep** or the upsert throws at runtime.

@@ -153,15 +153,15 @@ Key files: `db/pg_store/metrics.rs` (read getters), `api/handlers/{metrics,obser
 |---|-----|----------|------------|
 | G1 | **Pruner capture-guard** not migrated → data-loss re-opens | 🔴 blocker | Carry `authorizes_capture` scope into `ComputeGroupMetrics`; invariant I20 |
 | G2 | `walk_for_git` doesn't recurse into checkouts → nested masked | 🔴 blocker | Fix recursion + `.git`-file + depth in P-A scanner step |
-| G3 | 15,697 project-scope rows have no derivable `repository_id` | 🔴 decision | **Delete + recompute from `min_date`** (no fabrication); not a stamped guess |
+| G3 | 15,697 project-scope rows have no derivable `repository_id` | 🔴 resolved | Delete old-grain rows **before** index swap (else `NULL` collide); project = view, **no project-scope recompute**; repo-grain history via engine `min_date` fill (lossless) |
 | G4 | Identity-index swap silently no-ops (`if not exists`) | 🔴 correctness | Manual `DROP INDEX` + new name `_v2`; update Rust `ON CONFLICT` in lockstep |
 | G5 | `repo_key` normalizer doesn't exist; rename-match uses raw URLs | 🟠 | Shared pure `normalize_repo_key()`; back `find_live_root_by_remote` too |
 | G6 | Cadence source unresolved (registry col vs code map) | 🟠 decision | **Registry `metrics.cadence` enum** + split `rework_density` (§4) |
-| G7 | `project_metric_trend` + `quarterly` absent from spec views | 🟠 | Re-key trend to `(repository,scope)`; decide quarterly (add view or drop from allowlist) |
+| G7 | `project_metric_trend` + `quarterly` absent from spec views | 🟠 resolved | Re-key trend to `(repository,scope)`; keep quarterly as a **view**, `project_metric_quarterly` — **no `v_` prefix on any view** |
 | G8 | `get_holistic_ftr` bypasses views (reads `activity.sessions`) | 🟠 | New holistic view or it never becomes repo/scope-aware |
 | G9 | `dojo` scope missing `sensei.metric_grain` include | 🟠 | Add to `design.yaml` dojo `includes` before dojo deploy (P-C) |
 | G10 | `index_audit` can't detect nested *git* (only standalone) | 🟠 | New disk-walking nested-git detector |
-| G11 | 486 session rows collide under new identity (no `session_id`) | 🟡 | Keep `session_id` as non-identity payload, or delete/rescope |
+| G11 | 486 session rows collide under new identity (no `session_id`) | 🟡 resolved | **No stored session rows** — delete them; derive per-session from granular activity data via a view; drill-down re-sources |
 | G12 | `false_crash_rate` declared-but-uncomputed phantom | 🟡 | Implement or retire |
 | G13 | Box/violin types lag runtime in `@rokkit/chart@1.3.13` | 🟡 | Import `GeomBox`/`GeomViolin` typed; no `@ts-expect-error` |
 | G14 | Adjacent `project_quality_signals`/`project_hotspots` stay project-scalar | 🟡 | Align to repo/user grain or they contradict |
@@ -170,17 +170,23 @@ Key files: `db/pg_store/metrics.rs` (read getters), `api/handlers/{metrics,obser
 
 ---
 
-## 4. Open decisions to lock before the run
+## 4. Decisions — RESOLVED (2026-08-18)
 
-- **G3 / project-scope rows:** confirm **delete-and-recompute** (recommended — no-fabrication) vs
-  a stamped primary repo (rejected: fabricates identity).
-- **G6 / cadence:** confirm **`metrics.cadence` registry enum `('commit','day','session')`** (data-driven,
-  handles the intra-churn variance) **+ split `rework_density` into its own day-cadence group** so
-  every group is single-cadence for the watermark. (The two mappers split registry-vs-code; the
-  registry column + group-split satisfies both — cadence is data, groups stay single-cadence.)
-- **G7 / quarterly:** add a `v_metric_quarterly` or drop quarterly from the series allowlist.
-- **G11 / session rows:** keep `session_id` as payload vs delete the 486 rows.
-- **Canonical name (G9-scanner):** confirm `sensei.repositories` (table takes the name) — locked.
+- **G3 / project-scope rows → RESOLVED.** Project-scope is a **view** (D2) — *no project-scope
+  recompute*. Delete the old-grain rows (project-scope 15,697 + module 1,043 + session 486)
+  **before** the identity-index swap — with `project_id` gone from the index, `repository_id = NULL`
+  rows collide and the build fails. Repo-grain history repopulates via the watermark engine's
+  `min_date` fill (source intact → lossless).
+- **G6 / cadence → RESOLVED.** `metrics.cadence` registry enum `('commit','day')` (data-driven);
+  **split `rework_density` out of `churn`** into its own day-cadence group so every group is
+  single-cadence for the watermark.
+- **G7 / quarterly → RESOLVED.** Keep a quarterly **view** (re-keyed to repo grain); **no `v_`
+  prefix** — house naming (`project_metric_quarterly`). All new views drop the `v_` prefix.
+- **G11 / session rows → RESOLVED.** **No stored session-grain rows.** Per-session values derive
+  on demand from granular activity data (sessions/outcomes) via a view; the drill-down re-sources
+  from there. Delete the 486 rows; drop `session_id` from the metric grain.
+- **Canonical name → LOCKED.** `sensei.repositories` = the canonical table; drop the (consumer-less)
+  view; `sensei.repo_folders` compat view only if a psql surface is wanted.
 
 ---
 
