@@ -506,8 +506,9 @@ mod tests {
     }
 
     /// 7.2 `GET /api/projects/{id}/metrics`: latest-per-metric + facets + trend +
-    /// the `project_health` composite. Also pins the never-fabricate cases — a
-    /// project with no rows is honest-empty (200 []), an unknown project is a 404.
+    /// retired-metric exclusion (a retired metric's durable rows must NOT render).
+    /// Also pins the never-fabricate cases — a project with no rows is honest-empty
+    /// (200 []), an unknown project is a 404.
     #[tokio::test]
     async fn get_project_metrics_endpoint() {
         let (app, state) = test_app().await;
@@ -530,7 +531,9 @@ mod tests {
         state.pg.upsert_project_metric(&mid_b, &pid, None, None, w1, "daily", 0.25,
             &serde_json::json!({"numerator": 1, "denominator": 4}), "measured").await.unwrap();
 
-        // The composite: a project_health daily row using the REAL registry metric.
+        // A RETIRED metric with a durable daily row: project_health carries a past
+        // effective_until in the registry (retirement is in-place, never hand-delete a
+        // row), so its stored value must NOT render as an active card — asserted below.
         let (health_mid,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "SELECT id FROM sensei.metrics WHERE key = 'project_health'")
             .fetch_one(state.pg.pool()).await.expect("project_health seeded in registry");
@@ -558,9 +561,11 @@ mod tests {
         assert!(b["prior"].is_null(), "B has no prior week — null, not a fabricated 0");
         assert!(b["delta"].is_null());
 
-        let health = metrics.iter().find(|m| m["metric"].as_str() == Some("project_health"))
-            .expect("project_health present");
-        assert_eq!(health["value"], 82.0, "the composite value is present");
+        // Retired-metric exclusion: project_health is past its effective_until, so
+        // even with a durable daily row the endpoint filters it out of the active
+        // dashboard (get_project_metrics' ACTIVE_METRIC_PREDICATE) — never a stale card.
+        assert!(metrics.iter().all(|m| m["metric"].as_str() != Some("project_health")),
+            "retired project_health is excluded from the active metrics, not rendered as a stale card");
 
         // Honest-empty: a project with NO metric rows → 200 with an empty list.
         let empty_pid = state.pg.create_project(&format!("_test:pme-empty:{uniq}"), None, None).await.unwrap();
@@ -845,11 +850,14 @@ mod tests {
             "cache hit → stored model detail");
 
         // MISS: the deterministic, row-derived fallback — title = metric label
-        // (the seeded name == key), detail = the structural line from the row.
+        // (the seeded name == key), detail = the structural line from the row. This is
+        // a NON-EFFORT metric (is_effort gates the correction count to ftr/rework_ratio),
+        // so the fallback is the neutral "outcome · turns" line — the row's corrections
+        // are deliberately NOT shown (they'd imply an effort relevance this metric lacks).
         let miss = by_id(&sid("miss"));
         assert_eq!(miss["observation"]["title"], key, "cache miss → metric label as title");
-        assert_eq!(miss["observation"]["detail"], "outcome corrected; 2 corrections; 5 turns",
-            "cache miss → deterministic row-derived line, never blank or fabricated");
+        assert_eq!(miss["observation"]["detail"], "outcome corrected; 5 turns",
+            "cache miss → deterministic neutral line for a non-effort metric, never blank or fabricated");
 
         sqlx_core::query::query(
             "DELETE FROM sensei.insight_copy WHERE kind = 'session_metric_observation' AND facts_hash = $1")
@@ -2259,12 +2267,18 @@ mod tests {
         // (t1 'used'), so relevant=1, used=1 → dead = M - N = 0. t2/t3/t4 were never
         // invoked → not relevant → not "dead surface" (never fabricated as dead).
         assert!(close(get("unused_tools"), 0.0), "unused_tools = 0 dead RELEVANT tools (relevant=1, used=1; t2/t3/t4 never invoked → not relevant) (got {})", get("unused_tools"));
+        // context_pressure_rate: 0 of the 4 measurable sessions carried a context-
+        // pressure trouble signal → 0/4 = 0.0 (an honest zero — a real row, not fabricated).
+        assert!(close(get("context_pressure_rate"), 0.0), "context_pressure_rate = 0/4 = 0.0 (no pressure signals seeded) (got {})", get("context_pressure_rate"));
 
-        // exactly 11 base metric rows; no composite. The quality group
-        // (duplication_ratio/module_quality) is honest-empty here (no committed `.qlty`
-        // config → scan miss), so it contributes no row; project_health is RETIRED, so
-        // the health barrier wrote no composite row (see below).
-        assert_eq!(rows.len(), 11, "11 latest-per-metric project-scope rows (base only; quality honest-empty; project_health retired)");
+        // exactly 12 base metric rows; no composite. The five session_outcomes metrics
+        // (ftr, rework_ratio, throughput, time_to_useful_result, context_pressure_rate),
+        // churn's three (churn_rate, churn_concentration, rework_density), autonomy's two
+        // (interruption_rate, run_completion; false_crash_rate is declared-but-uncomputed),
+        // memory_promotion, and unused_tools. The quality group (duplication_ratio/
+        // module_quality) is honest-empty (no committed `.qlty` config → scan miss);
+        // project_health is RETIRED, so the health barrier wrote no composite row.
+        assert_eq!(rows.len(), 12, "12 latest-per-metric project-scope rows (base only; quality honest-empty; project_health retired)");
         // Honest-empty spot-check: the qlty-sourced quality metrics wrote NO row (the
         // seed repo has no `.qlty` config), never a fabricated score.
         assert!(!val.contains_key("duplication_ratio"), "duplication_ratio honest-empty (qlty scan missed — no fabricated value)");
@@ -2334,7 +2348,7 @@ mod tests {
         let (st, body) = req(app.clone(), "GET", &format!("/api/projects/{pid}/metrics"), None).await;
         assert_eq!(st, StatusCode::OK, "{body}");
         let ms = body["metrics"].as_array().expect("project metrics array");
-        assert_eq!(ms.len(), 11, "endpoint returns the 11 latest-per-metric rows (quality honest-empty; no retired composite)");
+        assert_eq!(ms.len(), 12, "endpoint returns the 12 latest-per-metric rows (quality honest-empty; no retired composite)");
         // … nor the values endpoint: the retired project_health has no row to serve.
         assert!(!ms.iter().any(|m| m["metric"].as_str() == Some("project_health")),
             "values endpoint does NOT carry the retired project_health");
