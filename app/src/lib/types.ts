@@ -1522,10 +1522,13 @@ export interface LogRow {
   level: string;
   /** `running_on` — daemon / cli / mcp / app. Null when the writer omits it. */
   source: string | null;
+  /** Top-level `module` column (tasks / scanner / analyzer / …) — a first-class
+   *  field like `source`, not a `context` prop. Null when the writer omits it. */
+  module: string | null;
   /** RFC-3339 timestamp. */
   logged_at: string;
   message: string;
-  /** Free-form jsonb; carries `module`, `folder`, `path`, etc. */
+  /** Free-form jsonb; carries `folder`, `path`, `method`, etc. */
   context: Record<string, unknown> | null;
   data: Record<string, unknown> | null;
   error: Record<string, unknown> | null;

@@ -40,6 +40,7 @@ impl LogLevel {
 pub struct LogEntry {
     pub level: String,
     pub running_on: String,
+    pub module: String,
     pub logged_at: String,
     pub message: String,
     pub context: Value,

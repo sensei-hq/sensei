@@ -10,6 +10,7 @@ use crate::api::state::AppState;
 pub(crate) struct LogBody {
     level: String,
     running_on: String,
+    module: Option<String>,
     logged_at: String,
     message: Option<String>,
     context: Option<serde_json::Value>,
@@ -25,6 +26,7 @@ pub(crate) async fn ingest_log(
     state.pg.insert_log(
         &body.level,
         &body.running_on,
+        body.module.as_deref(),
         &body.logged_at,
         body.message.as_deref().unwrap_or(""),
         &body.context.unwrap_or(serde_json::json!({})),
@@ -48,7 +50,7 @@ pub(crate) struct LogsQuery {
     /// Exact `running_on` match (daemon / cli / mcp / app).
     #[serde(default)]
     source: Option<String>,
-    /// Exact `context->>'module'` match (scanner / watcher / analyzer / …).
+    /// Exact `module` column match (scanner / watcher / analyzer / …).
     #[serde(default)]
     module: Option<String>,
     /// Lower bound on `logged_at`: a relative duration (`30s`, `15m`, `1h`,

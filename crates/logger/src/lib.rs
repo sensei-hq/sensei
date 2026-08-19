@@ -51,7 +51,7 @@ mod tests {
     fn with_context_merges() {
         let logger = Logger::new(LogWriter::noop(), LogLevel::Info, "daemon", "tasks");
         let child = logger.with_context(serde_json::json!({"task_id": 42}));
-        assert_eq!(child.context["module"], "tasks");
+        assert_eq!(child.module, "tasks");
         assert_eq!(child.context["task_id"], 42);
     }
 
@@ -68,9 +68,10 @@ mod tests {
         let entry = LogEntry {
             level: "info".into(),
             running_on: "daemon".into(),
+            module: "tasks".into(),
             logged_at: "2026-05-11T00:00:00Z".into(),
             message: "test".into(),
-            context: serde_json::json!({"module": "tasks"}),
+            context: serde_json::json!({}),
             data: Some(serde_json::json!({"items": 5})),
             error: None,
         };

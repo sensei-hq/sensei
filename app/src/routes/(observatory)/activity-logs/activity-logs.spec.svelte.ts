@@ -24,9 +24,10 @@ function makeRow(over: Partial<LogRow> = {}): LogRow {
     id: over.id ?? 'r1',
     level: over.level ?? 'info',
     source: over.source ?? null,
+    module: 'module' in over ? over.module : 'tasks',
     logged_at: over.logged_at ?? '2026-07-13T02:19:29.612354+00:00',
     message: over.message ?? 'task_completed',
-    context: 'context' in over ? (over.context ?? null) : { module: 'tasks', folder: 'Developer' },
+    context: 'context' in over ? (over.context ?? null) : { folder: 'Developer' },
     data: over.data ?? null,
     error: over.error ?? null,
   };
@@ -97,13 +98,12 @@ describe('levelTone', () => {
 });
 
 describe('moduleOf', () => {
-  it('reads context.module', () => {
-    expect(moduleOf(makeRow({ context: { module: 'scanner' } }))).toBe('scanner');
+  it('reads the module column', () => {
+    expect(moduleOf(makeRow({ module: 'scanner' }))).toBe('scanner');
   });
-  it('is null when absent or not a string', () => {
-    expect(moduleOf(makeRow({ context: {} }))).toBeNull();
-    expect(moduleOf(makeRow({ context: null }))).toBeNull();
-    expect(moduleOf(makeRow({ context: { module: 42 } }))).toBeNull();
+  it('is null when absent or empty', () => {
+    expect(moduleOf(makeRow({ module: null }))).toBeNull();
+    expect(moduleOf(makeRow({ module: '' }))).toBeNull();
   });
 });
 
@@ -130,7 +130,7 @@ describe('absoluteTime', () => {
 
 describe('search', () => {
   it('matches over message, module and source, case-insensitively', () => {
-    const row = makeRow({ message: 'task_completed', source: 'daemon', context: { module: 'tasks' } });
+    const row = makeRow({ message: 'task_completed', source: 'daemon', module: 'tasks' });
     expect(matchesSearch(row, 'COMPLETED')).toBe(true);
     expect(matchesSearch(row, 'daemon')).toBe(true);
     expect(matchesSearch(row, 'tasks')).toBe(true);
@@ -154,7 +154,7 @@ describe('search', () => {
 describe('payloadSections / hasPayload', () => {
   it('drops nulls and empty objects, orders error first', () => {
     const row = makeRow({
-      context: { module: 'tasks' },
+      context: { folder: 'Developer' },
       data: { duration_ms: 3 },
       error: { message: 'boom' },
     });
@@ -169,18 +169,18 @@ describe('payloadSections / hasPayload', () => {
   });
 
   it('pretty-prints the json', () => {
-    const [section] = payloadSections(makeRow({ context: { module: 'tasks' } }));
+    const [section] = payloadSections(makeRow({ context: { folder: 'Developer' } }));
     expect(section.label).toBe('context');
     expect(section.json).toContain('\n');
-    expect(section.json).toContain('"module": "tasks"');
+    expect(section.json).toContain('"folder": "Developer"');
   });
 });
 
 describe('distinct option lists', () => {
   const rows = [
-    makeRow({ source: 'daemon', context: { module: 'tasks' } }),
-    makeRow({ source: null, context: { module: 'watchdog' } }),
-    makeRow({ source: 'daemon', context: { module: 'tasks' } }),
+    makeRow({ source: 'daemon', module: 'tasks' }),
+    makeRow({ source: null, module: 'watchdog' }),
+    makeRow({ source: 'daemon', module: 'tasks' }),
   ];
   it('collects distinct non-null sources, sorted', () => {
     expect(distinctSources(rows, '')).toEqual(['daemon']);

@@ -74,11 +74,12 @@ impl LogWriter {
     #[cfg(feature = "pg")]
     pub(crate) async fn write_to_pg(pool: &sqlx_postgres::PgPool, entry: &LogEntry) -> Result<(), String> {
         sqlx_core::query::query(
-            "INSERT INTO public.logs(level, running_on, logged_at, message, context, data, error)
-             VALUES($1, $2, $3::timestamptz, $4, $5, $6, $7)"
+            "INSERT INTO public.logs(level, running_on, module, logged_at, message, context, data, error)
+             VALUES($1, $2, $3, $4::timestamptz, $5, $6, $7, $8)"
         )
         .bind(&entry.level)
         .bind(&entry.running_on)
+        .bind(&entry.module)
         .bind(&entry.logged_at)
         .bind(&entry.message)
         .bind(&entry.context)

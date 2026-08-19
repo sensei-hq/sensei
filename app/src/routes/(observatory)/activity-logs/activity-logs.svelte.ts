@@ -95,9 +95,9 @@ export function levelTone(level: string): { text: string; bg: string } {
   }
 }
 
-/** `context->>'module'` for a row, or null when absent / not a string. */
+/** The row's `module` (a first-class `public.logs` column), or null when absent. */
 export function moduleOf(row: LogRow): string | null {
-  const m = row.context?.['module'];
+  const m = row.module;
   return typeof m === 'string' && m ? m : null;
 }
 
@@ -172,7 +172,7 @@ export function distinctSources(rows: LogRow[], active: string): string[] {
   return [...set].sort();
 }
 
-/** Distinct `context.module` values across the rows (see `distinctSources`). */
+/** Distinct `module` values across the rows (see `distinctSources`). */
 export function distinctModules(rows: LogRow[], active: string): string[] {
   const set = new Set<string>();
   for (const r of rows) {

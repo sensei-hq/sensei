@@ -5019,9 +5019,10 @@
             pg.insert_log(
                 level,
                 &running_on,
+                Some(module),
                 &ts.to_rfc3339(),
                 &format!("{marker} {level} message"),
-                &serde_json::json!({ "module": module }),
+                &serde_json::json!({}),
                 &None,
                 &None,
             ).await.unwrap();
@@ -5052,9 +5053,9 @@
         assert_eq!(mine[0]["level"], "error");
         assert_eq!(mine[2]["level"], "info");
 
-        // Stable wire shape: source mirrors running_on, module lives in context.
+        // Stable wire shape: source mirrors running_on, module is a top-level column.
         assert_eq!(mine[0]["source"], format!("{marker}-b"));
-        assert_eq!(mine[0]["context"]["module"], "analyzer");
+        assert_eq!(mine[0]["module"], "analyzer");
         assert!(mine[0]["logged_at"].as_str().unwrap().contains('T'));
 
         cleanup_logs(&pg, &marker).await;
@@ -5076,13 +5077,13 @@
         assert_eq!(a_rows.len(), 2);
         assert!(a_rows.iter().all(|r| r["source"] == format!("{marker}-a")));
 
-        // module (context->>'module') filter → only the analyzer row.
+        // module column filter → only the analyzer row.
         let ana = pg.query_logs(None, None, Some("analyzer"), None, 1000).await.unwrap();
         let mine: Vec<_> = ana.iter()
             .filter(|r| r["source"].as_str().is_some_and(|s| s.starts_with(&marker)))
             .collect();
         assert_eq!(mine.len(), 1);
-        assert_eq!(mine[0]["context"]["module"], "analyzer");
+        assert_eq!(mine[0]["module"], "analyzer");
 
         cleanup_logs(&pg, &marker).await;
     }
