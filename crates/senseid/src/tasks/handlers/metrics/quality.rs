@@ -317,12 +317,56 @@ fn parse_smells(json: &str) -> Result<SmellCounts, String> {
     Ok(SmellCounts { per_file_dup_lines, per_file_maintainability: maint_per_file })
 }
 
+/// The FIXED `qlty` ruler pinned into every scanned worktree (P-B, spec §7). Every
+/// sampled commit is measured against THIS config — never its in-tree `.qlty`, which
+/// is absent on pre-config history and can drift between commits — so the trend is
+/// comparable ("the same ruler"). Deliberately plugin-LESS: `qlty metrics`/`smells`
+/// are built-in tree-sitter analyses, while the linter `[[plugin]]`s are for `qlty
+/// check` and would force a per-scan network source fetch. A STABLE snapshot —
+/// changing it re-bases the ruler, so it is versioned here deliberately rather than
+/// tracked to the live repo `.qlty`.
+const PINNED_QLTY_CONFIG: &str = r#"config_version = "0"
+exclude_patterns = [
+  "*.min.*", "*-min.*", "*_min.*",
+  "**/.yarn/**", "**/*.d.ts", "**/assets/**", "**/build/**", "**/cache/**",
+  "**/dist/**", "**/generated/**", "**/node_modules/**", "**/target/**",
+  "**/testdata/**", "**/vendor/**",
+]
+test_patterns = [
+  "**/test/**", "**/spec/**", "**/*.test.*", "**/*.spec.*",
+  "**/*_test.*", "**/*_spec.*", "**/test_*.*",
+]
+[smells]
+mode = "comment"
+[[source]]
+name = "default"
+default = true
+"#;
+
+/// Write [`PINNED_QLTY_CONFIG`] to `wt/.qlty/qlty.toml` (creating `.qlty/`), so the
+/// scan measures against the fixed ruler regardless of what config the checkout
+/// carried (config-pinning, P-B). Propagates the IO error — a scan is never silently
+/// left unpinned. qlty's content cache is global (`~/.qlty/cache`), so scans across
+/// worktrees already share it — no per-scan cache flag is needed.
+fn pin_qlty_config(wt: &Path) -> Result<(), String> {
+    let dir = wt.join(".qlty");
+    std::fs::create_dir_all(&dir).map_err(|e| format!("quality: pin .qlty dir: {e}"))?;
+    std::fs::write(dir.join("qlty.toml"), PINNED_QLTY_CONFIG)
+        .map_err(|e| format!("quality: pin qlty.toml: {e}"))
+}
+
 /// Run the two `qlty` scans in the worktree `wt` and assemble a [`QualityScan`].
 /// `qlty` absent / no `.qlty` config / no parseable TOTAL → `Ok(None)` (honest-empty);
 /// a scan that ran but produced unparseable SARIF → `Err` (genuine failure → retry).
 fn run_qlty_scan(wt: &Path) -> Result<Option<QualityScan>, String> {
+    // Config-pinning (P-B, spec §7): write the fixed ruler into the worktree BEFORE
+    // scanning, so this commit is measured against the SAME config as every other
+    // (its in-tree `.qlty` — absent on pre-config history, drifting between commits —
+    // is ignored). With the config always present, a `qlty metrics` miss below now
+    // means qlty is ABSENT (honest-empty), never "unconfigured".
+    pin_qlty_config(wt)?;
     let Some(metrics) = run_qlty(wt, &["metrics", "--all", "--quiet", "--no-upgrade-check"]) else {
-        return Ok(None); // qlty missing or no config → honest-empty
+        return Ok(None); // qlty CLI absent → honest-empty
     };
     let (total, per_file_lines) = parse_metrics(&metrics);
     let Some(total_lines) = total else {
@@ -1025,11 +1069,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn quality_real_scan_without_qlty_config_is_honest_empty() {
-        // End-to-end REAL path (worktree + real `run_qlty_scan`): the seeded temp repo
-        // has NO `.qlty` config committed (and qlty may be absent on CI), so the scan
-        // misses → NO rows (honest-empty, never a fabricated score). Also exercises the
-        // worktree add/remove lifecycle: no dangling worktree is left behind.
+    async fn quality_real_scan_pins_config_and_measures_pre_config_history() {
+        // End-to-end REAL path (worktree + real `run_qlty_scan` incl. config-pinning):
+        // the seeded temp repo has NO committed `.qlty`, but `pin_qlty_config` writes the
+        // fixed ruler into the scanned worktree — so a repo with real code IS measured
+        // (P-B: "pre-config history is measurable, same ruler"). qlty on PATH → real
+        // repo-grain rows; qlty absent → honest-empty (never a fabricated score). Also
+        // exercises worktree hygiene: no dangling worktree is left behind.
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
@@ -1039,10 +1085,22 @@ mod tests {
         git_commit_on_day(repo.path(), &dday.format("%Y-%m-%d").to_string(), &[("a.rs", "1\n2\n3\n")]);
 
         let written = compute(&ctx, &pid.to_string(), Some(dday)).await.unwrap();
-        assert_eq!(written, 0, "no .qlty config (or no qlty CLI) → scan miss → honest-empty");
         let (total,): (i64,) = query_as("SELECT count(*) FROM sensei.project_metrics WHERE repository_id = $1")
             .bind(rid).fetch_one(pg.pool()).await.unwrap();
-        assert_eq!(total, 0, "no rows for a scan miss (never fabricated)");
+
+        // qlty is optional (SOFT prereq): gate the assertion on its presence so this
+        // passes both locally (qlty installed → measured) and on a bare CI (absent →
+        // honest-empty). Config-pinning removed the "no committed .qlty" miss cause, so
+        // a miss now means only the CLI is absent.
+        let qlty_present = std::process::Command::new("qlty").arg("--version").output()
+            .map(|o| o.status.success()).unwrap_or(false);
+        if qlty_present {
+            assert!(written > 0, "config-pinning lets a repo with no committed .qlty be measured (qlty present)");
+            assert_eq!(total as u32, written, "every written quality row is repository-attributed");
+        } else {
+            assert_eq!(written, 0, "qlty CLI absent → honest-empty (never a fabricated score)");
+            assert_eq!(total, 0, "no rows without the qlty CLI");
+        }
 
         // Worktree hygiene: only the main worktree remains (the scan's temp worktree
         // was force-removed by the guard even though the scan missed).
