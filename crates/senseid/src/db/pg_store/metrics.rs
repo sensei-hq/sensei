@@ -239,6 +239,68 @@ impl PgStore {
     /// conflict target is the column list — Postgres infers the arbiter index
     /// (honouring its `nulls not distinct`); `ON CONFLICT ON CONSTRAINT <name>`
     /// would not resolve against an index.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn upsert_project_metric_repo(
+        &self,
+        metric_id:     &uuid::Uuid,
+        project_id:    &uuid::Uuid,
+        repository_id: Option<&uuid::Uuid>,
+        scope:         &str,
+        identity:      Option<&str>,
+        commit_sha:    Option<&str>,
+        folder_id:     Option<&uuid::Uuid>,
+        session_id:    Option<&uuid::Uuid>,
+        computed_on:   chrono::NaiveDate,
+        grain:         &str,
+        value:         f64,
+        props:         &serde_json::Value,
+        source:        &str,
+    ) -> Result<uuid::Uuid, String> {
+        // project_id is stored for lookup but is OUT of the conflict target — the
+        // same repository's value is shared across the projects that include it, so
+        // on conflict we refresh the lookup columns (project_id/folder_id/session_id)
+        // to the latest writer alongside value/props/source.
+        let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO sensei.project_metrics
+                (metric_id, project_id, repository_id, scope, identity, commit_sha,
+                 folder_id, session_id, computed_on, grain, value, props, source)
+             VALUES ($1, $2, $3, $4::sensei.metric_scope, $5, $6, $7, $8, $9,
+                     $10::sensei.metric_grain, $11::float8::numeric, $12, $13::sensei.metric_source)
+             ON CONFLICT (metric_id, repository_id, scope, identity, commit_sha, computed_on, grain) DO UPDATE
+                SET value       = EXCLUDED.value,
+                    props       = EXCLUDED.props,
+                    source      = EXCLUDED.source,
+                    project_id  = EXCLUDED.project_id,
+                    folder_id   = EXCLUDED.folder_id,
+                    session_id  = EXCLUDED.session_id,
+                    modified_at = now()
+             RETURNING id",
+        )
+        .bind(metric_id)
+        .bind(project_id)
+        .bind(repository_id)
+        .bind(scope)
+        .bind(identity)
+        .bind(commit_sha)
+        .bind(folder_id)
+        .bind(session_id)
+        .bind(computed_on)
+        .bind(grain)
+        .bind(value)
+        .bind(props)
+        .bind(source)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(row.0)
+    }
+
+    /// Project-grain convenience wrapper — `repository_id = NULL`, `scope = 'user'`.
+    /// Under the repo-grain identity a null-repository row is unique per
+    /// `(metric, day, grain)`, so this is for callers keyed on a unique `metric_id`
+    /// (tests); production computers call [`Self::upsert_project_metric_repo`] with a
+    /// resolved `repository_id`.
+    #[allow(clippy::too_many_arguments)]
     pub async fn upsert_project_metric(
         &self,
         metric_id:   &uuid::Uuid,
@@ -251,30 +313,11 @@ impl PgStore {
         props:       &serde_json::Value,
         source:      &str,
     ) -> Result<uuid::Uuid, String> {
-        let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
-            "INSERT INTO sensei.project_metrics
-                (metric_id, project_id, folder_id, session_id, computed_on, grain, value, props, source)
-             VALUES ($1, $2, $3, $4, $5, $6::sensei.metric_grain, $7::float8::numeric, $8, $9::sensei.metric_source)
-             ON CONFLICT (metric_id, project_id, folder_id, session_id, computed_on, grain) DO UPDATE
-                SET value       = EXCLUDED.value,
-                    props       = EXCLUDED.props,
-                    source      = EXCLUDED.source,
-                    modified_at = now()
-             RETURNING id",
+        self.upsert_project_metric_repo(
+            metric_id, project_id, None, "user", None, None,
+            folder_id, session_id, computed_on, grain, value, props, source,
         )
-        .bind(metric_id)
-        .bind(project_id)
-        .bind(folder_id)
-        .bind(session_id)
-        .bind(computed_on)
-        .bind(grain)
-        .bind(value)
-        .bind(props)
-        .bind(source)
-        .fetch_one(&self.pool)
         .await
-        .map_err(|e| e.to_string())?;
-        Ok(row.0)
     }
 
     // ── Per-datapoint explainer enrichment (compute-time) ─────────────────
