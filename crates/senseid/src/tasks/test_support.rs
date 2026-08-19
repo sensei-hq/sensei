@@ -56,7 +56,9 @@ async fn ensure_test_watch_root(pg: &PgStore) {
 /// [`seed_metrics_project_folder`] (which passes the synthetic `/_test/metrics-*`
 /// path): churn's git tests pass a REAL temp-repo path so `project_root_path`
 /// (the git churn source resolves the repo through it) points at an on-disk repo.
-/// Returns `(project_id, folder_id)`.
+/// Also seeds a canonical `sensei.repositories` row (repo_key `test/{uniq}`) and
+/// points `folders.repository_id` at it — every metric-fixture folder resolves to a
+/// repository, the repo-grain metric key. Returns `(project_id, folder_id)`.
 pub(crate) async fn seed_project_folder_at(
     pg: &PgStore,
     uniq: &uuid::Uuid,
@@ -79,6 +81,27 @@ pub(crate) async fn seed_project_folder_at(
     .fetch_one(pg.pool())
     .await
     .unwrap();
+    // Repo-grain: resolve the fixture folder to a canonical repository (the metric
+    // grain under `_v2`). Seed a local-only repo keyed on the collision-free
+    // `test/{uniq}` and point `folders.repository_id` at it, so compute writes carry a
+    // real `repository_id` (I-A) and read-backs pool per repository.
+    // `cleanup_metrics_fixture` deletes these rows so the unique `repo_key` can't
+    // collide across runs.
+    let (rid,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
+        "INSERT INTO sensei.repositories(repo_key, name) VALUES($1, $2) \
+         ON CONFLICT(repo_key) DO UPDATE SET name = EXCLUDED.name RETURNING id",
+    )
+    .bind(format!("test/{uniq}"))
+    .bind(&name)
+    .fetch_one(pg.pool())
+    .await
+    .unwrap();
+    sqlx_core::query::query("UPDATE sensei.folders SET repository_id = $2 WHERE id = $1")
+        .bind(fid)
+        .bind(rid)
+        .execute(pg.pool())
+        .await
+        .unwrap();
     (pid, fid)
 }
 
@@ -108,6 +131,66 @@ pub(crate) async fn seed_git_project_folder(
     let root = dir.path().to_string_lossy().to_string();
     let (pid, fid) = seed_project_folder_at(pg, uniq, &root).await;
     (pid, fid, dir)
+}
+
+/// Read a folder's resolved `repository_id` — the repo-grain key the fixture seeded
+/// onto it. Panics if the folder has none: a fixture folder always carries one after
+/// [`seed_project_folder_at`] / [`seed_second_repository`], so a NULL means the
+/// fixture is broken and should fail loud rather than silently mis-key a metric row.
+/// Tests use it to pass the right `repository_id` to
+/// [`PgStore::upsert_project_metric_repo`] when seeding rows to read back under `_v2`.
+pub(crate) async fn repository_for_folder(pg: &PgStore, folder_id: &uuid::Uuid) -> uuid::Uuid {
+    let (rid,): (uuid::Uuid,) =
+        sqlx_core::query_as::query_as("SELECT repository_id FROM sensei.folders WHERE id = $1")
+            .bind(folder_id)
+            .fetch_one(pg.pool())
+            .await
+            .unwrap();
+    rid
+}
+
+/// Seed a SECOND repository into an existing project: a git-kind checkout folder at a
+/// distinct `abs_path` (`/_test/metrics-{uniq}-b`) with its own `sensei.repositories`
+/// row (repo_key `test/{uniq}-b`), wired to `project_id`. The multi-repo pooling test
+/// uses this so a project spans two repositories and the `project_metric_daily` view
+/// pools their repo-grain rows (Σnum/Σden). Returns `(folder_id2, repository_id2)`.
+/// [`cleanup_metrics_fixture`] deletes the repo row (it walks every folder in the
+/// project); pass `folder_id2` as a fixture `fid` to also clear the folder.
+pub(crate) async fn seed_second_repository(
+    pg: &PgStore,
+    project_id: &uuid::Uuid,
+    uniq: &uuid::Uuid,
+) -> (uuid::Uuid, uuid::Uuid) {
+    ensure_test_watch_root(pg).await;
+    let name = format!("metrics-{uniq}-b");
+    let abs_path = format!("/_test/metrics-{uniq}-b");
+    let (fid,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
+        "INSERT INTO sensei.folders(root_id, kind, name, path, abs_path, project_id) \
+         VALUES('00000000-0000-0000-0000-000000000001', 'git'::sensei.folder_kind, $1, $1, $2, $3) \
+         ON CONFLICT(abs_path) DO UPDATE SET project_id = EXCLUDED.project_id RETURNING id",
+    )
+    .bind(&name)
+    .bind(&abs_path)
+    .bind(project_id)
+    .fetch_one(pg.pool())
+    .await
+    .unwrap();
+    let (rid,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
+        "INSERT INTO sensei.repositories(repo_key, name) VALUES($1, $2) \
+         ON CONFLICT(repo_key) DO UPDATE SET name = EXCLUDED.name RETURNING id",
+    )
+    .bind(format!("test/{uniq}-b"))
+    .bind(&name)
+    .fetch_one(pg.pool())
+    .await
+    .unwrap();
+    sqlx_core::query::query("UPDATE sensei.folders SET repository_id = $2 WHERE id = $1")
+        .bind(fid)
+        .bind(rid)
+        .execute(pg.pool())
+        .await
+        .unwrap();
+    (fid, rid)
 }
 
 /// `git init` a fresh repo at `dir` with a local commit identity and signing
@@ -158,7 +241,9 @@ pub(crate) fn git_commit_on_day(dir: &std::path::Path, day: &str, files: &[(&str
     assert!(ok, "git commit failed in the churn fixture repo (day {day})");
 }
 
-/// Insert one `activity.sessions` row and return its id. `outcome`/`ftr` are
+/// Insert one `activity.sessions` row (with `repo_folder_id = fid`, the durable repo
+/// anchor `session_outcomes` groups on to resolve the session's repository) and return
+/// its id. `outcome`/`ftr` are
 /// `Option` so tests can seed an in-flight session (`outcome = NULL`, `ftr = NULL`)
 /// alongside measurable ones.
 pub(crate) async fn seed_metrics_session(
@@ -171,8 +256,8 @@ pub(crate) async fn seed_metrics_session(
     started_at: chrono::DateTime<chrono::Utc>,
 ) -> uuid::Uuid {
     let (id,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
-        "INSERT INTO activity.sessions (folder_id, project_id, outcome, ftr, corrections, started_at) \
-         VALUES ($1, $2, $3::sensei.session_outcome, $4, $5, $6) RETURNING id",
+        "INSERT INTO activity.sessions (folder_id, repo_folder_id, project_id, outcome, ftr, corrections, started_at) \
+         VALUES ($1, $1, $2, $3::sensei.session_outcome, $4, $5, $6) RETURNING id",
     )
     .bind(fid)
     .bind(pid)
@@ -385,8 +470,8 @@ pub(crate) async fn seed_metrics_client_session(
     started_at: chrono::DateTime<chrono::Utc>,
 ) -> uuid::Uuid {
     let (id,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
-        "INSERT INTO activity.sessions (folder_id, project_id, client_session_id, started_at) \
-         VALUES ($1, $2, $3, $4) RETURNING id",
+        "INSERT INTO activity.sessions (folder_id, project_id, repo_folder_id, client_session_id, started_at) \
+         VALUES ($1, $2, $1, $3, $4) RETURNING id",
     )
     .bind(fid)
     .bind(pid)
@@ -642,13 +727,28 @@ pub(crate) async fn purge_tool_verdicts(pg: &PgStore, session_ids: &[&str]) {
 /// `detected_patterns`) and, when given, the folder (cascades its `sessions` →
 /// `turns` and its `nodes`). `exec_folder_paths` names the `folder_path`s whose
 /// `activity.task_executions` to purge (see [`purge_task_executions`]) — pass `&[]`
-/// for fixtures that seed no executions.
+/// for fixtures that seed no executions. Also deletes the `sensei.repositories` rows
+/// seeded onto this project's folders (by [`seed_project_folder_at`] /
+/// [`seed_second_repository`]) so the unique `repo_key` (`test/{uniq}…`) can't collide
+/// across runs.
 pub(crate) async fn cleanup_metrics_fixture(
     pg: &PgStore,
     pid: &uuid::Uuid,
     fid: Option<&uuid::Uuid>,
     exec_folder_paths: &[&str],
 ) {
+    // Capture the repositories seeded onto this project's folders BEFORE the project
+    // delete nulls their `project_id` (folders.project_id is ON DELETE SET NULL).
+    // Covers both the primary folder and any `seed_second_repository`; deleted at the
+    // end (folders.repository_id is ON DELETE SET NULL, so the ordering is safe).
+    let repo_ids: Vec<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
+        "SELECT DISTINCT repository_id FROM sensei.folders \
+          WHERE project_id = $1 AND repository_id IS NOT NULL",
+    )
+    .bind(pid)
+    .fetch_all(pg.pool())
+    .await
+    .unwrap();
     sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
         .bind(pid)
         .execute(pg.pool())
@@ -661,10 +761,18 @@ pub(crate) async fn cleanup_metrics_fixture(
             .await
             .unwrap();
     }
+    let rids: Vec<uuid::Uuid> = repo_ids.into_iter().map(|(r,)| r).collect();
+    if !rids.is_empty() {
+        sqlx_core::query::query("DELETE FROM sensei.repositories WHERE id = ANY($1)")
+            .bind(&rids)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+    }
     purge_task_executions(pg, exec_folder_paths).await;
 }
 
-/// Daily project-scope metric rows (`folder_id IS NULL`) for `pid`, keyed by
+/// Daily local-user metric rows (`scope = 'user'`) for `pid`, keyed by
 /// metric `key`: `(key, value, props)` ordered by key. The read-back the six
 /// metric compute-handler test modules assert against — was copy-pasted verbatim
 /// into each group's `#[cfg(test)]` module (a qlty duplication finding).
@@ -675,7 +783,7 @@ pub(crate) async fn daily_project_metric_rows(
     sqlx_core::query_as::query_as(
         "SELECT m.key, pm.value::float8, pm.props \
            FROM sensei.project_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
-          WHERE pm.project_id = $1 AND pm.grain = 'daily' AND pm.folder_id IS NULL \
+          WHERE pm.project_id = $1 AND pm.grain = 'daily' AND pm.scope = 'user' \
           ORDER BY m.key",
     )
     .bind(pid)
@@ -684,23 +792,6 @@ pub(crate) async fn daily_project_metric_rows(
     .unwrap()
 }
 
-/// Per-module daily rows (`folder_id` set) for one metric `key`:
-/// `(folder_id, value, props)` ordered by `folder_id`. Shared by the churn and
-/// duplication test modules (identical copies).
-pub(crate) async fn module_metric_rows(
-    pg: &PgStore,
-    pid: &uuid::Uuid,
-    key: &str,
-) -> Vec<(uuid::Uuid, f64, serde_json::Value)> {
-    sqlx_core::query_as::query_as(
-        "SELECT pm.folder_id, pm.value::float8, pm.props \
-           FROM sensei.project_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
-          WHERE pm.project_id = $1 AND pm.grain = 'daily' AND pm.folder_id IS NOT NULL \
-            AND m.key = $2 ORDER BY pm.folder_id",
-    )
-    .bind(pid)
-    .bind(key)
-    .fetch_all(pg.pool())
-    .await
-    .unwrap()
-}
+// `module_metric_rows` (per-module folder_id-set rows) was removed with the repo-grain
+// cutover: no computer writes per-module rows anymore (folder_id is not part of the
+// `project_metrics_identity_v2` key), so the helper had no callers.

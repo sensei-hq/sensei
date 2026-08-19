@@ -534,6 +534,27 @@ impl PgStore {
         Ok(row.map(|(r,)| r))
     }
 
+    /// The repository ROOTS a project spans — one `(repository_id, abs_path)` per
+    /// distinct `repository_id`, where `abs_path` is the SHALLOWEST (shortest-path)
+    /// checkout folder for that repository (its root working tree). The repo-grain
+    /// churn/quality compute iterates THIS to run the git-log / qlty walk once per
+    /// repository in the project's actual checkout on disk (D2: a project is a GROUP
+    /// of repositories). Ordered by path length so the primary (shallowest) repository
+    /// is first and iteration is deterministic. Honest-empty when the project has no
+    /// repository-linked folder — those repositories are then skipped, never faked (I-E).
+    pub async fn repository_roots_for_project(&self, project_id: &uuid::Uuid) -> Result<Vec<(uuid::Uuid, String)>, String> {
+        let rows: Vec<(uuid::Uuid, String)> = sqlx_core::query_as::query_as(
+            "SELECT roots.repository_id, roots.abs_path FROM ( \
+               SELECT DISTINCT ON (f.repository_id) f.repository_id, f.abs_path \
+                 FROM sensei.folders f \
+                WHERE f.project_id = $1 AND f.repository_id IS NOT NULL \
+                ORDER BY f.repository_id, length(f.abs_path) ASC \
+             ) roots \
+             ORDER BY length(roots.abs_path) ASC"
+        ).bind(project_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows)
+    }
+
     /// List folders in a non-terminal (recoverable) index state, for startup
     /// resume: `discovered` (scan ran, ProcessGitFolder hadn't started),
     /// `queued` (enqueued, not started), `indexing` (a scan was in-flight when

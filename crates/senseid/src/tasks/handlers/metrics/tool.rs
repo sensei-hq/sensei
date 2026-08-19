@@ -2,10 +2,17 @@
 //!
 //! Follows the `session_outcomes` / `churn` / `duplication` / `autonomy` /
 //! `knowledge` template (resolve `key → metric_id` via the active registry, write a
-//! daily project-scope row to `sensei.project_metrics` via
-//! [`PgStore::upsert_project_metric`]) for ONE project. The single row is `grain =
-//! daily`, `folder_id` NULL (project scope), `computed_on = today` — a SNAPSHOT of
-//! dead tool surface over the rolling window.
+//! daily row to `sensei.project_metrics`) for ONE project. `tool` is project-scoped
+//! — a family's tool registry has no natural per-repo grain — so under the repo-grain
+//! store its single row is ATTRIBUTED to the project's PRIMARY (root) repository via
+//! [`PgStore::primary_repository_for_project`] and written with
+//! [`PgStore::upsert_project_metric_repo`]: `repository_id = Some(primary)`, `scope =
+//! 'user'` (the single local user's reading), `identity`/`commit_sha` NULL (a
+//! project-scope day-cadence snapshot, not per-author and not per-commit), `folder_id`
+//! /`session_id` NULL, `grain = daily`, `computed_on = today` — a SNAPSHOT of dead
+//! tool surface over the rolling window. A project with no repository-linked folder
+//! has nowhere honest to attribute the row → honest-empty (NO row), never a fabricated
+//! repository.
 //!
 //! v1 registry key (`task_name = "tool"`):
 //! - `unused_tools` (count, lower_better): the number of RELEVANT tools with ZERO
@@ -61,10 +68,13 @@
 //! used" timestamp (the same field `autonomy` and the tools-health grid window on).
 //!
 //! Never-fabricate: every DB call propagates `Err`. 0 registered-in-scope tools ⇒
-//! NO row (nothing to measure — a 0 would be a fabricated "0 dead tools"). When
-//! tools ARE registered and every one has an in-window positive call, `value = 0` is
-//! a REAL written zero (0 dead tools). Strict project scoping on both the family set
-//! and the verdicts — another project's usage never marks this project's tools used.
+//! NO row (nothing to measure — a 0 would be a fabricated "0 dead tools"). No
+//! primary repository (a repo-less project) ⇒ NO row (nowhere honest to attribute
+//! the snapshot — never a fabricated repository). When tools ARE registered, a
+//! primary repository resolves, and every relevant tool has an in-window positive
+//! call, `value = 0` is a REAL written zero (0 dead tools). Strict project scoping on
+//! both the family set and the verdicts — another project's usage never marks this
+//! project's tools used.
 
 use crate::db::pg_store::PgStore;
 use crate::tasks::executor::TaskContext;
@@ -75,6 +85,9 @@ use super::MetricGroup;
 const GRAIN_DAILY: &str = "daily";
 /// `sensei.metric_source` text value — tool is measured, not estimated.
 const SOURCE_MEASURED: &str = "measured";
+/// `sensei.metric_scope` text value — `tool` is the single local user's reading of
+/// the project (attributed to its primary repository), never a whole-tree twin.
+const SCOPE_USER: &str = "user";
 
 /// The registry `key` this computer produces.
 const KEY_UNUSED_TOOLS: &str = "unused_tools";
@@ -155,10 +168,11 @@ async fn tool_usage_counts(
 /// Compute the `tool` group for one project as a snapshot as of today.
 /// `project_raw` is the project uuid carried in `task.folder_path`. Returns the
 /// number of `project_metrics` rows written (`0` = honest-empty: no RELEVANT tools —
-/// the project has invoked none of its registered-in-scope tools — or the metric is
-/// inactive). Idempotent — re-running backfills in place via the upsert identity.
-/// This is a FORWARD-ONLY snapshot (Phase 3): the tool registry + relevance reflect
-/// current state and cannot be reconstructed for a past day, so a historical `as_of`
+/// the project has invoked none of its registered-in-scope tools — the project has no
+/// primary repository to attribute the snapshot to, or the metric is inactive).
+/// Idempotent — re-running backfills in place via the upsert identity. This is a
+/// FORWARD-ONLY snapshot (Phase 3): the tool registry + relevance reflect current
+/// state and cannot be reconstructed for a past day, so a historical `as_of`
 /// (`Some(D)`, `D != today`) writes NO row (see [`super::is_historical`]);
 /// `None`/today keep the current snapshot-on-today behavior.
 pub(super) async fn compute(
@@ -199,6 +213,15 @@ pub(super) async fn compute(
         return Ok(0);
     }
 
+    // Repo-grain attribution (D2): `tool` is project-scoped (a family's registry has
+    // no per-repo grain), so its single daily row is attributed to the project's
+    // PRIMARY (root) repository — the shallowest checkout folder. A project with no
+    // repository-linked folder cannot be attributed to any repository, so the row is
+    // honest-empty (NO row) rather than pinned to a fabricated repository (I-E).
+    let Some(repository_id) = pg.primary_repository_for_project(&project_id).await? else {
+        return Ok(0);
+    };
+
     // `value` = dead RELEVANT surface = M - N. Every relevant tool used in-window
     // gives `unused = 0` — a REAL written zero (0 dead relevant tools), never
     // suppressed. `count` type: value IS the count, no numerator/denominator; the
@@ -211,8 +234,23 @@ pub(super) async fn compute(
         "used_tools": used_tools,
     });
     let day = super::today(pg).await?;
-    pg.upsert_project_metric(
-        &mid, &project_id, None, None, day, GRAIN_DAILY, unused as f64, &props, SOURCE_MEASURED,
+    // scope=user (the local user's reading); identity/commit_sha NULL — a
+    // project-scope day-cadence snapshot, not per-author, not per-commit;
+    // folder_id/session_id NULL (grain is daily, attribution is the repository).
+    pg.upsert_project_metric_repo(
+        &mid,
+        &project_id,
+        Some(&repository_id),
+        SCOPE_USER,
+        None,
+        None,
+        None,
+        None,
+        day,
+        GRAIN_DAILY,
+        unused as f64,
+        &props,
+        SOURCE_MEASURED,
     )
     .await?;
 
@@ -240,7 +278,8 @@ mod tests {
         // 2 dead relevant tools. The `partial`-only t3 is load-bearing: broadening the
         // used filter to `verdict IN ('used','partial')` would count t3 as used
         // (value → 1) and this goes red. t4 is load-bearing for relevance: counting
-        // never-invoked tools as dead would push value → 3 and relevant → 4.
+        // never-invoked tools as dead would push value → 3 and relevant → 4. The row
+        // is attributed to the fixture project's primary repository (scope=user).
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
@@ -382,6 +421,67 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn unused_tools_no_primary_repository_writes_no_row() {
+        // Repo-grain honest-empty (I-E): `tool` attributes its project-scope snapshot
+        // to the project's PRIMARY repository. A project with relevant tools but NO
+        // repository-linked folder has nowhere honest to attribute the row → NO row
+        // (never a fabricated repository). Same tool/verdict shape as
+        // `unused_tools_counts_tools_without_positive_verdicts` (which DOES write a row
+        // because its folder carries a repository), so a 0 here is the missing-repo
+        // guard, not empty tool data. Strips the fixture's `repository_id` so
+        // `primary_repository_for_project` resolves `None`.
+        let ctx = make_ctx().await;
+        let pg = ctx.pg();
+        let uniq = uuid::Uuid::new_v4();
+        let (pid, fid) = seed_metrics_project_folder(pg, &uniq).await;
+        // Capture the fixture's seeded repository so it can be cleaned up after we
+        // orphan it, then strip the folder's repository link → no primary repo.
+        let (rid,): (uuid::Uuid,) =
+            query_as("SELECT repository_id FROM sensei.folders WHERE id = $1")
+                .bind(fid)
+                .fetch_one(pg.pool())
+                .await
+                .unwrap();
+        sqlx_core::query::query("UPDATE sensei.folders SET repository_id = NULL WHERE id = $1")
+            .bind(fid)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+        let fam = format!("_test-fam-{uniq}");
+        let csid = format!("_test:tool:{uniq}");
+        purge_assistant_tools(pg, &[&fam]).await;
+        purge_tool_verdicts(pg, &[&csid]).await;
+        purge_assistant_events(pg, &[&csid]).await;
+
+        let ts = chrono::Utc::now() - chrono::Duration::hours(2);
+        seed_tool_session(pg, &fid, &pid, &csid, &fam, ts).await;
+        seed_assistant_tool(pg, &fam, "builtin", "builtin", "t1", "t1").await;
+        seed_tool_verdict(pg, &csid, "t1", "used", ts).await; // relevant + used
+
+        let written = compute(&ctx, &pid.to_string(), None).await.unwrap();
+        assert_eq!(written, 0, "no primary repository → honest-empty → NO row (never a fabricated repo)");
+
+        let (total,): (i64,) = query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
+            .bind(pid)
+            .fetch_one(pg.pool())
+            .await
+            .unwrap();
+        assert_eq!(total, 0, "no project_metrics rows when the project has no repository to attribute to");
+
+        purge_tool_verdicts(pg, &[&csid]).await;
+        purge_assistant_events(pg, &[&csid]).await;
+        purge_assistant_tools(pg, &[&fam]).await;
+        cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
+        // Clean up the now-orphaned repository row (the fixture cleanup keys off the
+        // folder's repository_id, which we nulled above).
+        sqlx_core::query::query("DELETE FROM sensei.repositories WHERE id = $1")
+            .bind(rid)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
     async fn unused_tools_positive_verdict_outside_window_counts_as_unused() {
         // Window boundary + relevance interplay: a tool whose ONLY 'used' verdict fired
         // OUTSIDE the usage window is still RELEVANT (relevance is all-time invocation,
@@ -429,6 +529,8 @@ mod tests {
         // not used), a3 no verdict (never invoked → irrelevant). A's scope must see
         // total_tools = 3 (family A only, not 6), relevant = 2 (a1,a2; a3 excluded),
         // used = 1 (a1 only — B's 'used' verdicts must not mark A's tools), value = 1.
+        // Each project's row is attributed to its own primary repository (distinct
+        // repository_id per fixture) so the two rows never collide under _v2.
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq_a = uuid::Uuid::new_v4();

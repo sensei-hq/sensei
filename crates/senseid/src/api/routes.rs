@@ -514,6 +514,14 @@ mod tests {
         let (app, state) = test_app().await;
         let uniq = uuid::Uuid::new_v4();
         let pid = state.pg.create_project(&format!("_test:pme:{uniq}"), None, None).await.unwrap();
+        // Repo-grain (_v2): `project_health` is a SHARED registry metric — a
+        // NULL-repository write is unique only per (metric,day,grain), so concurrent
+        // test projects collide on the fixed `w2` day. Pin its durable row to a
+        // per-test repository so the retirement-exclusion assertion can't be poisoned
+        // by another run's write.
+        let (rid,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO sensei.repositories (repo_key, name) VALUES ($1, $1) RETURNING id")
+            .bind(format!("test/{uniq}")).fetch_one(state.pg.pool()).await.unwrap();
 
         // Base metric A (ratio) across TWO ISO weeks → weekly trend has prior/delta.
         let key_a = format!("_test:pme:{uniq}:cov");
@@ -537,7 +545,8 @@ mod tests {
         let (health_mid,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "SELECT id FROM sensei.metrics WHERE key = 'project_health'")
             .fetch_one(state.pg.pool()).await.expect("project_health seeded in registry");
-        state.pg.upsert_project_metric(&health_mid, &pid, None, None, w2, "daily", 82.0,
+        state.pg.upsert_project_metric_repo(&health_mid, &pid, Some(&rid), "user", None, None,
+            None, None, w2, "daily", 82.0,
             &serde_json::json!({"components": 2}), "measured").await.unwrap();
 
         let (st, body) = req(app.clone(), "GET", &format!("/api/projects/{pid}/metrics"), None).await;
@@ -584,6 +593,10 @@ mod tests {
             .bind(vec![mid_a, mid_b]).execute(state.pg.pool()).await.unwrap();
         sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = ANY($1)")
             .bind(vec![pid, empty_pid]).execute(state.pg.pool()).await.unwrap();
+        // Repo-grain: drop the per-test repository (its uniq-derived repo_key must not
+        // leak — the health_mid row already cascaded with `pid`).
+        sqlx_core::query::query("DELETE FROM sensei.repositories WHERE id = $1")
+            .bind(rid).execute(state.pg.pool()).await.unwrap();
     }
 
     /// 8.2: the legacy FTR surfaces — the HTTP route `GET /api/metrics/{project}`
@@ -604,7 +617,13 @@ mod tests {
         let (pid_has, fid_has) =
             crate::tasks::test_support::seed_metrics_project_folder(&state.pg, &uniq_has).await;
         let name_has = format!("metrics-{uniq_has}");
-        state.pg.upsert_project_metric(&ftr_mid, &pid_has, None, None, today, "daily", 0.75,
+        // Repo-grain (_v2): `ftr` is a SHARED registry metric — a NULL-repository write
+        // is unique only per (metric,day,grain), so concurrent test projects writing
+        // `today` collide and steal each other's project_id. Pin it to the fixture's
+        // repository (scope=user) so this project's row is its own.
+        let rid_has = crate::tasks::test_support::repository_for_folder(&state.pg, &fid_has).await;
+        state.pg.upsert_project_metric_repo(&ftr_mid, &pid_has, Some(&rid_has), "user", None, None,
+            None, None, today, "daily", 0.75,
             &serde_json::json!({"numerator": 3, "denominator": 4}), "measured").await.unwrap();
 
         // Project WITHOUT any ftr data.
@@ -612,6 +631,7 @@ mod tests {
         let (pid_no, fid_no) =
             crate::tasks::test_support::seed_metrics_project_folder(&state.pg, &uniq_no).await;
         let name_no = format!("metrics-{uniq_no}");
+        let rid_no = crate::tasks::test_support::repository_for_folder(&state.pg, &fid_no).await;
 
         // ── HTTP surface: GET /api/metrics/{project} ──────────────────────
         let (st, body) = req(app.clone(), "GET", &format!("/api/metrics/{name_has}"), None).await;
@@ -641,6 +661,10 @@ mod tests {
             .bind(vec![fid_has, fid_no]).execute(state.pg.pool()).await.unwrap();
         sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = ANY($1)")
             .bind(vec![pid_has, pid_no]).execute(state.pg.pool()).await.unwrap();
+        // Repo-grain: drop the per-fixture repositories (folders.repository_id is
+        // ON DELETE SET NULL, and the ftr row already cascaded with its project).
+        sqlx_core::query::query("DELETE FROM sensei.repositories WHERE id = ANY($1)")
+            .bind(vec![rid_has, rid_no]).execute(state.pg.pool()).await.unwrap();
     }
 
     /// 7.3 `GET /api/projects/{id}/metrics/{key}?grain=weekly`: the weekly series

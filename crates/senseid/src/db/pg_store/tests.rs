@@ -2635,22 +2635,31 @@
         // capture path — its day must already exist in sensei.project_metrics.
         // (Previously aged 90 days, which pruned unconditionally; now the test
         // exercises capture-before-reclaim directly.)
+        // Repo-grain: the capture guard keys on the session's repository, so give the
+        // folder a repository and anchor the session to it via repo_folder_id.
+        let (repo_id,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO sensei.repositories (repo_key, name) VALUES ($1, 'prune-del') RETURNING id"
+        ).bind(format!("test/{suffix}")).fetch_one(s.pool()).await.unwrap();
+        sqlx_core::query::query("UPDATE sensei.folders SET repository_id = $1 WHERE id = $2")
+            .bind(repo_id).bind(fid).execute(s.pool()).await.unwrap();
         sqlx_core::query::query(
             "UPDATE activity.sessions
                 SET started_at = date_trunc('day', now() - interval '40 days'),
-                    analyzed_at = now() - interval '39 days'
+                    analyzed_at = now() - interval '39 days',
+                    repo_folder_id = $2
               WHERE id = $1"
-        ).bind(sid).execute(s.pool()).await.unwrap();
-        // Seed a covering daily project_metrics row for the session's day so the
-        // capture-before-reclaim guard is satisfied (the durable snapshot exists).
+        ).bind(sid).bind(fid).execute(s.pool()).await.unwrap();
+        // Seed a covering daily project_metrics row for the session's day (its OWN
+        // repository, scope='user') so the repo-grain capture-before-reclaim guard is
+        // satisfied (the durable snapshot exists).
         let day40: (chrono::NaiveDate,) = sqlx_core::query_as::query_as(
             "SELECT (date_trunc('day', now() - interval '40 days'))::date"
         ).fetch_one(s.pool()).await.unwrap();
         let ftr_id: (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "SELECT id FROM sensei.metrics WHERE key = 'ftr'"
         ).fetch_one(s.pool()).await.unwrap();
-        s.upsert_project_metric(&ftr_id.0, &pid, None, None, day40.0, "daily", 1.0,
-            &serde_json::json!({}), "measured").await.unwrap();
+        s.upsert_project_metric_repo(&ftr_id.0, &pid, Some(&repo_id), "user", None, None, None, None,
+            day40.0, "daily", 1.0, &serde_json::json!({}), "measured").await.unwrap();
         // Seed a child transcript_turn keyed on client_session_id (no FK).
         sqlx_core::query::query(
             "INSERT INTO activity.transcript_turns(session_id, source, turn_index, assistant_text)
@@ -2677,76 +2686,103 @@
             "SELECT COUNT(*) FROM activity.transcript_turns WHERE session_id = $1"
         ).bind(&csid).fetch_one(s.pool()).await.unwrap();
         assert_eq!(tt.0, 0, "transcript_turns keyed on this session must be gone");
+
+        // cleanup: the covering metric row references the repository (FK) — remove both
+        // so repo_key can't collide across runs of the shared test DB.
+        sqlx_core::query::query("DELETE FROM sensei.project_metrics WHERE project_id = $1")
+            .bind(pid).execute(s.pool()).await.ok();
+        sqlx_core::query::query("DELETE FROM sensei.repositories WHERE id = $1")
+            .bind(repo_id).execute(s.pool()).await.ok();
     }
 
-    /// Capture-before-reclaim (2026-08-12 retention decision): an analyzed
-    /// session past retention is reclaimable ONLY when its day is captured by a
-    /// CAPTURE-AUTHORIZING (session-derived delivery) metric in
-    /// sensei.project_metrics OR it is older than the hard backstop. This proves all
-    /// four arms with retention=30, backstop=60 on four same-project sessions dated:
-    /// 40d + captured by a session-derived day-keyed `ftr` row (prune), 45d +
-    /// uncaptured (KEEP), 50d + covered ONLY by a `duplication_ratio` row
-    /// (task_name='quality', a GIT/qlty-derived day-keyed metric that — like churn —
-    /// is EXCLUDED from the capture scope, so it must NOT mark the day captured)
-    /// (KEEP), 90d + uncaptured (prune via backstop).
+    /// Repo-grain capture-before-reclaim (I20, P-A.3b): after the metric store flips
+    /// to REPOSITORY grain, the pruner's capture guard keys on the SESSION'S
+    /// REPOSITORY (`folders.repository_id` via `s.repo_folder_id`), a `scope='user'`
+    /// row, and `metrics.capture_source='session'` — NOT the project, NOT the
+    /// cadence. Four legs prove all three discriminators, each at retention=30 /
+    /// backstop=60:
+    ///  (a) 40d, day captured by a `scope='user'` `capture_source='session'` (`ftr`)
+    ///      row ON THE SESSION'S REPOSITORY → PRUNED.
+    ///  (b) 45d, uncaptured on its own repo — a DECOY `scope='user'` session-metric
+    ///      row exists for the SAME day on a DIFFERENT repository → KEPT (fails if the
+    ///      guard drops the `pm.repository_id = rf.repository_id` match).
+    ///  (c) 50d, covered ONLY by (i) a `capture_source='snapshot'` DAY-cadence
+    ///      `rework_density` row (`scope='user'`) and (ii) a `capture_source='session'`
+    ///      `ftr` row at the WRONG scope (`scope='repo'`), both on the right repo/day
+    ///      → KEPT (fails if the guard keys on cadence='day' instead of
+    ///      `capture_source`, or drops the `scope='user'` filter).
+    ///  (d) 90d, past the backstop, uncaptured → PRUNED via the backstop arm.
     #[tokio::test]
-    async fn prune_activity_captures_before_reclaim() {
+    async fn prune_activity_captures_before_reclaim_repo_grain() {
         let s = pg_store().await;
-        let suffix = format!("prune_cbr_{}", uuid::Uuid::new_v4());
+        let suffix = format!("prune_cbr_repo_{}", uuid::Uuid::new_v4());
         let (pid, fid) = create_test_project_and_folder(&s, &suffix).await;
+
+        // The session's repository (fid's repository_id) plus a DECOY repository used
+        // to prove the guard matches the SESSION'S repository, not any repository.
+        let (repo_a,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO sensei.repositories (repo_key, name) VALUES ($1, 'cbr-a') RETURNING id"
+        ).bind(format!("test/{suffix}-a")).fetch_one(s.pool()).await.unwrap();
+        let (repo_b,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO sensei.repositories (repo_key, name) VALUES ($1, 'cbr-b') RETURNING id"
+        ).bind(format!("test/{suffix}-b")).fetch_one(s.pool()).await.unwrap();
+        sqlx_core::query::query("UPDATE sensei.folders SET repository_id = $1 WHERE id = $2")
+            .bind(repo_a).bind(fid).execute(s.pool()).await.unwrap();
+
+        // ftr = session_outcomes (capture_source='session'); rework_density = a
+        // snapshot metric at DAY cadence (the cadence-vs-capture_source trap).
         let ftr_id: (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "SELECT id FROM sensei.metrics WHERE key = 'ftr'"
         ).fetch_one(s.pool()).await.unwrap();
+        let rework_id: (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "SELECT id FROM sensei.metrics WHERE key = 'rework_density'"
+        ).fetch_one(s.pool()).await.unwrap();
 
-        // Helper: an analyzed session dated `age_days` ago in this folder.
-        async fn aged_session(s: &PgStore, fid: &uuid::Uuid, suffix: &str, tag: &str, age_days: i32) -> uuid::Uuid {
+        // An analyzed session `age_days` old whose repo_folder_id anchors to `fid`
+        // (whose repository_id is set), so the guard resolves its repository.
+        async fn aged_repo_session(s: &PgStore, fid: &uuid::Uuid, suffix: &str, tag: &str, age_days: i32) -> uuid::Uuid {
             let csid = format!("{suffix}-{tag}");
             let sid = s.record_session_event(&csid, fid, None, "claude", true).await.unwrap();
             sqlx_core::query::query(
                 "UPDATE activity.sessions
                     SET started_at = date_trunc('day', now() - (interval '1 day' * $2)),
-                        analyzed_at = now() - (interval '1 day' * ($2 - 1))
+                        analyzed_at = now() - (interval '1 day' * ($2 - 1)),
+                        repo_folder_id = $3
                   WHERE id = $1"
-            ).bind(sid).bind(age_days).execute(s.pool()).await.unwrap();
+            ).bind(sid).bind(age_days).bind(fid).execute(s.pool()).await.unwrap();
             sid
         }
+        async fn day_ago(s: &PgStore, age_days: i32) -> chrono::NaiveDate {
+            let d: (chrono::NaiveDate,) = sqlx_core::query_as::query_as(
+                "SELECT (date_trunc('day', now() - (interval '1 day' * $1)))::date"
+            ).bind(age_days).fetch_one(s.pool()).await.unwrap();
+            d.0
+        }
 
-        // (a) captured + past retention, inside backstop → PRUNED via capture. The
-        //     covering row is `ftr` = session_outcomes, a DAY-KEYED metric, so it
-        //     satisfies the scoped capture guard.
-        let captured = aged_session(&s, &fid, &suffix, "captured", 40).await;
-        let day40: (chrono::NaiveDate,) = sqlx_core::query_as::query_as(
-            "SELECT (date_trunc('day', now() - interval '40 days'))::date"
-        ).fetch_one(s.pool()).await.unwrap();
-        s.upsert_project_metric(&ftr_id.0, &pid, None, None, day40.0, "daily", 1.0,
-            &serde_json::json!({}), "measured").await.unwrap();
+        // (a) captured on its OWN repo by a scope=user session metric → PRUNED.
+        let captured = aged_repo_session(&s, &fid, &suffix, "captured", 40).await;
+        s.upsert_project_metric_repo(&ftr_id.0, &pid, Some(&repo_a), "user", None, None,
+            None, None, day_ago(&s, 40).await, "daily", 1.0, &serde_json::json!({}), "measured").await.unwrap();
 
-        // (b) uncaptured + past retention, inside backstop → KEPT. A DIFFERENT
-        //     day (45d) than the captured one so its day is genuinely uncovered
-        //     (capture is scoped per project-day, not per session).
-        let uncaptured = aged_session(&s, &fid, &suffix, "uncaptured", 45).await;
+        // (b) uncaptured on repo_a; a DECOY scope=user session metric for the SAME day
+        //     lives on repo_b → KEPT (the guard must match the session's repository).
+        let uncaptured = aged_repo_session(&s, &fid, &suffix, "uncaptured", 45).await;
+        s.upsert_project_metric_repo(&ftr_id.0, &pid, Some(&repo_b), "user", None, None,
+            None, None, day_ago(&s, 45).await, "daily", 1.0, &serde_json::json!({}), "measured").await.unwrap();
 
-        // (c) covered ONLY by a GIT/qlty-derived day-keyed metric (`duplication_ratio`,
-        //     task_name='quality'), past retention, inside backstop → KEPT.
-        //     This is the load-bearing case for the scoped guard: a git/qlty-sourced
-        //     computer stamps a grain='daily' row on a day independent of the session
-        //     stream, so an UNscoped EXISTS would treat this day as "captured" and
-        //     reclaim the session before its session-derived DELIVERY metric ever
-        //     computed — reintroducing the data loss. The scoped guard requires a
-        //     CAPTURE-AUTHORIZING (session-derived) metric, so this session stays
-        //     until one lands (or the backstop). `quality`, like `churn`, is excluded.
-        let snapshot_only = aged_session(&s, &fid, &suffix, "snaponly", 50).await;
-        let day50: (chrono::NaiveDate,) = sqlx_core::query_as::query_as(
-            "SELECT (date_trunc('day', now() - interval '50 days'))::date"
-        ).fetch_one(s.pool()).await.unwrap();
-        let dup_id: (uuid::Uuid,) = sqlx_core::query_as::query_as(
-            "SELECT id FROM sensei.metrics WHERE key = 'duplication_ratio'"
-        ).fetch_one(s.pool()).await.unwrap();
-        s.upsert_project_metric(&dup_id.0, &pid, None, None, day50.0, "daily", 0.4,
-            &serde_json::json!({}), "measured").await.unwrap();
+        // (c) on repo_a/day50, TWO non-authorizing rows: a snapshot + DAY-cadence
+        //     rework_density (scope=user) and a session-source ftr at scope=repo.
+        //     Neither authorizes reclaim → KEPT. Fails if the guard keys on
+        //     cadence='day' (the rework_density row would capture) or drops the
+        //     scope='user' filter (the scope=repo ftr row would capture).
+        let wrong_signal = aged_repo_session(&s, &fid, &suffix, "wrongsignal", 50).await;
+        s.upsert_project_metric_repo(&rework_id.0, &pid, Some(&repo_a), "user", None, None,
+            None, None, day_ago(&s, 50).await, "daily", 0.2, &serde_json::json!({}), "measured").await.unwrap();
+        s.upsert_project_metric_repo(&ftr_id.0, &pid, Some(&repo_a), "repo", None, None,
+            None, None, day_ago(&s, 50).await, "daily", 1.0, &serde_json::json!({}), "measured").await.unwrap();
 
-        // (d) uncaptured + past the backstop (90d > 60) → PRUNED via backstop.
-        let past_backstop = aged_session(&s, &fid, &suffix, "backstop", 90).await;
+        // (d) past the backstop, uncaptured → PRUNED via the backstop arm.
+        let past_backstop = aged_repo_session(&s, &fid, &suffix, "backstop", 90).await;
 
         s.prune_activity(30, 60).await.unwrap();
 
@@ -2756,17 +2792,24 @@
             ).bind(sid).fetch_one(s.pool()).await.unwrap();
             r.0
         }
-        assert!(!alive(&s, captured).await, "day captured by a day-keyed metric → pruned");
-        assert!(alive(&s, uncaptured).await, "uncaptured day inside backstop → kept (durable until snapshot exists)");
-        assert!(alive(&s, snapshot_only).await,
-            "day covered ONLY by a forward-only snapshot metric is NOT captured → kept (a snapshot row must not mask the missing delivery metric)");
-        assert!(!alive(&s, past_backstop).await, "uncaptured but past backstop → pruned so nothing lingers forever");
+        assert!(!alive(&s, captured).await,
+            "(a) day captured by a scope=user session metric ON THE SESSION'S REPOSITORY → pruned");
+        assert!(alive(&s, uncaptured).await,
+            "(b) uncaptured on its repo (the same-day metric is on ANOTHER repo) → kept: the guard must match the session's repository");
+        assert!(alive(&s, wrong_signal).await,
+            "(c) covered only by a snapshot/day metric + a wrong-scope session metric → kept: the guard keys on capture_source + scope=user, never cadence");
+        assert!(!alive(&s, past_backstop).await,
+            "(d) uncaptured but past the backstop → pruned so nothing lingers forever");
 
-        // Clean up the survivors + their covering metric rows.
+        // Clean up survivors, the seeded metric rows, then the repositories (repo_key
+        // uniqueness must not collide across runs of the shared test DB). project_metrics
+        // first so its repository FK does not block the repositories delete.
         sqlx_core::query::query("DELETE FROM activity.sessions WHERE id = ANY($1::uuid[])")
-            .bind(vec![uncaptured, snapshot_only]).execute(s.pool()).await.ok();
+            .bind(vec![uncaptured, wrong_signal]).execute(s.pool()).await.ok();
         sqlx_core::query::query("DELETE FROM sensei.project_metrics WHERE project_id = $1")
             .bind(pid).execute(s.pool()).await.ok();
+        sqlx_core::query::query("DELETE FROM sensei.repositories WHERE id = ANY($1::uuid[])")
+            .bind(vec![repo_a, repo_b]).execute(s.pool()).await.ok();
     }
 
     #[tokio::test]
@@ -3788,7 +3831,14 @@
         // Stored daily ftr row in the 14d window → the headline decodes a real value.
         let (ftr_mid,): (uuid::Uuid,) =
             query_as("SELECT id FROM sensei.metrics WHERE key = 'ftr'").fetch_one(s.pool()).await.unwrap();
-        s.upsert_project_metric(&ftr_mid, &pid, None, None, chrono::Utc::now().date_naive(), "daily", 1.0,
+        // Repo-grain (_v2): the shared `ftr` metric_id is unique per (metric, repo,
+        // user, day), so seed a per-test repository — a NULL-repository row would
+        // collide with a sibling project's `ftr` row on the same day.
+        let (rid,): (uuid::Uuid,) = query_as(
+            "INSERT INTO sensei.repositories (repo_key, name) VALUES ($1, 'ftr-decode') RETURNING id")
+            .bind(format!("test/ftr-decode-{}", uuid::Uuid::new_v4())).fetch_one(s.pool()).await.unwrap();
+        s.upsert_project_metric_repo(&ftr_mid, &pid, Some(&rid), "user", None, None, None, None,
+            chrono::Utc::now().date_naive(), "daily", 1.0,
             &serde_json::json!({"numerator": 1, "denominator": 1}), "measured").await.unwrap();
 
         let ftr = s.get_project_ftr(&pid).await.expect("get_project_ftr decodes numeric metrics");
@@ -5321,9 +5371,9 @@
         let active_mid = seed_metric(&s, &active_key, "ComputeActive", 0, None).await; // active, no end
         let retired_mid = seed_metric(&s, &retired_key, "ComputeRetired", -10, Some(-1)).await; // ended yesterday
         let d = chrono::NaiveDate::from_ymd_opt(2020, 1, 1).unwrap();
-        s.upsert_project_metric(&active_mid, &pid, None, None, d, "daily", 0.5, &serde_json::json!({}), "measured").await.unwrap();
+        s.upsert_project_metric(&active_mid, &pid, None, None, d, "daily", 0.5, &serde_json::json!({"numerator": 1, "denominator": 2}), "measured").await.unwrap();
         // The retired metric HAS a durable row — it just must not be read as active.
-        s.upsert_project_metric(&retired_mid, &pid, None, None, d, "daily", 0.9, &serde_json::json!({}), "measured").await.unwrap();
+        s.upsert_project_metric(&retired_mid, &pid, None, None, d, "daily", 0.9, &serde_json::json!({"numerator": 9, "denominator": 10}), "measured").await.unwrap();
 
         let keys: Vec<String> =
             s.get_project_metrics(&pid).await.unwrap().into_iter().map(|r| r.metric).collect();
@@ -5433,14 +5483,22 @@
         let today = chrono::Utc::now().date_naive();
         let d_recent = today - chrono::Duration::days(3);   // 7d + 14d window
         let d_prev = today - chrono::Duration::days(20);    // prior-14d window only
+        // Repo-grain (_v2): seed a per-test repository so these shared-`ftr` rows key
+        // on (ftr, repo, user, day) and can't collide with a sibling project's rows.
+        let (rid,): (uuid::Uuid,) = query_as(
+            "INSERT INTO sensei.repositories (repo_key, name) VALUES ($1, 'ftrget') RETURNING id")
+            .bind(format!("test/ftrget-{uniq}")).fetch_one(s.pool()).await.unwrap();
         // day A (today):     3/4 = 0.75
-        s.upsert_project_metric(&ftr_mid, &pid, None, None, today, "daily", 0.75,
+        s.upsert_project_metric_repo(&ftr_mid, &pid, Some(&rid), "user", None, None, None, None,
+            today, "daily", 0.75,
             &serde_json::json!({"numerator": 3, "denominator": 4, "correction_count": 1}), "measured").await.unwrap();
         // day B (today-3):   1/2 = 0.50
-        s.upsert_project_metric(&ftr_mid, &pid, None, None, d_recent, "daily", 0.5,
+        s.upsert_project_metric_repo(&ftr_mid, &pid, Some(&rid), "user", None, None, None, None,
+            d_recent, "daily", 0.5,
             &serde_json::json!({"numerator": 1, "denominator": 2, "correction_count": 2}), "measured").await.unwrap();
         // day C (today-20):  1/2 = 0.50 — prior-14d window, excluded from 14d/7d
-        s.upsert_project_metric(&ftr_mid, &pid, None, None, d_prev, "daily", 0.5,
+        s.upsert_project_metric_repo(&ftr_mid, &pid, Some(&rid), "user", None, None, None, None,
+            d_prev, "daily", 0.5,
             &serde_json::json!({"numerator": 1, "denominator": 2, "correction_count": 3}), "measured").await.unwrap();
 
         // ── get_ftr_daily (per-project): value → ftr_rate, props.denominator →
@@ -5523,7 +5581,13 @@
         let (ftr_mid,): (uuid::Uuid,) =
             query_as("SELECT id FROM sensei.metrics WHERE key = 'ftr'").fetch_one(s.pool()).await.unwrap();
         let d10 = chrono::Utc::now().date_naive() - chrono::Duration::days(10); // 8–13d band
-        s.upsert_project_metric(&ftr_mid, &pid, None, None, d10, "daily", 1.0,
+        // Repo-grain (_v2): a per-test repository so the shared `ftr` row keys on
+        // (ftr, repo, user, day) and can't collide with a sibling project's row.
+        let (rid,): (uuid::Uuid,) = query_as(
+            "INSERT INTO sensei.repositories (repo_key, name) VALUES ($1, 'ftrwin') RETURNING id")
+            .bind(format!("test/ftrwin-{}", uuid::Uuid::new_v4())).fetch_one(s.pool()).await.unwrap();
+        s.upsert_project_metric_repo(&ftr_mid, &pid, Some(&rid), "user", None, None, None, None,
+            d10, "daily", 1.0,
             &serde_json::json!({"numerator": 2, "denominator": 2}), "measured").await.unwrap();
 
         let ftr = s.get_project_ftr(&pid).await.unwrap();
@@ -5549,10 +5613,21 @@
         let day = chrono::Utc::now().date_naive() - chrono::Duration::days(6);
         let p1 = s.create_project(&format!("_test:ftrpool1:{}", uuid::Uuid::new_v4()), None, None).await.unwrap();
         let p2 = s.create_project(&format!("_test:ftrpool2:{}", uuid::Uuid::new_v4()), None, None).await.unwrap();
+        // Repo-grain (_v2): each project needs its OWN repository — under the repo-grain
+        // identity a NULL-repository `(ftr, day)` row is shared, so both projects would
+        // collapse onto ONE row and the pooled Σnum/Σden could never be observed.
+        let (r1,): (uuid::Uuid,) = query_as(
+            "INSERT INTO sensei.repositories (repo_key, name) VALUES ($1, 'ftrpool1') RETURNING id")
+            .bind(format!("test/ftrpool1-{}", uuid::Uuid::new_v4())).fetch_one(s.pool()).await.unwrap();
+        let (r2,): (uuid::Uuid,) = query_as(
+            "INSERT INTO sensei.repositories (repo_key, name) VALUES ($1, 'ftrpool2') RETURNING id")
+            .bind(format!("test/ftrpool2-{}", uuid::Uuid::new_v4())).fetch_one(s.pool()).await.unwrap();
         // P1: 1/1 = 1.0 ; P2: 0/3 = 0.0 → avg-of-rates 0.5, pooled 1/4 = 0.25.
-        s.upsert_project_metric(&ftr_mid, &p1, None, None, day, "daily", 1.0,
+        s.upsert_project_metric_repo(&ftr_mid, &p1, Some(&r1), "user", None, None, None, None,
+            day, "daily", 1.0,
             &serde_json::json!({"numerator": 1, "denominator": 1}), "measured").await.unwrap();
-        s.upsert_project_metric(&ftr_mid, &p2, None, None, day, "daily", 0.0,
+        s.upsert_project_metric_repo(&ftr_mid, &p2, Some(&r2), "user", None, None, None, None,
+            day, "daily", 0.0,
             &serde_json::json!({"numerator": 0, "denominator": 3}), "measured").await.unwrap();
 
         let holistic = s.get_ftr_daily(None, 14).await.unwrap();

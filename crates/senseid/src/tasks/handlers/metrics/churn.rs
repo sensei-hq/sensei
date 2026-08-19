@@ -1,36 +1,57 @@
 //! `churn` metric group computer.
 //!
 //! Follows the `session_outcomes` template (resolve `key → metric_id` via the
-//! active registry, write daily rows to `sensei.project_metrics` via
-//! [`PgStore::upsert_project_metric`]) for ONE project, but its two churn metrics
-//! are sourced from **git**, not the file-indexing feed:
+//! active registry, write daily rows to `sensei.project_metrics`) but at the
+//! REPOSITORY grain (spec 2026-08-18): metrics key on the GLOBAL `repository_id`,
+//! not the project. Its two git-sourced churn metrics are sourced from **git**, not
+//! the file-indexing feed:
 //!
-//! - `churn_rate` (count, project daily): the number of DISTINCT source files
-//!   touched by that day's commits — the real files-changed-over-time signal
-//!   (GitClear's churn *definition*, measured first-party from `git log`). One
-//!   project-level row per commit-day.
-//! - `churn_concentration` (pct, project daily): the share of the day's line-churn
-//!   absorbed by the busiest 20% of files (Pareto) — `numerator` = line-churn of
-//!   the top-20% files, `denominator` = total line-churn. A day with commits but
-//!   zero line-churn (only binary/mode changes) has no denominator ⇒ NO
+//! - `churn_rate` (count, per-repository daily): the number of DISTINCT source
+//!   files touched by that day's commits — the real files-changed-over-time signal
+//!   (GitClear's churn *definition*, measured first-party from `git log`). One row
+//!   per (repository × scope × commit-day).
+//! - `churn_concentration` (pct, per-repository daily): the share of the day's
+//!   line-churn absorbed by the busiest 20% of files (Pareto) — `numerator` =
+//!   line-churn of the top-20% files, `denominator` = total line-churn. A day with
+//!   commits but zero line-churn (only binary/mode changes) has no denominator ⇒ NO
 //!   concentration row (never a fabricated 0/0), though `churn_rate` still counts
 //!   the touched files.
-//! - `rework_density` (ratio, per-module + project): UNCHANGED — a forward-only
-//!   snapshot of `inference.detected_patterns` (`name LIKE 'rework: %'`) over
-//!   `sensei.nodes` project files. Out of scope for the git re-sourcing; it keeps
-//!   its DB source and its historical-`as_of`-skips behavior.
+//! - `rework_density` (ratio, PROJECT-level, attributed to the project's PRIMARY
+//!   repository): a forward-only snapshot of `inference.detected_patterns`
+//!   (`name LIKE 'rework: %'`) over `sensei.nodes` project files. It has no natural
+//!   per-repository git grain, so it is written ONCE per project against
+//!   [`PgStore::primary_repository_for_project`] (`scope = 'user'`, `folder_id =
+//!   NULL`). The former per-module (`folder_id`-set) rows are RETIRED — under the
+//!   repo-grain identity (`project_metrics_identity_v2`, which does NOT include
+//!   `folder_id`) they would collide. It keeps its DB source and its
+//!   historical-`as_of`-skip behavior.
+//!
+//! ## Dual derivation (I-B) — the whole-tree twin + the local-user value
+//! For each repository the churn metrics are derived TWICE:
+//! - `scope = 'repo'`: the whole-tree `git log` (ALL authors), `identity = NULL` —
+//!   the repository-wide churn twin.
+//! - `scope = 'user'`: `git log --author=<email>` per local git identity,
+//!   `identity = <email>` — the local user's OWN churn. This is the value the
+//!   default project read pools (the project view filters `scope = 'user'`).
+//!
+//! Local identities are the checkout's effective git author email (git's own
+//! local→global precedence via [`crate::git_identity::read_git_user`]); sensei
+//! models a single local user, so this is normally one email. A checkout with no
+//! resolvable git identity yields NO `scope = 'user'` rows (honest-empty, never a
+//! fabricated author).
 //!
 //! ## Git sourcing (why + how)
 //! The two churn metrics were previously counted from `activity.task_executions`
 //! (the file-INDEXING feed), so a re-index spiked `churn_rate` and only recent
 //! history existed. Real churn is files-changed-over-time from GIT, so they now
-//! read `git log` for the project's repo root — resolved via
-//! [`PgStore::project_root_path`] (the shortest repo-root `folders.abs_path`). A
-//! project with no repo-root folder, a root that is not a git repo, git being
-//! absent, or a repo with no commits on the selected day all produce NO row: an
-//! honest "no git churn data", never a fabricated value. This mirrors the git
-//! discipline already used by `indexer/cross_repo` and `tasks/handlers/scan`
-//! (shell out to git, tolerate its absence).
+//! read `git log` for EACH of the project's repository checkout roots — resolved
+//! via [`PgStore::repository_roots_for_project`] (one `(repository_id, abs_path)`
+//! per distinct repository, shallowest checkout wins). A project with no
+//! repository-linked checkout, a root that is not a git repo, git being absent, or
+//! a repo with no commits on the selected day all produce NO row: an honest "no git
+//! churn data", never a fabricated value. This mirrors the git discipline already
+//! used by `indexer/cross_repo` and `tasks/handlers/scan` (shell out to git,
+//! tolerate its absence).
 //!
 //! Commits bucket on the COMMITTER date (`%cd --date=short`); both the planner's
 //! per-day discovery ([`git_commit_days`]) and this computer read that same field,
@@ -54,7 +75,8 @@
 //! which authorizes reclaim only on `capture_source = 'session'` — excludes it.
 //!
 //! Never-fabricate: every DB call propagates `Err`; a git failure/miss produces NO
-//! row (honest-empty). A ratio/pct with denominator 0 writes NO row.
+//! row (honest-empty). A ratio/pct with denominator 0 writes NO row. A repository
+//! that cannot be resolved is SKIPPED, never a made-up repository (I-E).
 
 use std::collections::HashMap;
 
@@ -65,10 +87,13 @@ use crate::tasks::executor::TaskContext;
 
 use super::MetricGroup;
 
-/// `sensei.metric_grain` text value (churn writes daily rows only).
+/// `sensei.metric_grain` text value (churn writes daily rows only — I-A).
 const GRAIN_DAILY: &str = "daily";
 /// `sensei.metric_source` text value — churn is measured, not estimated.
 const SOURCE_MEASURED: &str = "measured";
+/// `sensei.metric_scope` text values (I-B): the local-user value + the whole-tree twin.
+const SCOPE_USER: &str = "user";
+const SCOPE_REPO: &str = "repo";
 
 /// The registry `key`s this computer produces.
 const KEY_CHURN_RATE: &str = "churn_rate";
@@ -103,6 +128,20 @@ pub(super) fn run_git(root: &str, args: &[&str]) -> Option<String> {
     out.status
         .success()
         .then(|| String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+/// The local git author identities to attribute the `scope = 'user'` churn twin to.
+/// sensei models a SINGLE local user, so this is the checkout's effective git author
+/// email (git's own local→global precedence via
+/// [`crate::git_identity::read_git_user`]), returned as a `Vec` so the caller loops
+/// uniformly. A checkout with no resolvable git identity yields an EMPTY set → no
+/// `scope = 'user'` rows for that repository (honest-empty, never a fabricated
+/// author — I-E). Reuses the shared identity helper rather than re-reading git config.
+fn local_identities(root: &str) -> Vec<String> {
+    crate::git_identity::read_git_user(std::path::Path::new(root))
+        .email
+        .into_iter()
+        .collect()
 }
 
 /// Parse `git log --numstat --date=short --pretty=format:'\x01%cd'` output into
@@ -161,17 +200,20 @@ pub(super) fn git_commit_days(root: &str) -> Vec<NaiveDate> {
 
 /// Per-`(day, file)` line-churn for the compute's day-set, read from `git log`.
 /// `as_of = Some(D)` → the single committer-day `D`; `None` → the trailing
-/// `window_days` window through `today`. The scan is bounded with `--since`/`--until`
-/// (a ±2-day buffer that comfortably absorbs a commit's timezone offset, which is
-/// < 1 day) and then filtered to the EXACT `[lo, hi]` committer-day range on the
-/// parsed `%cd` date — so the bucketing matches [`git_commit_days`] regardless of
-/// git's date-boundary interpretation. Empty on a non-git root / absent git / no
-/// commits on the range (honest-empty).
+/// `window_days` window through `today`. `author` scopes the walk: `Some(email)`
+/// adds `--author=<email>` (the `scope = 'user'` derivation — the local user's own
+/// commits); `None` counts ALL authors (the `scope = 'repo'` whole-tree twin). The
+/// scan is bounded with `--since`/`--until` (a ±2-day buffer that comfortably
+/// absorbs a commit's timezone offset, which is < 1 day) and then filtered to the
+/// EXACT `[lo, hi]` committer-day range on the parsed `%cd` date — so the bucketing
+/// matches [`git_commit_days`] regardless of git's date-boundary interpretation.
+/// Empty on a non-git root / absent git / no commits on the range (honest-empty).
 fn git_day_file_churn(
     root: &str,
     window_days: u32,
     today: NaiveDate,
     as_of: Option<NaiveDate>,
+    author: Option<&str>,
 ) -> HashMap<NaiveDate, HashMap<String, i64>> {
     let (lo, hi) = match as_of {
         Some(d) => (d, d),
@@ -183,13 +225,15 @@ fn git_day_file_churn(
     let since = (lo - chrono::Duration::days(2)).format(GIT_DATE_FMT).to_string();
     let until = (hi + chrono::Duration::days(2)).format(GIT_DATE_FMT).to_string();
     let pretty = format!("--pretty=format:{COMMIT_MARK}%cd");
-    let Some(out) = run_git(
-        root,
-        &[
-            "log", "--no-merges", "--numstat", "--date=short", &pretty, "--since", &since,
-            "--until", &until,
-        ],
-    ) else {
+    let author_flag = author.map(|email| format!("--author={email}"));
+    let mut args: Vec<&str> = vec![
+        "log", "--no-merges", "--numstat", "--date=short", &pretty, "--since", &since,
+        "--until", &until,
+    ];
+    if let Some(ref a) = author_flag {
+        args.push(a);
+    }
+    let Some(out) = run_git(root, &args) else {
         return HashMap::new();
     };
     let mut by_day = parse_numstat_log(&out);
@@ -197,39 +241,29 @@ fn git_day_file_churn(
     by_day
 }
 
-/// `(project_file_count, per-folder file counts)` — "project files" are
-/// `kind = 'file'` nodes across the project's folders (the `rework_density`
-/// denominator). Per-folder counts feed the per-module denominators.
-async fn project_file_counts(
-    pg: &PgStore,
-    project_id: &uuid::Uuid,
-) -> Result<(i64, HashMap<uuid::Uuid, i64>), String> {
-    let rows: Vec<(uuid::Uuid, i64)> = sqlx_core::query_as::query_as(
-        "SELECT n.folder_id                                   AS folder_id
-              , count(*)::int8                                 AS file_count
+/// `# project files` — `kind = 'file'` nodes across the project's folders (the
+/// `rework_density` denominator). One scalar count; the former per-folder breakdown
+/// is gone with the per-module rows.
+async fn project_file_count(pg: &PgStore, project_id: &uuid::Uuid) -> Result<i64, String> {
+    let (total,): (i64,) = sqlx_core::query_as::query_as(
+        "SELECT count(*)::int8
            FROM sensei.nodes   n
            JOIN sensei.folders f ON f.id = n.folder_id
           WHERE f.project_id  = $1
-            AND n.kind        = 'file'::sensei.node_kind
-          GROUP BY n.folder_id",
+            AND n.kind        = 'file'::sensei.node_kind",
     )
     .bind(project_id)
-    .fetch_all(pg.pool())
+    .fetch_one(pg.pool())
     .await
     .map_err(|e| e.to_string())?;
-    let total = rows.iter().map(|(_, c)| c).sum();
-    Ok((total, rows.into_iter().collect()))
+    Ok(total)
 }
 
-/// `(project rework count, per-folder rework counts)` — rework-flagged files are
-/// `inference.detected_patterns` rows the analyzer writes as `name = "rework:
-/// <file>"` (`is_anti_pattern`). One row per file (the table's uniqueness is
-/// `(project_id, name, is_anti_pattern)`), so a row count IS a distinct-file count.
-/// Per-folder counts (via the `folder_id` locus) feed the per-module numerators.
-async fn rework_counts(
-    pg: &PgStore,
-    project_id: &uuid::Uuid,
-) -> Result<(i64, HashMap<uuid::Uuid, i64>), String> {
+/// `# rework-flagged files` — `inference.detected_patterns` rows the analyzer writes
+/// as `name = "rework: <file>"` (`is_anti_pattern`). One row per file (the table's
+/// uniqueness is `(project_id, name, is_anti_pattern)`), so a row count IS a
+/// distinct-file count — the `rework_density` numerator.
+async fn rework_count(pg: &PgStore, project_id: &uuid::Uuid) -> Result<i64, String> {
     let (total,): (i64,) = sqlx_core::query_as::query_as(
         "SELECT count(*)::int8
            FROM inference.detected_patterns
@@ -241,34 +275,21 @@ async fn rework_counts(
     .fetch_one(pg.pool())
     .await
     .map_err(|e| e.to_string())?;
-    let rows: Vec<(uuid::Uuid, i64)> = sqlx_core::query_as::query_as(
-        "SELECT folder_id                                     AS folder_id
-              , count(*)::int8                                 AS rework_count
-           FROM inference.detected_patterns
-          WHERE project_id      = $1
-            AND is_anti_pattern
-            AND name LIKE 'rework: %'
-            AND folder_id IS NOT NULL
-          GROUP BY folder_id",
-    )
-    .bind(project_id)
-    .fetch_all(pg.pool())
-    .await
-    .map_err(|e| e.to_string())?;
-    Ok((total, rows.into_iter().collect()))
+    Ok(total)
 }
 
 /// Compute the `churn` group for one project. `project_raw` is the project uuid
 /// carried in `task.folder_path`. `as_of` is the target `computed_on` day:
-/// - `churn_rate` / `churn_concentration` (git-sourced): `Some(D)` computes ONLY
-///   day `D`'s commits (`computed_on = D`, the backfill/gap-fill path); `None`
-///   computes every commit-day in the trailing window.
+/// - `churn_rate` / `churn_concentration` (git-sourced, per-repository): `Some(D)`
+///   computes ONLY day `D`'s commits (`computed_on = D`, the backfill/gap-fill
+///   path); `None` computes every commit-day in the trailing window.
 /// - `rework_density` (forward-only snapshot): a historical `as_of` (`Some(D)`,
 ///   `D != today`) skips it (see [`super::is_historical`]).
 ///
 /// Returns the number of `project_metrics` rows written (`0` = honest-empty: no git
-/// churn on the day-set, no rework/file data, or none of the group's metrics
-/// active). Idempotent — re-running backfills in place via the upsert identity.
+/// churn on the day-set, no rework/file data, no resolvable repository, or none of
+/// the group's metrics active). Idempotent — re-running backfills in place via the
+/// upsert identity (`project_metrics_identity_v2`).
 pub(super) async fn compute(
     ctx: &TaskContext,
     project_raw: &str,
@@ -293,56 +314,79 @@ pub(super) async fn compute(
 
     let mut written = 0u32;
 
-    // ── churn_rate + churn_concentration (git-sourced, per-day) ──────────────
+    // ── churn_rate + churn_concentration (git-sourced, per-repository, per-day) ──
     if churn_rate_id.is_some() || concentration_id.is_some() {
-        // The project's git-root working dir (shortest repo-root abs_path). No
-        // repo-root folder → no git churn source → honest-empty (no rows).
-        if let Some(root) = pg.project_root_path(&project_id).await? {
-            let today = super::today(pg).await?;
-            for (day, files) in git_day_file_churn(&root, window_days, today, as_of) {
-                // churn_rate (count): # distinct files touched that day. A returned
-                // day always carries ≥1 file (the parser records a day only for a
-                // real numstat line), so this is ≥ 1 — never a fabricated 0.
-                if let Some(mid) = churn_rate_id {
-                    let no_props = serde_json::json!({});
-                    pg.upsert_project_metric(
-                        &mid, &project_id, None, None, day, GRAIN_DAILY, files.len() as f64,
-                        &no_props, SOURCE_MEASURED,
-                    )
-                    .await?;
-                    written += 1;
-                }
-                // churn_concentration (pct): Σ top-20% files' line-churn / Σ all.
-                if let Some(mid) = concentration_id {
-                    let total: i64 = files.values().sum();
-                    if total == 0 {
-                        // Commits touched files but with zero line-churn (all
-                        // binary/mode) → no denominator → NO row (never a 0/0).
-                        continue;
+        // Iterate the project's repository roots (D2: a project is a GROUP of
+        // repositories). Each root is the shallowest checkout dir for a repository —
+        // the working tree we run the git-log numstat walk in. A project with no
+        // repository-linked checkout yields no roots → honest-empty (no rows). A
+        // repository is NEVER fabricated (I-E).
+        let today = super::today(pg).await?;
+        for (repository_id, root) in pg.repository_roots_for_project(&project_id).await? {
+            // Dual derivation (I-B): the whole-tree twin (scope=repo, ALL authors,
+            // identity=NULL) then one author-filtered row per local git identity
+            // (scope=user, identity=that email — the value the project view pools).
+            // A checkout with no git identity contributes only the scope=repo twin.
+            let mut scopes: Vec<(&str, Option<String>)> = vec![(SCOPE_REPO, None)];
+            for email in local_identities(&root) {
+                scopes.push((SCOPE_USER, Some(email)));
+            }
+            for (scope, author_email) in scopes {
+                let author = author_email.as_deref();
+                // identity mirrors the author on the scope=user twin, NULL on
+                // scope=repo (I-C). commit_sha is NULL: a day-bucketed aggregate
+                // spans many commits, so no single sha is meaningful (I-D; see the
+                // contract_decisions note). folder_id/session_id are always NULL and
+                // grain is always daily (I-A).
+                for (day, files) in git_day_file_churn(&root, window_days, today, as_of, author) {
+                    // churn_rate (count): # distinct files touched that day. A
+                    // returned day always carries ≥1 file (the parser records a day
+                    // only for a real numstat line), so this is ≥ 1 — never a
+                    // fabricated 0. A count metric carries no numerator/denominator.
+                    if let Some(mid) = churn_rate_id {
+                        let no_props = serde_json::json!({});
+                        pg.upsert_project_metric_repo(
+                            &mid, &project_id, Some(&repository_id), scope, author, None,
+                            None, None, day, GRAIN_DAILY, files.len() as f64, &no_props,
+                            SOURCE_MEASURED,
+                        )
+                        .await?;
+                        written += 1;
                     }
-                    // Rank files by churn desc, path asc (deterministic ties), take
-                    // the busiest ceil(20%) — ≥1 whenever there is ≥1 file.
-                    let mut ranked: Vec<(&String, i64)> =
-                        files.iter().map(|(p, &c)| (p, c)).collect();
-                    ranked.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(b.0)));
-                    let top_k = ((ranked.len() as f64) * CONCENTRATION_TOP_FRACTION).ceil() as usize;
-                    let top_k = top_k.max(1);
-                    let numerator: i64 = ranked.iter().take(top_k).map(|(_, c)| *c).sum();
-                    let value = numerator as f64 / total as f64;
-                    let props =
-                        serde_json::json!({ "numerator": numerator, "denominator": total });
-                    pg.upsert_project_metric(
-                        &mid, &project_id, None, None, day, GRAIN_DAILY, value, &props,
-                        SOURCE_MEASURED,
-                    )
-                    .await?;
-                    written += 1;
+                    // churn_concentration (pct): Σ top-20% files' line-churn / Σ all.
+                    if let Some(mid) = concentration_id {
+                        let total: i64 = files.values().sum();
+                        if total == 0 {
+                            // Commits touched files but with zero line-churn (all
+                            // binary/mode) → no denominator → NO row (never a 0/0).
+                            continue;
+                        }
+                        // Rank files by churn desc, path asc (deterministic ties),
+                        // take the busiest ceil(20%) — ≥1 whenever there is ≥1 file.
+                        let mut ranked: Vec<(&String, i64)> =
+                            files.iter().map(|(p, &c)| (p, c)).collect();
+                        ranked.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(b.0)));
+                        let top_k =
+                            ((ranked.len() as f64) * CONCENTRATION_TOP_FRACTION).ceil() as usize;
+                        let top_k = top_k.max(1);
+                        let numerator: i64 = ranked.iter().take(top_k).map(|(_, c)| *c).sum();
+                        let value = numerator as f64 / total as f64;
+                        // I-F: pct rows carry props.numerator + props.denominator.
+                        let props =
+                            serde_json::json!({ "numerator": numerator, "denominator": total });
+                        pg.upsert_project_metric_repo(
+                            &mid, &project_id, Some(&repository_id), scope, author, None,
+                            None, None, day, GRAIN_DAILY, value, &props, SOURCE_MEASURED,
+                        )
+                        .await?;
+                        written += 1;
+                    }
                 }
             }
         }
     }
 
-    // ── rework_density (ratio): per-module + project snapshot as of today ──
+    // ── rework_density (ratio): PROJECT-level snapshot, primary-repository grain ──
     // Forward-only: a rework snapshot reflects the CURRENT signal vs current project
     // files and cannot be reconstructed for a past day, so a historical `as_of`
     // (Some(D), D != today) skips it entirely — no fabricated historical snapshot.
@@ -351,38 +395,31 @@ pub(super) async fn compute(
         if super::is_historical(pg, as_of).await? {
             return Ok(written);
         }
-        let (project_files, folder_files) = project_file_counts(pg, &project_id).await?;
-        let (rework_total, folder_rework) = rework_counts(pg, &project_id).await?;
-        let day = super::today(pg).await?;
-
-        // Project row: rework files ÷ project files. 0 project files → NO row (a real
-        // denominator of 0 would be a fabricated 0/0). 0 rework over real files → a
-        // real 0.0 (row written).
-        if project_files > 0 {
-            let value = rework_total as f64 / project_files as f64;
-            let props = serde_json::json!({ "numerator": rework_total, "denominator": project_files });
-            pg.upsert_project_metric(
-                &mid, &project_id, None, None, day, GRAIN_DAILY, value, &props, SOURCE_MEASURED,
-            )
-            .await?;
-            written += 1;
-        }
-
-        // Per-module rows for folders that carry a rework signal. Denominator is the
-        // folder's own file count; a folder with 0 files → NO row (no denominator).
-        for (folder_id, rework_count) in &folder_rework {
-            let files_here = folder_files.get(folder_id).copied().unwrap_or(0);
-            if files_here == 0 {
-                continue;
+        // Attribute the PROJECT-level rework snapshot to the project's PRIMARY
+        // repository (the repo-grain identity). rework_density has no per-author or
+        // per-repository git derivation — it is a whole-project count — so it is
+        // written ONCE (scope=user, identity=NULL: attributing a project-wide value
+        // to a single author would be a fabricated attribution, I-C/I-E). No
+        // repository → honest-empty (no row). The former per-module (folder_id-set)
+        // rows are retired (they collide under project_metrics_identity_v2).
+        if let Some(repository_id) = pg.primary_repository_for_project(&project_id).await? {
+            let project_files = project_file_count(pg, &project_id).await?;
+            // 0 project files → no denominator → NO row (a real denominator of 0
+            // would be a fabricated 0/0). 0 rework over real files → a real 0.0.
+            if project_files > 0 {
+                let rework_total = rework_count(pg, &project_id).await?;
+                let day = super::today(pg).await?;
+                let value = rework_total as f64 / project_files as f64;
+                // I-F: ratio rows carry props.numerator + props.denominator.
+                let props =
+                    serde_json::json!({ "numerator": rework_total, "denominator": project_files });
+                pg.upsert_project_metric_repo(
+                    &mid, &project_id, Some(&repository_id), SCOPE_USER, None, None,
+                    None, None, day, GRAIN_DAILY, value, &props, SOURCE_MEASURED,
+                )
+                .await?;
+                written += 1;
             }
-            let value = *rework_count as f64 / files_here as f64;
-            let props = serde_json::json!({ "numerator": rework_count, "denominator": files_here });
-            pg.upsert_project_metric(
-                &mid, &project_id, Some(folder_id), None, day, GRAIN_DAILY, value, &props,
-                SOURCE_MEASURED,
-            )
-            .await?;
-            written += 1;
         }
     }
 
@@ -394,7 +431,7 @@ mod tests {
     use super::*;
     use crate::tasks::test_support::{
         cleanup_metrics_fixture, daily_project_metric_rows as daily_rows, git_commit_on_day,
-        make_ctx, module_metric_rows as module_rows, seed_detected_pattern, seed_file_node,
+        make_ctx, repository_for_folder, seed_detected_pattern, seed_file_node,
         seed_git_project_folder, seed_metrics_project_folder,
     };
     use sqlx_core::query_as::query_as;
@@ -426,8 +463,10 @@ mod tests {
     #[tokio::test]
     async fn churn_git_single_day_as_of_over_seeded_commits() {
         // THE re-sourcing test: churn_rate + churn_concentration come from `git log`
-        // for the project's repo root, computed for a SINGLE historical day D via
-        // as_of=Some(D), stamped computed_on=D (mirrors session_outcomes/autonomy).
+        // for the project's repository root, computed for a SINGLE historical day D
+        // via as_of=Some(D), stamped computed_on=D (mirrors session_outcomes/autonomy).
+        // Under repo grain the fixture repo (author test@sensei.test) yields a DUAL
+        // derivation: the scope=repo whole-tree twin AND the scope=user author twin.
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
@@ -440,16 +479,20 @@ mod tests {
         git_commit_on_day(repo.path(), &day, &[("a.rs", "1\n2\n3\n4\n"), ("b.rs", "1\n2\n")]);
 
         // Incremental (as_of=None): D is outside the rolling window → NO churn rows
-        // (honest-empty for the recent window, never a fabricated backfill).
+        // (honest-empty for the recent window, never a fabricated backfill). No file
+        // nodes seeded → no rework_density row either.
         let incr = compute(&ctx, &pid.to_string(), None).await.unwrap();
         assert_eq!(incr, 0, "the 60-day-old commit-day is outside the rolling window → no incremental churn rows");
 
-        // Backfill (as_of=Some(D)): computes exactly that day's churn.
+        // Backfill (as_of=Some(D)): computes exactly that day's churn, DUAL scope —
+        // scope=repo (rate+conc) + scope=user (rate+conc) = 4 rows. rework_density is
+        // forward-only, so a historical backfill day skips it.
         let written = compute(&ctx, &pid.to_string(), Some(d)).await.unwrap();
-        assert_eq!(written, 2, "churn_rate + churn_concentration for day D (no file nodes/rework seeded)");
+        assert_eq!(written, 4, "churn_rate + churn_concentration × {{repo, user}} scope for day D");
 
+        // The project read pools scope=user (daily_rows filters scope='user').
         let daily = daily_rows(pg, &pid).await;
-        let rate = daily.iter().find(|r| r.0 == "churn_rate").expect("churn_rate project row");
+        let rate = daily.iter().find(|r| r.0 == "churn_rate").expect("churn_rate scope=user row");
         assert!((rate.1 - 2.0).abs() < 1e-9, "churn_rate = 2 distinct files changed (a.rs, b.rs)");
         let conc = daily.iter().find(|r| r.0 == "churn_concentration").expect("churn_concentration row");
         // top ceil(20% of 2) = 1 busiest file = a.rs (4) / total line-churn 6.
@@ -457,27 +500,90 @@ mod tests {
         assert_eq!(conc.2["numerator"].as_i64(), Some(4), "concentration numerator = busiest-20% line-churn");
         assert_eq!(conc.2["denominator"].as_i64(), Some(6), "concentration denominator = total line-churn");
 
-        // computed_on is stamped to the true commit day D (60 days ago).
+        // computed_on is stamped to the true commit day D (60 days ago); the row is
+        // keyed to the resolved repository at scope=user (I-A/I-B).
         let (rate_on_d,): (i64,) = query_as(
             "SELECT count(*) FROM sensei.project_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
-              WHERE pm.project_id = $1 AND pm.grain = 'daily' AND m.key = 'churn_rate' AND pm.computed_on = $2",
+              WHERE pm.project_id = $1 AND pm.grain = 'daily' AND pm.scope = 'user' \
+                AND m.key = 'churn_rate' AND pm.computed_on = $2",
         )
         .bind(pid)
         .bind(d)
         .fetch_one(pg.pool())
         .await
         .unwrap();
-        assert_eq!(rate_on_d, 1, "the churn_rate row is stamped computed_on = the commit's day D");
+        assert_eq!(rate_on_d, 1, "one scope=user churn_rate row stamped computed_on = the commit's day D");
 
-        // Idempotent: re-backfilling the same day upserts in place.
+        // Idempotent: re-backfilling the same day upserts in place (still 4 rows).
         let again = compute(&ctx, &pid.to_string(), Some(d)).await.unwrap();
-        assert_eq!(again, 2, "re-running the same day backfills in place");
+        assert_eq!(again, 4, "re-running the same day backfills in place");
         let (total,): (i64,) = query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
             .bind(pid)
             .fetch_one(pg.pool())
             .await
             .unwrap();
-        assert_eq!(total, 2, "idempotent upsert — still 2 rows after a second backfill");
+        assert_eq!(total, 4, "idempotent upsert — still 4 rows (2 scope=repo + 2 scope=user) after a second backfill");
+
+        cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
+    }
+
+    #[tokio::test]
+    async fn churn_writes_dual_scope_repo_grain_rows() {
+        // Pin the repo-grain identity contract (I-A..I-D) on the churn_rate rows: for
+        // a single-author repository the compute writes EXACTLY two churn_rate rows —
+        // the scope=repo whole-tree twin (identity NULL) and the scope=user author
+        // twin (identity = the checkout's git email) — BOTH keyed on the resolved
+        // repository_id, with folder_id/session_id/commit_sha NULL and grain=daily.
+        let ctx = make_ctx().await;
+        let pg = ctx.pg();
+        let uniq = uuid::Uuid::new_v4();
+        let (pid, fid, repo) = seed_git_project_folder(pg, &uniq).await;
+        let rid = repository_for_folder(pg, &fid).await;
+
+        let d = (chrono::Utc::now() - chrono::Duration::days(45)).date_naive();
+        let day = d.format("%Y-%m-%d").to_string();
+        git_commit_on_day(repo.path(), &day, &[("a.rs", "1\n2\n3\n")]);
+
+        compute(&ctx, &pid.to_string(), Some(d)).await.unwrap();
+
+        // (scope, identity, repository_id, folder_id, session_id, commit_sha, grain)
+        #[allow(clippy::type_complexity)]
+        let rows: Vec<(
+            String, Option<String>, Option<uuid::Uuid>, Option<uuid::Uuid>,
+            Option<uuid::Uuid>, Option<String>, String,
+        )> = query_as(
+            "SELECT pm.scope::text, pm.identity, pm.repository_id, pm.folder_id, \
+                    pm.session_id, pm.commit_sha, pm.grain::text \
+               FROM sensei.project_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
+              WHERE pm.project_id = $1 AND m.key = 'churn_rate' \
+              ORDER BY pm.scope",
+        )
+        .bind(pid)
+        .fetch_all(pg.pool())
+        .await
+        .unwrap();
+
+        assert_eq!(rows.len(), 2, "one scope=repo twin + one scope=user twin for the single repository");
+
+        // scope=repo: whole-tree, all authors, identity NULL (sorts first).
+        let (scope_r, ident_r, repo_r, folder_r, sess_r, sha_r, grain_r) = &rows[0];
+        assert_eq!(scope_r, "repo", "the whole-tree twin is scope=repo");
+        assert_eq!(*ident_r, None, "scope=repo identity is NULL (I-C)");
+        assert_eq!(*repo_r, Some(rid), "keyed on the resolved repository_id (I-A)");
+        assert_eq!(*folder_r, None, "folder_id is NULL (I-A)");
+        assert_eq!(*sess_r, None, "session_id is NULL (I-A)");
+        assert_eq!(*sha_r, None, "commit_sha is NULL for a day-bucketed aggregate (I-D)");
+        assert_eq!(grain_r, "daily", "grain is daily (I-A)");
+
+        // scope=user: author-filtered, identity = the checkout's git email.
+        let (scope_u, ident_u, repo_u, folder_u, sess_u, sha_u, grain_u) = &rows[1];
+        assert_eq!(scope_u, "user", "the local-user value is scope=user");
+        assert_eq!(ident_u.as_deref(), Some("test@sensei.test"), "scope=user identity = the checkout git email (I-C)");
+        assert_eq!(*repo_u, Some(rid), "keyed on the resolved repository_id (I-A)");
+        assert_eq!(*folder_u, None, "folder_id is NULL (I-A)");
+        assert_eq!(*sess_u, None, "session_id is NULL (I-A)");
+        assert_eq!(*sha_u, None, "commit_sha is NULL for a day-bucketed aggregate (I-D)");
+        assert_eq!(grain_u, "daily", "grain is daily (I-A)");
 
         cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
     }
@@ -487,7 +593,7 @@ mod tests {
         // Pin the ceil(20%) Pareto rule with N=6 files, where ceil(6×0.2)=2 diverges
         // from a floor-then-max(1) mutation (=1). One commit on day D with per-file
         // line-churn 4,3,1,1,1,1 (total 11); the top TWO busiest files (4+3=7) are
-        // the numerator, NOT the top-1 (4).
+        // the numerator, NOT the top-1 (4). Read the pooled scope=user row.
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
@@ -524,10 +630,12 @@ mod tests {
 
     #[tokio::test]
     async fn churn_non_git_project_writes_no_churn_rows_but_rework_still_computes() {
-        // A project whose repo-root folder is NOT a git repo (the synthetic
-        // `/_test/metrics-*` path) → git churn source misses → NO churn_rate /
-        // churn_concentration rows (honest-empty, never a fabricated 0). rework_density
-        // is DB-sourced and unaffected — it still computes its real 0.0 over real files.
+        // A project whose repository checkout folder is NOT a real git repo (the
+        // synthetic `/_test/metrics-*` path, still repository-linked by the fixture) →
+        // the git churn source misses → NO churn_rate / churn_concentration rows
+        // (honest-empty, never a fabricated 0). rework_density is DB-sourced and
+        // unaffected — it still computes its real 0.0 over real files, attributed to
+        // the project's primary repository.
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
@@ -548,12 +656,12 @@ mod tests {
         cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
     }
 
-    // ── rework_density (unchanged — DB-sourced, out of scope for the git re-source) ──
+    // ── rework_density (project-level, primary-repository grain) ─────────────
 
     #[tokio::test]
     async fn churn_no_data_writes_zero_rows() {
-        // Never-fabricate: a project with no repo-root folder, no patterns, and no
-        // files writes NO rows (not a defaulted 0).
+        // Never-fabricate: a project with no repository-linked folder, no patterns,
+        // and no files writes NO rows (not a defaulted 0).
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
@@ -563,7 +671,7 @@ mod tests {
             .unwrap();
 
         let written = compute(&ctx, &pid.to_string(), None).await.unwrap();
-        assert_eq!(written, 0, "no git churn / rework / files → zero rows written");
+        assert_eq!(written, 0, "no repository / rework / files → zero rows written");
 
         let (total,): (i64,) = query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
             .bind(pid)
@@ -578,7 +686,9 @@ mod tests {
     #[tokio::test]
     async fn churn_rework_density_ratio_and_zero_project_files() {
         // rework_density = # rework-flagged files ÷ # project files, with exact
-        // props.numerator/denominator; and the 0-project-files case writes NO row.
+        // props.numerator/denominator, written PROJECT-LEVEL ONLY (attributed to the
+        // primary repository, scope=user) — no per-module rows. The 0-project-files
+        // case writes NO row.
         let ctx = make_ctx().await;
         let pg = ctx.pg();
 
@@ -594,7 +704,7 @@ mod tests {
         seed_detected_pattern(pg, &pid_a, Some(&fid_a), "correction-prone", true).await;
 
         let written_a = compute(&ctx, &pid_a.to_string(), None).await.unwrap();
-        assert_eq!(written_a, 2, "rework_density project row + one per-module row (non-git root → no churn rows)");
+        assert_eq!(written_a, 1, "one PROJECT-level rework_density row (non-git root → no churn rows; per-module rows retired)");
 
         let daily_a = daily_rows(pg, &pid_a).await;
         let rd = daily_a.iter().find(|r| r.0 == "rework_density").expect("rework_density project row");
@@ -602,12 +712,15 @@ mod tests {
         assert_eq!(rd.2["numerator"].as_i64(), Some(2), "numerator = # rework-flagged files (correction-prone excluded)");
         assert_eq!(rd.2["denominator"].as_i64(), Some(4), "denominator = # project files");
 
-        let modules_a = module_rows(pg, &pid_a, "rework_density").await;
-        assert_eq!(modules_a.len(), 1, "one per-module rework_density row (the folder with the signal)");
-        assert_eq!(modules_a[0].0, fid_a, "module row attributed to the rework folder");
-        assert!((modules_a[0].1 - 0.5).abs() < 1e-9, "module rework_density = 2/4 = 0.5");
-        assert_eq!(modules_a[0].2["numerator"].as_i64(), Some(2), "module numerator = folder rework files");
-        assert_eq!(modules_a[0].2["denominator"].as_i64(), Some(4), "module denominator = folder file count");
+        // Repo grain retires the per-module rows: NOTHING is written with folder_id set.
+        let (module_rows,): (i64,) = query_as(
+            "SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1 AND folder_id IS NOT NULL",
+        )
+        .bind(pid_a)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        assert_eq!(module_rows, 0, "no per-module (folder_id-set) rows under repo grain");
 
         // ── Project B: rework flagged but ZERO project files → NO row ──
         let uniq_b = uuid::Uuid::new_v4();
@@ -641,7 +754,7 @@ mod tests {
         }
 
         let written = compute(&ctx, &pid.to_string(), None).await.unwrap();
-        assert_eq!(written, 1, "one rework_density project row (real 0.0); no per-module rows (no folder has a rework signal)");
+        assert_eq!(written, 1, "one PROJECT-level rework_density row (real 0.0); no churn rows on a non-git root");
 
         let daily = daily_rows(pg, &pid).await;
         let rd = daily.iter().find(|r| r.0 == "rework_density").expect("rework_density row IS written for a REAL zero");

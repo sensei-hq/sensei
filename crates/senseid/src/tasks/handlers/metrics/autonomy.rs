@@ -1,16 +1,30 @@
 //! `autonomy` metric group computer (Phase 5.4).
 //!
-//! Follows the `session_outcomes` / `churn` template (read the rolling window,
-//! resolve `key → metric_id` via the active registry, write daily project-scope
-//! rows to `sensei.project_metrics` via [`PgStore::upsert_project_metric`]) for ONE
-//! project. All rows are `grain = daily`, `folder_id` NULL (project scope).
+//! Follows the `session_outcomes` / `churn` / `knowledge` template (read the rolling
+//! window, resolve `key → metric_id` via the active registry, write daily rows to
+//! `sensei.project_metrics` via [`PgStore::upsert_project_metric_repo`]) for ONE
+//! project. Every row is `grain = daily`, `scope = user`, `identity = NULL`,
+//! `commit_sha = NULL`, `folder_id`/`session_id` NULL.
+//!
+//! ## Repo grain (I-A/I-B/I-C/I-D)
+//! Under the repo-grain identity (`metric_id, repository_id, scope, identity,
+//! commit_sha, computed_on, grain`) every production write carries a REAL
+//! `repository_id`; `folder_id`/`session_id` are no longer part of the identity (a
+//! `folder_id`-set or `grain = session` row would collide), and a null-repository row
+//! would collide across projects. Both autonomy metrics therefore resolve a
+//! repository and write `scope = user` ONLY (no whole-tree `repo` twin — autonomy is
+//! not a churn/quality dual-derivation), `identity = NULL` (a single local user; NULL
+//! keeps the row unique per `(metric, repo, user, day)`), and `commit_sha = NULL`
+//! (day-bucketed cadence, not a commit-cadence measurement).
 //!
 //! v1 registry keys (all `task_name = "autonomy"`):
 //! - `interruption_rate` (ratio, lower_better): `numerator` = # `Stop` events,
 //!   `denominator` = # `UserPromptSubmit` events that day; `value` = num/den — the
-//!   "how much the human keeps stepping in" babysitting signal.
+//!   "how much the human keeps stepping in" babysitting signal. Attributed to the
+//!   SESSION's repository (see below).
 //! - `run_completion` (ratio, higher_better): `numerator` = # runs that reached
-//!   `done`, `denominator` = # runs started that day; `value` = num/den.
+//!   `done`, `denominator` = # runs started that day; `value` = num/den. Attributed to
+//!   the project's PRIMARY repository (see below).
 //!
 //! Every ratio row carries `props.low_n = true` when its `denominator < 10` (a
 //! display gate for statistically-thin days) — the row is still written.
@@ -33,14 +47,24 @@
 //! SKIPPED — its registry key simply yields no rows until the signal exists. This
 //! is honest-empty, not fabrication.
 //!
-//! ## Attribution (never leak another project's data)
+//! ## Repository resolution (never leak another project's data, never fabricate one)
 //! - `interruption_rate`: `activity.assistant_events` carries no project id — its
 //!   `session_id` is the assistant's own session-id string. Events attribute to a
-//!   project through `activity.sessions.client_session_id = assistant_events.
-//!   session_id` then `sessions.project_id` (the same linkage `get_project_prompts`
-//!   uses). Events whose `session_id` matches no session, or a session in another
-//!   project, are simply not counted for this project.
-//! - `run_completion`: `activity.runs.project_id` is a direct FK — scope by it.
+//!   session through `activity.sessions.client_session_id = assistant_events.
+//!   session_id`, and to a REPOSITORY through that session's `repo_folder_id →
+//!   sensei.folders.repository_id`. Counts are GROUP BY `(day, repository)` and each
+//!   day/repository writes its own row. Events whose session matches no session, a
+//!   session in another project (the `sessions.project_id = $1` scope), or a session
+//!   whose repository cannot be resolved (`repo_folder_id` NULL, or that folder's
+//!   `repository_id` NULL) are EXCLUDED — the row is skipped, never attributed to a
+//!   fabricated repository (I-E).
+//! - `run_completion`: `activity.runs` carries only a direct `project_id` FK and NO
+//!   repository, so its per-day counts are project-wide. A project-wide value has no
+//!   natural per-repository grain, so it is attributed to
+//!   [`PgStore::primary_repository_for_project`] — the project's canonical
+//!   (shallowest-checkout) repository. A project with NO repository-linked folder
+//!   cannot be attributed to a repository, so `run_completion` writes NO row
+//!   (honest-empty — never fabricate a repository), even when runs exist.
 //!
 //! Windowing/day-bucketing uses each source row's TRUE occurrence time — the
 //! event's client clock `assistant_events.ts` (epoch ms →
@@ -52,17 +76,22 @@
 //!
 //! Never-fabricate: every DB call propagates `Err`; a metric/day with no data
 //! writes NO row. A ratio with denominator 0 writes NO row (a 0/0 would be a
-//! fabricated zero); a real denominator with 0 numerator writes a real `0.0`.
+//! fabricated zero); a real denominator with 0 numerator writes a real `0.0`. A
+//! repository that cannot be resolved skips the row (never a made-up repository).
 
 use crate::db::pg_store::PgStore;
 use crate::tasks::executor::TaskContext;
 
 use super::MetricGroup;
 
-/// `sensei.metric_grain` text value (autonomy writes daily project rows only).
+/// `sensei.metric_grain` text value (autonomy writes daily rows only).
 const GRAIN_DAILY: &str = "daily";
 /// `sensei.metric_source` text value — autonomy is measured, not estimated.
 const SOURCE_MEASURED: &str = "measured";
+/// `sensei.metric_scope` text value — autonomy writes the local-user value only (the
+/// default-project read); it has no whole-tree `repo` twin (that dual derivation is
+/// churn/quality only).
+const SCOPE_USER: &str = "user";
 
 /// The registry `key`s this computer produces. `false_crash_rate` is intentionally
 /// absent (NEEDS_CONTEXT — see the module doc).
@@ -79,9 +108,10 @@ const EVENT_USER_PROMPT: &str = "UserPromptSubmit";
 /// `props.low_n = true` (the row is still written).
 const LOW_N_THRESHOLD: i64 = 10;
 
-/// One day's interruption counts for a project: `(day, stop_count, prompt_count)`.
-/// `prompt_count` is the `interruption_rate` denominator.
-type DayInterruption = (chrono::NaiveDate, i64, i64);
+/// One day's interruption counts for a repository: `(day, repository_id, stop_count,
+/// prompt_count)`. `prompt_count` is the `interruption_rate` denominator; the row is
+/// keyed to the SESSION's resolved repository.
+type DayInterruption = (chrono::NaiveDate, uuid::Uuid, i64, i64);
 
 /// One day's run counts for a project: `(day, done_count, started_count)`.
 /// `started_count` (every run started that day) is the `run_completion` denominator.
@@ -97,12 +127,14 @@ type DayRunCompletion = (chrono::NaiveDate, i64, i64);
 const ANCHOR_INTERRUPTION: &str = "to_timestamp(ae.ts / 1000.0)";
 const ANCHOR_RUN_COMPLETION: &str = "r.started_at";
 
-/// Daily `Stop` / `UserPromptSubmit` counts over the selected day-set (rolling
-/// window when `as_of=None`, the single day `D` when `Some(D)`), attributed to the
-/// project via `sessions.client_session_id = assistant_events.session_id` (events
-/// with no matching session, or a session in another project, are excluded).
-/// Bucketed by the event's CLIENT `ts` (its true occurrence day), not the insert
-/// `created_at`.
+/// Daily `Stop` / `UserPromptSubmit` counts per REPOSITORY over the selected day-set
+/// (rolling window when `as_of=None`, the single day `D` when `Some(D)`), attributed
+/// to the project via `sessions.client_session_id = assistant_events.session_id` and
+/// to a repository via `sessions.repo_folder_id → sensei.folders.repository_id`.
+/// Events with no matching session, a session in another project, or a session whose
+/// repository cannot resolve (`repo_folder_id` NULL / that folder's `repository_id`
+/// NULL) are excluded. Bucketed by the event's CLIENT `ts` (its true occurrence day),
+/// not the insert `created_at`, and GROUP BY `(day, repository)`.
 async fn daily_interruption(
     pg: &PgStore,
     project_id: &uuid::Uuid,
@@ -111,15 +143,18 @@ async fn daily_interruption(
 ) -> Result<Vec<DayInterruption>, String> {
     let sql = format!(
         "SELECT date_trunc('day', to_timestamp(ae.ts / 1000.0))::date      AS day
+              , rf.repository_id                                            AS repository_id
               , count(*) FILTER (WHERE ae.event_type = $3)::int8           AS stop_count
               , count(*) FILTER (WHERE ae.event_type = $4)::int8           AS prompt_count
            FROM activity.assistant_events ae
-           JOIN activity.sessions        s ON s.client_session_id = ae.session_id
-          WHERE s.project_id   = $1
-            AND ae.event_type IN ($3, $4)
+           JOIN activity.sessions        s  ON s.client_session_id = ae.session_id
+           JOIN sensei.folders           rf ON rf.id = s.repo_folder_id
+          WHERE s.project_id      = $1
+            AND rf.repository_id IS NOT NULL
+            AND ae.event_type    IN ($3, $4)
             AND {}
-          GROUP BY 1
-          ORDER BY 1",
+          GROUP BY 1, 2
+          ORDER BY 1, 2",
         super::day_filter(ANCHOR_INTERRUPTION, as_of),
     );
     let q = sqlx_core::query_as::query_as::<_, DayInterruption>(&sql).bind(project_id);
@@ -136,6 +171,8 @@ async fn daily_interruption(
 /// `runs.project_id` FK. `done_count` is runs whose terminal `status = 'done'`;
 /// `started_count` is every run started that day (the denominator). Bucketed by
 /// `started_at` — a run counts on the day it started, regardless of when it finished.
+/// Runs carry no repository, so the caller attributes these project-wide counts to
+/// the project's primary repository.
 async fn daily_run_completion(
     pg: &PgStore,
     project_id: &uuid::Uuid,
@@ -185,10 +222,15 @@ fn ratio_props(numerator: i64, denominator: i64) -> serde_json::Value {
 /// event's client `ts`, `run_completion` on `runs.started_at` — never an insert-time
 /// `created_at`, so a synthesized/back-dated row files on its historical day.
 ///
+/// Repo grain (I-A/I-C/I-D): every row carries a real `repository_id`
+/// (`interruption_rate` the session's repository, `run_completion` the project's
+/// primary repository), `scope = user`, `identity = NULL`, `commit_sha = NULL`, and
+/// no `folder_id`/`session_id`.
+///
 /// Returns the number of `project_metrics` rows written (`0` = honest-empty: no
-/// events/runs on the selected day-set, or none of the group's computed metrics
-/// active). Idempotent — re-running backfills in place via the upsert identity.
-/// `false_crash_rate` is never written (see the module doc).
+/// events/runs on the selected day-set, no resolvable repository, or none of the
+/// group's computed metrics active). Idempotent — re-running backfills in place via
+/// the upsert identity. `false_crash_rate` is never written (see the module doc).
 pub(super) async fn compute(
     ctx: &TaskContext,
     project_raw: &str,
@@ -213,9 +255,9 @@ pub(super) async fn compute(
 
     let mut written = 0u32;
 
-    // ── interruption_rate: # Stop / # UserPromptSubmit, per day ──
+    // ── interruption_rate: # Stop / # UserPromptSubmit, per (day, session-repository) ──
     if let Some(mid) = interruption_id {
-        for (day, stop_count, prompt_count) in
+        for (day, repository_id, stop_count, prompt_count) in
             daily_interruption(pg, &project_id, window_days, as_of).await?
         {
             if prompt_count == 0 {
@@ -225,8 +267,12 @@ pub(super) async fn compute(
             }
             let value = stop_count as f64 / prompt_count as f64;
             let props = ratio_props(stop_count, prompt_count);
-            pg.upsert_project_metric(
-                &mid, &project_id, None, None, day, GRAIN_DAILY, value, &props, SOURCE_MEASURED,
+            // repository_id = the session's resolved repo (I-A); scope=user (I-B),
+            // identity=NULL (single local user, I-C), commit_sha=NULL (day cadence,
+            // I-D), folder_id/session_id=NULL (not in the identity).
+            pg.upsert_project_metric_repo(
+                &mid, &project_id, Some(&repository_id), SCOPE_USER, None, None, None, None,
+                day, GRAIN_DAILY, value, &props, SOURCE_MEASURED,
             )
             .await?;
             written += 1;
@@ -235,21 +281,28 @@ pub(super) async fn compute(
 
     // ── run_completion: # runs done / # runs started, per day ──
     if let Some(mid) = run_completion_id {
-        for (day, done_count, started_count) in
-            daily_run_completion(pg, &project_id, window_days, as_of).await?
-        {
-            if started_count == 0 {
-                // Defensive: GROUP BY only returns days with ≥1 run, so this never
-                // fires — but a real denominator of 0 must never write a fabricated 0/0.
-                continue;
+        // Runs carry only project_id (no repository) → attribute the project-wide
+        // per-day counts to the project's PRIMARY (canonical/root) repository. A
+        // project with no repository-linked folder cannot be attributed → NO row
+        // (honest-empty; never fabricate a repository), even when runs exist.
+        if let Some(repository_id) = pg.primary_repository_for_project(&project_id).await? {
+            for (day, done_count, started_count) in
+                daily_run_completion(pg, &project_id, window_days, as_of).await?
+            {
+                if started_count == 0 {
+                    // Defensive: GROUP BY only returns days with ≥1 run, so this never
+                    // fires — but a real denominator of 0 must never write a fabricated 0/0.
+                    continue;
+                }
+                let value = done_count as f64 / started_count as f64;
+                let props = ratio_props(done_count, started_count);
+                pg.upsert_project_metric_repo(
+                    &mid, &project_id, Some(&repository_id), SCOPE_USER, None, None, None, None,
+                    day, GRAIN_DAILY, value, &props, SOURCE_MEASURED,
+                )
+                .await?;
+                written += 1;
             }
-            let value = done_count as f64 / started_count as f64;
-            let props = ratio_props(done_count, started_count);
-            pg.upsert_project_metric(
-                &mid, &project_id, None, None, day, GRAIN_DAILY, value, &props, SOURCE_MEASURED,
-            )
-            .await?;
-            written += 1;
         }
     }
 
@@ -259,12 +312,35 @@ pub(super) async fn compute(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::pg_store::PgStore;
     use crate::tasks::test_support::{
         cleanup_metrics_fixture, daily_project_metric_rows as daily_rows, make_ctx,
-        purge_assistant_events, purge_runs, seed_assistant_event, seed_assistant_event_ex,
-        seed_metrics_client_session, seed_metrics_project_folder, seed_run,
+        purge_assistant_events, purge_runs, repository_for_folder, seed_assistant_event,
+        seed_assistant_event_ex, seed_metrics_client_session, seed_metrics_project_folder,
+        seed_run,
     };
     use sqlx_core::query_as::query_as;
+
+    /// Anchor a client session to its repository checkout for the repo-grain
+    /// resolution: `interruption_rate` groups by the session's `repo_folder_id →
+    /// sensei.folders.repository_id`, so a seeded session must point `repo_folder_id`
+    /// at the fixture's repository-linked folder (the fixture sets that folder's
+    /// `repository_id`). [`seed_metrics_client_session`] sets only `folder_id`, so the
+    /// tests set `repo_folder_id` here.
+    async fn anchor_session_repo(
+        pg: &PgStore,
+        client_session_id: &str,
+        repo_folder_id: &uuid::Uuid,
+    ) {
+        sqlx_core::query::query(
+            "UPDATE activity.sessions SET repo_folder_id = $1 WHERE client_session_id = $2",
+        )
+        .bind(repo_folder_id)
+        .bind(client_session_id)
+        .execute(pg.pool())
+        .await
+        .unwrap();
+    }
 
     #[tokio::test]
     async fn autonomy_metrics_from_events_and_runs() {
@@ -279,6 +355,7 @@ mod tests {
 
         let ts = chrono::Utc::now() - chrono::Duration::hours(2); // fixed day
         seed_metrics_client_session(pg, &fid, &pid, &csid, ts).await;
+        anchor_session_repo(pg, &csid, &fid).await; // repo-grain: attach the session's repository
         // 24 Stop / 25 UserPromptSubmit on one day → interruption_rate = 24/25 = 0.96,
         // low_n = false (25 >= 10).
         for _ in 0..24 {
@@ -311,6 +388,27 @@ mod tests {
         assert_eq!(rc.2["numerator"].as_i64(), Some(5), "run_completion numerator = # runs reaching done");
         assert_eq!(rc.2["denominator"].as_i64(), Some(9), "run_completion denominator = # runs started");
         assert_eq!(rc.2["low_n"].as_bool(), Some(true), "denominator 9 < 10 → low_n");
+
+        // Repo grain (I-A/I-C/I-D): BOTH rows are keyed to the fixture's repository
+        // (interruption_rate via the session's repo_folder_id, run_completion via the
+        // project's primary repository — the same repo for this single-folder project),
+        // scope=user, identity/commit_sha/folder_id/session_id all NULL, grain daily.
+        let repo = repository_for_folder(pg, &fid).await;
+        let (repo_grain_rows,): (i64,) = query_as(
+            "SELECT count(*) FROM sensei.project_metrics \
+              WHERE project_id = $1 AND repository_id = $2 AND scope = 'user'::sensei.metric_scope \
+                AND identity IS NULL AND commit_sha IS NULL AND folder_id IS NULL AND session_id IS NULL \
+                AND grain = 'daily'::sensei.metric_grain",
+        )
+        .bind(pid)
+        .bind(repo)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        assert_eq!(
+            repo_grain_rows, 2,
+            "both autonomy rows are repo-grain: repository set, scope=user, identity/commit_sha/folder/session NULL, grain daily",
+        );
 
         // false_crash_rate is NEEDS_CONTEXT — no row is ever written for it.
         assert!(
@@ -358,6 +456,45 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn autonomy_run_completion_no_repository_writes_no_row() {
+        // Repo-grain honest-empty (I-A/I-E): a project with REAL runs but NO
+        // repository-linked folder cannot attribute the project-wide run_completion
+        // counts to any repository, so the row is SKIPPED — never a fabricated
+        // repository. (interruption_rate needs a session-repository too and likewise
+        // writes nothing here.)
+        let ctx = make_ctx().await;
+        let pg = ctx.pg();
+        let uniq = uuid::Uuid::new_v4();
+        let pid = pg
+            .create_project(&format!("_test:autonomy-norepo:{uniq}"), None, None)
+            .await
+            .unwrap();
+        purge_runs(pg, &[&pid]).await;
+
+        // Runs exist, but the project has no repository-linked folder.
+        let ts = chrono::Utc::now() - chrono::Duration::hours(2);
+        seed_run(pg, &pid, "done", ts).await;
+        seed_run(pg, &pid, "crashed", ts).await;
+        assert!(
+            pg.primary_repository_for_project(&pid).await.unwrap().is_none(),
+            "fixture precondition: project has no repository to attribute to",
+        );
+
+        let written = compute(&ctx, &pid.to_string(), None).await.unwrap();
+        assert_eq!(written, 0, "runs present but no primary repository → run_completion cannot be attributed → honest-empty skip");
+
+        let (total,): (i64,) = query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
+            .bind(pid)
+            .fetch_one(pg.pool())
+            .await
+            .unwrap();
+        assert_eq!(total, 0, "no rows when the project has no repository (never a fabricated repository)");
+
+        purge_runs(pg, &[&pid]).await;
+        cleanup_metrics_fixture(pg, &pid, None, &[]).await;
+    }
+
+    #[tokio::test]
     async fn autonomy_real_zero_interruption_is_written_low_n() {
         // A day with UserPromptSubmit events but ZERO Stop events → interruption_rate
         // numerator 0 over a REAL denominator → value 0.0 is WRITTEN (a real zero,
@@ -371,6 +508,7 @@ mod tests {
 
         let ts = chrono::Utc::now() - chrono::Duration::hours(2);
         seed_metrics_client_session(pg, &fid, &pid, &csid, ts).await;
+        anchor_session_repo(pg, &csid, &fid).await;
         for _ in 0..3 {
             seed_assistant_event(pg, &csid, "UserPromptSubmit", ts).await;
         }
@@ -403,6 +541,7 @@ mod tests {
 
         let ts = chrono::Utc::now() - chrono::Duration::hours(2);
         seed_metrics_client_session(pg, &fid, &pid, &csid, ts).await;
+        anchor_session_repo(pg, &csid, &fid).await;
         for _ in 0..3 {
             seed_assistant_event(pg, &csid, "Stop", ts).await;
         }
@@ -439,6 +578,7 @@ mod tests {
         let csid_10 = format!("_test:autonomy-lown10:{uniq_10}");
         purge_assistant_events(pg, &[&csid_10]).await;
         seed_metrics_client_session(pg, &fid_10, &pid_10, &csid_10, ts).await;
+        anchor_session_repo(pg, &csid_10, &fid_10).await;
         for _ in 0..2 {
             seed_assistant_event(pg, &csid_10, "Stop", ts).await;
         }
@@ -458,6 +598,7 @@ mod tests {
         let csid_9 = format!("_test:autonomy-lown9:{uniq_9}");
         purge_assistant_events(pg, &[&csid_9]).await;
         seed_metrics_client_session(pg, &fid_9, &pid_9, &csid_9, ts).await;
+        anchor_session_repo(pg, &csid_9, &fid_9).await;
         for _ in 0..2 {
             seed_assistant_event(pg, &csid_9, "Stop", ts).await;
         }
@@ -495,6 +636,7 @@ mod tests {
         let ts = chrono::Utc::now() - chrono::Duration::hours(2);
         // Project A: 4 Stop / 5 UserPromptSubmit; 2 runs, 1 done.
         seed_metrics_client_session(pg, &fid_a, &pid_a, &csid_a, ts).await;
+        anchor_session_repo(pg, &csid_a, &fid_a).await;
         for _ in 0..4 {
             seed_assistant_event(pg, &csid_a, "Stop", ts).await;
         }
@@ -505,6 +647,7 @@ mod tests {
         seed_run(pg, &pid_a, "crashed", ts).await;
         // Project B: 10 Stop / 10 UserPromptSubmit; 5 runs, all done — must NOT touch A.
         seed_metrics_client_session(pg, &fid_b, &pid_b, &csid_b, ts).await;
+        anchor_session_repo(pg, &csid_b, &fid_b).await;
         for _ in 0..10 {
             seed_assistant_event(pg, &csid_b, "Stop", ts).await;
         }
@@ -527,6 +670,19 @@ mod tests {
         assert_eq!(rc.2["numerator"].as_i64(), Some(1), "A's done runs only (B's 5 excluded)");
         assert_eq!(rc.2["denominator"].as_i64(), Some(2), "A's started runs only (2 → 7 if B leaked)");
         assert!((rc.1 - 0.5).abs() < 1e-9, "A run_completion = 1/2 = 0.5");
+
+        // A's rows are attributed to A's OWN repository (not B's) — repo-grain
+        // attribution stays project-local.
+        let repo_a = repository_for_folder(pg, &fid_a).await;
+        let (a_rows,): (i64,) = query_as(
+            "SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1 AND repository_id = $2",
+        )
+        .bind(pid_a)
+        .bind(repo_a)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        assert_eq!(a_rows, 2, "both of A's rows keyed to A's own repository (never B's)");
 
         purge_runs(pg, &[&pid_a, &pid_b]).await;
         purge_assistant_events(pg, &[&csid_a, &csid_b]).await;
@@ -553,6 +709,7 @@ mod tests {
         let ts = chrono::Utc::now() - chrono::Duration::days(60);
         let day = ts.date_naive();
         seed_metrics_client_session(pg, &fid, &pid, &csid, ts).await;
+        anchor_session_repo(pg, &csid, &fid).await;
         for _ in 0..2 {
             seed_assistant_event(pg, &csid, "Stop", ts).await;
         }
@@ -629,6 +786,7 @@ mod tests {
         assert_ne!(historical_day, now.date_naive(), "the occurrence day differs from today");
 
         seed_metrics_client_session(pg, &fid, &pid, &csid, occurred).await;
+        anchor_session_repo(pg, &csid, &fid).await;
         // ts = 45 days ago, created_at = now → a synthesized/back-dated event.
         for _ in 0..2 {
             seed_assistant_event_ex(pg, &csid, "Stop", occurred, now).await;
