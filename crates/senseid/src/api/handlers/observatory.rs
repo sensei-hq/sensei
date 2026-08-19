@@ -370,7 +370,7 @@ pub(crate) async fn backfill_transcripts(State(state): State<AppState>) -> Json<
     Json(serde_json::json!({ "ok": true, "files_seen": files_seen, "enqueued": enqueued, "sessions_repaired": repaired }))
 }
 
-/// Enqueue a metrics backfill (Phase 5 — history recovery): one `PlanMetricDays` per
+/// Enqueue a metrics backfill (Phase 5 — history recovery): one `ComputeProjectMetrics` per
 /// project. The planner then backfills every data day its sources reach and recomputes
 /// today, so the metric charts render months of history. Overlap-guarded
 /// (`has_pending_kind`), so this is safe to call repeatedly; a re-plan is idempotent

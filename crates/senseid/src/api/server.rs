@@ -332,7 +332,7 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
     );
 
     // Metrics pipeline (Phase 4): once-daily (watermarked), enqueue the active
-    // metric registry per project — one ComputeMetrics per base group + a
+    // metric registry per project — one ComputeGroupMetrics per base group + a
     // ComputeHealth barrier. Mirrors the analyzer scheduler's spawn/watermark
     // pattern; the first tick backfills if a day has elapsed since the last run.
     crate::tasks::metrics_scheduler::spawn(
@@ -346,8 +346,8 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
     //      new transcripts, smart-skipped) so day-keyed sources exist, then re-attach
     //      orphaned sessions. FRESHLY-synthesized sessions become measurable after the
     //      analyzer runs, and each `AnalyzeProject` success enqueues an
-    //      overlap-guarded `PlanMetricDays` for its project (the synthesizer →
-    //      analyzer → PlanMetricDays chain).
+    //      overlap-guarded `ComputeProjectMetrics` for its project (the synthesizer →
+    //      analyzer → ComputeProjectMetrics chain).
     //   2. UNCONDITIONALLY enqueue the per-project metric plan on boot
     //      (`enqueue_backfill_all`). This is the trigger for a PERSIST-boot: when the
     //      daemon restarts and its sessions already exist AND are already analyzed
@@ -379,7 +379,7 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
             // measurable, so THIS is what backfills their history.
             match crate::tasks::metrics_scheduler::enqueue_backfill_all(&queue, &pg).await {
                 Ok(0) => tracing::debug!("startup: metric backfill skipped (a plan wave is already in flight)"),
-                Ok(n) => tracing::info!(projects = n, "startup: enqueued metric backfill (PlanMetricDays per project)"),
+                Ok(n) => tracing::info!(projects = n, "startup: enqueued metric backfill (ComputeProjectMetrics per project)"),
                 Err(e) => tracing::warn!(error = %e, "startup: metric backfill enqueue failed"),
             }
         });

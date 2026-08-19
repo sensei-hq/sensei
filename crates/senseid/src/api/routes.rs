@@ -2079,7 +2079,7 @@ mod tests {
     /// on a single seeded project in `sensei_test`, exercised together in sequence:
     ///
     ///   scheduler enqueue contract → real `TaskQueue` → real `spawn_workers`
-    ///   executor dispatch (`ComputeMetrics`→compute, `ComputeHealth`→compute_health)
+    ///   executor dispatch (`ComputeGroupMetrics`→compute, `ComputeHealth`→compute_health)
     ///   → the `blocked_by` health barrier → all six base computers → the retired
     ///   health barrier no-ops → the three read endpoints → FTR parity.
     ///
@@ -2087,7 +2087,7 @@ mod tests {
     /// the metrics scheduler's `enqueue_metrics_pass` (that fn is private) using the
     /// public `Task`/`TaskKind`/`TaskQueue` API and the REAL active registry
     /// (`active_task_names()` minus the `health` barrier name), enqueue one
-    /// `ComputeMetrics` per active base group + one `blocked_by` `ComputeHealth`, then
+    /// `ComputeGroupMetrics` per active base group + one `blocked_by` `ComputeHealth`, then
     /// let real `spawn_workers` drain the graph through the actual executor dispatch.
     /// This proves the health barrier only releases after its base metrics land.
     ///
@@ -2223,20 +2223,17 @@ mod tests {
         for g in ["session_outcomes", "churn", "quality", "autonomy", "knowledge", "tool"] {
             assert!(base_names.iter().any(|t| t == g), "base group `{g}` is active in the registry: {base_names:?}");
         }
-        let mut compute_ids = Vec::with_capacity(base_names.len());
-        for task_name in &base_names {
-            let id = ctx.queue.enqueue(Task::new(TaskKind::ComputeMetrics, &pid_str, task_name)).await;
-            compute_ids.push(id);
-        }
-        ctx.queue
-            .enqueue(Task::new(TaskKind::ComputeHealth, &pid_str, "").blocked_by(compute_ids))
-            .await;
-        let expected_tasks = base_names.len() + 1;
+        // Enqueue the per-project PARENT only: ComputeProjectMetrics freezes one
+        // frozen as_of, fans out one ComputeGroupMetrics per active base group, and
+        // enqueues the ComputeHealth barrier blocked on them — the whole engine graph.
+        ctx.queue.enqueue(Task::new(TaskKind::ComputeProjectMetrics, &pid_str, "")).await;
+        // parent (1) + one child per active base group + the health barrier (1).
+        let expected_tasks = base_names.len() + 2;
 
-        // The barrier is wired: health is BLOCKED until its base ComputeMetrics land.
+        // Only the parent is runnable up front; the group children + the health
+        // barrier are enqueued when the parent runs.
         let pre = ctx.queue.status().await;
-        assert_eq!(pre.pending, base_names.len(), "one ComputeMetrics per active base group pending");
-        assert_eq!(pre.blocked, 1, "the ComputeHealth barrier is blocked on its ComputeMetrics deps");
+        assert_eq!(pre.pending, 1, "just the ComputeProjectMetrics parent is pending up front");
 
         spawn_workers(ctx.clone(), 2);
 
@@ -2254,7 +2251,7 @@ mod tests {
         let fs = ctx.queue.status().await;
         assert!(
             drained,
-            "metrics graph must drain through the real executor (barrier released after its ComputeMetrics); \
+            "metrics graph must drain through the real executor (barrier released after its ComputeGroupMetrics); \
              pending={} blocked={} running={} completed={}",
             fs.pending, fs.blocked, fs.running, fs.completed,
         );
