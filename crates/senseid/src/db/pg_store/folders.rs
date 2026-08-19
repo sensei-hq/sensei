@@ -501,6 +501,39 @@ impl PgStore {
         Ok(assigned)
     }
 
+    /// The repositories a project spans — the distinct `repository_id`s on its
+    /// git/subtree checkout folders (D2: a project is a GROUP of repositories). The
+    /// repo-grain compute iterates THIS instead of the single `project_root_path`
+    /// (killing the multi-repo blind spot). Ordered by folder path so the "primary"
+    /// (shallowest) repository is first and iteration is deterministic. Honest-empty
+    /// when the project has no repository-linked folder.
+    pub async fn repositories_for_project(&self, project_id: &uuid::Uuid) -> Result<Vec<uuid::Uuid>, String> {
+        let rows: Vec<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
+            "SELECT f.repository_id \
+               FROM sensei.folders f \
+              WHERE f.project_id = $1 AND f.repository_id IS NOT NULL \
+              GROUP BY f.repository_id \
+              ORDER BY min(length(f.abs_path))"
+        ).bind(project_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(r,)| r).collect())
+    }
+
+    /// The project's CANONICAL (primary) repository — the repository of its
+    /// shallowest checkout folder (the root repo). Project-level metrics that have no
+    /// natural per-repo grain (`knowledge`, `tool`) are attributed here so they fit
+    /// the repo-grain identity. `None` when the project has no repository-linked
+    /// folder (a repo-less quasi-repo) — those metrics are then honest-empty.
+    pub async fn primary_repository_for_project(&self, project_id: &uuid::Uuid) -> Result<Option<uuid::Uuid>, String> {
+        let row: Option<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
+            "SELECT f.repository_id \
+               FROM sensei.folders f \
+              WHERE f.project_id = $1 AND f.repository_id IS NOT NULL \
+              ORDER BY length(f.abs_path) ASC \
+              LIMIT 1"
+        ).bind(project_id).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row.map(|(r,)| r))
+    }
+
     /// List folders in a non-terminal (recoverable) index state, for startup
     /// resume: `discovered` (scan ran, ProcessGitFolder hadn't started),
     /// `queued` (enqueued, not started), `indexing` (a scan was in-flight when
