@@ -180,11 +180,19 @@ async fn roll_up(
         return Ok(0);
     }
 
+    // Attribute the composite to the project's canonical (primary) repository under
+    // the repo-grain identity — the same choice the project-level day groups
+    // (knowledge/tool) make. A repo-less project cannot carry a repo-grain row, so it
+    // is honest-empty (never a fabricated attribution).
+    let Some(repository_id) = pg.primary_repository_for_project(project_id).await? else {
+        return Ok(0);
+    };
     let score = (100.0 * (sum_weighted / sum_weight)).round();
     let props = serde_json::json!({ "components": serde_json::Value::Object(components) });
     let day = super::today(pg).await?;
-    pg.upsert_project_metric(
-        &health_id, project_id, None, None, day, GRAIN_DAILY, score, &props, SOURCE_MEASURED,
+    pg.upsert_project_metric_repo(
+        &health_id, project_id, Some(&repository_id), "user", None, None, None, None,
+        day, GRAIN_DAILY, score, &props, SOURCE_MEASURED,
     )
     .await?;
     Ok(1)
@@ -233,9 +241,22 @@ mod tests {
     /// Upsert one latest daily project-scope value for a component metric.
     async fn seed_value(pg: &PgStore, mid: &uuid::Uuid, pid: &uuid::Uuid, value: f64) {
         let day = chrono::NaiveDate::from_ymd_opt(2020, 1, 1).unwrap();
-        pg.upsert_project_metric(mid, pid, None, None, day, GRAIN_DAILY, value, &serde_json::json!({}), SOURCE_MEASURED)
+        // Repo-grain: attribute to the project's primary repository so the row is
+        // unique per project under `_v2` (a NULL-repository wrapper row collides across
+        // projects seeding the same component key). Carry numerator/denominator so the
+        // pooled `project_metric_daily` view re-derives ratio/pct `value` back to
+        // `value` (count/duration read the stored value directly, ignoring parts).
+        let repository_id = pg
+            .primary_repository_for_project(pid)
             .await
-            .unwrap();
+            .unwrap()
+            .expect("health test project has a repository (seed_metrics_project_folder links one)");
+        pg.upsert_project_metric_repo(
+            mid, pid, Some(&repository_id), "user", None, None, None, None, day, GRAIN_DAILY,
+            value, &serde_json::json!({ "numerator": value, "denominator": 1.0 }), SOURCE_MEASURED,
+        )
+        .await
+        .unwrap();
     }
 
     /// Seed a dedicated ACTIVE composite metric (`type = score`, unique key/task_name)

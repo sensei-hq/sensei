@@ -66,8 +66,9 @@ impl PgStore {
     ///   never derived is kept even if it is old (would lose signal).
     /// - AND (capture-before-reclaim, invariant I20) the session's day must
     ///   EITHER already be captured in the durable metric store — an `EXISTS`
-    ///   daily `sensei.project_metrics` row for the session's project (via
-    ///   `folders.project_id`) with `computed_on = date_trunc('day',
+    ///   daily `scope = 'user'` `sensei.project_metrics` row for the session's
+    ///   repository (via `folders.repository_id` on the session's
+    ///   `repo_folder_id`) with `computed_on = date_trunc('day',
     ///   s.started_at)::date` AND whose metric has `capture_source = 'session'`
     ///   (a session-derived delivery metric — git/snapshot metrics never
     ///   authorize reclaim) — OR the session must be older than a hard backstop
@@ -100,14 +101,20 @@ impl PgStore {
         //     so we don't re-scan the guard SQL four times. Capture-before-
         //     reclaim (invariant I20): a session is eligible only when its day is
         //     already captured by a CAPTURE-AUTHORIZING metric in
-        //     sensei.project_metrics (daily grain, same project via the folder
-        //     join, and `metrics.capture_source = 'session'`) OR it is older than
+        //     sensei.project_metrics (daily grain, scope = 'user', on the
+        //     session's OWN repository via the `repo_folder_id` -> folders
+        //     -> repository_id join, and `metrics.capture_source = 'session'`)
+        //     OR it is older than
         //     the hard backstop. Scoping to `capture_source = 'session'` is
         //     load-bearing: it is the registry's own record of which metrics are
         //     session-derived delivery signals — git/snapshot metrics stamp a
         //     grain='daily' row on their own day too, so an unscoped EXISTS would
         //     let a session be reclaimed before its delivery metric ever computed
-        //     (the 164GB data-loss class). The authorization now lives in the
+        //     (the 164GB data-loss class). Keying the EXISTS on the session's OWN
+        //     repository (via `repo_folder_id` -> `folders.repository_id`), not
+        //     just its project, keeps the guard honest at repo grain: a session
+        //     is reclaimed only once a session-derived snapshot exists FOR THAT
+        //     REPOSITORY. The authorization now lives in the
         //     `metrics.capture_source` column (retiring the planner's
         //     day_keyed_task_names feed), so producer and guard can't drift.
         let eligible: Vec<(uuid::Uuid, String)> = sqlx_core::query_as::query_as(
@@ -119,7 +126,9 @@ impl PgStore {
                 AND (EXISTS (SELECT 1
                                FROM sensei.project_metrics pm
                                JOIN sensei.metrics m ON m.id = pm.metric_id
-                              WHERE pm.project_id = f.project_id
+                               JOIN sensei.folders rf ON rf.id = s.repo_folder_id
+                              WHERE pm.repository_id = rf.repository_id
+                                AND pm.scope = 'user'
                                 AND pm.grain = 'daily'
                                 AND pm.computed_on = date_trunc('day', s.started_at)::date
                                 AND m.capture_source = 'session')

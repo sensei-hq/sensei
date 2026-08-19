@@ -322,14 +322,16 @@ impl PgStore {
 
     // ── Per-datapoint explainer enrichment (compute-time) ─────────────────
 
-    /// The project-scope DAILY rows one metric GROUP wrote for `day` — `(row_id,
+    /// The scope=`user` DAILY rows one metric GROUP wrote for `day` — `(row_id,
     /// metric_key, value)` — the datapoints the compute-time explainer enrichment
     /// (see [`crate::tasks::handlers::metrics::explainer`]) annotates. Scoped to the
-    /// group via the metric's `task_name`, to project scope via `folder_id IS NULL`
-    /// (the same scope [`Self::get_project_metric_series`]'s daily view reads), and
-    /// to daily grain — so per-module (`folder_id` set) and per-session rows are
-    /// excluded. Empty when the group wrote no project-scope daily row that day
-    /// (honest-empty). Propagates the read error; never masks it.
+    /// group via the metric's `task_name`, to the local-user value via `scope =
+    /// 'user'` (the same rows `sensei.project_metric_daily` pools to the project),
+    /// and to daily grain. Under the repo grain the `_v2` identity carries no
+    /// `folder_id`/`session_id`, so this now returns one row PER REPOSITORY the
+    /// group wrote for the day (each row_id gets its own explainer). Empty when the
+    /// group wrote no scope=`user` daily row that day (honest-empty). Propagates the
+    /// read error; never masks it.
     pub async fn get_group_daily_metrics_for_day(
         &self,
         project_id: &uuid::Uuid,
@@ -343,8 +345,7 @@ impl PgStore {
               WHERE pm.project_id = $1
                 AND m.task_name   = $2
                 AND pm.grain      = 'daily'
-                AND pm.folder_id  IS NULL
-                AND pm.session_id IS NULL
+                AND pm.scope      = 'user'
                 AND pm.computed_on = $3
               ORDER BY m.key",
         )
@@ -357,11 +358,13 @@ impl PgStore {
         Ok(rows)
     }
 
-    /// The immediately-prior day's project-scope daily value for one metric — the
+    /// The immediately-prior day's POOLED project value for one metric — the
     /// `prev_value` the explainer's `delta` is measured against. Reads the most
-    /// recent daily row (project scope, `folder_id IS NULL`) with `computed_on < day`
-    /// for that metric key. `None` when this is the metric's first day (honest-null,
-    /// never a fabricated 0). Propagates the read error; never masks it.
+    /// recent row of the `sensei.project_metric_daily` VIEW (the repo-grain rows
+    /// already pooled to the project) with `date < day` for that metric key, so the
+    /// delta compares like-for-like against today's pooled value rather than a
+    /// single repository's base row. `None` when this is the metric's first day
+    /// (honest-null, never a fabricated 0). Propagates the read error; never masks it.
     pub async fn get_prev_daily_metric_value(
         &self,
         project_id: &uuid::Uuid,
@@ -369,16 +372,12 @@ impl PgStore {
         day: chrono::NaiveDate,
     ) -> Result<Option<f64>, String> {
         let row: Option<(f64,)> = sqlx_core::query_as::query_as(
-            "SELECT pm.value::float8
-               FROM sensei.project_metrics pm
-               JOIN sensei.metrics         m ON m.id = pm.metric_id
-              WHERE pm.project_id = $1
-                AND m.key         = $2
-                AND pm.grain      = 'daily'
-                AND pm.folder_id  IS NULL
-                AND pm.session_id IS NULL
-                AND pm.computed_on < $3
-              ORDER BY pm.computed_on DESC
+            "SELECT d.value::float8
+               FROM sensei.project_metric_daily d
+              WHERE d.project_id = $1
+                AND d.metric     = $2
+                AND d.date       < $3
+              ORDER BY d.date DESC
               LIMIT 1",
         )
         .bind(project_id)
