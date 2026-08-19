@@ -460,6 +460,47 @@ impl PgStore {
         Ok(())
     }
 
+    /// Populate the canonical `sensei.repositories` registry + `folders.repository_id`
+    /// for the git/subtree CHECKOUT-ROOT folders under `root_id` (D10, the repo-grain
+    /// metric grain). For each such folder that has a git remote, derive the canonical
+    /// key via [`super::normalize_repo_key`] from its first `remote_urls` entry, upsert
+    /// the GLOBAL `sensei.repositories` row (keyed on `repo_key`), and point
+    /// `folders.repository_id` at it — so two clones / a rename / a re-checkout of one
+    /// remote all resolve to ONE repository and metric history survives a folder move.
+    /// A folder with no parseable remote is left `repository_id = NULL` (a local-only
+    /// repo has no canonical identity and is never federated — never an abs_path
+    /// fallback). Only git/subtree roots carry `repository_id` (I16); a subfolder
+    /// resolves via its nearest ancestor. Idempotent: re-running upserts the same
+    /// repository row and only re-points folders whose `repository_id` actually
+    /// changed. Returns the number of folders (re)pointed this pass.
+    pub async fn assign_repositories(&self, root_id: &uuid::Uuid) -> Result<u64, String> {
+        let rows: Vec<(uuid::Uuid, String, Option<String>)> = sqlx_core::query_as::query_as(
+            "SELECT id, name, remote_urls->0->>'url' \
+               FROM sensei.folders \
+              WHERE root_id = $1 AND kind IN ('git', 'subtree')"
+        ).bind(root_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+
+        let mut assigned = 0u64;
+        for (folder_id, name, url) in rows {
+            // No remote / unparseable → local-only: leave repository_id NULL.
+            let Some(key) = url.as_deref().and_then(super::normalize_repo_key) else { continue };
+            let repo_id: (uuid::Uuid,) = sqlx_core::query_as::query_as(
+                "INSERT INTO sensei.repositories (repo_key, remote_url, name) VALUES ($1, $2, $3) \
+                 ON CONFLICT (repo_key) DO UPDATE SET remote_url = EXCLUDED.remote_url, modified_at = now() \
+                 RETURNING id"
+            ).bind(&key).bind(url.as_deref()).bind(&name)
+             .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
+            // Re-point only when it changes, so a no-op re-run stays cheap.
+            let res = sqlx_core::query::query(
+                "UPDATE sensei.folders SET repository_id = $2 \
+                  WHERE id = $1 AND repository_id IS DISTINCT FROM $2"
+            ).bind(folder_id).bind(repo_id.0)
+             .execute(&self.pool).await.map_err(|e| e.to_string())?;
+            assigned += res.rows_affected();
+        }
+        Ok(assigned)
+    }
+
     /// List folders in a non-terminal (recoverable) index state, for startup
     /// resume: `discovered` (scan ran, ProcessGitFolder hadn't started),
     /// `queued` (enqueued, not started), `indexing` (a scan was in-flight when

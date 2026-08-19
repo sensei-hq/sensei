@@ -143,6 +143,12 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
     let live: std::collections::HashSet<std::path::PathBuf> =
         classified.iter().map(|f| f.path.clone()).collect();
     let ReconcileRootsOutcome { removed, marked, remapped, archived } = reconcile_roots(ctx.pg(), &root_id, &live).await;
+    // Populate the canonical `sensei.repositories` registry + `folders.repository_id`
+    // from the git roots' captured remotes (the repo-grain metric grain, D10). Runs
+    // after the upsert loop stamped remote_urls. Best-effort — a failure is logged,
+    // never fatal to the scan.
+    let repos_assigned = ctx.pg().assign_repositories(&root_id).await
+        .unwrap_or_else(|e| { tracing::warn!(error = %e, "scan_root: assign_repositories failed"); 0 });
     // Then prune ghost folder subtrees whose directory was deleted/moved on disk
     // (e.g. a renamed sub-crate). `reconcile_roots` only prunes project ROOTS and
     // `prune_vanished` only reconciles files *within* an indexed folder, so nothing
@@ -169,13 +175,13 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
     if reabsorbed > 0 {
         tracing::info!("scan_root reconcile: re-absorbed {reabsorbed} nested standalone root(s) into their enclosing repo's project");
     }
-    if removed > 0 || marked > 0 || remapped > 0 || archived > 0 || ghosts > 0 || deduped > 0 || pruned_projects > 0 {
+    if removed > 0 || marked > 0 || remapped > 0 || archived > 0 || ghosts > 0 || deduped > 0 || pruned_projects > 0 || repos_assigned > 0 {
         emit(StateEvent::activity(ActivityEvent::new(
             ActivityLevel::Info,
-            &format!("reconcile · {removed} stale roots removed · {remapped} moved roots remapped · {archived} vanished roots archived · {ghosts} ghost folders pruned · {deduped} duplicate nodes deduped · {pruned_projects} empty projects purged · {marked} flagged stale · {orphaned} projects re-tagged"),
+            &format!("reconcile · {removed} stale roots removed · {remapped} moved roots remapped · {archived} vanished roots archived · {ghosts} ghost folders pruned · {deduped} duplicate nodes deduped · {pruned_projects} empty projects purged · {repos_assigned} folders linked to repositories · {marked} flagged stale · {orphaned} projects re-tagged"),
             start.elapsed().as_secs_f64(),
         )));
-        tracing::info!("scan_root reconcile: removed={removed} remapped={remapped} archived={archived} ghost_folders={ghosts} deduped_nodes={deduped} empty_projects_purged={pruned_projects} marked={marked} orphaned_retagged={orphaned}");
+        tracing::info!("scan_root reconcile: removed={removed} remapped={remapped} archived={archived} ghost_folders={ghosts} deduped_nodes={deduped} empty_projects_purged={pruned_projects} repos_assigned={repos_assigned} marked={marked} orphaned_retagged={orphaned}");
     }
 
     // 5. Register watcher

@@ -5618,3 +5618,46 @@
         sqlx_core::query::query("DELETE FROM sensei.repositories WHERE id = ANY($1)")
             .bind(vec![n1, n2]).execute(s.pool()).await.ok();
     }
+
+    // ── P-A.3b Stage 0: repository population (folders.repository_id) ─────
+    /// A git checkout with a remote is linked to a canonical `sensei.repositories`
+    /// row keyed on the NORMALIZED remote; a remote-less checkout stays NULL
+    /// (local-only, never federated); re-running is a no-op (idempotent).
+    #[tokio::test]
+    async fn assign_repositories_links_folders_to_canonical_repo_key() {
+        let s = PgStore::connect(&test_db_url()).await.unwrap();
+        let tag = uuid::Uuid::new_v4();
+        let root_id = s.add_watch_root(&format!("/tmp/assignrepo-{tag}"), "ar", &serde_json::json!([])).await.unwrap();
+
+        // A git checkout WITH a remote (run-unique so it can't collide in the shared DB).
+        let with_remote = s.upsert_repo_kind(&root_id, "git", "repo", &format!("/tmp/assignrepo-{tag}/repo")).await.unwrap();
+        let url = format!("git@github.com:Org/Repo-{tag}.git");
+        s.update_folder_remotes(&with_remote, &serde_json::json!([{"name": "origin", "url": url}])).await.unwrap();
+        // A git checkout with NO remote → local-only.
+        let no_remote = s.upsert_repo_kind(&root_id, "git", "local", &format!("/tmp/assignrepo-{tag}/local")).await.unwrap();
+
+        let n = s.assign_repositories(&root_id).await.unwrap();
+        assert_eq!(n, 1, "only the folder with a remote is (re)pointed; the remote-less one stays NULL");
+
+        // The remote folder → a repositories row keyed on the NORMALIZED remote.
+        let (rid, key): (Option<uuid::Uuid>, Option<String>) = query_as(
+            "SELECT f.repository_id, r.repo_key FROM sensei.folders f \
+               LEFT JOIN sensei.repositories r ON r.id = f.repository_id WHERE f.id = $1",
+        ).bind(with_remote).fetch_one(s.pool()).await.unwrap();
+        assert!(rid.is_some(), "the git checkout with a remote is linked to a repository");
+        assert_eq!(key.as_deref(), Some(format!("github.com/org/repo-{tag}").as_str()),
+            "linked via the normalized remote key (scheme/creds/.git stripped, lowercased)");
+
+        // The remote-less folder stays NULL — local-only, never federated.
+        let (rid2,): (Option<uuid::Uuid>,) = query_as("SELECT repository_id FROM sensei.folders WHERE id = $1")
+            .bind(no_remote).fetch_one(s.pool()).await.unwrap();
+        assert!(rid2.is_none(), "a checkout with no remote is left repository_id NULL");
+
+        // Idempotent: a second pass re-points nothing.
+        assert_eq!(s.assign_repositories(&root_id).await.unwrap(), 0, "re-run is a no-op (no folder changed)");
+
+        // cleanup (delete the watch root → cascades folders; then the repository row)
+        let repo_id = rid.unwrap();
+        sqlx_core::query::query("DELETE FROM sensei.folders_to_watch WHERE id = $1").bind(root_id).execute(s.pool()).await.ok();
+        sqlx_core::query::query("DELETE FROM sensei.repositories WHERE id = $1").bind(repo_id).execute(s.pool()).await.ok();
+    }
