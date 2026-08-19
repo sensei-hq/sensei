@@ -50,7 +50,7 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
         .map_err(|e| format!("read exclusions for {watch_root_path}: {e}"))?;
 
     // 1. Find all git folders
-    let git_folders: Vec<_> = scan_logic::find_git_folders(root, 3)
+    let git_folders: Vec<_> = scan_logic::find_git_folders(root, scan_logic::MAX_SCAN_DEPTH)
         .into_iter()
         .filter(|p| !scan_logic::is_excluded(p, &exclusions))
         .collect();
@@ -66,7 +66,7 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
 
     // 2. Classify into project roots: git repos + quasi-repos (non-git project
     //    roots that contain indexable code). Subfolders are never promoted.
-    let all_dirs: Vec<_> = scan_logic::all_directories(root, 3)
+    let all_dirs: Vec<_> = scan_logic::all_directories(root, scan_logic::MAX_SCAN_DEPTH)
         .into_iter()
         .filter(|p| !scan_logic::is_excluded(p, &exclusions))
         .collect();
