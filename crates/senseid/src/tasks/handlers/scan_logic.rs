@@ -11,6 +11,14 @@ const IGNORED_DIRS: &[&str] = &[
     "node_modules", "dist", "build", "target", "__pycache__", "__MACOSX",
 ];
 
+/// How deep the scan walk descends from a watch root. Lifted from the old
+/// hardcoded `3` (D15): a submodule / vendored checkout nested a few levels
+/// inside a repo that itself sits a level or two under the watch root lands well
+/// past depth 3. The walk stays affordable because `IGNORED_DIRS` and symlinks
+/// are pruned and it never descends into `.git`; the bound is only a backstop
+/// against a pathological tree.
+pub const MAX_SCAN_DEPTH: u32 = 8;
+
 /// A discovered folder with its classification.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DiscoveredFolder {
@@ -26,6 +34,17 @@ pub enum FolderKind {
     /// A non-git directory that looks like a project the developer started but
     /// never `git init`'d ("quasi-repo") — also treated as a project root.
     Standalone,
+}
+
+/// True if `path` is a git **checkout** — it holds a `.git` that is either a
+/// directory (a normal clone) OR a file (a linked worktree / submodule
+/// "gitlink", whose `.git` is a text file pointing at the real git dir).
+/// The single source of truth for "is this a repo root on disk", so the three
+/// walk boundaries (`walk_for_git`, `is_inside_git_repo`, `walk_dirs`) agree and
+/// none of them mask a worktree/submodule the way a `.is_dir()`-only test does.
+pub fn is_checkout(path: &Path) -> bool {
+    let g = path.join(".git");
+    g.is_dir() || g.is_file()
 }
 
 /// Find all .git directories under root up to max_depth.
@@ -61,14 +80,25 @@ fn walk_for_git(dir: &Path, depth: u32, max_depth: u32, out: &mut Vec<PathBuf>) 
         // `strategos/gateway`) is already reached via its real path, so following
         // the link would classify the same repo twice → two projects.
         if entry.file_type().map(|t| t.is_symlink()).unwrap_or(false) { continue; }
-        if !path.is_dir() || name.starts_with('.') { continue; }
-        if IGNORED_DIRS.contains(&name.as_str()) { continue; }
+        if !path.is_dir() { continue; }
 
-        if path.join(".git").is_dir() {
-            out.push(path);
-        } else {
+        // Detect-before-prune (D15d): record a checkout even when its own
+        // directory name is dotfile-prefixed or an IGNORED_DIRS build-output
+        // name (a repo literally named `build`). `is_checkout` also matches a
+        // `.git`-FILE worktree/submodule, not just a `.git` directory. Then
+        // descend INTO it so a nested checkout (submodule / vendored clone)
+        // surfaces as its own root — the walk no longer halts at the first
+        // `.git` (the core D15 fix). Descent stays affordable: `.git` internals
+        // are dotfile-skipped and IGNORED_DIRS/symlinks are pruned below.
+        if is_checkout(&path) {
+            out.push(path.clone());
             walk_for_git(&path, depth + 1, max_depth, out);
+            continue;
         }
+
+        // A non-checkout dir: prune generated / hidden dirs, else keep descending.
+        if name.starts_with('.') || IGNORED_DIRS.contains(&name.as_str()) { continue; }
+        walk_for_git(&path, depth + 1, max_depth, out);
     }
 }
 
@@ -97,7 +127,7 @@ pub fn ancestor_set(root: &Path, git_folders: &[PathBuf]) -> std::collections::H
 pub fn is_inside_git_repo(dir: &Path) -> bool {
     let mut cur = dir.parent();
     while let Some(p) = cur {
-        if p.join(".git").is_dir() {
+        if is_checkout(p) {
             return true;
         }
         cur = p.parent();
@@ -126,8 +156,9 @@ fn walk_dirs(dir: &Path, depth: u32, max_depth: u32, out: &mut Vec<PathBuf>) {
         if IGNORED_DIRS.contains(&name.as_str()) { continue; }
 
         out.push(path.clone());
-        // Don't recurse into git folders
-        if !path.join(".git").is_dir() {
+        // Don't recurse into a checkout — its contents are that repo's content,
+        // never quasi-repo candidates (`.git`-FILE worktrees included).
+        if !is_checkout(&path) {
             walk_dirs(&path, depth + 1, max_depth, out);
         }
     }
@@ -821,6 +852,113 @@ mod tests {
         let gits = find_git_folders(root, 3);
         assert_eq!(gits.len(), 1, "symlinked repo counted once, got {gits:?}");
         assert!(gits[0].ends_with("strategos/gateway"), "canonicalized to the real path, got {gits:?}");
+    }
+
+    // ── D15: checkout detection + nested/deep discovery ──────────────────
+    #[test]
+    fn is_checkout_true_for_git_dir_and_git_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        // `.git` DIRECTORY → a normal checkout.
+        let dir_repo = tmp.path().join("dir_repo");
+        std::fs::create_dir_all(dir_repo.join(".git")).unwrap();
+        assert!(is_checkout(&dir_repo), "a dir with a .git DIRECTORY is a checkout");
+        // `.git` FILE (a linked worktree / submodule gitlink) → also a checkout.
+        let file_repo = tmp.path().join("file_repo");
+        std::fs::create_dir_all(&file_repo).unwrap();
+        std::fs::write(file_repo.join(".git"), "gitdir: /main/.git/worktrees/wt\n").unwrap();
+        assert!(is_checkout(&file_repo), "a dir with a .git FILE (gitlink) is a checkout");
+        // No `.git` at all → not a checkout.
+        let plain = tmp.path().join("plain");
+        std::fs::create_dir_all(&plain).unwrap();
+        assert!(!is_checkout(&plain), "a dir with no .git is not a checkout");
+    }
+
+    #[test]
+    fn walk_for_git_descends_into_nested_checkout() {
+        // A repo with a nested checkout (vendored dep / submodule) must yield
+        // BOTH the outer repo AND the nested one — the recursion no longer halts
+        // at the first `.git` (the core D15 fix). Previously only `repo` was
+        // discovered and `repo/vendor/lib` was masked as its content.
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("repo/.git")).unwrap();
+        std::fs::create_dir_all(root.join("repo/vendor/lib/.git")).unwrap();
+        let gits = find_git_folders(root, MAX_SCAN_DEPTH);
+        assert!(gits.iter().any(|p| p.ends_with("repo")), "outer repo discovered: {gits:?}");
+        assert!(gits.iter().any(|p| p.ends_with("repo/vendor/lib")), "nested checkout discovered: {gits:?}");
+    }
+
+    #[test]
+    fn find_git_folders_discovers_git_file_worktree_and_submodule() {
+        // A checkout whose `.git` is a FILE (a linked worktree or a submodule
+        // gitlink) must be discovered as a root — previously only `.git`
+        // DIRECTORIES were, so every worktree/submodule was invisible.
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let wt = root.join("worktree");
+        std::fs::create_dir_all(&wt).unwrap();
+        std::fs::write(wt.join(".git"), "gitdir: /main/.git/worktrees/wt\n").unwrap();
+        let gits = find_git_folders(root, MAX_SCAN_DEPTH);
+        assert!(gits.iter().any(|p| p.ends_with("worktree")), "gitlink checkout discovered: {gits:?}");
+    }
+
+    #[test]
+    fn find_git_folders_finds_checkout_below_depth_3() {
+        // A checkout deeper than the old hardcoded depth-3 bound must be found
+        // now that MAX_SCAN_DEPTH lifts it.
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("l1/l2/l3/l4/repo/.git")).unwrap();
+        // The old bound (3) could not reach a depth-5 checkout — documents the limit.
+        assert!(!find_git_folders(root, 3).iter().any(|p| p.ends_with("repo")),
+            "depth-3 bound cannot reach a depth-5 checkout");
+        // The lifted bound reaches it.
+        assert!(find_git_folders(root, MAX_SCAN_DEPTH).iter().any(|p| p.ends_with("repo")),
+            "MAX_SCAN_DEPTH reaches the deep checkout");
+    }
+
+    #[test]
+    fn detect_before_prune_git_inside_ignored_name() {
+        // A checkout whose OWN directory name collides with an ignored
+        // build-output name (a repo literally named `build`) or is dotfile-
+        // prefixed must still be detected — `is_checkout` runs BEFORE the
+        // IGNORED_DIRS / dotfile skip (detect-before-prune, D15d).
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("build/.git")).unwrap();        // ignored NAME, real repo
+        std::fs::create_dir_all(root.join(".hidden_repo/.git")).unwrap(); // dotfile-prefixed repo
+        let gits = find_git_folders(root, MAX_SCAN_DEPTH);
+        assert!(gits.iter().any(|p| p.ends_with("build")), "checkout named `build` detected: {gits:?}");
+        assert!(gits.iter().any(|p| p.ends_with(".hidden_repo")), "dotfile-prefixed checkout detected: {gits:?}");
+    }
+
+    #[test]
+    fn all_directories_does_not_descend_into_git_file_checkout() {
+        // `walk_dirs` must treat a `.git`-FILE checkout as a git boundary just
+        // like a `.git`-DIR one — otherwise a worktree's internal dirs leak into
+        // the quasi-repo candidate set.
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let wt = root.join("worktree");
+        std::fs::create_dir_all(wt.join("src")).unwrap();
+        std::fs::write(wt.join(".git"), "gitdir: /main/.git/worktrees/wt\n").unwrap();
+        let dirs = all_directories(root, MAX_SCAN_DEPTH);
+        assert!(dirs.iter().any(|d| d.ends_with("worktree")), "the checkout dir itself is listed");
+        assert!(!dirs.iter().any(|d| d.ends_with("worktree/src")),
+            "must NOT descend into a .git-FILE checkout (its src is repo content, not a candidate root)");
+    }
+
+    #[test]
+    fn is_inside_git_repo_detects_enclosing_git_file_worktree() {
+        // An enclosing repo whose `.git` is a FILE (worktree/submodule) must
+        // count as a git ancestor, so a manifest sub-dir inside it is never
+        // promoted to its own standalone project.
+        let tmp = tempfile::tempdir().unwrap();
+        let wt = tmp.path().join("worktree");
+        std::fs::create_dir_all(wt.join("crates/x")).unwrap();
+        std::fs::write(wt.join(".git"), "gitdir: /main/.git/worktrees/wt\n").unwrap();
+        assert!(is_inside_git_repo(&wt.join("crates/x")),
+            "a dir inside a .git-FILE worktree is inside a git repo");
     }
 
     #[test]
