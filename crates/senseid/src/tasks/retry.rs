@@ -37,7 +37,7 @@ pub fn is_retryable(kind: &TaskKind) -> bool {
             // hiccup reading the window / writing project_metrics), so a bounded
             // retry re-drives them; the daily scheduler would otherwise not
             // re-attempt until the next day.
-            | TaskKind::ComputeMetrics
+            | TaskKind::ComputeGroupMetrics
             | TaskKind::ComputeHealth
     )
 }
@@ -104,7 +104,7 @@ mod tests {
     fn metrics_compute_kinds_are_retryable() {
         // A transient DB fault mid-compute must be re-driven by the bounded retry,
         // not stranded until the next daily scheduler pass.
-        for k in [TaskKind::ComputeMetrics, TaskKind::ComputeHealth] {
+        for k in [TaskKind::ComputeGroupMetrics, TaskKind::ComputeHealth] {
             assert!(is_retryable(&k), "{k} is a metrics-compute kind — retryable");
         }
     }

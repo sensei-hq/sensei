@@ -60,7 +60,7 @@
 //!
 //! ## `as_of` (per-day, mirrors `session_outcomes`/`autonomy`)
 //! `churn` is a PER-DAY planned group: the planner enqueues one
-//! `ComputeMetrics{as_of=Some(D)}` per git-commit-day plus the trailing window, so
+//! `ComputeGroupMetrics{as_of=Some(D)}` per git-commit-day plus the trailing window, so
 //! churn backfills over real git history.
 //! - `Some(D)` — compute ONLY day `D` from that day's commits, `computed_on = D`.
 //! - `None` — the rolling window: every commit-day in the trailing
