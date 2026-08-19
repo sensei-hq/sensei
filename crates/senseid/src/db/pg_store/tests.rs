@@ -5661,3 +5661,32 @@
         sqlx_core::query::query("DELETE FROM sensei.folders_to_watch WHERE id = $1").bind(root_id).execute(s.pool()).await.ok();
         sqlx_core::query::query("DELETE FROM sensei.repositories WHERE id = $1").bind(repo_id).execute(s.pool()).await.ok();
     }
+
+    // ── P-A.3b Stage 1: metric_watermarks ────────────────────────────────
+    /// The watermark is keyed uniquely per (repository, metric_group) and cascades
+    /// when its repository is deleted (so a repo prune leaves no orphan cursor).
+    #[tokio::test]
+    async fn metric_watermarks_pk_and_cascade_on_repository_delete() {
+        let s = PgStore::connect(&test_db_url()).await.unwrap();
+        let tag = uuid::Uuid::new_v4();
+        let (rid,): (uuid::Uuid,) = query_as(
+            "INSERT INTO sensei.repositories (repo_key, name) VALUES ($1, 'wm') RETURNING id",
+        ).bind(format!("host/wm/{tag}")).fetch_one(s.pool()).await.unwrap();
+
+        sqlx_core::query::query(
+            "INSERT INTO sensei.metric_watermarks (repository_id, metric_group, sealed_through) \
+             VALUES ($1, 'session_outcomes', current_date)",
+        ).bind(rid).execute(s.pool()).await.unwrap();
+
+        // PK: a duplicate (repository_id, metric_group) is rejected.
+        let dup = sqlx_core::query::query(
+            "INSERT INTO sensei.metric_watermarks (repository_id, metric_group) VALUES ($1, 'session_outcomes')",
+        ).bind(rid).execute(s.pool()).await;
+        assert!(dup.is_err(), "duplicate (repository_id, metric_group) violates the PK");
+
+        // FK cascade: deleting the repository drops its watermark (no orphan cursor).
+        sqlx_core::query::query("DELETE FROM sensei.repositories WHERE id = $1").bind(rid).execute(s.pool()).await.unwrap();
+        let (cnt,): (i64,) = query_as("SELECT count(*) FROM sensei.metric_watermarks WHERE repository_id = $1")
+            .bind(rid).fetch_one(s.pool()).await.unwrap();
+        assert_eq!(cnt, 0, "watermarks cascade on repository delete");
+    }
