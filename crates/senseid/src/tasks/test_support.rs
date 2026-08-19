@@ -794,4 +794,4 @@ pub(crate) async fn daily_project_metric_rows(
 
 // `module_metric_rows` (per-module folder_id-set rows) was removed with the repo-grain
 // cutover: no computer writes per-module rows anymore (folder_id is not part of the
-// `project_metrics_identity_v2` key), so the helper had no callers.
+// `project_metrics_identity` key), so the helper had no callers.
