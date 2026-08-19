@@ -5690,3 +5690,37 @@
             .bind(rid).fetch_one(s.pool()).await.unwrap();
         assert_eq!(cnt, 0, "watermarks cascade on repository delete");
     }
+
+    // ── P-A.3b Stage 2 foundation: project→repositories resolution ────────
+    /// A project spans the distinct repositories on its checkout folders, listed
+    /// shallowest-first (the "primary" = root checkout's repo, where project-level
+    /// metrics attach); the multi-repo compute iterates this, not one root path.
+    #[tokio::test]
+    async fn repositories_for_project_lists_repos_primary_first() {
+        let s = PgStore::connect(&test_db_url()).await.unwrap();
+        let tag = uuid::Uuid::new_v4();
+        let root_id = s.add_watch_root(&format!("/tmp/rfp-{tag}"), "rfp", &serde_json::json!([])).await.unwrap();
+        let pid = s.create_project(&format!("_test:rfp:{tag}"), None, None).await.unwrap();
+
+        let (r_root,): (uuid::Uuid,) = query_as("INSERT INTO sensei.repositories (repo_key, name) VALUES ($1, 'root') RETURNING id")
+            .bind(format!("host/{tag}/root")).fetch_one(s.pool()).await.unwrap();
+        let (r_nested,): (uuid::Uuid,) = query_as("INSERT INTO sensei.repositories (repo_key, name) VALUES ($1, 'nested') RETURNING id")
+            .bind(format!("host/{tag}/nested")).fetch_one(s.pool()).await.unwrap();
+        // Root checkout (shallow path) + a nested checkout (deeper path), both in the project.
+        let f_root = s.upsert_repo_kind(&root_id, "git", "root", &format!("/tmp/rfp-{tag}/root")).await.unwrap();
+        let f_nested = s.upsert_repo_kind(&root_id, "git", "nested", &format!("/tmp/rfp-{tag}/root/vendor/nested")).await.unwrap();
+        for (f, r) in [(f_root, r_root), (f_nested, r_nested)] {
+            sqlx_core::query::query("UPDATE sensei.folders SET repository_id = $2, project_id = $3 WHERE id = $1")
+                .bind(f).bind(r).bind(pid).execute(s.pool()).await.unwrap();
+        }
+
+        let repos = s.repositories_for_project(&pid).await.unwrap();
+        assert_eq!(repos, vec![r_root, r_nested], "both repos, shallowest (primary) first");
+        assert_eq!(s.primary_repository_for_project(&pid).await.unwrap(), Some(r_root),
+            "primary repository = the shallowest checkout's repository");
+
+        // cleanup
+        sqlx_core::query::query("DELETE FROM sensei.folders_to_watch WHERE id = $1").bind(root_id).execute(s.pool()).await.ok();
+        sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1").bind(pid).execute(s.pool()).await.ok();
+        sqlx_core::query::query("DELETE FROM sensei.repositories WHERE id = ANY($1)").bind(vec![r_root, r_nested]).execute(s.pool()).await.ok();
+    }
