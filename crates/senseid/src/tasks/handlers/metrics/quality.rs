@@ -44,8 +44,9 @@
 //! ## Capture-scope split (governance, #3)
 //! Quality is GIT/source-derived (like churn), so it must NOT authorize the activity
 //! pruner's capture-before-reclaim: the planner backfills it per sampled commit-day
-//! ([`super::planner::DayKeyedGroup`]), but it is EXCLUDED from
-//! [`super::planner::day_keyed_task_names`] via `authorizes_capture() == false`.
+//! ([`super::planner::DayKeyedGroup`]), but its registry `capture_source` is `git`,
+//! so the pruner's guard (which authorizes reclaim only on `capture_source =
+//! 'session'`) excludes it.
 //!
 //! Never-fabricate: every DB call propagates `Err`; a git/qlty miss or a scan with no
 //! parseable total (0 source lines) writes NO row. A real total with 0

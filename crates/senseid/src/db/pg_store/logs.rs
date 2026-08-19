@@ -64,15 +64,17 @@ impl PgStore {
     /// - Sessions are eligible only when `analyzed_at IS NOT NULL` AND
     ///   `started_at < now() - days` — a session whose insights the analyzer
     ///   never derived is kept even if it is old (would lose signal).
-    /// - AND (capture-before-reclaim) the session's day must EITHER already be
-    ///   captured in the durable metric store — an `EXISTS` daily
-    ///   `sensei.project_metrics` row for the session's project (via
+    /// - AND (capture-before-reclaim, invariant I20) the session's day must
+    ///   EITHER already be captured in the durable metric store — an `EXISTS`
+    ///   daily `sensei.project_metrics` row for the session's project (via
     ///   `folders.project_id`) with `computed_on = date_trunc('day',
-    ///   s.started_at)::date` — OR the session must be older than a hard
-    ///   backstop (`backstop_days`) so nothing lingers forever if metrics never
-    ///   compute. Backfilled history is thus durable regardless of
-    ///   prune/compute ordering: a day's sessions are only reclaimed once that
-    ///   day's snapshot exists (or the backstop forces it).
+    ///   s.started_at)::date` AND whose metric has `capture_source = 'session'`
+    ///   (a session-derived delivery metric — git/snapshot metrics never
+    ///   authorize reclaim) — OR the session must be older than a hard backstop
+    ///   (`backstop_days`) so nothing lingers forever if metrics never compute.
+    ///   Backfilled history is thus durable regardless of prune/compute
+    ///   ordering: a day's sessions are only reclaimed once that day's
+    ///   session-derived snapshot exists (or the backstop forces it).
     /// - The eligible sessions' \`activity.turns\` cascade (FK ON DELETE
     ///   CASCADE) so `turns` deletes are counted via a preflight
     ///   `COUNT(*) WHERE session_id IN (…)` for observability.
@@ -91,21 +93,23 @@ impl PgStore {
     ///
     /// Ordering respects FKs: children first (transcript_turns / assistant_events
     /// keyed by client_session_id), then sessions (which cascades turns).
-    pub async fn prune_activity(&self, days: i32, backstop_days: i32, day_keyed_groups: &[&str]) -> Result<ActivityPruneCounts, String> {
-        // Owned copy for the text[] bind (sqlx encodes `&[String]`, not `&[&str]`).
-        let day_keyed_owned: Vec<String> = day_keyed_groups.iter().map(|g| g.to_string()).collect();
+    pub async fn prune_activity(&self, days: i32, backstop_days: i32) -> Result<ActivityPruneCounts, String> {
         let mut tx = self.pool.begin().await.map_err(|e| e.to_string())?;
 
         // (1) Snapshot eligible sessions once — used for every child delete
         //     so we don't re-scan the guard SQL four times. Capture-before-
-        //     reclaim: a session is eligible only when its day is already
-        //     captured by a DAY-KEYED (delivery) metric in sensei.project_metrics
-        //     (daily grain, same project via the folder join, and the metric's
-        //     task_name is one of the day-keyed groups) OR it is older than the
-        //     hard backstop. Scoping to day-keyed metrics is load-bearing:
-        //     forward-only SNAPSHOT computers stamp a grain='daily' row on their
-        //     own day every run, so an unscoped EXISTS would let a session be
-        //     reclaimed before its delivery metric ever computed.
+        //     reclaim (invariant I20): a session is eligible only when its day is
+        //     already captured by a CAPTURE-AUTHORIZING metric in
+        //     sensei.project_metrics (daily grain, same project via the folder
+        //     join, and `metrics.capture_source = 'session'`) OR it is older than
+        //     the hard backstop. Scoping to `capture_source = 'session'` is
+        //     load-bearing: it is the registry's own record of which metrics are
+        //     session-derived delivery signals — git/snapshot metrics stamp a
+        //     grain='daily' row on their own day too, so an unscoped EXISTS would
+        //     let a session be reclaimed before its delivery metric ever computed
+        //     (the 164GB data-loss class). The authorization now lives in the
+        //     `metrics.capture_source` column (retiring the planner's
+        //     day_keyed_task_names feed), so producer and guard can't drift.
         let eligible: Vec<(uuid::Uuid, String)> = sqlx_core::query_as::query_as(
             "SELECT s.id, s.client_session_id
                FROM activity.sessions s
@@ -118,12 +122,11 @@ impl PgStore {
                               WHERE pm.project_id = f.project_id
                                 AND pm.grain = 'daily'
                                 AND pm.computed_on = date_trunc('day', s.started_at)::date
-                                AND m.task_name = ANY($3))
+                                AND m.capture_source = 'session')
                      OR s.started_at < now() - (interval '1 day' * $2))"
         )
             .bind(days)
             .bind(backstop_days)
-            .bind(&day_keyed_owned)
             .fetch_all(&mut *tx).await.map_err(|e| e.to_string())?;
         if eligible.is_empty() {
             // Even with no eligible sessions, orphan assistant_events by ts

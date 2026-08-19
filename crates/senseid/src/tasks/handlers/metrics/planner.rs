@@ -30,8 +30,8 @@
 //!     `git log`), so `churn_rate`/`churn_concentration` backfill over real git
 //!     history. Its trailing-window today compute (`as_of = Some(today)`) also runs
 //!     `churn`'s forward-only `rework_density` snapshot. Churn is GIT-derived, so it
-//!     is EXCLUDED from the pruner's capture scope — see [`day_keyed_task_names`] and
-//!     [`DayKeyedGroup::authorizes_capture`] (the capture-scope split, #3).
+//!     is EXCLUDED from the pruner's capture scope — its registry `capture_source`
+//!     is `git` (only `session` authorizes reclaim; the capture-scope split, #3).
 //!   - `quality` — the SAMPLED GIT commit-days (one anchor per ISO week), so the
 //!     heavy `git worktree` + `qlty` scan that sources `duplication_ratio`/
 //!     `module_quality` runs at a bounded cadence over real history. Also GIT-derived,
@@ -72,13 +72,13 @@ pub(super) enum DayKeyedGroup {
     Autonomy,
     /// GIT-derived churn (`churn_rate`/`churn_concentration`): backfilled per
     /// commit-day, but — unlike the session-derived groups — it does NOT authorize
-    /// the pruner's capture-before-reclaim (see [`Self::authorizes_capture`]).
+    /// the pruner's capture-before-reclaim (its registry `capture_source` is `git`).
     Churn,
     /// GIT-worktree + `qlty`-derived code quality (`duplication_ratio`/`module_quality`):
     /// backfilled per SAMPLED commit-day (one anchor per ISO week — see
     /// [`super::quality::sample_commit_days`]) to bound the heavy scan cost. Like
     /// churn it is git/source-derived, so it does NOT authorize the pruner's
-    /// capture-before-reclaim (see [`Self::authorizes_capture`]).
+    /// capture-before-reclaim (its registry `capture_source` is `git`).
     Quality,
 }
 
@@ -103,26 +103,6 @@ impl DayKeyedGroup {
         }
     }
 
-    /// Whether this group's DATA-day set is SESSION-DERIVED — i.e. its days come
-    /// from the raw activity the pruner reclaims (`sessions` / `runs` /
-    /// `assistant_events`). ONLY such groups may authorize the pruner's
-    /// capture-before-reclaim: a session's day is "captured" (safe to reclaim) only
-    /// once a SESSION-derived delivery metric wrote its row for it. Churn is
-    /// GIT-derived — its days come from `git log`, independent of the session stream
-    /// — so it must NEVER mark a day captured: a git-churn row for a day must not
-    /// green-light reclaiming that day's sessions before their ftr/throughput is
-    /// captured (that would reopen the earlier data-loss bug). This predicate IS the
-    /// capture-scope split (#3): the planner backfills churn per-day
-    /// ([`Self::ALL`]), but [`day_keyed_task_names`] (the pruner's scope) excludes it.
-    fn authorizes_capture(self) -> bool {
-        match self {
-            DayKeyedGroup::SessionOutcomes | DayKeyedGroup::Autonomy => true,
-            // GIT/source-derived groups: their days come from `git log`, independent
-            // of the session stream, so they must NEVER mark a session's day captured.
-            DayKeyedGroup::Churn | DayKeyedGroup::Quality => false,
-        }
-    }
-
     /// The registry `task_name` carried in the enqueued `ComputeMetrics` `task.path`
     /// (and used to resolve the group's active metric ids for the covered-day read).
     fn task_name(self) -> &'static str {
@@ -144,7 +124,7 @@ impl DayKeyedGroup {
     /// - `churn` — the distinct GIT committer-days in the project's repo (via
     ///   [`super::churn::git_commit_days`] on the repo root from
     ///   [`PgStore::project_root_path`]). Not a SQL read: churn is git-derived, which
-    ///   is exactly why it does NOT authorize pruning (see [`Self::authorizes_capture`]).
+    ///   is exactly why it does NOT authorize pruning (`capture_source = 'git'`).
     ///   A project with no repo-root folder / a non-git root has no git churn days →
     ///   honest-empty (no backfill, no fabricated day).
     /// - `quality` — the SAMPLED git commit-days (one anchor per ISO week, via
@@ -200,25 +180,6 @@ impl DayKeyedGroup {
             .map_err(|e| e.to_string())?;
         Ok(rows.into_iter().map(|(d,)| d).collect())
     }
-}
-
-/// The registry `task_name`s that may authorize the pruner's capture-before-reclaim
-/// — the SESSION-DERIVED day-keyed groups only (`session_outcomes`, `autonomy`),
-/// i.e. those whose day-set comes from the raw activity the pruner reclaims. This is
-/// the capture-scope half of the split (#3): [`DayKeyedGroup::ALL`] is what the
-/// planner backfills per-day (now including GIT-derived `churn`), but the pruner
-/// scope is FILTERED to [`DayKeyedGroup::authorizes_capture`] so a git-churn row can
-/// NEVER mark a session's day captured (which would reclaim that day's sessions
-/// before their ftr/throughput is captured — reopening the data-loss bug). Derived
-/// from `ALL` (not a second hardcoded list) so the two can't drift. Consumed by
-/// [`crate::tasks::activity_pruner`] to scope `PgStore::prune_activity`'s capture
-/// `EXISTS`.
-pub(crate) fn day_keyed_task_names() -> Vec<&'static str> {
-    DayKeyedGroup::ALL
-        .iter()
-        .filter(|g| g.authorizes_capture())
-        .map(|g| g.task_name())
-        .collect()
 }
 
 /// The day-keyed groups that are ACTIVE in the registry — the intersection of
@@ -591,36 +552,11 @@ mod tests {
         assert!(day_keyed_active(&["knowledge".to_string(), "health".to_string()]).is_empty());
     }
 
-    #[test]
-    fn day_keyed_task_names_excludes_git_derived_churn() {
-        // THE capture-scope split (#3): churn IS day-keyed (planner backfills it per
-        // git commit-day), but it is GIT-derived, so the pruner's capture scope
-        // (`day_keyed_task_names`) must EXCLUDE it — only the SESSION-derived groups
-        // may authorize reclaiming a day's sessions. Contrast `day_keyed_active`
-        // above, which INCLUDES churn.
-        let scope = day_keyed_task_names();
-        assert!(scope.contains(&"session_outcomes"), "session-derived → in the capture scope");
-        assert!(scope.contains(&"autonomy"), "session-derived → in the capture scope");
-        assert!(
-            !scope.contains(&"churn"),
-            "git-derived churn must NOT authorize capture-before-reclaim (would reopen the data-loss bug)",
-        );
-        assert!(
-            !scope.contains(&"quality"),
-            "git/qlty-derived quality must NOT authorize capture-before-reclaim either",
-        );
-        // Exactly the two session-derived groups, nothing else.
-        assert_eq!(scope.len(), 2, "capture scope = the session-derived day-keyed groups only");
-        // Every name in the scope is a genuinely capture-authorizing day-keyed group.
-        for g in DayKeyedGroup::ALL {
-            assert_eq!(
-                scope.contains(&g.task_name()),
-                g.authorizes_capture(),
-                "{:?} in capture scope iff it is session-derived",
-                g,
-            );
-        }
-    }
+    // NOTE: the pruner's capture-before-reclaim scope moved OUT of the planner into
+    // the `metrics.capture_source` registry column ('session' authorizes reclaim;
+    // 'git'/'snapshot' never do). It is verified by the DB-backed
+    // `prune_activity_captures_before_reclaim` (case c keeps a git-derived day) and
+    // the P-A.2 registry-mapping check — not by a planner pure-fn any longer.
 
     // ── DB-backed: enqueue one task per missing day per group ────────────────
 

@@ -2612,8 +2612,7 @@
         // useful — verify OUR session specifically survives. The analyzed-only
         // guard keeps it regardless of the capture-before-reclaim backstop
         // (backstop=60 here), so this assertion is unaffected by that guard.
-        let day_keyed = crate::tasks::handlers::metrics::planner::day_keyed_task_names();
-        s.prune_activity(30, 60, &day_keyed).await.unwrap();
+        s.prune_activity(30, 60).await.unwrap();
 
         let exists: (bool,) = sqlx_core::query_as::query_as(
             "SELECT EXISTS(SELECT 1 FROM activity.sessions WHERE id = $1)"
@@ -2667,8 +2666,7 @@
         // row (not the backstop) is what enables the prune. The covering row is
         // an `ftr` (session_outcomes = DAY-KEYED) metric, so it still counts as
         // captured under the scoped guard.
-        let day_keyed = crate::tasks::handlers::metrics::planner::day_keyed_task_names();
-        s.prune_activity(30, 60, &day_keyed).await.unwrap();
+        s.prune_activity(30, 60).await.unwrap();
 
         let exists: (bool,) = sqlx_core::query_as::query_as(
             "SELECT EXISTS(SELECT 1 FROM activity.sessions WHERE id = $1)"
@@ -2750,8 +2748,7 @@
         // (d) uncaptured + past the backstop (90d > 60) → PRUNED via backstop.
         let past_backstop = aged_session(&s, &fid, &suffix, "backstop", 90).await;
 
-        let day_keyed = crate::tasks::handlers::metrics::planner::day_keyed_task_names();
-        s.prune_activity(30, 60, &day_keyed).await.unwrap();
+        s.prune_activity(30, 60).await.unwrap();
 
         async fn alive(s: &PgStore, sid: uuid::Uuid) -> bool {
             let r: (bool,) = sqlx_core::query_as::query_as(
@@ -2797,8 +2794,7 @@
         // (unique csid) was pruned. Session-less orphan events are pruned by ts
         // alone (no capture-before-reclaim guard), so the backstop + day-keyed args
         // are inert.
-        let day_keyed = crate::tasks::handlers::metrics::planner::day_keyed_task_names();
-        s.prune_activity(30, 60, &day_keyed).await.unwrap();
+        s.prune_activity(30, 60).await.unwrap();
 
         let orphaned: (i64,) = sqlx_core::query_as::query_as(
             "SELECT COUNT(*) FROM activity.assistant_events WHERE session_id = $1"

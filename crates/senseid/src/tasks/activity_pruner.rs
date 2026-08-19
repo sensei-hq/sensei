@@ -81,12 +81,12 @@ async fn run(pg: Arc<PgStore>) {
             pg.get_config("activity.capture_backstop_days").await.ok().flatten(),
             days,
         );
-        // Scope the capture-before-reclaim guard to the DAY-KEYED (delivery) groups
-        // — the single source is the planner, so the pruner can't drift from the
-        // groups actually backfilled per-day (a forward-only snapshot row must never
-        // mark a session's day "captured").
-        let day_keyed = crate::tasks::handlers::metrics::planner::day_keyed_task_names();
-        match pg.prune_activity(days, backstop, &day_keyed).await {
+        // The capture-before-reclaim guard (I20) is scoped inside prune_activity to
+        // metrics with `capture_source = 'session'` — the registry's own record of
+        // which metrics are session-derived delivery signals, so a git/snapshot row
+        // can never mark a session's day "captured" (the pruner reads the column
+        // directly; no planner feed to drift from).
+        match pg.prune_activity(days, backstop).await {
             Ok(c) => {
                 let total = c.sessions + c.turns + c.transcript_turns + c.assistant_events;
                 if total > 0 {
@@ -136,23 +136,12 @@ mod tests {
         assert_eq!(parse_retention(Some("90".into())), 90);
     }
 
-    #[test]
-    fn capture_scope_is_session_derived_only_and_excludes_git_churn() {
-        // The pruner scopes `prune_activity`'s capture-before-reclaim EXISTS to
-        // `planner::day_keyed_task_names()`. That scope must stay SESSION-derived only
-        // (`session_outcomes`, `autonomy`) and EXCLUDE git-derived `churn`: a churn row
-        // for a day must NOT green-light reclaiming that day's sessions before their
-        // session-anchored metrics (ftr/throughput) are captured — that would reopen
-        // the earlier data-loss bug. Churn is still backfilled per-day by the planner;
-        // it is only the capture authorization it must not carry (the #3 split).
-        let scope = crate::tasks::handlers::metrics::planner::day_keyed_task_names();
-        assert!(scope.contains(&"session_outcomes"), "session_outcomes authorizes capture");
-        assert!(scope.contains(&"autonomy"), "autonomy authorizes capture");
-        assert!(
-            !scope.contains(&"churn"),
-            "git-derived churn must NOT authorize capture-before-reclaim (pruner capture scope excludes churn)",
-        );
-    }
+    // NOTE: the capture-before-reclaim scope (I20) is no longer a Rust function —
+    // it lives in the `metrics.capture_source` registry column ('session' authorizes
+    // reclaim; 'git'/'snapshot' never do), read directly by `prune_activity`'s guard.
+    // It is verified end-to-end by the DB-backed `prune_activity_captures_before_reclaim`
+    // (case c: a day covered only by a git-derived `duplication_ratio` is KEPT) and by
+    // the P-A.2 registry-mapping check.
 
     #[test]
     fn parse_backstop_defaults_to_max_floor_or_twice_retention() {
