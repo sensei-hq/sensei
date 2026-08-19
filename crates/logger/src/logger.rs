@@ -15,7 +15,11 @@ pub struct Logger {
     level: LogLevel,
     /// Which component: "daemon", "cli", "mcp", "app".
     pub running_on: String,
-    /// Flexible context bag (module, method, task_id, etc.).
+    /// Top-level module ("tasks", "api", "indexer", "gateway") — a FIRST-CLASS
+    /// column on public.logs (like `running_on`), not a `context` prop, so it is a
+    /// plainly-indexed queryable field.
+    pub module: String,
+    /// Flexible context bag (method, task_id, etc.).
     pub context: Value,
 }
 
@@ -36,7 +40,8 @@ impl Logger {
             writer,
             level,
             running_on: running_on.to_string(),
-            context: serde_json::json!({ "module": module }),
+            module: module.to_string(),
+            context: serde_json::json!({}),
         }
     }
 
@@ -46,6 +51,7 @@ impl Logger {
             writer: LogWriter::noop(),
             level: LogLevel::Error,
             running_on: "test".to_string(),
+            module: "test".to_string(),
             context: serde_json::json!({}),
         }
     }
@@ -60,6 +66,7 @@ impl Logger {
             writer: self.writer.clone(),
             level: self.level,
             running_on: self.running_on.clone(),
+            module: self.module.clone(),
             context: ctx,
         }
     }
@@ -76,6 +83,7 @@ impl Logger {
             writer: self.writer.clone(),
             level: self.level,
             running_on: self.running_on.clone(),
+            module: self.module.clone(),
             context: ctx,
         }
     }
@@ -110,6 +118,7 @@ impl Logger {
         let entry = LogEntry {
             level: level.as_str().to_string(),
             running_on: self.running_on.clone(),
+            module: self.module.clone(),
             logged_at: chrono::Utc::now().to_rfc3339(),
             message: message.to_string(),
             context: self.context.clone(),

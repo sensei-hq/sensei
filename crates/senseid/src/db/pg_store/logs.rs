@@ -256,6 +256,7 @@ impl PgStore {
         &self,
         level: &str,
         running_on: &str,
+        module: Option<&str>,
         logged_at: &str,
         message: &str,
         context: &serde_json::Value,
@@ -263,11 +264,12 @@ impl PgStore {
         error: &Option<serde_json::Value>,
     ) -> Result<(), String> {
         sqlx_core::query::query(
-            "INSERT INTO public.logs(level, running_on, logged_at, message, context, data, error)
-             VALUES($1, $2, $3::timestamptz, $4, $5, $6, $7)"
+            "INSERT INTO public.logs(level, running_on, module, logged_at, message, context, data, error)
+             VALUES($1, $2, $3, $4::timestamptz, $5, $6, $7, $8)"
         )
         .bind(level)
         .bind(running_on)
+        .bind(module)
         .bind(logged_at)
         .bind(message)
         .bind(context)
@@ -287,7 +289,7 @@ impl PgStore {
     /// - `level`   → exact match on the indexed `level` column.
     /// - `source`  → exact match on the indexed `running_on` column (which
     ///   component wrote the log: daemon / cli / mcp / app).
-    /// - `module`  → exact match on the indexed `context->>'module'` bucket
+    /// - `module`  → exact match on the indexed `module` column
     ///   (finer source: scanner / watcher / analyzer / scheduler / …).
     /// - `since`   → lower bound on the indexed `logged_at` timestamp.
     pub async fn query_logs(
@@ -302,6 +304,7 @@ impl PgStore {
             uuid::Uuid,
             String,
             String,
+            Option<String>,
             chrono::DateTime<chrono::Utc>,
             Option<String>,
             serde_json::Value,
@@ -309,11 +312,11 @@ impl PgStore {
             Option<serde_json::Value>,
         );
         let rows: Vec<LogRow> = sqlx_core::query_as::query_as(
-            "SELECT id, level, running_on, logged_at, message, context, data, error
+            "SELECT id, level, running_on, module, logged_at, message, context, data, error
              FROM public.logs
              WHERE ($1::text IS NULL OR level = $1)
                AND ($2::text IS NULL OR running_on = $2)
-               AND ($3::text IS NULL OR context->>'module' = $3)
+               AND ($3::text IS NULL OR module = $3)
                AND ($4::timestamptz IS NULL OR logged_at >= $4)
              ORDER BY logged_at DESC
              LIMIT $5",
@@ -329,11 +332,12 @@ impl PgStore {
 
         Ok(rows
             .into_iter()
-            .map(|(id, level, running_on, logged_at, message, context, data, error)| {
+            .map(|(id, level, running_on, module, logged_at, message, context, data, error)| {
                 serde_json::json!({
                     "id": id,
                     "level": level,
                     "source": running_on,
+                    "module": module,
                     "logged_at": logged_at.to_rfc3339(),
                     "message": message,
                     "context": context,
