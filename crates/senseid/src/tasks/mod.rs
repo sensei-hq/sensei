@@ -124,29 +124,30 @@ pub enum TaskKind {
     /// active run (beside `AdvanceRun`). STATUS only (publishes status + heartbeat
     /// + stall + plan segments); never drives the run.
     PublishRun,
-    /// Metrics pipeline (Phase 4): compute ONE base metric group for ONE project.
-    /// The group (the registry `task_name`, e.g. `"session_outcomes"`) rides in
-    /// `task.path` and the project id in `task.folder_path` — one kind handles
-    /// every group (the group is payload, not enum), which is why there is no
-    /// `TaskKind` per group. Enqueued daily by `metrics_scheduler`; dispatched to
-    /// `handlers::metrics::compute`.
-    ComputeMetrics,
-    /// Metrics pipeline (Phase 4): the per-project HEALTH barrier — a SEPARATE
-    /// kind from [`TaskKind::ComputeMetrics`] because it must run AFTER the base
-    /// groups land. The scheduler enqueues it `blocked_by` the project's
-    /// `ComputeMetrics` ids (project id in `task.folder_path`); dispatched to
-    /// `handlers::metrics::compute_health` (Phase 6 fills in the derived score).
+    /// Metrics pipeline (watermark engine): the per-(project, group) CHILD —
+    /// compute ONE base metric group for ONE project. The group (the registry
+    /// `task_name`, e.g. `"session_outcomes"`) rides in `task.path`, the project
+    /// id in `task.folder_path`, and the frozen `as_of` in `task.as_of` — one kind
+    /// handles every group (the group is payload, not enum), which is why there is
+    /// no `TaskKind` per group. Enqueued by the `ComputeProjectMetrics` parent;
+    /// dispatched to `handlers::metrics::compute_group`, which schedules + seals
+    /// each day via `sensei.metric_watermarks`.
+    ComputeGroupMetrics,
+    /// Metrics pipeline (watermark engine): the per-project HEALTH barrier — a
+    /// SEPARATE kind from [`TaskKind::ComputeGroupMetrics`] because it must run
+    /// AFTER the base groups land. The `ComputeProjectMetrics` parent enqueues it
+    /// `blocked_by` the project's `ComputeGroupMetrics` child ids (project id in
+    /// `task.folder_path`); dispatched to `handlers::metrics::compute_health`.
     ComputeHealth,
-    /// Metrics pipeline (Phase 4 — the historical-snapshot planner): the
-    /// per-project timeline → day-task planner. The project id rides in
-    /// `task.folder_path`. For each ACTIVE day-keyed group (`session_outcomes`,
-    /// `autonomy`) it diffs the project's DATA-day set (distinct true-occurrence
-    /// day over the group's source) against the COVERED-day set (distinct
-    /// `computed_on` already in `sensei.project_metrics` for that group's active
-    /// metrics) and enqueues one `ComputeMetrics{as_of=Some(D)}` per missing day
-    /// PLUS today — so first-install backfills every day and the daily run fills
-    /// only today + any gaps. Dispatched to `handlers::metrics::plan_metric_days`.
-    PlanMetricDays,
+    /// Metrics pipeline (watermark engine): the per-project PARENT. The project id
+    /// rides in `task.folder_path`. It FREEZES one `as_of` (`super::today`) shared
+    /// by every child, enqueues one `ComputeGroupMetrics{as_of}` per active base
+    /// group, then enqueues `ComputeHealth` `blocked_by` those child ids. Each
+    /// child schedules its own days off the per-(repo, group) watermark cursor in
+    /// `sensei.metric_watermarks`, so a re-tick recomputes only today + any gaps.
+    /// Enqueued each tick by `metrics_scheduler`; dispatched to
+    /// `handlers::metrics::compute_project`.
+    ComputeProjectMetrics,
 }
 
 impl std::fmt::Display for TaskKind {
@@ -182,9 +183,9 @@ impl std::fmt::Display for TaskKind {
             Self::PublishRelaySegments => write!(f, "publish_relay_segments"),
             Self::AdvanceRun => write!(f, "advance_run"),
             Self::PublishRun => write!(f, "publish_run"),
-            Self::ComputeMetrics => write!(f, "compute_metrics"),
+            Self::ComputeGroupMetrics => write!(f, "compute_group_metrics"),
             Self::ComputeHealth => write!(f, "compute_health"),
-            Self::PlanMetricDays => write!(f, "plan_metric_days"),
+            Self::ComputeProjectMetrics => write!(f, "compute_project_metrics"),
         }
     }
 }
@@ -233,10 +234,10 @@ impl TaskKind {
             // playbook_rules table — same order of cost as the tool-insights
             // snapshot.
             | TaskKind::LearnPlaybooks
-            // Metrics day-planner: a handful of per-project distinct-day
-            // aggregates + a bounded burst of enqueues (no compute of its own) —
-            // light and DB-bound, so it shares the short cap.
-            | TaskKind::PlanMetricDays => Duration::from_secs(180),
+            // Metrics per-project parent: freezes one as_of + a bounded burst of
+            // child/health enqueues (no compute of its own) — light and DB-bound,
+            // so it shares the short cap.
+            | TaskKind::ComputeProjectMetrics => Duration::from_secs(180),
             // Whole-repo, barrier, embedding and network-bound doc-indexing
             // tasks can legitimately run for minutes on a large repository.
             TaskKind::ScanRoot
@@ -261,11 +262,12 @@ impl TaskKind {
             // Eager insight-copy warming is up to WARM_CAP sequential model calls
             // (a cold embedded model is slow first); the breaker caps a down model.
             | TaskKind::WarmInsightCopy
-            // Metrics compute (base groups) + the per-project health barrier each
-            // scan a project's window (sessions / churn / duplication …) and write
-            // sensei.project_metrics — a whole-project batch that can run for
-            // minutes on a large corpus, so they share the generous batch budget.
-            | TaskKind::ComputeMetrics
+            // Metrics group compute (base groups, all planned days) + the
+            // per-project health barrier each scan a project's window (sessions /
+            // churn / duplication …) and write sensei.project_metrics — a
+            // whole-project batch that can run for minutes on a large corpus, so
+            // they share the generous batch budget.
+            | TaskKind::ComputeGroupMetrics
             | TaskKind::ComputeHealth
             | TaskKind::AggregateCorrections => Duration::from_secs(600),
             // Community detection is the terminal barrier and, on a huge edge-heavy
@@ -301,11 +303,11 @@ pub struct Task {
     pub module_id: Option<String>,       // for process_file: which module this file belongs to
     pub branch: Option<String>,          // git branch name (for branch-aware indexing)
     pub url: Option<String>,             // for import_lib: library docs URL
-    /// Target `computed_on` day for a metrics compute (`ComputeMetrics`). `None` =
-    /// the incremental "today" run (rolling-window behavior preserved). `Some(D)` =
-    /// compute the single historical day `D` (the backfill/gap-fill path) — see
-    /// `handlers::metrics`. Carried through `retry()` so an interrupted backfill
-    /// resumes on the same day.
+    /// Target `computed_on` day for a metrics compute (`ComputeGroupMetrics`).
+    /// `None` = the incremental "today" run (rolling-window behavior preserved).
+    /// `Some(D)` = compute the single historical day `D` (the backfill/gap-fill
+    /// path) — see `handlers::metrics`. Carried through `retry()` so an interrupted
+    /// backfill resumes on the same day.
     pub as_of: Option<chrono::NaiveDate>,
     pub status: TaskStatus,
     pub depends_on: Vec<u64>,            // won't run until these complete
@@ -384,10 +386,10 @@ impl Task {
         self
     }
 
-    /// Set the target `computed_on` day for a metrics compute (`ComputeMetrics`).
+    /// Set the target `computed_on` day for a metrics compute (`ComputeGroupMetrics`).
     /// `None` (the default) is the incremental "today" run; `Some(D)` targets the
-    /// single historical day `D`. Used by the timeline → day-task planner to
-    /// enqueue one compute per missing/stale day.
+    /// single historical day `D`. The `ComputeProjectMetrics` parent stamps the
+    /// frozen `as_of` here on every `ComputeGroupMetrics` child.
     #[allow(dead_code)]
     pub fn with_as_of(mut self, as_of: chrono::NaiveDate) -> Self {
         self.as_of = Some(as_of);
@@ -509,9 +511,9 @@ mod tests {
         assert_eq!(TaskKind::ClassifyPendingVerdicts.to_string(), "classify_pending_verdicts");
         assert_eq!(TaskKind::AdvanceRun.to_string(), "advance_run");
         assert_eq!(TaskKind::PublishRelaySegments.to_string(), "publish_relay_segments");
-        assert_eq!(TaskKind::ComputeMetrics.to_string(), "compute_metrics");
+        assert_eq!(TaskKind::ComputeGroupMetrics.to_string(), "compute_group_metrics");
         assert_eq!(TaskKind::ComputeHealth.to_string(), "compute_health");
-        assert_eq!(TaskKind::PlanMetricDays.to_string(), "plan_metric_days");
+        assert_eq!(TaskKind::ComputeProjectMetrics.to_string(), "compute_project_metrics");
     }
 
     #[test]
@@ -527,9 +529,11 @@ mod tests {
         assert_eq!(TaskKind::ScanRoot.watchdog_timeout(), long);
         assert_eq!(TaskKind::ScanDocDrift.watchdog_timeout(), long);
         assert_eq!(TaskKind::ClassifyPendingVerdicts.watchdog_timeout(), long);
-        // Metrics compute + health barrier are whole-project batches → long bucket.
-        assert_eq!(TaskKind::ComputeMetrics.watchdog_timeout(), long);
+        // Metrics group compute + health barrier are whole-project batches → long bucket.
+        assert_eq!(TaskKind::ComputeGroupMetrics.watchdog_timeout(), long);
         assert_eq!(TaskKind::ComputeHealth.watchdog_timeout(), long);
+        // The per-project parent only freezes as_of + enqueues → short bucket.
+        assert_eq!(TaskKind::ComputeProjectMetrics.watchdog_timeout(), short);
         // DetectCommunities (terminal barrier) gets a WIDER budget than `long` —
         // community detection on a huge edge-heavy folder legitimately runs many
         // minutes and must not be watchdog-killed into a retry-timeout loop.
@@ -550,8 +554,8 @@ mod tests {
             TaskKind::LearnPlaybooks,
             TaskKind::PublishRelaySegments, TaskKind::AdvanceRun,
             TaskKind::PublishRun,
-            TaskKind::ComputeMetrics, TaskKind::ComputeHealth,
-            TaskKind::PlanMetricDays,
+            TaskKind::ComputeGroupMetrics, TaskKind::ComputeHealth,
+            TaskKind::ComputeProjectMetrics,
         ] {
             assert!(k.watchdog_timeout().as_secs() > 0, "{k} must have a positive cap");
         }

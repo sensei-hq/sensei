@@ -130,9 +130,9 @@ async fn execute_task(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
             TaskKind::PublishRelaySegments => handlers::publish_relay_segments(ctx, task).await,
             TaskKind::AdvanceRun => handlers::advance_run(ctx, task).await,
             TaskKind::PublishRun => handlers::publish_run(ctx, task).await,
-            TaskKind::ComputeMetrics => handlers::metrics::compute(ctx, task).await,
+            TaskKind::ComputeProjectMetrics => handlers::metrics::compute_project(ctx, task).await,
+            TaskKind::ComputeGroupMetrics => handlers::metrics::compute_group(ctx, task).await,
             TaskKind::ComputeHealth => handlers::metrics::compute_health(ctx, task).await,
-            TaskKind::PlanMetricDays => handlers::metrics::plan_metric_days(ctx, task).await,
             TaskKind::BackfillTranscripts => crate::transcript::run_backfill(ctx, task).await,
             TaskKind::BackfillTranscriptFile => crate::transcript::run_backfill_file(ctx, task).await,
         }
@@ -310,49 +310,52 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn execute_task_dispatches_compute_metrics_and_health() {
-        // The executor must route ComputeMetrics → handlers::metrics::compute and
-        // ComputeHealth → handlers::metrics::compute_health. Both stubs return
-        // Ok(0), so `.is_ok()` alone can't tell the arms apart (swapping them would
-        // stay green). Assert by IDENTITY via the test-only routing probe so a
-        // crossed match arm fails here, not silently in Phase 5/6.
+    async fn execute_task_dispatches_metrics_graph() {
+        // The executor must route the metrics graph by IDENTITY:
+        //   ComputeProjectMetrics → handlers::metrics::compute_project (the parent),
+        //   ComputeGroupMetrics   → handlers::metrics::compute_group   (the child),
+        //   ComputeHealth         → handlers::metrics::compute_health  (the barrier).
+        // The handlers can honestly return Ok(0) on an empty fixture, so `.is_ok()`
+        // alone can't tell the arms apart (swapping them would stay green). Assert
+        // by IDENTITY via the test-only routing probe so a crossed match arm fails
+        // here, not silently downstream.
         use crate::tasks::handlers::metrics::probe;
         let ctx = make_ctx().await;
         let pid = uuid::Uuid::new_v4().to_string();
 
-        // ComputeMetrics (known group) → compute.
+        // ComputeGroupMetrics (known group) → compute_group (the per-group child).
         probe::reset();
-        let compute = Task::new(TaskKind::ComputeMetrics, &pid, "session_outcomes");
-        assert!(execute_task(&ctx, &compute).await.is_ok(),
-            "ComputeMetrics routes to the metrics compute handler");
-        assert_eq!(probe::take(), Some("compute"),
-            "ComputeMetrics must dispatch to compute, not compute_health");
+        let group = Task::new(TaskKind::ComputeGroupMetrics, &pid, "session_outcomes");
+        assert!(execute_task(&ctx, &group).await.is_ok(),
+            "ComputeGroupMetrics routes to the metrics group-compute handler");
+        assert_eq!(probe::take(), Some("compute_group"),
+            "ComputeGroupMetrics must dispatch to compute_group, not compute_health");
 
-        // ComputeMetrics (unknown group) → still compute (routed), logged no-op —
-        // the dispatch never panics on an unrecognised task_name.
+        // ComputeGroupMetrics (unknown group) → still compute_group (routed),
+        // logged no-op — the dispatch never panics on an unrecognised task_name.
         probe::reset();
-        let unknown = Task::new(TaskKind::ComputeMetrics, &pid, "no_such_group");
+        let unknown = Task::new(TaskKind::ComputeGroupMetrics, &pid, "no_such_group");
         assert!(execute_task(&ctx, &unknown).await.is_ok(),
             "an unknown metrics task_name is a logged no-op, not a queue error");
-        assert_eq!(probe::take(), Some("compute"),
-            "an unknown group still routes through compute");
+        assert_eq!(probe::take(), Some("compute_group"),
+            "an unknown group still routes through compute_group");
 
-        // ComputeHealth → compute_health.
+        // ComputeHealth → compute_health (the barrier).
         probe::reset();
         let health = Task::new(TaskKind::ComputeHealth, &pid, "");
         assert!(execute_task(&ctx, &health).await.is_ok(),
             "ComputeHealth routes to the metrics health handler");
         assert_eq!(probe::take(), Some("compute_health"),
-            "ComputeHealth must dispatch to compute_health, not compute");
+            "ComputeHealth must dispatch to compute_health, not compute_group");
 
-        // PlanMetricDays → plan_metric_days (the day-task planner), NOT a base
-        // compute or the health barrier.
+        // ComputeProjectMetrics → compute_project (the per-project parent), NOT a
+        // child group-compute or the health barrier.
         probe::reset();
-        let plan = Task::new(TaskKind::PlanMetricDays, &pid, "");
-        assert!(execute_task(&ctx, &plan).await.is_ok(),
-            "PlanMetricDays routes to the metrics planner handler");
-        assert_eq!(probe::take(), Some("plan_metric_days"),
-            "PlanMetricDays must dispatch to plan_metric_days");
+        let project = Task::new(TaskKind::ComputeProjectMetrics, &pid, "");
+        assert!(execute_task(&ctx, &project).await.is_ok(),
+            "ComputeProjectMetrics routes to the metrics project-parent handler");
+        assert_eq!(probe::take(), Some("compute_project"),
+            "ComputeProjectMetrics must dispatch to compute_project");
     }
 
     #[tokio::test]

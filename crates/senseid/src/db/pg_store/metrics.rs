@@ -849,4 +849,106 @@ impl PgStore {
         Ok(Self::ftr_headline_json(ftr_14d, ftr_14d_prev, trend, sessions_7d))
     }
 
+    // ── Metric watermarks (repo-grain compute cursor) ──────────────
+
+    /// The `sealed_through` cursor for one (repository, metric_group) row of
+    /// `sensei.metric_watermarks` — how far this group's calendar days are settled
+    /// for the repo. `None` when no watermark row exists yet (the group has never
+    /// been sealed for this repo → full-history fill), and equally `None` when the
+    /// row exists but `sealed_through` is still NULL (never a fabricated date).
+    /// Propagates the read error; never masks it.
+    pub async fn metric_watermark_sealed_through(
+        &self,
+        repository_id: &uuid::Uuid,
+        group: &str,
+    ) -> Result<Option<chrono::NaiveDate>, String> {
+        let row: Option<(Option<chrono::NaiveDate>,)> = sqlx_core::query_as::query_as(
+            "SELECT sealed_through
+               FROM sensei.metric_watermarks
+              WHERE repository_id = $1 AND metric_group = $2",
+        )
+        .bind(repository_id)
+        .bind(group)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        // No row → None; a row with NULL sealed_through → None (both = unset).
+        Ok(row.and_then(|(d,)| d))
+    }
+
+    /// The MIN `sealed_through` across `repository_ids` for one metric group — the
+    /// project-level cursor the day-keyed engine plans from (a project's group is
+    /// only settled through the least-sealed of its repos). Honest full-fill signal:
+    /// returns `None` if ANY requested repo is unset — no watermark row, or a row
+    /// whose `sealed_through` is still NULL — so the engine refills the full history
+    /// (spec test 1, min_date fill); otherwise `Some(min)`. Propagates the read
+    /// error; never masks it.
+    pub async fn min_sealed_through_for_repos(
+        &self,
+        repository_ids: &[uuid::Uuid],
+        group: &str,
+    ) -> Result<Option<chrono::NaiveDate>, String> {
+        // No repos → nothing sealed → honest None (full fill / no-op upstream).
+        if repository_ids.is_empty() {
+            return Ok(None);
+        }
+        // Count the DISTINCT repos that have a non-null sealed_through and the MIN of
+        // those dates in one read. A duplicate id in the input can't inflate the
+        // count (COUNT DISTINCT), so the comparison against the distinct requested
+        // set is exact.
+        let row: (i64, Option<chrono::NaiveDate>) = sqlx_core::query_as::query_as(
+            "SELECT count(DISTINCT repository_id) FILTER (WHERE sealed_through IS NOT NULL)::int8,
+                    min(sealed_through)
+               FROM sensei.metric_watermarks
+              WHERE repository_id = ANY($1) AND metric_group = $2",
+        )
+        .bind(repository_ids)
+        .bind(group)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        let (sealed_repos, min_sealed) = row;
+        let distinct_requested = {
+            let mut ids = repository_ids.to_vec();
+            ids.sort();
+            ids.dedup();
+            ids.len() as i64
+        };
+        // Any repo unset → min is undefined at the project level → full fill.
+        if sealed_repos < distinct_requested {
+            Ok(None)
+        } else {
+            Ok(min_sealed)
+        }
+    }
+
+    /// Advance one (repository, metric_group) watermark to `sealed_through` (upsert).
+    /// Called ONLY after a group's compute succeeds for the repo, so a failed group
+    /// holds its cursor and retries next run (fail-closed — spec test 6). Today is
+    /// never sealed: the caller passes `as_of - 1` (spec test 2). `last_sha` is left
+    /// untouched — reserved for a future per-commit optimization; the day-bucketed
+    /// churn + sampled quality groups seal by commit-DAY via `sealed_through`.
+    /// Propagates the write error; never masks it.
+    pub async fn advance_metric_watermark(
+        &self,
+        repository_id: &uuid::Uuid,
+        group: &str,
+        sealed_through: chrono::NaiveDate,
+    ) -> Result<(), String> {
+        sqlx_core::query::query(
+            "INSERT INTO sensei.metric_watermarks (repository_id, metric_group, sealed_through, updated_at)
+             VALUES ($1, $2, $3, now())
+             ON CONFLICT (repository_id, metric_group) DO UPDATE
+                SET sealed_through = EXCLUDED.sealed_through,
+                    updated_at     = now()",
+        )
+        .bind(repository_id)
+        .bind(group)
+        .bind(sealed_through)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
 }

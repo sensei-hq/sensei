@@ -205,11 +205,11 @@ mod tests {
             .unwrap();
         seed_cached_explainer(pg, &pid, "ftr", 0.6, day, "three of five first-try").await;
 
-        let task = Task::new(TaskKind::ComputeMetrics, &pid.to_string(), "session_outcomes").with_as_of(day);
-        super::super::compute(&ctx, &task).await.unwrap();
+        let task = Task::new(TaskKind::ComputeGroupMetrics, &pid.to_string(), "session_outcomes").with_as_of(day);
+        super::super::compute_group(&ctx, &task).await.unwrap();
 
         let (explainer, _) = read_props(pg, &pid).await;
-        assert_eq!(explainer.as_deref(), Some("three of five first-try"), "compute() ran the explainer enrichment on the group's daily datapoint");
+        assert_eq!(explainer.as_deref(), Some("three of five first-try"), "compute_group() ran the explainer enrichment on the group's daily datapoint");
 
         crate::tasks::test_support::cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
     }

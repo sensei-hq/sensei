@@ -3,7 +3,7 @@
 //! The `ComputeHealth` barrier's real body: it rolls the project's base metrics up
 //! into ONE 0–100 composite score and writes a single project-scope daily row for
 //! the `project_health` registry metric (`type = score`, `family = composite`,
-//! `higher_better`). It runs AFTER the base `ComputeMetrics` tasks land for a
+//! `higher_better`). It runs AFTER the base `ComputeGroupMetrics` tasks land for a
 //! project (the scheduler wires it `blocked_by` those ids), so the latest daily
 //! component values are already in `sensei.project_metrics` when it reads them.
 //!

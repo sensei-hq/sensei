@@ -1,19 +1,24 @@
-//! Metrics compute handlers (Phase 4 skeleton).
+//! Metrics compute handlers — the watermark engine dispatch.
 //!
-//! `ComputeMetrics` handles EVERY base metric group with ONE task kind — the
-//! specific group (the registry `task_name`, e.g. `"session_outcomes"`) travels
-//! in `task.path`, and the project id rides in `task.folder_path`. Keeping the
-//! group in the payload (not one `TaskKind` per group) is deliberate: it avoids
-//! per-group enum plumbing across the queue/retry/watchdog/executor surface.
+//! Three task kinds drive the per-project metric compute:
+//! - [`ComputeProjectMetrics`](crate::tasks::TaskKind::ComputeProjectMetrics) — the
+//!   per-project PARENT. [`compute_project`] freezes one `as_of` for the wave and
+//!   enqueues one [`ComputeGroupMetrics`](crate::tasks::TaskKind::ComputeGroupMetrics)
+//!   child per active base group plus the
+//!   [`ComputeHealth`](crate::tasks::TaskKind::ComputeHealth) barrier.
+//! - `ComputeGroupMetrics` — the per-(project, group) CHILD. The specific group (the
+//!   registry `task_name`, e.g. `"session_outcomes"`) travels in `task.path`, the
+//!   project id in `task.folder_path`, and the frozen `as_of` in `task.as_of`.
+//!   [`compute_group`] partitions the group by cadence, runs its computer for each
+//!   planned day, enriches each computed day, and advances the per-repo watermark.
+//! - `ComputeHealth` — the SEPARATE barrier kind that runs AFTER a project's base
+//!   metrics land (the scheduler wires it `blocked_by` the `ComputeGroupMetrics`
+//!   children). Its own registry `task_name` is [`HEALTH_TASK_NAME`], which is
+//!   therefore NOT a base group.
 //!
-//! `ComputeHealth` is the SEPARATE barrier kind that runs AFTER a project's base
-//! metrics land (the scheduler wires it `blocked_by` the project's
-//! `ComputeMetrics` ids). Its own registry `task_name` is [`HEALTH_TASK_NAME`],
-//! which is therefore NOT a base group.
-//!
-//! Phase 5 fills in the real per-group computation (read the window, write
-//! `sensei.project_metrics`) for the six base groups; Phase 6 fills in
-//! [`compute_health`] (the derived `project_health` roll-up in [`health`]). An
+//! The engine (day scheduling, watermark sealing, per-day explainer enrichment) lives
+//! in [`planner`]; this module owns the dispatch entry points and the shared helpers
+//! ([`today`], [`is_historical`], [`day_filter`], [`bind_day`], [`MetricGroup`]). An
 //! UNKNOWN `task_name` is an intentional logged no-op that returns `Ok` — a registry
 //! entry the daemon doesn't yet know about degrades to a warning, never a panic or a
 //! stuck queue.
@@ -100,12 +105,12 @@ pub(super) fn bind_day<'q, O>(
 }
 
 /// Test-only routing probe: records WHICH handler last ran on the current thread,
-/// so the executor's dispatch test can assert `ComputeMetrics → compute` and
-/// `ComputeHealth → compute_health` by IDENTITY (both stubs return `Ok(0)`, so a
-/// swapped match arm would otherwise stay green until Phase 5/6 make the paths
-/// diverge). Thread-local so it's isolated per `#[tokio::test]` (each runs on its
-/// own current-thread runtime); guarded by `#[cfg(test)]` so it compiles out of
-/// production entirely.
+/// so the executor's dispatch test can assert `ComputeProjectMetrics → compute_project`,
+/// `ComputeGroupMetrics → compute_group`, and `ComputeHealth → compute_health` by
+/// IDENTITY (the day-keyed/honest-empty paths return `Ok(0)` for an empty project, so a
+/// swapped match arm would otherwise stay green). Thread-local so it's isolated per
+/// `#[tokio::test]` (each runs on its own current-thread runtime); guarded by
+/// `#[cfg(test)]` so it compiles out of production entirely.
 #[cfg(test)]
 pub(crate) mod probe {
     use std::cell::Cell;
@@ -130,12 +135,12 @@ pub(crate) mod probe {
 
 /// The registry `task_name` of the health barrier. It is computed by the separate
 /// [`ComputeHealth`](crate::tasks::TaskKind::ComputeHealth) kind, NOT dispatched
-/// as a base `ComputeMetrics` group, so the metrics scheduler filters it out of
-/// the `ComputeMetrics` enumeration. Shared with `metrics_scheduler` so the two
+/// as a base `ComputeGroupMetrics` group, so `compute_project` filters it out of
+/// the base-group enumeration. Shared with `metrics_scheduler` so the two
 /// can't drift.
 pub(crate) const HEALTH_TASK_NAME: &str = "health";
 
-/// The base metric groups `ComputeMetrics` dispatches to — the registry
+/// The base metric groups `ComputeGroupMetrics` dispatches to — the registry
 /// `task_name` (carried in `task.path`) mapped to a typed group. Kept as an enum
 /// with a pure [`MetricGroup::from_task_name`] so routing is unit-testable
 /// without a DB and the dispatch can't silently drift from the registry. `health`
@@ -178,76 +183,32 @@ impl MetricGroup {
     }
 }
 
-/// `ComputeMetrics` handler: dispatch by the metric group in `task.path` (project
-/// id in `task.folder_path`). A known group runs its computer; an unknown
-/// `task_name` is a logged no-op that returns `Ok` — never a panic, never a queue
-/// error. Returns the number of `project_metrics` rows the group wrote.
-///
-/// Phases 5.1–5.6 wire all six v1 base groups — `session_outcomes`, `churn`,
-/// `duplication`, `autonomy`, `knowledge`, and `tool` — to their real computers;
-/// an UNKNOWN `task_name` remains an honest logged no-op, never a fabricated value.
-pub async fn compute(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
+/// `ComputeGroupMetrics` handler: the per-(project, group) CHILD. The metric group
+/// rides in `task.path`, the project id in `task.folder_path`, and the frozen
+/// `as_of` (shared by every child of one `ComputeProjectMetrics` wave) in
+/// `task.as_of`. Delegates to [`planner::compute_group`], which partitions the group
+/// by cadence — SNAPSHOT (`knowledge`/`tool`) → one today-only rolling compute (no
+/// watermark); DAY-KEYED (`session_outcomes`/`autonomy`/`churn`/`quality`) →
+/// watermark-planned per-day backfill — runs the computer for each planned day, runs
+/// the per-day explainer enrichment (moved here from the old `compute`), and, ON
+/// SUCCESS ONLY, advances each repo's `sensei.metric_watermarks` cursor to
+/// `as_of - 1` (today is never sealed). A failed group propagates `Err` and holds its
+/// watermark, so it retries next run (fail-closed — never a silent skipped day). An
+/// UNKNOWN `task_name` is a logged no-op that returns `Ok(0)`. Returns the number of
+/// `sensei.project_metrics` rows the group wrote.
+pub async fn compute_group(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
     #[cfg(test)]
-    probe::record("compute");
-    match MetricGroup::from_task_name(&task.path) {
-        Some(group) => {
-            tracing::info!(
-                group = group.as_str(),
-                project = %task.folder_path,
-                "compute_metrics: computing {}",
-                group.as_str(),
-            );
-            // `task.as_of` is the target `computed_on` day: `None` = today's
-            // incremental (rolling-window) run, `Some(D)` = the single historical
-            // day D (backfill/gap-fill). Threaded into every computer so the crate
-            // compiles uniformly; only `session_outcomes` implements per-day
-            // behavior in this phase — the rest accept the param and keep their
-            // current behavior (later phases wire them up).
-            let as_of = task.as_of;
-            let written = match group {
-                MetricGroup::SessionOutcomes => {
-                    session_outcomes::compute(ctx, &task.folder_path, as_of).await
-                }
-                MetricGroup::Churn => churn::compute(ctx, &task.folder_path, as_of).await,
-                MetricGroup::Quality => quality::compute(ctx, &task.folder_path, as_of).await,
-                MetricGroup::Autonomy => autonomy::compute(ctx, &task.folder_path, as_of).await,
-                MetricGroup::Knowledge => knowledge::compute(ctx, &task.folder_path, as_of).await,
-                MetricGroup::Tool => tool::compute(ctx, &task.folder_path, as_of).await,
-            }?;
-            // Compute-time per-datapoint EXPLAINER enrichment: generate each
-            // datapoint's "why this day's value is what it is" line WITH the value
-            // and merge it into props.explainer. Best-effort — the value is already
-            // persisted, so a failed/absent-model explainer never fails the compute.
-            // Cache-guarded (unchanged value ⇒ no model call). Rides the planner's
-            // per-day Some(D) tasks; a bare None (rolling) run enriches today.
-            // Decision record: docs/analysis/metric-explainability-generation.md.
-            if let Ok(project_id) = uuid::Uuid::parse_str(&task.folder_path) {
-                let day = match as_of {
-                    Some(d) => Some(d),
-                    None => today(ctx.pg()).await.ok(),
-                };
-                if let Some(day) = day {
-                    explainer::enrich_day(ctx, &project_id, group.as_str(), day).await;
-                }
-            }
-            Ok(written)
-        }
-        None => {
-            // Intentional logged no-op (NOT fabrication): a registry entry whose
-            // task_name the daemon doesn't map degrades to a warning instead of
-            // panicking the worker or wedging the queue.
-            tracing::warn!(
-                task_name = %task.path,
-                project = %task.folder_path,
-                "compute_metrics: unknown metrics task_name — no-op",
-            );
-            Ok(0)
-        }
-    }
+    probe::record("compute_group");
+    tracing::info!(
+        group = %task.path,
+        project = %task.folder_path,
+        "compute_group: computing metric group",
+    );
+    planner::compute_group(ctx, task).await
 }
 
 /// `ComputeHealth` handler (Phase 6): the per-project barrier that runs after the
-/// base `ComputeMetrics` tasks land (wired via `blocked_by` in the scheduler). It
+/// base `ComputeGroupMetrics` tasks land (wired via `blocked_by` in the scheduler). It
 /// rolls the project's latest daily component values into the derived
 /// `project_health` score — see [`health::compute`] for the normalization and the
 /// never-fabricate rules. The project id rides in `task.folder_path`. Returns the
@@ -265,22 +226,23 @@ pub async fn compute_health(ctx: &TaskContext, task: &Task) -> Result<u32, Strin
     health::compute(ctx, &task.folder_path, task.as_of).await
 }
 
-/// `PlanMetricDays` handler (Phase 4): the per-project timeline → day-task planner.
-/// The project id rides in `task.folder_path`. Delegates to [`planner::plan`],
-/// which — for each ACTIVE day-keyed group — diffs the project's data-day set
-/// against the already-covered `computed_on` days and enqueues one
-/// `ComputeMetrics{as_of=Some(D)}` per missing day plus today. Returns the number
-/// of `ComputeMetrics` tasks enqueued (`0` = honest-empty: no active day-keyed
-/// groups). Never fabricates: a day with no source data simply yields no task
-/// (and the downstream compute would write no row).
-pub async fn plan_metric_days(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
+/// `ComputeProjectMetrics` handler: the per-project PARENT that schedules the compute
+/// wave. The project id rides in `task.folder_path`. Delegates to
+/// [`planner::compute_project`], which freezes a single `as_of` for the whole wave
+/// (so every child sees the same day), enqueues ONE `ComputeGroupMetrics` child per
+/// active base group (each carrying the frozen `as_of`), and — when any child was
+/// enqueued — enqueues the per-project `ComputeHealth` barrier `blocked_by` those
+/// children. Returns the number of tasks enqueued (`0` = honest-empty: no active base
+/// groups → no children and no barrier). Never fabricates: a group with no source
+/// data still enqueues a child that honestly writes no row and advances no watermark.
+pub async fn compute_project(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
     #[cfg(test)]
-    probe::record("plan_metric_days");
+    probe::record("compute_project");
     tracing::info!(
         project = %task.folder_path,
-        "plan_metric_days: planning per-day metric compute",
+        "compute_project: scheduling per-project metric compute wave",
     );
-    planner::plan(ctx, &task.folder_path).await
+    planner::compute_project(ctx, task).await
 }
 
 #[cfg(test)]
@@ -305,22 +267,23 @@ mod tests {
     fn metric_group_rejects_unknown_and_health() {
         // A genuinely-unknown task_name has no group → handler logs a no-op.
         assert_eq!(MetricGroup::from_task_name("no_such_group"), None);
-        // `health` is the ComputeHealth barrier's name, NOT a base ComputeMetrics
+        // `health` is the ComputeHealth barrier's name, NOT a base ComputeGroupMetrics
         // group — so it never routes to a base computer.
         assert_eq!(MetricGroup::from_task_name(HEALTH_TASK_NAME), None);
     }
 
     #[tokio::test]
-    async fn compute_metrics_dispatches_by_task_name() {
+    async fn compute_group_dispatches_by_task_name() {
         let ctx = make_ctx().await;
         let pid = uuid::Uuid::new_v4().to_string();
 
         // A known task_name routes to its computer and returns Ok. `pid` is a
-        // random (nonexistent) project, so session_outcomes finds no sessions and
-        // honestly writes 0 rows — the routing is what's under test here.
-        let known = Task::new(TaskKind::ComputeMetrics, &pid, "session_outcomes");
+        // random (nonexistent) project with no repositories, so the day-keyed engine
+        // finds no repos and honestly writes 0 rows — the routing is what's under
+        // test here.
+        let known = Task::new(TaskKind::ComputeGroupMetrics, &pid, "session_outcomes");
         assert_eq!(
-            compute(&ctx, &known).await.unwrap(),
+            compute_group(&ctx, &known).await.unwrap(),
             0,
             "a known group routes to its computer and returns Ok (0 rows for an empty project)",
         );
@@ -328,11 +291,32 @@ mod tests {
         // An UNKNOWN task_name is a logged no-op — Ok, never a panic, never a
         // queue error (so a registry entry the daemon doesn't know degrades to a
         // warning, not a stuck queue).
-        let unknown = Task::new(TaskKind::ComputeMetrics, &pid, "no_such_group");
+        let unknown = Task::new(TaskKind::ComputeGroupMetrics, &pid, "no_such_group");
         assert_eq!(
-            compute(&ctx, &unknown).await.unwrap(),
+            compute_group(&ctx, &unknown).await.unwrap(),
             0,
             "an unknown task_name is a no-op that returns Ok",
+        );
+    }
+
+    #[tokio::test]
+    async fn compute_project_schedules_the_wave() {
+        // The per-project PARENT delegates to the engine, which enqueues one
+        // ComputeGroupMetrics child per active base group plus (when any child was
+        // enqueued) the ComputeHealth barrier. `pid` is a random project, so the
+        // wave is driven purely by the active registry. The returned count must equal
+        // the tasks actually enqueued onto the queue — routing + delegation under test
+        // (the watermark/day-scheduling behavior is covered by the engine tests in
+        // `planner`).
+        let ctx = make_ctx().await;
+        let pid = uuid::Uuid::new_v4().to_string();
+        let task = Task::new(TaskKind::ComputeProjectMetrics, &pid, "");
+        let enqueued = compute_project(&ctx, &task).await.unwrap();
+        let status = ctx.queue.status().await;
+        assert_eq!(
+            enqueued as usize,
+            status.pending + status.blocked,
+            "compute_project returns the count of tasks it enqueued (children pending + barrier blocked)",
         );
     }
 
