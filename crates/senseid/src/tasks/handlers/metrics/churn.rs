@@ -46,12 +46,12 @@
 //!   [`metrics.window_days`] window through today.
 //!
 //! ## Capture-scope split (governance, #3)
-//! Churn is GIT-derived, so its day-set must NOT authorize the activity pruner's
+//! Churn is GIT-derived, so it must NOT authorize the activity pruner's
 //! capture-before-reclaim: a git-churn row for a day must never green-light
 //! reclaiming that day's sessions before their session-anchored metrics (ftr /
-//! throughput) are captured. The planner backfills churn per-day, but
-//! `planner::day_keyed_task_names()` (the pruner's capture scope) stays
-//! SESSION-derived only (`session_outcomes`, `autonomy`) and EXCLUDES churn.
+//! throughput) are captured. The planner backfills churn per-day, but churn's
+//! registry `capture_source` is `git` (not `session`), so the pruner's guard —
+//! which authorizes reclaim only on `capture_source = 'session'` — excludes it.
 //!
 //! Never-fabricate: every DB call propagates `Err`; a git failure/miss produces NO
 //! row (honest-empty). A ratio/pct with denominator 0 writes NO row.
