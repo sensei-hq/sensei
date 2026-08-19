@@ -17,12 +17,17 @@ create table if not exists project_metrics (
 , modified_at   timestamptz   not null default now()
 );
 
--- Identity of a stored value: one row per metric x project x (module) x (session) x
--- date x grain. NULLS NOT DISTINCT so folder_id/session_id nulls (project-scope /
--- daily-grain rows) collide rather than duplicate — the upsert target the compute
--- tasks conflict on (idempotent re-run backfills, never duplicates).
-create unique index if not exists project_metrics_identity
-    on project_metrics (metric_id, project_id, folder_id, session_id, computed_on, grain)
+-- Identity of a stored value: one row per metric x REPOSITORY x scope x identity x
+-- commit_sha x date x grain (D1/D2 — repository is the grain; project_id is OUT of
+-- the identity, kept only as a lookup column). NULLS NOT DISTINCT so the null
+-- identity/commit_sha (day-grain, scope=repo) rows collide rather than duplicate —
+-- the upsert target the compute tasks conflict on (idempotent re-run backfills).
+-- Named _v2 deliberately: a `create unique index if not exists` with the OLD name
+-- would SILENTLY no-op against the existing differently-columned index (G4), so the
+-- old `project_metrics_identity` is dropped MANUALLY (dbd can't drop indexes) after
+-- the old-grain rows are deleted, then this one is created.
+create unique index if not exists project_metrics_identity_v2
+    on project_metrics (metric_id, repository_id, scope, identity, commit_sha, computed_on, grain)
     nulls not distinct;
 
 create index if not exists project_metrics_lookup

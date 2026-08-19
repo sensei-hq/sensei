@@ -438,8 +438,8 @@ pub struct QueueStatus {
 }
 
 /// Scheduling priority of a task kind for [`TaskQueue::next_task`] — LOWER runs
-/// first. The metric-backfill chain (`AnalyzeProject` → `PlanMetricDays` →
-/// `ComputeMetrics` → `ComputeHealth`) is HIGH priority (`0`) so a light metric
+/// first. The metric-backfill chain (`AnalyzeProject` → `ComputeProjectMetrics` →
+/// `ComputeGroupMetrics` → `ComputeHealth`) is HIGH priority (`0`) so a light metric
 /// compute preempts a bulk boot re-index (heavy per-file / graph tasks) that
 /// would otherwise saturate the small worker pool and leave the backfill
 /// `pending` indefinitely. Everything else is NORMAL (`1`). Kept as a small,
@@ -450,8 +450,8 @@ fn kind_priority(kind: &super::TaskKind) -> u8 {
     use super::TaskKind;
     match kind {
         TaskKind::AnalyzeProject
-        | TaskKind::PlanMetricDays
-        | TaskKind::ComputeMetrics
+        | TaskKind::ComputeProjectMetrics
+        | TaskKind::ComputeGroupMetrics
         | TaskKind::ComputeHealth => 0,
         _ => 1,
     }
@@ -780,8 +780,8 @@ mod tests {
         // future edit can't silently drop a member into the NORMAL band.
         for k in [
             TaskKind::AnalyzeProject,
-            TaskKind::PlanMetricDays,
-            TaskKind::ComputeMetrics,
+            TaskKind::ComputeProjectMetrics,
+            TaskKind::ComputeGroupMetrics,
             TaskKind::ComputeHealth,
         ] {
             assert_eq!(kind_priority(&k), 0, "{k} is high priority (metric backfill)");
@@ -812,18 +812,18 @@ mod tests {
         // A bulk re-index task lands FIRST (folder A) …
         q.enqueue(Task::new(TaskKind::ScanRoot, "A", "A")).await;
         // … then two metric computes for folder B (the backfill chain).
-        q.enqueue(Task::new(TaskKind::ComputeMetrics, "B", "group1")).await;
-        q.enqueue(Task::new(TaskKind::ComputeMetrics, "B", "group2")).await;
+        q.enqueue(Task::new(TaskKind::ComputeGroupMetrics, "B", "group1")).await;
+        q.enqueue(Task::new(TaskKind::ComputeGroupMetrics, "B", "group2")).await;
 
-        // Priority preempts FIFO: both ComputeMetrics come out before the
+        // Priority preempts FIFO: both ComputeGroupMetrics come out before the
         // earlier-enqueued ScanRoot, and the two computes keep enqueue order
         // (FIFO tie-break within the high-priority band).
         let t1 = q.next_task().await;
-        assert_eq!(t1.kind, TaskKind::ComputeMetrics);
+        assert_eq!(t1.kind, TaskKind::ComputeGroupMetrics);
         assert_eq!(t1.path, "group1", "FIFO preserved within the high-priority band");
         let t2 = q.next_task().await;
-        assert_eq!(t2.kind, TaskKind::ComputeMetrics);
-        assert_eq!(t2.path, "group2", "second ComputeMetrics keeps enqueue order");
+        assert_eq!(t2.kind, TaskKind::ComputeGroupMetrics);
+        assert_eq!(t2.path, "group2", "second ComputeGroupMetrics keeps enqueue order");
         // … and only then the bulk index.
         let t3 = q.next_task().await;
         assert_eq!(t3.kind, TaskKind::ScanRoot);
@@ -844,7 +844,7 @@ mod tests {
 
         // A HIGH-priority task for the capped folder A, plus a NORMAL task for
         // the free folder B.
-        q.enqueue(Task::new(TaskKind::ComputeMetrics, "A", "group")).await;
+        q.enqueue(Task::new(TaskKind::ComputeGroupMetrics, "A", "group")).await;
         q.enqueue(Task::new(TaskKind::ProcessFile, "B", "b.ts")).await;
 
         // Folder A is full, so its high-priority task is NOT startable; the

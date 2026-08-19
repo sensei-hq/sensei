@@ -460,6 +460,101 @@ impl PgStore {
         Ok(())
     }
 
+    /// Populate the canonical `sensei.repositories` registry + `folders.repository_id`
+    /// for the git/subtree CHECKOUT-ROOT folders under `root_id` (D10, the repo-grain
+    /// metric grain). For each such folder that has a git remote, derive the canonical
+    /// key via [`super::normalize_repo_key`] from its first `remote_urls` entry, upsert
+    /// the GLOBAL `sensei.repositories` row (keyed on `repo_key`), and point
+    /// `folders.repository_id` at it — so two clones / a rename / a re-checkout of one
+    /// remote all resolve to ONE repository and metric history survives a folder move.
+    /// A folder with no parseable remote is left `repository_id = NULL` (a local-only
+    /// repo has no canonical identity and is never federated — never an abs_path
+    /// fallback). Only git/subtree roots carry `repository_id` (I16); a subfolder
+    /// resolves via its nearest ancestor. Idempotent: re-running upserts the same
+    /// repository row and only re-points folders whose `repository_id` actually
+    /// changed. Returns the number of folders (re)pointed this pass.
+    pub async fn assign_repositories(&self, root_id: &uuid::Uuid) -> Result<u64, String> {
+        let rows: Vec<(uuid::Uuid, String, Option<String>)> = sqlx_core::query_as::query_as(
+            "SELECT id, name, remote_urls->0->>'url' \
+               FROM sensei.folders \
+              WHERE root_id = $1 AND kind IN ('git', 'subtree')"
+        ).bind(root_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+
+        let mut assigned = 0u64;
+        for (folder_id, name, url) in rows {
+            // No remote / unparseable → local-only: leave repository_id NULL.
+            let Some(key) = url.as_deref().and_then(super::normalize_repo_key) else { continue };
+            let repo_id: (uuid::Uuid,) = sqlx_core::query_as::query_as(
+                "INSERT INTO sensei.repositories (repo_key, remote_url, name) VALUES ($1, $2, $3) \
+                 ON CONFLICT (repo_key) DO UPDATE SET remote_url = EXCLUDED.remote_url, modified_at = now() \
+                 RETURNING id"
+            ).bind(&key).bind(url.as_deref()).bind(&name)
+             .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
+            // Re-point only when it changes, so a no-op re-run stays cheap.
+            let res = sqlx_core::query::query(
+                "UPDATE sensei.folders SET repository_id = $2 \
+                  WHERE id = $1 AND repository_id IS DISTINCT FROM $2"
+            ).bind(folder_id).bind(repo_id.0)
+             .execute(&self.pool).await.map_err(|e| e.to_string())?;
+            assigned += res.rows_affected();
+        }
+        Ok(assigned)
+    }
+
+    /// The repositories a project spans — the distinct `repository_id`s on its
+    /// git/subtree checkout folders (D2: a project is a GROUP of repositories). The
+    /// repo-grain compute iterates THIS instead of the single `project_root_path`
+    /// (killing the multi-repo blind spot). Ordered by folder path so the "primary"
+    /// (shallowest) repository is first and iteration is deterministic. Honest-empty
+    /// when the project has no repository-linked folder.
+    pub async fn repositories_for_project(&self, project_id: &uuid::Uuid) -> Result<Vec<uuid::Uuid>, String> {
+        let rows: Vec<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
+            "SELECT f.repository_id \
+               FROM sensei.folders f \
+              WHERE f.project_id = $1 AND f.repository_id IS NOT NULL \
+              GROUP BY f.repository_id \
+              ORDER BY min(length(f.abs_path))"
+        ).bind(project_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(r,)| r).collect())
+    }
+
+    /// The project's CANONICAL (primary) repository — the repository of its
+    /// shallowest checkout folder (the root repo). Project-level metrics that have no
+    /// natural per-repo grain (`knowledge`, `tool`) are attributed here so they fit
+    /// the repo-grain identity. `None` when the project has no repository-linked
+    /// folder (a repo-less quasi-repo) — those metrics are then honest-empty.
+    pub async fn primary_repository_for_project(&self, project_id: &uuid::Uuid) -> Result<Option<uuid::Uuid>, String> {
+        let row: Option<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
+            "SELECT f.repository_id \
+               FROM sensei.folders f \
+              WHERE f.project_id = $1 AND f.repository_id IS NOT NULL \
+              ORDER BY length(f.abs_path) ASC \
+              LIMIT 1"
+        ).bind(project_id).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row.map(|(r,)| r))
+    }
+
+    /// The repository ROOTS a project spans — one `(repository_id, abs_path)` per
+    /// distinct `repository_id`, where `abs_path` is the SHALLOWEST (shortest-path)
+    /// checkout folder for that repository (its root working tree). The repo-grain
+    /// churn/quality compute iterates THIS to run the git-log / qlty walk once per
+    /// repository in the project's actual checkout on disk (D2: a project is a GROUP
+    /// of repositories). Ordered by path length so the primary (shallowest) repository
+    /// is first and iteration is deterministic. Honest-empty when the project has no
+    /// repository-linked folder — those repositories are then skipped, never faked (I-E).
+    pub async fn repository_roots_for_project(&self, project_id: &uuid::Uuid) -> Result<Vec<(uuid::Uuid, String)>, String> {
+        let rows: Vec<(uuid::Uuid, String)> = sqlx_core::query_as::query_as(
+            "SELECT roots.repository_id, roots.abs_path FROM ( \
+               SELECT DISTINCT ON (f.repository_id) f.repository_id, f.abs_path \
+                 FROM sensei.folders f \
+                WHERE f.project_id = $1 AND f.repository_id IS NOT NULL \
+                ORDER BY f.repository_id, length(f.abs_path) ASC \
+             ) roots \
+             ORDER BY length(roots.abs_path) ASC"
+        ).bind(project_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows)
+    }
+
     /// List folders in a non-terminal (recoverable) index state, for startup
     /// resume: `discovered` (scan ran, ProcessGitFolder hadn't started),
     /// `queued` (enqueued, not started), `indexing` (a scan was in-flight when

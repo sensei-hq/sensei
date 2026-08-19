@@ -685,16 +685,16 @@ pub async fn analyze_project(ctx: &TaskContext, task: &Task) -> Result<u32, Stri
     // Analysis completion makes this project's (re)synthesized sessions
     // MEASURABLE — a `session_outcomes` day is only countable once the analyzer has
     // set each session's `outcome` — so analysis drives the per-day metric plan
-    // (synthesizer → analyzer → PlanMetricDays), with the daily metrics scheduler
+    // (synthesizer → analyzer → ComputeProjectMetrics), with the daily metrics scheduler
     // as the self-heal backstop. Project id rides in `folder_path` (empty `path`),
     // matching the metrics scheduler's enqueue shape. `enqueue_unique` guards
-    // against a plan storm: analyze runs often, so a PlanMetricDays already
+    // against a plan storm: analyze runs often, so a ComputeProjectMetrics already
     // pending/blocked/running for this project coalesces — the `None` return is
     // intentionally ignored (the in-flight plan already covers this project) and
     // never fails the analyze result.
     let _ = ctx
         .queue
-        .enqueue_unique(Task::new(TaskKind::PlanMetricDays, &project_id.to_string(), ""))
+        .enqueue_unique(Task::new(TaskKind::ComputeProjectMetrics, &project_id.to_string(), ""))
         .await;
     Ok(enriched)
 }
@@ -1246,9 +1246,9 @@ mod tests {
         // Analysis completion is what makes a project's (re)synthesized sessions
         // MEASURABLE — `session_outcomes` days become countable only once the
         // analyzer sets each session's `outcome` — so a successful analyze pass
-        // drives the per-day metric plan (synthesizer → analyzer → PlanMetricDays).
+        // drives the per-day metric plan (synthesizer → analyzer → ComputeProjectMetrics).
         // Because analyze runs often, the enqueue is `enqueue_unique`-guarded: a
-        // second pass while the first PlanMetricDays is still in flight must NOT
+        // second pass while the first ComputeProjectMetrics is still in flight must NOT
         // stack a duplicate (the plan-storm guard).
         let ctx = make_ctx().await;
         let pg = ctx.pg();
@@ -1264,11 +1264,11 @@ mod tests {
         pg.insert_hook_event(&csid, "claude", "UserPromptSubmit", None, None, 1000, None, &prompt("build the thing")).await.unwrap();
         pg.insert_hook_event(&csid, "claude", "Stop", None, None, 2000, None, &serde_json::json!({})).await.unwrap();
 
-        // Count PlanMetricDays enqueued for THIS project (id in folder_path, empty path).
+        // Count ComputeProjectMetrics enqueued for THIS project (id in folder_path, empty path).
         let owner = pid.to_string();
         let count_plans = |snap: &[(TaskKind, String, String)]| -> usize {
             snap.iter()
-                .filter(|(k, f, p)| *k == TaskKind::PlanMetricDays && *f == owner && p.is_empty())
+                .filter(|(k, f, p)| *k == TaskKind::ComputeProjectMetrics && *f == owner && p.is_empty())
                 .count()
         };
 
@@ -1276,10 +1276,10 @@ mod tests {
         analyze_project(&ctx, &task).await.unwrap();
         assert_eq!(
             count_plans(&ctx.queue.snapshot().await), 1,
-            "analysis completion enqueues exactly one PlanMetricDays for the project",
+            "analysis completion enqueues exactly one ComputeProjectMetrics for the project",
         );
 
-        // A second pass while the first PlanMetricDays is still pending coalesces —
+        // A second pass while the first ComputeProjectMetrics is still pending coalesces —
         // enqueue_unique dedups on (kind, folder_path, path), so no second stacks.
         analyze_project(&ctx, &task).await.unwrap();
         assert_eq!(

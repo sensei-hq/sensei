@@ -170,7 +170,8 @@ mod tests {
 
         // A session_outcomes daily ftr datapoint at 0.75 with real parts in props.
         let mid = *pg.active_metric_ids("session_outcomes").await.unwrap().get("ftr").expect("ftr metric");
-        pg.upsert_project_metric(&mid, &pid, None, None, day, "daily", 0.75, &json!({"numerator": 3, "denominator": 4}), "measured")
+        let rid = crate::tasks::test_support::repository_for_folder(pg, &fid).await;
+        pg.upsert_project_metric_repo(&mid, &pid, Some(&rid), "user", None, None, None, None, day, "daily", 0.75, &json!({"numerator": 3, "denominator": 4}), "measured")
             .await
             .unwrap();
         seed_cached_explainer(pg, &pid, "ftr", 0.75, day, "three of four landed first-try").await;
@@ -198,16 +199,17 @@ mod tests {
         let day = (chrono::Utc::now() - chrono::Duration::days(6)).date_naive();
 
         let mid = *pg.active_metric_ids("session_outcomes").await.unwrap().get("ftr").expect("ftr metric");
-        pg.upsert_project_metric(&mid, &pid, None, None, day, "daily", 0.6, &json!({"numerator": 3, "denominator": 5}), "measured")
+        let rid = crate::tasks::test_support::repository_for_folder(pg, &fid).await;
+        pg.upsert_project_metric_repo(&mid, &pid, Some(&rid), "user", None, None, None, None, day, "daily", 0.6, &json!({"numerator": 3, "denominator": 5}), "measured")
             .await
             .unwrap();
         seed_cached_explainer(pg, &pid, "ftr", 0.6, day, "three of five first-try").await;
 
-        let task = Task::new(TaskKind::ComputeMetrics, &pid.to_string(), "session_outcomes").with_as_of(day);
-        super::super::compute(&ctx, &task).await.unwrap();
+        let task = Task::new(TaskKind::ComputeGroupMetrics, &pid.to_string(), "session_outcomes").with_as_of(day);
+        super::super::compute_group(&ctx, &task).await.unwrap();
 
         let (explainer, _) = read_props(pg, &pid).await;
-        assert_eq!(explainer.as_deref(), Some("three of five first-try"), "compute() ran the explainer enrichment on the group's daily datapoint");
+        assert_eq!(explainer.as_deref(), Some("three of five first-try"), "compute_group() ran the explainer enrichment on the group's daily datapoint");
 
         crate::tasks::test_support::cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
     }
