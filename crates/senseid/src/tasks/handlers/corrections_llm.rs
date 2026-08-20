@@ -101,6 +101,8 @@ pub async fn summarize_cluster(
         auth: None,
         panel: None,
         consensus: None,
+        allow_fallback: true,
+        credentials: std::collections::HashMap::new(),
     };
     match gateway.execute(&request).await {
         Ok(resp) if resp.success => {

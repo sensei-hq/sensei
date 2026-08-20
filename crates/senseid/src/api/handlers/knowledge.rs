@@ -715,6 +715,8 @@ pub(crate) async fn generalise_memory(
         auth: None,
         panel: None,
         consensus: None,
+        allow_fallback: true,
+        credentials: std::collections::HashMap::new(),
     };
 
     // Timeout / gateway error / empty-or-unparseable output all degrade the SAME
