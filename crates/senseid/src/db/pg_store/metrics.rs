@@ -240,6 +240,43 @@ impl PgStore {
     /// (honouring its `nulls not distinct`); `ON CONFLICT ON CONSTRAINT <name>`
     /// would not resolve against an index.
     #[allow(clippy::too_many_arguments)]
+    /// Project health from the rating views (spec 2026-08-20): the weighted 0–100
+    /// `health_score` + per-metric 0–5 `ratings` (the radar spokes) + the `components`
+    /// map the score was built from. `health_score`/`components` are null when nothing
+    /// is rated yet (honest-empty — never a fabricated 0). `ratings` lists EVERY metric
+    /// with a current reading (rated or not) so the radar can show all spokes + values.
+    pub async fn get_project_health(&self, project_id: &uuid::Uuid) -> Result<serde_json::Value, String> {
+        let ratings: Vec<(serde_json::Value,)> = sqlx_core::query_as::query_as(
+            "SELECT jsonb_build_object( \
+                 'metric', metric, 'name', metric_name, 'family', family, \
+                 'value', value, 'rating', rating, 'weight', weight) \
+               FROM sensei.metric_ratings WHERE project_id = $1 \
+              ORDER BY family::text, metric",
+        )
+        .bind(project_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        let health: Option<(i32, i32, serde_json::Value)> = sqlx_core::query_as::query_as(
+            "SELECT health_score, rated_metrics, components \
+               FROM sensei.project_health_score WHERE project_id = $1",
+        )
+        .bind(project_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        let (score, rated, components) = match health {
+            Some((s, r, c)) => (serde_json::json!(s), serde_json::json!(r), c),
+            None => (serde_json::Value::Null, serde_json::json!(0), serde_json::Value::Null),
+        };
+        Ok(serde_json::json!({
+            "health_score": score,       // 0–100, or null when nothing rated
+            "rated_metrics": rated,
+            "components": components,     // {metric → {rating, weight, name}} or null
+            "ratings": ratings.into_iter().map(|(j,)| j).collect::<Vec<_>>(),
+        }))
+    }
+
     pub async fn upsert_project_metric_repo(
         &self,
         metric_id:     &uuid::Uuid,
