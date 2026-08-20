@@ -190,6 +190,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/graph/call-flow", get(codebase::call_flow))
         // Project analysis
         .route("/api/projects/{id}/analyze", post(observatory::analyze_solution))
+        .route("/api/projects/{id}/process/analyze", post(observatory::analyze_process))
         .route("/api/projects/{id}/backfill", post(observatory::backfill_project_sessions))
         .route("/api/transcripts/backfill", post(observatory::backfill_transcripts))
         .route("/api/metrics/backfill", post(observatory::backfill_metrics))

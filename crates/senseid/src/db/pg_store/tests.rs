@@ -3711,6 +3711,67 @@
     }
 
     #[tokio::test]
+    async fn process_analysis_selects_unscored_then_saves_judgments_evidence_watermark() {
+        // The process-quality store contract (spec 2026-08-20): a measurable
+        // session with a client_session_id + NULL process_analyzed_at is selected;
+        // save_session_process merges props.process, writes evidence rows keyed on
+        // the client id, stamps the watermark; and a re-save overwrites in place.
+        let s = pg_store().await;
+        let suffix = format!("proc_{}", uuid::Uuid::new_v4());
+        let (pid, fid) = create_test_project_and_folder(&s, &suffix).await;
+        let csid = format!("{suffix}-csid");
+        let sid = s.record_session_event(&csid, &fid, Some(&pid), "claude", true).await.unwrap();
+        // Make it measurable (outcome not null) — the selection base.
+        sqlx_core::query::query(
+            "UPDATE activity.sessions SET outcome='completed'::sensei.session_outcome, ftr=true WHERE id=$1"
+        ).bind(sid).execute(s.pool()).await.unwrap();
+
+        // Selected while un-scored.
+        let due = s.sessions_needing_process_analysis(&pid, 50).await.unwrap();
+        assert!(due.iter().any(|(id, c)| *id == sid && c == &csid), "un-scored measurable session is selected");
+
+        // Save a judgment + one evidence row.
+        let judgments = serde_json::json!({
+            "spec_depth": {"score": 4, "evidence": [{"turn": 1, "quote": "the plan is X", "kind": "plan"}], "note": "clear"},
+            "spec_deviation": {"score": null, "note": "no deviation"},
+            "refuted_findings": {"score": null},
+            "incomplete_analysis_llm": {"score": null},
+        });
+        let evidence = vec![("spec_depth".to_string(), 1, "the plan is X".to_string(), Some("plan".to_string()))];
+        s.save_session_process(&sid, &csid, &judgments, &evidence).await.unwrap();
+
+        // props.process merged + watermark stamped.
+        let (proc, stamped): (serde_json::Value, bool) = sqlx_core::query_as::query_as(
+            "SELECT props->'process', process_analyzed_at IS NOT NULL FROM activity.sessions WHERE id=$1"
+        ).bind(sid).fetch_one(s.pool()).await.unwrap();
+        assert_eq!(proc["spec_depth"]["score"].as_f64(), Some(4.0), "judgment stored under props.process");
+        assert!(stamped, "process_analyzed_at watermark stamped");
+
+        // Evidence row keyed on the client id.
+        let (ev_n,): (i64,) = sqlx_core::query_as::query_as(
+            "SELECT count(*) FROM activity.session_process_evidence WHERE session_id=$1 AND signal='spec_depth' AND turn_index=1"
+        ).bind(&csid).fetch_one(s.pool()).await.unwrap();
+        assert_eq!(ev_n, 1, "one grounded evidence row written");
+
+        // No longer selected (watermarked).
+        let due2 = s.sessions_needing_process_analysis(&pid, 50).await.unwrap();
+        assert!(!due2.iter().any(|(id, _)| *id == sid), "scored session no longer selected");
+
+        // Re-save overwrites evidence in place (no duplicates).
+        s.save_session_process(&sid, &csid, &judgments, &evidence).await.unwrap();
+        let (ev_after,): (i64,) = sqlx_core::query_as::query_as(
+            "SELECT count(*) FROM activity.session_process_evidence WHERE session_id=$1"
+        ).bind(&csid).fetch_one(s.pool()).await.unwrap();
+        assert_eq!(ev_after, 1, "re-save replaces evidence in place (idempotent), not appends");
+
+        // cleanup
+        sqlx_core::query::query("DELETE FROM activity.session_process_evidence WHERE session_id=$1").bind(&csid).execute(s.pool()).await.ok();
+        sqlx_core::query::query("DELETE FROM activity.sessions WHERE id=$1").bind(sid).execute(s.pool()).await.ok();
+        sqlx_core::query::query("DELETE FROM sensei.folders WHERE id=$1").bind(fid).execute(s.pool()).await.ok();
+        sqlx_core::query::query("DELETE FROM sensei.projects WHERE id=$1").bind(pid).execute(s.pool()).await.ok();
+    }
+
+    #[tokio::test]
     async fn set_session_summary_refreshes_when_changed() {
         // The retro producer REFRESHES a session's summary when it changes — so a
         // re-derivation (the transcript backfill) corrects a now-stale line, e.g.
