@@ -109,7 +109,10 @@ function formatCount(value: number): string {
 }
 
 function formatRatio(value: number): string {
-    return value.toFixed(2);
+    // Small ratios (quality smells-per-line ~0.0024, rework fractions) read as
+    // 2-decimals; large ratios (tokens-per-result ~7,700) read as a thousands-
+    // grouped integer so the axis/headline isn't "7732.00".
+    return Math.abs(value) >= 1000 ? formatCount(value) : value.toFixed(2);
 }
 
 // ── "smells per line" quality metrics: letter grade + per-1,000-lines rate ──

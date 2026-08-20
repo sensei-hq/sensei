@@ -20,6 +20,7 @@
     StreamChart,
     ConstellationChart,
     BandsChart,
+    TokensChart,
     MiniChart,
     SessionRow,
   } from '$lib/components/sessions';
@@ -65,6 +66,7 @@
     stream: { kanji: '流', sub: 'time spent, stacked' },
     constellation: { kanji: '星', sub: 'duration vs day' },
     bands: { kanji: '帯', sub: 'stacked per day' },
+    tokens: { kanji: '燃', sub: 'token volume per day' },
   };
   const MINI_GLYPH: Record<MiniMode, string> = {
     numbers: '数',
@@ -217,16 +219,23 @@
           <StreamChart {buckets} />
         {:else if digest.chart === 'constellation'}
           <ConstellationChart sessions={enriched} {days} />
+        {:else if digest.chart === 'tokens'}
+          <TokensChart {buckets} />
         {:else}
           <BandsChart {buckets} />
         {/if}
       </div>
 
-      <!-- Legend -->
+      <!-- Legend — token in/out for the volume chart, quality tones otherwise -->
       <div class="flex justify-end gap-4 mt-3 text-xs text-ink-mute">
-        <span class="inline-flex items-center gap-1"><span class="w-2 h-2 rounded-sm bg-success"></span>first-try</span>
-        <span class="inline-flex items-center gap-1"><span class="w-2 h-2 rounded-sm bg-warning"></span>corrected</span>
-        <span class="inline-flex items-center gap-1"><span class="w-2 h-2 rounded-sm bg-accent"></span>abandoned</span>
+        {#if digest.chart === 'tokens'}
+          <span class="inline-flex items-center gap-1"><span class="w-2 h-2 rounded-sm bg-accent-soft"></span>input</span>
+          <span class="inline-flex items-center gap-1"><span class="w-2 h-2 rounded-sm bg-accent"></span>output</span>
+        {:else}
+          <span class="inline-flex items-center gap-1"><span class="w-2 h-2 rounded-sm bg-success"></span>first-try</span>
+          <span class="inline-flex items-center gap-1"><span class="w-2 h-2 rounded-sm bg-warning"></span>corrected</span>
+          <span class="inline-flex items-center gap-1"><span class="w-2 h-2 rounded-sm bg-accent"></span>abandoned</span>
+        {/if}
       </div>
     </section>
 
