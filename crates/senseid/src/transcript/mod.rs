@@ -34,6 +34,11 @@ pub struct SynthEvent {
     pub tool_name: Option<String>,
     pub file_path: Option<String>,
     pub prompt: Option<String>,
+    /// The tool call's FULL `input` object (the bash command, skill name, agent
+    /// params, …), carried verbatim from the transcript's `tool_use.input` so the
+    /// enrich worker can derive `call_info`/`plugin`/`method` from a backfilled event
+    /// exactly as it does from a live-captured one. `None` for non-tool events.
+    pub tool_input: Option<serde_json::Value>,
     pub ts: i64, // ms epoch
 }
 
@@ -264,7 +269,13 @@ async fn synthesize_session(
     for ev in &synth.events {
         let payload = match ev.event_type.as_str() {
             "UserPromptSubmit" => serde_json::json!({ "prompt": ev.prompt }),
-            "PostToolUse" => serde_json::json!({ "tool_input": { "file_path": ev.file_path } }),
+            // Carry the FULL tool_input (bash command / skill / agent params) so the
+            // enrich worker derives call_info/plugin/method just like a live event;
+            // fall back to the file_path-only shape when the transcript lacked an input.
+            "PostToolUse" => serde_json::json!({
+                "tool_input": ev.tool_input.clone()
+                    .unwrap_or_else(|| serde_json::json!({ "file_path": ev.file_path })),
+            }),
             _ => serde_json::json!({}),
         };
         if let Err(e) = pg
@@ -432,7 +443,8 @@ mod tests {
         // a historical transcript whose cwd == the tracked folder's abs_path
         let content = format!(
             "{{\"type\":\"user\",\"cwd\":\"{cwd}\",\"timestamp\":\"2026-06-20T10:00:00.000Z\",\"message\":{{\"role\":\"user\",\"content\":\"add the parser\"}}}}\n\
-             {{\"type\":\"assistant\",\"cwd\":\"{cwd}\",\"timestamp\":\"2026-06-20T10:00:05.000Z\",\"message\":{{\"role\":\"assistant\",\"model\":\"claude-opus-4-8\",\"content\":[{{\"type\":\"tool_use\",\"name\":\"Edit\",\"input\":{{\"file_path\":\"{cwd}/src/x.rs\"}}}}]}}}}\n",
+             {{\"type\":\"assistant\",\"cwd\":\"{cwd}\",\"timestamp\":\"2026-06-20T10:00:05.000Z\",\"message\":{{\"role\":\"assistant\",\"model\":\"claude-opus-4-8\",\"content\":[{{\"type\":\"tool_use\",\"name\":\"Edit\",\"input\":{{\"file_path\":\"{cwd}/src/x.rs\"}}}}]}}}}\n\
+             {{\"type\":\"assistant\",\"cwd\":\"{cwd}\",\"timestamp\":\"2026-06-20T10:00:06.000Z\",\"message\":{{\"role\":\"assistant\",\"model\":\"claude-opus-4-8\",\"content\":[{{\"type\":\"tool_use\",\"name\":\"Bash\",\"input\":{{\"command\":\"cargo test\",\"description\":\"run tests\"}}}}]}}}}\n",
             cwd = repo_path
         );
         let root_dir = std::env::temp_dir().join(format!("sensei-imp-{}", uuid::Uuid::new_v4()));
@@ -461,6 +473,15 @@ mod tests {
         let kinds: Vec<&str> = kinds.iter().map(|k| k.0.as_str()).collect();
         assert!(kinds.contains(&"UserPromptSubmit") && kinds.contains(&"PostToolUse") && kinds.contains(&"Stop"), "got {kinds:?}");
         let n_before = kinds.len();
+
+        // The Bash tool_use's FULL input survives into the synthesized event's payload
+        // (not just file_path), so the enrich worker can derive call_info from a
+        // backfilled event exactly as from a live one.
+        let bash_cmd: (Option<String>,) = sqlx_core::query_as::query_as(
+            "SELECT payload->'tool_input'->>'command' FROM activity.assistant_events \
+              WHERE session_id=$1 AND tool_name='Bash'",
+        ).bind(&sid).fetch_one(pg.pool()).await.unwrap();
+        assert_eq!(bash_cmd.0.as_deref(), Some("cargo test"), "the full tool_input (bash command) is carried into the backfilled event");
 
         // re-run: file unchanged ⇒ cursor-skip, no duplicate events.
         backfill_all(&pg, &ads).await;

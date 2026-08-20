@@ -269,6 +269,7 @@ pub fn parse_zed_session(content: &str) -> Option<SynthSession> {
                 tool_name: None,
                 file_path: None,
                 prompt: Some(p),
+                tool_input: None,
                 ts,
             }),
             Ev::Tool(t) => events.push(SynthEvent {
@@ -276,6 +277,7 @@ pub fn parse_zed_session(content: &str) -> Option<SynthSession> {
                 tool_name: Some(t.name),
                 file_path: t.file_path,
                 prompt: None,
+                tool_input: None, // the Zed thread parser carries only file_path (no full input yet)
                 ts,
             }),
         }
@@ -285,6 +287,7 @@ pub fn parse_zed_session(content: &str) -> Option<SynthSession> {
         tool_name: None,
         file_path: None,
         prompt: None,
+        tool_input: None,
         ts: end,
     });
     Some(SynthSession { cwds, events })
