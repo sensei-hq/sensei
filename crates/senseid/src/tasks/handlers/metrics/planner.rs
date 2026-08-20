@@ -257,7 +257,6 @@ async fn run_computer(
         MetricGroup::Quality => super::quality::compute(ctx, project_raw, as_of).await,
         MetricGroup::Autonomy => super::autonomy::compute(ctx, project_raw, as_of).await,
         MetricGroup::Knowledge => super::knowledge::compute(ctx, project_raw, as_of).await,
-        MetricGroup::Tool => super::tool::compute(ctx, project_raw, as_of).await,
         MetricGroup::Coverage => super::coverage::compute(ctx, project_raw, as_of).await,
     }
 }
@@ -535,13 +534,13 @@ mod tests {
             "quality".to_string(),
             "autonomy".to_string(),
             "knowledge".to_string(),
-            "tool".to_string(),
+            "coverage".to_string(),
             "health".to_string(),
         ];
         assert_eq!(
             snapshot_active(&active),
-            vec![MetricGroup::Knowledge, MetricGroup::Tool],
-            "snapshot = knowledge/tool; day-keyed + health excluded",
+            vec![MetricGroup::Knowledge, MetricGroup::Coverage],
+            "snapshot = knowledge/coverage; day-keyed + health excluded",
         );
         assert!(snapshot_active(&["no_such_group".to_string()]).is_empty(), "unknown never fabricates");
         assert!(snapshot_active(&["health".to_string()]).is_empty());
