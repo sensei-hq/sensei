@@ -17,7 +17,7 @@ function makeRow(over: Partial<LogRow> = {}): LogRow {
     id: over.id ?? 'r1',
     level: over.level ?? 'info',
     source: over.source ?? null,
-    module: 'module' in over ? over.module : 'tasks',
+    module: 'module' in over ? (over.module ?? null) : 'tasks',
     logged_at: over.logged_at ?? '2026-07-13T02:19:29.612354+00:00',
     message: over.message ?? 'task_completed',
     context: over.context ?? { folder: 'Developer' },

@@ -112,6 +112,48 @@ function formatRatio(value: number): string {
     return value.toFixed(2);
 }
 
+// ── "smells per line" quality metrics: letter grade + per-1,000-lines rate ──
+// maintainability (module_quality) + duplication (duplication_ratio) are tiny
+// lower-better ratios (~0.0024) — `toFixed(2)` shows "0.00" and a [0,1] chart
+// crushes them to the floor. Present them the way qlty.sh does: a per-1,000-lines
+// rate ("2.4 / 1,000 lines") + a letter grade, so the reading is legible at a glance.
+
+/** A letter grade for a per-KLOC quality metric (lower is better → smaller = 'A'). */
+export type MetricGrade = 'A' | 'B' | 'C' | 'D' | 'F';
+
+/** Per-metric grade bands: the inclusive UPPER bound of A, B, C, D on the
+ *  per-1,000-lines scale (value × 1000); above D's bound is F. Initial bands, tunable.
+ *  Keyed by metric key — ONLY these "smells per line" ratios get a grade + per-KLOC. */
+const PER_KLOC_GRADES: Record<string, readonly [number, number, number, number]> = {
+    module_quality: [3, 6, 12, 25], // maintainability smells / 1,000 source lines
+    duplication_ratio: [20, 50, 100, 200], // duplicated lines / 1,000 source lines
+};
+
+/** True when a metric is presented as a per-1,000-lines rate + letter grade. */
+export function isPerKlocMetric(key: string): boolean {
+    return key in PER_KLOC_GRADES;
+}
+
+/** The letter grade for a per-KLOC metric's value, or null when the metric isn't
+ *  graded or the value is absent (honest — never a fabricated grade). */
+export function metricGrade(key: string, value: number | null | undefined): MetricGrade | null {
+    const bands = PER_KLOC_GRADES[key];
+    if (!bands || value == null || Number.isNaN(value)) return null;
+    const perKloc = value * 1000;
+    const [a, b, c, d] = bands;
+    if (perKloc <= a) return 'A';
+    if (perKloc <= b) return 'B';
+    if (perKloc <= c) return 'C';
+    if (perKloc <= d) return 'D';
+    return 'F';
+}
+
+/** Format a per-KLOC metric's value as a readable rate ("2.4 / 1,000 lines"). */
+export function formatPerKloc(value: number | null | undefined): string {
+    if (value == null || Number.isNaN(value)) return METRIC_NONE;
+    return `${(value * 1000).toFixed(1)} / 1,000 lines`;
+}
+
 /** Format a metric's headline value by its wire type. Absent -> METRIC_NONE. */
 export function formatMetricValue(
     type: MetricType,
@@ -162,6 +204,7 @@ export function metricTrend(
     direction: MetricDirection,
     delta: number | null | undefined,
     lowN = false,
+    perKloc = false,
 ): MetricTrend | null {
     // Thin sample (e.g. FTR over a single scored session): a week-over-week delta is
     // noise — one 0/1 vs 1/1 day swings ±100 pt. Show an honest "low n" marker beside
@@ -171,9 +214,12 @@ export function metricTrend(
     if (delta === 0) return { label: '0', dir: 'flat', tone: 'neutral' };
 
     // A change that rounds to nothing at the metric's display resolution reads
-    // as flat — never a confusing "−0.00" / "+0s".
-    const magnitude = formatDeltaMagnitude(type, Math.abs(delta));
-    if (magnitude === formatDeltaMagnitude(type, 0)) {
+    // as flat — never a confusing "−0.00" / "+0s". A per-KLOC metric measures the
+    // delta on the ×1,000 scale (a 0.0002 ratio change = 0.2 / 1,000 lines), so a
+    // tiny-but-real change is legible instead of collapsing to "0".
+    const fmt = (m: number) => (perKloc ? `${(m * 1000).toFixed(1)}` : formatDeltaMagnitude(type, m));
+    const magnitude = fmt(Math.abs(delta));
+    if (magnitude === fmt(0)) {
         return { label: '0', dir: 'flat', tone: 'neutral' };
     }
 
@@ -691,7 +737,12 @@ export function metricYDomain(type: MetricType, values: number[]): [number, numb
         case 'score':
             return [lo, Math.max(100, max)];
         case 'ratio':
-            return [lo, Math.max(1, max)];
+            // A ratio meaningfully in [0,1] (rates, shares) reads best against the
+            // full [0,1] context; but a TINY ratio (maintainability/duplication
+            // smells-per-line, ~0.002) is invisible crushed to the floor of [0,1], so
+            // once the whole series sits well below 0.1 auto-scale to the data (with
+            // headroom) so the shape + movement are legible.
+            return max <= 0.1 ? [lo, max > lo ? max * 1.25 : lo + 0.001] : [lo, Math.max(1, max)];
         case 'count':
         case 'duration':
         default:
@@ -741,6 +792,9 @@ export interface SignalVM {
     type: MetricType;
     direction: MetricDirection;
     value: string; // formatted headline value, or METRIC_NONE
+    /** Letter grade (A–F) for a per-KLOC quality metric (maintainability/
+     *  duplication); null for every other metric. Shown as a badge beside the value. */
+    grade: MetricGrade | null;
     sub: string; // numerator/denominator or unit context under the value
     trend: MetricTrend | null;
     color: TrendColor; // rule + sparkline tone
@@ -774,6 +828,16 @@ export const TREND_RULE: Record<TrendColor, string> = {
     success: 'border-t-success',
     accent: 'border-t-accent',
     'ink-faint': 'border-t-paper-edge',
+};
+
+/** Grade badge tone (a per-KLOC quality grade; healthier grade = calmer token).
+ *  Full class strings so UnoCSS extracts them statically. */
+export const GRADE_CLASS: Record<MetricGrade, string> = {
+    A: 'text-success bg-success-soft',
+    B: 'text-success bg-success-soft',
+    C: 'text-warning bg-warning-soft',
+    D: 'text-error bg-error-soft',
+    F: 'text-error bg-error-soft',
 };
 
 /** Unit-free magnitude for ranking movers: relative change vs the prior, so
@@ -826,10 +890,18 @@ export function toSignal(
     narrative?: MetricsNarrative | null,
 ): SignalVM {
     const family = familyOf(row.metric) ?? 'tool';
-    const trend = metricTrend(row.metric_type, row.direction, row.delta, isLowN(row));
+    const graded = isPerKlocMetric(row.metric);
+    const grade = graded ? metricGrade(row.metric, row.value) : null;
+    const trend = metricTrend(row.metric_type, row.direction, row.delta, isLowN(row), graded);
     const tools = row.metric === KEY_UNUSED_TOOLS ? toolsDisplay(row.props) : null;
 
-    const value = tools ? tools.value : formatMetricValue(row.metric_type, row.value);
+    // A per-KLOC quality metric shows its readable rate as the headline (the grade
+    // rides alongside via `grade`); everything else uses the type formatter.
+    const value = tools
+        ? tools.value
+        : graded
+          ? formatPerKloc(row.value)
+          : formatMetricValue(row.metric_type, row.value);
     const sub = tools ? tools.sub : metricSub(row);
     const name = tools ? tools.name : row.name;
 
@@ -844,6 +916,7 @@ export function toSignal(
         type: row.metric_type,
         direction: row.direction,
         value,
+        grade,
         sub,
         trend,
         color: toneColor(trend?.tone),

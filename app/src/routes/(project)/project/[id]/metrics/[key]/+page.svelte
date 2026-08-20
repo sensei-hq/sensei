@@ -16,6 +16,7 @@
         linkifyMetrics,
         formatMetricValue,
         TREND_TEXT,
+        GRADE_CLASS,
     } from '$lib/metrics/metric-view.js';
     import SignalRail from '../SignalRail.svelte';
     import DetailChart from '../DetailChart.svelte';
@@ -162,6 +163,11 @@
                                 {/if}
                             </div>
                             <div class="flex items-baseline gap-3 pt-1">
+                                {#if selected.grade}
+                                    <span
+                                        class="self-center rounded px-1.5 py-0.5 text-sm font-medium leading-none {GRADE_CLASS[selected.grade]}"
+                                        title="grade for the per-1,000-lines rate">{selected.grade}</span>
+                                {/if}
                                 <span class="text-ink tabular-nums">{selected.value}</span>
                                 {#if selected.trend}
                                     <span class="mono text-sm {TREND_TEXT[selected.color]}">{selected.trend.label}</span>
