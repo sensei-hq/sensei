@@ -953,6 +953,19 @@ impl PgStore {
         Ok(row.0)
     }
 
+    /// True when a session's metadata (inference model + token usage) has never
+    /// been attempted from its transcript — the signal the transcript backfill uses
+    /// to force a one-time metadata refresh for sessions captured before token
+    /// capture existed. `false` when the row is absent (a new session gets its
+    /// metadata via synthesis) or already attempted (skip the wasteful re-read, even
+    /// for a token-less source like a Zed thread). Keys on `meta_synced_at IS NULL`.
+    pub async fn session_needs_meta_backfill(&self, client_session_id: &str) -> Result<bool, String> {
+        let row: Option<(Option<chrono::DateTime<chrono::Utc>>,)> = sqlx_core::query_as::query_as(
+            "SELECT meta_synced_at FROM activity.sessions WHERE client_session_id = $1"
+        ).bind(client_session_id).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(matches!(row, Some((None,))))
+    }
+
     /// Mark a session as synthesized from a historical transcript (#75) and set
     /// its real historical start/end from the transcript timestamps (so it
     /// doesn't masquerade as "today" in the FTR/quality time windows).
@@ -967,17 +980,31 @@ impl PgStore {
         Ok(())
     }
 
-    /// Set the inference `provider` + `model` that ran a session (captured from
-    /// the transcript at synthesis, #75). Idempotent. Powers effectiveness-by-model.
-    pub async fn set_session_model(
-        &self, client_session_id: &str, provider: &str, model: &str,
+    /// Persist a session's transcript-derived metadata — inference `provider`/`model`
+    /// and input/output token usage — in one idempotent write, and stamp
+    /// `meta_synced_at` so the attempt is never repeated. Each field is only
+    /// overwritten when a real value is supplied (`COALESCE` preserves the existing
+    /// column on `None`); an absent value is left untouched, never replaced by a
+    /// fabricated default/zero. Powers effectiveness-by-model + token-usage reporting.
+    /// A no-op (0 rows) when the session row doesn't exist yet.
+    pub async fn set_session_metadata(
+        &self, client_session_id: &str, provider: Option<&str>, model: Option<&str>,
+        tokens_in: Option<i32>, tokens_out: Option<i32>,
     ) -> Result<(), String> {
         sqlx_core::query::query(
-            "UPDATE activity.sessions SET provider = $2, model = $3 WHERE client_session_id = $1",
+            "UPDATE activity.sessions
+                SET provider       = COALESCE($2, provider),
+                    model          = COALESCE($3, model),
+                    tokens_in      = COALESCE($4, tokens_in),
+                    tokens_out     = COALESCE($5, tokens_out),
+                    meta_synced_at = now()
+              WHERE client_session_id = $1",
         )
         .bind(client_session_id)
         .bind(provider)
         .bind(model)
+        .bind(tokens_in)
+        .bind(tokens_out)
         .execute(&self.pool)
         .await
         .map_err(|e| e.to_string())?;

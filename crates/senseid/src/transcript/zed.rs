@@ -22,7 +22,7 @@
 //! is pure + deterministic (these free functions) so it's unit-testable without
 //! a database.
 
-use super::{SynthEvent, SynthSession, TranscriptAdapter, TranscriptTurn, UnitRef};
+use super::{ParsedTranscript, SynthEvent, SynthSession, TranscriptAdapter, TranscriptTurn, UnitRef};
 use std::io::Read;
 use std::path::PathBuf;
 
@@ -127,16 +127,15 @@ impl TranscriptAdapter for ZedAdapter {
         Some(json)
     }
 
-    fn parse(&self, content: &str) -> Vec<TranscriptTurn> {
-        parse_zed_thread(content)
-    }
-
-    fn parse_session(&self, content: &str) -> Option<SynthSession> {
-        parse_zed_session(content)
-    }
-
-    fn model_for(&self, content: &str) -> Option<(String, String)> {
-        extract_model(content)
+    fn parse(&self, content: &str) -> ParsedTranscript {
+        let session = parse_zed_session(content);
+        ParsedTranscript {
+            turns: parse_zed_thread(content),
+            cwds: session.as_ref().map(|s| s.cwds.clone()).unwrap_or_default(),
+            events: session.map(|s| s.events).unwrap_or_default(),
+            model: extract_model(content),
+            tokens: extract_tokens(content),
+        }
     }
 }
 
@@ -154,6 +153,48 @@ fn decompress_zstd(blob: &[u8]) -> Option<String> {
     String::from_utf8(out)
         .map_err(|_| tracing::warn!("zed: thread JSON not valid UTF-8"))
         .ok()
+}
+
+/// Total `(tokens_in, tokens_out)` for a Zed thread. Zed records usage per model
+/// request in `request_token_usage` (a `{request_id → {input_tokens, output_tokens,
+/// [cache_*]}}` map); each request's input is the full context sent that turn, so
+/// summing across requests is the total tokens *processed* — the same "consumption"
+/// grain as the Claude adapter (which sums per-message usage). Prefers the
+/// `cumulative_token_usage` summary when Zed has populated it. `None` when no usage
+/// is recorded (honest-empty — never a fabricated 0). Pure.
+pub fn extract_tokens(content: &str) -> Option<(i64, i64)> {
+    let v: serde_json::Value = serde_json::from_str(content).ok()?;
+    // A TokenUsage object → (input + cache tokens, output). Cache keys are absent in
+    // current threads but summed defensively so a newer Zed schema is covered.
+    let usage = |u: &serde_json::Value| -> (i64, i64) {
+        let g = |k: &str| u.get(k).and_then(|x| x.as_i64()).unwrap_or(0);
+        (
+            g("input_tokens") + g("cache_creation_input_tokens") + g("cache_read_input_tokens"),
+            g("output_tokens"),
+        )
+    };
+    // Prefer Zed's own running total when present.
+    if let Some(obj) = v.get("cumulative_token_usage").and_then(|c| c.as_object())
+        && !obj.is_empty()
+    {
+        let (tin, tout) = usage(v.get("cumulative_token_usage").unwrap());
+        if tin > 0 || tout > 0 {
+            return Some((tin, tout));
+        }
+    }
+    // Else sum the per-request usage map.
+    if let Some(reqs) = v.get("request_token_usage").and_then(|r| r.as_object()) {
+        let (mut tin, mut tout) = (0i64, 0i64);
+        for u in reqs.values() {
+            let (i, o) = usage(u);
+            tin += i;
+            tout += o;
+        }
+        if tin > 0 || tout > 0 {
+            return Some((tin, tout));
+        }
+    }
+    None
 }
 
 /// `{provider, model}` of the thread, or `None` if absent.
@@ -488,6 +529,23 @@ mod tests {
         assert_eq!(extract_model(V3), Some(("copilot_chat".into(), "GPT-5".into())));
         assert_eq!(extract_model(V2), Some(("ollama".into(), "gemma4:latest".into())));
         assert_eq!(extract_model("{}"), None);
+    }
+
+    #[test]
+    fn extract_tokens_sums_request_usage_and_prefers_cumulative() {
+        // Per-request map (the shape seen in real v0.3.0 threads): sum across requests.
+        let per_req = r#"{"request_token_usage":{
+            "r1":{"input_tokens":12427,"output_tokens":406},
+            "r2":{"input_tokens":13448,"output_tokens":1}
+        }}"#;
+        assert_eq!(extract_tokens(per_req), Some((25875, 407)), "input + output summed across requests");
+        // Populated cumulative summary wins over the request map, and folds cache into input.
+        let cumulative = r#"{"cumulative_token_usage":{"input_tokens":100,"cache_read_input_tokens":900,"output_tokens":50},
+                             "request_token_usage":{"r1":{"input_tokens":1,"output_tokens":1}}}"#;
+        assert_eq!(extract_tokens(cumulative), Some((1000, 50)), "cumulative preferred; cache_read folded into input");
+        // No usage recorded ⇒ honest-None, never a fabricated (0,0).
+        assert_eq!(extract_tokens(r#"{"messages":[]}"#), None);
+        assert_eq!(extract_tokens("not json"), None);
     }
 
     #[test]
