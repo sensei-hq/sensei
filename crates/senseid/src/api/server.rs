@@ -520,6 +520,32 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
         });
     }
 
+    // Assistant-event enrichment (base-insert + post-update): derive the analyzable
+    // attributes (repository_id, plugin, method, tool_kind, call_info) for un-enriched
+    // `activity.assistant_events` from each row's own tool_name + payload->tool_input +
+    // cwd. Drains the whole backlog on boot in bounded batches (the historical rows on
+    // first install + any freshly-captured events), then tops up every 5 min. Keeps the
+    // hot capture path raw + fast; the derivation is re-runnable and never blocks a hook.
+    {
+        let pg = state.pg.clone();
+        tokio::spawn(async move {
+            const BATCH: i64 = 2000;
+            loop {
+                loop {
+                    match pg.enrich_assistant_events(BATCH).await {
+                        Ok(0) => break,
+                        Ok(n) => tracing::debug!("assistant-event enrich: {n} rows derived"),
+                        Err(e) => {
+                            tracing::warn!("assistant-event enrich failed: {e}");
+                            break;
+                        }
+                    }
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(300)).await;
+            }
+        });
+    }
+
     // Federation: poll registered Dōjō rules sources for applicable rule deltas.
     crate::federation::run_pull_loop(state.pg.clone(), 300);
 

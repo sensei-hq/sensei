@@ -262,6 +262,64 @@ impl PgStore {
         Ok(row.map(|r| r.0))
     }
 
+    /// Enrich up to `limit` un-enriched `activity.assistant_events` rows (the
+    /// EnrichAssistantEvents worker step) — the POST-UPDATE half of the base-insert +
+    /// post-update split: the hot capture path inserts raw (derived cols NULL,
+    /// `enriched_at` NULL), and this derives the analyzable attributes in batches from
+    /// the row's OWN `tool_name` + `payload->tool_input` + `cwd`. So it uniformly
+    /// enriches forward-captured events, the historical backlog, and transcript-
+    /// backfilled events (all land raw). Returns the number of rows enriched (`0` when
+    /// the backlog is drained). Idempotent: only touches `enriched_at IS NULL` rows.
+    ///
+    /// Derivation (assistant-agnostic where it can be; keyed to the Claude/MCP naming
+    /// that every current event uses):
+    /// - `repository_id` = the `cwd`'s nearest repo-anchored folder's repository
+    ///   (`repo_anchor_for(cwd)` → `folders.repository_id`); NULL when `cwd` is outside
+    ///   any tracked checkout (honest — never fabricated).
+    /// - `plugin`/`method` parsed from the MCP tool name (`mcp__plugin_<plugin>_<server>__<method>`).
+    /// - `tool_kind` ∈ {mcp, bash, skill, agent, builtin}.
+    /// - `call_info` = the most specific arg from `tool_input` (the bash command, skill
+    ///   name, subagent type, …), capped so a giant command never bloats the row.
+    ///
+    /// `FOR UPDATE SKIP LOCKED` so concurrent worker ticks don't collide.
+    pub async fn enrich_assistant_events(&self, limit: i64) -> Result<u64, String> {
+        let res = sqlx_core::query::query(
+            "WITH batch AS ( \
+                 SELECT id FROM activity.assistant_events \
+                  WHERE enriched_at IS NULL \
+                  ORDER BY id LIMIT $1 FOR UPDATE SKIP LOCKED \
+             ) \
+             UPDATE activity.assistant_events ae SET \
+                 repository_id = ( \
+                     SELECT f.repository_id FROM sensei.repo_anchor_for(ae.cwd) ra \
+                       JOIN sensei.folders f ON f.id = ra.repo_folder_id LIMIT 1), \
+                 plugin = CASE WHEN starts_with(ae.tool_name, 'mcp__plugin_') \
+                               THEN substring(ae.tool_name from '^mcp__plugin_([^_]+)_') END, \
+                 method = CASE WHEN starts_with(ae.tool_name, 'mcp__') \
+                               THEN regexp_replace(ae.tool_name, '^.*__', '') END, \
+                 tool_kind = CASE \
+                               WHEN ae.tool_name IS NULL THEN NULL \
+                               WHEN starts_with(ae.tool_name, 'mcp__') THEN 'mcp' \
+                               WHEN ae.tool_name = 'Bash' THEN 'bash' \
+                               WHEN ae.tool_name = 'Skill' THEN 'skill' \
+                               WHEN ae.tool_name IN ('Agent', 'Task') THEN 'agent' \
+                               ELSE 'builtin' END, \
+                 call_info = left(coalesce( \
+                               ae.payload->'tool_input'->>'command', \
+                               ae.payload->'tool_input'->>'skill', \
+                               ae.payload->'tool_input'->>'subagent_type', \
+                               ae.payload->'tool_input'->>'name', \
+                               ae.payload->'tool_input'->>'description'), 2000), \
+                 enriched_at = now() \
+             FROM batch b WHERE ae.id = b.id",
+        )
+        .bind(limit)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(res.rows_affected())
+    }
+
     /// Newest hook_event timestamp (epoch ms) for an assistant family, or None
     /// when the daemon has never recorded one for it. `assistant_family` is a
     /// Postgres enum, so bind with the explicit cast.
