@@ -165,6 +165,8 @@ mod fastembed_init {
                 auth: None,
                 panel: None,
                 consensus: None,
+                allow_fallback: true,
+                credentials: std::collections::HashMap::new(),
             };
 
             let response = gw.execute(&request).await.expect("gateway.execute");
@@ -323,6 +325,8 @@ mod ort_init {
                 auth: None,
                 panel: None,
                 consensus: None,
+                allow_fallback: true,
+                credentials: std::collections::HashMap::new(),
             };
 
             let response = gw.execute(&request).await.expect("gateway.execute");

@@ -94,7 +94,7 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "blo
 # consumes three of them; shared model/type vocabulary lives in sensei-kernel,
 # re-exported through these, so we don't depend on kernel directly.
 # Routing engine + cloud provider adapters (behind the default `cloud` feature).
-gateway = { package = "sensei-gateway", git = "https://github.com/sensei-hq/gateway.git", tag = "v0.4.6", features = ["cloud"] }
+gateway = { package = "sensei-gateway", git = "https://github.com/sensei-hq/gateway.git", tag = "v0.5.1", features = ["cloud"] }
 # Local model engine: id→bytes resolvers (managed / ollama / external / chained),
 # used by both model_provision (the sensei-owned Ollama-registry puller) and the
 # ModelProvisioning service's readiness/registration wiring. Always present; the
@@ -104,10 +104,10 @@ gateway = { package = "sensei-gateway", git = "https://github.com/sensei-hq/gate
 # on-demand provisioning downloads via the Ollama registry (crate::model_provision),
 # which is not Xet-affected. HF-as-a-source returns once gateway#5 (hf-hub Xet
 # stall) is resolved.
-local-engine = { package = "sensei-local-engine", git = "https://github.com/sensei-hq/gateway.git", tag = "v0.4.6" }
+local-engine = { package = "sensei-local-engine", git = "https://github.com/sensei-hq/gateway.git", tag = "v0.5.1" }
 # In-process inference adapters (llama.cpp / fastembed / ort). Optional — pulled
 # in (with its heavy native backend) only when an embedded-* feature is enabled.
-local-providers = { package = "sensei-local-providers", git = "https://github.com/sensei-hq/gateway.git", tag = "v0.4.6", optional = true }
+local-providers = { package = "sensei-local-providers", git = "https://github.com/sensei-hq/gateway.git", tag = "v0.5.1", optional = true }
 dojo-protocol = { path = "../dojo-protocol" }
 # Relay P5.2 — ACP (Agent Client Protocol) observe-first. The spec's official
 # Rust SDK (Apache-2.0, Zed-maintained). We use only its `schema::v1` wire types

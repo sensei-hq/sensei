@@ -632,6 +632,8 @@ async fn embed_query(state: &AppState, text: &str) -> Option<Vec<f32>> {
         auth: None,
         panel: None,
         consensus: None,
+        allow_fallback: true,
+        credentials: std::collections::HashMap::new(),
     };
     match tokio::time::timeout(
         std::time::Duration::from_secs(EMBED_QUERY_TIMEOUT_SECS),

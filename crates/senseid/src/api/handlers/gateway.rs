@@ -114,6 +114,8 @@ pub(crate) async fn infer(
         auth: None,
         panel: None,
         consensus: None,
+        allow_fallback: true,
+        credentials: std::collections::HashMap::new(),
     };
 
     match state.gateway.execute(&request).await {
@@ -149,6 +151,8 @@ pub(crate) async fn embed(
         auth: None,
         panel: None,
         consensus: None,
+        allow_fallback: true,
+        credentials: std::collections::HashMap::new(),
     };
 
     match state.gateway.execute(&request).await {

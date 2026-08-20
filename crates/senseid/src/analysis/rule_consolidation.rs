@@ -71,6 +71,8 @@ pub async fn consolidate_global_rules(
         auth: None,
         panel: None,
         consensus: None,
+        allow_fallback: true,
+        credentials: std::collections::HashMap::new(),
     };
     let resp = gateway
         .execute(&request)

@@ -240,6 +240,8 @@ impl Generalizer for GatewayGeneralizer {
                 auth: None,
                 panel: None,
                 consensus: None,
+                allow_fallback: true,
+                credentials: std::collections::HashMap::new(),
             };
             match tokio::time::timeout(POLISH_TIMEOUT, gateway.execute(&request)).await {
                 Ok(Ok(resp)) if resp.success => resp.content.as_deref().and_then(parse_generalise_response),

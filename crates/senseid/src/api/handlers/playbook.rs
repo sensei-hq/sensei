@@ -237,6 +237,8 @@ enhancement = improving something existing, bug = fixing a defect. \
         auth: None,
         panel: None,
         consensus: None,
+        allow_fallback: true,
+        credentials: std::collections::HashMap::new(),
     };
 
     let fut = state.gateway.execute(&request);

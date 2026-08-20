@@ -93,6 +93,8 @@ async fn embed_items(ctx: &TaskContext, items: &[CorrItem]) -> Option<Vec<Vec<f3
             auth: None,
             panel: None,
             consensus: None,
+            allow_fallback: true,
+            credentials: std::collections::HashMap::new(),
         };
         match tokio::time::timeout(
             std::time::Duration::from_secs(EMBED_TIMEOUT_SECS),
