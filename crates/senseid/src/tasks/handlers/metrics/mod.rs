@@ -34,7 +34,7 @@ use crate::db::pg_store::PgStore;
 /// superseded the former own-graph `duplication` snapshot.
 mod autonomy;
 mod churn;
-mod coverage;
+pub(crate) mod coverage;
 mod explainer;
 mod health;
 mod knowledge;

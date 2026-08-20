@@ -525,6 +525,36 @@ pub(crate) async fn scan_project_doc_drift(
     Ok(Json(summary))
 }
 
+#[derive(Deserialize)]
+pub(crate) struct CoverageBackfillQuery {
+    /// How many of the most-recent sampled ISO-week anchors to walk (omit = all).
+    weeks: Option<u32>,
+}
+
+/// POST /api/projects/{id}/coverage/backfill — the EXPLICIT opt-in coverage backfill
+/// (spec: "backfilling can be configured or explicitly requested"). Reconstructs
+/// historical coverage by checking out sampled past commits, running the configured
+/// `metrics.coverage_command`, and ingesting the produced lcov. It RUNS the project's
+/// test suite per commit (slow), so it is SPAWNED detached and this returns 202
+/// immediately — progress/results are logged. A no-op (still 202) when
+/// `metrics.coverage_command` is unset (the daemon never runs tests unless configured).
+pub(crate) async fn coverage_backfill(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(q): Query<CoverageBackfillQuery>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let uuid = crate::api::util::resolve_existing_project(&state, &id).await?;
+    let weeks = q.weeks;
+    let state = state.clone();
+    tokio::spawn(async move {
+        match crate::tasks::handlers::metrics::coverage::backfill(&state.pg, &uuid.to_string(), weeks).await {
+            Ok(rows) => tracing::info!(project = %uuid, rows, "coverage backfill finished"),
+            Err(e) => tracing::error!(error = %e, project = %uuid, "coverage backfill failed"),
+        }
+    });
+    Ok(Json(serde_json::json!({ "status": "started", "project": uuid, "weeks": weeks })))
+}
+
 // ── Service scoping (T2 Slice B) ────────────────────────────────────────────
 
 #[derive(Deserialize)]
