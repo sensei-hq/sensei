@@ -23,6 +23,9 @@ function bucket(over: Partial<DayBucket> = {}): DayBucket {
     uglyMins: 0,
     chartedMins: 0,
     ftr: null,
+    tokensIn: 0,
+    tokensOut: 0,
+    tokens: 0,
     ...over,
   };
 }

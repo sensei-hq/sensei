@@ -14,10 +14,10 @@
 // Mockup:  docs/mockups/Sensei/lib/sessions-zen.jsx → SessionsDigestZen
 import type { SessionRow } from '$lib/types.js';
 
-/** The four chart chips (pulse is deliberately NOT here — it is a
- *  mini-cycler-only mode, see MINI_MODES). */
-export type ChartVariant = 'trend' | 'stream' | 'constellation' | 'bands';
-export const CHART_VARIANTS: ChartVariant[] = ['trend', 'stream', 'constellation', 'bands'];
+/** The chart chips (pulse is deliberately NOT here — it is a mini-cycler-only
+ *  mode, see MINI_MODES). `tokens` is the per-day token-volume bars. */
+export type ChartVariant = 'trend' | 'stream' | 'constellation' | 'bands' | 'tokens';
+export const CHART_VARIANTS: ChartVariant[] = ['trend', 'stream', 'constellation', 'bands', 'tokens'];
 
 /** The collapsed-header mini-cycler modes. `numbers` is the resting stat trio;
  *  `pulse` lives ONLY here — it is never one of the CHART_VARIANTS chips. */
@@ -78,6 +78,24 @@ export function compactDuration(mins: number | null): string {
   const h = Math.floor(mins / 60);
   const m = mins % 60;
   return m === 0 ? `${h}h` : `${h}h ${String(m).padStart(2, '0')}m`;
+}
+
+/** Compact token count: "820" / "7.7k" / "1.3M" / "—". Keeps the row legible
+ *  where a raw grouped integer (132,332,559) would blow out the column. */
+export function compactTokens(tokens: number | null | undefined): string {
+  if (tokens == null || Number.isNaN(tokens)) return '—';
+  const n = Math.round(tokens);
+  if (n < 1_000) return `${n}`;
+  if (n < 1_000_000) return `${(n / 1_000).toFixed(n < 10_000 ? 1 : 0)}k`;
+  return `${(n / 1_000_000).toFixed(n < 10_000_000 ? 1 : 0)}M`;
+}
+
+/** Active-work minutes from the daemon's gap-aware `durationSecs`, or null when
+ *  the session carries no measured duration. Distinct from `durationMinutes`,
+ *  which is wall-clock (startedAt→completedAt). */
+export function activeMinutes(durationSecs: number | null | undefined): number | null {
+  if (durationSecs == null || Number.isNaN(durationSecs) || durationSecs < 0) return null;
+  return Math.round(durationSecs / 60);
 }
 
 /** HH:MM (24h) of the start time, in the viewer's locale/timezone. */
@@ -154,12 +172,31 @@ export interface EnrichedSession {
    *  when the endpoint doesn't carry it (single-folder projects, or the
    *  observatory multi-project view). Drives the row's folder-role chip. */
   folderRole: string | null;
+  /** Transcript-captured token usage (null when the source carried none — never
+   *  a fabricated 0). `tokens` is the in+out sum used by the row + charts. */
+  tokensIn: number | null;
+  tokensOut: number | null;
+  tokens: number | null;
+  /** Gap-aware ACTIVE work minutes from the daemon `durationSecs` (distinct from
+   *  `mins`, which is wall-clock). Null when the session has no measured duration. */
+  activeMins: number | null;
+  /** Compact display strings for the row. */
+  tokensLabel: string;
+  activeLabel: string;
+  /** Inference model that ran the session (e.g. "claude-opus-4-8"); null when
+   *  the source didn't record one. */
+  model: string | null;
 }
 
 /** Shape raw wire rows into the display contract. `now` injectable for tests. */
 export function enrich(rows: SessionRow[], now: Date = new Date()): EnrichedSession[] {
   return rows.map((s) => {
     const mins = durationMinutes(s.startedAt, s.completedAt);
+    const tokensIn = s.tokensIn ?? null;
+    const tokensOut = s.tokensOut ?? null;
+    // in+out only when at least one is present; both absent ⇒ null (honest, not 0).
+    const tokens = tokensIn == null && tokensOut == null ? null : (tokensIn ?? 0) + (tokensOut ?? 0);
+    const activeMins = activeMinutes(s.durationSecs);
     return {
       id: s.id,
       project: (s.project ?? '').trim(),
@@ -178,6 +215,13 @@ export function enrich(rows: SessionRow[], now: Date = new Date()): EnrichedSess
       time: timeOfDay(s.startedAt),
       duration: compactDuration(mins),
       folderRole: s.folderRole?.trim() ? s.folderRole.trim() : null,
+      tokensIn,
+      tokensOut,
+      tokens,
+      activeMins,
+      tokensLabel: compactTokens(tokens),
+      activeLabel: compactDuration(activeMins),
+      model: s.model?.trim() ? s.model.trim() : null,
     };
   });
 }
@@ -214,6 +258,12 @@ export interface DayBucket {
   chartedMins: number;
   /** first-try rate for the day (good / total), or null when the day is empty. */
   ftr: number | null;
+  /** Token volume for the day (sum over sessions carrying usage). `tokens` is
+   *  in+out; the split feeds the input/output balance. 0 when no session that day
+   *  carried tokens — a real absence at day grain, safe to draw as an empty bar. */
+  tokensIn: number;
+  tokensOut: number;
+  tokens: number;
 }
 
 /** Bucket enriched sessions into the ordered `days` axis by calendar day. */
@@ -230,6 +280,8 @@ export function aggregateByDay(
     const ugly = by('ugly');
     const neutral = by('neutral');
     const sumMins = (xs: EnrichedSession[]) => xs.reduce((a, s) => a + (s.mins ?? 0), 0);
+    const tokensIn = ofDay.reduce((a, s) => a + (s.tokensIn ?? 0), 0);
+    const tokensOut = ofDay.reduce((a, s) => a + (s.tokensOut ?? 0), 0);
     const total = ofDay.length;
     return {
       day,
@@ -245,6 +297,9 @@ export function aggregateByDay(
       uglyMins: sumMins(ugly),
       chartedMins: sumMins(good) + sumMins(bad) + sumMins(ugly),
       ftr: total ? good.length / total : null,
+      tokensIn,
+      tokensOut,
+      tokens: tokensIn + tokensOut,
     };
   });
 }
@@ -266,12 +321,17 @@ export interface DigestTotals {
   ugly: number;
   neutral: number;
   medianMins: number;
+  /** Total tokens over sessions carrying usage, and the per-session median.
+   *  Null when NO visible session carried tokens (honest — not a 0 stat). */
+  totalTokens: number | null;
+  medianTokens: number | null;
 }
 
 export function computeTotals(sessions: EnrichedSession[]): DigestTotals {
   const tone = (t: QualityTone) => sessions.filter((s) => s.quality === t).length;
   const projects = new Set(sessions.map((s) => s.project).filter(Boolean)).size;
   const durations = sessions.map((s) => s.mins).filter((m): m is number => m != null);
+  const tokenVals = sessions.map((s) => s.tokens).filter((t): t is number => t != null);
   return {
     count: sessions.length,
     projects,
@@ -280,6 +340,8 @@ export function computeTotals(sessions: EnrichedSession[]): DigestTotals {
     ugly: tone('ugly'),
     neutral: tone('neutral'),
     medianMins: Math.round(median(durations)),
+    totalTokens: tokenVals.length ? tokenVals.reduce((a, t) => a + t, 0) : null,
+    medianTokens: tokenVals.length ? Math.round(median(tokenVals)) : null,
   };
 }
 

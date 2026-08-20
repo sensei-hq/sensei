@@ -62,8 +62,10 @@ describe('formatMetricValue', () => {
         expect(formatMetricValue('pct', 0.417)).toBe('42%');
         expect(formatMetricValue('pct', 1)).toBe('100%');
     });
-    it('renders a ratio to two decimals', () => {
+    it('renders a small ratio to two decimals, a large ratio thousands-grouped', () => {
         expect(formatMetricValue('ratio', 0.166437)).toBe('0.17');
+        // tokens_per_result is a large ratio — read as a grouped integer, not "7732.00".
+        expect(formatMetricValue('ratio', 7732)).toBe('7,732');
     });
     it('renders a count with thousands separators', () => {
         expect(formatMetricValue('count', 11900)).toBe('11,900');
