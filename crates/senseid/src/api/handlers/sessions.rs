@@ -400,6 +400,8 @@ pub(crate) async fn hook_gate(
             auth: None,
             panel: None,
             consensus: None,
+            allow_fallback: true,
+            credentials: std::collections::HashMap::new(),
         };
         // Bound the call so a cold / wedged embedded inference can't hang the
         // PreToolUse gate. Timeout → fail-open (keep the deterministic verdict).

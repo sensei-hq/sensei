@@ -138,6 +138,8 @@ pub(crate) async fn image_generate(
         auth: None,
         panel: None,
         consensus: None,
+        allow_fallback: true,
+        credentials: std::collections::HashMap::new(),
     };
 
     let response = state.gateway.execute(&request).await

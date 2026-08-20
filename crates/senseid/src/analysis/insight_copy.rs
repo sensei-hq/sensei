@@ -475,6 +475,8 @@ async fn call_once(
         auth: None,
         panel: None,
         consensus: None,
+        allow_fallback: true,
+        credentials: std::collections::HashMap::new(),
     };
 
     match tokio::time::timeout(Duration::from_millis(WARM_TIMEOUT_MS), gateway.execute(&request)).await {

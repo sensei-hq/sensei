@@ -297,6 +297,8 @@ pub async fn analyze_session_process(ctx: &TaskContext, task: &Task) -> Result<u
             auth: None,
             panel: None,
             consensus: None,
+            allow_fallback: true,
+            credentials: std::collections::HashMap::new(),
         };
         let resp = match ctx.app_state.gateway.execute(&request).await {
             Ok(r) if r.success => r,
