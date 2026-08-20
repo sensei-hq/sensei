@@ -182,6 +182,7 @@ pub fn parse_claude_session(content: &str) -> Option<SynthSession> {
                         tool_name: None,
                         file_path: None,
                         prompt: Some(prompt),
+                        tool_input: None,
                         ts,
                     });
                     max_ts = max_ts.max(ts);
@@ -194,8 +195,12 @@ pub fn parse_claude_session(content: &str) -> Option<SynthSession> {
                     for b in blocks {
                         if b.get("type").and_then(|t| t.as_str()) == Some("tool_use") {
                             let tool_name = b.get("name").and_then(|n| n.as_str()).map(str::to_string);
-                            let file_path = b
-                                .get("input")
+                            // The full tool_use input — the enrich worker derives
+                            // call_info/plugin/method from it (bash command, skill/agent
+                            // params, …), same as a live-captured event.
+                            let tool_input = b.get("input").cloned();
+                            let file_path = tool_input
+                                .as_ref()
                                 .and_then(|i| i.get("file_path").or_else(|| i.get("path")))
                                 .and_then(|p| p.as_str())
                                 .map(str::to_string);
@@ -204,6 +209,7 @@ pub fn parse_claude_session(content: &str) -> Option<SynthSession> {
                                 tool_name,
                                 file_path,
                                 prompt: None,
+                                tool_input,
                                 ts,
                             });
                             max_ts = max_ts.max(ts);
@@ -225,6 +231,7 @@ pub fn parse_claude_session(content: &str) -> Option<SynthSession> {
         tool_name: None,
         file_path: None,
         prompt: None,
+        tool_input: None,
         ts: max_ts,
     });
     Some(SynthSession { cwds, events })
