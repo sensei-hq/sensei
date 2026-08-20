@@ -10,6 +10,7 @@
 //! with other work (scans, etc.) and one huge/bad file can't block the rest.
 
 pub mod claude;
+pub mod opencode;
 pub mod zed;
 
 use crate::tasks::executor::TaskContext;
@@ -43,11 +44,38 @@ pub struct SynthEvent {
 }
 
 /// A session reconstructed from a transcript: the cwds seen (for project
-/// resolution) + the synthesized event stream (#75).
+/// resolution) + the synthesized event stream (#75). Produced by the per-adapter
+/// `parse_*_session` helpers and folded into [`ParsedTranscript`].
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct SynthSession {
     pub cwds: Vec<String>,
     pub events: Vec<SynthEvent>,
+}
+
+/// The common, adapter-agnostic structured form of one transcript unit — the
+/// single contract between the per-source parsers and the persistence layer.
+///
+/// Every adapter's [`TranscriptAdapter::parse`] produces exactly this, and the
+/// coordinator persists ONLY from it (turns → `transcript_turns`, events →
+/// `assistant_events`, cwds → project resolution, model + tokens → `sessions`).
+/// Nothing downstream of `parse` sees adapter-specific raw content, so a format or
+/// parser change in any source never touches persistence, and the whole mapping is
+/// independently verifiable — a test asserts the struct from a fixture, no DB.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct ParsedTranscript {
+    /// Prose turns → `activity.transcript_turns`.
+    pub turns: Vec<TranscriptTurn>,
+    /// Distinct working directories seen → project resolution.
+    pub cwds: Vec<String>,
+    /// Reconstructed hook-stream events → `activity.assistant_events` (#75). Empty
+    /// when the source can't synthesize a session.
+    pub events: Vec<SynthEvent>,
+    /// Inference `(provider, model)` → `activity.sessions`. `None` when absent.
+    pub model: Option<(String, String)>,
+    /// Total `(tokens_in, tokens_out)` → `activity.sessions`. `None` when the source
+    /// records no usage (honest-empty — the coordinator leaves the columns NULL,
+    /// never a fabricated 0).
+    pub tokens: Option<(i64, i64)>,
 }
 
 /// A logical ingest unit — a transcript file (Claude) or a DB row (Zed) — with a
@@ -67,7 +95,7 @@ pub trait TranscriptAdapter: Send + Sync {
     /// Capture origin (distinct from the model `family`), e.g. "claude_code" / "zed".
     fn source(&self) -> &'static str;
     /// Harness/agent family (the `sensei.assistant_family` enum: "claude", "zed", …).
-    /// The precise per-unit model, when known, comes from `model_for`.
+    /// The precise per-unit model, when known, is carried on [`ParsedTranscript::model`].
     fn family(&self) -> &'static str;
     /// Units this adapter can ingest, each with a change-stamp for cursor skipping.
     fn units(&self) -> Vec<UnitRef>;
@@ -79,18 +107,13 @@ pub trait TranscriptAdapter: Send + Sync {
     /// Load a unit's raw content (the expensive read/decompress). `None` ⇒ gone
     /// or oversized (logged, never panics on bad data).
     fn load_content(&self, key: &str) -> Option<String>;
-    /// Parse unit content into prose turns.
-    fn parse(&self, content: &str) -> Vec<TranscriptTurn>;
-    /// Reconstruct a session's event stream for the historical-bootstrap import
-    /// (#75). Adapters that can't synthesize return None.
-    fn parse_session(&self, _content: &str) -> Option<SynthSession> {
-        None
-    }
-    /// Optional `(provider, model)` captured for a unit's content — Zed records
-    /// it per thread; Claude returns `None`.
-    fn model_for(&self, _content: &str) -> Option<(String, String)> {
-        None
-    }
+    /// Convert a unit's raw content into the common [`ParsedTranscript`] — the ONE
+    /// method carrying adapter-specific format knowledge. Everything the persistence
+    /// layer needs (turns, cwds, events, model, tokens) comes out of this single
+    /// struct, so persistence never sees raw content. Pure + deterministic (unit-
+    /// testable without a DB); a source that can't reconstruct events returns them
+    /// empty and/or `model`/`tokens` as `None`.
+    fn parse(&self, content: &str) -> ParsedTranscript;
 }
 
 #[cfg(test)]
@@ -125,11 +148,16 @@ fn zed_db_path() -> PathBuf {
     crate::paths::home().join("Library/Application Support/Zed/threads/threads.db")
 }
 
+fn opencode_db_path() -> PathBuf {
+    crate::paths::home().join(".local/share/opencode/opencode.db")
+}
+
 /// All configured transcript adapters.
 fn adapters() -> Vec<Box<dyn TranscriptAdapter>> {
     vec![
         Box::new(claude::ClaudeAdapter::new(claude_root())),
         Box::new(zed::ZedAdapter::new(zed_db_path())),
+        Box::new(opencode::OpenCodeAdapter::new(opencode_db_path())),
     ]
 }
 
@@ -139,6 +167,7 @@ fn adapter_for_source(source: &str) -> Option<Box<dyn TranscriptAdapter>> {
     match source {
         "claude_code" => Some(Box::new(claude::ClaudeAdapter::new(claude_root()))),
         "zed" => Some(Box::new(zed::ZedAdapter::new(zed_db_path()))),
+        "opencode" => Some(Box::new(opencode::OpenCodeAdapter::new(opencode_db_path()))),
         _ => None,
     }
 }
@@ -166,36 +195,76 @@ async fn ingest_one(
         Ok(Some(prev)) if prev >= stamp
     );
     let needs_synth = !pg.session_has_events(&session_id).await.unwrap_or(true);
-    if prose_fresh && !needs_synth {
+    // A session captured before token-capture existed still needs its model + token
+    // usage backfilled from the transcript — force a metadata refresh for it even
+    // when prose + events are already fresh. `false` for new sessions (synthesis
+    // sets their metadata) and for sessions already attempted (skip the re-read,
+    // even a token-less source), keyed on the `meta_synced_at` marker.
+    let needs_meta = pg.session_needs_meta_backfill(&session_id).await.unwrap_or(false);
+    if prose_fresh && !needs_synth && !needs_meta {
         return Ok(IngestOutcome::skipped());
     }
     // Adapter owns the read + its own oversize/format guards (returns None to skip).
     let Some(content) = adapter.load_content(key) else {
         return Ok(IngestOutcome::skipped());
     };
+    // Parse ONCE into the common structure; every persistence step below reads from
+    // `parsed`, never the raw content — the adapter→persistence seam.
+    let parsed = adapter.parse(&content);
     // 1. prose turns (#73) — only when stale.
     let mut turns = 0u32;
     if !prose_fresh {
-        let parsed = adapter.parse(&content);
-        let model = adapter.model_for(&content);
-        let (provider, model_name) = match &model {
+        let (provider, model_name) = match &parsed.model {
             Some((p, m)) => (Some(p.as_str()), Some(m.as_str())),
             None => (None, None),
         };
         turns = pg
-            .upsert_transcript_turns(adapter.source(), &session_id, adapter.family(), provider, model_name, &parsed)
+            .upsert_transcript_turns(adapter.source(), &session_id, adapter.family(), provider, model_name, &parsed.turns)
             .await?;
-        pg.set_transcript_cursor(adapter.source(), key, Some(&session_id), stamp, parsed.len() as i32)
+        pg.set_transcript_cursor(adapter.source(), key, Some(&session_id), stamp, parsed.turns.len() as i32)
             .await?;
     }
     // 2. historical-bootstrap: synthesize the session + events if not already
     // captured (#75), so the existing enricher can derive its metrics.
     let analyze_project = if needs_synth {
-        synthesize_session(pg, adapter, &session_id, &content).await
+        synthesize_session(pg, &parsed, &session_id, adapter.family()).await
     } else {
         None
     };
+    // 3. session metadata (inference model + token usage): refresh from the
+    //    transcript whether the session was just synthesized or already existed, so
+    //    a re-run backfills columns added after the session was first captured.
+    //    Idempotent; a miss leaves the column untouched (never a fabricated value).
+    set_session_metadata(pg, &session_id, &parsed).await;
     Ok(IngestOutcome { skipped: false, turns, analyze_project })
+}
+
+/// Persist a session's inference model + token usage from the already-parsed
+/// [`ParsedTranscript`]. The coordinator owns this write centrally (adapters stay
+/// pure parsers). Only supplies a value the source actually carries — an absent
+/// model/usage leaves the column as-is (never a fabricated default) — and always
+/// stamps `meta_synced_at` so the attempt is made at most once per session.
+async fn set_session_metadata(
+    pg: &crate::db::pg_store::PgStore,
+    session_id: &str,
+    parsed: &ParsedTranscript,
+) {
+    let (provider, model_name) = match &parsed.model {
+        Some((p, m)) => (Some(p.as_str()), Some(m.as_str())),
+        None => (None, None),
+    };
+    // Token totals fit `integer` (verified << i32::MAX for real sources); a value
+    // that somehow overflows is dropped rather than truncated to a wrong number.
+    let (tokens_in, tokens_out) = match parsed.tokens {
+        Some((ti, to)) => (i32::try_from(ti).ok(), i32::try_from(to).ok()),
+        None => (None, None),
+    };
+    if let Err(e) = pg
+        .set_session_metadata(session_id, provider, model_name, tokens_in, tokens_out)
+        .await
+    {
+        tracing::warn!(error = %e, session = %session_id, "set_session_metadata: write failed");
+    }
 }
 
 /// Historical-bootstrap (#75): if this session has no events yet (not
@@ -204,11 +273,14 @@ async fn ingest_one(
 /// stream so `analyze_project` can enrich it. Returns the project to analyze.
 async fn synthesize_session(
     pg: &crate::db::pg_store::PgStore,
-    adapter: &dyn TranscriptAdapter,
+    parsed: &ParsedTranscript,
     session_id: &str,
-    content: &str,
+    family: &str,
 ) -> Option<uuid::Uuid> {
-    let synth = adapter.parse_session(content)?;
+    // A source that can't reconstruct events (empty) has no session to synthesize.
+    if parsed.events.is_empty() {
+        return None;
+    }
     // dedup: never double-count a live-captured / already-imported session.
     match pg.session_has_events(session_id).await {
         Ok(true) => return None,
@@ -225,14 +297,14 @@ async fn synthesize_session(
     // cwd (or a subdir of a renamed repo covered by a single root alias) still
     // attributes to the right project instead of being dropped.
     let mut resolved = None;
-    for cwd in &synth.cwds {
+    for cwd in &parsed.cwds {
         if let Ok(Some((folder_id, project_id))) = pg.get_folder_ids_by_path(cwd).await {
             resolved = Some((cwd.clone(), folder_id, project_id));
             break;
         }
     }
     if resolved.is_none() {
-        for cwd in &synth.cwds {
+        for cwd in &parsed.cwds {
             if let Ok(Some((folder_id, project_id))) = pg.find_folder_for_path(cwd).await {
                 resolved = Some((cwd.clone(), folder_id, project_id));
                 break;
@@ -244,14 +316,14 @@ async fn synthesize_session(
         return None;
     };
     if let Err(e) = pg
-        .record_session_event(session_id, &folder_id, project_id.as_ref(), adapter.family(), true)
+        .record_session_event(session_id, &folder_id, project_id.as_ref(), family, true)
         .await
     {
         tracing::warn!(error = %e, "synthesize_session: record_session_event failed");
         return None;
     }
-    let started = synth.events.iter().map(|e| e.ts).min().unwrap_or(0);
-    let completed = synth.events.iter().map(|e| e.ts).max().unwrap_or(0);
+    let started = parsed.events.iter().map(|e| e.ts).min().unwrap_or(0);
+    let completed = parsed.events.iter().map(|e| e.ts).max().unwrap_or(0);
     // Session start/completed timestamps power the "Duration" column
     // on the observatory. If this write fails silently the row still
     // shows up but with a blank duration — surface the failure so the
@@ -259,14 +331,9 @@ async fn synthesize_session(
     if let Err(e) = pg.set_session_history(session_id, started, completed).await {
         tracing::warn!(error = %e, session = %session_id, "synthesize_session: set_session_history failed");
     }
-    // Capture the inference model that ran this session (Zed: per-thread; Claude:
-    // dominant transcript model) so insights can be attributed by model.
-    if let Some((provider, model)) = adapter.model_for(content)
-        && let Err(e) = pg.set_session_model(session_id, &provider, &model).await
-    {
-        tracing::warn!(error = %e, session = %session_id, "synthesize_session: set_session_model failed");
-    }
-    for ev in &synth.events {
+    // Model + token usage are refreshed by the caller (`set_session_metadata`) so a
+    // re-run backfills sessions synthesized before those columns existed.
+    for ev in &parsed.events {
         let payload = match ev.event_type.as_str() {
             "UserPromptSubmit" => serde_json::json!({ "prompt": ev.prompt }),
             // Carry the FULL tool_input (bash command / skill / agent params) so the
@@ -279,13 +346,13 @@ async fn synthesize_session(
             _ => serde_json::json!({}),
         };
         if let Err(e) = pg
-            .insert_hook_event(session_id, adapter.family(), &ev.event_type, ev.tool_name.as_deref(), Some(&cwd), ev.ts, None, &payload)
+            .insert_hook_event(session_id, family, &ev.event_type, ev.tool_name.as_deref(), Some(&cwd), ev.ts, None, &payload)
             .await
         {
             tracing::warn!(error = %e, session = %session_id, "synthesize_session: insert_hook_event failed");
         }
     }
-    tracing::info!(session = %session_id, events = synth.events.len(), "synthesize_session: imported historical session");
+    tracing::info!(session = %session_id, events = parsed.events.len(), "synthesize_session: imported historical session");
     project_id
 }
 
@@ -443,8 +510,8 @@ mod tests {
         // a historical transcript whose cwd == the tracked folder's abs_path
         let content = format!(
             "{{\"type\":\"user\",\"cwd\":\"{cwd}\",\"timestamp\":\"2026-06-20T10:00:00.000Z\",\"message\":{{\"role\":\"user\",\"content\":\"add the parser\"}}}}\n\
-             {{\"type\":\"assistant\",\"cwd\":\"{cwd}\",\"timestamp\":\"2026-06-20T10:00:05.000Z\",\"message\":{{\"role\":\"assistant\",\"model\":\"claude-opus-4-8\",\"content\":[{{\"type\":\"tool_use\",\"name\":\"Edit\",\"input\":{{\"file_path\":\"{cwd}/src/x.rs\"}}}}]}}}}\n\
-             {{\"type\":\"assistant\",\"cwd\":\"{cwd}\",\"timestamp\":\"2026-06-20T10:00:06.000Z\",\"message\":{{\"role\":\"assistant\",\"model\":\"claude-opus-4-8\",\"content\":[{{\"type\":\"tool_use\",\"name\":\"Bash\",\"input\":{{\"command\":\"cargo test\",\"description\":\"run tests\"}}}}]}}}}\n",
+             {{\"type\":\"assistant\",\"cwd\":\"{cwd}\",\"timestamp\":\"2026-06-20T10:00:05.000Z\",\"message\":{{\"role\":\"assistant\",\"model\":\"claude-opus-4-8\",\"usage\":{{\"input_tokens\":100,\"cache_read_input_tokens\":50,\"output_tokens\":20}},\"content\":[{{\"type\":\"tool_use\",\"name\":\"Edit\",\"input\":{{\"file_path\":\"{cwd}/src/x.rs\"}}}}]}}}}\n\
+             {{\"type\":\"assistant\",\"cwd\":\"{cwd}\",\"timestamp\":\"2026-06-20T10:00:06.000Z\",\"message\":{{\"role\":\"assistant\",\"model\":\"claude-opus-4-8\",\"usage\":{{\"input_tokens\":5,\"output_tokens\":8}},\"content\":[{{\"type\":\"tool_use\",\"name\":\"Bash\",\"input\":{{\"command\":\"cargo test\",\"description\":\"run tests\"}}}}]}}}}\n",
             cwd = repo_path
         );
         let root_dir = std::env::temp_dir().join(format!("sensei-imp-{}", uuid::Uuid::new_v4()));
@@ -457,14 +524,18 @@ mod tests {
 
         // session synthesized, attributed to the project, flagged backfilled,
         // with a historical started_at (not "today").
-        let s: (Option<uuid::Uuid>, bool, bool, Option<String>, Option<String>) = sqlx_core::query_as::query_as(
-            "SELECT project_id, backfilled, (started_at < now() - interval '1 day'), provider, model FROM activity.sessions WHERE client_session_id=$1"
+        let s: (Option<uuid::Uuid>, bool, bool, Option<String>, Option<String>, Option<i32>, Option<i32>, bool) = sqlx_core::query_as::query_as(
+            "SELECT project_id, backfilled, (started_at < now() - interval '1 day'), provider, model, tokens_in, tokens_out, meta_synced_at IS NOT NULL FROM activity.sessions WHERE client_session_id=$1"
         ).bind(&sid).fetch_one(pg.pool()).await.unwrap();
         assert_eq!(s.0, Some(pid), "attributed to the project resolved from cwd");
         assert!(s.1, "flagged backfilled");
         assert!(s.2, "started_at set from the transcript timestamp, not now()");
         assert_eq!(s.3.as_deref(), Some("anthropic"), "provider captured at synthesis");
         assert_eq!(s.4.as_deref(), Some("claude-opus-4-8"), "model captured from the transcript");
+        // token usage summed across assistant records: in=(100+50)+5=155, out=20+8=28
+        assert_eq!(s.5, Some(155), "tokens_in = input + cache tokens across the session");
+        assert_eq!(s.6, Some(28), "tokens_out = output tokens across the session");
+        assert!(s.7, "meta_synced_at stamped so the metadata backfill runs at most once");
 
         // events synthesized: prompt + tool-edit + terminal Stop.
         let kinds: Vec<(String,)> = sqlx_core::query_as::query_as(

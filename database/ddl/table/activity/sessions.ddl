@@ -25,6 +25,7 @@ create table if not exists sessions (
 , completed_at             timestamptz
 , analyzed_at              timestamptz
 , backfilled               boolean     not null default false  -- synthesized from a historical transcript (#75), not live-captured
+, meta_synced_at           timestamptz -- when the transcript backfill last attempted model+token capture for this session; gates the one-time metadata backfill so a token-less source isn't re-read every cycle
 );
 
 create index if not exists sessions_folder_id_idx
@@ -109,3 +110,9 @@ comment on column sessions.completed_at
 comment on column sessions.analyzed_at
      is 'When the analyzer last enriched this session (#67). The scheduler skips a
 session whose assistant_events are no newer than this — incremental re-analysis.';
+comment on column sessions.meta_synced_at
+     is 'When the transcript backfill last attempted to capture this session''s
+inference model + token usage from the source transcript. Set once the attempt
+runs (whether or not the source carried the values), so a session whose source has
+no tokens (e.g. a Zed thread) is not re-read on every backfill cycle. NULL ⇒ never
+attempted ⇒ eligible for the one-time metadata backfill.';

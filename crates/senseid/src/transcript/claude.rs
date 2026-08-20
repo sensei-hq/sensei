@@ -4,7 +4,7 @@
 //! spans one genuine human prompt to the next, and the assistant prose is the
 //! `text` content blocks (tool_use / thinking excluded).
 
-use super::{SynthEvent, SynthSession, TranscriptAdapter, TranscriptTurn, UnitRef};
+use super::{ParsedTranscript, SynthEvent, SynthSession, TranscriptAdapter, TranscriptTurn, UnitRef};
 use std::path::{Path, PathBuf};
 
 /// Cap stored assistant prose per turn (safety net for pathological turns).
@@ -105,17 +105,48 @@ impl TranscriptAdapter for ClaudeAdapter {
             .ok()
     }
 
-    fn parse(&self, content: &str) -> Vec<TranscriptTurn> {
-        parse_claude_transcript(content)
+    fn parse(&self, content: &str) -> ParsedTranscript {
+        let session = parse_claude_session(content);
+        ParsedTranscript {
+            turns: parse_claude_transcript(content),
+            cwds: session.as_ref().map(|s| s.cwds.clone()).unwrap_or_default(),
+            events: session.map(|s| s.events).unwrap_or_default(),
+            model: claude_model(content).map(|m| ("anthropic".to_string(), m)),
+            tokens: claude_tokens(content),
+        }
     }
+}
 
-    fn parse_session(&self, content: &str) -> Option<SynthSession> {
-        parse_claude_session(content)
+/// Total token usage across a Claude transcript's assistant records: `tokens_in` =
+/// Σ(`input_tokens` + `cache_creation_input_tokens` + `cache_read_input_tokens`) — all
+/// input the model processed — and `tokens_out` = Σ `output_tokens`, read from each
+/// `message.usage`. `None` when no record carries usage (honest-empty). Pure.
+pub fn claude_tokens(content: &str) -> Option<(i64, i64)> {
+    let (mut tin, mut tout, mut seen) = (0i64, 0i64, false);
+    for line in content.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.len() > MAX_LINE_BYTES {
+            continue;
+        }
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        if v.get("type").and_then(|t| t.as_str()) != Some("assistant") {
+            continue;
+        }
+        let Some(u) = v.get("message").and_then(|m| m.get("usage")) else {
+            continue;
+        };
+        let g = |k: &str| u.get(k).and_then(|x| x.as_i64()).unwrap_or(0);
+        let line_in = g("input_tokens") + g("cache_creation_input_tokens") + g("cache_read_input_tokens");
+        let line_out = g("output_tokens");
+        if line_in > 0 || line_out > 0 {
+            seen = true;
+            tin += line_in;
+            tout += line_out;
+        }
     }
-
-    fn model_for(&self, content: &str) -> Option<(String, String)> {
-        claude_model(content).map(|m| ("anthropic".to_string(), m))
-    }
+    seen.then_some((tin, tout))
 }
 
 /// The model that ran a Claude transcript: the most frequent `message.model`
@@ -444,6 +475,25 @@ mod tests {
 "#;
 
     #[test]
+    fn parse_produces_the_common_structure() {
+        // The adapter's single `parse` maps raw content → the shared ParsedTranscript
+        // (turns + cwds + events + model + tokens) that persistence consumes — verified
+        // here without a DB, so a format change is caught at the seam.
+        let content = concat!(
+            r#"{"type":"user","cwd":"/repo","timestamp":"2026-06-22T10:00:00.000Z","message":{"role":"user","content":"fix the parser"}}"#, "\n",
+            r#"{"type":"assistant","cwd":"/repo","timestamp":"2026-06-22T10:00:02.000Z","message":{"role":"assistant","model":"claude-opus-4-8","usage":{"input_tokens":10,"cache_read_input_tokens":90,"output_tokens":20},"content":[{"type":"text","text":"On it."},{"type":"tool_use","name":"Edit","input":{"file_path":"/repo/src/x.rs"}}]}}"#, "\n",
+        );
+        let p = ClaudeAdapter::new(std::path::PathBuf::from("/tmp")).parse(content);
+        assert_eq!(p.turns.len(), 1, "one user-bounded turn");
+        assert_eq!(p.turns[0].user_text.as_deref(), Some("fix the parser"));
+        assert_eq!(p.cwds, vec!["/repo".to_string()], "cwd collected for project resolution");
+        let kinds: Vec<&str> = p.events.iter().map(|e| e.event_type.as_str()).collect();
+        assert_eq!(kinds, vec!["UserPromptSubmit", "PostToolUse", "Stop"]);
+        assert_eq!(p.model, Some(("anthropic".to_string(), "claude-opus-4-8".to_string())));
+        assert_eq!(p.tokens, Some((100, 20)), "tokens_in=10+90 cache, tokens_out=20");
+    }
+
+    #[test]
     fn parse_session_reconstructs_events() {
         let s = parse_claude_session(SESS).unwrap();
         assert_eq!(s.cwds, vec!["/repo".to_string()], "collects distinct cwd for project resolution");
@@ -472,5 +522,18 @@ mod tests {
 "#;
         assert_eq!(claude_model(t).as_deref(), Some("claude-opus-4-8"), "most frequent model wins");
         assert_eq!(claude_model("{\"type\":\"user\",\"message\":{\"content\":\"hi\"}}").as_deref(), None, "no model ⇒ None");
+    }
+
+    #[test]
+    fn claude_tokens_sums_usage_including_cache() {
+        let t = r#"
+{"type":"user","message":{"content":"hi"}}
+{"type":"assistant","message":{"model":"claude-opus-4-8","usage":{"input_tokens":10,"cache_creation_input_tokens":100,"cache_read_input_tokens":50,"output_tokens":20}}}
+{"type":"assistant","message":{"model":"claude-opus-4-8","usage":{"input_tokens":5,"output_tokens":8}}}
+"#;
+        // in = (10+100+50) + (5+0+0) = 165 (cache counts as input processed); out = 20+8 = 28
+        assert_eq!(claude_tokens(t), Some((165, 28)));
+        // no usage anywhere ⇒ honest-None, never a fabricated (0,0)
+        assert_eq!(claude_tokens("{\"type\":\"user\",\"message\":{\"content\":\"hi\"}}"), None);
     }
 }
