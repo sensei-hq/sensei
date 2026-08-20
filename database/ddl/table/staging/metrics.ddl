@@ -28,6 +28,7 @@ create table metrics (
 , capture_source  text        -- cast to sensei.metric_capture on import
 , weight          numeric
 , target          numeric
+, rating_scale    jsonb       -- 5 thresholds (improvement order) → 0-5 rating; null = not rated
 , effective_until date        -- null = active; a past/today date = retired
 , retire_reason   text        -- why (set alongside a past effective_until)
 , modified_at     timestamptz not null default now()

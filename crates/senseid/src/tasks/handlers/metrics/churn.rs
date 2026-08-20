@@ -1104,4 +1104,45 @@ mod tests {
             .bind(&sid).execute(pg.pool()).await.unwrap();
         cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
     }
+
+    // ── rating scales + weighted 0-100 health (SQL views) ───────────────────
+
+    #[tokio::test]
+    async fn metric_ratings_and_project_health_score_views() {
+        // The metric_ratings + project_health_score views: each metric's latest pooled
+        // value → a 0-5 rating via its rating_scale (direction-aware bands), then the
+        // weighted 0-100 health. Seed coverage (higher_better, wt 3) at 0.86 → rating 4
+        // and maintainability (lower_better, wt 3) at 0.001 → rating 5.
+        // health = round(20 · (3·4 + 3·5) / (3+3)) = round(20 · 4.5) = 90.
+        let ctx = make_ctx().await;
+        let pg = ctx.pg();
+        let uniq = uuid::Uuid::new_v4();
+        let (pid, fid, _repo) = seed_git_project_folder(pg, &uniq).await;
+        let rid = repository_for_folder(pg, &fid).await;
+        let day = chrono::Utc::now().date_naive();
+
+        let cov = *pg.active_metric_ids("coverage").await.unwrap().get("coverage").expect("coverage seeded");
+        let mq = *pg.active_metric_ids("quality").await.unwrap().get("module_quality").expect("module_quality seeded");
+
+        // ratio metrics pool Σnum/Σden in project_metric_daily → value = num/den.
+        pg.upsert_project_metric_repo(&cov, &pid, Some(&rid), "user", None, None, None, None, day, "daily",
+            0.86, &serde_json::json!({"numerator": 86, "denominator": 100}), "measured").await.unwrap();
+        pg.upsert_project_metric_repo(&mq, &pid, Some(&rid), "user", None, None, None, None, day, "daily",
+            0.001, &serde_json::json!({"numerator": 1, "denominator": 1000}), "measured").await.unwrap();
+
+        let ratings: Vec<(String, Option<i32>)> = query_as(
+            "SELECT metric, rating FROM sensei.metric_ratings WHERE project_id = $1 ORDER BY metric",
+        ).bind(pid).fetch_all(pg.pool()).await.unwrap();
+        let rating_of = |k: &str| ratings.iter().find(|r| r.0 == k).and_then(|r| r.1);
+        assert_eq!(rating_of("coverage"), Some(4), "coverage 0.86 → rating 4 (below 0.90)");
+        assert_eq!(rating_of("module_quality"), Some(5), "maintainability 0.001 → rating 5 (below every threshold, best band)");
+
+        let (health, rated): (i32, i32) = query_as(
+            "SELECT health_score, rated_metrics FROM sensei.project_health_score WHERE project_id = $1",
+        ).bind(pid).fetch_one(pg.pool()).await.unwrap();
+        assert_eq!(rated, 2, "two rated metrics for this project");
+        assert_eq!(health, 90, "weighted 0-100 health = round(20 · (3·4 + 3·5)/6) = 90");
+
+        cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
+    }
 }
