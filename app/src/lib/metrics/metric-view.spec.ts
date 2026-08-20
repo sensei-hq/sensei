@@ -18,6 +18,9 @@ import {
     seriesDistribution,
     densifySeries,
     metricYDomain,
+    metricGrade,
+    formatPerKloc,
+    isPerKlocMetric,
     chartKindForType,
     defaultWindowForGrain,
     movingAverage,
@@ -322,6 +325,44 @@ describe('toSignal', () => {
     });
 });
 
+describe('per-KLOC grade (maintainability / duplication)', () => {
+    it('grades module_quality on the per-1,000-lines scale (lower = better)', () => {
+        expect(isPerKlocMetric('module_quality')).toBe(true);
+        expect(isPerKlocMetric('ftr')).toBe(false);
+        // value × 1000 → bands [3,6,12,25]: ≤3 A, ≤6 B, ≤12 C, ≤25 D, else F.
+        expect(metricGrade('module_quality', 0.002)).toBe('A'); // 2.0/kloc
+        expect(metricGrade('module_quality', 0.005)).toBe('B'); // 5.0
+        expect(metricGrade('module_quality', 0.01)).toBe('C'); // 10
+        expect(metricGrade('module_quality', 0.02)).toBe('D'); // 20
+        expect(metricGrade('module_quality', 0.05)).toBe('F'); // 50 > 25
+        expect(metricGrade('ftr', 0.5)).toBeNull(); // not a graded metric
+        expect(metricGrade('module_quality', null)).toBeNull(); // no value → no grade
+    });
+    it('formats the value as a readable per-1,000-lines rate', () => {
+        expect(formatPerKloc(0.0024)).toBe('2.4 / 1,000 lines');
+        expect(formatPerKloc(null)).toBe(METRIC_NONE);
+    });
+    it('toSignal surfaces the grade + per-KLOC value for a graded metric', () => {
+        const s = toSignal(
+            row({
+                metric: 'module_quality',
+                metric_type: 'ratio',
+                direction: 'lower_better',
+                value: 0.0024,
+                prior: 0.0022,
+                delta: 0.0002,
+                name: 'Maintainability',
+            }),
+            famOf,
+        );
+        expect(s.grade).toBe('A'); // 2.4/kloc ≤ 3
+        expect(s.value).toBe('2.4 / 1,000 lines');
+        // the tiny delta reads on the per-KLOC scale, not a false "flat 0".
+        expect(s.trend?.label).toBe(`+0.2`);
+        expect(s.trend?.tone).toBe('bad'); // lower_better + rose → worse
+    });
+});
+
 describe('linkifyMetrics', () => {
     const reg = (key: string, name: string): RegistryMetric => ({
         key,
@@ -609,6 +650,12 @@ describe('metricYDomain', () => {
     });
     it('extends a ratio ceiling only when the data exceeds 1 (never clips)', () => {
         expect(metricYDomain('ratio', [0.5, 2.5])).toEqual([0, 2.5]);
+    });
+    it('auto-scales a TINY ratio instead of crushing it against [0,1]', () => {
+        // maintainability ~0.0024 would be invisible on [0,1]; scale to the data.
+        const [lo, hi] = metricYDomain('ratio', [0.0022, 0.0024, 0.0023]);
+        expect(lo).toBe(0);
+        expect(hi).toBeCloseTo(0.0024 * 1.25, 6);
     });
     it('uses a 0–100 scale for a score', () => {
         expect(metricYDomain('score', [44, 46])).toEqual([0, 100]);
