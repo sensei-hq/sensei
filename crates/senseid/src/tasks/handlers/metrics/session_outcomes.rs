@@ -579,7 +579,11 @@ mod tests {
         // 3 first-try + 1 corrected. Direct arithmetic over these seeds:
         //   ftr_daily      : avg(case when ftr) = (1+1+1+0)/4 = 0.75; session_count = 4
         //   project_ftr    : Σnumerator/Σdenominator = 3/4 = 0.75; sessions_7d = 4
-        let ts = chrono::Utc::now() - chrono::Duration::hours(2);
+        // Anchor to the START of TODAY's UTC day — NOT `now() - 2h`, which crosses the
+        // UTC day boundary in the ~2h after midnight and lands the session on YESTERDAY
+        // (then the `today` row assertion below misses). Start-of-day is always on
+        // today's UTC date and ≤ now, so the seed is deterministically "today".
+        let ts = chrono::Utc::now().date_naive().and_hms_opt(0, 0, 0).unwrap().and_utc();
         for _ in 0..3 {
             seed_metrics_session(pg, &fid, &pid, Some("completed"), Some(true), 0, ts).await;
         }
