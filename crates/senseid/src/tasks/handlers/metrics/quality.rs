@@ -429,9 +429,9 @@ impl Drop for WorktreeGuard {
 /// DB/as_of path can be tested with a fake and the real path uses [`run_qlty_scan`].
 /// The worktree lives under a unique `sensei-qlty-<uuid>` temp dir (git does not
 /// create missing parents, so the base is created first and torn down by the guard).
-fn scan_at_commit<F>(root: &str, sha: &str, scan: F) -> Result<Option<QualityScan>, String>
+pub(super) fn scan_at_commit<T, F>(root: &str, sha: &str, scan: F) -> Result<Option<T>, String>
 where
-    F: FnOnce(&Path) -> Result<Option<QualityScan>, String>,
+    F: FnOnce(&Path) -> Result<Option<T>, String>,
 {
     let base = std::env::temp_dir().join(format!("sensei-qlty-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&base).map_err(|e| format!("quality: worktree base dir: {e}"))?;
@@ -450,7 +450,7 @@ where
 /// The last commit on or before end-of-`day` on the current branch (`git rev-list -1
 /// --first-parent --before=<day 23:59:59> HEAD`). `None` when `day` predates the
 /// repo's first commit, or git is unavailable — the caller then writes no row.
-fn resolve_commit_as_of(root: &str, day: NaiveDate) -> Option<String> {
+pub(super) fn resolve_commit_as_of(root: &str, day: NaiveDate) -> Option<String> {
     let until = format!("{} 23:59:59", day.format("%Y-%m-%d"));
     let out = super::churn::run_git(
         root,
