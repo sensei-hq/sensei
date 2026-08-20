@@ -543,6 +543,14 @@ export interface SessionRow {
   // sensei.folders for `role`. Absent on the current endpoint, so the
   // session row's folder-role chip stays dormant until then.
   folderRole?: string | null;
+  // Transcript-captured usage (null when the source carried none — never a
+  // fabricated 0): input/output tokens, gap-aware active duration (seconds),
+  // and the inference provider/model that ran the session.
+  tokensIn?: number | null;
+  tokensOut?: number | null;
+  durationSecs?: number | null;
+  provider?: string | null;
+  model?: string | null;
 }
 
 export interface SessionsDigest {

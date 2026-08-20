@@ -19,6 +19,13 @@
     duration = '42m',
     when = 'today',
     folderRole = null,
+    tokens = 7732,
+    tokensIn = 6000,
+    tokensOut = 1732,
+    tokensLabel = '7.7k',
+    activeMins = 30,
+    activeLabel = '30m',
+    model = 'claude-opus-4-8',
     onselect,
   }: {
     id?: string;
@@ -35,6 +42,13 @@
     duration?: string;
     when?: string;
     folderRole?: string | null;
+    tokens?: number | null;
+    tokensIn?: number | null;
+    tokensOut?: number | null;
+    tokensLabel?: string;
+    activeMins?: number | null;
+    activeLabel?: string;
+    model?: string | null;
     onselect?: (id: string) => void;
   } = $props();
 
@@ -56,6 +70,13 @@
     time,
     duration,
     folderRole,
+    tokens,
+    tokensIn,
+    tokensOut,
+    tokensLabel,
+    activeMins,
+    activeLabel,
+    model,
   });
 </script>
 

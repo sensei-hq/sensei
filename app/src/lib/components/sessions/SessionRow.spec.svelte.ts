@@ -18,6 +18,10 @@ type Props = Partial<{
   time: string;
   duration: string;
   folderRole: string | null;
+  tokens: number | null;
+  tokensIn: number | null;
+  tokensOut: number | null;
+  tokensLabel: string;
   onselect: (id: string) => void;
 }>;
 
@@ -61,7 +65,9 @@ describe('SessionRow — FTR badge agrees with the ftr column', () => {
 
   it('shows a faint dash when the session is not scored yet', () => {
     const m = mount({ ftr: null, quality: 'neutral' });
-    expect(row(m).querySelector('.text-ink-faint')?.textContent).toContain('—');
+    // The FTR badge is the faint cell carrying the uppercase tracking treatment —
+    // query it specifically so the (also-faint) token column doesn't shadow it.
+    expect(row(m).querySelector('.text-ink-faint.uppercase')?.textContent).toContain('—');
   });
 });
 
@@ -84,6 +90,14 @@ describe('SessionRow — meta', () => {
   it('falls back to "unlinked" for a project-less session', () => {
     const m = mount({ project: '' });
     expect(row(m).textContent ?? '').toContain('unlinked');
+  });
+
+  it('renders the token label with an in/out breakdown tooltip', () => {
+    const m = mount({ tokensLabel: '7.7k', tokensIn: 6000, tokensOut: 1732 });
+    const text = row(m).textContent ?? '';
+    expect(text).toContain('7.7k');
+    const cell = row(m).querySelector('[title*="in ·"]');
+    expect(cell?.getAttribute('title')).toContain('6,000 in · 1,732 out');
   });
 });
 

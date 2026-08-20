@@ -34,6 +34,14 @@
   const correctionsLabel = $derived(
     session.corrections === 0 ? 'first-try' : `${session.corrections}× rework`,
   );
+
+  // Token column: the in+out sum, with an in/out breakdown on hover. A dash when
+  // the session's source carried no usage (honest — never shown as 0).
+  const tokensTitle = $derived(
+    session.tokens == null
+      ? 'no token usage captured'
+      : `${(session.tokensIn ?? 0).toLocaleString()} in · ${(session.tokensOut ?? 0).toLocaleString()} out`,
+  );
 </script>
 
 <button
@@ -62,6 +70,11 @@
 
   <span class="flex items-center gap-4 text-xs">
     <span class="font-mono text-ink-mute w-14 text-right" style='font-feature-settings: "tnum";'>{session.duration}</span>
+    <span
+      class="font-mono text-ink-faint w-14 text-right"
+      style='font-feature-settings: "tnum";'
+      title={tokensTitle}
+    >{session.tokensLabel}</span>
     <span class="text-ink-soft w-20 text-right">{correctionsLabel}</span>
     <span class="{ftrClass} w-16 text-right uppercase tracking-wide">{ftrLabel}</span>
     <span class="text-ink-soft w-20 text-right capitalize">{session.outcome}</span>

@@ -561,6 +561,30 @@ pub(crate) async fn seed_assistant_event_ex(
     .unwrap();
 }
 
+/// Insert one `activity.assistant_events` row carrying a `tool_name` at a chosen
+/// `ts` — the `incomplete_analysis_rate` (edit-before-read) source. `event_type` is
+/// `"PostToolUse"` (a tool call); `session_id` matches a
+/// [`seed_metrics_client_session`] `client_session_id`. The compute classifies
+/// `tool_name` into edit-like vs read-like by regex, so pass e.g. `"Edit"`/`"Read"`.
+pub(crate) async fn seed_assistant_event_tool(
+    pg: &PgStore,
+    session_id: &str,
+    tool_name: &str,
+    at: chrono::DateTime<chrono::Utc>,
+) {
+    sqlx_core::query::query(
+        "INSERT INTO activity.assistant_events (session_id, event_type, tool_name, ts, created_at) \
+         VALUES ($1, 'PostToolUse', $2, $3, $4)",
+    )
+    .bind(session_id)
+    .bind(tool_name)
+    .bind(at.timestamp_millis())
+    .bind(at)
+    .execute(pg.pool())
+    .await
+    .unwrap();
+}
+
 /// Insert one `activity.runs` row — the `run_completion` source (autonomy, 5.4).
 /// `status` is a `sensei.run_status` literal (`"done"` = reached completion; any
 /// other value counts toward "started" but not "done"). `started_at` fixes the day

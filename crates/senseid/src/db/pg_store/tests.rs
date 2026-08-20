@@ -3691,6 +3691,19 @@
         assert!(row["completedAt"].as_str().is_some(), "completedAt set after the end event");
         assert!(row.get("folder_id").is_none(), "folder_id no longer leaks in place of the project");
 
+        // Token + duration + model surfaced (camelCase): a session with captured
+        // usage returns real numbers; a session with none returns null (never a 0).
+        sqlx_core::query::query(
+            "UPDATE activity.sessions SET tokens_in=1500, tokens_out=400, \
+                 duration=make_interval(secs => 1800), provider='anthropic', model='claude-opus-4-8' WHERE id=$1",
+        ).bind(session_id).execute(s.pool()).await.unwrap();
+        let all2 = s.list_all_sessions(500, None, None).await.unwrap();
+        let row2 = all2.iter().find(|r| r["id"].as_str() == Some(session_id.to_string().as_str())).unwrap();
+        assert_eq!(row2["tokensIn"].as_i64(), Some(1500), "tokensIn surfaced (camelCase)");
+        assert_eq!(row2["tokensOut"].as_i64(), Some(400), "tokensOut surfaced");
+        assert_eq!(row2["durationSecs"].as_f64(), Some(1800.0), "durationSecs = gap-aware active seconds");
+        assert_eq!(row2["model"].as_str(), Some("claude-opus-4-8"), "model surfaced");
+
         sqlx_core::query::query("DELETE FROM activity.sessions WHERE id = $1")
             .bind(session_id).execute(s.pool()).await.unwrap();
         sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")

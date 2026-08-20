@@ -64,6 +64,13 @@ const KEY_REWORK: &str = "rework_ratio";
 const KEY_THROUGHPUT: &str = "throughput";
 const KEY_TTUR: &str = "time_to_useful_result";
 const KEY_CONTEXT_PRESSURE: &str = "context_pressure_rate";
+/// Token-volume + duration + efficiency + process keys (2026-08-20 addition).
+const KEY_TOKENS_PER_DAY: &str = "tokens_per_day";
+const KEY_TOKENS_IN: &str = "tokens_in_per_day";
+const KEY_TOKENS_OUT: &str = "tokens_out_per_day";
+const KEY_SESSION_DURATION: &str = "session_duration";
+const KEY_TOKENS_PER_RESULT: &str = "tokens_per_result";
+const KEY_INCOMPLETE_ANALYSIS: &str = "incomplete_analysis_rate";
 
 /// One (day × repository) session-level aggregate for a project: `(day,
 /// repository_id, session_count, ftr_count, correction_count)`. Only
@@ -244,6 +251,165 @@ async fn daily_context_pressure(
         .map_err(|e| e.to_string())
 }
 
+/// Per-(day × repository) token-volume sums: `(day, repository_id, sum_in,
+/// sum_out, n)`. Base = sessions that carry token usage (`tokens_in IS NOT NULL`)
+/// — token volume is independent of outcome analysis, so this base is NOT the
+/// measurable-outcome base the rate metrics use; a session with no captured tokens
+/// contributes nothing (never a fabricated 0). `n` = sessions with tokens that day.
+async fn daily_token_volume(
+    pg: &PgStore,
+    project_id: &uuid::Uuid,
+    window_days: u32,
+    as_of: Option<chrono::NaiveDate>,
+) -> Result<Vec<(chrono::NaiveDate, uuid::Uuid, i64, i64, i64)>, String> {
+    let sql = format!(
+        "SELECT date_trunc('day', s.started_at)::date        AS day
+              , rf.repository_id                              AS repository_id
+              , coalesce(sum(s.tokens_in), 0)::int8           AS sum_in
+              , coalesce(sum(s.tokens_out), 0)::int8          AS sum_out
+              , count(*)::int8                                AS n
+           FROM activity.sessions s
+           JOIN sensei.folders    rf ON rf.id = s.repo_folder_id
+          WHERE s.project_id  = $1
+            AND rf.repository_id IS NOT NULL
+            AND s.tokens_in IS NOT NULL
+            AND {}
+          GROUP BY 1, 2
+          ORDER BY 1, 2",
+        super::day_filter(DAY_ANCHOR, as_of),
+    );
+    let q = sqlx_core::query_as::query_as::<_, (chrono::NaiveDate, uuid::Uuid, i64, i64, i64)>(&sql)
+        .bind(project_id);
+    super::bind_day(q, window_days, as_of)
+        .fetch_all(pg.pool())
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Per-(day × repository) mean active session duration in SECONDS: `(day,
+/// repository_id, avg_secs, n)`. Base = sessions with a recorded `duration`
+/// interval (gap-aware active work time); a session with no duration contributes
+/// nothing (honest-empty, never a fabricated 0). `n` = contributing sessions.
+async fn daily_session_duration(
+    pg: &PgStore,
+    project_id: &uuid::Uuid,
+    window_days: u32,
+    as_of: Option<chrono::NaiveDate>,
+) -> Result<Vec<(chrono::NaiveDate, uuid::Uuid, f64, i64)>, String> {
+    let sql = format!(
+        "SELECT date_trunc('day', s.started_at)::date                       AS day
+              , rf.repository_id                                            AS repository_id
+              , avg(EXTRACT(EPOCH FROM s.duration))::float8                 AS avg_secs
+              , count(*)::int8                                              AS n
+           FROM activity.sessions s
+           JOIN sensei.folders    rf ON rf.id = s.repo_folder_id
+          WHERE s.project_id  = $1
+            AND rf.repository_id IS NOT NULL
+            AND s.duration   IS NOT NULL
+            AND {}
+          GROUP BY 1, 2
+          ORDER BY 1, 2",
+        super::day_filter(DAY_ANCHOR, as_of),
+    );
+    let q = sqlx_core::query_as::query_as::<_, (chrono::NaiveDate, uuid::Uuid, f64, i64)>(&sql)
+        .bind(project_id);
+    super::bind_day(q, window_days, as_of)
+        .fetch_all(pg.pool())
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Per-(day × repository) `tokens_per_result`: `(day, repository_id,
+/// sum_out, completed)` — Σ output tokens over COMPLETED sessions (`outcome =
+/// 'completed'`) that carry token usage / count of those sessions. Output-token
+/// based so it isn't inflated by input cache. A (day, repo) with no completed
+/// token-bearing session writes NO row (honest-empty).
+async fn daily_tokens_per_result(
+    pg: &PgStore,
+    project_id: &uuid::Uuid,
+    window_days: u32,
+    as_of: Option<chrono::NaiveDate>,
+) -> Result<Vec<(chrono::NaiveDate, uuid::Uuid, i64, i64)>, String> {
+    let sql = format!(
+        "SELECT date_trunc('day', s.started_at)::date        AS day
+              , rf.repository_id                              AS repository_id
+              , coalesce(sum(s.tokens_out), 0)::int8          AS sum_out
+              , count(*)::int8                                AS completed
+           FROM activity.sessions s
+           JOIN sensei.folders    rf ON rf.id = s.repo_folder_id
+          WHERE s.project_id  = $1
+            AND rf.repository_id IS NOT NULL
+            AND s.outcome    = 'completed'::sensei.session_outcome
+            AND s.tokens_out IS NOT NULL
+            AND {}
+          GROUP BY 1, 2
+          ORDER BY 1, 2",
+        super::day_filter(DAY_ANCHOR, as_of),
+    );
+    let q = sqlx_core::query_as::query_as::<_, (chrono::NaiveDate, uuid::Uuid, i64, i64)>(&sql)
+        .bind(project_id);
+    super::bind_day(q, window_days, as_of)
+        .fetch_all(pg.pool())
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Per-(day × repository) edit-before-read counts for `incomplete_analysis_rate`:
+/// `(day, repository_id, flagged, measurable)`. Over the measurable base, for each
+/// session it compares the first EDIT-like tool event to the first READ/SEARCH-like
+/// one (from `activity.assistant_events`, joined on `client_session_id`); a session
+/// is FLAGGED when it edits before it reads (or edits with no read at all).
+/// `measurable` = sessions with ≥1 edit-like event that day for the repository —
+/// sessions with no edits are not measurable for this signal (excluded, never a
+/// fabricated 0). Tool-name classification is a cross-adapter heuristic (regex on
+/// the normalized `tool_name`), not intent.
+async fn daily_incomplete_analysis(
+    pg: &PgStore,
+    project_id: &uuid::Uuid,
+    window_days: u32,
+    as_of: Option<chrono::NaiveDate>,
+) -> Result<Vec<(chrono::NaiveDate, uuid::Uuid, i64, i64)>, String> {
+    // Heuristic tool-name classes, normalized across adapters (Claude Edit/Read,
+    // Zed edit_file/read_file, OpenCode edit/read, etc.). EDIT-like is restricted to
+    // modifications of existing files (edit/multiedit/str_replace) — NOT `write`,
+    // which is usually new-file creation and has nothing to read first.
+    const EDIT_RE: &str = "^(edit|multiedit|str_replace)";
+    const READ_RE: &str = "^(read|grep|glob|find|ls|list|search|cat)";
+    let sql = format!(
+        "WITH per_session AS ( \
+             SELECT s.id                                              AS sid \
+                  , date_trunc('day', s.started_at)::date             AS day \
+                  , rf.repository_id                                  AS repository_id \
+                  , min(e.ts) FILTER (WHERE e.tool_name ~* '{edit}')  AS edit_min \
+                  , min(e.ts) FILTER (WHERE e.tool_name ~* '{read}')  AS read_min \
+               FROM activity.sessions s \
+               JOIN sensei.folders          rf ON rf.id = s.repo_folder_id \
+               JOIN activity.assistant_events e ON e.session_id = s.client_session_id \
+              WHERE s.project_id  = $1 \
+                AND rf.repository_id IS NOT NULL \
+                AND s.outcome    IS NOT NULL AND s.outcome <> 'empty'::sensei.session_outcome \
+                AND {day} \
+              GROUP BY s.id, 2, 3 \
+         ) \
+         SELECT day \
+              , repository_id \
+              , count(*) FILTER (WHERE edit_min IS NOT NULL AND (read_min IS NULL OR edit_min < read_min))::int8 AS flagged \
+              , count(*) FILTER (WHERE edit_min IS NOT NULL)::int8                                               AS measurable \
+           FROM per_session \
+          GROUP BY day, repository_id \
+          ORDER BY day, repository_id",
+        edit = EDIT_RE,
+        read = READ_RE,
+        day = super::day_filter(DAY_ANCHOR, as_of),
+    );
+    let q = sqlx_core::query_as::query_as::<_, (chrono::NaiveDate, uuid::Uuid, i64, i64)>(&sql)
+        .bind(project_id);
+    super::bind_day(q, window_days, as_of)
+        .fetch_all(pg.pool())
+        .await
+        .map_err(|e| e.to_string())
+}
+
 /// Compute the `session_outcomes` group for one project.
 ///
 /// `project_raw` is the project uuid carried in `task.folder_path`. `as_of`
@@ -287,6 +453,12 @@ pub(super) async fn compute(
     let throughput_id = ids.get(KEY_THROUGHPUT).copied();
     let ttur_id = ids.get(KEY_TTUR).copied();
     let context_id = ids.get(KEY_CONTEXT_PRESSURE).copied();
+    let tokens_day_id = ids.get(KEY_TOKENS_PER_DAY).copied();
+    let tokens_in_id = ids.get(KEY_TOKENS_IN).copied();
+    let tokens_out_id = ids.get(KEY_TOKENS_OUT).copied();
+    let duration_id = ids.get(KEY_SESSION_DURATION).copied();
+    let tokens_result_id = ids.get(KEY_TOKENS_PER_RESULT).copied();
+    let incomplete_id = ids.get(KEY_INCOMPLETE_ANALYSIS).copied();
 
     let mut written = 0u32;
 
@@ -385,6 +557,99 @@ pub(super) async fn compute(
         }
     }
 
+    // Per-repository daily token volume: tokens_per_day (in+out), tokens_in_per_day,
+    // tokens_out_per_day — count-type, so value IS the daily sum (the pooling view
+    // sums across repositories). Base = sessions carrying token usage.
+    if tokens_day_id.is_some() || tokens_in_id.is_some() || tokens_out_id.is_some() {
+        for (day, repository_id, sum_in, sum_out, n) in
+            daily_token_volume(pg, &project_id, window_days, as_of).await?
+        {
+            let props = serde_json::json!({ "sessions": n, "tokens_in": sum_in, "tokens_out": sum_out });
+            if let Some(mid) = tokens_day_id {
+                pg.upsert_project_metric_repo(
+                    &mid, &project_id, Some(&repository_id), SCOPE_USER, None, None,
+                    None, None, day, GRAIN_DAILY, (sum_in + sum_out) as f64, &props, SOURCE_MEASURED,
+                )
+                .await?;
+                written += 1;
+            }
+            if let Some(mid) = tokens_in_id {
+                pg.upsert_project_metric_repo(
+                    &mid, &project_id, Some(&repository_id), SCOPE_USER, None, None,
+                    None, None, day, GRAIN_DAILY, sum_in as f64, &props, SOURCE_MEASURED,
+                )
+                .await?;
+                written += 1;
+            }
+            if let Some(mid) = tokens_out_id {
+                pg.upsert_project_metric_repo(
+                    &mid, &project_id, Some(&repository_id), SCOPE_USER, None, None,
+                    None, None, day, GRAIN_DAILY, sum_out as f64, &props, SOURCE_MEASURED,
+                )
+                .await?;
+                written += 1;
+            }
+        }
+    }
+
+    // Per-repository daily session_duration (duration, mean active seconds) — the
+    // pooling view averages across repositories. Base = sessions with a duration.
+    if let Some(mid) = duration_id {
+        for (day, repository_id, avg_secs, n) in
+            daily_session_duration(pg, &project_id, window_days, as_of).await?
+        {
+            let props = serde_json::json!({ "n": n });
+            pg.upsert_project_metric_repo(
+                &mid, &project_id, Some(&repository_id), SCOPE_USER, None, None,
+                None, None, day, GRAIN_DAILY, avg_secs, &props, SOURCE_MEASURED,
+            )
+            .await?;
+            written += 1;
+        }
+    }
+
+    // Per-repository daily tokens_per_result (ratio: Σ output tokens / completed
+    // sessions) — pools Σnum/Σden. A (day, repo) with no completed token-bearing
+    // session writes NO row (honest-empty, never a fabricated 0/0).
+    if let Some(mid) = tokens_result_id {
+        for (day, repository_id, sum_out, completed) in
+            daily_tokens_per_result(pg, &project_id, window_days, as_of).await?
+        {
+            if completed == 0 {
+                continue;
+            }
+            let value = sum_out as f64 / completed as f64;
+            let props = serde_json::json!({ "numerator": sum_out, "denominator": completed });
+            pg.upsert_project_metric_repo(
+                &mid, &project_id, Some(&repository_id), SCOPE_USER, None, None,
+                None, None, day, GRAIN_DAILY, value, &props, SOURCE_MEASURED,
+            )
+            .await?;
+            written += 1;
+        }
+    }
+
+    // Per-repository daily incomplete_analysis_rate (pct: edit-before-read sessions
+    // / sessions-with-edits) — a (day, repo) with no edit-bearing session has no
+    // denominator → NO row (honest-empty, never a fabricated 0/0).
+    if let Some(mid) = incomplete_id {
+        for (day, repository_id, flagged, measurable) in
+            daily_incomplete_analysis(pg, &project_id, window_days, as_of).await?
+        {
+            if measurable == 0 {
+                continue;
+            }
+            let value = flagged as f64 / measurable as f64;
+            let props = serde_json::json!({ "numerator": flagged, "denominator": measurable });
+            pg.upsert_project_metric_repo(
+                &mid, &project_id, Some(&repository_id), SCOPE_USER, None, None,
+                None, None, day, GRAIN_DAILY, value, &props, SOURCE_MEASURED,
+            )
+            .await?;
+            written += 1;
+        }
+    }
+
     Ok(written)
 }
 
@@ -393,8 +658,9 @@ mod tests {
     use super::*;
     use crate::tasks::test_support::{
         cleanup_metrics_fixture, daily_project_metric_rows as daily_rows, make_ctx,
-        repository_for_folder, seed_metrics_project_folder, seed_metrics_session,
-        seed_metrics_turn, seed_metrics_turn_ex, seed_second_repository,
+        repository_for_folder, seed_assistant_event_tool, seed_metrics_client_session,
+        seed_metrics_project_folder, seed_metrics_session, seed_metrics_turn, seed_metrics_turn_ex,
+        seed_second_repository,
     };
     use sqlx_core::query_as::query_as;
 
@@ -882,6 +1148,93 @@ mod tests {
         .unwrap();
         assert_eq!(rows, 0, "no usable turn in any session → no time_to_useful_result row (never a fabricated 0)");
 
+        cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
+    }
+
+    #[tokio::test]
+    async fn session_outcomes_writes_token_volume_duration_efficiency() {
+        // Token volume (count → summed), session duration (duration → averaged), and
+        // tokens_per_result (ratio → Σout/completed) over sessions carrying tokens.
+        let ctx = make_ctx().await;
+        let pg = ctx.pg();
+        let uniq = uuid::Uuid::new_v4();
+        let (pid, fid) = seed_metrics_project_folder(pg, &uniq).await;
+        let ts = chrono::Utc::now() - chrono::Duration::hours(2);
+        // Two completed sessions: (in=100,out=20,60s) + (in=300,out=80,120s).
+        let s1 = seed_metrics_session(pg, &fid, &pid, Some("completed"), Some(true), 0, ts).await;
+        let s2 = seed_metrics_session(pg, &fid, &pid, Some("completed"), Some(true), 0, ts).await;
+        for (sid, tin, tout, secs) in [(s1, 100i32, 20i32, 60.0f64), (s2, 300, 80, 120.0)] {
+            sqlx_core::query::query(
+                "UPDATE activity.sessions SET tokens_in=$2, tokens_out=$3, duration=make_interval(secs => $4) WHERE id=$1",
+            )
+            .bind(sid).bind(tin).bind(tout).bind(secs)
+            .execute(pg.pool()).await.unwrap();
+        }
+
+        compute(&ctx, &pid.to_string(), None).await.unwrap();
+        let daily = daily_rows(pg, &pid).await;
+
+        let tpd = daily.iter().find(|r| r.0 == "tokens_per_day").expect("tokens_per_day row");
+        assert!((tpd.1 - 500.0).abs() < 1e-9, "tokens_per_day = (100+20)+(300+80) = 500 (summed across sessions)");
+        let tin = daily.iter().find(|r| r.0 == "tokens_in_per_day").expect("tokens_in_per_day row");
+        assert!((tin.1 - 400.0).abs() < 1e-9, "tokens_in_per_day = 100+300");
+        let tout = daily.iter().find(|r| r.0 == "tokens_out_per_day").expect("tokens_out_per_day row");
+        assert!((tout.1 - 100.0).abs() < 1e-9, "tokens_out_per_day = 20+80");
+        let dur = daily.iter().find(|r| r.0 == "session_duration").expect("session_duration row");
+        assert!((dur.1 - 90.0).abs() < 1e-6, "session_duration = avg(60,120) = 90s");
+        let tpr = daily.iter().find(|r| r.0 == "tokens_per_result").expect("tokens_per_result row");
+        assert!((tpr.1 - 50.0).abs() < 1e-9, "tokens_per_result = 100 out / 2 completed = 50");
+        assert_eq!(tpr.2["numerator"].as_i64(), Some(100), "tpr numerator = Σ output tokens over completed");
+        assert_eq!(tpr.2["denominator"].as_i64(), Some(2), "tpr denominator = # completed token-bearing sessions");
+
+        cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
+    }
+
+    #[tokio::test]
+    async fn incomplete_analysis_flags_edit_before_read() {
+        // Edit-before-read: a session that edits before it reads (or edits with no
+        // read) is flagged; one that reads before editing is not; one with no edit is
+        // not even measurable. Rate = flagged / sessions-with-edits.
+        let ctx = make_ctx().await;
+        let pg = ctx.pg();
+        let uniq = uuid::Uuid::new_v4();
+        let (pid, fid) = seed_metrics_project_folder(pg, &uniq).await;
+        let t = chrono::Utc::now() - chrono::Duration::hours(2);
+        let at = |n: i64| t + chrono::Duration::seconds(n);
+
+        // Seed a completed client-session (needs client_session_id to join events +
+        // outcome to be measurable) and return its id string.
+        async fn completed(pg: &PgStore, fid: &uuid::Uuid, pid: &uuid::Uuid, csid: &str, t: chrono::DateTime<chrono::Utc>) {
+            let sid = seed_metrics_client_session(pg, fid, pid, csid, t).await;
+            sqlx_core::query::query("UPDATE activity.sessions SET outcome='completed'::sensei.session_outcome, ftr=true WHERE id=$1")
+                .bind(sid).execute(pg.pool()).await.unwrap();
+        }
+        let a = format!("cs-a-{uniq}"); // read @0 then edit @10 → NOT flagged
+        let b = format!("cs-b-{uniq}"); // edit @0 then read @10 → flagged
+        let c = format!("cs-c-{uniq}"); // edit only → flagged
+        let d = format!("cs-d-{uniq}"); // read only → NOT measurable (no edit)
+        for cs in [&a, &b, &c, &d] {
+            completed(pg, &fid, &pid, cs, t).await;
+        }
+        seed_assistant_event_tool(pg, &a, "Read", at(0)).await;
+        seed_assistant_event_tool(pg, &a, "Edit", at(10)).await;
+        seed_assistant_event_tool(pg, &b, "Edit", at(0)).await;
+        seed_assistant_event_tool(pg, &b, "Read", at(10)).await;
+        seed_assistant_event_tool(pg, &c, "Edit", at(0)).await;
+        seed_assistant_event_tool(pg, &d, "Read", at(0)).await;
+
+        compute(&ctx, &pid.to_string(), None).await.unwrap();
+        let daily = daily_rows(pg, &pid).await;
+        let ia = daily.iter().find(|r| r.0 == "incomplete_analysis_rate").expect("incomplete_analysis_rate row");
+        assert!((ia.1 - 2.0 / 3.0).abs() < 1e-9, "flagged(b,c)=2 / measurable(a,b,c)=3 = 2/3; d (no edit) excluded");
+        assert_eq!(ia.2["numerator"].as_i64(), Some(2), "flagged = edit-before-read sessions (b + c)");
+        assert_eq!(ia.2["denominator"].as_i64(), Some(3), "measurable = sessions with ≥1 edit (a,b,c); d excluded");
+
+        // clean up the events (keyed on the unique client_session_ids)
+        for cs in [&a, &b, &c, &d] {
+            sqlx_core::query::query("DELETE FROM activity.assistant_events WHERE session_id=$1")
+                .bind(cs).execute(pg.pool()).await.ok();
+        }
         cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
     }
 

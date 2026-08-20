@@ -18,21 +18,25 @@ impl PgStore {
         // timestamps in the camelCase shape the SessionData wire type and the
         // observatory components actually read (startedAt / completedAt). `corrections`
         // powers the "Corrections" column (first-try / N× rework) per the mockup.
+        // `duration` is the gap-aware active-work interval (seconds, so the UI need
+        // not parse a Postgres interval); tokens_in/out + provider/model come from the
+        // transcript capture (NULL when the source carried none — never a fabricated 0).
         type SessionRow = (
             uuid::Uuid, Option<String>, String, Option<String>, Option<String>,
             Option<bool>, i32, i32, chrono::DateTime<chrono::Utc>, Option<chrono::DateTime<chrono::Utc>>,
-            Option<String>,
+            Option<String>, Option<i32>, Option<i32>, Option<f64>, Option<String>, Option<String>,
         );
         let rows: Vec<SessionRow> = sqlx_core::query_as::query_as(
             "SELECT s.id, p.name, s.task, s.summary, s.outcome::text, s.ftr, s.turns, s.corrections,
-                    s.started_at, s.completed_at, s.acp_id
+                    s.started_at, s.completed_at, s.acp_id,
+                    s.tokens_in, s.tokens_out, EXTRACT(EPOCH FROM s.duration)::float8, s.provider, s.model
              FROM activity.sessions s
              LEFT JOIN sensei.projects p ON p.id = s.project_id
              WHERE ($2::int IS NULL OR s.started_at >= now() - make_interval(days => $2::int))
                AND ($3::uuid IS NULL OR s.project_id = $3)
              ORDER BY s.started_at DESC LIMIT $1"
         ).bind(limit).bind(range_days).bind(project).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
-        Ok(rows.into_iter().map(|(id, project, task, summary, outcome, ftr, turns, corrections, started, completed, agent)| {
+        Ok(rows.into_iter().map(|(id, project, task, summary, outcome, ftr, turns, corrections, started, completed, agent, tokens_in, tokens_out, duration_secs, provider, model)| {
             serde_json::json!({
                 "id": id,
                 "project": project,
@@ -45,6 +49,11 @@ impl PgStore {
                 "startedAt": started.to_rfc3339(),
                 "completedAt": completed.map(|c| c.to_rfc3339()),
                 "agent": agent,
+                "tokensIn": tokens_in,
+                "tokensOut": tokens_out,
+                "durationSecs": duration_secs,
+                "provider": provider,
+                "model": model,
             })
         }).collect())
     }
@@ -158,17 +167,20 @@ impl PgStore {
     pub async fn get_session(&self, id: &uuid::Uuid) -> Result<Option<serde_json::Value>, String> {
         // folder_id is nullable since P1 (a pruned raw-cwd folder SET-NULLs it; the session
         // survives via repo_folder_id) — decode as Option so a pruned row doesn't error.
-        let row: Option<(uuid::Uuid, Option<uuid::Uuid>, String, Option<String>, Option<String>, Option<bool>, i32, i32, chrono::DateTime<chrono::Utc>, Option<chrono::DateTime<chrono::Utc>>)> =
+        let row: Option<(uuid::Uuid, Option<uuid::Uuid>, String, Option<String>, Option<String>, Option<bool>, i32, i32, chrono::DateTime<chrono::Utc>, Option<chrono::DateTime<chrono::Utc>>, Option<i32>, Option<i32>, Option<f64>, Option<String>, Option<String>)> =
             sqlx_core::query_as::query_as(
-                "SELECT id, folder_id, task, acp_id, outcome::text, ftr, turns, corrections, started_at, completed_at FROM activity.sessions WHERE id = $1"
+                "SELECT id, folder_id, task, acp_id, outcome::text, ftr, turns, corrections, started_at, completed_at, \
+                        tokens_in, tokens_out, EXTRACT(EPOCH FROM duration)::float8, provider, model FROM activity.sessions WHERE id = $1"
             ).bind(id).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
 
-        Ok(row.map(|(id, fid, task, acp, outcome, ftr, turns, corr, started, completed)| {
+        Ok(row.map(|(id, fid, task, acp, outcome, ftr, turns, corr, started, completed, tokens_in, tokens_out, duration_secs, provider, model)| {
             serde_json::json!({
                 "id": id, "folder_id": fid, "task": task, "acp_id": acp,
                 "outcome": outcome, "ftr": ftr, "turns": turns, "corrections": corr,
                 "started_at": started.to_rfc3339(),
                 "completed_at": completed.map(|t| t.to_rfc3339()),
+                "tokensIn": tokens_in, "tokensOut": tokens_out, "durationSecs": duration_secs,
+                "provider": provider, "model": model,
             })
         }))
     }
@@ -777,11 +789,13 @@ impl PgStore {
             Option<String>, chrono::DateTime<chrono::Utc>, Option<String>,
             Option<bool>, i32, i32, String, Option<String>,
             Option<serde_json::Value>, Option<bool>, Option<serde_json::Value>,
+            Option<i32>, Option<i32>, Option<f64>, Option<String>, Option<String>,
         );
         let rows: Vec<Row> = sqlx_core::query_as::query_as(
             "SELECT s.client_session_id, s.started_at, s.outcome::text, s.ftr,
                     s.turns, s.corrections, s.task, s.summary,
-                    s.evidence, (s.props->>'resumed')::bool AS resumed, s.props->'trouble' AS trouble
+                    s.evidence, (s.props->>'resumed')::bool AS resumed, s.props->'trouble' AS trouble,
+                    s.tokens_in, s.tokens_out, EXTRACT(EPOCH FROM s.duration)::float8, s.provider, s.model
                FROM activity.sessions s
                JOIN sensei.folders  f ON f.id = s.folder_id
               WHERE f.project_id = $1
@@ -797,7 +811,7 @@ impl PgStore {
         .map_err(|e| e.to_string())?;
         Ok(rows
             .into_iter()
-            .map(|(client_session_id, started_at, outcome, ftr, turns, corrections, task, summary, evidence, resumed, trouble)| {
+            .map(|(client_session_id, started_at, outcome, ftr, turns, corrections, task, summary, evidence, resumed, trouble, tokens_in, tokens_out, duration_secs, provider, model)| {
                 serde_json::json!({
                     "client_session_id": client_session_id,
                     "started_at":        started_at.to_rfc3339(),
@@ -810,6 +824,11 @@ impl PgStore {
                     "evidence":          evidence,
                     "resumed":           resumed.unwrap_or(false),
                     "trouble":           trouble,
+                    "tokensIn":          tokens_in,
+                    "tokensOut":         tokens_out,
+                    "durationSecs":      duration_secs,
+                    "provider":          provider,
+                    "model":             model,
                 })
             })
             .collect())

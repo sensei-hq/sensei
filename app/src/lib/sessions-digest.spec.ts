@@ -17,6 +17,8 @@ import {
   replayHref,
   nextMiniMode,
   rangeDays,
+  compactTokens,
+  activeMinutes,
   CHART_VARIANTS,
   MINI_MODES,
   SESSION_RANGES,
@@ -44,6 +46,67 @@ const wire = (o: Partial<SessionRow> = {}): SessionRow => ({
   completedAt: null,
   agent: 'claude',
   ...o,
+});
+
+describe('token + active-duration helpers', () => {
+  it('compactTokens abbreviates by magnitude, dash for absent', () => {
+    expect(compactTokens(820)).toBe('820');
+    expect(compactTokens(7732)).toBe('7.7k');
+    expect(compactTokens(45000)).toBe('45k');
+    expect(compactTokens(1_300_000)).toBe('1.3M');
+    expect(compactTokens(132_332_559)).toBe('132M');
+    expect(compactTokens(null)).toBe('—');
+    expect(compactTokens(undefined)).toBe('—');
+  });
+  it('activeMinutes converts daemon durationSecs, null for absent/negative', () => {
+    expect(activeMinutes(1800)).toBe(30);
+    expect(activeMinutes(90)).toBe(2); // rounds
+    expect(activeMinutes(null)).toBe(null);
+    expect(activeMinutes(-5)).toBe(null);
+  });
+});
+
+describe('token enrichment + aggregation', () => {
+  it('enrich carries in/out + sum; both absent ⇒ null (never a fabricated 0)', () => {
+    const [a] = enrich([wire({ tokensIn: 6000, tokensOut: 1732 })], NOW);
+    expect(a.tokensIn).toBe(6000);
+    expect(a.tokensOut).toBe(1732);
+    expect(a.tokens).toBe(7732);
+    expect(a.tokensLabel).toBe('7.7k');
+    const [b] = enrich([wire({ tokensIn: null, tokensOut: null })], NOW);
+    expect(b.tokens).toBe(null);
+    expect(b.tokensLabel).toBe('—');
+    // one side present ⇒ the other counts as 0 in the sum (a real partial capture)
+    const [c] = enrich([wire({ tokensIn: 100, tokensOut: null })], NOW);
+    expect(c.tokens).toBe(100);
+  });
+  it('aggregateByDay sums token volume per day', () => {
+    const sessions = enrich(
+      [
+        wire({ id: 'a', startedAt: isoDaysAgo(0), tokensIn: 100, tokensOut: 20 }),
+        wire({ id: 'b', startedAt: isoDaysAgo(0), tokensIn: 300, tokensOut: 80 }),
+      ],
+      NOW,
+    );
+    const days = buildDays('7d', NOW);
+    const buckets = aggregateByDay(sessions, days, NOW);
+    const today = buckets[buckets.length - 1];
+    expect(today.tokensIn).toBe(400);
+    expect(today.tokensOut).toBe(100);
+    expect(today.tokens).toBe(500);
+  });
+  it('computeTotals reports total + median tokens, null when none carry usage', () => {
+    const withTokens = enrich(
+      [wire({ id: 'a', tokensIn: 100, tokensOut: 0 }), wire({ id: 'b', tokensIn: 300, tokensOut: 0 })],
+      NOW,
+    );
+    const t = computeTotals(withTokens);
+    expect(t.totalTokens).toBe(400);
+    expect(t.medianTokens).toBe(200);
+    const none = computeTotals(enrich([wire({ tokensIn: null, tokensOut: null })], NOW));
+    expect(none.totalTokens).toBe(null);
+    expect(none.medianTokens).toBe(null);
+  });
 });
 
 describe('quality mapping (outcome → tone)', () => {
@@ -221,8 +284,8 @@ describe('replayHref', () => {
 });
 
 describe('chart / cycler vocab', () => {
-  it('the chip group is exactly the four charts — pulse is never a chip', () => {
-    expect(CHART_VARIANTS).toEqual(['trend', 'stream', 'constellation', 'bands']);
+  it('the chip group is exactly the five charts — pulse is never a chip', () => {
+    expect(CHART_VARIANTS).toEqual(['trend', 'stream', 'constellation', 'bands', 'tokens']);
     expect(CHART_VARIANTS).not.toContain('pulse');
   });
   it('pulse exists only on the mini-cycler', () => {

@@ -7,5 +7,6 @@ export { default as TrendChart } from './TrendChart.svelte';
 export { default as StreamChart } from './StreamChart.svelte';
 export { default as ConstellationChart } from './ConstellationChart.svelte';
 export { default as BandsChart } from './BandsChart.svelte';
+export { default as TokensChart } from './TokensChart.svelte';
 export { default as MiniChart } from './MiniChart.svelte';
 export { default as SessionRow } from './SessionRow.svelte';
