@@ -16,6 +16,7 @@ create table if not exists metrics (
 , capture_source    metric_capture   not null default 'snapshot'
 , weight            numeric          not null default 1
 , target            numeric
+, rating_scale      jsonb            -- 5 thresholds (improvement order) → a 0-5 rating; null = not rated (neutral/uncomputed). See docs/spec/2026-08-20-metric-rating-scales-health.md
 , effective_from    date             not null default current_date
 , effective_until   date
 , retire_reason     text

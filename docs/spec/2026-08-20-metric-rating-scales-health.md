@@ -53,10 +53,18 @@ builds the viz separately. This spec delivers the **rating-scale data + the scor
   (Alternative under consideration: a 1–5 floor — 4 thresholds, `rating = 1 + count` —
   if a metric should never read 0; rejected as default because it blurs failing vs
   unmeasured.)
-- **R4 — Health = weighted mean of ratings, on the 0–5 scale.** `project_health` is
-  revived as `round1(Σ wᵢ·ratingᵢ / Σ wᵢ)` over the INCLUDED metrics, `type = score`,
-  domain `[0,5]` (a "3.8 / 5"). (A 0–100 presentation is just ×20 in the UI; the stored
-  score stays 0–5 to match the radar.)
+- **R4 — Health = weighted mean of ratings, presented 0–100.** `health_score =
+  round(20 · Σ wᵢ·ratingᵢ / Σ wᵢ)` over the INCLUDED metrics (ratings are 0–5, ×20 → a
+  0–100 score). Jerry chose 0–100 (familiar) for the headline; the per-metric ratings
+  stay 0–5 for the radar spokes.
+- **R10 — Ratings + health are VIEWS over the base metrics table (NOT a Rust
+  computer).** The rating band logic + the weighted aggregate live in SQL views over
+  `sensei.project_metrics` + `sensei.metrics` (`rating_scale`/`direction`/`weight`) — the
+  same "views are the consumer contract" pattern the daily/weekly metric views use. This
+  keeps the Rust side to ~a read getter + tests (no `rate()` fn, no `health.rs` rework).
+  The stored `project_health` composite metric stays RETIRED — health is now derived on
+  read, never a stored row. A scale/weight tune (jsonl + `dbd import`) changes the score
+  with zero code.
 - **R5 — Weight prop drives aggregation; core metrics weigh more.** `sensei.metrics.weight`
   (already exists) is the aggregation weight. Starting weights (TUNABLE — Jerry's "until
   we conclude what works"): **core = 3** (coverage, ftr, module_quality, duplication_ratio),
@@ -87,10 +95,10 @@ builds the viz separately. This spec delivers the **rating-scale data + the scor
 - `import_metrics` proc + `staging.metrics` gain the `rating_scale` column (the 4-place
   registry ripple: metrics.ddl already has `weight`; add `rating_scale` to staging +
   the import col-list + all jsonl rows that get a scale).
-- `project_health` revived: clear `effective_until`/`retire_reason`; `type = score`,
-  `direction = higher_better`, `weight` irrelevant (it's the composite, not an input);
-  `task_name = health` (the existing `ComputeHealth` barrier computes it).
-- `weight` values updated per R5 (jsonl).
+- `project_health` composite metric stays RETIRED (health is the `project_health_score`
+  VIEW now, R10 — no stored composite row, no `ComputeHealth` compute needed).
+- new views `sensei.metric_ratings` + `sensei.project_health_score` (§7).
+- `weight` values updated per R5 (jsonl); `rating_scale` seeded per §5 (in stored units).
 
 ## 5. Proposed rating scales (thresholds in improvement order → ratings 1..5)
 
@@ -129,16 +137,30 @@ Tunable starting points; each is "the value at which you reach rating 1, 2, 3, 4
 Pure + unit-tested against the table above (a coverage 0.86 → 4; a maintainability
 0.0024 → 2.4/kloc → 5; a duplication 0.07 → 3; etc.).
 
-## 7. Health computer rework (`health.rs`)
+## 7. Implementation — two SQL views (R10), no Rust computer
 
-Replace the linear `normalize` with the scale-based `rate`:
-1. For each active NON-composite metric with a `rating_scale` + a latest daily reading:
-   `rating = rate(value, direction, scale)`; skip (R6) when no reading / no scale.
-2. `score = round1(Σ(weightᵢ · ratingᵢ) / Σ(weightᵢ))` over the included metrics;
-   `Σweight = 0` (nothing rated) → NO row (honest-empty, never a fabricated score).
-3. Write `project_health` (`type = score`, value = the 0–5 score, `props.components` =
-   `{key → {rating, weight}}` so the radar + drill-down read the per-metric ratings from
-   the same row).
+Scales are stored in the metric's OWN stored-value unit (so the view compares directly,
+no per-metric conversion). E.g. `module_quality` stores the ratio, so its scale is
+`[0.025,0.012,0.006,0.003,0.0015]` (= the §5 per-KLOC `[25,12,6,3,1.5]` ÷ 1000).
+
+**`sensei.metric_ratings`** — per `(project, metric)`, the CURRENT rating:
+- source = the latest daily pooled value per `(project_id, metric)` (DISTINCT ON over
+  `sensei.project_metric_daily`, the scope=user default read), joined to `sensei.metrics`.
+- `rating` = count of `rating_scale` thresholds reached (direction-aware, R3):
+  `higher_better` → `count(t)` where `value >= t`; `lower_better` → where `value <= t`;
+  `NULL` when `rating_scale IS NULL` / `weight = 0` / `direction = neutral` (R7).
+- columns: `project_id, metric, name, family, value, weight, rating`.
+
+**`sensei.project_health_score`** — per project:
+- `health_score = round(20.0 * sum(weight*rating) / nullif(sum(weight),0))` over the
+  rated rows (0–100, R4); `HAVING sum(weight) > 0` so a project with nothing rated has
+  NO row (honest-empty, R6 — never a fabricated 0).
+- `components = jsonb_object_agg(metric, {rating, weight})` — the radar spokes + the
+  drill-down read the per-metric ratings from here (same numbers as the score, R8).
+
+Rust surface is only: a read getter (`GET /api/projects/{id}/health` → the
+`project_health_score` row) + view tests. The `health.rs` / `ComputeHealth` barrier
+stays dormant (project_health metric already retired); removing it is optional cleanup.
 
 ## 8. API / read path
 

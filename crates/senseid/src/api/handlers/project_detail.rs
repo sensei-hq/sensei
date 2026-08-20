@@ -525,6 +525,21 @@ pub(crate) async fn scan_project_doc_drift(
     Ok(Json(summary))
 }
 
+/// GET /api/projects/{id}/health — the weighted 0–100 health score + per-metric 0–5
+/// ratings (radar spokes) + the components map, from the rating views. Honest-empty
+/// score (null) when nothing is rated yet.
+pub(crate) async fn get_project_health(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let uuid = crate::api::util::resolve_existing_project(&state, &id).await?;
+    let health = state.pg.get_project_health(&uuid).await.map_err(|e| {
+        tracing::error!(error = %e, project = %uuid, "get_project_health failed");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+    Ok(Json(health))
+}
+
 #[derive(Deserialize)]
 pub(crate) struct CoverageBackfillQuery {
     /// How many of the most-recent sampled ISO-week anchors to walk (omit = all).
