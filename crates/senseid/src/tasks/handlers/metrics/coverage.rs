@@ -226,12 +226,124 @@ pub(super) async fn compute(
     Ok(written)
 }
 
+/// Config key: the shell command that produces an lcov report when run in a checkout
+/// (e.g. `cargo llvm-cov --lcov --output-path lcov.info`, `vitest run --coverage`).
+/// Empty/unset → backfill is DISABLED — the daemon never runs your tests unless you
+/// explicitly configure this.
+const COVERAGE_COMMAND_KEY: &str = "metrics.coverage_command";
+
+/// Run the configured coverage command in the worktree `wt` (`sh -c <command>`, cwd
+/// = `wt`). Ok on a zero exit; Err otherwise (the caller writes no row for that
+/// commit). Runs an ARBITRARY user-configured command — only ever reached through the
+/// opt-in [`backfill`], never the default snapshot wave.
+fn run_coverage_command(wt: &Path, command: &str) -> Result<(), String> {
+    let status = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(command)
+        .current_dir(wt)
+        .status()
+        .map_err(|e| format!("coverage: spawn coverage command: {e}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("coverage: command exited non-zero ({status}) in {}", wt.display()))
+    }
+}
+
+/// OPT-IN historical backfill (configured or explicitly requested — NEVER the default
+/// wave): reconstruct past coverage by checking out sampled commits, running the
+/// configured `metrics.coverage_command` in each worktree (reusing the `quality`
+/// worktree machinery), and ingesting the lcov it produces. Writes one row per
+/// `(repository, sampled commit)` stamped `computed_on = commit-day`, `commit_sha =
+/// sha` (a commit-cadence historical point distinct from the forward snapshot's
+/// `commit_sha = NULL` row). DISABLED (`Ok(0)`, logged) unless the command is
+/// configured — because it RUNS the project's test suite. `weeks` bounds how many of
+/// the most-recent sampled ISO-week anchors to walk (`None` = all). Returns the number
+/// of rows written. Never fabricates: a commit that predates the repo, a failed
+/// command, or an unproduced/empty lcov writes NO row for that commit.
+pub(crate) async fn backfill(
+    pg: &PgStore,
+    project_raw: &str,
+    weeks: Option<u32>,
+) -> Result<u32, String> {
+    let project_id = uuid::Uuid::parse_str(project_raw)
+        .map_err(|e| format!("coverage: bad project id {project_raw:?}: {e}"))?;
+
+    let command = pg.get_config(COVERAGE_COMMAND_KEY).await?.unwrap_or_default().trim().to_string();
+    if command.is_empty() {
+        tracing::info!(
+            "coverage: backfill requested but {COVERAGE_COMMAND_KEY} is unset — skipped (opt-in: the daemon does not run your tests unless configured)",
+        );
+        return Ok(0);
+    }
+
+    let ids = pg.active_metric_ids(MetricGroup::Coverage.as_str()).await?;
+    let Some(mid) = ids.get(KEY_COVERAGE).copied() else {
+        return Ok(0);
+    };
+    let candidates = lcov_candidates(pg).await;
+    let mut written = 0u32;
+
+    for (repository_id, abs_path) in pg.repository_roots_for_project(&project_id).await? {
+        // The SAME weekly anchors quality samples, bounded to the most recent `weeks`.
+        let mut sampled =
+            super::quality::sample_commit_days(&super::churn::git_commit_days(&abs_path));
+        if let Some(w) = weeks {
+            let w = w as usize;
+            if sampled.len() > w {
+                sampled = sampled.split_off(sampled.len() - w);
+            }
+        }
+        for day in sampled {
+            let Some(sha) = super::quality::resolve_commit_as_of(&abs_path, day) else {
+                continue; // day predates the repo / git miss → no row
+            };
+            // Checkout the commit, run the coverage command in it, ingest the lcov it
+            // produced. The worktree is always torn down (quality's WorktreeGuard).
+            let cmd = command.clone();
+            let cands = candidates.clone();
+            let scan = super::quality::scan_at_commit(&abs_path, &sha, move |wt| {
+                run_coverage_command(wt, &cmd)?;
+                Ok(read_coverage(&wt.to_string_lossy(), &cands))
+            })?;
+            let Some((hit, found)) = scan else {
+                continue; // command failed / no lcov produced → honest-empty for this commit
+            };
+            if found <= 0 {
+                continue;
+            }
+            let value = hit as f64 / found as f64;
+            let props = serde_json::json!({ "numerator": hit, "denominator": found });
+            pg.upsert_project_metric_repo(
+                &mid,
+                &project_id,
+                Some(&repository_id),
+                SCOPE_USER,
+                None,
+                Some(&sha), // commit_sha set → a historical, commit-cadence coverage point
+                None,
+                None,
+                day,
+                GRAIN_DAILY,
+                value,
+                &props,
+                SOURCE_MEASURED,
+            )
+            .await?;
+            written += 1;
+        }
+    }
+
+    tracing::info!(project = %project_raw, rows = written, "coverage: backfill complete");
+    Ok(written)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::tasks::test_support::{
-        cleanup_metrics_fixture, daily_project_metric_rows as daily_rows, make_ctx,
-        repository_for_folder, seed_git_project_folder,
+        cleanup_metrics_fixture, daily_project_metric_rows as daily_rows, git_commit_on_day,
+        make_ctx, repository_for_folder, seed_git_project_folder,
     };
     use sqlx_core::query_as::query_as;
 
@@ -443,5 +555,64 @@ end_of_record
 
         assert_eq!(written, 1, "the config override path is read");
         assert_eq!(den, Some(10), "read the override report (LF:10)");
+    }
+
+    // ── Opt-in backfill (checkout past commits + run the coverage command) ───
+
+    #[tokio::test]
+    async fn backfill_runs_command_at_sampled_commits_and_ingests_history() {
+        // With metrics.coverage_command configured, backfill checks out sampled past
+        // commits (one per ISO week), runs the command (here: write a fixed lcov), and
+        // ingests it → one historical coverage row per sampled commit, commit_sha set.
+        let ctx = make_ctx().await;
+        let pg = ctx.pg();
+        let uniq = uuid::Uuid::new_v4();
+        let (pid, fid, repo) = seed_git_project_folder(pg, &uniq).await;
+        // Three commits in three distinct ISO weeks → three sampled anchors.
+        for (d, f) in [("2025-05-05", "a.rs"), ("2025-05-12", "b.rs"), ("2025-05-19", "c.rs")] {
+            git_commit_on_day(repo.path(), d, &[(f, "x\n")]);
+        }
+        // The "coverage command" just writes a fixed lcov into the worktree (LH 5/LF 10).
+        pg.set_config(COVERAGE_COMMAND_KEY, "printf 'SF:x\\nLH:5\\nLF:10\\nend_of_record\\n' > lcov.info").await.unwrap();
+
+        let written = backfill(pg, &pid.to_string(), None).await.unwrap();
+
+        #[allow(clippy::type_complexity)]
+        let rows: Vec<(chrono::NaiveDate, Option<String>, f64)> = query_as(
+            "SELECT pm.computed_on, pm.commit_sha, pm.value::float8 \
+               FROM sensei.project_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
+              WHERE pm.project_id = $1 AND m.key = 'coverage' ORDER BY pm.computed_on",
+        )
+        .bind(pid)
+        .fetch_all(pg.pool())
+        .await
+        .unwrap();
+
+        // Reset the shared-DB global config BEFORE asserting (panic-safe leak guard).
+        pg.set_config(COVERAGE_COMMAND_KEY, "").await.unwrap();
+        cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
+
+        assert_eq!(written, 3, "one coverage row per sampled ISO-week commit");
+        assert_eq!(rows.len(), 3, "three historical coverage rows");
+        assert!(rows.iter().all(|r| r.1.is_some()), "every backfill row carries a commit_sha (commit-cadence historical point)");
+        assert!(rows.iter().all(|r| (r.2 - 0.5).abs() < 1e-9), "value = 5 hit / 10 found = 0.5");
+        let days: Vec<_> = rows.iter().map(|r| r.0.to_string()).collect();
+        assert!(days.contains(&"2025-05-05".to_string()), "stamped on the commit-day, not today");
+    }
+
+    #[tokio::test]
+    async fn backfill_disabled_without_a_configured_command() {
+        // No metrics.coverage_command → backfill is a no-op (the daemon never runs the
+        // project's tests unless explicitly configured).
+        let ctx = make_ctx().await;
+        let pg = ctx.pg();
+        let uniq = uuid::Uuid::new_v4();
+        let (pid, fid, repo) = seed_git_project_folder(pg, &uniq).await;
+        git_commit_on_day(repo.path(), "2025-05-05", &[("a.rs", "x\n")]);
+        pg.set_config(COVERAGE_COMMAND_KEY, "").await.unwrap(); // ensure unset
+
+        let written = backfill(pg, &pid.to_string(), None).await.unwrap();
+        cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
+        assert_eq!(written, 0, "no coverage_command → backfill runs nothing (opt-in)");
     }
 }
