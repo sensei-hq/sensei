@@ -11,6 +11,16 @@ create table if not exists assistant_events (
 , success          boolean
 , payload          jsonb             not null default '{}'
 , created_at       timestamptz       not null default now()
+-- Derived attributes (populated by the EnrichAssistantEvents worker from
+-- tool_name + payload->tool_input + cwd — a base-insert + post-update split so the
+-- hot capture path is never blocked and the derivation is re-runnable/backfillable).
+-- All nullable; `enriched_at` NULL marks a row the worker has not processed yet.
+, repository_id    uuid              references sensei.repositories(id) on delete set null
+, plugin           text
+, method           text
+, tool_kind        text
+, call_info        text
+, enriched_at      timestamptz
 );
 
 create index if not exists assistant_events_session_id_idx
@@ -24,6 +34,16 @@ create index if not exists assistant_events_created_at_idx
 
 create index if not exists assistant_events_family_idx
     on assistant_events(family, created_at desc);
+
+-- The EnrichAssistantEvents worker scans un-enriched rows (enriched_at IS NULL) in
+-- id order — a partial index keeps that scan cheap as the enriched backlog drains.
+create index if not exists assistant_events_unenriched_idx
+    on assistant_events(id) where enriched_at is null;
+
+-- Repo-grain tool-usage reads (tool_usage_by_repository, once repointed to the stored
+-- column) filter by repository + day.
+create index if not exists assistant_events_repository_id_idx
+    on assistant_events(repository_id, created_at desc) where repository_id is not null;
 
 comment on table assistant_events is
 'Raw assistant event log — one row per hook/event invocation, from any

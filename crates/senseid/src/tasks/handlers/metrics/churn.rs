@@ -1019,4 +1019,89 @@ mod tests {
 
         cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
     }
+
+    // ── assistant_events enrichment (base-insert + post-update worker) ───────
+
+    #[tokio::test]
+    async fn enrich_assistant_events_derives_attrs_from_own_payload() {
+        // The EnrichAssistantEvents worker derives repository_id/plugin/method/
+        // tool_kind/call_info from each raw event's own tool_name + payload->tool_input
+        // + cwd. Insert raw events (enriched_at NULL) then enrich in one batch.
+        let ctx = make_ctx().await;
+        let pg = ctx.pg();
+        let uniq = uuid::Uuid::new_v4();
+        let (pid, fid, repo) = seed_git_project_folder(pg, &uniq).await;
+        let rid = repository_for_folder(pg, &fid).await;
+        let root = repo.path().to_string_lossy().to_string();
+        let sid = format!("_test:enrich:{uniq}");
+
+        // (tool_name, cwd, payload) — an MCP plugin call in the repo, a Bash call, and a builtin.
+        let events: [(&str, Option<&str>, serde_json::Value); 3] = [
+            ("mcp__plugin_sensei_sensei__get_project_conventions", Some(root.as_str()),
+             serde_json::json!({"tool_input": {"repoId": "sensei"}})),
+            ("Bash", Some(root.as_str()),
+             serde_json::json!({"tool_input": {"command": "cargo build", "description": "build"}})),
+            ("Read", None, serde_json::json!({"tool_input": {"file_path": "/x"}})),
+        ];
+        for (tool_name, cwd, payload) in &events {
+            sqlx_core::query::query(
+                "INSERT INTO activity.assistant_events (session_id, event_type, tool_name, cwd, ts, payload) \
+                 VALUES ($1, 'PreToolUse', $2, $3, 0, $4)",
+            )
+            .bind(&sid)
+            .bind(tool_name)
+            .bind(cwd)
+            .bind(payload)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+        }
+
+        // Drain the whole un-enriched backlog (the shared test DB may hold other
+        // tests' events with higher priority in id order; the worker enriches
+        // oldest-first, so drain until empty to reach our freshly-inserted rows).
+        let mut total = 0u64;
+        loop {
+            let n = pg.enrich_assistant_events(500).await.unwrap();
+            total += n;
+            if n == 0 {
+                break;
+            }
+        }
+        assert!(total >= 3, "enriched at least the 3 seeded events (got {total})");
+
+        #[allow(clippy::type_complexity)]
+        let rows: Vec<(String, Option<uuid::Uuid>, Option<String>, Option<String>, Option<String>, Option<String>)> =
+            query_as(
+                "SELECT tool_name, repository_id, plugin, method, tool_kind, call_info \
+                   FROM activity.assistant_events WHERE session_id = $1 ORDER BY tool_name",
+            )
+            .bind(&sid)
+            .fetch_all(pg.pool())
+            .await
+            .unwrap();
+        let by = |t: &str| rows.iter().find(|r| r.0 == t).unwrap_or_else(|| panic!("row for {t}")).clone();
+
+        let mcp = by("mcp__plugin_sensei_sensei__get_project_conventions");
+        assert_eq!(mcp.2.as_deref(), Some("sensei"), "plugin parsed from mcp__plugin_<plugin>_");
+        assert_eq!(mcp.3.as_deref(), Some("get_project_conventions"), "method = segment after final __");
+        assert_eq!(mcp.4.as_deref(), Some("mcp"), "tool_kind = mcp");
+        assert_eq!(mcp.1, Some(rid), "repository_id resolved from cwd via repo_anchor_for");
+
+        let bash = by("Bash");
+        assert_eq!(bash.4.as_deref(), Some("bash"), "tool_kind = bash");
+        assert_eq!(bash.5.as_deref(), Some("cargo build"), "call_info = the shell command");
+        assert_eq!(bash.2, None, "no plugin for a builtin");
+
+        let read = by("Read");
+        assert_eq!(read.4.as_deref(), Some("builtin"), "tool_kind = builtin");
+        assert_eq!(read.1, None, "no cwd → no repository_id (honest-empty)");
+
+        // Idempotent: a second pass enriches nothing (all enriched_at set).
+        assert_eq!(pg.enrich_assistant_events(100).await.unwrap(), 0, "re-run enriches nothing (enriched_at set)");
+
+        sqlx_core::query::query("DELETE FROM activity.assistant_events WHERE session_id = $1")
+            .bind(&sid).execute(pg.pool()).await.unwrap();
+        cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
+    }
 }
