@@ -41,10 +41,34 @@ const EXTRA_BIN_OPT_PREFIXES: &[&str] = &[
 /// them here.
 const EXTRA_BIN_OPT_SUBDIR_PREFIXES: &[&str] = &["postgresql@", "postgresql"];
 
+/// Per-user tool-install `bin` dirs that live OUTSIDE PATH — resolved at runtime
+/// because they hang off `$HOME` / an install-var. `qlty`'s installer lands the
+/// binary at `$QLTY_INSTALL/bin` (default `~/.qlty/bin`), which a launchd-managed
+/// daemon's minimal PATH (`/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin`) does
+/// NOT include — so `which qlty` misses in the daemon even though it's installed.
+/// Listed here so [`which_binary`] finds them (the same reason the Homebrew "opt"
+/// dirs are scanned for keg-only postgres).
+fn user_local_bin_dirs() -> Vec<String> {
+    let mut dirs = Vec::new();
+    // `$QLTY_INSTALL/bin` wins (an explicit non-default install), else `~/.qlty/bin`.
+    if let Ok(qlty_install) = std::env::var("QLTY_INSTALL")
+        && !qlty_install.is_empty()
+    {
+        dirs.push(format!("{qlty_install}/bin"));
+    }
+    if let Ok(home) = std::env::var("HOME")
+        && !home.is_empty()
+    {
+        dirs.push(format!("{home}/.qlty/bin"));
+    }
+    dirs
+}
+
 /// Find a binary on PATH (and well-known directories).
 ///
 /// Uses `which` on Unix and `where` on Windows; falls back to scanning
-/// `EXTRA_BIN_DIRS` and Homebrew "opt" subdirs for keg-only formulas
+/// `EXTRA_BIN_DIRS`, per-user tool dirs ([`user_local_bin_dirs`], e.g.
+/// `~/.qlty/bin`), and Homebrew "opt" subdirs for keg-only formulas
 /// (currently postgresql variants). Returns the full path if found,
 /// `None` otherwise.
 pub fn which_binary(name: &str) -> Option<String> {
@@ -68,6 +92,15 @@ pub fn which_binary(name: &str) -> Option<String> {
     }
 
     for dir in EXTRA_BIN_DIRS {
+        let candidate = format!("{dir}/{name}");
+        if std::path::Path::new(&candidate).exists() {
+            return Some(candidate);
+        }
+    }
+
+    // Per-user tool installs off PATH (qlty at ~/.qlty/bin) — the daemon's launchd
+    // PATH omits these, so a bare `which` misses them.
+    for dir in user_local_bin_dirs() {
         let candidate = format!("{dir}/{name}");
         if std::path::Path::new(&candidate).exists() {
             return Some(candidate);
@@ -186,6 +219,41 @@ mod tests {
         assert!(
             std::path::Path::new(&resolved).exists(),
             "resolved path should exist on disk: {resolved}",
+        );
+    }
+
+    #[test]
+    fn user_local_bin_dirs_includes_qlty_home_dir() {
+        // The `qlty` install dir (`~/.qlty/bin`) must be a resolution candidate — this
+        // is the dir the daemon's launchd PATH omits, which made every qlty scan miss.
+        // HOME is always set in the test environment; assert without mutating env.
+        if let Ok(home) = std::env::var("HOME")
+            && !home.is_empty()
+        {
+            let dirs = user_local_bin_dirs();
+            assert!(
+                dirs.iter().any(|d| d == &format!("{home}/.qlty/bin")),
+                "user_local_bin_dirs must include ~/.qlty/bin (got {dirs:?})",
+            );
+        }
+    }
+
+    /// Smoke test for the qlty fallback: when `~/.qlty/bin/qlty` actually exists on the
+    /// host, `which_binary("qlty")` MUST resolve it (via PATH or the ~/.qlty/bin
+    /// fallback) — the resolution the daemon relies on. Gated on the file existing so
+    /// CI/machines without qlty stay green (testing the fallback, not absence).
+    #[test]
+    fn which_binary_resolves_qlty_when_installed_in_user_local_dir() {
+        let Ok(home) = std::env::var("HOME") else { return };
+        let expected = format!("{home}/.qlty/bin/qlty");
+        if !std::path::Path::new(&expected).exists() {
+            return; // qlty not installed at the default location on this host — skip.
+        }
+        let resolved = which_binary("qlty")
+            .expect("which_binary(\"qlty\") must resolve when ~/.qlty/bin/qlty exists");
+        assert!(
+            std::path::Path::new(&resolved).exists(),
+            "resolved qlty path should exist on disk: {resolved}",
         );
     }
 }

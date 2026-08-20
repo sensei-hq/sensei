@@ -272,6 +272,9 @@ impl SenseiLocalConfig {
 mod tests {
     use super::*;
 
+    // These assertions pin a compile-time CONTRACT between two consts (a regression
+    // guard if either is edited), so a constant condition is the point — not a bug.
+    #[allow(clippy::assertions_on_constants)]
     #[test]
     fn pool_warm_floor_is_below_the_ceiling() {
         // sqlx rejects a pool with min_connections > max_connections at build

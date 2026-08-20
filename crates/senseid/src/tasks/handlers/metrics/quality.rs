@@ -153,11 +153,26 @@ impl QualityScan {
 /// metrics` exit `0` even when they find smells, so a non-success status is a genuine
 /// failure (missing config / missing tool), not "found findings".
 fn run_qlty(dir: &Path, args: &[&str]) -> Option<String> {
-    let out = std::process::Command::new("qlty")
-        .args(args)
-        .current_dir(dir)
-        .output()
-        .ok()?;
+    // Resolve `qlty` through the SHARED bootstrap resolver — NOT a bare
+    // `Command::new("qlty")`. qlty installs at `~/.qlty/bin` (or `$QLTY_INSTALL/bin`),
+    // which the daemon's launchd PATH does not include; a bare spawn misses it and
+    // silently empties the whole quality family. `command_for` scans PATH + those
+    // user-local dirs (its doc: callers MUST use it when the binary may live outside
+    // the process PATH).
+    let mut cmd = match sensei_bootstrap::util::command_for("qlty") {
+        Ok(cmd) => cmd,
+        Err(e) => {
+            // qlty is a SOFT prereq (absent → honest-empty, daemon runs fine), but a
+            // fully-unresolvable CLI would otherwise seal the watermark as if measured.
+            // Surface it (no silent errors) instead of a silent empty.
+            tracing::warn!(
+                error = %e,
+                "quality: qlty CLI not resolved — quality metrics stay honest-empty until it is installed (~/.qlty/bin, $QLTY_INSTALL/bin, or on PATH)",
+            );
+            return None;
+        }
+    };
+    let out = cmd.args(args).current_dir(dir).output().ok()?;
     out.status
         .success()
         .then(|| String::from_utf8_lossy(&out.stdout).into_owned())
@@ -1106,9 +1121,10 @@ mod tests {
         // qlty is optional (SOFT prereq): gate the assertion on its presence so this
         // passes both locally (qlty installed → measured) and on a bare CI (absent →
         // honest-empty). Config-pinning removed the "no committed .qlty" miss cause, so
-        // a miss now means only the CLI is absent.
-        let qlty_present = std::process::Command::new("qlty").arg("--version").output()
-            .map(|o| o.status.success()).unwrap_or(false);
+        // a miss now means only the CLI is absent. Resolve it THE SAME WAY production
+        // does (the shared resolver, incl. ~/.qlty/bin) — NOT a bare `Command::new`,
+        // whose PATH-only view is exactly what silently emptied quality in the daemon.
+        let qlty_present = sensei_bootstrap::util::which_binary("qlty").is_some();
         if qlty_present {
             assert!(written > 0, "config-pinning lets a repo with no committed .qlty be measured (qlty present)");
             assert_eq!(total as u32, written, "every written quality row is repository-attributed");
