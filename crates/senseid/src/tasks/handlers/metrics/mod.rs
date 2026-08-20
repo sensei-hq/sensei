@@ -41,6 +41,7 @@ mod knowledge;
 pub(crate) mod planner;
 mod quality;
 mod session_outcomes;
+mod session_process;
 
 /// Today's date (DB `current_date`) — the `computed_on` for the SNAPSHOT metrics
 /// (`churn`'s `rework_density`) that store a point-in-time value rather than a
@@ -155,6 +156,9 @@ pub(crate) enum MetricGroup {
     /// Test coverage, INGESTED from an lcov report the project's test run produced
     /// (the daemon never runs tests). Forward-only snapshot.
     Coverage,
+    /// LLM process-quality judgments (spec 2026-08-20): day-keyed metrics derived
+    /// from `sessions.props.process` (spec_depth + the three occurrence rates).
+    SessionProcess,
 }
 
 impl MetricGroup {
@@ -168,6 +172,7 @@ impl MetricGroup {
             "autonomy" => Some(Self::Autonomy),
             "knowledge" => Some(Self::Knowledge),
             "coverage" => Some(Self::Coverage),
+            "session_process" => Some(Self::SessionProcess),
             _ => None,
         }
     }
@@ -181,6 +186,7 @@ impl MetricGroup {
             Self::Autonomy => "autonomy",
             Self::Knowledge => "knowledge",
             Self::Coverage => "coverage",
+            Self::SessionProcess => "session_process",
         }
     }
 }
@@ -262,6 +268,7 @@ mod tests {
         assert_eq!(MetricGroup::from_task_name("quality"), Some(MetricGroup::Quality));
         assert_eq!(MetricGroup::from_task_name("autonomy"), Some(MetricGroup::Autonomy));
         assert_eq!(MetricGroup::from_task_name("knowledge"), Some(MetricGroup::Knowledge));
+        assert_eq!(MetricGroup::from_task_name("session_process"), Some(MetricGroup::SessionProcess));
         assert_eq!(MetricGroup::from_task_name("coverage"), Some(MetricGroup::Coverage));
         // `tool` is retired (unused_tools → the tool_usage_by_repository view), no longer a group.
         assert_eq!(MetricGroup::from_task_name("tool"), None);

@@ -73,6 +73,16 @@ async fn enqueue_due_project(queue: &TaskQueue, pid: &uuid::Uuid) {
     queue.enqueue(Task::new(TaskKind::ScanDocDrift, "", &pid.to_string())).await;
 }
 
+/// Enqueue the DAILY-only LLM process-quality pass for one project (spec
+/// 2026-08-20). Separated from [`enqueue_due_project`] because it rides the daily
+/// full-refresh window, NOT every hourly activity tick — it's up to
+/// `batch_per_tick` local reasoning-chain calls, too heavy to run hourly. The
+/// task itself is watermark-gated (only un-scored sessions) + batch-capped, so a
+/// daily enqueue drains the backlog incrementally over successive days.
+async fn enqueue_daily_process(queue: &TaskQueue, pid: &uuid::Uuid) {
+    queue.enqueue(Task::new(TaskKind::AnalyzeSessionProcess, "", &pid.to_string())).await;
+}
+
 /// Enqueue the once-per-tick global aggregation passes, in dependency order.
 /// Extracted as a small helper (like [`enqueue_due_project`]) so the ordering
 /// contract is unit-testable without driving `run`'s infinite loop.
@@ -237,6 +247,12 @@ async fn run(queue: Arc<TaskQueue>, pg: Arc<PgStore>) {
                         tracing::warn!(project_id = %pid, error = %e, "analyzer_scheduler: could not list folders for community detection");
                     }
                 }
+            }
+            // LLM process-quality pass, daily only (spec 2026-08-20): score each
+            // active project's un-scored transcripts. Watermark-gated + batch-capped
+            // in the handler, so this daily enqueue drains the backlog incrementally.
+            for (pid, _) in &activity {
+                enqueue_daily_process(&queue, pid).await;
             }
         }
 

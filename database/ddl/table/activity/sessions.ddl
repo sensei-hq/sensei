@@ -26,6 +26,7 @@ create table if not exists sessions (
 , analyzed_at              timestamptz
 , backfilled               boolean     not null default false  -- synthesized from a historical transcript (#75), not live-captured
 , meta_synced_at           timestamptz -- when the transcript backfill last attempted model+token capture for this session; gates the one-time metadata backfill so a token-less source isn't re-read every cycle
+, process_analyzed_at      timestamptz -- when the LLM process-quality analyzer last scored this session (spec 2026-08-20); gates the daily incremental pass so a session is judged at most once until its transcript changes
 );
 
 create index if not exists sessions_folder_id_idx
@@ -116,3 +117,9 @@ inference model + token usage from the source transcript. Set once the attempt
 runs (whether or not the source carried the values), so a session whose source has
 no tokens (e.g. a Zed thread) is not re-read on every backfill cycle. NULL ⇒ never
 attempted ⇒ eligible for the one-time metadata backfill.';
+comment on column sessions.process_analyzed_at
+     is 'When the LLM process-quality analyzer last scored this session (spec
+2026-08-20). Gates the daily incremental pass: NULL ⇒ never scored ⇒ eligible;
+set to now() after a successful pass. Cleared when a transcript re-ingest bumps
+the session so its judgments are recomputed. props.process holds the judgments;
+activity.session_process_evidence holds the cited turns.';

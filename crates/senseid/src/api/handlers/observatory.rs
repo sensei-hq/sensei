@@ -324,6 +324,24 @@ pub(crate) async fn analyze_solution(
     })))
 }
 
+/// `POST /api/projects/{id}/process/analyze` — on-demand LLM process-quality pass
+/// (spec 2026-08-20): enqueue `AnalyzeSessionProcess` for this project so its
+/// un-scored sessions get spec-depth/deviation + refuted-findings +
+/// incomplete-analysis judgments (the scheduler also runs this daily). The task is
+/// watermark-gated + batch-capped, so repeated calls drain the backlog
+/// incrementally. Fail-closed: 404 for an unknown project. Returns `{ queued }`.
+pub(crate) async fn analyze_process(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let project_id = resolve_project_uuid(&state, &id).await?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    state.task_queue.enqueue(
+        crate::tasks::Task::new(crate::tasks::TaskKind::AnalyzeSessionProcess, "", &project_id.to_string()),
+    ).await;
+    Ok(Json(serde_json::json!({ "ok": true, "queued": true })))
+}
+
 /// `POST /api/projects/{id}/backfill` — RE-DERIVE this project's session signals
 /// from scratch: clear `analyzed_at` (so every captured session re-enriches with
 /// the CURRENT transcript-ground-truth logic) and enqueue `AnalyzeProject` (which
