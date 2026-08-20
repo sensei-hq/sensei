@@ -2112,11 +2112,10 @@ mod tests {
         use crate::tasks::handlers::metrics::HEALTH_TASK_NAME;
         use crate::tasks::test_support::{
             cleanup_metrics_fixture, git_commit_on_day, make_ctx, purge_assistant_events,
-            purge_assistant_tools, purge_corrections, purge_runs, purge_tool_verdicts,
-            seed_assistant_event, seed_assistant_tool, seed_correction, seed_detected_pattern,
-            seed_file_node, seed_git_project_folder, seed_memory, seed_metrics_client_session,
-            seed_metrics_session, seed_metrics_turn, seed_pattern_with_instances, seed_run,
-            seed_tool_session, seed_tool_verdict,
+            purge_corrections, purge_runs, seed_assistant_event, seed_correction,
+            seed_detected_pattern, seed_file_node, seed_git_project_folder, seed_memory,
+            seed_metrics_client_session, seed_metrics_session, seed_metrics_turn,
+            seed_pattern_with_instances, seed_run,
         };
         use crate::tasks::{Task, TaskKind};
         use sqlx_core::query_as::query_as;
@@ -2134,18 +2133,14 @@ mod tests {
         let folder_abs = repo.path().to_string_lossy().to_string();
         let pid_str = pid.to_string();
 
-        // no-FK client-session ids / family / correction signatures (explicit purge).
+        // no-FK client-session ids / correction signatures (explicit purge).
         let csid_auto = format!("_test:e2e-auto:{uniq}");
-        let csid_tool = format!("_test:e2e-tool:{uniq}");
-        let family = format!("_test-fam-e2e-{uniq}");
         let sig_a = format!("_test:e2e-corr-a:{uniq}");
         let sig_b = format!("_test:e2e-corr-b:{uniq}");
 
         // Idempotent pre-clean of the tables that never cascade (guards a prior
         // crashed run that leaked rows under these ids).
-        purge_assistant_events(pg, &[&csid_auto, &csid_tool]).await;
-        purge_tool_verdicts(pg, &[&csid_tool]).await;
-        purge_assistant_tools(pg, &[&family]).await;
+        purge_assistant_events(pg, &[&csid_auto]).await;
         purge_corrections(pg, &[&sig_a, &sig_b]).await;
         purge_runs(pg, &[&pid]).await;
 
@@ -2202,15 +2197,9 @@ mod tests {
         seed_correction(pg, &sig_b, 5, &[pid]).await;
         // → memory_promotion 2/(2 patterns + 2 corrections) = 2/4 = 0.5
 
-        // ── tool: family-scoped registry (4 tools) with one 'used' verdict ──
-        seed_tool_session(pg, &fid, &pid, &csid_tool, &family, ts).await;
-        for t in ["t1", "t2", "t3", "t4"] {
-            seed_assistant_tool(pg, &family, "builtin", "builtin", t, t).await;
-        }
-        seed_tool_verdict(pg, &csid_tool, "t1", "used", ts).await;
-        // → unused_tools 0: relevance-based (M−N). Only t1 was ever invoked →
-        //   relevant=1, used=1 → 0 dead. t2/t3/t4 were never invoked → NOT relevant,
-        //   so they are not "dead surface" (never fabricated as dead). total_tools=4.
+        // (tool: the `unused_tools` snapshot is RETIRED — tool usage is now the
+        //  repo-grain `activity.tool_usage_by_repository` view over the raw event
+        //  stream, not a computed metric, so nothing is seeded/asserted for it here.)
 
         // ── DRIVE: replicate the scheduler's enqueue, run the REAL worker pool ──
         let ctx = make_ctx().await;
@@ -2221,7 +2210,7 @@ mod tests {
             .into_iter()
             .filter(|t| t != HEALTH_TASK_NAME) // `health` is the ComputeHealth kind, not a base group
             .collect();
-        for g in ["session_outcomes", "churn", "quality", "autonomy", "knowledge", "tool"] {
+        for g in ["session_outcomes", "churn", "quality", "autonomy", "knowledge", "coverage"] {
             assert!(base_names.iter().any(|t| t == g), "base group `{g}` is active in the registry: {base_names:?}");
         }
         // Enqueue the per-project PARENT only: ComputeProjectMetrics freezes one
@@ -2284,28 +2273,25 @@ mod tests {
         assert!(close(get("interruption_rate"), 0.4), "interruption_rate = 4/10 = 0.4 (got {})", get("interruption_rate"));
         assert!(close(get("run_completion"), 0.8), "run_completion = 4/5 = 0.8 (got {})", get("run_completion"));
         assert!(close(get("memory_promotion"), 0.5), "memory_promotion = 2/4 = 0.5 (got {})", get("memory_promotion"));
-        // Relevance-based denominator: a tool is RELEVANT only if this project has
-        // ever invoked it (a tool_call_verdicts row). The seed gives ONE verdict
-        // (t1 'used'), so relevant=1, used=1 → dead = M - N = 0. t2/t3/t4 were never
-        // invoked → not relevant → not "dead surface" (never fabricated as dead).
-        assert!(close(get("unused_tools"), 0.0), "unused_tools = 0 dead RELEVANT tools (relevant=1, used=1; t2/t3/t4 never invoked → not relevant) (got {})", get("unused_tools"));
+        // (unused_tools RETIRED — replaced by the tool_usage_by_repository view; not computed.)
         // context_pressure_rate: 0 of the 4 measurable sessions carried a context-
         // pressure trouble signal → 0/4 = 0.0 (an honest zero — a real row, not fabricated).
         assert!(close(get("context_pressure_rate"), 0.0), "context_pressure_rate = 0/4 = 0.0 (no pressure signals seeded) (got {})", get("context_pressure_rate"));
 
-        // 12 base metric rows; no composite. The five session_outcomes metrics
+        // 11 base metric rows; no composite. The five session_outcomes metrics
         // (ftr, rework_ratio, throughput, time_to_useful_result, context_pressure_rate),
         // churn's three (churn_rate, churn_concentration, rework_density), autonomy's two
         // (interruption_rate, run_completion; false_crash_rate is declared-but-uncomputed),
-        // memory_promotion, and unused_tools. project_health is RETIRED, so the health
-        // barrier wrote no composite row.
+        // and memory_promotion. unused_tools is RETIRED (→ tool_usage_by_repository view)
+        // and coverage is honest-empty here (no lcov in the seed repo). project_health is
+        // RETIRED, so the health barrier wrote no composite row.
         //
         // The quality group (duplication_ratio/module_quality) is now CONFIG-PINNED
         // (P-B): the pinned ruler is injected into the scanned worktree, so on a host
         // WITH the qlty CLI it measures the seed repo's committed files (2 more rows);
         // WITHOUT qlty it is honest-empty. Gate on qlty so the E2E passes both locally
         // and on a bare CI — never a fabricated score either way.
-        let base_rows = 12;
+        let base_rows = 11;
         let qlty_present = std::process::Command::new("qlty").arg("--version").output()
             .map(|o| o.status.success()).unwrap_or(false);
         if qlty_present {
@@ -2367,16 +2353,19 @@ mod tests {
         for k in [
             "ftr", "rework_ratio", "throughput", "time_to_useful_result", "churn_rate",
             "churn_concentration", "rework_density", "duplication_ratio", "interruption_rate",
-            "run_completion", "memory_promotion", "unused_tools",
+            "run_completion", "memory_promotion",
         ] {
             let m = reg.iter().find(|m| m["key"].as_str() == Some(k))
                 .unwrap_or_else(|| panic!("registry endpoint serves `{k}`"));
             assert!(m["purpose"].as_str().is_some_and(|s| !s.is_empty()), "`{k}` carries a purpose facet");
             assert!(m["direction"].as_str().is_some_and(|s| !s.is_empty()), "`{k}` carries a direction facet");
         }
-        // The retired composite is served by NEITHER the registry (active-only) …
+        // The retired composite + the retired unused_tools are served by NEITHER the
+        // registry (active-only) …
         assert!(!reg.iter().any(|m| m["key"].as_str() == Some("project_health")),
             "registry endpoint does NOT serve the retired project_health");
+        assert!(!reg.iter().any(|m| m["key"].as_str() == Some("unused_tools")),
+            "registry endpoint does NOT serve the retired unused_tools (→ tool_usage_by_repository view)");
 
         // ── ENDPOINT 2: GET /api/projects/{id}/metrics returns the seeded data ──
         let (st, body) = req(app.clone(), "GET", &format!("/api/projects/{pid}/metrics"), None).await;
@@ -2445,9 +2434,7 @@ mod tests {
 
         // ── CLEANUP: purge the no-FK tables, then the project + folder (cascades) ──
         purge_runs(pg, &[&pid]).await;
-        purge_assistant_events(pg, &[&csid_auto, &csid_tool]).await;
-        purge_tool_verdicts(pg, &[&csid_tool]).await;
-        purge_assistant_tools(pg, &[&family]).await;
+        purge_assistant_events(pg, &[&csid_auto]).await;
         purge_corrections(pg, &[&sig_a, &sig_b]).await;
         cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
     }
