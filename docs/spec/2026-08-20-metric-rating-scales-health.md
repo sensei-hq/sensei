@@ -37,10 +37,22 @@ builds the viz separately. This spec delivers the **rating-scale data + the scor
   instead of bunching at an extreme. Tunable by editing the datafile + re-import — no
   redeploy, no code change. Generalizes the maintainability grade already shipped
   (`25beb609`).
-- **R3 — Direction-aware rating from the metric's own `direction`.** `higher_better`:
-  thresholds ascend, `rating = count(t ≤ value)`. `lower_better`: thresholds descend,
-  `rating = count(t ≥ value)`. Below the rating-1 threshold → 0. A `neutral`-direction
-  metric has no "better", so it is NOT rated (excluded from radar + score — see R7).
+- **R3 — Direction-aware rating from the metric's own `direction`; 0–5 over 5
+  thresholds; HALF-OPEN bands with OPEN ends.** The scale is 5 thresholds (the entry
+  values for ratings 1,2,3,4,5). `rating = count of thresholds "reached"`:
+  `higher_better` (thresholds ascend) → `count(t ≤ value)`; `lower_better` (thresholds
+  descend) → `count(t ≥ value)`. So the bands are half-open `[tᵢ, tᵢ₊₁)` and the ENDS
+  are open — the bottom band (rating 0) runs down to the worst possible value and the
+  top band (rating 5) runs up to the best (100% / 0). Worked coverage
+  `[0.40,0.55,0.70,0.80,0.90]`: `x<0.40 → 0`, `[0.40,0.55) → 1`, `[0.55,0.70) → 2`,
+  `[0.70,0.80) → 3`, `[0.80,0.90) → 4`, `0.90 ≤ x → 5`.
+  **Floor is 0, not 1 — deliberately** (R6 corollary): a *measured-and-failing* metric
+  reads **0** (a radar spoke at the center — an honest "this is failing"), which is
+  distinct from *not-measured-at-all* (EXCLUDED from the score, R6). A `neutral`-direction
+  metric has no "better", so it is NOT rated (excluded — see R7).
+  (Alternative under consideration: a 1–5 floor — 4 thresholds, `rating = 1 + count` —
+  if a metric should never read 0; rejected as default because it blurs failing vs
+  unmeasured.)
 - **R4 — Health = weighted mean of ratings, on the 0–5 scale.** `project_health` is
   revived as `round1(Σ wᵢ·ratingᵢ / Σ wᵢ)` over the INCLUDED metrics, `type = score`,
   domain `[0,5]` (a "3.8 / 5"). (A 0–100 presentation is just ×20 in the UI; the stored
