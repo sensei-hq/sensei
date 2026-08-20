@@ -46,9 +46,24 @@
     };
 
     // @rokkit/chart reads the series from the canvas' PlotState. A null v is a gap: the
-    // line builder breaks the path there (d3 `.defined`) instead of diving to 0.
-    const rows = $derived(series.map((v, i) => ({ i, v })));
+    // line/bar builder skips it (d3 `.defined`) instead of diving to 0. `vt` is a
+    // carry-forward-filled copy used ONLY by the moving-average trend (bars/line stay
+    // gap-aware via `v`): a trend inherently spans gaps, and rokkit's Plot.Trend reads
+    // `Number(y)` where `Number(null) === 0` would drag the line to the floor at every
+    // gap — carrying the last known value keeps the average honest across absent periods.
+    const rows = $derived.by(() => {
+        let firstDefined: number | null = null;
+        for (const v of series) if (v != null) { firstDefined = v; break; }
+        let last = firstDefined; // leading gaps carry the first defined value
+        return series.map((v, i) => {
+            if (v != null) last = v;
+            return { i, v, vt: last };
+        });
+    });
     const definedCount = $derived(series.filter((v) => v != null).length);
+    // A trailing simple moving average needs a few points to be meaningful; below this
+    // the raw bars already tell the whole story, so the trend is omitted.
+    const TREND_WINDOW = 3;
     // The last defined slot — the endpoint the health-hero dot marks (never a trailing gap).
     const lastIndex = $derived.by(() => {
         for (let i = series.length - 1; i >= 0; i--) {
@@ -78,8 +93,14 @@
     >
         {#if kind === 'bar'}
             <!-- Discrete counts as gap-aware bars (a null period draws no bar), so
-                 sporadic work reads as bursts, not a misleading continuous line. -->
+                 sporadic work reads as bursts, not a misleading continuous line. A
+                 dashed moving-average trend (rokkit Plot.Trend) rides over the bars so
+                 the direction of travel is legible through the noise; it reads the
+                 carry-forward `vt` channel so gaps don't drag it to zero. -->
             <Plot.Bar x="i" y="v" fill="currentColor" />
+            {#if definedCount > TREND_WINDOW}
+                <Plot.Trend x="i" y="vt" trend={{ type: 'ma', window: TREND_WINDOW }} />
+            {/if}
         {:else}
             <Plot.Line x="i" y="v" color="currentColor" options={{ strokeWidth: 1.5 }} />
             {#if endDot && lastIndex != null}
