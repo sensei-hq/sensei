@@ -34,6 +34,7 @@ use crate::db::pg_store::PgStore;
 /// superseded the former own-graph `duplication` snapshot.
 mod autonomy;
 mod churn;
+mod coverage;
 mod explainer;
 mod health;
 mod knowledge;
@@ -153,6 +154,9 @@ pub(crate) enum MetricGroup {
     Autonomy,
     Knowledge,
     Tool,
+    /// Test coverage, INGESTED from an lcov report the project's test run produced
+    /// (the daemon never runs tests). Forward-only snapshot, `scope = repo`.
+    Coverage,
 }
 
 impl MetricGroup {
@@ -166,6 +170,7 @@ impl MetricGroup {
             "autonomy" => Some(Self::Autonomy),
             "knowledge" => Some(Self::Knowledge),
             "tool" => Some(Self::Tool),
+            "coverage" => Some(Self::Coverage),
             _ => None,
         }
     }
@@ -179,6 +184,7 @@ impl MetricGroup {
             Self::Autonomy => "autonomy",
             Self::Knowledge => "knowledge",
             Self::Tool => "tool",
+            Self::Coverage => "coverage",
         }
     }
 }
@@ -261,6 +267,7 @@ mod tests {
         assert_eq!(MetricGroup::from_task_name("autonomy"), Some(MetricGroup::Autonomy));
         assert_eq!(MetricGroup::from_task_name("knowledge"), Some(MetricGroup::Knowledge));
         assert_eq!(MetricGroup::from_task_name("tool"), Some(MetricGroup::Tool));
+        assert_eq!(MetricGroup::from_task_name("coverage"), Some(MetricGroup::Coverage));
     }
 
     #[test]
