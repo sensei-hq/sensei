@@ -63,6 +63,12 @@ pub enum TaskKind {
     /// Enrich a project's sessions from the captured hook-event stream —
     /// derive turns/corrections/outcome/ftr/duration/module (analyzer L0, #66).
     AnalyzeProject,
+    /// LLM process-quality pass over a project's un-scored transcripts — spec
+    /// depth/deviation + refuted-findings + incomplete-analysis into
+    /// `sessions.props.process` + evidence (spec 2026-08-20). Local reasoning
+    /// chain, batch-capped, watermark-gated; `path` carries the project id.
+    /// Enqueued on the analyzer scheduler's daily full-refresh window.
+    AnalyzeSessionProcess,
     /// Scan a project's doc nodes for backtick identifier mentions that no
     /// longer resolve to a live code node, materialising `inference.drift_items`
     /// (analyzer-driven counterpart to the manual `/drift/scan` endpoint).
@@ -171,6 +177,7 @@ impl std::fmt::Display for TaskKind {
             Self::MeasureVerdicts => write!(f, "measure_verdicts"),
             Self::ReconcileIdentity => write!(f, "reconcile_identity"),
             Self::AnalyzeProject => write!(f, "analyze_project"),
+            Self::AnalyzeSessionProcess => write!(f, "analyze_session_process"),
             Self::ScanDocDrift => write!(f, "scan_doc_drift"),
             Self::BackfillTranscripts => write!(f, "backfill_transcripts"),
             Self::BackfillTranscriptFile => write!(f, "backfill_transcript_file"),
@@ -262,6 +269,10 @@ impl TaskKind {
             // Eager insight-copy warming is up to WARM_CAP sequential model calls
             // (a cold embedded model is slow first); the breaker caps a down model.
             | TaskKind::WarmInsightCopy
+            // Process-quality pass is up to batch_per_tick (default 25) sequential
+            // reasoning-chain calls over per-session transcripts — a batch that
+            // scales with the backlog, so it shares the generous batch budget.
+            | TaskKind::AnalyzeSessionProcess
             // Metrics group compute (base groups, all planned days) + the
             // per-project health barrier each scan a project's window (sessions /
             // churn / duplication …) and write sensei.project_metrics — a
@@ -546,7 +557,8 @@ mod tests {
             TaskKind::BranchSwitch, TaskKind::BuildConnections,
             TaskKind::EmbedNodes, TaskKind::IndexLibrary, TaskKind::IndexLibraryPage,
             TaskKind::DetectCommunities, TaskKind::ExtractDeps, TaskKind::MeasureVerdicts,
-            TaskKind::ReconcileIdentity, TaskKind::AnalyzeProject, TaskKind::ScanDocDrift,
+            TaskKind::ReconcileIdentity, TaskKind::AnalyzeProject,
+            TaskKind::AnalyzeSessionProcess, TaskKind::ScanDocDrift,
             TaskKind::BackfillTranscripts,
             TaskKind::BackfillTranscriptFile, TaskKind::AggregateCorrections,
             TaskKind::AggregateToolInsights, TaskKind::ClassifyPendingVerdicts,

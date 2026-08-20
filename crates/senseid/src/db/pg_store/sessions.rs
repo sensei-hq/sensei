@@ -1092,6 +1092,91 @@ impl PgStore {
         Ok(())
     }
 
+    // ── Process-quality analyzer (spec 2026-08-20) ──────────────────────
+
+    /// Measurable sessions for a project that still need the LLM process-quality
+    /// pass — `process_analyzed_at IS NULL` (never scored, or cleared by a
+    /// re-ingest). Returns `(session_uuid, client_session_id)`; a session with no
+    /// `client_session_id` can't join its transcript turns, so it's excluded (the
+    /// judgment has nothing to ground in — honest skip, not a fabricated score).
+    /// `outcome IS NOT NULL AND <> 'empty'` restricts to the same measurable base
+    /// the other session metrics use. Newest-first, capped at `limit` (the per-tick
+    /// batch cap so one project can't dominate the queue).
+    pub async fn sessions_needing_process_analysis(
+        &self, project_id: &uuid::Uuid, limit: i64,
+    ) -> Result<Vec<(uuid::Uuid, String)>, String> {
+        sqlx_core::query_as::query_as(
+            "SELECT id, client_session_id
+               FROM activity.sessions
+              WHERE project_id = $1
+                AND process_analyzed_at IS NULL
+                AND client_session_id IS NOT NULL
+                AND outcome IS NOT NULL AND outcome <> 'empty'::sensei.session_outcome
+              ORDER BY started_at DESC
+              LIMIT $2",
+        )
+        .bind(project_id)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())
+    }
+
+    /// Persist one session's process-quality result in a single transaction:
+    /// merge `judgments` into `sessions.props.process`, replace this session's
+    /// `session_process_evidence` rows with `evidence`, and stamp
+    /// `process_analyzed_at = now()` (the watermark). Evidence is keyed on the
+    /// `client_session_id` (matches `transcript_turns.session_id`); the session
+    /// row is keyed on the `id` uuid. Idempotent — a re-score overwrites props +
+    /// evidence in place. `evidence` rows are `(signal, turn_index, quote, kind)`.
+    /// Caller guarantees every evidence row cites a real turn (spec D5); this only
+    /// persists what it's given.
+    pub async fn save_session_process(
+        &self,
+        session_id: &uuid::Uuid,
+        client_session_id: &str,
+        judgments: &serde_json::Value,
+        evidence: &[(String, i32, String, Option<String>)],
+    ) -> Result<(), String> {
+        let mut tx = self.pool.begin().await.map_err(|e| e.to_string())?;
+        // 1. Merge the judgment object under props.process (preserve other props).
+        sqlx_core::query::query(
+            "UPDATE activity.sessions
+                SET props = coalesce(props, '{}'::jsonb) || jsonb_build_object('process', $2::jsonb),
+                    process_analyzed_at = now()
+              WHERE id = $1",
+        )
+        .bind(session_id)
+        .bind(judgments)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| e.to_string())?;
+        // 2. Replace this session's evidence rows (delete-then-insert = idempotent).
+        sqlx_core::query::query(
+            "DELETE FROM activity.session_process_evidence WHERE session_id = $1",
+        )
+        .bind(client_session_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| e.to_string())?;
+        for (signal, turn_index, quote, kind) in evidence {
+            sqlx_core::query::query(
+                "INSERT INTO activity.session_process_evidence (session_id, signal, turn_index, quote, kind)
+                 VALUES ($1, $2, $3, $4, $5)",
+            )
+            .bind(client_session_id)
+            .bind(signal)
+            .bind(turn_index)
+            .bind(quote)
+            .bind(kind.as_deref())
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| e.to_string())?;
+        }
+        tx.commit().await.map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
     // ── Projects ──────────────────────────────────────────────────────
 
     /// Recent sessions for a project with the folder role they ran in (the

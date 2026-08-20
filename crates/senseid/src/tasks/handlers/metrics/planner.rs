@@ -69,15 +69,21 @@ pub(super) enum DayKeyedGroup {
     /// [`super::quality::sample_commit_days`]) to bound the heavy scan cost. Also
     /// git/source-derived, so it does NOT authorize the pruner's capture-before-reclaim.
     Quality,
+    /// LLM process-quality (`spec_depth` + the three occurrence rates): filled per
+    /// day of sessions the LLM analyzer has scored (`sessions.props ? 'process'`),
+    /// bucketed on `sessions.started_at`. Session-source, so it DOES ride the same
+    /// day cadence as `session_outcomes`.
+    SessionProcess,
 }
 
 impl DayKeyedGroup {
     /// Every day-keyed group, in a stable order.
-    pub(super) const ALL: [DayKeyedGroup; 4] = [
+    pub(super) const ALL: [DayKeyedGroup; 5] = [
         DayKeyedGroup::SessionOutcomes,
         DayKeyedGroup::Autonomy,
         DayKeyedGroup::Churn,
         DayKeyedGroup::Quality,
+        DayKeyedGroup::SessionProcess,
     ];
 
     /// The base [`MetricGroup`] this day-keyed group computes — the single source of
@@ -89,6 +95,7 @@ impl DayKeyedGroup {
             DayKeyedGroup::Autonomy => MetricGroup::Autonomy,
             DayKeyedGroup::Churn => MetricGroup::Churn,
             DayKeyedGroup::Quality => MetricGroup::Quality,
+            DayKeyedGroup::SessionProcess => MetricGroup::SessionProcess,
         }
     }
 
@@ -154,6 +161,14 @@ impl DayKeyedGroup {
                       WHERE s.project_id   = $1
                         AND ae.event_type  = 'UserPromptSubmit'
                  ) u"
+            }
+            DayKeyedGroup::SessionProcess => {
+                // Days of sessions the LLM analyzer has SCORED (props ? 'process'),
+                // bucketed on started_at — the base the process computer writes over.
+                "SELECT DISTINCT date_trunc('day', s.started_at)::date AS day
+                   FROM activity.sessions s
+                  WHERE s.project_id = $1
+                    AND s.props ? 'process'"
             }
             // Handled by the git early-return above (churn/quality are not SQL day-sets).
             DayKeyedGroup::Churn | DayKeyedGroup::Quality => {
@@ -258,6 +273,7 @@ async fn run_computer(
         MetricGroup::Autonomy => super::autonomy::compute(ctx, project_raw, as_of).await,
         MetricGroup::Knowledge => super::knowledge::compute(ctx, project_raw, as_of).await,
         MetricGroup::Coverage => super::coverage::compute(ctx, project_raw, as_of).await,
+        MetricGroup::SessionProcess => super::session_process::compute(ctx, project_raw, as_of).await,
     }
 }
 

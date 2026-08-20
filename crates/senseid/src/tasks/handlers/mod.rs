@@ -28,6 +28,7 @@ mod corrections_llm;
 mod prompt_classify;
 pub(crate) mod tool_insights;
 mod learn_playbooks;
+pub(crate) mod session_process;
 pub(crate) mod metrics;
 pub(crate) mod helpers;
 
@@ -52,3 +53,4 @@ pub(crate) use publish_run::resolve_run_memberships;
 pub use advance_run::advance_run;
 pub use warm_insight_copy::warm_insight_copy;
 pub use learn_playbooks::learn_playbooks;
+pub use session_process::analyze_session_process;
