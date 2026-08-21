@@ -480,6 +480,8 @@ export function senseiApi(port: number) {
       get<{
         materializable: boolean; kind?: string; action_type?: string; reason?: string;
         title?: string; body?: string; impact?: string | null; gov_scope?: string; enforcement?: string;
+        // file-class (write_skill/create_agent) preview fields:
+        name?: string; path?: string; content?: string; consent_required?: boolean;
       }>(`/api/projects/${enc(id)}/recommendations/${enc(recId)}/preview`, { materializable: false }),
     materializeRecommendation: (
       id: string, recId: string,
