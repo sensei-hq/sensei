@@ -14,6 +14,25 @@ use std::sync::Arc;
 
 use crate::db::pg_store::PgStore;
 
+/// Serialises tests that mutate `inference.corrections` GLOBALLY.
+///
+/// Two operations on that table are table-wide by design, not per-project:
+/// - `delete_corrections_not_in(keep)` deletes every signature outside `keep`,
+///   so a test passing only its OWN signature wipes every other test's rows.
+/// - `aggregate_corrections` prunes to the signatures it just recomputed, and
+///   with no corrective prompts present that clears the table outright.
+///
+/// Neither can be scoped per-test — being table-wide is the behaviour under
+/// test. Concurrently, they silently delete a sibling's fixture: this is what
+/// made `metrics_pipeline_end_to_end` flake, its `memory_promotion` denominator
+/// dropping from 4 eligible items to 2 mid-run (2/2 = 1.0 instead of 2/4 = 0.5)
+/// because another test's sweep removed its two seeded corrections.
+///
+/// Hold this for the whole span between seeding corrections and asserting on
+/// anything derived from them.
+pub(crate) static CORRECTIONS_TABLE_LOCK: std::sync::LazyLock<tokio::sync::Mutex<()>> =
+    std::sync::LazyLock::new(|| tokio::sync::Mutex::new(()));
+
 /// A [`TaskContext`](crate::tasks::executor::TaskContext) backed by a fresh
 /// `TaskQueue`, the test `PgStore`, and a noop gateway — the standard fixture for
 /// task-handler unit tests.
