@@ -15,6 +15,7 @@
         metricAbout,
         linkifyMetrics,
         formatMetricValue,
+        metricTickFormatter,
         TREND_TEXT,
         GRADE_CLASS,
     } from '$lib/metrics/metric-view.js';
@@ -44,7 +45,11 @@
 
     const values = $derived(seriesValues(data.series));
     const distribution = $derived(seriesDistribution(values));
-    const format = $derived((v: number) => formatMetricValue(selected?.type ?? 'count', v));
+    // Key-aware, not type-only: maintainability/duplication are typed `ratio` but
+    // live inside 0-0.005, so a type-only formatter renders every axis tick as
+    // "0.00". They read per-1,000-lines here, matching their grade bands and
+    // headline rate.
+    const format = $derived(metricTickFormatter(selected?.key ?? '', selected?.type ?? 'count'));
 
     // Densified {date,value|null}[] for the chart (absent periods → gaps) and a
     // fixed y-domain per metric type (a flat series stays flat, not a mountain).
