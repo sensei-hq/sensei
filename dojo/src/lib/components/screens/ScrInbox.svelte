@@ -38,7 +38,7 @@
 	{#if needTotal > 0}<span class="mono text-accent text-xs">{needTotal} need you</span>{/if}
 {/snippet}
 
-<div class="flex flex-col {mobile ? 'p-4 gap-4' : 'gap-4 px-5 py-6'}">
+<div class="flex flex-col p-4 gap-4 md:px-5 md:py-6">
 	<SectionHead eyebrow="You · in flight" title="Inbox" count={inbox.length} right={needBadge} />
 	<SubTabs tabs={FILTERS} active={filter} onPick={(id) => (filter = id)} />
 

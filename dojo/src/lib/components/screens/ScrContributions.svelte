@@ -61,7 +61,7 @@
 	const tally = $derived(tallyContributions(mine, stat ?? { approved: 0, pending: 0, helped: 0 }));
 </script>
 
-<div class="flex flex-col p-8 gap-6">
+<div class="flex flex-col p-4 gap-4 md:p-8 md:gap-6">
 	<SectionHead eyebrow="You · sharing" title="Contributions">
 		{#snippet right()}
 			<div class="flex items-center gap-4">

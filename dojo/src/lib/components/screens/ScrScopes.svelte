@@ -32,7 +32,7 @@
 	const rowsFor = (group: string) => owners.filter((r) => r.group === group);
 </script>
 
-<div class="flex flex-col {mobile ? 'p-4 gap-4' : 'p-8 gap-6'}">
+<div class="flex flex-col p-4 gap-4 md:p-8 md:gap-6">
 	<SectionHead eyebrow={orgName + ' · admin'} title="Scopes & policies">
 		{#snippet right()}
 			<Btn size="sm" icon="add-circle">New scope</Btn>

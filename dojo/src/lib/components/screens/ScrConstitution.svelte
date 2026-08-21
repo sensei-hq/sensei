@@ -25,7 +25,7 @@
 	const rungs = $derived(personalRungs(ladder));
 </script>
 
-<div class="flex flex-col p-8 gap-6">
+<div class="flex flex-col p-4 gap-4 md:p-8 md:gap-6">
 	<SectionHead eyebrow="You · standing rules" title="Your constitution">
 		{#snippet right()}
 			<Btn size="sm" variant="ghost" icon="box" onclick={onGoPacks}>Rule packs →</Btn>

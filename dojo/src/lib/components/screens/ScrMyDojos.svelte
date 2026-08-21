@@ -23,7 +23,7 @@
 	const groups = $derived(groupDojos(dojos));
 </script>
 
-<div class="flex flex-col p-8 gap-6">
+<div class="flex flex-col p-4 gap-4 md:p-8 md:gap-6">
 	<SectionHead eyebrow="You · membership" title="My dōjōs" count={dojos.length}>
 		{#snippet right()}
 			<Btn size="sm" icon="add-circle" onclick={onCreateOrJoin}>Create or join</Btn>

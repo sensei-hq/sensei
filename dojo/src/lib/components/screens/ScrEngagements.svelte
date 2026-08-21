@@ -39,7 +39,7 @@
 	}
 </script>
 
-<div class="flex flex-col {mobile ? 'p-4 gap-4' : 'p-8 gap-6'}">
+<div class="flex flex-col p-4 gap-4 md:p-8 md:gap-6">
 	<SectionHead eyebrow={orgName + ' · clients'} title="Engagements" count={engagements.length}>
 		{#snippet right()}
 			<Btn size="sm" icon="add-circle" onclick={create}>New engagement</Btn>
