@@ -20,6 +20,8 @@ import {
     metricYDomain,
     metricGrade,
     formatPerKloc,
+    formatPerKlocTick,
+    metricTickFormatter,
     isPerKlocMetric,
     chartKindForType,
     defaultWindowForGrain,
@@ -83,6 +85,38 @@ describe('formatMetricValue', () => {
         expect(formatMetricValue('pct', null)).toBe(METRIC_NONE);
         expect(formatMetricValue('duration', undefined)).toBe(METRIC_NONE);
         expect(formatMetricValue('count', NaN)).toBe(METRIC_NONE);
+    });
+});
+
+describe('metricTickFormatter', () => {
+    it('reads per-1,000-lines for the smells-per-line metrics, not 0.00', () => {
+        // These are typed `ratio` but live inside 0-0.005, so a type-only
+        // formatter rendered EVERY axis tick as "0.00" — the line shape was fine,
+        // the labels carried no information.
+        for (const key of ['module_quality', 'duplication_ratio']) {
+            const fmt = metricTickFormatter(key, 'ratio');
+            expect(fmt(0.0024)).toBe('2.4');
+            expect(fmt(0.00053)).toBe('0.5');
+            expect(fmt(0.0024)).not.toBe('0.00');
+        }
+    });
+
+    it('leaves every other metric on its type formatter', () => {
+        // An ordinary ratio in [0,1] still reads as a ratio — this fix is keyed to
+        // the two per-KLOC metrics, not applied to ratios in general.
+        expect(metricTickFormatter('rework_ratio', 'ratio')(0.5)).toBe('0.50');
+        expect(metricTickFormatter('throughput', 'count')(4)).toBe('4');
+    });
+
+    it('tick format carries no unit suffix, unlike the headline rate', () => {
+        // The axis has no room for "/ 1,000 lines"; the headline copy keeps it.
+        expect(formatPerKlocTick(0.0024)).toBe('2.4');
+        expect(formatPerKloc(0.0024)).toBe('2.4 / 1,000 lines');
+    });
+
+    it('is honest about an absent value', () => {
+        expect(formatPerKlocTick(null)).toBe(formatPerKlocTick(undefined));
+        expect(formatPerKlocTick(Number.NaN)).toBe(formatPerKlocTick(null));
     });
 });
 
