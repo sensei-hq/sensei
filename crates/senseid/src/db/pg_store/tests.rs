@@ -1,21 +1,17 @@
     use super::*;
     use sqlx_core::query_as::query_as;
 
-    /// Test DB URL. Defaults to `sensei_test` — the throwaway DB the
-    /// monorepo convention reserves for `cargo test` and CI. NEVER default
-    /// to `sensei`: every test that inserts (e.g. `create_test_folder`)
-    /// would leak into the user's production data, and the `/_test` row
-    /// from earlier runs is a real example of how that surfaces in the UI.
-    /// Override with `TEST_DATABASE_URL` for ad-hoc targets (e.g. a forked
-    /// snapshot for debugging).
-    fn test_db_url() -> String {
-        std::env::var("TEST_DATABASE_URL")
-            .unwrap_or_else(|_| format!("postgresql://localhost:{}/sensei_test", sensei_bootstrap::POSTGRES_PORT))
-    }
+    // Every test here connects via `PgStore::connect_test()` — the tiny floorless
+    // pool. Do NOT reach for `PgStore::connect()`: that is the daemon's pool with a
+    // warm floor of `DB_POOL_MIN_CONNECTIONS`, and cargo runs these tests in
+    // parallel, so each one would hold 8 connections open and the suite would blow
+    // past Postgres's `max_connections` (it did: 80 of 223 tests failed to connect
+    // at default parallelism). `connect_test` also owns the URL default, including
+    // the never-point-at-`sensei` guard.
 
     #[tokio::test]
     async fn connect_to_pg() {
-        let store = PgStore::connect(&test_db_url()).await.unwrap();
+        let store = PgStore::connect_test().await.unwrap();
         let row: (i32,) = query_as("SELECT 1")
             .fetch_one(store.pool())
             .await
@@ -25,13 +21,13 @@
 
     #[tokio::test]
     async fn execute_raw_works() {
-        let store = PgStore::connect(&test_db_url()).await.unwrap();
+        let store = PgStore::connect_test().await.unwrap();
         store.execute_raw("SELECT 1").await.unwrap();
     }
 
     #[tokio::test]
     async fn schema_exists() {
-        let store = PgStore::connect(&test_db_url()).await.unwrap();
+        let store = PgStore::connect_test().await.unwrap();
         let row: (bool,) = query_as(
             "SELECT EXISTS(SELECT 1 FROM information_schema.schemata WHERE schema_name = 'sensei')"
         )
@@ -44,7 +40,7 @@
     // ── Config tests ───────────────────────────────────────────────
 
     async fn pg_store() -> PgStore {
-        PgStore::connect(&test_db_url()).await.unwrap()
+        PgStore::connect_test().await.unwrap()
     }
 
     /// Generate a unique key prefix for test isolation.
@@ -4783,7 +4779,7 @@
 
     #[tokio::test]
     async fn memories_table_exists() {
-        let store = PgStore::connect(&test_db_url()).await.unwrap();
+        let store = PgStore::connect_test().await.unwrap();
         let row: (bool,) = query_as(
             "SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_schema = 'sensei' AND table_name = 'memories')"
         )
@@ -5896,7 +5892,7 @@
     /// schema P-A.3's compute + upsert depend on.
     #[tokio::test]
     async fn repositories_schema_invariants() {
-        let s = PgStore::connect(&test_db_url()).await.unwrap();
+        let s = PgStore::connect_test().await.unwrap();
         let tag = uuid::Uuid::new_v4();
         let key = format!("host/{tag}/repo");
 
@@ -5937,7 +5933,7 @@
     /// (local-only, never federated); re-running is a no-op (idempotent).
     #[tokio::test]
     async fn assign_repositories_links_folders_to_canonical_repo_key() {
-        let s = PgStore::connect(&test_db_url()).await.unwrap();
+        let s = PgStore::connect_test().await.unwrap();
         let tag = uuid::Uuid::new_v4();
         let root_id = s.add_watch_root(&format!("/tmp/assignrepo-{tag}"), "ar", &serde_json::json!([])).await.unwrap();
 
@@ -5979,7 +5975,7 @@
     /// when its repository is deleted (so a repo prune leaves no orphan cursor).
     #[tokio::test]
     async fn metric_watermarks_pk_and_cascade_on_repository_delete() {
-        let s = PgStore::connect(&test_db_url()).await.unwrap();
+        let s = PgStore::connect_test().await.unwrap();
         let tag = uuid::Uuid::new_v4();
         let (rid,): (uuid::Uuid,) = query_as(
             "INSERT INTO sensei.repositories (repo_key, name) VALUES ($1, 'wm') RETURNING id",
@@ -6009,7 +6005,7 @@
     /// metrics attach); the multi-repo compute iterates this, not one root path.
     #[tokio::test]
     async fn repositories_for_project_lists_repos_primary_first() {
-        let s = PgStore::connect(&test_db_url()).await.unwrap();
+        let s = PgStore::connect_test().await.unwrap();
         let tag = uuid::Uuid::new_v4();
         let root_id = s.add_watch_root(&format!("/tmp/rfp-{tag}"), "rfp", &serde_json::json!([])).await.unwrap();
         let pid = s.create_project(&format!("_test:rfp:{tag}"), None, None).await.unwrap();
