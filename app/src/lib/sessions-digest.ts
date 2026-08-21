@@ -139,7 +139,15 @@ export function relativeWhen(iso: string, now: Date = new Date()): string {
   return `${Math.floor(days / 7)} weeks ago`;
 }
 
-/** Short axis label for a day key relative to today: "Today" / "Yest" / "−N". */
+/**
+ * Short axis label for a day key: "Today" / "Yest" / "mm/dd".
+ *
+ * Older days read as a real date rather than a "−N" offset. A negative number
+ * makes the reader do arithmetic against an implicit today just to place a bar,
+ * and it can't be matched against anything outside the chart — a commit, a
+ * calendar, another screen. The date can. "Today"/"Yest" stay because they are
+ * the two anchors people actually think in, and they carry no arithmetic.
+ */
 export function shortDayLabel(key: string, now: Date = new Date()): string {
   if (!key) return '';
   const [y, m, d] = key.split('-').map(Number);
@@ -147,7 +155,8 @@ export function shortDayLabel(key: string, now: Date = new Date()): string {
   const days = calendarDaysAgo(then, now);
   if (days <= 0) return 'Today';
   if (days === 1) return 'Yest';
-  return `−${days}`;
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${pad(m ?? 1)}/${pad(d ?? 1)}`;
 }
 
 /** A wire row plus every derived field the digest renders. */
