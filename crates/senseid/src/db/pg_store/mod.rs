@@ -490,10 +490,20 @@ impl PgStore {
         Ok(Self { pool })
     }
 
-    /// Connect to the test database. Uses TEST_DATABASE_URL or defaults to
-    /// sensei_test. A tiny floorless pool (min 0, max 4): the handler/pg_store test
-    /// suites spin up many `PgStore`s in parallel, so a warm floor of 8 each would
-    /// blow past Postgres's connection limit.
+    /// Connect to the test database — the ONLY constructor tests should use.
+    ///
+    /// A tiny floorless pool (min 0, max 4): the handler/pg_store test suites spin
+    /// up many `PgStore`s in parallel, so a warm floor of
+    /// `DB_POOL_MIN_CONNECTIONS` each would blow past Postgres's connection limit.
+    /// That is not hypothetical — 80 of 223 pg_store tests failed to connect at
+    /// default parallelism while they were still calling [`connect`](Self::connect).
+    ///
+    /// Defaults to `sensei_test`, the throwaway DB the monorepo convention reserves
+    /// for `cargo test` and CI. NEVER default this to `sensei`: every test that
+    /// inserts (e.g. `create_test_folder`) would leak into the user's production
+    /// data — stray `/_test` rows showing up in the UI is a real example of how
+    /// that surfaces. Override with `TEST_DATABASE_URL` for ad-hoc targets (e.g. a
+    /// forked snapshot for debugging).
     pub async fn connect_test() -> Result<Self, String> {
         let url = std::env::var("TEST_DATABASE_URL")
             .unwrap_or_else(|_| format!("postgresql://localhost:{}/sensei_test", sensei_bootstrap::POSTGRES_PORT));
