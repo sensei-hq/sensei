@@ -1,6 +1,6 @@
 use std::time::Duration;
 use sqlx_postgres::{PgPool, PgPoolOptions};
-use sensei_bootstrap::{DB_POOL_MAX_CONNECTIONS, DB_POOL_MIN_CONNECTIONS, DB_POOL_ACQUIRE_TIMEOUT_SECS, DB_POOL_IDLE_TIMEOUT_SECS};
+use sensei_bootstrap::{DB_POOL_MAX_CONNECTIONS, DB_POOL_MIN_CONNECTIONS, DB_POOL_ACQUIRE_TIMEOUT_SECS, DB_POOL_IDLE_TIMEOUT_SECS, DB_POOL_MAX_LIFETIME_SECS};
 use dojo_protocol::relay::RelayRunStatus;
 use crate::runs::{NewRun, Run, RunEvent, RunEventKind};
 
@@ -445,11 +445,15 @@ mod pack_resolution_tests;
 impl PgStore {
     /// Connect to a PostgreSQL database using the shared pool defaults from
     /// [`sensei_bootstrap`] (`DB_POOL_MIN_CONNECTIONS`, `DB_POOL_MAX_CONNECTIONS`,
-    /// `DB_POOL_ACQUIRE_TIMEOUT_SECS`, `DB_POOL_IDLE_TIMEOUT_SECS`).
+    /// `DB_POOL_ACQUIRE_TIMEOUT_SECS`, `DB_POOL_IDLE_TIMEOUT_SECS`,
+    /// `DB_POOL_MAX_LIFETIME_SECS`).
     ///
-    /// The pool is elastic: it keeps `DB_POOL_MIN_CONNECTIONS` warm, grows to
-    /// `DB_POOL_MAX_CONNECTIONS` under load, and reaps the extras back to the warm
-    /// floor once they sit idle past `DB_POOL_IDLE_TIMEOUT_SECS`.
+    /// The pool is elastic: it keeps `DB_POOL_MIN_CONNECTIONS` warm and grows to
+    /// `DB_POOL_MAX_CONNECTIONS` under load. Extras are retired by
+    /// `DB_POOL_MAX_LIFETIME_SECS` (an absolute age that nothing resets), which is
+    /// what actually returns the pool to the warm floor — `DB_POOL_IDLE_TIMEOUT_SECS`
+    /// cannot, because sqlx's FIFO idle queue rotates every connection and resets
+    /// its idle clock under even a light trickle of scheduler traffic.
     pub async fn connect(database_url: &str) -> Result<Self, String> {
         Self::connect_with(database_url, DB_POOL_MIN_CONNECTIONS, DB_POOL_MAX_CONNECTIONS).await
     }
@@ -464,6 +468,7 @@ impl PgStore {
             .max_connections(max)
             .acquire_timeout(Duration::from_secs(DB_POOL_ACQUIRE_TIMEOUT_SECS))
             .idle_timeout(Duration::from_secs(DB_POOL_IDLE_TIMEOUT_SECS))
+            .max_lifetime(Duration::from_secs(DB_POOL_MAX_LIFETIME_SECS))
             // Put `extensions` on the search_path so unqualified references to
             // pgvector's `vector` type and operators (`$n::vector`, `<=>`) resolve.
             // pgvector installs into the `extensions` schema — the Supabase/dbd
@@ -485,10 +490,20 @@ impl PgStore {
         Ok(Self { pool })
     }
 
-    /// Connect to the test database. Uses TEST_DATABASE_URL or defaults to
-    /// sensei_test. A tiny floorless pool (min 0, max 4): the handler/pg_store test
-    /// suites spin up many `PgStore`s in parallel, so a warm floor of 8 each would
-    /// blow past Postgres's connection limit.
+    /// Connect to the test database — the ONLY constructor tests should use.
+    ///
+    /// A tiny floorless pool (min 0, max 4): the handler/pg_store test suites spin
+    /// up many `PgStore`s in parallel, so a warm floor of
+    /// `DB_POOL_MIN_CONNECTIONS` each would blow past Postgres's connection limit.
+    /// That is not hypothetical — 80 of 223 pg_store tests failed to connect at
+    /// default parallelism while they were still calling [`connect`](Self::connect).
+    ///
+    /// Defaults to `sensei_test`, the throwaway DB the monorepo convention reserves
+    /// for `cargo test` and CI. NEVER default this to `sensei`: every test that
+    /// inserts (e.g. `create_test_folder`) would leak into the user's production
+    /// data — stray `/_test` rows showing up in the UI is a real example of how
+    /// that surfaces. Override with `TEST_DATABASE_URL` for ad-hoc targets (e.g. a
+    /// forked snapshot for debugging).
     pub async fn connect_test() -> Result<Self, String> {
         let url = std::env::var("TEST_DATABASE_URL")
             .unwrap_or_else(|_| format!("postgresql://localhost:{}/sensei_test", sensei_bootstrap::POSTGRES_PORT));

@@ -1,14 +1,17 @@
     use super::*;
 
-    fn ddl_test_skip() -> bool {
-        // Tests require a running sensei_dev DB. Skip if env var not set.
-        std::env::var("SENSEI_TEST_DB_URL").is_err()
-    }
+    // These connect via `PgStore::connect_test()` like the rest of the suite.
+    //
+    // They used to open with `if ddl_test_skip() { return; }`, gated on a
+    // `SENSEI_TEST_DB_URL` env var that is set nowhere in the repo or in any
+    // shell profile — so all ten returned before asserting anything and reported
+    // green forever. A test that cannot fail is worse than no test: it claims
+    // coverage of memory retrieval, context assembly and 7d telemetry that was
+    // never actually being exercised.
 
     #[tokio::test]
     async fn list_memories_filters_by_status() {
-        if ddl_test_skip() { return; }
-        let pg = PgStore::connect(&std::env::var("SENSEI_TEST_DB_URL").unwrap()).await.unwrap();
+        let pg = PgStore::connect_test().await.unwrap();
         let project_id = pg.ensure_test_project("list-status").await.unwrap();
         let m1 = pg.insert_memory(&InsertMemory {
             project_id: Some(project_id), scope: "project".into(), scope_filter: None,
@@ -37,8 +40,7 @@
 
     #[tokio::test]
     async fn set_memory_status_accept_proposal() {
-        if ddl_test_skip() { return; }
-        let pg = PgStore::connect(&std::env::var("SENSEI_TEST_DB_URL").unwrap()).await.unwrap();
+        let pg = PgStore::connect_test().await.unwrap();
         let pid = pg.ensure_test_project("accept-prop").await.unwrap();
         let mid = pg.insert_memory(&InsertMemory {
             project_id: Some(pid), scope: "project".into(), scope_filter: None,
@@ -59,8 +61,7 @@
 
     #[tokio::test]
     async fn get_memory_detail_includes_outcomes() {
-        if ddl_test_skip() { return; }
-        let pg = PgStore::connect(&std::env::var("SENSEI_TEST_DB_URL").unwrap()).await.unwrap();
+        let pg = PgStore::connect_test().await.unwrap();
         let pid = pg.ensure_test_project("detail").await.unwrap();
         let mid = pg.insert_memory(&InsertMemory {
             project_id: Some(pid), scope: "project".into(), scope_filter: None,
@@ -81,33 +82,44 @@
 
     #[tokio::test]
     async fn assemble_context_blends_three_scopes() {
-        if ddl_test_skip() { return; }
-        let pg = PgStore::connect(&std::env::var("SENSEI_TEST_DB_URL").unwrap()).await.unwrap();
+        let pg = PgStore::connect_test().await.unwrap();
         let pid = pg.ensure_test_project("blend").await.unwrap();
+
+        // Scope every query in this test to a run-unique tag.
+        //
+        // `assemble_context` matches `project_id = $2 OR scope='stack' OR
+        // scope='global'` and then takes the top N by strength, so the shared test
+        // DB's several-hundred global memories crowd this test's fixtures out of
+        // the window — deleting our own rows afterwards (below) never fixed that,
+        // because the noise is other suites' rows, not ours. The tags filter is
+        // part of the real contract, so the three-scope blend is still exercised;
+        // each fixture still qualifies via a DIFFERENT scope branch.
+        let tag = format!("blend-fixture-{}", uuid::Uuid::new_v4());
+        let only_ours = vec![tag.clone()];
 
         let m_p = pg.insert_memory(&InsertMemory {
             project_id: Some(pid), scope: "project".into(), scope_filter: None,
             mtype: "convention".into(), title: "P".into(), content: "p".into(),
-            impact: None, tags: vec![], triage_signal: None, status: "active".into(),
+            impact: None, tags: vec![tag.clone()], triage_signal: None, status: "active".into(),
             namespace_id: None, enforcement: None, origin: None, source_id: None,
             spine_slot: None, feature: None,
         }).await.unwrap();
         let m_s = pg.insert_memory(&InsertMemory {
             project_id: None, scope: "stack".into(), scope_filter: Some("rust".into()),
             mtype: "convention".into(), title: "S".into(), content: "s".into(),
-            impact: None, tags: vec![], triage_signal: None, status: "active".into(),
+            impact: None, tags: vec![tag.clone()], triage_signal: None, status: "active".into(),
             namespace_id: None, enforcement: None, origin: None, source_id: None,
             spine_slot: None, feature: None,
         }).await.unwrap();
         let m_g = pg.insert_memory(&InsertMemory {
             project_id: None, scope: "global".into(), scope_filter: None,
             mtype: "convention".into(), title: "G".into(), content: "g".into(),
-            impact: None, tags: vec![], triage_signal: None, status: "active".into(),
+            impact: None, tags: vec![tag.clone()], triage_signal: None, status: "active".into(),
             namespace_id: None, enforcement: None, origin: None, source_id: None,
             spine_slot: None, feature: None,
         }).await.unwrap();
 
-        let blob = pg.assemble_context(pid, &["rust".into()], None, 50, None).await.unwrap();
+        let blob = pg.assemble_context(pid, &["rust".into()], Some(&only_ours), 50, None).await.unwrap();
         let titles: Vec<String> = blob["memories"].as_array().unwrap().iter()
             .map(|m| m["title"].as_str().unwrap().to_string()).collect();
         assert!(titles.contains(&"P".to_string()));
@@ -118,12 +130,14 @@
         let m_prop = pg.insert_memory(&InsertMemory {
             project_id: Some(pid), scope: "project".into(), scope_filter: None,
             mtype: "convention".into(), title: "PROP".into(), content: "x".into(),
-            impact: None, tags: vec![], triage_signal: Some("revert".into()),
+            impact: None, tags: vec![tag.clone()], triage_signal: Some("revert".into()),
             status: "proposed".into(),
             namespace_id: None, enforcement: None, origin: None, source_id: None,
             spine_slot: None, feature: None,
         }).await.unwrap();
-        let blob2 = pg.assemble_context(pid, &["rust".into()], None, 50, None).await.unwrap();
+        // Carries the tag, so its absence below is genuinely the status filter
+        // doing the work rather than the tag filter hiding it.
+        let blob2 = pg.assemble_context(pid, &["rust".into()], Some(&only_ours), 50, None).await.unwrap();
         let titles2: Vec<String> = blob2["memories"].as_array().unwrap().iter()
             .map(|m| m["title"].as_str().unwrap().to_string()).collect();
         assert!(!titles2.contains(&"PROP".to_string()));
@@ -138,8 +152,7 @@
 
     #[tokio::test]
     async fn list_memories_for_slot_matches_slot_and_feature() {
-        if ddl_test_skip() { return; }
-        let pg = PgStore::connect(&std::env::var("SENSEI_TEST_DB_URL").unwrap()).await.unwrap();
+        let pg = PgStore::connect_test().await.unwrap();
         let pid = pg.ensure_test_project("slot-retrieval").await.unwrap();
 
         let m_design = pg.create_memory(Some(&pid), "project", None, "decision",
@@ -163,18 +176,30 @@
 
     #[tokio::test]
     async fn assemble_context_leads_with_slot_anchored_memory() {
-        if ddl_test_skip() { return; }
-        let pg = PgStore::connect(&std::env::var("SENSEI_TEST_DB_URL").unwrap()).await.unwrap();
+        let pg = PgStore::connect_test().await.unwrap();
         let pid = pg.ensure_test_project("slot-leads").await.unwrap();
+
+        // Tag-scoped for the same reason as `assemble_context_blends_three_scopes`:
+        // the shared test DB's global memories otherwise fill the top-N window and
+        // neither fixture appears. Uses `insert_memory` rather than `create_memory`
+        // because only the former carries tags alongside `spine_slot`.
+        let tag = format!("slot-leads-fixture-{}", uuid::Uuid::new_v4());
+        let only_ours = vec![tag.clone()];
+        let fixture = |title: &str, slot: Option<&str>| InsertMemory {
+            project_id: Some(pid), scope: "project".into(), scope_filter: None,
+            mtype: "decision".into(), title: title.into(), content: "c".into(),
+            impact: None, tags: vec![tag.clone()], triage_signal: None,
+            status: "active".into(), namespace_id: None, enforcement: None,
+            origin: None, source_id: None,
+            spine_slot: slot.map(|s| s.to_string()), feature: None,
+        };
 
         // Unanchored memory created first so a strength/recency-only ordering
         // would put it ahead of the slot-anchored one below.
-        let m_unanchored = pg.create_memory(Some(&pid), "project", None, "decision",
-            "unanchored", "c", None, None, None, None).await.unwrap();
-        let m_design = pg.create_memory(Some(&pid), "project", None, "decision",
-            "design-anchored", "c", None, None, Some("design"), None).await.unwrap();
+        let m_unanchored = pg.insert_memory(&fixture("unanchored", None)).await.unwrap();
+        let m_design = pg.insert_memory(&fixture("design-anchored", Some("design"))).await.unwrap();
 
-        let blob = pg.assemble_context(pid, &[], None, 50, Some(("design", None))).await.unwrap();
+        let blob = pg.assemble_context(pid, &[], Some(&only_ours), 50, Some(("design", None))).await.unwrap();
         let ids: Vec<String> = blob["memories"].as_array().unwrap().iter()
             .map(|m| m["id"].as_str().unwrap().to_string()).collect();
         assert_eq!(ids.first().map(String::as_str), Some(m_design.to_string().as_str()),
@@ -187,20 +212,24 @@
 
     #[tokio::test]
     async fn assemble_context_logs_one_load_per_memory() {
-        if ddl_test_skip() { return; }
-        let pg = PgStore::connect(&std::env::var("SENSEI_TEST_DB_URL").unwrap()).await.unwrap();
+        let pg = PgStore::connect_test().await.unwrap();
         let pid = pg.ensure_test_project("loads-writer").await.unwrap();
         // Project-scoped active memory → loaded exactly once per assemble_context
         // call on this (test-unique) project.
+        // Tag-scoped so the delivered set is exactly this memory: the telemetry
+        // assertions below count load rows, and an unscoped call would also log a
+        // load for every unrelated global memory that fit in the window.
+        let tag = format!("loads-fixture-{}", uuid::Uuid::new_v4());
+        let only_ours = vec![tag.clone()];
         let mid = pg.insert_memory(&InsertMemory {
             project_id: Some(pid), scope: "project".into(), scope_filter: None,
             mtype: "convention".into(), title: "L".into(), content: "l".into(),
-            impact: None, tags: vec![], triage_signal: None, status: "active".into(),
+            impact: None, tags: vec![tag.clone()], triage_signal: None, status: "active".into(),
             namespace_id: None, enforcement: None, origin: None, source_id: None,
             spine_slot: None, feature: None,
         }).await.unwrap();
 
-        let blob = pg.assemble_context(pid, &[], None, 50, None).await.unwrap();
+        let blob = pg.assemble_context(pid, &[], Some(&only_ours), 50, None).await.unwrap();
         // Context is still delivered (writer is additive, non-fatal).
         assert!(blob["memories"].as_array().unwrap().iter()
             .any(|m| m["id"].as_str() == Some(&mid.to_string())));
@@ -210,8 +239,10 @@
         assert_eq!(followed, 0);
         assert_eq!(skipped, 0);
 
-        // A second delivery logs a second load row.
-        pg.assemble_context(pid, &[], None, 50, None).await.unwrap();
+        // A second delivery logs a second load row. Same tag scope as the first —
+        // an unscoped call may not deliver this memory at all, so it would log
+        // nothing and the count below would stay at 1.
+        pg.assemble_context(pid, &[], Some(&only_ours), 50, None).await.unwrap();
         let (loaded2, _, _) = pg.memory_telemetry_7d(mid).await.unwrap();
         assert_eq!(loaded2, 2);
 
@@ -226,8 +257,7 @@
 
     #[tokio::test]
     async fn memory_loaded_last_7d_respects_window() {
-        if ddl_test_skip() { return; }
-        let pg = PgStore::connect(&std::env::var("SENSEI_TEST_DB_URL").unwrap()).await.unwrap();
+        let pg = PgStore::connect_test().await.unwrap();
         let pid = pg.ensure_test_project("loads-window").await.unwrap();
         let mid = pg.insert_memory(&InsertMemory {
             project_id: Some(pid), scope: "project".into(), scope_filter: None,
@@ -250,8 +280,7 @@
 
     #[tokio::test]
     async fn memory_followed_skipped_last_7d_over_outcomes() {
-        if ddl_test_skip() { return; }
-        let pg = PgStore::connect(&std::env::var("SENSEI_TEST_DB_URL").unwrap()).await.unwrap();
+        let pg = PgStore::connect_test().await.unwrap();
         let pid = pg.ensure_test_project("followed-skipped").await.unwrap();
         let mid = pg.insert_memory(&InsertMemory {
             project_id: Some(pid), scope: "project".into(), scope_filter: None,
@@ -281,8 +310,7 @@
 
     #[tokio::test]
     async fn get_memory_detail_includes_7d_telemetry() {
-        if ddl_test_skip() { return; }
-        let pg = PgStore::connect(&std::env::var("SENSEI_TEST_DB_URL").unwrap()).await.unwrap();
+        let pg = PgStore::connect_test().await.unwrap();
         let pid = pg.ensure_test_project("detail-telemetry").await.unwrap();
         let mid = pg.insert_memory(&InsertMemory {
             project_id: Some(pid), scope: "project".into(), scope_filter: None,

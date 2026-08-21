@@ -537,75 +537,146 @@ async fn resolve_project_namespace(
 }
 
 /// GET /api/projects/{id}/recommendations/{rec_id}/preview — render WHAT accepting
-/// would materialize (rule title/body/scope/enforcement) WITHOUT writing anything.
-/// The review-before-apply surface for the consent-first accept flow.
+/// would materialize (rule text + scope/tier, or the full SKILL.md/agent .md +
+/// target path) WITHOUT writing anything. The review-before-apply surface for the
+/// consent-first accept flow.
 pub(crate) async fn preview_recommendation_materialization(
     State(state): State<AppState>,
     Path((_project_id, rec_id)): Path<(String, String)>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
+    use crate::materialize::{ArtifactKind, artifact_path, render_agent_md, render_skill_md, slugify};
     let rec_uuid = uuid::Uuid::parse_str(&rec_id).map_err(|_| StatusCode::BAD_REQUEST)?;
-    let Some((action_type, title, why, impact, _pid, _based_on)) =
+    let Some((action_type, title, why, _impact, project_id, _based_on)) =
         state.pg.recommendation_for_materialize(&rec_uuid).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
     else {
         return Err(StatusCode::CONFLICT); // absent or already decided
     };
-    if !crate::db::pg_store::PgStore::is_rule_class_action(&action_type) {
+
+    // Rule-class (P-A): a governance rule preview.
+    if crate::db::pg_store::PgStore::is_rule_class_action(&action_type) {
         return Ok(Json(serde_json::json!({
-            "materializable": false,
-            "action_type": action_type,
-            "reason": "not a rule-class action (P-A materializes revise_rule/promote_pattern/enrich_memory only)",
+            "materializable": true, "kind": "rule", "action_type": action_type,
+            "title": title, "body": why, "gov_scope": "project", "enforcement": "recommended",
         })));
     }
-    // The would-be rule, defaults filled — the UI lets the user edit before Apply.
+    // File-class (P-B): render the exact SKILL.md / agent .md + target path.
+    if let Some(kind) = ArtifactKind::from_action(&action_type) {
+        let prompt = state.pg.recommendation_prompt(&rec_uuid).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        let body = prompt.as_deref().map(str::trim).filter(|s| !s.is_empty()).unwrap_or(why.trim());
+        let slug = slugify(&title, kind.as_str());
+        let content = match kind {
+            ArtifactKind::Skill => render_skill_md(&slug, &why, body),
+            ArtifactKind::Agent => render_agent_md(&slug, &why, body),
+        };
+        let rel = artifact_path(std::path::Path::new(""), kind, &slug);
+        return Ok(Json(serde_json::json!({
+            "materializable": true, "kind": kind.as_str(), "action_type": action_type,
+            "name": slug, "path": rel.to_string_lossy(), "content": content,
+            // A file write is consent-sensitive — the UI confirms before Apply.
+            "consent_required": true, "project_id": project_id,
+        })));
+    }
     Ok(Json(serde_json::json!({
-        "materializable": true,
-        "kind": "rule",
-        "action_type": action_type,
-        "title": title,
-        "body": why,
-        "impact": impact,
-        "gov_scope": "project",
-        "enforcement": "recommended",
+        "materializable": false, "action_type": action_type,
+        "reason": "not a materializable action (rule: revise_rule/promote_pattern/enrich_memory; file: write_skill/create_agent)",
     })))
 }
 
 /// POST /api/projects/{id}/recommendations/{rec_id}/materialize — accept a
-/// rule-class recommendation AND write it as a durable governance rule
-/// (`sensei.memories` at the chosen scope + enforcement), then schedule the
-/// before/after FTR measurement. Fail-closed on scope resolution + non-rule action.
+/// recommendation AND produce its durable artifact: a rule-class rec → a governance
+/// rule (`sensei.memories`, P-A); a `write_skill`/`create_agent` rec → a project
+/// file (`.claude/skills|agents/…`, P-B). Then schedule the before/after FTR
+/// measurement. Fail-closed on scope resolution, non-materializable action, and file
+/// collision (never clobbers a hand-authored file).
 pub(crate) async fn materialize_recommendation(
     State(state): State<AppState>,
     Path((project_id, rec_id)): Path<(String, String)>,
     body: Option<Json<MaterializeBody>>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    use crate::materialize::{ArtifactKind, artifact_path, render_agent_md, render_skill_md, slugify, write_artifact};
     let merr = |c: StatusCode, m: &str| (c, Json(serde_json::json!({ "error": m })));
     let rec_uuid = uuid::Uuid::parse_str(&rec_id).map_err(|_| merr(StatusCode::BAD_REQUEST, "bad rec id"))?;
     let pid = uuid::Uuid::parse_str(&project_id).map_err(|_| merr(StatusCode::BAD_REQUEST, "bad project id"))?;
     let b = body.map(|Json(b)| b).unwrap_or_default();
-    let gov_scope = b.gov_scope.as_deref().filter(|s| !s.is_empty()).unwrap_or("project").to_string();
-    let enforcement = b.enforcement.as_deref().map(str::trim).filter(|s| !s.is_empty());
-    if let Some(e) = enforcement
-        && !ENFORCEMENT_TIERS.contains(&e)
-    {
-        return Err(merr(StatusCode::BAD_REQUEST, "enforcement must be advisory|recommended|required|mandatory"));
-    }
-    let namespace_id = resolve_project_namespace(&state, &pid, &gov_scope, b.namespace_id.as_deref()).await?;
 
-    let materialized = state.pg.accept_recommendation_as_rule(
-        &rec_uuid, namespace_id.as_ref(), enforcement, &gov_scope,
-        b.title.as_deref(), b.body.as_deref(),
-    ).await.map_err(|e| {
-        if e.contains("not found") || e.contains("already decided") {
-            merr(StatusCode::CONFLICT, &e)
-        } else if e.contains("not rule-class") {
-            merr(StatusCode::BAD_REQUEST, &e)
-        } else {
-            tracing::error!(error = %e, rec = %rec_uuid, "materialize_recommendation failed");
-            merr(StatusCode::INTERNAL_SERVER_ERROR, "materialization failed")
+    // Peek the action WITHOUT deciding, so a file collision is caught while the rec
+    // is still pending (re-triable) rather than after the accept flip.
+    let Some((action_type, title, _why, _impact, _pid, _based_on)) = state.pg
+        .recommendation_for_materialize(&rec_uuid).await
+        .map_err(|e| merr(StatusCode::INTERNAL_SERVER_ERROR, &e))?
+    else {
+        return Err(merr(StatusCode::CONFLICT, "recommendation not found or already decided"));
+    };
+
+    // ── Rule-class (P-A) ──────────────────────────────────────────────────
+    if crate::db::pg_store::PgStore::is_rule_class_action(&action_type) {
+        let gov_scope = b.gov_scope.as_deref().filter(|s| !s.is_empty()).unwrap_or("project").to_string();
+        let enforcement = b.enforcement.as_deref().map(str::trim).filter(|s| !s.is_empty());
+        if let Some(e) = enforcement
+            && !ENFORCEMENT_TIERS.contains(&e)
+        {
+            return Err(merr(StatusCode::BAD_REQUEST, "enforcement must be advisory|recommended|required|mandatory"));
         }
-    })?;
+        let namespace_id = resolve_project_namespace(&state, &pid, &gov_scope, b.namespace_id.as_deref()).await?;
+        let materialized = state.pg.accept_recommendation_as_rule(
+            &rec_uuid, namespace_id.as_ref(), enforcement, &gov_scope, b.title.as_deref(), b.body.as_deref(),
+        ).await.map_err(|e| {
+            if e.contains("not found") || e.contains("already decided") { merr(StatusCode::CONFLICT, &e) }
+            else { tracing::error!(error = %e, rec = %rec_uuid, "materialize rule failed"); merr(StatusCode::INTERNAL_SERVER_ERROR, "materialization failed") }
+        })?;
+        state.task_queue.enqueue(crate::tasks::Task::new(crate::tasks::TaskKind::MeasureVerdicts, "", "")).await;
+        return Ok(Json(serde_json::json!({ "ok": true, "materialized": materialized })));
+    }
 
-    // Close the FTR loop (same as plain accept): schedule before/after measurement.
+    // ── File-class (P-B): write a project skill/agent ─────────────────────
+    let Some(kind) = ArtifactKind::from_action(&action_type) else {
+        return Err(merr(StatusCode::BAD_REQUEST, "recommendation is not materializable (not rule/skill/agent)"));
+    };
+    // The write target is the project's repo root.
+    let Some(repo_root) = state.pg.project_root_path(&pid).await
+        .map_err(|e| merr(StatusCode::INTERNAL_SERVER_ERROR, &e))?
+    else {
+        return Err(merr(StatusCode::BAD_REQUEST, "project has no repo folder to write the file into"));
+    };
+    let root = std::path::Path::new(&repo_root);
+    let slug = slugify(b.title.as_deref().unwrap_or(&title), kind.as_str());
+    // Collision check while still pending → the user can rename before accepting.
+    if artifact_path(root, kind, &slug).exists() {
+        return Err(merr(StatusCode::CONFLICT, &format!(
+            "a {} named '{slug}' already exists in this repo; edit the title", kind.as_str()
+        )));
+    }
+
+    // Flip to accepted (guarded) + get the prompt seed, then write the file.
+    let seed = state.pg.begin_file_materialization(&rec_uuid).await
+        .map_err(|e| merr(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
+    let Some((_at, _title, seed_why, prompt)) = seed else {
+        return Err(merr(StatusCode::CONFLICT, "recommendation not found or already decided"));
+    };
+    let description = b.body.as_deref().map(str::trim).filter(|s| !s.is_empty())
+        .map(str::to_string).unwrap_or(seed_why.clone());
+    // Body: the rec's prompt (a create_agent prompt IS an agent spec) else the why.
+    let body_text = prompt.as_deref().map(str::trim).filter(|s| !s.is_empty()).unwrap_or(seed_why.trim());
+    let content = match kind {
+        ArtifactKind::Skill => render_skill_md(&slug, &description, body_text),
+        ArtifactKind::Agent => render_agent_md(&slug, &description, body_text),
+    };
+    let rel = match write_artifact(root, kind, &slug, &content) {
+        Ok(p) => p,
+        Err(e) => {
+            // Rec is already accepted (flip committed); the file write failed. Surface
+            // it (never a silent swallow) — the ref stays NULL, recoverable by a repair.
+            tracing::error!(error = %e, rec = %rec_uuid, "materialize file failed after accept flip");
+            let code = if e.contains("already exists") { StatusCode::CONFLICT } else { StatusCode::INTERNAL_SERVER_ERROR };
+            return Err(merr(code, &e));
+        }
+    };
+    let materialized = serde_json::json!({
+        "kind": kind.as_str(), "file_path": rel.to_string_lossy(), "repo_root": repo_root, "name": slug,
+    });
+    if let Err(e) = state.pg.set_recommendation_materialized(&rec_uuid, &materialized).await {
+        tracing::error!(error = %e, rec = %rec_uuid, "set materialized_ref failed (file already written)");
+    }
     state.task_queue.enqueue(crate::tasks::Task::new(crate::tasks::TaskKind::MeasureVerdicts, "", "")).await;
     Ok(Json(serde_json::json!({ "ok": true, "materialized": materialized })))
 }

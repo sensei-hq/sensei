@@ -1,5 +1,18 @@
 use super::*;
 
+/// True only for a unique violation on `nodes_unique_identity` — the structural
+/// identity index `(folder_id, file_path, kind, name, parent_id, line_start)`.
+///
+/// Matched by constraint NAME rather than by the generic 23505 code so the
+/// adopt-by-identity fallback can never silently absorb a different conflict
+/// (notably `nodes_unique_fqn`, which the ON CONFLICT clause already handles).
+fn is_identity_conflict(e: &sqlx_core::error::Error) -> bool {
+    matches!(
+        e,
+        sqlx_core::error::Error::Database(db) if db.constraint() == Some("nodes_unique_identity")
+    )
+}
+
 #[allow(dead_code, clippy::too_many_arguments, clippy::type_complexity)]
 impl PgStore {
     /// BM25-style keyword ranking: matches nodes by name/signature/docstring.
@@ -183,7 +196,7 @@ impl PgStore {
         let is_exported = def.as_ref().is_some_and(|d| d.is_exported);
         let parent_id = def.as_ref().and_then(|d| d.parent_id);
 
-        let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
+        let inserted: Result<(uuid::Uuid,), sqlx_core::error::Error> = sqlx_core::query_as::query_as(
             "INSERT INTO sensei.nodes
                  (folder_id, fqn, kind, name, language, resolved,
                   file_path, signature, line_start, line_end, is_exported, parent_id)
@@ -206,8 +219,81 @@ impl PgStore {
         )
         .bind(folder_id).bind(fqn).bind(kind).bind(name).bind(language).bind(resolved)
         .bind(file_path).bind(signature).bind(line_start).bind(line_end).bind(is_exported).bind(parent_id)
-        .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
+        .fetch_one(&self.pool).await;
+
+        let row: (uuid::Uuid,) = match inserted {
+            Ok(r) => r,
+            Err(e) if is_identity_conflict(&e) => {
+                // The row already exists under a DIFFERENT fqn: `ON CONFLICT
+                // (folder_id, fqn)` above can't see it, so the insert fell through
+                // to a raw INSERT and hit `nodes_unique_identity`
+                // (folder_id, file_path, kind, name, parent_id, line_start).
+                //
+                // This happens whenever a node's fqn SHAPE changes for a file that
+                // was already indexed — e.g. the module container's fqn language
+                // segment is derived from the parse output, so it flips when a parse
+                // stops yielding top-level defs. Without this branch the write fails
+                // forever: process_file returns Err, fail_folder withholds
+                // scan_state, the reconcile re-drives the folder every tick, and the
+                // folder never leaves `failed`.
+                //
+                // Adopt the existing row by re-pointing its fqn at the new value.
+                // Keyed on the identity columns so we update exactly the row that
+                // blocked us — NULLS NOT DISTINCT mirrors the index semantics.
+                self.adopt_node_by_identity(
+                    folder_id, fqn, kind, name, language, resolved,
+                    file_path, signature, line_start, line_end, is_exported, parent_id,
+                ).await?
+            }
+            Err(e) => return Err(e.to_string()),
+        };
         Ok(row.0)
+    }
+
+    /// Re-point an existing node's `fqn` when an fqn-keyed upsert collided with
+    /// `nodes_unique_identity`. Matches on the identity columns using
+    /// `IS NOT DISTINCT FROM` so NULL `parent_id`/`line_start` compare equal, the
+    /// same way the index's `NULLS NOT DISTINCT` does.
+    #[allow(clippy::too_many_arguments)]
+    async fn adopt_node_by_identity(
+        &self,
+        folder_id: &uuid::Uuid,
+        fqn: &str,
+        kind: &str,
+        name: &str,
+        language: Option<&str>,
+        resolved: bool,
+        file_path: Option<&str>,
+        signature: Option<&str>,
+        line_start: Option<i32>,
+        line_end: Option<i32>,
+        is_exported: bool,
+        parent_id: Option<&uuid::Uuid>,
+    ) -> Result<(uuid::Uuid,), String> {
+        sqlx_core::query_as::query_as(
+            "UPDATE sensei.nodes SET
+                 fqn         = $2,
+                 resolved    = resolved OR $6,
+                 kind        = CASE WHEN $6 THEN $3::sensei.node_kind ELSE kind END,
+                 signature   = CASE WHEN $6 THEN $8 ELSE signature END,
+                 line_end    = CASE WHEN $6 THEN $10 ELSE line_end END,
+                 is_exported = CASE WHEN $6 THEN $11 ELSE is_exported END,
+                 language    = COALESCE($5, language),
+                 embedding   = CASE WHEN $6 AND signature IS DISTINCT FROM $8
+                                    THEN NULL ELSE embedding END,
+                 modified_at = now()
+               WHERE folder_id = $1
+                 AND file_path  IS NOT DISTINCT FROM $7
+                 AND kind       = $3::sensei.node_kind
+                 AND name       = $4
+                 AND parent_id  IS NOT DISTINCT FROM $12
+                 AND line_start IS NOT DISTINCT FROM $9
+             RETURNING id"
+        )
+        .bind(folder_id).bind(fqn).bind(kind).bind(name).bind(language).bind(resolved)
+        .bind(file_path).bind(signature).bind(line_start).bind(line_end).bind(is_exported).bind(parent_id)
+        .fetch_one(&self.pool).await
+        .map_err(|e| format!("adopt node by identity ({name}): {e}"))
     }
 
     /// Get-or-create a first-class `lib_symbol` node for an EXTERNAL reference (a
