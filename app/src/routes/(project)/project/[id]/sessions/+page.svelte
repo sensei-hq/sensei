@@ -9,7 +9,6 @@
   //
   // Spec:   docs/spec/screen/project-sessions.md
   // Mockup: docs/mockups/Sensei/lib/project-pages.jsx → sessions pane
-  import { untrack } from 'svelte';
   import { goto } from '$app/navigation';
   import { appState } from '$lib/appstate.svelte.js';
   import { senseiApi } from '$lib/api.js';
@@ -40,14 +39,29 @@
 
   const projectName = $derived(data.project?.name ?? 'project');
 
-  // One state instance per mount, seeded once from the load result. The range
-  // chips refetch through a PROJECT-SCOPED fetcher thereafter, so no other
-  // project's sessions can leak in (spec wrong-gate). untrack makes the
-  // one-time reads of `data` explicit (see insights/+page.svelte).
-  const digest = new SessionsDigestState(
-    projectSessionsFetcher(senseiApi(appState.port), untrack(() => data.projectId)),
-    untrack(() => data.sessions),
-    untrack(() => data.range as SessionRange),
+  // Re-created whenever the loaded project changes — NOT untracked.
+  //
+  // This is a `[id]` route, so SvelteKit reuses this component instance when only
+  // the param changes: navigating project A → project B updates `data` WITHOUT a
+  // remount. Seeding the state once (with `untrack`) therefore froze both the
+  // fetcher's project id and the initial rows to whichever project was mounted
+  // first, and project B's page rendered project A's sessions — the exact
+  // cross-project leak the previous comment here claimed to prevent. The
+  // `untrack` pattern is safe on `insights` (an Observatory screen with no route
+  // param) and for `atlas`'s one-shot zoom level; it is not safe for the project
+  // SCOPE, which is precisely what changes on navigation.
+  //
+  // Constructing this is cheap and side-effect-free (the constructor only
+  // assigns; it does not fetch), so re-deriving per project costs nothing. Range
+  // chips mutate the instance rather than `data`, so picking 30d/90d does not
+  // trigger a rebuild and the selection survives.
+  const digest = $derived.by(
+    () =>
+      new SessionsDigestState(
+        projectSessionsFetcher(senseiApi(appState.port), data.projectId),
+        data.sessions,
+        data.range as SessionRange,
+      ),
   );
 
   // Memoized slices so the header and the chart read one filtered source.
