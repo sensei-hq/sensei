@@ -216,11 +216,19 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
     // Walk all files to discover directories
     let walker = super::helpers::build_walker(repo_path).build();
 
+    // Every indexable file the ignore rules leave VISIBLE, as (abs, rel). This is
+    // collected from the walker itself, so `.gitignore` (including nested ones),
+    // `.ignore`, the global gitignore and `.git/info/exclude` are all honoured.
+    //
+    // The `exclude` globset is applied only to DIRECTORY discovery below, not to
+    // this list: spec/test files are deliberately indexed and flagged via
+    // `nodes.is_test`, so the globset must not be used to drop them.
+    let mut visible: Vec<(std::path::PathBuf, String)> = Vec::new();
+
     for entry in walker.flatten() {
         if !entry.path().is_file() { continue; }
         let rel = entry.path().strip_prefix(repo_path).unwrap_or(entry.path());
-        let rel_str = rel.to_string_lossy();
-        if exclude.is_match(&*rel_str) { continue; }
+        let rel_str = rel.to_string_lossy().to_string();
 
         // Skip binary files and files without extensions
         let ext = entry.path().extension()
@@ -230,28 +238,33 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
         if ext.is_empty() { continue; }
         if is_binary_ext(&ext) { continue; }
 
+        visible.push((entry.path().to_path_buf(), rel_str.clone()));
+
+        if exclude.is_match(&rel_str) { continue; }
         if let Some(parent) = entry.path().parent() {
             dirs.insert(parent.to_path_buf());
         }
     }
 
-    // Enumerate the working tree's indexable files with mtimes (one read_dir
-    // pass per discovered dir), keyed by abs path → rel path.
+    // The working tree's indexable files with mtimes, keyed by abs path → rel path.
+    //
+    // Derived from the walker's own output rather than re-reading each discovered
+    // directory. The previous `read_dir` pass re-enumerated every file in a
+    // discovered dir and applied ONLY the extension checks, so it silently
+    // re-admitted files the ignore rules had just excluded — any gitignored file
+    // sitting in a directory that also held tracked files was indexed. Sourcing
+    // from `visible` removes that asymmetry by construction: one enumeration, one
+    // set of rules.
     let mut current_meta: std::collections::HashMap<std::path::PathBuf, String> = std::collections::HashMap::new();
     let mut current: Vec<(String, i64)> = Vec::new();
-    for dir in &dirs {
-        if let Ok(entries) = std::fs::read_dir(dir) {
-            for entry in entries.flatten() {
-                if !entry.path().is_file() { continue; }
-                let ext = entry.path().extension().and_then(|e| e.to_str()).unwrap_or("").to_string();
-                if ext.is_empty() || is_binary_ext(&ext) { continue; }
-                let rel = entry.path().strip_prefix(repo_path).unwrap_or(&entry.path())
-                    .to_string_lossy().to_string();
-                let mtime = super::helpers::file_mtime_ms(&entry.path()).unwrap_or(0);
-                current.push((rel.clone(), mtime));
-                current_meta.insert(entry.path(), rel);
-            }
-        }
+    for (abs, rel) in visible {
+        // Keep the previous membership rule — only files under a discovered
+        // (non-excluded) directory participate — so this change subtracts the
+        // ignored files and nothing else.
+        if !abs.parent().is_some_and(|p| dirs.contains(p)) { continue; }
+        let mtime = super::helpers::file_mtime_ms(&abs).unwrap_or(0);
+        current.push((rel.clone(), mtime));
+        current_meta.insert(abs, rel);
     }
     // Diff against the last index with the two-tier gate. The injected hasher
     // reads+hashes ONLY the mtime-drifted candidates (an unchanged-mtime file is

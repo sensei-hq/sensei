@@ -135,6 +135,35 @@ pub(crate) fn build_walker(path: &std::path::Path) -> ignore::WalkBuilder {
     b
 }
 
+/// The set of files in `dir` that the scan's ignore rules leave VISIBLE — i.e.
+/// what [`build_walker`] would yield for that one directory.
+///
+/// This exists so the fs-watcher and the scan cannot disagree about what belongs
+/// in the index. The watcher receives raw FSEvents, which know nothing about
+/// `.gitignore`; without this it enqueued a `ProcessFile` for every generated
+/// artifact (an i18n compiler's 131 emitted message files, say). The scan then
+/// correctly did NOT see those files, so they landed in `plan.removed` and had
+/// their nodes deleted and edges unresolved — and the next build re-added them.
+/// A permanent add/prune churn loop over files that should never be indexed.
+///
+/// Implemented by reusing `build_walker` at `max_depth(1)` rather than
+/// re-deriving the ignore rules: `parents(true)` (the default) still reads
+/// `.gitignore` from every ancestor, so a nested `.gitignore` — the case that
+/// actually bit us — is honoured exactly as the full walk honours it. Reusing the
+/// builder means the two paths cannot drift apart.
+///
+/// Costs one directory read, so callers handling a batch should group by parent
+/// and call this once per directory.
+pub(crate) fn visible_files_in_dir(dir: &std::path::Path) -> std::collections::HashSet<std::path::PathBuf> {
+    let mut w = build_walker(dir);
+    w.max_depth(Some(1));
+    w.build()
+        .flatten()
+        .filter(|e| e.path().is_file())
+        .map(|e| e.path().to_path_buf())
+        .collect()
+}
+
 /// Flip a folder to `indexed` at the terminal community barrier (D4.1),
 /// fail-closed (D6d). Promotes ONLY from `indexing` — the in-flight state
 /// `process_git_folder` sets at scan start:
@@ -304,6 +333,58 @@ mod tests {
         assert!(!is_binary_ext("md"));
         assert!(!is_binary_ext("json"));
         assert!(!is_binary_ext(""));
+    }
+
+    /// The watcher/scan parity check must honour a NESTED `.gitignore` — that is
+    /// the exact shape that leaked: a generated directory carrying its own
+    /// `.gitignore` containing `*`, holding 131 emitted i18n files. FSEvents
+    /// reported them, the scan's walker did not, so they were indexed then pruned
+    /// then re-indexed forever.
+    #[test]
+    fn visible_files_in_dir_honours_nested_gitignore() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        // Make it a repo-ish root with a top-level ignore file too.
+        std::fs::write(root.join(".gitignore"), "*.log\n").unwrap();
+
+        let gen_dir = root.join("generated");
+        std::fs::create_dir_all(&gen_dir).unwrap();
+        // The generated dir disowns everything inside it.
+        std::fs::write(gen_dir.join(".gitignore"), "*\n").unwrap();
+        std::fs::write(gen_dir.join("messages_a.js"), "export const a = 1\n").unwrap();
+        std::fs::write(gen_dir.join("messages_b.js"), "export const b = 2\n").unwrap();
+
+        let visible = visible_files_in_dir(&gen_dir);
+        assert!(
+            visible.is_empty(),
+            "a nested .gitignore of `*` must hide every file in that directory, got {visible:?}"
+        );
+
+        // A sibling directory with tracked files stays visible, and the
+        // root-level rule still applies within it.
+        let src = root.join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("main.rs"), "fn main() {}\n").unwrap();
+        std::fs::write(src.join("debug.log"), "noise\n").unwrap();
+
+        let visible = visible_files_in_dir(&src);
+        assert!(visible.contains(&src.join("main.rs")), "tracked source stays visible");
+        assert!(
+            !visible.contains(&src.join("debug.log")),
+            "an ancestor .gitignore rule must still apply to a nested directory"
+        );
+    }
+
+    /// A directory with no ignore rules at all yields its files — guards against
+    /// the helper accidentally hiding everything (which would silently stop the
+    /// watcher from indexing anything).
+    #[test]
+    fn visible_files_in_dir_yields_unignored_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let f = dir.path().join("thing.ts");
+        std::fs::write(&f, "export const x = 1\n").unwrap();
+        let visible = visible_files_in_dir(dir.path());
+        assert!(visible.contains(&f), "an unignored file must be visible, got {visible:?}");
     }
 
     #[test]
