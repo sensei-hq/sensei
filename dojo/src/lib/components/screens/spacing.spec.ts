@@ -4,41 +4,59 @@ import ScrProjects from './ScrProjects.svelte';
 import ScrConstitution from './ScrConstitution.svelte';
 import { projects, stance, ladder } from '$lib/components/kit/fixtures';
 
-// px → 4px-grid cleanup intent (chunk 3). The (app) screens' inline
-// `padding/gap` px were converted to grid utilities (`p-8`=32 · `gap-6`=24 ·
-// `p-4`=16 · `gap-4`=16). These assert the conversion preserved the layout
-// intent: the desktop screens keep the 32/24 rhythm, the responsive screens
-// switch to the 16/16 phone rhythm, and no inline `padding:`/`gap:` px survives
-// on the screen wrappers. Rendered as the shell renders them (no mobile prop =
-// desktop).
+// Screen spacing is mobile-first (§1.7): the phone rhythm (`p-4`=16 · `gap-4`=16)
+// is the base, and the desktop rhythm (`p-8`=32 · `gap-6`=24) sits behind `md:`.
+// Before this, screens either hard-coded the desktop rhythm or branched on a
+// `mobile` prop that nothing in the app ever set — so every screen rendered
+// desktop spacing at every width.
+//
+// Asserted with word boundaries rather than `toContain`: `toContain('p-8')` also
+// matches the `p-8` inside `md:p-8`, so it passed before *and* after the
+// conversion and proved nothing either way.
 
 /** The root wrapper element a screen renders into. */
 function root(container: HTMLElement): HTMLElement {
 	return container.firstElementChild as HTMLElement;
 }
 
-describe('dojo screen spacing — px converted to 4px-grid utilities', () => {
+const SCREENS = [
+	['ScrConstitution', () => render(ScrConstitution, { props: { stance, ladder } })],
+	['ScrProjects', () => render(ScrProjects, { props: { projects } })]
+] as const;
+
+describe('dojo screen spacing — mobile-first 4px-grid utilities', () => {
 	afterEach(cleanup);
 
-	it('a governance screen (ScrConstitution) uses the same desktop rhythm', () => {
-		const { container } = render(ScrConstitution, { props: { stance, ladder } });
-		const el = root(container);
-		expect(el.className).toContain('p-8');
-		expect(el.className).toContain('gap-6');
+	it.each(SCREENS)('%s bases the phone rhythm and steps up at md', (_name, mount) => {
+		const cls = root(mount().container).className;
+		expect(cls).toMatch(/\bp-4\b/);
+		expect(cls).toMatch(/\bgap-4\b/);
+		expect(cls).toMatch(/\bmd:p-8\b/);
+		expect(cls).toMatch(/\bmd:gap-6\b/);
 	});
 
-	it('responsive screens keep the desktop rhythm by default (p-8 / gap-6)', () => {
-		const { container } = render(ScrProjects, { props: { projects } });
-		const el = root(container);
-		expect(el.className).toContain('p-8');
-		expect(el.className).toContain('gap-6');
-		expect(el.getAttribute('style') ?? '').not.toMatch(/padding:|gap:/);
+	it.each(SCREENS)('%s has no unprefixed desktop spacing', (_name, mount) => {
+		const cls = root(mount().container).className;
+		// An unprefixed `p-8`/`gap-6` would apply at phone widths too — the exact
+		// defect this conversion removed. The lookbehind lets `md:p-8` through.
+		expect(cls).not.toMatch(/(?<!:)\bp-8\b/);
+		expect(cls).not.toMatch(/(?<!:)\bgap-6\b/);
 	});
 
-	it('responsive screens switch to the phone rhythm with mobile (p-4 / gap-4)', () => {
-		const { container } = render(ScrProjects, { props: { projects, mobile: true } });
-		const el = root(container);
-		expect(el.className).toContain('p-4');
-		expect(el.className).toContain('gap-4');
+	it.each(SCREENS)('%s keeps spacing out of inline styles', (_name, mount) => {
+		const style = root(mount().container).getAttribute('style') ?? '';
+		expect(style).not.toMatch(/padding:|gap:/);
+	});
+
+	it('the mobile prop no longer drives wrapper spacing', () => {
+		// `mobile` survives only for content decisions (which columns and panes
+		// render). Spacing is CSS's job now, so passing it must not move the
+		// wrapper — this is the regression guard against reintroducing the branch.
+		const desktop = root(render(ScrProjects, { props: { projects } }).container).className;
+		cleanup();
+		const phone = root(
+			render(ScrProjects, { props: { projects, mobile: true } }).container
+		).className;
+		expect(phone).toBe(desktop);
 	});
 });
