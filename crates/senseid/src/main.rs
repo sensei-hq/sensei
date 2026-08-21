@@ -11,6 +11,7 @@ mod api;
 mod tasks;
 mod transcript;
 mod governance;
+mod materialize;
 mod review;
 mod secret_scan;
 mod libraries;

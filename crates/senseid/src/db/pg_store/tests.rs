@@ -1826,6 +1826,42 @@
         s.delete_project(&pid).await.unwrap();
     }
 
+    #[tokio::test]
+    async fn begin_file_materialization_flips_and_returns_prompt_seed() {
+        // P-B store contract: the guarded flip returns the (action_type, title, why,
+        // prompt) seed a file materializer renders, and set_recommendation_materialized
+        // records the file provenance. Second flip is guarded (no double write).
+        let s = pg_store().await;
+        let pid = s.create_project(&format!("_test:pbmat-{}", uuid::Uuid::new_v4()), None, None).await.unwrap();
+        let rid = s.create_recommendation_full(
+            &pid, "Establish DBD Guardian Agent", "cross-layer churn needs a review agent", None,
+            "create_agent", "high", &serde_json::json!({}), None,
+            Some("You are an Architectural Review Agent for dbd. Before any code is accepted, check module boundaries."),
+        ).await.unwrap();
+
+        let (action_type, title, why, prompt) = s.begin_file_materialization(&rid).await.unwrap().expect("pending → seed");
+        assert_eq!(action_type, "create_agent");
+        assert_eq!(title, "Establish DBD Guardian Agent");
+        assert_eq!(why, "cross-layer churn needs a review agent");
+        assert!(prompt.as_deref().unwrap().starts_with("You are an Architectural Review Agent"), "prompt seed returned");
+
+        // Record the file provenance (what the handler does after writing the file).
+        let mref = serde_json::json!({ "kind": "agent", "file_path": ".claude/agents/establish-dbd-guardian-agent.md" });
+        s.set_recommendation_materialized(&rid, &mref).await.unwrap();
+        let (status, kind, fp): (String, Option<String>, Option<String>) = sqlx_core::query_as::query_as(
+            "SELECT status::text, materialized_ref->>'kind', materialized_ref->>'file_path' FROM inference.recommendations WHERE id=$1"
+        ).bind(rid).fetch_one(s.pool()).await.unwrap();
+        assert_eq!(status, "accepted");
+        assert_eq!(kind.as_deref(), Some("agent"));
+        assert_eq!(fp.as_deref(), Some(".claude/agents/establish-dbd-guardian-agent.md"));
+
+        // Guarded: a second flip on the accepted rec returns None (no re-materialize).
+        assert!(s.begin_file_materialization(&rid).await.unwrap().is_none(), "guarded at pending");
+
+        sqlx_core::query::query("DELETE FROM inference.recommendations WHERE id=$1").bind(rid).execute(s.pool()).await.ok();
+        s.delete_project(&pid).await.unwrap();
+    }
+
     // ── Accept-driven pattern promotion ──────────────────────────────
     // Accepting a `promote_pattern` rec advances its source pattern's
     // lifecycle to `rule` (the read path renders it `adopted`). The action
