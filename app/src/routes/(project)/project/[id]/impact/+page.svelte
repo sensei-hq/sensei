@@ -71,7 +71,7 @@
 
 <div class="px-6 py-6">
   <h2 class="text-xl font-normal m-0 mb-1">Impact</h2>
-  <p class="text-[13px] text-ink-mute m-0 mb-5 max-w-[640px] leading-relaxed">
+  <p class="text-sm text-ink-mute m-0 mb-5 max-w-[640px] leading-relaxed">
     Each accepted recommendation gets a measurement window. FTR baseline vs
     current tells you whether it worked. The MOE panel writes the reasoning.
   </p>
@@ -79,19 +79,19 @@
   <!-- Verdict counts — measured impact at a glance -->
   <div class="flex gap-6 mb-5" data-impact-total={data.total}>
     <div>
-      <span class="font-mono text-[17px] font-light text-success">{data.buckets.positive.length}</span>
+      <span class="font-mono text-lg font-light text-success">{data.buckets.positive.length}</span>
       <span class="text-xs uppercase tracking-wider text-ink-faint ml-2">positive</span>
     </div>
     <div>
-      <span class="font-mono text-[17px] font-light text-ink">{data.buckets.neutral.length}</span>
+      <span class="font-mono text-lg font-light text-ink">{data.buckets.neutral.length}</span>
       <span class="text-xs uppercase tracking-wider text-ink-faint ml-2">neutral</span>
     </div>
     <div>
-      <span class="font-mono text-[17px] font-light text-warning">{data.buckets.negative.length}</span>
+      <span class="font-mono text-lg font-light text-warning">{data.buckets.negative.length}</span>
       <span class="text-xs uppercase tracking-wider text-ink-faint ml-2">negative</span>
     </div>
     <div>
-      <span class="font-mono text-[17px] font-light text-ink-soft">{data.buckets.pending.length}</span>
+      <span class="font-mono text-lg font-light text-ink-soft">{data.buckets.pending.length}</span>
       <span class="text-xs uppercase tracking-wider text-ink-faint ml-2">pending</span>
     </div>
   </div>
@@ -122,7 +122,7 @@
             onclick={() => (selectedId = v.id)}
           >
             <div class="flex items-center gap-2 mb-1">
-              <span class="kanji text-[13px] {toneClass(vm.tone)}">{vm.glyph}</span>
+              <span class="kanji text-sm {toneClass(vm.tone)}">{vm.glyph}</span>
               <span class="text-xs uppercase tracking-wider {toneClass(vm.tone)}">{v.verdict}</span>
               <span class="flex-1"></span>
               <span
@@ -132,7 +132,7 @@
                 class:text-ink-mute={v.ftrDelta == null || v.ftrDelta === 0}
               >{formatDeltaPct(v.ftrDelta)}</span>
             </div>
-            <p class="text-[13px] m-0 leading-snug font-medium truncate"
+            <p class="text-sm m-0 leading-snug font-medium truncate"
                class:text-ink={isOpen}
                class:text-ink-mute={!isOpen}>{v.title}</p>
           </button>
@@ -164,7 +164,7 @@
               class:bg-paper-mute={selectedVm.tone === 'ink'}
               class:border-paper-edge={selectedVm.tone === 'ink'}
             >
-              <span class="kanji text-[13px] {toneClass(selectedVm.tone)}">{selectedVm.glyph}</span>
+              <span class="kanji text-sm {toneClass(selectedVm.tone)}">{selectedVm.glyph}</span>
               <span class="text-xs uppercase tracking-wider font-medium {toneClass(selectedVm.tone)}">
                 {selectedVm.label}
               </span>

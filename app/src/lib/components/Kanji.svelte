@@ -20,7 +20,7 @@
       '4xl': 'text-4xl',
       // Signature screen-header glyph — 40px, matching the mockup ScreenHeader/
       // KanjiHeader (a fixed display glyph, not body type). See mockup-drift-audit F5.
-      'screen': 'text-[40px]',
+      'screen': 'text-3xl',
     })[size]
   );
 

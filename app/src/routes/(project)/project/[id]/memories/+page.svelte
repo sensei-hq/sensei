@@ -268,20 +268,20 @@
                     </div>
 
                     <!-- The memory statement — display-scale, mockup vibe -->
-                    <h2 class="display text-[40px] font-light leading-tight tracking-tight m-0 mb-5 text-ink">
+                    <h2 class="display text-3xl font-light leading-tight tracking-tight m-0 mb-5 text-ink">
                         What: {openedMemory.title || openedMemory.name}
                     </h2>
 
                     <!-- Because — quiet paragraph -->
                     {#if openedMemory.content}
-                        <p class="text-[15px] text-ink-mute leading-relaxed m-0 mb-4 whitespace-pre-line">
+                        <p class="text-base text-ink-mute leading-relaxed m-0 mb-4 whitespace-pre-line">
                             {openedMemory.content}
                         </p>
                     {/if}
 
                     <!-- Consequence — either violated summary or reinforced summary -->
                     {#if (openedMemory.violatedCount ?? 0) > 0}
-                        <p class="text-[13px] text-ink-soft leading-relaxed m-0 mb-6">
+                        <p class="text-sm text-ink-soft leading-relaxed m-0 mb-6">
                             When this slipped, sensei saw
                             <span class="text-warning">
                                 {openedMemory.violatedCount} correction{openedMemory.violatedCount === 1 ? '' : 's'}
@@ -289,13 +289,13 @@
                             across recent sessions.
                         </p>
                     {:else if (openedMemory.reinforcedCount ?? 0) > 0}
-                        <p class="text-[13px] text-ink-soft leading-relaxed m-0 mb-6">
+                        <p class="text-sm text-ink-soft leading-relaxed m-0 mb-6">
                             Reinforced
                             <span class="text-ink-mute">{openedMemory.reinforcedCount} time{openedMemory.reinforcedCount === 1 ? '' : 's'}</span>
                             without a violation.
                         </p>
                     {:else if openedMemory.impact}
-                        <p class="text-[13px] text-ink-soft leading-relaxed m-0 mb-6">
+                        <p class="text-sm text-ink-soft leading-relaxed m-0 mb-6">
                             {openedMemory.impact}
                         </p>
                     {/if}

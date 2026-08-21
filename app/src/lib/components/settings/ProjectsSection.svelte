@@ -113,7 +113,7 @@
                  Was text-accent + accent-soft bg, which gave near-zero contrast. -->
             {#if isMulti}
               <span
-                class="font-mono py-1 px-2 text-[11px] uppercase tracking-wider text-on-primary bg-accent rounded-sm"
+                class="font-mono py-1 px-2 text-xs uppercase tracking-wider text-on-primary bg-accent rounded-sm"
                 >multi-repo</span
               >
             {:else}
@@ -144,7 +144,7 @@
           {#if stackChips.length > 0}
             <div class="flex flex-wrap gap-1 mt-3 pl-13">
               {#each stackChips as chip}
-                <span class="font-mono text-[11px] text-ink-mute bg-paper-mute rounded-sm py-0.5 px-1.5">{chip}</span>
+                <span class="font-mono text-xs text-ink-mute bg-paper-mute rounded-sm py-0.5 px-1.5">{chip}</span>
               {/each}
             </div>
           {/if}
@@ -153,7 +153,7 @@
           {#if project.folders.length > 0}
             <div class="flex flex-wrap gap-2 mt-3 pl-13">
               {#each project.folders as folder (folder.id)}
-                <span class="font-mono inline-flex items-center gap-2 text-[11px] py-1 pl-2 pr-1 bg-paper-soft border border-paper-edge rounded-sm">
+                <span class="font-mono inline-flex items-center gap-2 text-xs py-1 pl-2 pr-1 bg-paper-soft border border-paper-edge rounded-sm">
                   <!-- The visible {folder.name} labels this row; the Select trigger
                        takes its accessible name from its value text. (rokkit Select
                        v1.3.1 drops aria-*/data-* — only `class` reaches the DOM.) -->

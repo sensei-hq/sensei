@@ -48,11 +48,11 @@
 <div class="flex flex-col h-full" data-screen="activity-logs">
   <!-- Header -->
   <div class="flex items-center gap-5 pt-5 pb-4 px-6 border-b border-paper-edge">
-    <span class="kanji text-[40px] text-accent leading-none">診</span>
+    <span class="kanji text-3xl text-accent leading-none">診</span>
     <div class="flex-1 min-w-0">
       <p class="m-0 mb-1"><Eyebrow>Observatory · Logs</Eyebrow></p>
-      <h1 class="display text-[22px] font-normal m-0">Activity logs</h1>
-      <p class="text-[13px] text-ink-mute mt-1 mb-0 max-w-[640px] leading-relaxed">
+      <h1 class="display text-xl font-normal m-0">Activity logs</h1>
+      <p class="text-sm text-ink-mute mt-1 mb-0 max-w-[640px] leading-relaxed">
         Daemon, cli, mcp and app activity as the machine recorded it — the surface to
         open when the numbers don't correlate or a signal isn't updating.
       </p>

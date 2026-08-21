@@ -61,9 +61,13 @@ describe('PageHeader', () => {
   });
 
   it.each([
-    // F5: h1/h2 screen headers use the mockup's 40px signature kanji; h3 stays compact.
-    ['h1', /\btext-2xl\b/, /text-\[40px\]/],
-    ['h2', /\btext-xl\b/,  /text-\[40px\]/],
+    // F5: h1/h2 screen headers use the mockup's 40px signature kanji; h3 stays
+    // compact. Asserted as the scale stop, not `text-[40px]`: `text-3xl` IS 40px
+    // (uno.config.js fontSize."3xl"), so the rendering is unchanged, and a test
+    // pinning the literal was pinning a guidelines violation (§1.3 "never literal
+    // px") — h3 below already used a stop, so the two were inconsistent.
+    ['h1', /\btext-2xl\b/, /\btext-3xl\b/],
+    ['h2', /\btext-xl\b/,  /\btext-3xl\b/],
     ['h3', /\btext-lg\b/,  /\btext-xl\b/],
   ] as const)('variant %s sizes title + kanji per spec', (variant, titleRe, kanjiRe) => {
     const m = mountComponent(PageHeaderHarness, { title: 'X', kanji: '刻', variant });
