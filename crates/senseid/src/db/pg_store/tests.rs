@@ -1061,6 +1061,63 @@
         s.delete_nodes_by_folder(&fid).await.unwrap();
     }
 
+    /// A node whose fqn SHAPE changes must be adopted, not rejected.
+    ///
+    /// Reproduces the production failure: `MetricSparkline.svelte` was indexed
+    /// with the module fqn `typescript·@sensei/desktop·lib/components/
+    /// MetricSparkline`; a later parse yielded no top-level defs, so the fqn's
+    /// language segment changed. `ON CONFLICT (folder_id, fqn)` cannot see the old
+    /// row, so the statement fell through to a raw INSERT and hit
+    /// `nodes_unique_identity` — the same file/kind/name/parent/line. That made
+    /// process_file fail, which withheld scan_state, which made the reconcile
+    /// re-drive the folder every 5 minutes forever with the folder stuck `failed`.
+    #[tokio::test]
+    async fn upsert_node_by_fqn_adopts_row_when_only_the_fqn_changed() {
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, &format!("adopt_{}", uuid::Uuid::new_v4())).await;
+
+        let file_path = "src/lib/components/MetricSparkline.svelte";
+        let name = "lib/components/MetricSparkline";
+        // NULL line_start / parent_id on purpose — exercises the NULLS NOT
+        // DISTINCT semantics the identity index uses, which is exactly the shape
+        // a module container node has.
+        let def = || FqnDef {
+            file_path,
+            signature: None,
+            line_start: None,
+            line_end: None,
+            is_exported: false,
+            parent_id: None,
+        };
+
+        // Indexed once under the original fqn.
+        let first = s.upsert_node_by_fqn(
+            &fid, "typescript·@sensei/desktop·lib/components/MetricSparkline",
+            "module", name, Some("svelte"), Some(def()),
+        ).await.unwrap();
+
+        // Same structural identity, DIFFERENT fqn — this used to be a hard error.
+        let second = s.upsert_node_by_fqn(
+            &fid, "svelte·@sensei/desktop·lib/components/MetricSparkline",
+            "module", name, Some("svelte"), Some(def()),
+        ).await
+            .expect("an fqn change on an existing identity must adopt the row, not fail");
+
+        assert_eq!(first, second, "the existing node is adopted, keeping its id (and so its edges/embedding)");
+
+        // Exactly one row, now carrying the new fqn.
+        let (count, fqn): (i64, Option<String>) = query_as(
+            "SELECT count(*) OVER (), fqn FROM sensei.nodes
+             WHERE folder_id=$1 AND file_path=$2 AND kind='module'::sensei.node_kind"
+        ).bind(fid).bind(file_path).fetch_one(s.pool()).await.unwrap();
+        assert_eq!(count, 1, "adoption must not leave a duplicate module node behind");
+        assert_eq!(
+            fqn.as_deref(),
+            Some("svelte·@sensei/desktop·lib/components/MetricSparkline"),
+            "the adopted row is re-pointed at the new fqn"
+        );
+    }
+
     #[tokio::test]
     async fn upsert_node_by_fqn_merges_ref_and_def() {
         // FQN get-or-create (SCIP/LSIF moniker model): a REFERENCE creates an
