@@ -2115,6 +2115,11 @@ mod tests {
     ///   run_completion 0.8 · memory_promotion 0.5 · unused_tools 0 · time_to_useful_result.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn metrics_pipeline_end_to_end() {
+        // Seeds corrections and asserts on `memory_promotion`, whose denominator
+        // counts them. A sibling test prunes that table by keep-set (table-wide
+        // by design), which silently deleted these rows mid-run and turned
+        // 2/4 into 2/2. Share the lock rather than pretend it can be scoped.
+        let _serialised = crate::tasks::test_support::CORRECTIONS_TABLE_LOCK.lock().await;
         use crate::tasks::executor::spawn_workers;
         use crate::tasks::handlers::metrics::HEALTH_TASK_NAME;
         use crate::tasks::test_support::{
