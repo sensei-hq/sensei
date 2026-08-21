@@ -1,6 +1,6 @@
 use std::time::Duration;
 use sqlx_postgres::{PgPool, PgPoolOptions};
-use sensei_bootstrap::{DB_POOL_MAX_CONNECTIONS, DB_POOL_MIN_CONNECTIONS, DB_POOL_ACQUIRE_TIMEOUT_SECS, DB_POOL_IDLE_TIMEOUT_SECS};
+use sensei_bootstrap::{DB_POOL_MAX_CONNECTIONS, DB_POOL_MIN_CONNECTIONS, DB_POOL_ACQUIRE_TIMEOUT_SECS, DB_POOL_IDLE_TIMEOUT_SECS, DB_POOL_MAX_LIFETIME_SECS};
 use dojo_protocol::relay::RelayRunStatus;
 use crate::runs::{NewRun, Run, RunEvent, RunEventKind};
 
@@ -445,11 +445,15 @@ mod pack_resolution_tests;
 impl PgStore {
     /// Connect to a PostgreSQL database using the shared pool defaults from
     /// [`sensei_bootstrap`] (`DB_POOL_MIN_CONNECTIONS`, `DB_POOL_MAX_CONNECTIONS`,
-    /// `DB_POOL_ACQUIRE_TIMEOUT_SECS`, `DB_POOL_IDLE_TIMEOUT_SECS`).
+    /// `DB_POOL_ACQUIRE_TIMEOUT_SECS`, `DB_POOL_IDLE_TIMEOUT_SECS`,
+    /// `DB_POOL_MAX_LIFETIME_SECS`).
     ///
-    /// The pool is elastic: it keeps `DB_POOL_MIN_CONNECTIONS` warm, grows to
-    /// `DB_POOL_MAX_CONNECTIONS` under load, and reaps the extras back to the warm
-    /// floor once they sit idle past `DB_POOL_IDLE_TIMEOUT_SECS`.
+    /// The pool is elastic: it keeps `DB_POOL_MIN_CONNECTIONS` warm and grows to
+    /// `DB_POOL_MAX_CONNECTIONS` under load. Extras are retired by
+    /// `DB_POOL_MAX_LIFETIME_SECS` (an absolute age that nothing resets), which is
+    /// what actually returns the pool to the warm floor — `DB_POOL_IDLE_TIMEOUT_SECS`
+    /// cannot, because sqlx's FIFO idle queue rotates every connection and resets
+    /// its idle clock under even a light trickle of scheduler traffic.
     pub async fn connect(database_url: &str) -> Result<Self, String> {
         Self::connect_with(database_url, DB_POOL_MIN_CONNECTIONS, DB_POOL_MAX_CONNECTIONS).await
     }
@@ -464,6 +468,7 @@ impl PgStore {
             .max_connections(max)
             .acquire_timeout(Duration::from_secs(DB_POOL_ACQUIRE_TIMEOUT_SECS))
             .idle_timeout(Duration::from_secs(DB_POOL_IDLE_TIMEOUT_SECS))
+            .max_lifetime(Duration::from_secs(DB_POOL_MAX_LIFETIME_SECS))
             // Put `extensions` on the search_path so unqualified references to
             // pgvector's `vector` type and operators (`$n::vector`, `<=>`) resolve.
             // pgvector installs into the `extensions` schema — the Supabase/dbd
