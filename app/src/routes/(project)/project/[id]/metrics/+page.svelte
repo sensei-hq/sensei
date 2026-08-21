@@ -10,6 +10,7 @@
         deterministicHeadline,
     } from '$lib/metrics/metric-view.js';
     import HealthHero from './HealthHero.svelte';
+    import HealthRadar from './HealthRadar.svelte';
     import MoverCard from './MoverCard.svelte';
     import SignalGridCell from './SignalGridCell.svelte';
     import SignalLegend from './SignalLegend.svelte';
@@ -77,6 +78,16 @@
                 </div>
             </section>
         {/if}
+
+        <!-- All signals at once, on the one scale they share (0-5 ratings).
+             Sits above the per-metric grid: shape first, then the detail. -->
+        <section data-component="metrics-radar" class="mb-10">
+            <HealthRadar
+                components={data.health?.components ?? {}}
+                score={data.health?.health_score ?? null}
+                ratedMetrics={data.health?.rated_metrics ?? 0}
+            />
+        </section>
 
         <section data-component="metrics-grid" class="flex flex-col gap-3">
             <div class="flex items-center justify-between gap-4 flex-wrap">
