@@ -145,6 +145,19 @@ pub fn principle_signal(prompt: &str) -> Option<&'static str> {
 /// absence, never abandonment (see `derive_outcome`). PRECISION-favoring — only
 /// unambiguous phrasings, so ordinary work is never mislabeled. Reads both the
 /// user turn and Claude's reply (Phase D mines these hints further).
+///
+/// Cues REMOVED after a false positive in the wild, kept out deliberately:
+/// - "low on context" / "running low on context" — Claude says this routinely
+///   and then keeps working; it announces a constraint, not a decision to stop.
+///   One such turn out of 27 flipped a session with `ftr = true`, 0 corrections
+///   and a clean end to `abandoned`.
+/// - "out of context" — ordinary English ("taken out of context"), and it also
+///   matches any session that merely DISCUSSES context limits, which made
+///   sessions about context management self-label as abandoned.
+///
+/// The bar for a cue here is that it can only plausibly mean "we are stopping".
+/// A phrase that also appears in normal work is not evidence, because this
+/// single boolean outweighs turn count, corrections and FTR.
 pub fn abandonment_signal(user_text: &str, assistant_text: &str) -> bool {
     let u = user_text.trim().to_lowercase();
     let a = assistant_text.trim().to_lowercase();
@@ -154,9 +167,9 @@ pub fn abandonment_signal(user_text: &str, assistant_text: &str) -> bool {
         "i'll come back to this later", "come back to this later", "let's scrap", "lets scrap",
     ];
     const CLAUDE: &[&str] = &[
-        "start a new session", "start a fresh session", "running low on context",
-        "low on context", "resume this later", "let's resume later", "pick this up later",
-        "continue in a new session", "out of context",
+        "start a new session", "start a fresh session",
+        "resume this later", "let's resume later", "pick this up later",
+        "continue in a new session",
     ];
     USER.iter().any(|s| u.contains(s)) || CLAUDE.iter().any(|s| a.contains(s))
 }
@@ -232,8 +245,10 @@ fn trailing_failures(events: &[HookEvent]) -> usize {
 /// - **empty** — 0 turns: not a measured outcome (the read path excludes it from
 ///   throughput/ftr). Never a signal card.
 /// - **abandoned** — ONLY on a POSITIVE transcript abandonment signal (user gave
-///   up, or Claude advised stop/resume-later). Phase B additionally spares any
-///   session later resumed. NEVER inferred from a missing end event.
+///   up, or Claude advised stop/resume-later), AND no clean end, AND not later
+///   resumed (Phase B). NEVER inferred from a missing end event. A session that
+///   reached Stop/SessionEnd is `completed`/`corrected` whatever a mid-transcript
+///   turn said — the terminal evidence outranks a phrase.
 /// - **completed / corrected** — a clean end (Stop/SessionEnd); `corrected` if the
 ///   user had to correct.
 /// - **blocked** — no clean end but a tail error cluster.
@@ -250,18 +265,28 @@ fn derive_outcome(
     if real_turns == 0 {
         return "empty";
     }
-    // `abandoned` requires a positive signal AND no resume-link: a session that was
-    // reopened/continued is never abandoned (Phase B), even if a turn said "stop".
+    let has_end = events
+        .iter()
+        .any(|e| e.event_type == "Stop" || e.event_type == "SessionEnd");
+
+    // `abandoned` requires a positive signal, no resume-link, AND no clean end.
+    //
+    // - no resume-link: a session that was reopened/continued is never abandoned
+    //   (Phase B), even if a turn said "stop".
+    // - no clean end (added after a false positive): a session that reached
+    //   Stop/SessionEnd finished. A cue somewhere in the middle is then about
+    //   some sub-task ("let's stop here and do X instead"), not the session — and
+    //   it should not outrank the terminal evidence. The case that motivated this
+    //   ended cleanly with `ftr = true` and 0 corrections, which is provably the
+    //   opposite of abandoned, yet one turn flipped it.
     let abandoned = !resumed
+        && !has_end
         && transcript.iter().any(|t| {
             abandonment_signal(t.user_text.as_deref().unwrap_or(""), &t.assistant_text)
         });
     if abandoned {
         return "abandoned";
     }
-    let has_end = events
-        .iter()
-        .any(|e| e.event_type == "Stop" || e.event_type == "SessionEnd");
     if has_end {
         if corrections > 0 { "corrected" } else { "completed" }
     } else if trailing_failures(events) >= 2 {
@@ -915,6 +940,68 @@ mod tests {
     /// A minimal transcript turn for the transcript-first derivation tests.
     fn tt(idx: i32, user: &str, assistant: &str) -> TranscriptTurn {
         TranscriptTurn { turn_index: idx, user_text: Some(user.into()), assistant_text: assistant.into(), started_at: None }
+    }
+
+    /// The invariant that was violated in the wild: a session that ended cleanly
+    /// with no corrections is first-try-right, which is the OPPOSITE of
+    /// abandoned. No phrase anywhere in the transcript may outrank that.
+    #[test]
+    fn a_clean_end_can_never_be_abandoned() {
+        let events = vec![
+            prompt_ev("add the radar", 1000),
+            prompt_ev("now wire it up", 2000),
+            ev("Stop", 3000),
+        ];
+        // Mid-transcript cues about stopping a SUB-task, plus a clean end.
+        let transcript = vec![
+            tt(0, "add the radar", "done"),
+            tt(1, "now wire it up", "let's stop here and take the other approach instead"),
+            tt(2, "ship it", "shipped"),
+        ];
+        let m = derive_session_metrics(&events, &transcript).unwrap();
+        assert_eq!(
+            m.outcome, "completed",
+            "a session that reached Stop with 0 corrections is completed, not abandoned",
+        );
+    }
+
+    /// Removed cues, kept out on purpose: Claude announces a context constraint
+    /// and keeps working. One such turn out of 27 flipped a real session (clean
+    /// end, ftr=true, 0 corrections) to `abandoned`.
+    #[test]
+    fn context_talk_is_not_an_abandonment_signal() {
+        for assistant in [
+            "i'm running low on context, let me summarise and continue",
+            "we're low on context so i'll be brief",
+            "that quote was taken out of context",
+            "the error is out of context here",
+        ] {
+            assert!(
+                !abandonment_signal("keep going", assistant),
+                "must not read as abandonment: {assistant}",
+            );
+        }
+    }
+
+    /// The genuinely unambiguous cues must still fire — this is a precision fix,
+    /// not a removal of the signal.
+    #[test]
+    fn explicit_give_up_is_still_an_abandonment_signal() {
+        assert!(abandonment_signal("i give up on this", ""));
+        assert!(abandonment_signal("let's scrap it", ""));
+        assert!(abandonment_signal("", "let's pick this up later"));
+        assert!(abandonment_signal("", "continue in a new session"));
+        assert!(!abandonment_signal("carry on", "here is the patch"));
+    }
+
+    /// With no clean end, an explicit give-up still classifies as abandoned —
+    /// the ordering fix must not have made the outcome unreachable.
+    #[test]
+    fn give_up_without_a_clean_end_is_still_abandoned() {
+        let events = vec![prompt_ev("try the migration", 1000)];
+        let transcript = vec![tt(0, "i give up on this", "understood")];
+        let m = derive_session_metrics(&events, &transcript).unwrap();
+        assert_eq!(m.outcome, "abandoned");
     }
 
     #[test]
