@@ -71,10 +71,10 @@
             <div class="flex items-baseline gap-2">
               <span class="text-sm text-ink font-medium truncate">{lib.name}</span>
               {#if lib.version}
-                <span class="font-mono text-[11px] text-ink-soft bg-paper-mute rounded-sm px-1.5 py-0.5">{lib.version}</span>
+                <span class="font-mono text-xs text-ink-soft bg-paper-mute rounded-sm px-1.5 py-0.5">{lib.version}</span>
               {/if}
               {#if lib.ecosystem}
-                <span class="font-mono text-[11px] text-ink-soft uppercase">{lib.ecosystem}</span>
+                <span class="font-mono text-xs text-ink-soft uppercase">{lib.ecosystem}</span>
               {/if}
             </div>
             {#if lib.description}

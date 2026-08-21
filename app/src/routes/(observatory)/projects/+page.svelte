@@ -61,13 +61,13 @@
 <div data-component="projects-page" class="w-full h-full flex flex-col bg-paper overflow-hidden">
   <!-- Header -->
   <div class="pt-5 pb-4 px-7 border-b border-paper-edge flex items-center gap-5">
-    <span class="kanji text-[28px] text-accent">場</span>
+    <span class="kanji text-2xl text-accent">場</span>
     <div>
       <p class="m-0 mb-0.5"><Eyebrow>Projects</Eyebrow></p>
-      <h1 class="display text-[22px] font-normal m-0">All the places you work.</h1>
+      <h1 class="display text-xl font-normal m-0">All the places you work.</h1>
     </div>
     <span class="flex-1"></span>
-    <span class="font-mono text-[11px] text-ink-soft py-1 px-2 border border-paper-edge rounded">
+    <span class="font-mono text-xs text-ink-soft py-1 px-2 border border-paper-edge rounded">
       ⌘K to jump
     </span>
   </div>
@@ -81,12 +81,12 @@
       aria-label="filter projects by status"
     >
       {#snippet itemContent(proxy: ProxyItem)}
-        <span class="kanji text-[11px]">{proxy.get('kanji')}</span>
+        <span class="kanji text-xs">{proxy.get('kanji')}</span>
         <span>{proxy.label}</span>
         <!-- Inherit the option's text colour (rokkit sets a contrast-correct colour
              per selected/unselected state) instead of a hardcoded text-ink-mute,
              which failed contrast on the SELECTED pill's background (a11y). -->
-        <span class="font-mono text-[11px]">{proxy.get('count')}</span>
+        <span class="font-mono text-xs">{proxy.get('count')}</span>
       {/snippet}
     </Toggle>
     <span class="flex-1"></span>
@@ -99,29 +99,29 @@
       aria-label="view"
     >
       {#snippet itemContent(proxy: ProxyItem)}
-        <span class="{proxy.get('icon')} text-[16px]" aria-hidden="true"></span>
+        <span class="{proxy.get('icon')} text-base" aria-hidden="true"></span>
       {/snippet}
     </Toggle>
 
     <div class="flex items-center bg-paper-soft border border-paper-edge rounded gap-2 py-1 px-2 min-w-[260px]">
-      <span class="kanji text-[11px] text-ink-soft">探</span>
+      <span class="kanji text-xs text-ink-soft">探</span>
       <input
         type="text"
         bind:value={projectsView.query}
         placeholder="search projects or clients…"
         aria-label="search projects"
-        class="border-none outline-none bg-transparent text-[13px] flex-1 text-ink placeholder:text-ink-faint"
+        class="border-none outline-none bg-transparent text-sm flex-1 text-ink placeholder:text-ink-faint"
       />
       {#if projectsView.query}
         <button
           type="button"
           onclick={() => projectsView.clearQuery()}
-          class="text-[11px] text-ink-faint hover:text-ink"
+          class="text-xs text-ink-faint hover:text-ink"
           aria-label="clear search"
         >×</button>
       {/if}
     </div>
-    <span class="font-mono text-[11px] text-ink-soft whitespace-nowrap">
+    <span class="font-mono text-xs text-ink-soft whitespace-nowrap">
       {filtered.length} of {counts.all}
     </span>
   </div>
@@ -133,7 +133,7 @@
         No projects yet. Set up a project to get started.
       </p>
     {:else if filtered.length === 0}
-      <p class="text-[13px] text-ink-soft py-6 text-center">
+      <p class="text-sm text-ink-soft py-6 text-center">
         {projectsView.query ? `No projects match “${projectsView.query}”.` : 'No projects in this bucket.'}
       </p>
     {:else if projectsView.view === 'grid'}
