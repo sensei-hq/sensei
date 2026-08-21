@@ -35,7 +35,7 @@
       {@render brand()}
 
       <!-- Inline links (desktop / wide) -->
-      <div class="site-nav-wide items-center gap-6">
+      <div class="hidden md:flex items-center gap-6">
         {#each links as [href, label] (href)}
           <a {href} class="text-ink-soft text-sm nav-link no-underline">{label}</a>
         {/each}
@@ -53,7 +53,7 @@
       <!-- Hamburger (small mobile) -->
       <button
         type="button"
-        class="site-nav-toggle text-ink"
+        class="site-nav-toggle inline-flex md:hidden text-ink"
         aria-label={open ? 'Close menu' : 'Open menu'}
         aria-expanded={open}
         aria-controls="site-nav-menu"
@@ -73,7 +73,7 @@
 
   <!-- Disclosure panel (small mobile) -->
   {#if open}
-    <div id="site-nav-menu" class="site-nav-menu border-t border-paper-edge px-7 py-5 flex flex-col gap-5">
+    <div id="site-nav-menu" class="site-nav-menu md:hidden border-t border-paper-edge px-7 py-5 flex flex-col gap-5">
       {#each links as [href, label] (href)}
         <a {href} class="text-ink-soft text-base nav-link no-underline" onclick={close}>{label}</a>
       {/each}
@@ -108,11 +108,7 @@
   .nav-link:hover {
     color: var(--ink);
   }
-  .site-nav-wide {
-    display: flex;
-  }
   .site-nav-toggle {
-    display: none;
     align-items: center;
     justify-content: center;
     padding: 4px;
@@ -123,18 +119,5 @@
   }
   .site-nav-menu {
     background: var(--paper);
-  }
-  @media (max-width: 720px) {
-    .site-nav-wide {
-      display: none;
-    }
-    .site-nav-toggle {
-      display: inline-flex;
-    }
-  }
-  @media (min-width: 721px) {
-    .site-nav-menu {
-      display: none;
-    }
   }
 </style>
