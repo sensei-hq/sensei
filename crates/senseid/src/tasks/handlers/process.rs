@@ -923,7 +923,20 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
                 // The module container's fqn language matches the file's defs (the
                 // first fqn's leading segment), so a Python/TS module node isn't
                 // mislabelled as rust.
-                let lang = fqn_out.defs.first().and_then(|d| d.fqn.split('·').next()).unwrap_or("rust");
+                //
+                // When the parse yields a module path but NO top-level defs there is
+                // no leading segment to copy, so fall back to the FILE's language
+                // rather than a hardcoded "rust" — that fallback minted
+                // `rust·<pkg>·lib/components/Foo` for a .svelte file, which is both
+                // wrong (it corrupts the same-language scoring the `language` column
+                // feeds) and unstable: the fqn flipped as soon as defs reappeared.
+                // Only `adopt_node_by_identity` keeps such a flip from wedging the
+                // file forever, so don't rely on it — emit a stable value here.
+                let lang = fqn_out.defs.first()
+                    .and_then(|d| d.fqn.split('·').next())
+                    .filter(|seg| !seg.is_empty())
+                    .or(file_lang)
+                    .unwrap_or("rust");
                 let mfqn = crate::languages::fqn::item(lang, &fqn_out.package, "", &fqn_out.module);
                 let mname = fqn_out.module.rsplit("::").next().unwrap_or(&fqn_out.module);
                 let mid = ctx.pg().upsert_node_by_fqn(
@@ -2483,7 +2496,7 @@ mod tests {
 
         let reason: Option<String> = sqlx_core::query_scalar::query_scalar(
             "SELECT skip_reason::text FROM sensei.scan_state WHERE folder_id = $1 AND file_path = $2"
-        ).bind(&fid).bind("docs/License.txt")
+        ).bind(fid).bind("docs/License.txt")
             .fetch_one(ctx.pg().pool()).await.unwrap();
         assert_eq!(reason.as_deref(), Some("invalid_utf8"), "skip reason persisted");
 
@@ -2499,7 +2512,7 @@ mod tests {
         ctx.pg().upsert_scan_state(&fid, "docs/License.txt", 222, "hashB").await.unwrap();
         let cleared: Option<String> = sqlx_core::query_scalar::query_scalar(
             "SELECT skip_reason::text FROM sensei.scan_state WHERE folder_id = $1 AND file_path = $2"
-        ).bind(&fid).bind("docs/License.txt")
+        ).bind(fid).bind("docs/License.txt")
             .fetch_one(ctx.pg().pool()).await.unwrap();
         assert_eq!(cleared, None, "re-indexing a fixed file must clear the stale skip reason");
     }
