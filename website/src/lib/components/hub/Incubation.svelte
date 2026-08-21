@@ -19,7 +19,7 @@
     </p>
   </div>
 
-  <div class="incubation-grid gap-5">
+  <div class="grid grid-cols-1 lg:grid-cols-3 gap-5">
     {#each INCUBATING as p (p.id)}
       <div class="incubation-card border border-paper-edge border-dashed rounded-lg text-{p.id}">
         <div class="p-6 flex flex-col" style="flex:1">
@@ -47,10 +47,6 @@
   .incubation-wrap {
     max-width: 1120px;
   }
-  .incubation-grid {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-  }
   .incubation-card {
     display: flex;
     flex-direction: column;
@@ -66,10 +62,5 @@
     width: 6px;
     height: 6px;
     border-radius: 50%;
-  }
-  @media (max-width: 900px) {
-    .incubation-grid {
-      grid-template-columns: 1fr;
-    }
   }
 </style>

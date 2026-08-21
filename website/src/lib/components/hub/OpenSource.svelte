@@ -4,7 +4,7 @@
 </script>
 
 <section id="open" class="opensource-wrap mx-auto px-7 py-24">
-  <div class="opensource-grid gap-8">
+  <div class="grid grid-cols-1 md:grid-cols-[1fr_1.2fr] items-center gap-8">
     <div>
       <div class="flex items-baseline gap-3 mb-4">
         <span class="kanji text-accent text-3xl" style="line-height:1">公</span>
@@ -46,11 +46,6 @@
   .opensource-wrap {
     max-width: 1120px;
   }
-  .opensource-grid {
-    display: grid;
-    grid-template-columns: 1fr 1.2fr;
-    align-items: center;
-  }
   .repo-row {
     display: grid;
     grid-template-columns: auto 1fr auto;
@@ -66,10 +61,5 @@
     height: 8px;
     border-radius: 50%;
     flex-shrink: 0;
-  }
-  @media (max-width: 768px) {
-    .opensource-grid {
-      grid-template-columns: 1fr;
-    }
   }
 </style>

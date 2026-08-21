@@ -4,7 +4,7 @@
 
 <section id="approach" class="bg-paper-soft">
   <div class="approach-inner mx-auto px-7 py-24">
-    <div class="approach-grid gap-8">
+    <div class="grid grid-cols-1 md:grid-cols-[1fr_1.5fr] items-start gap-8">
       <div>
         <span class="mono text-ink-mute mb-3 block text-xs" style="letter-spacing:0.12em;text-transform:uppercase">The approach</span>
         <h2 class="display text-ink m-0 text-2xl" style="font-weight:400;letter-spacing:-0.015em;line-height:1.25">
@@ -41,19 +41,9 @@
   .approach-inner {
     max-width: 1120px;
   }
-  .approach-grid {
-    display: grid;
-    grid-template-columns: 1fr 1.5fr;
-    align-items: start;
-  }
   .principle-row {
     display: grid;
     grid-template-columns: auto 1fr;
     align-items: start;
-  }
-  @media (max-width: 768px) {
-    .approach-grid {
-      grid-template-columns: 1fr;
-    }
   }
 </style>

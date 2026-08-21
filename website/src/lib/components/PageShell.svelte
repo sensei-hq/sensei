@@ -10,14 +10,14 @@
 </svelte:head>
 
 <div class="page">
-  <nav class="page-nav py-6 px-12">
+  <nav class="page-nav py-4 px-6 lg:py-6 lg:px-12">
     <a href="{base}/sensei" class="back-link gap-2">
       <span class="i-brand:sensei text-sensei" style="width:20px;height:20px;flex-shrink:0" aria-hidden="true"></span>
       <span class="display text-base">Sensei</span>
     </a>
   </nav>
 
-  <div class="page-content pt-16 px-12 pb-30">
+  <div class="page-content pt-12 px-6 pb-16 lg:pt-16 lg:px-12 lg:pb-30">
     {@render children()}
   </div>
 </div>
@@ -40,9 +40,5 @@
   .page-content {
     max-width: 800px;
     margin: 0 auto;
-  }
-  @media (max-width: 900px) {
-    .page-nav { padding: 16px 24px; }
-    .page-content { padding: 48px 24px 64px; }
   }
 </style>

@@ -34,7 +34,7 @@
   <!-- Objective -->
   <section class="doc-section mb-25">
     <div class="section-tag mb-4">Objective</div>
-    <h2 class="display section-title mb-7">
+    <h2 class="display section-title text-2xl lg:text-3xl mb-7">
       Make AI-assisted development measurably better.
     </h2>
     <div class="prose">
@@ -55,11 +55,11 @@
   <!-- What you get -->
   <section class="doc-section mb-25">
     <div class="section-tag mb-4">What you get</div>
-    <h2 class="display section-title mb-7">
+    <h2 class="display section-title text-2xl lg:text-3xl mb-7">
       The full toolkit.
     </h2>
 
-    <div class="toolkit-grid gap-6 mt-2">
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-2">
       <div class="toolkit-card p-6">
         <div class="kanji toolkit-kanji mb-3.5">令</div>
         <h3 class="display toolkit-title mb-3">20 Commands</h3>
@@ -102,7 +102,7 @@
   <!-- Architecture -->
   <section class="doc-section mb-25">
     <div class="section-tag mb-4">Architecture</div>
-    <h2 class="display section-title mb-7">
+    <h2 class="display section-title text-2xl lg:text-3xl mb-7">
       How it's built.
     </h2>
     <div class="prose">
@@ -129,7 +129,7 @@
   <!-- Local inference -->
   <section class="doc-section mb-25">
     <div class="section-tag mb-4">Local inference</div>
-    <h2 class="display section-title mb-7">
+    <h2 class="display section-title text-2xl lg:text-3xl mb-7">
       On-device intelligence.
     </h2>
     <div class="prose">
@@ -142,7 +142,7 @@
         Hardware-aware model selection recommends the right models for your machine:
       </p>
     </div>
-    <div class="hw-grid gap-5 mt-5">
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-5 mt-5">
       <div class="hw-card p-4">
         <div class="mono hw-spec mb-1.5">8 GB</div>
         <div class="hw-model">Gemma3:12b</div>
@@ -171,7 +171,6 @@
 
 <style>
   .section-title {
-    font-size: var(--text-3xl);
     font-weight: 300;
     letter-spacing: -0.02em;
     line-height: 1.15;
@@ -185,10 +184,6 @@
     background: var(--paper-2);
     padding: 4px 4px;
     border-radius: 4px;
-  }
-  .toolkit-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
   }
   .toolkit-card {
     border: var(--hairline);
@@ -217,10 +212,6 @@
     padding: 4px 4px;
     border-radius: 3px;
   }
-  .hw-grid {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-  }
   .hw-card {
     border: var(--hairline);
     border-radius: 10px;
@@ -229,9 +220,4 @@
   .hw-spec { font-size: var(--text-sm); color: var(--sumi-3); }
   .hw-model { font-size: var(--text-base); font-weight: 500; color: var(--sumi); }
   .hw-note { font-size: var(--text-xs); color: var(--sumi-3); }
-  @media (max-width: 900px) {
-    .section-title { font-size: var(--text-2xl); }
-    .toolkit-grid { grid-template-columns: 1fr; }
-    .hw-grid { grid-template-columns: 1fr; }
-  }
 </style>

@@ -17,13 +17,13 @@
 <a {href}
    target={isExternal ? '_blank' : undefined}
    rel={isExternal ? 'noopener' : undefined}
-   class="library-row gap-5 px-5 py-5 no-underline text-{p.id}">
+   class="library-row grid grid-cols-[auto_1fr_auto] md:grid-cols-[auto_150px_1fr_auto_auto] items-center gap-5 px-5 py-5 no-underline text-{p.id}">
   <span class="kanji text-{p.id} text-center text-2xl" style="line-height:1;width:34px">{p.kanji}</span>
   <span class="lib-name">
     <span class="display text-ink block text-lg" style="letter-spacing:-0.01em">{p.name}</span>
     <span class="mono text-ink-faint text-xs">{p.lang}</span>
   </span>
-  <span class="lib-desc">
+  <span class="hidden md:inline">
     <span class="text-ink block text-sm">{p.tagline}</span>
     <span class="text-ink-mute text-xs">{p.category}</span>
   </span>
@@ -33,9 +33,6 @@
 
 <style>
   .library-row {
-    display: grid;
-    grid-template-columns: auto 150px 1fr auto auto;
-    align-items: center;
     border-top: 1px solid var(--paper-edge);
     transition: background 0.15s;
   }
@@ -44,13 +41,5 @@
   }
   .library-row:hover {
     background: var(--paper-mute);
-  }
-  @media (max-width: 768px) {
-    .library-row {
-      grid-template-columns: auto 1fr auto;
-    }
-    .lib-desc {
-      display: none;
-    }
   }
 </style>
