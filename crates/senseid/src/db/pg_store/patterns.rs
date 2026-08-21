@@ -119,6 +119,143 @@ impl PgStore {
         Ok(())
     }
 
+    /// The `action_type`s that materialize a governance RULE on accept (spec
+    /// 2026-08-20 insight-acceptance-materialization, P-A). Everything else falls
+    /// back to the plain [`Self::accept_recommendation`] status flip.
+    pub fn is_rule_class_action(action_type: &str) -> bool {
+        matches!(action_type, "revise_rule" | "promote_pattern" | "enrich_memory")
+    }
+
+    /// Read a pending recommendation's fields for a materialization preview WITHOUT
+    /// deciding it: `(action_type, title, why, impact, project_id, based_on)`.
+    /// `None` when the rec is absent or already decided (so a stale UI previews
+    /// nothing rather than a fabricated artifact).
+    pub async fn recommendation_for_materialize(
+        &self, id: &uuid::Uuid,
+    ) -> Result<Option<(String, String, String, Option<String>, uuid::Uuid, String)>, String> {
+        sqlx_core::query_as::query_as(
+            "SELECT action_type, title, why, impact, project_id, based_on::text
+               FROM inference.recommendations
+              WHERE id = $1 AND status = 'pending'",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| e.to_string())
+    }
+
+    /// Accept a rule-class recommendation AND materialize it into a durable
+    /// governance rule — a `sensei.memories` row at `namespace_id` (the resolved
+    /// scope; `None` = the always-on general/user rung) with `enforcement`
+    /// (default `recommended`), which immediately enters live rule resolution
+    /// (`get_rules` / the SessionStart push). `title`/`content` default to the
+    /// rec's `title`/`why`; callers may override (the review-before-apply edit).
+    /// Records `materialized_ref` on the rec so the effect can be measured + undone.
+    ///
+    /// Order mirrors [`Self::accept_recommendation`]'s documented tradeoff: flip the
+    /// status under the pending-guard FIRST (idempotent — a double click 409s), then
+    /// materialize. A materialize failure AFTER the flip is logged loudly (the rec
+    /// is accepted, the rule write is lost + recoverable), never a silent swallow —
+    /// and never a fabricated rule. Returns the `materialized_ref` written, or
+    /// `Err("... not rule-class")` when the caller mis-routed a non-rule action.
+    pub async fn accept_recommendation_as_rule(
+        &self,
+        id: &uuid::Uuid,
+        namespace_id: Option<&uuid::Uuid>,
+        enforcement: Option<&str>,
+        gov_scope: &str,
+        title_override: Option<&str>,
+        body_override: Option<&str>,
+    ) -> Result<serde_json::Value, String> {
+        let row: Option<(String, String, String, Option<String>, uuid::Uuid, String)> =
+            sqlx_core::query_as::query_as(
+                "UPDATE inference.recommendations
+                    SET status = 'accepted'::sensei.recommendation_status, acted_at = now()
+                  WHERE id = $1 AND status = 'pending'
+              RETURNING action_type, title, why, impact, project_id, based_on::text",
+            )
+            .bind(id)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        let Some((action_type, title, why, impact, project_id, based_on)) = row else {
+            return Err("recommendation not found or already decided".into());
+        };
+        if !Self::is_rule_class_action(&action_type) {
+            // The caller should have routed this to the plain accept; the status is
+            // already flipped, so surface the mis-route rather than fabricate a rule.
+            return Err(format!("recommendation action_type '{action_type}' is not rule-class"));
+        }
+
+        // A rule needs a body. Recs always carry a non-empty `why`; an override wins.
+        let content = body_override
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| why.trim().to_string());
+        let rule_title = title_override
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .unwrap_or(title.trim())
+            .to_string();
+        // Legacy memory_scope mirrors the governance scope for the older read paths;
+        // the real binding is namespace_id + enforcement.
+        let mem_scope = match gov_scope {
+            "technology" | "team" | "organization" | "client" => "stack",
+            "general" | "user" => "global",
+            _ => "project",
+        };
+
+        let mem = crate::db::pg_store::InsertMemory {
+            project_id: Some(project_id),
+            scope: mem_scope.to_string(),
+            scope_filter: None,
+            mtype: "convention".to_string(),
+            title: rule_title,
+            content,
+            impact,
+            tags: vec!["accepted-recommendation".to_string()],
+            triage_signal: None,
+            status: "active".to_string(), // an accepted rule is live immediately
+            namespace_id: namespace_id.copied(),
+            enforcement: enforcement.map(str::to_string),
+            origin: Some("authored".to_string()), // the user accepted → authored
+            source_id: None,
+            spine_slot: None,
+            feature: None,
+        };
+        let memory_id = self.insert_memory(&mem).await.map_err(|e| {
+            tracing::error!(error = %e, recommendation = %id, "accept_recommendation_as_rule: memory insert failed AFTER status flip — rec accepted, rule lost");
+            e
+        })?;
+
+        // promote_pattern also advances the source pattern's lifecycle (preserve the
+        // legacy side-effect) — best-effort, never blocks the rule write.
+        if action_type == "promote_pattern"
+            && let Some(pattern_id) = Self::based_on_first_pattern(&based_on)
+            && let Err(e) = self.promote_pattern(&pattern_id, "rule").await
+        {
+            tracing::error!(error = %e, recommendation = %id, pattern = %pattern_id, "accept_recommendation_as_rule: pattern lifecycle advance failed (rule still written)");
+        }
+
+        let materialized = serde_json::json!({
+            "kind": "rule",
+            "memory_id": memory_id,
+            "namespace_id": namespace_id,
+            "scope": gov_scope,
+            "enforcement": enforcement.unwrap_or("recommended"),
+        });
+        sqlx_core::query::query(
+            "UPDATE inference.recommendations SET materialized_ref = $2 WHERE id = $1",
+        )
+        .bind(id)
+        .bind(&materialized)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(materialized)
+    }
+
     /// Move a `pending` recommendation to `dismissed` (the reject terminal —
     /// the enum uses `dismissed`, not `rejected`). Same shape as accept:
     /// idempotency-guarded so a stale UI can't clobber a real decision.

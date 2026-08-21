@@ -125,6 +125,11 @@ pub fn create_router(state: AppState) -> Router {
                post(project_detail::accept_project_recommendation))
         .route("/api/projects/{id}/recommendations/{rec_id}/reject",
                post(project_detail::reject_project_recommendation))
+        // P-A: rule-class accept that MATERIALIZES a governance rule (+ preview).
+        .route("/api/projects/{id}/recommendations/{rec_id}/preview",
+               get(project_detail::preview_recommendation_materialization))
+        .route("/api/projects/{id}/recommendations/{rec_id}/materialize",
+               post(project_detail::materialize_recommendation))
         .route("/api/projects/{id}/impact",          get(project_detail::get_project_impact))
         .route("/api/projects/{id}/impact-verdicts",
                get(project_detail::list_impact_verdicts)
