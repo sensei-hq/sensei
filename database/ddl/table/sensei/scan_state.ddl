@@ -5,6 +5,7 @@ create table if not exists scan_state (
 , file_path                text        not null
 , mtime                    bigint      not null
 , content_hash             text        not null
+, skip_reason              sensei.scan_skip_reason
 , indexed_at               timestamptz not null default now()
 , modified_at              timestamptz not null default now()
 , primary key (folder_id, file_path)
@@ -18,9 +19,11 @@ create index if not exists scan_state_indexed_at_idx
 
 comment on table scan_state is
 'Per-file scan fingerprint used by the indexer to skip unchanged files.
+A row means the file was EXAMINED at this fingerprint — not necessarily indexed.
 - mtime: file modification time as unix ms
 - content_hash: sha256 of file content for change detection
-- indexed_at: when this file was last successfully indexed';
+- skip_reason: null = indexed; non-null = examined and deliberately not indexed
+- indexed_at: when this file was last examined';
 
 comment on column scan_state.folder_id
      is 'Foreign key to folders — which folder this file belongs to.';
@@ -30,7 +33,9 @@ comment on column scan_state.mtime
      is 'File modification time as Unix epoch milliseconds, used for quick change detection.';
 comment on column scan_state.content_hash
      is 'SHA-256 hash of the file content used to confirm whether it has changed since last index.';
+comment on column scan_state.skip_reason
+     is 'Null when the file was indexed. Non-null records why it was examined but deliberately not indexed (unsupported format, binary content, invalid UTF-8, parse error, excluded by config). Recording the fingerprint alongside the reason is what stops a skipped file from being re-enqueued on every reconcile; because the skip is keyed to the fingerprint, fixing the file re-triggers indexing automatically.';
 comment on column scan_state.indexed_at
-     is 'Timestamp when this file was last successfully indexed.';
+     is 'Timestamp when this file was last examined (indexed, or skipped with a reason).';
 comment on column scan_state.modified_at
      is 'Timestamp of the last modification to this row.';
