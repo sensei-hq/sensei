@@ -489,6 +489,127 @@ pub(crate) async fn accept_project_recommendation(
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
+/// Body for materializing a rule-class recommendation (spec 2026-08-20 P-A). All
+/// fields optional: `gov_scope` defaults to `project`; `enforcement` to the DB
+/// default (`recommended`); `title`/`body` override the rec's `title`/`why`.
+#[derive(serde::Deserialize, Default)]
+pub(crate) struct MaterializeBody {
+    pub gov_scope:    Option<String>,
+    pub namespace_id: Option<String>,
+    pub enforcement:  Option<String>,
+    pub title:        Option<String>,
+    pub body:         Option<String>,
+}
+
+/// The enforcement tiers a rule may be authored at (advisory < recommended <
+/// required < mandatory). Guarded so a typo can't reach the enum cast.
+const ENFORCEMENT_TIERS: [&str; 4] = ["advisory", "recommended", "required", "mandatory"];
+
+/// Resolve the governance namespace for a project + scope: `general`/`user` →
+/// always-on rung (NULL); an explicit `namespace_id` wins; otherwise the project's
+/// repo folder's namespace of that scope. Fail-closed: a specific scope with no
+/// bound namespace errors (never silently lands the rule at the broad general rung).
+async fn resolve_project_namespace(
+    state: &AppState, project_id: &uuid::Uuid, gov_scope: &str, namespace_id: Option<&str>,
+) -> Result<Option<uuid::Uuid>, (StatusCode, Json<serde_json::Value>)> {
+    let merr = |c: StatusCode, m: &str| (c, Json(serde_json::json!({ "error": m })));
+    if let Some(ns) = namespace_id.filter(|s| !s.is_empty()) {
+        return Ok(Some(uuid::Uuid::parse_str(ns).map_err(|_| merr(StatusCode::BAD_REQUEST, "bad namespace_id"))?));
+    }
+    if matches!(gov_scope, "general" | "user") {
+        return Ok(None);
+    }
+    let Some(root) = state.pg.project_root_path(project_id).await
+        .map_err(|e| merr(StatusCode::INTERNAL_SERVER_ERROR, &e))?
+    else {
+        return Err(merr(StatusCode::BAD_REQUEST, "project has no repo folder to resolve a scope against; pass namespace_id or gov_scope=general"));
+    };
+    let fid = match state.pg.get_folder_ids_by_path(&root).await.map_err(|e| merr(StatusCode::INTERNAL_SERVER_ERROR, &e))? {
+        Some((fid, _)) => fid,
+        None => return Err(merr(StatusCode::BAD_REQUEST, "project repo folder not found; pass namespace_id or gov_scope=general")),
+    };
+    match state.pg.namespace_for_folder_scope(&fid, gov_scope).await.map_err(|e| merr(StatusCode::INTERNAL_SERVER_ERROR, &e))? {
+        Some(ns) => Ok(Some(ns)),
+        None => Err(merr(StatusCode::BAD_REQUEST, &format!(
+            "no '{gov_scope}'-scoped namespace bound to this project — pass an explicit namespace_id, or use gov_scope=general"
+        ))),
+    }
+}
+
+/// GET /api/projects/{id}/recommendations/{rec_id}/preview — render WHAT accepting
+/// would materialize (rule title/body/scope/enforcement) WITHOUT writing anything.
+/// The review-before-apply surface for the consent-first accept flow.
+pub(crate) async fn preview_recommendation_materialization(
+    State(state): State<AppState>,
+    Path((_project_id, rec_id)): Path<(String, String)>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let rec_uuid = uuid::Uuid::parse_str(&rec_id).map_err(|_| StatusCode::BAD_REQUEST)?;
+    let Some((action_type, title, why, impact, _pid, _based_on)) =
+        state.pg.recommendation_for_materialize(&rec_uuid).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    else {
+        return Err(StatusCode::CONFLICT); // absent or already decided
+    };
+    if !crate::db::pg_store::PgStore::is_rule_class_action(&action_type) {
+        return Ok(Json(serde_json::json!({
+            "materializable": false,
+            "action_type": action_type,
+            "reason": "not a rule-class action (P-A materializes revise_rule/promote_pattern/enrich_memory only)",
+        })));
+    }
+    // The would-be rule, defaults filled — the UI lets the user edit before Apply.
+    Ok(Json(serde_json::json!({
+        "materializable": true,
+        "kind": "rule",
+        "action_type": action_type,
+        "title": title,
+        "body": why,
+        "impact": impact,
+        "gov_scope": "project",
+        "enforcement": "recommended",
+    })))
+}
+
+/// POST /api/projects/{id}/recommendations/{rec_id}/materialize — accept a
+/// rule-class recommendation AND write it as a durable governance rule
+/// (`sensei.memories` at the chosen scope + enforcement), then schedule the
+/// before/after FTR measurement. Fail-closed on scope resolution + non-rule action.
+pub(crate) async fn materialize_recommendation(
+    State(state): State<AppState>,
+    Path((project_id, rec_id)): Path<(String, String)>,
+    body: Option<Json<MaterializeBody>>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let merr = |c: StatusCode, m: &str| (c, Json(serde_json::json!({ "error": m })));
+    let rec_uuid = uuid::Uuid::parse_str(&rec_id).map_err(|_| merr(StatusCode::BAD_REQUEST, "bad rec id"))?;
+    let pid = uuid::Uuid::parse_str(&project_id).map_err(|_| merr(StatusCode::BAD_REQUEST, "bad project id"))?;
+    let b = body.map(|Json(b)| b).unwrap_or_default();
+    let gov_scope = b.gov_scope.as_deref().filter(|s| !s.is_empty()).unwrap_or("project").to_string();
+    let enforcement = b.enforcement.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    if let Some(e) = enforcement
+        && !ENFORCEMENT_TIERS.contains(&e)
+    {
+        return Err(merr(StatusCode::BAD_REQUEST, "enforcement must be advisory|recommended|required|mandatory"));
+    }
+    let namespace_id = resolve_project_namespace(&state, &pid, &gov_scope, b.namespace_id.as_deref()).await?;
+
+    let materialized = state.pg.accept_recommendation_as_rule(
+        &rec_uuid, namespace_id.as_ref(), enforcement, &gov_scope,
+        b.title.as_deref(), b.body.as_deref(),
+    ).await.map_err(|e| {
+        if e.contains("not found") || e.contains("already decided") {
+            merr(StatusCode::CONFLICT, &e)
+        } else if e.contains("not rule-class") {
+            merr(StatusCode::BAD_REQUEST, &e)
+        } else {
+            tracing::error!(error = %e, rec = %rec_uuid, "materialize_recommendation failed");
+            merr(StatusCode::INTERNAL_SERVER_ERROR, "materialization failed")
+        }
+    })?;
+
+    // Close the FTR loop (same as plain accept): schedule before/after measurement.
+    state.task_queue.enqueue(crate::tasks::Task::new(crate::tasks::TaskKind::MeasureVerdicts, "", "")).await;
+    Ok(Json(serde_json::json!({ "ok": true, "materialized": materialized })))
+}
+
 /// POST /api/projects/{id}/recommendations/{rec_id}/reject
 pub(crate) async fn reject_project_recommendation(
     State(state): State<AppState>,
