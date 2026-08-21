@@ -791,8 +791,8 @@ dependencies = [
 
 [[package]]
 name = "dbd-core"
-version = "0.10.5"
-source = "git+https://github.com/sensei-hq/dbd?tag=v0.10.5#3d9188202d0a3cb0ed2d3747b0a42671d960ca4d"
+version = "0.10.7"
+source = "git+https://github.com/sensei-hq/dbd?tag=v0.10.7#992dced8640e6848670d08ed9fe50adc56474080"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
