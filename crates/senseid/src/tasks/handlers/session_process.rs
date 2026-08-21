@@ -22,10 +22,14 @@ use crate::transcript::TranscriptTurn;
 /// Sessions scored per project per tick — the batch cap so one project can't
 /// dominate the queue on a hot tick. Config `process.batch_per_tick` overrides.
 const DEFAULT_BATCH_PER_TICK: i64 = 25;
-/// Output budget for the reasoning JSON. Kept modest: a big budget + a long
-/// transcript OOMs the embedded model's GPU context (observed
-/// `kIOGPUCommandBufferCallbackErrorOutOfMemory`), which fail-opens the session.
-const MAX_TOKENS: u32 = 800;
+/// Output budget for the reasoning call. gemma4 (the reasoning chain's model) is a
+/// THINKING model — it spends tokens reasoning internally BEFORE emitting the JSON,
+/// so too small a budget is exhausted mid-thought and returns EMPTY content
+/// (`done_reason=length`, no JSON → fail-open). Verified: 800 → empty on a real
+/// transcript; 3000 → completes (`done_reason=stop`) with valid JSON. GPU-OOM
+/// pressure is bounded by the INPUT caps below (turns/chars) + routing to ollama
+/// (which manages its own memory), not by starving the output budget.
+const MAX_TOKENS: u32 = 3000;
 /// Skip transcripts with fewer than this many turns — too little to judge, and a
 /// judgment would be noise. Such a session is watermarked as scored-with-nothing
 /// (all-N/A), so it isn't re-read every tick.
