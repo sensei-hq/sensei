@@ -102,21 +102,14 @@ pub(crate) fn classify_unscannable(
     sniff_content(path)
 }
 
-pub(crate) fn build_globset() -> globset::GlobSet {
-    let patterns = &[
-        "**/node_modules/**", "**/dist/**", "**/build/**", "**/target/**",
-        "**/.next/**", "**/.svelte-kit/**",
-        "**/__pycache__/**", "**/__MACOSX/**", "**/.venv/**", "**/venv/**",
-        "**/*.spec.ts", "**/*.spec.tsx", "**/*.spec.js",
-        "**/*.test.ts", "**/*.test.tsx", "**/*.test.js",
-        "**/*_test.py", "**/*_test.go", "**/*_test.rs",
-        "**/*.d.ts",
-    ];
-    let mut builder = globset::GlobSetBuilder::new();
-    for p in patterns {
-        if let Ok(g) = globset::Glob::new(p) { builder.add(g); }
-    }
-    builder.build().unwrap_or_else(|_| globset::GlobSetBuilder::new().build().unwrap())
+/// Path patterns excluded from directory discovery.
+///
+/// Thin wrapper over the resolved [`crate::classifiers::ScanRules`] — the pattern
+/// list itself lives with the other scan lists so it is operator-tunable through
+/// `sensei.config` (`scan.exclude_globs.add` / `.remove`) rather than code-bound.
+/// Returns a borrow of the process-wide set instead of rebuilding it per call.
+pub(crate) fn build_globset() -> &'static globset::GlobSet {
+    crate::classifiers::scan_rules().exclude_globs()
 }
 
 /// A directory walker that honours ignore files (.gitignore, .ignore, global
