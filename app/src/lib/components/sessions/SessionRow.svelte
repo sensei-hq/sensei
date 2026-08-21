@@ -61,7 +61,7 @@
       <span class="truncate">{session.project || 'unlinked'}{#if session.agent} · {session.agent}{/if}</span>
       {#if session.folderRole}
         <span
-          class="shrink-0 py-px px-1.5 rounded-full bg-paper-mute text-ink-mute uppercase tracking-wide text-[10px]"
+          class="shrink-0 py-px px-1.5 rounded-full bg-paper-mute text-ink-mute uppercase tracking-wide text-xs"
           data-folder-role={session.folderRole}
         >{session.folderRole}</span>
       {/if}
