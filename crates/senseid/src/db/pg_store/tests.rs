@@ -1,21 +1,17 @@
     use super::*;
     use sqlx_core::query_as::query_as;
 
-    /// Test DB URL. Defaults to `sensei_test` — the throwaway DB the
-    /// monorepo convention reserves for `cargo test` and CI. NEVER default
-    /// to `sensei`: every test that inserts (e.g. `create_test_folder`)
-    /// would leak into the user's production data, and the `/_test` row
-    /// from earlier runs is a real example of how that surfaces in the UI.
-    /// Override with `TEST_DATABASE_URL` for ad-hoc targets (e.g. a forked
-    /// snapshot for debugging).
-    fn test_db_url() -> String {
-        std::env::var("TEST_DATABASE_URL")
-            .unwrap_or_else(|_| format!("postgresql://localhost:{}/sensei_test", sensei_bootstrap::POSTGRES_PORT))
-    }
+    // Every test here connects via `PgStore::connect_test()` — the tiny floorless
+    // pool. Do NOT reach for `PgStore::connect()`: that is the daemon's pool with a
+    // warm floor of `DB_POOL_MIN_CONNECTIONS`, and cargo runs these tests in
+    // parallel, so each one would hold 8 connections open and the suite would blow
+    // past Postgres's `max_connections` (it did: 80 of 223 tests failed to connect
+    // at default parallelism). `connect_test` also owns the URL default, including
+    // the never-point-at-`sensei` guard.
 
     #[tokio::test]
     async fn connect_to_pg() {
-        let store = PgStore::connect(&test_db_url()).await.unwrap();
+        let store = PgStore::connect_test().await.unwrap();
         let row: (i32,) = query_as("SELECT 1")
             .fetch_one(store.pool())
             .await
@@ -25,13 +21,13 @@
 
     #[tokio::test]
     async fn execute_raw_works() {
-        let store = PgStore::connect(&test_db_url()).await.unwrap();
+        let store = PgStore::connect_test().await.unwrap();
         store.execute_raw("SELECT 1").await.unwrap();
     }
 
     #[tokio::test]
     async fn schema_exists() {
-        let store = PgStore::connect(&test_db_url()).await.unwrap();
+        let store = PgStore::connect_test().await.unwrap();
         let row: (bool,) = query_as(
             "SELECT EXISTS(SELECT 1 FROM information_schema.schemata WHERE schema_name = 'sensei')"
         )
@@ -44,7 +40,7 @@
     // ── Config tests ───────────────────────────────────────────────
 
     async fn pg_store() -> PgStore {
-        PgStore::connect(&test_db_url()).await.unwrap()
+        PgStore::connect_test().await.unwrap()
     }
 
     /// Generate a unique key prefix for test isolation.
@@ -1061,6 +1057,63 @@
         s.delete_nodes_by_folder(&fid).await.unwrap();
     }
 
+    /// A node whose fqn SHAPE changes must be adopted, not rejected.
+    ///
+    /// Reproduces the production failure: `MetricSparkline.svelte` was indexed
+    /// with the module fqn `typescript·@sensei/desktop·lib/components/
+    /// MetricSparkline`; a later parse yielded no top-level defs, so the fqn's
+    /// language segment changed. `ON CONFLICT (folder_id, fqn)` cannot see the old
+    /// row, so the statement fell through to a raw INSERT and hit
+    /// `nodes_unique_identity` — the same file/kind/name/parent/line. That made
+    /// process_file fail, which withheld scan_state, which made the reconcile
+    /// re-drive the folder every 5 minutes forever with the folder stuck `failed`.
+    #[tokio::test]
+    async fn upsert_node_by_fqn_adopts_row_when_only_the_fqn_changed() {
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, &format!("adopt_{}", uuid::Uuid::new_v4())).await;
+
+        let file_path = "src/lib/components/MetricSparkline.svelte";
+        let name = "lib/components/MetricSparkline";
+        // NULL line_start / parent_id on purpose — exercises the NULLS NOT
+        // DISTINCT semantics the identity index uses, which is exactly the shape
+        // a module container node has.
+        let def = || FqnDef {
+            file_path,
+            signature: None,
+            line_start: None,
+            line_end: None,
+            is_exported: false,
+            parent_id: None,
+        };
+
+        // Indexed once under the original fqn.
+        let first = s.upsert_node_by_fqn(
+            &fid, "typescript·@sensei/desktop·lib/components/MetricSparkline",
+            "module", name, Some("svelte"), Some(def()),
+        ).await.unwrap();
+
+        // Same structural identity, DIFFERENT fqn — this used to be a hard error.
+        let second = s.upsert_node_by_fqn(
+            &fid, "svelte·@sensei/desktop·lib/components/MetricSparkline",
+            "module", name, Some("svelte"), Some(def()),
+        ).await
+            .expect("an fqn change on an existing identity must adopt the row, not fail");
+
+        assert_eq!(first, second, "the existing node is adopted, keeping its id (and so its edges/embedding)");
+
+        // Exactly one row, now carrying the new fqn.
+        let (count, fqn): (i64, Option<String>) = query_as(
+            "SELECT count(*) OVER (), fqn FROM sensei.nodes
+             WHERE folder_id=$1 AND file_path=$2 AND kind='module'::sensei.node_kind"
+        ).bind(fid).bind(file_path).fetch_one(s.pool()).await.unwrap();
+        assert_eq!(count, 1, "adoption must not leave a duplicate module node behind");
+        assert_eq!(
+            fqn.as_deref(),
+            Some("svelte·@sensei/desktop·lib/components/MetricSparkline"),
+            "the adopted row is re-pointed at the new fqn"
+        );
+    }
+
     #[tokio::test]
     async fn upsert_node_by_fqn_merges_ref_and_def() {
         // FQN get-or-create (SCIP/LSIF moniker model): a REFERENCE creates an
@@ -1823,6 +1876,42 @@
 
         sqlx_core::query::query("DELETE FROM sensei.memories WHERE id=$1").bind(mem_id).execute(s.pool()).await.ok();
         sqlx_core::query::query("DELETE FROM inference.recommendations WHERE project_id=$1").bind(pid).execute(s.pool()).await.ok();
+        s.delete_project(&pid).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn begin_file_materialization_flips_and_returns_prompt_seed() {
+        // P-B store contract: the guarded flip returns the (action_type, title, why,
+        // prompt) seed a file materializer renders, and set_recommendation_materialized
+        // records the file provenance. Second flip is guarded (no double write).
+        let s = pg_store().await;
+        let pid = s.create_project(&format!("_test:pbmat-{}", uuid::Uuid::new_v4()), None, None).await.unwrap();
+        let rid = s.create_recommendation_full(
+            &pid, "Establish DBD Guardian Agent", "cross-layer churn needs a review agent", None,
+            "create_agent", "high", &serde_json::json!({}), None,
+            Some("You are an Architectural Review Agent for dbd. Before any code is accepted, check module boundaries."),
+        ).await.unwrap();
+
+        let (action_type, title, why, prompt) = s.begin_file_materialization(&rid).await.unwrap().expect("pending → seed");
+        assert_eq!(action_type, "create_agent");
+        assert_eq!(title, "Establish DBD Guardian Agent");
+        assert_eq!(why, "cross-layer churn needs a review agent");
+        assert!(prompt.as_deref().unwrap().starts_with("You are an Architectural Review Agent"), "prompt seed returned");
+
+        // Record the file provenance (what the handler does after writing the file).
+        let mref = serde_json::json!({ "kind": "agent", "file_path": ".claude/agents/establish-dbd-guardian-agent.md" });
+        s.set_recommendation_materialized(&rid, &mref).await.unwrap();
+        let (status, kind, fp): (String, Option<String>, Option<String>) = sqlx_core::query_as::query_as(
+            "SELECT status::text, materialized_ref->>'kind', materialized_ref->>'file_path' FROM inference.recommendations WHERE id=$1"
+        ).bind(rid).fetch_one(s.pool()).await.unwrap();
+        assert_eq!(status, "accepted");
+        assert_eq!(kind.as_deref(), Some("agent"));
+        assert_eq!(fp.as_deref(), Some(".claude/agents/establish-dbd-guardian-agent.md"));
+
+        // Guarded: a second flip on the accepted rec returns None (no re-materialize).
+        assert!(s.begin_file_materialization(&rid).await.unwrap().is_none(), "guarded at pending");
+
+        sqlx_core::query::query("DELETE FROM inference.recommendations WHERE id=$1").bind(rid).execute(s.pool()).await.ok();
         s.delete_project(&pid).await.unwrap();
     }
 
@@ -4690,7 +4779,7 @@
 
     #[tokio::test]
     async fn memories_table_exists() {
-        let store = PgStore::connect(&test_db_url()).await.unwrap();
+        let store = PgStore::connect_test().await.unwrap();
         let row: (bool,) = query_as(
             "SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_schema = 'sensei' AND table_name = 'memories')"
         )
@@ -5803,7 +5892,7 @@
     /// schema P-A.3's compute + upsert depend on.
     #[tokio::test]
     async fn repositories_schema_invariants() {
-        let s = PgStore::connect(&test_db_url()).await.unwrap();
+        let s = PgStore::connect_test().await.unwrap();
         let tag = uuid::Uuid::new_v4();
         let key = format!("host/{tag}/repo");
 
@@ -5844,7 +5933,7 @@
     /// (local-only, never federated); re-running is a no-op (idempotent).
     #[tokio::test]
     async fn assign_repositories_links_folders_to_canonical_repo_key() {
-        let s = PgStore::connect(&test_db_url()).await.unwrap();
+        let s = PgStore::connect_test().await.unwrap();
         let tag = uuid::Uuid::new_v4();
         let root_id = s.add_watch_root(&format!("/tmp/assignrepo-{tag}"), "ar", &serde_json::json!([])).await.unwrap();
 
@@ -5886,7 +5975,7 @@
     /// when its repository is deleted (so a repo prune leaves no orphan cursor).
     #[tokio::test]
     async fn metric_watermarks_pk_and_cascade_on_repository_delete() {
-        let s = PgStore::connect(&test_db_url()).await.unwrap();
+        let s = PgStore::connect_test().await.unwrap();
         let tag = uuid::Uuid::new_v4();
         let (rid,): (uuid::Uuid,) = query_as(
             "INSERT INTO sensei.repositories (repo_key, name) VALUES ($1, 'wm') RETURNING id",
@@ -5916,7 +6005,7 @@
     /// metrics attach); the multi-repo compute iterates this, not one root path.
     #[tokio::test]
     async fn repositories_for_project_lists_repos_primary_first() {
-        let s = PgStore::connect(&test_db_url()).await.unwrap();
+        let s = PgStore::connect_test().await.unwrap();
         let tag = uuid::Uuid::new_v4();
         let root_id = s.add_watch_root(&format!("/tmp/rfp-{tag}"), "rfp", &serde_json::json!([])).await.unwrap();
         let pid = s.create_project(&format!("_test:rfp:{tag}"), None, None).await.unwrap();

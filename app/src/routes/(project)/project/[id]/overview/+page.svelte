@@ -44,12 +44,21 @@
       if (action === 'reject') {
         await api.rejectProjectRecommendation(projectId, rec.id);
       } else {
-        // P-A: a rule-class rec (revise_rule/promote_pattern/enrich_memory)
-        // MATERIALIZES a governance rule on accept — write it at the default
-        // project scope / recommended tier. A non-rule rec falls back to the plain
-        // accept (status flip + FTR measurement), unchanged.
+        // Accept → materialize the rec's artifact:
+        //  • rule-class (revise_rule/promote_pattern/enrich_memory) → a governance
+        //    rule at project scope / recommended tier (no file — auto).
+        //  • write_skill/create_agent → a project FILE (.claude/skills|agents/…).
+        //    A file write is consent-sensitive, so confirm (showing the target
+        //    path) before writing; declining leaves the rec pending.
+        //  • anything else → the plain accept (status flip + FTR measurement).
         const preview = await api.previewRecommendation(projectId, rec.id);
-        if (preview.materializable) {
+        if (preview.materializable && preview.consent_required) {
+          const ok = confirm(
+            `Create a ${preview.kind} at ${preview.path}?\n\nsensei will write a new file into this repo (git-tracked, reversible).`,
+          );
+          if (!ok) return; // declined — rec stays pending
+          await api.materializeRecommendation(projectId, rec.id, {});
+        } else if (preview.materializable) {
           await api.materializeRecommendation(projectId, rec.id, {
             gov_scope: 'project',
             enforcement: 'recommended',

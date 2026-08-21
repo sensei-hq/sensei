@@ -219,6 +219,46 @@ pub async fn start_server(port: u16) -> std::io::Result<()> {
 
 /// Build the full-mode router and supporting infrastructure (task queue,
 /// workers, progress emitter, root watchers). Only called once the DB
+/// Read the `scan.*` override keys and install the process-wide scan rules.
+///
+/// Non-fatal by construction: a missing key, an unreadable config table, or a
+/// malformed value all degrade to the built-in defaults rather than blocking
+/// boot — the daemon scanning with default lists is always better than not
+/// scanning. See [`crate::classifiers::ScanRules`] for the add/remove semantics.
+async fn init_scan_rules_from_config(pg: &crate::db::pg_store::PgStore) {
+    use crate::classifiers::{SCAN_RULE_CONFIG_KEYS, ScanRuleOverrides, init_scan_rules};
+
+    let mut values: std::collections::HashMap<&str, Option<String>> =
+        std::collections::HashMap::new();
+    for key in SCAN_RULE_CONFIG_KEYS {
+        match pg.get_config(key).await {
+            Ok(v) => { values.insert(key, v); }
+            Err(e) => {
+                tracing::warn!(config_key = %key, error = %e,
+                    "scan rules: config read failed — using the built-in default for this list");
+                values.insert(key, None);
+            }
+        }
+    }
+
+    let overrides = ScanRuleOverrides::from_config(|k| values.get(k).cloned().flatten());
+    let customised = !overrides.is_empty();
+    if !init_scan_rules(&overrides) {
+        tracing::warn!("scan rules were already resolved — operator overrides NOT applied");
+        return;
+    }
+    if customised {
+        tracing::info!(
+            binary_add = overrides.binary_add.len(), binary_remove = overrides.binary_remove.len(),
+            source_add = overrides.source_add.len(), source_remove = overrides.source_remove.len(),
+            exclude_add = overrides.exclude_add.len(), exclude_remove = overrides.exclude_remove.len(),
+            "scan rules: applied operator overrides from sensei.config",
+        );
+    } else {
+        tracing::info!("scan rules: using built-in defaults (no scan.* overrides set)");
+    }
+}
+
 /// connect has succeeded — every component below assumes `PgStore` works.
 async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<TaskQueue>) {
     let task_queue = Arc::new(TaskQueue::new());
@@ -227,6 +267,14 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
         && let Ok(max) = max_str.parse::<usize>() {
             task_queue.set_max_concurrent_repos(max);
         }
+
+    // Resolve the operator-tunable scan lists (binary extensions, fallback source
+    // extensions, exclude globs) BEFORE anything scans. These were code-bound
+    // constants, so adding an opaque format meant a release; they are now
+    // add/remove overlays on the built-in defaults, read from `sensei.config`.
+    // Must happen before `spawn_workers` / the schedulers below, because
+    // `init_scan_rules` refuses to swap the lists out once resolved.
+    init_scan_rules_from_config(&pg).await;
 
     // Table-driven gateway config (#76): load routers/models/chains from the
     // `gateway.*` tables. A load error is logged and degrades to the in-code

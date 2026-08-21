@@ -496,6 +496,43 @@ impl RootWatcher {
         for (repo_path, changes) in repo_changes {
             let mut file_task_ids = Vec::new();
 
+            // FSEvents knows nothing about `.gitignore`, so a raw batch includes
+            // generated artifacts the scan deliberately never indexes. Enqueueing
+            // those was not merely wasteful, it churned: the scan's walker doesn't
+            // see them, so they landed in `plan.removed` and had their nodes
+            // deleted and edges unresolved on the next reconcile — then the next
+            // build re-created them and the watcher re-added them, forever.
+            //
+            // Filter Create/Modify through the SAME ignore rules the scan uses,
+            // grouped by directory so it costs one read per directory rather than
+            // one per file. Deletions are deliberately NOT filtered: a file that
+            // has just been removed cannot be "visible", and a previously-indexed
+            // file must still be pruned when it disappears.
+            //
+            // The test is "exists AND is ignored", never bare "not visible" —
+            // those are different things. A path absent from the directory listing
+            // may simply not be on disk yet (FSEvents can outrun the write, and
+            // tests seed repo rows without materialising files), and silently
+            // dropping that would lose a real edit until the next reconcile. Only
+            // a file we can positively see AND that the ignore rules hide is
+            // skipped.
+            let mut visible_by_dir: HashMap<PathBuf, HashSet<PathBuf>> = HashMap::new();
+            let is_ignored = |path: &PathBuf,
+                              cache: &mut HashMap<PathBuf, HashSet<PathBuf>>| -> bool {
+                if !path.exists() {
+                    return false;
+                }
+                match path.parent() {
+                    Some(parent) => !cache
+                        .entry(parent.to_path_buf())
+                        .or_insert_with(|| {
+                            crate::tasks::handlers::helpers::visible_files_in_dir(parent)
+                        })
+                        .contains(path),
+                    None => false,
+                }
+            };
+
             let mut deleted_dirs: HashSet<PathBuf> = HashSet::new();
             for (path, kind) in &changes {
                 if *kind == ChangeKind::Delete
@@ -520,6 +557,11 @@ impl RootWatcher {
                         file_task_ids.push(id);
                     }
                     ChangeKind::Create | ChangeKind::Modify => {
+                        if is_ignored(path, &mut visible_by_dir) {
+                            tracing::debug!(path = %path.display(),
+                                "watcher: path is ignored by the scan's ignore rules — not enqueueing");
+                            continue;
+                        }
                         let rel_dir = path.parent()
                             .and_then(|p| p.strip_prefix(&repo_path).ok())
                             .map(|p| p.to_string_lossy().replace('\\', "/"))
@@ -933,6 +975,87 @@ mod tests {
         let pool = pg.pool();
         sqlx_core::query::query("DELETE FROM sensei.folders WHERE root_id=$1").bind(root_id).execute(pool).await.ok();
         sqlx_core::query::query("DELETE FROM sensei.folders_to_watch WHERE id=$1").bind(root_id).execute(pool).await.ok();
+    }
+
+    /// The watcher must not enqueue a file the scan's ignore rules hide, and must
+    /// still enqueue its tracked neighbour.
+    ///
+    /// This is the churn the filter exists to stop: FSEvents knows nothing about
+    /// `.gitignore`, so it reported 131 generated i18n files; the scan's walker
+    /// correctly never saw them, so every reconcile put them in `plan.removed`,
+    /// deleted their nodes and unresolved their edges — and the next build
+    /// re-created them and the watcher re-added them. Forever.
+    #[tokio::test]
+    async fn process_batch_skips_gitignored_paths_but_keeps_tracked_ones() {
+        let pg = PgStore::connect_test().await.unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let repo_dir = tmp.path().join("repo");
+        let gen_dir = repo_dir.join("generated");
+        std::fs::create_dir_all(&gen_dir).unwrap();
+        // The real-world shape: a generated dir carrying a `.gitignore` of `*`.
+        std::fs::write(gen_dir.join(".gitignore"), "*\n").unwrap();
+        let ignored = gen_dir.join("messages.js");
+        std::fs::write(&ignored, "export const a = 1\n").unwrap();
+        let tracked = repo_dir.join("lib.rs");
+        std::fs::write(&tracked, "fn main() {}\n").unwrap();
+
+        let root = tmp.path().to_string_lossy().to_string();
+        let repo = repo_dir.to_string_lossy().to_string();
+        let root_id = pg.add_watch_root(&root, "wt_ignored", &serde_json::json!([])).await.unwrap();
+        pg.upsert_repo_kind(&root_id, "git", "repo", &repo).await.unwrap();
+
+        let queue = Arc::new(TaskQueue::new());
+        let mut changes = HashMap::new();
+        changes.insert(ignored.clone(), ChangeKind::Modify);
+        changes.insert(tracked.clone(), ChangeKind::Modify);
+        RootWatcher::process_batch(changes, &queue, Some(&pg)).await;
+
+        let snap = queue.snapshot().await;
+        let queued: Vec<String> = snap.iter()
+            .filter(|(k, _, _)| *k == TaskKind::ProcessFile)
+            .map(|(_, _, p)| p.clone())
+            .collect();
+        assert!(
+            queued.iter().any(|p| p == &tracked.to_string_lossy()),
+            "the tracked file must still be enqueued, got {queued:?}"
+        );
+        assert!(
+            !queued.iter().any(|p| p == &ignored.to_string_lossy()),
+            "a gitignored file must NOT be enqueued, got {queued:?}"
+        );
+
+        cleanup_watch_repo(&pg, &root_id).await;
+    }
+
+    /// Deletions are deliberately NOT ignore-filtered: a previously-indexed file
+    /// must still be pruned when it disappears, and a deleted path can never be
+    /// "visible" in a directory listing.
+    #[tokio::test]
+    async fn process_batch_still_deletes_a_vanished_path() {
+        let pg = PgStore::connect_test().await.unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        // The DIRECTORY must still exist — a missing parent is the separate
+        // folder-deletion case, which enqueues DeleteFolder instead.
+        let src = tmp.path().join("repo/src");
+        std::fs::create_dir_all(&src).unwrap();
+        let gone = src.join("gone.rs"); // deliberately never created
+
+        let root = tmp.path().to_string_lossy().to_string();
+        let repo = tmp.path().join("repo").to_string_lossy().to_string();
+        let root_id = pg.add_watch_root(&root, "wt_del", &serde_json::json!([])).await.unwrap();
+        pg.upsert_repo_kind(&root_id, "git", "repo", &repo).await.unwrap();
+
+        let queue = Arc::new(TaskQueue::new());
+        let mut changes = HashMap::new();
+        changes.insert(gone, ChangeKind::Delete);
+        RootWatcher::process_batch(changes, &queue, Some(&pg)).await;
+
+        let snap = queue.snapshot().await;
+        assert!(
+            snap.iter().any(|(k, _, _)| *k == TaskKind::DeleteFile),
+            "a delete must still be enqueued even though the path is gone"
+        );
+        cleanup_watch_repo(&pg, &root_id).await;
     }
 
     #[tokio::test]

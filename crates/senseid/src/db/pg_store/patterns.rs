@@ -144,6 +144,20 @@ impl PgStore {
         .map_err(|e| e.to_string())
     }
 
+    /// The `prompt` (ready-to-send instruction; for `create_agent` it's a full agent
+    /// system-prompt) of a recommendation — the body seed a file materialization
+    /// (P-B) renders into a SKILL.md / agent `.md`. `None` when absent or unset.
+    pub async fn recommendation_prompt(&self, id: &uuid::Uuid) -> Result<Option<String>, String> {
+        let row: Option<(Option<String>,)> = sqlx_core::query_as::query_as(
+            "SELECT prompt FROM inference.recommendations WHERE id = $1",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(row.and_then(|(p,)| p))
+    }
+
     /// Accept a rule-class recommendation AND materialize it into a durable
     /// governance rule — a `sensei.memories` row at `namespace_id` (the resolved
     /// scope; `None` = the always-on general/user rung) with `enforcement`
@@ -254,6 +268,44 @@ impl PgStore {
         .await
         .map_err(|e| e.to_string())?;
         Ok(materialized)
+    }
+
+    /// Flip a pending recommendation to `accepted` (guarded, idempotent) and RETURN
+    /// the seed a file-materializer (P-B skill/agent) needs: `(action_type, title,
+    /// why, prompt)`. The file write + `materialized_ref` happen in the handler
+    /// (I/O lives outside the store); [`Self::set_recommendation_materialized`]
+    /// records the ref after the file lands. Mirrors the accept-then-side-effect
+    /// tradeoff of [`Self::accept_recommendation`]. `None` ⇒ absent/already decided.
+    pub async fn begin_file_materialization(
+        &self, id: &uuid::Uuid,
+    ) -> Result<Option<(String, String, String, Option<String>)>, String> {
+        sqlx_core::query_as::query_as(
+            "UPDATE inference.recommendations
+                SET status = 'accepted'::sensei.recommendation_status, acted_at = now()
+              WHERE id = $1 AND status = 'pending'
+          RETURNING action_type, title, why, prompt",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| e.to_string())
+    }
+
+    /// Record what an accept materialized (the `materialized_ref` provenance) on an
+    /// already-accepted recommendation. Called after a file write (P-B) so the ref
+    /// points at the written path. Idempotent set.
+    pub async fn set_recommendation_materialized(
+        &self, id: &uuid::Uuid, materialized: &serde_json::Value,
+    ) -> Result<(), String> {
+        sqlx_core::query::query(
+            "UPDATE inference.recommendations SET materialized_ref = $2 WHERE id = $1",
+        )
+        .bind(id)
+        .bind(materialized)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(())
     }
 
     /// Move a `pending` recommendation to `dismissed` (the reject terminal —

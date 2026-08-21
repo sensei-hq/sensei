@@ -216,11 +216,19 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
     // Walk all files to discover directories
     let walker = super::helpers::build_walker(repo_path).build();
 
+    // Every indexable file the ignore rules leave VISIBLE, as (abs, rel). This is
+    // collected from the walker itself, so `.gitignore` (including nested ones),
+    // `.ignore`, the global gitignore and `.git/info/exclude` are all honoured.
+    //
+    // The `exclude` globset is applied only to DIRECTORY discovery below, not to
+    // this list: spec/test files are deliberately indexed and flagged via
+    // `nodes.is_test`, so the globset must not be used to drop them.
+    let mut visible: Vec<(std::path::PathBuf, String)> = Vec::new();
+
     for entry in walker.flatten() {
         if !entry.path().is_file() { continue; }
         let rel = entry.path().strip_prefix(repo_path).unwrap_or(entry.path());
-        let rel_str = rel.to_string_lossy();
-        if exclude.is_match(&*rel_str) { continue; }
+        let rel_str = rel.to_string_lossy().to_string();
 
         // Skip binary files and files without extensions
         let ext = entry.path().extension()
@@ -230,35 +238,40 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
         if ext.is_empty() { continue; }
         if is_binary_ext(&ext) { continue; }
 
+        visible.push((entry.path().to_path_buf(), rel_str.clone()));
+
+        if exclude.is_match(&rel_str) { continue; }
         if let Some(parent) = entry.path().parent() {
             dirs.insert(parent.to_path_buf());
         }
     }
 
-    // Enumerate the working tree's indexable files with mtimes (one read_dir
-    // pass per discovered dir), keyed by abs path → rel path.
+    // The working tree's indexable files with mtimes, keyed by abs path → rel path.
+    //
+    // Derived from the walker's own output rather than re-reading each discovered
+    // directory. The previous `read_dir` pass re-enumerated every file in a
+    // discovered dir and applied ONLY the extension checks, so it silently
+    // re-admitted files the ignore rules had just excluded — any gitignored file
+    // sitting in a directory that also held tracked files was indexed. Sourcing
+    // from `visible` removes that asymmetry by construction: one enumeration, one
+    // set of rules.
     let mut current_meta: std::collections::HashMap<std::path::PathBuf, String> = std::collections::HashMap::new();
     let mut current: Vec<(String, i64)> = Vec::new();
-    for dir in &dirs {
-        if let Ok(entries) = std::fs::read_dir(dir) {
-            for entry in entries.flatten() {
-                if !entry.path().is_file() { continue; }
-                let ext = entry.path().extension().and_then(|e| e.to_str()).unwrap_or("").to_string();
-                if ext.is_empty() || is_binary_ext(&ext) { continue; }
-                let rel = entry.path().strip_prefix(repo_path).unwrap_or(&entry.path())
-                    .to_string_lossy().to_string();
-                let mtime = super::helpers::file_mtime_ms(&entry.path()).unwrap_or(0);
-                current.push((rel.clone(), mtime));
-                current_meta.insert(entry.path(), rel);
-            }
-        }
+    for (abs, rel) in visible {
+        // Keep the previous membership rule — only files under a discovered
+        // (non-excluded) directory participate — so this change subtracts the
+        // ignored files and nothing else.
+        if !abs.parent().is_some_and(|p| dirs.contains(p)) { continue; }
+        let mtime = super::helpers::file_mtime_ms(&abs).unwrap_or(0);
+        current.push((rel.clone(), mtime));
+        current_meta.insert(abs, rel);
     }
     // Diff against the last index with the two-tier gate. The injected hasher
     // reads+hashes ONLY the mtime-drifted candidates (an unchanged-mtime file is
     // never touched), so a no-op re-scan is stat-only. `plan.changed` needs
     // reindexing, `plan.touched` only needs its mtime refreshed, `plan.removed`
     // is gone from disk.
-    let plan = super::scan_logic::plan_reindex(&current, &prior_state, |rel| {
+    let mut plan = super::scan_logic::plan_reindex(&current, &prior_state, |rel| {
         super::helpers::hash_file(&repo_path.join(rel))
     });
 
@@ -269,6 +282,45 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
         for (path, mtime, hash) in &plan.touched {
             if let Err(e) = ctx.pg().upsert_scan_state(fid, path, *mtime, hash).await {
                 tracing::warn!(folder_id = %fid, file = %path, error = %e, "upsert_scan_state (touched refresh) failed");
+            }
+        }
+    }
+
+    // Files the per-file stage could never index — an unsupported/binary format,
+    // or content that isn't UTF-8 source text — are FINGERPRINTED here together
+    // with the reason, and dropped from `changed` so no doomed ProcessFile is
+    // enqueued.
+    //
+    // This is what stops an infinite re-index loop. `process_file` returns early
+    // for these files WITHOUT writing scan_state, and `plan_reindex` treats a
+    // file with no prior row as changed — so an unfingerprinted skip is
+    // re-enqueued on every reconcile, the folder never reaches `indexed`, and the
+    // whole downstream pipeline (embeddings → deps → connections → communities)
+    // re-runs every tick. Recording the fingerprint makes the mtime gate skip it
+    // for free next pass, while keying the skip to the fingerprint keeps it
+    // self-healing: fix the file (re-encode it) and it is re-indexed on its own.
+    if let Some(ref fid) = folder_uuid {
+        let skippable: Vec<_> = plan.changed.iter()
+            .filter_map(|rel| {
+                let abs = repo_path.join(rel);
+                let ext = abs.extension().and_then(|e| e.to_str()).unwrap_or("");
+                super::helpers::classify_unscannable(&abs, ext).map(|reason| (rel.clone(), reason))
+            })
+            .collect();
+        for (rel, reason) in skippable {
+            // Only fingerprint what we actually observed: if the file can't be
+            // read we record nothing and leave it queued, rather than storing a
+            // fingerprint we didn't measure.
+            let Some((mtime, hash)) = super::helpers::file_fingerprint(&repo_path.join(&rel)) else {
+                tracing::debug!(file = %rel, "unscannable file not fingerprinted (unreadable) — left queued");
+                continue;
+            };
+            // Drop from `changed` only once the write succeeded, so a DB failure
+            // retries next pass instead of silently losing the file.
+            match ctx.pg().upsert_scan_state_skipped(fid, &rel, mtime, &hash, reason).await {
+                Ok(()) => { plan.changed.remove(&rel); }
+                Err(e) => tracing::warn!(folder_id = %fid, file = %rel, error = %e,
+                    "upsert_scan_state (skip) failed — file stays queued for the next pass"),
             }
         }
     }
@@ -884,7 +936,20 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
                 // The module container's fqn language matches the file's defs (the
                 // first fqn's leading segment), so a Python/TS module node isn't
                 // mislabelled as rust.
-                let lang = fqn_out.defs.first().and_then(|d| d.fqn.split('·').next()).unwrap_or("rust");
+                //
+                // When the parse yields a module path but NO top-level defs there is
+                // no leading segment to copy, so fall back to the FILE's language
+                // rather than a hardcoded "rust" — that fallback minted
+                // `rust·<pkg>·lib/components/Foo` for a .svelte file, which is both
+                // wrong (it corrupts the same-language scoring the `language` column
+                // feeds) and unstable: the fqn flipped as soon as defs reappeared.
+                // Only `adopt_node_by_identity` keeps such a flip from wedging the
+                // file forever, so don't rely on it — emit a stable value here.
+                let lang = fqn_out.defs.first()
+                    .and_then(|d| d.fqn.split('·').next())
+                    .filter(|seg| !seg.is_empty())
+                    .or(file_lang)
+                    .unwrap_or("rust");
                 let mfqn = crate::languages::fqn::item(lang, &fqn_out.package, "", &fqn_out.module);
                 let mname = fqn_out.module.rsplit("::").next().unwrap_or(&fqn_out.module);
                 let mid = ctx.pg().upsert_node_by_fqn(
@@ -2421,6 +2486,48 @@ mod tests {
         let after = ctx.pg().list_scan_state(&fid).await.unwrap();
         assert_eq!(after.len(), 1);
         assert!(after.iter().all(|(p, _)| p != "a.rs"), "a.rs dropped, b.rs kept");
+    }
+
+    /// A skipped file must be fingerprinted WITH its reason, and re-indexing it
+    /// later must CLEAR that reason. Without the fingerprint, `plan_reindex`
+    /// treats the file as changed on every pass and re-enqueues it forever; if
+    /// the reason were left stale, a file the user fixed would keep reporting as
+    /// unscannable.
+    #[tokio::test]
+    async fn scan_state_records_skip_reason_and_clears_it_on_reindex() {
+        let ctx = make_ctx().await;
+        let tmp = tempfile::tempdir().unwrap();
+        let repo_path = tmp.path().to_string_lossy().to_string();
+        let root_id = ctx.pg().add_watch_root(&repo_path, "skipreason", &serde_json::json!([])).await.unwrap();
+        let fid = ctx.pg().upsert_repo(&root_id, "skipreason-repo", &repo_path).await.unwrap();
+
+        // Skipped: fingerprint + reason recorded (exercises the ::enum cast).
+        ctx.pg().upsert_scan_state_skipped(
+            &fid, "docs/License.txt", 111, "hashA",
+            crate::classifiers::ScanSkipReason::InvalidUtf8,
+        ).await.unwrap();
+
+        let reason: Option<String> = sqlx_core::query_scalar::query_scalar(
+            "SELECT skip_reason::text FROM sensei.scan_state WHERE folder_id = $1 AND file_path = $2"
+        ).bind(fid).bind("docs/License.txt")
+            .fetch_one(ctx.pg().pool()).await.unwrap();
+        assert_eq!(reason.as_deref(), Some("invalid_utf8"), "skip reason persisted");
+
+        // The fingerprint itself must be visible to the change-detection gate —
+        // that is what stops the re-enqueue loop.
+        let state = ctx.pg().list_scan_state(&fid).await.unwrap();
+        assert!(
+            state.iter().any(|(p, _)| p == "docs/License.txt"),
+            "a skipped file must still carry a fingerprint the mtime gate can match"
+        );
+
+        // User fixes the encoding → the file indexes normally → reason cleared.
+        ctx.pg().upsert_scan_state(&fid, "docs/License.txt", 222, "hashB").await.unwrap();
+        let cleared: Option<String> = sqlx_core::query_scalar::query_scalar(
+            "SELECT skip_reason::text FROM sensei.scan_state WHERE folder_id = $1 AND file_path = $2"
+        ).bind(fid).bind("docs/License.txt")
+            .fetch_one(ctx.pg().pool()).await.unwrap();
+        assert_eq!(cleared, None, "re-indexing a fixed file must clear the stale skip reason");
     }
 
     #[tokio::test]

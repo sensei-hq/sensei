@@ -709,11 +709,49 @@ impl PgStore {
 
     // ── Scan State ───────────────────────────────────────────────────
 
+    /// Record that a file was indexed at this fingerprint (clears any prior
+    /// skip reason — a file that used to be unscannable and now parses is
+    /// indexed normally).
     pub async fn upsert_scan_state(&self, folder_id: &uuid::Uuid, file_path: &str, mtime: i64, content_hash: &str) -> Result<(), String> {
+        self.write_scan_state(folder_id, file_path, mtime, content_hash, None).await
+    }
+
+    /// Record that a file was EXAMINED at this fingerprint but deliberately not
+    /// indexed, and why.
+    ///
+    /// Writing the fingerprint is the point: `plan_reindex` treats a file with
+    /// no prior row as changed, so a skip that isn't fingerprinted is re-enqueued
+    /// on every reconcile forever. Keying the skip to the fingerprint also makes
+    /// it self-healing — fix the file and the mtime/hash change re-triggers it.
+    pub async fn upsert_scan_state_skipped(
+        &self,
+        folder_id: &uuid::Uuid,
+        file_path: &str,
+        mtime: i64,
+        content_hash: &str,
+        reason: crate::classifiers::ScanSkipReason,
+    ) -> Result<(), String> {
+        self.write_scan_state(folder_id, file_path, mtime, content_hash, Some(reason)).await
+    }
+
+    /// Single writer behind [`upsert_scan_state`] / [`upsert_scan_state_skipped`]
+    /// so the statement lives in exactly one place. `skip_reason` is always
+    /// assigned on conflict (never left stale) so a file can move between
+    /// indexed and skipped in either direction.
+    async fn write_scan_state(
+        &self,
+        folder_id: &uuid::Uuid,
+        file_path: &str,
+        mtime: i64,
+        content_hash: &str,
+        reason: Option<crate::classifiers::ScanSkipReason>,
+    ) -> Result<(), String> {
         sqlx_core::query::query(
-            "INSERT INTO sensei.scan_state(folder_id, file_path, mtime, content_hash) VALUES($1, $2, $3, $4)
-             ON CONFLICT(folder_id, file_path) DO UPDATE SET mtime = EXCLUDED.mtime, content_hash = EXCLUDED.content_hash, indexed_at = now(), modified_at = now()"
+            "INSERT INTO sensei.scan_state(folder_id, file_path, mtime, content_hash, skip_reason)
+             VALUES($1, $2, $3, $4, $5::sensei.scan_skip_reason)
+             ON CONFLICT(folder_id, file_path) DO UPDATE SET mtime = EXCLUDED.mtime, content_hash = EXCLUDED.content_hash, skip_reason = EXCLUDED.skip_reason, indexed_at = now(), modified_at = now()"
         ).bind(folder_id).bind(file_path).bind(mtime).bind(content_hash)
+            .bind(reason.map(|r| r.as_db()))
             .execute(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(())
     }

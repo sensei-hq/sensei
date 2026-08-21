@@ -1,6 +1,7 @@
 //! Shared helpers used by process and other handler modules.
 
 use super::super::executor::TaskContext;
+use crate::classifiers::ScanSkipReason;
 
 /// Check if a file extension indicates a binary (non-text) file. This is a
 /// fast first pass; `is_probably_binary` (content sniff) is the robust net for
@@ -51,39 +52,64 @@ pub(crate) fn file_fingerprint(path: &std::path::Path) -> Option<(i64, String)> 
 /// byte is a strong binary signal; otherwise we require the bytes to be valid
 /// UTF-8 (tolerating a multi-byte char split at the read boundary).
 pub(crate) fn is_probably_binary(path: &std::path::Path) -> bool {
+    sniff_content(path).is_some()
+}
+
+/// The content-sniff half of [`classify_unscannable`], kept separate so
+/// [`is_probably_binary`] and the reason-returning path share ONE implementation.
+///
+/// `None` means the head of the file reads as UTF-8 source text. Otherwise it
+/// distinguishes the two failure modes, because they differ in actionability: a
+/// null byte means an opaque binary (ignore quietly), whereas merely-invalid
+/// UTF-8 is usually latin-1/cp1252 text the user can re-encode.
+///
+/// An unreadable file returns `BinaryContent` so callers still treat it as
+/// skippable — matching the previous behaviour.
+fn sniff_content(path: &std::path::Path) -> Option<ScanSkipReason> {
     use std::io::Read;
     let mut buf = [0u8; 8192];
     let n = match std::fs::File::open(path).and_then(|mut f| f.read(&mut buf)) {
         Ok(n) => n,
-        Err(_) => return true, // unreadable → treat as skippable
+        Err(_) => return Some(ScanSkipReason::BinaryContent), // unreadable → skippable
     };
     let slice = &buf[..n];
     if slice.contains(&0) {
-        return true;
+        return Some(ScanSkipReason::BinaryContent);
     }
     match std::str::from_utf8(slice) {
-        Ok(_) => false,
-        // Only call it binary when invalid bytes appear well before the end —
-        // a trailing error is likely a UTF-8 char split at the 8KB boundary.
-        Err(e) => e.valid_up_to() + 4 < n,
+        Ok(_) => None,
+        // Only call it unscannable when invalid bytes appear well before the end
+        // — a trailing error is likely a UTF-8 char split at the 8KB boundary.
+        Err(e) if e.valid_up_to() + 4 < n => Some(ScanSkipReason::InvalidUtf8),
+        Err(_) => None,
     }
 }
 
-pub(crate) fn build_globset() -> globset::GlobSet {
-    let patterns = &[
-        "**/node_modules/**", "**/dist/**", "**/build/**", "**/target/**",
-        "**/.next/**", "**/.svelte-kit/**",
-        "**/__pycache__/**", "**/__MACOSX/**", "**/.venv/**", "**/venv/**",
-        "**/*.spec.ts", "**/*.spec.tsx", "**/*.spec.js",
-        "**/*.test.ts", "**/*.test.tsx", "**/*.test.js",
-        "**/*_test.py", "**/*_test.go", "**/*_test.rs",
-        "**/*.d.ts",
-    ];
-    let mut builder = globset::GlobSetBuilder::new();
-    for p in patterns {
-        if let Ok(g) = globset::Glob::new(p) { builder.add(g); }
+/// Decide whether a file can be indexed as source text, and if not, why.
+///
+/// `None` means "index it". `Some(reason)` is recorded on the file's
+/// `scan_state` row together with its fingerprint, so the skip sticks across
+/// reconciles instead of the file looking changed forever. The extension test
+/// comes first because it is a pure string compare — the content sniff only
+/// reads the head of files the cheap test didn't already settle.
+pub(crate) fn classify_unscannable(
+    path: &std::path::Path,
+    ext: &str,
+) -> Option<ScanSkipReason> {
+    if is_binary_ext(ext) {
+        return Some(ScanSkipReason::UnsupportedFormat);
     }
-    builder.build().unwrap_or_else(|_| globset::GlobSetBuilder::new().build().unwrap())
+    sniff_content(path)
+}
+
+/// Path patterns excluded from directory discovery.
+///
+/// Thin wrapper over the resolved [`crate::classifiers::ScanRules`] — the pattern
+/// list itself lives with the other scan lists so it is operator-tunable through
+/// `sensei.config` (`scan.exclude_globs.add` / `.remove`) rather than code-bound.
+/// Returns a borrow of the process-wide set instead of rebuilding it per call.
+pub(crate) fn build_globset() -> &'static globset::GlobSet {
+    crate::classifiers::scan_rules().exclude_globs()
 }
 
 /// A directory walker that honours ignore files (.gitignore, .ignore, global
@@ -100,6 +126,35 @@ pub(crate) fn build_walker(path: &std::path::Path) -> ignore::WalkBuilder {
         .git_exclude(true)
         .require_git(false);
     b
+}
+
+/// The set of files in `dir` that the scan's ignore rules leave VISIBLE — i.e.
+/// what [`build_walker`] would yield for that one directory.
+///
+/// This exists so the fs-watcher and the scan cannot disagree about what belongs
+/// in the index. The watcher receives raw FSEvents, which know nothing about
+/// `.gitignore`; without this it enqueued a `ProcessFile` for every generated
+/// artifact (an i18n compiler's 131 emitted message files, say). The scan then
+/// correctly did NOT see those files, so they landed in `plan.removed` and had
+/// their nodes deleted and edges unresolved — and the next build re-added them.
+/// A permanent add/prune churn loop over files that should never be indexed.
+///
+/// Implemented by reusing `build_walker` at `max_depth(1)` rather than
+/// re-deriving the ignore rules: `parents(true)` (the default) still reads
+/// `.gitignore` from every ancestor, so a nested `.gitignore` — the case that
+/// actually bit us — is honoured exactly as the full walk honours it. Reusing the
+/// builder means the two paths cannot drift apart.
+///
+/// Costs one directory read, so callers handling a batch should group by parent
+/// and call this once per directory.
+pub(crate) fn visible_files_in_dir(dir: &std::path::Path) -> std::collections::HashSet<std::path::PathBuf> {
+    let mut w = build_walker(dir);
+    w.max_depth(Some(1));
+    w.build()
+        .flatten()
+        .filter(|e| e.path().is_file())
+        .map(|e| e.path().to_path_buf())
+        .collect()
 }
 
 /// Flip a folder to `indexed` at the terminal community barrier (D4.1),
@@ -185,6 +240,84 @@ mod tests {
         assert!(is_probably_binary(&missing), "unreadable => skip");
     }
 
+    /// The reason matters, not just the yes/no: an unreadable-encoding file is
+    /// something the USER can fix (re-encode it), whereas an opaque binary is
+    /// expected and should stay quiet. The scan persists this reason so the file
+    /// stops being re-enqueued every reconcile.
+    #[test]
+    fn classify_unscannable_distinguishes_the_reason() {
+        let dir = tempfile::tempdir().unwrap();
+
+        // Indexable source text → no reason, index it.
+        let src = dir.path().join("a.rs");
+        std::fs::write(&src, "fn main() {}\n").unwrap();
+        assert_eq!(classify_unscannable(&src, "rs"), None, "valid source is indexable");
+
+        // Known non-source extension → settled by the cheap string test.
+        let cert = dir.path().join("Prod_Push_Certificate.p12");
+        std::fs::write(&cert, [0x30u8, 0x82, 0x04, 0x00]).unwrap();
+        assert_eq!(
+            classify_unscannable(&cert, "p12"),
+            Some(ScanSkipReason::UnsupportedFormat),
+            "binary extension → unsupported_format"
+        );
+
+        // Upper-case extension must be caught too — these were the files that
+        // slipped through and re-indexed forever.
+        let img = dir.path().join("IMG_8877.JPG");
+        std::fs::write(&img, [0xFFu8, 0xD8, 0xFF, 0xE0]).unwrap();
+        assert_eq!(
+            classify_unscannable(&img, "JPG"),
+            Some(ScanSkipReason::UnsupportedFormat),
+            "upper-case binary extension → unsupported_format"
+        );
+
+        // Null bytes with a source-ish extension → binary by content.
+        let nul = dir.path().join("stats.json");
+        std::fs::write(&nul, [b'{', 0x00, b'}']).unwrap();
+        assert_eq!(
+            classify_unscannable(&nul, "json"),
+            Some(ScanSkipReason::BinaryContent),
+            "null bytes → binary_content"
+        );
+
+        // Latin-1 text in a text file → actionable encoding problem. The invalid
+        // bytes must sit well before the end: a trailing decode error is
+        // deliberately tolerated as a multi-byte char split at the read boundary.
+        let latin1 = dir.path().join("License.txt");
+        let mut bytes = b"Copyright ".to_vec();
+        bytes.extend_from_slice(&[0xE9, 0xE9, 0xE9]); // 'ééé' in latin-1
+        bytes.extend_from_slice(b" - all rights reserved.\n");
+        std::fs::write(&latin1, &bytes).unwrap();
+        assert_eq!(
+            classify_unscannable(&latin1, "txt"),
+            Some(ScanSkipReason::InvalidUtf8),
+            "non-UTF8 text → invalid_utf8 (the user can re-encode it)"
+        );
+    }
+
+    /// Only the reasons a user can act on should be surfaced; the rest are
+    /// expected and would just be noise.
+    #[test]
+    fn only_encoding_and_parse_failures_are_actionable() {
+        assert!(ScanSkipReason::InvalidUtf8.is_actionable());
+        assert!(ScanSkipReason::ParseError.is_actionable());
+        assert!(!ScanSkipReason::UnsupportedFormat.is_actionable());
+        assert!(!ScanSkipReason::BinaryContent.is_actionable());
+        assert!(!ScanSkipReason::ExcludedByConfig.is_actionable());
+    }
+
+    /// Every variant must map to a label the `sensei.scan_skip_reason` enum
+    /// actually accepts — a typo here becomes a runtime insert failure.
+    #[test]
+    fn skip_reason_db_labels_match_the_pg_enum() {
+        assert_eq!(ScanSkipReason::UnsupportedFormat.as_db(), "unsupported_format");
+        assert_eq!(ScanSkipReason::BinaryContent.as_db(), "binary_content");
+        assert_eq!(ScanSkipReason::InvalidUtf8.as_db(), "invalid_utf8");
+        assert_eq!(ScanSkipReason::ParseError.as_db(), "parse_error");
+        assert_eq!(ScanSkipReason::ExcludedByConfig.as_db(), "excluded_by_config");
+    }
+
     #[test]
     fn is_binary_ext_rejects_source_extensions() {
         assert!(!is_binary_ext("rs"));
@@ -193,6 +326,58 @@ mod tests {
         assert!(!is_binary_ext("md"));
         assert!(!is_binary_ext("json"));
         assert!(!is_binary_ext(""));
+    }
+
+    /// The watcher/scan parity check must honour a NESTED `.gitignore` — that is
+    /// the exact shape that leaked: a generated directory carrying its own
+    /// `.gitignore` containing `*`, holding 131 emitted i18n files. FSEvents
+    /// reported them, the scan's walker did not, so they were indexed then pruned
+    /// then re-indexed forever.
+    #[test]
+    fn visible_files_in_dir_honours_nested_gitignore() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        // Make it a repo-ish root with a top-level ignore file too.
+        std::fs::write(root.join(".gitignore"), "*.log\n").unwrap();
+
+        let gen_dir = root.join("generated");
+        std::fs::create_dir_all(&gen_dir).unwrap();
+        // The generated dir disowns everything inside it.
+        std::fs::write(gen_dir.join(".gitignore"), "*\n").unwrap();
+        std::fs::write(gen_dir.join("messages_a.js"), "export const a = 1\n").unwrap();
+        std::fs::write(gen_dir.join("messages_b.js"), "export const b = 2\n").unwrap();
+
+        let visible = visible_files_in_dir(&gen_dir);
+        assert!(
+            visible.is_empty(),
+            "a nested .gitignore of `*` must hide every file in that directory, got {visible:?}"
+        );
+
+        // A sibling directory with tracked files stays visible, and the
+        // root-level rule still applies within it.
+        let src = root.join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("main.rs"), "fn main() {}\n").unwrap();
+        std::fs::write(src.join("debug.log"), "noise\n").unwrap();
+
+        let visible = visible_files_in_dir(&src);
+        assert!(visible.contains(&src.join("main.rs")), "tracked source stays visible");
+        assert!(
+            !visible.contains(&src.join("debug.log")),
+            "an ancestor .gitignore rule must still apply to a nested directory"
+        );
+    }
+
+    /// A directory with no ignore rules at all yields its files — guards against
+    /// the helper accidentally hiding everything (which would silently stop the
+    /// watcher from indexing anything).
+    #[test]
+    fn visible_files_in_dir_yields_unignored_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let f = dir.path().join("thing.ts");
+        std::fs::write(&f, "export const x = 1\n").unwrap();
+        let visible = visible_files_in_dir(dir.path());
+        assert!(visible.contains(&f), "an unignored file must be visible, got {visible:?}");
     }
 
     #[test]

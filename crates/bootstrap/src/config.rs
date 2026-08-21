@@ -109,7 +109,33 @@ pub const DB_POOL_MIN_CONNECTIONS: u32 = 8;
 pub const DB_POOL_ACQUIRE_TIMEOUT_SECS: u64 = 10;
 
 /// How long (in seconds) an idle connection is kept alive before being closed.
+///
+/// NOTE: this alone does not shrink the pool under a steady trickle of work.
+/// sqlx keeps idle connections in a FIFO queue, so each acquire hands out the
+/// *least-recently-returned* connection and pushes it to the back — every
+/// connection is rotated and its `idle_since` reset. With the daemon's
+/// schedulers ticking (advance_run 15s, watchdog 60s, reconcile 300s) no
+/// connection ever accumulates a full idle period, so the reaper never fires.
+/// [`DB_POOL_MAX_LIFETIME_SECS`] is what actually reclaims the pool.
 pub const DB_POOL_IDLE_TIMEOUT_SECS: u64 = 300;
+
+/// Absolute lifetime (in seconds) of a pooled connection, measured from when it
+/// was opened — not from when it went idle.
+///
+/// This is the mechanism that returns the pool to its warm floor. Because the
+/// age is absolute, nothing resets it (unlike `idle_since`, which sqlx's own
+/// maintenance pass refreshes each time it puts a still-fresh connection back),
+/// so expiry is guaranteed to fire regardless of traffic. When a connection
+/// expires sqlx closes it and refills only up to `min_connections`, so a pool
+/// that ballooned to [`DB_POOL_MAX_CONNECTIONS`] during a burst (e.g. the boot
+/// metrics backfill) decays back to [`DB_POOL_MIN_CONNECTIONS`] once demand
+/// drops, instead of holding its high-water mark for the life of the process.
+///
+/// Only idle connections are recycled — a checked-out connection is never
+/// interrupted mid-query; it is retired when it returns to the pool. Five
+/// minutes keeps the reclaim prompt while holding reconnect churn to a handful
+/// per minute (a local TCP connect plus the `after_connect` search_path SET).
+pub const DB_POOL_MAX_LIFETIME_SECS: u64 = 300;
 
 /// Configuration for all sensei components.
 ///
@@ -284,6 +310,28 @@ mod tests {
         assert!(
             DB_POOL_MIN_CONNECTIONS < DB_POOL_MAX_CONNECTIONS,
             "warm floor ({DB_POOL_MIN_CONNECTIONS}) must leave room to grow up to the ceiling ({DB_POOL_MAX_CONNECTIONS})"
+        );
+    }
+
+    #[allow(clippy::assertions_on_constants)]
+    #[test]
+    fn pool_max_lifetime_drives_prompt_reclaim() {
+        // sqlx runs its pool maintenance pass every `min(max_lifetime,
+        // idle_timeout)`, and only `max_lifetime` can actually retire a
+        // connection under steady traffic (see the const docs). Keeping the
+        // lifetime at or below the idle timeout is therefore what guarantees the
+        // pool decays from the ceiling back to the warm floor promptly. If this
+        // is ever raised above the idle timeout, reclaim slows to the new
+        // lifetime and the pool goes back to holding its high-water mark.
+        assert!(
+            DB_POOL_MAX_LIFETIME_SECS <= DB_POOL_IDLE_TIMEOUT_SECS,
+            "max_lifetime ({DB_POOL_MAX_LIFETIME_SECS}s) must be <= idle_timeout ({DB_POOL_IDLE_TIMEOUT_SECS}s) so it drives the maintenance period"
+        );
+        // A connection has to outlive the wait for one, or a caller could be
+        // handed a connection that is already due for retirement.
+        assert!(
+            DB_POOL_MAX_LIFETIME_SECS > DB_POOL_ACQUIRE_TIMEOUT_SECS,
+            "max_lifetime ({DB_POOL_MAX_LIFETIME_SECS}s) must exceed the acquire timeout ({DB_POOL_ACQUIRE_TIMEOUT_SECS}s)"
         );
     }
 
