@@ -23,6 +23,7 @@ create table if not exists recommendations (
 , focal                    boolean                   not null default false
 , acted_at                 timestamptz
 , measured_at              timestamptz
+, materialized_ref         jsonb
 );
 
 create index if not exists recommendations_project_id_idx
@@ -103,3 +104,10 @@ comment on column recommendations.acted_at
      is 'Timestamp when the user accepted — the point-in-time marker for before/after FTR comparison.';
 comment on column recommendations.measured_at
      is 'Timestamp when verdict was last computed.';
+comment on column recommendations.materialized_ref
+     is 'What accepting this recommendation PRODUCED (spec 2026-08-20 insight-acceptance-
+materialization): {kind, ...ref, scope, enforcement}. For a rule-class accept →
+{kind:"rule", memory_id, namespace_id, scope, enforcement}; later phases add
+{kind:"skill"|"agent", file_path} and {kind:"pack_rule", pack_rule_id}. NULL when
+the accept was a plain status flip (no artifact materialized). The provenance the
+effect-measurement + un-apply read.';

@@ -41,8 +41,23 @@
     deciding = true;
     try {
       const api = senseiApi(appState.port);
-      if (action === 'accept') await api.acceptProjectRecommendation(projectId, rec.id);
-      else await api.rejectProjectRecommendation(projectId, rec.id);
+      if (action === 'reject') {
+        await api.rejectProjectRecommendation(projectId, rec.id);
+      } else {
+        // P-A: a rule-class rec (revise_rule/promote_pattern/enrich_memory)
+        // MATERIALIZES a governance rule on accept — write it at the default
+        // project scope / recommended tier. A non-rule rec falls back to the plain
+        // accept (status flip + FTR measurement), unchanged.
+        const preview = await api.previewRecommendation(projectId, rec.id);
+        if (preview.materializable) {
+          await api.materializeRecommendation(projectId, rec.id, {
+            gov_scope: 'project',
+            enforcement: 'recommended',
+          });
+        } else {
+          await api.acceptProjectRecommendation(projectId, rec.id);
+        }
+      }
       await invalidateAll();
     } finally {
       deciding = false;

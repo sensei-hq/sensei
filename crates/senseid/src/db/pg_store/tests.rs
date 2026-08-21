@@ -1757,6 +1757,75 @@
         s.delete_project(&pid).await.unwrap();
     }
 
+    // ── P-A: accept → materialize a governance RULE (spec 2026-08-20) ──
+    #[tokio::test]
+    async fn accept_as_rule_materializes_a_memory_and_records_provenance() {
+        let s = pg_store().await;
+        let pid = s.create_project(&format!("_test:mat-{}", uuid::Uuid::new_v4()), None, None).await.unwrap();
+        // A revise_rule rec — the canonical rule-class case ("why are you using regex").
+        let rid = s.create_recommendation(&pid, "No bare regex in the parser", "regex is fragile here; use the typed lexer", "revise_rule", "high").await.unwrap();
+
+        // Accept + materialize at gov_scope=general (namespace None) enforcement=required.
+        let mat = s.accept_recommendation_as_rule(&rid, None, Some("required"), "general", None, None).await.unwrap();
+        assert_eq!(mat["kind"], "rule");
+        assert_eq!(mat["scope"], "general");
+        assert_eq!(mat["enforcement"], "required");
+        let mem_id = uuid::Uuid::parse_str(mat["memory_id"].as_str().unwrap()).unwrap();
+
+        // The memory is LIVE (active) with the rec's content + chosen enforcement + origin.
+        let (title, content, status, enforcement, mtype, origin): (String, String, String, String, String, String) =
+            sqlx_core::query_as::query_as(
+                "SELECT title, content, status::text, enforcement::text, type::text, origin::text FROM sensei.memories WHERE id=$1"
+            ).bind(mem_id).fetch_one(s.pool()).await.unwrap();
+        assert_eq!(title, "No bare regex in the parser");
+        assert_eq!(content, "regex is fragile here; use the typed lexer", "body defaults to the rec's why");
+        assert_eq!(status, "active", "an accepted rule is live immediately");
+        assert_eq!(enforcement, "required");
+        assert_eq!(mtype, "convention");
+        assert_eq!(origin, "authored");
+
+        // The rec is accepted + carries the materialized_ref provenance.
+        let (rstatus, ref_kind, ref_mem): (String, Option<String>, Option<String>) = sqlx_core::query_as::query_as(
+            "SELECT status::text, materialized_ref->>'kind', materialized_ref->>'memory_id' FROM inference.recommendations WHERE id=$1"
+        ).bind(rid).fetch_one(s.pool()).await.unwrap();
+        assert_eq!(rstatus, "accepted");
+        assert_eq!(ref_kind.as_deref(), Some("rule"));
+        assert_eq!(ref_mem.as_deref(), Some(mem_id.to_string().as_str()), "provenance links the exact memory");
+
+        // Idempotent guard: a second materialize on the now-accepted rec errors (no double write).
+        let err = s.accept_recommendation_as_rule(&rid, None, None, "general", None, None).await.expect_err("guarded at pending");
+        assert!(err.contains("already decided") || err.contains("not found"), "guard: {err}");
+
+        sqlx_core::query::query("DELETE FROM sensei.memories WHERE id=$1").bind(mem_id).execute(s.pool()).await.ok();
+        sqlx_core::query::query("DELETE FROM inference.recommendations WHERE id=$1").bind(rid).execute(s.pool()).await.ok();
+        s.delete_project(&pid).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn accept_as_rule_rejects_non_rule_action_and_title_body_override() {
+        let s = pg_store().await;
+        let pid = s.create_project(&format!("_test:mat2-{}", uuid::Uuid::new_v4()), None, None).await.unwrap();
+
+        // Non-rule action (audit_stale) → error, no memory written (mis-route surfaced).
+        let audit = s.create_recommendation(&pid, "_test:audit", "high rework file", "audit_stale", "low").await.unwrap();
+        let err = s.accept_recommendation_as_rule(&audit, None, None, "general", None, None).await.expect_err("non-rule rejected");
+        assert!(err.contains("not rule-class"), "got: {err}");
+
+        // enrich_memory with title + body overrides (the review-before-apply edit path).
+        let rid = s.create_recommendation(&pid, "orig title", "orig why", "enrich_memory", "medium").await.unwrap();
+        let mat = s.accept_recommendation_as_rule(&rid, None, Some("advisory"), "general", Some("edited title"), Some("edited body")).await.unwrap();
+        let mem_id = uuid::Uuid::parse_str(mat["memory_id"].as_str().unwrap()).unwrap();
+        let (title, content): (String, String) = sqlx_core::query_as::query_as(
+            "SELECT title, content FROM sensei.memories WHERE id=$1"
+        ).bind(mem_id).fetch_one(s.pool()).await.unwrap();
+        assert_eq!(title, "edited title", "title override wins");
+        assert_eq!(content, "edited body", "body override wins");
+
+        sqlx_core::query::query("DELETE FROM sensei.memories WHERE id=$1").bind(mem_id).execute(s.pool()).await.ok();
+        sqlx_core::query::query("DELETE FROM inference.recommendations WHERE project_id=$1").bind(pid).execute(s.pool()).await.ok();
+        s.delete_project(&pid).await.unwrap();
+    }
+
     // ── Accept-driven pattern promotion ──────────────────────────────
     // Accepting a `promote_pattern` rec advances its source pattern's
     // lifecycle to `rule` (the read path renders it `adopted`). The action

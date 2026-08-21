@@ -473,6 +473,22 @@ export function senseiApi(port: number) {
         `/api/projects/${enc(id)}/recommendations/${enc(recId)}/reject`, {}, { ok: false },
       ),
 
+    // P-A: rule-class accept that MATERIALIZES a governance rule (spec 2026-08-20).
+    // `preview` renders what would be written (no write); `materialize` accepts +
+    // writes the rule at the chosen scope/enforcement (defaults: project / recommended).
+    previewRecommendation: (id: string, recId: string) =>
+      get<{
+        materializable: boolean; kind?: string; action_type?: string; reason?: string;
+        title?: string; body?: string; impact?: string | null; gov_scope?: string; enforcement?: string;
+      }>(`/api/projects/${enc(id)}/recommendations/${enc(recId)}/preview`, { materializable: false }),
+    materializeRecommendation: (
+      id: string, recId: string,
+      opts?: { gov_scope?: string; namespace_id?: string; enforcement?: string; title?: string; body?: string },
+    ) =>
+      post<{ ok: boolean; materialized?: unknown }>(
+        `/api/projects/${enc(id)}/recommendations/${enc(recId)}/materialize`, opts ?? {}, { ok: false },
+      ),
+
     // ── Observatory · Insights (Slot 5) ─────────────────────────────────
     // Server-side triage aggregator: bundles recs, memories, patterns and
     // corrections pre-bucketed into Now / Soon / Settled. `project` scopes
