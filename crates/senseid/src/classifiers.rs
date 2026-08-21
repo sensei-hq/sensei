@@ -356,13 +356,9 @@ mod tests {
         assert!(c.is_binary("icns"));
     }
 
-    /// Upper-case extensions are real on case-preserving filesystems
-    /// (`IMG_8877.JPG`, `Body Measurements.PNG`). A case-sensitive lookup let
-    /// them through the walk filter, and they were then skipped downstream
-    /// without a fingerprint — so they re-indexed on every reconcile forever.
-    // These exercise `ScanRules::from_overrides` directly and never call
-    // `init_scan_rules`: that writes a process-wide OnceLock, so touching it here
-    // would leak into every other test in the binary.
+    // The override tests below exercise `ScanRules::from_overrides` directly and
+    // never call `init_scan_rules`: that writes a process-wide OnceLock, so
+    // touching it here would leak into every other test in the binary.
 
     /// The whole point of the config layer: add a format without a release.
     #[test]
@@ -464,6 +460,10 @@ mod tests {
         assert!(rules.exclude_globs().is_match("node_modules/x/y.js"));
     }
 
+    /// Upper-case extensions are real on case-preserving filesystems
+    /// (`IMG_8877.JPG`, `Body Measurements.PNG`). A case-sensitive lookup let
+    /// them through the walk filter, and they were then skipped downstream
+    /// without a fingerprint — so they re-indexed on every reconcile forever.
     #[test]
     fn is_binary_is_case_insensitive() {
         let c = file_classifier();
