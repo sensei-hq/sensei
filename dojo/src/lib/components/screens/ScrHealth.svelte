@@ -23,7 +23,7 @@
 	const max = $derived(barMax(health.contribVsApprove));
 </script>
 
-<div class="flex flex-col {mobile ? 'p-4 gap-4' : 'p-8 gap-6'}">
+<div class="flex flex-col p-4 gap-4 md:p-8 md:gap-6">
 	<SectionHead eyebrow={orgName + ' · admin'} title="Health / Monitor" />
 
 	<Banner kanji="観" tone="neutral" title="The shared mind's vital signs, fed by the audit trail.">

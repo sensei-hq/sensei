@@ -52,7 +52,7 @@
 	</div>
 {/snippet}
 
-<div class="flex flex-col {mobile ? 'p-4 gap-4' : 'p-8 gap-6'}">
+<div class="flex flex-col p-4 gap-4 md:p-8 md:gap-6">
 	<SectionHead eyebrow={orgName + ' · govern'} title="Triage" count={triage.all.length}>
 		{#snippet right()}
 			<Btn size="sm" variant="ghost" icon="tuning-2">My scopes</Btn>

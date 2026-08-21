@@ -133,6 +133,7 @@ A qlty pass ran on 2026-08-10 (commits `2bd4dc2b`..`992c7256`). Landed: excluded
 |------|---------|
 | _(file issue)_ | **On-page SEO** — canonical, OpenGraph, Twitter Card tags + a generated `sitemap.xml` (root `<svelte:head>`); submit to Search Console. |
 | _(file issue)_ | **Website redesign** — screenshots→flows + a "For teams · 結 Dōjō" section + a Teams nav; **reconcile the "0 external requests / local-first" promise with the opt-in networked Dōjō**; trim Dōjō copy to shipped reality. |
+| _(file issue)_ | **Componentize `routes/sensei/+page.svelte`, then finish its responsive pass** — the last desktop-first `@media` block in `website/` (11 of 12 converted to mobile-first prefixes in 95d2208d). This one is a 1194-line monolith whose single `@media (max-width: 900px)` block carries 36 rules over ~36 section classes. Converting it in place is mechanical but makes the file *less* readable (36 elements each gaining 2–4 responsive utilities) without addressing the real deviation: every sibling section on the hub page is already a component (`lib/components/hub/Hero.svelte`, `Footer.svelte`, `Approach.svelte`, …), so this page — and `routes/torii-seiki/+page.svelte`, 395 lines — are the house-style outliers. Extract the ~12 sections into components first (§1.1/§1.5), converting each one's responsive rules as it moves. The block also carries literal-px debt §1.3 forbids (`padding: 16px 24px`, `font-size: 180px` / `280px`), which the extraction should clear at the same time. |
 
 ---
 
