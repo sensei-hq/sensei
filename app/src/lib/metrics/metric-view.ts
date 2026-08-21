@@ -157,6 +157,34 @@ export function formatPerKloc(value: number | null | undefined): string {
     return `${(value * 1000).toFixed(1)} / 1,000 lines`;
 }
 
+/**
+ * Compact per-KLOC value for an AXIS TICK — the number alone ("2.4"), without the
+ * "/ 1,000 lines" suffix `formatPerKloc` carries for headline copy.
+ */
+export function formatPerKlocTick(value: number | null | undefined): string {
+    if (value == null || Number.isNaN(value)) return METRIC_NONE;
+    return (value * 1000).toFixed(1);
+}
+
+/**
+ * The tick/value formatter for a metric, chosen by KEY first and type second.
+ *
+ * Type alone is not enough. `module_quality` and `duplication_ratio` are typed
+ * `ratio`, so a type-only formatter runs `toFixed(2)` over a series that lives
+ * inside 0–0.005 and every axis tick renders "0.00" — the chart's line shape is
+ * fine (`metricYDomain` already auto-scales tiny ratios) but its labels carry no
+ * information. Those two are presented per-1,000-lines everywhere else (grade
+ * bands, headline rate), so their axis reads in the same unit.
+ */
+export function metricTickFormatter(
+    key: string,
+    type: MetricType,
+): (value: number) => string {
+    return isPerKlocMetric(key)
+        ? (v: number) => formatPerKlocTick(v)
+        : (v: number) => formatMetricValue(type, v);
+}
+
 /** Format a metric's headline value by its wire type. Absent -> METRIC_NONE. */
 export function formatMetricValue(
     type: MetricType,
