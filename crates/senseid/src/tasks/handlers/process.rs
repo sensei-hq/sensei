@@ -258,7 +258,7 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
     // never touched), so a no-op re-scan is stat-only. `plan.changed` needs
     // reindexing, `plan.touched` only needs its mtime refreshed, `plan.removed`
     // is gone from disk.
-    let plan = super::scan_logic::plan_reindex(&current, &prior_state, |rel| {
+    let mut plan = super::scan_logic::plan_reindex(&current, &prior_state, |rel| {
         super::helpers::hash_file(&repo_path.join(rel))
     });
 
@@ -269,6 +269,45 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
         for (path, mtime, hash) in &plan.touched {
             if let Err(e) = ctx.pg().upsert_scan_state(fid, path, *mtime, hash).await {
                 tracing::warn!(folder_id = %fid, file = %path, error = %e, "upsert_scan_state (touched refresh) failed");
+            }
+        }
+    }
+
+    // Files the per-file stage could never index — an unsupported/binary format,
+    // or content that isn't UTF-8 source text — are FINGERPRINTED here together
+    // with the reason, and dropped from `changed` so no doomed ProcessFile is
+    // enqueued.
+    //
+    // This is what stops an infinite re-index loop. `process_file` returns early
+    // for these files WITHOUT writing scan_state, and `plan_reindex` treats a
+    // file with no prior row as changed — so an unfingerprinted skip is
+    // re-enqueued on every reconcile, the folder never reaches `indexed`, and the
+    // whole downstream pipeline (embeddings → deps → connections → communities)
+    // re-runs every tick. Recording the fingerprint makes the mtime gate skip it
+    // for free next pass, while keying the skip to the fingerprint keeps it
+    // self-healing: fix the file (re-encode it) and it is re-indexed on its own.
+    if let Some(ref fid) = folder_uuid {
+        let skippable: Vec<_> = plan.changed.iter()
+            .filter_map(|rel| {
+                let abs = repo_path.join(rel);
+                let ext = abs.extension().and_then(|e| e.to_str()).unwrap_or("");
+                super::helpers::classify_unscannable(&abs, ext).map(|reason| (rel.clone(), reason))
+            })
+            .collect();
+        for (rel, reason) in skippable {
+            // Only fingerprint what we actually observed: if the file can't be
+            // read we record nothing and leave it queued, rather than storing a
+            // fingerprint we didn't measure.
+            let Some((mtime, hash)) = super::helpers::file_fingerprint(&repo_path.join(&rel)) else {
+                tracing::debug!(file = %rel, "unscannable file not fingerprinted (unreadable) — left queued");
+                continue;
+            };
+            // Drop from `changed` only once the write succeeded, so a DB failure
+            // retries next pass instead of silently losing the file.
+            match ctx.pg().upsert_scan_state_skipped(fid, &rel, mtime, &hash, reason).await {
+                Ok(()) => { plan.changed.remove(&rel); }
+                Err(e) => tracing::warn!(folder_id = %fid, file = %rel, error = %e,
+                    "upsert_scan_state (skip) failed — file stays queued for the next pass"),
             }
         }
     }
@@ -2421,6 +2460,48 @@ mod tests {
         let after = ctx.pg().list_scan_state(&fid).await.unwrap();
         assert_eq!(after.len(), 1);
         assert!(after.iter().all(|(p, _)| p != "a.rs"), "a.rs dropped, b.rs kept");
+    }
+
+    /// A skipped file must be fingerprinted WITH its reason, and re-indexing it
+    /// later must CLEAR that reason. Without the fingerprint, `plan_reindex`
+    /// treats the file as changed on every pass and re-enqueues it forever; if
+    /// the reason were left stale, a file the user fixed would keep reporting as
+    /// unscannable.
+    #[tokio::test]
+    async fn scan_state_records_skip_reason_and_clears_it_on_reindex() {
+        let ctx = make_ctx().await;
+        let tmp = tempfile::tempdir().unwrap();
+        let repo_path = tmp.path().to_string_lossy().to_string();
+        let root_id = ctx.pg().add_watch_root(&repo_path, "skipreason", &serde_json::json!([])).await.unwrap();
+        let fid = ctx.pg().upsert_repo(&root_id, "skipreason-repo", &repo_path).await.unwrap();
+
+        // Skipped: fingerprint + reason recorded (exercises the ::enum cast).
+        ctx.pg().upsert_scan_state_skipped(
+            &fid, "docs/License.txt", 111, "hashA",
+            crate::classifiers::ScanSkipReason::InvalidUtf8,
+        ).await.unwrap();
+
+        let reason: Option<String> = sqlx_core::query_scalar::query_scalar(
+            "SELECT skip_reason::text FROM sensei.scan_state WHERE folder_id = $1 AND file_path = $2"
+        ).bind(&fid).bind("docs/License.txt")
+            .fetch_one(ctx.pg().pool()).await.unwrap();
+        assert_eq!(reason.as_deref(), Some("invalid_utf8"), "skip reason persisted");
+
+        // The fingerprint itself must be visible to the change-detection gate —
+        // that is what stops the re-enqueue loop.
+        let state = ctx.pg().list_scan_state(&fid).await.unwrap();
+        assert!(
+            state.iter().any(|(p, _)| p == "docs/License.txt"),
+            "a skipped file must still carry a fingerprint the mtime gate can match"
+        );
+
+        // User fixes the encoding → the file indexes normally → reason cleared.
+        ctx.pg().upsert_scan_state(&fid, "docs/License.txt", 222, "hashB").await.unwrap();
+        let cleared: Option<String> = sqlx_core::query_scalar::query_scalar(
+            "SELECT skip_reason::text FROM sensei.scan_state WHERE folder_id = $1 AND file_path = $2"
+        ).bind(&fid).bind("docs/License.txt")
+            .fetch_one(ctx.pg().pool()).await.unwrap();
+        assert_eq!(cleared, None, "re-indexing a fixed file must clear the stale skip reason");
     }
 
     #[tokio::test]
