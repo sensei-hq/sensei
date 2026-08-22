@@ -327,7 +327,7 @@ mod tests {
     #[test]
     fn signal_facts_carries_tool_relevance_and_recent_step() {
         let m = json!({
-            "metric": "unused_tools", "name": "Unused-tool count", "metric_type": "count",
+            "metric": "unused_tools", "name": "Tools used", "metric_type": "count",
             "direction": "lower_better", "value": 3.0,
             "props": { "total_tools": 106, "relevant_tools": 12, "used_tools": 9 },
             "prior": 3.0, "delta": 0.0,
@@ -410,7 +410,7 @@ mod tests {
         // "worsening" and stay separate from the recent step — so the narrative
         // can no longer call the metric improving.
         let m = json!({
-            "metric": "interruption_rate", "name": "Interruption rate", "metric_type": "ratio",
+            "metric": "interruption_rate", "name": "Interruptions", "metric_type": "ratio",
             "direction": "lower_better", "value": 1.0,
             "props": {}, "prior": 2.5, "delta": -1.5,
         });

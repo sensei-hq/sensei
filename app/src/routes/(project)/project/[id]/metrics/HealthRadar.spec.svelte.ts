@@ -11,7 +11,7 @@ afterEach(() => {
 });
 
 const components: Record<string, HealthComponent> = {
-  ftr: { name: 'First-turn resolution (FTR)', rating: 5, weight: 3 },
+  ftr: { name: 'First-turn resolution', rating: 5, weight: 3 },
   coverage: { name: 'Coverage', rating: 2, weight: 3 },
   spec_depth: { name: 'Spec depth', rating: 4, weight: 2 },
   churn_rate: { name: 'Churn rate', rating: 1, weight: 1 },
