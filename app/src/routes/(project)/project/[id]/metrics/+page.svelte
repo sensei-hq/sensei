@@ -41,19 +41,36 @@
             No metrics have been computed for this project yet.
         </div>
     {:else}
-        <!-- Headline · interpreted movers · grid beneath: read the meaning first,
-             scan the shapes second. -->
-        <header
-            data-component="metrics-header"
-            class="flex flex-col md:flex-row md:items-start md:justify-between gap-6 mb-10"
-        >
-            <div class="flex flex-col gap-2 max-w-[560px]">
+        <!-- Header names the screen; the card below carries the reading. Per the
+             mockups (01-metrics-check.png, 02-ev.png) the h1 is the signal COUNT
+             with the section glyph, and the narrative sentence lives in a bordered
+             card beside the health readout — it was standing in as the h1, which
+             left the screen with no title and the health score floating loose. -->
+        <header data-component="metrics-header" class="flex items-baseline gap-4 mb-6">
+            <Kanji char="測" size="screen" tone="accent" />
+            <div class="flex flex-col gap-1">
                 <Eyebrow>Project · metrics · this week</Eyebrow>
-                <h1 data-component="metrics-headline" class="display text-2xl md:text-3xl font-light leading-tight text-ink text-pretty">
-                    {headline}
+                <h1 class="display text-2xl md:text-3xl font-light leading-tight text-ink">
+                    {signals.length} {signals.length === 1 ? 'signal' : 'signals'}
                 </h1>
+            </div>
+        </header>
+
+        <section
+            data-component="metrics-narrative"
+            class="mb-10 flex flex-col gap-6 rounded-lg border border-paper-edge bg-paper-soft p-6 md:flex-row md:items-start md:justify-between"
+        >
+            <div class="flex flex-col gap-3 max-w-[560px]">
+                <p
+                    data-component="metrics-headline"
+                    class="display text-xl md:text-2xl font-light leading-snug text-ink text-pretty m-0"
+                >
+                    {headline}
+                </p>
                 {#if data.narrative?.subhead}
-                    <p class="text-sm text-ink-soft leading-relaxed text-pretty">{data.narrative.subhead}</p>
+                    <p class="text-sm text-ink-soft leading-relaxed text-pretty m-0">
+                        {data.narrative.subhead}
+                    </p>
                 {/if}
             </div>
             {#if hero}
@@ -63,7 +80,7 @@
                     series={data.series[hero.key] ?? []}
                 />
             {/if}
-        </header>
+        </section>
 
         {#if movers.length}
             <section data-component="metrics-movers" class="mb-10 flex flex-col gap-3">
@@ -93,7 +110,9 @@
             <div class="flex items-center justify-between gap-4 flex-wrap">
                 <div class="flex items-center gap-2">
                     <Kanji char="観" size="sm" tone="muted" />
-                    <Eyebrow>All {signals.length} signals</Eyebrow>
+                    <!-- The count is the h1 now; repeating it here just says the
+                         same number twice on one screen. -->
+                    <Eyebrow>All signals</Eyebrow>
                 </div>
                 <SignalLegend />
             </div>
