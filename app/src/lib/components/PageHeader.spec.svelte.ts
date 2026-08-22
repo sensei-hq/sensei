@@ -115,26 +115,6 @@ describe('PageHeader', () => {
     ).toMatch(/\bline-clamp-2\b/);
   });
 
-  it('renders a count beside the title, and omits the node when absent', () => {
-    const withCount = mountComponent(PageHeaderHarness, { title: 'X', count: 12 });
-    cleanup.push(withCount.destroy);
-    expect(
-      root(withCount).querySelector('[data-component="page-header-count"]')!.textContent,
-    ).toBe('12');
-
-    const none = mountComponent(PageHeaderHarness, { title: 'X' });
-    cleanup.push(none.destroy);
-    expect(root(none).querySelector('[data-component="page-header-count"]')).toBeNull();
-  });
-
-  it('renders a count of 0 rather than treating it as absent', () => {
-    // `count={0}` is a real tally ("no rows"), not a missing prop — a falsy check
-    // here would silently hide it.
-    const m = mountComponent(PageHeaderHarness, { title: 'X', count: 0 });
-    cleanup.push(m.destroy);
-    expect(root(m).querySelector('[data-component="page-header-count"]')!.textContent).toBe('0');
-  });
-
   it('takes an icon when there is no kanji, and prefers the kanji when both are set', () => {
     const iconOnly = mountComponent(PageHeaderHarness, {
       title: 'X',

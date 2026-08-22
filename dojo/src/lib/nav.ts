@@ -9,7 +9,7 @@
 // bind to.
 //
 // The nav-item / -group shapes are the kit's (`KitNavGroup` / `KitNavItem`), so
-// the AppShell + MobileShell + NavPane consume these directly.
+// the AppShell + NavPane + TabBar consume these directly.
 
 import type { KitNavGroup, KitNavItem } from './components/kit/types';
 
