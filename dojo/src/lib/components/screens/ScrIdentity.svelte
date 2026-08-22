@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { SectionHead, Banner, Btn, Chip, Icon, ListSection } from '$lib/components/kit';
+	import { SectionHead, Btn, Chip, Icon, ListSection } from '$lib/components/kit';
 	import type { KitIdentity } from '$lib/components/kit/types';
 
 	// The admin Identity & SSO screen (mockup ScrIdentity) — how org identity
@@ -20,16 +20,10 @@
 </script>
 
 <div class="flex flex-col p-4 gap-4 md:p-8 md:gap-6">
-	<SectionHead eyebrow={orgName + ' · admin'} title="Identity & SSO" />
-
-	<Banner
-		kanji="鍵"
-		tone="neutral"
-		title="Connect org identity — SSO, provisioning, and how git maps to members."
-	>
-		Roles derive from these mappings; SSO and SCIM keep membership in step with your directory
-		automatically.
-	</Banner>
+	<SectionHead
+		kanji="鍵" eyebrow={orgName + ' · admin'} title="Identity & SSO" 
+		description="Connect org identity — SSO, provisioning, and how git maps to members. Roles derive from these mappings; SSO and SCIM keep membership in step with your directory automatically."
+	/>
 
 	<div class="grid grid-cols-1 gap-4 md:grid-cols-2">
 		<!-- Identity provider — protocol + connection status + domain. -->

@@ -31,7 +31,7 @@
 </script>
 
 <script lang="ts">
-	import { SectionHead, Banner, StatBadge, ListSection, KanjiToken, Chip, Btn } from '$lib/components/kit';
+	import { SectionHead, StatBadge, ListSection, KanjiToken, Chip, Btn } from '$lib/components/kit';
 	import type { KitContribution, KitDownstream, KitContribStat } from '$lib/components/kit/types';
 	import { tallyContributions } from '$lib/personal-view';
 
@@ -62,7 +62,10 @@
 </script>
 
 <div class="flex flex-col p-4 gap-4 md:p-8 md:gap-6">
-	<SectionHead eyebrow="You · sharing" title="Contributions">
+	<SectionHead
+		kanji="共" eyebrow="You · sharing" title="Contributions"
+		description="You propose; a maintainer decides — nothing publishes without their named approval. You share from a session's ready-to-share lane; it lands in the bound dōjō's triage queue. Every source is dereferenced before it leaves — the lesson travels, the source never does."
+	>
 		{#snippet right()}
 			<div class="flex items-center gap-4">
 				<StatBadge n={tally.approved} label="approved" toneClass="text-success" />
@@ -70,15 +73,6 @@
 			</div>
 		{/snippet}
 	</SectionHead>
-
-	<Banner
-		kanji="共"
-		tone="neutral"
-		title="You propose; a maintainer decides — nothing publishes without their named approval."
-	>
-		You share from a session's ready-to-share lane; it lands in the bound dōjō's triage queue.
-		Every source is dereferenced before it leaves — the lesson travels, the source never does.
-	</Banner>
 
 	<ListSection icon="upload-square" title="What you've shared" count={mine.length}>
 		{#each mine as c, i (i)}
