@@ -101,6 +101,23 @@ describe('metricTickFormatter', () => {
         }
     });
 
+    it('gives a real observed series distinct tick labels', () => {
+        // The defect was never one bad label — it was a whole axis reading "0.00"
+        // top to bottom, which is why the chart looked broken. These are the live
+        // ranges (sensei.metric_facts): module_quality 0–0.00527 avg 0.00154,
+        // duplication_ratio 0–0.897 avg 0.0439. Spot values across each range must
+        // land on different labels, or the axis carries no information again.
+        const cases: Array<[string, number[]]> = [
+            ['module_quality', [0, 0.00077, 0.00154, 0.0031, 0.00527]],
+            ['duplication_ratio', [0, 0.011, 0.0439, 0.44, 0.897]],
+        ];
+        for (const [key, values] of cases) {
+            const fmt = metricTickFormatter(key, 'ratio');
+            const labels = values.map(fmt);
+            expect(new Set(labels).size).toBe(labels.length);
+        }
+    });
+
     it('leaves every other metric on its type formatter', () => {
         // An ordinary ratio in [0,1] still reads as a ratio — this fix is keyed to
         // the two per-KLOC metrics, not applied to ratios in general.
