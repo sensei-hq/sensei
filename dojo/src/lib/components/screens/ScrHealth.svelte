@@ -12,12 +12,10 @@
 	// helpers.
 	let {
 		orgName,
-		health,
-		mobile = false
+		health
 	}: {
 		orgName: string;
 		health: KitHealth;
-		mobile?: boolean;
 	} = $props();
 
 	const max = $derived(barMax(health.contribVsApprove));

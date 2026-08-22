@@ -12,12 +12,10 @@
 	let {
 		orgName,
 		owners = [],
-		mobile = false,
 		onAssign
 	}: {
 		orgName: string;
 		owners?: KitScopeOwner[];
-		mobile?: boolean;
 		onAssign?: (o: KitScopeOwner) => void;
 	} = $props();
 

@@ -11,12 +11,10 @@
 	let {
 		orgName,
 		identity,
-		mobile = false,
 		onAddMapping
 	}: {
 		orgName: string;
 		identity: KitIdentity;
-		mobile?: boolean;
 		onAddMapping?: () => void;
 	} = $props();
 </script>

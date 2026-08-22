@@ -9,9 +9,8 @@
 	// right callback. `resolved` swaps a row's actions for the resolved marker.
 	let {
 		items = needsYou,
-		resolved,
-		mobile = false
-	}: { items?: KitNeed[]; resolved?: Record<string, string>; mobile?: boolean } = $props();
+		resolved
+	}: { items?: KitNeed[]; resolved?: Record<string, string> } = $props();
 
 	let lastNeed = $state('');
 	let lastAction = $state('');
@@ -21,7 +20,6 @@
 <NeedsYouBand
 	{items}
 	{resolved}
-	{mobile}
 	onOpen={(it) => (opened = it.id)}
 	onAct={(it, a) => {
 		lastNeed = it.id;

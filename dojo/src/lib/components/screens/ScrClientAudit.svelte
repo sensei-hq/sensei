@@ -11,12 +11,10 @@
 	// supplies the ledger (kit fixtures this chunk).
 	let {
 		orgName,
-		entries = [],
-		mobile = false
+		entries = []
 	}: {
 		orgName: string;
 		entries?: KitClientAuditRow[];
-		mobile?: boolean;
 	} = $props();
 </script>
 

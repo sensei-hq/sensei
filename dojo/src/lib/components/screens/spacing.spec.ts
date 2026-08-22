@@ -47,16 +47,9 @@ describe('dojo screen spacing — mobile-first 4px-grid utilities', () => {
 		const style = root(mount().container).getAttribute('style') ?? '';
 		expect(style).not.toMatch(/padding:|gap:/);
 	});
-
-	it('the mobile prop no longer drives wrapper spacing', () => {
-		// `mobile` survives only for content decisions (which columns and panes
-		// render). Spacing is CSS's job now, so passing it must not move the
-		// wrapper — this is the regression guard against reintroducing the branch.
-		const desktop = root(render(ScrProjects, { props: { projects } }).container).className;
-		cleanup();
-		const phone = root(
-			render(ScrProjects, { props: { projects, mobile: true } }).container
-		).className;
-		expect(phone).toBe(desktop);
-	});
 });
+
+// There is no "renders the phone rhythm when `mobile` is set" case any more: the
+// prop is gone from every screen, so the type checker — not a runtime assertion —
+// is what stops the branch coming back. The unprefixed-spacing case above is the
+// guard that matters, since that is the defect the prop was masking.
