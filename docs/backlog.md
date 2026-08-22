@@ -105,6 +105,10 @@ The 2026-07-14 mockup-gap pass is closed. Details in [`spec/MOCKUP-INDEX.md`](sp
 
 ## Cleanup / tech-debt
 
+| Item | Summary |
+|------|---------|
+| _(file issue)_ | **`app/e2e/**` is outside every static gate** — `tsconfig.json` extends `.svelte-kit/tsconfig.json`, whose `include` covers `src/` only, so `bun run check` (1114 files, 0 errors) and `tsc --noEmit` never look at the Playwright suite: `tsc --listFiles` matches **0** files under `e2e/tests`. Typechecking it via a probe config (`{extends: "./tsconfig.json", include: ["e2e/**/*.ts"]}`) surfaces **9 pre-existing errors** — 3 in the playwright configs (`TS2769` no matching overload), and 6 in specs: `boot-flow.spec.ts:73` and `dojo-binding.spec.ts:136` pass a `RegExp` where a `string` is expected (`TS2345`), and `cold-start.spec.ts:49`, `instruments-observatory.spec.ts:63`, `instruments-t2-slices.spec.ts:146` (×2) pass 2 args to a 1-arg call (`TS2554`). Fix those, then add an `e2e` project to the check script so the gate covers them. Until then an e2e spec can only be validated with `bunx playwright test --list` (proves it transpiles and registers, not that it type-checks). |
+
 ### Quality pass (qlty.sh) — 2026-08-10 status + follow-ups
 
 A qlty pass ran on 2026-08-10 (commits `2bd4dc2b`..`992c7256`). Landed: excluded vendored tree-sitter grammars (qlty smells 427→394); deduped the metrics test read-back helpers into `test_support` (→386); fixed two pipeline blockers (the bootstrap `brew`-shelling hang, and the app suite failing 98/98 on a missing generated tsconfig — app coverage was silently 0, now runs at ~45%); excluded generated `paraglide` from dojo coverage; added rulepacks-data DB-wrapper tests; and brought **senseid's pure (DB-free) modules** into CI coverage (`scripts/senseid-pure-coverage.sh` + a `senseid` job) — lifting the Rust+dojo aggregate from 75.8% to a locally-projected ~80.7%. Open follow-ups:
