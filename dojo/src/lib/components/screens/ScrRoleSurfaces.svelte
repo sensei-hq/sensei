@@ -27,7 +27,6 @@
 		policies = [],
 		audit = [],
 		me = 'You',
-		mobile = false,
 		onSetRole
 	}: {
 		orgName: string;
@@ -36,7 +35,6 @@
 		policies?: KitRolePolicy[];
 		audit?: KitChatTurn[];
 		me?: string;
-		mobile?: boolean;
 		/** Change a member's role (admin). Called with the row + the chosen role;
 		 *  absent = read-only (fixture render). The row must carry a `userId`. */
 		onSetRole?: (member: KitMember, role: string) => void;

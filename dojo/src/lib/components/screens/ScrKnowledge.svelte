@@ -19,12 +19,10 @@
 	// Presentational: the page supplies the library (kit fixtures this chunk).
 	let {
 		orgName,
-		knowledge,
-		mobile = false
+		knowledge
 	}: {
 		orgName: string;
 		knowledge: KitKnowledge;
-		mobile?: boolean;
 	} = $props();
 </script>
 

@@ -12,13 +12,11 @@
 	let {
 		orgName,
 		approvals = [],
-		mobile = false,
 		onReview,
 		onApprove
 	}: {
 		orgName: string;
 		approvals?: KitApproval[];
-		mobile?: boolean;
 		onReview?: (a: KitApproval) => void;
 		onApprove?: (a: KitApproval) => void;
 	} = $props();

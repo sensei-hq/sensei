@@ -11,13 +11,11 @@
 	let {
 		inbox = [],
 		error = null,
-		mobile = false,
 		selectedId = null,
 		onOpen
 	}: {
 		inbox?: KitInbox[];
 		error?: string | null;
-		mobile?: boolean;
 		selectedId?: string | null;
 		onOpen: (run: KitRun) => void;
 	} = $props();

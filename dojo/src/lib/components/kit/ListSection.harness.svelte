@@ -14,6 +14,6 @@
 
 <ListSection {title} {icon} {count}>
 	{#each projects as p (p.id)}
-		<ProjectRow {p} compact />
+		<ProjectRow {p} />
 	{/each}
 </ListSection>

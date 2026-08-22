@@ -12,12 +12,10 @@
 	// come from the pure `billing-view` helpers.
 	let {
 		orgName,
-		billing,
-		mobile = false
+		billing
 	}: {
 		orgName: string;
 		billing: KitBilling;
-		mobile?: boolean;
 	} = $props();
 
 	const monthly = $derived(monthlyTotal(billing));

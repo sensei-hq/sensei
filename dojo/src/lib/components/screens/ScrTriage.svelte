@@ -21,19 +21,17 @@
 	// (learning · cause · evidence · conflict · distribution scope + the
 	// approve/revise/decline affordance) in a sticky right pane on desktop.
 	// Presentational: the page supplies the groups + detail (kit fixtures this
-	// chunk); the selection lives in the `triage-state` rune store. On
-	// mobile the detail pane drops (one-column list). Degrades to an honest empty
-	// state when the queue is clear.
+	// chunk); the selection lives in the `triage-state` rune store. Below `md` the
+	// detail pane is hidden and the grid collapses to the one-column list.
+	// Degrades to an honest empty state when the queue is clear.
 	let {
 		orgName,
 		groups = [],
-		detail,
-		mobile = false
+		detail
 	}: {
 		orgName: string;
 		groups?: KitTriageGroup[];
 		detail: KitCandidateDetail;
-		mobile?: boolean;
 	} = $props();
 
 	// Seed the selection store ONCE from the props — a different org re-mounts this
@@ -120,10 +118,10 @@
 			</div>
 
 			<!-- Right pane — the focused candidate's detail + decision affordance. -->
-			{#if !mobile && triage.current}
+			{#if triage.current}
 				{@const cur = triage.current}
 				<div
-					class="bg-paper-soft border-paper-edge overflow-hidden rounded-lg border"
+					class="bg-paper-soft border-paper-edge hidden overflow-hidden rounded-lg border md:block"
 					style="position: sticky; top: 0"
 				>
 					<div class="border-paper-edge flex items-center gap-3 border-b" style="padding: 16px">

@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
-	import { AppShell, MobileShell } from '$lib/components/kit';
+	import { AppShell } from '$lib/components/kit';
 	import {
 		navGroupsFor,
 		tabsFor,
@@ -76,29 +76,23 @@
 	const needsCount = 0;
 </script>
 
+<!-- One K2AppShell for every width: TopBar + responsive NavPane drawer, plus a
+     bottom TabBar below `md`. Rendering a second phone-only shell here would
+     instantiate `children()` — the whole screen tree — a second time. -->
 <div class="bg-paper h-screen w-full overflow-hidden">
-	<!-- Desktop: the K2AppShell frame (TopBar + responsive NavPane). -->
-	<div class="hidden h-full md:block">
-		<AppShell
-			{context}
-			org={kitOrg}
-			dojos={kitDojos}
-			{me}
-			{nav}
-			{active}
-			{needsCount}
-			{onpick}
-			{onnav}
-			{onneeds}
-		>
-			{@render children()}
-		</AppShell>
-	</div>
-
-	<!-- Mobile: the condensed K2MobileShell with bottom tabs. -->
-	<div class="h-full md:hidden">
-		<MobileShell {context} org={kitOrg} {me} {tabs} {active} {onnav}>
-			{@render children()}
-		</MobileShell>
-	</div>
+	<AppShell
+		{context}
+		org={kitOrg}
+		dojos={kitDojos}
+		{me}
+		{nav}
+		{tabs}
+		{active}
+		{needsCount}
+		{onpick}
+		{onnav}
+		{onneeds}
+	>
+		{@render children()}
+	</AppShell>
 </div>
