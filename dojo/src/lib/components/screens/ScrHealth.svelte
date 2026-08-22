@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { SectionHead, Banner, Chip, KanjiToken, StatBadge, ListSection } from '$lib/components/kit';
+	import { SectionHead, Chip, KanjiToken, StatBadge, ListSection } from '$lib/components/kit';
 	import type { KitHealth } from '$lib/components/kit/types';
 	import { signalToneClass, alertToneClass, barMax, barPct } from '$lib/health-view';
 
@@ -22,12 +22,10 @@
 </script>
 
 <div class="flex flex-col p-4 gap-4 md:p-8 md:gap-6">
-	<SectionHead eyebrow={orgName + ' · admin'} title="Health / Monitor" />
-
-	<Banner kanji="観" tone="neutral" title="The shared mind's vital signs, fed by the audit trail.">
-		Throughput, adoption and leak-guard at a glance. Anomalies surface as alerts before they become
-		incidents.
-	</Banner>
+	<SectionHead
+		kanji="観" eyebrow={orgName + ' · admin'} title="Health / Monitor" 
+		description="The shared mind's vital signs, fed by the audit trail. Throughput, adoption and leak-guard at a glance. Anomalies surface as alerts before they become incidents."
+	/>
 
 	<!-- Signal cards — two-up on phone, four-up on desktop. -->
 	<div class="grid grid-cols-2 gap-4 md:grid-cols-4">

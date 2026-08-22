@@ -1,7 +1,6 @@
 <script lang="ts">
 	import {
 		SectionHead,
-		Banner,
 		Btn,
 		Chip,
 		ListSection,
@@ -51,20 +50,14 @@
 {/snippet}
 
 <div class="flex flex-col p-4 gap-4 md:p-8 md:gap-6">
-	<SectionHead eyebrow={orgName + ' · govern'} title="Triage" count={triage.all.length}>
+	<SectionHead
+		kanji="門" eyebrow={orgName + ' · govern'} title="Triage" count={triage.all.length}
+		description="Candidate learnings waiting on a maintainer, grouped by scope and ranked by confidence. You decide what becomes shared knowledge. High-impact and safety candidates need a second approval before they publish."
+	>
 		{#snippet right()}
 			<Btn size="sm" variant="ghost" icon="tuning-2">My scopes</Btn>
 		{/snippet}
 	</SectionHead>
-
-	<Banner
-		kanji="門"
-		tone="neutral"
-		title="Candidate learnings waiting on a maintainer, grouped by scope and ranked by confidence."
-	>
-		You decide what becomes shared knowledge. High-impact and safety candidates need a second
-		approval before they publish.
-	</Banner>
 
 	{#if triage.all.length}
 		<div class="grid gap-4 items-start grid-cols-1 md:grid-cols-[1.1fr_1fr]">

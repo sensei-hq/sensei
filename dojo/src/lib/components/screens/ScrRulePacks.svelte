@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { SectionHead, Banner, Btn, Icon, Chip, ListSection, RuleRow } from '$lib/components/kit';
+	import { SectionHead, Btn, Icon, Chip, ListSection, RuleRow } from '$lib/components/kit';
 	import type { KitRulePack } from '$lib/components/kit/types';
 	import { createRulePacks } from '$lib/rulepacks-state.svelte';
 	import { untrack } from 'svelte';
@@ -40,20 +40,14 @@
 </script>
 
 <div class="flex flex-col p-4 gap-4 md:p-8 md:gap-6">
-	<SectionHead eyebrow="Adopt · not a library" title="Rule packs">
+	<SectionHead
+		kanji="束" eyebrow="Adopt · not a library" title="Rule packs"
+		description="Packs are bundles of rules you adopt into your constitution. Adopting a pack adds its rules at the scope you choose. Open a pack to read its rules first — you can drop any single rule later, so a pack is a starting point, not a lock."
+	>
 		{#snippet right()}
 			<Btn size="sm" variant="ghost" icon="tuning-2">Browse all</Btn>
 		{/snippet}
 	</SectionHead>
-
-	<Banner
-		kanji="束"
-		tone="neutral"
-		title="Packs are bundles of rules you adopt into your constitution."
-	>
-		Adopting a pack adds its rules at the scope you choose. Open a pack to read its rules first —
-		you can drop any single rule later, so a pack is a starting point, not a lock.
-	</Banner>
 
 	<ListSection
 		icon="check-circle"

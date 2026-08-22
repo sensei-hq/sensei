@@ -1,7 +1,6 @@
 <script lang="ts">
 	import {
 		SectionHead,
-		Banner,
 		Btn,
 		Icon,
 		Chip,
@@ -45,20 +44,14 @@
 
 <div class="relative">
 	<div class="flex flex-col p-4 gap-4 md:p-8 md:gap-6">
-		<SectionHead eyebrow={orgName + ' · governance'} title="Constitution">
+		<SectionHead
+		kanji="掟" eyebrow={orgName + ' · governance'} title="Constitution"
+		description="The dōjō authors its rules by scope — company-wide, per team, per stack. Stacks also adopt rule packs. These are the dōjō's own rules; how they combine with your personal and a project's rules is resolved — and shown — when you open a project."
+	>
 			{#snippet right()}
 				<Btn size="sm" icon="add-circle" onclick={ladder.openNew}>New rule</Btn>
 			{/snippet}
 		</SectionHead>
-
-		<Banner
-			kanji="掟"
-			tone="neutral"
-			title="The dōjō authors its rules by scope — company-wide, per team, per stack."
-		>
-			Stacks also adopt rule packs. These are the dōjō's own rules; how they combine with your
-			personal and a project's rules is resolved — and shown — when you open a project.
-		</Banner>
 
 		<div
 			class="grid gap-4 items-start grid-cols-1 md:grid-cols-[252px_1fr]"
