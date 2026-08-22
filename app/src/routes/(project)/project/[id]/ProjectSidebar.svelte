@@ -14,6 +14,7 @@
         APP_VERSION,
         type FtrBand,
     } from './project-sidebar-view.js';
+    import { projectVisibilityLabel } from './overview/overview-view.svelte.js';
 
     interface Props {
         projectId: string;
@@ -54,25 +55,35 @@
     data-component="project-sidebar"
     class="w-[180px] shrink-0 border-r border-paper-edge bg-paper flex flex-col py-3"
 >
-    <!-- Identity: project icon + name + a band-coloured status dot -->
-    <div data-component="project-identity" class="px-4 pb-4 pt-2 flex flex-col gap-1.5">
-        <div class="flex items-center gap-2">
-            <ProjectGlyph {icon} />
-            <Eyebrow>Project</Eyebrow>
+    <!-- Identity card: glyph · status dot · name, then the visibility chip.
+         Mockups 02-ev.png / 02-rev3.png frame this as a bordered card with the
+         dot beside the name, and carry no "Project" eyebrow — "THIS PROJECT"
+         below already says it. -->
+    <div class="px-3 pb-3 pt-1">
+        <div
+            data-component="project-identity"
+            class="rounded-lg border border-paper-edge bg-paper-soft px-3 py-2.5 flex flex-col gap-2"
+        >
+            <div class="flex items-center gap-2 min-w-0">
+                <ProjectGlyph {icon} />
+                <span
+                    data-project-status
+                    data-band={band}
+                    class="w-2 h-2 shrink-0 rounded-full {DOT[band]}"
+                    title="FTR band"
+                ></span>
+                <span
+                    data-component="sidebar-project-name"
+                    class="text-sm font-semibold leading-tight truncate">{name}</span>
+            </div>
+            <!-- Always present: an internal project used to show no chip at all,
+                 which read as missing data rather than "no client". -->
             <span
-                data-project-status
-                data-band={band}
-                class="ml-auto w-2 h-2 rounded-full {DOT[band]}"
-                title="FTR band"
-            ></span>
-        </div>
-        <span data-component="sidebar-project-name" class="text-sm font-semibold leading-tight">{name}</span>
-        {#if client}
-            <span
-                class="self-start mono text-xs text-ink-mute bg-paper-soft border border-paper-edge rounded px-1.5 py-0.5"
-                >{client}</span
+                data-component="sidebar-project-visibility"
+                class="self-start mono text-xs uppercase text-ink-mute bg-paper border border-paper-edge rounded px-1.5 py-0.5"
+                >{projectVisibilityLabel(client)}</span
             >
-        {/if}
+        </div>
     </div>
 
     <div class="px-4 pb-2"><Eyebrow>This project</Eyebrow></div>
