@@ -10,8 +10,8 @@
 	// identical. TopBar sits on top, then a NavPane + scrolling main, and below `md`
 	// a bottom TabBar. This shell owns the drawer open state (TopBar's hamburger
 	// toggles it, the NavPane backdrop / a nav selection closes it) so screens just
-	// pass nav + content. `children` is the main-column content (a screen typically
-	// opens with a ContextHeader).
+	// pass nav + content. `children` is the main-column content (a screen opens
+	// with its own SectionHead).
 	//
 	// It renders at every width because its parts already adapt: TopBar's hamburger
 	// is `md:hidden` and its chips/search are `hidden md:*`, and NavPane is a fixed

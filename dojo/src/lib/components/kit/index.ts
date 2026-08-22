@@ -51,7 +51,6 @@ export { default as ConfidenceBar } from './ConfidenceBar.svelte';
 // Chrome.
 export { default as OrgSwitcher } from './OrgSwitcher.svelte';
 export { default as TopBar } from './TopBar.svelte';
-export { default as ContextHeader } from './ContextHeader.svelte';
 export { default as NavPane } from './NavPane.svelte';
 export { default as AppShell } from './AppShell.svelte';
 export { default as AccountMenu } from './AccountMenu.svelte';

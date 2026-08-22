@@ -27,7 +27,7 @@
 </script>
 
 <div class="flex flex-col gap-3 p-4 max-w-2xl" data-testid="intake">
-  <PageHeader kanji="門" eyebrow="This project" title="Intake" description="Start a chunk of work in this project" variant="h1" />
+  <PageHeader kanji="門" eyebrow="This project" title="Intake" description="Start a chunk of work in this project" size="lg" />
 
   {#if intake.phase !== 'recorded'}
     <section class="flex flex-col gap-2">

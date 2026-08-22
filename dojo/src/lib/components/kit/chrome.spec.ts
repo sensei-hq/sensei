@@ -1,7 +1,6 @@
 import { render, cleanup, fireEvent } from '@testing-library/svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import TopBar from './TopBar.svelte';
-import ContextHeader from './ContextHeader.svelte';
 import NavPane from './NavPane.svelte';
 import TabBar from './TabBar.svelte';
 import OrgSwitcher from './OrgSwitcher.svelte';
@@ -40,22 +39,6 @@ describe('kit chrome — TopBar', () => {
 		expect(burger.className).toContain('md:hidden');
 		await fireEvent.click(burger);
 		expect(onmenu).toHaveBeenCalled();
-	});
-});
-
-describe('kit chrome — ContextHeader', () => {
-	afterEach(cleanup);
-
-	it('personal context shows "Your work" + the viewer name', () => {
-		const { getByText } = render(ContextHeader, { props: { context: 'you', me } });
-		expect(getByText('Your work')).toBeTruthy();
-		expect(getByText('Rin Saito')).toBeTruthy();
-	});
-
-	it('org context shows the org name + route', () => {
-		const { getByText } = render(ContextHeader, { props: { context: 'org', org } });
-		expect(getByText('Acme Corp')).toBeTruthy();
-		expect(getByText('sensei-hq.com/acme')).toBeTruthy();
 	});
 });
 

@@ -85,7 +85,6 @@
 {/snippet}
 
 <PageHeader
-  variant="h2"
   eyebrow="Observatory · Dōjō connections"
   kanji="連"
   title="Where your sensei meets the team's Dōjō."

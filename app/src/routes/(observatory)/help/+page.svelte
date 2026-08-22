@@ -2,7 +2,7 @@
     import { PageHeader } from '$lib/components';
 </script>
 
-<PageHeader kanji="助" eyebrow="Sensei" title="Help" variant="h1" />
+<PageHeader kanji="助" eyebrow="Sensei" title="Help" size="lg" />
 <div class="max-w-[640px] px-8 pt-8 pb-16">
 
     <section class="mb-7">

@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { HealthState } from '$lib/health-state.svelte.js';
-  import { KanjiHeader, StatusDisc, GateRow, ProgressCard } from '$lib/components';
+  import { PageHeader, StatusDisc, GateRow, ProgressCard } from '$lib/components';
   import Header from './Header.svelte';
   import Footer from './Footer.svelte';
   import Remedy from './Remedy.svelte';
@@ -90,10 +90,11 @@
 
     <!-- Right column · hero, ledger -->
     <div class="flex flex-col gap-5 min-w-0">
-      <KanjiHeader kanji="支" eyebrow="foundation">
+      <!-- Nested in the right column, which already pads: no chrome, compact glyph. -->
+      <PageHeader kanji="支" eyebrow="foundation" size="sm" bordered={false} padded={false}>
         {#snippet title()}{state.display.heroTitle}{/snippet}
         {#snippet right()}<StatusDisc status={heroDiscStatus} size={32} />{/snippet}
-      </KanjiHeader>
+      </PageHeader>
 
       <div class="flex-1 min-h-0 flex flex-col border-t border-paper-edge">
         {#each state.gates as gate, i (gate.id)}
