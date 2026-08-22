@@ -971,26 +971,8 @@ export function buildSignals(
     return rows.map((r) => toSignal(r, familyOf, narrative));
 }
 
-/** The health (composite) signal, promoted to the hero. Null when absent. */
-export function healthSignal(signals: SignalVM[]): SignalVM | null {
-    return signals.find((s) => s.family === 'composite') ?? null;
-}
-
 /** The registry key of the north-star outcome metric. */
 const KEY_FTR = 'ftr';
-
-/** The hero signal for the metrics landing. FTR is the north star, so it leads;
- *  the retired `project_health` composite is a fallback only for legacy data that
- *  still carries it. Null when neither is present. (The composite was retired —
- *  a rising-then-falling amalgam that obscured FTR — so the hero leads on the
- *  metric everything is judged by.) */
-export function heroSignal(signals: SignalVM[]): SignalVM | null {
-    return (
-        signals.find((s) => s.key === KEY_FTR) ??
-        signals.find((s) => s.family === 'composite') ??
-        null
-    );
-}
 
 /** The top-N movers (non-flat), most-moved first — excludes the composite/health
  *  signal (it is the hero, not a mover). */
@@ -999,23 +981,6 @@ export function pickMovers(signals: SignalVM[], n = 4): SignalVM[] {
         .filter((s) => s.moved && s.family !== 'composite')
         .sort((a, b) => b.magnitude - a.magnitude)
         .slice(0, n);
-}
-
-/** Grid order for "all signals": composite/health first, then movers (by
- *  magnitude), then the rest by family order — so what moved reads first. */
-export function orderSignals(signals: SignalVM[]): SignalVM[] {
-    const rank = (s: SignalVM): number => {
-        if (s.family === 'composite') return 0;
-        if (s.moved) return 1;
-        return 2;
-    };
-    return [...signals].sort((a, b) => {
-        const ra = rank(a);
-        const rb = rank(b);
-        if (ra !== rb) return ra - rb;
-        if (ra === 1) return b.magnitude - a.magnitude; // movers: biggest first
-        return FAMILY_ORDER.indexOf(a.family) - FAMILY_ORDER.indexOf(b.family);
-    });
 }
 
 /**

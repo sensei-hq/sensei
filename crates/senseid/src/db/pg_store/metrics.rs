@@ -240,6 +240,12 @@ impl PgStore {
     /// (honouring its `nulls not distinct`); `ON CONFLICT ON CONSTRAINT <name>`
     /// would not resolve against an index.
     #[allow(clippy::too_many_arguments)]
+    /// Weeks of composite-score history the health payload carries. Twelve ≈ a
+    /// quarter: enough to read a direction, few enough to plot legibly in the
+    /// hero's 240px sparkline. The label the card renders says the same thing, so
+    /// this number and that copy have to agree.
+    const HEALTH_TREND_WEEKS: i64 = 12;
+
     /// Project health from the rating views (spec 2026-08-20): the weighted 0–100
     /// `health_score` + per-metric 0–5 `ratings` (the radar spokes) + the `components`
     /// map the score was built from. `health_score`/`components` are null when nothing
@@ -274,13 +280,24 @@ impl PgStore {
         // weighted roll-up of ratings, and a daily series of it is mostly noise.
         // Read from `project_health_trend` (a view over the same rating facts), so
         // there is no stored-and-recomputed second copy of the number.
+        //
+        // BOUNDED to the last `HEALTH_TREND_WEEKS`. The view keeps every period, so
+        // an unbounded read grows forever — a three-year-old project would ship
+        // ~156 points on every metrics load and cram them into a 240px sparkline.
+        // Newest-first inside the subquery to apply the limit, then re-sorted
+        // oldest-first because that is the order a sparkline plots.
         let trend: Vec<(chrono::NaiveDate, i32)> = sqlx_core::query_as::query_as(
-            "SELECT period, health_score \
-               FROM sensei.project_health_trend \
-              WHERE project_id = $1 AND grain = 'weekly' \
-              ORDER BY period",
+            "SELECT period, health_score FROM ( \
+                 SELECT period, health_score \
+                   FROM sensei.project_health_trend \
+                  WHERE project_id = $1 AND grain = 'weekly' \
+                  ORDER BY period DESC \
+                  LIMIT $2 \
+             ) recent \
+             ORDER BY period",
         )
         .bind(project_id)
+        .bind(Self::HEALTH_TREND_WEEKS)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| e.to_string())?;

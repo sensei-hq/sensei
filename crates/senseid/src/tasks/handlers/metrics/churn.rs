@@ -1158,6 +1158,11 @@ mod tests {
             !trend.is_empty(),
             "a project with rated metrics has at least one weekly point: {trend:?}"
         );
+        // Upper bound only — this fixture spans fewer than 12 weeks, so this cannot
+        // prove the LIMIT fires. It guards the payload from becoming unbounded as a
+        // project ages (the view keeps every period), and pins the number the hero
+        // card's "last twelve" label promises.
+        assert!(trend.len() <= 12, "the weekly trend is bounded: {} points", trend.len());
 
         cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
     }

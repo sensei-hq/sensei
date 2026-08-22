@@ -10,10 +10,7 @@ import {
     toneColor,
     toSignal,
     buildSignals,
-    healthSignal,
-    heroSignal,
     pickMovers,
-    orderSignals,
     groupSignals,
     deterministicHeadline,
     seriesDistribution,
@@ -460,34 +457,6 @@ describe('linkifyMetrics', () => {
     });
 });
 
-describe('heroSignal', () => {
-    it('leads with FTR (the north star) over the composite when both are present', () => {
-        const signals = buildSignals(
-            [row({ metric: 'ftr', value: 1 }), row({ metric: 'project_health', metric_type: 'score', value: 44 })],
-            famOf,
-        );
-        expect(heroSignal(signals)?.key).toBe('ftr');
-    });
-
-    it('is FTR when the composite is retired (no composite row)', () => {
-        const signals = buildSignals(
-            [row({ metric: 'ftr', value: 1 }), row({ metric: 'churn_concentration', metric_type: 'pct', value: 0.5 })],
-            famOf,
-        );
-        expect(heroSignal(signals)?.key).toBe('ftr');
-    });
-
-    it('falls back to the composite only when FTR is absent (legacy data)', () => {
-        const signals = buildSignals([row({ metric: 'project_health', metric_type: 'score', value: 44 })], famOf);
-        expect(heroSignal(signals)?.key).toBe('project_health');
-    });
-
-    it('is null when neither FTR nor a composite exists', () => {
-        const signals = buildSignals([row({ metric: 'churn_concentration', metric_type: 'pct', value: 0.5 })], famOf);
-        expect(heroSignal(signals)).toBeNull();
-    });
-});
-
 describe('movers + ordering', () => {
     const rows: ProjectMetricRow[] = [
         row({ metric: 'project_health', metric_type: 'score', value: 44, prior: 46, delta: -2 }),
@@ -497,8 +466,7 @@ describe('movers + ordering', () => {
     ];
     const signals = buildSignals(rows, famOf);
 
-    it('health is the hero, never a mover', () => {
-        expect(healthSignal(signals)?.key).toBe('project_health');
+    it('the composite is never a mover — it is the hero readout', () => {
         expect(pickMovers(signals).some((s) => s.key === 'project_health')).toBe(false);
     });
 
@@ -510,11 +478,6 @@ describe('movers + ordering', () => {
         expect(movers[1].key).toBe('churn_concentration');
     });
 
-    it('grid order is composite first, then movers, then the rest', () => {
-        const ordered = orderSignals(signals).map((s) => s.key);
-        expect(ordered[0]).toBe('project_health');
-        expect(ordered.indexOf('time_to_useful_result')).toBeLessThan(ordered.indexOf('unused_tools'));
-    });
 });
 
 describe('groupSignals', () => {
