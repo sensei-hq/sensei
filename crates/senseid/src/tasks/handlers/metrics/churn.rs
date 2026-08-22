@@ -1143,6 +1143,22 @@ mod tests {
         assert_eq!(rated, 2, "two rated metrics for this project");
         assert_eq!(health, 90, "weighted 0-100 health = round(20 · (3·4 + 3·5)/6) = 90");
 
+        // The API read the hero card uses must carry the score AND its weekly
+        // history. The card previously fell back to FTR because the composite
+        // arrived as a (retired, never-computed) metric row instead of from here.
+        let payload = pg.get_project_health(&pid).await.unwrap();
+        assert_eq!(payload["health_score"], serde_json::json!(90), "score comes from the view");
+        assert_eq!(payload["rated_metrics"], serde_json::json!(2));
+        let trend = payload["trend"].as_array().expect("trend is an array, never absent");
+        assert!(
+            trend.iter().all(|p| p["period"].is_string() && p["health_score"].is_number()),
+            "each trend point carries a period + a score: {trend:?}"
+        );
+        assert!(
+            !trend.is_empty(),
+            "a project with rated metrics has at least one weekly point: {trend:?}"
+        );
+
         cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
     }
 }

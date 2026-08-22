@@ -269,11 +269,29 @@ impl PgStore {
             Some((s, r, c)) => (serde_json::json!(s), serde_json::json!(r), c),
             None => (serde_json::Value::Null, serde_json::json!(0), serde_json::Value::Null),
         };
+        // The score's own history, oldest-first, so the hero readout can show a
+        // trend + sparkline instead of falling back to FTR. Weekly: the score is a
+        // weighted roll-up of ratings, and a daily series of it is mostly noise.
+        // Read from `project_health_trend` (a view over the same rating facts), so
+        // there is no stored-and-recomputed second copy of the number.
+        let trend: Vec<(chrono::NaiveDate, i32)> = sqlx_core::query_as::query_as(
+            "SELECT period, health_score \
+               FROM sensei.project_health_trend \
+              WHERE project_id = $1 AND grain = 'weekly' \
+              ORDER BY period",
+        )
+        .bind(project_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(serde_json::json!({
             "health_score": score,       // 0–100, or null when nothing rated
             "rated_metrics": rated,
             "components": components,     // {metric → {rating, weight, name}} or null
             "ratings": ratings.into_iter().map(|(j,)| j).collect::<Vec<_>>(),
+            "trend": trend.into_iter()
+                .map(|(period, s)| serde_json::json!({ "period": period, "health_score": s }))
+                .collect::<Vec<_>>(),
         }))
     }
 

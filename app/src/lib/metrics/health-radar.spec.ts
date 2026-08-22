@@ -1,3 +1,4 @@
+import type { ProjectHealth } from './health-radar.js';
 import { describe, it, expect } from 'vitest';
 import {
   toSpokes,
@@ -6,6 +7,7 @@ import {
   weightCoverage,
   RATING_DOMAIN,
   type HealthComponent,
+  healthHeroReadout,
 } from './health-radar.js';
 
 const comps = (o: Record<string, Partial<HealthComponent>>): Record<string, HealthComponent> =>
@@ -88,4 +90,52 @@ describe('weightCoverage', () => {
     expect(weightCoverage(spokes, 29)).toBe(1);
     expect(weightCoverage(spokes, 0)).toBe(0);
   });
+});
+
+describe('healthHeroReadout', () => {
+    // The card used to fall back to FTR here, because the `project_health` METRIC
+    // was retired in favour of the project_health_score VIEW and so the composite
+    // signal the hero searched for never appears in the metric rows. That is why
+    // it read "First-turn resolution" where the mockup reads "HEALTH".
+    const health = (over: Partial<ProjectHealth> = {}): ProjectHealth => ({
+        health_score: 52,
+        rated_metrics: 18,
+        components: {},
+        ...over,
+    });
+    const pt = (period: string, health_score: number) => ({ period, health_score });
+
+    it('reads the score from the view, with its weekly series', () => {
+        const r = healthHeroReadout(
+            health({ trend: [pt('2026-08-03', 68), pt('2026-08-10', 40), pt('2026-08-17', 43)] }),
+        );
+        expect(r?.value).toBe('52');
+        expect(r?.series).toEqual([68, 40, 43]);
+    });
+
+    it('compares the two most recent weeks, not the live score against a week', () => {
+        // The current partial week would otherwise read as a drop every time.
+        const r = healthHeroReadout(
+            health({ health_score: 52, trend: [pt('2026-08-10', 40), pt('2026-08-17', 43)] }),
+        );
+        expect(r?.delta).toBe(3);
+    });
+
+    it('has no delta with fewer than two weeks of history', () => {
+        expect(healthHeroReadout(health({ trend: [pt('2026-08-17', 43)] }))?.delta).toBeNull();
+        expect(healthHeroReadout(health({ trend: [] }))?.delta).toBeNull();
+        expect(healthHeroReadout(health())?.series).toEqual([]);
+    });
+
+    it('is null when there is no score — never a fabricated 0', () => {
+        expect(healthHeroReadout(null)).toBeNull();
+        expect(healthHeroReadout(undefined)).toBeNull();
+        expect(
+            healthHeroReadout({ health_score: null as unknown as number, rated_metrics: 0, components: {} }),
+        ).toBeNull();
+    });
+
+    it('keeps a real score of 0, which is a reading and not an absence', () => {
+        expect(healthHeroReadout(health({ health_score: 0 }))?.value).toBe('0');
+    });
 });

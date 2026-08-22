@@ -4,11 +4,11 @@
     import {
         buildSignals,
         familyLookup,
-        heroSignal,
         pickMovers,
         groupSignals,
         deterministicHeadline,
     } from '$lib/metrics/metric-view.js';
+    import { healthHeroReadout } from '$lib/metrics/health-radar.js';
     import HealthHero from './HealthHero.svelte';
     import HealthRadar from './HealthRadar.svelte';
     import MoverCard from './MoverCard.svelte';
@@ -19,7 +19,7 @@
 
     const projectId = $derived(page.params.id ?? '');
     const signals = $derived(buildSignals(data.rows, familyLookup(data.registry), data.narrative));
-    const hero = $derived(heroSignal(signals));
+    const hero = $derived(healthHeroReadout(data.health));
     const movers = $derived(pickMovers(signals));
     const groups = $derived(groupSignals(signals));
     const headline = $derived(data.narrative?.headline ?? deterministicHeadline(signals));
@@ -74,11 +74,7 @@
                 {/if}
             </div>
             {#if hero}
-                <HealthHero
-                    signal={hero}
-                    label={hero.key === 'ftr' ? 'First-turn resolution' : 'Health'}
-                    series={data.series[hero.key] ?? []}
-                />
+                <HealthHero value={hero.value} series={hero.series} delta={hero.delta} />
             {/if}
         </section>
 
