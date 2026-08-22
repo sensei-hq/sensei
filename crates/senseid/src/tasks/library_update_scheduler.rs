@@ -234,9 +234,23 @@ pub(crate) async fn tick(pg: &PgStore, queue: &TaskQueue, src: &impl VersionSour
 }
 
 #[cfg(test)]
+// Test gates are blocking `std::sync::Mutex` held across awaits ON PURPOSE —
+// see `crate::tasks::test_support::TestGate` for why an async mutex loses
+// wakeups across per-test runtimes. One allow per test module, not per site.
+#[allow(clippy::await_holding_lock)]
 mod tests {
     use super::*;
     use crate::db::pg_store::PgStore;
+    use crate::tasks::test_support::TestGate;
+
+    /// `tick` scans EVERY pinned library in the database, not just this test's,
+    /// so two of these running concurrently apply each other's vulnerability stub
+    /// to each other's rows: a `high: true` stub in one test writes a
+    /// security-tier flag onto another test's library, and that test's
+    /// "no security-tier flag" assertion fails. `seed_pin` already gives every
+    /// test unique project/library UUIDs — the sharing is in `tick`'s global
+    /// sweep, which is the behaviour under test and cannot be scoped away.
+    static TICK_LOCK: TestGate = TestGate::new();
 
     struct Stub(Option<String>);
     #[async_trait::async_trait]
@@ -295,6 +309,7 @@ mod tests {
 
     #[tokio::test]
     async fn tick_notifies_a_real_bump_and_dedupes() {
+        let _guard = TICK_LOCK.enter();
         let Ok(s) = PgStore::connect_test().await else { return };
         let q = TaskQueue::new();
         let (pid, lid) = seed_pin(&s, "1.0.0").await;
@@ -311,6 +326,7 @@ mod tests {
 
     #[tokio::test]
     async fn tick_is_fail_closed_on_range_pin_and_no_latest() {
+        let _guard = TICK_LOCK.enter();
         let Ok(s) = PgStore::connect_test().await else { return };
         let q = TaskQueue::new();
         // A range pin already accepts the latest → Unknown → no notice.
@@ -392,6 +408,7 @@ mod tests {
 
     #[tokio::test]
     async fn patch_bump_enqueues_reindex_not_a_rec() {
+        let _guard = TICK_LOCK.enter();
         let Ok(s) = PgStore::connect_test().await else { return };
         let q = TaskQueue::new();
         let (pid, lid) = seed_pin(&s, "1.0.0").await;
@@ -410,6 +427,7 @@ mod tests {
 
     #[tokio::test]
     async fn patch_already_applied_writes_auto_applied_audit() {
+        let _guard = TICK_LOCK.enter();
         let Ok(s) = PgStore::connect_test().await else { return };
         let q = TaskQueue::new();
         let (pid, lid) = seed_pin(&s, "1.0.0").await;
@@ -425,6 +443,7 @@ mod tests {
 
     #[tokio::test]
     async fn patch_without_source_falls_back_to_notify() {
+        let _guard = TICK_LOCK.enter();
         let Ok(s) = PgStore::connect_test().await else { return };
         let q = TaskQueue::new();
         let (pid, lid) = seed_pin(&s, "1.0.0").await; // no source set
@@ -439,6 +458,7 @@ mod tests {
 
     #[tokio::test]
     async fn security_bump_flags_high_urgency_refreshes_and_never_touches_pin() {
+        let _guard = TICK_LOCK.enter();
         let Ok(s) = PgStore::connect_test().await else { return };
         let q = TaskQueue::new();
         let (pid, lid) = seed_pin(&s, "1.0.0").await; // pin at 1.0.0
@@ -464,6 +484,7 @@ mod tests {
 
     #[tokio::test]
     async fn security_flag_not_suppressed_by_prior_notify() {
+        let _guard = TICK_LOCK.enter();
         let Ok(s) = PgStore::connect_test().await else { return };
         let q = TaskQueue::new();
         let (pid, lid) = seed_pin(&s, "1.0.0").await;
@@ -480,6 +501,7 @@ mod tests {
 
     #[tokio::test]
     async fn low_severity_advisory_does_not_escalate() {
+        let _guard = TICK_LOCK.enter();
         let Ok(s) = PgStore::connect_test().await else { return };
         let q = TaskQueue::new();
         let (pid, lid) = seed_pin(&s, "1.0.0").await;

@@ -14,6 +14,39 @@ use std::sync::Arc;
 
 use crate::db::pg_store::PgStore;
 
+/// A cross-test serialisation gate.
+///
+/// **Blocking on purpose.** Every `#[tokio::test]` builds its own current-thread
+/// runtime and drops it when the test ends, so a `static` async mutex is shared
+/// across runtimes that come and go. Releasing it wakes a waker owned by some
+/// *other* runtime; if that runtime is already gone the wakeup is lost and every
+/// remaining waiter parks forever on a mutex nobody holds. That was observed as
+/// 9 tests stuck past 60s with ZERO rows in `pg_stat_activity` — nothing was
+/// waiting on the database.
+///
+/// A blocking mutex has no waker to lose. Each test owns its thread, so blocking
+/// it costs nothing, and the guard is only held across `.await` inside a
+/// current-thread runtime (where futures need not be `Send`). Call sites need
+/// `#[allow(clippy::await_holding_lock)]`, which is why the reasoning lives here
+/// rather than being restated at each one.
+///
+/// Poisoning is ignored deliberately: a panicking test must not turn one failure
+/// into a cascade of unrelated ones. A gate orders tests; it guards no invariant
+/// a panic could corrupt.
+pub(crate) struct TestGate(std::sync::Mutex<()>);
+
+impl TestGate {
+    pub(crate) const fn new() -> Self {
+        Self(std::sync::Mutex::new(()))
+    }
+
+    /// Acquire the gate, ignoring poisoning. Hold the guard for the whole span
+    /// that must not overlap another test.
+    pub(crate) fn enter(&self) -> std::sync::MutexGuard<'_, ()> {
+        self.0.lock().unwrap_or_else(|e| e.into_inner())
+    }
+}
+
 /// Serialises tests that mutate `inference.corrections` GLOBALLY.
 ///
 /// Two operations on that table are table-wide by design, not per-project:
@@ -30,8 +63,7 @@ use crate::db::pg_store::PgStore;
 ///
 /// Hold this for the whole span between seeding corrections and asserting on
 /// anything derived from them.
-pub(crate) static CORRECTIONS_TABLE_LOCK: std::sync::LazyLock<tokio::sync::Mutex<()>> =
-    std::sync::LazyLock::new(|| tokio::sync::Mutex::new(()));
+pub(crate) static CORRECTIONS_TABLE_LOCK: TestGate = TestGate::new();
 
 /// A [`TaskContext`](crate::tasks::executor::TaskContext) backed by a fresh
 /// `TaskQueue`, the test `PgStore`, and a noop gateway — the standard fixture for

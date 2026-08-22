@@ -295,6 +295,10 @@ pub(crate) async fn resolve_run_memberships(
 }
 
 #[cfg(test)]
+// Test gates are blocking `std::sync::Mutex` held across awaits ON PURPOSE —
+// see `crate::tasks::test_support::TestGate` for why an async mutex loses
+// wakeups across per-test runtimes. One allow per test module, not per site.
+#[allow(clippy::await_holding_lock)]
 mod tests {
     use super::*;
     use crate::api::state::SharedState;
@@ -335,8 +339,8 @@ mod tests {
     /// sibling's). `known_run_with_no_dojo_is_zero` is included because it
     /// depends on there being NO enabled membership, which the others violate
     /// while running.
-    static MEMBERSHIP_COUNT_LOCK: std::sync::LazyLock<tokio::sync::Mutex<()>> =
-        std::sync::LazyLock::new(|| tokio::sync::Mutex::new(()));
+    static MEMBERSHIP_COUNT_LOCK: crate::tasks::test_support::TestGate =
+        crate::tasks::test_support::TestGate::new();
 
     #[tokio::test]
     async fn empty_run_id_is_empty_work() {
@@ -364,7 +368,7 @@ mod tests {
     async fn known_run_with_no_dojo_is_zero() {
         // A real run but (typically) no enrolled dojo in the test DB → empty work,
         // not an error. Exercises the get_run + membership-resolve path end to end.
-        let _serialised = MEMBERSHIP_COUNT_LOCK.lock().await;
+        let _serialised = MEMBERSHIP_COUNT_LOCK.enter();
         let Some(ctx) = make_ctx().await else { return; };
         let pg = ctx.pg();
         let id = pg.create_run(&NewRun::default()).await.unwrap();
@@ -385,7 +389,7 @@ mod tests {
     #[tokio::test]
     #[cfg_attr(not(target_os = "macos"), ignore)]
     async fn full_bridge_publishes_status_segments_and_persists_session_id() {
-        let _serialised = MEMBERSHIP_COUNT_LOCK.lock().await;
+        let _serialised = MEMBERSHIP_COUNT_LOCK.enter();
         use crate::db::pg_store::NewDojoMembership;
         use crate::runs::RunEventKind;
         use axum::{extract::Query, routing::get, routing::post, Json, Router};
@@ -490,7 +494,7 @@ mod tests {
     #[tokio::test]
     #[cfg_attr(not(target_os = "macos"), ignore)]
     async fn full_bridge_authors_plan_graph_segments() {
-        let _serialised = MEMBERSHIP_COUNT_LOCK.lock().await;
+        let _serialised = MEMBERSHIP_COUNT_LOCK.enter();
         use crate::db::pg_store::NewDojoMembership;
         use axum::{extract::Query, routing::get, routing::post, Json, Router};
         use dojo_protocol::relay::{RelayInboxPull, RelaySegment, RelaySegmentsPublish, RelaySessionUpdate};

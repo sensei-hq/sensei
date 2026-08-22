@@ -166,6 +166,10 @@ async fn wait_for_scan_drain(queue: &TaskQueue) {
 }
 
 #[cfg(test)]
+// Test gates are blocking `std::sync::Mutex` held across awaits ON PURPOSE —
+// see `crate::tasks::test_support::TestGate` for why an async mutex loses
+// wakeups across per-test runtimes. One allow per test module, not per site.
+#[allow(clippy::await_holding_lock)]
 mod tests {
     use super::*;
     use std::time::Duration;
@@ -211,8 +215,8 @@ mod tests {
     /// `0.0.0-old` while the other had already deleted it, so the read came back
     /// `None`. There is no way to scope a fixed global key per test, so the
     /// contention is serialised instead of pretended away.
-    static VERSION_KEY_LOCK: std::sync::LazyLock<tokio::sync::Mutex<()>> =
-        std::sync::LazyLock::new(|| tokio::sync::Mutex::new(()));
+    static VERSION_KEY_LOCK: crate::tasks::test_support::TestGate =
+        crate::tasks::test_support::TestGate::new();
 
     /// End-to-end D2 contract: a version change re-scans WITHOUT committing the
     /// version; an aborted (never-committed) rescan re-triggers next boot; the
@@ -221,7 +225,7 @@ mod tests {
     /// mirroring the in-memory queue being recreated on every daemon start.
     #[tokio::test]
     async fn rescan_is_crash_safe_then_commits_and_is_idempotent() {
-        let _serialised = VERSION_KEY_LOCK.lock().await;
+        let _serialised = VERSION_KEY_LOCK.enter();
         let pg = PgStore::connect_test().await.unwrap();
 
         // A watch root we can assert a ScanRoot targets. The shared test DB may
@@ -307,7 +311,7 @@ mod tests {
         // Single-writer (D6e/W5): a version-bump rescan must not stack a second
         // ScanRoot for a root the reconcile tick is already scanning — the race
         // the review flagged. Without the guard the root would show 2 ScanRoots.
-        let _serialised = VERSION_KEY_LOCK.lock().await;
+        let _serialised = VERSION_KEY_LOCK.enter();
         let pg = PgStore::connect_test().await.unwrap();
         let tmp = tempfile::tempdir().unwrap();
         let root_path = tmp.path().to_string_lossy().to_string();

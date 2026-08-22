@@ -428,10 +428,19 @@ mod transcript;
 pub(crate) use repo_key::normalize_repo_key;
 
 #[cfg(test)]
+// Test gates are blocking `std::sync::Mutex` held across awaits ON PURPOSE —
+// see `crate::tasks::test_support::TestGate` for why an async mutex loses
+// wakeups across per-test runtimes. One allow per test module, not per site.
+#[allow(clippy::await_holding_lock)]
 mod tests;
 #[cfg(test)]
 mod knowledge_tests;
 #[cfg(test)]
+// `resume_test_guard()` is a blocking `std::sync::Mutex` held across awaits on
+// purpose — see `crate::tasks::test_support::TestGate` for why an async mutex loses
+// wakeups here. These are current-thread test runtimes, one per test, so
+// blocking the thread costs nothing and cannot deadlock the runtime.
+#[allow(clippy::await_holding_lock)]
 mod run_tests;
 #[cfg(test)]
 mod playbook_tests;
