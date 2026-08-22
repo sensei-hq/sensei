@@ -75,10 +75,6 @@
     const note = $derived(historyNote(fullChartSeries));
     const caption = $derived(note ? `${note} · ${data.grain}` : '');
 
-    // "About this metric" is a popover (info button), not interleaved with the
-    // real content — it's reference material, opened on demand.
-    let aboutOpen = $state(false);
-
     // The selected datapoint index — defaults to the latest defined point, and a
     // chart click moves it. Drives the highlight + the evidence panel's day.
     let selectedIndex = $state<number | null>(null);
@@ -158,25 +154,10 @@
 
             <div class="overflow-auto min-h-0 p-6 md:p-8 flex flex-col gap-6">
                 {#if selected}
-                    <div class="relative flex items-start justify-between gap-6 flex-wrap">
+                    <div class="flex items-start justify-between gap-6 flex-wrap">
                         <div class="flex flex-col gap-1">
                             <Eyebrow>{selected.familyLabel}</Eyebrow>
-                            <div class="flex items-center gap-2">
-                                <div class="display text-2xl font-light leading-tight text-ink">{selected.name}</div>
-                                {#if about}
-                                    <button
-                                        type="button"
-                                        data-component="about-toggle"
-                                        aria-expanded={aboutOpen}
-                                        aria-label="About this metric"
-                                        title="About this metric"
-                                        onclick={() => (aboutOpen = !aboutOpen)}
-                                        class="w-5 h-5 shrink-0 rounded-full border text-xs leading-none transition-colors duration-fast {aboutOpen
-                                            ? 'border-accent text-accent'
-                                            : 'border-paper-edge text-ink-mute hover:text-accent hover:border-accent'}"
-                                    >i</button>
-                                {/if}
-                            </div>
+                            <div class="display text-2xl font-light leading-tight text-ink">{selected.name}</div>
                             <!-- The value is the point of this screen, so it is the
                                  largest thing on it (mockup's hero "57%"). It read at
                                  body size against a text-2xl title, which inverted the
@@ -207,16 +188,11 @@
                                 >{g.label}</a>
                             {/each}
                         </div>
-
-                        {#if aboutOpen && about}
-                            <div
-                                data-component="about-popover"
-                                class="absolute right-0 top-full mt-2 z-20 w-[22rem] max-w-[90vw] bg-paper border border-paper-edge rounded-lg shadow-md p-4"
-                            >
-                                <AboutMetric {about} {howToReadSegments} {projectId} />
-                            </div>
-                        {/if}
                     </div>
+
+                    {#if about}
+                        <AboutMetric {about} {howToReadSegments} {projectId} />
+                    {/if}
 
                     {#if data.seriesError}
                         <p data-component="chart-error" class="bg-paper border border-paper-edge rounded-md px-4 py-6 text-sm text-ink-mute">

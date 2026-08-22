@@ -2,41 +2,62 @@
     import { Eyebrow, Kanji } from '$lib/components';
     import type { MetricAbout, TextSegment } from '$lib/metrics/metric-view.js';
 
+    // What the metric means, as primary content rather than reference material.
+    // The mockups (03-ev.png, 04-ev.png) lay this out as labelled columns under
+    // the hero value — "WHAT IT MEASURES" beside "HOW TO READ IT", with the
+    // arithmetic in its own block — because a number nobody can interpret is the
+    // "no why" gap the design set out to close (annotation on 01-ev.png). It used
+    // to be a label/value <dl> behind an info popover.
     let {
         about,
         howToReadSegments = [],
         projectId = '',
     }: { about: MetricAbout; howToReadSegments?: TextSegment[]; projectId?: string } = $props();
 
-    // Only the fields that carry copy — a metric with no formula shows two rows,
-    // never an empty "How it's computed". `metricAbout` returns null when nothing
-    // is present, so `about` here always has at least one row.
-    const rows = $derived(
-        [
-            { key: 'purpose', label: 'What it tells you', text: about.purpose, mono: false },
-            { key: 'how', label: 'How to read it', text: about.howToRead, mono: false },
-            { key: 'formula', label: 'How it’s computed', text: about.formula ?? '', mono: true },
-        ].filter((r) => r.text.trim().length > 0),
-    );
+    const purpose = $derived(about.purpose.trim());
+    const howToRead = $derived(about.howToRead.trim());
+    const formula = $derived((about.formula ?? '').trim());
 </script>
 
-<section data-component="metric-about" class="flex flex-col gap-3">
-    <div class="flex items-center gap-2">
-        <Kanji char="解" size="sm" tone="accent" />
-        <Eyebrow>About this metric</Eyebrow>
+<section
+    data-component="metric-about"
+    class="rounded-md border border-paper-edge bg-paper p-4 flex flex-col gap-4"
+>
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-4">
+        {#if purpose}
+            <div class="flex flex-col gap-2">
+                <Eyebrow>What it measures</Eyebrow>
+                <p
+                    data-row="purpose"
+                    class="m-0 text-sm leading-relaxed text-ink-soft text-pretty"
+                >{purpose}</p>
+            </div>
+        {/if}
+
+        {#if howToRead}
+            <div class="flex flex-col gap-2">
+                <Eyebrow>How to read it</Eyebrow>
+                <p
+                    data-row="how"
+                    class="m-0 text-sm leading-relaxed text-ink-soft text-pretty"
+                >{#if howToReadSegments.length}{#each howToReadSegments as seg, si (si)}{#if seg.key && projectId}<a
+                                data-companion={seg.key}
+                                href={`/project/${projectId}/metrics/${seg.key}`}
+                                class="text-accent no-underline hover:underline">{seg.text}</a>{:else}{seg.text}{/if}{/each}{:else}{howToRead}{/if}</p>
+            </div>
+        {/if}
     </div>
-    <dl class="grid grid-cols-1 sm:grid-cols-[168px_1fr] gap-x-6 gap-y-3 m-0">
-        {#each rows as r (r.key)}
-            <dt class="text-xs text-ink-faint pt-0.5">{r.label}</dt>
-            <dd
-                data-row={r.key}
-                class="m-0 text-sm leading-relaxed text-pretty {r.mono
-                    ? 'mono text-ink-mute'
-                    : 'text-ink-soft'}"
-            >{#if r.key === 'how' && howToReadSegments.length}{#each howToReadSegments as seg, si (si)}{#if seg.key && projectId}<a
-                            data-companion={seg.key}
-                            href={`/project/${projectId}/metrics/${seg.key}`}
-                            class="text-accent no-underline hover:underline">{seg.text}</a>{:else}{seg.text}{/if}{/each}{:else}{r.text}{/if}</dd>
-        {/each}
-    </dl>
+
+    {#if formula}
+        <div class="flex flex-col gap-2 border-t border-paper-edge pt-4">
+            <div class="flex items-center gap-2">
+                <Kanji char="式" size="sm" tone="accent" />
+                <Eyebrow>How this number was calculated</Eyebrow>
+            </div>
+            <code
+                data-row="formula"
+                class="mono block m-0 rounded border border-paper-edge bg-paper-soft px-3 py-2 text-xs leading-relaxed text-ink-mute"
+            >{formula}</code>
+        </div>
+    {/if}
 </section>
