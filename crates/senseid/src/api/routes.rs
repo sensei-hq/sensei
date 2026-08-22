@@ -403,6 +403,10 @@ pub fn create_degraded_router(db_url: String, error: String) -> Router {
 }
 
 #[cfg(test)]
+// Test gates are blocking `std::sync::Mutex` held across awaits ON PURPOSE —
+// see `crate::tasks::test_support::TestGate` for why an async mutex loses
+// wakeups across per-test runtimes. One allow per test module, not per site.
+#[allow(clippy::await_holding_lock)]
 mod tests {
     use super::*;
     use std::sync::Arc;
@@ -1349,7 +1353,7 @@ mod tests {
     async fn collective_preferences_put_then_get_roundtrip() {
         let (app, state) = test_app().await;
         // Serialize with the pg_store singleton test (shared one-row table).
-        let _guard = crate::collective::preferences::test_lock().lock().await;
+        let _guard = crate::collective::preferences::test_lock().enter();
 
         // PUT a known-valid body → 200; the response echoes the saved shape.
         let put = app.clone().oneshot(
@@ -2119,7 +2123,7 @@ mod tests {
         // counts them. A sibling test prunes that table by keep-set (table-wide
         // by design), which silently deleted these rows mid-run and turned
         // 2/4 into 2/2. Share the lock rather than pretend it can be scoped.
-        let _serialised = crate::tasks::test_support::CORRECTIONS_TABLE_LOCK.lock().await;
+        let _serialised = crate::tasks::test_support::CORRECTIONS_TABLE_LOCK.enter();
         use crate::tasks::executor::spawn_workers;
         use crate::tasks::handlers::metrics::HEALTH_TASK_NAME;
         use crate::tasks::test_support::{

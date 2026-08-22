@@ -90,7 +90,7 @@
         // Holds the shared resume lock: this test asserts a run STAYS paused, but
         // the global resume_due_runs (scheduler tests) would resume any paused run
         // whose paused_until has elapsed — so serialize against those callers.
-        let _guard = crate::runs::resume_test_lock().lock().await;
+        let _guard = crate::runs::resume_test_guard();
         let Ok(pg) = PgStore::connect_test().await else { return; };
         let id = pg.create_run(&NewRun::default()).await.unwrap();
 
@@ -193,8 +193,8 @@
     #[tokio::test]
     async fn resume_due_runs_flips_only_elapsed_pauses() {
         // resume_due_runs is a global UPDATE; serialize with the scheduler test
-        // that also creates due-paused runs (see runs::resume_test_lock).
-        let _guard = crate::runs::resume_test_lock().lock().await;
+        // that also creates due-paused runs (see runs::resume_test_guard).
+        let _guard = crate::runs::resume_test_guard();
         let Ok(pg) = PgStore::connect_test().await else { return; };
         // Clear any stray due pauses so our set assertions are exact.
         pg.resume_due_runs().await.unwrap();

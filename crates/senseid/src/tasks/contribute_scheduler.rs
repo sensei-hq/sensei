@@ -190,6 +190,10 @@ pub fn spawn(pg: Arc<PgStore>, gateway: Arc<gateway::Gateway>) {
 }
 
 #[cfg(test)]
+// Test gates are blocking `std::sync::Mutex` held across awaits ON PURPOSE —
+// see `crate::tasks::test_support::TestGate` for why an async mutex loses
+// wakeups across per-test runtimes. One allow per test module, not per site.
+#[allow(clippy::await_holding_lock)]
 mod tests {
     use super::*;
 
@@ -228,7 +232,7 @@ mod tests {
         use crate::dojo::contribute::NoLlm;
 
         let Ok(pg) = PgStore::connect_test().await else { return; };
-        let _guard = preferences::test_lock().lock().await;
+        let _guard = preferences::test_lock().enter();
 
         // A project + memory + APPROVED batch, a destination membership, and the
         // project bound to it so routing yields exactly one target.

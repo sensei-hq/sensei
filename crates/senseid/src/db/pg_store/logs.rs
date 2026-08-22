@@ -191,11 +191,25 @@ impl PgStore {
 
         // (6) Session-less orphan assistant_events by ts. Runs after the
         //     session-scoped prune so we don't double-count.
+        //
+        //     NOT EXISTS, never NOT IN — the same reason the eligible-empty path
+        //     above spells it out: `sessions.client_session_id` is NULLABLE, and
+        //     under ANSI three-valued logic a single NULL in a `NOT IN` subquery
+        //     makes the predicate NULL for EVERY row, so the DELETE silently
+        //     matches nothing. This path had the `NOT IN` form, so orphan events
+        //     were never reclaimed once any session carried a NULL client id —
+        //     which is the normal case for a session anchored without one (e.g.
+        //     an AI-start row). A retention leak that only showed up as a flaky
+        //     test, because it passed exactly when no such session happened to
+        //     exist.
         let cutoff_ms = self.cutoff_millis(days);
         let ae_orphan = sqlx_core::query::query(
-            "DELETE FROM activity.assistant_events WHERE ts < $1
-               AND (session_id = '' OR session_id NOT IN
-                    (SELECT client_session_id FROM activity.sessions))"
+            "DELETE FROM activity.assistant_events ae
+              WHERE ae.ts < $1
+                AND (ae.session_id = ''
+                     OR NOT EXISTS (
+                        SELECT 1 FROM activity.sessions s
+                         WHERE s.client_session_id = ae.session_id))"
         )
             .bind(cutoff_ms)
             .execute(&mut *tx).await.map_err(|e| e.to_string())?;

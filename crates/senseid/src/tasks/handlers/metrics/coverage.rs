@@ -339,12 +339,28 @@ pub(crate) async fn backfill(
 }
 
 #[cfg(test)]
+// Test gates are blocking `std::sync::Mutex` held across awaits ON PURPOSE —
+// see `crate::tasks::test_support::TestGate` for why an async mutex loses
+// wakeups across per-test runtimes. One allow per test module, not per site.
+#[allow(clippy::await_holding_lock)]
 mod tests {
     use super::*;
     use crate::tasks::test_support::{
         cleanup_metrics_fixture, daily_project_metric_rows as daily_rows, git_commit_on_day,
-        make_ctx, repository_for_folder, seed_git_project_folder,
+        make_ctx, repository_for_folder, seed_git_project_folder, TestGate,
     };
+
+    /// Coverage resolves its lcov path through the GLOBAL `metrics.coverage_lcov`
+    /// config, and `coverage_reads_config_override_path` sets that key for the
+    /// duration of its body. Its own comment says the reset protects "the next
+    /// SERIAL test" — but these run in parallel, so while the override is live any
+    /// concurrent coverage test looks for `build/cov/report.lcov` instead of
+    /// `lcov.info`, finds nothing, and writes 0 rows. That is what failed
+    /// `coverage_real_zero_hits_writes_a_real_zero` (expected 1 row, got 0) and
+    /// `backfill_runs_command_at_sampled_commits_and_ingests_history`. The
+    /// fixtures are already per-test unique — the shared state is the config row,
+    /// which is global by design.
+    static COVERAGE_CONFIG_LOCK: TestGate = TestGate::new();
     use sqlx_core::query_as::query_as;
 
     // ── Pure: lcov parser ────────────────────────────────────────────────────
@@ -398,6 +414,7 @@ end_of_record
 
     #[tokio::test]
     async fn coverage_ingests_current_lcov_and_pools_into_the_default_read() {
+        let _guard = COVERAGE_CONFIG_LOCK.enter();
         // A repo with an lcov report (LH 15 / LF 20) → ONE scope=user coverage row
         // (identity NULL), value 0.75, props numerator/denominator = 15/20, keyed on the
         // repository, and surfaced in the DEFAULT scope=user project read (like knowledge).
@@ -452,6 +469,7 @@ end_of_record
 
     #[tokio::test]
     async fn coverage_real_zero_hits_writes_a_real_zero() {
+        let _guard = COVERAGE_CONFIG_LOCK.enter();
         // A report with real instrumented lines but 0 hit → a REAL 0.0 row (the suite is
         // instrumented but nothing is covered), never suppressed.
         let ctx = make_ctx().await;
@@ -479,6 +497,7 @@ end_of_record
 
     #[tokio::test]
     async fn coverage_no_report_or_empty_writes_no_row() {
+        let _guard = COVERAGE_CONFIG_LOCK.enter();
         // No lcov file at all → honest-empty (no row).
         let ctx = make_ctx().await;
         let pg = ctx.pg();
@@ -504,6 +523,7 @@ end_of_record
 
     #[tokio::test]
     async fn coverage_historical_as_of_skips() {
+        let _guard = COVERAGE_CONFIG_LOCK.enter();
         // Forward-only: a historical as_of writes NO row (historical coverage is the
         // opt-in backfill, not this snapshot path), even with a report present.
         let ctx = make_ctx().await;
@@ -527,6 +547,7 @@ end_of_record
 
     #[tokio::test]
     async fn coverage_reads_config_override_path() {
+        let _guard = COVERAGE_CONFIG_LOCK.enter();
         // The metrics.coverage_lcov override points at a non-default location.
         let ctx = make_ctx().await;
         let pg = ctx.pg();
@@ -561,6 +582,7 @@ end_of_record
 
     #[tokio::test]
     async fn backfill_runs_command_at_sampled_commits_and_ingests_history() {
+        let _guard = COVERAGE_CONFIG_LOCK.enter();
         // With metrics.coverage_command configured, backfill checks out sampled past
         // commits (one per ISO week), runs the command (here: write a fixed lcov), and
         // ingests it → one historical coverage row per sampled commit, commit_sha set.
@@ -602,6 +624,7 @@ end_of_record
 
     #[tokio::test]
     async fn backfill_disabled_without_a_configured_command() {
+        let _guard = COVERAGE_CONFIG_LOCK.enter();
         // No metrics.coverage_command → backfill is a no-op (the daemon never runs the
         // project's tests unless explicitly configured).
         let ctx = make_ctx().await;

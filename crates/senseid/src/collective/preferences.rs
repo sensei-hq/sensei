@@ -174,9 +174,10 @@ pub async fn set(pg: &PgStore, prefs: CollectivePreferences) -> Result<Collectiv
 /// row (HTTP round-trip + pg_store round-trip) so parallel test threads don't
 /// clobber each other's expected state on the shared singleton.
 #[cfg(test)]
-pub(crate) fn test_lock() -> &'static tokio::sync::Mutex<()> {
-    static LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
-    LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+pub(crate) fn test_lock() -> &'static crate::tasks::test_support::TestGate {
+    static LOCK: crate::tasks::test_support::TestGate =
+        crate::tasks::test_support::TestGate::new();
+    &LOCK
 }
 
 #[cfg(test)]
