@@ -1,6 +1,7 @@
 <script lang="ts">
     import { Kanji, Eyebrow } from '$lib/components';
     import { TREND_TEXT, type SignalVM, type SeriesDistribution } from '$lib/metrics/metric-view.js';
+    import { metricKanji } from '$lib/metrics/metric-kanji.js';
 
     // The drill-down left rail: every signal (movers first), the selected one
     // highlighted, plus the selected metric's High/Mean/Low over the period.
@@ -34,7 +35,16 @@
                 class="rail-item flex items-center justify-between gap-3 p-3 rounded-md no-underline text-sm transition-colors duration-fast"
                 class:active={s.key === selectedKey}
             >
-                <span class="text-ink truncate">{s.name}</span>
+                <!-- Glyph column is reserved whether or not this metric has one,
+                     so an unassigned signal doesn't shunt its name out of line. -->
+                <span class="flex items-baseline gap-3 min-w-0">
+                    <span class="w-4 shrink-0 text-center" aria-hidden="true">
+                        {#if metricKanji(s.key)}
+                            <Kanji char={metricKanji(s.key)!} size="sm" tone="muted" />
+                        {/if}
+                    </span>
+                    <span class="text-ink truncate">{s.name}</span>
+                </span>
                 {#if s.trend}
                     <span class="mono text-xs shrink-0 {TREND_TEXT[s.color]}">{s.trend.label}</span>
                 {/if}
