@@ -182,7 +182,6 @@
 {/snippet}
 
 <PageHeader
-  variant="h2"
   eyebrow="Observatory · Upgrades"
   kanji="贈"
   title="Upgrades waiting for your call."
