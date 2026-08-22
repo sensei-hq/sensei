@@ -4,7 +4,7 @@
     import {
         buildSignals,
         familyLookup,
-        orderSignals,
+        groupSignals,
         seriesValues,
         seriesDistribution,
         densifySeries,
@@ -31,7 +31,7 @@
 
     const projectId = $derived(page.params.id ?? '');
     const signals = $derived(buildSignals(data.rows, familyLookup(data.registry), data.narrative));
-    const ordered = $derived(orderSignals(signals));
+    const groups = $derived(groupSignals(signals));
     const selected = $derived(signals.find((s) => s.key === data.selectedKey) ?? null);
     // The static "about this metric" reference (purpose / how-to-read / formula),
     // from the selected metric's registry row + the series' formula facet.
@@ -149,7 +149,7 @@
             class="flex-1 min-h-0 grid grid-cols-1 md:grid-cols-[260px_1fr] bg-paper-soft border border-paper-edge rounded-lg overflow-hidden"
         >
             <div class="overflow-auto min-h-0">
-                <SignalRail signals={ordered} selectedKey={data.selectedKey} {projectId} {distribution} {format} />
+                <SignalRail {groups} selectedKey={data.selectedKey} {projectId} {distribution} {format} />
             </div>
 
             <div class="overflow-auto min-h-0 p-6 md:p-8 flex flex-col gap-6">
