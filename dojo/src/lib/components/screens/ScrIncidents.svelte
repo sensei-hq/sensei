@@ -14,7 +14,6 @@
 		orgName,
 		incidents = [],
 		detail = null,
-		mobile = false,
 		onOpen,
 		onCloseDetail,
 		onReport,
@@ -25,7 +24,6 @@
 		incidents?: KitIncident[];
 		/** The loaded detail for the "Open" pane, or null when none is open. */
 		detail?: KitIncidentDetail | null;
-		mobile?: boolean;
 		onOpen?: (i: KitIncident) => void;
 		/** Dismiss the open detail pane. */
 		onCloseDetail?: () => void;

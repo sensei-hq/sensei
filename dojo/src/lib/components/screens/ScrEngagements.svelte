@@ -12,7 +12,6 @@
 		orgName,
 		engagements = [],
 		confidentiality,
-		mobile = false,
 		onNew,
 		onClose,
 		onDelete
@@ -20,7 +19,6 @@
 		orgName: string;
 		engagements?: KitEngagement[];
 		confidentiality: KitConfidentiality;
-		mobile?: boolean;
 		/** Register a new engagement (lead) — prompts for a client name. Absent =
 		 *  read-only. */
 		onNew?: (client: string) => void;
