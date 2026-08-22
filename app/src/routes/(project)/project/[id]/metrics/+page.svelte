@@ -6,7 +6,7 @@
         familyLookup,
         heroSignal,
         pickMovers,
-        orderSignals,
+        groupSignals,
         deterministicHeadline,
     } from '$lib/metrics/metric-view.js';
     import HealthHero from './HealthHero.svelte';
@@ -21,7 +21,7 @@
     const signals = $derived(buildSignals(data.rows, familyLookup(data.registry), data.narrative));
     const hero = $derived(heroSignal(signals));
     const movers = $derived(pickMovers(signals));
-    const ordered = $derived(orderSignals(signals));
+    const groups = $derived(groupSignals(signals));
     const headline = $derived(data.narrative?.headline ?? deterministicHeadline(signals));
 </script>
 
@@ -106,7 +106,10 @@
             />
         </section>
 
-        <section data-component="metrics-grid" class="flex flex-col gap-3">
+        <!-- Grouped, and led by the signals that matter rather than by whatever
+             moved this week. Ordering by movement is why this read as an
+             undifferentiated wall — see KEY_SIGNAL_KEYS. -->
+        <section data-component="metrics-grid" class="flex flex-col gap-6">
             <div class="flex items-center justify-between gap-4 flex-wrap">
                 <div class="flex items-center gap-2">
                     <Kanji char="観" size="sm" tone="muted" />
@@ -116,18 +119,25 @@
                 </div>
                 <SignalLegend />
             </div>
-            <div class="grid grid-cols-2 lg:grid-cols-4 gap-px bg-paper-edge border border-paper-edge rounded-md overflow-hidden">
-                {#each ordered as s (s.key)}
-                    <SignalGridCell
-                        signal={s}
-                        series={data.series[s.key] ?? []}
-                        href={`/project/${projectId}/metrics/${s.key}`}
-                    />
-                {/each}
-            </div>
+
+            {#each groups as g (g.id)}
+                <div data-component="signal-group" data-group={g.id} class="flex flex-col gap-2">
+                    <Eyebrow>{g.label}</Eyebrow>
+                    <div class="grid grid-cols-2 lg:grid-cols-4 gap-px bg-paper-edge border border-paper-edge rounded-md overflow-hidden">
+                        {#each g.signals as s (s.key)}
+                            <SignalGridCell
+                                signal={s}
+                                series={data.series[s.key] ?? []}
+                                href={`/project/${projectId}/metrics/${s.key}`}
+                            />
+                        {/each}
+                    </div>
+                </div>
+            {/each}
             <p class="text-xs text-ink-faint leading-relaxed">
-                Movers this period are ordered first and carry a coloured rule. Several ratios rest on a
-                denominator of one or two — sensei shows the shape, not a verdict.
+                Key signals lead; the rest are grouped by what they measure, movers first within each
+                group and carrying a coloured rule. Several ratios rest on a denominator of one or two
+                — sensei shows the shape, not a verdict.
             </p>
         </section>
     {/if}

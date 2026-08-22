@@ -1,18 +1,20 @@
 <script lang="ts">
     import { Kanji, Eyebrow } from '$lib/components';
-    import { TREND_TEXT, type SignalVM, type SeriesDistribution } from '$lib/metrics/metric-view.js';
+    import { TREND_TEXT, type SignalGroup, type SeriesDistribution } from '$lib/metrics/metric-view.js';
     import { metricKanji } from '$lib/metrics/metric-kanji.js';
 
-    // The drill-down left rail: every signal (movers first), the selected one
-    // highlighted, plus the selected metric's High/Mean/Low over the period.
+    // The drill-down left rail: every signal, grouped and led by the key signals
+    // (the same order the grid uses), the selected one highlighted, plus the
+    // selected metric's High/Mean/Low over the period. A flat 27-item list was
+    // unnavigable — there was no way to tell which of them mattered.
     let {
-        signals,
+        groups,
         selectedKey,
         projectId,
         distribution,
         format,
     }: {
-        signals: SignalVM[];
+        groups: SignalGroup[];
         selectedKey: string;
         projectId: string;
         distribution: SeriesDistribution | null;
@@ -26,14 +28,19 @@
         <Eyebrow>Signals</Eyebrow>
     </div>
 
-    <nav class="flex flex-col gap-1">
-        {#each signals as s (s.key)}
+    <nav class="flex flex-col gap-4">
+        {#each groups as g (g.id)}
+        <div class="flex flex-col gap-1">
+            <div class="px-3 pb-0.5"><Eyebrow>{g.label}</Eyebrow></div>
+            {#each g.signals as s (s.key)}
             <a
                 href={`/project/${projectId}/metrics/${s.key}`}
                 data-signal={s.key}
                 data-active={s.key === selectedKey}
-                class="rail-item flex items-center justify-between gap-3 p-3 rounded-md no-underline text-sm transition-colors duration-fast"
-                class:active={s.key === selectedKey}
+                class="flex items-center justify-between gap-3 border-l-2 p-3 pl-2.5 rounded-md no-underline text-sm transition-colors duration-fast {s.key ===
+                selectedKey
+                    ? 'border-accent bg-accent-soft text-ink'
+                    : 'border-transparent text-ink-soft hover:bg-paper-mute'}"
             >
                 <!-- Glyph column is reserved whether or not this metric has one,
                      so an unassigned signal doesn't shunt its name out of line. -->
@@ -49,6 +56,8 @@
                     <span class="mono text-xs shrink-0 {TREND_TEXT[s.color]}">{s.trend.label}</span>
                 {/if}
             </a>
+            {/each}
+        </div>
         {/each}
     </nav>
 
@@ -65,14 +74,3 @@
     {/if}
 </div>
 
-<style>
-    .rail-item {
-        color: var(--ink-soft);
-    }
-    .rail-item:hover {
-        background: var(--paper-mute);
-    }
-    .rail-item.active {
-        background: var(--paper-mute);
-    }
-</style>
