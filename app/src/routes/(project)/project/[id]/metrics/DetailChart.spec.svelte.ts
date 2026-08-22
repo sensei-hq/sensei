@@ -156,4 +156,26 @@ describe('DetailChart', () => {
         ]);
         expect(root.textContent).toContain('history from 2025-01-01');
     });
+
+    // Clicking a point drives the drill-down below the chart, but nothing said so
+    // — the mockup pairs the caption with a "click a point to open it" hint. It is
+    // tied to `onselect`, so it can never promise an interaction that isn't wired.
+    const twoPoints: ChartPoint[] = [
+        { date: '2025-01-01', value: 1 },
+        { date: '2025-01-02', value: 2 },
+    ];
+
+    it('advertises the click affordance when onselect is wired', () => {
+        const root = mount(twoPoints, [0, 10], { onselect: () => {} });
+        expect(q(root, '[data-component="chart-hint"]')?.textContent?.trim()).toBe(
+            'click a point to open it',
+        );
+    });
+
+    it('stays silent about clicking when onselect is absent', () => {
+        const root = mount(twoPoints);
+        expect(q(root, '[data-component="chart-hint"]')).toBeNull();
+        // ...and the caption still renders on its own.
+        expect(root.textContent).toContain('history from 2025-01-01');
+    });
 });

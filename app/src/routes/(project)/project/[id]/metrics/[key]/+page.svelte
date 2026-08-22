@@ -127,10 +127,20 @@
      scroll INDEPENDENTLY (min-h-0 + overflow-auto), so a long evidence panel never
      drags the rail off-screen. -->
 <div class="h-full flex flex-col overflow-hidden pt-8 px-6 md:px-10 pb-6 max-w-[1040px]">
-    <a
-        href={`/project/${projectId}/metrics`}
-        class="inline-flex items-center gap-1 text-xs text-ink-mute hover:text-accent no-underline mb-4 shrink-0"
-    >← All signals</a>
+    <!-- Back link + the trail that tells you where in the signal set you are
+         (mockup: "metrics · quality · churn concentration"). Lowercased in CSS,
+         not in the data, so the family/metric names stay as the registry has them. -->
+    <div class="flex items-baseline gap-4 mb-4 shrink-0">
+        <a
+            href={`/project/${projectId}/metrics`}
+            class="inline-flex items-center gap-1 text-xs text-ink-mute hover:text-accent no-underline"
+        >← All signals</a>
+        {#if selected}
+            <div data-component="signal-breadcrumb" class="mono text-xs text-ink-faint lowercase truncate">
+                metrics · {selected.familyLabel} · {selected.name}
+            </div>
+        {/if}
+    </div>
 
     {#if data.error}
         <div data-component="metrics-error" class="bg-paper-soft border border-paper-edge rounded-lg px-4 py-6 text-sm text-ink-mute">
@@ -167,13 +177,18 @@
                                     >i</button>
                                 {/if}
                             </div>
+                            <!-- The value is the point of this screen, so it is the
+                                 largest thing on it (mockup's hero "57%"). It read at
+                                 body size against a text-2xl title, which inverted the
+                                 hierarchy. Trend and comparison sit on its baseline. -->
                             <div class="flex items-baseline gap-3 pt-1">
                                 {#if selected.grade}
                                     <span
                                         class="self-center rounded px-1.5 py-0.5 text-sm font-medium leading-none {GRADE_CLASS[selected.grade]}"
                                         title="grade for the per-1,000-lines rate">{selected.grade}</span>
                                 {/if}
-                                <span class="text-ink tabular-nums">{selected.value}</span>
+                                <span class="display text-3xl font-light leading-none text-ink tabular-nums"
+                                    >{selected.value}</span>
                                 {#if selected.trend}
                                     <span class="mono text-sm {TREND_TEXT[selected.color]}">{selected.trend.label}</span>
                                 {/if}
