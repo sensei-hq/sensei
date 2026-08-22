@@ -151,7 +151,19 @@
 </script>
 
 <div data-component="detail-chart" class="bg-paper border border-paper-edge rounded-md p-4 flex flex-col gap-2">
-    {#if caption}<div class="text-xs text-ink-mute">{caption}</div>{/if}
+    <!-- Header row: what the series covers, and — when a click actually does
+         something — that it can be clicked. The drill-down below is driven by
+         `onselect`, so without this the interaction is invisible. -->
+    {#if caption || onselect}
+        <div class="flex items-baseline justify-between gap-4">
+            <div class="text-xs text-ink-mute">{caption}</div>
+            {#if onselect}
+                <div data-component="chart-hint" class="mono text-xs text-ink-faint shrink-0">
+                    click a point to open it
+                </div>
+            {/if}
+        </div>
+    {/if}
     {#if definedCount >= 2}
         <ChartCanvas
             {rows}

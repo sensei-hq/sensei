@@ -97,4 +97,36 @@ test.describe('Project window — Metrics', () => {
     expect(values.length).toBeGreaterThan(0);
     expect(values.every((v) => typeof v === 'string' && v.length > 0)).toBe(true);
   });
+
+  test('a signal detail names where you are: metrics · family · signal', async ({ tauriPage }) => {
+    const project = await pickTestProject();
+    if (!project) {
+      test.skip(true, 'no projects registered');
+      return;
+    }
+
+    const data = await safeJson<{ metrics: Array<{ metric?: string }> }>(
+      `${DAEMON_URL}/api/projects/${project.id}/metrics`,
+      { metrics: [] },
+    );
+    const key = data.metrics.find((m) => m.metric)?.metric;
+    if (!key) {
+      test.skip(true, 'no metrics computed for the test project');
+      return;
+    }
+
+    await navigateToScreen(
+      tauriPage,
+      `/project/${project.id}/metrics/${key}`,
+      '[data-component="signal-detail"]',
+    );
+
+    // Three segments, and the last one is a real signal name — not an empty
+    // trail rendered because the lookup missed.
+    const crumb = (await tauriPage.evaluate(
+      `(document.querySelector('[data-component="signal-breadcrumb"]')?.textContent ?? '').trim()`,
+    )) as string;
+    expect(crumb.startsWith('metrics ·')).toBe(true);
+    expect(crumb.split('·').map((s) => s.trim()).filter(Boolean).length).toBe(3);
+  });
 });
