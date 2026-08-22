@@ -3003,12 +3003,74 @@
         assert_eq!(orphaned.0, 0);
     }
 
+    #[tokio::test]
+    async fn prune_activity_prunes_orphans_despite_a_null_client_session_id() {
+        // Regression: step (6) of prune_activity used `session_id NOT IN (SELECT
+        // client_session_id FROM activity.sessions)`. `client_session_id` is
+        // NULLABLE, and under three-valued logic ONE NULL in the subquery makes
+        // the predicate NULL for every row — the DELETE then matches nothing, so
+        // orphan events were never reclaimed. Sessions with no client id are
+        // normal (an AI-start anchor row has none), so this leaked in production
+        // and merely LOOKED like a flaky test: it passed only on runs where no
+        // such session existed.
+        //
+        // Assert the real thing: with a NULL-client_session_id session present
+        // AND at least one prune-eligible session (so the non-empty branch runs),
+        // an old orphan is still pruned.
+        let s = pg_store().await;
+        let uniq = uuid::Uuid::new_v4();
+
+        // A session carrying NO client_session_id — the NULL that poisoned NOT IN.
+        let fid = uuid::Uuid::new_v4();
+        s.execute_raw("INSERT INTO sensei.folders_to_watch(id, path, name, status) VALUES('00000000-0000-0000-0000-000000000001','/_test','_test','watching'::sensei.watch_status) ON CONFLICT DO NOTHING").await.unwrap();
+        s.execute_raw(&format!(
+            "INSERT INTO sensei.folders(id, root_id, kind, name, path, abs_path) \
+             VALUES('{fid}','00000000-0000-0000-0000-000000000001','git'::sensei.folder_kind,'_np_{uniq}','_np_{uniq}','/_test/_np_{uniq}')"
+        )).await.unwrap();
+        let (null_sid,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO activity.sessions (folder_id, started_at, client_session_id) \
+             VALUES ($1, now(), NULL) RETURNING id",
+        ).bind(fid).fetch_one(s.pool()).await.unwrap();
+
+        // A prune-ELIGIBLE session (analyzed, past the 60-day backstop) so
+        // prune_activity takes its non-empty branch and reaches step (6). Without
+        // this the eligible set can be empty, the early-return path runs instead —
+        // and that path always spelled the predicate correctly, so the test would
+        // pass with the bug still in place.
+        sqlx_core::query::query(
+            "INSERT INTO activity.sessions (folder_id, started_at, analyzed_at, client_session_id) \
+             VALUES ($1, now() - interval '90 days', now(), $2)",
+        )
+        .bind(fid)
+        .bind(format!("eligible_{uniq}"))
+        .execute(s.pool()).await.unwrap();
+
+        let orphan_csid = format!("orphan_null_{uniq}");
+        let old_ts: i64 = (chrono::Utc::now() - chrono::Duration::days(90)).timestamp() * 1000;
+        s.insert_hook_event(&orphan_csid, "claude", "PostToolUse", Some("Read"), None, old_ts, None,
+            &serde_json::json!({})).await.unwrap();
+
+        s.prune_activity(30, 60).await.unwrap();
+
+        let (left,): (i64,) = sqlx_core::query_as::query_as(
+            "SELECT COUNT(*) FROM activity.assistant_events WHERE session_id = $1"
+        ).bind(&orphan_csid).fetch_one(s.pool()).await.unwrap();
+
+        // Clean up before asserting so a failure doesn't leak fixture rows.
+        sqlx_core::query::query("DELETE FROM activity.sessions WHERE id = $1")
+            .bind(null_sid).execute(s.pool()).await.unwrap();
+        sqlx_core::query::query("DELETE FROM sensei.folders WHERE id = $1")
+            .bind(fid).execute(s.pool()).await.unwrap();
+
+        assert_eq!(left, 0, "a NULL client_session_id must not block the orphan prune");
+    }
+
     // ── Corrections aggregation tests ──────────────────────────────────
 
     #[tokio::test]
     async fn correction_upsert_is_idempotent_by_signature() {
         // Prunes by keep-set, which deletes every OTHER test's corrections.
-        let _serialised = crate::tasks::test_support::CORRECTIONS_TABLE_LOCK.lock().await;
+        let _serialised = crate::tasks::test_support::CORRECTIONS_TABLE_LOCK.enter();
         let s = pg_store().await;
         let p = uuid::Uuid::new_v4();
         let sig = format!("corr-test-{}", uuid::Uuid::new_v4());
@@ -4874,7 +4936,7 @@
     async fn collective_preferences_defaults_and_upsert_roundtrip() {
         let Ok(pg) = PgStore::connect_test().await else { return; };
         use crate::collective::preferences::{self, CollectivePreferences};
-        let _guard = preferences::test_lock().lock().await;
+        let _guard = preferences::test_lock().enter();
 
         // Clean slate — the singleton row may linger from a prior run.
         sqlx_core::query::query("DELETE FROM sensei.collective_preferences")
