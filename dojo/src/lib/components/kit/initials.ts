@@ -1,7 +1,7 @@
 // Two-letter monogram from a display name — the kit's avatar fallback (the
 // window.Avatar treatment). Strips parenthetical qualifiers (e.g. "(Admin)"),
 // then takes the first letter of the first two words that *start* with a letter
-// or number, uppercased. Shared by TopBar / MobileShell / ChatThread, which each
+// or number, uppercased. Shared by TopBar / ChatThread, which each
 // carried a byte-identical copy before this was extracted.
 //
 // Behaviour preserved from the originals: only `null`/`undefined` fall back to

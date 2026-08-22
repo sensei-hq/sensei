@@ -4,7 +4,7 @@
 
 	// Served /logout route. kavach.config.js declares `routes.logout: '/logout'`,
 	// but the pinned kavach does NOT serve that path, so the kit's `href="/logout"`
-	// links (TopBar / MobileShell) 404. This page IS that route: the supabase
+	// links (TopBar's account menu) 404. This page IS that route: the supabase
 	// session is client-managed via the kavach instance hydrated into context by
 	// the root +layout's onMount. Because `href="/logout"` is a FULL navigation,
 	// this page can mount before that async hydration finishes — so poll briefly

@@ -10,7 +10,6 @@
     icon,
     description,
     clampDescription = false,
-    count,
     size = 'md',
     bordered = true,
     padded = true,
@@ -22,7 +21,6 @@
     icon?: string;
     description?: string;
     clampDescription?: boolean;
-    count?: number | string;
     size?: 'sm' | 'md' | 'lg';
     bordered?: boolean;
     padded?: boolean;
@@ -37,7 +35,6 @@
   {icon}
   {description}
   {clampDescription}
-  {count}
   {size}
   {bordered}
   {padded}

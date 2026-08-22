@@ -22,7 +22,6 @@
     icon,
     description,
     clampDescription = false,
-    count,
     size = 'md',
     bordered = true,
     padded = true,
@@ -43,8 +42,6 @@
      * the content below the fold.
      */
     clampDescription?: boolean;
-    /** A tally alongside the title (e.g. how many rows the section lists). */
-    count?: number | string;
     size?: Size;
     bordered?: boolean;
     /** Off for a header nested inside a container that already pads. */
@@ -84,16 +81,9 @@
     {#if eyebrow}
       <div class="mb-1"><Eyebrow>{eyebrow}</Eyebrow></div>
     {/if}
-    <div class="flex items-baseline gap-2 min-w-0">
-      <h1 class="display {s.title} font-normal m-0 tracking-tight text-ink">
-        {#if typeof title === 'string'}{title}{:else}{@render title()}{/if}
-      </h1>
-      {#if count != null}
-        <span data-component="page-header-count" class="mono text-xs text-ink-faint shrink-0"
-          >{count}</span
-        >
-      {/if}
-    </div>
+    <h1 class="display {s.title} font-normal m-0 tracking-tight text-ink">
+      {#if typeof title === 'string'}{title}{:else}{@render title()}{/if}
+    </h1>
     {#if description}
       <p
         data-component="page-header-description"
