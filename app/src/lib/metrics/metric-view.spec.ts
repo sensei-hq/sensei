@@ -14,6 +14,7 @@ import {
     heroSignal,
     pickMovers,
     orderSignals,
+    groupSignals,
     deterministicHeadline,
     seriesDistribution,
     densifySeries,
@@ -510,6 +511,81 @@ describe('movers + ordering', () => {
         const ordered = orderSignals(signals).map((s) => s.key);
         expect(ordered[0]).toBe('project_health');
         expect(ordered.indexOf('time_to_useful_result')).toBeLessThan(ordered.indexOf('unused_tools'));
+    });
+});
+
+describe('groupSignals', () => {
+    // Importance is a product judgement, not something the data carries: ordering
+    // by movement put whatever twitched this period first, which is why the grid
+    // read as an undifferentiated wall.
+    const famOfFull = (k: string): MetricFamily | undefined =>
+        (({
+            ftr: 'outcome',
+            module_quality: 'quality',
+            coverage: 'quality',
+            duplication_ratio: 'quality',
+            churn_rate: 'quality',
+            throughput: 'velocity',
+            project_health: 'composite',
+            tokens_per_day: 'cost',
+        }) as Record<string, MetricFamily>)[k];
+
+    const allRows: ProjectMetricRow[] = [
+        row({ metric: 'throughput', metric_type: 'count', value: 4 }),
+        row({ metric: 'churn_rate', metric_type: 'count', value: 2 }),
+        row({ metric: 'coverage', metric_type: 'pct', value: 0.7 }),
+        row({ metric: 'project_health', metric_type: 'score', value: 44 }),
+        row({ metric: 'duplication_ratio', value: 0.04 }),
+        row({ metric: 'tokens_per_day', metric_type: 'count', value: 1000 }),
+        row({ metric: 'module_quality', value: 0.0015 }),
+        row({ metric: 'ftr', metric_type: 'pct', value: 0.75 }),
+    ];
+    const all = buildSignals(allRows, famOfFull);
+
+    it('leads with the curated key signals, in the curated order', () => {
+        const groups = groupSignals(all);
+        expect(groups[0].id).toBe('key');
+        expect(groups[0].label).toBe('Key signals');
+        expect(groups[0].signals.map((s) => s.key)).toEqual([
+            'ftr',
+            'module_quality',
+            'coverage',
+            'duplication_ratio',
+        ]);
+    });
+
+    it('never loses a signal — every non-composite metric lands in exactly one group', () => {
+        // The guard that matters. `cost` was missing from both MetricFamily and
+        // FAMILY_ORDER while the daemon returns it for the token metrics, so a
+        // group-by-known-family would have dropped them off the screen silently.
+        const groups = groupSignals(all);
+        const grouped = groups.flatMap((g) => g.signals.map((s) => s.key));
+        const expected = all.filter((s) => s.family !== 'composite').map((s) => s.key);
+        expect(grouped.slice().sort()).toEqual(expected.slice().sort());
+        expect(new Set(grouped).size).toBe(grouped.length); // no duplicates
+    });
+
+    it('keeps the composite out — it is the hero readout, not a grid cell', () => {
+        const grouped = groupSignals(all).flatMap((g) => g.signals.map((s) => s.key));
+        expect(grouped).not.toContain('project_health');
+    });
+
+    it('places a cost metric rather than dropping it', () => {
+        const cost = groupSignals(all).find((g) => g.signals.some((s) => s.key === 'tokens_per_day'));
+        expect(cost).toBeDefined();
+        expect(cost!.label).toBe('Cost');
+    });
+
+    it('drops empty groups instead of rendering an empty shell', () => {
+        const only = buildSignals([row({ metric: 'ftr', metric_type: 'pct', value: 0.75 })], famOfFull);
+        const groups = groupSignals(only);
+        expect(groups).toHaveLength(1);
+        expect(groups[0].id).toBe('key');
+    });
+
+    it('omits the key group entirely when none of its metrics exist', () => {
+        const none = buildSignals([row({ metric: 'throughput', metric_type: 'count', value: 4 })], famOfFull);
+        expect(groupSignals(none).map((g) => g.id)).toEqual(['velocity']);
     });
 });
 

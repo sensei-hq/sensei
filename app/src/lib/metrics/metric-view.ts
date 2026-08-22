@@ -18,6 +18,7 @@ export type MetricFamily =
     | 'quality'
     | 'knowledge'
     | 'autonomy'
+    | 'cost'
     | 'tool';
 
 /** One row of `GET /api/projects/{id}/metrics` (ProjectMetricRow + injected trend). */
@@ -43,6 +44,7 @@ export const FAMILY_ORDER: MetricFamily[] = [
     'quality',
     'knowledge',
     'autonomy',
+    'cost',
     'tool',
 ];
 
@@ -53,6 +55,7 @@ export const FAMILY_LABEL: Record<MetricFamily, string> = {
     quality: 'Quality',
     knowledge: 'Knowledge',
     autonomy: 'Autonomy',
+    cost: 'Cost',
     tool: 'Tooling',
 };
 
@@ -1014,6 +1017,80 @@ export function orderSignals(signals: SignalVM[]): SignalVM[] {
         if (ra === 1) return b.magnitude - a.magnitude; // movers: biggest first
         return FAMILY_ORDER.indexOf(a.family) - FAMILY_ORDER.indexOf(b.family);
     });
+}
+
+/**
+ * The signals that lead the screen, in the order they lead it.
+ *
+ * A CURATED product judgement, not a derived one — owner-set (FTR ·
+ * maintainability · coverage · duplication). Importance is not something the
+ * data can tell us: ordering by movement puts whatever twitched this week first,
+ * which is why the grid read as unordered. Everything NOT named here keeps a
+ * derived order inside its family (movers first, then alphabetical) rather than
+ * being assigned an invented rank.
+ */
+export const KEY_SIGNAL_KEYS: readonly string[] = [
+    'ftr',
+    'module_quality',
+    'coverage',
+    'duplication_ratio',
+];
+
+/** A titled run of signals — the grid and the rail both render these. */
+export interface SignalGroup {
+    /** Stable id for keying; 'key' for the lead group, else the family. */
+    id: string;
+    label: string;
+    signals: SignalVM[];
+}
+
+/**
+ * Group signals for display: the curated key signals first, then one group per
+ * family in [`FAMILY_ORDER`].
+ *
+ * `composite` (the project health score) is excluded — it is the hero readout at
+ * the top of the screen, not a cell in the grid. Empty groups are dropped, so a
+ * project missing a metric shows no empty shell.
+ */
+export function groupSignals(signals: SignalVM[]): SignalGroup[] {
+    const rank = new Map(KEY_SIGNAL_KEYS.map((k, i) => [k, i]));
+    const eligible = signals.filter((s) => s.family !== 'composite');
+
+    const lead = eligible
+        .filter((s) => rank.has(s.key))
+        .sort((a, b) => rank.get(a.key)! - rank.get(b.key)!);
+
+    // Within a family: movers first (biggest first), then alphabetical so the
+    // order is stable across periods for everything that didn't move.
+    const byMovementThenName = (a: SignalVM, b: SignalVM): number => {
+        if (a.moved !== b.moved) return a.moved ? -1 : 1;
+        if (a.moved && b.moved) return b.magnitude - a.magnitude;
+        return a.name.localeCompare(b.name);
+    };
+
+    const rest = eligible.filter((s) => !rank.has(s.key));
+    const groups: SignalGroup[] = [];
+    if (lead.length) groups.push({ id: 'key', label: 'Key signals', signals: lead });
+
+    const placed = new Set<string>();
+    for (const family of FAMILY_ORDER) {
+        if (family === 'composite') continue;
+        const inFamily = rest.filter((s) => s.family === family).sort(byMovementThenName);
+        if (inFamily.length) {
+            inFamily.forEach((s) => placed.add(s.key));
+            groups.push({ id: family, label: FAMILY_LABEL[family], signals: inFamily });
+        }
+    }
+
+    // A family the daemon returns but FAMILY_ORDER doesn't list must still render.
+    // `cost` was exactly that case — absent from the union AND the order, so
+    // `FAMILY_ORDER.indexOf()` returned -1 for the four token metrics and a
+    // filter-by-known-family would have dropped them off the screen silently.
+    // Grouping must not be able to lose a metric, so anything unplaced lands here.
+    const leftover = rest.filter((s) => !placed.has(s.key)).sort(byMovementThenName);
+    if (leftover.length) groups.push({ id: 'other', label: 'Other', signals: leftover });
+
+    return groups;
 }
 
 /** A one-line deterministic summary headline — the honest fallback when no
