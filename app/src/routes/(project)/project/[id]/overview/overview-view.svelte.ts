@@ -38,7 +38,13 @@ export function ftrDisplay(project: Pick<ProjectOverviewHeader, 'ftr' | 'warn'>)
 
 /** The header eyebrow — "Project · {client or internal}". */
 export function projectEyebrow(project: Pick<ProjectOverviewHeader, 'client'>): string {
-  return `Project · ${project.client?.trim() || 'internal'}`;
+  return `Project · ${projectVisibilityLabel(project.client)}`;
+}
+
+/** The client name, or "internal" when a project has none. One source for the
+ *  fallback so the overview eyebrow and the sidebar chip can't drift apart. */
+export function projectVisibilityLabel(client: string | null | undefined): string {
+  return client?.trim() || 'internal';
 }
 
 /** The "{n} repos" chip label, shown only when the project spans >1 folder.
