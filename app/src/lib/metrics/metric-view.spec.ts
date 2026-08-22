@@ -48,7 +48,7 @@ function row(over: Partial<ProjectMetricRow>): ProjectMetricRow {
         date: '2026-08-10',
         value: 1,
         props: {},
-        name: 'First-turn resolution (FTR)',
+        name: 'First-turn resolution',
         metric_type: 'pct',
         unit: '%',
         direction: 'higher_better',
@@ -303,7 +303,7 @@ describe('toSignal', () => {
                 direction: 'lower_better',
                 value: 3, // unused = M - N
                 props: { total_tools: 106, relevant_tools: 12, used_tools: 9 },
-                name: 'Unused-tool count',
+                name: 'Tools used',
             }),
             famOf,
         );
@@ -427,21 +427,24 @@ describe('linkifyMetrics', () => {
         direction: 'higher_better',
     });
     const registry: RegistryMetric[] = [
-        reg('rework_ratio', 'Rework ratio'),
-        reg('ftr', 'First-turn resolution (FTR)'),
+        reg('rework_ratio', 'Rework share'),
+        reg('ftr', 'First-turn resolution'),
         reg('churn_rate', 'Churn rate'),
     ];
 
     it('links another metric named in the text (case-insensitive), keeping the prose', () => {
-        const segs = linkifyMetrics('Never read alone. Companion: rework ratio.', registry, 'ftr');
-        expect(segs.map((s) => s.text).join('')).toBe('Never read alone. Companion: rework ratio.');
+        // Lower-cased in the prose, title-cased in the registry — this is what the
+        // real seed says ("Companion: rework share"), so a rename that misses the
+        // prose silently drops the companion link.
+        const segs = linkifyMetrics('Never read alone. Companion: rework share.', registry, 'ftr');
+        expect(segs.map((s) => s.text).join('')).toBe('Never read alone. Companion: rework share.');
         const linked = segs.find((s) => s.key);
         expect(linked?.key).toBe('rework_ratio');
-        expect(linked?.text).toBe('rework ratio');
+        expect(linked?.text).toBe('rework share');
     });
 
     it('never links the current metric to itself', () => {
-        const segs = linkifyMetrics('Rework ratio rises when work is deferred.', registry, 'rework_ratio');
+        const segs = linkifyMetrics('Rework share rises when work is deferred.', registry, 'rework_ratio');
         expect(segs.every((s) => s.key == null)).toBe(true);
     });
 

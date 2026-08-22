@@ -888,14 +888,13 @@ function moverMagnitude(delta: number | null, prior: number | null): number {
  *  Returns null for every other metric (they use the generic formatting). */
 function toolsDisplay(
     props: Record<string, unknown> | null,
-): { name: string; value: string; sub: string; insight: string } | null {
+): { value: string; sub: string; insight: string } | null {
     const relevant = numProp(props, 'relevant_tools');
     const used = numProp(props, 'used_tools');
     if (relevant == null || used == null) return null;
     const total = numProp(props, 'total_tools');
     const totalNote = total != null ? ` · ${formatCount(total)} registered` : '';
     return {
-        name: 'Tools used',
         value: `${formatCount(used)} of ${formatCount(relevant)}`,
         sub: `relevant${totalNote}`,
         insight:
@@ -937,7 +936,7 @@ export function toSignal(
           ? formatPerKloc(row.value)
           : formatMetricValue(row.metric_type, row.value);
     const sub = tools ? tools.sub : metricSub(row);
-    const name = tools ? tools.name : row.name;
+    const name = row.name;
 
     const generated = narrative?.insights?.[row.metric];
     const insight = generated ?? tools?.insight ?? deterministicInsight(row, value, sub);
