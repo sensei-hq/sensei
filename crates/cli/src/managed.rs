@@ -72,10 +72,10 @@ pub fn write_directive(path: &Path) -> std::io::Result<Change> {
     // or HTTP input — the Actix web path-traversal rule is a false positive in this CLI crate.
     let existing = fs::read_to_string(path).ok(); // nosemgrep
     let block = directive_block();
-    if let Some(text) = existing.as_deref() {
-        if text.contains(&block) {
-            return Ok(Change::Unchanged);
-        }
+    if let Some(text) = existing.as_deref()
+        && text.contains(&block)
+    {
+        return Ok(Change::Unchanged);
     }
     let new = upsert(existing.as_deref(), &block);
     fs::write(path, new)?; // nosemgrep: same program-derived path — see note above
