@@ -12,6 +12,7 @@
     import HealthHero from './HealthHero.svelte';
     import HealthRadar from './HealthRadar.svelte';
     import MoverCard from './MoverCard.svelte';
+    import CorrelationCard from './CorrelationCard.svelte';
     import SignalGridCell from './SignalGridCell.svelte';
     import SignalLegend from './SignalLegend.svelte';
 
@@ -23,6 +24,10 @@
     const movers = $derived(pickMovers(signals));
     const groups = $derived(groupSignals(signals));
     const headline = $derived(data.narrative?.headline ?? deterministicHeadline(signals));
+    // Display name by key, so a card never shows a raw registry key.
+    const nameOf = $derived((key: string) => signals.find((s) => s.key === key)?.name ?? key);
+    // Cap the list: past a handful this stops being a reading and becomes a table.
+    const correlations = $derived(data.correlations.slice(0, 6));
 </script>
 
 <div class="pt-8 px-6 md:px-10 pb-12 max-w-[1040px]">
@@ -101,6 +106,28 @@
                 ratedMetrics={data.health?.rated_metrics ?? 0}
             />
         </section>
+
+        {#if correlations.length}
+            <!-- What moves with what. The daemon already drops pairs related by
+                 CONSTRUCTION (tokens_in ⊂ tokens_per_day correlates 1.00 and says
+                 nothing), so everything here is a relationship worth reading. -->
+            <section data-component="metrics-correlations" class="mb-10 flex flex-col gap-3">
+                <div class="flex items-center gap-2">
+                    <Kanji char="繋" size="sm" tone="accent" />
+                    <Eyebrow>What moves together</Eyebrow>
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {#each correlations as c (c.a + '|' + c.b)}
+                        <CorrelationCard
+                            correlation={c}
+                            seriesA={data.series[c.a] ?? []}
+                            seriesB={data.series[c.b] ?? []}
+                            {nameOf}
+                        />
+                    {/each}
+                </div>
+            </section>
+        {/if}
 
         <!-- Grouped, and led by the signals that matter rather than by whatever
              moved this week. Ordering by movement is why this read as an

@@ -285,6 +285,16 @@ export function senseiApi(port: number) {
     // 404 when the daemon rated nothing for this project: honest-empty, and the
     // Result lets the caller tell that apart from a fetch failure.
     getProjectHealth: (id: string) => tryGet<ProjectHealth>(`/api/projects/${enc(id)}/health`),
+    /** Which metrics move together, across every project. Portfolio-wide on
+     *  purpose: per project the paired-day count rarely clears the daemon's n>=20
+     *  gate, so a project-scoped call is usually empty. */
+    getMetricCorrelations: () =>
+        tryGet<{
+            cells: number;
+            min_pairs: number;
+            min_rho: number;
+            correlations: Array<{ a: string; b: string; rho: number; n: number }>;
+        }>(`/api/metrics/correlations`),
 
     // Per-metric time series for the card sparklines / trend view.
     getProjectMetricSeries: (
