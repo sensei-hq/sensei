@@ -272,6 +272,7 @@ async fn run_computer(
         MetricGroup::Quality => super::quality::compute(ctx, project_raw, as_of).await,
         MetricGroup::Autonomy => super::autonomy::compute(ctx, project_raw, as_of).await,
         MetricGroup::Knowledge => super::knowledge::compute(ctx, project_raw, as_of).await,
+        MetricGroup::Cost => super::cost::compute(ctx, project_raw, as_of).await,
         MetricGroup::Coverage => super::coverage::compute(ctx, project_raw, as_of).await,
         MetricGroup::SessionProcess => super::session_process::compute(ctx, project_raw, as_of).await,
     }

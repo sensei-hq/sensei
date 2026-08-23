@@ -37,6 +37,7 @@ mod churn;
 pub(crate) mod coverage;
 mod explainer;
 mod health;
+mod cost;
 mod knowledge;
 pub(crate) mod planner;
 mod quality;
@@ -159,6 +160,9 @@ pub(crate) enum MetricGroup {
     /// LLM process-quality judgments (spec 2026-08-20): day-keyed metrics derived
     /// from `sessions.props.process` (spec_depth + the three occurrence rates).
     SessionProcess,
+    /// Real money: the configured subscription divided by what shipped in the
+    /// trailing window. SNAPSHOT cadence — anchored to now, forward-only.
+    Cost,
 }
 
 impl MetricGroup {
@@ -171,6 +175,7 @@ impl MetricGroup {
             "quality" => Some(Self::Quality),
             "autonomy" => Some(Self::Autonomy),
             "knowledge" => Some(Self::Knowledge),
+            "cost" => Some(Self::Cost),
             "coverage" => Some(Self::Coverage),
             "session_process" => Some(Self::SessionProcess),
             _ => None,
@@ -185,6 +190,7 @@ impl MetricGroup {
             Self::Quality => "quality",
             Self::Autonomy => "autonomy",
             Self::Knowledge => "knowledge",
+            Self::Cost => "cost",
             Self::Coverage => "coverage",
             Self::SessionProcess => "session_process",
         }
