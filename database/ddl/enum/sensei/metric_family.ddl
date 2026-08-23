@@ -11,12 +11,9 @@ set search_path to sensei, extensions;
 create type metric_family
     as enum (
         'outcome'
-      -- DEPRECATED, retained only so the design matches the live type. Postgres
-      -- cannot drop an enum value in place — it needs a full type recreation that
-      -- rewrites every dependent column — and dbd detects the orphan but does not
-      -- execute that rewrite. No metric uses it (all four moved to `usage`); it is
-      -- an unused label, cheaper to carry than a live column rewrite. Remove it in
-      -- a release that can afford the recreation.
+      -- Real money, from the user's configured subscription — NOT tokens. The four
+      -- token metrics moved to `usage` because under a flat fee the marginal cost
+      -- of a token is zero; `cost` now means what it says.
       , 'cost'
       , 'usage'
       , 'velocity'

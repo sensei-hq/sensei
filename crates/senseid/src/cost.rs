@@ -86,17 +86,34 @@ impl Subscription {
         self.amount / self.period.days()
     }
 
-    /// Cost attributable to one delivered result — the number a subscription can
-    /// honestly answer: "what did each shipped thing cost me?".
+    /// Cost attributable to one delivered result over `window_days` — the number a
+    /// subscription can honestly answer: "what did each shipped thing cost me?".
     ///
-    /// `results` is whatever the caller counts as delivery for that day (completed
-    /// sessions, merged runs). `None` when nothing was delivered: dividing by zero
-    /// would be infinite, and reporting the full day's fee as the cost of nothing
-    /// would say a quiet day was infinitely expensive rather than simply idle.
-    pub fn cost_per_result(&self, results: u32) -> Option<f64> {
-        (results > 0).then(|| self.daily_rate() / f64::from(results))
+    /// A WINDOW, not a single day, and that is a correctness matter rather than a
+    /// smoothing preference. Delivery is lumpy: measured on real data, only 2 of
+    /// the last 14 days carried any result at all, so a per-day figure would be
+    /// null ~86% of the time and wildly volatile on the days it existed. A trailing
+    /// window also matches how the fee is actually incurred — you are billed for a
+    /// period, not a day.
+    ///
+    /// `None` when the window delivered nothing: dividing by zero is infinite, and
+    /// charging the whole window's fee to "nothing" would call an idle stretch
+    /// infinitely expensive rather than simply idle.
+    pub fn cost_per_result(&self, results: u32, window_days: u32) -> Option<f64> {
+        (results > 0 && window_days > 0)
+            .then(|| self.daily_rate() * f64::from(window_days) / f64::from(results))
+    }
+
+    /// The fee attributable to a stretch of `window_days`.
+    pub fn window_cost(&self, window_days: u32) -> f64 {
+        self.daily_rate() * f64::from(window_days)
     }
 }
+
+/// Trailing window for the cost metric, in days. Thirty ≈ the monthly billing
+/// period, so the question it answers ("what did a result cost me this month?")
+/// matches the bill the user actually receives.
+pub const COST_WINDOW_DAYS: u32 = 30;
 
 #[cfg(test)]
 mod tests {
@@ -160,20 +177,32 @@ mod tests {
     }
 
     #[test]
-    fn cost_per_result_divides_the_day_across_what_shipped() {
+    fn cost_per_result_divides_the_window_fee_across_what_shipped() {
         let s = max20();
-        let four = s.cost_per_result(4).unwrap();
-        assert!((four - s.daily_rate() / 4.0).abs() < 1e-9);
+        let four = s.cost_per_result(4, COST_WINDOW_DAYS).unwrap();
+        // $200/mo over a 30-day window ≈ the monthly fee, split four ways.
+        assert!((four - s.window_cost(COST_WINDOW_DAYS) / 4.0).abs() < 1e-9);
+        assert!((four - 49.3).abs() < 0.5, "≈ $49 per result, got {four}");
         // Twice the delivery for the same fee halves the unit cost — the direction
         // that makes this a genuine efficiency signal, unlike a token count.
-        let eight = s.cost_per_result(8).unwrap();
+        let eight = s.cost_per_result(8, COST_WINDOW_DAYS).unwrap();
         assert!(eight < four, "{eight} !< {four}");
     }
 
     #[test]
-    fn a_day_that_delivered_nothing_has_no_cost_per_result() {
-        // Not infinity, and not the whole day's fee — an idle day is idle, not
-        // infinitely expensive.
-        assert_eq!(max20().cost_per_result(0), None);
+    fn a_window_that_delivered_nothing_has_no_cost_per_result() {
+        // Not infinity, and not the whole window's fee — an idle stretch is idle,
+        // not infinitely expensive.
+        assert_eq!(max20().cost_per_result(0, COST_WINDOW_DAYS), None);
+        // A zero-length window is not a reading either.
+        assert_eq!(max20().cost_per_result(4, 0), None);
+    }
+
+    #[test]
+    fn a_longer_window_costs_proportionally_more() {
+        let s = max20();
+        let thirty = s.window_cost(30);
+        assert!((s.window_cost(60) - 2.0 * thirty).abs() < 1e-9);
+        assert!((thirty - 200.0).abs() < 3.0, "≈ one month's fee, got {thirty}");
     }
 }
