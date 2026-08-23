@@ -493,7 +493,7 @@ describe('groupSignals', () => {
             churn_rate: 'quality',
             throughput: 'velocity',
             project_health: 'composite',
-            tokens_per_day: 'cost',
+            tokens_per_day: 'usage',
         }) as Record<string, MetricFamily>)[k];
 
     const allRows: ProjectMetricRow[] = [
@@ -536,10 +536,10 @@ describe('groupSignals', () => {
         expect(grouped).not.toContain('project_health');
     });
 
-    it('places a cost metric rather than dropping it', () => {
-        const cost = groupSignals(all).find((g) => g.signals.some((s) => s.key === 'tokens_per_day'));
-        expect(cost).toBeDefined();
-        expect(cost!.label).toBe('Cost');
+    it('places a usage metric rather than dropping it', () => {
+        const usage = groupSignals(all).find((g) => g.signals.some((s) => s.key === 'tokens_per_day'));
+        expect(usage).toBeDefined();
+        expect(usage!.label).toBe('Usage');
     });
 
     it('drops empty groups instead of rendering an empty shell', () => {

@@ -18,7 +18,7 @@ export type MetricFamily =
     | 'quality'
     | 'knowledge'
     | 'autonomy'
-    | 'cost'
+    | 'usage'
     | 'tool';
 
 /** One row of `GET /api/projects/{id}/metrics` (ProjectMetricRow + injected trend). */
@@ -44,7 +44,7 @@ export const FAMILY_ORDER: MetricFamily[] = [
     'quality',
     'knowledge',
     'autonomy',
-    'cost',
+    'usage',
     'tool',
 ];
 
@@ -55,7 +55,7 @@ export const FAMILY_LABEL: Record<MetricFamily, string> = {
     quality: 'Quality',
     knowledge: 'Knowledge',
     autonomy: 'Autonomy',
-    cost: 'Cost',
+    usage: 'Usage',
     tool: 'Tooling',
 };
 
