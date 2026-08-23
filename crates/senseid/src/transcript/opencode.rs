@@ -275,7 +275,8 @@ pub fn parse_opencode_messages(content: &str) -> Vec<TranscriptTurn> {
                     user_text: Some(trimmed.to_string()),
                     assistant_text: String::new(),
                     started_at: time_created.and_then(millis_to_datetime),
-                });
+                        ..Default::default()
+                    });
             }
             "assistant" => {
                 if let Some(t) = cur.as_mut() {

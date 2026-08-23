@@ -939,7 +939,7 @@ mod tests {
 
     /// A minimal transcript turn for the transcript-first derivation tests.
     fn tt(idx: i32, user: &str, assistant: &str) -> TranscriptTurn {
-        TranscriptTurn { turn_index: idx, user_text: Some(user.into()), assistant_text: assistant.into(), started_at: None }
+        TranscriptTurn { turn_index: idx, user_text: Some(user.into()), assistant_text: assistant.into(), started_at: None, ..Default::default() }
     }
 
     /// The invariant that was violated in the wild: a session that ended cleanly

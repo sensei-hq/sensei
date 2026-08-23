@@ -4,7 +4,7 @@
 //! spans one genuine human prompt to the next, and the assistant prose is the
 //! `text` content blocks (tool_use / thinking excluded).
 
-use super::{ParsedTranscript, SynthEvent, SynthSession, TranscriptAdapter, TranscriptTurn, UnitRef};
+use super::{ParsedTranscript, SynthEvent, SynthSession, TranscriptAdapter, TranscriptTurn, TurnFacts, UnitRef};
 use std::path::{Path, PathBuf};
 
 /// Cap stored assistant prose per turn (safety net for pathological turns).
@@ -268,6 +268,70 @@ pub fn parse_claude_session(content: &str) -> Option<SynthSession> {
     Some(SynthSession { cwds, events })
 }
 
+/// The per-turn attributes we PROMOTE to columns, lifted from one transcript
+/// record. Everything not named here still survives in `attrs` — see
+/// [`turn_attrs`] — so adding a signal later is a query, not a re-ingest.
+///
+/// Token counts stay SPLIT. `claude_tokens` (session grain) deliberately sums
+/// fresh + cache-write + cache-read as "all input the model processed", but ~98%
+/// of that total is cache reads, which bill far cheaper — so cost read off the sum
+/// is roughly 10x high and IMPROVES when caching gets worse. At turn grain we keep
+/// the parts and let the consumer choose.
+fn merge_facts(facts: &mut TurnFacts, v: &serde_json::Value) {
+    let str_of = |x: Option<&serde_json::Value>| {
+        x.and_then(|t| t.as_str()).filter(|t| !t.is_empty()).map(str::to_string)
+    };
+    // Top-level record attributes.
+    if facts.git_branch.is_none() { facts.git_branch = str_of(v.get("gitBranch")); }
+    if facts.effort.is_none() { facts.effort = str_of(v.get("effort")); }
+    if facts.skill.is_none() { facts.skill = str_of(v.get("attributionSkill")); }
+    if facts.plugin.is_none() { facts.plugin = str_of(v.get("attributionPlugin")); }
+    if facts.is_sidechain.is_none() {
+        facts.is_sidechain = v.get("isSidechain").and_then(|b| b.as_bool());
+    }
+    let Some(m) = v.get("message") else { return };
+    if facts.stop_reason.is_none() { facts.stop_reason = str_of(m.get("stop_reason")); }
+    let Some(u) = m.get("usage") else { return };
+    if facts.service_tier.is_none() { facts.service_tier = str_of(u.get("service_tier")); }
+    // Summed across the turn's assistant records: one turn issues several.
+    let add = |slot: &mut Option<i64>, n: Option<i64>| {
+        if let Some(n) = n { *slot = Some(slot.unwrap_or(0) + n); }
+    };
+    add(&mut facts.tokens_in, u.get("input_tokens").and_then(|x| x.as_i64()));
+    add(&mut facts.tokens_out, u.get("output_tokens").and_then(|x| x.as_i64()));
+    add(&mut facts.cache_read, u.get("cache_read_input_tokens").and_then(|x| x.as_i64()));
+    add(&mut facts.cache_write, u.get("cache_creation_input_tokens").and_then(|x| x.as_i64()));
+}
+
+/// The record's attributes minus the bulky prose/content we already store in
+/// their own columns. Keeping `message.content` would duplicate `assistant_text`
+/// and can be megabytes; everything else is small and worth retaining verbatim.
+fn turn_attrs(v: &serde_json::Value) -> serde_json::Value {
+    const DROP: [&str; 3] = ["message", "attachment", "toolUseResult"];
+    let mut out = serde_json::Map::new();
+    if let Some(obj) = v.as_object() {
+        for (k, val) in obj {
+            if DROP.contains(&k.as_str()) {
+                continue;
+            }
+            out.insert(k.clone(), val.clone());
+        }
+    }
+    // …but keep the small, high-signal parts of `message` that are not prose.
+    if let Some(m) = v.get("message").and_then(|m| m.as_object()) {
+        let mut mm = serde_json::Map::new();
+        for k in ["id", "model", "stop_reason", "stop_sequence", "usage", "container"] {
+            if let Some(val) = m.get(k) {
+                mm.insert(k.to_string(), val.clone());
+            }
+        }
+        if !mm.is_empty() {
+            out.insert("message".into(), serde_json::Value::Object(mm));
+        }
+    }
+    serde_json::Value::Object(out)
+}
+
 /// Parse a Claude transcript (JSONL) into user-prompt-bounded turns. A new turn
 /// starts at each genuine human prompt; assistant `text` blocks until the next
 /// prompt form that turn's response. Pure + deterministic.
@@ -294,17 +358,29 @@ pub fn parse_claude_transcript(content: &str) -> Vec<TranscriptTurn> {
                         turns.push(t);
                     }
                     idx += 1;
+                    let mut facts = TurnFacts::default();
+                    merge_facts(&mut facts, &v);
                     cur = Some(TranscriptTurn {
                         turn_index: idx,
                         user_text: Some(prompt),
                         assistant_text: String::new(),
                         started_at: parse_ts(&v),
+                        attrs: turn_attrs(&v),
+                        facts,
                     });
                 }
                 // tool_result / meta / injected → not a boundary, ignore.
             }
             "assistant" => {
                 if let Some(t) = cur.as_mut() {
+                    // A turn spans several assistant records — tokens sum, and the
+                    // LAST stop_reason is the one that ended it.
+                    merge_facts(&mut t.facts, &v);
+                    if let Some(sr) = v.get("message").and_then(|m| m.get("stop_reason"))
+                        .and_then(|x| x.as_str()).filter(|x| !x.is_empty())
+                    {
+                        t.facts.stop_reason = Some(sr.to_string());
+                    }
                     let text = assistant_text_blocks(&v);
                     if !text.is_empty() {
                         if !t.assistant_text.is_empty() {
@@ -409,6 +485,62 @@ fn parse_ts(v: &serde_json::Value) -> Option<chrono::DateTime<chrono::Utc>> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn turn_keeps_split_tokens_and_promoted_attributes() {
+        // The whole point of the split: `tokens_in` here is FRESH input only.
+        // Summing it with cache_read (as the session-grain total does) is what makes
+        // cost read ~10x high — measured against real transcripts, ~98% of that sum
+        // is cache reads, which bill far cheaper.
+        let c = concat!(
+            r#"{"type":"user","cwd":"/r","gitBranch":"develop","effort":"xhigh","isSidechain":false,"#,
+            r#""attributionSkill":"superpowers:brainstorming","attributionPlugin":"superpowers","#,
+            r#""timestamp":"2026-06-20T10:00:00.000Z","message":{"role":"user","content":"go"}}"#, "\n",
+            r#"{"type":"assistant","cwd":"/r","message":{"role":"assistant","model":"claude-opus-4-8","stop_reason":"tool_use","#,
+            r#""usage":{"input_tokens":10,"cache_creation_input_tokens":100,"cache_read_input_tokens":900,"output_tokens":20,"service_tier":"standard"}},"#,
+            r#""content":[{"type":"text","text":"ok"}]}"#, "\n",
+            r#"{"type":"assistant","cwd":"/r","message":{"role":"assistant","model":"claude-opus-4-8","stop_reason":"end_turn","#,
+            r#""usage":{"input_tokens":5,"cache_read_input_tokens":50,"output_tokens":8}},"content":[{"type":"text","text":"done"}]}"#, "\n",
+        );
+        let turns = parse_claude_transcript(c);
+        assert_eq!(turns.len(), 1, "one user prompt = one turn");
+        let f = &turns[0].facts;
+        assert_eq!(f.tokens_in, Some(15), "fresh input only, summed over the turn's records (10+5)");
+        assert_eq!(f.cache_read, Some(950), "cache reads kept SEPARATE (900+50)");
+        assert_eq!(f.cache_write, Some(100));
+        assert_eq!(f.tokens_out, Some(28));
+        // The LAST record's stop_reason is the one that ended the turn.
+        assert_eq!(f.stop_reason.as_deref(), Some("end_turn"));
+        assert_eq!(f.skill.as_deref(), Some("superpowers:brainstorming"));
+        assert_eq!(f.plugin.as_deref(), Some("superpowers"));
+        assert_eq!(f.git_branch.as_deref(), Some("develop"));
+        assert_eq!(f.effort.as_deref(), Some("xhigh"));
+        assert_eq!(f.service_tier.as_deref(), Some("standard"));
+        assert_eq!(f.is_sidechain, Some(false));
+        // Unpromoted attributes survive verbatim rather than being dropped…
+        assert_eq!(turns[0].attrs["cwd"], "/r");
+        // …but the bulky prose does not (it is already in assistant_text).
+        assert!(turns[0].attrs.get("message").and_then(|m| m.get("content")).is_none(),
+            "message.content is not duplicated into attrs");
+    }
+
+    #[test]
+    fn turn_facts_are_null_not_zero_when_the_transcript_lacks_them() {
+        // Honest-empty: a transcript with no usage/attribution must not record
+        // fabricated zeros that a consumer can't tell from a real reading.
+        let c = concat!(
+            r#"{"type":"user","message":{"role":"user","content":"hi"}}"#, "\n",
+            r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"yo"}]}}"#, "\n",
+        );
+        let turns = parse_claude_transcript(c);
+        assert_eq!(turns.len(), 1);
+        let f = &turns[0].facts;
+        assert_eq!(f.tokens_in, None, "absent usage is null, never 0");
+        assert_eq!(f.cache_read, None);
+        assert_eq!(f.skill, None);
+        assert_eq!(f.is_sidechain, None);
+    }
+
     use super::*;
 
     // A compact transcript: prompt → (thinking+text+tool_use) → tool_result →
