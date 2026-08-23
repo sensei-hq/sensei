@@ -23,7 +23,7 @@ begin
   insert into sensei.metrics (
       key, name, description, family, type, unit, direction,
       purpose, how_to_read, formula, task_name, cadence, capture_source,
-      weight, target, rating_scale, effective_until, retire_reason, modified_at
+      weight, target, rating_scale, derives_from, effective_until, retire_reason, modified_at
   )
   select
       stg.key
@@ -42,6 +42,7 @@ begin
     , coalesce(stg.weight, 1)
     , stg.target
     , stg.rating_scale
+    , stg.derives_from
     , stg.effective_until
     , nullif(stg.retire_reason, '')
     , coalesce(stg.modified_at, now())
@@ -64,6 +65,7 @@ begin
     , weight          = excluded.weight
     , target          = excluded.target
     , rating_scale     = excluded.rating_scale
+    , derives_from     = excluded.derives_from
     , effective_until = excluded.effective_until
     , retire_reason   = excluded.retire_reason
     , modified_at     = excluded.modified_at

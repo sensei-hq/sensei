@@ -107,6 +107,8 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/projects/{id}/drift/scan",      post(project_detail::scan_project_doc_drift))
         .route("/api/projects/{id}/coverage/backfill", post(project_detail::coverage_backfill))
         .route("/api/projects/{id}/health",           get(project_detail::get_project_health))
+        .route("/api/projects/{id}/correlations",     get(project_detail::get_metric_correlations))
+        .route("/api/metrics/correlations",          get(project_detail::get_portfolio_correlations))
         .route("/api/projects/{id}/patterns",        get(project_detail::get_project_patterns))
         .route("/api/projects/{id}/libraries",       get(project_detail::get_project_libraries))
         .route("/api/projects/{id}/instruments",     get(project_detail::get_project_instruments))

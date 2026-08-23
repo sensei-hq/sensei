@@ -732,6 +732,40 @@ pub(crate) async fn get_project_health(
     Ok(Json(health))
 }
 
+/// GET /api/metrics/correlations — the PORTFOLIO view, across every project.
+///
+/// Usually the more useful of the two: a correlation needs both metrics on the
+/// same day repeatedly, and per project that rarely accumulates. Pooling projects
+/// buys sample size, so this describes how the SIGNALS relate rather than how one
+/// codebase behaves.
+pub(crate) async fn get_portfolio_correlations(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let out = state.pg.get_metric_correlations(None).await.map_err(|e| {
+        tracing::error!(error = %e, "get_portfolio_correlations failed");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+    Ok(Json(out))
+}
+
+/// GET /api/projects/{id}/correlations — which metrics move together.
+///
+/// Pairs related BY CONSTRUCTION (the registry's `derives_from`) are omitted, not
+/// ranked lower: `tokens_in_per_day` vs `tokens_per_day` correlates 1.00 because
+/// the second contains the first, which is arithmetic rather than a finding. Each
+/// result carries its sample size so a caller can weight the claim.
+pub(crate) async fn get_metric_correlations(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let uuid = crate::api::util::resolve_existing_project(&state, &id).await?;
+    let out = state.pg.get_metric_correlations(Some(&uuid)).await.map_err(|e| {
+        tracing::error!(error = %e, project = %uuid, "get_metric_correlations failed");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+    Ok(Json(out))
+}
+
 #[derive(Deserialize)]
 pub(crate) struct CoverageBackfillQuery {
     /// How many of the most-recent sampled ISO-week anchors to walk (omit = all).
