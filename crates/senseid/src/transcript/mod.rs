@@ -524,18 +524,31 @@ mod tests {
 
         // session synthesized, attributed to the project, flagged backfilled,
         // with a historical started_at (not "today").
-        let s: (Option<uuid::Uuid>, bool, bool, Option<String>, Option<String>, Option<i32>, Option<i32>, bool) = sqlx_core::query_as::query_as(
+        // Named alias + a destructuring bind: the row is eight columns, and read
+        // positionally (`s.5`, `s.6`) you have to count to know which is which.
+        type SessionRow = (
+            Option<uuid::Uuid>, // project_id
+            bool,               // backfilled
+            bool,              // started_at is historical
+            Option<String>,     // provider
+            Option<String>,     // model
+            Option<i32>,        // tokens_in
+            Option<i32>,        // tokens_out
+            bool,               // meta_synced_at IS NOT NULL
+        );
+        let (project_id, backfilled, historical, provider, model, tokens_in, tokens_out, meta_synced):
+            SessionRow = sqlx_core::query_as::query_as(
             "SELECT project_id, backfilled, (started_at < now() - interval '1 day'), provider, model, tokens_in, tokens_out, meta_synced_at IS NOT NULL FROM activity.sessions WHERE client_session_id=$1"
         ).bind(&sid).fetch_one(pg.pool()).await.unwrap();
-        assert_eq!(s.0, Some(pid), "attributed to the project resolved from cwd");
-        assert!(s.1, "flagged backfilled");
-        assert!(s.2, "started_at set from the transcript timestamp, not now()");
-        assert_eq!(s.3.as_deref(), Some("anthropic"), "provider captured at synthesis");
-        assert_eq!(s.4.as_deref(), Some("claude-opus-4-8"), "model captured from the transcript");
+        assert_eq!(project_id, Some(pid), "attributed to the project resolved from cwd");
+        assert!(backfilled, "flagged backfilled");
+        assert!(historical, "started_at set from the transcript timestamp, not now()");
+        assert_eq!(provider.as_deref(), Some("anthropic"), "provider captured at synthesis");
+        assert_eq!(model.as_deref(), Some("claude-opus-4-8"), "model captured from the transcript");
         // token usage summed across assistant records: in=(100+50)+5=155, out=20+8=28
-        assert_eq!(s.5, Some(155), "tokens_in = input + cache tokens across the session");
-        assert_eq!(s.6, Some(28), "tokens_out = output tokens across the session");
-        assert!(s.7, "meta_synced_at stamped so the metadata backfill runs at most once");
+        assert_eq!(tokens_in, Some(155), "tokens_in = input + cache tokens across the session");
+        assert_eq!(tokens_out, Some(28), "tokens_out = output tokens across the session");
+        assert!(meta_synced, "meta_synced_at stamped so the metadata backfill runs at most once");
 
         // events synthesized: prompt + tool-edit + terminal Stop.
         let kinds: Vec<(String,)> = sqlx_core::query_as::query_as(
