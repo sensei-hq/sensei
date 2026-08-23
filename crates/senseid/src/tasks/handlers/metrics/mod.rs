@@ -39,6 +39,7 @@ mod explainer;
 mod health;
 mod cost;
 mod knowledge;
+mod usage;
 pub(crate) mod planner;
 mod quality;
 mod session_outcomes;
@@ -163,6 +164,9 @@ pub(crate) enum MetricGroup {
     /// Real money: the configured subscription divided by what shipped in the
     /// trailing window. SNAPSHOT cadence — anchored to now, forward-only.
     Cost,
+    /// Context-reuse efficiency (`cache_reuse`) from the per-turn token split.
+    /// DAY-KEYED: each day's sessions are settled once the day is past.
+    Usage,
 }
 
 impl MetricGroup {
@@ -176,6 +180,7 @@ impl MetricGroup {
             "autonomy" => Some(Self::Autonomy),
             "knowledge" => Some(Self::Knowledge),
             "cost" => Some(Self::Cost),
+            "usage" => Some(Self::Usage),
             "coverage" => Some(Self::Coverage),
             "session_process" => Some(Self::SessionProcess),
             _ => None,
@@ -191,6 +196,7 @@ impl MetricGroup {
             Self::Autonomy => "autonomy",
             Self::Knowledge => "knowledge",
             Self::Cost => "cost",
+            Self::Usage => "usage",
             Self::Coverage => "coverage",
             Self::SessionProcess => "session_process",
         }
