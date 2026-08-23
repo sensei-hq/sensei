@@ -18,7 +18,7 @@ use crate::tasks::{Task, TaskKind};
 use std::path::PathBuf;
 
 /// One user-prompt -> assistant-response turn parsed from a transcript.
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct TranscriptTurn {
     pub turn_index: i32,
     pub user_text: Option<String>,
@@ -33,6 +33,24 @@ pub struct TranscriptTurn {
     /// All `Option` — a transcript that doesn't carry one stays honest-null rather
     /// than recording a fabricated 0/false.
     pub facts: TurnFacts,
+}
+
+impl Default for TranscriptTurn {
+    /// `attrs` defaults to an empty OBJECT, not `serde_json::Value::default()` —
+    /// which is JSON `null`. A derived Default wrote `null` into a column
+    /// documented as `default '{}'`, so adapters that don't collect attributes yet
+    /// (Zed, OpenCode) stored a different empty than the DDL promises, and
+    /// `attrs ? 'key'` / `attrs->>'k'` behave differently on the two.
+    fn default() -> Self {
+        Self {
+            turn_index: 0,
+            user_text: None,
+            assistant_text: String::new(),
+            started_at: None,
+            attrs: serde_json::Value::Object(serde_json::Map::new()),
+            facts: TurnFacts::default(),
+        }
+    }
 }
 
 /// Promoted per-turn attributes. Token counts are kept SPLIT — folding cache reads

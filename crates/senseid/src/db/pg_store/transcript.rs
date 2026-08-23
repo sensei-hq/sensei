@@ -27,7 +27,9 @@ impl PgStore {
                    started_at     = EXCLUDED.started_at,
                    -- COALESCE, not overwrite: a re-ingest by an adapter that does not
                    -- yet collect these must not erase what another pass captured.
-                   attrs          = CASE WHEN EXCLUDED.attrs = '{}'::jsonb
+                   -- `'{}'` AND `'null'`: an adapter that supplies neither must not
+                   -- erase attributes another pass captured.
+                   attrs          = CASE WHEN EXCLUDED.attrs IN ('{}'::jsonb, 'null'::jsonb)
                                          THEN activity.transcript_turns.attrs ELSE EXCLUDED.attrs END,
                    tokens_in      = COALESCE(EXCLUDED.tokens_in,    activity.transcript_turns.tokens_in),
                    tokens_out     = COALESCE(EXCLUDED.tokens_out,   activity.transcript_turns.tokens_out),
