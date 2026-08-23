@@ -443,6 +443,10 @@ mod knowledge_tests;
 #[allow(clippy::await_holding_lock)]
 mod run_tests;
 #[cfg(test)]
+// Test gates are blocking `std::sync::Mutex` held across awaits ON PURPOSE —
+// see `crate::tasks::test_support::TestGate` for why an async mutex loses
+// wakeups across per-test runtimes. One allow per test module, not per site.
+#[allow(clippy::await_holding_lock)]
 mod playbook_tests;
 #[cfg(test)]
 mod pack_resolution_tests;
