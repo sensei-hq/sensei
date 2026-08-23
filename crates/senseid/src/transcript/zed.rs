@@ -229,8 +229,9 @@ pub fn parse_zed_thread(content: &str) -> Vec<TranscriptTurn> {
                 turn_index: idx,
                 user_text: Some(m.text.trim().to_string()),
                 assistant_text: String::new(),
-                started_at: None, // Zed has no per-message timestamps
-            });
+                started_at: None, // Zed has no per-message timestamps,
+                        ..Default::default()
+                    });
         } else if let Some(t) = cur.as_mut() {
             let text = m.text.trim();
             if !text.is_empty() {

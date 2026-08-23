@@ -18,12 +18,39 @@ use crate::tasks::{Task, TaskKind};
 use std::path::PathBuf;
 
 /// One user-prompt -> assistant-response turn parsed from a transcript.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct TranscriptTurn {
     pub turn_index: i32,
     pub user_text: Option<String>,
     pub assistant_text: String,
     pub started_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// Everything else the transcript record carried, verbatim. Adapters see far
+    /// more than we model; anything unpromoted used to be discarded at parse time
+    /// and was then unrecoverable without the original file. Default `{}` for an
+    /// adapter that doesn't (yet) collect it.
+    pub attrs: serde_json::Value,
+    /// Per-turn signals promoted out of `attrs` because something reads them.
+    /// All `Option` — a transcript that doesn't carry one stays honest-null rather
+    /// than recording a fabricated 0/false.
+    pub facts: TurnFacts,
+}
+
+/// Promoted per-turn attributes. Token counts are kept SPLIT — folding cache reads
+/// into a single input total is what makes the session-grain `tokens_in` read ~10x
+/// high for cost (measured: ~98% of it is cache reads).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct TurnFacts {
+    pub tokens_in: Option<i64>,
+    pub tokens_out: Option<i64>,
+    pub cache_read: Option<i64>,
+    pub cache_write: Option<i64>,
+    pub stop_reason: Option<String>,
+    pub is_sidechain: Option<bool>,
+    pub skill: Option<String>,
+    pub plugin: Option<String>,
+    pub git_branch: Option<String>,
+    pub effort: Option<String>,
+    pub service_tier: Option<String>,
 }
 
 /// A synthesized hook-stream event reconstructed from a transcript (#75) — the

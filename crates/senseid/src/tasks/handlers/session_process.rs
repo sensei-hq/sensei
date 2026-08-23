@@ -338,6 +338,7 @@ mod tests {
             user_text: user.map(|s| s.to_string()),
             assistant_text: asst.to_string(),
             started_at: None,
+            ..Default::default()
         }
     }
 
