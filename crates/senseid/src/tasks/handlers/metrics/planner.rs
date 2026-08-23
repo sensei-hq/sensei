@@ -74,16 +74,22 @@ pub(super) enum DayKeyedGroup {
     /// bucketed on `sessions.started_at`. Session-source, so it DOES ride the same
     /// day cadence as `session_outcomes`.
     SessionProcess,
+    /// Context-reuse (`cache_reuse`): one ratio per (day, repository) from the
+    /// per-turn token split, bucketed on `sessions.started_at`. Session-source, so
+    /// it rides the same day cadence as `session_outcomes` — a past day's sessions
+    /// are settled and can be honestly recomputed, unlike a snapshot.
+    Usage,
 }
 
 impl DayKeyedGroup {
     /// Every day-keyed group, in a stable order.
-    pub(super) const ALL: [DayKeyedGroup; 5] = [
+    pub(super) const ALL: [DayKeyedGroup; 6] = [
         DayKeyedGroup::SessionOutcomes,
         DayKeyedGroup::Autonomy,
         DayKeyedGroup::Churn,
         DayKeyedGroup::Quality,
         DayKeyedGroup::SessionProcess,
+        DayKeyedGroup::Usage,
     ];
 
     /// The base [`MetricGroup`] this day-keyed group computes — the single source of
@@ -96,6 +102,7 @@ impl DayKeyedGroup {
             DayKeyedGroup::Churn => MetricGroup::Churn,
             DayKeyedGroup::Quality => MetricGroup::Quality,
             DayKeyedGroup::SessionProcess => MetricGroup::SessionProcess,
+            DayKeyedGroup::Usage => MetricGroup::Usage,
         }
     }
 
@@ -161,6 +168,17 @@ impl DayKeyedGroup {
                       WHERE s.project_id   = $1
                         AND ae.event_type  = 'UserPromptSubmit'
                  ) u"
+            }
+            DayKeyedGroup::Usage => {
+                // Days with token-accounted turns. Only claude_code carries the
+                // split so far, so a day of Zed/OpenCode-only work has no data day
+                // and is not planned — which is honest: we cannot measure reuse we
+                // never captured.
+                "SELECT DISTINCT date_trunc('day', s.started_at)::date AS day
+                   FROM activity.transcript_turns tt
+                   JOIN activity.sessions         s ON s.client_session_id = tt.session_id
+                  WHERE s.project_id  = $1
+                    AND tt.tokens_in IS NOT NULL"
             }
             DayKeyedGroup::SessionProcess => {
                 // Days of sessions the LLM analyzer has SCORED (props ? 'process'),
@@ -273,6 +291,7 @@ async fn run_computer(
         MetricGroup::Autonomy => super::autonomy::compute(ctx, project_raw, as_of).await,
         MetricGroup::Knowledge => super::knowledge::compute(ctx, project_raw, as_of).await,
         MetricGroup::Cost => super::cost::compute(ctx, project_raw, as_of).await,
+        MetricGroup::Usage => super::usage::compute(ctx, project_raw, as_of).await,
         MetricGroup::Coverage => super::coverage::compute(ctx, project_raw, as_of).await,
         MetricGroup::SessionProcess => super::session_process::compute(ctx, project_raw, as_of).await,
     }
