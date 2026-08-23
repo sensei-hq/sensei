@@ -1,5 +1,16 @@
     use super::*;
 
+    /// Both learned-rule tests begin with a GLOBAL
+    /// `delete from sensei.playbook_rules where source='learned'` as their clean
+    /// slate, then insert and read back their own proposal. Run in parallel they
+    /// wipe each other's fixture mid-test: the row is inserted, the sibling's
+    /// delete removes it, and the `.find(...).unwrap()` that follows panics.
+    /// The table-wide delete IS the intended setup, so it can't be scoped per
+    /// test — serialise instead. See `crate::tasks::test_support::TestGate` for
+    /// why the gate blocks rather than awaiting.
+    static LEARNED_RULES_LOCK: crate::tasks::test_support::TestGate =
+        crate::tasks::test_support::TestGate::new();
+
     #[tokio::test]
     async fn playbook_rules_load_and_run_roundtrip() {
         let Ok(pg) = PgStore::connect_test().await else { return; };
@@ -127,6 +138,7 @@
 
     #[tokio::test]
     async fn apply_learn_plan_reweights_and_upserts() {
+        let _guard = LEARNED_RULES_LOCK.enter();
         let Ok(pg) = PgStore::connect_test().await else { return; };
         pg.execute_raw("delete from sensei.playbook_rules where source='learned'").await.ok(); // clean slate — shared test DB
         let rules = pg.list_playbook_rules().await.unwrap();
@@ -149,6 +161,7 @@
 
     #[tokio::test]
     async fn accept_flips_proposal_enabled() {
+        let _guard = LEARNED_RULES_LOCK.enter();
         let Ok(pg) = PgStore::connect_test().await else { return; };
         pg.execute_raw("delete from sensei.playbook_rules where source='learned'").await.ok(); // clean slate — shared test DB
         use crate::playbook::{LearnPlan, LearnedRule, Lifecycle, Intent, Risk};
