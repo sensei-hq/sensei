@@ -2219,12 +2219,23 @@ mod tests {
 
         // ── DRIVE: replicate the scheduler's enqueue, run the REAL worker pool ──
         let ctx = make_ctx().await;
+        // `active_task_names()` is a GLOBAL registry read, and the health roll-up
+        // tests seed ACTIVE synthetic metrics (`_test:health:<uuid>:…`) with their
+        // own task_name. Those make the parent fan out extra children, and — worse —
+        // the count moves between this read and the parent's own read when a sibling
+        // test seeds or purges concurrently. Counting them made the drain assertion
+        // race: observed `pending=0 blocked=0 running=0 completed=40` with the graph
+        // fully drained and only the arithmetic wrong.
+        //
+        // Depend on the REAL base groups only. Synthetic ones can add tasks but never
+        // remove them, so `completed >= expected` stays a valid floor either way.
         let base_names: Vec<String> = pg
             .active_task_names()
             .await
             .unwrap()
             .into_iter()
             .filter(|t| t != HEALTH_TASK_NAME) // `health` is the ComputeHealth kind, not a base group
+            .filter(|t| !t.starts_with("_test:")) // another test's fixture, not a shipped group
             .collect();
         for g in ["session_outcomes", "churn", "quality", "autonomy", "knowledge", "coverage"] {
             assert!(base_names.iter().any(|t| t == g), "base group `{g}` is active in the registry: {base_names:?}");
