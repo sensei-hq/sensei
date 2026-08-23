@@ -36,6 +36,7 @@ pub mod corrections;
 pub mod verdicts;
 pub mod ranking;
 pub mod model_insight;
+pub mod cost;
 pub mod runs;
 pub mod git_identity;
 pub mod resolution;

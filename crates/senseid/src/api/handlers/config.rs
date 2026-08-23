@@ -28,6 +28,21 @@ pub(crate) async fn set_config_handler(
     Json(body): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     if let Some(obj) = body.as_object() {
+        // Validate BEFORE writing anything, so a bad value in a multi-key PUT
+        // can't leave half of it applied.
+        for (key, val) in obj {
+            let v = match val { serde_json::Value::String(s) => s.clone(), other => other.to_string() };
+            if key == crate::cost::SUBSCRIPTION_CONFIG_KEY
+                && !v.trim().is_empty()
+                && crate::cost::Subscription::parse(Some(&v)).is_none()
+            {
+                // Storing an unparseable plan would silently disable cost — the
+                // screen would read "not configured" while the user believes they
+                // configured it. Reject instead. (Blank is allowed: that is how a
+                // user clears the setting.)
+                return Err(StatusCode::BAD_REQUEST);
+            }
+        }
         for (key, val) in obj {
             let v = match val { serde_json::Value::String(s) => s.clone(), other => other.to_string() };
             state.pg.set_config(key, &v).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
