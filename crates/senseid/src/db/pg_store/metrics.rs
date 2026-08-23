@@ -240,6 +240,70 @@ impl PgStore {
     /// (honouring its `nulls not distinct`); `ON CONFLICT ON CONSTRAINT <name>`
     /// would not resolve against an index.
     #[allow(clippy::too_many_arguments)]
+    /// Metric correlations for a project: which signals move together.
+    ///
+    /// Reads the daily project-scope values as (project, day) CELLS and the
+    /// registry's `derives_from` suppression lists, then defers to
+    /// [`crate::correlate::correlations`] for the statistics — the maths is pure
+    /// and unit-tested there, this only supplies observations.
+    /// `project_id = None` correlates across EVERY project (the portfolio view).
+    ///
+    /// That is usually the useful call. Per project the data is thin — measured
+    /// here, most projects have zero daily rows and the busiest yields exactly one
+    /// reportable pair — because a correlation needs both metrics present on the
+    /// same day, repeatedly. Pooling projects raises the paired count enough for
+    /// the weaker-but-real relationships to clear the gates, at the cost of mixing
+    /// codebases: a portfolio finding describes how the SIGNALS relate, not how one
+    /// project behaves.
+    pub async fn get_metric_correlations(
+        &self,
+        project_id: Option<&uuid::Uuid>,
+    ) -> Result<serde_json::Value, String> {
+        // Cells are keyed by (project, day) even in the portfolio view: pooling two
+        // projects' values into one day would correlate unrelated codebases and
+        // manufacture a relationship that exists in neither.
+        let obs: Vec<(uuid::Uuid, chrono::NaiveDate, String, f64)> = sqlx_core::query_as::query_as(
+            "SELECT pm.project_id, pm.computed_on, m.key, pm.value::float8 \
+               FROM sensei.project_metrics pm \
+               JOIN sensei.metrics m ON m.id = pm.metric_id \
+              WHERE ($1::uuid IS NULL OR pm.project_id = $1) \
+                AND pm.grain = 'daily' \
+                AND pm.scope = 'user' AND pm.value IS NOT NULL",
+        )
+        .bind(project_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+        let mut by_day: std::collections::HashMap<
+            (uuid::Uuid, chrono::NaiveDate),
+            crate::correlate::Cell,
+        > = std::collections::HashMap::new();
+        for (pid, day, key, value) in obs {
+            by_day.entry((pid, day)).or_default().insert(key, value);
+        }
+        let cells: Vec<crate::correlate::Cell> = by_day.into_values().collect();
+
+        let rows: Vec<(String, Option<Vec<String>>)> = sqlx_core::query_as::query_as(
+            "SELECT key, derives_from FROM sensei.metrics WHERE derives_from IS NOT NULL",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        let derives: std::collections::HashMap<String, Vec<String>> =
+            rows.into_iter().filter_map(|(k, v)| v.map(|v| (k, v))).collect();
+
+        let found = crate::correlate::correlations(&cells, &derives);
+        Ok(serde_json::json!({
+            "cells": cells.len(),
+            "min_pairs": crate::correlate::MIN_PAIRS,
+            "min_rho": crate::correlate::MIN_RHO,
+            "correlations": found.iter().map(|c| serde_json::json!({
+                "a": c.a, "b": c.b, "rho": c.rho, "n": c.n,
+            })).collect::<Vec<_>>(),
+        }))
+    }
+
     /// Weeks of composite-score history the health payload carries. Twelve ≈ a
     /// quarter: enough to read a direction, few enough to plot legibly in the
     /// hero's 240px sparkline. The label the card renders says the same thing, so

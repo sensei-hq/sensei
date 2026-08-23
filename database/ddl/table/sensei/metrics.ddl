@@ -17,6 +17,16 @@ create table if not exists metrics (
 , weight            numeric          not null default 1
 , target            numeric
 , rating_scale      jsonb            -- 5 thresholds (improvement order) → a 0-5 rating; null = not rated (neutral/uncomputed). See docs/spec/2026-08-20-metric-rating-scales-health.md
+-- Metric keys whose relationship to THIS metric is definitional or mechanical
+-- rather than informative — the suppression list for correlation analysis.
+-- Measured on real data, an unfiltered ranking is topped by arithmetic:
+-- tokens_in_per_day vs tokens_per_day correlates 1.00 because the second
+-- CONTAINS the first, and session_duration vs the token counts sits at 0.89-0.92
+-- because a longer session mechanically consumes more. Presenting those as
+-- insights would bury the genuine findings (spec_depth vs spec_deviation_rate at
+-- -0.54, throughput vs shallow-analysis at 0.77). Symmetric by convention: list
+-- the relationship on either side and the engine treats it both ways.
+, derives_from      text[]
 , effective_from    date             not null default current_date
 , effective_until   date
 , retire_reason     text
