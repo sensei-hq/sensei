@@ -257,9 +257,41 @@ Verified the sources actually survive before agreeing:
 | **opencode** | 2026-01-07 → 2026-08-23 · 246 turns / 30 sessions | own store, files back to 2024-12 | ✅ all |
 | **claude_code** | 2026-05-21 → 2026-08-24 · 2,007 turns / 112 sessions | **72 of 77** cursor files present | ⚠️ 5 files gone |
 
-**Exact loss: 73 turns across 5 sessions**, all from **2026-07-21 → 07-23** —
-`strategos/gateway` (50), `dbd-rs` (10 + 1), `alert-platform` (10),
-`strategos` (2). That is **1.7% of 4,239 turns**.
+**73 turns across 5 sessions** have no surviving transcript, all from
+**2026-07-21 → 07-23** — `strategos/gateway` (50), `dbd-rs` (10 + 1),
+`alert-platform` (10), `strategos` (2). That is **1.7% of 4,239 turns**.
+
+Those are pre-rename paths, and the renames **are** known — `folder_path_aliases`
+already holds exactly them:
+
+```
+/Users/Jerry/Developer/dbd-rs            → /Users/Jerry/Developer/dbd
+/Users/Jerry/Developer/strategos/gateway → /Users/Jerry/Developer/gateway
+/Users/Jerry/Developer/strategos/monorepo→ /Users/Jerry/Developer/torii
+```
+
+and `repair_sessions_from_transcripts` resolves through `find_folder_for_path`,
+which is alias-aware. So those sessions **attribute correctly** — the rename is
+not the problem.
+
+The problem is narrower: **the transcript files themselves are gone.** The
+directories survive holding only `memory/`, and the session UUIDs appear nowhere
+on disk. An alias resolves a *path*; it cannot resurrect a *deleted file*. So
+these 73 turns cannot be regenerated.
+
+**Which makes the blanket wipe the wrong shape.** They are already ingested and
+already attributable, so the fix is a carve-out rather than an accepted loss:
+
+> Truncate the derived layer **except rows whose source unit no longer exists**
+> (`transcript_cursor.file_path` absent on disk for a file-backed source).
+> Reprocess everything else.
+
+Zero loss, and the reprocess still yields one consistent definition.
+
+Two of the four cwds — `/Users/Jerry/Developer/strategos` and
+`/Users/Jerry/Work/Alert/repos/alert-platform` — have **no alias and no folder**,
+so 12 of those turns would orphan even with their files. Worth adding aliases
+before Phase 8 runs.
 
 And to answer the May question directly: **all 319 Claude turns predating the
 oldest surviving file are in files that still exist** — zero are in the vanished
