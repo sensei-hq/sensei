@@ -41,6 +41,10 @@ carry it.** That is why they are one document and not three projects.
 - **Q13** *There is no dōjō Rust service. Dōjō is entirely Supabase-backed.* This voids the "Fork 1 / Supabase = auth ONLY" decision completely, and makes sensei→Supabase login the **only** transport rather than one option. See §3.2 for what it strands.
 - **Q14** *Self-hosted dōjō is dropped*, but `dojo_url` stays **configurable** — a self-host is then just the same deployment at a different URL, with no second auth plane to maintain.
 - **Q18** *Cross-tenant user-metric visibility is deferred* — acknowledged as needed, not blocking. Until decided the safe default holds: **home-tenant admins only**, client sees repo-scope aggregates.
+- **Q12** *A turn is **one exchange**, not prompt-to-prompt.* Rationale: even an acknowledgement is a turn, and **fewer turns is often better** — a definition that folds several exchanges into one prompt boundary hides exactly the signal the metric exists to show. This is the transcript definition, so the merge keeps `transcript_turns`' grain. **It moves numbers** — see §3.3.
+- **Q15** *The daemon gets a **restricted Postgres role***, not the default `authenticated`. Its JWT should be able to do only what sync needs.
+- **Q16** *Git-alias claiming: **verified-email match only.*** No admin-review path in v1.
+- **Q17** *Reuse GitHub's access control rather than inventing one.* GitHub already knows the user's **verified emails** (`user:email`) and **repo access** (`read:org`, collaborator lists). Take both as the source of truth; anything GitHub cannot answer is **dōjō-admin managed**. Email **domain** (`sensei-hq.com`, `example-corp.com` vs `gmail.com`/`icloud.com`) is a **hint for proposing** an org mapping — never an authorization signal on its own (see §3.3).
 - Mirrored schema: same table set both sides; locally `tenant_id` is nullable and filled on dōjō registration.
 
 ---
@@ -235,6 +239,54 @@ create table repositories_in_projects (
 
 Every roll-up is still unambiguous, because roll-ups are always evaluated within
 one tenant. The property Q3 was protecting survives; only its scope narrows.
+
+### 3.3 Two answers with teeth (Q12, Q17)
+
+#### Q12 moves numbers, and that has to be deliberate
+
+Choosing **per-exchange** is the right call for the reason you gave — an
+acknowledgement is a turn, and fewer turns is often better, so a boundary that
+folds several exchanges into one prompt would hide the signal. But it is not a
+free rename:
+
+- **69 of 297 sessions disagree** on turn count between the two definitions today. Every turn-counting metric moves for those sessions.
+- Four columns on `activity.turns` are defined **on the prompt-to-prompt boundary** and do not survive the change unaltered: `segment` (idle-gap sub-session), `is_correction` (this prompt corrected the last), `triage_signal`, `tool_calls`. Under per-exchange, `is_correction` and `segment` need **redefinition**, not just recomputation.
+- Historical rows computed under the old definition are not comparable to new ones.
+
+So the merge must:
+
+1. Pick a **cutover date** and record it, so a chart spanning it can mark the discontinuity rather than showing a phantom trend.
+2. **Recompute history** under the new definition where the raw transcript survives (it does — that is what `transcript_turns` is), so the series is consistent rather than spliced.
+3. Redefine the four derived columns explicitly, in the spec, before writing code.
+
+This is Phase 8's real work. The table merge is the easy half.
+
+#### Q17 — reuse GitHub, with one boundary
+
+Taking GitHub as the source of truth is right and removes most of the identity
+problem: its **verified emails** are verified *by GitHub* (mailbox control
+proven), which is a far stronger assertion than a git commit trailer — anyone can
+put any address in a commit. So:
+
+```
+git commit email  ──matches──►  a GitHub-verified email of the authenticated user
+                                        │
+                                        ▼
+                                  alias is CLAIMED (Q16)
+otherwise ─────────────────────► unclaimed; stays local, never attributed in dōjō
+```
+
+That closes the attribution attack from the ADR without an admin queue.
+
+**The one boundary:** the email-domain heuristic is a *suggestion*, not
+authorization. `dev@example-corp.com` proves mailbox control at that
+domain — it does **not** prove membership of the Seneca Global org. **GitHub org
+membership is the authoritative signal**; the domain merely proposes *which*
+tenant to offer. Keeping those separate is what stops "I own an address at your
+domain" from becoming "I am in your dōjō".
+
+Scope note: this needs `user:email` and `read:org`. Auth doc Scenario 21 already
+covers reduced scope — preserve existing rows, log, never delete.
 
 ### 3.2 What Q13 strands — the transport that was never live
 
@@ -506,13 +558,13 @@ Phases 0, 3 and 4 need no decisions and no dōjō. They are the recommended star
 | ~~Q13~~ | **Answered:** no service exists — dōjō is Supabase-backed end to end (§3.2) | — | — |
 | ~~Q14~~ | **Answered:** self-hosting dropped; `dojo_url` stays configurable | — | — |
 | ~~Q18~~ | **Deferred** (needed eventually). Default meanwhile: home-tenant admins only | — | — |
-| Q15 | Daemon JWT — restricted Postgres role, or full `authenticated`? | 7 | restricted |
-| Q16 | Git-alias claiming — verified-email match only, or admin review? | 7 | never silent |
-| Q17 | Persona email disjointness — rely on discipline + a loud `unique(dojo_user_id)` failure, or intercept the auth callback? | 6 | discipline + loud failure |
-| Q12 | Post-merge turn definition: prompt-to-prompt or per-exchange? | 8 | *(shifts turn-counting metrics; must be dated)* |
+| ~~Q15~~ | **Answered:** restricted Postgres role | — | — |
+| ~~Q16~~ | **Answered:** verified-email match only | — | — |
+| ~~Q17~~ | **Answered:** reuse GitHub's verified emails + repo access; rest is admin-managed; domain is a hint only | — | — |
+| ~~Q12~~ | **Answered:** **per-exchange** — fewer turns is often better, so the boundary must not hide it (§3.3) | — | — |
 
-**Answered:** Q1 (dōjō wins) · Q2 (auth-gated auto-sync) · Q3 (one repo, one project *per tenant*) · Q4 (self + admins) · Q5 (views first) · Q6 (keep retired history) · Q7 (all workers local) · Q8 (multi-tenant repos, one owner) · Q9 (inactive until activated) · Q10 (web = viewers) · Q11 (teams now, UI later) · Q13 (no Rust service) · Q14 (no self-hosting).
+**Answered:** Q1 (dōjō wins) · Q2 (auth-gated auto-sync) · Q3 (one repo, one project *per tenant*) · Q4 (self + admins) · Q5 (views first) · Q6 (keep retired history) · Q7 (all workers local) · Q8 (multi-tenant repos, one owner) · Q9 (inactive until activated) · Q10 (web = viewers) · Q11 (teams now, UI later) · Q12 (per-exchange turns) · Q13 (no Rust service) · Q14 (no self-hosting) · Q15 (restricted role) · Q16 (verified-email claiming) · Q17 (reuse GitHub).
 
-**Still open:** Q12 (post-merge turn definition) · Q15 (daemon JWT role) · Q16 (git-alias claiming) · Q17 (persona email disjointness).
+**All 18 answered or deferred.** The design is decided; what remains is sequencing and build.
 
 **Deferred:** Q18 (cross-tenant user-metric visibility).
