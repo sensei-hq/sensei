@@ -1009,13 +1009,21 @@ impl PgStore {
     pub async fn set_session_metadata(
         &self, client_session_id: &str, provider: Option<&str>, model: Option<&str>,
         tokens_in: Option<i32>, tokens_out: Option<i32>,
+        split: Option<&crate::transcript::SessionTokens>,
     ) -> Result<(), String> {
+        // COALESCE throughout: a source that reports no split must not erase what
+        // another pass captured, and `tokens_in` keeps its "all input" meaning.
         sqlx_core::query::query(
             "UPDATE activity.sessions
                 SET provider       = COALESCE($2, provider),
                     model          = COALESCE($3, model),
                     tokens_in      = COALESCE($4, tokens_in),
                     tokens_out     = COALESCE($5, tokens_out),
+                    tokens_fresh   = COALESCE($6, tokens_fresh),
+                    cache_read     = COALESCE($7, cache_read),
+                    cache_write    = COALESCE($8, cache_write),
+                    tokens_reasoning = COALESCE($9, tokens_reasoning),
+                    metered_cost   = COALESCE($10, metered_cost),
                     meta_synced_at = now()
               WHERE client_session_id = $1",
         )
@@ -1024,6 +1032,11 @@ impl PgStore {
         .bind(model)
         .bind(tokens_in)
         .bind(tokens_out)
+        .bind(split.map(|t| t.input))
+        .bind(split.and_then(|t| t.cache_read))
+        .bind(split.and_then(|t| t.cache_write))
+        .bind(split.and_then(|t| t.reasoning))
+        .bind(split.and_then(|t| t.cost))
         .execute(&self.pool)
         .await
         .map_err(|e| e.to_string())?;
