@@ -208,11 +208,28 @@ pub fn extract_model(content: &str) -> Option<(String, String)> {
 
 /// Parse a Zed thread JSON into user-prompt-bounded turns (mirrors the Claude
 /// adapter's grain). Pure + deterministic.
+///
+/// Turns are STAMPED by spreading them evenly across the thread's
+/// `[initial_project_snapshot.timestamp, updated_at]` window — the same treatment
+/// `parse_zed_session` already gave synthesized events, now shared via
+/// [`thread_span_ms`] / [`spread_ms`] rather than duplicated.
+///
+/// They previously carried `started_at: None` on the grounds that "Zed has no
+/// per-message timestamps". True per MESSAGE, but the THREAD records its span, so
+/// the conclusion was wrong — and the cost was severe: every day-keyed metric
+/// buckets on `started_at`, so all 1,986 captured Zed turns were invisible to the
+/// metric layer despite being ingested. A turn's stamp is an interpolation, not a
+/// reading; it places a turn in the right day and order, which is what day-grain
+/// metrics need.
 pub fn parse_zed_thread(content: &str) -> Vec<TranscriptTurn> {
     let Ok(v) = serde_json::from_str::<serde_json::Value>(content) else {
         return Vec::new();
     };
     let msgs = normalize_messages(&v);
+    // None when the thread records no start: a turn then keeps a NULL stamp rather
+    // than being dated to the epoch, which would file real work under 1970.
+    let span = thread_span_ms(&v);
+    let prompt_total = msgs.iter().filter(|m| m.is_user && !m.text.trim().is_empty()).count() as i64;
     let mut turns: Vec<TranscriptTurn> = Vec::new();
     let mut cur: Option<TranscriptTurn> = None;
     let mut idx = 0i32;
@@ -229,9 +246,12 @@ pub fn parse_zed_thread(content: &str) -> Vec<TranscriptTurn> {
                 turn_index: idx,
                 user_text: Some(m.text.trim().to_string()),
                 assistant_text: String::new(),
-                started_at: None, // Zed has no per-message timestamps,
-                        ..Default::default()
-                    });
+                started_at: span.map(|sp| {
+                    let ms = spread_ms(sp, i64::from(idx) - 1, prompt_total);
+                    chrono::DateTime::from_timestamp_millis(ms).unwrap_or_default()
+                }),
+                ..Default::default()
+            });
         } else if let Some(t) = cur.as_mut() {
             let text = m.text.trim();
             if !text.is_empty() {
@@ -286,21 +306,9 @@ pub fn parse_zed_session(content: &str) -> Option<SynthSession> {
         return None;
     }
 
-    let start = snapshot_start_ms(&v).unwrap_or(0);
-    let end = v
-        .get("updated_at")
-        .and_then(|u| u.as_str())
-        .and_then(parse_iso_ms)
-        .unwrap_or(start)
-        .max(start);
+    let span = thread_span_ms(&v).unwrap_or((0, 0));
     let n = seq.len() as i64;
-    let ts_at = |i: i64| -> i64 {
-        if n <= 1 {
-            start
-        } else {
-            start + (end - start) * i / (n - 1)
-        }
-    };
+    let ts_at = |i: i64| -> i64 { spread_ms(span, i, n) };
 
     let mut events: Vec<SynthEvent> = Vec::with_capacity(seq.len() + 1);
     for (i, ev) in seq.into_iter().enumerate() {
@@ -330,7 +338,7 @@ pub fn parse_zed_session(content: &str) -> Option<SynthSession> {
         file_path: None,
         prompt: None,
         tool_input: None,
-        ts: end,
+        ts: span.1, // the thread's end — the terminal Stop closes the window
     });
     Some(SynthSession { cwds, events })
 }
@@ -360,6 +368,29 @@ fn snapshot_start_ms(v: &serde_json::Value) -> Option<i64> {
         .and_then(|s| s.get("timestamp"))
         .and_then(|t| t.as_str())
         .and_then(parse_iso_ms)
+}
+
+/// The thread's `[start, end]` span in epoch ms: `initial_project_snapshot
+/// .timestamp` to top-level `updated_at`.
+///
+/// `None` when the thread carries no start — a turn then keeps a NULL
+/// `started_at` rather than being stamped with a guessed day, which would place
+/// real work on a date it did not happen.
+fn thread_span_ms(v: &serde_json::Value) -> Option<(i64, i64)> {
+    let start = snapshot_start_ms(v)?;
+    let end = v
+        .get("updated_at")
+        .and_then(|u| u.as_str())
+        .and_then(parse_iso_ms)
+        .unwrap_or(start)
+        .max(start);
+    Some((start, end))
+}
+
+/// Epoch ms for item `i` of `n`, spread evenly across `[start, end]`.
+fn spread_ms(span: (i64, i64), i: i64, n: i64) -> i64 {
+    let (start, end) = span;
+    if n <= 1 { start } else { start + (end - start) * i / (n - 1) }
 }
 
 /// Normalize both schema shapes (tagged `User`/`Agent` vs flat `role`) into a
@@ -524,6 +555,61 @@ mod tests {
         {"id": "2", "role": "assistant", "segments": [{"type": "text", "text": "Checking."}], "tool_uses": [{"id": "t1", "name": "find_path", "input": {"path": "/Users/Jerry/Developer/dbd/src/toc.rs"}}], "tool_results": []}
       ]
     }"#;
+
+    #[test]
+    fn turns_are_stamped_across_the_thread_window() {
+        // The bug this fixes: every Zed turn carried started_at = None, so all
+        // 1,986 captured turns were invisible to day-keyed metrics. Zed has no
+        // PER-MESSAGE timestamp, but the THREAD records its span, which is enough
+        // to place a turn in the right day.
+        let turns = parse_zed_thread(V3);
+        assert_eq!(turns.len(), 2);
+        let first = turns[0].started_at.expect("first turn is stamped");
+        let second = turns[1].started_at.expect("second turn is stamped");
+        assert_eq!(first.to_rfc3339(), "2026-05-15T10:00:00+00:00", "first sits at the window start");
+        assert_eq!(second.to_rfc3339(), "2026-05-15T10:30:00+00:00", "last sits at updated_at");
+        assert!(first < second, "turns stay monotonic");
+    }
+
+    #[test]
+    fn a_single_turn_sits_at_the_window_start_not_the_end() {
+        // With one prompt there is no interval to spread over; anchoring to the
+        // start keeps it inside the session rather than at its close.
+        let turns = parse_zed_thread(V2);
+        assert_eq!(turns.len(), 1);
+        assert_eq!(
+            turns[0].started_at.unwrap().to_rfc3339(),
+            "2026-03-01T12:00:00+00:00"
+        );
+    }
+
+    #[test]
+    fn a_thread_with_no_snapshot_timestamp_keeps_a_null_stamp() {
+        // Honest-null: guessing would file real work under the epoch (1970), which
+        // is worse than absent — a day-keyed metric would then bucket it there.
+        let no_ts = r#"{
+          "version": "0.3.0",
+          "updated_at": "2026-05-15T10:30:00.000Z",
+          "messages": [{"User": {"content": [{"Text": "hello"}]}}]
+        }"#;
+        let turns = parse_zed_thread(no_ts);
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].started_at, None);
+    }
+
+    #[test]
+    fn turn_stamps_agree_with_the_synthesized_event_window() {
+        // Both paths derive from the same span helpers, so a turn can never land
+        // outside the events reconstructed from the same thread.
+        let turns = parse_zed_thread(V3);
+        let sess = parse_zed_session(V3).expect("session parses");
+        let first_ev = sess.events.iter().map(|e| e.ts).min().unwrap();
+        let last_ev = sess.events.iter().map(|e| e.ts).max().unwrap();
+        for t in &turns {
+            let ms = t.started_at.unwrap().timestamp_millis();
+            assert!((first_ev..=last_ev).contains(&ms), "turn {ms} outside [{first_ev}, {last_ev}]");
+        }
+    }
 
     #[test]
     fn extract_model_reads_provider_and_model() {
