@@ -33,6 +33,26 @@ const DEFAULT_RETENTION_DAYS: i32 = 90;
 /// its day never got captured into `sensei.project_metrics`.
 const BACKSTOP_FLOOR_DAYS: i32 = 90;
 
+/// Keep raw task-execution rows for two weeks, then roll them into
+/// `activity.task_execution_daily`. Much shorter than activity retention (90d)
+/// because a successful job receipt has no individual value once its day is
+/// counted — and the volume is the problem: 4.8M rows / 1.5 GB accumulated in
+/// 69 days with nothing pruning them, 83% of it per-file index churn.
+const DEFAULT_EXECUTION_RETENTION_DAYS: i32 = 14;
+
+/// Keep FAILED task executions far longer than successful ones. Their
+/// `error_message`, `path` and `retry_number` are the reason to keep a log, and
+/// they are rare enough to be free (32,664 of 4.8M — 0.7%).
+const DEFAULT_EXECUTION_FAILED_RETENTION_DAYS: i32 = 90;
+
+/// Positive-integer config with a default — shared by the two execution-retention
+/// knobs so neither can drift from the other's parsing rules.
+fn parse_positive(cfg: Option<String>, default: i32) -> i32 {
+    cfg.and_then(|v| v.trim().parse::<i32>().ok())
+        .filter(|n| *n > 0)
+        .unwrap_or(default)
+}
+
 fn parse_interval(cfg: Option<String>) -> u64 {
     cfg.and_then(|v| v.trim().parse::<u64>().ok())
         .filter(|n| *n > 0)
@@ -81,6 +101,34 @@ async fn run(pg: Arc<PgStore>) {
             pg.get_config("activity.capture_backstop_days").await.ok().flatten(),
             days,
         );
+        // Task-execution history rides the same tick rather than getting its own
+        // pruner: it is the same concern (reclaim captured activity) on the same
+        // schedule, and a second loop would be a second thing to keep in sync.
+        //
+        // Its retention is SEPARATE from `activity.retention_days` and much
+        // shorter, because the two answer different questions. Raw activity is
+        // the evidence metrics are derived from; a task-execution row is a job
+        // receipt whose value collapses into a daily count once it succeeds.
+        // Failures keep their own, longer window — the error message is the
+        // whole point of the log, and they are ~0.7% of rows.
+        let exec_days = parse_positive(
+            pg.get_config("tasks.execution_retention_days").await.ok().flatten(),
+            DEFAULT_EXECUTION_RETENTION_DAYS,
+        );
+        let exec_failed_days = parse_positive(
+            pg.get_config("tasks.execution_failed_retention_days").await.ok().flatten(),
+            DEFAULT_EXECUTION_FAILED_RETENTION_DAYS,
+        );
+        match pg.rollup_and_prune_task_executions(exec_days, exec_failed_days).await {
+            Ok((rolled, pruned)) if pruned > 0 => tracing::info!(
+                rolled, pruned,
+                "activity_pruner: rolled up + reclaimed task_executions older than {exec_days}d \
+                 (failures kept {exec_failed_days}d)",
+            ),
+            Ok(_) => {}
+            Err(e) => tracing::warn!(error = %e, "activity_pruner: task_execution rollup failed"),
+        }
+
         // The capture-before-reclaim guard (I20) is scoped inside prune_activity to
         // metrics with `capture_source = 'session'` — the registry's own record of
         // which metrics are session-derived delivery signals, so a git/snapshot row

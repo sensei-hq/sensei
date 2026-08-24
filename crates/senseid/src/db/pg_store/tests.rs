@@ -115,14 +115,14 @@
         let fp = format!("/_test/reconcile/{}", uuid::Uuid::new_v4());
 
         // A — orphaned: running, started well before the cutoff (prior session).
-        let a = s.start_task_execution(1, None, "ProcessFile", &fp, "a", 0).await.unwrap();
+        let a = s.start_task_execution(1, None, &crate::tasks::TaskKind::ProcessFile.to_string(), &fp, "a", 0).await.unwrap();
         sqlx_core::query::query(
             "UPDATE activity.task_executions SET started_at = now() - interval '2 hours' WHERE id = $1")
             .bind(a).execute(s.pool()).await.unwrap();
         // B — this session: running, started at now() (after the cutoff).
-        let b = s.start_task_execution(2, None, "ProcessFile", &fp, "b", 0).await.unwrap();
+        let b = s.start_task_execution(2, None, &crate::tasks::TaskKind::ProcessFile.to_string(), &fp, "b", 0).await.unwrap();
         // C — already terminal from a prior session: must not be re-touched.
-        let c = s.start_task_execution(3, None, "ProcessFile", &fp, "c", 0).await.unwrap();
+        let c = s.start_task_execution(3, None, &crate::tasks::TaskKind::ProcessFile.to_string(), &fp, "c", 0).await.unwrap();
         sqlx_core::query::query(
             "UPDATE activity.task_executions SET status = 'completed', started_at = now() - interval '2 hours' WHERE id = $1")
             .bind(c).execute(s.pool()).await.unwrap();
@@ -132,7 +132,7 @@
         // D — boundary: running, started EXACTLY at the cutoff. The sweep is
         // exclusive (`started_at < cutoff`), so a row at session_start belongs
         // to this session and must be left running — locks the `<` vs `<=` line.
-        let d = s.start_task_execution(4, None, "ProcessFile", &fp, "d", 0).await.unwrap();
+        let d = s.start_task_execution(4, None, &crate::tasks::TaskKind::ProcessFile.to_string(), &fp, "d", 0).await.unwrap();
         sqlx_core::query::query(
             "UPDATE activity.task_executions SET started_at = $2 WHERE id = $1")
             .bind(d).bind(cutoff).execute(s.pool()).await.unwrap();
@@ -169,13 +169,67 @@
     }
 
     #[tokio::test]
+    async fn rollup_keeps_failures_raw_and_is_idempotent() {
+        // The execution log grew to 4.8M rows / 1.5 GB in 69 days with nothing
+        // pruning it. Retention rolls old rows into a daily bucket and deletes
+        // them — except failures, whose error_message is the reason to keep a
+        // log at all.
+        let s = pg_store().await;
+        let fp = format!("/_test/rollup/{}", uuid::Uuid::new_v4());
+        let kind = crate::tasks::TaskKind::ProcessFile.to_string();
+
+        // Three old rows: two completed, one failed. All past the 14d window.
+        for (tid, status) in [(901i64, "completed"), (902, "completed"), (903, "failed")] {
+            let id = s.start_task_execution(tid, None, &kind, &fp, "x", 0).await.unwrap();
+            sqlx_core::query::query(
+                "UPDATE activity.task_executions \
+                    SET started_at = now() - interval '30 days', status = $2, duration_ms = 10 \
+                  WHERE id = $1",
+            ).bind(id).bind(status).execute(s.pool()).await.unwrap();
+        }
+
+        let (rolled, pruned) = s.rollup_and_prune_task_executions(14, 90).await.unwrap();
+        assert!(rolled >= 1 && pruned >= 2, "rolled={rolled} pruned={pruned}");
+
+        let remaining: (i64,) = query_as(
+            "SELECT count(*) FROM activity.task_executions WHERE folder_path = $1",
+        ).bind(&fp).fetch_one(s.pool()).await.unwrap();
+        assert_eq!(remaining.0, 1, "the FAILED row survives; the completed ones are rolled up");
+
+        let (status,): (String,) = query_as(
+            "SELECT status FROM activity.task_executions WHERE folder_path = $1",
+        ).bind(&fp).fetch_one(s.pool()).await.unwrap();
+        assert_eq!(status, "failed", "and it is the failure that was kept");
+
+        // Idempotency is the load-bearing property: the raw rows are GONE after
+        // the first pass, so an additive upsert would double-count on every
+        // re-run with no source left to correct it from.
+        let day_runs = |s: PgStore, fp: String| async move {
+            let r: (i64,) = query_as(
+                "SELECT coalesce(sum(runs),0)::int8 FROM activity.task_execution_daily d \
+                  WHERE d.day = (now() - interval '30 days')::date \
+                    AND d.task_kind::text = 'process_file'",
+            ).fetch_one(s.pool()).await.unwrap();
+            let _ = fp;
+            r.0
+        };
+        let first = day_runs(s.clone(), fp.clone()).await;
+        s.rollup_and_prune_task_executions(14, 90).await.unwrap();
+        let second = day_runs(s.clone(), fp.clone()).await;
+        assert_eq!(first, second, "re-running the rollup must not double-count");
+
+        sqlx_core::query::query("DELETE FROM activity.task_executions WHERE folder_path = $1")
+            .bind(&fp).execute(s.pool()).await.unwrap();
+    }
+
+    #[tokio::test]
     async fn start_task_execution_records_retry_number() {
         // D6c: a re-driven task carries its attempt count, and the execution
         // record must persist it (`task_executions.retry_number`, currently
         // always 0) so retries are observable on the logs/health screen.
         let s = pg_store().await;
         let fp = format!("/_test/retrynum/{}", uuid::Uuid::new_v4());
-        let id = s.start_task_execution(77, None, "ProcessFile", &fp, "a.rs", 2).await.unwrap();
+        let id = s.start_task_execution(77, None, &crate::tasks::TaskKind::ProcessFile.to_string(), &fp, "a.rs", 2).await.unwrap();
 
         let (rn,): (i32,) = query_as("SELECT retry_number FROM activity.task_executions WHERE id = $1")
             .bind(id).fetch_one(s.pool()).await.unwrap();
@@ -3460,7 +3514,7 @@
         ] {
             sqlx_core::query::query(
                 "INSERT INTO activity.task_executions(task_id, task_kind, status, started_at) \
-                 VALUES($1, $2, 'completed', $3)",
+                 VALUES($1, $2::sensei.task_execution_kind, 'completed', $3)",
             )
             .bind(task_id).bind(kind).bind(started)
             .execute(&s.pool).await.unwrap();
