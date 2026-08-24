@@ -1347,7 +1347,7 @@ mod tests {
             .execute(pool).await.unwrap();
         let (pack,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "INSERT INTO sensei.rule_packs
-                (slug, name, area, source, summary, enforcement, owner_namespace_id, status, published_by)
+                (slug, name, area, attribution, summary, enforcement, owner_namespace_id, status, published_by)
              VALUES ('global-materialize-test', 'GM', 'principles', 'GMSource', 's',
                      'mandatory', NULL, 'active', 'test')
              RETURNING id")

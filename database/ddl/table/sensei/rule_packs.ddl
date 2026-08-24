@@ -21,7 +21,7 @@ create table if not exists rule_packs (
 , name               text           not null      -- "Auth boundary guards"
 , kanji              text                          -- 守 — optional display token
 , area               rule_pack_area not null       -- the 7-set domain this pack curates
-, source             text           not null      -- authority/provenance: "Robert C. Martin", "OWASP",
+, attribution             text           not null      -- authority/provenance: "Robert C. Martin", "OWASP",
                                                    --   "PCI SSC", "Rokkit", "Ponytail · DietrichGebert"
 , summary            text                          -- one-liner: why this bundle exists
 , enforcement        enforcement    not null default 'recommended'  -- pack DEFAULT tier; a rule keeps its own
@@ -34,6 +34,11 @@ create table if not exists rule_packs (
 , published_at       timestamptz    not null default now()
 , updated_at         timestamptz    not null default now()
 , constraint rule_packs_owner_slug unique (owner_namespace_id, slug)
+  -- Shared vocabulary (see sensei.entity_scope / sensei.entity_origin).
+  -- scope answers WHO MAY SEE IT and therefore whether it syncs; origin answers
+  -- WHERE IT CAME FROM and therefore what a re-import may safely replace.
+, scope         entity_scope  not null default 'local'
+, origin        entity_origin not null default 'builtin'
 );
 
 -- Global packs (owner_namespace_id NULL) still need a unique slug — a NULL owner
@@ -69,3 +74,11 @@ drop policy if exists rule_packs_global_read on rule_packs;
 create policy rule_packs_global_read on rule_packs
     for select to authenticated
     using (owner_namespace_id is null and status = 'active');
+
+comment on column rule_packs.attribution is
+'Human-readable credit for where this pack''s rules come from — "OWASP · sensei",
+"Kent Beck · XP · sensei". Free text, deliberately.
+
+Named `source` until 2026-08-24, which put a citation in the same column name
+four other tables used for provenance. It is neither a scope nor an origin: those
+are now sensei.entity_scope and sensei.entity_origin.';
