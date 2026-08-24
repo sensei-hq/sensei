@@ -191,9 +191,8 @@ async fn roll_up(
     let props = serde_json::json!({ "components": serde_json::Value::Object(components) });
     let day = super::today(pg).await?;
     pg.upsert_project_metric_repo(
-        &health_id, project_id, Some(&repository_id), "user", None, None, None, None,
-        day, GRAIN_DAILY, score, &props, SOURCE_MEASURED,
-    )
+        &health_id, &repository_id, "user", None, None,
+        day, GRAIN_DAILY, score, &props, SOURCE_MEASURED)
     .await?;
     Ok(1)
 }
@@ -252,9 +251,8 @@ mod tests {
             .unwrap()
             .expect("health test project has a repository (seed_metrics_project_folder links one)");
         pg.upsert_project_metric_repo(
-            mid, pid, Some(&repository_id), "user", None, None, None, None, day, GRAIN_DAILY,
-            value, &serde_json::json!({ "numerator": value, "denominator": 1.0 }), SOURCE_MEASURED,
-        )
+            mid, &repository_id, "user", None, None, day, GRAIN_DAILY,
+            value, &serde_json::json!({ "numerator": value, "denominator": 1.0 }), SOURCE_MEASURED)
         .await
         .unwrap();
     }
@@ -285,7 +283,7 @@ mod tests {
             "SELECT pm.value::float8, pm.props \
                FROM sensei.project_metrics pm \
               WHERE pm.project_id = $1 AND pm.metric_id = $2 \
-                AND pm.grain = 'daily' AND pm.folder_id IS NULL",
+                AND pm.grain = 'daily'",
         )
         .bind(pid)
         .bind(mid)

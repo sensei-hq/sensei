@@ -207,19 +207,15 @@ pub(super) async fn compute(
     // snapshot, not commit cadence), folder_id/session_id=NULL (not in the identity).
     pg.upsert_project_metric_repo(
         &mid,
-        &project_id,
-        Some(&repository_id),
+        &repository_id,
         SCOPE_USER,
-        None,
-        None,
         None,
         None,
         day,
         GRAIN_DAILY,
         value,
         &props,
-        SOURCE_MEASURED,
-    )
+        SOURCE_MEASURED)
     .await?;
 
     Ok(1)
@@ -270,15 +266,13 @@ mod tests {
             .await
             .unwrap()
             .expect("fixture project has a repository-linked folder");
-        let (repo_id, scope, identity, commit_sha, folder_id, session_id): (
+        let (repo_id, scope, identity, commit_sha): (
             Option<uuid::Uuid>,
             String,
             Option<String>,
             Option<String>,
-            Option<uuid::Uuid>,
-            Option<uuid::Uuid>,
         ) = query_as(
-            "SELECT pm.repository_id, pm.scope::text, pm.identity, pm.commit_sha, pm.folder_id, pm.session_id \
+            "SELECT pm.repository_id, pm.scope::text, pm.identity, pm.commit_sha \
                FROM sensei.project_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
               WHERE pm.project_id = $1 AND m.key = 'memory_promotion'",
         )
@@ -290,8 +284,6 @@ mod tests {
         assert_eq!(scope, "user", "knowledge writes scope=user only (I-B)");
         assert_eq!(identity, None, "identity NULL — single local user (I-C)");
         assert_eq!(commit_sha, None, "commit_sha NULL — day-bucketed snapshot, not commit cadence (I-D)");
-        assert_eq!(folder_id, None, "folder_id NULL — not in the repo-grain identity (I-A)");
-        assert_eq!(session_id, None, "session_id NULL — not in the repo-grain identity (I-A)");
 
         cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
     }

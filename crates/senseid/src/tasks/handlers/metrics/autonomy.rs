@@ -271,9 +271,8 @@ pub(super) async fn compute(
             // identity=NULL (single local user, I-C), commit_sha=NULL (day cadence,
             // I-D), folder_id/session_id=NULL (not in the identity).
             pg.upsert_project_metric_repo(
-                &mid, &project_id, Some(&repository_id), SCOPE_USER, None, None, None, None,
-                day, GRAIN_DAILY, value, &props, SOURCE_MEASURED,
-            )
+                &mid, &repository_id, SCOPE_USER, None, None,
+                day, GRAIN_DAILY, value, &props, SOURCE_MEASURED)
             .await?;
             written += 1;
         }
@@ -297,9 +296,8 @@ pub(super) async fn compute(
                 let value = done_count as f64 / started_count as f64;
                 let props = ratio_props(done_count, started_count);
                 pg.upsert_project_metric_repo(
-                    &mid, &project_id, Some(&repository_id), SCOPE_USER, None, None, None, None,
-                    day, GRAIN_DAILY, value, &props, SOURCE_MEASURED,
-                )
+                    &mid, &repository_id, SCOPE_USER, None, None,
+                    day, GRAIN_DAILY, value, &props, SOURCE_MEASURED)
                 .await?;
                 written += 1;
             }
@@ -392,12 +390,12 @@ mod tests {
         // Repo grain (I-A/I-C/I-D): BOTH rows are keyed to the fixture's repository
         // (interruption_rate via the session's repo_folder_id, run_completion via the
         // project's primary repository — the same repo for this single-folder project),
-        // scope=user, identity/commit_sha/folder_id/session_id all NULL, grain daily.
+        // scope=user, identity/commit_sha NULL, grain daily.
         let repo = repository_for_folder(pg, &fid).await;
         let (repo_grain_rows,): (i64,) = query_as(
             "SELECT count(*) FROM sensei.project_metrics \
               WHERE project_id = $1 AND repository_id = $2 AND scope = 'user'::sensei.metric_scope \
-                AND identity IS NULL AND commit_sha IS NULL AND folder_id IS NULL AND session_id IS NULL \
+                AND identity IS NULL AND commit_sha IS NULL \
                 AND grain = 'daily'::sensei.metric_grain",
         )
         .bind(pid)
@@ -407,7 +405,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             repo_grain_rows, 2,
-            "both autonomy rows are repo-grain: repository set, scope=user, identity/commit_sha/folder/session NULL, grain daily",
+            "both autonomy rows are repo-grain: repository set, scope=user, identity/commit_sha NULL, grain daily",
         );
 
         // false_crash_rate is NEEDS_CONTEXT — no row is ever written for it.

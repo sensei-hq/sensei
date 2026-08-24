@@ -649,7 +649,7 @@ where
 
             // scope = repo: the whole-tree twin (identity = NULL, D7/D8).
             written += write_ratio_rows(
-                pg, &project_id, &repository_id, SCOPE_REPO, None, &sha, day, dup_id, mq_id,
+                pg, &repository_id, SCOPE_REPO, None, &sha, day, dup_id, mq_id,
                 qs.whole_tree_dup_lines(), qs.whole_tree_maintainability(), qs.total_lines,
             )
             .await?;
@@ -661,7 +661,7 @@ where
                 let touched = git_authored_files(&abs_path, &sha, email);
                 let user_total = qs.touched_lines(&touched);
                 written += write_ratio_rows(
-                    pg, &project_id, &repository_id, SCOPE_USER, Some(email), &sha, day, dup_id,
+                    pg, &repository_id, SCOPE_USER, Some(email), &sha, day, dup_id,
                     mq_id, qs.touched_dup_lines(&touched), qs.touched_maintainability(&touched),
                     user_total,
                 )
@@ -683,7 +683,6 @@ where
 #[allow(clippy::too_many_arguments)]
 async fn write_ratio_rows(
     pg: &PgStore,
-    project_id: &uuid::Uuid,
     repository_id: &uuid::Uuid,
     scope: &str,
     identity: Option<&str>,
@@ -708,9 +707,8 @@ async fn write_ratio_rows(
             "commit": sha,
         });
         pg.upsert_project_metric_repo(
-            &mid, project_id, Some(repository_id), scope, identity, Some(sha), None, None, day,
-            GRAIN_DAILY, value, &props, SOURCE_MEASURED,
-        )
+            &mid, repository_id, scope, identity, Some(sha), day,
+            GRAIN_DAILY, value, &props, SOURCE_MEASURED)
         .await?;
         written += 1;
     }
@@ -723,9 +721,8 @@ async fn write_ratio_rows(
             "commit": sha,
         });
         pg.upsert_project_metric_repo(
-            &mid, project_id, Some(repository_id), scope, identity, Some(sha), None, None, day,
-            GRAIN_DAILY, value, &props, SOURCE_MEASURED,
-        )
+            &mid, repository_id, scope, identity, Some(sha), day,
+            GRAIN_DAILY, value, &props, SOURCE_MEASURED)
         .await?;
         written += 1;
     }
@@ -1049,9 +1046,8 @@ mod tests {
         for key in ["duplication_ratio", "module_quality"] {
             let mid = *ids.get(key).expect("active quality metric");
             pg.upsert_project_metric_repo(
-                &mid, &pid, Some(&rid), "repo", None, Some(&sha), None, None, dday, "daily", 0.5,
-                &serde_json::json!({"numerator": 1, "denominator": 2, "commit": sha}), "measured",
-            )
+                &mid, &rid, "repo", None, Some(&sha), dday, "daily", 0.5,
+                &serde_json::json!({"numerator": 1, "denominator": 2, "commit": sha}), "measured")
             .await
             .unwrap();
         }
