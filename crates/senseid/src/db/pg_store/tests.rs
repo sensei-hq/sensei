@@ -3374,13 +3374,18 @@
             .bind(sid).execute(&s.pool).await.unwrap();
     }
 
-    /// Serialises the tests that invoke the GLOBAL transcript repair.
+    /// Serialises EVERY test that invokes a global session repair — both
+    /// `repair_sessions_from_transcripts` and `repair_orphaned_sessions`.
     ///
-    /// `repair_sessions_from_transcripts` is deliberately global — it sweeps every
-    /// transcript-only session, which is what makes it converge as folders become
-    /// tracked. That also means one test's repair operates on another's fixture:
-    /// concurrently, test B's sweep creates the session test A has just asserted
-    /// does not exist yet, and A fails on its own precondition.
+    /// Both are deliberately global: they sweep every unattached session, which
+    /// is what makes them converge as folders become tracked. That also means one
+    /// test's repair operates on another's fixture. Two ways it bites, both
+    /// observed: test B's sweep creates the session test A has just asserted does
+    /// not exist yet (A fails its own precondition), and B's sweep attributes A's
+    /// half-built fixture to the wrong folder before A finishes building it.
+    ///
+    /// Any new test that calls a global repair belongs here too. Gating only the
+    /// transcript pair left the two `repair_orphaned_sessions` tests racing.
     ///
     /// Blocking on purpose — see [`crate::tasks::test_support::TestGate`] for why
     /// an async mutex loses wakers across per-test runtimes.
@@ -3437,6 +3442,40 @@
     }
 
     #[tokio::test]
+    async fn a_task_id_lookup_is_scoped_to_the_issuing_daemon_session() {
+        // Task ids restart at 1 on every boot while `task_executions` accumulates
+        // forever, so id 1 accrues rows from every session the daemon has ever
+        // run. An unscoped lookup returned a pile of unrelated tasks of other
+        // KINDS — a follower would read another session's failure as its own.
+        let s = pg_store().await;
+        let task_id = 999_777_555i64;
+        sqlx_core::query::query("DELETE FROM activity.task_executions WHERE task_id = $1")
+            .bind(task_id).execute(&s.pool).await.unwrap();
+
+        let boundary = chrono::Utc::now();
+        // One row from a "previous session" (before the boundary), one from this.
+        for (kind, started) in [
+            ("scan_root", boundary - chrono::Duration::hours(3)),
+            ("backfill_coverage", boundary + chrono::Duration::seconds(1)),
+        ] {
+            sqlx_core::query::query(
+                "INSERT INTO activity.task_executions(task_id, task_kind, status, started_at) \
+                 VALUES($1, $2, 'completed', $3)",
+            )
+            .bind(task_id).bind(kind).bind(started)
+            .execute(&s.pool).await.unwrap();
+        }
+
+        let rows = s.task_execution_attempts(task_id, boundary).await.unwrap();
+
+        sqlx_core::query::query("DELETE FROM activity.task_executions WHERE task_id = $1")
+            .bind(task_id).execute(&s.pool).await.unwrap();
+
+        assert_eq!(rows.len(), 1, "only this session's row: {rows:?}");
+        assert_eq!(rows[0]["kind"], "backfill_coverage");
+    }
+
+    #[tokio::test]
     async fn repair_from_transcripts_leaves_an_unresolvable_cwd_alone() {
         // A wrong attribution is worse than a missing one: a cwd that resolves to
         // no tracked folder must NOT be attached to a guessed repository.
@@ -3468,6 +3507,7 @@
         // A session captured under a since-renamed repo: its events survived but the
         // session row was cascade-deleted. The repair recreates the row, resolving the
         // folder from the (old) cwd via the alias.
+        let _gate = REPAIR_SWEEP_GATE.enter();
         let s = pg_store().await;
         let sess = "_test-repair-orphan-session";
         clear_test_session(&s, sess).await;
@@ -3498,6 +3538,7 @@
         // (`/_test/shadow-parent`) AND a renamed subdir aliased to a different folder
         // (`/_test/shadow-parent/sub` → new folder). Most-specific-first must attribute
         // it to the renamed subdir's folder, not the shadowing parent.
+        let _gate = REPAIR_SWEEP_GATE.enter();
         let s = pg_store().await;
         let sess = "_test-shadow-session";
         clear_test_session(&s, sess).await;

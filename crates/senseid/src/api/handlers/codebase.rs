@@ -173,7 +173,18 @@ pub(crate) async fn call_flow(
     })))
 }
 
-pub(crate) async fn detect_communities(
+/// `POST /api/graph/communities` — how many communities a repo currently has.
+///
+/// Named `detect_communities` until now, which was a lie in both directions: it
+/// shares a name with `TaskKind::DetectCommunities` and its handler but detects
+/// nothing — it READS `list_communities` and counts. Anyone reading the route
+/// table would reasonably conclude this endpoint triggers detection, and anyone
+/// grepping for the task handler finds this instead.
+///
+/// The verb stays POST because the app already calls it that way; the name now
+/// says what it does. Detection is queued as `TaskKind::DetectCommunities` by
+/// the indexing pipeline, never from here.
+pub(crate) async fn community_counts(
     State(state): State<AppState>,
     Json(body): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
