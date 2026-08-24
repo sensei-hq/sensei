@@ -329,6 +329,17 @@ Three further reasons:
 2. **False provenance.** A file asserting it is a Claude transcript when it is not. Placed in `~/.claude/projects` it corrupts another tool's state; placed elsewhere, ingestion must be told it is synthetic — which is the carve-out, reached by a longer road.
 3. **`assistant_events` is kept anyway**, so the tool and structure dimensions survive the wipe untouched.
 
+**Recovery audit — every candidate source checked, all ruled out on evidence:**
+
+| Candidate | Verdict |
+|---|---|
+| Renamed transcript dirs (`dbd-rs`→`dbd`, `strategos/gateway`→`gateway`) | aliases already exist and resolve; the **files** are absent from those dirs |
+| `~/.claude/file-history` (66 dirs, 190 MB) | Claude's file-**edit version store** (`<hash>@v1/@v2`), not transcripts; none of the 5 UUIDs present |
+| Zed `threads.db` (127 MB) | covers those repos only to **2026-02-24 / 2026-03-20**; Zed's last activity anywhere is 2026-05-15, two months before |
+| `database/import/staging/assistant_events.jsonl` (66 MB) | spans **2026-06-01 → 06-15** only; 0 lines for any of the 5 session ids — and it is a *subset* seed export (15,342 lines vs 76,710 DB rows in that window), not an archive |
+| Synthetic rebuild from turn rows | possible but strictly worse — 0 tool content retained vs 999 real tool calls |
+| Whole home tree, by session UUID | not present anywhere |
+
 **Consequence — these five are barely a special case.** Because events survive,
 the per-exchange turn derivation can be recomputed for them from events, the same
 path `activity.turns` uses. Only the *prose* is unrecoverable, and the carve-out
