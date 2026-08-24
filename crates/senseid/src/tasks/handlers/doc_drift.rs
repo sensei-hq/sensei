@@ -16,8 +16,7 @@ use super::super::Task;
 /// this handler is the thin task-side wrapper. Returns the count of
 /// newly-broken references.
 pub async fn scan_doc_drift(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
-    let project_id = uuid::Uuid::parse_str(&task.path)
-        .map_err(|_| format!("ScanDocDrift: invalid project id '{}'", task.path))?;
+    let project_id = task.project_id()?;
     let summary = ctx
         .pg()
         .scan_project_doc_drift(&project_id)
@@ -48,7 +47,7 @@ mod tests {
         // A non-UUID payload is a bug, not empty work — fail loudly (parse guard).
         let bad = Task::new(TaskKind::ScanDocDrift, "", "not-a-uuid");
         let err = scan_doc_drift(&ctx, &bad).await.unwrap_err();
-        assert!(err.contains("invalid project id"), "got: {err}");
+        assert!(err.contains("expected a project id"), "got: {err}");
         // An empty payload is likewise rejected rather than scanning nothing.
         let empty = Task::new(TaskKind::ScanDocDrift, "", "");
         assert!(scan_doc_drift(&ctx, &empty).await.is_err());

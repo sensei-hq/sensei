@@ -12,7 +12,7 @@ pub async fn resolve_libs(ctx: &TaskContext, task: &Task) -> Result<u32, String>
     // once and reuse for both repo_path and the later mark_folder_indexed
     // call. folder_name comes from the DB row so subtree composite names
     // like "sensei:homebrew" survive in log messages.
-    let folder = ctx.pg().get_repo_by_path(&task.folder_path).await
+    let folder = ctx.pg().get_repo_by_path(task.folder_abs_path()).await
         .map_err(|e| tracing::warn!(error = %e, path = %task.folder_path, "resolve_libs: get_repo_by_path failed")).ok().flatten();
     let folder_name = folder.as_ref()
         .and_then(|f| f["name"].as_str())
@@ -318,7 +318,7 @@ pub async fn index_library_page(ctx: &TaskContext, task: &Task) -> Result<u32, S
 /// Parse manifest files (package.json, Cargo.toml, pyproject.toml) and upsert
 /// detected dependencies into libraries + referenced_libraries.
 pub async fn extract_deps(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
-    let folder = ctx.pg().get_repo_by_path(&task.folder_path).await
+    let folder = ctx.pg().get_repo_by_path(task.folder_abs_path()).await
         .map_err(|e| format!("DB error: {}", e))?
         .ok_or_else(|| format!("Folder '{}' not found", task.folder_path))?;
 

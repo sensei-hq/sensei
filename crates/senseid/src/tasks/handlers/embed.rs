@@ -190,7 +190,7 @@ async fn store_embedding(ctx: &TaskContext, id: &uuid::Uuid, vector: &[f32], emb
 /// Embed every not-yet-embedded code-graph node for the task's folder.
 /// `folder_path` is the repo abs_path (Task contract).
 pub async fn embed_nodes(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
-    let folder = match ctx.pg().get_repo_by_path(&task.folder_path).await {
+    let folder = match ctx.pg().get_repo_by_path(task.folder_abs_path()).await {
         Ok(f) => f,
         Err(e) => {
             tracing::warn!("embed_nodes: {} — get_repo_by_path failed: {e}", task.folder_path);

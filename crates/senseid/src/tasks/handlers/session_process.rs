@@ -260,8 +260,7 @@ fn batch_per_tick(cfg: Option<String>) -> i64 {
 /// all-N/A ones, which ARE progress (they won't be retried). A model failure on
 /// a session leaves it un-watermarked (retried next tick) and does not count.
 pub async fn analyze_session_process(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
-    let project_id = uuid::Uuid::parse_str(&task.path)
-        .map_err(|_| format!("AnalyzeSessionProcess: invalid project id '{}'", task.path))?;
+    let project_id = task.project_id()?;
     let pg = ctx.pg();
     let cap = batch_per_tick(pg.get_config("process.batch_per_tick").await.ok().flatten());
 

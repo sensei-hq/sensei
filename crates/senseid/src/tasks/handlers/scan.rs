@@ -125,7 +125,7 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
             }
             Err(e) => tracing::warn!(error = %e, path = %path_str, "scan_root: upsert_repo_kind failed"),
         }
-        let process_task = Task::new(TaskKind::ProcessGitFolder, &path_str, &path_str)
+        let process_task = Task::for_folder(TaskKind::ProcessGitFolder, &path_str)
             .with_parent(task.id);
         // Single-writer (D6e/W5): skip if this folder is already being scanned,
         // so a concurrent ScanRoot can't fan out a second ProcessGitFolder for it.
@@ -835,7 +835,7 @@ mod tests {
         let ctx = make_ctx().await;
         let repo_path = root.join("repo").to_string_lossy().to_string();
         // Pre-seed: this repo is already being scanned.
-        ctx.queue.enqueue(Task::new(TaskKind::ProcessGitFolder, &repo_path, &repo_path)).await;
+        ctx.queue.enqueue(Task::for_folder(TaskKind::ProcessGitFolder, &repo_path)).await;
 
         let task = Task::new(TaskKind::ScanRoot, "", &root.to_string_lossy());
         scan_root(&ctx, &task).await.unwrap();

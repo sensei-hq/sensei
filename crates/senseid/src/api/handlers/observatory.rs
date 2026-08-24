@@ -370,7 +370,7 @@ pub(crate) async fn backfill_project_sessions(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     state
         .task_queue
-        .enqueue(crate::tasks::Task::new(crate::tasks::TaskKind::AnalyzeProject, "", &uuid.to_string()))
+        .enqueue(crate::tasks::Task::for_project(crate::tasks::TaskKind::AnalyzeProject, &uuid))
         .await;
     Ok(Json(serde_json::json!({ "reset": reset, "queued": true })))
 }

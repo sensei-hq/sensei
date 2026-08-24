@@ -653,8 +653,7 @@ pub async fn enrich_session(
 /// Handler for `TaskKind::AnalyzeProject`: enrich every attributed session of a
 /// project. `task.path` carries the project id (UUID string).
 pub async fn analyze_project(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
-    let project_id = uuid::Uuid::parse_str(&task.path)
-        .map_err(|_| format!("AnalyzeProject: invalid project id '{}'", task.path))?;
+    let project_id = task.project_id()?;
     let sessions = ctx.pg().get_project_sessions_needing_enrichment(&project_id).await?;
     let mut enriched = 0u32;
     // Folders touched by sessions enriched THIS pass — derivation is scoped to

@@ -345,7 +345,7 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
             .map(|pkg| format!("pkg:{}:{}", folder_name, pkg.name))
             .unwrap_or_else(|| root_pkg_id.clone());
 
-        let mut ft = Task::new(TaskKind::ProcessFolder, folder_path, &abs_dir)
+        let mut ft = Task::for_file(TaskKind::ProcessFolder, folder_path, &abs_dir)
             .with_parent(task.id);
         ft.module_id = Some(pkg_id);
         let folder_id = ctx.queue.enqueue(ft).await;
@@ -353,7 +353,7 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
         let rel_dir_name = if rel_dir.is_empty() { "(root)".to_string() } else { rel_dir.replace('\\', "/") };
         let mod_id = format!("mod:{}:{}", folder_name, rel_dir_name);
         for abs in changed_here {
-            let file_task = Task::new(TaskKind::ProcessFile, folder_path, &abs.to_string_lossy())
+            let file_task = Task::for_file(TaskKind::ProcessFile, folder_path, &abs.to_string_lossy())
                 .with_parent(folder_id)
                 .with_module(&mod_id);
             all_file_task_ids.push(ctx.queue.enqueue(file_task).await);
@@ -1345,7 +1345,7 @@ mod tests {
 
         let pkg_id = format!("pkg:{}:(root)", folder_name);
 
-        let mut task = Task::new(TaskKind::ProcessFolder, &repo_path, &src_dir.to_string_lossy());
+        let mut task = Task::for_file(TaskKind::ProcessFolder, &repo_path, &src_dir.to_string_lossy());
         task.module_id = Some(pkg_id.clone());
 
         process_folder(&ctx, &task).await.unwrap();
@@ -1541,7 +1541,7 @@ mod tests {
         // Process ONLY the file — deliberately NO resolve_edges. Edges must be
         // resolved at emit for this to pass.
         let abs = repo.join("src/lib.rs").to_string_lossy().to_string();
-        process_file(&ctx, &Task::new(TaskKind::ProcessFile, &repo_path, &abs)).await.unwrap();
+        process_file(&ctx, &Task::for_file(TaskKind::ProcessFile, &repo_path, &abs)).await.unwrap();
 
         // Defs carry their canonical fqn + language.
         let (compute_id, compute_fqn, compute_lang): (uuid::Uuid, Option<String>, Option<String>) =
@@ -1591,7 +1591,7 @@ mod tests {
 
         // Caller first.
         let abs_caller = repo.join("src/caller.rs").to_string_lossy().to_string();
-        process_file(&ctx, &Task::new(TaskKind::ProcessFile, &repo_path, &abs_caller)).await.unwrap();
+        process_file(&ctx, &Task::for_file(TaskKind::ProcessFile, &repo_path, &abs_caller)).await.unwrap();
 
         // `run` is a STUB awaiting its definition.
         let (run_id, run_resolved, run_file): (uuid::Uuid, bool, Option<String>) = sqlx_core::query_as::query_as(
@@ -1611,7 +1611,7 @@ mod tests {
 
         // Now index the callee — the SAME node is enriched.
         let abs_callee = repo.join("src/callee.rs").to_string_lossy().to_string();
-        process_file(&ctx, &Task::new(TaskKind::ProcessFile, &repo_path, &abs_callee)).await.unwrap();
+        process_file(&ctx, &Task::for_file(TaskKind::ProcessFile, &repo_path, &abs_callee)).await.unwrap();
 
         let (run_id2, run_resolved2, run_file2): (uuid::Uuid, bool, Option<String>) = sqlx_core::query_as::query_as(
             "SELECT id, resolved, file_path FROM sensei.nodes WHERE folder_id=$1 AND fqn='rust·twofile·callee·run'")
@@ -1646,7 +1646,7 @@ mod tests {
         ctx.pg().update_folder_status(&fid, "indexing").await.unwrap();
 
         let abs = repo.join("src/lib.rs").to_string_lossy().to_string();
-        process_file(&ctx, &Task::new(TaskKind::ProcessFile, &repo_path, &abs)).await.unwrap();
+        process_file(&ctx, &Task::for_file(TaskKind::ProcessFile, &repo_path, &abs)).await.unwrap();
 
         // The external symbol is a `lib_symbol`, grouped by package.
         let (sym_id, sym_pkg, parent): (uuid::Uuid, Option<String>, Option<uuid::Uuid>) = sqlx_core::query_as::query_as(
@@ -1697,7 +1697,7 @@ mod tests {
 
         for rel in ["src/lib.rs", "tests/it.rs"] {
             let abs = repo.join(rel).to_string_lossy().to_string();
-            process_file(&ctx, &Task::new(TaskKind::ProcessFile, &repo_path, &abs)).await.unwrap();
+            process_file(&ctx, &Task::for_file(TaskKind::ProcessFile, &repo_path, &abs)).await.unwrap();
         }
 
         let count = |sql: &'static str| {
@@ -1737,7 +1737,7 @@ mod tests {
         ctx.pg().update_folder_status(&fid, "indexing").await.unwrap();
 
         let abs = repo.join("src/widget.rs").to_string_lossy().to_string();
-        process_file(&ctx, &Task::new(TaskKind::ProcessFile, &repo_path, &abs)).await.unwrap();
+        process_file(&ctx, &Task::for_file(TaskKind::ProcessFile, &repo_path, &abs)).await.unwrap();
 
         async fn node(ctx: &TaskContext, fid: uuid::Uuid, fqn: &str) -> (uuid::Uuid, Option<uuid::Uuid>, String) {
             sqlx_core::query_as::query_as("SELECT id, parent_id, kind::text FROM sensei.nodes WHERE folder_id=$1 AND fqn=$2")
@@ -1784,7 +1784,7 @@ mod tests {
         ctx.pg().update_folder_status(&fid, "indexing").await.unwrap();
 
         let abs = repo.join("src/util.ts").to_string_lossy().to_string();
-        process_file(&ctx, &Task::new(TaskKind::ProcessFile, &repo_path, &abs)).await.unwrap();
+        process_file(&ctx, &Task::for_file(TaskKind::ProcessFile, &repo_path, &abs)).await.unwrap();
 
         let (compute_id, compute_fqn, compute_lang): (uuid::Uuid, Option<String>, Option<String>) =
             sqlx_core::query_as::query_as(
@@ -1852,7 +1852,7 @@ mod tests {
         async fn scan_files(ctx: &TaskContext, repo: &std::path::Path, repo_path: &str, rels: &[&str]) {
             for rel in rels {
                 let abs = repo.join(rel).to_string_lossy().to_string();
-                process_file(ctx, &Task::new(TaskKind::ProcessFile, repo_path, &abs)).await.unwrap();
+                process_file(ctx, &Task::for_file(TaskKind::ProcessFile, repo_path, &abs)).await.unwrap();
             }
             crate::tasks::handlers::build_connections(ctx, &Task::new(TaskKind::BuildConnections, repo_path, repo_path)).await.unwrap();
             crate::tasks::handlers::detect_communities(ctx, &Task::new(TaskKind::DetectCommunities, repo_path, "")).await.unwrap();
@@ -2013,7 +2013,7 @@ mod tests {
             let (_rid, fid, repo_path) = seed_indexing_repo(ctx, root, name).await;
             for rel in order {
                 let abs = root.join("repo").join(rel).to_string_lossy().to_string();
-                process_file(ctx, &Task::new(TaskKind::ProcessFile, &repo_path, &abs)).await.unwrap();
+                process_file(ctx, &Task::for_file(TaskKind::ProcessFile, &repo_path, &abs)).await.unwrap();
             }
             crate::indexer::community::detect_communities_for_folder(ctx.pg(), &fid).await.unwrap();
             fid
@@ -2059,7 +2059,7 @@ mod tests {
 
         let abs = file.to_string_lossy().to_string();
         super::fault::fail_for(&abs);
-        let task = Task::new(TaskKind::ProcessFile, &repo_path, &abs);
+        let task = Task::for_file(TaskKind::ProcessFile, &repo_path, &abs);
         let res = process_file(&ctx, &task).await;
         super::fault::clear(&abs);
 
@@ -2087,7 +2087,7 @@ mod tests {
         let (rid, fid, repo_path) = seed_indexing_repo(&ctx, root, "d6c_ok").await;
 
         let abs = file.to_string_lossy().to_string();
-        let task = Task::new(TaskKind::ProcessFile, &repo_path, &abs);
+        let task = Task::for_file(TaskKind::ProcessFile, &repo_path, &abs);
         process_file(&ctx, &task).await.unwrap();
 
         assert_eq!(ctx.pg().list_scan_state(&fid).await.unwrap().len(), 1,
@@ -2117,11 +2117,11 @@ mod tests {
 
         let bad_abs = bad.to_string_lossy().to_string();
         super::fault::fail_for(&bad_abs);
-        let bad_res = process_file(&ctx, &Task::new(TaskKind::ProcessFile, &repo_path, &bad_abs)).await;
+        let bad_res = process_file(&ctx, &Task::for_file(TaskKind::ProcessFile, &repo_path, &bad_abs)).await;
         super::fault::clear(&bad_abs);
         // The sibling processes independently and succeeds.
         let good_abs = good.to_string_lossy().to_string();
-        process_file(&ctx, &Task::new(TaskKind::ProcessFile, &repo_path, &good_abs)).await.unwrap();
+        process_file(&ctx, &Task::for_file(TaskKind::ProcessFile, &repo_path, &good_abs)).await.unwrap();
 
         assert!(bad_res.is_err(), "the bad file fails fatally");
         assert_eq!(ctx.pg().get_folder_status(&fid).await.unwrap().as_deref(), Some("failed"),
@@ -2148,7 +2148,7 @@ mod tests {
         let ctx = make_ctx().await;
         let (rid, fid, repo_path) = seed_indexing_repo(&ctx, root, "d3_reindex").await;
         let abs = file.to_string_lossy().to_string();
-        let task = Task::new(TaskKind::ProcessFile, &repo_path, &abs);
+        let task = Task::for_file(TaskKind::ProcessFile, &repo_path, &abs);
 
         process_file(&ctx, &task).await.unwrap();
         let keep_id: uuid::Uuid = sqlx_core::query_as::query_as::<_, (uuid::Uuid,)>(
@@ -2193,7 +2193,7 @@ mod tests {
         let ctx = make_ctx().await;
         let (rid, fid, repo_path) = seed_indexing_repo(&ctx, root, "d5b_sections").await;
         let abs = file.to_string_lossy().to_string();
-        let task = Task::new(TaskKind::ProcessFile, &repo_path, &abs);
+        let task = Task::for_file(TaskKind::ProcessFile, &repo_path, &abs);
 
         process_file(&ctx, &task).await.unwrap();
 
@@ -2281,7 +2281,7 @@ mod tests {
         let ctx = make_ctx().await;
         let (rid, fid, repo_path) = seed_indexing_repo(&ctx, root, "d5b_dupe").await;
         let abs = file.to_string_lossy().to_string();
-        let task = Task::new(TaskKind::ProcessFile, &repo_path, &abs);
+        let task = Task::for_file(TaskKind::ProcessFile, &repo_path, &abs);
 
         process_file(&ctx, &task).await.unwrap();
 
@@ -2335,7 +2335,7 @@ mod tests {
         let ctx = make_ctx().await;
         let (rid, fid, repo_path) = seed_indexing_repo(&ctx, root, "d5b_rationale").await;
         let abs = file.to_string_lossy().to_string();
-        let task = Task::new(TaskKind::ProcessFile, &repo_path, &abs);
+        let task = Task::for_file(TaskKind::ProcessFile, &repo_path, &abs);
 
         process_file(&ctx, &task).await.unwrap();
 
@@ -2388,7 +2388,7 @@ mod tests {
         let ctx = make_ctx().await;
         let (rid, fid, repo_path) = seed_indexing_repo(&ctx, root, "isexp").await;
         let abs = file.to_string_lossy().to_string();
-        process_file(&ctx, &Task::new(TaskKind::ProcessFile, &repo_path, &abs)).await.unwrap();
+        process_file(&ctx, &Task::for_file(TaskKind::ProcessFile, &repo_path, &abs)).await.unwrap();
 
         let exported = |name: &str| {
             let pool = ctx.pg().pool().clone();
@@ -2421,7 +2421,7 @@ mod tests {
         let ctx = make_ctx().await;
         let (rid, fid, repo_path) = seed_indexing_repo(&ctx, root, "d3_edge").await;
         let abs = file.to_string_lossy().to_string();
-        let task = Task::new(TaskKind::ProcessFile, &repo_path, &abs);
+        let task = Task::for_file(TaskKind::ProcessFile, &repo_path, &abs);
 
         process_file(&ctx, &task).await.unwrap();
         let (calls_before,): (i64,) = sqlx_core::query_as::query_as(
@@ -2602,7 +2602,7 @@ mod tests {
         let root_id = ctx.pg().add_watch_root(&repo_path, "cg", &serde_json::json!([])).await.unwrap();
         let fid = ctx.pg().upsert_repo(&root_id, "cg-repo", &repo_path).await.unwrap();
 
-        let task = Task::new(TaskKind::ProcessFile, &repo_path, &file_abs.to_string_lossy());
+        let task = Task::for_file(TaskKind::ProcessFile, &repo_path, &file_abs.to_string_lossy());
         process_file(&ctx, &task).await.unwrap();
 
         let nodes = ctx.pg().get_nodes_by_folder(&fid).await.unwrap();

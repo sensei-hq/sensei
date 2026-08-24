@@ -27,7 +27,7 @@ pub(super) mod fault {
 }
 
 pub async fn detect_communities(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
-    let folder = ctx.pg().get_repo_by_path(&task.folder_path).await
+    let folder = ctx.pg().get_repo_by_path(task.folder_abs_path()).await
         .map_err(|e| format!("DB error: {}", e))?
         .ok_or_else(|| format!("Folder '{}' not found", task.folder_path))?;
 
