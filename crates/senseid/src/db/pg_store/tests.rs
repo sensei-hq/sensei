@@ -2820,8 +2820,10 @@
             day40.0, "daily", 1.0, &serde_json::json!({}), "measured").await.unwrap();
         // Seed a child transcript_turn keyed on client_session_id (no FK).
         sqlx_core::query::query(
-            "INSERT INTO activity.transcript_turns(session_id, source, turn_index, assistant_text)
-             VALUES ($1, 'claude', 0, 'hello')"
+            // `family` is NOT NULL — TranscriptAdapter::family() returns &'static str,
+            // so the ingest path always supplies one and a fixture must too.
+            "INSERT INTO activity.transcript_turns(session_id, source, family, turn_index, assistant_text)
+             VALUES ($1, 'claude_code', 'claude', 0, 'hello')"
         ).bind(&csid).execute(s.pool()).await.unwrap();
         // Seed a hook event under the same client_session_id.
         s.insert_hook_event(&csid, "claude", "UserPromptSubmit", None, None, 1000, None,
@@ -3370,6 +3372,80 @@
             .bind(sid).execute(&s.pool).await.unwrap();
         sqlx_core::query::query("DELETE FROM activity.assistant_events WHERE session_id = $1")
             .bind(sid).execute(&s.pool).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn repair_sessions_from_transcripts_creates_the_missing_session() {
+        // The gap the events-based repair cannot close: prose was ingested but no
+        // session was ever synthesized (the source reconstructed no events, or no
+        // cwd resolved at the time). The turns then exist and can join nothing.
+        let s = pg_store().await;
+        let sess = "_test-repair-from-transcript";
+        clear_test_session(&s, sess).await;
+        sqlx_core::query::query("DELETE FROM activity.transcript_turns WHERE session_id = $1")
+            .bind(sess).execute(&s.pool).await.unwrap();
+        let fid = create_test_folder(&s, "repair-tt").await; // /_test/repair-tt
+
+        // A turn carrying its cwd in attrs, historical, with NO session row.
+        let turn = crate::transcript::TranscriptTurn {
+            turn_index: 1,
+            user_text: Some("do the thing".into()),
+            assistant_text: "done".into(),
+            started_at: chrono::DateTime::from_timestamp_millis(1_700_000_000_000),
+            attrs: serde_json::json!({ "cwd": "/_test/repair-tt" }),
+            ..Default::default()
+        };
+        s.upsert_transcript_turns("claude_code", sess, "claude", None, None, &[turn])
+            .await.unwrap();
+        assert_eq!(session_row_folder(&s, sess).await, None, "no session before the repair");
+
+        let n = s.repair_sessions_from_transcripts().await.unwrap();
+        assert!(n >= 1, "the transcript-only session is created; got {n}");
+        assert_eq!(session_row_folder(&s, sess).await, Some(fid),
+            "resolved from the cwd the turn retained in attrs");
+
+        // Historical, not today — otherwise it pollutes recency and every
+        // time-windowed metric.
+        let (started,): (chrono::DateTime<chrono::Utc>,) = sqlx_core::query_as::query_as(
+            "SELECT started_at FROM activity.sessions WHERE client_session_id = $1",
+        ).bind(sess).fetch_one(&s.pool).await.unwrap();
+        assert!(started < chrono::Utc::now() - chrono::Duration::days(365),
+            "carries the turn's real timestamp, not now(); got {started}");
+
+        // Idempotent: a second pass finds nothing to do for this session.
+        s.repair_sessions_from_transcripts().await.unwrap();
+        let (rows,): (i64,) = sqlx_core::query_as::query_as(
+            "SELECT count(*) FROM activity.sessions WHERE client_session_id = $1",
+        ).bind(sess).fetch_one(&s.pool).await.unwrap();
+        assert_eq!(rows, 1, "re-running the backfill does not duplicate the session");
+
+        clear_test_session(&s, sess).await;
+    }
+
+    #[tokio::test]
+    async fn repair_from_transcripts_leaves_an_unresolvable_cwd_alone() {
+        // A wrong attribution is worse than a missing one: a cwd that resolves to
+        // no tracked folder must NOT be attached to a guessed repository.
+        let s = pg_store().await;
+        let sess = "_test-repair-tt-unresolvable";
+        clear_test_session(&s, sess).await;
+        sqlx_core::query::query("DELETE FROM activity.transcript_turns WHERE session_id = $1")
+            .bind(sess).execute(&s.pool).await.unwrap();
+        let turn = crate::transcript::TranscriptTurn {
+            turn_index: 1,
+            user_text: Some("x".into()),
+            assistant_text: "y".into(),
+            started_at: chrono::DateTime::from_timestamp_millis(1_700_000_000_000),
+            attrs: serde_json::json!({ "cwd": "/_nowhere/not/tracked" }),
+            ..Default::default()
+        };
+        s.upsert_transcript_turns("claude_code", sess, "claude", None, None, &[turn])
+            .await.unwrap();
+        s.repair_sessions_from_transcripts().await.unwrap();
+        assert_eq!(session_row_folder(&s, sess).await, None,
+            "left unattached rather than misattributed");
+        sqlx_core::query::query("DELETE FROM activity.transcript_turns WHERE session_id = $1")
+            .bind(sess).execute(&s.pool).await.unwrap();
     }
 
     #[tokio::test]

@@ -487,16 +487,76 @@ pub async fn backfill_all(
 /// Skips files unchanged since last ingest (the per-file task re-checks to stay
 /// race-safe). Returns the number of files enqueued.
 pub async fn run_backfill(ctx: &TaskContext, _task: &Task) -> Result<u32, String> {
-    let (_seen, enqueued) = dispatch(&ctx.queue).await;
-    // Re-attach sessions orphaned by a repo delete/rename (events survived, the
-    // session row was cascade-deleted) — resolves each via its cwd, now alias-aware.
-    // Idempotent + cheap (only sessions with no row are touched); logged, never fatal.
-    match ctx.pg().repair_orphaned_sessions().await {
-        Ok(n) if n > 0 => tracing::info!(repaired = n, "run_backfill: re-attached orphaned sessions"),
-        Ok(_) => {}
-        Err(e) => tracing::warn!(error = %e, "run_backfill: repair_orphaned_sessions failed"),
+    // Thin wrapper: the task kind exists to schedule the work, not to define it.
+    let out = backfill(&ctx.queue, ctx.pg()).await;
+    Ok(out.enqueued)
+}
+
+/// What a transcript backfill IS — enqueue every unit, then repair sessions.
+///
+/// One definition, called by thin wrappers: the `BackfillTranscripts` task and the
+/// `/api/transcripts/backfill` endpoint. They were previously two copies of the
+/// same sequence and had already drifted — the endpoint ran only the events-based
+/// repair, so a fix added to the task path silently did not reach the button.
+/// Anything added here now reaches both by construction.
+pub async fn backfill(
+    queue: &crate::tasks::queue::TaskQueue,
+    pg: &crate::db::pg_store::PgStore,
+) -> BackfillOutcome {
+    let (files_seen, enqueued) = dispatch(queue).await;
+    let sessions_repaired = repair_sessions(pg).await;
+    BackfillOutcome { files_seen, enqueued, sessions_repaired }
+}
+
+/// What one backfill did — the shape both callers report.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct BackfillOutcome {
+    pub files_seen: u32,
+    pub enqueued: u32,
+    pub sessions_repaired: u32,
+}
+
+
+/// Both session repairs, run together — the ONE place either is invoked.
+///
+/// There are two entry points to a transcript backfill (the scheduled task and
+/// the HTTP trigger), and they had drifted: the trigger called only the
+/// events-based repair, so a fix added to the task path silently did not apply to
+/// the button. Sharing one function is what makes "part of the backfill" true of
+/// both rather than of whichever path happened to be edited.
+///
+/// Order matters. The events-based repair runs first because an event carries a
+/// cwd per record — a stronger attribution signal than the transcript's
+/// thread-level one — so anything it can resolve is resolved better there.
+///
+/// Both are idempotent and cheap: each only looks at sessions that do not exist,
+/// so re-running converges rather than duplicating. Neither is fatal — a repair
+/// failure logs and lets the ingest stand.
+pub async fn repair_sessions(pg: &crate::db::pg_store::PgStore) -> u32 {
+    let mut repaired = 0u32;
+    match pg.repair_orphaned_sessions().await {
+        Ok(n) => {
+            if n > 0 {
+                tracing::info!(repaired = n, "repair_sessions: re-attached orphaned sessions");
+            }
+            repaired += n;
+        }
+        Err(e) => tracing::warn!(error = %e, "repair_sessions: repair_orphaned_sessions failed"),
     }
-    Ok(enqueued)
+    // Transcripts whose prose was ingested but whose session was never
+    // synthesized (no reconstructable events, or no cwd resolved at the time). A
+    // folder tracked LATER makes an earlier cwd resolvable, so this converges on
+    // every backfill instead of needing a one-off sweep.
+    match pg.repair_sessions_from_transcripts().await {
+        Ok(n) => {
+            if n > 0 {
+                tracing::info!(repaired = n, "repair_sessions: created sessions from transcripts");
+            }
+            repaired += n;
+        }
+        Err(e) => tracing::warn!(error = %e, "repair_sessions: repair_sessions_from_transcripts failed"),
+    }
+    repaired
 }
 
 /// Scan all adapters and enqueue one `BackfillTranscriptFile` task per
