@@ -26,20 +26,10 @@ const BACKOFF_CAP_SECS: u64 = 60;
 /// pipeline (D6c). Other kinds fail for permanent reasons (a missing URL, a bad
 /// project-id payload, a deleted root), so retrying them just burns cycles.
 pub fn is_retryable(kind: &TaskKind) -> bool {
-    matches!(
-        kind,
-        TaskKind::ProcessFile
-            | TaskKind::ProcessGitFolder
-            | TaskKind::ProcessFolder
-            | TaskKind::BuildConnections
-            | TaskKind::DetectCommunities
-            // Metrics compute + health barrier fail for transient reasons (a DB
-            // hiccup reading the window / writing project_metrics), so a bounded
-            // retry re-drives them; the daily scheduler would otherwise not
-            // re-attempt until the next day.
-            | TaskKind::ComputeGroupMetrics
-            | TaskKind::ComputeHealth
-    )
+    // The policy now lives on the kind descriptor, so adding a kind forces a
+    // retry decision at the definition instead of defaulting to "no" by
+    // falling through a match arm here.
+    kind.is_retryable()
 }
 
 /// Exponential backoff before the given attempt. `attempt` is the

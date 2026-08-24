@@ -6418,3 +6418,39 @@
 
         assert!(clash.is_err(), "a second persona claiming the same login is rejected");
     }
+
+    #[tokio::test]
+    async fn all_task_kinds_match_the_database_enum() {
+        // Ties the three places a kind must exist into one assertion: the Rust
+        // enum, `TaskKind::ALL`, and `sensei.task_execution_kind`.
+        //
+        // This is the guard the codebase lacked. task_kind was free text until
+        // Phase 0, and four kinds had already orphaned their history by being
+        // renamed or retired with nothing noticing. Now a half-added kind fails
+        // here instead of at an INSERT on a fire-and-forget path that only logs.
+        let s = pg_store().await;
+        let db: Vec<String> = query_as::<_, (String,)>(
+            "SELECT e.enumlabel::text FROM pg_enum e \
+               JOIN pg_type t ON t.oid = e.enumtypid \
+              WHERE t.typname = 'task_execution_kind'",
+        ).fetch_all(s.pool()).await.unwrap().into_iter().map(|(v,)| v).collect();
+
+        // Values kept only to describe historical rows. They have no TaskKind by
+        // design — remapping them to a live kind would fabricate history that
+        // never happened (compute_metrics SPLIT in two; resolve_edges was retired
+        // outright and has no successor at all).
+        let retired = ["resolve_edges", "plan_metric_days", "compute_metrics", "reconcile_identity"];
+
+        for k in crate::tasks::TaskKind::ALL {
+            let name = k.info().name;
+            assert!(db.iter().any(|d| d == name),
+                "{name} is a live TaskKind but missing from sensei.task_execution_kind — \
+                 an execution row for it would fail to INSERT");
+        }
+        for value in &db {
+            if retired.contains(&value.as_str()) { continue; }
+            assert!(crate::tasks::TaskKind::ALL.iter().any(|k| k.info().name == value),
+                "{value} exists in the DB enum but no TaskKind produces it — \
+                 either add the kind or mark the value retired");
+        }
+    }
