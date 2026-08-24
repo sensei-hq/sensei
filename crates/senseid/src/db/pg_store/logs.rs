@@ -511,7 +511,7 @@ impl PgStore {
 
     /// Execution rows for the CHILDREN of one queue task id.
     ///
-    /// A dispatcher (`BackfillTranscripts` enqueues one task per transcript) has
+    /// A dispatcher (`IngestCaptures` enqueues one task per transcript) has
     /// no meaningful progress of its own — it finishes in milliseconds having
     /// queued thousands of children. Following the parent alone would report
     /// "completed" while the actual ingestion had barely started, so a follower

@@ -6439,7 +6439,8 @@
         // design — remapping them to a live kind would fabricate history that
         // never happened (compute_metrics SPLIT in two; resolve_edges was retired
         // outright and has no successor at all).
-        let retired = ["resolve_edges", "plan_metric_days", "compute_metrics", "reconcile_identity"];
+        let retired = ["resolve_edges", "plan_metric_days", "compute_metrics", "reconcile_identity",
+                       "backfill_transcripts", "backfill_transcript_file"];
 
         for k in crate::tasks::TaskKind::ALL {
             let name = k.info().name;
