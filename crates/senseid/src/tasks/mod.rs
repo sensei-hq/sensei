@@ -80,6 +80,16 @@ pub enum TaskKind {
     /// Ingest one transcript file into activity.transcript_turns (resumable,
     /// per-file cursor). folder_path = capture source, path = file (#73).
     BackfillTranscriptFile,
+    /// Reconstruct historical coverage for one project: check out sampled past
+    /// commits and run the configured `metrics.coverage_command` in each.
+    /// `path` = project id, `folder_path` = week bound ("" = all history).
+    ///
+    /// Deliberately ONE task per project rather than a dispatcher + per-commit
+    /// children, which is the shape `BackfillTranscripts` uses. Coverage runs the
+    /// project's REAL TEST SUITE per commit, and the executor runs N workers — so
+    /// per-commit children would put N test suites on the machine at once. The
+    /// serial loop inside one task is the concurrency control.
+    BackfillCoverage,
     /// Global: cluster recurring corrective prompts across all projects into
     /// inference.corrections (analyzer #65 step 5). Enqueued once per scheduler tick.
     AggregateCorrections,
@@ -181,6 +191,7 @@ impl std::fmt::Display for TaskKind {
             Self::ScanDocDrift => write!(f, "scan_doc_drift"),
             Self::BackfillTranscripts => write!(f, "backfill_transcripts"),
             Self::BackfillTranscriptFile => write!(f, "backfill_transcript_file"),
+            Self::BackfillCoverage => write!(f, "backfill_coverage"),
             Self::AggregateCorrections => write!(f, "aggregate_corrections"),
             Self::AggregateToolInsights => write!(f, "aggregate_tool_insights"),
             Self::ClassifyPendingVerdicts => write!(f, "classify_pending_verdicts"),
@@ -288,6 +299,14 @@ impl TaskKind {
             // into a retry-timeout loop that stranded the folder at `indexing`, so
             // the terminal barrier gets a wider budget.
             TaskKind::DetectCommunities => Duration::from_secs(1800),
+            // Coverage backfill is the longest task in the system by a wide margin
+            // and is not comparable to the others: it runs the project's REAL TEST
+            // SUITE once per sampled commit, serially. A repo with two years of
+            // history is ~100 suite runs in one task, so no budget derived from the
+            // other kinds fits. The `weeks` bound on the request — not the watchdog
+            // — is the intended control; the watchdog is only here to stop a hung
+            // command wedging a worker forever.
+            TaskKind::BackfillCoverage => Duration::from_secs(7200),
         }
     }
 }
@@ -560,7 +579,8 @@ mod tests {
             TaskKind::ReconcileIdentity, TaskKind::AnalyzeProject,
             TaskKind::AnalyzeSessionProcess, TaskKind::ScanDocDrift,
             TaskKind::BackfillTranscripts,
-            TaskKind::BackfillTranscriptFile, TaskKind::AggregateCorrections,
+            TaskKind::BackfillTranscriptFile, TaskKind::BackfillCoverage,
+            TaskKind::AggregateCorrections,
             TaskKind::AggregateToolInsights, TaskKind::ClassifyPendingVerdicts,
             TaskKind::ConsolidateGovernance, TaskKind::WarmInsightCopy,
             TaskKind::LearnPlaybooks,

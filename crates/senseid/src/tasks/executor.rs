@@ -136,6 +136,7 @@ async fn execute_task(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
             TaskKind::ComputeHealth => handlers::metrics::compute_health(ctx, task).await,
             TaskKind::BackfillTranscripts => crate::transcript::run_backfill(ctx, task).await,
             TaskKind::BackfillTranscriptFile => crate::transcript::run_backfill_file(ctx, task).await,
+            TaskKind::BackfillCoverage => handlers::metrics::coverage::run_backfill(ctx, task).await,
         }
     };
     let cap = task.kind.watchdog_timeout();

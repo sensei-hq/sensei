@@ -378,15 +378,22 @@ pub(crate) async fn backfill_project_sessions(
 /// Enqueue a transcript backfill (#73) — ingest assistant/user prose from the
 /// agent transcript caches into activity.transcript_turns. Resumable, so this
 /// is safe to call repeatedly; only changed transcripts do work.
+///
+/// ENQUEUES rather than running the backfill inline. The dispatcher walks every
+/// transcript the adapters can see — ~2,700 files on this machine — and running
+/// that on the request thread meant the caller held a connection open across a
+/// filesystem sweep it could not observe, and any client timeout abandoned a
+/// sweep that kept running. Follow the work on `GET /api/tasks/progress` (SSE)
+/// or `GET /api/tasks/status`.
+///
+/// Deduped: a second request while one is in flight reports the in-flight run.
 pub(crate) async fn backfill_transcripts(State(state): State<AppState>) -> Json<serde_json::Value> {
-    // Thin wrapper over the one definition — see `crate::transcript::backfill`.
-    let out = crate::transcript::backfill(&state.task_queue, &state.pg).await;
-    Json(serde_json::json!({
-        "ok": true,
-        "files_seen": out.files_seen,
-        "enqueued": out.enqueued,
-        "sessions_repaired": out.sessions_repaired,
-    }))
+    let kind = crate::tasks::TaskKind::BackfillTranscripts;
+    if state.task_queue.has_pending_kind(kind.clone()).await {
+        return Json(serde_json::json!({ "ok": true, "queued": false, "running": true }));
+    }
+    let task_id = state.task_queue.enqueue(crate::tasks::Task::new(kind, "", "")).await;
+    Json(serde_json::json!({ "ok": true, "queued": true, "taskId": task_id }))
 }
 
 /// Enqueue a metrics backfill (Phase 5 — history recovery): one `ComputeProjectMetrics` per

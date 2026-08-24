@@ -2239,15 +2239,27 @@ mod tests {
             .filter(|t| t != HEALTH_TASK_NAME) // `health` is the ComputeHealth kind, not a base group
             .filter(|t| !t.starts_with("_test:")) // another test's fixture, not a shipped group
             .collect();
-        for g in ["session_outcomes", "churn", "quality", "autonomy", "knowledge", "coverage"] {
+        const REQUIRED_GROUPS: [&str; 6] =
+            ["session_outcomes", "churn", "quality", "autonomy", "knowledge", "coverage"];
+        for g in REQUIRED_GROUPS {
             assert!(base_names.iter().any(|t| t == g), "base group `{g}` is active in the registry: {base_names:?}");
         }
         // Enqueue the per-project PARENT only: ComputeProjectMetrics freezes one
         // frozen as_of, fans out one ComputeGroupMetrics per active base group, and
         // enqueues the ComputeHealth barrier blocked on them — the whole engine graph.
         ctx.queue.enqueue(Task::new(TaskKind::ComputeProjectMetrics, &pid_str, "")).await;
-        // parent (1) + one child per active base group + the health barrier (1).
-        let expected_tasks = base_names.len() + 2;
+        // parent (1) + one child per REQUIRED base group + the health barrier (1).
+        //
+        // Counted from the fixed list, NOT from `base_names.len()`. Filtering
+        // `_test:` fixtures narrowed the race above but did not close it: a sibling
+        // test can seed an active group WITHOUT that prefix, which this read counts
+        // and the sibling's cleanup then removes before the parent fans out — an
+        // expectation one higher than any number of tasks that can ever run
+        // (observed: fully drained at `completed=11`, only the arithmetic wrong).
+        // The six required groups are asserted present just above and no test
+        // removes them, so they are a floor that cannot move underneath us; extra
+        // groups only ever ADD tasks, which `completed >= expected` tolerates.
+        let expected_tasks = REQUIRED_GROUPS.len() + 2;
 
         // Only the parent is runnable up front; the group children + the health
         // barrier are enqueued when the parent runs.

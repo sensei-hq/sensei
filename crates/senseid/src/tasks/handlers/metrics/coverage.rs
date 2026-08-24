@@ -261,6 +261,26 @@ fn run_coverage_command(wt: &Path, command: &str) -> Result<(), String> {
 /// the most-recent sampled ISO-week anchors to walk (`None` = all). Returns the number
 /// of rows written. Never fabricates: a commit that predates the repo, a failed
 /// command, or an unproduced/empty lcov writes NO row for that commit.
+/// Handler for `TaskKind::BackfillCoverage` — a thin wrapper over [`backfill`].
+///
+/// The task kind exists to SCHEDULE the work, not to define it: the definition
+/// stays in `backfill` so the queue and any call surface run the same code.
+/// `task.path` = project id, `task.folder_path` = the week bound ("" = all
+/// history), which is how the queue carries the request's `weeks` parameter.
+pub(crate) async fn run_backfill(
+    ctx: &crate::tasks::executor::TaskContext,
+    task: &crate::tasks::Task,
+) -> Result<u32, String> {
+    // An unparseable bound is a caller bug, and silently walking ALL history
+    // instead of the requested window would run far more of the test suite than
+    // was asked for — so refuse rather than guess.
+    let weeks = match task.folder_path.as_str() {
+        "" => None,
+        w => Some(w.parse::<u32>().map_err(|e| format!("coverage: bad weeks {w:?}: {e}"))?),
+    };
+    backfill(ctx.pg(), &task.path, weeks).await
+}
+
 pub(crate) async fn backfill(
     pg: &PgStore,
     project_raw: &str,
@@ -620,6 +640,52 @@ end_of_record
         assert!(rows.iter().all(|r| (r.2 - 0.5).abs() < 1e-9), "value = 5 hit / 10 found = 0.5");
         let days: Vec<_> = rows.iter().map(|r| r.0.to_string()).collect();
         assert!(days.contains(&"2025-05-05".to_string()), "stamped on the commit-day, not today");
+    }
+
+    // ── The task wrapper (`TaskKind::BackfillCoverage`) ─────────────────────
+
+    #[tokio::test]
+    async fn the_task_wrapper_honours_the_week_bound_it_was_queued_with() {
+        let _guard = COVERAGE_CONFIG_LOCK.enter();
+        // The `weeks` bound survives the trip through the queue. It rides in
+        // `folder_path` as a string, so a wrapper that dropped or misparsed it
+        // would silently run the project's test suite over the WHOLE history
+        // instead of the one week that was asked for.
+        let ctx = make_ctx().await;
+        let pg = ctx.pg();
+        let uniq = uuid::Uuid::new_v4();
+        let (pid, fid, repo) = seed_git_project_folder(pg, &uniq).await;
+        for (d, f) in [("2025-05-05", "a.rs"), ("2025-05-12", "b.rs"), ("2025-05-19", "c.rs")] {
+            git_commit_on_day(repo.path(), d, &[(f, "x\n")]);
+        }
+        pg.set_config(COVERAGE_COMMAND_KEY, "printf 'SF:x\\nLH:5\\nLF:10\\nend_of_record\\n' > lcov.info").await.unwrap();
+
+        let task = crate::tasks::Task::new(
+            crate::tasks::TaskKind::BackfillCoverage,
+            "1", // weeks = 1 → only the most recent sampled anchor
+            &pid.to_string(),
+        );
+        let written = run_backfill(&ctx, &task).await.unwrap();
+
+        pg.set_config(COVERAGE_COMMAND_KEY, "").await.unwrap();
+        cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
+
+        assert_eq!(written, 1, "weeks=1 walks ONE anchor, not all three");
+    }
+
+    #[tokio::test]
+    async fn the_task_wrapper_refuses_an_unparseable_week_bound() {
+        // Falling back to `None` here would be the worst possible default: it
+        // would run the test suite across the entire history because the bound
+        // was malformed. Refuse instead.
+        let ctx = make_ctx().await;
+        let task = crate::tasks::Task::new(
+            crate::tasks::TaskKind::BackfillCoverage,
+            "not-a-number",
+            &uuid::Uuid::new_v4().to_string(),
+        );
+        let err = run_backfill(&ctx, &task).await.unwrap_err();
+        assert!(err.contains("bad weeks"), "got {err}");
     }
 
     #[tokio::test]

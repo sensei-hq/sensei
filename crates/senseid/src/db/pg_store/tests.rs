@@ -3374,11 +3374,25 @@
             .bind(sid).execute(&s.pool).await.unwrap();
     }
 
+    /// Serialises the tests that invoke the GLOBAL transcript repair.
+    ///
+    /// `repair_sessions_from_transcripts` is deliberately global — it sweeps every
+    /// transcript-only session, which is what makes it converge as folders become
+    /// tracked. That also means one test's repair operates on another's fixture:
+    /// concurrently, test B's sweep creates the session test A has just asserted
+    /// does not exist yet, and A fails on its own precondition.
+    ///
+    /// Blocking on purpose — see [`crate::tasks::test_support::TestGate`] for why
+    /// an async mutex loses wakers across per-test runtimes.
+    static REPAIR_SWEEP_GATE: crate::tasks::test_support::TestGate =
+        crate::tasks::test_support::TestGate::new();
+
     #[tokio::test]
     async fn repair_sessions_from_transcripts_creates_the_missing_session() {
         // The gap the events-based repair cannot close: prose was ingested but no
         // session was ever synthesized (the source reconstructed no events, or no
         // cwd resolved at the time). The turns then exist and can join nothing.
+        let _gate = REPAIR_SWEEP_GATE.enter();
         let s = pg_store().await;
         let sess = "_test-repair-from-transcript";
         clear_test_session(&s, sess).await;
@@ -3426,6 +3440,7 @@
     async fn repair_from_transcripts_leaves_an_unresolvable_cwd_alone() {
         // A wrong attribution is worse than a missing one: a cwd that resolves to
         // no tracked folder must NOT be attached to a guessed repository.
+        let _gate = REPAIR_SWEEP_GATE.enter();
         let s = pg_store().await;
         let sess = "_test-repair-tt-unresolvable";
         clear_test_session(&s, sess).await;
