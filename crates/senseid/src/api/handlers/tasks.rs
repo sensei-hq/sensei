@@ -68,6 +68,8 @@ async fn queued_state(state: &AppState, task_id: u64) -> Option<serde_json::Valu
         serde_json::json!({
             "taskId": task_id,
             "kind": t.kind.to_string(),
+            "pipeline": t.kind.pipeline(),
+            "stage": t.kind.stage(),
             "folderPath": t.folder_path,
             "path": t.path,
             "status": "queued",
@@ -210,6 +212,34 @@ pub(crate) async fn task_events(
     });
 
     Sse::new(head.chain(live))
+}
+
+/// `GET /api/tasks/kinds` — the task catalogue, grouped by pipeline.
+///
+/// Exists because the pipelines were previously convention only: which stage a
+/// kind belonged to lived in reviewers' heads and in the order of a `match`.
+/// Publishing the grouping means the app, the docs and a human debugging a
+/// stalled queue all read the same answer from one place.
+///
+/// Pure: derived entirely from the kind descriptors, so it cannot drift from the
+/// behaviour it describes.
+pub(crate) async fn list_kinds() -> Json<serde_json::Value> {
+    use std::collections::BTreeMap;
+    let mut by_pipeline: BTreeMap<String, Vec<serde_json::Value>> = BTreeMap::new();
+    for k in crate::tasks::TaskKind::ALL {
+        let i = k.info();
+        by_pipeline
+            .entry(format!("{:?}", i.pipeline).to_lowercase())
+            .or_default()
+            .push(serde_json::json!({
+                "kind": i.name,
+                "stage": format!("{:?}", i.stage).to_lowercase(),
+                "budgetSecs": i.budget_secs,
+                "highPriority": i.high_priority,
+                "retryable": i.retryable,
+            }));
+    }
+    Json(serde_json::json!({ "pipelines": by_pipeline }))
 }
 
 #[cfg(test)]

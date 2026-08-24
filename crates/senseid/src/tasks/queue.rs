@@ -484,14 +484,10 @@ pub struct QueueStatus {
 /// reorders *selection among already-startable tasks*; it never bypasses the
 /// per-repo concurrency cap (that gate is applied first in `next_task`).
 fn kind_priority(kind: &super::TaskKind) -> u8 {
-    use super::TaskKind;
-    match kind {
-        TaskKind::AnalyzeProject
-        | TaskKind::ComputeProjectMetrics
-        | TaskKind::ComputeGroupMetrics
-        | TaskKind::ComputeHealth => 0,
-        _ => 1,
-    }
+    // Reads the kind descriptor rather than re-listing the HIGH set here.
+    // The list lived in two places (this match and the watchdog tiering) and
+    // nothing kept them agreeing.
+    if kind.is_high_priority() { 0 } else { 1 }
 }
 
 /// Best-effort resolver: for each unmet-dependency id, produce a
