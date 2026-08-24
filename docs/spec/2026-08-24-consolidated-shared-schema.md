@@ -1,5 +1,21 @@
 # Consolidated shared schema — the table set, mirrored local ⇄ dojo
 
+> **⚠ Partially superseded.** The plan of record is
+> [`2026-08-24-platform-restructure.md`](./2026-08-24-platform-restructure.md).
+> This document is retained for its **measurements and rationale**, which remain
+> valid. Superseded since writing:
+> - **No `people` table.** The login is Supabase `auth.users` and the profile
+>   (username, display name, avatar) lives there only — a username does not change
+>   by tenant. Membership is `tenant_users(tenant_id, user_id, role)`: one user
+>   belongs to MANY tenants (personal + employer + clients), so the `people.tenant_id`
+>   and `people.display_name` in this doc are both wrong.
+> - `identities` → Supabase `auth.identities`; local git-email grouping →
+>   **`personas`** (labelled), deliberately **kept apart** in dōjō rather than
+>   merged. See root spec §3 and the ADR.
+> - **No local-authored metrics.** The catalog is product-owned; tenants toggle
+>   `metric_activations`.
+> - Teams are a confirmed level, with a default team per tenant.
+
 Supersedes the table sections of the two prior design docs. Design for
 discussion; no DDL changed.
 
@@ -112,8 +128,10 @@ repo lives on this machine* is local.
 ### T1 — dojo authoritative, pulled down
 
 `metrics` (the config). A team must compute a metric identically or the
-comparison is meaningless. Local-only metrics remain possible via
-`owner = 'local'`.
+comparison is meaningless. **Superseded:** local-only metrics are not possible —
+every metric is bound to a worker via `task_name`, so the catalog is
+product-owned and a tenant controls only *activation* (`metric_activations`).
+See root spec §2.
 
 ### T2 — mirrored, two-way
 
@@ -232,11 +250,13 @@ project that disagrees with its repository's.
 ### `metrics` — pull-only
 
 ```sql
-  owner        text not null default 'local'   -- 'dojo' | 'local'
-, dojo_version bigint
+  dojo_version bigint          -- product catalog version pulled down
+-- NOTE: no `owner` column. The catalog is product-owned; per-tenant on/off
+-- lives in `metric_activations(scope_id, metric_id, enabled)` — root spec §2.
 ```
 
-Dojo rows replace wholesale on sync; `owner='local'` rows are never touched. A
+Catalog rows replace wholesale on sync; activation rows are local state and are
+never overwritten by a catalog pull. A
 key collision resolves in dojo's favour with the local one renamed and flagged,
 never silently dropped.
 
