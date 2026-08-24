@@ -1,0 +1,268 @@
+# Platform restructure — root spec
+
+One root document for three restructures that share a spine. Phased, and each
+phase broken down per surface.
+
+**Status:** design. No code or DDL changed yet.
+**Detail docs** (evidence and rationale; this document is the plan of record):
+
+- [`2026-08-24-task-worker-system-analysis.md`](./2026-08-24-task-worker-system-analysis.md) — worker inventory, pipelines, findings
+- [`2026-08-24-shared-schema-and-sync-design.md`](./2026-08-24-shared-schema-and-sync-design.md) — metrics/repo/project DB layer
+- [`2026-08-24-provisioning-and-identity-addendum.md`](./2026-08-24-provisioning-and-identity-addendum.md) — GitHub onboarding, identity gaps
+- [`2026-08-24-consolidated-shared-schema.md`](./2026-08-24-consolidated-shared-schema.md) — the mirrored table set
+- [`dojo/dojo-auth-provisioning.md`](./dojo/dojo-auth-provisioning.md) — the Gherkin this is reconciled against
+
+---
+
+## 1. The three restructures
+
+| | Workstream | Core change | Independent? |
+|---|---|---|---|
+| **A** | **Task/worker** | typed payloads, `Processor` trait, coordinator→worker, backfill as a parameter, log archival | Yes — ships alone |
+| **B** | **Dōjō sign-in** | GitHub provisioning as local tasks, global identity, email aliases, tenants/teams | Needs A's task shape for the provisioning pipeline; needs C's identity tables |
+| **C** | **Shared entity/config** | one vocabulary for scope/origin/owner across metrics, skills, agents, rules, memories, playbooks; mirrored local ⇄ dōjō tables | Partly independent; the local half ships without dōjō |
+
+They share one spine: **a typed, scoped entity model plus a task system that can
+carry it.** That is why they are one document and not three projects.
+
+**Locked decisions**
+
+- **Q3** One repository → exactly one project; a project holds many.
+- **Q7** *All workers are local.* Dōjō has no job runner and is not getting one now; it holds the governance model for accepting pushes. The design keeps a dōjō-side worker possible (org-level consolidation across tenants is the plausible first case) but nothing depends on it.
+- Mirrored schema: same table set both sides; locally `tenant_id` is nullable and filled on dōjō registration.
+
+---
+
+## 2. Cross-cutting: one vocabulary for shared entities
+
+This is the part that makes C bigger than metrics. Skills, agents, rules,
+memories and playbooks are all shareable entities, and **each invented its own
+word for the same two ideas**:
+
+```
+memories.scope         = global | project          ← visibility
+memories.origin        = authored | learned        ← provenance
+rule_packs.source      = "OWASP · sensei", "Kent Beck · XP · sensei", …
+                                                   ← a citation string, not a scope
+playbooks.source       = builtin                   ← provenance
+library_skills.source  = manifest                  ← provenance
+library_agents.source  = manifest                  ← provenance
+federated_memories     = (nothing)
+```
+
+`source` means three unrelated things across three tables, and none of them
+expresses local-vs-remote. Proposed single vocabulary, applied to **every**
+shareable entity:
+
+```sql
+scope   entity_scope   -- 'local' | 'project' | 'tenant' | 'public'
+origin  entity_origin  -- 'authored' | 'learned' | 'imported'
+owner_person_id  uuid  -- set when scope='local'
+owner_project_id uuid  -- set when scope='project'
+owner_tenant_id  uuid  -- set when scope='tenant'
+attribution text       -- the citation ("OWASP · sensei") — free text, kept, renamed off `source`
+```
+
+- **scope** answers *who may see it* and therefore *whether it syncs*.
+- **origin** answers *where it came from* — needed to know what a re-import may overwrite.
+- **attribution** keeps the human-readable credit that `rule_packs.source` holds today; it stops pretending to be an enum.
+
+Entities taking this vocabulary: `metrics`, `memories`, `rule_packs`,
+`playbooks`, `library_skills`, `library_agents`, `consolidated_rulesets`,
+`intake_guide`.
+
+`public` is the marketplace tier (`marketplace/catalog.json`) — already a real
+distribution channel, currently unmodelled in the DB.
+
+---
+
+## 3. The entity model
+
+```
+tenant                        (GitHub org, or personal; NULL locally until registration)
+ ├── tenant_members  → people
+ └── teams
+      ├── team_members → people
+      └── projects
+           └── repositories_in_projects → repositories   (1 repo → 1 project)
+                                              └── repository_metrics
+people ──< person_emails                      (git aliases + verified auth emails)
+people ──< identities                         ((provider, subject) → person)
+metrics / skills / agents / rules / memories  (scope + origin + owner_*)
+```
+
+Metric-read authorization follows exactly one path:
+
+```
+person → team_members → team → projects → repositories_in_projects → repository
+```
+
+GitHub's per-repo `admin|write|read` is used **only** to discover which repos to
+create during provisioning — never to decide what a teammate can see.
+
+---
+
+## 4. Surfaces
+
+| Surface | What lives there |
+|---|---|
+| **DB** | `database/ddl` — local `sensei.*`/`activity.*`, and the mirrored `dojo.*` |
+| **senseid** | Rust daemon: queue, workers, sync client, HTTP API |
+| **dojo** | SvelteKit + Supabase: governance, RLS, read UI |
+| **app** | desktop UI: metrics, follow/progress, settings |
+| **CLI / MCP** | call surfaces that enqueue and follow |
+| **marketplace** | skills/agents distribution (`public` scope) |
+
+---
+
+## 5. Phases
+
+Each phase is shippable and forward-only; no phase depends on a later one.
+
+### Phase 0 — Reclaim (A) · no behaviour change
+
+The 1.5 GB win and the lies in the names. Nothing here needs a decision.
+
+| Surface | Work |
+|---|---|
+| DB | Prune + roll up `activity.task_executions` (**4.8M rows / 1,568 MB / 69 days, nothing prunes it**); add `task_execution_daily`; make `task_kind` an enum (three rename orphans live in it today: `compute_metrics`, `plan_metric_days`, `resolve_edges`) |
+| senseid | Retention worker; rename `TaskKind::ReconcileIdentity` → `ReconcileRepoMetadata` (**it reads repo frontmatter — the name will collide badly with Phase 3's identity work**) |
+| app | none |
+
+**Done when:** `task_executions` holds coordinator + failed rows only, workers roll up nightly, and `task_kind` cannot take an unknown value.
+
+### Phase 1 — Typed payloads + `Processor` trait (A)
+
+| Surface | Work |
+|---|---|
+| DB | `tasks.payload jsonb`; `trace_id` |
+| senseid | `TaskPayload` enum replacing `folder_path`/`path`/`module_id`/`branch`/`url`; `Processor` trait carrying `KIND`/`PIPELINE`/`STAGE`/`BUDGET`; registry replaces the 35-arm match |
+| CLI/MCP | enqueue wrappers take typed payloads |
+
+**Why first among A:** every handler currently re-parses stringly-typed fields with its own convention — `folder_path` is variously a path, a capture-source name, and (in `BackfillCoverage`) a stringified week count. Backfill cannot become a parameter until there is somewhere typed to put it.
+
+**Done when:** no handler parses `task.path`; a malformed payload fails at enqueue, not at run.
+
+### Phase 2 — Coordinator → worker, backfill as a parameter (A)
+
+| Surface | Work |
+|---|---|
+| DB | `pipeline_watermarks` replacing `metric_watermarks` + `transcript_cursor` |
+| senseid | Per pipeline: one coordinator (what needs doing) + one worker (one unit, idempotent, updates its own watermark). Retire `Backfill*` kinds in favour of `Ingest*` with a `from` date |
+| app | Backfill buttons post a range, not a special endpoint |
+| CLI/MCP | `sensei backfill --repo X --from D` → the same coordinator |
+
+Metrics already proves the model (`as_of: None` = today, `Some(d)` = that day). Coverage and transcripts each grew a second kind instead; this generalises the metrics case.
+
+**Done when:** no task kind has "backfill" in its name and the same code path serves live and historical.
+
+### Phase 3 — People, aliases, and correct user metrics (C, local only)
+
+Ships with **no dōjō dependency** and has immediate user-visible payoff.
+
+| Surface | Work |
+|---|---|
+| DB | `people`, `person_emails` (citext, soft-delete, partial unique); `repository_metrics.person_id` |
+| senseid | Resolve git author emails → person; roll-ups group by `person_id` falling back to `identity` |
+| app | "My metrics" stops splitting one human across aliases |
+
+**The measurement that motivates this** — user-scoped rows today:
+
+```
+me@jerrythomas.name             422 rows / 26 repos
+hi@sensei-hq.com                108 / 2
+owner@example.com       84 / 2
+dev@sensei-hq.com                74 / 1
+dev@example-corp.com    62 / 9
+contributor@example.com        17 / 1
+```
+
+At least five are one human. Dōjō's "metrics by user" would show them as five contributors.
+
+**Keep `identity` (the raw git email) and add `person_id` as a resolved FK** — collapsing at write time would be a destructive merge needing recomputation (each row came from `git log --author=<email>`, so merging must *sum*). Resolution stays a re-runnable derivation.
+
+### Phase 4 — Repository/project model (C, local only)
+
+| Surface | Work |
+|---|---|
+| DB | `project_metrics` → `repository_metrics` (drop `project_id`, `folder_id`, `session_id`); `project_metrics` becomes a view; `repositories_in_projects` with `unique(repository_id)`; `folders.project_id` becomes derived |
+| senseid | Writers target `repository_metrics` |
+| app | reads unchanged (the view preserves the contract) |
+
+**Nearly free:** measured 15,389 rows — `repository_id` NULL = 0, `folder_id` set = 0, `session_id` set = 0, repos in >1 project = 0, `project_id` disagreements = 0. A column drop and a view, not a migration.
+
+### Phase 5 — Entity scope vocabulary (C, local only)
+
+| Surface | Work |
+|---|---|
+| DB | `entity_scope`/`entity_origin` enums; apply `scope`/`origin`/`owner_*`/`attribution` to metrics, memories, rule_packs, playbooks, library_skills, library_agents, consolidated_rulesets, intake_guide; migrate `rule_packs.source` → `attribution` |
+| senseid | One resolver for "what is in scope here", replacing per-entity logic |
+| app | scope shown and editable per entity |
+| marketplace | `public` scope maps to `catalog.json` |
+
+### Phase 6 — Identity + tenants (B)
+
+| Surface | Work |
+|---|---|
+| DB | `identities` **global** (`unique(provider, subject)`, `person_id` FK — today `dojo.identities` is `unique(tenant_id, provider, subject)`, so one sign-in provisioning four tenants makes four rows for one human with nothing tying them); `tenants`, `teams`, `team_members`, `tenant_members`, all with nullable `tenant_id` locally |
+| senseid | Provisioning pipeline: `SyncGitHubIdentity` → `LinkPersonEmails` → `ProvisionTenants` → `SyncOrgRepositories { org, cursor }` → `ReconcileMemberships`. Token passed as `token_ref` (follow `dojo_memberships.credential_ref`: keychain, never Postgres) |
+| dojo | Mirror tables; sign-in accepts a provisioned push rather than fetching |
+| app | Dōjō linking UI; tenant activation (auth doc Scenarios 17–18) |
+
+**Because all workers are local (Q7), the daemon is the provisioner**: it holds the token, walks GitHub (paginated, resumable via `cursor`), fills local tables, then pushes under dōjō's governance. Dōjō validates and accepts; it never fetches.
+
+### Phase 7 — Sync + governance (B + C)
+
+| Surface | Work |
+|---|---|
+| DB | `sync_state` (upsert per entity+key+direction, not a growing queue); `visibility`/`synced_at` on repositories; `origin`/`shared_at` on `repository_metrics` |
+| senseid | Pull-else-compute: if the repo is shared and the metric is repo-scoped, take dōjō's row (`origin='dojo'`) and **do not recompute**; else compute (`origin='local'`) and push |
+| dojo | RLS on the authorization path in §3; per-repo push authorization; `metrics` config becomes authoritative and pull-only |
+| app | shows whether a number is local or shared |
+
+`origin` is what stops the loop where local recomputes what it just pulled and pushes it back. `scope='user'` rows are always computed locally and pushed as values — **dōjō can show per-user metrics without ever holding a session, turn, or event.**
+
+### Phase 8 — Activity consolidation (A)
+
+Left last because it changes metric inputs.
+
+| Surface | Work |
+|---|---|
+| DB | Merge `activity.turns` into `transcript_turns` → `activity.session_turns`; `session_id` text → uuid FK; orphan transcripts resolve to a repository by `repo_key` |
+| senseid | One standardized `{sessions[], turns[], events[]}` persistence path for every adapter |
+| app | unchanged |
+
+Measured: 95% overlap (297 of 313 sessions have both), but **69 of 297 disagree on turn count** — a hook turn is prompt-to-prompt, a transcript turn is one exchange. They are two definitions, not duplicates, so the merge must pick one and date the change (Q12).
+
+---
+
+## 6. Dependencies
+
+```
+Phase 0 ──────────────────────────────► (independent)
+Phase 1 ──► Phase 2 ──────────────────► Phase 8
+Phase 3 ──► Phase 4 ──► Phase 5
+Phase 3 ──► Phase 6 ──► Phase 7
+Phase 1 ──► Phase 6            (provisioning needs typed payloads)
+```
+
+Phases 0, 3 and 4 need no decisions and no dōjō. They are the recommended start.
+
+---
+
+## 7. Open questions
+
+| # | Question | Blocks | Leaning |
+|---|---|---|---|
+| Q1 | Project identity across machines — dōjō assigns id, local adopts? | 6 | yes |
+| Q2 | Repo sync default: private opt-in? | 7 | yes |
+| Q4 | Who sees `scope='user'` rows — self + team, or self + admins? | 7 | *(people question — yours)* |
+| Q5 | Materialize weekly/monthly, or views? | 7 | views |
+| Q6 | Retired metric definitions — keep local history? | 7 | keep |
+| Q8 | One `repo_key` in two tenants? | 6 | allow (`unique(repo_key, tenant_id)`) |
+| Q9 | Do inactive tenants sync repos before activation? | 7 | no |
+| Q10 | Web sign-in with no local install — minimal inline provisioning, or gate on a linked install? | 6 | *(open)* |
+| Q11 | Teams as a real level now, or tenant-only first? | 6 | teams now — retrofitting is an access migration |
+| Q12 | Post-merge turn definition: prompt-to-prompt or per-exchange? | 8 | *(shifts turn-counting metrics; must be dated)* |
+
+**Answered:** Q3 (one repo, one project) · Q7 (all workers local).
