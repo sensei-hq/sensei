@@ -30,7 +30,9 @@ carry it.** That is why they are one document and not three projects.
 
 - **Q3** One repository → exactly one project **per tenant**; a project holds many. *(Relaxed from a global unique by Q8 — see §3.1.)*
 - **Q7** *All workers are local.* Dōjō has no job runner and is not getting one now; it holds the governance model for accepting pushes. The design keeps a dōjō-side worker possible (org-level consolidation across tenants is the plausible first case) but nothing depends on it.
-- **Q11** *Teams are a real level.* A tenant may run several teams on different projects, so access is granted per team, not per org. Every tenant gets a **default team** on creation and small orgs never see the concept; an admin can then create teams, move people between them, and assign projects to teams. Tenant membership is billing and identity; **team membership is access**.
+- **Q11** *Teams are a real level — schema now, UI later.* `teams`, `team_members`, `team_projects` are created up front with a **default team containing everyone**, so nothing is blocked and no access migration is needed later; the team-management UI is provisioned when it is wanted. Access is granted per team, not per org. Tenant membership is billing and identity; **team membership is access**.
+- **Q9** *Provisioned ≠ synced.* Tenants discovered from GitHub are created **inactive**. They are genuinely needed — a user may run sensei first and link a login later, and the tenant rows must already exist to attach to — but **nothing syncs until activation**. Activation is the gate, and it is tied to **entitlement/pricing**: the shared metrics and governance plane is a paid surface.
+- **Q10** *Web sign-in is for admins and viewers only.* Dōjō consumes; it does not produce. Anyone who wants data — every developer — needs sensei locally, and dōjō should **recommend the download**. This closes the bootstrapping question entirely: there is no "web user with no install" gap to fill, because a web-only user is a viewer by design.
 - **Identity comes from Supabase** (`auth.users` + `auth.identities`), not from tables we build. The profile (username, avatar) lives on the login only — it does not vary by tenant. Local `personas` group git emails and link to at most one login each. **Caveat:** Supabase auto-links identities sharing a verified email and this cannot be disabled — persona separation depends on disjoint emails. See ADR §2.1.
 - **Q1** *Project identity:* local sensei **derives** it where it can; a user may combine projects on either side; **dōjō wins on conflict.** So the local uuid is provisional and dōjō's is canonical once registered.
 - **Q2** *Sync is gated on authentication, not per-repo opt-in.* Once the user authenticates to dōjō **from sensei**, repos sync automatically both ways. No login → no connection → no sync. (This makes first login the consent moment: it must state plainly what will sync, because after it, every tracked repo's metrics do.)
@@ -133,7 +135,7 @@ auth.users            THE LOGIN — profile lives here and nowhere else:
 
 tenant                        (GitHub org, or personal; NULL locally until registration)
  └── teams                    (a default team exists from creation)
-      └── projects            (assigned to a team)
+      └── team_projects → projects     (mapping, so a project can span teams)
            └── repositories_in_projects → repositories   (1 repo → 1 project PER TENANT)
                                               └── repository_metrics
 
@@ -446,10 +448,10 @@ Phases 0, 3 and 4 need no decisions and no dōjō. They are the recommended star
 | ~~Q4~~ | **Answered:** **self + admins** only | — | — |
 | ~~Q5~~ | **Answered:** start with **views**; materialize only if they measure slow | — | — |
 | ~~Q6~~ | **Answered:** **keep** history for retired metrics (`effective_until` already models it) | — | — |
-| Q8 | One `repo_key` in two tenants? | 6 | allow (`unique(repo_key, tenant_id)`) |
-| Q9 | Do inactive tenants sync repos before activation? | 7 | no |
-| Q10 | Web sign-in with no local install — minimal inline provisioning, or gate on a linked install? | 6 | *(open)* |
-| ~~Q11~~ | **Answered:** teams are a real level, default team per tenant | — | — |
+| ~~Q8~~ | **Answered:** yes — one repo row, N `repository_tenants` links, exactly one `is_owner`. **Relaxes Q3** to one project *per tenant* (§3.1) | — | — |
+| ~~Q9~~ | **Answered:** provisioned inactive, **no sync until activation**; activation gated by entitlement/pricing | — | — |
+| ~~Q10~~ | **Answered:** web = admins/viewers only; devs need sensei; dōjō recommends the download | — | — |
+| ~~Q11~~ | **Answered:** teams/team_members/**team_projects** created now with a default team; UI later | — | — |
 | Q13 | Is the dōjō Rust service still live? Keep artifacts/triage there, or retire it? | 6,7 | keep for what RLS can't express |
 | Q14 | Self-hosted dōjō — own Supabase, or keep the device-token plane? | 6 | *(open)* |
 | Q15 | Daemon JWT — restricted Postgres role, or full `authenticated`? | 7 | restricted |
@@ -457,6 +459,6 @@ Phases 0, 3 and 4 need no decisions and no dōjō. They are the recommended star
 | Q17 | Persona email disjointness — rely on discipline + a loud `unique(dojo_user_id)` failure, or intercept the auth callback? | 6 | discipline + loud failure |
 | Q12 | Post-merge turn definition: prompt-to-prompt or per-exchange? | 8 | *(shifts turn-counting metrics; must be dated)* |
 
-**Answered:** Q1 (dōjō wins) · Q2 (auth-gated auto-sync) · Q3 (one repo, one project) · Q4 (self + admins) · Q5 (views first) · Q6 (keep retired history) · Q7 (all workers local) · Q8 (multi-tenant repos, one owner) · Q11 (teams, default team).
+**Answered:** Q1 (dōjō wins) · Q2 (auth-gated auto-sync) · Q3 (one repo, one project *per tenant*) · Q4 (self + admins) · Q5 (views first) · Q6 (keep retired history) · Q7 (all workers local) · Q8 (multi-tenant repos, one owner) · Q9 (inactive until activated) · Q10 (web = viewers) · Q11 (teams now, UI later).
 
-**Still open:** Q9 (inactive tenants sync?) · Q10 (web sign-in, no local install) · Q12 (post-merge turn definition) · Q13 (is the dōjō Rust service live?) · Q14 (self-hosted dōjō auth) · Q15 (daemon JWT role) · Q16 (git-alias claiming) · Q17 (persona email disjointness).
+**Still open:** Q12 (post-merge turn definition) · Q13 (**is the dōjō Rust service live?** — gates the sync design) · Q14 (self-hosted dōjō auth) · Q15 (daemon JWT role) · Q16 (git-alias claiming) · Q17 (persona email disjointness) · Q18 (cross-tenant user-metric visibility).
