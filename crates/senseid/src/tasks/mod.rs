@@ -167,147 +167,176 @@ pub enum TaskKind {
 }
 
 impl std::fmt::Display for TaskKind {
+    /// The wire/log name, from [`TaskKind::info`] — one definition, so a rename
+    /// cannot drift between the log, the database enum, and the code.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::ScanRoot => write!(f, "scan_root"),
-            Self::ProcessGitFolder => write!(f, "process_git_folder"),
-            Self::ProcessFolder => write!(f, "process_folder"),
-            Self::ProcessFile => write!(f, "process_file"),
-            Self::DeleteFile => write!(f, "delete_file"),
-            Self::DeleteFolder => write!(f, "delete_folder"),
-            Self::ResolveLibs => write!(f, "resolve_libs"),
-            Self::ImportLib => write!(f, "import_lib"),
-            Self::BranchSwitch => write!(f, "branch_switch"),
-            Self::BuildConnections => write!(f, "build_connections"),
-            Self::EmbedNodes => write!(f, "embed_nodes"),
-            Self::IndexLibrary => write!(f, "index_library"),
-            Self::IndexLibraryPage => write!(f, "index_library_page"),
-            Self::DetectCommunities => write!(f, "detect_communities"),
-            Self::ExtractDeps => write!(f, "extract_deps"),
-            Self::MeasureVerdicts => write!(f, "measure_verdicts"),
-            Self::ReconcileRepoMetadata => write!(f, "reconcile_repo_metadata"),
-            Self::AnalyzeProject => write!(f, "analyze_project"),
-            Self::AnalyzeSessionProcess => write!(f, "analyze_session_process"),
-            Self::ScanDocDrift => write!(f, "scan_doc_drift"),
-            Self::BackfillTranscripts => write!(f, "backfill_transcripts"),
-            Self::BackfillTranscriptFile => write!(f, "backfill_transcript_file"),
-            Self::BackfillCoverage => write!(f, "backfill_coverage"),
-            Self::AggregateCorrections => write!(f, "aggregate_corrections"),
-            Self::AggregateToolInsights => write!(f, "aggregate_tool_insights"),
-            Self::ClassifyPendingVerdicts => write!(f, "classify_pending_verdicts"),
-            Self::ConsolidateGovernance => write!(f, "consolidate_governance"),
-            Self::WarmInsightCopy => write!(f, "warm_insight_copy"),
-            Self::LearnPlaybooks => write!(f, "learn_playbooks"),
-            Self::PublishRelaySegments => write!(f, "publish_relay_segments"),
-            Self::AdvanceRun => write!(f, "advance_run"),
-            Self::PublishRun => write!(f, "publish_run"),
-            Self::ComputeGroupMetrics => write!(f, "compute_group_metrics"),
-            Self::ComputeHealth => write!(f, "compute_health"),
-            Self::ComputeProjectMetrics => write!(f, "compute_project_metrics"),
-        }
+        f.write_str(self.info().name)
     }
 }
 
+
+// ── Kind metadata ───────────────────────────────────────────────────────────
+
+/// Which pipeline a task kind belongs to.
+///
+/// The pipelines already existed as convention — nothing in the code named them,
+/// so "which stage is this" lived only in reviewers' heads and in the ordering of
+/// a `match`. Naming them makes grouping queryable and gives a new kind an
+/// obvious home.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Pipeline {
+    /// Walk a checkout into the code graph.
+    Index,
+    /// Resolve and index third-party library docs.
+    Library,
+    /// Ingest and enrich assistant activity.
+    Activity,
+    /// Compute metric values from the above.
+    Metrics,
+    /// Distil signals, learn, and publish.
+    Inference,
+}
+
+/// Where in its pipeline a kind sits.
+///
+/// `Coordinate` is the load-bearing one: a coordinator decides WHAT needs doing
+/// and enqueues workers, so it finishes in milliseconds having done none of the
+/// work. Anything reporting on a coordinator has to look at its children.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Stage {
+    /// Decides what needs doing and enqueues workers. Does no work itself.
+    Coordinate,
+    /// Finds the units to process.
+    Discover,
+    /// Reads one unit into the store.
+    Ingest,
+    /// Computes from what was ingested.
+    Derive,
+    /// Combines derived values across units.
+    Aggregate,
+    /// Sends results outward.
+    Publish,
+}
+
+/// Everything the system needs to know about a kind, in ONE place.
+///
+/// Before this, adding a kind meant editing five: the enum, `Display`, the
+/// watchdog match, `queue::kind_priority`, and `retry::is_retryable` — plus a
+/// test list that enforced nothing. Four of those were `match` arms that a new
+/// variant silently fell through to a default on. Now [`TaskKind::info`] is the
+/// single exhaustive match, so the compiler refuses to build until a new kind
+/// declares its budget, priority and retry policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KindInfo {
+    /// Wire/log name. Must match `sensei.task_execution_kind` — a test asserts it.
+    pub name: &'static str,
+    pub pipeline: Pipeline,
+    pub stage: Stage,
+    /// Watchdog budget. A wedged handler would otherwise hold its worker forever,
+    /// keep its task `running`, and block the folder's barrier — freezing the pool.
+    pub budget_secs: u64,
+    /// Preempts bulk work in the queue. Reserved for the metrics chain, so a
+    /// compute wave is not starved behind a boot re-index.
+    pub high_priority: bool,
+    /// Whether a failure is worth re-driving. False for kinds that fail for
+    /// permanent reasons (a missing URL, a bad id, a deleted root) — retrying
+    /// those just burns cycles.
+    pub retryable: bool,
+}
+
 impl TaskKind {
-    /// Wall-clock safety cap for a single task in the worker executor. A task
-    /// that exceeds this is abandoned by the watchdog and marked failed, so a
-    /// wedged handler (a stalled network/DB call) can't occupy a worker forever
-    /// and starve the resolve barrier — one stuck task otherwise freezes the
-    /// whole pool. This is a last-resort net, not a tight SLA: the cap is
-    /// generous and abandoned work is retried or backfilled.
-    pub fn watchdog_timeout(&self) -> std::time::Duration {
-        use std::time::Duration;
+    /// Every kind. Kept beside [`Self::info`] and checked against both the
+    /// descriptor and the database enum by `all_kinds_match_the_database_enum`,
+    /// so a kind cannot be half-added.
+    pub const ALL: &'static [TaskKind] = &[
+        Self::ScanRoot,
+        Self::ProcessGitFolder,
+        Self::ProcessFolder,
+        Self::ProcessFile,
+        Self::DeleteFile,
+        Self::DeleteFolder,
+        Self::BranchSwitch,
+        Self::ExtractDeps,
+        Self::BuildConnections,
+        Self::EmbedNodes,
+        Self::DetectCommunities,
+        Self::ResolveLibs,
+        Self::ImportLib,
+        Self::IndexLibrary,
+        Self::IndexLibraryPage,
+        Self::BackfillTranscripts,
+        Self::BackfillTranscriptFile,
+        Self::AnalyzeProject,
+        Self::AnalyzeSessionProcess,
+        Self::ReconcileRepoMetadata,
+        Self::ComputeProjectMetrics,
+        Self::ComputeGroupMetrics,
+        Self::ComputeHealth,
+        Self::BackfillCoverage,
+        Self::MeasureVerdicts,
+        Self::ClassifyPendingVerdicts,
+        Self::AggregateCorrections,
+        Self::AggregateToolInsights,
+        Self::ConsolidateGovernance,
+        Self::WarmInsightCopy,
+        Self::LearnPlaybooks,
+        Self::ScanDocDrift,
+        Self::PublishRelaySegments,
+        Self::AdvanceRun,
+        Self::PublishRun,
+    ];
+
+    /// The single source of per-kind truth.
+    pub const fn info(&self) -> KindInfo {
         match self {
-            // Per-file / light tasks finish in well under a second normally.
-            TaskKind::ProcessFile
-            | TaskKind::ProcessFolder
-            | TaskKind::DeleteFile
-            | TaskKind::DeleteFolder
-            | TaskKind::ExtractDeps
-            | TaskKind::BranchSwitch
-            | TaskKind::ReconcileRepoMetadata
-            // Transcript ingestion is chunked per-file; the dispatcher just
-            // lists + enqueues, each per-file task parses one transcript.
-            | TaskKind::BackfillTranscripts
-            | TaskKind::BackfillTranscriptFile
-            | TaskKind::MeasureVerdicts
-            // Relay segment-publish: one DB read + a couple of bounded HTTP
-            // posts per enrolled dojo — light and network-bounded already.
-            | TaskKind::PublishRelaySegments
-            // AdvanceRun tick (P3.2): a single run read + a heartbeat + one event
-            // append — trivially fast. (The agent drive that P3.3 adds will keep
-            // its own budget/timeouts; the tick itself stays light.)
-            | TaskKind::AdvanceRun
-            // PublishRun (P1): one run read + one events read + a bounded HTTP
-            // post per owning dojo — the same light, network-bounded shape as
-            // PublishRelaySegments.
-            | TaskKind::PublishRun
-            // Tool-insights snapshot: a couple of small aggregations + one
-            // multi-row insert — well under a minute in practice, but keep
-            // the same 3-minute budget as the other analyzer touch-ups so a
-            // pathological corpus doesn't wedge the queue.
-            | TaskKind::AggregateToolInsights
-            // Learning-loop pass: one UPDATE join + one GROUP BY aggregate +
-            // a bounded number of UPDATE/UPSERT statements off the (small)
-            // playbook_rules table — same order of cost as the tool-insights
-            // snapshot.
-            | TaskKind::LearnPlaybooks
-            // Metrics per-project parent: freezes one as_of + a bounded burst of
-            // child/health enqueues (no compute of its own) — light and DB-bound,
-            // so it shares the short cap.
-            | TaskKind::ComputeProjectMetrics => Duration::from_secs(180),
-            // Whole-repo, barrier, embedding and network-bound doc-indexing
-            // tasks can legitimately run for minutes on a large repository.
-            TaskKind::ScanRoot
-            | TaskKind::ProcessGitFolder
-            | TaskKind::ResolveLibs
-            | TaskKind::ImportLib
-            | TaskKind::BuildConnections
-            | TaskKind::EmbedNodes
-            | TaskKind::IndexLibrary
-            | TaskKind::IndexLibraryPage
-            | TaskKind::AnalyzeProject
-            // Doc-drift scan walks up to 500 doc nodes, reading each file off
-            // disk — on a large repo that's the same order as AnalyzeProject.
-            | TaskKind::ScanDocDrift
-            // Verdict gap-fill loops every unclassified in-window session, each
-            // a couple of DB round-trips + string classification — a batch that
-            // scales with the backlog, so it shares the generous batch budget.
-            | TaskKind::ClassifyPendingVerdicts
-            // Tier-2 consolidation is one model (reasoning-chain) call; a cold
-            // embedded model can take minutes, so it shares the batch budget.
-            | TaskKind::ConsolidateGovernance
-            // Eager insight-copy warming is up to WARM_CAP sequential model calls
-            // (a cold embedded model is slow first); the breaker caps a down model.
-            | TaskKind::WarmInsightCopy
-            // Process-quality pass is up to batch_per_tick (default 25) sequential
-            // reasoning-chain calls over per-session transcripts — a batch that
-            // scales with the backlog, so it shares the generous batch budget.
-            | TaskKind::AnalyzeSessionProcess
-            // Metrics group compute (base groups, all planned days) + the
-            // per-project health barrier each scan a project's window (sessions /
-            // churn / duplication …) and write sensei.project_metrics — a
-            // whole-project batch that can run for minutes on a large corpus, so
-            // they share the generous batch budget.
-            | TaskKind::ComputeGroupMetrics
-            | TaskKind::ComputeHealth
-            | TaskKind::AggregateCorrections => Duration::from_secs(600),
-            // Community detection is the terminal barrier and, on a huge edge-heavy
-            // folder post-FQN (observed: 141k nodes / 287k edges / 11k communities),
-            // runs label-propagation + an atomic replace of every community and node
-            // community_id — legitimately many minutes. 600s watchdog-killed those
-            // into a retry-timeout loop that stranded the folder at `indexing`, so
-            // the terminal barrier gets a wider budget.
-            TaskKind::DetectCommunities => Duration::from_secs(1800),
-            // Coverage backfill is the longest task in the system by a wide margin
-            // and is not comparable to the others: it runs the project's REAL TEST
-            // SUITE once per sampled commit, serially. A repo with two years of
-            // history is ~100 suite runs in one task, so no budget derived from the
-            // other kinds fits. The `weeks` bound on the request — not the watchdog
-            // — is the intended control; the watchdog is only here to stop a hung
-            // command wedging a worker forever.
-            TaskKind::BackfillCoverage => Duration::from_secs(7200),
+            Self::ScanRoot => KindInfo { name: "scan_root", pipeline: Pipeline::Index, stage: Stage::Discover, budget_secs: 600, high_priority: false, retryable: false },
+            Self::ProcessGitFolder => KindInfo { name: "process_git_folder", pipeline: Pipeline::Index, stage: Stage::Discover, budget_secs: 600, high_priority: false, retryable: true },
+            Self::ProcessFolder => KindInfo { name: "process_folder", pipeline: Pipeline::Index, stage: Stage::Discover, budget_secs: 180, high_priority: false, retryable: true },
+            Self::ProcessFile => KindInfo { name: "process_file", pipeline: Pipeline::Index, stage: Stage::Ingest, budget_secs: 180, high_priority: false, retryable: true },
+            Self::DeleteFile => KindInfo { name: "delete_file", pipeline: Pipeline::Index, stage: Stage::Ingest, budget_secs: 180, high_priority: false, retryable: false },
+            Self::DeleteFolder => KindInfo { name: "delete_folder", pipeline: Pipeline::Index, stage: Stage::Ingest, budget_secs: 180, high_priority: false, retryable: false },
+            Self::BranchSwitch => KindInfo { name: "branch_switch", pipeline: Pipeline::Index, stage: Stage::Ingest, budget_secs: 180, high_priority: false, retryable: false },
+            Self::ExtractDeps => KindInfo { name: "extract_deps", pipeline: Pipeline::Index, stage: Stage::Derive, budget_secs: 180, high_priority: false, retryable: false },
+            Self::BuildConnections => KindInfo { name: "build_connections", pipeline: Pipeline::Index, stage: Stage::Derive, budget_secs: 600, high_priority: false, retryable: true },
+            Self::EmbedNodes => KindInfo { name: "embed_nodes", pipeline: Pipeline::Index, stage: Stage::Derive, budget_secs: 600, high_priority: false, retryable: false },
+            Self::DetectCommunities => KindInfo { name: "detect_communities", pipeline: Pipeline::Index, stage: Stage::Aggregate, budget_secs: 1800, high_priority: false, retryable: true },
+            Self::ResolveLibs => KindInfo { name: "resolve_libs", pipeline: Pipeline::Library, stage: Stage::Discover, budget_secs: 600, high_priority: false, retryable: false },
+            Self::ImportLib => KindInfo { name: "import_lib", pipeline: Pipeline::Library, stage: Stage::Ingest, budget_secs: 600, high_priority: false, retryable: false },
+            Self::IndexLibrary => KindInfo { name: "index_library", pipeline: Pipeline::Library, stage: Stage::Ingest, budget_secs: 600, high_priority: false, retryable: false },
+            Self::IndexLibraryPage => KindInfo { name: "index_library_page", pipeline: Pipeline::Library, stage: Stage::Ingest, budget_secs: 600, high_priority: false, retryable: false },
+            Self::BackfillTranscripts => KindInfo { name: "backfill_transcripts", pipeline: Pipeline::Activity, stage: Stage::Coordinate, budget_secs: 180, high_priority: false, retryable: false },
+            Self::BackfillTranscriptFile => KindInfo { name: "backfill_transcript_file", pipeline: Pipeline::Activity, stage: Stage::Ingest, budget_secs: 180, high_priority: false, retryable: false },
+            Self::AnalyzeProject => KindInfo { name: "analyze_project", pipeline: Pipeline::Activity, stage: Stage::Derive, budget_secs: 600, high_priority: true, retryable: false },
+            Self::AnalyzeSessionProcess => KindInfo { name: "analyze_session_process", pipeline: Pipeline::Activity, stage: Stage::Derive, budget_secs: 600, high_priority: false, retryable: false },
+            Self::ReconcileRepoMetadata => KindInfo { name: "reconcile_repo_metadata", pipeline: Pipeline::Activity, stage: Stage::Derive, budget_secs: 180, high_priority: false, retryable: false },
+            Self::ComputeProjectMetrics => KindInfo { name: "compute_project_metrics", pipeline: Pipeline::Metrics, stage: Stage::Coordinate, budget_secs: 180, high_priority: true, retryable: false },
+            Self::ComputeGroupMetrics => KindInfo { name: "compute_group_metrics", pipeline: Pipeline::Metrics, stage: Stage::Derive, budget_secs: 600, high_priority: true, retryable: true },
+            Self::ComputeHealth => KindInfo { name: "compute_health", pipeline: Pipeline::Metrics, stage: Stage::Aggregate, budget_secs: 600, high_priority: true, retryable: true },
+            Self::BackfillCoverage => KindInfo { name: "backfill_coverage", pipeline: Pipeline::Metrics, stage: Stage::Ingest, budget_secs: 7200, high_priority: false, retryable: false },
+            Self::MeasureVerdicts => KindInfo { name: "measure_verdicts", pipeline: Pipeline::Inference, stage: Stage::Derive, budget_secs: 180, high_priority: false, retryable: false },
+            Self::ClassifyPendingVerdicts => KindInfo { name: "classify_pending_verdicts", pipeline: Pipeline::Inference, stage: Stage::Derive, budget_secs: 600, high_priority: false, retryable: false },
+            Self::AggregateCorrections => KindInfo { name: "aggregate_corrections", pipeline: Pipeline::Inference, stage: Stage::Aggregate, budget_secs: 600, high_priority: false, retryable: false },
+            Self::AggregateToolInsights => KindInfo { name: "aggregate_tool_insights", pipeline: Pipeline::Inference, stage: Stage::Aggregate, budget_secs: 180, high_priority: false, retryable: false },
+            Self::ConsolidateGovernance => KindInfo { name: "consolidate_governance", pipeline: Pipeline::Inference, stage: Stage::Aggregate, budget_secs: 600, high_priority: false, retryable: false },
+            Self::WarmInsightCopy => KindInfo { name: "warm_insight_copy", pipeline: Pipeline::Inference, stage: Stage::Derive, budget_secs: 600, high_priority: false, retryable: false },
+            Self::LearnPlaybooks => KindInfo { name: "learn_playbooks", pipeline: Pipeline::Inference, stage: Stage::Derive, budget_secs: 180, high_priority: false, retryable: false },
+            Self::ScanDocDrift => KindInfo { name: "scan_doc_drift", pipeline: Pipeline::Inference, stage: Stage::Derive, budget_secs: 600, high_priority: false, retryable: false },
+            Self::PublishRelaySegments => KindInfo { name: "publish_relay_segments", pipeline: Pipeline::Inference, stage: Stage::Publish, budget_secs: 180, high_priority: false, retryable: false },
+            Self::AdvanceRun => KindInfo { name: "advance_run", pipeline: Pipeline::Inference, stage: Stage::Publish, budget_secs: 180, high_priority: false, retryable: false },
+            Self::PublishRun => KindInfo { name: "publish_run", pipeline: Pipeline::Inference, stage: Stage::Publish, budget_secs: 180, high_priority: false, retryable: false },
         }
+    }
+
+    pub const fn pipeline(&self) -> Pipeline { self.info().pipeline }
+    pub const fn stage(&self) -> Stage { self.info().stage }
+    pub const fn is_retryable(&self) -> bool { self.info().retryable }
+    pub const fn is_high_priority(&self) -> bool { self.info().high_priority }
+
+    /// Watchdog cap for this kind.
+    pub const fn watchdog_timeout(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(self.info().budget_secs)
     }
 }
 
@@ -549,47 +578,75 @@ mod tests {
     #[test]
     fn watchdog_timeout_is_bounded_and_tiered() {
         // Light per-file tasks get the short cap; heavy/whole-repo/network tasks
-        // get the long cap. Every variant returns a finite, positive bound.
+        // get the long cap. Spot-checks of the tiering, now read off the descriptor.
         let short = std::time::Duration::from_secs(180);
         let long = std::time::Duration::from_secs(600);
         assert_eq!(TaskKind::ProcessFile.watchdog_timeout(), short);
-        assert_eq!(TaskKind::DeleteFile.watchdog_timeout(), short);
-        assert_eq!(TaskKind::ResolveLibs.watchdog_timeout(), long);
-        assert_eq!(TaskKind::EmbedNodes.watchdog_timeout(), long);
         assert_eq!(TaskKind::ScanRoot.watchdog_timeout(), long);
-        assert_eq!(TaskKind::ScanDocDrift.watchdog_timeout(), long);
-        assert_eq!(TaskKind::ClassifyPendingVerdicts.watchdog_timeout(), long);
-        // Metrics group compute + health barrier are whole-project batches → long bucket.
         assert_eq!(TaskKind::ComputeGroupMetrics.watchdog_timeout(), long);
-        assert_eq!(TaskKind::ComputeHealth.watchdog_timeout(), long);
         // The per-project parent only freezes as_of + enqueues → short bucket.
         assert_eq!(TaskKind::ComputeProjectMetrics.watchdog_timeout(), short);
-        // DetectCommunities (terminal barrier) gets a WIDER budget than `long` —
-        // community detection on a huge edge-heavy folder legitimately runs many
-        // minutes and must not be watchdog-killed into a retry-timeout loop.
-        assert!(TaskKind::DetectCommunities.watchdog_timeout() > long,
-            "DetectCommunities gets a wider-than-long watchdog for huge graphs");
-        for k in [
-            TaskKind::ScanRoot, TaskKind::ProcessGitFolder, TaskKind::ProcessFolder,
-            TaskKind::ProcessFile, TaskKind::DeleteFile, TaskKind::DeleteFolder,
-            TaskKind::ResolveLibs, TaskKind::ImportLib,
-            TaskKind::BranchSwitch, TaskKind::BuildConnections,
-            TaskKind::EmbedNodes, TaskKind::IndexLibrary, TaskKind::IndexLibraryPage,
-            TaskKind::DetectCommunities, TaskKind::ExtractDeps, TaskKind::MeasureVerdicts,
-            TaskKind::ReconcileRepoMetadata, TaskKind::AnalyzeProject,
-            TaskKind::AnalyzeSessionProcess, TaskKind::ScanDocDrift,
-            TaskKind::BackfillTranscripts,
-            TaskKind::BackfillTranscriptFile, TaskKind::BackfillCoverage,
-            TaskKind::AggregateCorrections,
-            TaskKind::AggregateToolInsights, TaskKind::ClassifyPendingVerdicts,
-            TaskKind::ConsolidateGovernance, TaskKind::WarmInsightCopy,
-            TaskKind::LearnPlaybooks,
-            TaskKind::PublishRelaySegments, TaskKind::AdvanceRun,
-            TaskKind::PublishRun,
-            TaskKind::ComputeGroupMetrics, TaskKind::ComputeHealth,
-            TaskKind::ComputeProjectMetrics,
-        ] {
+        // The terminal barrier gets a WIDER budget: community detection on a huge
+        // edge-heavy folder legitimately runs many minutes and must not be
+        // watchdog-killed into a retry-timeout loop.
+        assert!(TaskKind::DetectCommunities.watchdog_timeout() > long);
+        // Coverage runs the project's real test suite per commit — the widest.
+        assert!(TaskKind::BackfillCoverage.watchdog_timeout()
+                > TaskKind::DetectCommunities.watchdog_timeout());
+
+        // Iterating ALL rather than a hand-copied list: the old version repeated
+        // every variant here, so a new kind was covered only if someone
+        // remembered to add it in two places.
+        for k in TaskKind::ALL {
             assert!(k.watchdog_timeout().as_secs() > 0, "{k} must have a positive cap");
+        }
+    }
+
+    #[test]
+    fn every_kind_is_in_all_exactly_once() {
+        // `info()` is exhaustive, so the compiler already forces a new variant to
+        // declare a descriptor. This catches the other half — that it also lands
+        // in ALL, which nothing else enforces.
+        let mut names: Vec<&str> = TaskKind::ALL.iter().map(|k| k.info().name).collect();
+        let total = names.len();
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(names.len(), total, "a kind appears twice in ALL");
+        assert_eq!(total, 35, "ALL is missing a kind — add it beside its info() arm");
+    }
+
+    #[test]
+    fn kind_names_are_snake_case_and_stable() {
+        // The name is the wire value written to activity.task_executions.task_kind,
+        // which is a Postgres enum. A name that does not match a value there fails
+        // at INSERT, on a fire-and-forget path that only logs — so drift would be
+        // invisible until someone read the log. Check the shape here.
+        for k in TaskKind::ALL {
+            let n = k.info().name;
+            assert!(!n.is_empty(), "{k} has an empty name");
+            assert!(n.chars().all(|c| c.is_ascii_lowercase() || c == '_'),
+                "{k} name {n:?} must be snake_case to match the DB enum");
+            assert_eq!(k.to_string(), n, "Display must be the descriptor name");
+        }
+    }
+
+    #[test]
+    fn pipelines_and_stages_are_assigned_coherently() {
+        // Coordinators do no work themselves — they enqueue and finish in
+        // milliseconds — so a coordinator with a long budget is a modelling
+        // mistake worth catching.
+        for k in TaskKind::ALL {
+            let i = k.info();
+            if i.stage == Stage::Coordinate {
+                assert!(i.budget_secs <= 180,
+                    "{k} coordinates but claims a {}s budget — coordinators enqueue, they do not work",
+                    i.budget_secs);
+            }
+        }
+        // The metrics chain is what preempts a boot re-index; nothing else should.
+        for k in TaskKind::ALL.iter().filter(|k| k.is_high_priority()) {
+            assert!(matches!(k.pipeline(), Pipeline::Metrics | Pipeline::Activity),
+                "{k} claims high priority outside the metrics chain");
         }
     }
 }

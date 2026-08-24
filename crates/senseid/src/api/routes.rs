@@ -189,6 +189,7 @@ pub fn create_router(state: AppState) -> Router {
         // resolve. Both answer from the durable `activity.task_executions` log,
         // so they work after the run and across a daemon restart; the firehose
         // above is live-only and tells a late subscriber nothing.
+        .route("/api/tasks/kinds", get(crate::api::handlers::tasks::list_kinds))
         .route("/api/tasks/{id}", get(crate::api::handlers::tasks::get_task))
         .route("/api/tasks/{id}/events", get(crate::api::handlers::tasks::task_events))
         // Background-task visibility (#96): scheduler registry + last-run times
@@ -2034,6 +2035,22 @@ mod tests {
     // (git/standalone) while keeping the scalar summary fields; the un-`under`
     // app path is unchanged (full tree). Goes RED if the compact trim regresses.
     // ── Following one queued task ───────────────────────────────────────────
+
+    #[tokio::test]
+    async fn the_kind_catalogue_covers_every_pipeline() {
+        // The catalogue is derived from the kind descriptors, so this also proves
+        // every kind reached a pipeline — a kind with no home would simply be
+        // absent from the response rather than erroring anywhere.
+        let (app, _state) = test_app().await;
+        let (status, body) = req(app, "GET", "/api/tasks/kinds", None).await;
+        assert_eq!(status, StatusCode::OK);
+        let pipelines = body["pipelines"].as_object().expect("pipelines object");
+        for expected in ["index", "library", "activity", "metrics", "inference"] {
+            assert!(pipelines.contains_key(expected), "missing pipeline {expected}: {body:?}");
+        }
+        let total: usize = pipelines.values().map(|v| v.as_array().map_or(0, |a| a.len())).sum();
+        assert_eq!(total, TaskKind::ALL.len(), "every kind appears exactly once");
+    }
 
     #[tokio::test]
     async fn the_task_id_route_does_not_swallow_its_static_siblings() {
