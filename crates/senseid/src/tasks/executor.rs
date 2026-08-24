@@ -276,7 +276,7 @@ mod tests {
         let task = Task::new(TaskKind::ScanDocDrift, "", "not-a-uuid");
         let result = execute_task(&ctx, &task).await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("invalid project id"));
+        assert!(result.unwrap_err().contains("expected a project id"));
     }
 
     #[tokio::test]
