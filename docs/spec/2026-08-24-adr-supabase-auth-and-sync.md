@@ -166,6 +166,70 @@ Sources: [Identity Linking](https://supabase.com/docs/guides/auth/auth-identity-
 [supabase/auth#2472](https://github.com/supabase/auth/issues/2472) ·
 [General configuration](https://supabase.com/docs/guides/auth/general-configuration)
 
+### 2.2 Can a merged user be split later, keeping the data?
+
+**The GitHub-account case is already safe.** Two Google OAuth logins with
+different emails — `dev@example-corp.com` and `me@jerrythomas.name` —
+produce **two separate `auth.users`**. Auto-linking matches on *email*, and
+Supabase never learns that both Google accounts sit behind one GitHub user. The
+shared GitHub account is invisible to it.
+
+The merge window is narrower than it first appears: it opens only when one
+identity's email **equals another user's verified email**. A GitHub sign-in whose
+*primary* email is `me@jerrythomas.name` links to the Google user with that
+address — which is usually what you want.
+
+**Can Supabase split them afterwards? Effectively no.**
+
+- `unlinkIdentity()` *"unlinks an identity from a user by **deleting** it"*, requires the user to hold **≥2 identities**, and afterwards *"the user will no longer be able to sign in with that identity"*.
+- Signing in again with that provider **re-links straight back** to the same user if the email still matches and is confirmed — so unlink-then-signin loops rather than splits.
+- To genuinely split you must first make the emails **not match** (change or remove the address on the retained user), then unlink, then sign in fresh to mint a new `auth.users`.
+- Nothing carries history across. **There is no split-user operation.**
+
+So your instinct is right: removing `dev@example-corp.com` from the
+retained account is precisely the step that makes a split possible at all.
+
+**But this only matters if we let it.** The decisive design rule:
+
+> **Never key our data on `auth.users.id`.**
+
+Use a stable internal principal — locally `personas.id`, and a dōjō-side
+`principals` row — with `auth_user_id` as a **mutable pointer**, not an identity:
+
+```sql
+-- dojo side
+create table principals (
+  id            uuid primary key default gen_random_uuid()   -- ← what our data references
+, auth_user_id  uuid unique                                   -- ← a POINTER; may be re-pointed
+, label         text
+);
+-- tenant_users, team_members, repository_metrics … all reference principals(id)
+```
+
+A split then becomes **our** operation, not Supabase's:
+
+1. user signs in fresh → a new `auth.users` exists
+2. create a second `principals` row (or re-point an existing one) at it
+3. re-attribute the affected rows from principal A to principal B — one
+   transaction, on our side, reversible
+
+And because `repository_metrics` **keeps the raw git `identity` email** (decided
+earlier for a different reason — merging would have been destructive), the
+re-attribution is a *re-derivation from immutable raw attribution*, not a
+destructive edit. Rows move by re-resolving `identity → persona → principal`.
+
+That is what makes the split lossless. The earlier decision to keep the raw email
+alongside the resolved FK turns out to be the thing that buys this.
+
+**Consequence for the plan:** add `principals` to the dōjō table set, and make
+every FK that would have pointed at `auth.users` point at `principals` instead.
+Cheap now, and the only alternative to it is being permanently unable to undo a
+merge.
+
+Sources: [unlinkIdentity](https://supabase.com/docs/reference/javascript/auth-unlinkidentity) ·
+[Identity Linking](https://supabase.com/docs/guides/auth/auth-identity-linking) ·
+[Discussion #18875](https://github.com/orgs/supabase/discussions/18875)
+
 ---
 
 ## 3. The security finding this exposes
