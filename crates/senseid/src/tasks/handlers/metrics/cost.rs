@@ -115,19 +115,15 @@ pub(super) async fn compute(
     let day = super::today(pg).await?;
     pg.upsert_project_metric_repo(
         &mid,
-        &project_id,
-        Some(&repository_id),
+        &repository_id,
         SCOPE_USER,
-        None,
-        None,
         None,
         None,
         day,
         GRAIN_DAILY,
         value,
         &props,
-        SOURCE_MEASURED,
-    )
+        SOURCE_MEASURED)
     .await?;
 
     Ok(1)

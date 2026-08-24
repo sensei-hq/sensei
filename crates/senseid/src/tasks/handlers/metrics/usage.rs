@@ -111,19 +111,15 @@ pub(super) async fn compute(
         });
         pg.upsert_project_metric_repo(
             &mid,
-            &project_id,
-            Some(&repository_id),
+            &repository_id,
             SCOPE_USER,
-            None,
-            None,
             None,
             None,
             day,
             GRAIN_DAILY,
             mean_ratio,
             &props,
-            SOURCE_MEASURED,
-        )
+            SOURCE_MEASURED)
         .await?;
         written += 1;
     }

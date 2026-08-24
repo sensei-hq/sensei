@@ -115,9 +115,7 @@ pub(super) async fn compute(
             let value = depth_sum / depth_n as f64;
             let props = serde_json::json!({ "n": depth_n });
             pg.upsert_project_metric_repo(
-                &mid, &project_id, Some(&repository_id), SCOPE_USER, None, None,
-                None, None, day, GRAIN_DAILY, value, &props, SOURCE_MEASURED,
-            )
+                &mid, &repository_id, SCOPE_USER, None, None, day, GRAIN_DAILY, value, &props, SOURCE_MEASURED)
             .await?;
             written += 1;
         }
@@ -128,9 +126,7 @@ pub(super) async fn compute(
             let value = dev_present as f64 / dev_applicable as f64;
             let props = serde_json::json!({ "numerator": dev_present, "denominator": dev_applicable });
             pg.upsert_project_metric_repo(
-                &mid, &project_id, Some(&repository_id), SCOPE_USER, None, None,
-                None, None, day, GRAIN_DAILY, value, &props, SOURCE_MEASURED,
-            )
+                &mid, &repository_id, SCOPE_USER, None, None, day, GRAIN_DAILY, value, &props, SOURCE_MEASURED)
             .await?;
             written += 1;
         }
@@ -142,9 +138,7 @@ pub(super) async fn compute(
                     let value = present as f64 / scored_n as f64;
                     let props = serde_json::json!({ "numerator": present, "denominator": scored_n });
                     pg.upsert_project_metric_repo(
-                        &mid, &project_id, Some(&repository_id), SCOPE_USER, None, None,
-                        None, None, day, GRAIN_DAILY, value, &props, SOURCE_MEASURED,
-                    )
+                        &mid, &repository_id, SCOPE_USER, None, None, day, GRAIN_DAILY, value, &props, SOURCE_MEASURED)
                     .await?;
                     written += 1;
                 }

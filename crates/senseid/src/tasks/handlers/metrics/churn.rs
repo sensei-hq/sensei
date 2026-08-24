@@ -426,10 +426,8 @@ pub(super) async fn compute(
                     if let Some(mid) = churn_rate_id {
                         let no_props = serde_json::json!({});
                         pg.upsert_project_metric_repo(
-                            &mid, &project_id, Some(&repository_id), scope, author, None,
-                            None, None, day, GRAIN_DAILY, files.len() as f64, &no_props,
-                            SOURCE_MEASURED,
-                        )
+                            &mid, &repository_id, scope, author, None, day, GRAIN_DAILY, files.len() as f64, &no_props,
+                            SOURCE_MEASURED)
                         .await?;
                         written += 1;
                     }
@@ -455,9 +453,7 @@ pub(super) async fn compute(
                         let props =
                             serde_json::json!({ "numerator": numerator, "denominator": total });
                         pg.upsert_project_metric_repo(
-                            &mid, &project_id, Some(&repository_id), scope, author, None,
-                            None, None, day, GRAIN_DAILY, value, &props, SOURCE_MEASURED,
-                        )
+                            &mid, &repository_id, scope, author, None, day, GRAIN_DAILY, value, &props, SOURCE_MEASURED)
                         .await?;
                         written += 1;
                     }
@@ -494,9 +490,7 @@ pub(super) async fn compute(
                 let props =
                     serde_json::json!({ "numerator": rework_total, "denominator": project_files });
                 pg.upsert_project_metric_repo(
-                    &mid, &project_id, Some(&repository_id), SCOPE_USER, None, None,
-                    None, None, day, GRAIN_DAILY, value, &props, SOURCE_MEASURED,
-                )
+                    &mid, &repository_id, SCOPE_USER, None, None, day, GRAIN_DAILY, value, &props, SOURCE_MEASURED)
                 .await?;
                 written += 1;
             }
@@ -640,11 +634,9 @@ mod tests {
         // (scope, identity, repository_id, folder_id, session_id, commit_sha, grain)
         #[allow(clippy::type_complexity)]
         let rows: Vec<(
-            String, Option<String>, Option<uuid::Uuid>, Option<uuid::Uuid>,
-            Option<uuid::Uuid>, Option<String>, String,
+            String, Option<String>, Option<uuid::Uuid>, Option<String>, String,
         )> = query_as(
-            "SELECT pm.scope::text, pm.identity, pm.repository_id, pm.folder_id, \
-                    pm.session_id, pm.commit_sha, pm.grain::text \
+            "SELECT pm.scope::text, pm.identity, pm.repository_id, pm.commit_sha, pm.grain::text \
                FROM sensei.project_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
               WHERE pm.project_id = $1 AND m.key = 'churn_rate' \
               ORDER BY pm.scope",
@@ -657,22 +649,18 @@ mod tests {
         assert_eq!(rows.len(), 2, "one scope=repo twin + one scope=user twin for the single repository");
 
         // scope=repo: whole-tree, all authors, identity NULL (sorts first).
-        let (scope_r, ident_r, repo_r, folder_r, sess_r, sha_r, grain_r) = &rows[0];
+        let (scope_r, ident_r, repo_r, sha_r, grain_r) = &rows[0];
         assert_eq!(scope_r, "repo", "the whole-tree twin is scope=repo");
         assert_eq!(*ident_r, None, "scope=repo identity is NULL (I-C)");
         assert_eq!(*repo_r, Some(rid), "keyed on the resolved repository_id (I-A)");
-        assert_eq!(*folder_r, None, "folder_id is NULL (I-A)");
-        assert_eq!(*sess_r, None, "session_id is NULL (I-A)");
         assert_eq!(*sha_r, None, "commit_sha is NULL for a day-bucketed aggregate (I-D)");
         assert_eq!(grain_r, "daily", "grain is daily (I-A)");
 
         // scope=user: author-filtered, identity = the checkout's git email.
-        let (scope_u, ident_u, repo_u, folder_u, sess_u, sha_u, grain_u) = &rows[1];
+        let (scope_u, ident_u, repo_u, sha_u, grain_u) = &rows[1];
         assert_eq!(scope_u, "user", "the local-user value is scope=user");
         assert_eq!(ident_u.as_deref(), Some("test@sensei.test"), "scope=user identity = the checkout git email (I-C)");
         assert_eq!(*repo_u, Some(rid), "keyed on the resolved repository_id (I-A)");
-        assert_eq!(*folder_u, None, "folder_id is NULL (I-A)");
-        assert_eq!(*sess_u, None, "session_id is NULL (I-A)");
         assert_eq!(*sha_u, None, "commit_sha is NULL for a day-bucketed aggregate (I-D)");
         assert_eq!(grain_u, "daily", "grain is daily (I-A)");
 
@@ -803,15 +791,11 @@ mod tests {
         assert_eq!(rd.2["numerator"].as_i64(), Some(2), "numerator = # rework-flagged files (correction-prone excluded)");
         assert_eq!(rd.2["denominator"].as_i64(), Some(4), "denominator = # project files");
 
-        // Repo grain retires the per-module rows: NOTHING is written with folder_id set.
-        let (module_rows,): (i64,) = query_as(
-            "SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1 AND folder_id IS NOT NULL",
-        )
-        .bind(pid_a)
-        .fetch_one(pg.pool())
-        .await
-        .unwrap();
-        assert_eq!(module_rows, 0, "no per-module (folder_id-set) rows under repo grain");
+        // Repo grain retires the per-module rows. This used to assert
+        // `folder_id IS NOT NULL` returned nothing; the column has since been
+        // dropped from the store, so the invariant is now STRUCTURAL — there is
+        // no per-module column left to write. Asserting on a column that cannot
+        // exist would be a test that can never fail.
 
         // ── Project B: rework flagged but ZERO project files → NO row ──
         let uniq_b = uuid::Uuid::new_v4();
@@ -1125,9 +1109,9 @@ mod tests {
         let mq = *pg.active_metric_ids("quality").await.unwrap().get("module_quality").expect("module_quality seeded");
 
         // ratio metrics pool Σnum/Σden in project_metric_daily → value = num/den.
-        pg.upsert_project_metric_repo(&cov, &pid, Some(&rid), "user", None, None, None, None, day, "daily",
+        pg.upsert_project_metric_repo(&cov, &rid, "user", None, None, day, "daily",
             0.86, &serde_json::json!({"numerator": 86, "denominator": 100}), "measured").await.unwrap();
-        pg.upsert_project_metric_repo(&mq, &pid, Some(&rid), "user", None, None, None, None, day, "daily",
+        pg.upsert_project_metric_repo(&mq, &rid, "user", None, None, day, "daily",
             0.001, &serde_json::json!({"numerator": 1, "denominator": 1000}), "measured").await.unwrap();
 
         let ratings: Vec<(String, Option<i32>)> = query_as(

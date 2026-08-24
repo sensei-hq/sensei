@@ -2870,7 +2870,7 @@
         let ftr_id: (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "SELECT id FROM sensei.metrics WHERE key = 'ftr'"
         ).fetch_one(s.pool()).await.unwrap();
-        s.upsert_project_metric_repo(&ftr_id.0, &pid, Some(&repo_id), "user", None, None, None, None,
+        s.upsert_project_metric_repo(&ftr_id.0, &repo_id, "user", None, None,
             day40.0, "daily", 1.0, &serde_json::json!({}), "measured").await.unwrap();
         // Seed a child transcript_turn keyed on client_session_id (no FK).
         sqlx_core::query::query(
@@ -2903,7 +2903,7 @@
 
         // cleanup: the covering metric row references the repository (FK) — remove both
         // so repo_key can't collide across runs of the shared test DB.
-        sqlx_core::query::query("DELETE FROM sensei.project_metrics WHERE project_id = $1")
+        sqlx_core::query::query("DELETE FROM sensei.repository_metrics WHERE repository_id = $1")
             .bind(pid).execute(s.pool()).await.ok();
         sqlx_core::query::query("DELETE FROM sensei.repositories WHERE id = $1")
             .bind(repo_id).execute(s.pool()).await.ok();
@@ -2975,14 +2975,12 @@
 
         // (a) captured on its OWN repo by a scope=user session metric → PRUNED.
         let captured = aged_repo_session(&s, &fid, &suffix, "captured", 40).await;
-        s.upsert_project_metric_repo(&ftr_id.0, &pid, Some(&repo_a), "user", None, None,
-            None, None, day_ago(&s, 40).await, "daily", 1.0, &serde_json::json!({}), "measured").await.unwrap();
+        s.upsert_project_metric_repo(&ftr_id.0, &repo_a, "user", None, None, day_ago(&s, 40).await, "daily", 1.0, &serde_json::json!({}), "measured").await.unwrap();
 
         // (b) uncaptured on repo_a; a DECOY scope=user session metric for the SAME day
         //     lives on repo_b → KEPT (the guard must match the session's repository).
         let uncaptured = aged_repo_session(&s, &fid, &suffix, "uncaptured", 45).await;
-        s.upsert_project_metric_repo(&ftr_id.0, &pid, Some(&repo_b), "user", None, None,
-            None, None, day_ago(&s, 45).await, "daily", 1.0, &serde_json::json!({}), "measured").await.unwrap();
+        s.upsert_project_metric_repo(&ftr_id.0, &repo_b, "user", None, None, day_ago(&s, 45).await, "daily", 1.0, &serde_json::json!({}), "measured").await.unwrap();
 
         // (c) on repo_a/day50, TWO non-authorizing rows: a snapshot + DAY-cadence
         //     rework_density (scope=user) and a session-source ftr at scope=repo.
@@ -2990,10 +2988,8 @@
         //     cadence='day' (the rework_density row would capture) or drops the
         //     scope='user' filter (the scope=repo ftr row would capture).
         let wrong_signal = aged_repo_session(&s, &fid, &suffix, "wrongsignal", 50).await;
-        s.upsert_project_metric_repo(&rework_id.0, &pid, Some(&repo_a), "user", None, None,
-            None, None, day_ago(&s, 50).await, "daily", 0.2, &serde_json::json!({}), "measured").await.unwrap();
-        s.upsert_project_metric_repo(&ftr_id.0, &pid, Some(&repo_a), "repo", None, None,
-            None, None, day_ago(&s, 50).await, "daily", 1.0, &serde_json::json!({}), "measured").await.unwrap();
+        s.upsert_project_metric_repo(&rework_id.0, &repo_a, "user", None, None, day_ago(&s, 50).await, "daily", 0.2, &serde_json::json!({}), "measured").await.unwrap();
+        s.upsert_project_metric_repo(&ftr_id.0, &repo_a, "repo", None, None, day_ago(&s, 50).await, "daily", 1.0, &serde_json::json!({}), "measured").await.unwrap();
 
         // (d) past the backstop, uncaptured → PRUNED via the backstop arm.
         let past_backstop = aged_repo_session(&s, &fid, &suffix, "backstop", 90).await;
@@ -3020,7 +3016,7 @@
         // first so its repository FK does not block the repositories delete.
         sqlx_core::query::query("DELETE FROM activity.sessions WHERE id = ANY($1::uuid[])")
             .bind(vec![uncaptured, wrong_signal]).execute(s.pool()).await.ok();
-        sqlx_core::query::query("DELETE FROM sensei.project_metrics WHERE project_id = $1")
+        sqlx_core::query::query("DELETE FROM sensei.repository_metrics WHERE repository_id = $1")
             .bind(pid).execute(s.pool()).await.ok();
         sqlx_core::query::query("DELETE FROM sensei.repositories WHERE id = ANY($1::uuid[])")
             .bind(vec![repo_a, repo_b]).execute(s.pool()).await.ok();
@@ -4319,7 +4315,8 @@
         let (rid,): (uuid::Uuid,) = query_as(
             "INSERT INTO sensei.repositories (repo_key, name) VALUES ($1, 'ftr-decode') RETURNING id")
             .bind(format!("test/ftr-decode-{}", uuid::Uuid::new_v4())).fetch_one(s.pool()).await.unwrap();
-        s.upsert_project_metric_repo(&ftr_mid, &pid, Some(&rid), "user", None, None, None, None,
+            crate::tasks::test_support::link_repository_to_project(&s, &rid, &pid, "ftr-decode").await;
+        s.upsert_project_metric_repo(&ftr_mid, &rid, "user", None, None,
             chrono::Utc::now().date_naive(), "daily", 1.0,
             &serde_json::json!({"numerator": 1, "denominator": 1}), "measured").await.unwrap();
 
@@ -5644,11 +5641,11 @@
         let s = pg_store().await;
         let uniq = uuid::Uuid::new_v4();
         let pid = s.create_project(&format!("_test:pm-idem:{uniq}"), None, None).await.unwrap();
+        let rid = crate::tasks::test_support::seed_bare_repository(&s, &pid, &uuid::Uuid::new_v4()).await;
         let mid = seed_metric(&s, &format!("_test:pm-idem:{uniq}:ftr"), "ComputeFtr", 0, None).await;
         let day = chrono::NaiveDate::from_ymd_opt(2020, 1, 1).unwrap();
 
-        let id1 = s.upsert_project_metric(
-            &mid, &pid, None, None, day, "daily", 0.5,
+        let id1 = s.upsert_project_metric(&mid, &rid, day, "daily", 0.5,
             &serde_json::json!({"numerator": 1, "denominator": 2}), "measured",
         ).await.unwrap();
 
@@ -5660,16 +5657,14 @@
             query_as("SELECT modified_at FROM sensei.project_metrics WHERE id = $1")
                 .bind(id1).fetch_one(s.pool()).await.unwrap();
 
-        let id2 = s.upsert_project_metric(
-            &mid, &pid, None, None, day, "daily", 0.75,
+        let id2 = s.upsert_project_metric(&mid, &rid, day, "daily", 0.75,
             &serde_json::json!({"numerator": 3, "denominator": 4}), "estimated",
         ).await.unwrap();
         assert_eq!(id1, id2, "same identity upserts the same row (no duplicate)");
 
         let (n,): (i64,) = query_as(
             "SELECT count(*) FROM sensei.project_metrics
-              WHERE metric_id = $1 AND project_id = $2 AND folder_id IS NULL
-                AND session_id IS NULL AND computed_on = $3 AND grain = 'daily'")
+              WHERE metric_id = $1 AND project_id = $2 AND computed_on = $3 AND grain = 'daily'")
             .bind(mid).bind(pid).bind(day).fetch_one(s.pool()).await.unwrap();
         assert_eq!(n, 1, "one row per identity — the second upsert updated in place");
 
@@ -5813,14 +5808,15 @@
         let s = pg_store().await;
         let uniq = uuid::Uuid::new_v4();
         let pid = s.create_project(&format!("_test:gpm:{uniq}"), None, None).await.unwrap();
+        let rid = crate::tasks::test_support::seed_bare_repository(&s, &pid, &uuid::Uuid::new_v4()).await;
         let key = format!("_test:gpm:{uniq}:cov");
         let mid = seed_metric(&s, &key, "ComputeCoverage", 0, None).await;
         let d1 = chrono::NaiveDate::from_ymd_opt(2020, 1, 1).unwrap();
         let d2 = chrono::NaiveDate::from_ymd_opt(2020, 1, 2).unwrap(); // later => latest
 
-        s.upsert_project_metric(&mid, &pid, None, None, d1, "daily", 0.5,
+        s.upsert_project_metric(&mid, &rid, d1, "daily", 0.5,
             &serde_json::json!({"numerator": 1, "denominator": 2}), "measured").await.unwrap();
-        s.upsert_project_metric(&mid, &pid, None, None, d2, "daily", 0.75,
+        s.upsert_project_metric(&mid, &rid, d2, "daily", 0.75,
             &serde_json::json!({"numerator": 3, "denominator": 4}), "measured").await.unwrap();
 
         let rows = s.get_project_metrics(&pid).await.unwrap();
@@ -5849,14 +5845,15 @@
         let s = pg_store().await;
         let uniq = uuid::Uuid::new_v4();
         let pid = s.create_project(&format!("_test:gpm-ret:{uniq}"), None, None).await.unwrap();
+        let rid = crate::tasks::test_support::seed_bare_repository(&s, &pid, &uuid::Uuid::new_v4()).await;
         let active_key = format!("_test:gpm-ret:{uniq}:active");
         let retired_key = format!("_test:gpm-ret:{uniq}:retired");
         let active_mid = seed_metric(&s, &active_key, "ComputeActive", 0, None).await; // active, no end
         let retired_mid = seed_metric(&s, &retired_key, "ComputeRetired", -10, Some(-1)).await; // ended yesterday
         let d = chrono::NaiveDate::from_ymd_opt(2020, 1, 1).unwrap();
-        s.upsert_project_metric(&active_mid, &pid, None, None, d, "daily", 0.5, &serde_json::json!({"numerator": 1, "denominator": 2}), "measured").await.unwrap();
+        s.upsert_project_metric(&active_mid, &rid, d, "daily", 0.5, &serde_json::json!({"numerator": 1, "denominator": 2}), "measured").await.unwrap();
         // The retired metric HAS a durable row — it just must not be read as active.
-        s.upsert_project_metric(&retired_mid, &pid, None, None, d, "daily", 0.9, &serde_json::json!({"numerator": 9, "denominator": 10}), "measured").await.unwrap();
+        s.upsert_project_metric(&retired_mid, &rid, d, "daily", 0.9, &serde_json::json!({"numerator": 9, "denominator": 10}), "measured").await.unwrap();
 
         let keys: Vec<String> =
             s.get_project_metrics(&pid).await.unwrap().into_iter().map(|r| r.metric).collect();
@@ -5971,16 +5968,17 @@
         let (rid,): (uuid::Uuid,) = query_as(
             "INSERT INTO sensei.repositories (repo_key, name) VALUES ($1, 'ftrget') RETURNING id")
             .bind(format!("test/ftrget-{uniq}")).fetch_one(s.pool()).await.unwrap();
+        crate::tasks::test_support::link_repository_to_project(&s, &rid, &pid, "ftrget").await;
         // day A (today):     3/4 = 0.75
-        s.upsert_project_metric_repo(&ftr_mid, &pid, Some(&rid), "user", None, None, None, None,
+        s.upsert_project_metric_repo(&ftr_mid, &rid, "user", None, None,
             today, "daily", 0.75,
             &serde_json::json!({"numerator": 3, "denominator": 4, "correction_count": 1}), "measured").await.unwrap();
         // day B (today-3):   1/2 = 0.50
-        s.upsert_project_metric_repo(&ftr_mid, &pid, Some(&rid), "user", None, None, None, None,
+        s.upsert_project_metric_repo(&ftr_mid, &rid, "user", None, None,
             d_recent, "daily", 0.5,
             &serde_json::json!({"numerator": 1, "denominator": 2, "correction_count": 2}), "measured").await.unwrap();
         // day C (today-20):  1/2 = 0.50 — prior-14d window, excluded from 14d/7d
-        s.upsert_project_metric_repo(&ftr_mid, &pid, Some(&rid), "user", None, None, None, None,
+        s.upsert_project_metric_repo(&ftr_mid, &rid, "user", None, None,
             d_prev, "daily", 0.5,
             &serde_json::json!({"numerator": 1, "denominator": 2, "correction_count": 3}), "measured").await.unwrap();
 
@@ -6069,7 +6067,8 @@
         let (rid,): (uuid::Uuid,) = query_as(
             "INSERT INTO sensei.repositories (repo_key, name) VALUES ($1, 'ftrwin') RETURNING id")
             .bind(format!("test/ftrwin-{}", uuid::Uuid::new_v4())).fetch_one(s.pool()).await.unwrap();
-        s.upsert_project_metric_repo(&ftr_mid, &pid, Some(&rid), "user", None, None, None, None,
+            crate::tasks::test_support::link_repository_to_project(&s, &rid, &pid, "ftrwin").await;
+        s.upsert_project_metric_repo(&ftr_mid, &rid, "user", None, None,
             d10, "daily", 1.0,
             &serde_json::json!({"numerator": 2, "denominator": 2}), "measured").await.unwrap();
 
@@ -6102,14 +6101,16 @@
         let (r1,): (uuid::Uuid,) = query_as(
             "INSERT INTO sensei.repositories (repo_key, name) VALUES ($1, 'ftrpool1') RETURNING id")
             .bind(format!("test/ftrpool1-{}", uuid::Uuid::new_v4())).fetch_one(s.pool()).await.unwrap();
+            crate::tasks::test_support::link_repository_to_project(&s, &r1, &p1, "ftrpool1").await;
         let (r2,): (uuid::Uuid,) = query_as(
             "INSERT INTO sensei.repositories (repo_key, name) VALUES ($1, 'ftrpool2') RETURNING id")
             .bind(format!("test/ftrpool2-{}", uuid::Uuid::new_v4())).fetch_one(s.pool()).await.unwrap();
+            crate::tasks::test_support::link_repository_to_project(&s, &r2, &p2, "ftrpool2").await;
         // P1: 1/1 = 1.0 ; P2: 0/3 = 0.0 → avg-of-rates 0.5, pooled 1/4 = 0.25.
-        s.upsert_project_metric_repo(&ftr_mid, &p1, Some(&r1), "user", None, None, None, None,
+        s.upsert_project_metric_repo(&ftr_mid, &r1, "user", None, None,
             day, "daily", 1.0,
             &serde_json::json!({"numerator": 1, "denominator": 1}), "measured").await.unwrap();
-        s.upsert_project_metric_repo(&ftr_mid, &p2, Some(&r2), "user", None, None, None, None,
+        s.upsert_project_metric_repo(&ftr_mid, &r2, "user", None, None,
             day, "daily", 0.0,
             &serde_json::json!({"numerator": 0, "denominator": 3}), "measured").await.unwrap();
 
@@ -6262,8 +6263,10 @@
 
         let (r_root,): (uuid::Uuid,) = query_as("INSERT INTO sensei.repositories (repo_key, name) VALUES ($1, 'root') RETURNING id")
             .bind(format!("host/{tag}/root")).fetch_one(s.pool()).await.unwrap();
+        crate::tasks::test_support::link_repository_to_project(&s, &r_root, &pid, "root").await;
         let (r_nested,): (uuid::Uuid,) = query_as("INSERT INTO sensei.repositories (repo_key, name) VALUES ($1, 'nested') RETURNING id")
             .bind(format!("host/{tag}/nested")).fetch_one(s.pool()).await.unwrap();
+        crate::tasks::test_support::link_repository_to_project(&s, &r_nested, &pid, "nested").await;
         // Root checkout (shallow path) + a nested checkout (deeper path), both in the project.
         let f_root = s.upsert_repo_kind(&root_id, "git", "root", &format!("/tmp/rfp-{tag}/root")).await.unwrap();
         let f_nested = s.upsert_repo_kind(&root_id, "git", "nested", &format!("/tmp/rfp-{tag}/root/vendor/nested")).await.unwrap();

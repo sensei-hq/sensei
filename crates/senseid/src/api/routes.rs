@@ -547,21 +547,25 @@ mod tests {
         let (rid,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "INSERT INTO sensei.repositories (repo_key, name) VALUES ($1, $1) RETURNING id")
             .bind(format!("test/{uniq}")).fetch_one(state.pg.pool()).await.unwrap();
+        // The repository must reach the project through a folder: project_metrics
+        // derives project_id from that link, so an unlinked repo's rows exist but
+        // are invisible to every project-filtered read.
+        crate::tasks::test_support::link_repository_to_project(&state.pg, &rid, &pid, "pme").await;
 
         // Base metric A (ratio) across TWO ISO weeks → weekly trend has prior/delta.
         let key_a = format!("_test:pme:{uniq}:cov");
         let mid_a = seed_metric(&state.pg, &key_a, "ratio", "higher_better").await;
         let w1 = chrono::NaiveDate::from_ymd_opt(2020, 1, 6).unwrap();  // Monday
         let w2 = chrono::NaiveDate::from_ymd_opt(2020, 1, 13).unwrap(); // next Monday
-        state.pg.upsert_project_metric(&mid_a, &pid, None, None, w1, "daily", 0.5,
+        state.pg.upsert_project_metric(&mid_a, &rid, w1, "daily", 0.5,
             &serde_json::json!({"numerator": 1, "denominator": 2}), "measured").await.unwrap();
-        state.pg.upsert_project_metric(&mid_a, &pid, None, None, w2, "daily", 0.75,
+        state.pg.upsert_project_metric(&mid_a, &rid, w2, "daily", 0.75,
             &serde_json::json!({"numerator": 3, "denominator": 4}), "measured").await.unwrap();
 
         // Base metric B (ratio) — a SINGLE week → no prior period (trend is null).
         let key_b = format!("_test:pme:{uniq}:dup");
         let mid_b = seed_metric(&state.pg, &key_b, "ratio", "lower_better").await;
-        state.pg.upsert_project_metric(&mid_b, &pid, None, None, w1, "daily", 0.25,
+        state.pg.upsert_project_metric(&mid_b, &rid, w1, "daily", 0.25,
             &serde_json::json!({"numerator": 1, "denominator": 4}), "measured").await.unwrap();
 
         // A RETIRED metric with a durable daily row: project_health carries a past
@@ -570,8 +574,7 @@ mod tests {
         let (health_mid,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "SELECT id FROM sensei.metrics WHERE key = 'project_health'")
             .fetch_one(state.pg.pool()).await.expect("project_health seeded in registry");
-        state.pg.upsert_project_metric_repo(&health_mid, &pid, Some(&rid), "user", None, None,
-            None, None, w2, "daily", 82.0,
+        state.pg.upsert_project_metric_repo(&health_mid, &rid, "user", None, None, w2, "daily", 82.0,
             &serde_json::json!({"components": 2}), "measured").await.unwrap();
 
         let (st, body) = req(app.clone(), "GET", &format!("/api/projects/{pid}/metrics"), None).await;
@@ -647,8 +650,7 @@ mod tests {
         // `today` collide and steal each other's project_id. Pin it to the fixture's
         // repository (scope=user) so this project's row is its own.
         let rid_has = crate::tasks::test_support::repository_for_folder(&state.pg, &fid_has).await;
-        state.pg.upsert_project_metric_repo(&ftr_mid, &pid_has, Some(&rid_has), "user", None, None,
-            None, None, today, "daily", 0.75,
+        state.pg.upsert_project_metric_repo(&ftr_mid, &rid_has, "user", None, None, today, "daily", 0.75,
             &serde_json::json!({"numerator": 3, "denominator": 4}), "measured").await.unwrap();
 
         // Project WITHOUT any ftr data.
@@ -700,6 +702,7 @@ mod tests {
         let (app, state) = test_app().await;
         let uniq = uuid::Uuid::new_v4().simple().to_string();
         let pid = state.pg.create_project(&format!("_test_pms_{uniq}"), None, None).await.unwrap();
+        let rid = crate::tasks::test_support::seed_bare_repository(&state.pg, &pid, &uuid::Uuid::new_v4()).await;
         let key = format!("_test_pms_{uniq}_cov"); // URL-safe (no colons) — it goes in the path
         let mid = seed_metric(&state.pg, &key, "ratio", "higher_better").await;
 
@@ -714,7 +717,7 @@ mod tests {
             (chrono::NaiveDate::from_ymd_opt(2020, 1, 15).unwrap(), 3, 12),//           ratio 0.250
         ];
         for (d, num, den) in days {
-            state.pg.upsert_project_metric(&mid, &pid, None, None, d, "daily",
+            state.pg.upsert_project_metric(&mid, &rid, d, "daily",
                 num as f64 / den as f64,
                 &serde_json::json!({"numerator": num, "denominator": den}), "measured").await.unwrap();
         }

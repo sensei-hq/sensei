@@ -171,7 +171,7 @@ mod tests {
         // A session_outcomes daily ftr datapoint at 0.75 with real parts in props.
         let mid = *pg.active_metric_ids("session_outcomes").await.unwrap().get("ftr").expect("ftr metric");
         let rid = crate::tasks::test_support::repository_for_folder(pg, &fid).await;
-        pg.upsert_project_metric_repo(&mid, &pid, Some(&rid), "user", None, None, None, None, day, "daily", 0.75, &json!({"numerator": 3, "denominator": 4}), "measured")
+        pg.upsert_project_metric_repo(&mid, &rid, "user", None, None, day, "daily", 0.75, &json!({"numerator": 3, "denominator": 4}), "measured")
             .await
             .unwrap();
         seed_cached_explainer(pg, &pid, "ftr", 0.75, day, "three of four landed first-try").await;
@@ -200,7 +200,7 @@ mod tests {
 
         let mid = *pg.active_metric_ids("session_outcomes").await.unwrap().get("ftr").expect("ftr metric");
         let rid = crate::tasks::test_support::repository_for_folder(pg, &fid).await;
-        pg.upsert_project_metric_repo(&mid, &pid, Some(&rid), "user", None, None, None, None, day, "daily", 0.6, &json!({"numerator": 3, "denominator": 5}), "measured")
+        pg.upsert_project_metric_repo(&mid, &rid, "user", None, None, day, "daily", 0.6, &json!({"numerator": 3, "denominator": 5}), "measured")
             .await
             .unwrap();
         seed_cached_explainer(pg, &pid, "ftr", 0.6, day, "three of five first-try").await;
