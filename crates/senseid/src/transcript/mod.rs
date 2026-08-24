@@ -117,10 +117,48 @@ pub struct ParsedTranscript {
     pub events: Vec<SynthEvent>,
     /// Inference `(provider, model)` → `activity.sessions`. `None` when absent.
     pub model: Option<(String, String)>,
-    /// Total `(tokens_in, tokens_out)` → `activity.sessions`. `None` when the source
-    /// records no usage (honest-empty — the coordinator leaves the columns NULL,
-    /// never a fabricated 0).
-    pub tokens: Option<(i64, i64)>,
+    /// Session-total usage → `activity.sessions`. `None` when the source records
+    /// none (honest-empty — the coordinator leaves the columns NULL, never a
+    /// fabricated 0).
+    pub tokens: Option<SessionTokens>,
+}
+
+/// One session's total usage, kept SPLIT.
+///
+/// Session grain on purpose. Claude reports usage per assistant message, but Zed
+/// and OpenCode only carry a running total for the whole thread — so spreading
+/// those across turns would invent per-turn readings, and summing the repeated
+/// total across turns would multiply it. The totals therefore live on
+/// `activity.sessions`, where every source can populate them honestly, while
+/// `transcript_turns.tokens_*` stays per-turn for the source that genuinely has
+/// it.
+///
+/// `cache_read` matters most: measured across real transcripts it is ~98% of all
+/// input, and it bills far cheaper — so folding it into one `tokens_in` makes any
+/// cost read from that number roughly 8x high and moves it the wrong way when
+/// caching improves.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct SessionTokens {
+    /// Fresh input only — NOT including cache.
+    pub input: i64,
+    pub output: i64,
+    pub cache_read: Option<i64>,
+    pub cache_write: Option<i64>,
+    /// Reasoning/thinking tokens, where the source separates them (OpenCode).
+    pub reasoning: Option<i64>,
+    /// Metered cost in whole currency units, where the source knows it (OpenCode).
+    /// `None` on a subscription plan — and 0.0 IS a real reading there, not an
+    /// absence, so the two must stay distinguishable.
+    pub cost: Option<f64>,
+}
+
+impl SessionTokens {
+    /// Everything the model processed on the input side: fresh + cache write +
+    /// cache read. What the old `(tokens_in, tokens_out)` pair reported as
+    /// `tokens_in`, preserved so existing consumers keep their meaning.
+    pub fn total_input(&self) -> i64 {
+        self.input + self.cache_write.unwrap_or(0) + self.cache_read.unwrap_or(0)
+    }
 }
 
 /// A logical ingest unit — a transcript file (Claude) or a DB row (Zed) — with a
@@ -300,12 +338,26 @@ async fn set_session_metadata(
     };
     // Token totals fit `integer` (verified << i32::MAX for real sources); a value
     // that somehow overflows is dropped rather than truncated to a wrong number.
-    let (tokens_in, tokens_out) = match parsed.tokens {
-        Some((ti, to)) => (i32::try_from(ti).ok(), i32::try_from(to).ok()),
+    // `tokens_in` keeps its established meaning — ALL input the model processed —
+    // so existing consumers are unaffected; the split rides alongside in its own
+    // columns rather than changing what the old one means.
+    let t = parsed.tokens;
+    let (tokens_in, tokens_out) = match &t {
+        Some(t) => (
+            i32::try_from(t.total_input()).ok(),
+            i32::try_from(t.output + t.reasoning.unwrap_or(0)).ok(),
+        ),
         None => (None, None),
     };
     if let Err(e) = pg
-        .set_session_metadata(session_id, provider, model_name, tokens_in, tokens_out)
+        .set_session_metadata(
+            session_id,
+            provider,
+            model_name,
+            tokens_in,
+            tokens_out,
+            t.as_ref(),
+        )
         .await
     {
         tracing::warn!(error = %e, session = %session_id, "set_session_metadata: write failed");
