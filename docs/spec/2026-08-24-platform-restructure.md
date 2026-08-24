@@ -298,6 +298,42 @@ oldest surviving file are in files that still exist** — zero are in the vanish
 five. File mtime is *last write*, so a session opened 2026-05-21 and continued
 into July still has its transcript. Nothing from May is at risk.
 
+#### Do not synthesize replacement transcripts either — the data is already better preserved
+
+Considered rebuilding a transcript file from the surviving turn rows for the five
+sessions with no file. **Recommend against it**, and it turns out to be
+unnecessary.
+
+Measured, for those 5 sessions:
+
+```
+activity.transcript_turns   73 rows    user_text ×73, assistant_text ×60,
+                                       model ×73, tokens ×60,
+                                       attrs: cwd, gitBranch, uuid, parentUuid,
+                                              timestamp, version, promptId …
+activity.assistant_events   2,109 rows PreToolUse 999 · PostToolUse 940
+                                       UserPromptSubmit 46 · Stop 59
+                                       SessionStart 6 · SessionEnd 5 · PreCompact 1
+```
+
+**The events already cover the dimension a rebuild would miss.** `transcript_turns`
+retained **zero** tool content — 0 turns contain a tool block, and the 13
+empty-`assistant_text` turns are precisely the tool-only ones. A transcript
+reconstructed from those rows would represent 73 prose turns and **no tool use at
+all**, against 999 real tool calls. Every metric derived from it would be quietly
+wrong for those sessions.
+
+Three further reasons:
+
+1. **A round-trip can only lose.** rows → synthetic file → re-ingest extracts a *subset* of what the rows already hold. It cannot add information.
+2. **False provenance.** A file asserting it is a Claude transcript when it is not. Placed in `~/.claude/projects` it corrupts another tool's state; placed elsewhere, ingestion must be told it is synthetic — which is the carve-out, reached by a longer road.
+3. **`assistant_events` is kept anyway**, so the tool and structure dimensions survive the wipe untouched.
+
+**Consequence — these five are barely a special case.** Because events survive,
+the per-exchange turn derivation can be recomputed for them from events, the same
+path `activity.turns` uses. Only the *prose* is unrecoverable, and the carve-out
+preserves it verbatim. Nothing needs to be fabricated.
+
 #### Do not move the transcript files — fix the mapping instead
 
 Considered moving old-named transcript dirs into their new names
