@@ -38,6 +38,9 @@ carry it.** That is why they are one document and not three projects.
 - **Q2** *Sync is gated on authentication, not per-repo opt-in.* Once the user authenticates to dōjō **from sensei**, repos sync automatically both ways. No login → no connection → no sync. (This makes first login the consent moment: it must state plainly what will sync, because after it, every tracked repo's metrics do.)
 - **Q4** *User-scoped metric visibility: **self + admins**.* Not the whole team — a teammate cannot see another member's individual numbers.
 - **Never key data on `auth.users.id`.** A dōjō-side `principals` row is the stable identity our FKs reference; `auth_user_id` is a re-pointable pointer. This is what makes a merged account splittable later without losing history — see ADR §2.2.
+- **Q13** *There is no dōjō Rust service. Dōjō is entirely Supabase-backed.* This voids the "Fork 1 / Supabase = auth ONLY" decision completely, and makes sensei→Supabase login the **only** transport rather than one option. See §3.2 for what it strands.
+- **Q14** *Self-hosted dōjō is dropped*, but `dojo_url` stays **configurable** — a self-host is then just the same deployment at a different URL, with no second auth plane to maintain.
+- **Q18** *Cross-tenant user-metric visibility is deferred* — acknowledged as needed, not blocking. Until decided the safe default holds: **home-tenant admins only**, client sees repo-scope aggregates.
 - Mirrored schema: same table set both sides; locally `tenant_id` is nullable and filled on dōjō registration.
 
 ---
@@ -232,6 +235,54 @@ create table repositories_in_projects (
 
 Every roll-up is still unambiguous, because roll-ups are always evaluated within
 one tenant. The property Q3 was protecting survives; only its scope narrows.
+
+### 3.2 What Q13 strands — the transport that was never live
+
+Dōjō is Supabase-backed end to end; **there is no Rust service**. That is not a
+small correction, because a substantial amount of built code targets one:
+
+```
+crates/senseid/src/dojo/          6,080 LOC   DojoClient, contribute, relay_*
+crates/dojo-protocol/             1,561 LOC   the wire types for that service
+                                  ─────────
+                                  ~7,600 LOC  targeting /v1/t/{tenant}/… — nothing serves it
+14 files reference DojoClient      publish_segments, publish_run, collective/inbox,
+                                   relay_drivers, agent_spawn, 3 API handlers
+dojo/src/lib/triage-data.ts                    calls ${dojoApiUrl}/v1/t/{tenant}/triage
+```
+
+`collective/promote.rs` (the ~987-LOC promotion/k-anonymity engine the old build
+plan describes) **is not in this tree at all** — it lived in the service.
+
+**But it was never exercised.** Live local rows:
+
+```
+sensei.dojo_memberships   1     (the seeded global dōjō)
+sensei.dojo_outbox        0     ← never sent anything
+sensei.dojo_inbox         0     ← never received anything
+```
+
+So this is built-but-never-live code, not working code we would break. That
+changes the framing of the sync workstream: **Phase 7 builds a transport, it does
+not reshape an existing one.**
+
+Three consequences for the plan:
+
+1. **The ADR recommendation to "keep a governed write path in the service" is
+   void** — there is no service to keep it in. Governance must live in RLS +
+   constraints + Postgres functions, or in dōjō Edge Functions, or locally in the
+   daemon. Anything genuinely needing a service (k-anonymity ≥3 across
+   contributors, promotion scoring) has to be re-sited deliberately, not assumed.
+2. **`dojo-protocol` and `dojo/client.rs` become retirement candidates**, along
+   with the device-token plane and `dojo_outbox`/`dojo_inbox` (both empty). Worth
+   a decision rather than leaving ~7.6k LOC pointed at nothing — dead code
+   describing an architecture we no longer have is exactly what misled the
+   earlier drafts of this spec.
+3. **The relay features** (`relay_drivers`, `relay_project`, `relay_nudge`,
+   `publish_segments`, `publish_run`) need triage: how much of each is local
+   behaviour worth keeping versus outbound calls with no destination.
+
+None of this blocks Phases 0–5, which are entirely local.
 
 #### And it opens a real privacy question (Q18)
 
@@ -452,13 +503,16 @@ Phases 0, 3 and 4 need no decisions and no dōjō. They are the recommended star
 | ~~Q9~~ | **Answered:** provisioned inactive, **no sync until activation**; activation gated by entitlement/pricing | — | — |
 | ~~Q10~~ | **Answered:** web = admins/viewers only; devs need sensei; dōjō recommends the download | — | — |
 | ~~Q11~~ | **Answered:** teams/team_members/**team_projects** created now with a default team; UI later | — | — |
-| Q13 | Is the dōjō Rust service still live? Keep artifacts/triage there, or retire it? | 6,7 | keep for what RLS can't express |
-| Q14 | Self-hosted dōjō — own Supabase, or keep the device-token plane? | 6 | *(open)* |
+| ~~Q13~~ | **Answered:** no service exists — dōjō is Supabase-backed end to end (§3.2) | — | — |
+| ~~Q14~~ | **Answered:** self-hosting dropped; `dojo_url` stays configurable | — | — |
+| ~~Q18~~ | **Deferred** (needed eventually). Default meanwhile: home-tenant admins only | — | — |
 | Q15 | Daemon JWT — restricted Postgres role, or full `authenticated`? | 7 | restricted |
 | Q16 | Git-alias claiming — verified-email match only, or admin review? | 7 | never silent |
 | Q17 | Persona email disjointness — rely on discipline + a loud `unique(dojo_user_id)` failure, or intercept the auth callback? | 6 | discipline + loud failure |
 | Q12 | Post-merge turn definition: prompt-to-prompt or per-exchange? | 8 | *(shifts turn-counting metrics; must be dated)* |
 
-**Answered:** Q1 (dōjō wins) · Q2 (auth-gated auto-sync) · Q3 (one repo, one project *per tenant*) · Q4 (self + admins) · Q5 (views first) · Q6 (keep retired history) · Q7 (all workers local) · Q8 (multi-tenant repos, one owner) · Q9 (inactive until activated) · Q10 (web = viewers) · Q11 (teams now, UI later).
+**Answered:** Q1 (dōjō wins) · Q2 (auth-gated auto-sync) · Q3 (one repo, one project *per tenant*) · Q4 (self + admins) · Q5 (views first) · Q6 (keep retired history) · Q7 (all workers local) · Q8 (multi-tenant repos, one owner) · Q9 (inactive until activated) · Q10 (web = viewers) · Q11 (teams now, UI later) · Q13 (no Rust service) · Q14 (no self-hosting).
 
-**Still open:** Q12 (post-merge turn definition) · Q13 (**is the dōjō Rust service live?** — gates the sync design) · Q14 (self-hosted dōjō auth) · Q15 (daemon JWT role) · Q16 (git-alias claiming) · Q17 (persona email disjointness) · Q18 (cross-tenant user-metric visibility).
+**Still open:** Q12 (post-merge turn definition) · Q15 (daemon JWT role) · Q16 (git-alias claiming) · Q17 (persona email disjointness).
+
+**Deferred:** Q18 (cross-tenant user-metric visibility).
