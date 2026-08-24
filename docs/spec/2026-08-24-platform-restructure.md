@@ -320,6 +320,19 @@ alias:
 almost certainly **this repo's old location**, so one alias recovers a block of
 Zed history for sensei itself.
 
+**Not in that list, and worth stating:**
+`/Users/Jerry/Work/Alert/repos/alert-platform` **already resolves** — it has an
+exact `sensei.folders` row (810 rows exist under `Alert/repos`). Its transcript
+directory `-Users-Jerry-Work-Alert-repos-alert-platform` maps correctly too; it
+simply holds **0 `.jsonl`** (only `memory/`), because the file was pruned. So that
+session needs no alias and no tracking — its 10 turns are already correctly
+attributed in the DB, and the vanished-file carve-out is what preserves them.
+The same is true of `strategos/gateway` and `dbd-rs`, which alias correctly.
+
+That is the general shape: **a missing transcript and an unresolvable cwd are
+different failures.** Only the second is fixable by mapping; the first is fixable
+only by not deleting the rows we already have.
+
 Both actions are reversible rows in our own database, and they make the reprocess
 attribute correctly without touching a single file on disk. This should run
 **before** Phase 8.
