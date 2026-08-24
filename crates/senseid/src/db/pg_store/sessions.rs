@@ -963,6 +963,90 @@ impl PgStore {
         Ok(repaired)
     }
 
+    /// Create sessions for transcripts that have TURNS but no session row.
+    ///
+    /// The sibling of [`Self::repair_orphaned_sessions`], which recovers sessions
+    /// from surviving EVENTS. This covers the case that one cannot: a transcript
+    /// whose prose was ingested but whose synthesis was skipped — because the
+    /// source reconstructed no events, or because none of its cwds resolved to a
+    /// tracked folder at the time. Measured here, 67 transcript sessions (46 Zed,
+    /// 18 Claude, 3 OpenCode) were in exactly that state, so their turns existed
+    /// but could join nothing.
+    ///
+    /// Runs on every backfill rather than as a one-off patch: a folder tracked
+    /// AFTER a transcript was ingested makes previously-unresolvable cwds
+    /// resolvable, so this converges over time instead of needing a manual sweep.
+    ///
+    /// `cwd` comes from the turn's retained `attrs` where the source records one.
+    /// A session whose cwd still does not resolve is LEFT ALONE — attaching it to
+    /// a guessed folder would misattribute real work to the wrong repository, and
+    /// a wrong attribution is worse than a missing one.
+    pub async fn repair_sessions_from_transcripts(&self) -> Result<u32, String> {
+        let orphans: Vec<(String, Vec<String>, String, Option<chrono::DateTime<chrono::Utc>>, Option<chrono::DateTime<chrono::Utc>>)> =
+            sqlx_core::query_as::query_as(
+                "SELECT t.session_id,
+                        -- Each source names its working directory differently, so
+                        -- take whichever it recorded: Claude `cwd`, OpenCode `path`,
+                        -- Zed the first worktree of its project snapshot.
+                        COALESCE(array_agg(DISTINCT COALESCE(
+                                     t.attrs->>'cwd',
+                                     t.attrs->>'path',
+                                     t.attrs #>> '{initial_project_snapshot,worktree_snapshots,0,worktree_path}'
+                                 )) FILTER (WHERE COALESCE(
+                                     t.attrs->>'cwd',
+                                     t.attrs->>'path',
+                                     t.attrs #>> '{initial_project_snapshot,worktree_snapshots,0,worktree_path}'
+                                 ) IS NOT NULL), '{}') AS cwds,
+                        (array_agg(t.family))[1] AS family,
+                        min(t.started_at) AS started_at,
+                        max(t.started_at) AS completed_at
+                   FROM activity.transcript_turns t
+                  WHERE t.session_id <> ''
+                    AND NOT EXISTS (
+                        SELECT 1 FROM activity.sessions s
+                         WHERE s.client_session_id = t.session_id)
+                  GROUP BY t.session_id",
+            )
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        let mut repaired = 0u32;
+        for (session_id, mut cwds, family, started, completed) in orphans {
+            // Most-specific first, matching repair_orphaned_sessions: a deeper path
+            // is a stronger signal than a parent that would shadow it.
+            cwds.sort_by_key(|c| std::cmp::Reverse(c.len()));
+            let mut resolved = None;
+            for cwd in &cwds {
+                if let Ok(Some(fp)) = self.find_folder_for_path(cwd).await {
+                    resolved = Some(fp);
+                    break;
+                }
+            }
+            let Some((folder_id, project_id)) = resolved else {
+                continue; // unresolvable — leave it rather than misattribute
+            };
+            if self
+                .record_session_event(&session_id, &folder_id, project_id.as_ref(), &family, true)
+                .await
+                .is_ok()
+            {
+                // The row would otherwise default to now() and masquerade as today,
+                // polluting recency order and every time-windowed metric.
+                if let (Some(a), Some(b)) = (started, completed)
+                    && let Err(e) = self
+                        .set_session_history(&session_id, a.timestamp_millis(), b.timestamp_millis())
+                        .await
+                {
+                    tracing::warn!(error = %e, session = %session_id,
+                        "repair_sessions_from_transcripts: set_session_history failed");
+                }
+                repaired += 1;
+            }
+        }
+        Ok(repaired)
+    }
+
     /// True if a session already has captured/imported events — the dedup guard
     /// so the importer never double-counts a live-captured (or already-imported) session.
     pub async fn session_has_events(&self, client_session_id: &str) -> Result<bool, String> {
