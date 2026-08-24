@@ -5,8 +5,8 @@
 //! files. Ingest is LLM-free — the analyzer's LLM tiers consume the corpus
 //! selectively.
 //!
-//! Chunked execution: `BackfillTranscripts` is a *dispatcher* that enqueues one
-//! `BackfillTranscriptFile` task per changed transcript, so ingestion interleaves
+//! Chunked execution: `IngestCaptures` is a *dispatcher* that enqueues one
+//! `IngestCapture` task per changed transcript, so ingestion interleaves
 //! with other work (scans, etc.) and one huge/bad file can't block the rest.
 
 pub mod claude;
@@ -455,7 +455,7 @@ async fn synthesize_session(
 
 /// Ingest every file across all adapters in-process (no queue). Test helper
 /// exercising the ingest+skip path end-to-end; the production path is the
-/// chunked dispatcher (`run_backfill` -> per-file `run_backfill_file`).
+/// chunked dispatcher (`run_backfill` -> per-file `run_ingest_capture`).
 #[cfg(test)]
 pub async fn backfill_all(
     pg: &crate::db::pg_store::PgStore,
@@ -481,8 +481,8 @@ pub async fn backfill_all(
     report
 }
 
-/// Dispatcher for `TaskKind::BackfillTranscripts`: enqueue one
-/// `BackfillTranscriptFile` task per changed/new transcript so ingestion
+/// Dispatcher for `TaskKind::IngestCaptures`: enqueue one
+/// `IngestCapture` task per changed/new transcript so ingestion
 /// interleaves with other work and a single huge/bad file can't block the rest.
 /// Skips files unchanged since last ingest (the per-file task re-checks to stay
 /// race-safe). Returns the number of files enqueued.
@@ -498,7 +498,7 @@ pub async fn run_backfill(ctx: &TaskContext, task: &Task) -> Result<u32, String>
 
 /// What a transcript backfill IS — enqueue every unit, then repair sessions.
 ///
-/// One definition with ONE caller: the `BackfillTranscripts` task. It was briefly
+/// One definition with ONE caller: the `IngestCaptures` task. It was briefly
 /// shared by the task and the `/api/transcripts/backfill` endpoint (before that,
 /// two drifted copies of the same sequence — the endpoint ran only the
 /// events-based repair, so a fix added to the task path silently did not reach
@@ -576,7 +576,7 @@ pub async fn repair_sessions(pg: &crate::db::pg_store::PgStore) -> u32 {
     repaired
 }
 
-/// Scan all adapters and enqueue one `BackfillTranscriptFile` task per
+/// Scan all adapters and enqueue one `IngestCapture` task per
 /// transcript. Returns `(files_seen, enqueued)`. Each per-file task does the
 /// smart skip (cursor for prose + session-has-events for synthesis), so the
 /// dispatcher stays trivial and correct across upgrades. Callable from the
@@ -610,7 +610,7 @@ pub async fn dispatch(
                 continue;
             }
             // folder_path = capture source, path = unit key (file path or thread id).
-            let mut task = Task::for_capture(TaskKind::BackfillTranscriptFile, ad.source(), &unit.key);
+            let mut task = Task::for_capture(TaskKind::IngestCapture, ad.source(), &unit.key);
             if let Some(p) = parent {
                 task = task.with_parent(p);
             }
@@ -622,9 +622,9 @@ pub async fn dispatch(
     (count, count)
 }
 
-/// Handler for `TaskKind::BackfillTranscriptFile`: ingest one transcript.
+/// Handler for `TaskKind::IngestCapture`: ingest one transcript.
 /// `task.folder_path` = capture source, `task.path` = transcript file path.
-pub async fn run_backfill_file(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
+pub async fn run_ingest_capture(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
     let Some(adapter) = adapter_for_source(task.capture_source()) else {
         return Err(format!("unknown transcript source '{}'", task.folder_path));
     };

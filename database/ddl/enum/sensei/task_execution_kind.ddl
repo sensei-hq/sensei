@@ -27,6 +27,12 @@ set search_path to sensei, extensions;
 --                        README frontmatter and never touched user identity;
 --                        the name would have collided with the real identity
 --                        work). Retained here because 1,208 rows carry it.
+--   * backfill_transcripts / backfill_transcript_file renamed to
+--                        ingest_captures / ingest_capture. The names became
+--                        WRONG when the coordinator gained a `from` bound: it
+--                        does ordinary parameterised ingestion, and calling that
+--                        "backfill" implies a separate mode that no longer
+--                        exists.
 -- Retention eventually prunes these rows; the values stay so the type remains a
 -- truthful description of what the column has held.
 create type task_execution_kind as enum (
@@ -48,8 +54,8 @@ create type task_execution_kind as enum (
 , 'index_library'
 , 'index_library_page'
   -- ── activity pipeline ──
-, 'backfill_transcripts'
-, 'backfill_transcript_file'
+, 'ingest_captures'
+, 'ingest_capture'
 , 'analyze_project'
 , 'analyze_session_process'
 , 'reconcile_repo_metadata'
@@ -75,4 +81,6 @@ create type task_execution_kind as enum (
 , 'plan_metric_days'
 , 'compute_metrics'
 , 'reconcile_identity'
+, 'backfill_transcripts'
+, 'backfill_transcript_file'
 );

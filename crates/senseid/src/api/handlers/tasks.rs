@@ -21,7 +21,7 @@
 //!
 //! ## Dispatchers
 //!
-//! A dispatcher (`BackfillTranscripts` queues one task per transcript) completes
+//! A dispatcher (`IngestCaptures` queues one task per transcript) completes
 //! in milliseconds having done none of the work. Reporting only its own row
 //! would tell a follower "completed" while thousands of children had barely
 //! started, so both endpoints carry the children and aggregate them.

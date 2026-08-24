@@ -74,18 +74,18 @@ pub enum TaskKind {
     /// (analyzer-driven counterpart to the manual `/drift/scan` endpoint).
     /// Per-project: `path` carries the project id, exactly like `AnalyzeProject`.
     ScanDocDrift,
-    /// Dispatcher: enqueue one `BackfillTranscriptFile` per changed transcript
+    /// Dispatcher: enqueue one `IngestCapture` per changed transcript
     /// so ingestion chunks + interleaves with other work (#73).
-    BackfillTranscripts,
+    IngestCaptures,
     /// Ingest one transcript file into activity.transcript_turns (resumable,
     /// per-file cursor). folder_path = capture source, path = file (#73).
-    BackfillTranscriptFile,
+    IngestCapture,
     /// Reconstruct historical coverage for one project: check out sampled past
     /// commits and run the configured `metrics.coverage_command` in each.
     /// `path` = project id, `folder_path` = week bound ("" = all history).
     ///
     /// Deliberately ONE task per project rather than a dispatcher + per-commit
-    /// children, which is the shape `BackfillTranscripts` uses. Coverage runs the
+    /// children, which is the shape `IngestCaptures` uses. Coverage runs the
     /// project's REAL TEST SUITE per commit, and the executor runs N workers — so
     /// per-commit children would put N test suites on the machine at once. The
     /// serial loop inside one task is the concurrency control.
@@ -266,8 +266,8 @@ impl TaskKind {
         Self::ImportLib,
         Self::IndexLibrary,
         Self::IndexLibraryPage,
-        Self::BackfillTranscripts,
-        Self::BackfillTranscriptFile,
+        Self::IngestCaptures,
+        Self::IngestCapture,
         Self::AnalyzeProject,
         Self::AnalyzeSessionProcess,
         Self::ReconcileRepoMetadata,
@@ -306,8 +306,8 @@ impl TaskKind {
             Self::ImportLib => KindInfo { name: "import_lib", pipeline: Pipeline::Library, stage: Stage::Ingest, budget_secs: 600, high_priority: false, retryable: false },
             Self::IndexLibrary => KindInfo { name: "index_library", pipeline: Pipeline::Library, stage: Stage::Ingest, budget_secs: 600, high_priority: false, retryable: false },
             Self::IndexLibraryPage => KindInfo { name: "index_library_page", pipeline: Pipeline::Library, stage: Stage::Ingest, budget_secs: 600, high_priority: false, retryable: false },
-            Self::BackfillTranscripts => KindInfo { name: "backfill_transcripts", pipeline: Pipeline::Activity, stage: Stage::Coordinate, budget_secs: 180, high_priority: false, retryable: false },
-            Self::BackfillTranscriptFile => KindInfo { name: "backfill_transcript_file", pipeline: Pipeline::Activity, stage: Stage::Ingest, budget_secs: 180, high_priority: false, retryable: false },
+            Self::IngestCaptures => KindInfo { name: "ingest_captures", pipeline: Pipeline::Activity, stage: Stage::Coordinate, budget_secs: 180, high_priority: false, retryable: false },
+            Self::IngestCapture => KindInfo { name: "ingest_capture", pipeline: Pipeline::Activity, stage: Stage::Ingest, budget_secs: 180, high_priority: false, retryable: false },
             Self::AnalyzeProject => KindInfo { name: "analyze_project", pipeline: Pipeline::Activity, stage: Stage::Derive, budget_secs: 600, high_priority: true, retryable: false },
             Self::AnalyzeSessionProcess => KindInfo { name: "analyze_session_process", pipeline: Pipeline::Activity, stage: Stage::Derive, budget_secs: 600, high_priority: false, retryable: false },
             Self::ReconcileRepoMetadata => KindInfo { name: "reconcile_repo_metadata", pipeline: Pipeline::Activity, stage: Stage::Derive, budget_secs: 180, high_priority: false, retryable: false },
@@ -762,7 +762,7 @@ mod tests {
         let t = Task::for_project(TaskKind::AnalyzeProject, &pid);
         assert_eq!(t.project_id().unwrap(), pid, "a project task reads its id back");
 
-        let t = Task::for_capture(TaskKind::BackfillTranscriptFile, "zed", "thread-1");
+        let t = Task::for_capture(TaskKind::IngestCapture, "zed", "thread-1");
         assert_eq!(t.capture_source(), "zed");
         assert_eq!(t.path, "thread-1");
 
@@ -800,7 +800,7 @@ mod tests {
         // The phase's claim, as a test: a backfill is a DATE PARAMETER on the
         // normal work, not a separate kind. Metrics already used `as_of` this way;
         // captures now read the same field rather than inventing a second idiom.
-        let mut t = Task::new(TaskKind::BackfillTranscripts, "", "");
+        let mut t = Task::new(TaskKind::IngestCaptures, "", "");
         assert_eq!(t.as_of_stamp_ns(), None, "unbounded by default — ingest everything");
 
         t.as_of = chrono::NaiveDate::from_ymd_opt(2026, 6, 1);
