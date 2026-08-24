@@ -35,6 +35,7 @@ select rm.id
      , rm.repository_id
      , rm.scope
      , rm.identity
+     , rm.persona_id
      , rm.commit_sha
      , rm.computed_on
      , rm.grain

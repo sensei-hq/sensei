@@ -6285,3 +6285,136 @@
         sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1").bind(pid).execute(s.pool()).await.ok();
         sqlx_core::query::query("DELETE FROM sensei.repositories WHERE id = ANY($1)").bind(vec![r_root, r_nested]).execute(s.pool()).await.ok();
     }
+
+    // ── Personas (Phase 3) ──────────────────────────────────────────────────
+
+    /// Seed a project + repository + one user-scope metric row for `email`.
+    async fn seed_identity_row(
+        s: &PgStore,
+        uniq: &uuid::Uuid,
+        email: &str,
+        value: f64,
+    ) -> (uuid::Uuid, uuid::Uuid) {
+        let pid = s.create_project(&format!("_test:persona:{uniq}"), None, None).await.unwrap();
+        let rid = crate::tasks::test_support::seed_bare_repository(s, &pid, uniq).await;
+        let mid = seed_metric(s, &format!("_test:persona:{uniq}:ftr"), "ComputeFtr", 0, None).await;
+        s.upsert_project_metric_repo(
+            &mid, &rid, "user", Some(email), None,
+            chrono::NaiveDate::from_ymd_opt(2020, 3, 1).unwrap(), "daily", value,
+            &serde_json::json!({}), "measured",
+        ).await.unwrap();
+        (pid, rid)
+    }
+
+    #[tokio::test]
+    async fn resolution_groups_aliases_without_touching_the_raw_email() {
+        // The point of the persona layer: two git addresses that belong to one
+        // working identity resolve to ONE persona — while `identity` keeps the
+        // raw assertion each row was computed from, so the grouping stays a
+        // re-derivation rather than a destructive merge.
+        let s = pg_store().await;
+        let uniq = uuid::Uuid::new_v4();
+        let a = format!("a-{uniq}@example.com");
+        let b = format!("b-{uniq}@example.com");
+        let (pid, _rid) = seed_identity_row(&s, &uniq, &a, 0.5).await;
+        let uniq2 = uuid::Uuid::new_v4();
+        let (pid2, _r2) = seed_identity_row(&s, &uniq2, &b, 0.75).await;
+
+        let persona = s.upsert_persona(&format!("work-{uniq}"), true).await.unwrap();
+        s.link_persona_email(&persona, &a, "git").await.unwrap();
+        s.link_persona_email(&persona, &b, "git").await.unwrap();
+        s.resolve_persona_ids().await.unwrap();
+
+        let (n, distinct_identities): (i64, i64) = query_as(
+            "SELECT count(*)::int8, count(DISTINCT identity)::int8 \
+               FROM sensei.repository_metrics WHERE persona_id = $1",
+        ).bind(persona).fetch_one(s.pool()).await.unwrap();
+
+        crate::tasks::test_support::cleanup_metrics_fixture(&s, &pid, None, &[]).await;
+        crate::tasks::test_support::cleanup_metrics_fixture(&s, &pid2, None, &[]).await;
+        sqlx_core::query::query("DELETE FROM sensei.personas WHERE id = $1")
+            .bind(persona).execute(s.pool()).await.unwrap();
+
+        assert_eq!(n, 2, "both alias rows resolve to the one persona");
+        assert_eq!(distinct_identities, 2, "the RAW emails are preserved, not collapsed");
+    }
+
+    #[tokio::test]
+    async fn an_unrecognised_author_stays_unassigned_rather_than_guessed() {
+        // Never-fabricate: an email no persona claims must NOT be folded into the
+        // local user's numbers. It stays NULL and is surfaced for assignment.
+        let s = pg_store().await;
+        let uniq = uuid::Uuid::new_v4();
+        let stranger = format!("stranger-{uniq}@example.com");
+        let (pid, _rid) = seed_identity_row(&s, &uniq, &stranger, 0.9).await;
+
+        s.resolve_persona_ids().await.unwrap();
+        let (unresolved,): (i64,) = query_as(
+            "SELECT count(*)::int8 FROM sensei.repository_metrics \
+              WHERE identity = $1 AND persona_id IS NULL",
+        ).bind(&stranger).fetch_one(s.pool()).await.unwrap();
+        let pending = s.unassigned_identities().await.unwrap();
+
+        crate::tasks::test_support::cleanup_metrics_fixture(&s, &pid, None, &[]).await;
+
+        assert_eq!(unresolved, 1, "an unclaimed author is left unattributed");
+        assert!(pending.iter().any(|(e, _)| e == &stranger),
+            "and is surfaced for assignment rather than silently ignored");
+    }
+
+    #[tokio::test]
+    async fn reassigning_an_email_moves_its_rows_on_re_resolution() {
+        // The reason `identity` is kept: correcting a persona assignment is a
+        // re-run, not a data-loss event. Move the address, re-resolve, and the
+        // history follows.
+        let s = pg_store().await;
+        let uniq = uuid::Uuid::new_v4();
+        let email = format!("moves-{uniq}@example.com");
+        let (pid, _rid) = seed_identity_row(&s, &uniq, &email, 0.5).await;
+
+        let first = s.upsert_persona(&format!("first-{uniq}"), true).await.unwrap();
+        let second = s.upsert_persona(&format!("second-{uniq}"), true).await.unwrap();
+        s.link_persona_email(&first, &email, "git").await.unwrap();
+        s.resolve_persona_ids().await.unwrap();
+
+        // The correction: the address actually belongs to the other identity.
+        s.link_persona_email(&second, &email, "git").await.unwrap();
+        s.resolve_persona_ids().await.unwrap();
+
+        let (on_second,): (i64,) = query_as(
+            "SELECT count(*)::int8 FROM sensei.repository_metrics WHERE persona_id = $1",
+        ).bind(second).fetch_one(s.pool()).await.unwrap();
+        let (on_first,): (i64,) = query_as(
+            "SELECT count(*)::int8 FROM sensei.repository_metrics WHERE persona_id = $1",
+        ).bind(first).fetch_one(s.pool()).await.unwrap();
+
+        crate::tasks::test_support::cleanup_metrics_fixture(&s, &pid, None, &[]).await;
+        sqlx_core::query::query("DELETE FROM sensei.personas WHERE id = ANY($1)")
+            .bind(vec![first, second]).execute(s.pool()).await.unwrap();
+
+        assert_eq!(on_second, 1, "the row followed the reassigned address");
+        assert_eq!(on_first, 0, "and no longer counts toward the old persona");
+    }
+
+    #[tokio::test]
+    async fn two_personas_cannot_share_one_dojo_login() {
+        // The privacy boundary made structural. Supabase auto-links identities
+        // sharing a verified email and cannot be told not to, so two personas CAN
+        // end up pointing at one merged account — this must fail loudly rather
+        // than silently file business work under a personal identity.
+        let s = pg_store().await;
+        let uniq = uuid::Uuid::new_v4();
+        let a = s.upsert_persona(&format!("pa-{uniq}"), true).await.unwrap();
+        let b = s.upsert_persona(&format!("pb-{uniq}"), true).await.unwrap();
+        let principal = uuid::Uuid::new_v4();
+
+        sqlx_core::query::query("UPDATE sensei.personas SET principal_id = $2 WHERE id = $1")
+            .bind(a).bind(principal).execute(s.pool()).await.unwrap();
+        let clash = sqlx_core::query::query("UPDATE sensei.personas SET principal_id = $2 WHERE id = $1")
+            .bind(b).bind(principal).execute(s.pool()).await;
+
+        sqlx_core::query::query("DELETE FROM sensei.personas WHERE id = ANY($1)")
+            .bind(vec![a, b]).execute(s.pool()).await.unwrap();
+
+        assert!(clash.is_err(), "a second persona claiming the same login is rejected");
+    }

@@ -288,6 +288,22 @@ async fn run(queue: Arc<TaskQueue>, pg: Arc<PgStore>) {
         if let Err(e) = metrics_tick(&queue, &pg).await {
             tracing::warn!(error = %e, "metrics_scheduler: tick failed — will retry next tick");
         }
+        // Resolve `identity` → persona for whatever the wave just wrote.
+        //
+        // A derivation, not part of the write: doing it here (rather than in the
+        // upsert) keeps the store write free of a per-row lookup, and makes a
+        // persona correction take effect on the next tick without recomputing a
+        // single metric. The UPDATE only touches rows whose resolution actually
+        // changed, so a steady state costs one indexed scan.
+        //
+        // Non-fatal: an unresolved persona means metrics read per-email instead
+        // of per-identity, which is the previous behaviour — never a reason to
+        // fail the wave.
+        match pg.resolve_persona_ids().await {
+            Ok(n) if n > 0 => tracing::info!(rows = n, "metrics_scheduler: resolved identities to personas"),
+            Ok(_) => {}
+            Err(e) => tracing::warn!(error = %e, "metrics_scheduler: persona resolution failed"),
+        }
     }
 }
 

@@ -418,6 +418,7 @@ mod logs;
 mod mcp;
 mod memory;
 mod metrics;
+mod personas;
 mod patterns;
 mod playbook;
 mod projects;
