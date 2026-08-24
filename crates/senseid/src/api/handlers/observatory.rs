@@ -375,6 +375,13 @@ pub(crate) async fn backfill_project_sessions(
     Ok(Json(serde_json::json!({ "reset": reset, "queued": true })))
 }
 
+/// Optional lower bound for a capture ingest.
+#[derive(Deserialize)]
+pub(crate) struct CaptureIngestQuery {
+    /// Only ingest units changed on or after this day. Omitted = everything.
+    from: Option<chrono::NaiveDate>,
+}
+
 /// Enqueue a transcript backfill (#73) — ingest assistant/user prose from the
 /// agent transcript caches into activity.transcript_turns. Resumable, so this
 /// is safe to call repeatedly; only changed transcripts do work.
@@ -387,13 +394,21 @@ pub(crate) async fn backfill_project_sessions(
 /// or `GET /api/tasks/status`.
 ///
 /// Deduped: a second request while one is in flight reports the in-flight run.
-pub(crate) async fn backfill_transcripts(State(state): State<AppState>) -> Json<serde_json::Value> {
+pub(crate) async fn backfill_transcripts(
+    State(state): State<AppState>,
+    Query(q): Query<CaptureIngestQuery>,
+) -> Json<serde_json::Value> {
     let kind = crate::tasks::TaskKind::BackfillTranscripts;
     if state.task_queue.has_pending_kind(kind.clone()).await {
         return Json(serde_json::json!({ "ok": true, "queued": false, "running": true }));
     }
-    let task_id = state.task_queue.enqueue(crate::tasks::Task::new(kind, "", "")).await;
-    Json(serde_json::json!({ "ok": true, "queued": true, "taskId": task_id }))
+    // `?from=YYYY-MM-DD` bounds the walk; omitted ingests everything. Same kind,
+    // same handler — the range is a parameter, which is why there is no separate
+    // "backfill" task to keep in sync with the normal one.
+    let mut task = crate::tasks::Task::new(kind, "", "");
+    task.as_of = q.from;
+    let task_id = state.task_queue.enqueue(task).await;
+    Json(serde_json::json!({ "ok": true, "queued": true, "taskId": task_id, "from": q.from }))
 }
 
 /// Enqueue a metrics backfill (Phase 5 — history recovery): one `ComputeProjectMetrics` per
