@@ -298,6 +298,32 @@ oldest surviving file are in files that still exist** — zero are in the vanish
 five. File mtime is *last write*, so a session opened 2026-05-21 and continued
 into July still has its transcript. Nothing from May is at risk.
 
+#### Do not move the transcript files — fix the mapping instead
+
+Considered moving old-named transcript dirs into their new names
+(`-…-dbd-rs/*` → `-…-dbd/`). **Recommend against it**, on three grounds:
+
+1. **It cannot recover the five.** Those UUIDs exist nowhere on disk — searched the whole home tree. Moving files cannot create files that are absent.
+2. **The directory name is not the cwd source, and cannot be.** The adapters read cwd from transcript *content* (`attrs.cwd`), because the encoding is **ambiguous and irreversible**: `-Users-Jerry-Developer-sensei-hq-sensei` could decode to `sensei-hq/sensei` **or** `sensei/hq/sensei`, and nothing in the name says which. Reorganising by directory name would therefore be guesswork, and would change nothing about how resolution actually works.
+3. **It would break two things for no gain.** `transcript_cursor.file_path` keys on the absolute path, so every moved file re-ingests as new. And `~/.claude/projects` is Claude Code's own state directory — its resume/index behaviour reads that layout. Mutating another tool's state to fix our attribution is the wrong direction.
+
+**What actually fixes it:** the unresolved cwds are a *mapping* gap in our own DB,
+not a filesystem one. Measured — 16 distinct cwds resolve to no folder and no
+alias:
+
+| Action | Count | Paths |
+|---|---|---|
+| **Track it** (exists on disk) | 6 | `Developer/sensei-hq`, `Developer/jovy`, `Developer/llm-rules`, `Work/Alert`, `Work/Babb`, `Work/Got-a-guy` |
+| **Add an alias** (gone) | 10 | `Developer/sensei`, `Developer/reader`, `Developer/magpie-scanner`, `jovy/wix-mirror`, `Work/AI`, `Work/Wombat`, `Work/FizzBot`, `Work/Value Pricing`, `Work/Basketball App`, `Alert/example-alert-site` |
+
+`/Users/Jerry/Developer/sensei` → `/Users/Jerry/Developer/sensei-hq/sensei` is
+almost certainly **this repo's old location**, so one alias recovers a block of
+Zed history for sensei itself.
+
+Both actions are reversible rows in our own database, and they make the reprocess
+attribute correctly without touching a single file on disk. This should run
+**before** Phase 8.
+
 #### What must NOT be wiped
 
 Everything above regenerates from a durable source. These do not:
