@@ -399,6 +399,94 @@ impl Task {
         }
     }
 
+    // ── Typed payload ───────────────────────────────────────────────────
+    //
+    // `folder_path` and `path` are two untyped strings that mean something
+    // different for almost every kind. The code says so itself — there are
+    // comments reading "lib name stored in path field", "library UUID stored in
+    // folder_path", "page title stored in path" — and `BackfillCoverage` went as
+    // far as putting a WEEK COUNT in `folder_path`.
+    //
+    // The consequence is that nothing checks an enqueue. Pass a project id where
+    // a folder path belongs and it fails much later, inside a handler, as a parse
+    // error or (worse) a lookup miss that reads as "no data". Every handler also
+    // re-parsed its own inputs with its own error text: four different phrasings
+    // of "invalid project id" existed.
+    //
+    // These constructors and accessors are the contract. The storage is still the
+    // two columns — a jsonb payload is a later, separate change — but both ends
+    // now name what they carry, in one place.
+
+    /// A task about one PROJECT. The id rides in `path`.
+    pub fn for_project(kind: TaskKind, project_id: &uuid::Uuid) -> Self {
+        Self::new(kind, "", &project_id.to_string())
+    }
+
+    /// A task about one FOLDER on disk — the git checkout root it operates in.
+    pub fn for_folder(kind: TaskKind, abs_path: &str) -> Self {
+        Self::new(kind, abs_path, abs_path)
+    }
+
+    /// A task about one FILE within a folder.
+    pub fn for_file(kind: TaskKind, folder_abs_path: &str, file_abs_path: &str) -> Self {
+        Self::new(kind, folder_abs_path, file_abs_path)
+    }
+
+    /// A task about one captured unit — a transcript file or thread — from a
+    /// named capture source (`claude_code`, `zed`, `opencode`).
+    pub fn for_capture(kind: TaskKind, source: &str, unit: &str) -> Self {
+        Self::new(kind, source, unit)
+    }
+
+    /// A coverage backfill for one project, optionally bounded to the most recent
+    /// `weeks` sampled anchors.
+    ///
+    /// The bound used to be stringified into `folder_path` at the call site, which
+    /// is exactly the kind of thing this constructor exists to stop being ad hoc.
+    pub fn for_coverage_backfill(project_id: &uuid::Uuid, weeks: Option<u32>) -> Self {
+        Self::new(
+            TaskKind::BackfillCoverage,
+            &weeks.map(|w| w.to_string()).unwrap_or_default(),
+            &project_id.to_string(),
+        )
+    }
+
+    /// The project id this task is about.
+    ///
+    /// One parse, one error phrasing. Handlers previously each wrote their own —
+    /// "ScanDocDrift: invalid project id", "AnalyzeSessionProcess: invalid project
+    /// id", "coverage: bad project id" — so the same failure read three ways
+    /// depending on which handler hit it.
+    pub fn project_id(&self) -> Result<uuid::Uuid, String> {
+        uuid::Uuid::parse_str(&self.path).map_err(|e| {
+            format!("{}: expected a project id in `path`, got {:?} ({e})", self.kind, self.path)
+        })
+    }
+
+    /// The folder abs path this task operates in.
+    pub fn folder_abs_path(&self) -> &str {
+        &self.folder_path
+    }
+
+    /// The capture source this task's unit came from.
+    pub fn capture_source(&self) -> &str {
+        &self.folder_path
+    }
+
+    /// The week bound on a coverage backfill: `None` = all history.
+    ///
+    /// An unparseable bound is an ERROR, not a fallback to `None`. Defaulting
+    /// would silently run the project's real test suite across its entire history
+    /// because a string was malformed — far more work than was asked for.
+    pub fn coverage_weeks(&self) -> Result<Option<u32>, String> {
+        match self.folder_path.as_str() {
+            "" => Ok(None),
+            w => w.parse::<u32>().map(Some).map_err(|e| {
+                format!("{}: expected a week count in `folder_path`, got {w:?} ({e})", self.kind)
+            }),
+        }
+    }
+
     /// The next retry attempt for a failed task (D6c): same identity
     /// (kind/paths/module/branch/url/parent), `retry_number` incremented, and
     /// all runtime state reset — the queue assigns a fresh `id` on re-enqueue,
@@ -648,5 +736,44 @@ mod tests {
             assert!(matches!(k.pipeline(), Pipeline::Metrics | Pipeline::Activity),
                 "{k} claims high priority outside the metrics chain");
         }
+    }
+
+    #[test]
+    fn typed_constructors_and_accessors_round_trip() {
+        let pid = uuid::Uuid::new_v4();
+        let t = Task::for_project(TaskKind::AnalyzeProject, &pid);
+        assert_eq!(t.project_id().unwrap(), pid, "a project task reads its id back");
+
+        let t = Task::for_capture(TaskKind::BackfillTranscriptFile, "zed", "thread-1");
+        assert_eq!(t.capture_source(), "zed");
+        assert_eq!(t.path, "thread-1");
+
+        let t = Task::for_file(TaskKind::ProcessFile, "/repo", "/repo/a.rs");
+        assert_eq!(t.folder_abs_path(), "/repo");
+        assert_eq!(t.path, "/repo/a.rs");
+    }
+
+    #[test]
+    fn a_wrong_payload_is_an_error_not_a_silent_miss() {
+        // The failure this contract exists to surface. Before it, a folder path
+        // handed to a project-scoped kind parsed as garbage deep inside a handler
+        // — or worse, looked up nothing and read as "no data".
+        let t = Task::new(TaskKind::AnalyzeProject, "", "/not/a/uuid");
+        let err = t.project_id().unwrap_err();
+        assert!(err.contains("expected a project id"), "got: {err}");
+        assert!(err.contains("analyze_project"), "the error names the kind: {err}");
+    }
+
+    #[test]
+    fn a_malformed_week_bound_refuses_rather_than_running_all_history() {
+        // Defaulting to None here would silently run the project's real test suite
+        // across its ENTIRE history because a string was malformed — far more work
+        // than was asked for, and expensive.
+        let pid = uuid::Uuid::new_v4();
+        assert_eq!(Task::for_coverage_backfill(&pid, Some(4)).coverage_weeks().unwrap(), Some(4));
+        assert_eq!(Task::for_coverage_backfill(&pid, None).coverage_weeks().unwrap(), None);
+
+        let bad = Task::new(TaskKind::BackfillCoverage, "not-a-number", &pid.to_string());
+        assert!(bad.coverage_weeks().is_err(), "a malformed bound must not default to all history");
     }
 }

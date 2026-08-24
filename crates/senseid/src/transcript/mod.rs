@@ -585,7 +585,7 @@ pub async fn dispatch(queue: &crate::tasks::queue::TaskQueue, parent: Option<u64
     for ad in adapters() {
         for unit in ad.units() {
             // folder_path = capture source, path = unit key (file path or thread id).
-            let mut task = Task::new(TaskKind::BackfillTranscriptFile, ad.source(), &unit.key);
+            let mut task = Task::for_capture(TaskKind::BackfillTranscriptFile, ad.source(), &unit.key);
             if let Some(p) = parent {
                 task = task.with_parent(p);
             }
@@ -600,7 +600,7 @@ pub async fn dispatch(queue: &crate::tasks::queue::TaskQueue, parent: Option<u64
 /// Handler for `TaskKind::BackfillTranscriptFile`: ingest one transcript.
 /// `task.folder_path` = capture source, `task.path` = transcript file path.
 pub async fn run_backfill_file(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
-    let Some(adapter) = adapter_for_source(&task.folder_path) else {
+    let Some(adapter) = adapter_for_source(task.capture_source()) else {
         return Err(format!("unknown transcript source '{}'", task.folder_path));
     };
     let outcome = ingest_one(ctx.pg(), adapter.as_ref(), &task.path).await?;

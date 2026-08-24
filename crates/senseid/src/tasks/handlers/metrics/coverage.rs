@@ -267,13 +267,7 @@ pub(crate) async fn run_backfill(
     ctx: &crate::tasks::executor::TaskContext,
     task: &crate::tasks::Task,
 ) -> Result<u32, String> {
-    // An unparseable bound is a caller bug, and silently walking ALL history
-    // instead of the requested window would run far more of the test suite than
-    // was asked for — so refuse rather than guess.
-    let weeks = match task.folder_path.as_str() {
-        "" => None,
-        w => Some(w.parse::<u32>().map_err(|e| format!("coverage: bad weeks {w:?}: {e}"))?),
-    };
+    let weeks = task.coverage_weeks()?;
     backfill(ctx.pg(), &task.path, weeks).await
 }
 
@@ -678,7 +672,7 @@ end_of_record
             &uuid::Uuid::new_v4().to_string(),
         );
         let err = run_backfill(&ctx, &task).await.unwrap_err();
-        assert!(err.contains("bad weeks"), "got {err}");
+        assert!(err.contains("expected a week count"), "got {err}");
     }
 
     #[tokio::test]

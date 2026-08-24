@@ -800,9 +800,13 @@ pub(crate) async fn coverage_backfill(
             serde_json::json!({ "queued": false, "running": true, "project": uuid }),
         ));
     }
-    // folder_path carries the week bound; the handler parses it back.
-    let weeks = q.weeks.map(|w| w.to_string()).unwrap_or_default();
-    let task_id = state.task_queue.enqueue(crate::tasks::Task::new(kind, &weeks, &project)).await;
+    // Typed constructor: the week bound used to be stringified into
+    // `folder_path` here, which is precisely the ad-hoc encoding the payload
+    // contract exists to remove.
+    let task_id = state
+        .task_queue
+        .enqueue(crate::tasks::Task::for_coverage_backfill(&uuid, q.weeks))
+        .await;
     // The id is the whole point of returning early: the caller follows the work on
     // GET /api/tasks/progress (SSE) or polls GET /api/tasks/status. A request that
     // instead held the connection open for a test-suite-per-commit run would be
