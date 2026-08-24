@@ -95,7 +95,7 @@ impl PgStore {
                                 > (CASE r.enforcement::text WHEN 'advisory' THEN 1 WHEN 'recommended' THEN 2 WHEN 'required' THEN 3 WHEN 'mandatory' THEN 4 ELSE 0 END)
                              THEN a.enforcement::text ELSE r.enforcement::text END,
                         COALESCE(n.scope_key, 'general'),
-                        p.source
+                        p.attribution
                    FROM sensei.rule_pack_adoptions a
                    JOIN sensei.rule_packs p      ON p.id = a.pack_id
                    JOIN sensei.rule_pack_rules r ON r.pack_id = p.id
