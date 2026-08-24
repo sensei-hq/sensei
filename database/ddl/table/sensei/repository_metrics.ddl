@@ -21,6 +21,13 @@ create table if not exists repository_metrics (
 , repository_id uuid          not null references sensei.repositories(id) on delete cascade
 , scope         metric_scope  not null default 'user'
 , identity      text
+  -- The persona `identity` resolves to. NULLABLE and DERIVED — never a
+  -- replacement for the raw email above. Resolving at write time would be a
+  -- destructive merge: each row came from `git log --author=<email>`, so
+  -- combining two aliases must SUM, and a later persona reassignment would have
+  -- no source left to recompute from. Keeping both makes re-attribution a
+  -- re-derivation over immutable raw attribution.
+, persona_id    uuid          references sensei.personas(id) on delete set null
 , commit_sha    text
 , computed_on   date          not null
 , grain         metric_grain  not null
@@ -43,6 +50,11 @@ create unique index if not exists repository_metrics_identity
 -- and every read filters by repository.
 create index if not exists repository_metrics_repository_idx
     on repository_metrics (repository_id, metric_id, computed_on);
+
+-- Roll-ups group by persona; a partial index because only scope='user' rows
+-- carry one (a repo-scope value has no author dimension).
+create index if not exists repository_metrics_persona_idx
+    on repository_metrics (persona_id, metric_id, computed_on) where persona_id is not null;
 
 comment on table repository_metrics is
 'The value store — every computed metric value, at repository + date grain. All
