@@ -21,7 +21,7 @@
 //!
 //! Timestamps are unix milliseconds.
 
-use super::{SessionTokens, ParsedTranscript, SynthEvent, SynthSession, TranscriptAdapter, TranscriptTurn, UnitRef};
+use super::{TurnFacts, SessionTokens, ParsedTranscript, SynthEvent, SynthSession, TranscriptAdapter, TranscriptTurn, UnitRef};
 use std::path::PathBuf;
 
 /// Cap stored assistant prose per turn (matches Claude/Zed adapters).
@@ -274,16 +274,22 @@ pub fn parse_opencode_messages(content: &str) -> Vec<TranscriptTurn> {
                     turns.push(t);
                 }
                 idx += 1;
+                let mut facts = TurnFacts::default();
+                // The attributes live on `data`, not on the row wrapper.
+                if let Some(d) = msg.get("data") { merge_facts(&mut facts, d); }
                 cur = Some(TranscriptTurn {
                     turn_index: idx,
                     user_text: Some(trimmed.to_string()),
                     assistant_text: String::new(),
                     started_at: time_created.and_then(millis_to_datetime),
-                        ..Default::default()
-                    });
+                    attrs: msg.get("data").map(turn_attrs).unwrap_or_default(),
+                    facts,
+                });
             }
             "assistant" => {
                 if let Some(t) = cur.as_mut() {
+                    // Usage sums across the turn's assistant messages.
+                    if let Some(d) = msg.get("data") { merge_facts(&mut t.facts, d); }
                     let text = extract_text_from_parts(msg);
                     let trimmed = text.trim();
                     if !trimmed.is_empty() {
@@ -499,6 +505,53 @@ pub fn extract_dominant_model(content: &str) -> Option<(String, String)> {
         })
 }
 
+
+/// Promoted per-message attributes for OpenCode.
+///
+/// OpenCode records usage PER MESSAGE (`data.tokens` = `{input, output,
+/// reasoning, cache:{read,write}}`) as well as a session total, so — unlike Zed —
+/// it can fill the per-turn columns the way Claude does. Summed across the turn's
+/// assistant messages; the LAST `finish` is the one that ended the turn.
+fn merge_facts(facts: &mut TurnFacts, msg: &serde_json::Value) {
+    let str_of = |v: Option<&serde_json::Value>| {
+        v.and_then(|x| x.as_str()).filter(|x| !x.is_empty()).map(str::to_string)
+    };
+    // `agent`/`mode` are OpenCode's nearest equivalents to skill/effort.
+    if facts.skill.is_none() { facts.skill = str_of(msg.get("agent")); }
+    if facts.effort.is_none() { facts.effort = str_of(msg.get("mode")); }
+    // A message with a parent is subagent work.
+    if facts.is_sidechain.is_none() && msg.get("parentID").is_some() {
+        facts.is_sidechain = Some(true);
+    }
+    if let Some(f) = str_of(msg.get("finish")) { facts.stop_reason = Some(f); }
+
+    let Some(t) = msg.get("tokens") else { return };
+    let add = |slot: &mut Option<i64>, n: Option<i64>| {
+        if let Some(n) = n { *slot = Some(slot.unwrap_or(0) + n); }
+    };
+    add(&mut facts.tokens_in, t.get("input").and_then(|x| x.as_i64()));
+    add(&mut facts.tokens_out, t.get("output").and_then(|x| x.as_i64()));
+    if let Some(c) = t.get("cache") {
+        add(&mut facts.cache_read, c.get("read").and_then(|x| x.as_i64()));
+        add(&mut facts.cache_write, c.get("write").and_then(|x| x.as_i64()));
+    }
+}
+
+/// The message's attributes minus the bulky parts we already store as prose —
+/// kept verbatim so a signal we have not promoted is a query, not a re-ingest.
+fn turn_attrs(msg: &serde_json::Value) -> serde_json::Value {
+    const DROP: [&str; 2] = ["parts", "summary"];
+    let mut out = serde_json::Map::new();
+    if let Some(obj) = msg.as_object() {
+        for (k, v) in obj {
+            if !DROP.contains(&k.as_str()) {
+                out.insert(k.clone(), v.clone());
+            }
+        }
+    }
+    serde_json::Value::Object(out)
+}
+
 /// Session-level usage from the content blob, kept SPLIT (OpenCode stores
 /// per-session cumulative totals on `session`).
 ///
@@ -535,6 +588,43 @@ fn millis_to_datetime(ms: i64) -> Option<chrono::DateTime<chrono::Utc>> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn opencode_fills_per_turn_facts_from_per_message_usage() {
+        // Unlike Zed, OpenCode records usage PER MESSAGE, so it can populate the
+        // per-turn columns the way Claude does rather than only a session total.
+        let blob = serde_json::json!({
+            "messages": [
+                {"time_created": 1_700_000_000_000i64,
+                 "data": {"role": "user", "agent": "build"},
+                 "parts": [{"data": {"type": "text", "text": "add the parser"}}]},
+                {"time_created": 1_700_000_001_000i64,
+                 "data": {"role": "assistant", "agent": "build", "mode": "build",
+                          "parentID": "m1", "finish": "tool-calls",
+                          "tokens": {"input": 100, "output": 20, "reasoning": 5,
+                                     "cache": {"read": 900, "write": 50}}},
+                 "parts": [{"data": {"type": "text", "text": "on it"}}]},
+                {"time_created": 1_700_000_002_000i64,
+                 "data": {"role": "assistant", "agent": "build", "finish": "stop",
+                          "tokens": {"input": 10, "output": 8,
+                                     "cache": {"read": 100, "write": 0}}},
+                 "parts": [{"data": {"type": "text", "text": "done"}}]}
+            ]
+        }).to_string();
+        let turns = parse_opencode_messages(&blob);
+        assert_eq!(turns.len(), 1);
+        let f = &turns[0].facts;
+        assert_eq!(f.tokens_in, Some(110), "fresh input summed across the turn (100+10)");
+        assert_eq!(f.cache_read, Some(1000), "cache kept separate (900+100)");
+        assert_eq!(f.cache_write, Some(50));
+        assert_eq!(f.tokens_out, Some(28));
+        assert_eq!(f.stop_reason.as_deref(), Some("stop"), "the LAST finish ends the turn");
+        assert_eq!(f.skill.as_deref(), Some("build"), "agent is OpenCode's skill analogue");
+        assert_eq!(f.is_sidechain, Some(true), "a parented message is subagent work");
+        // Raw shape retained, prose excluded.
+        assert!(turns[0].attrs.get("parts").is_none());
+        assert_eq!(turns[0].attrs["agent"], "build", "raw shape retained");
+    }
+
     use super::*;
 
     /// Build a minimal content blob matching the real load_content output.

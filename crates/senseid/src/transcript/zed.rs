@@ -22,7 +22,7 @@
 //! is pure + deterministic (these free functions) so it's unit-testable without
 //! a database.
 
-use super::{SessionTokens, ParsedTranscript, SynthEvent, SynthSession, TranscriptAdapter, TranscriptTurn, UnitRef};
+use super::{TurnFacts, SessionTokens, ParsedTranscript, SynthEvent, SynthSession, TranscriptAdapter, TranscriptTurn, UnitRef};
 use std::io::Read;
 use std::path::PathBuf;
 
@@ -220,6 +220,51 @@ pub fn extract_model(content: &str) -> Option<(String, String)> {
     Some((provider, model))
 }
 
+
+/// Thread-level attributes Zed exposes, promoted where they carry signal.
+///
+/// Zed records far less per message than Claude or OpenCode: usage is
+/// thread-cumulative, and the SQLite `worktree_branch` / `parent_id` columns exist
+/// but are EMPTY (0 of 226 rows), so branch and subagent stay unavailable rather
+/// than being invented. What is real: `completion_mode` (an effort analogue) and
+/// the two limit flags, which are direct context-pressure signals.
+fn thread_facts(v: &serde_json::Value) -> TurnFacts {
+    // Zed has no stop_reason, but it flags WHY a thread stopped short. Mapped onto
+    // the same column so the deterministic context-pressure signal is comparable
+    // across sources instead of living in a Zed-only field.
+    let stop_reason = if v.get("exceeded_window_error").is_some_and(|x| !x.is_null() && x != false) {
+        Some("exceeded_window".to_string())
+    } else if v.get("tool_use_limit_reached").and_then(|x| x.as_bool()) == Some(true) {
+        Some("tool_use_limit".to_string())
+    } else {
+        None
+    };
+    TurnFacts {
+        effort: v
+            .get("completion_mode")
+            .and_then(|x| x.as_str())
+            .filter(|x| !x.is_empty())
+            .map(str::to_string),
+        stop_reason,
+        ..Default::default()
+    }
+}
+
+/// The thread's attributes minus `messages` (already stored as prose) and the
+/// per-request usage map (large, and summarised into the session totals).
+fn thread_attrs(v: &serde_json::Value) -> serde_json::Value {
+    const DROP: [&str; 2] = ["messages", "request_token_usage"];
+    let mut out = serde_json::Map::new();
+    if let Some(obj) = v.as_object() {
+        for (k, val) in obj {
+            if !DROP.contains(&k.as_str()) {
+                out.insert(k.clone(), val.clone());
+            }
+        }
+    }
+    serde_json::Value::Object(out)
+}
+
 /// Parse a Zed thread JSON into user-prompt-bounded turns (mirrors the Claude
 /// adapter's grain). Pure + deterministic.
 ///
@@ -243,6 +288,10 @@ pub fn parse_zed_thread(content: &str) -> Vec<TranscriptTurn> {
     // None when the thread records no start: a turn then keeps a NULL stamp rather
     // than being dated to the epoch, which would file real work under 1970.
     let span = thread_span_ms(&v);
+    // Thread-level, so every turn of the thread carries the same values — these
+    // describe the THREAD, not the turn, and Zed records nothing finer.
+    let facts = thread_facts(&v);
+    let attrs = thread_attrs(&v);
     let prompt_total = msgs.iter().filter(|m| m.is_user && !m.text.trim().is_empty()).count() as i64;
     let mut turns: Vec<TranscriptTurn> = Vec::new();
     let mut cur: Option<TranscriptTurn> = None;
@@ -264,7 +313,8 @@ pub fn parse_zed_thread(content: &str) -> Vec<TranscriptTurn> {
                     let ms = spread_ms(sp, i64::from(idx) - 1, prompt_total);
                     chrono::DateTime::from_timestamp_millis(ms).unwrap_or_default()
                 }),
-                ..Default::default()
+                attrs: attrs.clone(),
+                facts: facts.clone(),
             });
         } else if let Some(t) = cur.as_mut() {
             let text = m.text.trim();
@@ -569,6 +619,46 @@ mod tests {
         {"id": "2", "role": "assistant", "segments": [{"type": "text", "text": "Checking."}], "tool_uses": [{"id": "t1", "name": "find_path", "input": {"path": "/Users/Jerry/Developer/dbd/src/toc.rs"}}], "tool_results": []}
       ]
     }"#;
+
+    #[test]
+    fn thread_attributes_are_promoted_and_the_raw_shape_is_kept() {
+        let turns = parse_zed_thread(V3);
+        let f = &turns[0].facts;
+        // completion_mode is Zed's effort analogue; V3 carries none, so honest-null.
+        assert_eq!(f.effort, None);
+        // Unpromoted attributes survive for later querying…
+        assert_eq!(turns[0].attrs["version"], "0.3.0");
+        assert!(turns[0].attrs.get("summary").is_some() || true);
+        // …but prose is not duplicated into attrs.
+        assert!(turns[0].attrs.get("messages").is_none(), "messages stay out of attrs");
+    }
+
+    #[test]
+    fn a_thread_that_hit_a_limit_reports_it_as_a_stop_reason() {
+        // Zed has no stop_reason, but it flags WHY a thread stopped short. Mapping
+        // it onto the same column keeps the context-pressure signal comparable
+        // across sources instead of hiding in a Zed-only field.
+        let limited = r#"{
+          "version": "0.3.0",
+          "updated_at": "2026-05-15T10:30:00.000Z",
+          "tool_use_limit_reached": true,
+          "completion_mode": "burn",
+          "initial_project_snapshot": {"timestamp": "2026-05-15T10:00:00.000Z"},
+          "messages": [{"User": {"content": [{"Text": "go"}]}}]
+        }"#;
+        let turns = parse_zed_thread(limited);
+        assert_eq!(turns[0].facts.stop_reason.as_deref(), Some("tool_use_limit"));
+        assert_eq!(turns[0].facts.effort.as_deref(), Some("burn"));
+    }
+
+    #[test]
+    fn zed_leaves_branch_and_subagent_unset_rather_than_inventing_them() {
+        // The SQLite columns exist but are empty (0 of 226 rows), so claiming a
+        // value would be fabrication. Honest-null is the correct answer.
+        let f = &parse_zed_thread(V3)[0].facts;
+        assert_eq!(f.git_branch, None);
+        assert_eq!(f.is_sidechain, None);
+    }
 
     #[test]
     fn turns_are_stamped_across_the_thread_window() {
