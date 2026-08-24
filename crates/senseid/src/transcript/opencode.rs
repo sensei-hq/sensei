@@ -21,7 +21,7 @@
 //!
 //! Timestamps are unix milliseconds.
 
-use super::{ParsedTranscript, SynthEvent, SynthSession, TranscriptAdapter, TranscriptTurn, UnitRef};
+use super::{SessionTokens, ParsedTranscript, SynthEvent, SynthSession, TranscriptAdapter, TranscriptTurn, UnitRef};
 use std::path::PathBuf;
 
 /// Cap stored assistant prose per turn (matches Claude/Zed adapters).
@@ -105,7 +105,7 @@ impl TranscriptAdapter for OpenCodeAdapter {
                         m.id, m.data, m.time_created, \
                         p.data, p.time_created, \
                         s.tokens_input, s.tokens_output, \
-                        s.tokens_reasoning, s.tokens_cache_read, s.tokens_cache_write \
+                        s.tokens_reasoning, s.tokens_cache_read, s.tokens_cache_write, s.cost \
                  FROM session s \
                  JOIN message m ON m.session_id = s.id \
                  LEFT JOIN part p ON p.message_id = m.id \
@@ -130,6 +130,7 @@ impl TranscriptAdapter for OpenCodeAdapter {
                     r.get::<_, Option<i64>>(11)?,     // session.tokens_reasoning
                     r.get::<_, Option<i64>>(12)?,     // session.tokens_cache_read
                     r.get::<_, Option<i64>>(13)?,     // session.tokens_cache_write
+                    r.get::<_, Option<f64>>(14)?,     // session.cost (metered; 0.0 on a plan)
                 ))
             })
             .ok()?;
@@ -146,6 +147,7 @@ impl TranscriptAdapter for OpenCodeAdapter {
         let mut tokens_reasoning: Option<i64> = None;
         let mut tokens_cache_read: Option<i64> = None;
         let mut tokens_cache_write: Option<i64> = None;
+        let mut cost: Option<f64> = None;
         let mut meta_seen = false;
 
         for row in rows.flatten() {
@@ -160,6 +162,7 @@ impl TranscriptAdapter for OpenCodeAdapter {
                 tokens_reasoning = row.11;
                 tokens_cache_read = row.12;
                 tokens_cache_write = row.13;
+                cost = row.14;
             }
             let msg_id = row.4;
             let msg_data: serde_json::Value = serde_json::from_str(&row.5).unwrap_or(serde_json::json!({}));
@@ -205,6 +208,7 @@ impl TranscriptAdapter for OpenCodeAdapter {
             "tokens_reasoning": tokens_reasoning,
             "tokens_cache_read": tokens_cache_read,
             "tokens_cache_write": tokens_cache_write,
+            "cost": cost,
             "messages": msgs,
         }))
         .ok()
@@ -495,20 +499,34 @@ pub fn extract_dominant_model(content: &str) -> Option<(String, String)> {
         })
 }
 
-/// Session-level `(tokens_in, tokens_out)` from the content blob (OpenCode stores
-/// per-session cumulative token totals on `session`). To match the cross-adapter
-/// definition ([`crate::transcript::claude::claude_tokens`]): `tokens_in` = all
-/// input the model processed = `tokens_input` + `tokens_cache_read` +
-/// `tokens_cache_write` (cache reads/writes are real input tokens, just cheaper);
-/// `tokens_out` = all generated = `tokens_output` + `tokens_reasoning` (thinking is
-/// output-side). `None` when the session carries no usage (honest-empty — never a
+/// Session-level usage from the content blob, kept SPLIT (OpenCode stores
+/// per-session cumulative totals on `session`).
+///
+/// `input` is FRESH input only; cache read/write ride their own fields rather
+/// than being folded in. Measured on this machine's 54 OpenCode sessions,
+/// cache_read is 343M of 357M total input — 96% — so a folded total prices ~8x
+/// high and improves when caching gets worse.
+///
+/// `reasoning` is kept separate too (it is output-side but distinct work), and
+/// `cost` is OpenCode's own metered figure. `cost` is `Some(0.0)` on a
+/// subscription plan, which is a REAL reading — distinct from `None`, which means
+/// the session reported none.
+///
+/// `None` when the session carries no usage at all (honest-empty — never a
 /// fabricated 0).
-pub fn extract_tokens(content: &str) -> Option<(i64, i64)> {
+pub fn extract_tokens(content: &str) -> Option<SessionTokens> {
     let root: serde_json::Value = serde_json::from_str(content).ok()?;
     let g = |k: &str| root.get(k).and_then(|v| v.as_i64()).unwrap_or(0);
-    let tokens_in = g("tokens_input") + g("tokens_cache_read") + g("tokens_cache_write");
-    let tokens_out = g("tokens_output") + g("tokens_reasoning");
-    (tokens_in > 0 || tokens_out > 0).then_some((tokens_in, tokens_out))
+    let has = |k: &str| root.get(k).and_then(|v| v.as_i64());
+    let t = SessionTokens {
+        input: g("tokens_input"),
+        output: g("tokens_output"),
+        cache_read: has("tokens_cache_read"),
+        cache_write: has("tokens_cache_write"),
+        reasoning: has("tokens_reasoning"),
+        cost: root.get("cost").and_then(|v| v.as_f64()).filter(|c| c.is_finite()),
+    };
+    (t.total_input() > 0 || t.output > 0 || t.reasoning.unwrap_or(0) > 0).then_some(t)
 }
 
 fn millis_to_datetime(ms: i64) -> Option<chrono::DateTime<chrono::Utc>> {
@@ -734,11 +752,19 @@ mod tests {
             "tokens_input": 3474319, "tokens_output": 334525, "tokens_reasoning": 607047,
             "tokens_cache_read": 128858240, "tokens_cache_write": 0, "messages": []
         }).to_string();
-        // in = 3474319 + 128858240 + 0 = 132332559; out = 334525 + 607047 = 941572
-        assert_eq!(extract_tokens(&with), Some((132_332_559, 941_572)));
+        // Split: fresh 3,474,319 with 128,858,240 read from cache — 97.4% of the
+        // input, and the reason folding them prices ~8x high.
+        let t = extract_tokens(&with).expect("usage parsed");
+        assert_eq!(t.input, 3_474_319, "fresh input only");
+        assert_eq!(t.cache_read, Some(128_858_240));
+        assert_eq!(t.reasoning, Some(607_047), "reasoning stays its own field");
+        assert_eq!(t.total_input(), 132_332_559, "the folded meaning is still available");
         // plain input/output with no cache/reasoning keys still works
         let plain = serde_json::json!({"tokens_input": 100, "tokens_output": 40, "messages": []}).to_string();
-        assert_eq!(extract_tokens(&plain), Some((100, 40)));
+        let p2 = extract_tokens(&plain).expect("usage parsed");
+        assert_eq!((p2.input, p2.output), (100, 40));
+        // Absent cache keys stay None — "not reported" is not "cached nothing".
+        assert_eq!((p2.cache_read, p2.cache_write), (None, None));
         // absent or all-zero → None (honest-empty, never a fabricated 0)
         assert_eq!(extract_tokens(&serde_json::json!({"messages": []}).to_string()), None);
         assert_eq!(extract_tokens(&serde_json::json!({"tokens_input": 0, "tokens_output": 0}).to_string()), None);

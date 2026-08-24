@@ -22,7 +22,7 @@
 //! is pure + deterministic (these free functions) so it's unit-testable without
 //! a database.
 
-use super::{ParsedTranscript, SynthEvent, SynthSession, TranscriptAdapter, TranscriptTurn, UnitRef};
+use super::{SessionTokens, ParsedTranscript, SynthEvent, SynthSession, TranscriptAdapter, TranscriptTurn, UnitRef};
 use std::io::Read;
 use std::path::PathBuf;
 
@@ -162,36 +162,50 @@ fn decompress_zstd(blob: &[u8]) -> Option<String> {
 /// grain as the Claude adapter (which sums per-message usage). Prefers the
 /// `cumulative_token_usage` summary when Zed has populated it. `None` when no usage
 /// is recorded (honest-empty — never a fabricated 0). Pure.
-pub fn extract_tokens(content: &str) -> Option<(i64, i64)> {
+pub fn extract_tokens(content: &str) -> Option<SessionTokens> {
     let v: serde_json::Value = serde_json::from_str(content).ok()?;
-    // A TokenUsage object → (input + cache tokens, output). Cache keys are absent in
-    // current threads but summed defensively so a newer Zed schema is covered.
-    let usage = |u: &serde_json::Value| -> (i64, i64) {
+    // A TokenUsage object, kept SPLIT. Zed's cache keys are populated on only a
+    // minority of threads (7 of 60 sampled), so they stay Option: absent means the
+    // thread did not report caching, NOT that nothing was cached.
+    let usage = |u: &serde_json::Value| -> SessionTokens {
         let g = |k: &str| u.get(k).and_then(|x| x.as_i64()).unwrap_or(0);
-        (
-            g("input_tokens") + g("cache_creation_input_tokens") + g("cache_read_input_tokens"),
-            g("output_tokens"),
-        )
+        let has = |k: &str| u.get(k).and_then(|x| x.as_i64());
+        SessionTokens {
+            input: g("input_tokens"),
+            output: g("output_tokens"),
+            cache_read: has("cache_read_input_tokens"),
+            cache_write: has("cache_creation_input_tokens"),
+            reasoning: None,
+            cost: None,
+        }
     };
     // Prefer Zed's own running total when present.
     if let Some(obj) = v.get("cumulative_token_usage").and_then(|c| c.as_object())
         && !obj.is_empty()
     {
-        let (tin, tout) = usage(v.get("cumulative_token_usage").unwrap());
-        if tin > 0 || tout > 0 {
-            return Some((tin, tout));
+        let t = usage(v.get("cumulative_token_usage").unwrap());
+        if t.total_input() > 0 || t.output > 0 {
+            return Some(t);
         }
     }
     // Else sum the per-request usage map.
     if let Some(reqs) = v.get("request_token_usage").and_then(|r| r.as_object()) {
-        let (mut tin, mut tout) = (0i64, 0i64);
+        let mut acc = SessionTokens::default();
+        // Sum each part independently. `Option` is preserved: a cache field stays
+        // None until at least one request reports it, so "no thread reported
+        // caching" never collapses into "cached nothing".
+        let add = |slot: &mut Option<i64>, v: Option<i64>| {
+            if let Some(v) = v { *slot = Some(slot.unwrap_or(0) + v); }
+        };
         for u in reqs.values() {
-            let (i, o) = usage(u);
-            tin += i;
-            tout += o;
+            let t = usage(u);
+            acc.input += t.input;
+            acc.output += t.output;
+            add(&mut acc.cache_read, t.cache_read);
+            add(&mut acc.cache_write, t.cache_write);
         }
-        if tin > 0 || tout > 0 {
-            return Some((tin, tout));
+        if acc.total_input() > 0 || acc.output > 0 {
+            return Some(acc);
         }
     }
     None
@@ -625,11 +639,16 @@ mod tests {
             "r1":{"input_tokens":12427,"output_tokens":406},
             "r2":{"input_tokens":13448,"output_tokens":1}
         }}"#;
-        assert_eq!(extract_tokens(per_req), Some((25875, 407)), "input + output summed across requests");
+        let pr = extract_tokens(per_req).expect("usage parsed");
+        assert_eq!(pr.total_input(), 25875, "summed across requests");
+        assert_eq!(pr.output, 407);
         // Populated cumulative summary wins over the request map, and folds cache into input.
         let cumulative = r#"{"cumulative_token_usage":{"input_tokens":100,"cache_read_input_tokens":900,"output_tokens":50},
                              "request_token_usage":{"r1":{"input_tokens":1,"output_tokens":1}}}"#;
-        assert_eq!(extract_tokens(cumulative), Some((1000, 50)), "cumulative preferred; cache_read folded into input");
+        let cu = extract_tokens(cumulative).expect("usage parsed");
+        assert_eq!(cu.input, 100, "cumulative preferred, and cache is NOT folded in");
+        assert_eq!(cu.cache_read, Some(900));
+        assert_eq!(cu.total_input(), 1000, "the folded meaning remains available");
         // No usage recorded ⇒ honest-None, never a fabricated (0,0).
         assert_eq!(extract_tokens(r#"{"messages":[]}"#), None);
         assert_eq!(extract_tokens("not json"), None);

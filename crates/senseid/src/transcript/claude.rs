@@ -4,7 +4,7 @@
 //! spans one genuine human prompt to the next, and the assistant prose is the
 //! `text` content blocks (tool_use / thinking excluded).
 
-use super::{ParsedTranscript, SynthEvent, SynthSession, TranscriptAdapter, TranscriptTurn, TurnFacts, UnitRef};
+use super::{ParsedTranscript, SessionTokens, SynthEvent, SynthSession, TranscriptAdapter, TranscriptTurn, TurnFacts, UnitRef};
 use std::path::{Path, PathBuf};
 
 /// Cap stored assistant prose per turn (safety net for pathological turns).
@@ -117,12 +117,11 @@ impl TranscriptAdapter for ClaudeAdapter {
     }
 }
 
-/// Total token usage across a Claude transcript's assistant records: `tokens_in` =
-/// Σ(`input_tokens` + `cache_creation_input_tokens` + `cache_read_input_tokens`) — all
-/// input the model processed — and `tokens_out` = Σ `output_tokens`, read from each
-/// `message.usage`. `None` when no record carries usage (honest-empty). Pure.
-pub fn claude_tokens(content: &str) -> Option<(i64, i64)> {
-    let (mut tin, mut tout, mut seen) = (0i64, 0i64, false);
+/// Session-total token usage across a Claude transcript's assistant records, kept
+/// SPLIT (fresh input / cache write / cache read / output). `None` when no record
+/// carries usage (honest-empty). Pure.
+pub fn claude_tokens(content: &str) -> Option<SessionTokens> {
+    let (mut fresh, mut cw, mut cr, mut tout, mut seen) = (0i64, 0i64, 0i64, 0i64, false);
     for line in content.lines() {
         let line = line.trim();
         if line.is_empty() || line.len() > MAX_LINE_BYTES {
@@ -142,11 +141,20 @@ pub fn claude_tokens(content: &str) -> Option<(i64, i64)> {
         let line_out = g("output_tokens");
         if line_in > 0 || line_out > 0 {
             seen = true;
-            tin += line_in;
+            fresh += g("input_tokens");
+            cw += g("cache_creation_input_tokens");
+            cr += g("cache_read_input_tokens");
             tout += line_out;
         }
     }
-    seen.then_some((tin, tout))
+    seen.then_some(SessionTokens {
+        input: fresh,
+        output: tout,
+        cache_read: Some(cr),
+        cache_write: Some(cw),
+        reasoning: None,   // Claude does not separate reasoning tokens
+        cost: None,        // no metered cost in the transcript
+    })
 }
 
 /// The model that ran a Claude transcript: the most frequent `message.model`
@@ -622,7 +630,11 @@ mod tests {
         let kinds: Vec<&str> = p.events.iter().map(|e| e.event_type.as_str()).collect();
         assert_eq!(kinds, vec!["UserPromptSubmit", "PostToolUse", "Stop"]);
         assert_eq!(p.model, Some(("anthropic".to_string(), "claude-opus-4-8".to_string())));
-        assert_eq!(p.tokens, Some((100, 20)), "tokens_in=10+90 cache, tokens_out=20");
+        let t = p.tokens.expect("usage parsed");
+        assert_eq!(t.input, 10, "FRESH input only — cache is no longer folded in");
+        assert_eq!(t.cache_read, Some(90));
+        assert_eq!(t.output, 20);
+        assert_eq!(t.total_input(), 100, "the old tokens_in meaning is preserved");
     }
 
     #[test]
@@ -663,8 +675,14 @@ mod tests {
 {"type":"assistant","message":{"model":"claude-opus-4-8","usage":{"input_tokens":10,"cache_creation_input_tokens":100,"cache_read_input_tokens":50,"output_tokens":20}}}
 {"type":"assistant","message":{"model":"claude-opus-4-8","usage":{"input_tokens":5,"output_tokens":8}}}
 "#;
-        // in = (10+100+50) + (5+0+0) = 165 (cache counts as input processed); out = 20+8 = 28
-        assert_eq!(claude_tokens(t), Some((165, 28)));
+        // Split across the turn's records: fresh 10+5, write 100+0, read 50+0.
+        let got = claude_tokens(t).expect("usage parsed");
+        assert_eq!(got.input, 15, "fresh input only");
+        assert_eq!(got.cache_write, Some(100));
+        assert_eq!(got.cache_read, Some(50));
+        assert_eq!(got.output, 28);
+        // total_input() still reports what tokens_in always meant.
+        assert_eq!(got.total_input(), 165);
         // no usage anywhere ⇒ honest-None, never a fabricated (0,0)
         assert_eq!(claude_tokens("{\"type\":\"user\",\"message\":{\"content\":\"hi\"}}"), None);
     }
