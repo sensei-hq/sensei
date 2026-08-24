@@ -210,7 +210,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/projects/{id}/analyze", post(observatory::analyze_solution))
         .route("/api/projects/{id}/process/analyze", post(observatory::analyze_process))
         .route("/api/projects/{id}/backfill", post(observatory::backfill_project_sessions))
-        .route("/api/transcripts/backfill", post(observatory::backfill_transcripts))
+        .route("/api/transcripts/backfill", post(observatory::ingest_captures))
         .route("/api/metrics/backfill", post(observatory::backfill_metrics))
         .route("/api/projects/{id}/graph", get(observatory::solution_graph))
         .route("/api/projects/{id}/roles", get(observatory::solution_roles))
@@ -2084,12 +2084,12 @@ mod tests {
         let (app, state) = test_app().await;
         let id = state
             .task_queue
-            .enqueue(Task::new(TaskKind::BackfillTranscripts, "", ""))
+            .enqueue(Task::new(TaskKind::IngestCaptures, "", ""))
             .await;
         let (status, body) = req(app, "GET", &format!("/api/tasks/{id}"), None).await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body["status"], "queued", "{body:?}");
-        assert_eq!(body["kind"], "backfill_transcripts", "{body:?}");
+        assert_eq!(body["kind"], "ingest_captures", "{body:?}");
     }
 
     #[tokio::test]

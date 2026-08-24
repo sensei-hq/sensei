@@ -420,7 +420,7 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
             // since boot is when newly-tracked folders make a previously
             // unresolvable cwd resolvable. Enqueuing means startup gets whatever
             // the task does, forever, with no third thing to keep in sync.
-            let kind = crate::tasks::TaskKind::BackfillTranscripts;
+            let kind = crate::tasks::TaskKind::IngestCaptures;
             if queue.has_pending_kind(kind.clone()).await {
                 tracing::debug!("startup: transcript backfill already in flight");
             } else {

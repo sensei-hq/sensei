@@ -394,11 +394,11 @@ pub(crate) struct CaptureIngestQuery {
 /// or `GET /api/tasks/status`.
 ///
 /// Deduped: a second request while one is in flight reports the in-flight run.
-pub(crate) async fn backfill_transcripts(
+pub(crate) async fn ingest_captures(
     State(state): State<AppState>,
     Query(q): Query<CaptureIngestQuery>,
 ) -> Json<serde_json::Value> {
-    let kind = crate::tasks::TaskKind::BackfillTranscripts;
+    let kind = crate::tasks::TaskKind::IngestCaptures;
     if state.task_queue.has_pending_kind(kind.clone()).await {
         return Json(serde_json::json!({ "ok": true, "queued": false, "running": true }));
     }
@@ -415,7 +415,7 @@ pub(crate) async fn backfill_transcripts(
 /// project. The planner then backfills every data day its sources reach and recomputes
 /// today, so the metric charts render months of history. Overlap-guarded
 /// (`has_pending_kind`), so this is safe to call repeatedly; a re-plan is idempotent
-/// (per-day upserts). Mirrors [`backfill_transcripts`]. A project-list read failure is
+/// (per-day upserts). Mirrors [`ingest_captures`]. A project-list read failure is
 /// a 500 — never masked into a fake `enqueued: 0` (which would read as "no projects").
 pub(crate) async fn backfill_metrics(
     State(state): State<AppState>,
