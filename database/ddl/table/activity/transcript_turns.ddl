@@ -11,7 +11,10 @@ create table if not exists activity.transcript_turns (
     id             uuid primary key default gen_random_uuid()
   , source         text not null
   , session_id     text not null
-  , family         text
+  -- NOT NULL: `TranscriptAdapter::family()` returns `&'static str`, so the ingest
+  -- path cannot produce a null — the column being nullable let stale fixtures hold
+  -- one, which then broke a repair query that legitimately assumed the contract.
+  , family         text not null
   , provider       text
   , model          text
   , turn_index     integer not null
