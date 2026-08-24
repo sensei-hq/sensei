@@ -476,9 +476,7 @@ pub(super) async fn compute(
                     "correction_count": correction_count,
                 });
                 pg.upsert_project_metric_repo(
-                    &mid, &project_id, Some(&repository_id), SCOPE_USER, None, None,
-                    None, None, day, GRAIN_DAILY, value, &props, SOURCE_MEASURED,
-                )
+                    &mid, &repository_id, SCOPE_USER, None, None, day, GRAIN_DAILY, value, &props, SOURCE_MEASURED)
                 .await?;
                 written += 1;
             }
@@ -486,9 +484,7 @@ pub(super) async fn compute(
                 // count-type: value IS the count; no numerator/denominator needed.
                 let props = serde_json::json!({});
                 pg.upsert_project_metric_repo(
-                    &mid, &project_id, Some(&repository_id), SCOPE_USER, None, None,
-                    None, None, day, GRAIN_DAILY, session_count as f64, &props, SOURCE_MEASURED,
-                )
+                    &mid, &repository_id, SCOPE_USER, None, None, day, GRAIN_DAILY, session_count as f64, &props, SOURCE_MEASURED)
                 .await?;
                 written += 1;
             }
@@ -511,9 +507,7 @@ pub(super) async fn compute(
                 "denominator": total_tool_calls,
             });
             pg.upsert_project_metric_repo(
-                &mid, &project_id, Some(&repository_id), SCOPE_USER, None, None,
-                None, None, day, GRAIN_DAILY, value, &props, SOURCE_MEASURED,
-            )
+                &mid, &repository_id, SCOPE_USER, None, None, day, GRAIN_DAILY, value, &props, SOURCE_MEASURED)
             .await?;
             written += 1;
         }
@@ -528,9 +522,7 @@ pub(super) async fn compute(
         {
             let props = serde_json::json!({ "n": n });
             pg.upsert_project_metric_repo(
-                &mid, &project_id, Some(&repository_id), SCOPE_USER, None, None,
-                None, None, day, GRAIN_DAILY, median_secs, &props, SOURCE_MEASURED,
-            )
+                &mid, &repository_id, SCOPE_USER, None, None, day, GRAIN_DAILY, median_secs, &props, SOURCE_MEASURED)
             .await?;
             written += 1;
         }
@@ -549,9 +541,7 @@ pub(super) async fn compute(
             let value = pressured as f64 / total as f64;
             let props = serde_json::json!({ "numerator": pressured, "denominator": total });
             pg.upsert_project_metric_repo(
-                &mid, &project_id, Some(&repository_id), SCOPE_USER, None, None,
-                None, None, day, GRAIN_DAILY, value, &props, SOURCE_MEASURED,
-            )
+                &mid, &repository_id, SCOPE_USER, None, None, day, GRAIN_DAILY, value, &props, SOURCE_MEASURED)
             .await?;
             written += 1;
         }
@@ -567,25 +557,19 @@ pub(super) async fn compute(
             let props = serde_json::json!({ "sessions": n, "tokens_in": sum_in, "tokens_out": sum_out });
             if let Some(mid) = tokens_day_id {
                 pg.upsert_project_metric_repo(
-                    &mid, &project_id, Some(&repository_id), SCOPE_USER, None, None,
-                    None, None, day, GRAIN_DAILY, (sum_in + sum_out) as f64, &props, SOURCE_MEASURED,
-                )
+                    &mid, &repository_id, SCOPE_USER, None, None, day, GRAIN_DAILY, (sum_in + sum_out) as f64, &props, SOURCE_MEASURED)
                 .await?;
                 written += 1;
             }
             if let Some(mid) = tokens_in_id {
                 pg.upsert_project_metric_repo(
-                    &mid, &project_id, Some(&repository_id), SCOPE_USER, None, None,
-                    None, None, day, GRAIN_DAILY, sum_in as f64, &props, SOURCE_MEASURED,
-                )
+                    &mid, &repository_id, SCOPE_USER, None, None, day, GRAIN_DAILY, sum_in as f64, &props, SOURCE_MEASURED)
                 .await?;
                 written += 1;
             }
             if let Some(mid) = tokens_out_id {
                 pg.upsert_project_metric_repo(
-                    &mid, &project_id, Some(&repository_id), SCOPE_USER, None, None,
-                    None, None, day, GRAIN_DAILY, sum_out as f64, &props, SOURCE_MEASURED,
-                )
+                    &mid, &repository_id, SCOPE_USER, None, None, day, GRAIN_DAILY, sum_out as f64, &props, SOURCE_MEASURED)
                 .await?;
                 written += 1;
             }
@@ -600,9 +584,7 @@ pub(super) async fn compute(
         {
             let props = serde_json::json!({ "n": n });
             pg.upsert_project_metric_repo(
-                &mid, &project_id, Some(&repository_id), SCOPE_USER, None, None,
-                None, None, day, GRAIN_DAILY, avg_secs, &props, SOURCE_MEASURED,
-            )
+                &mid, &repository_id, SCOPE_USER, None, None, day, GRAIN_DAILY, avg_secs, &props, SOURCE_MEASURED)
             .await?;
             written += 1;
         }
@@ -621,9 +603,7 @@ pub(super) async fn compute(
             let value = sum_out as f64 / completed as f64;
             let props = serde_json::json!({ "numerator": sum_out, "denominator": completed });
             pg.upsert_project_metric_repo(
-                &mid, &project_id, Some(&repository_id), SCOPE_USER, None, None,
-                None, None, day, GRAIN_DAILY, value, &props, SOURCE_MEASURED,
-            )
+                &mid, &repository_id, SCOPE_USER, None, None, day, GRAIN_DAILY, value, &props, SOURCE_MEASURED)
             .await?;
             written += 1;
         }
@@ -642,9 +622,7 @@ pub(super) async fn compute(
             let value = flagged as f64 / measurable as f64;
             let props = serde_json::json!({ "numerator": flagged, "denominator": measurable });
             pg.upsert_project_metric_repo(
-                &mid, &project_id, Some(&repository_id), SCOPE_USER, None, None,
-                None, None, day, GRAIN_DAILY, value, &props, SOURCE_MEASURED,
-            )
+                &mid, &repository_id, SCOPE_USER, None, None, day, GRAIN_DAILY, value, &props, SOURCE_MEASURED)
             .await?;
             written += 1;
         }
@@ -691,13 +669,13 @@ mod tests {
         let written = compute(&ctx, &pid.to_string(), None).await.unwrap();
         assert_eq!(written, 5, "5 repo-grain daily rows (ftr, rework, throughput, time_to_useful, context_pressure); per-session grain retired");
 
-        // ── Repo-grain proof: the daily rows are scope=user, keyed on the session's
-        //    repository, folder_id/session_id NULL, grain=daily ──────────────
+        // ── Repo-grain proof: the daily rows are scope=user, keyed on the
+        //    session's repository, grain=daily. The folder_id/session_id columns
+        //    this used to assert were NULL have since been dropped from the
+        //    store, so that half of the invariant is now structural.
         let rid = repository_for_folder(pg, &fid).await;
-        let (row_repo, row_scope, row_grain, row_folder, row_session): (
-            Option<uuid::Uuid>, String, String, Option<uuid::Uuid>, Option<uuid::Uuid>,
-        ) = query_as(
-            "SELECT pm.repository_id, pm.scope::text, pm.grain::text, pm.folder_id, pm.session_id \
+        let (row_repo, row_scope, row_grain): (uuid::Uuid, String, String) = query_as(
+            "SELECT pm.repository_id, pm.scope::text, pm.grain::text \
                FROM sensei.project_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
               WHERE pm.project_id = $1 AND m.key = 'ftr'",
         )
@@ -705,11 +683,9 @@ mod tests {
         .fetch_one(pg.pool())
         .await
         .unwrap();
-        assert_eq!(row_repo, Some(rid), "the ftr daily row is keyed on the session's repository");
+        assert_eq!(row_repo, rid, "the ftr daily row is keyed on the session's repository");
         assert_eq!(row_scope, "user", "the local-user default-project value is scope=user");
         assert_eq!(row_grain, "daily", "the row is daily grain (per-session grain retired)");
-        assert_eq!(row_folder, None, "no folder_id under the repo-grain identity (I-A)");
-        assert_eq!(row_session, None, "no session_id under the repo-grain identity (I-A)");
 
         // ── Daily rows ────────────────────────────────────────────────────
         let daily = daily_rows(pg, &pid).await;

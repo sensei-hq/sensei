@@ -241,6 +241,81 @@ pub(crate) async fn repository_for_folder(pg: &PgStore, folder_id: &uuid::Uuid) 
 /// pools their repo-grain rows (Σnum/Σden). Returns `(folder_id2, repository_id2)`.
 /// [`cleanup_metrics_fixture`] deletes the repo row (it walks every folder in the
 /// project); pass `folder_id2` as a fixture `fid` to also clear the folder.
+/// Attach an already-created test repository to a project via a folder.
+///
+/// `sensei.project_metrics` derives `project_id` by looking up the repository's
+/// folder, so a repository with none yields NULL and every project-filtered read
+/// silently returns nothing — the rows exist but are invisible. Tests that create
+/// a repository inline (rather than through [`seed_bare_repository`]) need this
+/// to be readable by project.
+pub(crate) async fn link_repository_to_project(
+    pg: &PgStore,
+    repository_id: &uuid::Uuid,
+    project_id: &uuid::Uuid,
+    name: &str,
+) {
+    ensure_test_watch_root(pg).await;
+    let abs = format!("/_test/link-{name}-{repository_id}");
+    sqlx_core::query::query(
+        "INSERT INTO sensei.folders(root_id, kind, name, path, abs_path, project_id, repository_id) \
+         VALUES('00000000-0000-0000-0000-000000000001', 'git'::sensei.folder_kind, $1, $1, $2, $3, $4) \
+         ON CONFLICT(abs_path) DO UPDATE SET project_id = EXCLUDED.project_id, \
+                                             repository_id = EXCLUDED.repository_id",
+    )
+    .bind(name)
+    .bind(&abs)
+    .bind(project_id)
+    .bind(repository_id)
+    .execute(pg.pool())
+    .await
+    .unwrap();
+}
+
+/// A repository for tests that need a valid `repository_id` to hang metric rows
+/// on, LINKED to `project_id` through a folder.
+///
+/// Two constraints make the link mandatory rather than optional:
+///   * `repository_metrics.repository_id` is NOT NULL with an FK, so a test can
+///     no longer pass a project id (or `None`) where a repository belongs.
+///     Several did before the rename; the FK now rejects it.
+///   * `sensei.project_metrics` derives `project_id` by looking up the
+///     repository's folder. A repository with NO folder yields a NULL project_id,
+///     so any read filtered by project finds nothing — the row exists but is
+///     invisible, which is the most confusing possible test failure.
+///
+/// Keyed on `uniq` so parallel tests cannot collide on `repo_key`/`abs_path`, and
+/// upserting so a re-run is idempotent.
+pub(crate) async fn seed_bare_repository(
+    pg: &PgStore,
+    project_id: &uuid::Uuid,
+    uniq: &uuid::Uuid,
+) -> uuid::Uuid {
+    ensure_test_watch_root(pg).await;
+    let (rid,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
+        "INSERT INTO sensei.repositories(repo_key, name) VALUES($1, $2) \
+         ON CONFLICT(repo_key) DO UPDATE SET name = EXCLUDED.name RETURNING id",
+    )
+    .bind(format!("test/bare-{uniq}"))
+    .bind(format!("bare-{uniq}"))
+    .fetch_one(pg.pool())
+    .await
+    .unwrap();
+    sqlx_core::query::query(
+        "INSERT INTO sensei.folders(root_id, kind, name, path, abs_path, project_id, repository_id) \
+         VALUES('00000000-0000-0000-0000-000000000001', 'git'::sensei.folder_kind, $1, $1, $2, $3, $4) \
+         ON CONFLICT(abs_path) DO UPDATE SET project_id = EXCLUDED.project_id, \
+                                             repository_id = EXCLUDED.repository_id",
+    )
+    .bind(format!("bare-{uniq}"))
+    .bind(format!("/_test/bare-{uniq}"))
+    .bind(project_id)
+    .bind(rid)
+    .execute(pg.pool())
+    .await
+    .unwrap();
+    rid
+}
+
 pub(crate) async fn seed_second_repository(
     pg: &PgStore,
     project_id: &uuid::Uuid,
