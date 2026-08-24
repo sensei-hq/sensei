@@ -24,9 +24,18 @@ set search_path to sensei, extensions;
 -- persona. REMOTELY they are separate logins. `principal_id` is the seam — at
 -- most one login per persona — and the unique index is what makes the privacy
 -- boundary structural rather than a convention.
+--
+-- LABEL IS THE GITHUB LOGIN, not a category of work. That distinction is
+-- load-bearing: `jerrythomas` commits across EIGHT repository owners
+-- (jerrythomas, example-corp-inc, example-health, example-alert, example-labs, sensei-hq, …), so a
+-- label like "personal" would read as "personal repos" and be wrong on seven of
+-- them. A persona answers WHO, never WHERE — and two personas can commit to the
+-- same owner (both `jerrythomas` and `sensei-hq` touch sensei-hq repos, under
+-- different addresses), which is precisely why the repo cannot imply the
+-- identity.
 create table if not exists personas (
   id            uuid        primary key default gen_random_uuid()
-, label         text        not null
+, label         text        not null      -- GitHub login, e.g. 'jerrythomas'
   -- FALSE for a contributor who is NOT the local user. `contributor@example.com`
   -- above may well be someone else; folding it into the user's own numbers would
   -- be a fabricated attribution, so an unrecognised email gets its own persona
@@ -59,7 +68,7 @@ Not a "people" table. One human may own several personas by choice, and a
 persona may belong to someone else entirely (is_self = false).';
 
 comment on column personas.label
-     is 'How the user names this identity: sensei-hq, personal, example-corp. Unique case-insensitively.';
+     is 'The GitHub login this identity commits as (jerrythomas, sensei-hq, joelthomas8847). Unique case-insensitively. NOT a category of repo — one persona spans many owners.';
 comment on column personas.is_self
      is 'FALSE when this persona is another contributor, not the local user — so their commits are never counted as "mine".';
 comment on column personas.principal_id
