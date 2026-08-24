@@ -152,7 +152,13 @@ pub(crate) async fn remap_folder_endpoint(
             false
         }
     };
-    let sessions_repaired = state.pg.repair_orphaned_sessions().await.unwrap_or(0);
+    // BOTH repairs, via the shared definition. A remap is precisely the event that
+    // makes a previously unresolvable cwd resolvable, so running only the
+    // events-based half here left exactly the sessions this endpoint exists to
+    // recover unattached. Cheap and bounded (two idempotent statements), so it
+    // stays inline — the caller is asking "what did my remap recover?" and a task
+    // id would not answer that.
+    let sessions_repaired = crate::transcript::repair_sessions(&state.pg).await;
     Ok(Json(serde_json::json!({
         "ok": true,
         "old": old,
@@ -621,23 +627,17 @@ pub(crate) async fn index_doctor(State(state): State<AppState>) -> Json<serde_js
     Json(serde_json::to_value(&report).unwrap_or_else(|_| serde_json::json!({})))
 }
 
-pub(crate) async fn index_progress_sse(
-    State(state): State<AppState>,
-) -> Sse<impl tokio_stream::Stream<Item = Result<Event, std::convert::Infallible>>> {
-    let rx = state.task_queue.sender().subscribe();
-    let stream = BroadcastStream::new(rx)
-        .filter_map(|result| {
-            match result {
-                Ok(event) => {
-                    let data = serde_json::to_string(&event).unwrap_or_default();
-                    Some(Ok(Event::default().data(data)))
-                }
-                Err(_) => None,
-            }
-        });
-    Sse::new(stream)
-}
-
+/// Every task event, for every task — the firehose behind both
+/// `/api/tasks/progress` and `/api/index/progress`.
+///
+/// Live-only: a subscriber sees what happens from the moment it attaches and
+/// nothing before, so it cannot answer "what happened to task N". Use
+/// `/api/tasks/{id}/events` for that — it opens with a snapshot from the durable
+/// log first.
+///
+/// This was two byte-identical functions serving the two routes. They never
+/// diverged, but nothing prevented it — a filter added to one would silently not
+/// apply to the other.
 pub(crate) async fn task_progress_sse(
     State(state): State<AppState>,
 ) -> Sse<impl tokio_stream::Stream<Item = Result<Event, std::convert::Infallible>>> {

@@ -1,5 +1,49 @@
 use super::*;
 
+/// One `activity.task_executions` row as selected by [`TASK_EXECUTION_COLUMNS`].
+/// The alias and the column list travel together — changing one without the
+/// other is a decode error at runtime, so neither is written out twice.
+type TaskExecutionRow = (
+    i64,                                            // task_id
+    Option<i64>,                                    // parent_task_id
+    String,                                         // task_kind
+    String,                                         // folder_path
+    String,                                         // path
+    String,                                         // status
+    Option<i32>,                                    // items_processed
+    Option<i32>,                                    // duration_ms
+    i32,                                            // retry_number
+    Option<String>,                                 // error_message
+    chrono::DateTime<chrono::Utc>,                  // started_at
+    Option<chrono::DateTime<chrono::Utc>>,          // completed_at
+);
+
+/// Select list matching [`TaskExecutionRow`], field for field and in order.
+const TASK_EXECUTION_COLUMNS: &str = "task_id, parent_task_id, task_kind, folder_path, path, \
+     status, items_processed, duration_ms, retry_number, error_message, started_at, completed_at";
+
+/// One execution row as the wire shape a follower reads.
+///
+/// `items_processed` is the handler's own return value (rows written, files
+/// queued …) — the only place a caller can learn what the work actually DID, so
+/// it is carried through rather than reduced to a status.
+fn task_execution_json(r: TaskExecutionRow) -> serde_json::Value {
+    serde_json::json!({
+        "taskId": r.0,
+        "parentTaskId": r.1,
+        "kind": r.2,
+        "folderPath": r.3,
+        "path": r.4,
+        "status": r.5,
+        "itemsProcessed": r.6,
+        "durationMs": r.7,
+        "retryNumber": r.8,
+        "error": r.9,
+        "startedAt": r.10,
+        "completedAt": r.11,
+    })
+}
+
 #[allow(dead_code, clippy::too_many_arguments, clippy::type_complexity)]
 impl PgStore {
     pub async fn log_index_error(
@@ -432,6 +476,64 @@ impl PgStore {
         .await
         .map_err(|e| format!("fail_task_execution: {}", e))?;
         Ok(())
+    }
+
+    /// Every execution row for one queue task id, newest attempt first.
+    ///
+    /// A task id can have MORE than one row: a retry inserts a fresh row with an
+    /// incremented `retry_number`. Returning all of them (rather than the latest)
+    /// is what makes a retried task honest to a follower — "succeeded on attempt
+    /// 3 after two failures" and "succeeded first time" are different stories and
+    /// collapsing them would hide the failures.
+    ///
+    /// `since` MUST be the issuing queue's session start. Task ids restart at 1
+    /// with every daemon, so this table holds many unrelated rows per id — an
+    /// unscoped lookup for id 1 returns a pile of other sessions' tasks, of other
+    /// KINDS, which is worse than returning nothing.
+    pub async fn task_execution_attempts(
+        &self,
+        task_id: i64,
+        since: chrono::DateTime<chrono::Utc>,
+    ) -> Result<Vec<serde_json::Value>, String> {
+        let sql = format!(
+            "SELECT {TASK_EXECUTION_COLUMNS} FROM activity.task_executions \
+              WHERE task_id = $1 AND started_at >= $2 \
+              ORDER BY retry_number DESC, started_at DESC"
+        );
+        let rows: Vec<TaskExecutionRow> = sqlx_core::query_as::query_as(&sql)
+            .bind(task_id)
+            .bind(since)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| format!("task_execution_attempts: {e}"))?;
+        Ok(rows.into_iter().map(task_execution_json).collect())
+    }
+
+    /// Execution rows for the CHILDREN of one queue task id.
+    ///
+    /// A dispatcher (`BackfillTranscripts` enqueues one task per transcript) has
+    /// no meaningful progress of its own — it finishes in milliseconds having
+    /// queued thousands of children. Following the parent alone would report
+    /// "completed" while the actual ingestion had barely started, so a follower
+    /// needs the children to see real progress.
+    /// `since` scopes to the issuing queue's session, for the same reason as
+    /// [`task_execution_attempts`] — parent ids restart at 1 too.
+    pub async fn child_task_executions(
+        &self,
+        parent_task_id: i64,
+        since: chrono::DateTime<chrono::Utc>,
+    ) -> Result<Vec<serde_json::Value>, String> {
+        let sql = format!(
+            "SELECT {TASK_EXECUTION_COLUMNS} FROM activity.task_executions \
+              WHERE parent_task_id = $1 AND started_at >= $2 ORDER BY started_at"
+        );
+        let rows: Vec<TaskExecutionRow> = sqlx_core::query_as::query_as(&sql)
+            .bind(parent_task_id)
+            .bind(since)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| format!("child_task_executions: {e}"))?;
+        Ok(rows.into_iter().map(task_execution_json).collect())
     }
 
     /// Boot reconcile (D6b/W2): terminate task-execution rows still `running`

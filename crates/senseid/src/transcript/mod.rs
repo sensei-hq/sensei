@@ -486,9 +486,13 @@ pub async fn backfill_all(
 /// interleaves with other work and a single huge/bad file can't block the rest.
 /// Skips files unchanged since last ingest (the per-file task re-checks to stay
 /// race-safe). Returns the number of files enqueued.
-pub async fn run_backfill(ctx: &TaskContext, _task: &Task) -> Result<u32, String> {
+pub async fn run_backfill(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
     // Thin wrapper: the task kind exists to schedule the work, not to define it.
-    let out = backfill(&ctx.queue, ctx.pg()).await;
+    // The task's own id is passed as the parent so every per-file child links back
+    // to it in `activity.task_executions` — that link is what lets a caller follow
+    // this dispatcher and see the ingestion progress rather than a task that
+    // "completed" in milliseconds having done none of the work.
+    let out = backfill(&ctx.queue, ctx.pg(), Some(task.id)).await;
     Ok(out.enqueued)
 }
 
@@ -508,11 +512,14 @@ pub async fn run_backfill(ctx: &TaskContext, _task: &Task) -> Result<u32, String
 ///
 /// Keep it that way. A call surface that needs this work enqueues the task; it
 /// does not call this directly.
+/// `parent` is the dispatching task's id, stamped on every child so the
+/// execution log forms a tree a follower can aggregate.
 pub async fn backfill(
     queue: &crate::tasks::queue::TaskQueue,
     pg: &crate::db::pg_store::PgStore,
+    parent: Option<u64>,
 ) -> BackfillOutcome {
-    let (files_seen, enqueued) = dispatch(queue).await;
+    let (files_seen, enqueued) = dispatch(queue, parent).await;
     let sessions_repaired = repair_sessions(pg).await;
     BackfillOutcome { files_seen, enqueued, sessions_repaired }
 }
@@ -573,14 +580,16 @@ pub async fn repair_sessions(pg: &crate::db::pg_store::PgStore) -> u32 {
 /// smart skip (cursor for prose + session-has-events for synthesis), so the
 /// dispatcher stays trivial and correct across upgrades. Callable from the
 /// dispatcher task or directly from the trigger endpoint (immediate feedback).
-pub async fn dispatch(queue: &crate::tasks::queue::TaskQueue) -> (u32, u32) {
+pub async fn dispatch(queue: &crate::tasks::queue::TaskQueue, parent: Option<u64>) -> (u32, u32) {
     let mut count = 0u32;
     for ad in adapters() {
         for unit in ad.units() {
             // folder_path = capture source, path = unit key (file path or thread id).
-            queue
-                .enqueue(Task::new(TaskKind::BackfillTranscriptFile, ad.source(), &unit.key))
-                .await;
+            let mut task = Task::new(TaskKind::BackfillTranscriptFile, ad.source(), &unit.key);
+            if let Some(p) = parent {
+                task = task.with_parent(p);
+            }
+            queue.enqueue(task).await;
             count += 1;
         }
     }

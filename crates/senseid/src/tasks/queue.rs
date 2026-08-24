@@ -18,6 +18,15 @@ pub struct TaskQueue {
     next_id: AtomicU64,
     tx: broadcast::Sender<TaskEvent>,
     max_concurrent_repos: std::sync::atomic::AtomicUsize,
+    /// When this queue — and therefore this id space — came into existence.
+    ///
+    /// `next_id` starts at 1 on every construction, so a task id is unique only
+    /// WITHIN one daemon session; `activity.task_executions` accumulates across
+    /// sessions and will happily hold dozens of unrelated rows for id 1. Any
+    /// lookup by task id must therefore be scoped to the session that issued it,
+    /// and the queue is the right owner of that boundary because it defines the
+    /// id space.
+    session_start: chrono::DateTime<chrono::Utc>,
 }
 
 struct QueueState {
@@ -49,6 +58,7 @@ impl TaskQueue {
             }),
             notify: Notify::new(),
             next_id: AtomicU64::new(1),
+            session_start: chrono::Utc::now(),
             tx,
             max_concurrent_repos: std::sync::atomic::AtomicUsize::new(max_repos),
         }
@@ -413,6 +423,33 @@ impl TaskQueue {
             .chain(s.completed.iter())
             .map(|t| (t.kind.clone(), t.folder_path.clone(), t.path.clone()))
             .collect()
+    }
+
+    /// When this id space began — the lower bound for any `task_executions`
+    /// lookup by task id. See the field docs on `session_start`.
+    pub fn session_start(&self) -> chrono::DateTime<chrono::Utc> {
+        self.session_start
+    }
+
+    /// One task by id, wherever it currently sits in the queue.
+    ///
+    /// Exists for the follow endpoints: a task that has been enqueued but has not
+    /// started yet has NO `activity.task_executions` row (the executor writes
+    /// that on start), so the durable log alone would 404 a task that genuinely
+    /// exists and is about to run — the one answer a follower must never get.
+    ///
+    /// `completed` is searched too: it is a bounded ring the queue keeps for
+    /// status, and finding a task there is strictly better than reporting it
+    /// unknown.
+    pub async fn find_task(&self, task_id: u64) -> Option<Task> {
+        let s = self.inner.lock().await;
+        s.pending
+            .iter()
+            .chain(s.blocked.iter())
+            .chain(s.running.values())
+            .chain(s.completed.iter())
+            .find(|t| t.id == task_id)
+            .cloned()
     }
 
     /// Get queue status summary.

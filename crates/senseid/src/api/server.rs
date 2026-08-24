@@ -411,14 +411,21 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
         let pg = state.pg.clone();
         let queue = task_queue.clone();
         tokio::spawn(async move {
-            let (_seen, dispatched) = crate::transcript::dispatch(&queue).await;
-            if dispatched > 0 {
-                tracing::info!(dispatched, "startup: dispatched transcript backfill for metric history");
-            }
-            match pg.repair_orphaned_sessions().await {
-                Ok(n) if n > 0 => tracing::info!(repaired = n, "startup: re-attached orphaned sessions"),
-                Ok(_) => {}
-                Err(e) => tracing::warn!(error = %e, "startup: repair_orphaned_sessions failed"),
+            // Enqueue the task rather than calling the dispatcher directly.
+            //
+            // This was a THIRD copy of the backfill sequence and it had already
+            // drifted: it ran `dispatch` plus `repair_orphaned_sessions` (the
+            // events-based repair) only, so the transcript-based repair added
+            // later never ran on boot — the one path where it matters most,
+            // since boot is when newly-tracked folders make a previously
+            // unresolvable cwd resolvable. Enqueuing means startup gets whatever
+            // the task does, forever, with no third thing to keep in sync.
+            let kind = crate::tasks::TaskKind::BackfillTranscripts;
+            if queue.has_pending_kind(kind.clone()).await {
+                tracing::debug!("startup: transcript backfill already in flight");
+            } else {
+                let id = queue.enqueue(crate::tasks::Task::new(kind, "", "")).await;
+                tracing::info!(task_id = id, "startup: enqueued transcript backfill for metric history");
             }
             // Persist-boot trigger: plan the per-day metric backfill for every project
             // (guarded + idempotent). On a fresh install this runs before synthesis

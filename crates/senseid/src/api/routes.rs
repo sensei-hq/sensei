@@ -174,13 +174,23 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/index", post(workspace::index_project))
         .route("/api/index/status", get(workspace::task_status))
         .route("/api/index/doctor", get(workspace::index_doctor))
-        .route("/api/index/progress", get(workspace::index_progress_sse))
+        // Same stream as /api/tasks/progress, under the older name the app still
+        // uses. One handler, two routes — it was previously two byte-identical
+        // handler functions, which is a drift waiting to happen.
+        .route("/api/index/progress", get(workspace::task_progress_sse))
         // dirty_status removed — task queue handles incremental
         .route("/api/index/errors", get(workspace::list_index_errors))
         .route("/api/index/errors/{repo_id}", get(workspace::list_repo_index_errors))
-        // Task queue (new)
+        // Task queue: aggregate status + the firehose of every task event.
         .route("/api/tasks/status", get(workspace::task_status))
         .route("/api/tasks/progress", get(workspace::task_progress_sse))
+        // Following ONE queued task. Any endpoint that returns a taskId is only
+        // half a contract without these — the caller would hold an id it cannot
+        // resolve. Both answer from the durable `activity.task_executions` log,
+        // so they work after the run and across a daemon restart; the firehose
+        // above is live-only and tells a late subscriber nothing.
+        .route("/api/tasks/{id}", get(crate::api::handlers::tasks::get_task))
+        .route("/api/tasks/{id}/events", get(crate::api::handlers::tasks::task_events))
         // Background-task visibility (#96): scheduler registry + last-run times
         .route("/api/tasks/scheduled", get(crate::api::handlers::scheduled_tasks::scheduled))
         // Graph
@@ -190,7 +200,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/graph/callers", get(codebase::fn_callers))
         .route("/api/graph/callees", get(codebase::fn_callees))
         .route("/api/graph/files", get(codebase::files_by_tag))
-        .route("/api/graph/communities", post(codebase::detect_communities))
+        .route("/api/graph/communities", post(codebase::community_counts))
         .route("/api/graph/communities/info", get(codebase::community_info))
         .route("/api/graph/{repoId}/tree", get(codebase::graph_tree))
         .route("/api/graph/doc-drift", get(codebase::doc_drift))
@@ -415,6 +425,7 @@ mod tests {
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
     use tower::ServiceExt;
+    use crate::tasks::{Task, TaskKind};
     use crate::tasks::queue::TaskQueue;
     use crate::api::state::SharedState;
 
@@ -2019,6 +2030,48 @@ mod tests {
     // token cap. The scoped call must now return ONLY repo-root folders
     // (git/standalone) while keeping the scalar summary fields; the un-`under`
     // app path is unchanged (full tree). Goes RED if the compact trim regresses.
+    // ── Following one queued task ───────────────────────────────────────────
+
+    #[tokio::test]
+    async fn the_task_id_route_does_not_swallow_its_static_siblings() {
+        // `/api/tasks/{id}` sits alongside `/status`, `/progress` and
+        // `/scheduled`. If the dynamic segment won, those would try to parse
+        // "status" as a u64 and 400 — breaking three shipped endpoints to add
+        // one. Static-wins is matchit's documented behaviour; this pins it,
+        // because the failure would be silent until something called them.
+        let (app, _state) = test_app().await;
+        let (status, body) = req(app, "GET", "/api/tasks/status", None).await;
+        assert_eq!(status, StatusCode::OK, "static sibling still routes: {body:?}");
+        assert!(body.get("queue").is_some(), "reached task_status, not the id route: {body:?}");
+    }
+
+    #[tokio::test]
+    async fn following_an_unknown_task_is_a_404_not_an_empty_success() {
+        // The one answer a follower must never get is a 200 that looks like
+        // "nothing has happened yet" for an id that does not exist — it would
+        // poll forever.
+        let (app, _state) = test_app().await;
+        let (status, _) = req(app, "GET", "/api/tasks/999999999", None).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn a_queued_but_unstarted_task_is_followable_before_it_runs() {
+        // The gap the durable log alone cannot cover: the executor writes the
+        // execution row on START, so between enqueue and start there is no row.
+        // Reporting 404 there would 404 the id the enqueue endpoint just handed
+        // back — the most likely instant for a caller to look it up.
+        let (app, state) = test_app().await;
+        let id = state
+            .task_queue
+            .enqueue(Task::new(TaskKind::BackfillTranscripts, "", ""))
+            .await;
+        let (status, body) = req(app, "GET", &format!("/api/tasks/{id}"), None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["status"], "queued", "{body:?}");
+        assert_eq!(body["kind"], "backfill_transcripts", "{body:?}");
+    }
+
     #[tokio::test]
     async fn find_projects_under_returns_compact_folders() {
         use sensei_mcp::daemon_request_for;
