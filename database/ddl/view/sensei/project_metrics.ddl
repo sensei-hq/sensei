@@ -22,6 +22,12 @@ set search_path to sensei, extensions;
 -- Ordering by abs_path makes the pick deterministic when a repository is
 -- reachable through more than one folder, so the view cannot return different
 -- project_ids for the same row across runs.
+-- DEPLOY NOTE: adding or reordering a column here requires DROP VIEW … CASCADE
+-- followed by re-applying this file and every dependent view. Postgres rejects
+-- `CREATE OR REPLACE VIEW` with "cannot change name of view column" unless the
+-- new column is appended last, and `dbd reconcile` only ever emits the REPLACE
+-- form — so it fails mid-run, after the table changes have already landed. See
+-- docs/backlog.md (dbd note, 2026-08-24).
 create or replace view project_metrics as
 select rm.id
      , rm.metric_id
