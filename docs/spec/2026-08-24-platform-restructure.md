@@ -367,8 +367,8 @@ Phases 0, 3 and 4 need no decisions and no dōjō. They are the recommended star
 | ~~Q1~~ | **Answered:** local derives; users may combine either side; **dōjō wins on conflict** | — | — |
 | ~~Q2~~ | **Answered:** auto-sync once authenticated from sensei; no login = no sync | — | — |
 | ~~Q4~~ | **Answered:** **self + admins** only | — | — |
-| Q5 | Materialize weekly/monthly, or views? | 7 | views |
-| Q6 | Retired metric definitions — keep local history? | 7 | keep |
+| ~~Q5~~ | **Answered:** start with **views**; materialize only if they measure slow | — | — |
+| ~~Q6~~ | **Answered:** **keep** history for retired metrics (`effective_until` already models it) | — | — |
 | Q8 | One `repo_key` in two tenants? | 6 | allow (`unique(repo_key, tenant_id)`) |
 | Q9 | Do inactive tenants sync repos before activation? | 7 | no |
 | Q10 | Web sign-in with no local install — minimal inline provisioning, or gate on a linked install? | 6 | *(open)* |
@@ -380,4 +380,6 @@ Phases 0, 3 and 4 need no decisions and no dōjō. They are the recommended star
 | Q17 | Persona email disjointness — rely on discipline + a loud `unique(dojo_user_id)` failure, or intercept the auth callback? | 6 | discipline + loud failure |
 | Q12 | Post-merge turn definition: prompt-to-prompt or per-exchange? | 8 | *(shifts turn-counting metrics; must be dated)* |
 
-**Answered:** Q1 (dōjō wins) · Q2 (auth-gated auto-sync) · Q3 (one repo, one project) · Q4 (self + admins) · Q7 (all workers local) · Q11 (teams, default team).
+**Answered:** Q1 (dōjō wins) · Q2 (auth-gated auto-sync) · Q3 (one repo, one project) · Q4 (self + admins) · Q5 (views first) · Q6 (keep retired history) · Q7 (all workers local) · Q11 (teams, default team).
+
+**Still open:** Q8 (repo_key in two tenants) · Q9 (inactive tenants sync?) · Q10 (web sign-in, no local install) · Q12 (post-merge turn definition) · Q13 (is the dōjō Rust service live?) · Q14 (self-hosted dōjō auth) · Q15 (daemon JWT role) · Q16 (git-alias claiming) · Q17 (persona email disjointness).
