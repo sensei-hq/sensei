@@ -492,7 +492,7 @@ pub async fn run_backfill(ctx: &TaskContext, task: &Task) -> Result<u32, String>
     // to it in `activity.task_executions` — that link is what lets a caller follow
     // this dispatcher and see the ingestion progress rather than a task that
     // "completed" in milliseconds having done none of the work.
-    let out = backfill(&ctx.queue, ctx.pg(), Some(task.id)).await;
+    let out = backfill(&ctx.queue, ctx.pg(), Some(task.id), task.as_of_stamp_ns()).await;
     Ok(out.enqueued)
 }
 
@@ -518,8 +518,9 @@ pub async fn backfill(
     queue: &crate::tasks::queue::TaskQueue,
     pg: &crate::db::pg_store::PgStore,
     parent: Option<u64>,
+    since: Option<i64>,
 ) -> BackfillOutcome {
-    let (files_seen, enqueued) = dispatch(queue, parent).await;
+    let (files_seen, enqueued) = dispatch(queue, parent, since).await;
     let sessions_repaired = repair_sessions(pg).await;
     BackfillOutcome { files_seen, enqueued, sessions_repaired }
 }
@@ -580,10 +581,34 @@ pub async fn repair_sessions(pg: &crate::db::pg_store::PgStore) -> u32 {
 /// smart skip (cursor for prose + session-has-events for synthesis), so the
 /// dispatcher stays trivial and correct across upgrades. Callable from the
 /// dispatcher task or directly from the trigger endpoint (immediate feedback).
-pub async fn dispatch(queue: &crate::tasks::queue::TaskQueue, parent: Option<u64>) -> (u32, u32) {
+pub async fn dispatch(
+    queue: &crate::tasks::queue::TaskQueue,
+    parent: Option<u64>,
+    since: Option<i64>,
+) -> (u32, u32) {
     let mut count = 0u32;
+    let mut skipped = 0u32;
     for ad in adapters() {
         for unit in ad.units() {
+            // `since` is what makes a backfill a PARAMETER rather than a separate
+            // kind: the same coordinator ingests everything (None) or only units
+            // changed after a point (Some). One code path, two requests.
+            //
+            // Filtering on the unit's cheap change-stamp — no content read — so a
+            // catch-up run enqueues only what moved instead of a task per unit
+            // across every source (~2,700 here) that then no-ops against its own
+            // cursor.
+            //
+            // Deliberately NOT derived from "the last successful run": a unit
+            // modified while a run was in flight would be skipped forever. An
+            // explicit caller-supplied bound cannot silently lose data that way,
+            // and the default (None) keeps the cursor-guarded full walk.
+            if let Some(cutoff) = since
+                && unit.stamp < cutoff
+            {
+                skipped += 1;
+                continue;
+            }
             // folder_path = capture source, path = unit key (file path or thread id).
             let mut task = Task::for_capture(TaskKind::BackfillTranscriptFile, ad.source(), &unit.key);
             if let Some(p) = parent {
@@ -593,7 +618,7 @@ pub async fn dispatch(queue: &crate::tasks::queue::TaskQueue, parent: Option<u64
             count += 1;
         }
     }
-    tracing::info!(count, "transcript backfill: dispatched per-unit tasks");
+    tracing::info!(count, skipped, "capture ingest: dispatched per-unit tasks");
     (count, count)
 }
 

@@ -473,6 +473,24 @@ impl Task {
         &self.folder_path
     }
 
+    /// `as_of` as a capture change-stamp (epoch nanoseconds), for kinds that
+    /// ingest units carrying an mtime-style stamp.
+    ///
+    /// `as_of` already meant "the day this task is for" on the metrics side. Using
+    /// the SAME field for captures is the point of the phase: a backfill is a
+    /// date parameter on the normal work, not a separate kind — so both pipelines
+    /// express "from this day" the same way rather than inventing a second idiom.
+    ///
+    /// `None` = no bound = ingest everything (the cursor still skips unchanged
+    /// units, so this stays correct, just less selective).
+    pub fn as_of_stamp_ns(&self) -> Option<i64> {
+        self.as_of.map(|d| {
+            d.and_hms_opt(0, 0, 0)
+                .map(|dt| dt.and_utc().timestamp_nanos_opt().unwrap_or(0))
+                .unwrap_or(0)
+        })
+    }
+
     /// The week bound on a coverage backfill: `None` = all history.
     ///
     /// An unparseable bound is an ERROR, not a fallback to `None`. Defaulting
@@ -775,5 +793,28 @@ mod tests {
 
         let bad = Task::new(TaskKind::BackfillCoverage, "not-a-number", &pid.to_string());
         assert!(bad.coverage_weeks().is_err(), "a malformed bound must not default to all history");
+    }
+
+    #[test]
+    fn as_of_is_the_one_way_a_task_says_from_this_day() {
+        // The phase's claim, as a test: a backfill is a DATE PARAMETER on the
+        // normal work, not a separate kind. Metrics already used `as_of` this way;
+        // captures now read the same field rather than inventing a second idiom.
+        let mut t = Task::new(TaskKind::BackfillTranscripts, "", "");
+        assert_eq!(t.as_of_stamp_ns(), None, "unbounded by default — ingest everything");
+
+        t.as_of = chrono::NaiveDate::from_ymd_opt(2026, 6, 1);
+        let stamp = t.as_of_stamp_ns().expect("a bounded task yields a stamp");
+        // 2026-06-01T00:00:00Z in epoch nanoseconds.
+        let expected = chrono::NaiveDate::from_ymd_opt(2026, 6, 1)
+            .unwrap().and_hms_opt(0, 0, 0).unwrap()
+            .and_utc().timestamp_nanos_opt().unwrap();
+        assert_eq!(stamp, expected, "the bound is the day's UTC midnight, in ns");
+
+        // The units it must compare against are mtime nanoseconds, so a unit from
+        // the day before the bound sorts below it and a later one above.
+        let day_before = expected - 86_400_000_000_000;
+        assert!(day_before < stamp, "an older unit is skipped by the bound");
+        assert!(expected + 1 > stamp, "a newer unit is kept");
     }
 }
