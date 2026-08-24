@@ -494,11 +494,20 @@ pub async fn run_backfill(ctx: &TaskContext, _task: &Task) -> Result<u32, String
 
 /// What a transcript backfill IS — enqueue every unit, then repair sessions.
 ///
-/// One definition, called by thin wrappers: the `BackfillTranscripts` task and the
-/// `/api/transcripts/backfill` endpoint. They were previously two copies of the
-/// same sequence and had already drifted — the endpoint ran only the events-based
-/// repair, so a fix added to the task path silently did not reach the button.
-/// Anything added here now reaches both by construction.
+/// One definition with ONE caller: the `BackfillTranscripts` task. It was briefly
+/// shared by the task and the `/api/transcripts/backfill` endpoint (before that,
+/// two drifted copies of the same sequence — the endpoint ran only the
+/// events-based repair, so a fix added to the task path silently did not reach
+/// the button).
+///
+/// Sharing the definition fixed the drift but left the endpoint executing a
+/// ~2,700-file filesystem sweep on the request thread. The endpoint now ENQUEUES
+/// this task instead, so the work has one home: the queue supplies dedup, retry,
+/// restart survival, and progress on `/api/tasks/progress` — none of which an
+/// HTTP handler running the sweep inline can offer.
+///
+/// Keep it that way. A call surface that needs this work enqueues the task; it
+/// does not call this directly.
 pub async fn backfill(
     queue: &crate::tasks::queue::TaskQueue,
     pg: &crate::db::pg_store::PgStore,

@@ -775,9 +775,17 @@ pub(crate) struct CoverageBackfillQuery {
 /// POST /api/projects/{id}/coverage/backfill — the EXPLICIT opt-in coverage backfill
 /// (spec: "backfilling can be configured or explicitly requested"). Reconstructs
 /// historical coverage by checking out sampled past commits, running the configured
-/// `metrics.coverage_command`, and ingesting the produced lcov. It RUNS the project's
-/// test suite per commit (slow), so it is SPAWNED detached and this returns 202
-/// immediately — progress/results are logged. A no-op (still 202) when
+/// `metrics.coverage_command`, and ingesting the produced lcov.
+///
+/// It RUNS the project's test suite per commit — the longest operation the daemon
+/// performs — so this endpoint ENQUEUES `BackfillCoverage` and returns; the queue
+/// owns the execution. It used to `tokio::spawn` the work detached, which put the
+/// heaviest job in the system outside every guarantee the queue provides: no
+/// dedup (two clicks ran two test suites over the same repo at once), no
+/// visibility in task status, no retry, and silent loss on daemon restart.
+///
+/// Deduped per project, so a second request while one is in flight reports the
+/// in-flight run instead of stacking another. A no-op when
 /// `metrics.coverage_command` is unset (the daemon never runs tests unless configured).
 pub(crate) async fn coverage_backfill(
     State(state): State<AppState>,
@@ -785,15 +793,23 @@ pub(crate) async fn coverage_backfill(
     Query(q): Query<CoverageBackfillQuery>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let uuid = crate::api::util::resolve_existing_project(&state, &id).await?;
-    let weeks = q.weeks;
-    let state = state.clone();
-    tokio::spawn(async move {
-        match crate::tasks::handlers::metrics::coverage::backfill(&state.pg, &uuid.to_string(), weeks).await {
-            Ok(rows) => tracing::info!(project = %uuid, rows, "coverage backfill finished"),
-            Err(e) => tracing::error!(error = %e, project = %uuid, "coverage backfill failed"),
-        }
-    });
-    Ok(Json(serde_json::json!({ "status": "started", "project": uuid, "weeks": weeks })))
+    let project = uuid.to_string();
+    let kind = crate::tasks::TaskKind::BackfillCoverage;
+    if state.task_queue.has_pending_kind_path(kind.clone(), &project).await {
+        return Ok(Json(
+            serde_json::json!({ "queued": false, "running": true, "project": uuid }),
+        ));
+    }
+    // folder_path carries the week bound; the handler parses it back.
+    let weeks = q.weeks.map(|w| w.to_string()).unwrap_or_default();
+    let task_id = state.task_queue.enqueue(crate::tasks::Task::new(kind, &weeks, &project)).await;
+    // The id is the whole point of returning early: the caller follows the work on
+    // GET /api/tasks/progress (SSE) or polls GET /api/tasks/status. A request that
+    // instead held the connection open for a test-suite-per-commit run would be
+    // killed by any client/proxy timeout while the work carried on unobserved.
+    Ok(Json(
+        serde_json::json!({ "queued": true, "taskId": task_id, "project": uuid, "weeks": q.weeks }),
+    ))
 }
 
 // ── Service scoping (T2 Slice B) ────────────────────────────────────────────
