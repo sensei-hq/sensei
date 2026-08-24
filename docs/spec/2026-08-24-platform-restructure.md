@@ -28,7 +28,7 @@ carry it.** That is why they are one document and not three projects.
 
 **Locked decisions**
 
-- **Q3** One repository → exactly one project; a project holds many.
+- **Q3** One repository → exactly one project **per tenant**; a project holds many. *(Relaxed from a global unique by Q8 — see §3.1.)*
 - **Q7** *All workers are local.* Dōjō has no job runner and is not getting one now; it holds the governance model for accepting pushes. The design keeps a dōjō-side worker possible (org-level consolidation across tenants is the plausible first case) but nothing depends on it.
 - **Q11** *Teams are a real level.* A tenant may run several teams on different projects, so access is granted per team, not per org. Every tenant gets a **default team** on creation and small orgs never see the concept; an admin can then create teams, move people between them, and assign projects to teams. Tenant membership is billing and identity; **team membership is access**.
 - **Identity comes from Supabase** (`auth.users` + `auth.identities`), not from tables we build. The profile (username, avatar) lives on the login only — it does not vary by tenant. Local `personas` group git emails and link to at most one login each. **Caveat:** Supabase auto-links identities sharing a verified email and this cannot be disabled — persona separation depends on disjoint emails. See ADR §2.1.
@@ -134,8 +134,12 @@ auth.users            THE LOGIN — profile lives here and nowhere else:
 tenant                        (GitHub org, or personal; NULL locally until registration)
  └── teams                    (a default team exists from creation)
       └── projects            (assigned to a team)
-           └── repositories_in_projects → repositories   (1 repo → 1 project)
+           └── repositories_in_projects → repositories   (1 repo → 1 project PER TENANT)
                                               └── repository_metrics
+
+repositories                  ONE row per repo_key, globally
+ └──< repository_tenants      (repository_id, tenant_id, is_owner)
+        a repo may be linked to SEVERAL tenants; exactly ONE is the owner
 
 principals (DŌJŌ)             THE STABLE IDENTITY every FK points at
  └── auth_user_id → auth.users   a re-pointable POINTER, not the key
@@ -167,6 +171,79 @@ activation state. Nothing describing the human.
 `unlinkIdentity` deletes an identity and re-signing-in re-merges while the email
 still matches — so the only way to undo an accidental account merge without
 losing history is to own the indirection ourselves. ADR §2.2.
+
+### 3.1 One repo, several tenants (Q8) — the consulting case
+
+The driving scenario: an SG employee has access to a **client's** repo. The repo
+should be reachable inside SG (with teams), but **ownership and management sit
+with the client**, whose team may mix client members and SG members for
+comparison — while other SG members see nothing.
+
+```sql
+create table repositories (              -- ONE row per repo, globally
+  id        uuid primary key default gen_random_uuid()
+, repo_key  text not null unique         -- github.com/client/api
+, remote_url text
+, name      text not null
+);
+
+create table repository_tenants (        -- the repo's reach
+  repository_id uuid not null references repositories(id) on delete cascade
+, tenant_id     uuid not null references tenants(id)      on delete cascade
+, is_owner      boolean not null default false
+, primary key (repository_id, tenant_id)
+);
+create unique index repository_one_owner
+    on repository_tenants(repository_id) where is_owner;
+```
+
+**One repository row, N tenant links, exactly one owner** — rather than a copy of
+the repo per tenant. Duplicating the row would duplicate its metrics and let the
+two copies diverge, and there would be no answer to "which one is real".
+
+- **Owner tenant** (the client) governs: metric activation, retention, who may be
+  linked. `is_owner` is unique per repo, so governance is never ambiguous.
+- **Linked tenant** (SG) gets *reach*, not control.
+- **Access is still purely team-based**: an SG member who is not on the client's
+  team sees nothing, because the path `principal → team_members → team → projects
+  → repositories_in_projects` never reaches the repo for them. Being an SG
+  employee grants nothing by itself.
+- **Metrics are stored once** against `repository_id`, so a comparison across a
+  mixed client/SG team is the same numbers, not two tenants' recomputations.
+
+#### This modifies Q3
+
+Q3 locked *"one repository → exactly one project"* with `unique(repository_id)`.
+That is now **too strong**: the same repo may sit in the client's project *and* in
+an SG project. The constraint relaxes to **one project per tenant**:
+
+```sql
+create table repositories_in_projects (
+  project_id    uuid not null references projects(id)      on delete cascade
+, repository_id uuid not null references repositories(id)  on delete cascade
+, tenant_id     uuid not null references tenants(id)
+, role          text
+, primary key (project_id, repository_id)
+, unique (repository_id, tenant_id)      -- ← was unique(repository_id)
+);
+```
+
+Every roll-up is still unambiguous, because roll-ups are always evaluated within
+one tenant. The property Q3 was protecting survives; only its scope narrows.
+
+#### And it opens a real privacy question (Q18)
+
+If Jerry (SG) commits to a client repo, his **user-scoped** metrics attach to a
+repo the client owns. Q4 says user-scoped rows are visible to *self + admins* —
+but **whose admins?**
+
+- the **owner** tenant's admins (client sees an SG contractor's individual numbers), or
+- the person's **home** tenant admins (SG sees them; client sees only repo-scope), or
+- both
+
+This is a contractual question as much as a technical one, and the answer changes
+the RLS policy. Flagged as **Q18**; the safe default until decided is
+**home-tenant admins only**, with the client seeing repo-scope aggregates.
 
 **Personas are not aliases of one person, and must not be merged.** The local
 identities measured here are two (or three) deliberate working identities, not
@@ -380,6 +457,6 @@ Phases 0, 3 and 4 need no decisions and no dōjō. They are the recommended star
 | Q17 | Persona email disjointness — rely on discipline + a loud `unique(dojo_user_id)` failure, or intercept the auth callback? | 6 | discipline + loud failure |
 | Q12 | Post-merge turn definition: prompt-to-prompt or per-exchange? | 8 | *(shifts turn-counting metrics; must be dated)* |
 
-**Answered:** Q1 (dōjō wins) · Q2 (auth-gated auto-sync) · Q3 (one repo, one project) · Q4 (self + admins) · Q5 (views first) · Q6 (keep retired history) · Q7 (all workers local) · Q11 (teams, default team).
+**Answered:** Q1 (dōjō wins) · Q2 (auth-gated auto-sync) · Q3 (one repo, one project) · Q4 (self + admins) · Q5 (views first) · Q6 (keep retired history) · Q7 (all workers local) · Q8 (multi-tenant repos, one owner) · Q11 (teams, default team).
 
-**Still open:** Q8 (repo_key in two tenants) · Q9 (inactive tenants sync?) · Q10 (web sign-in, no local install) · Q12 (post-merge turn definition) · Q13 (is the dōjō Rust service live?) · Q14 (self-hosted dōjō auth) · Q15 (daemon JWT role) · Q16 (git-alias claiming) · Q17 (persona email disjointness).
+**Still open:** Q9 (inactive tenants sync?) · Q10 (web sign-in, no local install) · Q12 (post-merge turn definition) · Q13 (is the dōjō Rust service live?) · Q14 (self-hosted dōjō auth) · Q15 (daemon JWT role) · Q16 (git-alias claiming) · Q17 (persona email disjointness).
