@@ -32,6 +32,10 @@ carry it.** That is why they are one document and not three projects.
 - **Q7** *All workers are local.* Dōjō has no job runner and is not getting one now; it holds the governance model for accepting pushes. The design keeps a dōjō-side worker possible (org-level consolidation across tenants is the plausible first case) but nothing depends on it.
 - **Q11** *Teams are a real level.* A tenant may run several teams on different projects, so access is granted per team, not per org. Every tenant gets a **default team** on creation and small orgs never see the concept; an admin can then create teams, move people between them, and assign projects to teams. Tenant membership is billing and identity; **team membership is access**.
 - **Identity comes from Supabase** (`auth.users` + `auth.identities`), not from tables we build. The profile (username, avatar) lives on the login only — it does not vary by tenant. Local `personas` group git emails and link to at most one login each. **Caveat:** Supabase auto-links identities sharing a verified email and this cannot be disabled — persona separation depends on disjoint emails. See ADR §2.1.
+- **Q1** *Project identity:* local sensei **derives** it where it can; a user may combine projects on either side; **dōjō wins on conflict.** So the local uuid is provisional and dōjō's is canonical once registered.
+- **Q2** *Sync is gated on authentication, not per-repo opt-in.* Once the user authenticates to dōjō **from sensei**, repos sync automatically both ways. No login → no connection → no sync. (This makes first login the consent moment: it must state plainly what will sync, because after it, every tracked repo's metrics do.)
+- **Q4** *User-scoped metric visibility: **self + admins**.* Not the whole team — a teammate cannot see another member's individual numbers.
+- **Never key data on `auth.users.id`.** A dōjō-side `principals` row is the stable identity our FKs reference; `auth_user_id` is a re-pointable pointer. This is what makes a merged account splittable later without losing history — see ADR §2.2.
 - Mirrored schema: same table set both sides; locally `tenant_id` is nullable and filled on dōjō registration.
 
 ---
@@ -133,10 +137,13 @@ tenant                        (GitHub org, or personal; NULL locally until regis
            └── repositories_in_projects → repositories   (1 repo → 1 project)
                                               └── repository_metrics
 
+principals (DŌJŌ)             THE STABLE IDENTITY every FK points at
+ └── auth_user_id → auth.users   a re-pointable POINTER, not the key
+
 personas (LOCAL ONLY)         one per working identity you keep apart
  ├── label                    'sensei-hq' | 'personal' | …
  ├── persona_emails           the git addresses that persona commits under
- └── dojo_user_id → auth.users   nullable, UNIQUE; at most one login per persona
+ └── principal_id             nullable, UNIQUE; at most one login per persona
 
 skills / agents / rules / memories / playbooks   (scope + origin + owner_*)
 ```
@@ -154,6 +161,12 @@ skills / agents / rules / memories / playbooks   (scope + origin + owner_*)
 
 `tenant_users` therefore carries **only** the relationship: role, kind, seat,
 activation state. Nothing describing the human.
+
+**And no FK points at `auth.users`.** They point at `principals`, whose
+`auth_user_id` is a pointer we can re-aim. Supabase has no split-user operation —
+`unlinkIdentity` deletes an identity and re-signing-in re-merges while the email
+still matches — so the only way to undo an accidental account merge without
+losing history is to own the indirection ourselves. ADR §2.2.
 
 **Personas are not aliases of one person, and must not be merged.** The local
 identities measured here are two (or three) deliberate working identities, not
@@ -351,9 +364,9 @@ Phases 0, 3 and 4 need no decisions and no dōjō. They are the recommended star
 
 | # | Question | Blocks | Leaning |
 |---|---|---|---|
-| Q1 | Project identity across machines — dōjō assigns id, local adopts? | 6 | yes |
-| Q2 | Repo sync default: private opt-in? | 7 | yes |
-| Q4 | Who sees `scope='user'` rows — self + team, or self + admins? | 7 | *(people question — yours)* |
+| ~~Q1~~ | **Answered:** local derives; users may combine either side; **dōjō wins on conflict** | — | — |
+| ~~Q2~~ | **Answered:** auto-sync once authenticated from sensei; no login = no sync | — | — |
+| ~~Q4~~ | **Answered:** **self + admins** only | — | — |
 | Q5 | Materialize weekly/monthly, or views? | 7 | views |
 | Q6 | Retired metric definitions — keep local history? | 7 | keep |
 | Q8 | One `repo_key` in two tenants? | 6 | allow (`unique(repo_key, tenant_id)`) |
@@ -367,4 +380,4 @@ Phases 0, 3 and 4 need no decisions and no dōjō. They are the recommended star
 | Q17 | Persona email disjointness — rely on discipline + a loud `unique(dojo_user_id)` failure, or intercept the auth callback? | 6 | discipline + loud failure |
 | Q12 | Post-merge turn definition: prompt-to-prompt or per-exchange? | 8 | *(shifts turn-counting metrics; must be dated)* |
 
-**Answered:** Q3 (one repo, one project) · Q7 (all workers local).
+**Answered:** Q1 (dōjō wins) · Q2 (auth-gated auto-sync) · Q3 (one repo, one project) · Q4 (self + admins) · Q7 (all workers local) · Q11 (teams, default team).
