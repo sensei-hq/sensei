@@ -290,7 +290,7 @@ pub(crate) async fn sync_readme_frontmatter(
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("write {}: {e}", readme.display())))?;
 
     // Echo-loop guard: update the stored frontmatter snapshot so the watcher's
-    // reconcile_identity (DB-only — it never writes the README) sees no change
+    // reconcile_repo_metadata (DB-only — it never writes the README) sees no change
     // and skips the redundant re-reconcile our own write would otherwise trigger.
     let snapshot = serde_json::json!({
         "frontmatter": serde_json::to_value(&fm).unwrap_or(serde_json::Value::Null),

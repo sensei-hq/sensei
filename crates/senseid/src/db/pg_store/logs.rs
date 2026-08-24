@@ -19,7 +19,7 @@ type TaskExecutionRow = (
 );
 
 /// Select list matching [`TaskExecutionRow`], field for field and in order.
-const TASK_EXECUTION_COLUMNS: &str = "task_id, parent_task_id, task_kind, folder_path, path, \
+const TASK_EXECUTION_COLUMNS: &str = "task_id, parent_task_id, task_kind::text, folder_path, path, \
      status, items_processed, duration_ms, retry_number, error_message, started_at, completed_at";
 
 /// One execution row as the wire shape a follower reads.
@@ -422,7 +422,7 @@ impl PgStore {
     ) -> Result<uuid::Uuid, String> {
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "INSERT INTO activity.task_executions(task_id, parent_task_id, task_kind, folder_path, path, status, retry_number)
-             VALUES($1, $2, $3, $4, $5, 'running', $6) RETURNING id"
+             VALUES($1, $2, $3::sensei.task_execution_kind, $4, $5, 'running', $6) RETURNING id"
         )
         .bind(task_id)
         .bind(parent_task_id)
@@ -534,6 +534,77 @@ impl PgStore {
             .await
             .map_err(|e| format!("child_task_executions: {e}"))?;
         Ok(rows.into_iter().map(task_execution_json).collect())
+    }
+
+    /// Roll up task executions older than `days` into `task_execution_daily`,
+    /// then delete the raw rows — except failures, which are kept for
+    /// `failed_days` because their `error_message`/`path`/`retry_number` are the
+    /// whole reason to keep a log at all (and they are rare: 32,664 of 4.8M).
+    ///
+    /// Rollup happens BEFORE the delete, in one transaction, so a crash between
+    /// the two cannot lose rows that were never aggregated.
+    ///
+    /// Idempotent: the upsert keys on `(day, task_kind, status)` and REPLACES
+    /// the bucket rather than adding to it, so re-running over a day already
+    /// rolled up yields the same numbers. That matters because the raw rows are
+    /// gone after the first pass — an additive upsert would double-count every
+    /// re-run and there would be no source left to correct it from.
+    pub async fn rollup_and_prune_task_executions(
+        &self,
+        days: i32,
+        failed_days: i32,
+    ) -> Result<(u64, u64), String> {
+        let mut tx = self.pool.begin().await.map_err(|e| e.to_string())?;
+
+        // Aggregate every eligible row, failures included: the daily counts
+        // should describe the whole day even though the failed rows themselves
+        // survive a while longer.
+        let rolled = sqlx_core::query::query(
+            "INSERT INTO activity.task_execution_daily
+                 (day, task_kind, status, runs, failures, items_processed, p50_ms, p95_ms, max_ms, rolled_up_at)
+             -- `::text::` is deliberate, not redundant: it makes the rollup work
+             -- whether `task_executions.task_kind` is still text or already the
+             -- enum, so the migration can roll up BEFORE converting the column
+             -- (converting 4.8M rows first would rewrite the whole table).
+             SELECT started_at::date, task_kind::text::sensei.task_execution_kind, status, count(*),
+                    count(*) FILTER (WHERE status = 'failed'),
+                    sum(items_processed),
+                    percentile_disc(0.5) WITHIN GROUP (ORDER BY duration_ms)::int,
+                    percentile_disc(0.95) WITHIN GROUP (ORDER BY duration_ms)::int,
+                    max(duration_ms),
+                    now()
+               FROM activity.task_executions
+              WHERE started_at < now() - (interval '1 day' * $1)
+              GROUP BY 1, 2, 3
+             ON CONFLICT (day, task_kind, status) DO UPDATE SET
+                    runs = excluded.runs,
+                    failures = excluded.failures,
+                    items_processed = excluded.items_processed,
+                    p50_ms = excluded.p50_ms,
+                    p95_ms = excluded.p95_ms,
+                    max_ms = excluded.max_ms,
+                    rolled_up_at = excluded.rolled_up_at",
+        )
+        .bind(days)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| format!("rollup_task_executions: {e}"))?
+        .rows_affected();
+
+        let pruned = sqlx_core::query::query(
+            "DELETE FROM activity.task_executions
+              WHERE started_at < now() - (interval '1 day' * $1)
+                AND (status <> 'failed' OR started_at < now() - (interval '1 day' * $2))",
+        )
+        .bind(days)
+        .bind(failed_days)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| format!("prune_task_executions: {e}"))?
+        .rows_affected();
+
+        tx.commit().await.map_err(|e| e.to_string())?;
+        Ok((rolled, pruned))
     }
 
     /// Boot reconcile (D6b/W2): terminate task-execution rows still `running`

@@ -59,7 +59,7 @@ pub enum TaskKind {
     MeasureVerdicts,
     /// Re-reconcile a project root's identity from its README frontmatter
     /// (watcher-triggered on a root README change). Lightweight: no file walk.
-    ReconcileIdentity,
+    ReconcileRepoMetadata,
     /// Enrich a project's sessions from the captured hook-event stream —
     /// derive turns/corrections/outcome/ftr/duration/module (analyzer L0, #66).
     AnalyzeProject,
@@ -185,7 +185,7 @@ impl std::fmt::Display for TaskKind {
             Self::DetectCommunities => write!(f, "detect_communities"),
             Self::ExtractDeps => write!(f, "extract_deps"),
             Self::MeasureVerdicts => write!(f, "measure_verdicts"),
-            Self::ReconcileIdentity => write!(f, "reconcile_identity"),
+            Self::ReconcileRepoMetadata => write!(f, "reconcile_repo_metadata"),
             Self::AnalyzeProject => write!(f, "analyze_project"),
             Self::AnalyzeSessionProcess => write!(f, "analyze_session_process"),
             Self::ScanDocDrift => write!(f, "scan_doc_drift"),
@@ -225,7 +225,7 @@ impl TaskKind {
             | TaskKind::DeleteFolder
             | TaskKind::ExtractDeps
             | TaskKind::BranchSwitch
-            | TaskKind::ReconcileIdentity
+            | TaskKind::ReconcileRepoMetadata
             // Transcript ingestion is chunked per-file; the dispatcher just
             // lists + enqueues, each per-file task parses one transcript.
             | TaskKind::BackfillTranscripts
@@ -576,7 +576,7 @@ mod tests {
             TaskKind::BranchSwitch, TaskKind::BuildConnections,
             TaskKind::EmbedNodes, TaskKind::IndexLibrary, TaskKind::IndexLibraryPage,
             TaskKind::DetectCommunities, TaskKind::ExtractDeps, TaskKind::MeasureVerdicts,
-            TaskKind::ReconcileIdentity, TaskKind::AnalyzeProject,
+            TaskKind::ReconcileRepoMetadata, TaskKind::AnalyzeProject,
             TaskKind::AnalyzeSessionProcess, TaskKind::ScanDocDrift,
             TaskKind::BackfillTranscripts,
             TaskKind::BackfillTranscriptFile, TaskKind::BackfillCoverage,

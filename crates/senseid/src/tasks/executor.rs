@@ -118,7 +118,7 @@ async fn execute_task(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
             TaskKind::DetectCommunities => handlers::detect_communities(ctx, task).await,
             TaskKind::ExtractDeps => handlers::extract_deps(ctx, task).await,
             TaskKind::MeasureVerdicts => handlers::measure_verdicts(ctx, task).await,
-            TaskKind::ReconcileIdentity => handlers::reconcile_identity(ctx, task).await,
+            TaskKind::ReconcileRepoMetadata => handlers::reconcile_repo_metadata(ctx, task).await,
             TaskKind::AnalyzeProject => handlers::analyze_project(ctx, task).await,
             TaskKind::AnalyzeSessionProcess => handlers::analyze_session_process(ctx, task).await,
             TaskKind::ScanDocDrift => handlers::scan_doc_drift(ctx, task).await,

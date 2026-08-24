@@ -585,7 +585,7 @@ impl RootWatcher {
                             && let Some(parent) = path.parent()
                         {
                             queue.enqueue(
-                                Task::new(TaskKind::ReconcileIdentity, &parent.to_string_lossy(), &parent.to_string_lossy())
+                                Task::new(TaskKind::ReconcileRepoMetadata, &parent.to_string_lossy(), &parent.to_string_lossy())
                             ).await;
                         }
                     }

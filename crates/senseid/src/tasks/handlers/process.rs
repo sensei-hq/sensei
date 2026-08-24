@@ -571,7 +571,7 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
 /// props (incl. the frontmatter snapshot), icons, project identity, role, and
 /// folder_namespaces. Filesystem-READ-ONLY (it never writes the README, so it
 /// can't trigger a file-change loop), idempotent, and additive. Shared by the
-/// scan pipeline (process_git_folder) and the watcher's ReconcileIdentity task.
+/// scan pipeline (process_git_folder) and the watcher's ReconcileRepoMetadata task.
 pub async fn reconcile_repo_identity(ctx: &TaskContext, repo_abs_path: &str) -> Result<u32, String> {
     use crate::tasks::processors::metadata;
     let repo_path = Path::new(repo_abs_path);
@@ -593,7 +593,7 @@ pub async fn reconcile_repo_identity(ctx: &TaskContext, repo_abs_path: &str) -> 
     let stack = super::scan_logic::detect_stack(repo_path);
 
     // Folder props: scanned metadata + the parsed frontmatter blob. The
-    // frontmatter snapshot here is what reconcile_identity compares against to
+    // frontmatter snapshot here is what reconcile_repo_metadata compares against to
     // suppress no-op re-reconciles.
     let meta = serde_json::json!({
         "icon": icon,
@@ -738,7 +738,7 @@ pub async fn reconcile_repo_identity(ctx: &TaskContext, repo_abs_path: &str) -> 
 /// body-only README edit a no-op, so a UI-driven change → README write → watcher
 /// event neither loops nor churns the DB. `task.path` is the project-root abs
 /// path (set by the watcher).
-pub async fn reconcile_identity(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
+pub async fn reconcile_repo_metadata(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
     use crate::tasks::processors::metadata;
     let repo_path = Path::new(&task.path);
 
@@ -747,11 +747,11 @@ pub async fn reconcile_identity(ctx: &TaskContext, task: &Task) -> Result<u32, S
     let stored = ctx.pg().get_repo_by_path(&task.path).await.ok().flatten()
         .and_then(|f| f.get("props").and_then(|p| p.get("frontmatter")).cloned());
     if stored.as_ref() == Some(&fresh) {
-        tracing::debug!("reconcile_identity: {} — frontmatter unchanged, skipping", task.path);
+        tracing::debug!("reconcile_repo_metadata: {} — frontmatter unchanged, skipping", task.path);
         return Ok(0);
     }
 
-    tracing::info!("reconcile_identity: {} — frontmatter changed, reconciling", task.path);
+    tracing::info!("reconcile_repo_metadata: {} — frontmatter changed, reconciling", task.path);
     reconcile_repo_identity(ctx, &task.path).await
 }
 
