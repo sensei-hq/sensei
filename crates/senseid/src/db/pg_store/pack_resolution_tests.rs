@@ -31,7 +31,7 @@
         // Adopted pack: two rules with different default tiers (advisory < required).
         let (pack,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "INSERT INTO sensei.rule_packs
-                (slug, name, area, source, summary, enforcement, owner_namespace_id, status, published_by)
+                (slug, name, area, attribution, summary, enforcement, owner_namespace_id, status, published_by)
              VALUES ('pack-resolution-test', 'T', 'principles', 'TestSource', 's',
                      'recommended', NULL, 'active', 'test')
              RETURNING id")
@@ -45,7 +45,7 @@
         // Un-adopted pack: its rule must never resolve (a pack governs nothing until adopted).
         sqlx_core::query::query(
             "INSERT INTO sensei.rule_packs
-                (slug, name, area, source, summary, enforcement, owner_namespace_id, status, published_by)
+                (slug, name, area, attribution, summary, enforcement, owner_namespace_id, status, published_by)
              VALUES ('pack-unadopted-test', 'U', 'security', '', 's', 'mandatory', NULL, 'active', 'test')")
             .execute(pool).await.unwrap();
         sqlx_core::query::query(
@@ -172,7 +172,7 @@
         let ns = pg.upsert_namespace("general", "Bundled", "checker-ns-test").await.unwrap();
         let (pack,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "INSERT INTO sensei.rule_packs
-                (slug, name, area, source, summary, enforcement, owner_namespace_id, status, published_by)
+                (slug, name, area, attribution, summary, enforcement, owner_namespace_id, status, published_by)
              VALUES ('checker-resolve-test', 'C', 'tech_stack', 's', 's', 'advisory', NULL, 'active', 'test')
              RETURNING id")
             .fetch_one(pool).await.unwrap();
