@@ -242,24 +242,53 @@ one tenant. The property Q3 was protecting survives; only its scope narrows.
 
 ### 3.3 Two answers with teeth (Q12, Q17)
 
-#### Q12 moves numbers, and that has to be deliberate
+#### Q12: wipe and reprocess, so there is no cutover at all
 
-Choosing **per-exchange** is the right call for the reason you gave — an
-acknowledgement is a turn, and fewer turns is often better, so a boundary that
-folds several exchanges into one prompt would hide the signal. But it is not a
-free rename:
+Original concern was a dated cutover and a spliced series. **Superseded — we wipe
+derived history and reprocess from source instead.** That gives one consistent
+definition across the whole corpus with no discontinuity to explain, which is
+strictly better than splicing.
 
-- **69 of 297 sessions disagree** on turn count between the two definitions today. Every turn-counting metric moves for those sessions.
-- Four columns on `activity.turns` are defined **on the prompt-to-prompt boundary** and do not survive the change unaltered: `segment` (idle-gap sub-session), `is_correction` (this prompt corrected the last), `triage_signal`, `tool_calls`. Under per-exchange, `is_correction` and `segment` need **redefinition**, not just recomputation.
-- Historical rows computed under the old definition are not comparable to new ones.
+Verified the sources actually survive before agreeing:
 
-So the merge must:
+| Source | DB coverage | Source on disk | Recomputable |
+|---|---|---|---|
+| **zed** | 2025-05-07 → 2026-05-15 · 1,986 turns / 222 sessions | `threads.db` **127 MB, intact** (last write 2026-05-27, matches) | ✅ all |
+| **opencode** | 2026-01-07 → 2026-08-23 · 246 turns / 30 sessions | own store, files back to 2024-12 | ✅ all |
+| **claude_code** | 2026-05-21 → 2026-08-24 · 2,007 turns / 112 sessions | **72 of 77** cursor files present | ⚠️ 5 files gone |
 
-1. Pick a **cutover date** and record it, so a chart spanning it can mark the discontinuity rather than showing a phantom trend.
-2. **Recompute history** under the new definition where the raw transcript survives (it does — that is what `transcript_turns` is), so the series is consistent rather than spliced.
-3. Redefine the four derived columns explicitly, in the spec, before writing code.
+**Exact loss: 73 turns across 5 sessions**, all from **2026-07-21 → 07-23** —
+`strategos/gateway` (50), `dbd-rs` (10 + 1), `alert-platform` (10),
+`strategos` (2). That is **1.7% of 4,239 turns**.
 
-This is Phase 8's real work. The table merge is the easy half.
+And to answer the May question directly: **all 319 Claude turns predating the
+oldest surviving file are in files that still exist** — zero are in the vanished
+five. File mtime is *last write*, so a session opened 2026-05-21 and continued
+into July still has its transcript. Nothing from May is at risk.
+
+#### What must NOT be wiped
+
+Everything above regenerates from a durable source. These do not:
+
+| Table | Rows | Why it cannot be regenerated |
+|---|---|---|
+| `activity.assistant_events` | 298,353 | the hook stream — **the source** `turns` derive from |
+| `sensei.memories` | 16 | `origin='authored'` rows are **user-written**; nothing can recreate them |
+| `sensei.tool_insights` | 34,697 | accumulated observation, not a pure function of transcripts |
+| `inference.recommendations` | 2,459 | LLM output — re-running costs spend **and returns different text** |
+| `inference.drift_items` | 3,032 | same |
+| `inference.detected_patterns` | 1,367 | same |
+| `activity.session_process_evidence` | 406 | LLM-derived per session; non-deterministic on re-run |
+| `sensei.playbook_rules` / `consolidated_rulesets` / `memory_outcomes` | 6 / 2 / 3 | accumulated learning, some human-accepted |
+
+`inference.communities` (76,895) regenerates from the code graph and can go.
+
+So Phase 8 is: **truncate the derived layer** (`transcript_turns`, `turns`,
+`sessions`, `repository_metrics`, watermarks, cursors), **keep events and the
+learned/authored layer**, then reprocess. The four derived columns (`segment`,
+`is_correction`, `triage_signal`, `tool_calls`) still need **redefinition** for
+per-exchange grain before the reprocess runs — that remains the real design work;
+the wipe just removes the migration and the discontinuity.
 
 #### Q17 — reuse GitHub, with one boundary
 
