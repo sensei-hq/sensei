@@ -10,6 +10,7 @@ phase broken down per surface.
 - [`2026-08-24-shared-schema-and-sync-design.md`](./2026-08-24-shared-schema-and-sync-design.md) — metrics/repo/project DB layer
 - [`2026-08-24-provisioning-and-identity-addendum.md`](./2026-08-24-provisioning-and-identity-addendum.md) — GitHub onboarding, identity gaps
 - [`2026-08-24-consolidated-shared-schema.md`](./2026-08-24-consolidated-shared-schema.md) — the mirrored table set
+- [`2026-08-24-adr-supabase-auth-and-sync.md`](./2026-08-24-adr-supabase-auth-and-sync.md) — **ADR**: Supabase identity linking, optional sensei login, and the git-attribution constraint
 - [`dojo/dojo-auth-provisioning.md`](./dojo/dojo-auth-provisioning.md) — the Gherkin this is reconciled against
 
 ---
@@ -29,6 +30,8 @@ carry it.** That is why they are one document and not three projects.
 
 - **Q3** One repository → exactly one project; a project holds many.
 - **Q7** *All workers are local.* Dōjō has no job runner and is not getting one now; it holds the governance model for accepting pushes. The design keeps a dōjō-side worker possible (org-level consolidation across tenants is the plausible first case) but nothing depends on it.
+- **Q11** *Teams are a real level.* A tenant may run several teams on different projects, so access is granted per team, not per org. Every tenant gets a **default team** on creation and small orgs never see the concept; an admin can then create teams, move people between them, and assign projects to teams. Tenant membership is billing and identity; **team membership is access**.
+- **Identity comes from Supabase** (`auth.users` + `auth.identities`), not from tables we build. The profile (username, avatar) lives on the login only — it does not vary by tenant. Local `personas` group git emails and link to at most one login each. **Caveat:** Supabase auto-links identities sharing a verified email and this cannot be disabled — persona separation depends on disjoint emails. See ADR §2.1.
 - Mirrored schema: same table set both sides; locally `tenant_id` is nullable and filled on dōjō registration.
 
 ---
@@ -51,8 +54,44 @@ federated_memories     = (nothing)
 ```
 
 `source` means three unrelated things across three tables, and none of them
-expresses local-vs-remote. Proposed single vocabulary, applied to **every**
-shareable entity:
+expresses local-vs-remote.
+
+### Two classes, not one
+
+Before the vocabulary: **metrics are not the same kind of thing as skills and
+rules**, and treating them alike was an error in the earlier draft.
+
+| | **Code-backed catalog** | **Content entities** |
+|---|---|---|
+| Members | `metrics` | skills, agents, rule_packs, memories, playbooks, consolidated_rulesets, intake_guide |
+| Who authors | **the product** (sensei/dōjō) only | anyone, at several scopes |
+| Why | every metric has `task_name` binding it to a worker — **a tenant-authored metric would have no computation** | content needs no code to exist |
+| Tenant control | **activation** (on/off) | scope + authorship |
+| Sync | pulled, identical everywhere | scoped push/pull |
+
+So there are **no local-only metrics**. The list is global and product-managed;
+what a tenant chooses is which of them are *active*. Disabling one hides it
+**and skips its computation** — a real saving, since the planner then enqueues no
+task for it.
+
+```sql
+create table metric_activations (
+  scope_id   uuid            -- tenant_id; NULL = this install's default
+, metric_id  uuid not null references metrics(id) on delete cascade
+, enabled    boolean not null default true
+, updated_at timestamptz not null default now()
+, primary key (scope_id, metric_id)
+);
+```
+
+Today `active_metrics()` filters on `effective_from`/`effective_until` only —
+that is the **product's** lifecycle (27 active, 2 retired of 29) and it stays.
+Activation is a second, independent filter layered on top: product retirement
+removes a metric for everyone; activation removes it for one tenant.
+
+### The vocabulary (content entities only)
+
+Applied to **every content entity**:
 
 ```sql
 scope   entity_scope   -- 'local' | 'project' | 'tenant' | 'public'
@@ -67,9 +106,9 @@ attribution text       -- the citation ("OWASP · sensei") — free text, kept, 
 - **origin** answers *where it came from* — needed to know what a re-import may overwrite.
 - **attribution** keeps the human-readable credit that `rule_packs.source` holds today; it stops pretending to be an enum.
 
-Entities taking this vocabulary: `metrics`, `memories`, `rule_packs`,
-`playbooks`, `library_skills`, `library_agents`, `consolidated_rulesets`,
-`intake_guide`.
+Entities taking this vocabulary: `memories`, `rule_packs`, `playbooks`,
+`library_skills`, `library_agents`, `consolidated_rulesets`, `intake_guide`.
+**Not `metrics`** — see the split above.
 
 `public` is the marketplace tier (`marketplace/catalog.json`) — already a real
 distribution channel, currently unmodelled in the DB.
@@ -79,26 +118,85 @@ distribution channel, currently unmodelled in the DB.
 ## 3. The entity model
 
 ```
+auth.users            THE LOGIN — profile lives here and nowhere else:
+ │                    username, display name, avatar, primary email
+ ├──< auth.identities  (github, google… Supabase links providers for free)
+ │
+ ├──< tenant_users    (tenant_id, user_id, role, kind)   ← membership ONLY, no profile
+ │      one user → MANY tenants: personal dōjō + employer + each client
+ │
+ └──< team_members    (team_id, user_id, role)           ← ACCESS
+
 tenant                        (GitHub org, or personal; NULL locally until registration)
- ├── tenant_members  → people
- └── teams
-      ├── team_members → people
-      └── projects
+ └── teams                    (a default team exists from creation)
+      └── projects            (assigned to a team)
            └── repositories_in_projects → repositories   (1 repo → 1 project)
                                               └── repository_metrics
-people ──< person_emails                      (git aliases + verified auth emails)
-people ──< identities                         ((provider, subject) → person)
-metrics / skills / agents / rules / memories  (scope + origin + owner_*)
+
+personas (LOCAL ONLY)         one per working identity you keep apart
+ ├── label                    'sensei-hq' | 'personal' | …
+ ├── persona_emails           the git addresses that persona commits under
+ └── dojo_user_id → auth.users   nullable, UNIQUE; at most one login per persona
+
+skills / agents / rules / memories / playbooks   (scope + origin + owner_*)
 ```
 
-Metric-read authorization follows exactly one path:
+**There is no `people` table.** An earlier draft had one with `tenant_id` and
+`display_name`; both were wrong:
+
+- `tenant_id` on a person is wrong because **one user belongs to many tenants** —
+  personal dōjō plus employer plus each client. The tenant relation is
+  `tenant_users`, a separate row per membership.
+- `display_name`/avatar on a person duplicates the login. **A username does not
+  change by tenant**, so the profile lives once on `auth.users` and every tenant
+  reads the same one. Storing it per membership would let the same human render
+  under different names in different dōjōs by accident.
+
+`tenant_users` therefore carries **only** the relationship: role, kind, seat,
+activation state. Nothing describing the human.
+
+**Personas are not aliases of one person, and must not be merged.** The local
+identities measured here are two (or three) deliberate working identities, not
+one human's duplicates:
 
 ```
-person → team_members → team → projects → repositories_in_projects → repository
+me@jerrythomas.name             422 rows / 26 repos / 2019-06-25 → 2026-08-24
+owner@example.com       84 / 2  / 2026-06-15 → 2026-08-21   ┐ personal
+hi@sensei-hq.com                108 / 2  / 2026-07-26 → 2026-08-24   ┐ sensei-hq
+dev@sensei-hq.com                74 / 1  / 2026-06-13 → 2026-08-21   ┘
+dev@example-corp.com    62 / 9  / 2018-09-08 → 2026-03-20   ← employer, ended
+contributor@example.com        17 / 1  / 2025-05-24 → 2025-06-25   ← may be another human
+```
+
+So the rule is:
+
+- **Locally** — every persona is visible in one place, each row **tagged** with its
+  persona label. Grouping is by persona, and "all of me" is a union the UI offers,
+  never a merge the schema forces.
+- **In dōjō** — personas are **separate logins**. sensei-hq work does not appear
+  under the personal account and vice versa. That separation is a privacy
+  boundary the user chose; the schema must make violating it impossible, not
+  merely discouraged.
+
+This corrects the earlier draft, which assumed one human = one person and would
+have merged all six into a single contributor.
+
+Metric-read authorization follows exactly one path, enforced by RLS:
+
+```
+auth.uid() → team_members → team → projects → repositories_in_projects → repository
 ```
 
 GitHub's per-repo `admin|write|read` is used **only** to discover which repos to
 create during provisioning — never to decide what a teammate can see.
+
+**Attribution constraint (security).** A git commit email is an *unverified
+assertion* — anyone can `git config user.email` to a colleague's address. Locally
+that is harmless (own machine, own data). Once user-scoped metrics are pushed and
+shown per person it becomes an attribution attack. So a shared `scope='user'` row
+is keyed on the **authenticated** person (`auth.uid()`), never on the git email;
+the git email travels as a property. Git aliases are **claimed**, never
+auto-linked. Full reasoning in the ADR §3.
 
 ---
 
@@ -156,30 +254,29 @@ Metrics already proves the model (`as_of: None` = today, `Some(d)` = that day). 
 
 **Done when:** no task kind has "backfill" in its name and the same code path serves live and historical.
 
-### Phase 3 — People, aliases, and correct user metrics (C, local only)
+### Phase 3 — Personas and correct user metrics (C, local only)
 
 Ships with **no dōjō dependency** and has immediate user-visible payoff.
 
 | Surface | Work |
 |---|---|
-| DB | `people`, `person_emails` (citext, soft-delete, partial unique); `repository_metrics.person_id` |
-| senseid | Resolve git author emails → person; roll-ups group by `person_id` falling back to `identity` |
-| app | "My metrics" stops splitting one human across aliases |
+| DB | `personas` (id, label, `dojo_user_id` nullable), `persona_emails` (citext, soft-delete, partial unique); `repository_metrics.persona_id` |
+| senseid | Resolve git author email → persona; roll-ups group by persona |
+| app | Metrics tagged by persona; a "combined" view offered, not forced |
 
-**The measurement that motivates this** — user-scoped rows today:
+Six git identities today resolve to **two or three personas** (see §3), not one
+person. The payoff is not merging — it is that "sensei-hq work" and "personal
+work" become separable at all, which today they are not.
 
-```
-me@jerrythomas.name             422 rows / 26 repos
-hi@sensei-hq.com                108 / 2
-owner@example.com       84 / 2
-dev@sensei-hq.com                74 / 1
-dev@example-corp.com    62 / 9
-contributor@example.com        17 / 1
-```
+**Keep `identity` (the raw git email) and add `persona_id` as a resolved FK.**
+Collapsing at write time would be destructive: each row came from
+`git log --author=<email>`, so combining must *sum*, and a persona
+reassignment later would need recomputation. Resolution stays a re-runnable
+derivation over immutable raw attribution.
 
-At least five are one human. Dōjō's "metrics by user" would show them as five contributors.
-
-**Keep `identity` (the raw git email) and add `person_id` as a resolved FK** — collapsing at write time would be a destructive merge needing recomputation (each row came from `git log --author=<email>`, so merging must *sum*). Resolution stays a re-runnable derivation.
+Unassigned emails default to their own persona rather than to a guessed one —
+`contributor@example.com` may be a different human entirely, and quietly
+folding it into yours would be a fabricated attribution.
 
 ### Phase 4 — Repository/project model (C, local only)
 
@@ -262,7 +359,12 @@ Phases 0, 3 and 4 need no decisions and no dōjō. They are the recommended star
 | Q8 | One `repo_key` in two tenants? | 6 | allow (`unique(repo_key, tenant_id)`) |
 | Q9 | Do inactive tenants sync repos before activation? | 7 | no |
 | Q10 | Web sign-in with no local install — minimal inline provisioning, or gate on a linked install? | 6 | *(open)* |
-| Q11 | Teams as a real level now, or tenant-only first? | 6 | teams now — retrofitting is an access migration |
+| ~~Q11~~ | **Answered:** teams are a real level, default team per tenant | — | — |
+| Q13 | Is the dōjō Rust service still live? Keep artifacts/triage there, or retire it? | 6,7 | keep for what RLS can't express |
+| Q14 | Self-hosted dōjō — own Supabase, or keep the device-token plane? | 6 | *(open)* |
+| Q15 | Daemon JWT — restricted Postgres role, or full `authenticated`? | 7 | restricted |
+| Q16 | Git-alias claiming — verified-email match only, or admin review? | 7 | never silent |
+| Q17 | Persona email disjointness — rely on discipline + a loud `unique(dojo_user_id)` failure, or intercept the auth callback? | 6 | discipline + loud failure |
 | Q12 | Post-merge turn definition: prompt-to-prompt or per-exchange? | 8 | *(shifts turn-counting metrics; must be dated)* |
 
 **Answered:** Q3 (one repo, one project) · Q7 (all workers local).

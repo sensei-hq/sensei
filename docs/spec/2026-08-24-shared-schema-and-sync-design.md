@@ -1,5 +1,21 @@
 # Shared schema + local/dojo sync — DB layer design
 
+> **⚠ Partially superseded.** The plan of record is
+> [`2026-08-24-platform-restructure.md`](./2026-08-24-platform-restructure.md).
+> This document is retained for its **measurements and rationale**, which remain
+> valid. Superseded since writing:
+> - **No `people` table.** The login is Supabase `auth.users` and the profile
+>   (username, display name, avatar) lives there only — a username does not change
+>   by tenant. Membership is `tenant_users(tenant_id, user_id, role)`: one user
+>   belongs to MANY tenants (personal + employer + clients), so the `people.tenant_id`
+>   and `people.display_name` in this doc are both wrong.
+> - `identities` → Supabase `auth.identities`; local git-email grouping →
+>   **`personas`** (labelled), deliberately **kept apart** in dōjō rather than
+>   merged. See root spec §3 and the ADR.
+> - **No local-authored metrics.** The catalog is product-owned; tenants toggle
+>   `metric_activations`.
+> - Teams are a confirmed level, with a default team per tenant.
+
 Status: **design for discussion**, no code or DDL changed. Companion to
 `2026-08-24-task-worker-system-analysis.md`; that one covers workers, this one
 covers what we change at the database level first.
@@ -71,7 +87,10 @@ and versioned by `modified_at`. Making it shared means: **dojo owns the
 definition, local pulls it.** A team must compute the same metric the same way
 or the comparison in dojo is meaningless.
 
-Local override stays possible (a user adds a private metric) — see §5.
+**Superseded:** an earlier draft allowed a local/private metric. It cannot exist —
+`metrics.task_name` binds every metric to a worker, so a user-authored metric would
+have no computation. The list is product-owned; a tenant toggles *activation*.
+See the root spec §2.
 
 ### T2 — Shared data, two-way (local ⇄ dojo)
 
@@ -181,7 +200,8 @@ ADD   dojo_version bigint  -- monotonic; local refuses to overwrite a newer loca
 ```
 
 Pull semantics: dojo rows land with `scope_owner='dojo'` and are replaced
-wholesale on each sync. Local rows (`scope_owner='local'`) are never touched by
+wholesale on each sync. (Superseded: there are no local-authored metric rows —
+see root spec §2. Retained text below described the abandoned model.) Local rows are never touched by
 sync. A key collision resolves in dojo's favour with the local one renamed and
 flagged, never silently dropped.
 

@@ -1,5 +1,21 @@
 # Addendum — GitHub provisioning, identity, and where the worker runs
 
+> **⚠ Partially superseded.** The plan of record is
+> [`2026-08-24-platform-restructure.md`](./2026-08-24-platform-restructure.md).
+> This document is retained for its **measurements and rationale**, which remain
+> valid. Superseded since writing:
+> - **No `people` table.** The login is Supabase `auth.users` and the profile
+>   (username, display name, avatar) lives there only — a username does not change
+>   by tenant. Membership is `tenant_users(tenant_id, user_id, role)`: one user
+>   belongs to MANY tenants (personal + employer + clients), so the `people.tenant_id`
+>   and `people.display_name` in this doc are both wrong.
+> - `identities` → Supabase `auth.identities`; local git-email grouping →
+>   **`personas`** (labelled), deliberately **kept apart** in dōjō rather than
+>   merged. See root spec §3 and the ADR.
+> - **No local-authored metrics.** The catalog is product-owned; tenants toggle
+>   `metric_activations`.
+> - Teams are a confirmed level, with a default team per tenant.
+
 Extends `2026-08-24-shared-schema-and-sync-design.md` after reading
 `docs/spec/dojo/dojo-auth-provisioning.md`. Design for discussion; no code or
 DDL changed.
