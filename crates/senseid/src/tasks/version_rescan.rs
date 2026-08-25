@@ -132,8 +132,12 @@ pub fn spawn_version_commit_watcher(
     tokio::spawn(async move {
         wait_for_scan_drain(&queue).await;
         match pg.set_config(LAST_VERSION_KEY, &version).await {
-            Ok(_) => tracing::info!("version rescan: scan drained — recorded {LAST_VERSION_KEY}={version}"),
-            Err(e) => tracing::warn!(error = %e, "version rescan: recording {LAST_VERSION_KEY} after drain failed; rebuild may re-trigger next boot"),
+            Ok(_) => tracing::info!(
+                "version rescan: scan drained — recorded {LAST_VERSION_KEY}={version}"
+            ),
+            Err(e) => {
+                tracing::warn!(error = %e, "version rescan: recording {LAST_VERSION_KEY} after drain failed; rebuild may re-trigger next boot")
+            }
         }
     })
 }
@@ -201,10 +205,7 @@ mod tests {
 
     /// Count ScanRoot tasks in a drained set targeting a specific root path.
     fn scanroots_for<'a>(tasks: &'a [Task], root_path: &str) -> Vec<&'a Task> {
-        tasks
-            .iter()
-            .filter(|t| t.kind == TaskKind::ScanRoot && t.path == root_path)
-            .collect()
+        tasks.iter().filter(|t| t.kind == TaskKind::ScanRoot && t.path == root_path).collect()
     }
 
     /// Serialises the tests below.
@@ -250,7 +251,11 @@ mod tests {
             maybe_rescan_on_version_change(&pg, &q1, current).await,
             "version change must trigger a rebuild",
         );
-        assert_eq!(scanroots_for(&drain_all(&q1).await, &root_path).len(), 1, "one ScanRoot for our root");
+        assert_eq!(
+            scanroots_for(&drain_all(&q1).await, &root_path).len(),
+            1,
+            "one ScanRoot for our root"
+        );
         assert_eq!(
             pg.get_config(LAST_VERSION_KEY).await.unwrap().as_deref(),
             Some("0.0.0-old"),
@@ -269,7 +274,11 @@ mod tests {
             maybe_rescan_on_version_change(&pg, &q2, current).await,
             "an uncommitted (aborted) rescan must re-trigger next boot",
         );
-        assert_eq!(scanroots_for(&drain_all(&q2).await, &root_path).len(), 1, "ScanRoot re-enqueued after abort");
+        assert_eq!(
+            scanroots_for(&drain_all(&q2).await, &root_path).len(),
+            1,
+            "ScanRoot re-enqueued after abort"
+        );
 
         // The commit watcher must hold off while work is in flight, then record
         // the version once the queue drains. Drive it with a controlled task so
@@ -299,7 +308,10 @@ mod tests {
             !maybe_rescan_on_version_change(&pg, &q3, current).await,
             "same version must not re-trigger once committed",
         );
-        assert!(scanroots_for(&drain_all(&q3).await, &root_path).is_empty(), "no rescan on a committed version");
+        assert!(
+            scanroots_for(&drain_all(&q3).await, &root_path).is_empty(),
+            "no rescan on a committed version"
+        );
 
         // Cleanup shared-DB state.
         pg.remove_watch_root(&rid).await.unwrap();

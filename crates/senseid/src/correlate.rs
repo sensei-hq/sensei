@@ -142,9 +142,7 @@ pub fn correlations(
             }
         }
     }
-    out.sort_by(|p, q| {
-        q.rho.abs().partial_cmp(&p.rho.abs()).unwrap_or(std::cmp::Ordering::Equal)
-    });
+    out.sort_by(|p, q| q.rho.abs().partial_cmp(&p.rho.abs()).unwrap_or(std::cmp::Ordering::Equal));
     out
 }
 

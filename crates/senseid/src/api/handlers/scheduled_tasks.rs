@@ -14,8 +14,8 @@
 //! pruners, mcp discovery — they tick on an interval or run at startup, no
 //! persisted cursor) reports `last_run_at: null`.
 
-use axum::{extract::State, http::StatusCode, response::Json};
 use crate::api::state::AppState;
+use axum::{extract::State, http::StatusCode, response::Json};
 
 /// One scheduled background worker: display name, what it does, and the
 /// `sensei.config` key holding its last-run epoch-millis watermark (if any).
@@ -31,14 +31,46 @@ struct ScheduledTask {
 /// `api/server.rs`). Registry, not reflection — keep in step when a worker is
 /// added or its watermark key changes.
 const TASKS: &[ScheduledTask] = &[
-    ScheduledTask { name: "analyzer", description: "Session/log analyzer — findings, recommendations, learned memories", watermark_key: Some("analyzer.last_full_refresh") },
-    ScheduledTask { name: "advance_run", description: "Relay run scheduler — auto-resume due pauses + tick active runs", watermark_key: None },
-    ScheduledTask { name: "reconcile", description: "Folder/index reconcile — self-healing scan-drift repair", watermark_key: Some("reconcile.last_run") },
-    ScheduledTask { name: "index_audit", description: "Index integrity audit (read-only drift check)", watermark_key: Some("audit.last_run") },
-    ScheduledTask { name: "contribute", description: "Dōjō upstream contribute cadence", watermark_key: Some("collective.last_prepared") },
-    ScheduledTask { name: "log_pruner", description: "Structured-log TTL pruning", watermark_key: None },
-    ScheduledTask { name: "activity_pruner", description: "Activity-data GC (after analysis derives insights)", watermark_key: None },
-    ScheduledTask { name: "mcp_discovery", description: "MCP tool discovery (startup + on refresh)", watermark_key: None },
+    ScheduledTask {
+        name: "analyzer",
+        description: "Session/log analyzer — findings, recommendations, learned memories",
+        watermark_key: Some("analyzer.last_full_refresh"),
+    },
+    ScheduledTask {
+        name: "advance_run",
+        description: "Relay run scheduler — auto-resume due pauses + tick active runs",
+        watermark_key: None,
+    },
+    ScheduledTask {
+        name: "reconcile",
+        description: "Folder/index reconcile — self-healing scan-drift repair",
+        watermark_key: Some("reconcile.last_run"),
+    },
+    ScheduledTask {
+        name: "index_audit",
+        description: "Index integrity audit (read-only drift check)",
+        watermark_key: Some("audit.last_run"),
+    },
+    ScheduledTask {
+        name: "contribute",
+        description: "Dōjō upstream contribute cadence",
+        watermark_key: Some("collective.last_prepared"),
+    },
+    ScheduledTask {
+        name: "log_pruner",
+        description: "Structured-log TTL pruning",
+        watermark_key: None,
+    },
+    ScheduledTask {
+        name: "activity_pruner",
+        description: "Activity-data GC (after analysis derives insights)",
+        watermark_key: None,
+    },
+    ScheduledTask {
+        name: "mcp_discovery",
+        description: "MCP tool discovery (startup + on refresh)",
+        watermark_key: None,
+    },
 ];
 
 /// Parse an epoch-millis config value into an RFC-3339 timestamp. `None` for a
@@ -59,7 +91,7 @@ pub(crate) async fn scheduled(
         // endpoint exists to remove. A genuine absent watermark is still None.
         let last_run_at = match t.watermark_key {
             Some(key) => watermark_to_rfc3339(
-                state.pg.get_config(key).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+                state.pg.get_config(key).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
             ),
             None => None,
         };

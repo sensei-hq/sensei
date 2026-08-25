@@ -22,10 +22,15 @@ impl PgStore {
         // let the scanner/watcher/grep process folders the user explicitly
         // excluded (indexing/leaking excluded content). Propagate instead.
         let row: Option<(serde_json::Value,)> = sqlx_core::query_as::query_as(
-            "SELECT excluded FROM sensei.folders_to_watch WHERE path = $1"
-        ).bind(root_path).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
+            "SELECT excluded FROM sensei.folders_to_watch WHERE path = $1",
+        )
+        .bind(root_path)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         let root = root_path.trim_end_matches('/');
-        Ok(row.and_then(|(v,)| v.as_array().cloned())
+        Ok(row
+            .and_then(|(v,)| v.as_array().cloned())
             .unwrap_or_default()
             .into_iter()
             .filter_map(|e| e.as_str().map(str::to_string))
@@ -36,12 +41,22 @@ impl PgStore {
 
     /// Watch root's path + its raw (relative) `excluded` list, by id — for the
     /// update handler to diff old-vs-new and prune added / re-scan removed.
-    pub async fn get_watch_root(&self, id: &uuid::Uuid) -> Result<Option<(String, Vec<String>)>, String> {
+    pub async fn get_watch_root(
+        &self,
+        id: &uuid::Uuid,
+    ) -> Result<Option<(String, Vec<String>)>, String> {
         let row: Option<(String, serde_json::Value)> = sqlx_core::query_as::query_as(
-            "SELECT path, excluded FROM sensei.folders_to_watch WHERE id = $1"
-        ).bind(id).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
+            "SELECT path, excluded FROM sensei.folders_to_watch WHERE id = $1",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(row.map(|(path, ex)| {
-            let list = ex.as_array().map(|a| a.iter().filter_map(|e| e.as_str().map(str::to_string)).collect()).unwrap_or_default();
+            let list = ex
+                .as_array()
+                .map(|a| a.iter().filter_map(|e| e.as_str().map(str::to_string)).collect())
+                .unwrap_or_default();
             (path, list)
         }))
     }
@@ -55,12 +70,21 @@ impl PgStore {
         let res = sqlx_core::query::query(
             "DELETE FROM sensei.folders f
               WHERE f.abs_path = $1 OR starts_with(f.abs_path, $1 || '/')",
-        ).bind(p).execute(&self.pool).await.map_err(|e| e.to_string())?;
+        )
+        .bind(p)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(res.rows_affected())
     }
 
     /// Register a git repo as a folder. Equivalent to old upsert_repo_basic.
-    pub async fn upsert_repo(&self, root_id: &uuid::Uuid, name: &str, abs_path: &str) -> Result<uuid::Uuid, String> {
+    pub async fn upsert_repo(
+        &self,
+        root_id: &uuid::Uuid,
+        name: &str,
+        abs_path: &str,
+    ) -> Result<uuid::Uuid, String> {
         self.upsert_folder(root_id, "git", name, name, abs_path, None, None).await
     }
 
@@ -72,7 +96,13 @@ impl PgStore {
     /// `.git` (now a quasi-repo) is relabelled `standalone`, and one that gained
     /// a `.git` flips back to `git`. `subtree`/`folder` kinds are never clobbered
     /// here — those are owned by subtree detection and tree materialisation.
-    pub async fn upsert_repo_kind(&self, root_id: &uuid::Uuid, kind: &str, name: &str, abs_path: &str) -> Result<uuid::Uuid, String> {
+    pub async fn upsert_repo_kind(
+        &self,
+        root_id: &uuid::Uuid,
+        kind: &str,
+        name: &str,
+        abs_path: &str,
+    ) -> Result<uuid::Uuid, String> {
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "INSERT INTO sensei.folders(root_id, kind, name, path, abs_path)
              VALUES($1, $2::sensei.folder_kind, $3, $3, $4)
@@ -91,10 +121,16 @@ impl PgStore {
     /// Upsert a structural subfolder (`kind='folder'`) within a project, linked
     /// to its parent folder. Thin wrapper over [`Self::upsert_subfolder_kind`].
     pub async fn upsert_subfolder(
-        &self, root_id: &uuid::Uuid, name: &str, path: &str, abs_path: &str,
-        parent_id: Option<&uuid::Uuid>, project_id: Option<&uuid::Uuid>,
+        &self,
+        root_id: &uuid::Uuid,
+        name: &str,
+        path: &str,
+        abs_path: &str,
+        parent_id: Option<&uuid::Uuid>,
+        project_id: Option<&uuid::Uuid>,
     ) -> Result<uuid::Uuid, String> {
-        self.upsert_subfolder_kind(root_id, "folder", name, path, abs_path, parent_id, project_id).await
+        self.upsert_subfolder_kind(root_id, "folder", name, path, abs_path, parent_id, project_id)
+            .await
     }
 
     /// Upsert a structural subfolder with an explicit `kind` — `folder` (the
@@ -104,8 +140,14 @@ impl PgStore {
     /// structural kinds (`folder`↔`workspace_member`); a path that is actually a
     /// (nested) project ROOT (`git`/`standalone`/`subtree`) is never reclassified.
     pub async fn upsert_subfolder_kind(
-        &self, root_id: &uuid::Uuid, kind: &str, name: &str, path: &str, abs_path: &str,
-        parent_id: Option<&uuid::Uuid>, project_id: Option<&uuid::Uuid>,
+        &self,
+        root_id: &uuid::Uuid,
+        kind: &str,
+        name: &str,
+        path: &str,
+        abs_path: &str,
+        parent_id: Option<&uuid::Uuid>,
+        project_id: Option<&uuid::Uuid>,
     ) -> Result<uuid::Uuid, String> {
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "INSERT INTO sensei.folders(root_id, kind, status, name, path, abs_path, parent_id, project_id)
@@ -125,7 +167,10 @@ impl PgStore {
     }
 
     /// Get a repo (folder with kind='git'/'subtree') by abs_path.
-    pub async fn get_repo_by_path(&self, abs_path: &str) -> Result<Option<serde_json::Value>, String> {
+    pub async fn get_repo_by_path(
+        &self,
+        abs_path: &str,
+    ) -> Result<Option<serde_json::Value>, String> {
         let row: Option<(uuid::Uuid, uuid::Uuid, String, String, String, Option<uuid::Uuid>, serde_json::Value, Vec<String>, chrono::DateTime<chrono::Utc>)> =
             sqlx_core::query_as::query_as(
                 "SELECT id, root_id, kind::text, name, abs_path, project_id, props, tags, modified_at FROM sensei.folders WHERE abs_path = $1"
@@ -151,15 +196,30 @@ impl PgStore {
     }
 
     /// Set folder props (metadata like stack, libs, indexed_at, etc.).
-    pub async fn set_folder_props(&self, folder_id: &uuid::Uuid, props: &serde_json::Value) -> Result<(), String> {
+    pub async fn set_folder_props(
+        &self,
+        folder_id: &uuid::Uuid,
+        props: &serde_json::Value,
+    ) -> Result<(), String> {
         sqlx_core::query::query(
-            "UPDATE sensei.folders SET props = props || $2, modified_at = now() WHERE id = $1"
-        ).bind(folder_id).bind(props).execute(&self.pool).await.map_err(|e| e.to_string())?;
+            "UPDATE sensei.folders SET props = props || $2, modified_at = now() WHERE id = $1",
+        )
+        .bind(folder_id)
+        .bind(props)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(())
     }
 
     /// Assign a folder to a project with role/label.
-    pub async fn set_folder_project(&self, folder_id: &uuid::Uuid, project_id: &uuid::Uuid, role: &str, label: Option<&str>) -> Result<(), String> {
+    pub async fn set_folder_project(
+        &self,
+        folder_id: &uuid::Uuid,
+        project_id: &uuid::Uuid,
+        role: &str,
+        label: Option<&str>,
+    ) -> Result<(), String> {
         let props = serde_json::json!({"role": role, "label": label});
         sqlx_core::query::query(
             "UPDATE sensei.folders SET project_id = $2, props = props || $3, modified_at = now() WHERE id = $1"
@@ -170,7 +230,11 @@ impl PgStore {
     /// Update only the `role` column on a folder. Used by the Projects
     /// setup stage when the user picks a role from the dropdown — distinct
     /// from set_folder_project (which also reassigns project membership).
-    pub async fn update_folder_role(&self, folder_id: &uuid::Uuid, role: Option<&str>) -> Result<(), String> {
+    pub async fn update_folder_role(
+        &self,
+        folder_id: &uuid::Uuid,
+        role: Option<&str>,
+    ) -> Result<(), String> {
         sqlx_core::query::query(
             "UPDATE sensei.folders SET role = $2::sensei.folder_role, modified_at = now() WHERE id = $1"
         ).bind(folder_id).bind(role).execute(&self.pool).await.map_err(|e| e.to_string())?;
@@ -180,7 +244,10 @@ impl PgStore {
     /// All folders belonging to a project, ordered by path. Used to enrich
     /// /api/projects responses with folder membership so the Projects setup
     /// page can render per-folder details.
-    pub async fn list_folders_by_project(&self, project_id: &uuid::Uuid) -> Result<Vec<serde_json::Value>, String> {
+    pub async fn list_folders_by_project(
+        &self,
+        project_id: &uuid::Uuid,
+    ) -> Result<Vec<serde_json::Value>, String> {
         self.query_folders_by_project(project_id, false).await
     }
 
@@ -192,7 +259,10 @@ impl PgStore {
     /// the MCP proxy's `resolve_from_cwd_in` longest-prefix cwd→project match
     /// still resolves any deep working directory (a deep cwd still
     /// `starts_with` the repo root).
-    pub async fn list_root_folders_by_project(&self, project_id: &uuid::Uuid) -> Result<Vec<serde_json::Value>, String> {
+    pub async fn list_root_folders_by_project(
+        &self,
+        project_id: &uuid::Uuid,
+    ) -> Result<Vec<serde_json::Value>, String> {
         self.query_folders_by_project(project_id, true).await
     }
 
@@ -200,13 +270,20 @@ impl PgStore {
     /// analyzer scheduler needs to enqueue `DetectCommunities` per folder. Only
     /// `indexed` folders are worth running community detection on (others have
     /// no code nodes yet).
-    pub async fn get_indexed_folder_paths_for_project(&self, project_id: &uuid::Uuid) -> Result<Vec<String>, String> {
+    pub async fn get_indexed_folder_paths_for_project(
+        &self,
+        project_id: &uuid::Uuid,
+    ) -> Result<Vec<String>, String> {
         let rows: Vec<(String,)> = sqlx_core::query_as::query_as(
             "SELECT abs_path
              FROM sensei.folders
              WHERE project_id = $1 AND status = 'indexed'::sensei.folder_status
-             ORDER BY abs_path"
-        ).bind(project_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+             ORDER BY abs_path",
+        )
+        .bind(project_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(rows.into_iter().map(|(p,)| p).collect())
     }
 
@@ -218,14 +295,21 @@ impl PgStore {
     /// rather than a nested sub-package. `None` when the project has no
     /// repo-root folder (e.g. a project deleted out from under a run). The
     /// caller must still confirm the path exists on disk before spawning.
-    pub async fn project_root_path(&self, project_id: &uuid::Uuid) -> Result<Option<String>, String> {
+    pub async fn project_root_path(
+        &self,
+        project_id: &uuid::Uuid,
+    ) -> Result<Option<String>, String> {
         let row: Option<(String,)> = sqlx_core::query_as::query_as(
             "SELECT abs_path
              FROM sensei.folders
              WHERE project_id = $1 AND kind::text IN ('git','standalone')
              ORDER BY length(abs_path), abs_path
-             LIMIT 1"
-        ).bind(project_id).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
+             LIMIT 1",
+        )
+        .bind(project_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(row.map(|(p,)| p))
     }
 
@@ -248,7 +332,11 @@ impl PgStore {
     /// `mark_folder_indexed` remains the dedicated writer of `indexed` (it also
     /// stamps `props.indexed_at`). A scan marks `indexing` at start so a
     /// crash leaves a recoverable state (resume re-enqueues non-terminal folders).
-    pub async fn update_folder_status(&self, folder_id: &uuid::Uuid, status: &str) -> Result<(), String> {
+    pub async fn update_folder_status(
+        &self,
+        folder_id: &uuid::Uuid,
+        status: &str,
+    ) -> Result<(), String> {
         sqlx_core::query::query(
             "UPDATE sensei.folders SET status = $2::sensei.folder_status, modified_at = now() WHERE id = $1"
         ).bind(folder_id).bind(status).execute(&self.pool).await.map_err(|e| e.to_string())?;
@@ -259,10 +347,16 @@ impl PgStore {
     /// such folder row exists — an honest miss, never a fabricated status. Used
     /// by the fail-closed barrier (D6d) to leave a folder with a recorded fatal
     /// failure `failed` rather than advancing it to `indexed`.
-    pub async fn get_folder_status(&self, folder_id: &uuid::Uuid) -> Result<Option<String>, String> {
-        let row: Option<(String,)> = sqlx_core::query_as::query_as(
-            "SELECT status::text FROM sensei.folders WHERE id = $1"
-        ).bind(folder_id).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
+    pub async fn get_folder_status(
+        &self,
+        folder_id: &uuid::Uuid,
+    ) -> Result<Option<String>, String> {
+        let row: Option<(String,)> =
+            sqlx_core::query_as::query_as("SELECT status::text FROM sensei.folders WHERE id = $1")
+                .bind(folder_id)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(|e| e.to_string())?;
         Ok(row.map(|r| r.0))
     }
 
@@ -311,8 +405,14 @@ impl PgStore {
     // ── Nodes ─────────────────────────────────────────────────────────
 
     pub async fn upsert_folder(
-        &self, root_id: &uuid::Uuid, kind: &str, name: &str, path: &str, abs_path: &str,
-        parent_id: Option<&uuid::Uuid>, project_id: Option<&uuid::Uuid>,
+        &self,
+        root_id: &uuid::Uuid,
+        kind: &str,
+        name: &str,
+        path: &str,
+        abs_path: &str,
+        parent_id: Option<&uuid::Uuid>,
+        project_id: Option<&uuid::Uuid>,
     ) -> Result<uuid::Uuid, String> {
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "INSERT INTO sensei.folders(root_id, kind, name, path, abs_path, parent_id, project_id)
@@ -324,7 +424,10 @@ impl PgStore {
         Ok(row.0)
     }
 
-    pub async fn list_folders_by_root(&self, root_id: &uuid::Uuid) -> Result<Vec<serde_json::Value>, String> {
+    pub async fn list_folders_by_root(
+        &self,
+        root_id: &uuid::Uuid,
+    ) -> Result<Vec<serde_json::Value>, String> {
         let rows: Vec<(uuid::Uuid, String, String, String, String, Option<uuid::Uuid>, serde_json::Value, String)> = sqlx_core::query_as::query_as(
             "SELECT id, kind::text, name, path, abs_path, project_id, remote_urls, status::text FROM sensei.folders WHERE root_id = $1 ORDER BY path"
         ).bind(root_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
@@ -336,7 +439,10 @@ impl PgStore {
     pub async fn delete_folder_tree(&self, folder_id: &uuid::Uuid) -> Result<(), String> {
         // CASCADE will handle children via parent_id FK
         sqlx_core::query::query("DELETE FROM sensei.folders WHERE id = $1")
-            .bind(folder_id).execute(&self.pool).await.map_err(|e| e.to_string())?;
+            .bind(folder_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
         Ok(())
     }
 
@@ -435,7 +541,10 @@ impl PgStore {
     /// or `None`. Distinct from [`Self::get_folder_ids_by_path`], which also follows
     /// aliases — the manual `remap` needs to know whether `old` is itself a real
     /// folder row (to re-point) versus already gone (alias-only).
-    pub async fn folder_id_by_abs_path(&self, abs_path: &str) -> Result<Option<uuid::Uuid>, String> {
+    pub async fn folder_id_by_abs_path(
+        &self,
+        abs_path: &str,
+    ) -> Result<Option<uuid::Uuid>, String> {
         let row: Option<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
             "SELECT id FROM sensei.folders WHERE abs_path = $1 LIMIT 1",
         )
@@ -450,7 +559,11 @@ impl PgStore {
     /// producing half of git-remote rename detection, called during scan. Without
     /// this the column stays `'[]'` and [`Self::find_live_root_by_remote`] can never
     /// match, so auto-remap is inert (that was the pre-existing prod state).
-    pub async fn update_folder_remotes(&self, folder_id: &uuid::Uuid, remotes: &serde_json::Value) -> Result<(), String> {
+    pub async fn update_folder_remotes(
+        &self,
+        folder_id: &uuid::Uuid,
+        remotes: &serde_json::Value,
+    ) -> Result<(), String> {
         sqlx_core::query::query("UPDATE sensei.folders SET remote_urls = $2 WHERE id = $1")
             .bind(folder_id)
             .bind(remotes)
@@ -477,8 +590,12 @@ impl PgStore {
         let rows: Vec<(uuid::Uuid, String, Option<String>)> = sqlx_core::query_as::query_as(
             "SELECT id, name, remote_urls->0->>'url' \
                FROM sensei.folders \
-              WHERE root_id = $1 AND kind IN ('git', 'subtree')"
-        ).bind(root_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+              WHERE root_id = $1 AND kind IN ('git', 'subtree')",
+        )
+        .bind(root_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
 
         let mut assigned = 0u64;
         for (folder_id, name, url) in rows {
@@ -493,9 +610,13 @@ impl PgStore {
             // Re-point only when it changes, so a no-op re-run stays cheap.
             let res = sqlx_core::query::query(
                 "UPDATE sensei.folders SET repository_id = $2 \
-                  WHERE id = $1 AND repository_id IS DISTINCT FROM $2"
-            ).bind(folder_id).bind(repo_id.0)
-             .execute(&self.pool).await.map_err(|e| e.to_string())?;
+                  WHERE id = $1 AND repository_id IS DISTINCT FROM $2",
+            )
+            .bind(folder_id)
+            .bind(repo_id.0)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
             assigned += res.rows_affected();
         }
         Ok(assigned)
@@ -507,14 +628,21 @@ impl PgStore {
     /// (killing the multi-repo blind spot). Ordered by folder path so the "primary"
     /// (shallowest) repository is first and iteration is deterministic. Honest-empty
     /// when the project has no repository-linked folder.
-    pub async fn repositories_for_project(&self, project_id: &uuid::Uuid) -> Result<Vec<uuid::Uuid>, String> {
+    pub async fn repositories_for_project(
+        &self,
+        project_id: &uuid::Uuid,
+    ) -> Result<Vec<uuid::Uuid>, String> {
         let rows: Vec<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
             "SELECT f.repository_id \
                FROM sensei.folders f \
               WHERE f.project_id = $1 AND f.repository_id IS NOT NULL \
               GROUP BY f.repository_id \
-              ORDER BY min(length(f.abs_path))"
-        ).bind(project_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+              ORDER BY min(length(f.abs_path))",
+        )
+        .bind(project_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(rows.into_iter().map(|(r,)| r).collect())
     }
 
@@ -523,14 +651,21 @@ impl PgStore {
     /// natural per-repo grain (`knowledge`, `tool`) are attributed here so they fit
     /// the repo-grain identity. `None` when the project has no repository-linked
     /// folder (a repo-less quasi-repo) — those metrics are then honest-empty.
-    pub async fn primary_repository_for_project(&self, project_id: &uuid::Uuid) -> Result<Option<uuid::Uuid>, String> {
+    pub async fn primary_repository_for_project(
+        &self,
+        project_id: &uuid::Uuid,
+    ) -> Result<Option<uuid::Uuid>, String> {
         let row: Option<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
             "SELECT f.repository_id \
                FROM sensei.folders f \
               WHERE f.project_id = $1 AND f.repository_id IS NOT NULL \
               ORDER BY length(f.abs_path) ASC \
-              LIMIT 1"
-        ).bind(project_id).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
+              LIMIT 1",
+        )
+        .bind(project_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(row.map(|(r,)| r))
     }
 
@@ -542,7 +677,10 @@ impl PgStore {
     /// of repositories). Ordered by path length so the primary (shallowest) repository
     /// is first and iteration is deterministic. Honest-empty when the project has no
     /// repository-linked folder — those repositories are then skipped, never faked (I-E).
-    pub async fn repository_roots_for_project(&self, project_id: &uuid::Uuid) -> Result<Vec<(uuid::Uuid, String)>, String> {
+    pub async fn repository_roots_for_project(
+        &self,
+        project_id: &uuid::Uuid,
+    ) -> Result<Vec<(uuid::Uuid, String)>, String> {
         let rows: Vec<(uuid::Uuid, String)> = sqlx_core::query_as::query_as(
             "SELECT roots.repository_id, roots.abs_path FROM ( \
                SELECT DISTINCT ON (f.repository_id) f.repository_id, f.abs_path \
@@ -550,8 +688,12 @@ impl PgStore {
                 WHERE f.project_id = $1 AND f.repository_id IS NOT NULL \
                 ORDER BY f.repository_id, length(f.abs_path) ASC \
              ) roots \
-             ORDER BY length(roots.abs_path) ASC"
-        ).bind(project_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+             ORDER BY length(roots.abs_path) ASC",
+        )
+        .bind(project_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(rows)
     }
 
@@ -564,7 +706,10 @@ impl PgStore {
     /// repository has NO captured AI activity — those metrics are then honest-empty
     /// for it (nothing to measure), unless a pre-AI baseline is opted in. Propagates
     /// the read error; never masks it.
-    pub async fn repo_ai_start(&self, repository_id: &uuid::Uuid) -> Result<Option<chrono::NaiveDate>, String> {
+    pub async fn repo_ai_start(
+        &self,
+        repository_id: &uuid::Uuid,
+    ) -> Result<Option<chrono::NaiveDate>, String> {
         let row: (Option<chrono::NaiveDate>,) = sqlx_core::query_as::query_as(
             "SELECT least( \
                (SELECT min(date_trunc('day', s.started_at)::date) \
@@ -575,8 +720,12 @@ impl PgStore {
                   FROM activity.assistant_events ae \
                   JOIN activity.sessions        s ON s.client_session_id = ae.session_id \
                   JOIN sensei.folders           f ON f.id = s.repo_folder_id \
-                 WHERE f.repository_id = $1))"
-        ).bind(repository_id).fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
+                 WHERE f.repository_id = $1))",
+        )
+        .bind(repository_id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(row.0)
     }
 
@@ -592,23 +741,30 @@ impl PgStore {
     /// otherwise loses every task on restart. Re-enqueuing an already-running
     /// folder is deduped by the single-writer guard (`enqueue_unique`).
     pub async fn list_pending_folders(&self) -> Result<Vec<serde_json::Value>, String> {
-        let rows: Vec<(uuid::Uuid, uuid::Uuid, String, String, String, String)> = sqlx_core::query_as::query_as(
-            "SELECT id, root_id, kind::text, name, abs_path, status::text \
+        let rows: Vec<(uuid::Uuid, uuid::Uuid, String, String, String, String)> =
+            sqlx_core::query_as::query_as(
+                "SELECT id, root_id, kind::text, name, abs_path, status::text \
              FROM sensei.folders \
              WHERE status IN ('discovered'::sensei.folder_status, 'queued'::sensei.folder_status, \
                               'indexing'::sensei.folder_status, 'failed'::sensei.folder_status) \
-             ORDER BY abs_path"
-        ).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
-        Ok(rows.into_iter().map(|(id, root_id, kind, name, abs_path, status)| {
-            serde_json::json!({
-                "id": id,
-                "root_id": root_id,
-                "kind": kind,
-                "name": name,
-                "abs_path": abs_path,
-                "status": status,
+             ORDER BY abs_path",
+            )
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(rows
+            .into_iter()
+            .map(|(id, root_id, kind, name, abs_path, status)| {
+                serde_json::json!({
+                    "id": id,
+                    "root_id": root_id,
+                    "kind": kind,
+                    "name": name,
+                    "abs_path": abs_path,
+                    "status": status,
+                })
             })
-        }).collect())
+            .collect())
     }
 
     /// Count folders belonging to a project that have not yet reached a terminal
@@ -635,7 +791,12 @@ impl PgStore {
 
     // ── Memories ──────────────────────────────────────────────────────
 
-    pub async fn add_watch_root(&self, path: &str, name: &str, excluded: &serde_json::Value) -> Result<uuid::Uuid, String> {
+    pub async fn add_watch_root(
+        &self,
+        path: &str,
+        name: &str,
+        excluded: &serde_json::Value,
+    ) -> Result<uuid::Uuid, String> {
         // On conflict, PRESERVE the existing `excluded` — exclusions are managed
         // by `update_watch_root` (the roots API), and a re-scan passes `[]`, which
         // must never wipe the user's exclusions. `excluded` here is the seed for
@@ -643,9 +804,14 @@ impl PgStore {
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "INSERT INTO sensei.folders_to_watch(path, name, excluded) VALUES($1, $2, $3)
              ON CONFLICT(path) DO UPDATE SET name = EXCLUDED.name, modified_at = now()
-             RETURNING id"
-        ).bind(path).bind(name).bind(excluded)
-            .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
+             RETURNING id",
+        )
+        .bind(path)
+        .bind(name)
+        .bind(excluded)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(row.0)
     }
 
@@ -664,12 +830,19 @@ impl PgStore {
     /// existing top-level root instead of registering a redundant sub-root (watch
     /// roots stay top-level; a change resolves to its repo via
     /// [`Self::repo_root_for_path`]). `None` when `path` is under no watch root.
-    pub async fn enclosing_watch_root(&self, path: &str) -> Result<Option<(uuid::Uuid, String)>, String> {
+    pub async fn enclosing_watch_root(
+        &self,
+        path: &str,
+    ) -> Result<Option<(uuid::Uuid, String)>, String> {
         sqlx_core::query_as::query_as(
             "SELECT id, path FROM sensei.folders_to_watch
               WHERE $1 = path OR $1 LIKE path || '/%'
-              ORDER BY length(path) DESC LIMIT 1"
-        ).bind(path).fetch_optional(&self.pool).await.map_err(|e| e.to_string())
+              ORDER BY length(path) DESC LIMIT 1",
+        )
+        .bind(path)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| e.to_string())
     }
 
     pub async fn update_watch_status(&self, id: &uuid::Uuid, status: &str) -> Result<(), String> {
@@ -694,16 +867,23 @@ impl PgStore {
                 SET name     = COALESCE($2, name),
                     excluded = COALESCE($3, excluded),
                     modified_at = now()
-              WHERE id = $1"
+              WHERE id = $1",
         )
-            .bind(id).bind(name).bind(excluded)
-            .execute(&self.pool).await.map_err(|e| e.to_string())?;
+        .bind(id)
+        .bind(name)
+        .bind(excluded)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(())
     }
 
     pub async fn remove_watch_root(&self, id: &uuid::Uuid) -> Result<(), String> {
         sqlx_core::query::query("DELETE FROM sensei.folders_to_watch WHERE id = $1")
-            .bind(id).execute(&self.pool).await.map_err(|e| e.to_string())?;
+            .bind(id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
         Ok(())
     }
 
@@ -712,7 +892,13 @@ impl PgStore {
     /// Record that a file was indexed at this fingerprint (clears any prior
     /// skip reason — a file that used to be unscannable and now parses is
     /// indexed normally).
-    pub async fn upsert_scan_state(&self, folder_id: &uuid::Uuid, file_path: &str, mtime: i64, content_hash: &str) -> Result<(), String> {
+    pub async fn upsert_scan_state(
+        &self,
+        folder_id: &uuid::Uuid,
+        file_path: &str,
+        mtime: i64,
+        content_hash: &str,
+    ) -> Result<(), String> {
         self.write_scan_state(folder_id, file_path, mtime, content_hash, None).await
     }
 
@@ -756,13 +942,22 @@ impl PgStore {
         Ok(())
     }
 
-    pub async fn get_stale_files(&self, folder_id: &uuid::Uuid, current_files: &[(String, i64)]) -> Result<Vec<String>, String> {
+    pub async fn get_stale_files(
+        &self,
+        folder_id: &uuid::Uuid,
+        current_files: &[(String, i64)],
+    ) -> Result<Vec<String>, String> {
         // Return files where mtime has changed
         let mut stale = Vec::new();
         for (path, mtime) in current_files {
             let row: Option<(i64,)> = sqlx_core::query_as::query_as(
-                "SELECT mtime FROM sensei.scan_state WHERE folder_id = $1 AND file_path = $2"
-            ).bind(folder_id).bind(path).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
+                "SELECT mtime FROM sensei.scan_state WHERE folder_id = $1 AND file_path = $2",
+            )
+            .bind(folder_id)
+            .bind(path)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
             match row {
                 None => stale.push(path.clone()), // new file
                 Some((old_mtime,)) if old_mtime != *mtime => stale.push(path.clone()),
@@ -774,7 +969,10 @@ impl PgStore {
 
     pub async fn delete_scan_state(&self, folder_id: &uuid::Uuid) -> Result<(), String> {
         sqlx_core::query::query("DELETE FROM sensei.scan_state WHERE folder_id = $1")
-            .bind(folder_id).execute(&self.pool).await.map_err(|e| e.to_string())?;
+            .bind(folder_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
         Ok(())
     }
 
@@ -784,26 +982,50 @@ impl PgStore {
     /// memory instead of N per-file queries. The `content_hash` lets a re-scan
     /// short-circuit a *touched-but-identical* file (mtime drifted, bytes same)
     /// without reindexing it. See [`crate::tasks::handlers::scan_logic::plan_reindex`].
-    pub async fn list_scan_state_full(&self, folder_id: &uuid::Uuid) -> Result<Vec<(String, i64, String)>, String> {
+    pub async fn list_scan_state_full(
+        &self,
+        folder_id: &uuid::Uuid,
+    ) -> Result<Vec<(String, i64, String)>, String> {
         let rows: Vec<(String, i64, String)> = sqlx_core::query_as::query_as(
-            "SELECT file_path, mtime, content_hash FROM sensei.scan_state WHERE folder_id = $1"
-        ).bind(folder_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+            "SELECT file_path, mtime, content_hash FROM sensei.scan_state WHERE folder_id = $1",
+        )
+        .bind(folder_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(rows)
     }
 
     /// All scan-state fingerprints for a folder as `(file_path, mtime)`. A thin
     /// projection over [`Self::list_scan_state_full`] for callers that only need
     /// the mtime (removed-file diff, tests).
-    pub async fn list_scan_state(&self, folder_id: &uuid::Uuid) -> Result<Vec<(String, i64)>, String> {
-        Ok(self.list_scan_state_full(folder_id).await?
-            .into_iter().map(|(p, m, _)| (p, m)).collect())
+    pub async fn list_scan_state(
+        &self,
+        folder_id: &uuid::Uuid,
+    ) -> Result<Vec<(String, i64)>, String> {
+        Ok(self
+            .list_scan_state_full(folder_id)
+            .await?
+            .into_iter()
+            .map(|(p, m, _)| (p, m))
+            .collect())
     }
 
     /// Drop a single file's scan-state row (used when a file no longer exists on
     /// disk, e.g. it was deleted or removed by a branch switch).
-    pub async fn delete_scan_state_file(&self, folder_id: &uuid::Uuid, file_path: &str) -> Result<(), String> {
-        sqlx_core::query::query("DELETE FROM sensei.scan_state WHERE folder_id = $1 AND file_path = $2")
-            .bind(folder_id).bind(file_path).execute(&self.pool).await.map_err(|e| e.to_string())?;
+    pub async fn delete_scan_state_file(
+        &self,
+        folder_id: &uuid::Uuid,
+        file_path: &str,
+    ) -> Result<(), String> {
+        sqlx_core::query::query(
+            "DELETE FROM sensei.scan_state WHERE folder_id = $1 AND file_path = $2",
+        )
+        .bind(folder_id)
+        .bind(file_path)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(())
     }
 
@@ -813,7 +1035,8 @@ impl PgStore {
     /// is the path itself or its closest parent. Attributes a hook event (which
     /// carries a `cwd`) to the indexed folder it ran in. `None` when uncovered.
     pub async fn find_folder_for_path(
-        &self, path: &str,
+        &self,
+        path: &str,
     ) -> Result<Option<(uuid::Uuid, Option<uuid::Uuid>)>, String> {
         // Nearest ancestor over current abs_paths AND former paths (aliases), so a
         // hook cwd recorded under an old path (pre-rename) still attributes to the
@@ -829,8 +1052,12 @@ impl PgStore {
              ) c
              WHERE $1 = c.p OR $1 LIKE c.p || '/%'
              ORDER BY length(c.p) DESC, c.live DESC
-             LIMIT 1"
-        ).bind(path).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
+             LIMIT 1",
+        )
+        .bind(path)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(row)
     }
 
@@ -842,15 +1069,20 @@ impl PgStore {
     /// Structural subdirs (workspace_member / folder) are skipped so the one-owner
     /// repo root wins. `None` when the path is under no indexed repo.
     pub async fn repo_root_for_path(
-        &self, path: &str,
+        &self,
+        path: &str,
     ) -> Result<Option<(String, Option<uuid::Uuid>)>, String> {
         let row: Option<(String, Option<uuid::Uuid>)> = sqlx_core::query_as::query_as(
             "SELECT abs_path, project_id FROM sensei.folders
               WHERE kind IN ('git','standalone','subtree')
                 AND ($1 = abs_path OR $1 LIKE abs_path || '/%')
               ORDER BY length(abs_path) DESC
-              LIMIT 1"
-        ).bind(path).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
+              LIMIT 1",
+        )
+        .bind(path)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(row)
     }
 
@@ -860,7 +1092,10 @@ impl PgStore {
     /// — so a transcript recorded under an OLD path (before a rename/move) still
     /// resolves to the current folder + project. A live abs_path match wins over an
     /// alias. None if the path isn't a tracked folder or a known former path.
-    pub async fn get_folder_ids_by_path(&self, abs_path: &str) -> Result<Option<(uuid::Uuid, Option<uuid::Uuid>)>, String> {
+    pub async fn get_folder_ids_by_path(
+        &self,
+        abs_path: &str,
+    ) -> Result<Option<(uuid::Uuid, Option<uuid::Uuid>)>, String> {
         let row: Option<(uuid::Uuid, Option<uuid::Uuid>)> = sqlx_core::query_as::query_as(
             "SELECT f.id, f.project_id FROM sensei.folders f
              WHERE f.abs_path = $1
@@ -979,7 +1214,10 @@ impl PgStore {
     }
 
     /// The project a folder belongs to, or `None` (unattributed folder).
-    pub async fn folder_project_id(&self, folder_id: &uuid::Uuid) -> Result<Option<uuid::Uuid>, String> {
+    pub async fn folder_project_id(
+        &self,
+        folder_id: &uuid::Uuid,
+    ) -> Result<Option<uuid::Uuid>, String> {
         let row: Option<(Option<uuid::Uuid>,)> =
             sqlx_core::query_as::query_as("SELECT project_id FROM sensei.folders WHERE id = $1")
                 .bind(folder_id)
@@ -1008,8 +1246,9 @@ impl PgStore {
     pub async fn scope_folder_ids(&self, ident: &str) -> Result<Vec<uuid::Uuid>, String> {
         // (1) Try project name lookup first.
         if let Some(proj) = self.get_project_by_name(ident).await? {
-            let pid = crate::api::util::json_uuid(&proj["id"])
-                .ok_or_else(|| format!("scope_folder_ids: project row missing id for '{}'", ident))?;
+            let pid = crate::api::util::json_uuid(&proj["id"]).ok_or_else(|| {
+                format!("scope_folder_ids: project row missing id for '{}'", ident)
+            })?;
             return self.folder_ids_for_project(&pid).await;
         }
 
@@ -1022,8 +1261,9 @@ impl PgStore {
 
         // (3) Try folder/repo lookup by name.
         if let Some(folder) = self.get_repo_by_name(ident).await? {
-            let fid = crate::api::util::json_uuid(&folder["id"])
-                .ok_or_else(|| format!("scope_folder_ids: folder row missing id for '{}'", ident))?;
+            let fid = crate::api::util::json_uuid(&folder["id"]).ok_or_else(|| {
+                format!("scope_folder_ids: folder row missing id for '{}'", ident)
+            })?;
             if let Some(pid) = crate::api::util::json_uuid(&folder["project_id"]) {
                 return self.folder_ids_for_project(&pid).await;
             }
@@ -1061,15 +1301,24 @@ impl PgStore {
     /// `/tree` endpoint: `kind`/`role`/`parent_id` drive the folder hierarchy
     /// (repo root → sub-projects/subtrees → subfolders) that the node subtrees
     /// hang off.
-    pub async fn get_folders_scoped(&self, folder_ids: &[uuid::Uuid]) -> Result<Vec<serde_json::Value>, String> {
-        if folder_ids.is_empty() { return Ok(vec![]); }
-        let rows: Vec<(uuid::Uuid, String, Option<String>, String, String, Option<uuid::Uuid>)> = sqlx_core::query_as::query_as(
-            "SELECT id, kind::text, role::text, name, abs_path, parent_id FROM sensei.folders
-              WHERE id = ANY($1) ORDER BY abs_path"
-        ).bind(folder_ids).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+    pub async fn get_folders_scoped(
+        &self,
+        folder_ids: &[uuid::Uuid],
+    ) -> Result<Vec<serde_json::Value>, String> {
+        if folder_ids.is_empty() {
+            return Ok(vec![]);
+        }
+        let rows: Vec<(uuid::Uuid, String, Option<String>, String, String, Option<uuid::Uuid>)> =
+            sqlx_core::query_as::query_as(
+                "SELECT id, kind::text, role::text, name, abs_path, parent_id FROM sensei.folders
+              WHERE id = ANY($1) ORDER BY abs_path",
+            )
+            .bind(folder_ids)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
         Ok(rows.into_iter().map(|(id, kind, role, name, abs_path, parent_id)| {
             serde_json::json!({ "id": id, "kind": kind, "role": role, "name": name, "abs_path": abs_path, "parent_id": parent_id })
         }).collect())
     }
-
 }

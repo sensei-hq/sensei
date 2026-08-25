@@ -124,11 +124,11 @@ impl ScanRuleOverrides {
     pub fn from_config(get: impl Fn(&str) -> Option<String>) -> Self {
         let read = |key: &str| parse_string_array(key, get(key));
         Self {
-            binary_add:     read("scan.binary_exts.add"),
-            binary_remove:  read("scan.binary_exts.remove"),
-            source_add:     read("scan.source_exts.add"),
-            source_remove:  read("scan.source_exts.remove"),
-            exclude_add:    read("scan.exclude_globs.add"),
+            binary_add: read("scan.binary_exts.add"),
+            binary_remove: read("scan.binary_exts.remove"),
+            source_add: read("scan.source_exts.add"),
+            source_remove: read("scan.source_exts.remove"),
+            exclude_add: read("scan.exclude_globs.add"),
             exclude_remove: read("scan.exclude_globs.remove"),
         }
     }
@@ -136,9 +136,12 @@ impl ScanRuleOverrides {
     /// True when no key supplied anything — lets boot log "defaults" rather than
     /// implying an operator customised the lists.
     pub fn is_empty(&self) -> bool {
-        self.binary_add.is_empty() && self.binary_remove.is_empty()
-            && self.source_add.is_empty() && self.source_remove.is_empty()
-            && self.exclude_add.is_empty() && self.exclude_remove.is_empty()
+        self.binary_add.is_empty()
+            && self.binary_remove.is_empty()
+            && self.source_add.is_empty()
+            && self.source_remove.is_empty()
+            && self.exclude_add.is_empty()
+            && self.exclude_remove.is_empty()
     }
 }
 
@@ -147,7 +150,8 @@ impl ScanRules {
         let build_ext_set = |defaults: &[&str], add: &[String], remove: &[String]| {
             let removed: std::collections::HashSet<String> =
                 remove.iter().map(|s| normalise_ext(s)).collect();
-            defaults.iter()
+            defaults
+                .iter()
                 .map(|s| normalise_ext(s))
                 .chain(add.iter().map(|s| normalise_ext(s)))
                 .filter(|e| !e.is_empty() && !removed.contains(e))
@@ -157,14 +161,15 @@ impl ScanRules {
         let removed_globs: std::collections::HashSet<&str> =
             o.exclude_remove.iter().map(|s| s.trim()).collect();
         let mut b = globset::GlobSetBuilder::new();
-        for p in DEFAULT_EXCLUDE_GLOBS.iter().copied()
-            .chain(o.exclude_add.iter().map(|s| s.trim()))
+        for p in DEFAULT_EXCLUDE_GLOBS.iter().copied().chain(o.exclude_add.iter().map(|s| s.trim()))
         {
             if p.is_empty() || removed_globs.contains(p) {
                 continue;
             }
             match globset::Glob::new(p) {
-                Ok(g) => { b.add(g); }
+                Ok(g) => {
+                    b.add(g);
+                }
                 // A typo in one operator-supplied pattern must not take the whole
                 // exclude list (and therefore the scan) down with it.
                 Err(e) => tracing::warn!(pattern = %p, error = %e,
@@ -224,10 +229,10 @@ impl ScanSkipReason {
     pub fn as_db(self) -> &'static str {
         match self {
             Self::UnsupportedFormat => "unsupported_format",
-            Self::BinaryContent     => "binary_content",
-            Self::InvalidUtf8       => "invalid_utf8",
-            Self::ParseError        => "parse_error",
-            Self::ExcludedByConfig  => "excluded_by_config",
+            Self::BinaryContent => "binary_content",
+            Self::InvalidUtf8 => "invalid_utf8",
+            Self::ParseError => "parse_error",
+            Self::ExcludedByConfig => "excluded_by_config",
         }
     }
 
@@ -253,37 +258,125 @@ pub struct DefaultClassifier;
 /// `scan.binary_exts.add` / `scan.binary_exts.remove` — see [`ScanRules`].
 const DEFAULT_BINARY_EXTS: &[&str] = &[
     // images
-    "png", "jpg", "jpeg", "gif", "ico", "svg", "webp", "avif", "bmp",
-    "tiff", "tif", "icns", "heic",
+    "png",
+    "jpg",
+    "jpeg",
+    "gif",
+    "ico",
+    "svg",
+    "webp",
+    "avif",
+    "bmp",
+    "tiff",
+    "tif",
+    "icns",
+    "heic",
     // fonts
-    "woff", "woff2", "ttf", "eot", "otf",
+    "woff",
+    "woff2",
+    "ttf",
+    "eot",
+    "otf",
     // archives
-    "zip", "tar", "gz", "tgz", "bz2", "xz", "7z", "rar", "z",
+    "zip",
+    "tar",
+    "gz",
+    "tgz",
+    "bz2",
+    "xz",
+    "7z",
+    "rar",
+    "z",
     // compiled / binaries
-    "exe", "dll", "so", "dylib", "o", "a", "lib", "class", "jar",
-    "pyc", "pyo", "pdb", "wasm",
+    "exe",
+    "dll",
+    "so",
+    "dylib",
+    "o",
+    "a",
+    "lib",
+    "class",
+    "jar",
+    "pyc",
+    "pyo",
+    "pdb",
+    "wasm",
     // databases / columnar data
-    "db", "sqlite", "sqlite3", "profraw", "parquet", "arrow", "feather",
+    "db",
+    "sqlite",
+    "sqlite3",
+    "profraw",
+    "parquet",
+    "arrow",
+    "feather",
     // office documents
-    "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx",
+    "pdf",
+    "doc",
+    "docx",
+    "xls",
+    "xlsx",
+    "ppt",
+    "pptx",
     // media
-    "mp4", "mov", "avi", "webm", "mkv", "mp3", "wav", "flac", "ogg",
+    "mp4",
+    "mov",
+    "avi",
+    "webm",
+    "mkv",
+    "mp3",
+    "wav",
+    "flac",
+    "ogg",
     // keys / certificates / keystores (opaque; never source)
-    "p12", "pfx", "jks", "keystore", "cer", "crt", "der",
+    "p12",
+    "pfx",
+    "jks",
+    "keystore",
+    "cer",
+    "crt",
+    "der",
     // ebooks
-    "epub", "mobi", "azw3",
+    "epub",
+    "mobi",
+    "azw3",
     // design documents
-    "psd", "ai", "sketch", "xcf",
+    "psd",
+    "ai",
+    "sketch",
+    "xcf",
     // model / array serialisation
-    "npz", "npy", "pkl", "h5", "onnx", "safetensors", "pt", "pth",
+    "npz",
+    "npy",
+    "pkl",
+    "h5",
+    "onnx",
+    "safetensors",
+    "pt",
+    "pth",
     // platform packages / disk images
-    "aar", "apk", "aab", "ipa", "dmg", "deb", "rpm", "iso",
+    "aar",
+    "apk",
+    "aab",
+    "ipa",
+    "dmg",
+    "deb",
+    "rpm",
+    "iso",
     // binary lockfiles + db dumps
-    "lockb", "dump",
+    "lockb",
+    "dump",
     // editor swap files
-    "swp", "swo", "swn",
+    "swp",
+    "swo",
+    "swn",
     // misc binary
-    "bin", "dat", "pack", "idx", "map", "ds_store", "lock",
+    "bin",
+    "dat",
+    "pack",
+    "idx",
+    "map",
+    "ds_store",
+    "lock",
 ];
 
 /// Extra source-language extensions we recognise without a parser adapter.
@@ -291,10 +384,9 @@ const DEFAULT_BINARY_EXTS: &[&str] = &[
 /// Keeping this flat here means new-language coverage in the classifier is
 /// one edit, not a scattered scan of scan_logic.rs.
 const DEFAULT_SOURCE_EXTS: &[&str] = &[
-    "go", "rb", "sh", "bash", "zsh", "fish", "pl", "pm", "php",
-    "lua", "r", "jl", "scala", "ex", "exs", "erl", "hs", "ml",
-    "dart", "cs", "fs", "fsx", "clj", "cljs", "groovy", "m", "mm",
-    "cxx", "hh", "hxx", "swift", "scss", "css", "html",
+    "go", "rb", "sh", "bash", "zsh", "fish", "pl", "pm", "php", "lua", "r", "jl", "scala", "ex",
+    "exs", "erl", "hs", "ml", "dart", "cs", "fs", "fsx", "clj", "cljs", "groovy", "m", "mm", "cxx",
+    "hh", "hxx", "swift", "scss", "css", "html",
 ];
 
 /// Built-in path patterns excluded from DIRECTORY discovery. Operators extend or
@@ -304,12 +396,25 @@ const DEFAULT_SOURCE_EXTS: &[&str] = &[
 /// patterns read as "don't treat a directory of only specs as a project"; test
 /// files themselves are deliberately indexed and flagged via `nodes.is_test`.
 const DEFAULT_EXCLUDE_GLOBS: &[&str] = &[
-    "**/node_modules/**", "**/dist/**", "**/build/**", "**/target/**",
-    "**/.next/**", "**/.svelte-kit/**",
-    "**/__pycache__/**", "**/__MACOSX/**", "**/.venv/**", "**/venv/**",
-    "**/*.spec.ts", "**/*.spec.tsx", "**/*.spec.js",
-    "**/*.test.ts", "**/*.test.tsx", "**/*.test.js",
-    "**/*_test.py", "**/*_test.go", "**/*_test.rs",
+    "**/node_modules/**",
+    "**/dist/**",
+    "**/build/**",
+    "**/target/**",
+    "**/.next/**",
+    "**/.svelte-kit/**",
+    "**/__pycache__/**",
+    "**/__MACOSX/**",
+    "**/.venv/**",
+    "**/venv/**",
+    "**/*.spec.ts",
+    "**/*.spec.tsx",
+    "**/*.spec.js",
+    "**/*.test.ts",
+    "**/*.test.tsx",
+    "**/*.test.js",
+    "**/*_test.py",
+    "**/*_test.go",
+    "**/*_test.rs",
     "**/*.d.ts",
 ];
 
@@ -392,8 +497,14 @@ mod tests {
             ..Default::default()
         });
         assert!(rules.exclude_globs().is_match("pkg/coverage/index.html"), "added glob excludes");
-        assert!(!rules.exclude_globs().is_match("src/types.d.ts"), "removed glob no longer excludes");
-        assert!(rules.exclude_globs().is_match("node_modules/x/y.js"), "other defaults still apply");
+        assert!(
+            !rules.exclude_globs().is_match("src/types.d.ts"),
+            "removed glob no longer excludes"
+        );
+        assert!(
+            rules.exclude_globs().is_match("node_modules/x/y.js"),
+            "other defaults still apply"
+        );
     }
 
     /// One bad operator-supplied pattern must not empty the whole exclude set —
@@ -404,8 +515,10 @@ mod tests {
             exclude_add: vec!["**/{unclosed".into()],
             ..Default::default()
         });
-        assert!(rules.exclude_globs().is_match("node_modules/x/y.js"),
-            "defaults survive an invalid added pattern");
+        assert!(
+            rules.exclude_globs().is_match("node_modules/x/y.js"),
+            "defaults survive an invalid added pattern"
+        );
     }
 
     /// A malformed config value degrades to "no override", never an error that
@@ -425,12 +538,12 @@ mod tests {
     #[test]
     fn overrides_from_config_reads_every_documented_key() {
         let overrides = ScanRuleOverrides::from_config(|k| match k {
-            "scan.binary_exts.add"     => Some(r#"["aa"]"#.into()),
-            "scan.binary_exts.remove"  => Some(r#"["bb"]"#.into()),
-            "scan.source_exts.add"     => Some(r#"["cc"]"#.into()),
-            "scan.source_exts.remove"  => Some(r#"["dd"]"#.into()),
-            "scan.exclude_globs.add"   => Some(r#"["**/ee/**"]"#.into()),
-            "scan.exclude_globs.remove"=> Some(r#"["**/ff/**"]"#.into()),
+            "scan.binary_exts.add" => Some(r#"["aa"]"#.into()),
+            "scan.binary_exts.remove" => Some(r#"["bb"]"#.into()),
+            "scan.source_exts.add" => Some(r#"["cc"]"#.into()),
+            "scan.source_exts.remove" => Some(r#"["dd"]"#.into()),
+            "scan.exclude_globs.add" => Some(r#"["**/ee/**"]"#.into()),
+            "scan.exclude_globs.remove" => Some(r#"["**/ff/**"]"#.into()),
             _ => None,
         });
         assert_eq!(overrides.binary_add, ["aa"]);
@@ -487,12 +600,21 @@ mod tests {
     fn is_binary_covers_observed_reindex_loop_offenders() {
         let c = file_classifier();
         for ext in [
-            "p12", "pfx", "jks", "keystore",
-            "epub", "mobi",
+            "p12",
+            "pfx",
+            "jks",
+            "keystore",
+            "epub",
+            "mobi",
             "psd",
-            "npz", "npy", "safetensors",
-            "aar", "apk", "dmg",
-            "lockb", "dump",
+            "npz",
+            "npy",
+            "safetensors",
+            "aar",
+            "apk",
+            "dmg",
+            "lockb",
+            "dump",
             "swp",
         ] {
             assert!(c.is_binary(ext), "{ext} must be classified binary");

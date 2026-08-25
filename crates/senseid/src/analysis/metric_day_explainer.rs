@@ -87,7 +87,9 @@ impl MetricDayFacts {
         let mut line = format!("value {}", fmt_num(self.value));
         match self.delta {
             Some(d) if d > 0.0 => line.push_str(&format!(", up {} from the prior day", fmt_num(d))),
-            Some(d) if d < 0.0 => line.push_str(&format!(", down {} from the prior day", fmt_num(-d))),
+            Some(d) if d < 0.0 => {
+                line.push_str(&format!(", down {} from the prior day", fmt_num(-d)))
+            }
             Some(_) => line.push_str(", unchanged from the prior day"),
             None => {}
         }
@@ -123,13 +125,21 @@ pub async fn explain(
     facts: &MetricDayFacts,
 ) -> String {
     let facts_json = facts.to_facts_json();
-    if let Some(copy) = insight_copy::read_cached_copy(store, InsightKind::MetricDayExplainer, &facts_json).await {
+    if let Some(copy) =
+        insight_copy::read_cached_copy(store, InsightKind::MetricDayExplainer, &facts_json).await
+    {
         return copy.detail;
     }
     // Miss → generate inline (off-wire, at compute time). A down/stub model
     // returns None fast; we then fall back to the deterministic line.
-    if let Some(copy) =
-        insight_copy::generate_and_cache(store, gateway, InsightKind::MetricDayExplainer, &facts_json, CopyLimits::default()).await
+    if let Some(copy) = insight_copy::generate_and_cache(
+        store,
+        gateway,
+        InsightKind::MetricDayExplainer,
+        &facts_json,
+        CopyLimits::default(),
+    )
+    .await
     {
         return copy.detail;
     }
@@ -195,9 +205,15 @@ mod tests {
     #[test]
     fn fallback_names_the_value_and_direction() {
         // Up from the prior day.
-        assert_eq!(facts(0.75, Some(0.5)).fallback_detail(), "value 0.75, up 0.25 from the prior day");
+        assert_eq!(
+            facts(0.75, Some(0.5)).fallback_detail(),
+            "value 0.75, up 0.25 from the prior day"
+        );
         // Down from the prior day (the delta sign is honoured, magnitude is positive).
-        assert_eq!(facts(0.5, Some(0.75)).fallback_detail(), "value 0.5, down 0.25 from the prior day");
+        assert_eq!(
+            facts(0.5, Some(0.75)).fallback_detail(),
+            "value 0.5, down 0.25 from the prior day"
+        );
     }
 
     #[test]
@@ -209,7 +225,10 @@ mod tests {
     #[test]
     fn fallback_handles_unchanged_value_and_integers() {
         // Delta of exactly 0 reads as unchanged (never "up 0"/"down 0").
-        assert_eq!(facts(0.75, Some(0.75)).fallback_detail(), "value 0.75, unchanged from the prior day");
+        assert_eq!(
+            facts(0.75, Some(0.75)).fallback_detail(),
+            "value 0.75, unchanged from the prior day"
+        );
         // Integral values (counts, whole-second durations) drop the fractional part.
         assert_eq!(facts(4.0, Some(2.0)).fallback_detail(), "value 4, up 2 from the prior day");
         assert_eq!(facts(20.0, None).fallback_detail(), "value 20");

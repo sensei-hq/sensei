@@ -15,8 +15,8 @@
 //! tick) — never a fabricated judgment. Runs downstream of ingest, on the daily
 //! full-refresh window; never inline with capture.
 
-use crate::tasks::executor::TaskContext;
 use crate::tasks::Task;
+use crate::tasks::executor::TaskContext;
 use crate::transcript::TranscriptTurn;
 
 /// Sessions scored per project per tick — the batch cap so one project can't
@@ -162,8 +162,13 @@ pub(crate) fn parse_and_ground(
         if let Some(items) = obj.and_then(|o| o.get("evidence")).and_then(|e| e.as_array()) {
             for it in items {
                 let turn = it.get("turn").and_then(|t| t.as_i64()).map(|t| t as i32);
-                let quote = it.get("quote").and_then(|q| q.as_str()).unwrap_or("").trim().to_string();
-                let kind = it.get("kind").and_then(|k| k.as_str()).map(|k| k.trim().to_string()).filter(|k| !k.is_empty());
+                let quote =
+                    it.get("quote").and_then(|q| q.as_str()).unwrap_or("").trim().to_string();
+                let kind = it
+                    .get("kind")
+                    .and_then(|k| k.as_str())
+                    .map(|k| k.trim().to_string())
+                    .filter(|k| !k.is_empty());
                 if let Some(turn) = turn
                     && valid_turns.contains(&turn)
                     && !quote.is_empty()
@@ -185,19 +190,26 @@ pub(crate) fn parse_and_ground(
     {
         let obj = root.get("spec_depth");
         let note = note_of(obj);
-        let score = obj.and_then(|o| o.get("score")).and_then(|s| s.as_f64()).filter(|n| (0.0..=5.0).contains(n));
+        let score = obj
+            .and_then(|o| o.get("score"))
+            .and_then(|s| s.as_f64())
+            .filter(|n| (0.0..=5.0).contains(n));
         let ev = grounded(obj);
         if let Some(score) = score
             && !ev.is_empty()
         {
             scored_any = true;
-            judgments.insert("spec_depth".into(), serde_json::json!({ "score": score, "evidence": ev_json(&ev), "note": note }));
+            judgments.insert(
+                "spec_depth".into(),
+                serde_json::json!({ "score": score, "evidence": ev_json(&ev), "note": note }),
+            );
             for (t, q, k) in ev {
                 evidence.push(("spec_depth".into(), t, q, k));
             }
         } else {
             // No plan / ungrounded score → N/A (never a fabricated magnitude).
-            judgments.insert("spec_depth".into(), serde_json::json!({ "score": null, "note": note }));
+            judgments
+                .insert("spec_depth".into(), serde_json::json!({ "score": null, "note": note }));
         }
     }
 
@@ -219,20 +231,20 @@ pub(crate) fn parse_and_ground(
         // an ungrounded "true" is coerced to false, not counted.
         if claimed && !ev.is_empty() {
             scored_any = true;
-            judgments.insert(sig.to_string(), serde_json::json!({ "present": true, "evidence": ev_json(&ev), "note": note }));
+            judgments.insert(
+                sig.to_string(),
+                serde_json::json!({ "present": true, "evidence": ev_json(&ev), "note": note }),
+            );
             for (t, q, k) in ev {
                 evidence.push((sig.to_string(), t, q, k));
             }
         } else {
-            judgments.insert(sig.to_string(), serde_json::json!({ "present": false, "note": note }));
+            judgments
+                .insert(sig.to_string(), serde_json::json!({ "present": false, "note": note }));
         }
     }
 
-    Some(SessionJudgment {
-        judgments: serde_json::Value::Object(judgments),
-        evidence,
-        scored_any,
-    })
+    Some(SessionJudgment { judgments: serde_json::Value::Object(judgments), evidence, scored_any })
 }
 
 /// The all-N/A result stored for a session with too little to judge (below
@@ -241,9 +253,15 @@ pub(crate) fn parse_and_ground(
 /// clean `false` — there was nothing to judge either way).
 fn all_na() -> serde_json::Value {
     let mut m = serde_json::Map::new();
-    m.insert("spec_depth".into(), serde_json::json!({ "score": null, "note": "insufficient transcript" }));
+    m.insert(
+        "spec_depth".into(),
+        serde_json::json!({ "score": null, "note": "insufficient transcript" }),
+    );
     for &sig in OCCURRENCE_SIGNALS.iter() {
-        m.insert(sig.to_string(), serde_json::json!({ "present": null, "note": "insufficient transcript" }));
+        m.insert(
+            sig.to_string(),
+            serde_json::json!({ "present": null, "note": "insufficient transcript" }),
+        );
     }
     serde_json::Value::Object(m)
 }
@@ -279,7 +297,8 @@ pub async fn analyze_session_process(ctx: &TaskContext, task: &Task) -> Result<u
             continue;
         }
 
-        let valid_turns: std::collections::HashSet<i32> = turns.iter().map(|t| t.turn_index).collect();
+        let valid_turns: std::collections::HashSet<i32> =
+            turns.iter().map(|t| t.turn_index).collect();
         let user = build_transcript_prompt(&turns);
 
         use gateway::types::capability::Capability;
@@ -316,8 +335,13 @@ pub async fn analyze_session_process(ctx: &TaskContext, task: &Task) -> Result<u
             tracing::warn!(session = %client_session_id, "session_process: output did not parse — leaving unscored (retry next tick)");
             continue;
         };
-        pg.save_session_process(&session_id, &client_session_id, &result.judgments, &result.evidence)
-            .await?;
+        pg.save_session_process(
+            &session_id,
+            &client_session_id,
+            &result.judgments,
+            &result.evidence,
+        )
+        .await?;
         scored += 1;
         tracing::debug!(session = %client_session_id, scored_any = result.scored_any, evidence = result.evidence.len(), "session_process: scored");
     }
@@ -351,7 +375,10 @@ mod tests {
 
         let long: Vec<TranscriptTurn> = (1..=100).map(|i| turn(i, Some("u"), "a")).collect();
         let pl = build_transcript_prompt(&long);
-        assert!(pl.contains("middle turns elided"), "long transcript elides the middle, not silently");
+        assert!(
+            pl.contains("middle turns elided"),
+            "long transcript elides the middle, not silently"
+        );
         assert!(pl.contains("[turn 1] "), "keeps the head");
         assert!(pl.contains("[turn 100] "), "keeps the tail");
     }
@@ -364,8 +391,14 @@ mod tests {
         let big = "x".repeat(5_000);
         let turns: Vec<TranscriptTurn> = (1..=30).map(|i| turn(i, Some(&big), &big)).collect();
         let p = build_transcript_prompt(&turns);
-        assert!(p.chars().count() <= super::MAX_PROMPT_CHARS + 200, "prompt hard-capped near the ceiling");
-        assert!(p.contains("truncated to fit the model context"), "truncation is marked, not silent");
+        assert!(
+            p.chars().count() <= super::MAX_PROMPT_CHARS + 200,
+            "prompt hard-capped near the ceiling"
+        );
+        assert!(
+            p.contains("truncated to fit the model context"),
+            "truncation is marked, not silent"
+        );
         assert!(p.contains("[turn 1] "), "head (plan) preserved over the tail");
     }
 
@@ -385,12 +418,23 @@ mod tests {
         // spec_deviation: honest null (no plan).
         assert!(r.judgments["spec_deviation"]["present"].is_null());
         // refuted_findings: present=true but evidence cites turn 99 (not real) → coerced to false (D5).
-        assert_eq!(r.judgments["refuted_findings"]["present"].as_bool(), Some(false), "ungrounded present=true coerced to false");
+        assert_eq!(
+            r.judgments["refuted_findings"]["present"].as_bool(),
+            Some(false),
+            "ungrounded present=true coerced to false"
+        );
         // incomplete_analysis_llm: present=true with NO evidence → coerced to false (D5).
-        assert_eq!(r.judgments["incomplete_analysis_llm"]["present"].as_bool(), Some(false), "present=true with no evidence coerced to false");
+        assert_eq!(
+            r.judgments["incomplete_analysis_llm"]["present"].as_bool(),
+            Some(false),
+            "present=true with no evidence coerced to false"
+        );
         // Only the one grounded evidence row (spec_depth's plan) is persisted.
         assert_eq!(r.evidence.len(), 1);
-        assert_eq!(r.evidence[0], ("spec_depth".to_string(), 1, "the plan is X".to_string(), Some("plan".to_string())));
+        assert_eq!(
+            r.evidence[0],
+            ("spec_depth".to_string(), 1, "the plan is X".to_string(), Some("plan".to_string()))
+        );
     }
 
     #[test]
@@ -405,12 +449,22 @@ mod tests {
         let r = parse_and_ground(out, &valid).expect("parses");
         assert!(r.scored_any);
         assert_eq!(r.judgments["spec_depth"]["score"].as_f64(), Some(3.0));
-        assert_eq!(r.judgments["spec_deviation"]["present"].as_bool(), Some(true), "grounded deviation flagged");
-        assert_eq!(r.judgments["refuted_findings"]["present"].as_bool(), Some(false), "clean = false (no evidence needed)");
+        assert_eq!(
+            r.judgments["spec_deviation"]["present"].as_bool(),
+            Some(true),
+            "grounded deviation flagged"
+        );
+        assert_eq!(
+            r.judgments["refuted_findings"]["present"].as_bool(),
+            Some(false),
+            "clean = false (no evidence needed)"
+        );
         assert_eq!(r.judgments["incomplete_analysis_llm"]["present"].as_bool(), Some(true));
         // Evidence rows: 1 (depth plan) + 2 (deviation pair) + 1 (incomplete) = 4.
         assert_eq!(r.evidence.len(), 4);
-        assert!(r.evidence.iter().any(|(s, t, _, k)| s == "spec_deviation" && *t == 4 && k.as_deref() == Some("action")));
+        assert!(r.evidence.iter().any(|(s, t, _, k)| s == "spec_deviation"
+            && *t == 4
+            && k.as_deref() == Some("action")));
     }
 
     #[test]

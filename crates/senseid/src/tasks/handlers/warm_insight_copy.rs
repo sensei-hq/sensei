@@ -9,9 +9,9 @@
 //! The recommendation is the primary, most-visible source; memories / patterns /
 //! corrections warm lazily via `copy_or_warm` as before.
 
-use super::super::executor::TaskContext;
 use super::super::Task;
-use crate::analysis::insight_copy::{generate_and_cache, read_cached_copy, CopyLimits};
+use super::super::executor::TaskContext;
+use crate::analysis::insight_copy::{CopyLimits, generate_and_cache, read_cached_copy};
 
 /// Model calls warmed per tick — bounds the (blocking, sometimes cold) embedded
 /// model work under the task watchdog; the next tick warms more, and cached recs
@@ -33,10 +33,17 @@ pub async fn warm_insight_copy(ctx: &TaskContext, _task: &Task) -> Result<u32, S
         }
         attempts += 1;
         // Off-wire, breaker-guarded: a down model returns None fast (no stall).
-        if generate_and_cache(ctx.pg(), gateway, kind, &facts, CopyLimits::default()).await.is_some() {
+        if generate_and_cache(ctx.pg(), gateway, kind, &facts, CopyLimits::default())
+            .await
+            .is_some()
+        {
             warmed += 1;
         }
     }
-    tracing::info!(warmed, pending = recs.len(), "warm_insight_copy: eager mentor-copy warm for pending recs");
+    tracing::info!(
+        warmed,
+        pending = recs.len(),
+        "warm_insight_copy: eager mentor-copy warm for pending recs"
+    );
     Ok(warmed)
 }

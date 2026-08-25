@@ -4,7 +4,10 @@
 //! spans one genuine human prompt to the next, and the assistant prose is the
 //! `text` content blocks (tool_use / thinking excluded).
 
-use super::{ParsedTranscript, SessionTokens, SynthEvent, SynthSession, TranscriptAdapter, TranscriptTurn, TurnFacts, UnitRef};
+use super::{
+    ParsedTranscript, SessionTokens, SynthEvent, SynthSession, TranscriptAdapter, TranscriptTurn,
+    TurnFacts, UnitRef,
+};
 use std::path::{Path, PathBuf};
 
 /// Cap stored assistant prose per turn (safety net for pathological turns).
@@ -97,7 +100,11 @@ impl TranscriptAdapter for ClaudeAdapter {
         let path = Path::new(key);
         let size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
         if size > MAX_TRANSCRIPT_BYTES {
-            tracing::warn!(file = key, size_mb = size / 1_048_576, "transcript ingest: skipping oversized transcript");
+            tracing::warn!(
+                file = key,
+                size_mb = size / 1_048_576,
+                "transcript ingest: skipping oversized transcript"
+            );
             return None;
         }
         std::fs::read_to_string(path)
@@ -137,7 +144,8 @@ pub fn claude_tokens(content: &str) -> Option<SessionTokens> {
             continue;
         };
         let g = |k: &str| u.get(k).and_then(|x| x.as_i64()).unwrap_or(0);
-        let line_in = g("input_tokens") + g("cache_creation_input_tokens") + g("cache_read_input_tokens");
+        let line_in =
+            g("input_tokens") + g("cache_creation_input_tokens") + g("cache_read_input_tokens");
         let line_out = g("output_tokens");
         if line_in > 0 || line_out > 0 {
             seen = true;
@@ -152,8 +160,8 @@ pub fn claude_tokens(content: &str) -> Option<SessionTokens> {
         output: tout,
         cache_read: Some(cr),
         cache_write: Some(cw),
-        reasoning: None,   // Claude does not separate reasoning tokens
-        cost: None,        // no metered cost in the transcript
+        reasoning: None, // Claude does not separate reasoning tokens
+        cost: None,      // no metered cost in the transcript
     })
 }
 
@@ -172,7 +180,8 @@ pub fn claude_model(content: &str) -> Option<String> {
             continue;
         };
         if v.get("type").and_then(|t| t.as_str()) == Some("assistant")
-            && let Some(model) = v.get("message").and_then(|m| m.get("model")).and_then(|m| m.as_str())
+            && let Some(model) =
+                v.get("message").and_then(|m| m.get("model")).and_then(|m| m.as_str())
             && !model.is_empty()
             && model != "<synthetic>"
         {
@@ -233,7 +242,8 @@ pub fn parse_claude_session(content: &str) -> Option<SynthSession> {
                 {
                     for b in blocks {
                         if b.get("type").and_then(|t| t.as_str()) == Some("tool_use") {
-                            let tool_name = b.get("name").and_then(|n| n.as_str()).map(str::to_string);
+                            let tool_name =
+                                b.get("name").and_then(|n| n.as_str()).map(str::to_string);
                             // The full tool_use input — the enrich worker derives
                             // call_info/plugin/method from it (bash command, skill/agent
                             // params, …), same as a live-captured event.
@@ -290,20 +300,34 @@ fn merge_facts(facts: &mut TurnFacts, v: &serde_json::Value) {
         x.and_then(|t| t.as_str()).filter(|t| !t.is_empty()).map(str::to_string)
     };
     // Top-level record attributes.
-    if facts.git_branch.is_none() { facts.git_branch = str_of(v.get("gitBranch")); }
-    if facts.effort.is_none() { facts.effort = str_of(v.get("effort")); }
-    if facts.skill.is_none() { facts.skill = str_of(v.get("attributionSkill")); }
-    if facts.plugin.is_none() { facts.plugin = str_of(v.get("attributionPlugin")); }
+    if facts.git_branch.is_none() {
+        facts.git_branch = str_of(v.get("gitBranch"));
+    }
+    if facts.effort.is_none() {
+        facts.effort = str_of(v.get("effort"));
+    }
+    if facts.skill.is_none() {
+        facts.skill = str_of(v.get("attributionSkill"));
+    }
+    if facts.plugin.is_none() {
+        facts.plugin = str_of(v.get("attributionPlugin"));
+    }
     if facts.is_sidechain.is_none() {
         facts.is_sidechain = v.get("isSidechain").and_then(|b| b.as_bool());
     }
     let Some(m) = v.get("message") else { return };
-    if facts.stop_reason.is_none() { facts.stop_reason = str_of(m.get("stop_reason")); }
+    if facts.stop_reason.is_none() {
+        facts.stop_reason = str_of(m.get("stop_reason"));
+    }
     let Some(u) = m.get("usage") else { return };
-    if facts.service_tier.is_none() { facts.service_tier = str_of(u.get("service_tier")); }
+    if facts.service_tier.is_none() {
+        facts.service_tier = str_of(u.get("service_tier"));
+    }
     // Summed across the turn's assistant records: one turn issues several.
     let add = |slot: &mut Option<i64>, n: Option<i64>| {
-        if let Some(n) = n { *slot = Some(slot.unwrap_or(0) + n); }
+        if let Some(n) = n {
+            *slot = Some(slot.unwrap_or(0) + n);
+        }
     };
     add(&mut facts.tokens_in, u.get("input_tokens").and_then(|x| x.as_i64()));
     add(&mut facts.tokens_out, u.get("output_tokens").and_then(|x| x.as_i64()));
@@ -384,8 +408,11 @@ pub fn parse_claude_transcript(content: &str) -> Vec<TranscriptTurn> {
                     // A turn spans several assistant records — tokens sum, and the
                     // LAST stop_reason is the one that ended it.
                     merge_facts(&mut t.facts, &v);
-                    if let Some(sr) = v.get("message").and_then(|m| m.get("stop_reason"))
-                        .and_then(|x| x.as_str()).filter(|x| !x.is_empty())
+                    if let Some(sr) = v
+                        .get("message")
+                        .and_then(|m| m.get("stop_reason"))
+                        .and_then(|x| x.as_str())
+                        .filter(|x| !x.is_empty())
                     {
                         t.facts.stop_reason = Some(sr.to_string());
                     }
@@ -428,9 +455,7 @@ fn human_prompt_text(v: &serde_json::Value) -> Option<String> {
         serde_json::Value::String(s) => s.clone(),
         serde_json::Value::Array(blocks) => {
             // a tool_result message is not a human prompt
-            if blocks
-                .iter()
-                .any(|b| b.get("type").and_then(|t| t.as_str()) == Some("tool_result"))
+            if blocks.iter().any(|b| b.get("type").and_then(|t| t.as_str()) == Some("tool_result"))
             {
                 return None;
             }
@@ -486,9 +511,7 @@ fn is_injected_noise(text: &str) -> bool {
 
 fn parse_ts(v: &serde_json::Value) -> Option<chrono::DateTime<chrono::Utc>> {
     let ts = v.get("timestamp").and_then(|t| t.as_str())?;
-    chrono::DateTime::parse_from_rfc3339(ts)
-        .ok()
-        .map(|d| d.with_timezone(&chrono::Utc))
+    chrono::DateTime::parse_from_rfc3339(ts).ok().map(|d| d.with_timezone(&chrono::Utc))
 }
 
 #[cfg(test)]
@@ -503,17 +526,24 @@ mod tests {
         let c = concat!(
             r#"{"type":"user","cwd":"/r","gitBranch":"develop","effort":"xhigh","isSidechain":false,"#,
             r#""attributionSkill":"superpowers:brainstorming","attributionPlugin":"superpowers","#,
-            r#""timestamp":"2026-06-20T10:00:00.000Z","message":{"role":"user","content":"go"}}"#, "\n",
+            r#""timestamp":"2026-06-20T10:00:00.000Z","message":{"role":"user","content":"go"}}"#,
+            "\n",
             r#"{"type":"assistant","cwd":"/r","message":{"role":"assistant","model":"claude-opus-4-8","stop_reason":"tool_use","#,
             r#""usage":{"input_tokens":10,"cache_creation_input_tokens":100,"cache_read_input_tokens":900,"output_tokens":20,"service_tier":"standard"}},"#,
-            r#""content":[{"type":"text","text":"ok"}]}"#, "\n",
+            r#""content":[{"type":"text","text":"ok"}]}"#,
+            "\n",
             r#"{"type":"assistant","cwd":"/r","message":{"role":"assistant","model":"claude-opus-4-8","stop_reason":"end_turn","#,
-            r#""usage":{"input_tokens":5,"cache_read_input_tokens":50,"output_tokens":8}},"content":[{"type":"text","text":"done"}]}"#, "\n",
+            r#""usage":{"input_tokens":5,"cache_read_input_tokens":50,"output_tokens":8}},"content":[{"type":"text","text":"done"}]}"#,
+            "\n",
         );
         let turns = parse_claude_transcript(c);
         assert_eq!(turns.len(), 1, "one user prompt = one turn");
         let f = &turns[0].facts;
-        assert_eq!(f.tokens_in, Some(15), "fresh input only, summed over the turn's records (10+5)");
+        assert_eq!(
+            f.tokens_in,
+            Some(15),
+            "fresh input only, summed over the turn's records (10+5)"
+        );
         assert_eq!(f.cache_read, Some(950), "cache reads kept SEPARATE (900+50)");
         assert_eq!(f.cache_write, Some(100));
         assert_eq!(f.tokens_out, Some(28));
@@ -528,8 +558,10 @@ mod tests {
         // Unpromoted attributes survive verbatim rather than being dropped…
         assert_eq!(turns[0].attrs["cwd"], "/r");
         // …but the bulky prose does not (it is already in assistant_text).
-        assert!(turns[0].attrs.get("message").and_then(|m| m.get("content")).is_none(),
-            "message.content is not duplicated into attrs");
+        assert!(
+            turns[0].attrs.get("message").and_then(|m| m.get("content")).is_none(),
+            "message.content is not duplicated into attrs"
+        );
     }
 
     #[test]
@@ -537,8 +569,10 @@ mod tests {
         // Honest-empty: a transcript with no usage/attribution must not record
         // fabricated zeros that a consumer can't tell from a real reading.
         let c = concat!(
-            r#"{"type":"user","message":{"role":"user","content":"hi"}}"#, "\n",
-            r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"yo"}]}}"#, "\n",
+            r#"{"type":"user","message":{"role":"user","content":"hi"}}"#,
+            "\n",
+            r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"yo"}]}}"#,
+            "\n",
         );
         let turns = parse_claude_transcript(c);
         assert_eq!(turns.len(), 1);
@@ -569,7 +603,11 @@ mod tests {
     #[test]
     fn splits_on_genuine_prompts_only() {
         let turns = parse_claude_transcript(SAMPLE);
-        assert_eq!(turns.len(), 2, "two human prompts ⇒ two turns (tool_result/meta/notification ignored)");
+        assert_eq!(
+            turns.len(),
+            2,
+            "two human prompts ⇒ two turns (tool_result/meta/notification ignored)"
+        );
         assert_eq!(turns[0].turn_index, 1);
         assert_eq!(turns[0].user_text.as_deref(), Some("add a login page"));
         // assistant text accumulates across messages within the turn; tool_use
@@ -583,19 +621,19 @@ mod tests {
     #[test]
     fn parses_started_at_from_prompt_timestamp() {
         let turns = parse_claude_transcript(SAMPLE);
-        assert_eq!(
-            turns[0].started_at.unwrap().to_rfc3339(),
-            "2026-06-22T10:00:00+00:00"
-        );
+        assert_eq!(turns[0].started_at.unwrap().to_rfc3339(), "2026-06-22T10:00:00+00:00");
     }
 
     #[test]
     fn human_prompt_text_rejects_tool_results_meta_and_noise() {
-        let tool_result = serde_json::json!({"message":{"content":[{"type":"tool_result","content":"x"}]}});
+        let tool_result =
+            serde_json::json!({"message":{"content":[{"type":"tool_result","content":"x"}]}});
         assert!(human_prompt_text(&tool_result).is_none());
-        let meta = serde_json::json!({"isMeta":true,"message":{"content":[{"type":"text","text":"hi"}]}});
+        let meta =
+            serde_json::json!({"isMeta":true,"message":{"content":[{"type":"text","text":"hi"}]}});
         assert!(human_prompt_text(&meta).is_none());
-        let noise = serde_json::json!({"message":{"content":"<system-reminder>stuff</system-reminder>"}});
+        let noise =
+            serde_json::json!({"message":{"content":"<system-reminder>stuff</system-reminder>"}});
         assert!(human_prompt_text(&noise).is_none());
         let real = serde_json::json!({"message":{"content":"fix the bug"}});
         assert_eq!(human_prompt_text(&real).as_deref(), Some("fix the bug"));
@@ -603,7 +641,9 @@ mod tests {
 
     #[test]
     fn ignores_malformed_lines_and_empty() {
-        let turns = parse_claude_transcript("not json\n\n{\"type\":\"user\",\"message\":{\"content\":\"hello\"}}\n");
+        let turns = parse_claude_transcript(
+            "not json\n\n{\"type\":\"user\",\"message\":{\"content\":\"hello\"}}\n",
+        );
         assert_eq!(turns.len(), 1);
         assert_eq!(turns[0].user_text.as_deref(), Some("hello"));
     }
@@ -620,8 +660,10 @@ mod tests {
         // (turns + cwds + events + model + tokens) that persistence consumes — verified
         // here without a DB, so a format change is caught at the seam.
         let content = concat!(
-            r#"{"type":"user","cwd":"/repo","timestamp":"2026-06-22T10:00:00.000Z","message":{"role":"user","content":"fix the parser"}}"#, "\n",
-            r#"{"type":"assistant","cwd":"/repo","timestamp":"2026-06-22T10:00:02.000Z","message":{"role":"assistant","model":"claude-opus-4-8","usage":{"input_tokens":10,"cache_read_input_tokens":90,"output_tokens":20},"content":[{"type":"text","text":"On it."},{"type":"tool_use","name":"Edit","input":{"file_path":"/repo/src/x.rs"}}]}}"#, "\n",
+            r#"{"type":"user","cwd":"/repo","timestamp":"2026-06-22T10:00:00.000Z","message":{"role":"user","content":"fix the parser"}}"#,
+            "\n",
+            r#"{"type":"assistant","cwd":"/repo","timestamp":"2026-06-22T10:00:02.000Z","message":{"role":"assistant","model":"claude-opus-4-8","usage":{"input_tokens":10,"cache_read_input_tokens":90,"output_tokens":20},"content":[{"type":"text","text":"On it."},{"type":"tool_use","name":"Edit","input":{"file_path":"/repo/src/x.rs"}}]}}"#,
+            "\n",
         );
         let p = ClaudeAdapter::new(std::path::PathBuf::from("/tmp")).parse(content);
         assert_eq!(p.turns.len(), 1, "one user-bounded turn");
@@ -640,14 +682,30 @@ mod tests {
     #[test]
     fn parse_session_reconstructs_events() {
         let s = parse_claude_session(SESS).unwrap();
-        assert_eq!(s.cwds, vec!["/repo".to_string()], "collects distinct cwd for project resolution");
+        assert_eq!(
+            s.cwds,
+            vec!["/repo".to_string()],
+            "collects distinct cwd for project resolution"
+        );
         let kinds: Vec<&str> = s.events.iter().map(|e| e.event_type.as_str()).collect();
-        assert_eq!(kinds, vec!["UserPromptSubmit", "PostToolUse", "PostToolUse", "Stop"], "prompts + tool_uses + synthetic Stop");
+        assert_eq!(
+            kinds,
+            vec!["UserPromptSubmit", "PostToolUse", "PostToolUse", "Stop"],
+            "prompts + tool_uses + synthetic Stop"
+        );
         assert_eq!(s.events[0].prompt.as_deref(), Some("fix the parser"));
         let edit = s.events.iter().find(|e| e.tool_name.as_deref() == Some("Edit")).unwrap();
-        assert_eq!(edit.file_path.as_deref(), Some("/repo/src/x.rs"), "Edit carries file_path (the churn signal)");
+        assert_eq!(
+            edit.file_path.as_deref(),
+            Some("/repo/src/x.rs"),
+            "Edit carries file_path (the churn signal)"
+        );
         let stop = s.events.last().unwrap();
-        assert_eq!(stop.ts, s.events.iter().map(|e| e.ts).max().unwrap(), "Stop at the last timestamp");
+        assert_eq!(
+            stop.ts,
+            s.events.iter().map(|e| e.ts).max().unwrap(),
+            "Stop at the last timestamp"
+        );
     }
 
     #[test]
@@ -665,7 +723,11 @@ mod tests {
 {"type":"assistant","message":{"model":"claude-sonnet-4-6","content":[{"type":"text","text":"c"}]}}
 "#;
         assert_eq!(claude_model(t).as_deref(), Some("claude-opus-4-8"), "most frequent model wins");
-        assert_eq!(claude_model("{\"type\":\"user\",\"message\":{\"content\":\"hi\"}}").as_deref(), None, "no model ⇒ None");
+        assert_eq!(
+            claude_model("{\"type\":\"user\",\"message\":{\"content\":\"hi\"}}").as_deref(),
+            None,
+            "no model ⇒ None"
+        );
     }
 
     #[test]

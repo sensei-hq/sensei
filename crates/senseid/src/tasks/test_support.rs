@@ -75,7 +75,10 @@ pub(crate) async fn make_ctx() -> Arc<crate::tasks::executor::TaskContext> {
         task_queue: queue.clone(),
         pg: crate::db::pg_store::PgStore::connect_test().await.unwrap(),
         gateway,
-        event_tx: { let (tx, _) = tokio::sync::broadcast::channel(16); tx },
+        event_tx: {
+            let (tx, _) = tokio::sync::broadcast::channel(16);
+            tx
+        },
         breaker: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
         provisioning: None,
     });
@@ -115,10 +118,7 @@ pub(crate) async fn seed_project_folder_at(
     uniq: &uuid::Uuid,
     abs_path: &str,
 ) -> (uuid::Uuid, uuid::Uuid) {
-    let pid = pg
-        .create_project(&format!("_test:metrics:{uniq}"), None, None)
-        .await
-        .unwrap();
+    let pid = pg.create_project(&format!("_test:metrics:{uniq}"), None, None).await.unwrap();
     ensure_test_watch_root(pg).await;
     let name = format!("metrics-{uniq}");
     let (fid,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
@@ -383,11 +383,8 @@ pub(crate) fn git_commit_on_day(dir: &std::path::Path, day: &str, files: &[(&str
     for (name, content) in files {
         std::fs::write(dir.join(name), content).unwrap();
     }
-    let add = std::process::Command::new("git")
-        .args(["add", "-A"])
-        .current_dir(dir)
-        .status()
-        .unwrap();
+    let add =
+        std::process::Command::new("git").args(["add", "-A"]).current_dir(dir).status().unwrap();
     assert!(add.success(), "git add -A failed in the churn fixture repo");
     let stamp = format!("{day}T12:00:00");
     let ok = std::process::Command::new("git")

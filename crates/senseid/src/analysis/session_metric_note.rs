@@ -123,11 +123,8 @@ impl SessionMetricFacts {
     /// read entirely from the row — e.g. `"outcome completed; first-try; 3 turns"`.
     /// Never blank (outcome is always present) and never fabricated.
     pub fn fallback(&self) -> FallbackCopy {
-        let turns = if self.turns == 1 {
-            "1 turn".to_string()
-        } else {
-            format!("{} turns", self.turns)
-        };
+        let turns =
+            if self.turns == 1 { "1 turn".to_string() } else { format!("{} turns", self.turns) };
         // FTR / rework are effort metrics → lead with the effort (first-try / N
         // corrections). Other metrics (latency, throughput, …) are NOT about
         // first-try, so a neutral "outcome · turns" line avoids implying an
@@ -184,7 +181,12 @@ mod tests {
 
     #[test]
     fn from_row_reads_only_present_fields() {
-        let f = SessionMetricFacts::from_session_row(&row("completed", Some(true), 0, 3), "ftr", "First-try rate", "share resolved on the first attempt");
+        let f = SessionMetricFacts::from_session_row(
+            &row("completed", Some(true), 0, 3),
+            "ftr",
+            "First-try rate",
+            "share resolved on the first attempt",
+        );
         assert_eq!(f.metric_key, "ftr");
         assert_eq!(f.metric_label, "First-try rate");
         assert_eq!(f.meaning, "share resolved on the first attempt");
@@ -198,7 +200,12 @@ mod tests {
 
     #[test]
     fn facts_json_carries_metric_and_session_signals_but_not_label() {
-        let f = SessionMetricFacts::from_session_row(&row("corrected", Some(false), 2, 5), "ftr", "First-try rate", "the meaning");
+        let f = SessionMetricFacts::from_session_row(
+            &row("corrected", Some(false), 2, 5),
+            "ftr",
+            "First-try rate",
+            "the meaning",
+        );
         let v = f.to_facts_json();
         assert_eq!(v["metric"], json!("ftr"));
         assert_eq!(v["meaning"], json!("the meaning"));
@@ -217,7 +224,8 @@ mod tests {
         // different metrics produces two distinct cache rows.
         let base = row("completed", Some(true), 0, 3);
         let a = SessionMetricFacts::from_session_row(&base, "ftr", "FTR", "m1").to_facts_json();
-        let b = SessionMetricFacts::from_session_row(&base, "duplication", "Dup", "m1").to_facts_json();
+        let b =
+            SessionMetricFacts::from_session_row(&base, "duplication", "Dup", "m1").to_facts_json();
         assert_ne!(
             insight_copy::facts_hash(InsightKind::SessionMetricObservation, &a),
             insight_copy::facts_hash(InsightKind::SessionMetricObservation, &b),
@@ -228,7 +236,12 @@ mod tests {
     #[test]
     fn fallback_is_row_derived_and_matches_the_documented_shape() {
         // The exact shape the module doc promises for a clean first-try session.
-        let f = SessionMetricFacts::from_session_row(&row("completed", Some(true), 0, 3), "ftr", "First-try rate", "meaning");
+        let f = SessionMetricFacts::from_session_row(
+            &row("completed", Some(true), 0, 3),
+            "ftr",
+            "First-try rate",
+            "meaning",
+        );
         let fb = f.fallback();
         assert_eq!(fb.title, "First-try rate", "title is the metric label");
         assert_eq!(fb.detail, "outcome completed; first-try; 3 turns");
@@ -236,19 +249,39 @@ mod tests {
 
     #[test]
     fn fallback_names_corrections_and_singularises_turns() {
-        let f = SessionMetricFacts::from_session_row(&row("corrected", Some(false), 2, 1), "ftr", "FTR", "meaning");
+        let f = SessionMetricFacts::from_session_row(
+            &row("corrected", Some(false), 2, 1),
+            "ftr",
+            "FTR",
+            "meaning",
+        );
         assert_eq!(f.fallback().detail, "outcome corrected; 2 corrections; 1 turn");
-        let one = SessionMetricFacts::from_session_row(&row("corrected", Some(false), 1, 4), "ftr", "FTR", "meaning");
+        let one = SessionMetricFacts::from_session_row(
+            &row("corrected", Some(false), 1, 4),
+            "ftr",
+            "FTR",
+            "meaning",
+        );
         assert_eq!(one.fallback().detail, "outcome corrected; 1 correction; 4 turns");
     }
 
     #[test]
     fn fallback_handles_missing_ftr_and_not_first_try() {
         // ftr unknown, no corrections recorded → plain "no corrections".
-        let unknown = SessionMetricFacts::from_session_row(&row("completed", None, 0, 2), "ftr", "FTR", "meaning");
+        let unknown = SessionMetricFacts::from_session_row(
+            &row("completed", None, 0, 2),
+            "ftr",
+            "FTR",
+            "meaning",
+        );
         assert_eq!(unknown.fallback().detail, "outcome completed; no corrections; 2 turns");
         // ftr explicitly false with no correction count → "not first-try".
-        let not_ftr = SessionMetricFacts::from_session_row(&row("completed", Some(false), 0, 2), "ftr", "FTR", "meaning");
+        let not_ftr = SessionMetricFacts::from_session_row(
+            &row("completed", Some(false), 0, 2),
+            "ftr",
+            "FTR",
+            "meaning",
+        );
         assert_eq!(not_ftr.fallback().detail, "outcome completed; not first-try; 2 turns");
     }
 
@@ -257,7 +290,12 @@ mod tests {
         // An unregistered key → label defaults to the key, meaning empty; the
         // fallback still reads honestly (never blank), never fabricated. A
         // non-effort key omits the first-try phrasing (that's FTR/rework only).
-        let f = SessionMetricFacts::from_session_row(&row("completed", Some(true), 0, 1), "_test_key", "_test_key", "");
+        let f = SessionMetricFacts::from_session_row(
+            &row("completed", Some(true), 0, 1),
+            "_test_key",
+            "_test_key",
+            "",
+        );
         let fb = f.fallback();
         assert_eq!(fb.title, "_test_key");
         assert_eq!(fb.detail, "outcome completed; 1 turn");

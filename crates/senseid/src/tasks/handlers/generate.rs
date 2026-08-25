@@ -176,11 +176,8 @@ pub(crate) fn plan_artifacts(patterns: &[PatternRow]) -> Vec<Planned> {
             // Correction clustering: recurring fixes in one area → suggest a
             // guard/skill to stop the repeat.
             "correction-prone" => {
-                let urgency = if p.instance_count >= CORRECTION_HIGH_URGENCY {
-                    "high"
-                } else {
-                    "medium"
-                };
+                let urgency =
+                    if p.instance_count >= CORRECTION_HIGH_URGENCY { "high" } else { "medium" };
                 out.push(Planned::Recommendation {
                     source_pattern: p.id,
                     title: format!("Recurring corrections in {}", p.folder_label),
@@ -245,14 +242,7 @@ pub async fn generate_for_project(
     for item in planned {
         let pattern_id = item.source_pattern();
         match item {
-            Planned::Recommendation {
-                title,
-                why,
-                impact,
-                action_type,
-                urgency,
-                ..
-            } => {
+            Planned::Recommendation { title, why, impact, action_type, urgency, .. } => {
                 // Skip if a recommendation already cites this pattern.
                 if ctx
                     .pg()
@@ -279,7 +269,9 @@ pub async fn generate_for_project(
                     .await
                 {
                     Ok(_) => written += 1,
-                    Err(e) => tracing::warn!(error = %e, pattern = %pattern_id, "generate: recommendation insert failed"),
+                    Err(e) => {
+                        tracing::warn!(error = %e, pattern = %pattern_id, "generate: recommendation insert failed")
+                    }
                 }
             }
             Planned::Memory {
@@ -293,12 +285,7 @@ pub async fn generate_for_project(
                 ..
             } => {
                 // Skip if a learned memory already sources this pattern.
-                if ctx
-                    .pg()
-                    .memory_exists_with_source(&pattern_id)
-                    .await
-                    .unwrap_or(false)
-                {
+                if ctx.pg().memory_exists_with_source(&pattern_id).await.unwrap_or(false) {
                     continue;
                 }
                 // Analyzer memories self-anchor into the spine's design/decisions
@@ -329,7 +316,9 @@ pub async fn generate_for_project(
                         }
                         written += 1;
                     }
-                    Err(e) => tracing::warn!(error = %e, pattern = %pattern_id, "generate: memory insert failed"),
+                    Err(e) => {
+                        tracing::warn!(error = %e, pattern = %pattern_id, "generate: memory insert failed")
+                    }
                 }
             }
         }
@@ -361,7 +350,10 @@ mod tests {
         assert_eq!(principle_title("make sure to use dbd deploy"), "Use dbd deploy");
         assert_eq!(principle_title("never edit generated files"), "Edit generated files"); // lead stripped
         // Falls back to the whole prompt when no lead-in matches.
-        assert_eq!(principle_title("prefer composition over inheritance"), "Prefer composition over inheritance");
+        assert_eq!(
+            principle_title("prefer composition over inheritance"),
+            "Prefer composition over inheritance"
+        );
     }
 
     #[test]
@@ -381,7 +373,8 @@ mod tests {
         let planned = plan_artifacts(&[row("rule-candidates", false, 2, instances)]);
         assert_eq!(planned.len(), 2);
         let mem = planned.iter().find(|p| matches!(p, Planned::Memory { .. })).expect("memory");
-        let rec = planned.iter().find(|p| matches!(p, Planned::Recommendation { .. })).expect("rec");
+        let rec =
+            planned.iter().find(|p| matches!(p, Planned::Recommendation { .. })).expect("rec");
         match mem {
             Planned::Memory { title, content, mtype, category, triage_signal, .. } => {
                 assert_eq!(title, "Run the tests first");
@@ -406,7 +399,9 @@ mod tests {
 
     #[test]
     fn empty_rule_candidate_yields_nothing() {
-        assert!(plan_artifacts(&[row("rule-candidates", false, 0, serde_json::json!([]))]).is_empty());
+        assert!(
+            plan_artifacts(&[row("rule-candidates", false, 0, serde_json::json!([]))]).is_empty()
+        );
     }
 
     #[test]
@@ -445,19 +440,19 @@ mod tests {
     #[test]
     fn marginal_rework_churn_is_skipped() {
         // Detected as churn (>=5) but below the rec threshold (<8) → no inbox noise.
-        let inst = serde_json::json!([{ "file": "src/x.rs", "max_session_edits": 6, "total_edits": 6 }]);
+        let inst =
+            serde_json::json!([{ "file": "src/x.rs", "max_session_edits": 6, "total_edits": 6 }]);
         assert!(plan_artifacts(&[row("rework: src/x.rs", true, 1, inst)]).is_empty());
     }
 
     #[test]
     fn unknown_pattern_is_ignored() {
-        assert!(plan_artifacts(&[row("something-else", false, 3, serde_json::json!([]))]).is_empty());
+        assert!(
+            plan_artifacts(&[row("something-else", false, 3, serde_json::json!([]))]).is_empty()
+        );
     }
 
     // ── DB-backed orchestrator test ──────────────────────────────────────
-    
-    
-    
 
     use crate::tasks::test_support::make_ctx;
 
@@ -465,27 +460,53 @@ mod tests {
     async fn generate_writes_memory_and_recommendation_idempotently() {
         let ctx = make_ctx().await;
         let pg = ctx.pg();
-        let pid = pg.create_project(&format!("_test:gen-{}", uuid::Uuid::new_v4()), None, None).await.unwrap();
-        let root = pg.add_watch_root(&format!("/_test/gen-root-{}", uuid::Uuid::new_v4()), "t", &serde_json::json!([])).await.unwrap();
-        let fid = pg.upsert_repo(&root, "gen-repo", &format!("/_test/gen-{}", uuid::Uuid::new_v4())).await.unwrap();
+        let pid = pg
+            .create_project(&format!("_test:gen-{}", uuid::Uuid::new_v4()), None, None)
+            .await
+            .unwrap();
+        let root = pg
+            .add_watch_root(
+                &format!("/_test/gen-root-{}", uuid::Uuid::new_v4()),
+                "t",
+                &serde_json::json!([]),
+            )
+            .await
+            .unwrap();
+        let fid = pg
+            .upsert_repo(&root, "gen-repo", &format!("/_test/gen-{}", uuid::Uuid::new_v4()))
+            .await
+            .unwrap();
         // A session attributes this folder to the project (L1's attribution path).
         let csid = format!("_test-gen-sid-{}", uuid::Uuid::new_v4());
         pg.record_session_event(&csid, &fid, Some(&pid), "claude", true).await.unwrap();
 
         // A rule-candidate pattern (the user stated a principle) → memory + promote rec.
         let instances = serde_json::json!([{ "session": csid, "prompt": "you should always run the tests first" }]);
-        let pat_id = pg.upsert_pattern(&pid, Some(&fid), "rule-candidates", false, None, &instances).await.unwrap();
+        let pat_id = pg
+            .upsert_pattern(&pid, Some(&fid), "rule-candidates", false, None, &instances)
+            .await
+            .unwrap();
 
         // First run: writes a learned memory + a recommendation.
         let written = generate_for_project(&ctx, &pid).await.unwrap();
         assert!(written >= 2, "expected memory + recommendation, got {written}");
-        assert!(pg.recommendation_exists_for_pattern(&pid, &pat_id).await.unwrap(), "recommendation cites the pattern");
-        assert!(pg.memory_exists_with_source(&pat_id).await.unwrap(), "learned memory sources the pattern");
+        assert!(
+            pg.recommendation_exists_for_pattern(&pid, &pat_id).await.unwrap(),
+            "recommendation cites the pattern"
+        );
+        assert!(
+            pg.memory_exists_with_source(&pat_id).await.unwrap(),
+            "learned memory sources the pattern"
+        );
 
         // The learned memory carries the distilled title + category.
         let mem: Option<(String, Option<String>, String)> = sqlx_core::query_as::query_as(
-            "SELECT title, category::text, origin FROM sensei.memories WHERE source_id = $1"
-        ).bind(pat_id).fetch_optional(pg.pool()).await.unwrap();
+            "SELECT title, category::text, origin FROM sensei.memories WHERE source_id = $1",
+        )
+        .bind(pat_id)
+        .fetch_optional(pg.pool())
+        .await
+        .unwrap();
         let (title, category, origin) = mem.expect("memory row");
         assert_eq!(title, "Run the tests first");
         assert_eq!(category.as_deref(), Some("convention"));
@@ -494,9 +515,17 @@ mod tests {
         // The analyzer's real write path anchors it: category/mtype="convention"
         // → default_slot → "design" (project scope, so no feature).
         let anchor: (Option<String>, Option<String>) = sqlx_core::query_as::query_as(
-            "SELECT spine_slot::text, feature FROM sensei.memories WHERE source_id = $1"
-        ).bind(pat_id).fetch_one(pg.pool()).await.unwrap();
-        assert_eq!(anchor.0.as_deref(), Some("design"), "analyzer memory self-anchors into the design slot");
+            "SELECT spine_slot::text, feature FROM sensei.memories WHERE source_id = $1",
+        )
+        .bind(pat_id)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        assert_eq!(
+            anchor.0.as_deref(),
+            Some("design"),
+            "analyzer memory self-anchors into the design slot"
+        );
         assert_eq!(anchor.1, None, "analyzer memories are project-scope — no feature");
 
         // Second run: idempotent — nothing new.
@@ -505,12 +534,40 @@ mod tests {
 
         // cleanup (best-effort)
         let pool = pg.pool();
-        sqlx_core::query::query("DELETE FROM sensei.memories WHERE source_id = $1").bind(pat_id).execute(pool).await.ok();
-        sqlx_core::query::query("DELETE FROM inference.recommendations WHERE project_id = $1").bind(pid).execute(pool).await.ok();
-        sqlx_core::query::query("DELETE FROM inference.detected_patterns WHERE project_id = $1").bind(pid).execute(pool).await.ok();
-        sqlx_core::query::query("DELETE FROM activity.sessions WHERE client_session_id = $1").bind(&csid).execute(pool).await.ok();
-        sqlx_core::query::query("DELETE FROM sensei.folders WHERE id = $1").bind(fid).execute(pool).await.ok();
-        sqlx_core::query::query("DELETE FROM sensei.folders_to_watch WHERE id = $1").bind(root).execute(pool).await.ok();
-        sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1").bind(pid).execute(pool).await.ok();
+        sqlx_core::query::query("DELETE FROM sensei.memories WHERE source_id = $1")
+            .bind(pat_id)
+            .execute(pool)
+            .await
+            .ok();
+        sqlx_core::query::query("DELETE FROM inference.recommendations WHERE project_id = $1")
+            .bind(pid)
+            .execute(pool)
+            .await
+            .ok();
+        sqlx_core::query::query("DELETE FROM inference.detected_patterns WHERE project_id = $1")
+            .bind(pid)
+            .execute(pool)
+            .await
+            .ok();
+        sqlx_core::query::query("DELETE FROM activity.sessions WHERE client_session_id = $1")
+            .bind(&csid)
+            .execute(pool)
+            .await
+            .ok();
+        sqlx_core::query::query("DELETE FROM sensei.folders WHERE id = $1")
+            .bind(fid)
+            .execute(pool)
+            .await
+            .ok();
+        sqlx_core::query::query("DELETE FROM sensei.folders_to_watch WHERE id = $1")
+            .bind(root)
+            .execute(pool)
+            .await
+            .ok();
+        sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
+            .bind(pid)
+            .execute(pool)
+            .await
+            .ok();
     }
 }

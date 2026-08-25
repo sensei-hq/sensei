@@ -2,8 +2,8 @@
 //! search and duplicate detection can rank by cosine similarity. Runs as a
 //! barrier task after a folder's files are processed.
 
-use super::super::executor::TaskContext;
 use super::super::Task;
+use super::super::executor::TaskContext;
 
 /// Expected embedding width — matches the `vector(384)` column on sensei.nodes.
 const EMBED_DIM: usize = 384;
@@ -174,7 +174,12 @@ async fn embed_batch(ctx: &TaskContext, texts: Vec<String>) -> BatchOutcome {
 /// Persist one node embedding, bumping `embedded`. A wrong width means the
 /// configured embed chain doesn't match the `vector(384)` column — a config
 /// error worth failing the task loudly.
-async fn store_embedding(ctx: &TaskContext, id: &uuid::Uuid, vector: &[f32], embedded: &mut u32) -> Result<(), String> {
+async fn store_embedding(
+    ctx: &TaskContext,
+    id: &uuid::Uuid,
+    vector: &[f32],
+    embedded: &mut u32,
+) -> Result<(), String> {
     if vector.len() != EMBED_DIM {
         return Err(format!(
             "expected {EMBED_DIM}-dim embeddings (sensei.nodes.embedding is vector({EMBED_DIM})), \
@@ -205,7 +210,11 @@ pub async fn embed_nodes(ctx: &TaskContext, task: &Task) -> Result<u32, String> 
 
     // (id, kind, name, signature, file_path) for each node still missing an embedding.
     let nodes = ctx.pg().nodes_without_embeddings(&folder_id, 10_000).await?;
-    tracing::debug!("embed_nodes: {} (id={folder_id}) — {} pending nodes", task.folder_path, nodes.len());
+    tracing::debug!(
+        "embed_nodes: {} (id={folder_id}) — {} pending nodes",
+        task.folder_path,
+        nodes.len()
+    );
     if nodes.is_empty() {
         return Ok(0);
     }
@@ -240,7 +249,10 @@ pub async fn embed_nodes(ctx: &TaskContext, task: &Task) -> Result<u32, String> 
             // whole batch. Only the offending node is skipped.
             outcome @ (BatchOutcome::Ok(_) | BatchOutcome::Failed(_)) => {
                 if let BatchOutcome::Failed(e) = &outcome {
-                    tracing::debug!("embed_nodes: {} — batch failed, retrying per-text: {e}", task.folder_name());
+                    tracing::debug!(
+                        "embed_nodes: {} — batch failed, retrying per-text: {e}",
+                        task.folder_name()
+                    );
                 }
                 let mut any_ok = false;
                 for (&i, text) in batch.iter().zip(batch_texts) {
@@ -256,14 +268,20 @@ pub async fn embed_nodes(ctx: &TaskContext, task: &Task) -> Result<u32, String> 
                             tracing::debug!("embed_nodes: skip {kind} {name} — {e}");
                         }
                         BatchOutcome::TimedOut => {
-                            tracing::warn!("embed_nodes: {} — embed timed out, leaving rest for backfill", task.folder_name());
+                            tracing::warn!(
+                                "embed_nodes: {} — embed timed out, leaving rest for backfill",
+                                task.folder_name()
+                            );
                             return Ok(embedded);
                         }
                     }
                 }
                 consecutive_failures = if any_ok { 0 } else { consecutive_failures + 1 };
                 if consecutive_failures >= EMBED_MAX_CONSECUTIVE_FAILURES {
-                    tracing::warn!("embed_nodes: {} — backend unhealthy, leaving remaining nodes for backfill", task.folder_name());
+                    tracing::warn!(
+                        "embed_nodes: {} — backend unhealthy, leaving remaining nodes for backfill",
+                        task.folder_name()
+                    );
                     break;
                 }
             }
@@ -389,7 +407,11 @@ mod tests {
     fn pack_mixed_lengths_stay_safe() {
         let mut texts: Vec<String> = Vec::new();
         for i in 0..300 {
-            texts.push(if i % 7 == 0 { "x".repeat(EMBED_MAX_CHARS) } else { "kind name".to_string() });
+            texts.push(if i % 7 == 0 {
+                "x".repeat(EMBED_MAX_CHARS)
+            } else {
+                "kind name".to_string()
+            });
         }
         let batches = pack_embed_batches(&texts);
         assert_batches_safe(&texts, &batches);

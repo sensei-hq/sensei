@@ -3,8 +3,13 @@ use super::*;
 #[allow(dead_code, clippy::too_many_arguments, clippy::type_complexity)]
 impl PgStore {
     pub async fn create_benchmark_report(
-        &self, folder_id: Option<&uuid::Uuid>, run_name: &str, strategy: &str,
-        score: Option<f64>, tokens: Option<i32>, elapsed_ms: Option<i32>,
+        &self,
+        folder_id: Option<&uuid::Uuid>,
+        run_name: &str,
+        strategy: &str,
+        score: Option<f64>,
+        tokens: Option<i32>,
+        elapsed_ms: Option<i32>,
     ) -> Result<uuid::Uuid, String> {
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "INSERT INTO sensei.benchmark_reports(folder_id, run_name, strategy, score, tokens, elapsed_ms) VALUES($1, $2, $3, $4, $5, $6) RETURNING id"
@@ -43,10 +48,7 @@ impl PgStore {
         // Failures in the reasoning-trace write are logged but don't
         // abort the whole batch — verdict measurement is best-effort by
         // design (the scheduler retries every full-refresh window).
-        type Row = (
-            uuid::Uuid, Option<uuid::Uuid>, f64, f64,
-            Option<Vec<String>>, String,
-        );
+        type Row = (uuid::Uuid, Option<uuid::Uuid>, f64, f64, Option<Vec<String>>, String);
         let rows: Vec<Row> = sqlx_core::query_as::query_as(
             "WITH current AS (
                SELECT r.id AS rec_id,
@@ -70,17 +72,25 @@ impl PgStore {
                     r.based_on::text
                FROM inference.recommendations r
                JOIN current c ON c.rec_id = r.id
-          LEFT JOIN inference.reasoning_traces t ON t.id = r.reasoning_trace_id"
-        ).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+          LEFT JOIN inference.reasoning_traces t ON t.id = r.reasoning_trace_id",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
 
-        if rows.is_empty() { return Ok(0); }
+        if rows.is_empty() {
+            return Ok(0);
+        }
 
         let mut updated: i64 = 0;
         for (rec_id, trace_id, baseline_ftr, current_ftr, models_used_opt, based_on) in rows {
             let verdict = crate::verdicts::Verdict::from_ftr_delta(current_ftr - baseline_ftr);
             let models_used = models_used_opt.unwrap_or_default();
             let consensus = crate::verdicts::synthesize_reasoning(
-                verdict, baseline_ftr, current_ftr, &models_used,
+                verdict,
+                baseline_ftr,
+                current_ftr,
+                &models_used,
             );
 
             let upd = sqlx_core::query::query(
@@ -88,17 +98,21 @@ impl PgStore {
                     SET verdict     = $2::sensei.recommendation_verdict,
                         current_ftr = $3,
                         measured_at = now()
-                  WHERE id = $1 AND verdict = 'pending'"
+                  WHERE id = $1 AND verdict = 'pending'",
             )
             .bind(rec_id)
             .bind(verdict.as_wire())
             .bind(current_ftr)
-            .execute(&self.pool).await.map_err(|e| e.to_string())?;
+            .execute(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
 
             // The `verdict = 'pending'` guard makes the flip win exactly once, so a
             // concurrent scheduler tick can't measure (or challenge) the same rec
             // twice. `rows_affected == 0` means another tick already claimed it.
-            if upd.rows_affected() == 0 { continue; }
+            if upd.rows_affected() == 0 {
+                continue;
+            }
             updated += 1;
 
             // Learning-loop feedback: an accepted rec whose FTR REGRESSED after
@@ -125,8 +139,13 @@ impl PgStore {
             match trace_id {
                 Some(id) => {
                     if let Err(e) = sqlx_core::query::query(
-                        "UPDATE inference.reasoning_traces SET consensus = $2 WHERE id = $1"
-                    ).bind(id).bind(&consensus).execute(&self.pool).await {
+                        "UPDATE inference.reasoning_traces SET consensus = $2 WHERE id = $1",
+                    )
+                    .bind(id)
+                    .bind(&consensus)
+                    .execute(&self.pool)
+                    .await
+                    {
                         tracing::warn!(error = %e, rec = %rec_id, trace = %id, "measure_pending_verdicts: consensus update failed");
                     }
                 }
@@ -174,8 +193,13 @@ impl PgStore {
     /// shape unchanged (`{day, ftr_rate, session_count}`);
     /// `props.correction_count`/`avg_turns` are carried in the store but were
     /// never part of this getter's shape, so they stay unexposed.
-    pub async fn get_ftr_daily(&self, project_id: Option<&uuid::Uuid>, days: i32) -> Result<Vec<serde_json::Value>, String> {
-        let rows: Vec<(chrono::NaiveDate, Option<f64>, Option<i64>)> = if let Some(pid) = project_id {
+    pub async fn get_ftr_daily(
+        &self,
+        project_id: Option<&uuid::Uuid>,
+        days: i32,
+    ) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(chrono::NaiveDate, Option<f64>, Option<i64>)> = if let Some(pid) = project_id
+        {
             sqlx_core::query_as::query_as(
                 "SELECT d.date, d.value::float8, (d.props->>'denominator')::int8
                    FROM sensei.project_metric_daily d
@@ -197,19 +221,31 @@ impl PgStore {
         }).collect())
     }
 
-    pub async fn get_hotspots(&self, project_id: &uuid::Uuid, days: i32) -> Result<Vec<serde_json::Value>, String> {
+    pub async fn get_hotspots(
+        &self,
+        project_id: &uuid::Uuid,
+        days: i32,
+    ) -> Result<Vec<serde_json::Value>, String> {
         let rows: Vec<(String, String, i64, i64)> = sqlx_core::query_as::query_as(
             "SELECT folder, file_path, edit_count, correction_count
              FROM sensei.project_hotspots
              WHERE project_id = $1 AND last_event_at >= (now() - ($2::int || ' days')::interval)
-             ORDER BY (edit_count + correction_count) DESC LIMIT 20"
-        ).bind(project_id).bind(days).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+             ORDER BY (edit_count + correction_count) DESC LIMIT 20",
+        )
+        .bind(project_id)
+        .bind(days)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(rows.into_iter().map(|(folder, path, edits, corrections)| {
             serde_json::json!({ "folder": folder, "file_path": path, "edit_count": edits, "correction_count": corrections })
         }).collect())
     }
 
-    pub async fn get_quality_signals(&self, project_id: &uuid::Uuid) -> Result<serde_json::Value, String> {
+    pub async fn get_quality_signals(
+        &self,
+        project_id: &uuid::Uuid,
+    ) -> Result<serde_json::Value, String> {
         let row: Option<(f64, Option<f64>, i64, Option<f64>)> = sqlx_core::query_as::query_as(
             "SELECT ftr_7d::float8, pattern_compliance::float8, open_drift_count, test_pass_rate::float8
              FROM sensei.project_quality_signals WHERE project_id = $1"
@@ -315,7 +351,10 @@ impl PgStore {
     /// map the score was built from. `health_score`/`components` are null when nothing
     /// is rated yet (honest-empty — never a fabricated 0). `ratings` lists EVERY metric
     /// with a current reading (rated or not) so the radar can show all spokes + values.
-    pub async fn get_project_health(&self, project_id: &uuid::Uuid) -> Result<serde_json::Value, String> {
+    pub async fn get_project_health(
+        &self,
+        project_id: &uuid::Uuid,
+    ) -> Result<serde_json::Value, String> {
         let ratings: Vec<(serde_json::Value,)> = sqlx_core::query_as::query_as(
             "SELECT jsonb_build_object( \
                  'metric', metric, 'name', metric_name, 'family', family, \
@@ -378,16 +417,16 @@ impl PgStore {
 
     pub async fn upsert_project_metric_repo(
         &self,
-        metric_id:     &uuid::Uuid,
+        metric_id: &uuid::Uuid,
         repository_id: &uuid::Uuid,
-        scope:         &str,
-        identity:      Option<&str>,
-        commit_sha:    Option<&str>,
-        computed_on:   chrono::NaiveDate,
-        grain:         &str,
-        value:         f64,
-        props:         &serde_json::Value,
-        source:        &str,
+        scope: &str,
+        identity: Option<&str>,
+        commit_sha: Option<&str>,
+        computed_on: chrono::NaiveDate,
+        grain: &str,
+        value: f64,
+        props: &serde_json::Value,
+        source: &str,
     ) -> Result<uuid::Uuid, String> {
         // Writes target the TABLE, never the `project_metrics` compatibility view:
         // the view's project_id is derived and has no inverse, so an insert through
@@ -433,16 +472,26 @@ impl PgStore {
     #[allow(clippy::too_many_arguments)]
     pub async fn upsert_project_metric(
         &self,
-        metric_id:     &uuid::Uuid,
+        metric_id: &uuid::Uuid,
         repository_id: &uuid::Uuid,
-        computed_on:   chrono::NaiveDate,
-        grain:         &str,
-        value:         f64,
-        props:         &serde_json::Value,
-        source:        &str,
+        computed_on: chrono::NaiveDate,
+        grain: &str,
+        value: f64,
+        props: &serde_json::Value,
+        source: &str,
     ) -> Result<uuid::Uuid, String> {
         self.upsert_project_metric_repo(
-            metric_id, repository_id, "user", None, None, computed_on, grain, value, props, source)
+            metric_id,
+            repository_id,
+            "user",
+            None,
+            None,
+            computed_on,
+            grain,
+            value,
+            props,
+            source,
+        )
         .await
     }
 
@@ -585,21 +634,65 @@ impl PgStore {
             Self::ACTIVE_METRIC_PREDICATE,
         );
         let rows: Vec<(
-            uuid::Uuid, String, String, String, String, String, Option<String>, String,
-            String, String, String, String, f64, Option<f64>, chrono::NaiveDate, Option<chrono::NaiveDate>,
+            uuid::Uuid,
+            String,
+            String,
+            String,
+            String,
+            String,
+            Option<String>,
+            String,
+            String,
+            String,
+            String,
+            String,
+            f64,
+            Option<f64>,
+            chrono::NaiveDate,
+            Option<chrono::NaiveDate>,
         )> = sqlx_core::query_as::query_as(&sql)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| e.to_string())?;
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
         Ok(rows
             .into_iter()
-            .map(|(
-                id, key, name, description, family, metric_type, unit, direction,
-                purpose, how_to_read, formula, task_name, weight, target, effective_from, effective_until,
-            )| Metric {
-                id, key, name, description, family, metric_type, unit, direction,
-                purpose, how_to_read, formula, task_name, weight, target, effective_from, effective_until,
-            })
+            .map(
+                |(
+                    id,
+                    key,
+                    name,
+                    description,
+                    family,
+                    metric_type,
+                    unit,
+                    direction,
+                    purpose,
+                    how_to_read,
+                    formula,
+                    task_name,
+                    weight,
+                    target,
+                    effective_from,
+                    effective_until,
+                )| Metric {
+                    id,
+                    key,
+                    name,
+                    description,
+                    family,
+                    metric_type,
+                    unit,
+                    direction,
+                    purpose,
+                    how_to_read,
+                    formula,
+                    task_name,
+                    weight,
+                    target,
+                    effective_from,
+                    effective_until,
+                },
+            )
             .collect())
     }
 
@@ -612,9 +705,9 @@ impl PgStore {
             Self::ACTIVE_METRIC_PREDICATE,
         );
         let rows: Vec<(String,)> = sqlx_core::query_as::query_as(&sql)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| e.to_string())?;
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
         Ok(rows.into_iter().map(|(t,)| t).collect())
     }
 
@@ -666,20 +759,48 @@ impl PgStore {
             Self::ACTIVE_METRIC_PREDICATE,
         );
         let rows: Vec<(
-            String, chrono::NaiveDate, f64, serde_json::Value, String, String,
-            Option<String>, String, String, String,
+            String,
+            chrono::NaiveDate,
+            f64,
+            serde_json::Value,
+            String,
+            String,
+            Option<String>,
+            String,
+            String,
+            String,
         )> = sqlx_core::query_as::query_as(&sql)
-        .bind(project_id)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| e.to_string())?;
+            .bind(project_id)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
         Ok(rows
             .into_iter()
-            .map(|(
-                metric, date, value, props, name, metric_type, unit, direction, purpose, how_to_read,
-            )| ProjectMetricRow {
-                metric, date, value, props, name, metric_type, unit, direction, purpose, how_to_read,
-            })
+            .map(
+                |(
+                    metric,
+                    date,
+                    value,
+                    props,
+                    name,
+                    metric_type,
+                    unit,
+                    direction,
+                    purpose,
+                    how_to_read,
+                )| ProjectMetricRow {
+                    metric,
+                    date,
+                    value,
+                    props,
+                    name,
+                    metric_type,
+                    unit,
+                    direction,
+                    purpose,
+                    how_to_read,
+                },
+            )
             .collect())
     }
 
@@ -709,7 +830,12 @@ impl PgStore {
         Ok(rows
             .into_iter()
             .map(|(metric, period, value, prior, delta, direction)| ProjectMetricTrendRow {
-                metric, period, value, prior, delta, direction,
+                metric,
+                period,
+                value,
+                prior,
+                delta,
+                direction,
             })
             .collect())
     }
@@ -743,9 +869,9 @@ impl PgStore {
         // so coarser grains select a literal NULL — the explainer is a per-day
         // artifact and is never rolled up. No user string reaches the SQL.
         let (view, period_col, explainer_col) = match grain {
-            "daily"     => ("sensei.project_metric_daily",     "date",   "props->>'explainer'"),
-            "weekly"    => ("sensei.project_metric_weekly",    "period", "null::text"),
-            "monthly"   => ("sensei.project_metric_monthly",   "period", "null::text"),
+            "daily" => ("sensei.project_metric_daily", "date", "props->>'explainer'"),
+            "weekly" => ("sensei.project_metric_weekly", "period", "null::text"),
+            "monthly" => ("sensei.project_metric_monthly", "period", "null::text"),
             "quarterly" => ("sensei.project_metric_quarterly", "period", "null::text"),
             other => return Err(format!("invalid grain: {other:?}")),
         };
@@ -755,15 +881,21 @@ impl PgStore {
               WHERE project_id = $1 AND metric = $2
               ORDER BY {period_col}",
         );
-        let rows: Vec<(chrono::NaiveDate, f64, String, Option<String>)> = sqlx_core::query_as::query_as(&sql)
-            .bind(project_id)
-            .bind(key)
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|e| e.to_string())?;
+        let rows: Vec<(chrono::NaiveDate, f64, String, Option<String>)> =
+            sqlx_core::query_as::query_as(&sql)
+                .bind(project_id)
+                .bind(key)
+                .fetch_all(&self.pool)
+                .await
+                .map_err(|e| e.to_string())?;
         let points = rows
             .into_iter()
-            .map(|(period, value, direction, explainer)| ProjectMetricSeriesPoint { period, value, direction, explainer })
+            .map(|(period, value, direction, explainer)| ProjectMetricSeriesPoint {
+                period,
+                value,
+                direction,
+                explainer,
+            })
             .collect();
         // `formula` is a metric-level facet, read by key from the registry so it
         // survives an empty series and stays honest-null for an unknown key.
@@ -836,8 +968,9 @@ impl PgStore {
     pub async fn get_model_effectiveness(&self) -> Result<Vec<serde_json::Value>, String> {
         // Raw per-(provider, raw-model) SUMS; folded by canonical model in Rust
         // (re-weighting FTR) so label variants aggregate — see model_insight.
-        let rows: Vec<(Option<String>, String, i64, i64, i64, i64)> = sqlx_core::query_as::query_as(
-            "SELECT provider, model,
+        let rows: Vec<(Option<String>, String, i64, i64, i64, i64)> =
+            sqlx_core::query_as::query_as(
+                "SELECT provider, model,
                     count(*) AS sessions,
                     count(*) FILTER (WHERE ftr)::int8 AS ftr_sessions,
                     sum(corrections)::int8 AS corrections,
@@ -845,10 +978,10 @@ impl PgStore {
                FROM activity.sessions
               WHERE model IS NOT NULL AND analyzed_at IS NOT NULL
               GROUP BY provider, model",
-        )
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| e.to_string())?;
+            )
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
         let raw = rows
             .into_iter()
             .map(|(provider, model, sessions, ftr, corr, turns)| {
@@ -862,7 +995,8 @@ impl PgStore {
     /// sessions — the input to the model-effectiveness recommendation. Label
     /// variants are folded to a canonical model (model_insight::fold_model_stats).
     pub async fn get_project_model_stats(
-        &self, project_id: &uuid::Uuid,
+        &self,
+        project_id: &uuid::Uuid,
     ) -> Result<Vec<crate::model_insight::ModelStat>, String> {
         let rows: Vec<(Option<String>, String, i64, i64)> = sqlx_core::query_as::query_as(
             "SELECT provider, model, count(*) AS sessions,
@@ -877,12 +1011,17 @@ impl PgStore {
         .map_err(|e| e.to_string())?;
         let raw = rows
             .into_iter()
-            .map(|(provider, model, sessions, ftr)| (provider.unwrap_or_default(), model, sessions, ftr))
+            .map(|(provider, model, sessions, ftr)| {
+                (provider.unwrap_or_default(), model, sessions, ftr)
+            })
             .collect();
         Ok(crate::model_insight::fold_model_stats(raw))
     }
 
-    pub async fn get_project_ftr(&self, project_id: &uuid::Uuid) -> Result<serde_json::Value, String> {
+    pub async fn get_project_ftr(
+        &self,
+        project_id: &uuid::Uuid,
+    ) -> Result<serde_json::Value, String> {
         // Headline re-derived from the daily `ftr` rows in
         // `sensei.project_metric_daily` (metric='ftr') — the single FTR source of
         // truth. `ftr14d` reuses [`Self::get_project_ftr_rate`] (same 14d Σnum/Σden)
@@ -928,13 +1067,20 @@ impl PgStore {
     /// has no `ftr` rows in the window — honest-absent, NEVER a fabricated `0`.
     /// Shared by the legacy `/api/metrics/{project}` route and the MCP
     /// `get_metrics` tool so those surfaces report the same number.
-    pub async fn get_project_ftr_rate(&self, project_id: &uuid::Uuid) -> Result<Option<f64>, String> {
+    pub async fn get_project_ftr_rate(
+        &self,
+        project_id: &uuid::Uuid,
+    ) -> Result<Option<f64>, String> {
         let row: (Option<f64>,) = sqlx_core::query_as::query_as(
             "SELECT (sum((props->>'numerator')::float8)
                        / nullif(sum((props->>'denominator')::float8), 0))::float8
                FROM sensei.project_metric_daily
-              WHERE metric = 'ftr' AND project_id = $1 AND date > current_date - 14"
-        ).bind(project_id).fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
+              WHERE metric = 'ftr' AND project_id = $1 AND date > current_date - 14",
+        )
+        .bind(project_id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(row.0)
     }
 
@@ -968,8 +1114,11 @@ impl PgStore {
                         AND s.ftr IS NOT NULL
                         AND s.outcome <> 'empty'::sensei.session_outcome)
              FROM generate_series(current_date - 13, current_date, interval '1 day') d
-             ORDER BY d"
-        ).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+             ORDER BY d",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         let trend: Vec<f64> = daily.into_iter().map(|(_, v)| v.unwrap_or(0.0)).collect();
 
         Ok(Self::ftr_headline_json(ftr_14d, ftr_14d_prev, trend, sessions_7d))
@@ -1041,11 +1190,7 @@ impl PgStore {
             ids.len() as i64
         };
         // Any repo unset → min is undefined at the project level → full fill.
-        if sealed_repos < distinct_requested {
-            Ok(None)
-        } else {
-            Ok(min_sealed)
-        }
+        if sealed_repos < distinct_requested { Ok(None) } else { Ok(min_sealed) }
     }
 
     /// Advance one (repository, metric_group) watermark to `sealed_through` (upsert).
@@ -1076,5 +1221,4 @@ impl PgStore {
         .map_err(|e| e.to_string())?;
         Ok(())
     }
-
 }

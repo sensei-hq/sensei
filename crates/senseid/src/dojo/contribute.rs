@@ -34,17 +34,18 @@ use std::future::Future;
 use uuid::Uuid;
 
 use crate::collective::anonymize::{
-    anonymize_for_global, current_rotation_bucket, ContributorIdentity, Generalizer, GatewayGeneralizer,
-    ProjectShape,
+    ContributorIdentity, GatewayGeneralizer, Generalizer, ProjectShape, anonymize_for_global,
+    current_rotation_bucket,
 };
 use crate::db::pg_store::{DojoMembership, PgStore, ShareBatchItem};
 use crate::dojo::attribution::{Dereferenced, ProjectIdentifiers};
 use crate::dojo::client::{DojoClient, DojoClientError};
 use crate::dojo::memberships::MembershipKind;
-use crate::dojo::routing::{client_precedence_route, Contribution, MembershipRef, RoutingDecision};
+use crate::dojo::routing::{Contribution, MembershipRef, RoutingDecision, client_precedence_route};
 use dojo_protocol::{
-    artifact_signature, ArtifactKind, ArtifactPayload, ArtifactScope, Attribution, AttributionMode,
-    PatternFamily, PatternPayload, PrinciplePayload, PublishArtifactResponse, PublishedArtifact,
+    ArtifactKind, ArtifactPayload, ArtifactScope, Attribution, AttributionMode, PatternFamily,
+    PatternPayload, PrinciplePayload, PublishArtifactResponse, PublishedArtifact,
+    artifact_signature,
 };
 
 /// The global-collective tenant key — the special-case public Dōjō everyone may
@@ -173,7 +174,14 @@ impl Outbox for PgOutbox<'_> {
         let remote_id = remote_id.to_string();
         async move {
             store
-                .outbox_mark_sent(&membership_id, Some(&batch_id), Some(&memory_id), &signature, sent_seq, &remote_id)
+                .outbox_mark_sent(
+                    &membership_id,
+                    Some(&batch_id),
+                    Some(&memory_id),
+                    &signature,
+                    sent_seq,
+                    &remote_id,
+                )
                 .await
         }
     }
@@ -188,7 +196,13 @@ impl Outbox for PgOutbox<'_> {
         let signature = key.signature.to_string();
         async move {
             store
-                .outbox_mark_state(&membership_id, Some(&batch_id), Some(&memory_id), &signature, state.as_str())
+                .outbox_mark_state(
+                    &membership_id,
+                    Some(&batch_id),
+                    Some(&memory_id),
+                    &signature,
+                    state.as_str(),
+                )
                 .await
         }
     }
@@ -279,7 +293,16 @@ async fn build_artifact_for_target<G: Generalizer>(
         }
     } else if global {
         // GLOBAL — anonymise (deterministic strip + optional polish + re-check).
-        match anonymize_for_global(&item.body, ctx, shape.clone(), contributor, rotation_bucket, generalizer).await {
+        match anonymize_for_global(
+            &item.body,
+            ctx,
+            shape.clone(),
+            contributor,
+            rotation_bucket,
+            generalizer,
+        )
+        .await
+        {
             Ok(a) => (a.text, a.attribution),
             Err(_) => return held(),
         }
@@ -403,7 +426,8 @@ pub struct StageOutcome {
 
 impl StageOutcome {
     fn from_items(batch_id: Uuid, items: Vec<ItemOutcome>) -> Self {
-        let mut o = StageOutcome { batch_id, staged: 0, held: 0, already_sent: 0, errored: 0, items };
+        let mut o =
+            StageOutcome { batch_id, staged: 0, held: 0, already_sent: 0, errored: 0, items };
         for it in &o.items {
             match it.result {
                 ItemResult::Staged => o.staged += 1,
@@ -452,9 +476,13 @@ pub async fn load_batch(store: &PgStore, batch_id: Uuid) -> Result<LoadedBatch, 
     let membership_rows = store.list_dojo_memberships().await?;
     let candidates: Vec<MembershipRef> = membership_rows
         .iter()
-        .filter_map(|m| MembershipKind::from_db_str(&m.kind).map(|kind| MembershipRef { membership_id: m.id, kind }))
+        .filter_map(|m| {
+            MembershipKind::from_db_str(&m.kind)
+                .map(|kind| MembershipRef { membership_id: m.id, kind })
+        })
         .collect();
-    let memberships: HashMap<Uuid, DojoMembership> = membership_rows.into_iter().map(|m| (m.id, m)).collect();
+    let memberships: HashMap<Uuid, DojoMembership> =
+        membership_rows.into_iter().map(|m| (m.id, m)).collect();
 
     let bound = store.project_bound_membership(&project_id).await?;
     let routing = client_precedence_route(&candidates, &Contribution { bound_membership: bound });
@@ -540,7 +568,18 @@ where
                 ItemPlan::Publish(art) => {
                     match outbox.already_sent(target.membership_id, &art.signature).await {
                         Ok(true) => ItemResult::AlreadySent,
-                        Ok(false) => publish_one(publisher, outbox, membership, target.membership_id, loaded.batch_id, it.memory_id, &art).await,
+                        Ok(false) => {
+                            publish_one(
+                                publisher,
+                                outbox,
+                                membership,
+                                target.membership_id,
+                                loaded.batch_id,
+                                it.memory_id,
+                                &art,
+                            )
+                            .await
+                        }
                         Err(e) => {
                             tracing::error!(error = %e, memory = %it.memory_id, "contribute: outbox dedup check failed");
                             ItemResult::Error { message: e }
@@ -717,10 +756,19 @@ pub async fn contribute_batch(
 ) -> Result<ContributeOutcome, String> {
     let loaded = load_batch(store, batch_id).await?;
     let generalizer = GatewayGeneralizer::new(gateway);
-    let contributor = ContributorIdentity { user_key: store.get_or_create_contributor_key().await? };
+    let contributor =
+        ContributorIdentity { user_key: store.get_or_create_contributor_key().await? };
     let outbox = PgOutbox(store);
     let publisher = LivePublisher;
-    Ok(run_contribution(&loaded, &publisher, &outbox, &generalizer, &contributor, current_rotation_bucket()).await)
+    Ok(run_contribution(
+        &loaded,
+        &publisher,
+        &outbox,
+        &generalizer,
+        &contributor,
+        current_rotation_bucket(),
+    )
+    .await)
 }
 
 // ── Share-review preview (no publish) ────────────────────────────────────────
@@ -791,8 +839,14 @@ pub async fn preview_batch(
                 match membership {
                     Some(m) => {
                         let plan = build_artifact_for_target(
-                            it, m, target.dereference, &loaded.identifiers, &loaded.shape, contributor,
-                            current_rotation_bucket(), &NoLlm,
+                            it,
+                            m,
+                            target.dereference,
+                            &loaded.identifiers,
+                            &loaded.shape,
+                            contributor,
+                            current_rotation_bucket(),
+                            &NoLlm,
                         )
                         .await;
                         let will_dereference = target.dereference || is_global_dojo(&m.tenant_key);
@@ -811,7 +865,11 @@ pub async fn preview_batch(
                                 kind,
                                 title: String::new(),
                                 body: String::new(),
-                                attribution: if will_dereference { anonymous_attribution() } else { named_attribution() },
+                                attribution: if will_dereference {
+                                    anonymous_attribution()
+                                } else {
+                                    named_attribution()
+                                },
                                 will_dereference,
                                 state: "held",
                             },
@@ -883,7 +941,12 @@ mod tests {
     }
 
     fn item(title: &str, body: &str, mtype: &str) -> ShareBatchItem {
-        ShareBatchItem { memory_id: Uuid::new_v4(), title: title.into(), body: body.into(), memory_type: mtype.into() }
+        ShareBatchItem {
+            memory_id: Uuid::new_v4(),
+            title: title.into(),
+            body: body.into(),
+            memory_type: mtype.into(),
+        }
     }
 
     fn loaded(m: DojoMembership, dereference: bool, items: Vec<ShareBatchItem>) -> LoadedBatch {
@@ -949,15 +1012,28 @@ mod tests {
     }
 
     impl Outbox for MemOutbox {
-        fn already_sent(&self, membership_id: Uuid, signature: &str) -> impl Future<Output = Result<bool, String>> + Send {
+        fn already_sent(
+            &self,
+            membership_id: Uuid,
+            signature: &str,
+        ) -> impl Future<Output = Result<bool, String>> + Send {
             let hit = self.sent.lock().unwrap().contains(&(membership_id, signature.to_string()));
             async move { Ok(hit) }
         }
-        fn mark_sent(&self, key: OutboxKey<'_>, _sent_seq: i64, _remote_id: &str) -> impl Future<Output = Result<(), String>> + Send {
+        fn mark_sent(
+            &self,
+            key: OutboxKey<'_>,
+            _sent_seq: i64,
+            _remote_id: &str,
+        ) -> impl Future<Output = Result<(), String>> + Send {
             self.sent.lock().unwrap().insert((key.membership_id, key.signature.to_string()));
             async move { Ok(()) }
         }
-        fn mark_state(&self, key: OutboxKey<'_>, state: OutboxState) -> impl Future<Output = Result<(), String>> + Send {
+        fn mark_state(
+            &self,
+            key: OutboxKey<'_>,
+            state: OutboxState,
+        ) -> impl Future<Output = Result<(), String>> + Send {
             self.states.lock().unwrap().push((key.membership_id, key.signature.to_string(), state));
             async move { Ok(()) }
         }
@@ -1029,7 +1105,11 @@ mod tests {
         let l = loaded(
             membership("community", GLOBAL_DOJO_TENANT_KEY),
             false,
-            vec![item("write tests", "In acme-api, Jane Doe pushed writing tests first.", "convention")],
+            vec![item(
+                "write tests",
+                "In acme-api, Jane Doe pushed writing tests first.",
+                "convention",
+            )],
         );
         let pubr = RecordingPublisher::new(Behavior::Ok);
         let obx = MemOutbox::default();
@@ -1037,7 +1117,11 @@ mod tests {
 
         assert_eq!(out.published, 1);
         let art = &pubr.published()[0];
-        assert_eq!(art.attribution.mode, AttributionMode::Anonymous, "global uses anonymous attribution");
+        assert_eq!(
+            art.attribution.mode,
+            AttributionMode::Anonymous,
+            "global uses anonymous attribution"
+        );
         assert!(art.attribution.anonymous_id.is_some(), "global carries a rotating anon id");
         no_identifier(&art.body);
     }
@@ -1078,7 +1162,11 @@ mod tests {
         let l = loaded(
             membership("client", "github/acme"),
             true,
-            vec![item("prefer tools", "We used a dedicated migration tool in acme-api.", "convention")],
+            vec![item(
+                "prefer tools",
+                "We used a dedicated migration tool in acme-api.",
+                "convention",
+            )],
         );
         let pubr = RecordingPublisher::new(Behavior::Ok);
         let obx = MemOutbox::default();
@@ -1090,7 +1178,11 @@ mod tests {
         assert_eq!(second.published, 0);
         assert_eq!(second.already_sent, 1);
         assert!(matches!(second.items[0].result, ItemResult::AlreadySent));
-        assert_eq!(pubr.published().len(), 1, "the publisher must be hit exactly once across the replay");
+        assert_eq!(
+            pubr.published().len(),
+            1,
+            "the publisher must be hit exactly once across the replay"
+        );
     }
 
     // ── transient failure queues for replay, then succeeds ───────────────────
@@ -1100,7 +1192,11 @@ mod tests {
         let l = loaded(
             membership("client", "github/acme"),
             true,
-            vec![item("prefer tools", "We used a dedicated migration tool in acme-api.", "convention")],
+            vec![item(
+                "prefer tools",
+                "We used a dedicated migration tool in acme-api.",
+                "convention",
+            )],
         );
         let obx = MemOutbox::default();
 
@@ -1134,7 +1230,8 @@ mod tests {
 
     #[tokio::test]
     async fn no_destination_when_unbound_and_no_memberships() {
-        let mut l = loaded(membership("client", "github/acme"), true, vec![item("x", "y", "convention")]);
+        let mut l =
+            loaded(membership("client", "github/acme"), true, vec![item("x", "y", "convention")]);
         l.routing = RoutingDecision::default(); // no targets
         let pubr = RecordingPublisher::new(Behavior::Ok);
         let obx = MemOutbox::default();
@@ -1154,7 +1251,15 @@ mod tests {
             true,
             vec![item("prefer tools", "A dedicated migration tool in acme-api.", "convention")],
         );
-        let out = run_contribution(&l, &RecordingPublisher::new(Behavior::Ok), &MemOutbox::default(), &NoLlm, &contributor(), 1).await;
+        let out = run_contribution(
+            &l,
+            &RecordingPublisher::new(Behavior::Ok),
+            &MemOutbox::default(),
+            &NoLlm,
+            &contributor(),
+            1,
+        )
+        .await;
         let v = serde_json::to_value(&out).expect("outcome serializes");
         assert_eq!(v["published"], serde_json::json!(1));
         assert_eq!(v["items"][0]["result"], serde_json::json!("published"));
@@ -1230,7 +1335,8 @@ mod tests {
 
     #[tokio::test]
     async fn stage_no_destination_when_unbound() {
-        let mut l = loaded(membership("client", "github/acme"), true, vec![item("x", "y", "convention")]);
+        let mut l =
+            loaded(membership("client", "github/acme"), true, vec![item("x", "y", "convention")]);
         l.routing = RoutingDecision::default(); // no targets
         let obx = MemOutbox::default();
         let out = stage_contribution(&l, &obx, &NoLlm, &contributor(), 1).await;
@@ -1244,7 +1350,13 @@ mod tests {
         let m = membership("client", "github/acme");
         let plan = build_artifact_for_target(
             &item("adapter", "Use an adapter per language in acme-api.", "pattern"),
-            &m, true, &ctx(), &ProjectShape::default(), &contributor(), 1, &NoLlm,
+            &m,
+            true,
+            &ctx(),
+            &ProjectShape::default(),
+            &contributor(),
+            1,
+            &NoLlm,
         )
         .await;
         match plan {

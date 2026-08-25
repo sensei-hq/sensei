@@ -1,7 +1,7 @@
 //! External link extraction from repo docs and config files.
 
-use std::path::Path;
 use serde::Serialize;
+use std::path::Path;
 
 /// External links found in a repo's docs and config.
 #[derive(Debug, Clone, Serialize, Default)]
@@ -29,14 +29,12 @@ pub fn scan_external_links(repo_path: &Path) -> ExternalLinksResult {
     let mut links = Vec::new();
 
     // Markdown files to scan
-    let md_files: Vec<String> = [
-        "README.md", "readme.md", "CONTRIBUTING.md", "CHANGELOG.md",
-        ".sensei/rules.md",
-    ]
-    .iter()
-    .map(|f| f.to_string())
-    .chain(list_md_files_in(repo_path, "docs", 1))
-    .collect();
+    let md_files: Vec<String> =
+        ["README.md", "readme.md", "CONTRIBUTING.md", "CHANGELOG.md", ".sensei/rules.md"]
+            .iter()
+            .map(|f| f.to_string())
+            .chain(list_md_files_in(repo_path, "docs", 1))
+            .collect();
 
     for rel_path in &md_files {
         let abs = repo_path.join(rel_path);
@@ -52,10 +50,7 @@ pub fn scan_external_links(repo_path: &Path) -> ExternalLinksResult {
     for filename in ["package.json", "Cargo.toml", "pyproject.toml"] {
         let path = repo_path.join(filename);
         let Ok(content) = std::fs::read_to_string(&path) else { continue };
-        let ext = std::path::Path::new(filename)
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("");
+        let ext = std::path::Path::new(filename).extension().and_then(|e| e.to_str()).unwrap_or("");
         let Some(adapter) = crate::adapters::config::config_adapter_for_ext(ext) else { continue };
         for meta in adapter.extract_metadata_links(&content) {
             let external = meta.into_external(filename);
@@ -81,12 +76,7 @@ fn extract_markdown_links(content: &str, found_in: &str, links: &mut Vec<Externa
         let url = cap[2].to_string();
         let kind = classify_url(&url);
         if kind != "skip" {
-            links.push(ExternalLink {
-                url,
-                kind,
-                label,
-                found_in: found_in.to_string(),
-            });
+            links.push(ExternalLink { url, kind, label, found_in: found_in.to_string() });
         }
     }
 
@@ -96,12 +86,7 @@ fn extract_markdown_links(content: &str, found_in: &str, links: &mut Vec<Externa
         let url = cap[1].to_string();
         let kind = classify_url(&url);
         if kind != "skip" {
-            links.push(ExternalLink {
-                url,
-                kind,
-                label: None,
-                found_in: found_in.to_string(),
-            });
+            links.push(ExternalLink { url, kind, label: None, found_in: found_in.to_string() });
         }
     }
 }
@@ -142,12 +127,16 @@ pub(crate) fn classify_url(url: &str) -> String {
     if lower.contains("github.com") && lower.contains("/actions") {
         return "ci".into();
     }
-    if lower.contains("docs.") || lower.contains("/docs") || lower.contains("readme.io")
-        || lower.contains("gitbook.io") || lower.contains("docusaurus")
+    if lower.contains("docs.")
+        || lower.contains("/docs")
+        || lower.contains("readme.io")
+        || lower.contains("gitbook.io")
+        || lower.contains("docusaurus")
     {
         return "docs".into();
     }
-    if lower.contains("slack.com") || lower.contains("discord.gg") || lower.contains("discord.com") {
+    if lower.contains("slack.com") || lower.contains("discord.gg") || lower.contains("discord.com")
+    {
         return "chat".into();
     }
     if lower.contains("vercel.app") || lower.contains("netlify.app") || lower.contains("heroku") {
@@ -170,10 +159,11 @@ pub(crate) fn list_md_files_in(repo_path: &Path, subdir: &str, _max_depth: usize
         for entry in entries.flatten() {
             if entry.path().is_file()
                 && let Some(ext) = entry.path().extension().and_then(|e| e.to_str())
-                    && (ext == "md" || ext == "mdx") {
-                        let rel = format!("{}/{}", subdir, entry.file_name().to_string_lossy());
-                        files.push(rel);
-                    }
+                && (ext == "md" || ext == "mdx")
+            {
+                let rel = format!("{}/{}", subdir, entry.file_name().to_string_lossy());
+                files.push(rel);
+            }
         }
     }
     files
@@ -265,7 +255,8 @@ mod tests {
         std::fs::write(
             dir.path().join("pyproject.toml"),
             "[project]\nname = \"y\"\n\n[project.urls]\nhomepage = \"https://py.example\"\n",
-        ).unwrap();
+        )
+        .unwrap();
         let result = scan_external_links(dir.path());
         let urls: Vec<&str> = result.links.iter().map(|l| l.url.as_str()).collect();
         assert!(urls.contains(&"https://py.example"));

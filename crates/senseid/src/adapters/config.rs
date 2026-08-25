@@ -13,7 +13,7 @@
 //! config might carry: `homepage`, `repository`, `bugs`, `documentation`,
 //! `description`, `version`.
 
-use crate::tasks::processors::metadata::external_links::{classify_url, ExternalLink};
+use crate::tasks::processors::metadata::external_links::{ExternalLink, classify_url};
 
 mod json;
 mod toml_adapter;
@@ -79,11 +79,7 @@ pub fn config_adapter_for_ext(ext: &str) -> Option<&'static dyn ConfigAdapter> {
 
 /// All registered ConfigAdapter impls. Add new formats here.
 pub fn registered_adapters() -> &'static [&'static dyn ConfigAdapter] {
-    &[
-        &json::JsonConfigAdapter,
-        &toml_adapter::TomlConfigAdapter,
-        &yaml::YamlConfigAdapter,
-    ]
+    &[&json::JsonConfigAdapter, &toml_adapter::TomlConfigAdapter, &yaml::YamlConfigAdapter]
 }
 
 #[cfg(test)]

@@ -1,5 +1,5 @@
-use std::path::Path;
 use std::collections::HashSet;
+use std::path::Path;
 
 use crate::types::NodeKind;
 
@@ -20,8 +20,8 @@ pub struct DocFrontmatter {
 
 /// Classification result for a doc/extension file.
 pub struct DocClassification {
-    pub kind: NodeKind,     // Doc or Extension
-    pub doc_type: String,   // requirement, design, feature, usage, changelog, extension, doc
+    pub kind: NodeKind,               // Doc or Extension
+    pub doc_type: String, // requirement, design, feature, usage, changelog, extension, doc
     pub doc_category: Option<String>, // sub-category from frontmatter
 }
 
@@ -29,10 +29,16 @@ pub struct DocClassification {
 /// Classifies docs by frontmatter + path heuristics.
 /// Marketplace files (skills/commands/plugins) are classified as extensions.
 /// Public wrapper for use by task handlers.
-pub fn parse_frontmatter_pub(content: &str) -> DocFrontmatter { parse_frontmatter(content) }
-pub fn classify_doc_pub(rel_path: &str, fm: &DocFrontmatter) -> DocClassification { classify_doc(rel_path, fm) }
+pub fn parse_frontmatter_pub(content: &str) -> DocFrontmatter {
+    parse_frontmatter(content)
+}
+pub fn classify_doc_pub(rel_path: &str, fm: &DocFrontmatter) -> DocClassification {
+    classify_doc(rel_path, fm)
+}
 #[allow(dead_code)] // TODO: wire up traceability edge creation
-pub fn create_traceability_edges_pub(_repo_id: &str) -> Result<(), String> { Ok(()) }
+pub fn create_traceability_edges_pub(_repo_id: &str) -> Result<(), String> {
+    Ok(())
+}
 
 /// Parse YAML frontmatter from between --- fences.
 fn parse_frontmatter(content: &str) -> DocFrontmatter {
@@ -55,7 +61,11 @@ fn classify_doc(rel_path: &str, frontmatter: &DocFrontmatter) -> DocClassificati
     // 1. Frontmatter type takes priority
     if let Some(ref ft) = frontmatter.doc_type {
         let ft_lower = ft.to_lowercase();
-        let kind = if ft_lower == "extension" || ft_lower == "skill" || ft_lower == "command" || ft_lower == "plugin" {
+        let kind = if ft_lower == "extension"
+            || ft_lower == "skill"
+            || ft_lower == "command"
+            || ft_lower == "plugin"
+        {
             NodeKind::Extension
         } else {
             NodeKind::Doc
@@ -72,15 +82,24 @@ fn classify_doc(rel_path: &str, frontmatter: &DocFrontmatter) -> DocClassificati
 
     // Marketplace files are extensions, not docs
     // Matches both "marketplace/skills/..." (parent repo) and "skills/..." (subtree repo)
-    if lower.starts_with("marketplace/skills/") || lower.starts_with("marketplace/commands/")
-        || lower.starts_with("marketplace/plugins/") || lower.starts_with("marketplace/hooks/")
-        || lower.starts_with("skills/") || lower.starts_with("commands/")
-        || lower.starts_with("plugins/") || lower.starts_with("hooks/")
+    if lower.starts_with("marketplace/skills/")
+        || lower.starts_with("marketplace/commands/")
+        || lower.starts_with("marketplace/plugins/")
+        || lower.starts_with("marketplace/hooks/")
+        || lower.starts_with("skills/")
+        || lower.starts_with("commands/")
+        || lower.starts_with("plugins/")
+        || lower.starts_with("hooks/")
     {
-        let sub = if lower.contains("/skills/") { "skill" }
-            else if lower.contains("/commands/") { "command" }
-            else if lower.contains("/plugins/") { "plugin" }
-            else { "hook" };
+        let sub = if lower.contains("/skills/") {
+            "skill"
+        } else if lower.contains("/commands/") {
+            "command"
+        } else if lower.contains("/plugins/") {
+            "plugin"
+        } else {
+            "hook"
+        };
         return DocClassification {
             kind: NodeKind::Extension,
             doc_type: "extension".into(),
@@ -89,59 +108,120 @@ fn classify_doc(rel_path: &str, frontmatter: &DocFrontmatter) -> DocClassificati
     }
 
     // Requirement docs
-    if lower.contains("requirement") || lower.contains("/prd") || lower.contains("openspec/product/") {
-        return DocClassification { kind: NodeKind::Doc, doc_type: "requirement".into(), doc_category: frontmatter.category.clone() };
+    if lower.contains("requirement")
+        || lower.contains("/prd")
+        || lower.contains("openspec/product/")
+    {
+        return DocClassification {
+            kind: NodeKind::Doc,
+            doc_type: "requirement".into(),
+            doc_category: frontmatter.category.clone(),
+        };
     }
 
     // Design docs
-    if lower.contains("/design/") || lower.contains("architecture") || lower.contains("/adr/")
-        || lower.contains("/plans/") || lower.contains("openspec/specs/") && lower.contains("design")
+    if lower.contains("/design/")
+        || lower.contains("architecture")
+        || lower.contains("/adr/")
+        || lower.contains("/plans/")
+        || lower.contains("openspec/specs/") && lower.contains("design")
     {
-        return DocClassification { kind: NodeKind::Doc, doc_type: "design".into(), doc_category: frontmatter.category.clone() };
+        return DocClassification {
+            kind: NodeKind::Doc,
+            doc_type: "design".into(),
+            doc_category: frontmatter.category.clone(),
+        };
     }
 
     // Feature specs
-    if lower.contains("/features/") || lower.contains("/specs/") || lower.contains("openspec/specs/") {
-        return DocClassification { kind: NodeKind::Doc, doc_type: "feature".into(), doc_category: frontmatter.category.clone() };
+    if lower.contains("/features/")
+        || lower.contains("/specs/")
+        || lower.contains("openspec/specs/")
+    {
+        return DocClassification {
+            kind: NodeKind::Doc,
+            doc_type: "feature".into(),
+            doc_category: frontmatter.category.clone(),
+        };
     }
 
     // Usage / overview
-    if lower.contains("readme") || lower.contains("llms") || lower.contains("/guide/") || lower.contains("/usage/") {
-        return DocClassification { kind: NodeKind::Doc, doc_type: "usage".into(), doc_category: frontmatter.category.clone() };
+    if lower.contains("readme")
+        || lower.contains("llms")
+        || lower.contains("/guide/")
+        || lower.contains("/usage/")
+    {
+        return DocClassification {
+            kind: NodeKind::Doc,
+            doc_type: "usage".into(),
+            doc_category: frontmatter.category.clone(),
+        };
     }
 
     // API specs
     if lower.contains("/api/") || lower.contains("openapi") || lower.contains("swagger") {
-        return DocClassification { kind: NodeKind::Doc, doc_type: "api-spec".into(), doc_category: frontmatter.category.clone() };
+        return DocClassification {
+            kind: NodeKind::Doc,
+            doc_type: "api-spec".into(),
+            doc_category: frontmatter.category.clone(),
+        };
     }
 
     // Changelog
     if lower.contains("changelog") || lower.contains("release") {
-        return DocClassification { kind: NodeKind::Doc, doc_type: "changelog".into(), doc_category: None };
+        return DocClassification {
+            kind: NodeKind::Doc,
+            doc_type: "changelog".into(),
+            doc_category: None,
+        };
     }
 
     // Roadmap
     if lower.contains("/roadmap/") {
-        return DocClassification { kind: NodeKind::Doc, doc_type: "design".into(), doc_category: Some("roadmap".into()) };
+        return DocClassification {
+            kind: NodeKind::Doc,
+            doc_type: "design".into(),
+            doc_category: Some("roadmap".into()),
+        };
     }
 
     // Sensei workflow phases
     if lower.contains("/ideas/") {
-        return DocClassification { kind: NodeKind::Doc, doc_type: "idea".into(), doc_category: Some("idea".into()) };
+        return DocClassification {
+            kind: NodeKind::Doc,
+            doc_type: "idea".into(),
+            doc_category: Some("idea".into()),
+        };
     }
     if lower.contains("/analysis/") {
-        return DocClassification { kind: NodeKind::Doc, doc_type: "analysis".into(), doc_category: Some("analysis".into()) };
+        return DocClassification {
+            kind: NodeKind::Doc,
+            doc_type: "analysis".into(),
+            doc_category: Some("analysis".into()),
+        };
     }
     if lower.contains("/blueprints/") {
-        return DocClassification { kind: NodeKind::Doc, doc_type: "blueprint".into(), doc_category: Some("blueprint".into()) };
+        return DocClassification {
+            kind: NodeKind::Doc,
+            doc_type: "blueprint".into(),
+            doc_category: Some("blueprint".into()),
+        };
     }
     if lower.contains("/experiments/") {
-        return DocClassification { kind: NodeKind::Doc, doc_type: "experiment".into(), doc_category: Some("experiment".into()) };
+        return DocClassification {
+            kind: NodeKind::Doc,
+            doc_type: "experiment".into(),
+            doc_category: Some("experiment".into()),
+        };
     }
 
     // Operations
     if lower.contains("runbook") || lower.contains("/ops/") {
-        return DocClassification { kind: NodeKind::Doc, doc_type: "operations".into(), doc_category: None };
+        return DocClassification {
+            kind: NodeKind::Doc,
+            doc_type: "operations".into(),
+            doc_category: None,
+        };
     }
 
     // Default
@@ -158,9 +238,7 @@ fn classify_doc(rel_path: &str, frontmatter: &DocFrontmatter) -> DocClassificati
 pub fn parse_to_ir(content: &str, rel_path: &str, repo_path: &str) -> crate::ir::IRDoc {
     let fm = parse_frontmatter(content);
     let classification = classify_doc(rel_path, &fm);
-    let title = fm.name.clone()
-        .or_else(|| fm.title.clone())
-        .or_else(|| extract_title(content));
+    let title = fm.name.clone().or_else(|| fm.title.clone()).or_else(|| extract_title(content));
     let sections = extract_sections(content);
     let code_blocks = extract_code_blocks(content);
     let file_refs = extract_file_refs(content, repo_path);
@@ -169,27 +247,39 @@ pub fn parse_to_ir(content: &str, rel_path: &str, repo_path: &str) -> crate::ir:
 
     // Build raw frontmatter HashMap
     let mut frontmatter = std::collections::HashMap::new();
-    if let Some(ref v) = fm.name { frontmatter.insert("name".into(), v.clone()); }
-    if let Some(ref v) = fm.title { frontmatter.insert("title".into(), v.clone()); }
-    if let Some(ref v) = fm.doc_type { frontmatter.insert("type".into(), v.clone()); }
-    if let Some(ref v) = fm.category { frontmatter.insert("category".into(), v.clone()); }
-    if let Some(ref v) = fm._description { frontmatter.insert("description".into(), v.clone()); }
+    if let Some(ref v) = fm.name {
+        frontmatter.insert("name".into(), v.clone());
+    }
+    if let Some(ref v) = fm.title {
+        frontmatter.insert("title".into(), v.clone());
+    }
+    if let Some(ref v) = fm.doc_type {
+        frontmatter.insert("type".into(), v.clone());
+    }
+    if let Some(ref v) = fm.category {
+        frontmatter.insert("category".into(), v.clone());
+    }
+    if let Some(ref v) = fm._description {
+        frontmatter.insert("description".into(), v.clone());
+    }
     // Also extract additional frontmatter fields we haven't typed
     extract_raw_frontmatter(content, &mut frontmatter);
 
     // Infer category from path if not in frontmatter
-    let category = classification.doc_category.clone()
-        .or_else(|| infer_category_from_path(rel_path));
+    let category =
+        classification.doc_category.clone().or_else(|| infer_category_from_path(rel_path));
 
     // Infer extension
-    let ext = std::path::Path::new(rel_path).extension()
+    let ext = std::path::Path::new(rel_path)
+        .extension()
         .and_then(|e| e.to_str())
         .map(|e| format!(".{}", e));
 
     crate::ir::IRDoc {
         base: crate::ir::IRBase {
             name: title.clone().unwrap_or_else(|| {
-                std::path::Path::new(rel_path).file_stem()
+                std::path::Path::new(rel_path)
+                    .file_stem()
                     .map(|s| s.to_string_lossy().to_string())
                     .unwrap_or_default()
             }),
@@ -205,7 +295,9 @@ pub fn parse_to_ir(content: &str, rel_path: &str, repo_path: &str) -> crate::ir:
         },
         doc_type: Some(classification.doc_type),
         frontmatter,
-        status: fm.doc_type.as_deref()
+        status: fm
+            .doc_type
+            .as_deref()
             .and(None) // status not in DocFrontmatter yet — use raw
             .or_else(|| extract_frontmatter_field(content, "status")),
         origin: extract_frontmatter_field(content, "origin"),
@@ -237,13 +329,13 @@ pub fn extract_rationale_pub(content: &str) -> Vec<crate::ir::IRRationale> {
     let mut out = Vec::new();
     for (i, line) in content.lines().enumerate() {
         // First marker on the line wins (one rationale per line).
-        if let Some((marker, pos)) = MARKERS.iter()
+        if let Some((marker, pos)) = MARKERS
+            .iter()
             .filter_map(|m| find_marker_word(line, m).map(|p| (*m, p)))
             .min_by_key(|(_, p)| *p)
         {
-            let text: String = line[pos..]
-                .trim_end_matches(['-', '>', '*', '/', ' '])
-                .chars().take(200).collect();
+            let text: String =
+                line[pos..].trim_end_matches(['-', '>', '*', '/', ' ']).chars().take(200).collect();
             out.push(crate::ir::IRRationale {
                 marker: marker.to_string(),
                 text: text.trim().to_string(),
@@ -290,7 +382,10 @@ fn extract_sections(content: &str) -> Vec<crate::ir::IRSection> {
                 let end = i as u32;
                 let preview = make_preview(&lines, start as usize + 1, end as usize);
                 sections.push(crate::ir::IRSection {
-                    heading, level: lvl, line_start: start + 1, line_end: end,
+                    heading,
+                    level: lvl,
+                    line_start: start + 1,
+                    line_end: end,
                     content_preview: preview,
                 });
             }
@@ -303,7 +398,10 @@ fn extract_sections(content: &str) -> Vec<crate::ir::IRSection> {
         let end = lines.len() as u32;
         let preview = make_preview(&lines, start as usize + 1, end as usize);
         sections.push(crate::ir::IRSection {
-            heading, level, line_start: start + 1, line_end: end,
+            heading,
+            level,
+            line_start: start + 1,
+            line_end: end,
             content_preview: preview,
         });
     }
@@ -312,7 +410,8 @@ fn extract_sections(content: &str) -> Vec<crate::ir::IRSection> {
 }
 
 fn parse_heading(line: &str) -> Option<(u8, String)> {
-    for (n, prefix) in [(6, "######"), (5, "#####"), (4, "####"), (3, "###"), (2, "##"), (1, "# ")] {
+    for (n, prefix) in [(6, "######"), (5, "#####"), (4, "####"), (3, "###"), (2, "##"), (1, "# ")]
+    {
         if let Some(rest) = line.strip_prefix(prefix) {
             return Some((n, rest.trim().into()));
         }
@@ -321,7 +420,8 @@ fn parse_heading(line: &str) -> Option<(u8, String)> {
 }
 
 fn make_preview(lines: &[&str], start: usize, end: usize) -> Option<String> {
-    let text: String = lines.get(start..end.min(lines.len()))
+    let text: String = lines
+        .get(start..end.min(lines.len()))
         .map(|s| s.join("\n"))
         .unwrap_or_default()
         .chars()
@@ -398,7 +498,9 @@ fn extract_doc_refs(content: &str) -> Vec<String> {
 #[cfg(test)]
 fn extract_frontmatter_field(content: &str, field: &str) -> Option<String> {
     let trimmed = content.trim_start();
-    if !trimmed.starts_with("---") { return None; }
+    if !trimmed.starts_with("---") {
+        return None;
+    }
     let after_first = &trimmed[3..];
     let end = after_first.find("\n---")?;
     let yaml = &after_first[..end];
@@ -406,7 +508,9 @@ fn extract_frontmatter_field(content: &str, field: &str) -> Option<String> {
         let line = line.trim();
         if line.starts_with(&format!("{}:", field)) {
             let val = line[field.len() + 1..].trim();
-            if val.is_empty() { return None; }
+            if val.is_empty() {
+                return None;
+            }
             return Some(val.to_string());
         }
     }
@@ -417,7 +521,9 @@ fn extract_frontmatter_field(content: &str, field: &str) -> Option<String> {
 #[cfg(test)]
 fn extract_raw_frontmatter(content: &str, map: &mut std::collections::HashMap<String, String>) {
     let trimmed = content.trim_start();
-    if !trimmed.starts_with("---") { return; }
+    if !trimmed.starts_with("---") {
+        return;
+    }
     let after_first = &trimmed[3..];
     if let Some(end) = after_first.find("\n---") {
         let yaml = &after_first[..end];
@@ -438,15 +544,25 @@ fn extract_raw_frontmatter(content: &str, map: &mut std::collections::HashMap<St
 #[cfg(test)]
 fn infer_category_from_path(rel_path: &str) -> Option<String> {
     let lower = rel_path.to_lowercase();
-    if lower.contains("/ideas/") { Some("idea".into()) }
-    else if lower.contains("/analysis/") { Some("analysis".into()) }
-    else if lower.contains("/blueprints/") { Some("blueprint".into()) }
-    else if lower.contains("/experiments/") { Some("experiment".into()) }
-    else if lower.contains("/plans/") { Some("plan".into()) }
-    else if lower.contains("/design/") { Some("design".into()) }
-    else if lower.contains("/features/") { Some("feature".into()) }
-    else if lower.contains("/reference/") { Some("reference".into()) }
-    else { None }
+    if lower.contains("/ideas/") {
+        Some("idea".into())
+    } else if lower.contains("/analysis/") {
+        Some("analysis".into())
+    } else if lower.contains("/blueprints/") {
+        Some("blueprint".into())
+    } else if lower.contains("/experiments/") {
+        Some("experiment".into())
+    } else if lower.contains("/plans/") {
+        Some("plan".into())
+    } else if lower.contains("/design/") {
+        Some("design".into())
+    } else if lower.contains("/features/") {
+        Some("feature".into())
+    } else if lower.contains("/reference/") {
+        Some("reference".into())
+    } else {
+        None
+    }
 }
 
 /// Extract the first H1 title from markdown.
@@ -485,8 +601,11 @@ pub fn extract_fn_mentions(content: &str) -> Vec<String> {
     for (i, part) in parts.iter().enumerate() {
         if i % 2 == 1 {
             let trimmed = part.trim();
-            if !trimmed.contains('/') && !trimmed.contains(' ') && !trimmed.contains('.')
-                && trimmed.len() > 1 && trimmed.len() < 50
+            if !trimmed.contains('/')
+                && !trimmed.contains(' ')
+                && !trimmed.contains('.')
+                && trimmed.len() > 1
+                && trimmed.len() < 50
                 && trimmed.chars().all(|c| c.is_alphanumeric() || c == '_')
             {
                 names.insert(trimmed.to_string());
@@ -521,8 +640,12 @@ This is IMPORTANT: keep it.
         let markers: Vec<&str> = r.iter().map(|x| x.marker.as_str()).collect();
         // TODO, NOTE, HACK, IMPORTANT — the lowercase prose line and NOTE_CONST
         // (word-boundary + case guard) must NOT match.
-        assert_eq!(markers, vec!["TODO", "NOTE", "HACK", "IMPORTANT"],
-            "only uppercase word-boundary markers match, got {:?}", markers);
+        assert_eq!(
+            markers,
+            vec!["TODO", "NOTE", "HACK", "IMPORTANT"],
+            "only uppercase word-boundary markers match, got {:?}",
+            markers
+        );
         assert_eq!(r[0].text, "TODO: fix the retry path");
         assert_eq!(r[0].line, 1);
         assert_eq!(r[2].text, "HACK: workaround for #123", "trailing --> is trimmed");
@@ -569,7 +692,11 @@ This is IMPORTANT: keep it.
 
     #[test]
     fn frontmatter_skill_type() {
-        let fm = DocFrontmatter { doc_type: Some("skill".into()), name: Some("my-skill".into()), ..Default::default() };
+        let fm = DocFrontmatter {
+            doc_type: Some("skill".into()),
+            name: Some("my-skill".into()),
+            ..Default::default()
+        };
         let c = classify_doc("marketplace/skills/x/SKILL.md", &fm);
         assert!(matches!(c.kind, NodeKind::Extension));
         assert_eq!(c.doc_type, "skill");
@@ -600,7 +727,8 @@ This is IMPORTANT: keep it.
 
     #[test]
     fn extract_fn_mentions_from_backticks() {
-        let content = "Use `greet` to say hello. The `validate` function checks input. Ignore `src/foo.ts`.";
+        let content =
+            "Use `greet` to say hello. The `validate` function checks input. Ignore `src/foo.ts`.";
         let names = extract_fn_mentions(content);
         assert!(names.contains(&"greet".to_string()));
         assert!(names.contains(&"validate".to_string()));

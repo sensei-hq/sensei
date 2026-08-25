@@ -31,12 +31,7 @@ pub struct GradleManifestAdapter;
 
 impl ManifestAdapter for GradleManifestAdapter {
     fn manifest_filenames(&self) -> &[&'static str] {
-        &[
-            "build.gradle",
-            "build.gradle.kts",
-            "settings.gradle",
-            "settings.gradle.kts",
-        ]
+        &["build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts"]
     }
 
     fn ecosystem(&self) -> &'static str {
@@ -77,11 +72,7 @@ impl ManifestAdapter for GradleManifestAdapter {
         let name = extract_root_project_name(content);
         let version = extract_top_level_kv(content, "version");
         let description = extract_top_level_kv(content, "description");
-        ParsedManifest {
-            name,
-            version,
-            description,
-        }
+        ParsedManifest { name, version, description }
     }
 
     fn stack_labels(&self, _content: &str) -> Vec<&'static str> {
@@ -144,13 +135,16 @@ impl ManifestAdapter for GradleManifestAdapter {
     /// repos actually use so we prefer that; a caller can still swap in
     /// `gradle` on read if the folder lacks the wrapper script.
     fn parse_commands(&self, _content: &str) -> Vec<super::DiscoveredCommand> {
-        super::conventional_commands("./gradlew", &[
-            ("test",         "test"),
-            ("build",        "build"),
-            ("assemble",     "build"),
-            ("clean",        "run"),
-            ("check",        "typecheck"),
-        ])
+        super::conventional_commands(
+            "./gradlew",
+            &[
+                ("test", "test"),
+                ("build", "build"),
+                ("assemble", "build"),
+                ("clean", "run"),
+                ("check", "typecheck"),
+            ],
+        )
     }
 }
 
@@ -228,20 +222,16 @@ fn strip_comments(content: &str) -> String {
 /// tolerated.
 fn extract_root_project_name(content: &str) -> Option<String> {
     static RE: OnceLock<Regex> = OnceLock::new();
-    let re = RE.get_or_init(|| {
-        Regex::new(r#"rootProject\.name\s*=\s*['"]([^'"]+)['"]"#).unwrap()
-    });
+    let re = RE.get_or_init(|| Regex::new(r#"rootProject\.name\s*=\s*['"]([^'"]+)['"]"#).unwrap());
     re.captures(content).map(|c| c.get(1).unwrap().as_str().trim().to_string())
 }
 
 /// Match top-level `<key> = "value"` (Groovy) or `<key>.set("value")` /
 /// `val <key> = "value"` (Kotlin). Only the first form is picked up in v1.
 fn extract_top_level_kv(content: &str, key: &str) -> Option<String> {
-    let re = Regex::new(&format!(
-        r#"(?m)^\s*{key}\s*=\s*['"]([^'"]+)['"]"#,
-        key = regex::escape(key)
-    ))
-    .ok()?;
+    let re =
+        Regex::new(&format!(r#"(?m)^\s*{key}\s*=\s*['"]([^'"]+)['"]"#, key = regex::escape(key)))
+            .ok()?;
     let stripped = strip_comments(content);
     re.captures(&stripped).map(|c| c.get(1).unwrap().as_str().to_string())
 }
@@ -257,9 +247,7 @@ fn extract_gradle_includes(content: &str) -> Vec<String> {
     // Find each include(...) call, then extract every quoted string inside
     // its argument list. Two-step because Regex's `(?m)` doesn't do
     // recursive matching.
-    let call_re = RE.get_or_init(|| {
-        Regex::new(r"(?m)^\s*include\s*\(?([^\n)]+)\)?\s*$").unwrap()
-    });
+    let call_re = RE.get_or_init(|| Regex::new(r"(?m)^\s*include\s*\(?([^\n)]+)\)?\s*$").unwrap());
     let arg_re = Regex::new(r#"['"]([^'"]+)['"]"#).unwrap();
     let mut out = Vec::new();
     for call in call_re.captures_iter(&stripped) {
@@ -295,12 +283,7 @@ mod tests {
         assert_eq!(a.ecosystem(), "maven");
         assert_eq!(
             a.manifest_filenames(),
-            &[
-                "build.gradle",
-                "build.gradle.kts",
-                "settings.gradle",
-                "settings.gradle.kts"
-            ],
+            &["build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts"],
         );
     }
 
@@ -425,11 +408,8 @@ mod tests {
         .unwrap();
         for sub in ["core", "api"] {
             std::fs::create_dir_all(dir.path().join(sub)).unwrap();
-            std::fs::write(
-                dir.path().join(sub).join("build.gradle"),
-                "// stub\nversion = '1.0'\n",
-            )
-            .unwrap();
+            std::fs::write(dir.path().join(sub).join("build.gradle"), "// stub\nversion = '1.0'\n")
+                .unwrap();
         }
 
         let members = GradleManifestAdapter.detect_workspace_members(dir.path());
@@ -466,11 +446,7 @@ mod tests {
         )
         .unwrap();
         std::fs::create_dir_all(dir.path().join("core")).unwrap();
-        std::fs::write(
-            dir.path().join("core").join("build.gradle.kts"),
-            "// stub\n",
-        )
-        .unwrap();
+        std::fs::write(dir.path().join("core").join("build.gradle.kts"), "// stub\n").unwrap();
         let members = GradleManifestAdapter.detect_workspace_members(dir.path());
         assert_eq!(members.len(), 1);
         assert_eq!(members[0].name, "kts-app:core");

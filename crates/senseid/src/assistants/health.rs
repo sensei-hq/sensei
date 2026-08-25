@@ -6,12 +6,22 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub enum CheckStatus { Ok, Warn, Fail, Unknown }
+pub enum CheckStatus {
+    Ok,
+    Warn,
+    Fail,
+    Unknown,
+}
 
 impl CheckStatus {
     /// Severity for "worst-of" aggregation: Fail > Warn > Unknown > Ok.
     fn rank(self) -> u8 {
-        match self { CheckStatus::Ok => 0, CheckStatus::Unknown => 1, CheckStatus::Warn => 2, CheckStatus::Fail => 3 }
+        match self {
+            CheckStatus::Ok => 0,
+            CheckStatus::Unknown => 1,
+            CheckStatus::Warn => 2,
+            CheckStatus::Fail => 3,
+        }
     }
     /// The more-severe of two statuses.
     pub fn worse(self, other: CheckStatus) -> CheckStatus {
@@ -48,9 +58,20 @@ pub struct AdapterHealth {
 
 impl AdapterHealth {
     /// Build with `status` computed as the worst of `checks`.
-    pub fn new(adapter_id: &str, family: &str, checks: Vec<AdapterCheck>, resolvable: bool) -> Self {
+    pub fn new(
+        adapter_id: &str,
+        family: &str,
+        checks: Vec<AdapterCheck>,
+        resolvable: bool,
+    ) -> Self {
         let status = CheckStatus::worst_of(checks.iter().map(|c| &c.status));
-        Self { adapter_id: adapter_id.to_string(), family: family.to_string(), status, checks, resolvable }
+        Self {
+            adapter_id: adapter_id.to_string(),
+            family: family.to_string(),
+            status,
+            checks,
+            resolvable,
+        }
     }
 }
 
@@ -70,7 +91,9 @@ pub struct AdapterResolveReport {
 /// on Mon–Fri. Coarse (1-minute step) on purpose — freshness thresholds are in
 /// hours, so minute granularity is precise enough and keeps the loop cheap.
 pub fn business_elapsed_hours(from_ms: i64, to_ms: i64, exclude_weekends: bool) -> f64 {
-    if to_ms <= from_ms { return 0.0; }
+    if to_ms <= from_ms {
+        return 0.0;
+    }
     if !exclude_weekends {
         return (to_ms - from_ms) as f64 / 3_600_000.0;
     }
@@ -79,9 +102,12 @@ pub fn business_elapsed_hours(from_ms: i64, to_ms: i64, exclude_weekends: bool) 
     let mut t = from_ms;
     while t < to_ms {
         let dt = Utc.timestamp_millis_opt(t).single();
-        let is_weekend = dt.map(|d| matches!(d.weekday(), Weekday::Sat | Weekday::Sun)).unwrap_or(false);
+        let is_weekend =
+            dt.map(|d| matches!(d.weekday(), Weekday::Sat | Weekday::Sun)).unwrap_or(false);
         let next = (t + STEP_MS).min(to_ms);
-        if !is_weekend { counted_ms += next - t; }
+        if !is_weekend {
+            counted_ms += next - t;
+        }
         t = next;
     }
     counted_ms as f64 / 3_600_000.0
@@ -98,17 +124,30 @@ pub fn capture_freshness(
 ) -> AdapterCheck {
     match last_ts {
         None => AdapterCheck::new(
-            "events", "events flowing", CheckStatus::Warn,
+            "events",
+            "events flowing",
+            CheckStatus::Warn,
             Some("never captured — no hook events recorded yet".into()),
         ),
         Some(ts) => {
             let elapsed = business_elapsed_hours(ts, now_ms, exclude_weekends);
             if elapsed <= window_hours {
-                AdapterCheck::new("events", "events flowing", CheckStatus::Ok,
-                    Some(format!("last event {:.1}h ago", elapsed)))
+                AdapterCheck::new(
+                    "events",
+                    "events flowing",
+                    CheckStatus::Ok,
+                    Some(format!("last event {:.1}h ago", elapsed)),
+                )
             } else {
-                AdapterCheck::new("events", "events flowing", CheckStatus::Fail,
-                    Some(format!("stale: last event {:.1}h ago (window {}h)", elapsed, window_hours)))
+                AdapterCheck::new(
+                    "events",
+                    "events flowing",
+                    CheckStatus::Fail,
+                    Some(format!(
+                        "stale: last event {:.1}h ago (window {}h)",
+                        elapsed, window_hours
+                    )),
+                )
             }
         }
     }

@@ -1,7 +1,7 @@
 //! LogWriter — enum-dispatched writers for different deployment contexts.
 
-use std::sync::Arc;
 use crate::types::LogEntry;
+use std::sync::Arc;
 
 /// Pluggable log destination. Constructed once at startup.
 pub enum LogWriter {
@@ -39,10 +39,7 @@ impl LogWriter {
     /// Create an API writer targeting a daemon URL.
     #[cfg(feature = "api")]
     pub fn api(base_url: &str) -> Arc<Self> {
-        Arc::new(Self::Api {
-            base_url: base_url.to_string(),
-            client: reqwest::Client::new(),
-        })
+        Arc::new(Self::Api { base_url: base_url.to_string(), client: reqwest::Client::new() })
     }
 
     /// Create a buffered writer that caches logs until `set_pool()` is called.
@@ -72,7 +69,10 @@ impl LogWriter {
     }
 
     #[cfg(feature = "pg")]
-    pub(crate) async fn write_to_pg(pool: &sqlx_postgres::PgPool, entry: &LogEntry) -> Result<(), String> {
+    pub(crate) async fn write_to_pg(
+        pool: &sqlx_postgres::PgPool,
+        entry: &LogEntry,
+    ) -> Result<(), String> {
         sqlx_core::query::query(
             "INSERT INTO public.logs(level, running_on, module, logged_at, message, context, data, error)
              VALUES($1, $2, $3, $4::timestamptz, $5, $6, $7, $8)"
@@ -99,11 +99,7 @@ impl LogWriter {
             }
             #[cfg(feature = "api")]
             Self::Api { base_url, client } => {
-                let _ = client
-                    .post(format!("{base_url}/api/logs"))
-                    .json(entry)
-                    .send()
-                    .await;
+                let _ = client.post(format!("{base_url}/api/logs")).json(entry).send().await;
             }
             Self::Buffered(state) => {
                 let mut guard = state.lock().await;

@@ -2,7 +2,12 @@ use super::*;
 
 #[allow(dead_code, clippy::too_many_arguments, clippy::type_complexity)]
 impl PgStore {
-    pub async fn create_project(&self, name: &str, description: Option<&str>, client: Option<&str>) -> Result<uuid::Uuid, String> {
+    pub async fn create_project(
+        &self,
+        name: &str,
+        description: Option<&str>,
+        client: Option<&str>,
+    ) -> Result<uuid::Uuid, String> {
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "INSERT INTO sensei.projects(name, description, client) VALUES($1, $2, $3) RETURNING id"
         ).bind(name).bind(description).bind(client)
@@ -30,14 +35,19 @@ impl PgStore {
     /// is pruned separately by [`Self::heal_duplicate_name_projects`]). Returns
     /// `(id, created)`; `created` is true only when a new row was minted, letting
     /// the caller emit its `project_add` event exactly once.
-    pub async fn get_or_create_project_by_name(&self, name: &str) -> Result<(uuid::Uuid, bool), String> {
+    pub async fn get_or_create_project_by_name(
+        &self,
+        name: &str,
+    ) -> Result<(uuid::Uuid, bool), String> {
         let mut tx = self.pool.begin().await.map_err(|e| e.to_string())?;
         // Serialize concurrent creators of this exact name. The lock is
         // transaction-scoped (auto-released on commit/rollback); hashtext maps
         // the name into the advisory key space.
         sqlx_core::query::query("SELECT pg_advisory_xact_lock(hashtext($1)::int8)")
             .bind(name)
-            .execute(&mut *tx).await.map_err(|e| e.to_string())?;
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| e.to_string())?;
 
         // Prefer the folder-bearing row so a not-yet-healed phantom is never
         // adopted over the real project; `id` is the stable tiebreak.
@@ -46,7 +56,11 @@ impl PgStore {
               WHERE p.name = $1
               ORDER BY (SELECT count(*) FROM sensei.folders f WHERE f.project_id = p.id) DESC, p.id
               LIMIT 1",
-        ).bind(name).fetch_optional(&mut *tx).await.map_err(|e| e.to_string())?;
+        )
+        .bind(name)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|e| e.to_string())?;
 
         if let Some((id,)) = existing {
             tx.commit().await.map_err(|e| e.to_string())?;
@@ -55,7 +69,11 @@ impl PgStore {
 
         let (id,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "INSERT INTO sensei.projects(name) VALUES($1) RETURNING id",
-        ).bind(name).fetch_one(&mut *tx).await.map_err(|e| e.to_string())?;
+        )
+        .bind(name)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(|e| e.to_string())?;
         tx.commit().await.map_err(|e| e.to_string())?;
         Ok((id, true))
     }
@@ -216,7 +234,10 @@ impl PgStore {
     /// - `toMerge` = memories that share a normalized `title` with at least one
     ///   other memory in the project (dedup candidates). There is no signature
     ///   column, so a case/whitespace-folded title is the merge-candidate proxy.
-    pub async fn get_project_overview_stats(&self, project_id: &uuid::Uuid) -> Result<serde_json::Value, String> {
+    pub async fn get_project_overview_stats(
+        &self,
+        project_id: &uuid::Uuid,
+    ) -> Result<serde_json::Value, String> {
         let (mem_total, sessions_7d, sessions_7d_corrected, drift_open, referenced_docs, ready_to_share, to_merge):
             (i64, i64, i64, i64, i64, i64, i64) = sqlx_core::query_as::query_as(
             "SELECT
@@ -248,7 +269,10 @@ impl PgStore {
         }))
     }
 
-    pub async fn get_project_by_name(&self, name: &str) -> Result<Option<serde_json::Value>, String> {
+    pub async fn get_project_by_name(
+        &self,
+        name: &str,
+    ) -> Result<Option<serde_json::Value>, String> {
         let row: Option<(uuid::Uuid, String, Option<String>, Option<String>, String, Option<String>, serde_json::Value, serde_json::Value, Vec<String>, chrono::DateTime<chrono::Utc>)> =
             sqlx_core::query_as::query_as(
                 "SELECT id, name, description, client, maturity::text, goal, stack, links, tags, modified_at FROM sensei.projects WHERE name = $1"
@@ -310,17 +334,38 @@ impl PgStore {
             ).bind(under).fetch_all(&self.pool).await
             .map_err(|e| { tracing::error!(error = %e, "list_projects failed"); e.to_string() })?;
 
-        Ok(rows.into_iter().map(|(id, name, desc, client, maturity, tags, modified, icon, stack, vision, dojo_id, repos_count, libs_count, last_session_at, sessions7d)| {
-            serde_json::json!({
-                "id": id, "name": name, "description": desc, "client": client,
-                "maturity": maturity, "tags": tags, "modified_at": modified.to_rfc3339(),
-                "icon": icon, "stack": stack, "vision": vision,
-                "dojo_id": dojo_id,
-                "repos_count": repos_count, "libs_count": libs_count,
-                "last_session_at": last_session_at.map(|t| t.to_rfc3339()),
-                "sessions7d": sessions7d,
-            })
-        }).collect())
+        Ok(rows
+            .into_iter()
+            .map(
+                |(
+                    id,
+                    name,
+                    desc,
+                    client,
+                    maturity,
+                    tags,
+                    modified,
+                    icon,
+                    stack,
+                    vision,
+                    dojo_id,
+                    repos_count,
+                    libs_count,
+                    last_session_at,
+                    sessions7d,
+                )| {
+                    serde_json::json!({
+                        "id": id, "name": name, "description": desc, "client": client,
+                        "maturity": maturity, "tags": tags, "modified_at": modified.to_rfc3339(),
+                        "icon": icon, "stack": stack, "vision": vision,
+                        "dojo_id": dojo_id,
+                        "repos_count": repos_count, "libs_count": libs_count,
+                        "last_session_at": last_session_at.map(|t| t.to_rfc3339()),
+                        "sessions7d": sessions7d,
+                    })
+                },
+            )
+            .collect())
     }
 
     /// Partial-update a project's editable identity fields. Omitted (`None`)
@@ -328,13 +373,15 @@ impl PgStore {
     /// About form only overwrites the columns the user actually edited. An
     /// unknown `maturity` is rejected up front (before the DB round trip)
     /// rather than allowed to fail as a raw Postgres enum-cast error.
-    pub async fn update_project(&self, id: &uuid::Uuid, patch: &ProjectPatch<'_>) -> Result<(), String> {
+    pub async fn update_project(
+        &self,
+        id: &uuid::Uuid,
+        patch: &ProjectPatch<'_>,
+    ) -> Result<(), String> {
         if let Some(m) = patch.maturity
             && !PROJECT_MATURITIES.contains(&m)
         {
-            return Err(format!(
-                "invalid maturity '{m}': expected one of {PROJECT_MATURITIES:?}"
-            ));
+            return Err(format!("invalid maturity '{m}': expected one of {PROJECT_MATURITIES:?}"));
         }
         sqlx_core::query::query(
             "UPDATE sensei.projects SET
@@ -348,7 +395,7 @@ impl PgStore {
                  stack         = COALESCE($9, stack),
                  links         = COALESCE($10, links),
                  modified_at   = now()
-             WHERE id = $1"
+             WHERE id = $1",
         )
         .bind(id)
         .bind(patch.name)
@@ -360,14 +407,21 @@ impl PgStore {
         .bind(patch.icon)
         .bind(patch.stack)
         .bind(patch.links)
-        .execute(&self.pool).await
-        .map_err(|e| { tracing::error!(error = %e, "update_project failed"); e.to_string() })?;
+        .execute(&self.pool)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, "update_project failed");
+            e.to_string()
+        })?;
         Ok(())
     }
 
     pub async fn delete_project(&self, id: &uuid::Uuid) -> Result<(), String> {
         sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
-            .bind(id).execute(&self.pool).await.map_err(|e| e.to_string())?;
+            .bind(id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
         Ok(())
     }
 
@@ -401,10 +455,12 @@ impl PgStore {
 
         // Verify both projects exist.
         let (exists,): (i64,) = sqlx_core::query_as::query_as(
-            "SELECT COUNT(*) FROM sensei.projects WHERE id = ANY($1::uuid[])"
+            "SELECT COUNT(*) FROM sensei.projects WHERE id = ANY($1::uuid[])",
         )
-            .bind([*source, *target].as_slice())
-            .fetch_one(&mut *tx).await.map_err(|e| e.to_string())?;
+        .bind([*source, *target].as_slice())
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(|e| e.to_string())?;
         if exists != 2 {
             return Err(format!(
                 "merge_projects: expected source + target to exist, found {exists} of 2"
@@ -420,8 +476,11 @@ impl PgStore {
             "UPDATE sensei.memories   SET project_id = $2 WHERE project_id = $1",
         ] {
             sqlx_core::query::query(stmt)
-                .bind(source).bind(target)
-                .execute(&mut *tx).await.map_err(|e| e.to_string())?;
+                .bind(source)
+                .bind(target)
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| e.to_string())?;
         }
 
         // CASCADE deletes derived rows (detected_patterns / recommendations /
@@ -429,7 +488,9 @@ impl PgStore {
         // service_projects / project_dependencies edges at either end).
         sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
             .bind(source)
-            .execute(&mut *tx).await.map_err(|e| e.to_string())?;
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| e.to_string())?;
 
         tx.commit().await.map_err(|e| e.to_string())?;
         Ok(())
@@ -474,7 +535,12 @@ impl PgStore {
     /// survivor. Shares the candidate query; performs no mutation. Used by the
     /// index integrity audit's read-only (`doctor`) pass.
     pub async fn detect_duplicate_name_phantoms(&self) -> Result<Vec<uuid::Uuid>, String> {
-        Ok(self.duplicate_name_phantom_pairs().await?.into_iter().map(|(phantom, _)| phantom).collect())
+        Ok(self
+            .duplicate_name_phantom_pairs()
+            .await?
+            .into_iter()
+            .map(|(phantom, _)| phantom)
+            .collect())
     }
 
     /// Self-heal Bug 3: re-absorb a `standalone` project root that was
@@ -516,7 +582,14 @@ impl PgStore {
                     SET kind = 'folder'::sensei.folder_kind,
                         parent_id = $2, project_id = $3, root_id = $4, modified_at = now()
                   WHERE id = $1",
-            ).bind(s_id).bind(g_id).bind(g_pid).bind(g_root).execute(&self.pool).await {
+            )
+            .bind(s_id)
+            .bind(g_id)
+            .bind(g_pid)
+            .bind(g_root)
+            .execute(&self.pool)
+            .await
+            {
                 tracing::warn!(folder = %s_id, error = %e, "heal_nested_standalone_roots: re-attribute failed");
                 continue;
             }
@@ -527,7 +600,12 @@ impl PgStore {
                 let outside: (i64,) = sqlx_core::query_as::query_as(
                     "SELECT count(*) FROM sensei.folders
                       WHERE project_id = $1 AND NOT starts_with(abs_path, $2 || '/')",
-                ).bind(s_pid).bind(&g_abs).fetch_one(&self.pool).await.unwrap_or((1,));
+                )
+                .bind(s_pid)
+                .bind(&g_abs)
+                .fetch_one(&self.pool)
+                .await
+                .unwrap_or((1,));
                 if outside.0 == 0 {
                     match self.merge_projects(&s_pid, &g_pid).await {
                         Ok(()) => tracing::info!(phantom = %s_pid, survivor = %g_pid,
@@ -554,43 +632,64 @@ impl PgStore {
         Ok(self.nested_standalone_candidates().await?.into_iter().map(|c| c.5).collect())
     }
 
-    pub async fn get_project_drift(&self, project_id: &uuid::Uuid) -> Result<serde_json::Value, String> {
+    pub async fn get_project_drift(
+        &self,
+        project_id: &uuid::Uuid,
+    ) -> Result<serde_json::Value, String> {
         // `expected_signature` and `actual_signature` power the Traceability
         // detail drawer's Expected-vs-Actual diff. Both are nullable — `broken`
         // rows carry no `actual`, `drifted` carries both, `current` may carry
         // neither depending on how the detector wrote the row.
         type DriftRow = (
-            uuid::Uuid, String, Option<String>, Option<String>, Option<String>,
+            uuid::Uuid,
+            String,
+            Option<String>,
+            Option<String>,
+            Option<String>,
             chrono::DateTime<chrono::Utc>,
         );
         let rows: Vec<DriftRow> = sqlx_core::query_as::query_as(
-                "SELECT id, status::text, detail, expected_signature, actual_signature, detected_at
+            "SELECT id, status::text, detail, expected_signature, actual_signature, detected_at
                  FROM sensei.project_drift WHERE project_id = $1
-                 ORDER BY detected_at DESC LIMIT 200"
-            ).bind(project_id)
-            .fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+                 ORDER BY detected_at DESC LIMIT 200",
+        )
+        .bind(project_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
 
         let total = rows.len();
         let drifted = rows.iter().filter(|r| r.1 == "drifted").count();
         let broken = rows.iter().filter(|r| r.1 == "broken").count();
-        let items: Vec<_> = rows.into_iter().map(|(id, status, detail, expected, actual, detected_at)| {
-            serde_json::json!({
-                "id": id, "status": status, "detail": detail,
-                "expectedSignature": expected,
-                "actualSignature":   actual,
-                "detectedAt": detected_at.to_rfc3339(),
+        let items: Vec<_> = rows
+            .into_iter()
+            .map(|(id, status, detail, expected, actual, detected_at)| {
+                serde_json::json!({
+                    "id": id, "status": status, "detail": detail,
+                    "expectedSignature": expected,
+                    "actualSignature":   actual,
+                    "detectedAt": detected_at.to_rfc3339(),
+                })
             })
-        }).collect();
+            .collect();
 
-        Ok(serde_json::json!({ "items": items, "total": total, "drifted": drifted, "broken": broken }))
+        Ok(
+            serde_json::json!({ "items": items, "total": total, "drifted": drifted, "broken": broken }),
+        )
     }
 
     /// Resolve a local project by name → its id (scope-match for a project-scoped
     /// artifact). `None` = no such project on this install.
-    pub async fn resolve_project_by_name(&self, name: String) -> Result<Option<uuid::Uuid>, String> {
-        let row: Option<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
-            "SELECT id FROM sensei.projects WHERE name = $1 LIMIT 1")
-            .bind(&name).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
+    pub async fn resolve_project_by_name(
+        &self,
+        name: String,
+    ) -> Result<Option<uuid::Uuid>, String> {
+        let row: Option<(uuid::Uuid,)> =
+            sqlx_core::query_as::query_as("SELECT id FROM sensei.projects WHERE name = $1 LIMIT 1")
+                .bind(&name)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(|e| e.to_string())?;
         Ok(row.map(|(id,)| id))
     }
 
@@ -602,22 +701,34 @@ impl PgStore {
         // owned by a single test, so the SELECT-then-INSERT is race-free here.
         let name = format!("_test:{name}");
         if let Some(row) = sqlx_core::query_as::query_as::<_, (uuid::Uuid,)>(
-            "SELECT id FROM sensei.projects WHERE name = $1"
-        ).bind(&name).fetch_optional(&self.pool).await.map_err(|e| e.to_string())? {
+            "SELECT id FROM sensei.projects WHERE name = $1",
+        )
+        .bind(&name)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?
+        {
             return Ok(row.0);
         }
         let id = uuid::Uuid::new_v4();
         sqlx_core::query::query(
-            "INSERT INTO sensei.projects (id, name) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING"
-        ).bind(id).bind(&name)
-         .execute(&self.pool).await.map_err(|e| e.to_string())?;
+            "INSERT INTO sensei.projects (id, name) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING",
+        )
+        .bind(id)
+        .bind(&name)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(id)
     }
 
     /// Inputs for the L3 maturity signal (#71): `(enriched_session_count,
     /// has_insights)`. `has_insights` is true once the analyzer has produced any
     /// recommendation or learned memory for the project.
-    pub async fn get_project_maturity_inputs(&self, project_id: &uuid::Uuid) -> Result<(i64, bool), String> {
+    pub async fn get_project_maturity_inputs(
+        &self,
+        project_id: &uuid::Uuid,
+    ) -> Result<(i64, bool), String> {
         let row: (i64, bool) = sqlx_core::query_as::query_as(
             "SELECT
                (SELECT count(*) FROM activity.sessions WHERE project_id = $1 AND analyzed_at IS NOT NULL),
@@ -635,8 +746,11 @@ impl PgStore {
             "SELECT
                (SELECT count(*) FROM activity.sessions WHERE analyzed_at IS NOT NULL),
                (EXISTS(SELECT 1 FROM inference.recommendations)
-                OR EXISTS(SELECT 1 FROM sensei.memories WHERE origin = 'learned'))"
-        ).fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
+                OR EXISTS(SELECT 1 FROM sensei.memories WHERE origin = 'learned'))",
+        )
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(row)
     }
 
@@ -668,7 +782,11 @@ impl PgStore {
         Ok(rows)
     }
 
-    pub async fn namespace_for_folder_scope(&self, folder_id: &uuid::Uuid, scope_key: &str) -> Result<Option<uuid::Uuid>, String> {
+    pub async fn namespace_for_folder_scope(
+        &self,
+        folder_id: &uuid::Uuid,
+        scope_key: &str,
+    ) -> Result<Option<uuid::Uuid>, String> {
         if matches!(scope_key, "general" | "user") {
             return Ok(None); // always-on scopes are unscoped (namespace_id NULL)
         }
@@ -690,12 +808,20 @@ impl PgStore {
     /// Return the list of stack identifiers for a project.
     /// The `sensei.projects.stack` column is JSONB and may be an array of strings,
     /// an object with a recognisable array key, or absent — all cases return `[]`.
-    pub async fn get_project_stack_ids(&self, project_id: &uuid::Uuid) -> Result<Vec<String>, String> {
-        let row: Option<(serde_json::Value,)> = sqlx_core::query_as::query_as(
-            "SELECT stack FROM sensei.projects WHERE id = $1"
-        ).bind(project_id).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
+    pub async fn get_project_stack_ids(
+        &self,
+        project_id: &uuid::Uuid,
+    ) -> Result<Vec<String>, String> {
+        let row: Option<(serde_json::Value,)> =
+            sqlx_core::query_as::query_as("SELECT stack FROM sensei.projects WHERE id = $1")
+                .bind(project_id)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(|e| e.to_string())?;
 
-        let Some((stack_json,)) = row else { return Ok(vec![]); };
+        let Some((stack_json,)) = row else {
+            return Ok(vec![]);
+        };
 
         // The stack jsonb may be an array of strings, an object with a "languages" key,
         // or empty. Be permissive: accept array-of-strings OR object-with-arrays, return [].
@@ -707,7 +833,10 @@ impl PgStore {
                 // Try common keys: languages, ids, items.
                 for key in &["languages", "ids", "items"] {
                     if let Some(serde_json::Value::Array(arr)) = obj.get(*key) {
-                        return Ok(arr.iter().filter_map(|v| v.as_str().map(String::from)).collect());
+                        return Ok(arr
+                            .iter()
+                            .filter_map(|v| v.as_str().map(String::from))
+                            .collect());
                     }
                 }
                 // No recognizable shape — return empty (no stack blending).
@@ -717,7 +846,10 @@ impl PgStore {
         }
     }
 
-    pub async fn get_project_repos(&self, project_id: &uuid::Uuid) -> Result<Vec<serde_json::Value>, String> {
+    pub async fn get_project_repos(
+        &self,
+        project_id: &uuid::Uuid,
+    ) -> Result<Vec<serde_json::Value>, String> {
         // Only project ROOTS are repos. `kind='folder'` (navigable subfolder tree)
         // AND `kind='workspace_member'` (monorepo members, D5a) are the structural
         // tree, NOT separate repos — listing them makes a single-repo monorepo with
@@ -741,8 +873,12 @@ impl PgStore {
     /// auto-bind suggestion. Reads `sensei.folders.remote_urls`; DB-only.
     pub async fn project_org_owners(&self, project_id: &uuid::Uuid) -> Result<Vec<String>, String> {
         let folders: Vec<(serde_json::Value,)> = sqlx_core::query_as::query_as(
-            "SELECT remote_urls FROM sensei.folders WHERE project_id = $1")
-            .bind(project_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+            "SELECT remote_urls FROM sensei.folders WHERE project_id = $1",
+        )
+        .bind(project_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         let mut owners: Vec<String> = Vec::new();
         for (remotes,) in folders {
             if let Some(arr) = remotes.as_array() {
@@ -768,21 +904,29 @@ impl PgStore {
     /// abs_path, remote_urls}` (repo name + git owner/repo parsed from remotes),
     /// and `activity.sessions.{id, client_session_id}`.
     pub async fn project_identifiers(
-        &self, project_id: &uuid::Uuid,
+        &self,
+        project_id: &uuid::Uuid,
     ) -> Result<crate::dojo::attribution::ProjectIdentifiers, String> {
         use crate::dojo::attribution::ProjectIdentifiers;
 
-        let proj: Option<(String, Option<String>)> = sqlx_core::query_as::query_as(
-            "SELECT name, client FROM sensei.projects WHERE id = $1")
-            .bind(project_id).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
+        let proj: Option<(String, Option<String>)> =
+            sqlx_core::query_as::query_as("SELECT name, client FROM sensei.projects WHERE id = $1")
+                .bind(project_id)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(|e| e.to_string())?;
         let (project_name, client_name) = match proj {
             Some((name, client)) => (Some(name), client),
             None => (None, None),
         };
 
         let folders: Vec<(String, String, serde_json::Value)> = sqlx_core::query_as::query_as(
-            "SELECT name, abs_path, remote_urls FROM sensei.folders WHERE project_id = $1")
-            .bind(project_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+            "SELECT name, abs_path, remote_urls FROM sensei.folders WHERE project_id = $1",
+        )
+        .bind(project_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
 
         let mut repo_names: Vec<String> = Vec::new();
         let mut folder_paths: Vec<String> = Vec::new();
@@ -803,8 +947,12 @@ impl PgStore {
         }
 
         let sessions: Vec<(uuid::Uuid, Option<String>)> = sqlx_core::query_as::query_as(
-            "SELECT id, client_session_id FROM activity.sessions WHERE project_id = $1")
-            .bind(project_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+            "SELECT id, client_session_id FROM activity.sessions WHERE project_id = $1",
+        )
+        .bind(project_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         let mut session_ids: Vec<String> = Vec::new();
         for (id, csid) in sessions {
             session_ids.push(id.to_string());
@@ -831,5 +979,4 @@ impl PgStore {
     }
 
     // ── Federation ledger ─────────────────────────────────────────────
-
 }

@@ -17,8 +17,11 @@ pub async fn model_insight_for_project(
     // Stats are already folded to canonical models (label variants merged).
     let stats = ctx.pg().get_project_model_stats(project_id).await?;
 
-    let Some(reco) = model_insight::recommend_model(&stats, model_insight::MIN_SESSIONS, model_insight::MIN_GAIN)
-    else {
+    let Some(reco) = model_insight::recommend_model(
+        &stats,
+        model_insight::MIN_SESSIONS,
+        model_insight::MIN_GAIN,
+    ) else {
         return Ok(0);
     };
 
@@ -50,7 +53,15 @@ pub async fn model_insight_for_project(
     match ctx
         .pg()
         .create_recommendation_full(
-            project_id, &title, &why, Some(&impact), "revise_rule", urgency, &based_on, None, None,
+            project_id,
+            &title,
+            &why,
+            Some(&impact),
+            "revise_rule",
+            urgency,
+            &based_on,
+            None,
+            None,
         )
         .await
     {

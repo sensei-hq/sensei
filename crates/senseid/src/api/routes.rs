@@ -1,46 +1,46 @@
 use axum::{
-    routing::{get, post, put, delete},
     Router,
-    response::Json,
     http::StatusCode,
+    response::Json,
+    routing::{delete, get, post, put},
 };
 
 use crate::api::state::AppState;
 
-use crate::api::handlers::health;
-use crate::api::handlers::workspace;
-use crate::api::handlers::observatory;
-use crate::api::handlers::sessions;
+use crate::api::handlers::checker;
 use crate::api::handlers::codebase;
-use crate::api::handlers::libraries;
 use crate::api::handlers::config;
-use crate::api::handlers::query;
-use crate::api::handlers::mcp;
-use crate::api::handlers::logs;
+use crate::api::handlers::corrections;
+use crate::api::handlers::dojo;
 use crate::api::handlers::gateway;
-use crate::api::handlers::scan_events;
-use crate::api::handlers::project_detail;
-use crate::api::handlers::instruments;
-use crate::api::handlers::verdicts;
-use crate::api::handlers::mcp_servers as mcp_servers_handler;
-use crate::api::handlers::gateway_routers;
 use crate::api::handlers::gateway_chains;
 use crate::api::handlers::gateway_image;
-use crate::api::handlers::model_provisioning;
-use crate::api::handlers::knowledge;
-use crate::api::handlers::planner;
-use crate::api::handlers::checker;
-use crate::api::handlers::dojo;
-use crate::api::handlers::preferences;
-use crate::api::handlers::share_review;
-use crate::api::handlers::review;
-use crate::api::handlers::upgrades;
-use crate::api::handlers::corrections;
-use crate::api::handlers::runs;
+use crate::api::handlers::gateway_routers;
+use crate::api::handlers::health;
 use crate::api::handlers::identity;
-use crate::api::handlers::stance;
-use crate::api::handlers::playbook;
+use crate::api::handlers::instruments;
+use crate::api::handlers::knowledge;
+use crate::api::handlers::libraries;
+use crate::api::handlers::logs;
+use crate::api::handlers::mcp;
+use crate::api::handlers::mcp_servers as mcp_servers_handler;
 use crate::api::handlers::metrics;
+use crate::api::handlers::model_provisioning;
+use crate::api::handlers::observatory;
+use crate::api::handlers::planner;
+use crate::api::handlers::playbook;
+use crate::api::handlers::preferences;
+use crate::api::handlers::project_detail;
+use crate::api::handlers::query;
+use crate::api::handlers::review;
+use crate::api::handlers::runs;
+use crate::api::handlers::scan_events;
+use crate::api::handlers::sessions;
+use crate::api::handlers::share_review;
+use crate::api::handlers::stance;
+use crate::api::handlers::upgrades;
+use crate::api::handlers::verdicts;
+use crate::api::handlers::workspace;
 
 pub fn create_router(state: AppState) -> Router {
     Router::new()
@@ -55,28 +55,43 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/gateway/infer", post(gateway::infer))
         .route("/api/gateway/embed", post(gateway::embed))
         .route("/api/gateway/consensus", post(gateway::consensus))
-        .route("/api/gateway/routers",                       get(gateway_routers::list_routers))
-        .route("/api/gateway/routers/{id}/providers",        get(gateway_routers::router_providers))
-        .route("/api/gateway/routers/{id}/models",           get(gateway_routers::router_models))
-        .route("/api/gateway/routers/{id}/key",              post(gateway_routers::set_router_key).delete(gateway_routers::clear_router_key))
-        .route("/api/gateway/models",                        get(gateway_routers::list_all_models))
-        .route("/api/gateway/chains",                        get(gateway_chains::list_chains))
-        .route("/api/gateway/chains/{id}/role",              put(gateway_chains::set_chain_role))
-        .route("/api/gateway/chains/{id}/available-models",  get(gateway_chains::list_available_models))
-        .route("/api/gateway/chains/{id}/models",            post(gateway_chains::add_chain_model))
-        .route("/api/gateway/chains/{id}/models/{member_id}",           delete(gateway_chains::remove_chain_model))
-        .route("/api/gateway/chains/{id}/models/{member_id}/move",      put(gateway_chains::move_chain_model))
-        .route("/api/gateway/image/generate",                post(gateway_image::image_generate))
+        .route("/api/gateway/routers", get(gateway_routers::list_routers))
+        .route("/api/gateway/routers/{id}/providers", get(gateway_routers::router_providers))
+        .route("/api/gateway/routers/{id}/models", get(gateway_routers::router_models))
+        .route(
+            "/api/gateway/routers/{id}/key",
+            post(gateway_routers::set_router_key).delete(gateway_routers::clear_router_key),
+        )
+        .route("/api/gateway/models", get(gateway_routers::list_all_models))
+        .route("/api/gateway/chains", get(gateway_chains::list_chains))
+        .route("/api/gateway/chains/{id}/role", put(gateway_chains::set_chain_role))
+        .route(
+            "/api/gateway/chains/{id}/available-models",
+            get(gateway_chains::list_available_models),
+        )
+        .route("/api/gateway/chains/{id}/models", post(gateway_chains::add_chain_model))
+        .route(
+            "/api/gateway/chains/{id}/models/{member_id}",
+            delete(gateway_chains::remove_chain_model),
+        )
+        .route(
+            "/api/gateway/chains/{id}/models/{member_id}/move",
+            put(gateway_chains::move_chain_model),
+        )
+        .route("/api/gateway/image/generate", post(gateway_image::image_generate))
         // On-demand model provisioning: pull + coldboot a local GGUF chat model
         // behind the embedded-llama router. POST starts (or joins) a pull; GET
         // snapshots every tracked model's phase. Both degrade cleanly when the
         // daemon lacks the embedded engine (501 / empty list).
-        .route("/api/gateway/models/provision/status",       get(model_provisioning::provision_status))
-        .route("/api/gateway/models/{id}/provision",         post(model_provisioning::provision_model))
+        .route("/api/gateway/models/provision/status", get(model_provisioning::provision_status))
+        .route("/api/gateway/models/{id}/provision", post(model_provisioning::provision_model))
         // Repos (individual git repos)
         .route("/api/repos", get(workspace::list_projects).post(workspace::create_project))
         .route("/api/repos/sync-frontmatter", post(workspace::sync_readme_frontmatter))
-        .route("/api/repos/{repo_id}", put(workspace::update_project).delete(workspace::delete_project))
+        .route(
+            "/api/repos/{repo_id}",
+            put(workspace::update_project).delete(workspace::delete_project),
+        )
         .route("/api/repos/{repo_id}/tags", post(workspace::add_project_tag))
         .route("/api/repos/{repo_id}/tags/{tag}", delete(workspace::remove_project_tag))
         .route("/api/repos/{repo_id}/summary", get(observatory::project_summary))
@@ -87,8 +102,14 @@ pub fn create_router(state: AppState) -> Router {
         // Projects (groups of 1+ repos)
         .route("/api/projects", get(observatory::list_solutions).post(observatory::create_solution))
         .route("/api/projects/merge", post(observatory::merge_projects))
-        .route("/api/projects/{id}", put(observatory::update_solution).delete(observatory::delete_solution))
-        .route("/api/projects/{id}/repos", get(project_detail::get_project_repos).post(observatory::add_solution_repo))
+        .route(
+            "/api/projects/{id}",
+            put(observatory::update_solution).delete(observatory::delete_solution),
+        )
+        .route(
+            "/api/projects/{id}/repos",
+            get(project_detail::get_project_repos).post(observatory::add_solution_repo),
+        )
         .route("/api/projects/{id}/repos/{repo_id}", delete(observatory::remove_solution_repo))
         .route("/api/projects/{id}/tags", post(observatory::add_solution_tag))
         .route("/api/projects/{id}/tags/{tag}", delete(observatory::remove_solution_tag))
@@ -100,76 +121,105 @@ pub fn create_router(state: AppState) -> Router {
         // user. Complements /api/knowledge/rules (WHAT a run may do).
         .route("/api/stance", get(stance::get_stance).post(stance::set_stance))
         // Project detail endpoints (multi-window)
-        .route("/api/projects/{id}/ftr",             get(project_detail::get_project_ftr))
-        .route("/api/projects/{id}/icon",            get(project_detail::get_project_icon))
-        .route("/api/projects/{id}/overview",        get(project_detail::get_project_overview))
-        .route("/api/projects/{id}/drift",           get(project_detail::get_project_drift))
-        .route("/api/projects/{id}/drift/scan",      post(project_detail::scan_project_doc_drift))
+        .route("/api/projects/{id}/ftr", get(project_detail::get_project_ftr))
+        .route("/api/projects/{id}/icon", get(project_detail::get_project_icon))
+        .route("/api/projects/{id}/overview", get(project_detail::get_project_overview))
+        .route("/api/projects/{id}/drift", get(project_detail::get_project_drift))
+        .route("/api/projects/{id}/drift/scan", post(project_detail::scan_project_doc_drift))
         .route("/api/projects/{id}/coverage/backfill", post(project_detail::coverage_backfill))
-        .route("/api/projects/{id}/health",           get(project_detail::get_project_health))
-        .route("/api/projects/{id}/correlations",     get(project_detail::get_metric_correlations))
-        .route("/api/metrics/correlations",          get(project_detail::get_portfolio_correlations))
-        .route("/api/projects/{id}/patterns",        get(project_detail::get_project_patterns))
-        .route("/api/projects/{id}/libraries",       get(project_detail::get_project_libraries))
-        .route("/api/projects/{id}/instruments",     get(project_detail::get_project_instruments))
-        .route("/api/projects/{id}/mcp-tool-stats",  get(project_detail::get_project_mcp_tool_stats))
-        .route("/api/projects/{id}/services",        get(project_detail::list_project_services))
-        .route("/api/projects/{id}/services/{service_id}/scope",
-               put(project_detail::set_project_service_scope))
-        .route("/api/projects/{id}/memories",        get(project_detail::get_project_memories))
-        .route("/api/projects/{id}/memory-batches",
-               get(project_detail::list_memory_share_batches)
-                 .post(project_detail::create_memory_share_batch))
-        .route("/api/projects/{id}/memory-batches/{batch_id}",
-               put(project_detail::decide_memory_share_batch))
-        .route("/api/projects/{id}/recommendations", get(project_detail::get_project_recommendations))
-        .route("/api/projects/{id}/recommendations/{rec_id}/accept",
-               post(project_detail::accept_project_recommendation))
-        .route("/api/projects/{id}/recommendations/{rec_id}/reject",
-               post(project_detail::reject_project_recommendation))
+        .route("/api/projects/{id}/health", get(project_detail::get_project_health))
+        .route("/api/projects/{id}/correlations", get(project_detail::get_metric_correlations))
+        .route("/api/metrics/correlations", get(project_detail::get_portfolio_correlations))
+        .route("/api/projects/{id}/patterns", get(project_detail::get_project_patterns))
+        .route("/api/projects/{id}/libraries", get(project_detail::get_project_libraries))
+        .route("/api/projects/{id}/instruments", get(project_detail::get_project_instruments))
+        .route("/api/projects/{id}/mcp-tool-stats", get(project_detail::get_project_mcp_tool_stats))
+        .route("/api/projects/{id}/services", get(project_detail::list_project_services))
+        .route(
+            "/api/projects/{id}/services/{service_id}/scope",
+            put(project_detail::set_project_service_scope),
+        )
+        .route("/api/projects/{id}/memories", get(project_detail::get_project_memories))
+        .route(
+            "/api/projects/{id}/memory-batches",
+            get(project_detail::list_memory_share_batches)
+                .post(project_detail::create_memory_share_batch),
+        )
+        .route(
+            "/api/projects/{id}/memory-batches/{batch_id}",
+            put(project_detail::decide_memory_share_batch),
+        )
+        .route(
+            "/api/projects/{id}/recommendations",
+            get(project_detail::get_project_recommendations),
+        )
+        .route(
+            "/api/projects/{id}/recommendations/{rec_id}/accept",
+            post(project_detail::accept_project_recommendation),
+        )
+        .route(
+            "/api/projects/{id}/recommendations/{rec_id}/reject",
+            post(project_detail::reject_project_recommendation),
+        )
         // P-A: rule-class accept that MATERIALIZES a governance rule (+ preview).
-        .route("/api/projects/{id}/recommendations/{rec_id}/preview",
-               get(project_detail::preview_recommendation_materialization))
-        .route("/api/projects/{id}/recommendations/{rec_id}/materialize",
-               post(project_detail::materialize_recommendation))
-        .route("/api/projects/{id}/impact",          get(project_detail::get_project_impact))
-        .route("/api/projects/{id}/impact-verdicts",
-               get(project_detail::list_impact_verdicts)
-                 .post(project_detail::create_impact_verdict))
-        .route("/api/projects/{id}/impact-verdicts/{verdict_id}",
-               put(project_detail::decide_impact_verdict))
-        .route("/api/projects/{id}/sessions",        get(project_detail::get_project_sessions))
-        .route("/api/projects/{id}/project-deps",    get(project_detail::get_project_project_deps))
-        .route("/api/projects/{id}/commands",        get(project_detail::get_project_commands))
+        .route(
+            "/api/projects/{id}/recommendations/{rec_id}/preview",
+            get(project_detail::preview_recommendation_materialization),
+        )
+        .route(
+            "/api/projects/{id}/recommendations/{rec_id}/materialize",
+            post(project_detail::materialize_recommendation),
+        )
+        .route("/api/projects/{id}/impact", get(project_detail::get_project_impact))
+        .route(
+            "/api/projects/{id}/impact-verdicts",
+            get(project_detail::list_impact_verdicts).post(project_detail::create_impact_verdict),
+        )
+        .route(
+            "/api/projects/{id}/impact-verdicts/{verdict_id}",
+            put(project_detail::decide_impact_verdict),
+        )
+        .route("/api/projects/{id}/sessions", get(project_detail::get_project_sessions))
+        .route("/api/projects/{id}/project-deps", get(project_detail::get_project_project_deps))
+        .route("/api/projects/{id}/commands", get(project_detail::get_project_commands))
         // Metrics (Phase 7): latest-per-metric + trend + health for a project, and
         // one metric's series at a grain (?grain=daily|weekly|monthly|quarterly).
-        .route("/api/projects/{id}/metrics",         get(metrics::get_project_metrics))
-        .route("/api/projects/{id}/metrics/{key}",   get(metrics::get_project_metric_series))
+        .route("/api/projects/{id}/metrics", get(metrics::get_project_metrics))
+        .route("/api/projects/{id}/metrics/{key}", get(metrics::get_project_metric_series))
         // Datapoint→sessions drill-down: the measurable sessions behind one daily
         // metric point (?day=YYYY-MM-DD).
-        .route("/api/projects/{id}/metrics/{key}/sessions",
-               get(metrics::get_project_metric_day_sessions))
-        .route("/api/projects/{id}/tools",           get(metrics::get_project_tools))
+        .route(
+            "/api/projects/{id}/metrics/{key}/sessions",
+            get(metrics::get_project_metric_day_sessions),
+        )
+        .route("/api/projects/{id}/tools", get(metrics::get_project_tools))
         // G10: user-scope capability→preferred-tool bias for get_commands.
-        .route("/api/preferences/commands",          get(project_detail::get_command_preferences).put(project_detail::set_command_preference))
-        .route("/api/projects/{id}/library-version-conflicts", get(project_detail::get_project_library_version_conflicts))
+        .route(
+            "/api/preferences/commands",
+            get(project_detail::get_command_preferences)
+                .put(project_detail::set_command_preference),
+        )
+        .route(
+            "/api/projects/{id}/library-version-conflicts",
+            get(project_detail::get_project_library_version_conflicts),
+        )
         // Observatory chart data
-        .route("/api/observatory/ftr-daily",             get(observatory::holistic_ftr_daily))
-        .route("/api/observatory/tool-usage",            get(observatory::tool_usage))
-        .route("/api/observatory/tool-signals",          get(observatory::tool_signals))
-        .route("/api/observatory/tool-insights",         get(observatory::tool_insights))
-        .route("/api/observatory/model-effectiveness",   get(observatory::model_effectiveness))
-        .route("/api/observatory/today",                 get(observatory::observatory_today))
-        .route("/api/observatory/ftr",                   get(observatory::observatory_ftr))
-        .route("/api/insights",                          get(observatory::get_insights))
-        .route("/api/projects/{id}/ftr-daily",           get(observatory::project_ftr_daily))
-        .route("/api/projects/{id}/hotspots",            get(observatory::project_hotspots))
-        .route("/api/projects/{id}/quality-signals",     get(observatory::project_quality_signals))
-        .route("/api/projects/{id}/maturity",            get(observatory::project_maturity))
+        .route("/api/observatory/ftr-daily", get(observatory::holistic_ftr_daily))
+        .route("/api/observatory/tool-usage", get(observatory::tool_usage))
+        .route("/api/observatory/tool-signals", get(observatory::tool_signals))
+        .route("/api/observatory/tool-insights", get(observatory::tool_insights))
+        .route("/api/observatory/model-effectiveness", get(observatory::model_effectiveness))
+        .route("/api/observatory/today", get(observatory::observatory_today))
+        .route("/api/observatory/ftr", get(observatory::observatory_ftr))
+        .route("/api/insights", get(observatory::get_insights))
+        .route("/api/projects/{id}/ftr-daily", get(observatory::project_ftr_daily))
+        .route("/api/projects/{id}/hotspots", get(observatory::project_hotspots))
+        .route("/api/projects/{id}/quality-signals", get(observatory::project_quality_signals))
+        .route("/api/projects/{id}/maturity", get(observatory::project_maturity))
         .route("/api/corrections", get(corrections::list_corrections))
         .route("/api/projects/{id}/corrections", get(corrections::project_corrections))
-        .route("/api/projects/{id}/teachings",           get(observatory::project_teachings))
-        .route("/api/libs/{id}/usage",                   get(observatory::library_usage))
+        .route("/api/projects/{id}/teachings", get(observatory::project_teachings))
+        .route("/api/libs/{id}/usage", get(observatory::library_usage))
         // Indexing
         .route("/api/index", post(workspace::index_project))
         .route("/api/index/status", get(workspace::task_status))
@@ -279,7 +329,10 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/config/{key}", get(config::get_config_key).delete(config::delete_config_key))
         // Sessions
         .route("/api/sessions", get(sessions::get_sessions_stub).post(sessions::create_session))
-        .route("/api/sessions/{id}", get(sessions::get_session).put(sessions::update_session_handler))
+        .route(
+            "/api/sessions/{id}",
+            get(sessions::get_session).put(sessions::update_session_handler),
+        )
         .route("/api/sessions/{id}/tool-timeline", get(sessions::get_session_tool_timeline))
         .route("/api/sessions/{id}/replay", get(sessions::get_session_replay))
         // Relay runs (P3.2 observability + P3.8 run-control create)
@@ -327,59 +380,77 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/metrics/registry", get(metrics::get_metrics_registry))
         .route("/api/metrics/{project}", get(observatory::get_metrics))
         // Workflow state
-        .route("/api/state/{project}", get(sessions::get_workflow_state).put(sessions::update_workflow_state))
+        .route(
+            "/api/state/{project}",
+            get(sessions::get_workflow_state).put(sessions::update_workflow_state),
+        )
         // Scan
         .route("/api/scan", post(workspace::scan_folder))
         .route("/api/scan/suggestions", get(workspace::scan_suggestions))
         .route("/api/scan/roots", get(workspace::scan_roots).post(workspace::add_watch_root))
-        .route("/api/scan/roots/{id}", put(workspace::update_watch_root).delete(workspace::delete_watch_root))
+        .route(
+            "/api/scan/roots/{id}",
+            put(workspace::update_watch_root).delete(workspace::delete_watch_root),
+        )
         // Backfill embeddings for already-indexed nodes (EmbedNodes per folder)
         .route("/api/embed/backfill", post(workspace::backfill_embeddings))
         // Knowledge plane
-        .route("/api/knowledge/memories",                get(knowledge::list_memories).post(knowledge::save_memory))
-        .route("/api/knowledge/memories/{id}",           get(knowledge::get_memory))
-        .route("/api/knowledge/memories/{id}/promote",   post(knowledge::promote_memory))
+        .route(
+            "/api/knowledge/memories",
+            get(knowledge::list_memories).post(knowledge::save_memory),
+        )
+        .route("/api/knowledge/memories/{id}", get(knowledge::get_memory))
+        .route("/api/knowledge/memories/{id}/promote", post(knowledge::promote_memory))
         .route("/api/knowledge/memories/{id}/generalise", post(knowledge::generalise_memory))
-        .route("/api/knowledge/memories/{id}/archive",   post(knowledge::archive_memory))
+        .route("/api/knowledge/memories/{id}/archive", post(knowledge::archive_memory))
         .route("/api/knowledge/memories/{id}/reinforce", post(knowledge::reinforce_memory))
         .route("/api/knowledge/memories/{id}/challenge", post(knowledge::challenge_memory))
-        .route("/api/knowledge/memories/{id}/dismiss",   post(knowledge::dismiss_memory))
-        .route("/api/knowledge/memories/{id}/merge",     post(knowledge::merge_memory))
-        .route("/api/knowledge/promotion-candidates",    get(knowledge::promotion_candidates))
-        .route("/api/knowledge/proposals",               post(knowledge::propose_memory))
-        .route("/api/knowledge/proposals/{id}/accept",   post(knowledge::accept_proposal))
-        .route("/api/knowledge/proposals/{id}/reject",   post(knowledge::reject_proposal))
-        .route("/api/knowledge/outcomes",                post(knowledge::record_outcomes))
-        .route("/api/knowledge/context",                 get(knowledge::get_context))
-        .route("/api/planner/generate",                  post(planner::generate_plan))
-        .route("/api/checkers/run",                      post(checker::run_checkers))
-        .route("/api/knowledge/rules",                   get(knowledge::get_rules))
-        .route("/api/knowledge/constitution",            get(knowledge::get_constitution))
-        .route("/api/knowledge/rules/materialize",       post(knowledge::materialize_rules))
-        .route("/api/knowledge/rules/consolidate",       post(knowledge::consolidate_rules))
-        .route("/api/knowledge/rules/consolidated",      get(knowledge::get_consolidated))
-        .route("/api/knowledge/rules/consolidate/{id}/approve", post(knowledge::approve_consolidated))
+        .route("/api/knowledge/memories/{id}/dismiss", post(knowledge::dismiss_memory))
+        .route("/api/knowledge/memories/{id}/merge", post(knowledge::merge_memory))
+        .route("/api/knowledge/promotion-candidates", get(knowledge::promotion_candidates))
+        .route("/api/knowledge/proposals", post(knowledge::propose_memory))
+        .route("/api/knowledge/proposals/{id}/accept", post(knowledge::accept_proposal))
+        .route("/api/knowledge/proposals/{id}/reject", post(knowledge::reject_proposal))
+        .route("/api/knowledge/outcomes", post(knowledge::record_outcomes))
+        .route("/api/knowledge/context", get(knowledge::get_context))
+        .route("/api/planner/generate", post(planner::generate_plan))
+        .route("/api/checkers/run", post(checker::run_checkers))
+        .route("/api/knowledge/rules", get(knowledge::get_rules))
+        .route("/api/knowledge/constitution", get(knowledge::get_constitution))
+        .route("/api/knowledge/rules/materialize", post(knowledge::materialize_rules))
+        .route("/api/knowledge/rules/consolidate", post(knowledge::consolidate_rules))
+        .route("/api/knowledge/rules/consolidated", get(knowledge::get_consolidated))
+        .route(
+            "/api/knowledge/rules/consolidate/{id}/approve",
+            post(knowledge::approve_consolidated),
+        )
         // Federation sources (Dōjō rules tenant path /v1/t/{origin}/{org}/rules)
-        .route("/api/knowledge/sources",                 get(knowledge::list_sources).post(knowledge::create_source))
-        .route("/api/knowledge/sources/{id}",            delete(knowledge::delete_source))
-        .route("/api/knowledge/sources/{id}/sync",       post(knowledge::sync_source))
-        .route("/api/knowledge/sources/{id}/status",     get(knowledge::source_status))
+        .route(
+            "/api/knowledge/sources",
+            get(knowledge::list_sources).post(knowledge::create_source),
+        )
+        .route("/api/knowledge/sources/{id}", delete(knowledge::delete_source))
+        .route("/api/knowledge/sources/{id}/sync", post(knowledge::sync_source))
+        .route("/api/knowledge/sources/{id}/status", get(knowledge::source_status))
         // Collective sharing preferences (Preferences → Sharing, C9)
-        .route("/api/preferences/collective",            get(preferences::get_collective).put(preferences::put_collective))
+        .route(
+            "/api/preferences/collective",
+            get(preferences::get_collective).put(preferences::put_collective),
+        )
         // Dōjō connections (memberships)
-        .route("/api/dojo/memberships",                  get(dojo::list_memberships).post(dojo::create_membership))
-        .route("/api/dojo/memberships/{id}/orgs",        put(dojo::set_membership_orgs))
+        .route("/api/dojo/memberships", get(dojo::list_memberships).post(dojo::create_membership))
+        .route("/api/dojo/memberships/{id}/orgs", put(dojo::set_membership_orgs))
         // R3 infer-at-detect auto-bind: suggestion (read-only) + confirm-bind
-        .route("/api/projects/{id}/dojo-suggestion",     get(dojo::project_binding_suggestion))
-        .route("/api/projects/{id}/dojo-binding",        post(dojo::bind_project_to_membership))
+        .route("/api/projects/{id}/dojo-suggestion", get(dojo::project_binding_suggestion))
+        .route("/api/projects/{id}/dojo-binding", post(dojo::bind_project_to_membership))
         // Dōjō upstream share review (C6)
-        .route("/api/share-review/next-batch",           get(share_review::next_batch))
-        .route("/api/share-review/{batch}/publish",      post(share_review::publish_batch))
+        .route("/api/share-review/next-batch", get(share_review::next_batch))
+        .route("/api/share-review/{batch}/publish", post(share_review::publish_batch))
         // Dōjō downstream inbox / upgrades (C7)
-        .route("/api/upgrades",                          get(upgrades::list))
-        .route("/api/upgrades/{id}/apply",               post(upgrades::apply))
-        .route("/api/upgrades/{id}/mute",                post(upgrades::mute))
-        .route("/api/upgrades/{id}/pin",                 post(upgrades::pin))
+        .route("/api/upgrades", get(upgrades::list))
+        .route("/api/upgrades/{id}/apply", post(upgrades::apply))
+        .route("/api/upgrades/{id}/mute", post(upgrades::mute))
+        .route("/api/upgrades/{id}/pin", post(upgrades::pin))
         // Stop
         .route("/stop", post(workspace::stop))
         .with_state(state)
@@ -413,11 +484,14 @@ pub fn create_degraded_router(db_url: String, error: String) -> Router {
         .fallback(move || {
             let msg = fallback_msg.clone();
             async move {
-                (StatusCode::SERVICE_UNAVAILABLE, Json(serde_json::json!({
-                    "ok": false,
-                    "reason": "db_unavailable",
-                    "message": msg,
-                })))
+                (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    Json(serde_json::json!({
+                        "ok": false,
+                        "reason": "db_unavailable",
+                        "message": msg,
+                    })),
+                )
             }
         })
 }
@@ -429,13 +503,13 @@ pub fn create_degraded_router(db_url: String, error: String) -> Router {
 #[allow(clippy::await_holding_lock)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
+    use crate::api::state::SharedState;
+    use crate::tasks::queue::TaskQueue;
+    use crate::tasks::{Task, TaskKind};
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
+    use std::sync::Arc;
     use tower::ServiceExt;
-    use crate::tasks::{Task, TaskKind};
-    use crate::tasks::queue::TaskQueue;
-    use crate::api::state::SharedState;
 
     async fn test_app() -> (Router, AppState) {
         let gateway = crate::api::gateway_init::init_gateway_test().await;
@@ -453,10 +527,18 @@ mod tests {
     }
 
     /// Send one request through the real router; returns `(status, json_body)`.
-    async fn req(app: Router, method: &str, uri: &str, body: Option<serde_json::Value>) -> (StatusCode, serde_json::Value) {
+    async fn req(
+        app: Router,
+        method: &str,
+        uri: &str,
+        body: Option<serde_json::Value>,
+    ) -> (StatusCode, serde_json::Value) {
         let builder = Request::builder().method(method).uri(uri);
         let request = match body {
-            Some(v) => builder.header("content-type", "application/json").body(Body::from(v.to_string())).unwrap(),
+            Some(v) => builder
+                .header("content-type", "application/json")
+                .body(Body::from(v.to_string()))
+                .unwrap(),
             None => builder.body(Body::empty()).unwrap(),
         };
         let resp = app.oneshot(request).await.unwrap();
@@ -496,7 +578,10 @@ mod tests {
     /// fixed known strings so assertions have a stable target. `effective_from`
     /// defaults to `current_date`, so the row is active today. Cleaned up by caller.
     async fn seed_metric(
-        pg: &crate::db::pg_store::PgStore, key: &str, mtype: &str, direction: &str,
+        pg: &crate::db::pg_store::PgStore,
+        key: &str,
+        mtype: &str,
+        direction: &str,
     ) -> uuid::Uuid {
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "INSERT INTO sensei.metrics
@@ -524,18 +609,27 @@ mod tests {
         let metrics = body["metrics"].as_array().expect("metrics is an array");
         assert!(!metrics.is_empty(), "the active registry is non-empty");
         for m in metrics {
-            assert!(m["purpose"].as_str().is_some_and(|s| !s.is_empty()),
-                "every metric carries a purpose: {m}");
-            assert!(m["direction"].as_str().is_some_and(|s| !s.is_empty()),
-                "every metric carries a direction: {m}");
+            assert!(
+                m["purpose"].as_str().is_some_and(|s| !s.is_empty()),
+                "every metric carries a purpose: {m}"
+            );
+            assert!(
+                m["direction"].as_str().is_some_and(|s| !s.is_empty()),
+                "every metric carries a direction: {m}"
+            );
         }
-        let ours = metrics.iter().find(|m| m["key"].as_str() == Some(key.as_str()))
+        let ours = metrics
+            .iter()
+            .find(|m| m["key"].as_str() == Some(key.as_str()))
             .expect("seeded metric is in the active registry");
         assert_eq!(ours["direction"], "higher_better");
         assert_eq!(ours["purpose"], "test purpose");
 
         sqlx_core::query::query("DELETE FROM sensei.metrics WHERE id = $1")
-            .bind(mid).execute(state.pg.pool()).await.unwrap();
+            .bind(mid)
+            .execute(state.pg.pool())
+            .await
+            .unwrap();
     }
 
     /// 7.2 `GET /api/projects/{id}/metrics`: latest-per-metric + facets + trend +
@@ -553,8 +647,12 @@ mod tests {
         // per-test repository so the retirement-exclusion assertion can't be poisoned
         // by another run's write.
         let (rid,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
-            "INSERT INTO sensei.repositories (repo_key, name) VALUES ($1, $1) RETURNING id")
-            .bind(format!("test/{uniq}")).fetch_one(state.pg.pool()).await.unwrap();
+            "INSERT INTO sensei.repositories (repo_key, name) VALUES ($1, $1) RETURNING id",
+        )
+        .bind(format!("test/{uniq}"))
+        .fetch_one(state.pg.pool())
+        .await
+        .unwrap();
         // The repository must reach the project through a folder: project_metrics
         // derives project_id from that link, so an unlinked repo's rows exist but
         // are invisible to every project-filtered read.
@@ -563,33 +661,86 @@ mod tests {
         // Base metric A (ratio) across TWO ISO weeks → weekly trend has prior/delta.
         let key_a = format!("_test:pme:{uniq}:cov");
         let mid_a = seed_metric(&state.pg, &key_a, "ratio", "higher_better").await;
-        let w1 = chrono::NaiveDate::from_ymd_opt(2020, 1, 6).unwrap();  // Monday
+        let w1 = chrono::NaiveDate::from_ymd_opt(2020, 1, 6).unwrap(); // Monday
         let w2 = chrono::NaiveDate::from_ymd_opt(2020, 1, 13).unwrap(); // next Monday
-        state.pg.upsert_project_metric(&mid_a, &rid, w1, "daily", 0.5,
-            &serde_json::json!({"numerator": 1, "denominator": 2}), "measured").await.unwrap();
-        state.pg.upsert_project_metric(&mid_a, &rid, w2, "daily", 0.75,
-            &serde_json::json!({"numerator": 3, "denominator": 4}), "measured").await.unwrap();
+        state
+            .pg
+            .upsert_project_metric(
+                &mid_a,
+                &rid,
+                w1,
+                "daily",
+                0.5,
+                &serde_json::json!({"numerator": 1, "denominator": 2}),
+                "measured",
+            )
+            .await
+            .unwrap();
+        state
+            .pg
+            .upsert_project_metric(
+                &mid_a,
+                &rid,
+                w2,
+                "daily",
+                0.75,
+                &serde_json::json!({"numerator": 3, "denominator": 4}),
+                "measured",
+            )
+            .await
+            .unwrap();
 
         // Base metric B (ratio) — a SINGLE week → no prior period (trend is null).
         let key_b = format!("_test:pme:{uniq}:dup");
         let mid_b = seed_metric(&state.pg, &key_b, "ratio", "lower_better").await;
-        state.pg.upsert_project_metric(&mid_b, &rid, w1, "daily", 0.25,
-            &serde_json::json!({"numerator": 1, "denominator": 4}), "measured").await.unwrap();
+        state
+            .pg
+            .upsert_project_metric(
+                &mid_b,
+                &rid,
+                w1,
+                "daily",
+                0.25,
+                &serde_json::json!({"numerator": 1, "denominator": 4}),
+                "measured",
+            )
+            .await
+            .unwrap();
 
         // A RETIRED metric with a durable daily row: project_health carries a past
         // effective_until in the registry (retirement is in-place, never hand-delete a
         // row), so its stored value must NOT render as an active card — asserted below.
         let (health_mid,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
-            "SELECT id FROM sensei.metrics WHERE key = 'project_health'")
-            .fetch_one(state.pg.pool()).await.expect("project_health seeded in registry");
-        state.pg.upsert_project_metric_repo(&health_mid, &rid, "user", None, None, w2, "daily", 82.0,
-            &serde_json::json!({"components": 2}), "measured").await.unwrap();
+            "SELECT id FROM sensei.metrics WHERE key = 'project_health'",
+        )
+        .fetch_one(state.pg.pool())
+        .await
+        .expect("project_health seeded in registry");
+        state
+            .pg
+            .upsert_project_metric_repo(
+                &health_mid,
+                &rid,
+                "user",
+                None,
+                None,
+                w2,
+                "daily",
+                82.0,
+                &serde_json::json!({"components": 2}),
+                "measured",
+            )
+            .await
+            .unwrap();
 
-        let (st, body) = req(app.clone(), "GET", &format!("/api/projects/{pid}/metrics"), None).await;
+        let (st, body) =
+            req(app.clone(), "GET", &format!("/api/projects/{pid}/metrics"), None).await;
         assert_eq!(st, StatusCode::OK, "{body}");
         let metrics = body["metrics"].as_array().expect("metrics array");
 
-        let a = metrics.iter().find(|m| m["metric"].as_str() == Some(key_a.as_str()))
+        let a = metrics
+            .iter()
+            .find(|m| m["metric"].as_str() == Some(key_a.as_str()))
             .expect("metric A present");
         assert_eq!(a["value"], 0.75, "latest daily value for A");
         assert_eq!(a["purpose"], "test purpose", "facet: purpose attached");
@@ -599,7 +750,9 @@ mod tests {
         assert_eq!(a["prior"].as_f64(), Some(0.5), "A weekly prior (Σnum/Σden of week 1)");
         assert_eq!(a["delta"].as_f64(), Some(0.25), "A weekly delta = value - prior");
 
-        let b = metrics.iter().find(|m| m["metric"].as_str() == Some(key_b.as_str()))
+        let b = metrics
+            .iter()
+            .find(|m| m["metric"].as_str() == Some(key_b.as_str()))
             .expect("metric B present");
         assert_eq!(b["value"], 0.25);
         // Honest-null trend: B has a single week → prior/delta null, never a fake 0.
@@ -609,30 +762,47 @@ mod tests {
         // Retired-metric exclusion: project_health is past its effective_until, so
         // even with a durable daily row the endpoint filters it out of the active
         // dashboard (get_project_metrics' ACTIVE_METRIC_PREDICATE) — never a stale card.
-        assert!(metrics.iter().all(|m| m["metric"].as_str() != Some("project_health")),
-            "retired project_health is excluded from the active metrics, not rendered as a stale card");
+        assert!(
+            metrics.iter().all(|m| m["metric"].as_str() != Some("project_health")),
+            "retired project_health is excluded from the active metrics, not rendered as a stale card"
+        );
 
         // Honest-empty: a project with NO metric rows → 200 with an empty list.
-        let empty_pid = state.pg.create_project(&format!("_test:pme-empty:{uniq}"), None, None).await.unwrap();
-        let (st, body) = req(app.clone(), "GET", &format!("/api/projects/{empty_pid}/metrics"), None).await;
+        let empty_pid =
+            state.pg.create_project(&format!("_test:pme-empty:{uniq}"), None, None).await.unwrap();
+        let (st, body) =
+            req(app.clone(), "GET", &format!("/api/projects/{empty_pid}/metrics"), None).await;
         assert_eq!(st, StatusCode::OK);
-        assert_eq!(body["metrics"].as_array().map(|a| a.len()), Some(0),
-            "no rows → honest-empty list, not a fabricated row");
+        assert_eq!(
+            body["metrics"].as_array().map(|a| a.len()),
+            Some(0),
+            "no rows → honest-empty list, not a fabricated row"
+        );
 
         // Unknown project id → 404 (matches GET /api/projects/{id}/ftr), never a 200-empty.
-        let (st, _) = req(app, "GET", &format!("/api/projects/{}/metrics", uuid::Uuid::new_v4()), None).await;
+        let (st, _) =
+            req(app, "GET", &format!("/api/projects/{}/metrics", uuid::Uuid::new_v4()), None).await;
         assert_eq!(st, StatusCode::NOT_FOUND, "unknown project → 404, never a fabricated empty");
 
         // cleanup — project_metrics cascade from the metric + project; the shared
         // project_health registry row is left intact (its test row cascades w/ pid).
         sqlx_core::query::query("DELETE FROM sensei.metrics WHERE id = ANY($1)")
-            .bind(vec![mid_a, mid_b]).execute(state.pg.pool()).await.unwrap();
+            .bind(vec![mid_a, mid_b])
+            .execute(state.pg.pool())
+            .await
+            .unwrap();
         sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = ANY($1)")
-            .bind(vec![pid, empty_pid]).execute(state.pg.pool()).await.unwrap();
+            .bind(vec![pid, empty_pid])
+            .execute(state.pg.pool())
+            .await
+            .unwrap();
         // Repo-grain: drop the per-test repository (its uniq-derived repo_key must not
         // leak — the health_mid row already cascaded with `pid`).
         sqlx_core::query::query("DELETE FROM sensei.repositories WHERE id = $1")
-            .bind(rid).execute(state.pg.pool()).await.unwrap();
+            .bind(rid)
+            .execute(state.pg.pool())
+            .await
+            .unwrap();
     }
 
     /// 8.2: the legacy FTR surfaces — the HTTP route `GET /api/metrics/{project}`
@@ -645,7 +815,9 @@ mod tests {
         let (app, state) = test_app().await;
         let (ftr_mid,): (uuid::Uuid,) =
             sqlx_core::query_as::query_as("SELECT id FROM sensei.metrics WHERE key = 'ftr'")
-                .fetch_one(state.pg.pool()).await.expect("ftr metric seeded in registry");
+                .fetch_one(state.pg.pool())
+                .await
+                .expect("ftr metric seeded in registry");
         let today = chrono::Utc::now().date_naive();
 
         // Project WITH ftr data — folder name is what both surfaces resolve on.
@@ -658,8 +830,22 @@ mod tests {
         // `today` collide and steal each other's project_id. Pin it to the fixture's
         // repository (scope=user) so this project's row is its own.
         let rid_has = crate::tasks::test_support::repository_for_folder(&state.pg, &fid_has).await;
-        state.pg.upsert_project_metric_repo(&ftr_mid, &rid_has, "user", None, None, today, "daily", 0.75,
-            &serde_json::json!({"numerator": 3, "denominator": 4}), "measured").await.unwrap();
+        state
+            .pg
+            .upsert_project_metric_repo(
+                &ftr_mid,
+                &rid_has,
+                "user",
+                None,
+                None,
+                today,
+                "daily",
+                0.75,
+                &serde_json::json!({"numerator": 3, "denominator": 4}),
+                "measured",
+            )
+            .await
+            .unwrap();
 
         // Project WITHOUT any ftr data.
         let uniq_no = uuid::Uuid::new_v4();
@@ -671,35 +857,56 @@ mod tests {
         // ── HTTP surface: GET /api/metrics/{project} ──────────────────────
         let (st, body) = req(app.clone(), "GET", &format!("/api/metrics/{name_has}"), None).await;
         assert_eq!(st, StatusCode::OK, "{body}");
-        assert!((body["ftr"].as_f64().expect("ftr is a number when data exists") - 0.75).abs() < 1e-9,
-            "HTTP ftr = store Σnum/Σden (0.75), not a re-computed completion rate");
+        assert!(
+            (body["ftr"].as_f64().expect("ftr is a number when data exists") - 0.75).abs() < 1e-9,
+            "HTTP ftr = store Σnum/Σden (0.75), not a re-computed completion rate"
+        );
 
         let (st, body) = req(app.clone(), "GET", &format!("/api/metrics/{name_no}"), None).await;
         assert_eq!(st, StatusCode::OK, "{body}");
-        assert!(body["ftr"].is_null(),
-            "HTTP ftr is honest-null with no data — NEVER a fabricated 0.0; got {}", body["ftr"]);
+        assert!(
+            body["ftr"].is_null(),
+            "HTTP ftr is honest-null with no data — NEVER a fabricated 0.0; got {}",
+            body["ftr"]
+        );
 
         // ── MCP surface: POST /api/mcp/call get_metrics ───────────────────
-        let call = |name: &str| serde_json::json!({"tool": "get_metrics", "params": {"repoId": name}});
+        let call =
+            |name: &str| serde_json::json!({"tool": "get_metrics", "params": {"repoId": name}});
         let (st, body) = req(app.clone(), "POST", "/api/mcp/call", Some(call(&name_has))).await;
         assert_eq!(st, StatusCode::OK, "{body}");
-        assert!((body["ftr"].as_f64().expect("mcp ftr is a number when data exists") - 0.75).abs() < 1e-9,
-            "MCP ftr = store Σnum/Σden (0.75)");
+        assert!(
+            (body["ftr"].as_f64().expect("mcp ftr is a number when data exists") - 0.75).abs()
+                < 1e-9,
+            "MCP ftr = store Σnum/Σden (0.75)"
+        );
 
         let (st, body) = req(app.clone(), "POST", "/api/mcp/call", Some(call(&name_no))).await;
         assert_eq!(st, StatusCode::OK, "{body}");
-        assert!(body["ftr"].is_null(),
-            "MCP ftr is honest-null with no data — NEVER a fabricated 0.0; got {}", body["ftr"]);
+        assert!(
+            body["ftr"].is_null(),
+            "MCP ftr is honest-null with no data — NEVER a fabricated 0.0; got {}",
+            body["ftr"]
+        );
 
         // cleanup — sessions (none) + folders + projects; project_metrics cascade.
         sqlx_core::query::query("DELETE FROM sensei.folders WHERE id = ANY($1)")
-            .bind(vec![fid_has, fid_no]).execute(state.pg.pool()).await.unwrap();
+            .bind(vec![fid_has, fid_no])
+            .execute(state.pg.pool())
+            .await
+            .unwrap();
         sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = ANY($1)")
-            .bind(vec![pid_has, pid_no]).execute(state.pg.pool()).await.unwrap();
+            .bind(vec![pid_has, pid_no])
+            .execute(state.pg.pool())
+            .await
+            .unwrap();
         // Repo-grain: drop the per-fixture repositories (folders.repository_id is
         // ON DELETE SET NULL, and the ftr row already cascaded with its project).
         sqlx_core::query::query("DELETE FROM sensei.repositories WHERE id = ANY($1)")
-            .bind(vec![rid_has, rid_no]).execute(state.pg.pool()).await.unwrap();
+            .bind(vec![rid_has, rid_no])
+            .execute(state.pg.pool())
+            .await
+            .unwrap();
     }
 
     /// 7.3 `GET /api/projects/{id}/metrics/{key}?grain=weekly`: the weekly series
@@ -710,7 +917,12 @@ mod tests {
         let (app, state) = test_app().await;
         let uniq = uuid::Uuid::new_v4().simple().to_string();
         let pid = state.pg.create_project(&format!("_test_pms_{uniq}"), None, None).await.unwrap();
-        let rid = crate::tasks::test_support::seed_bare_repository(&state.pg, &pid, &uuid::Uuid::new_v4()).await;
+        let rid = crate::tasks::test_support::seed_bare_repository(
+            &state.pg,
+            &pid,
+            &uuid::Uuid::new_v4(),
+        )
+        .await;
         let key = format!("_test_pms_{uniq}_cov"); // URL-safe (no colons) — it goes in the path
         let mid = seed_metric(&state.pg, &key, "ratio", "higher_better").await;
 
@@ -719,59 +931,104 @@ mod tests {
         // proving the weekly view re-derives from sums, not by averaging ratios.
         // (daily value = num/den; the weekly roll-up reads props, not this value.)
         let days = [
-            (chrono::NaiveDate::from_ymd_opt(2020, 1, 6).unwrap(),  1, 1), // wk 01-06: ratio 1.000
-            (chrono::NaiveDate::from_ymd_opt(2020, 1, 8).unwrap(),  1, 3), //           ratio 0.333
+            (chrono::NaiveDate::from_ymd_opt(2020, 1, 6).unwrap(), 1, 1), // wk 01-06: ratio 1.000
+            (chrono::NaiveDate::from_ymd_opt(2020, 1, 8).unwrap(), 1, 3), //           ratio 0.333
             (chrono::NaiveDate::from_ymd_opt(2020, 1, 13).unwrap(), 3, 4), // wk 01-13: ratio 0.750
-            (chrono::NaiveDate::from_ymd_opt(2020, 1, 15).unwrap(), 3, 12),//           ratio 0.250
+            (chrono::NaiveDate::from_ymd_opt(2020, 1, 15).unwrap(), 3, 12), //           ratio 0.250
         ];
         for (d, num, den) in days {
-            state.pg.upsert_project_metric(&mid, &rid, d, "daily",
-                num as f64 / den as f64,
-                &serde_json::json!({"numerator": num, "denominator": den}), "measured").await.unwrap();
+            state
+                .pg
+                .upsert_project_metric(
+                    &mid,
+                    &rid,
+                    d,
+                    "daily",
+                    num as f64 / den as f64,
+                    &serde_json::json!({"numerator": num, "denominator": den}),
+                    "measured",
+                )
+                .await
+                .unwrap();
         }
         // Expected weekly values re-derived Σnum/Σden:
         //   wk1 = (1+1)/(1+3)  = 0.5   [mean of daily ratios would be 0.667 — rejected]
         //   wk2 = (3+3)/(4+12) = 0.375 [mean of daily ratios would be 0.5   — rejected]
         let expect = [
-            (chrono::NaiveDate::from_ymd_opt(2020, 1, 6).unwrap(),  0.5_f64),
+            (chrono::NaiveDate::from_ymd_opt(2020, 1, 6).unwrap(), 0.5_f64),
             (chrono::NaiveDate::from_ymd_opt(2020, 1, 13).unwrap(), 0.375_f64),
         ];
 
-        let (st, body) = req(app.clone(), "GET",
-            &format!("/api/projects/{pid}/metrics/{key}?grain=weekly"), None).await;
+        let (st, body) = req(
+            app.clone(),
+            "GET",
+            &format!("/api/projects/{pid}/metrics/{key}?grain=weekly"),
+            None,
+        )
+        .await;
         assert_eq!(st, StatusCode::OK, "{body}");
         assert_eq!(body["grain"], "weekly");
         assert_eq!(body["metric"].as_str(), Some(key.as_str()));
-        assert_eq!(body["formula"].as_str(), Some("test formula"),
-            "series carries the metric's formula facet (how it's calculated)");
+        assert_eq!(
+            body["formula"].as_str(),
+            Some("test formula"),
+            "series carries the metric's formula facet (how it's calculated)"
+        );
         let series = body["series"].as_array().expect("series array");
         assert_eq!(series.len(), 2, "one point per ISO week");
         for (point, (period, value)) in series.iter().zip(expect) {
-            assert_eq!(point["period"].as_str(), Some(period.to_string().as_str()),
-                "period is the week start");
+            assert_eq!(
+                point["period"].as_str(),
+                Some(period.to_string().as_str()),
+                "period is the week start"
+            );
             let got = point["value"].as_f64().expect("numeric value");
-            assert!((got - value).abs() < 1e-9,
-                "weekly value re-derived Σnum/Σden: got {got}, want {value}");
+            assert!(
+                (got - value).abs() < 1e-9,
+                "weekly value re-derived Σnum/Σden: got {got}, want {value}"
+            );
         }
 
         // Invalid grain → 400 (never a silent default that would mismeasure).
-        let (st, _) = req(app.clone(), "GET",
-            &format!("/api/projects/{pid}/metrics/{key}?grain=yearly"), None).await;
+        let (st, _) = req(
+            app.clone(),
+            "GET",
+            &format!("/api/projects/{pid}/metrics/{key}?grain=yearly"),
+            None,
+        )
+        .await;
         assert_eq!(st, StatusCode::BAD_REQUEST, "invalid grain → 400");
 
         // Unknown metric key (no rows) → 200 with an empty series (honest-empty)
         // and an honest-null formula (the key names no registered metric).
-        let (st, body) = req(app.clone(), "GET",
-            &format!("/api/projects/{pid}/metrics/{key}_nope?grain=weekly"), None).await;
+        let (st, body) = req(
+            app.clone(),
+            "GET",
+            &format!("/api/projects/{pid}/metrics/{key}_nope?grain=weekly"),
+            None,
+        )
+        .await;
         assert_eq!(st, StatusCode::OK);
-        assert_eq!(body["series"].as_array().map(|a| a.len()), Some(0),
-            "unknown key → honest-empty series, not a failure");
-        assert!(body["formula"].is_null(), "unknown key → honest-null formula, not a fabricated string");
+        assert_eq!(
+            body["series"].as_array().map(|a| a.len()),
+            Some(0),
+            "unknown key → honest-empty series, not a failure"
+        );
+        assert!(
+            body["formula"].is_null(),
+            "unknown key → honest-null formula, not a fabricated string"
+        );
 
         sqlx_core::query::query("DELETE FROM sensei.metrics WHERE id = $1")
-            .bind(mid).execute(state.pg.pool()).await.unwrap();
+            .bind(mid)
+            .execute(state.pg.pool())
+            .await
+            .unwrap();
         sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
-            .bind(pid).execute(state.pg.pool()).await.unwrap();
+            .bind(pid)
+            .execute(state.pg.pool())
+            .await
+            .unwrap();
     }
 
     /// `GET /api/projects/{id}/metrics/{key}/sessions?day=YYYY-MM-DD`: the
@@ -782,17 +1039,20 @@ mod tests {
     async fn get_project_metric_day_sessions_endpoint() {
         let (app, state) = test_app().await;
         let uniq = uuid::Uuid::new_v4();
-        let (pid, fid) = crate::tasks::test_support::seed_metrics_project_folder(&state.pg, &uniq).await;
+        let (pid, fid) =
+            crate::tasks::test_support::seed_metrics_project_folder(&state.pg, &uniq).await;
         let key = format!("_test_pmds_{}", uniq.simple()); // URL-safe (no colons) — it goes in the path
 
-        let utc = |ts: &str| chrono::DateTime::parse_from_rfc3339(ts).unwrap().with_timezone(&chrono::Utc);
+        let utc = |ts: &str| {
+            chrono::DateTime::parse_from_rfc3339(ts).unwrap().with_timezone(&chrono::Utc)
+        };
         // `client_session_id` is globally unique — scope the ids to this run's uniq.
         let sid = |n: &str| format!("cs-{n}-{}", uniq.simple());
         // Two measurable sessions on the target day + one in-flight (excluded).
         for (cs, task, outcome, ftr, turns, corr, at) in [
-            (sid("1"), "task-a", Some("completed"), Some(true),  3, 0, "2020-06-15T12:00:00Z"),
+            (sid("1"), "task-a", Some("completed"), Some(true), 3, 0, "2020-06-15T12:00:00Z"),
             (sid("2"), "task-b", Some("corrected"), Some(false), 5, 2, "2020-06-15T20:00:00Z"),
-            (sid("x"), "task-x", None,              None,        0, 0, "2020-06-15T13:00:00Z"),
+            (sid("x"), "task-x", None, None, 0, 0, "2020-06-15T13:00:00Z"),
         ] {
             sqlx_core::query::query(
                 "INSERT INTO activity.sessions
@@ -805,12 +1065,21 @@ mod tests {
 
         // Happy path: 200 + the two measurable sessions (newest-first), each with the
         // structural fields the client renders its one-liner from.
-        let (st, body) = req(app.clone(), "GET",
-            &format!("/api/projects/{pid}/metrics/{key}/sessions?day=2020-06-15"), None).await;
+        let (st, body) = req(
+            app.clone(),
+            "GET",
+            &format!("/api/projects/{pid}/metrics/{key}/sessions?day=2020-06-15"),
+            None,
+        )
+        .await;
         assert_eq!(st, StatusCode::OK, "{body}");
         assert_eq!(body["day"], "2020-06-15");
         assert_eq!(body["metric"].as_str(), Some(key.as_str()));
-        assert_eq!(body["count"].as_u64(), Some(2), "two measurable sessions that day (in-flight excluded)");
+        assert_eq!(
+            body["count"].as_u64(),
+            Some(2),
+            "two measurable sessions that day (in-flight excluded)"
+        );
         let sessions = body["sessions"].as_array().expect("sessions array");
         assert_eq!(sessions.len(), 2);
         let s0 = &sessions[0];
@@ -824,23 +1093,40 @@ mod tests {
         assert_eq!(s0["corrections"], 2);
 
         // Absent day → 400 (no datapoint to scope to).
-        let (st, _) = req(app.clone(), "GET",
-            &format!("/api/projects/{pid}/metrics/{key}/sessions"), None).await;
+        let (st, _) =
+            req(app.clone(), "GET", &format!("/api/projects/{pid}/metrics/{key}/sessions"), None)
+                .await;
         assert_eq!(st, StatusCode::BAD_REQUEST, "absent day → 400");
         // Malformed day → 400 (never a silent default).
-        let (st, _) = req(app.clone(), "GET",
-            &format!("/api/projects/{pid}/metrics/{key}/sessions?day=nope"), None).await;
+        let (st, _) = req(
+            app.clone(),
+            "GET",
+            &format!("/api/projects/{pid}/metrics/{key}/sessions?day=nope"),
+            None,
+        )
+        .await;
         assert_eq!(st, StatusCode::BAD_REQUEST, "malformed day → 400");
         // A day with no measurable session → honest-empty (200 []).
-        let (st, body) = req(app.clone(), "GET",
-            &format!("/api/projects/{pid}/metrics/{key}/sessions?day=2019-01-01"), None).await;
+        let (st, body) = req(
+            app.clone(),
+            "GET",
+            &format!("/api/projects/{pid}/metrics/{key}/sessions?day=2019-01-01"),
+            None,
+        )
+        .await;
         assert_eq!(st, StatusCode::OK);
         assert_eq!(body["count"].as_u64(), Some(0), "no sessions that day → honest-empty");
 
         sqlx_core::query::query("DELETE FROM activity.sessions WHERE folder_id = $1")
-            .bind(fid).execute(state.pg.pool()).await.unwrap();
+            .bind(fid)
+            .execute(state.pg.pool())
+            .await
+            .unwrap();
         sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
-            .bind(pid).execute(state.pg.pool()).await.unwrap();
+            .bind(pid)
+            .execute(state.pg.pool())
+            .await
+            .unwrap();
     }
 
     /// The drill-down attaches a per-session, per-metric `observation` (the "why
@@ -851,23 +1137,44 @@ mod tests {
     /// `facts_hash` and leaves a second session uncached to pin both paths.
     #[tokio::test]
     async fn get_project_metric_day_sessions_attaches_observation() {
-        use crate::analysis::insight_copy::{facts_hash, InsightKind};
+        use crate::analysis::insight_copy::{InsightKind, facts_hash};
         use crate::analysis::session_metric_note::SessionMetricFacts;
 
         let (app, state) = test_app().await;
         let uniq = uuid::Uuid::new_v4();
-        let (pid, fid) = crate::tasks::test_support::seed_metrics_project_folder(&state.pg, &uniq).await;
+        let (pid, fid) =
+            crate::tasks::test_support::seed_metrics_project_folder(&state.pg, &uniq).await;
         // URL-safe key (goes in the path). seed_metric sets name = key and
         // how_to_read = 'test how', so label = key and meaning = "test how".
         let key = format!("_test_smo_{}", uniq.simple());
         let mid = seed_metric(&state.pg, &key, "ratio", "higher_better").await;
 
-        let utc = |ts: &str| chrono::DateTime::parse_from_rfc3339(ts).unwrap().with_timezone(&chrono::Utc);
+        let utc = |ts: &str| {
+            chrono::DateTime::parse_from_rfc3339(ts).unwrap().with_timezone(&chrono::Utc)
+        };
         let sid = |n: &str| format!("cs-{n}-{}", uniq.simple());
         // Two measurable sessions on the target day. The MISS one is newer → first.
         for (cs, task, summary, outcome, ftr, turns, corr, at) in [
-            (sid("hit"),  "task-hit",  "did the hit thing",  "completed", true,  3, 0, "2020-06-15T12:00:00Z"),
-            (sid("miss"), "task-miss", "did the miss thing", "corrected", false, 5, 2, "2020-06-15T20:00:00Z"),
+            (
+                sid("hit"),
+                "task-hit",
+                "did the hit thing",
+                "completed",
+                true,
+                3,
+                0,
+                "2020-06-15T12:00:00Z",
+            ),
+            (
+                sid("miss"),
+                "task-miss",
+                "did the miss thing",
+                "corrected",
+                false,
+                5,
+                2,
+                "2020-06-15T20:00:00Z",
+            ),
         ] {
             sqlx_core::query::query(
                 "INSERT INTO activity.sessions
@@ -885,29 +1192,46 @@ mod tests {
             "task": "task-hit", "summary": "did the hit thing",
         });
         let hit_facts = SessionMetricFacts::from_session_row(&hit_row, &key, &key, "test how");
-        let hit_hash = facts_hash(InsightKind::SessionMetricObservation, &hit_facts.to_facts_json());
-        state.pg.upsert_insight_copy(
-            "session_metric_observation", &hit_hash,
-            "first-try win", "this session resolved on the first attempt, lifting the rate",
-            None, None,
-        ).await;
+        let hit_hash =
+            facts_hash(InsightKind::SessionMetricObservation, &hit_facts.to_facts_json());
+        state
+            .pg
+            .upsert_insight_copy(
+                "session_metric_observation",
+                &hit_hash,
+                "first-try win",
+                "this session resolved on the first attempt, lifting the rate",
+                None,
+                None,
+            )
+            .await;
 
-        let (st, body) = req(app.clone(), "GET",
-            &format!("/api/projects/{pid}/metrics/{key}/sessions?day=2020-06-15"), None).await;
+        let (st, body) = req(
+            app.clone(),
+            "GET",
+            &format!("/api/projects/{pid}/metrics/{key}/sessions?day=2020-06-15"),
+            None,
+        )
+        .await;
         assert_eq!(st, StatusCode::OK, "{body}");
         let sessions = body["sessions"].as_array().expect("sessions array");
         assert_eq!(sessions.len(), 2);
 
-        let by_id = |cs: &str| sessions.iter()
-            .find(|s| s["client_session_id"].as_str() == Some(cs))
-            .unwrap_or_else(|| panic!("session {cs} present"));
+        let by_id = |cs: &str| {
+            sessions
+                .iter()
+                .find(|s| s["client_session_id"].as_str() == Some(cs))
+                .unwrap_or_else(|| panic!("session {cs} present"))
+        };
 
         // HIT: the stored model copy is served verbatim.
         let hit = by_id(&sid("hit"));
         assert_eq!(hit["observation"]["title"], "first-try win", "cache hit → stored model title");
-        assert_eq!(hit["observation"]["detail"],
+        assert_eq!(
+            hit["observation"]["detail"],
             "this session resolved on the first attempt, lifting the rate",
-            "cache hit → stored model detail");
+            "cache hit → stored model detail"
+        );
 
         // MISS: the deterministic, row-derived fallback — title = metric label
         // (the seeded name == key), detail = the structural line from the row. This is
@@ -916,18 +1240,29 @@ mod tests {
         // are deliberately NOT shown (they'd imply an effort relevance this metric lacks).
         let miss = by_id(&sid("miss"));
         assert_eq!(miss["observation"]["title"], key, "cache miss → metric label as title");
-        assert_eq!(miss["observation"]["detail"], "outcome corrected; 5 turns",
-            "cache miss → deterministic neutral line for a non-effort metric, never blank or fabricated");
+        assert_eq!(
+            miss["observation"]["detail"], "outcome corrected; 5 turns",
+            "cache miss → deterministic neutral line for a non-effort metric, never blank or fabricated"
+        );
 
         sqlx_core::query::query(
             "DELETE FROM sensei.insight_copy WHERE kind = 'session_metric_observation' AND facts_hash = $1")
             .bind(&hit_hash).execute(state.pg.pool()).await.unwrap();
         sqlx_core::query::query("DELETE FROM activity.sessions WHERE folder_id = $1")
-            .bind(fid).execute(state.pg.pool()).await.unwrap();
+            .bind(fid)
+            .execute(state.pg.pool())
+            .await
+            .unwrap();
         sqlx_core::query::query("DELETE FROM sensei.metrics WHERE id = $1")
-            .bind(mid).execute(state.pg.pool()).await.unwrap();
+            .bind(mid)
+            .execute(state.pg.pool())
+            .await
+            .unwrap();
         sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
-            .bind(pid).execute(state.pg.pool()).await.unwrap();
+            .bind(pid)
+            .execute(state.pg.pool())
+            .await
+            .unwrap();
     }
 
     /// End-to-end automated-run flow through the REAL router against sensei_test:
@@ -957,9 +1292,21 @@ mod tests {
         assert_eq!(st, StatusCode::OK, "GET /api/runs/{{id}} routed");
 
         // Flip both tasks done via the two-param /tasks/{task_id} route.
-        let (st, _) = req(app.clone(), "POST", &format!("/api/runs/{run_id}/tasks/t1"), Some(serde_json::json!({ "state": "done" }))).await;
+        let (st, _) = req(
+            app.clone(),
+            "POST",
+            &format!("/api/runs/{run_id}/tasks/t1"),
+            Some(serde_json::json!({ "state": "done" })),
+        )
+        .await;
         assert_eq!(st, StatusCode::OK, "update_task_status routed (t1)");
-        let (st, ok) = req(app.clone(), "POST", &format!("/api/runs/{run_id}/tasks/t2"), Some(serde_json::json!({ "state": "done" }))).await;
+        let (st, ok) = req(
+            app.clone(),
+            "POST",
+            &format!("/api/runs/{run_id}/tasks/t2"),
+            Some(serde_json::json!({ "state": "done" })),
+        )
+        .await;
         assert_eq!(st, StatusCode::OK);
         assert_eq!(ok["state"], "done");
 
@@ -975,20 +1322,30 @@ mod tests {
         assert_eq!(g["phases"][0]["tasks"][1]["state"], "done");
 
         // report_run_outcome → terminal done.
-        let (st, body) = req(app.clone(), "POST", &format!("/api/runs/{run_id}/outcome"), Some(serde_json::json!({ "outcome": "done", "summary": "smoke ok" }))).await;
+        let (st, body) = req(
+            app.clone(),
+            "POST",
+            &format!("/api/runs/{run_id}/outcome"),
+            Some(serde_json::json!({ "outcome": "done", "summary": "smoke ok" })),
+        )
+        .await;
         assert_eq!(st, StatusCode::OK);
         assert_eq!(body["run"]["status"], "done");
 
         sqlx_core::query::query("DELETE FROM activity.runs WHERE id = $1")
-            .bind(rid).execute(state.pg.pool()).await.unwrap();
+            .bind(rid)
+            .execute(state.pg.pool())
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
     async fn health_check() {
         let (app, _) = test_app().await;
-        let resp = app.oneshot(
-            Request::builder().uri("/health").body(Body::empty()).unwrap()
-        ).await.unwrap();
+        let resp = app
+            .oneshot(Request::builder().uri("/health").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
         let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
@@ -1010,11 +1367,16 @@ mod tests {
     #[tokio::test]
     async fn provision_model_without_supervisor_is_501() {
         let (app, _) = test_app().await;
-        let resp = app.oneshot(
-            Request::builder().method("POST")
-                .uri("/api/gateway/models/gemma2:2b/provision")
-                .body(Body::empty()).unwrap()
-        ).await.unwrap();
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/gateway/models/gemma2:2b/provision")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
         assert_eq!(resp.status(), StatusCode::NOT_IMPLEMENTED);
         let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
@@ -1029,11 +1391,15 @@ mod tests {
     #[tokio::test]
     async fn provision_status_without_supervisor_is_empty_list() {
         let (app, _) = test_app().await;
-        let resp = app.oneshot(
-            Request::builder()
-                .uri("/api/gateway/models/provision/status")
-                .body(Body::empty()).unwrap()
-        ).await.unwrap();
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/gateway/models/provision/status")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
         let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
@@ -1043,9 +1409,10 @@ mod tests {
     #[tokio::test]
     async fn index_doctor_endpoint_returns_readonly_report() {
         let (app, _) = test_app().await;
-        let resp = app.oneshot(
-            Request::builder().uri("/api/index/doctor").body(Body::empty()).unwrap()
-        ).await.unwrap();
+        let resp = app
+            .oneshot(Request::builder().uri("/api/index/doctor").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
         let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
@@ -1061,12 +1428,24 @@ mod tests {
     #[tokio::test]
     async fn folder_remap_endpoint_404_when_new_path_not_indexed() {
         let (app, _) = test_app().await;
-        let resp = app.oneshot(
-            Request::builder().method("POST").uri("/api/folders/remap")
-                .header("content-type", "application/json")
-                .body(Body::from(r#"{"old":"/_test/remap-ep-gone","new":"/_test/remap-ep-never-indexed"}"#)).unwrap()
-        ).await.unwrap();
-        assert_eq!(resp.status(), StatusCode::NOT_FOUND, "the rename destination must be an indexed folder");
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/folders/remap")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"old":"/_test/remap-ep-gone","new":"/_test/remap-ep-never-indexed"}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::NOT_FOUND,
+            "the rename destination must be an indexed folder"
+        );
     }
 
     #[tokio::test]
@@ -1080,27 +1459,67 @@ mod tests {
             "INSERT INTO sensei.folders(root_id, kind, name, path, abs_path) VALUES('00000000-0000-0000-0000-000000000001','git'::sensei.folder_kind,'remap-ep-new','remap-ep-new','/_test/remap-ep-new') ON CONFLICT(abs_path) DO NOTHING"
         ).await.unwrap();
         // Start clean, then leave an orphaned event captured under the OLD (renamed) path.
-        state.pg.execute_raw("DELETE FROM activity.sessions WHERE client_session_id = '_test-remap-ep-session'").await.unwrap();
-        state.pg.execute_raw("DELETE FROM activity.assistant_events WHERE session_id = '_test-remap-ep-session'").await.unwrap();
-        state.pg.insert_hook_event("_test-remap-ep-session", "claude", "PreToolUse", None, Some("/_test/remap-ep-old"), 1_700_000_500, None, &serde_json::json!({})).await.unwrap();
+        state
+            .pg
+            .execute_raw(
+                "DELETE FROM activity.sessions WHERE client_session_id = '_test-remap-ep-session'",
+            )
+            .await
+            .unwrap();
+        state
+            .pg
+            .execute_raw(
+                "DELETE FROM activity.assistant_events WHERE session_id = '_test-remap-ep-session'",
+            )
+            .await
+            .unwrap();
+        state
+            .pg
+            .insert_hook_event(
+                "_test-remap-ep-session",
+                "claude",
+                "PreToolUse",
+                None,
+                Some("/_test/remap-ep-old"),
+                1_700_000_500,
+                None,
+                &serde_json::json!({}),
+            )
+            .await
+            .unwrap();
 
-        let resp = app.oneshot(
-            Request::builder().method("POST").uri("/api/folders/remap")
-                .header("content-type", "application/json")
-                .body(Body::from(r#"{"old":"/_test/remap-ep-old","new":"/_test/remap-ep-new"}"#)).unwrap()
-        ).await.unwrap();
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/folders/remap")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"old":"/_test/remap-ep-old","new":"/_test/remap-ep-new"}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
         let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(json["ok"], true);
         assert_eq!(json["remapped"], false, "old had no folder row → alias-only");
         assert_eq!(json["aliased"], true);
-        assert!(json["sessions_repaired"].as_u64().unwrap() >= 1, "the orphaned session under old is re-attached");
+        assert!(
+            json["sessions_repaired"].as_u64().unwrap() >= 1,
+            "the orphaned session under old is re-attached"
+        );
 
         // The old path now aliases forward to the new folder.
         let new_id = state.pg.folder_id_by_abs_path("/_test/remap-ep-new").await.unwrap().unwrap();
         let resolved = state.pg.get_folder_ids_by_path("/_test/remap-ep-old").await.unwrap();
-        assert_eq!(resolved.map(|(f, _)| f), Some(new_id), "the old path resolves to the new folder via the alias");
+        assert_eq!(
+            resolved.map(|(f, _)| f),
+            Some(new_id),
+            "the old path resolves to the new folder via the alias"
+        );
     }
 
     #[tokio::test]
@@ -1111,15 +1530,28 @@ mod tests {
         let body = format!(
             r#"{{"scope":"project","type":"convention","title":"note","content":"the token is {token}"}}"#
         );
-        let resp = app.oneshot(
-            Request::builder().method("POST").uri("/api/knowledge/memories")
-                .header("content-type", "application/json")
-                .body(Body::from(body)).unwrap()
-        ).await.unwrap();
-        assert_eq!(resp.status(), StatusCode::BAD_REQUEST, "a memory carrying a secret is rejected (fail closed)");
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/knowledge/memories")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::BAD_REQUEST,
+            "a memory carrying a secret is rejected (fail closed)"
+        );
         let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
         let text = String::from_utf8_lossy(&bytes);
-        assert!(text.contains("secret") && text.contains("github token"), "the error names the kind: {text}");
+        assert!(
+            text.contains("secret") && text.contains("github token"),
+            "the error names the kind: {text}"
+        );
         assert!(!text.contains(&token), "the secret value is never echoed back: {text}");
     }
 
@@ -1127,25 +1559,42 @@ mod tests {
     async fn save_memory_records_and_surfaces_evidence() {
         let (app, _) = test_app().await;
         let body = r#"{"scope":"global","type":"convention","title":"ev-note","content":"reuse the shared helper","evidence":"crates/senseid/src/x.rs:42"}"#;
-        let resp = app.clone().oneshot(
-            Request::builder().method("POST").uri("/api/knowledge/memories")
-                .header("content-type", "application/json")
-                .body(Body::from(body)).unwrap()
-        ).await.unwrap();
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/knowledge/memories")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
         let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
         let saved: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         let id = saved["id"].as_str().expect("id");
         // The read surfaces the save-time source note as evidence.
-        let get = app.oneshot(
-            Request::builder().uri(format!("/api/knowledge/memories/{id}")).body(Body::empty()).unwrap()
-        ).await.unwrap();
+        let get = app
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/knowledge/memories/{id}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
         assert_eq!(get.status(), StatusCode::OK);
         let gb = axum::body::to_bytes(get.into_body(), usize::MAX).await.unwrap();
         let detail: serde_json::Value = serde_json::from_slice(&gb).unwrap();
         let ev = detail["evidence"].as_array().expect("evidence array");
-        assert!(ev.iter().any(|e| e["note"] == "crates/senseid/src/x.rs:42" && e["session_id"].is_null()),
-            "the save-time source note is surfaced with a null session_id: {:?}", ev);
+        assert!(
+            ev.iter()
+                .any(|e| e["note"] == "crates/senseid/src/x.rs:42" && e["session_id"].is_null()),
+            "the save-time source note is surfaced with a null session_id: {:?}",
+            ev
+        );
     }
 
     #[tokio::test]
@@ -1154,42 +1603,100 @@ mod tests {
         let (app, state) = test_app().await;
         let lib = format!("_libep_{}", uuid::Uuid::new_v4());
         let lid = state.pg.upsert_library(&lib, "npm", Some("1"), None, None, None).await.unwrap();
-        state.pg.replace_library_capabilities(&lid, "manifest", Some("1"),
-            &[ProvidedSkill { name: "semantic-styles-rokkit".into(), focus: "styling".into(), path: Some("p.md".into()), body: Some("# body".into()) }],
-            &[]).await.unwrap();
+        state
+            .pg
+            .replace_library_capabilities(
+                &lid,
+                "manifest",
+                Some("1"),
+                &[ProvidedSkill {
+                    name: "semantic-styles-rokkit".into(),
+                    focus: "styling".into(),
+                    path: Some("p.md".into()),
+                    body: Some("# body".into()),
+                }],
+                &[],
+            )
+            .await
+            .unwrap();
 
-        let list = app.clone().oneshot(Request::builder().uri(format!("/api/libs/{lib}/skills")).body(Body::empty()).unwrap()).await.unwrap();
+        let list = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/libs/{lib}/skills"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
         assert_eq!(list.status(), StatusCode::OK);
         let lb = axum::body::to_bytes(list.into_body(), usize::MAX).await.unwrap();
         let arr: serde_json::Value = serde_json::from_slice(&lb).unwrap();
         assert_eq!(arr.as_array().unwrap().len(), 1);
         assert_eq!(arr[0]["focus"], "styling");
 
-        let get = app.clone().oneshot(Request::builder().uri(format!("/api/libs/{lib}/skills/styling")).body(Body::empty()).unwrap()).await.unwrap();
+        let get = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/libs/{lib}/skills/styling"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
         assert_eq!(get.status(), StatusCode::OK);
         let gb = axum::body::to_bytes(get.into_body(), usize::MAX).await.unwrap();
         let one: serde_json::Value = serde_json::from_slice(&gb).unwrap();
         assert_eq!(one["name"], "semantic-styles-rokkit");
         assert_eq!(one["body"], "# body");
 
-        let miss = app.oneshot(Request::builder().uri(format!("/api/libs/{lib}/skills/nope")).body(Body::empty()).unwrap()).await.unwrap();
-        assert_eq!(miss.status(), StatusCode::NOT_FOUND, "unknown focus → 404, not a fabricated empty");
+        let miss = app
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/libs/{lib}/skills/nope"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            miss.status(),
+            StatusCode::NOT_FOUND,
+            "unknown focus → 404, not a fabricated empty"
+        );
     }
 
     #[tokio::test]
     async fn risk_class_endpoint_classifies_by_path() {
         let (app, _) = test_app().await;
-        let resp = app.oneshot(
-            Request::builder().method("POST").uri("/api/review/risk-class")
-                .header("content-type", "application/json")
-                .body(Body::from(r#"{"paths":["database/ddl/x.ddl","docs/y.md"],"task":"tweak schema"}"#)).unwrap()
-        ).await.unwrap();
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/review/risk-class")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"paths":["database/ddl/x.ddl","docs/y.md"],"task":"tweak schema"}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
         let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(json["class"], "approve", "a DDL change requires approve");
-        assert!(json["reasons"].as_array().unwrap().iter().any(|r| r.as_str().unwrap_or("").contains(".ddl")),
-            "reasons name the DDL driver: {:?}", json["reasons"]);
+        assert!(
+            json["reasons"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|r| r.as_str().unwrap_or("").contains(".ddl")),
+            "reasons name the DDL driver: {:?}",
+            json["reasons"]
+        );
     }
 
     #[tokio::test]
@@ -1197,20 +1704,25 @@ mod tests {
         let (app, _) = test_app().await;
 
         // Create
-        let resp = app.clone().oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/repos")
-                .header("content-type", "application/json")
-                .body(Body::from(r#"{"repoId":"test","path":"/tmp/test"}"#))
-                .unwrap()
-        ).await.unwrap();
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/repos")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"repoId":"test","path":"/tmp/test"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
 
         // List
-        let resp = app.oneshot(
-            Request::builder().uri("/api/repos").body(Body::empty()).unwrap()
-        ).await.unwrap();
+        let resp = app
+            .oneshot(Request::builder().uri("/api/repos").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
         let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
         let repos: Vec<serde_json::Value> = serde_json::from_slice(&body).unwrap();
         assert!(repos.iter().any(|r| r["name"] == "test"), "created repo should be in list");
@@ -1220,11 +1732,22 @@ mod tests {
     async fn delete_project_returns_ok() {
         let (app, state) = test_app().await;
         // Register a repo via PgStore
-        let root_id = state.pg.add_watch_root("/_test/del_proj", "test", &serde_json::json!([])).await.unwrap();
+        let root_id = state
+            .pg
+            .add_watch_root("/_test/del_proj", "test", &serde_json::json!([]))
+            .await
+            .unwrap();
         state.pg.upsert_repo(&root_id, "x", "/_test/del_proj/x").await.unwrap();
-        let resp = app.oneshot(
-            Request::builder().method("DELETE").uri("/api/repos/x").body(Body::empty()).unwrap()
-        ).await.unwrap();
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri("/api/repos/x")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
     }
 
@@ -1232,22 +1755,27 @@ mod tests {
     async fn create_and_list_solutions() {
         let (app, _) = test_app().await;
 
-        let resp = app.clone().oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/projects")
-                .header("content-type", "application/json")
-                .body(Body::from(r#"{"name":"Acme","repos":[]}"#))
-                .unwrap()
-        ).await.unwrap();
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/projects")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"name":"Acme","repos":[]}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
         assert_eq!(resp.status(), StatusCode::CREATED);
         let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert!(json["id"].is_string());
 
-        let resp = app.oneshot(
-            Request::builder().uri("/api/projects").body(Body::empty()).unwrap()
-        ).await.unwrap();
+        let resp = app
+            .oneshot(Request::builder().uri("/api/projects").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
         let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
         let solutions: Vec<serde_json::Value> = serde_json::from_slice(&body).unwrap();
         assert!(solutions.iter().any(|s| s["name"] == "Acme"), "Acme project should be in list");
@@ -1259,21 +1787,26 @@ mod tests {
 
         // Create a temp repo with a Python file
         let dir = tempfile::TempDir::new().unwrap();
-        std::fs::write(dir.path().join("hello.py"), "def greet(name):\n    return f'hi {name}'\n").unwrap();
+        std::fs::write(dir.path().join("hello.py"), "def greet(name):\n    return f'hi {name}'\n")
+            .unwrap();
 
         let body = serde_json::json!({
             "repoId": "test-repo",
             "repoPath": dir.path().to_string_lossy(),
         });
 
-        let resp = app.clone().oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/index")
-                .header("content-type", "application/json")
-                .body(Body::from(body.to_string()))
-                .unwrap()
-        ).await.unwrap();
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/index")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
         let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
@@ -1284,12 +1817,10 @@ mod tests {
         // (no worker spawned in test_app). The e2e_server test covers the full flow.
 
         // Verify queue status endpoint works
-        let resp = app.oneshot(
-            Request::builder()
-                .uri("/api/index/status")
-                .body(Body::empty())
-                .unwrap()
-        ).await.unwrap();
+        let resp = app
+            .oneshot(Request::builder().uri("/api/index/status").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
         let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
@@ -1312,60 +1843,95 @@ mod tests {
         let fn_name = format!("scope_child_fn_{}", &uniq[..8]);
 
         // Setup: root + child folders registered under a project.
-        let root_id = state.pg.add_watch_root(&root_path, "test", &serde_json::json!([])).await.unwrap();
-        let root_fid = state.pg.upsert_repo(&root_id, &root_name, &format!("{}/{}", root_path, root_name)).await.unwrap();
-        let child_fid = state.pg.upsert_subfolder(
-            &root_id, &child_name,
-            &format!("{}/{}", root_name, child_name),
-            &format!("{}/{}/{}", root_path, root_name, child_name),
-            Some(&root_fid), None,
-        ).await.unwrap();
+        let root_id =
+            state.pg.add_watch_root(&root_path, "test", &serde_json::json!([])).await.unwrap();
+        let root_fid = state
+            .pg
+            .upsert_repo(&root_id, &root_name, &format!("{}/{}", root_path, root_name))
+            .await
+            .unwrap();
+        let child_fid = state
+            .pg
+            .upsert_subfolder(
+                &root_id,
+                &child_name,
+                &format!("{}/{}", root_name, child_name),
+                &format!("{}/{}/{}", root_path, root_name, child_name),
+                Some(&root_fid),
+                None,
+            )
+            .await
+            .unwrap();
 
         let proj_id = state.pg.create_project(&proj_name, None, None).await.unwrap();
         state.pg.set_folder_project(&root_fid, &proj_id, "backend", None).await.unwrap();
         state.pg.set_folder_project(&child_fid, &proj_id, "backend", None).await.unwrap();
 
         // Insert a function only in the child folder.
-        state.pg.upsert_node(
-            &child_fid, "function", &fn_name, "src/lib.rs",
-            None, Some(&format!("fn {}()", fn_name)), Some(1), Some(5),
-        ).await.unwrap();
+        state
+            .pg
+            .upsert_node(
+                &child_fid,
+                "function",
+                &fn_name,
+                "src/lib.rs",
+                None,
+                Some(&format!("fn {}()", fn_name)),
+                Some(1),
+                Some(5),
+            )
+            .await
+            .unwrap();
 
         // GET /api/graph/functions?repoId=<proj>&q=<fn>
-        let resp = app.clone().oneshot(
-            Request::builder()
-                .uri(format!("/api/graph/functions?repoId={}&q={}", proj_name, fn_name))
-                .body(Body::empty())
-                .unwrap()
-        ).await.unwrap();
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/graph/functions?repoId={}&q={}", proj_name, fn_name))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
         assert_eq!(resp.status(), StatusCode::OK, "search_functions should succeed");
         let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
         let results: Vec<serde_json::Value> = serde_json::from_slice(&body).unwrap();
         assert!(
             results.iter().any(|r| r["name"] == fn_name),
-            "child-folder function must appear when searching by project name; got: {:?}", results
+            "child-folder function must appear when searching by project name; got: {:?}",
+            results
         );
 
         // GET /api/repos/{repo_id}/summary — scoped counts should include child.
-        let resp = app.clone().oneshot(
-            Request::builder()
-                .uri(format!("/api/repos/{}/summary", proj_name))
-                .body(Body::empty())
-                .unwrap()
-        ).await.unwrap();
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/repos/{}/summary", proj_name))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
         assert_eq!(resp.status(), StatusCode::OK, "project_summary should succeed");
         let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
         let summary: serde_json::Value = serde_json::from_slice(&body).unwrap();
         let fn_count = summary["functions"].as_i64().unwrap_or(0);
-        assert!(fn_count >= 1, "summary must count child-folder function; got functions={}", fn_count);
+        assert!(
+            fn_count >= 1,
+            "summary must count child-folder function; got functions={}",
+            fn_count
+        );
     }
 
     #[tokio::test]
     async fn assistants_health_endpoint_returns_status_and_adapters() {
         let (app, _) = test_app().await;
-        let resp = app.oneshot(
-            Request::builder().uri("/api/assistants/health").body(Body::empty()).unwrap()
-        ).await.unwrap();
+        let resp = app
+            .oneshot(Request::builder().uri("/api/assistants/health").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
         let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
@@ -1399,9 +1965,12 @@ mod tests {
         assert!(saved["updated_at"].is_string(), "PUT response carries updated_at");
 
         // GET reflects the write, with the full category shape.
-        let get = app.oneshot(
-            Request::builder().uri("/api/preferences/collective").body(Body::empty()).unwrap()
-        ).await.unwrap();
+        let get = app
+            .oneshot(
+                Request::builder().uri("/api/preferences/collective").body(Body::empty()).unwrap(),
+            )
+            .await
+            .unwrap();
         assert_eq!(get.status(), StatusCode::OK);
         let body = axum::body::to_bytes(get.into_body(), usize::MAX).await.unwrap();
         let got: serde_json::Value = serde_json::from_slice(&body).unwrap();
@@ -1413,17 +1982,25 @@ mod tests {
 
         // Cleanup the shared singleton row.
         sqlx_core::query::query("DELETE FROM sensei.collective_preferences")
-            .execute(state.pg.pool()).await.ok();
+            .execute(state.pg.pool())
+            .await
+            .ok();
     }
 
     #[tokio::test]
     async fn collective_preferences_put_rejects_invalid_destination() {
         let (app, _) = test_app().await;
-        let resp = app.oneshot(
-            Request::builder().method("PUT").uri("/api/preferences/collective")
-                .header("content-type", "application/json")
-                .body(Body::from(r#"{"destination":"everyone"}"#)).unwrap()
-        ).await.unwrap();
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/api/preferences/collective")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"destination":"everyone"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
         let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
@@ -1438,16 +2015,25 @@ mod tests {
         let root = tempfile::TempDir::new().unwrap();
         let repo = root.path().join("my-project");
         std::fs::create_dir_all(repo.join(".git")).unwrap();
-        std::fs::write(repo.join("package.json"), r#"{"name":"test","dependencies":{"express":"4"}}"#).unwrap();
+        std::fs::write(
+            repo.join("package.json"),
+            r#"{"name":"test","dependencies":{"express":"4"}}"#,
+        )
+        .unwrap();
 
-        let resp = app.oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/scan")
-                .header("content-type", "application/json")
-                .body(Body::from(serde_json::json!({"root": root.path().to_string_lossy()}).to_string()))
-                .unwrap()
-        ).await.unwrap();
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/scan")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({"root": root.path().to_string_lossy()}).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
         let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
         // scan_folder returns {"ok": true, "scanning": true} — scan runs async in background
@@ -1460,19 +2046,27 @@ mod tests {
 
     /// Seed one active memory (`status='active'`, `strength=1.0`) and return its id.
     async fn seed_memory(state: &AppState, title: &str, content: &str) -> uuid::Uuid {
-        state.pg.create_memory(None, "global", None, "decision", title, content, None, None, None, None)
-            .await.unwrap()
+        state
+            .pg
+            .create_memory(None, "global", None, "decision", title, content, None, None, None, None)
+            .await
+            .unwrap()
     }
 
     #[tokio::test]
     async fn memory_archive_action_sets_archived() {
         let (app, state) = test_app().await;
         let mid = seed_memory(&state, "_test:route_archive", "rule a").await;
-        let resp = app.oneshot(
-            Request::builder().method("POST")
-                .uri(format!("/api/knowledge/memories/{mid}/archive"))
-                .body(Body::empty()).unwrap()
-        ).await.unwrap();
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/knowledge/memories/{mid}/archive"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
         let m = state.pg.get_memory(&mid).await.unwrap().unwrap();
         assert_eq!(m["status"], "archived");
@@ -1483,11 +2077,16 @@ mod tests {
         let (app, state) = test_app().await;
         let mid = seed_memory(&state, "_test:route_reinforce", "rule r").await;
         assert_eq!(state.pg.get_memory(&mid).await.unwrap().unwrap()["strength"], 1.0);
-        let resp = app.oneshot(
-            Request::builder().method("POST")
-                .uri(format!("/api/knowledge/memories/{mid}/reinforce"))
-                .body(Body::empty()).unwrap()
-        ).await.unwrap();
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/knowledge/memories/{mid}/reinforce"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
         // Strength moves; status promotion is the analyzer's job, not this action.
         assert_eq!(state.pg.get_memory(&mid).await.unwrap().unwrap()["strength"], 2.0);
@@ -1497,11 +2096,16 @@ mod tests {
     async fn memory_challenge_action_sets_challenged() {
         let (app, state) = test_app().await;
         let mid = seed_memory(&state, "_test:route_challenge", "rule c").await;
-        let resp = app.oneshot(
-            Request::builder().method("POST")
-                .uri(format!("/api/knowledge/memories/{mid}/challenge"))
-                .body(Body::empty()).unwrap()
-        ).await.unwrap();
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/knowledge/memories/{mid}/challenge"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
         let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
@@ -1513,11 +2117,16 @@ mod tests {
     async fn memory_dismiss_action_sets_rejected() {
         let (app, state) = test_app().await;
         let mid = seed_memory(&state, "_test:route_dismiss", "rule d").await;
-        let resp = app.oneshot(
-            Request::builder().method("POST")
-                .uri(format!("/api/knowledge/memories/{mid}/dismiss"))
-                .body(Body::empty()).unwrap()
-        ).await.unwrap();
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/knowledge/memories/{mid}/dismiss"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
         assert_eq!(state.pg.get_memory(&mid).await.unwrap().unwrap()["status"], "rejected");
     }
@@ -1527,12 +2136,17 @@ mod tests {
         let (app, state) = test_app().await;
         let member = seed_memory(&state, "_test:route_merge_member", "member text").await;
         let rep = seed_memory(&state, "_test:route_merge_rep", "surviving text").await;
-        let resp = app.oneshot(
-            Request::builder().method("POST")
-                .uri(format!("/api/knowledge/memories/{member}/merge"))
-                .header("content-type", "application/json")
-                .body(Body::from(serde_json::json!({"into": rep.to_string()}).to_string())).unwrap()
-        ).await.unwrap();
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/knowledge/memories/{member}/merge"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::json!({"into": rep.to_string()}).to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
         // Member leaves the active set (archived) and is linked under the survivor.
         assert_eq!(state.pg.get_memory(&member).await.unwrap().unwrap()["status"], "archived");
@@ -1542,11 +2156,16 @@ mod tests {
     #[tokio::test]
     async fn memory_action_bad_uuid_is_400() {
         let (app, _) = test_app().await;
-        let resp = app.oneshot(
-            Request::builder().method("POST")
-                .uri("/api/knowledge/memories/not-a-uuid/archive")
-                .body(Body::empty()).unwrap()
-        ).await.unwrap();
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/knowledge/memories/not-a-uuid/archive")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 
@@ -1554,12 +2173,17 @@ mod tests {
     async fn memory_merge_missing_into_is_400() {
         let (app, state) = test_app().await;
         let mid = seed_memory(&state, "_test:route_merge_nointo", "x").await;
-        let resp = app.oneshot(
-            Request::builder().method("POST")
-                .uri(format!("/api/knowledge/memories/{mid}/merge"))
-                .header("content-type", "application/json")
-                .body(Body::from("{}")).unwrap()
-        ).await.unwrap();
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/knowledge/memories/{mid}/merge"))
+                    .header("content-type", "application/json")
+                    .body(Body::from("{}"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 
@@ -1567,12 +2191,17 @@ mod tests {
     async fn memory_merge_invalid_into_is_400() {
         let (app, state) = test_app().await;
         let mid = seed_memory(&state, "_test:route_merge_badinto", "x").await;
-        let resp = app.oneshot(
-            Request::builder().method("POST")
-                .uri(format!("/api/knowledge/memories/{mid}/merge"))
-                .header("content-type", "application/json")
-                .body(Body::from(r#"{"into":"not-a-uuid"}"#)).unwrap()
-        ).await.unwrap();
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/knowledge/memories/{mid}/merge"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"into":"not-a-uuid"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 
@@ -1583,53 +2212,86 @@ mod tests {
         let (app, state) = test_app().await;
 
         // brief is a feature-scope slot; without a feature it must be rejected.
-        let resp = app.clone().oneshot(
-            Request::builder().method("POST")
-                .uri("/api/knowledge/memories")
-                .header("content-type", "application/json")
-                .body(Body::from(serde_json::json!({
-                    "scope": "global", "type": "decision",
-                    "title": "_test:slot_brief_nofeature", "content": "c",
-                    "spine_slot": "brief",
-                }).to_string())).unwrap()
-        ).await.unwrap();
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/knowledge/memories")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "scope": "global", "type": "decision",
+                            "title": "_test:slot_brief_nofeature", "content": "c",
+                            "spine_slot": "brief",
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST, "feature-scope slot needs a feature");
 
         // Unknown slot is a 400 too.
-        let resp = app.clone().oneshot(
-            Request::builder().method("POST")
-                .uri("/api/knowledge/memories")
-                .header("content-type", "application/json")
-                .body(Body::from(serde_json::json!({
-                    "scope": "global", "type": "decision",
-                    "title": "_test:slot_nonsense", "content": "c",
-                    "spine_slot": "nonsense",
-                }).to_string())).unwrap()
-        ).await.unwrap();
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/knowledge/memories")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "scope": "global", "type": "decision",
+                            "title": "_test:slot_nonsense", "content": "c",
+                            "spine_slot": "nonsense",
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST, "unknown spine_slot rejected");
 
         // brief + feature is valid and persists both columns.
-        let resp = app.oneshot(
-            Request::builder().method("POST")
-                .uri("/api/knowledge/memories")
-                .header("content-type", "application/json")
-                .body(Body::from(serde_json::json!({
-                    "scope": "global", "type": "decision",
-                    "title": "_test:slot_brief_auth", "content": "c",
-                    "spine_slot": "brief", "feature": "auth",
-                }).to_string())).unwrap()
-        ).await.unwrap();
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/knowledge/memories")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "scope": "global", "type": "decision",
+                            "title": "_test:slot_brief_auth", "content": "c",
+                            "spine_slot": "brief", "feature": "auth",
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
         let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
         let id = uuid::Uuid::parse_str(json["id"].as_str().unwrap()).unwrap();
         let row: (Option<String>, Option<String>) = sqlx_core::query_as::query_as(
-            "SELECT spine_slot::text, feature FROM sensei.memories WHERE id = $1"
-        ).bind(id).fetch_one(state.pg.pool()).await.unwrap();
+            "SELECT spine_slot::text, feature FROM sensei.memories WHERE id = $1",
+        )
+        .bind(id)
+        .fetch_one(state.pg.pool())
+        .await
+        .unwrap();
         assert_eq!(row, (Some("brief".into()), Some("auth".into())));
 
         sqlx_core::query::query("DELETE FROM sensei.memories WHERE id = $1")
-            .bind(id).execute(state.pg.pool()).await.unwrap();
+            .bind(id)
+            .execute(state.pg.pool())
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
@@ -1642,38 +2304,77 @@ mod tests {
         let (app, state) = test_app().await;
         let pid = state.pg.ensure_test_project("route-slot-context").await.unwrap();
 
-        let m_unanchored = state.pg.create_memory(
-            Some(&pid), "project", None, "decision", "_test:route_slot_unanchored", "c",
-            None, None, None, None,
-        ).await.unwrap();
-        let m_design = state.pg.create_memory(
-            Some(&pid), "project", None, "decision", "_test:route_slot_design", "c",
-            None, None, Some("design"), None,
-        ).await.unwrap();
+        let m_unanchored = state
+            .pg
+            .create_memory(
+                Some(&pid),
+                "project",
+                None,
+                "decision",
+                "_test:route_slot_unanchored",
+                "c",
+                None,
+                None,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        let m_design = state
+            .pg
+            .create_memory(
+                Some(&pid),
+                "project",
+                None,
+                "decision",
+                "_test:route_slot_design",
+                "c",
+                None,
+                None,
+                Some("design"),
+                None,
+            )
+            .await
+            .unwrap();
 
         // With ?slot=design: the slot-anchored memory leads.
-        let (status, blob) = get_json(
-            &app, &format!("/api/knowledge/context?project_id={pid}&slot=design"),
-        ).await;
+        let (status, blob) =
+            get_json(&app, &format!("/api/knowledge/context?project_id={pid}&slot=design")).await;
         assert_eq!(status, StatusCode::OK);
-        let ids: Vec<String> = blob["memories"].as_array().unwrap().iter()
-            .map(|m| m["id"].as_str().unwrap().to_string()).collect();
-        assert_eq!(ids.first().map(String::as_str), Some(m_design.to_string().as_str()),
-            "slot-anchored memory must lead when ?slot= is present");
+        let ids: Vec<String> = blob["memories"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|m| m["id"].as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(
+            ids.first().map(String::as_str),
+            Some(m_design.to_string().as_str()),
+            "slot-anchored memory must lead when ?slot= is present"
+        );
         assert!(ids.contains(&m_unanchored.to_string()), "general blend still present");
 
         // Without ?slot=: unchanged general blend (order not slot-led).
-        let (status_plain, blob_plain) = get_json(
-            &app, &format!("/api/knowledge/context?project_id={pid}"),
-        ).await;
+        let (status_plain, blob_plain) =
+            get_json(&app, &format!("/api/knowledge/context?project_id={pid}")).await;
         assert_eq!(status_plain, StatusCode::OK);
-        let plain_ids: Vec<String> = blob_plain["memories"].as_array().unwrap().iter()
-            .map(|m| m["id"].as_str().unwrap().to_string()).collect();
-        assert!(plain_ids.contains(&m_design.to_string()) && plain_ids.contains(&m_unanchored.to_string()),
-            "both memories still present with no slot hint");
+        let plain_ids: Vec<String> = blob_plain["memories"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|m| m["id"].as_str().unwrap().to_string())
+            .collect();
+        assert!(
+            plain_ids.contains(&m_design.to_string())
+                && plain_ids.contains(&m_unanchored.to_string()),
+            "both memories still present with no slot hint"
+        );
 
         sqlx_core::query::query("DELETE FROM sensei.memories WHERE id = ANY($1)")
-            .bind(&[m_unanchored, m_design][..]).execute(state.pg.pool()).await.unwrap();
+            .bind(&[m_unanchored, m_design][..])
+            .execute(state.pg.pool())
+            .await
+            .unwrap();
     }
 
     // ── MCP-proxy ↔ daemon seam ──────────────────────────────────────────
@@ -1690,9 +2391,11 @@ mod tests {
     // MCP knowledge lookup came back empty. Unit tests on each side stayed
     // green in isolation because nothing exercised the crossing.
     async fn get_json(app: &Router, uri: &str) -> (StatusCode, serde_json::Value) {
-        let resp = app.clone().oneshot(
-            Request::builder().uri(uri).body(Body::empty()).unwrap()
-        ).await.unwrap();
+        let resp = app
+            .clone()
+            .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
         let status = resp.status();
         let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
         let json = serde_json::from_slice(&body).unwrap_or(serde_json::json!(null));
@@ -1707,47 +2410,99 @@ mod tests {
         // resolves) + a project-scoped memory + a general-scoped rule.
         let pid = state.pg.ensure_test_project("mcp-seam").await.unwrap();
         let name = state.pg.get_project(&pid).await.unwrap().unwrap()["name"]
-            .as_str().unwrap().to_string();               // "_test:mcp-seam"
+            .as_str()
+            .unwrap()
+            .to_string(); // "_test:mcp-seam"
         let abs_path = "/_test/mcp-seam/repo".to_string();
-        let root_id = state.pg.add_watch_root(&abs_path, "mcp-seam", &serde_json::json!([]))
-            .await.unwrap();
-        state.pg.upsert_folder(&root_id, "git", "repo", "repo", &abs_path, None, Some(&pid))
-            .await.unwrap();
+        let root_id =
+            state.pg.add_watch_root(&abs_path, "mcp-seam", &serde_json::json!([])).await.unwrap();
+        state
+            .pg
+            .upsert_folder(&root_id, "git", "repo", "repo", &abs_path, None, Some(&pid))
+            .await
+            .unwrap();
 
         let mem_title = format!("_test:mcp-seam-memory-{}", std::process::id());
-        state.pg.create_memory(Some(&pid), "project", None, "convention", &mem_title, "seam memory", None, None, None, None)
-            .await.unwrap();
+        state
+            .pg
+            .create_memory(
+                Some(&pid),
+                "project",
+                None,
+                "convention",
+                &mem_title,
+                "seam memory",
+                None,
+                None,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
         // A general-scoped rule (namespace_id NULL, active) so the resolved
         // folder's ruleset is non-empty regardless of DB baseline.
-        state.pg.create_memory(None, "global", None, "convention", "_test:mcp-seam-rule", "seam rule", None, None, None, None)
-            .await.unwrap();
+        state
+            .pg
+            .create_memory(
+                None,
+                "global",
+                None,
+                "convention",
+                "_test:mcp-seam-rule",
+                "seam rule",
+                None,
+                None,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
 
         // ── get_layered_context: proxy sends ?project=<name> ──
         let (st_name, ctx_by_name) =
             get_json(&app, &format!("/api/knowledge/context?project={name}")).await;
-        assert_eq!(st_name, StatusCode::OK,
-            "context by project NAME must resolve — this was HTTP 400 on the original bug");
-        let has_title = |ctx: &serde_json::Value| ctx["memories"].as_array().unwrap().iter()
-            .any(|m| m["title"].as_str() == Some(mem_title.as_str()));
-        assert!(has_title(&ctx_by_name),
-            "context resolved by name must contain the project-scoped memory (proves name→correct project uuid)");
+        assert_eq!(
+            st_name,
+            StatusCode::OK,
+            "context by project NAME must resolve — this was HTTP 400 on the original bug"
+        );
+        let has_title = |ctx: &serde_json::Value| {
+            ctx["memories"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|m| m["title"].as_str() == Some(mem_title.as_str()))
+        };
+        assert!(
+            has_title(&ctx_by_name),
+            "context resolved by name must contain the project-scoped memory (proves name→correct project uuid)"
+        );
 
         // Old contract still works AND resolves to the SAME project's memories.
         let (st_uuid, ctx_by_uuid) =
             get_json(&app, &format!("/api/knowledge/context?project_id={pid}")).await;
         assert_eq!(st_uuid, StatusCode::OK, "explicit project_id=<uuid> must keep working");
-        assert!(has_title(&ctx_by_uuid),
-            "name and uuid must resolve to the same project → same project memory present");
+        assert!(
+            has_title(&ctx_by_uuid),
+            "name and uuid must resolve to the same project → same project memory present"
+        );
 
         // ── get_rules: proxy sends ?project=<name> ──
         let (st_rules, rules_by_name) =
             get_json(&app, &format!("/api/knowledge/rules?project={name}")).await;
-        assert_eq!(st_rules, StatusCode::OK,
-            "rules by project NAME must resolve the folder — this was HTTP 400 on the original bug");
-        assert_eq!(rules_by_name["folder"], abs_path,
-            "rules-by-name must resolve to the project's repo abs_path");
-        assert!(rules_by_name["total"].as_i64().unwrap_or(0) >= 1,
-            "the general-scoped rule must resolve for the project");
+        assert_eq!(
+            st_rules,
+            StatusCode::OK,
+            "rules by project NAME must resolve the folder — this was HTTP 400 on the original bug"
+        );
+        assert_eq!(
+            rules_by_name["folder"], abs_path,
+            "rules-by-name must resolve to the project's repo abs_path"
+        );
+        assert!(
+            rules_by_name["total"].as_i64().unwrap_or(0) >= 1,
+            "the general-scoped rule must resolve for the project"
+        );
 
         // Old contract still works: ?folder=<abs_path>.
         let (st_folder, rules_by_folder) =
@@ -1779,7 +2534,9 @@ mod tests {
         let mut out = String::with_capacity(s.len());
         for b in s.bytes() {
             match b {
-                b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => out.push(b as char),
+                b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                    out.push(b as char)
+                }
                 _ => out.push_str(&format!("%{b:02X}")),
             }
         }
@@ -1789,12 +2546,14 @@ mod tests {
     /// Issue a lib-shaped [`sensei_mcp::DaemonRequest`] against the in-process
     /// router — the same translation the binary's `send_daemon_request` does,
     /// minus the network. Returns `(status, raw daemon JSON)`.
-    async fn send_shaped(app: &Router, req: &sensei_mcp::DaemonRequest) -> (StatusCode, serde_json::Value) {
+    async fn send_shaped(
+        app: &Router,
+        req: &sensei_mcp::DaemonRequest,
+    ) -> (StatusCode, serde_json::Value) {
         let mut uri = req.path.clone();
         if !req.query.is_empty() {
-            let qs: Vec<String> = req.query.iter()
-                .map(|(k, v)| format!("{}={}", qenc(k), qenc(v)))
-                .collect();
+            let qs: Vec<String> =
+                req.query.iter().map(|(k, v)| format!("{}={}", qenc(k), qenc(v))).collect();
             uri.push('?');
             uri.push_str(&qs.join("&"));
         }
@@ -1835,41 +2594,114 @@ mod tests {
         // rule + code nodes + a tagged file + a discoverable command.
         let pid = state.pg.ensure_test_project(&format!("contract-{short}")).await.unwrap();
         let name = state.pg.get_project(&pid).await.unwrap().unwrap()["name"]
-            .as_str().unwrap().to_string();                    // "_test:contract-XXXX"
+            .as_str()
+            .unwrap()
+            .to_string(); // "_test:contract-XXXX"
         let abs_path = format!("/_test/contract-{short}/repo");
-        let root_id = state.pg.add_watch_root(&abs_path, &format!("contract-{short}"), &serde_json::json!([]))
-            .await.unwrap();
+        let root_id = state
+            .pg
+            .add_watch_root(&abs_path, &format!("contract-{short}"), &serde_json::json!([]))
+            .await
+            .unwrap();
         // Folder name == project name: get_file_tags looks up folders.name.
-        let folder_id = state.pg
+        let folder_id = state
+            .pg
             .upsert_folder(&root_id, "git", &name, "repo", &abs_path, None, Some(&pid))
-            .await.unwrap();
+            .await
+            .unwrap();
 
         let mem_title = format!("_test:contract-mem-{short}");
-        state.pg.create_memory(Some(&pid), "project", None, "convention", &mem_title, "seam memory", None, None, None, None)
-            .await.unwrap();
+        state
+            .pg
+            .create_memory(
+                Some(&pid),
+                "project",
+                None,
+                "convention",
+                &mem_title,
+                "seam memory",
+                None,
+                None,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
         let rule_title = format!("_test:contract-rule-{short}");
-        state.pg.create_memory(None, "global", None, "convention", &rule_title, "seam rule", None, None, None, None)
-            .await.unwrap();
+        state
+            .pg
+            .create_memory(
+                None,
+                "global",
+                None,
+                "convention",
+                &rule_title,
+                "seam rule",
+                None,
+                None,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
 
         let fn_name = format!("contract_fn_{short}");
-        state.pg.upsert_node(&folder_id, "function", &fn_name, "src/lib.rs",
-            None, Some(&format!("fn {fn_name}()")), Some(1), Some(5)).await.unwrap();
+        state
+            .pg
+            .upsert_node(
+                &folder_id,
+                "function",
+                &fn_name,
+                "src/lib.rs",
+                None,
+                Some(&format!("fn {fn_name}()")),
+                Some(1),
+                Some(5),
+            )
+            .await
+            .unwrap();
         let struct_name = format!("ContractType{short}");
-        state.pg.upsert_node(&folder_id, "struct", &struct_name, "src/lib.rs",
-            None, Some(&format!("struct {struct_name}")), Some(7), Some(9)).await.unwrap();
+        state
+            .pg
+            .upsert_node(
+                &folder_id,
+                "struct",
+                &struct_name,
+                "src/lib.rs",
+                None,
+                Some(&format!("struct {struct_name}")),
+                Some(7),
+                Some(9),
+            )
+            .await
+            .unwrap();
 
         // A tagged `file` node so get_patterns (→ get_file_tags) resolves a hit.
         let file_path = "src/widget.rs".to_string();
-        let file_id = state.pg.upsert_node(&folder_id, "file", "widget.rs", &file_path,
-            None, None, None, None).await.unwrap();
+        let file_id = state
+            .pg
+            .upsert_node(&folder_id, "file", "widget.rs", &file_path, None, None, None, None)
+            .await
+            .unwrap();
         let tag = "route";
         sqlx_core::query::query("UPDATE sensei.nodes SET tags = $2 WHERE id = $1")
-            .bind(file_id).bind(vec![tag.to_string()])
-            .execute(state.pg.pool()).await.unwrap();
+            .bind(file_id)
+            .bind(vec![tag.to_string()])
+            .execute(state.pg.pool())
+            .await
+            .unwrap();
 
         // A discoverable command so get_commands resolves a hit.
-        state.pg.replace_folder_commands(&folder_id, "npm", Some("package.json"),
-            &[("test".to_string(), "cargo test".to_string(), Some("test"))]).await.unwrap();
+        state
+            .pg
+            .replace_folder_commands(
+                &folder_id,
+                "npm",
+                Some("package.json"),
+                &[("test".to_string(), "cargo test".to_string(), Some("test"))],
+            )
+            .await
+            .unwrap();
 
         // cwd is only consulted by the rules FALLBACK (no project) + governance;
         // here a project always resolves, so its value is inert.
@@ -1878,14 +2710,23 @@ mod tests {
         // ── Direct Chunk-A guards: the request SHAPE the proxy produces ──────
         // These go RED on the exact original bug (name sent as project_id /
         // cwd sent as folder) regardless of daemon tolerance.
-        let ctx_req = daemon_request_for("get_layered_context", &serde_json::json!({}), cwd, Some(&name)).unwrap();
-        assert!(ctx_req.query.iter().any(|(k, v)| k == "project" && v == &name),
-            "context proxy must send ?project=<name>");
-        assert!(!ctx_req.query.iter().any(|(k, _)| k == "project_id"),
-            "context proxy must NOT send the name as project_id (the Chunk-A bug shape)");
-        let rules_req = daemon_request_for("get_rules", &serde_json::json!({}), cwd, Some(&name)).unwrap();
-        assert!(rules_req.query.iter().any(|(k, v)| k == "project" && v == &name),
-            "rules proxy must send ?project=<name>, not folder=<cwd> (the Chunk-A bug shape)");
+        let ctx_req =
+            daemon_request_for("get_layered_context", &serde_json::json!({}), cwd, Some(&name))
+                .unwrap();
+        assert!(
+            ctx_req.query.iter().any(|(k, v)| k == "project" && v == &name),
+            "context proxy must send ?project=<name>"
+        );
+        assert!(
+            !ctx_req.query.iter().any(|(k, _)| k == "project_id"),
+            "context proxy must NOT send the name as project_id (the Chunk-A bug shape)"
+        );
+        let rules_req =
+            daemon_request_for("get_rules", &serde_json::json!({}), cwd, Some(&name)).unwrap();
+        assert!(
+            rules_req.query.iter().any(|(k, v)| k == "project" && v == &name),
+            "rules proxy must send ?project=<name>, not folder=<cwd> (the Chunk-A bug shape)"
+        );
 
         // ── The contract table ──────────────────────────────────────────────
         // Each entry: (tool, caller args, discriminating check on the daemon
@@ -1893,66 +2734,164 @@ mod tests {
         // a reason so a failure names the offending tool.
         type Check = Box<dyn Fn(&serde_json::Value) -> Result<(), String>>;
         let arr_has = |v: &serde_json::Value, key: &str, field: &str, want: &str| -> bool {
-            v[key].as_array().map(|a| a.iter().any(|e| e[field].as_str() == Some(want))).unwrap_or(false)
+            v[key]
+                .as_array()
+                .map(|a| a.iter().any(|e| e[field].as_str() == Some(want)))
+                .unwrap_or(false)
         };
         let cases: Vec<(&str, serde_json::Value, Check)> = vec![
-            ("get_layered_context", serde_json::json!({}), Box::new({
-                let t = mem_title.clone();
-                move |b| if arr_has(b, "memories", "title", &t) { Ok(()) }
-                         else { Err(format!("seeded project memory '{t}' absent from context")) }
-            })),
-            ("get_rules", serde_json::json!({}), Box::new({
-                let ap = abs_path.clone();
-                move |b| if b["folder"].as_str() == Some(&ap) && b["total"].as_i64().unwrap_or(0) >= 1 { Ok(()) }
-                         else { Err(format!("rules folder={:?} total={:?} (want folder={ap}, total>=1)", b["folder"], b["total"])) }
-            })),
-            ("search", serde_json::json!({ "query": fn_name.clone() }), Box::new({
-                let f = fn_name.clone();
-                move |b| if arr_has(b, "functions", "name", &f) { Ok(()) }
-                         else { Err(format!("search missing seeded function '{f}'")) }
-            })),
-            ("get_project_summary", serde_json::json!({}), Box::new({
-                let n = name.clone();
-                move |b| if b["project"]["name"].as_str() == Some(&n) && b["functions"].as_i64().unwrap_or(0) >= 1 { Ok(()) }
-                         else { Err(format!("summary project={:?} functions={:?}", b["project"]["name"], b["functions"])) }
-            })),
-            ("get_project_conventions", serde_json::json!({}), Box::new(move |b| {
-                if arr_has(b, "naming", "kind", "function") { Ok(()) }
-                else { Err(format!("conventions missing function naming; got {}", b["naming"])) }
-            })),
-            ("get_patterns", serde_json::json!({ "pattern": tag }), Box::new({
-                let fp = file_path.clone();
-                move |b| if arr_has(b, "files", "file_path", &fp) { Ok(()) }
-                         else { Err(format!("get_patterns missing tagged file '{fp}'; got {b}")) }
-            })),
-            ("get_duplicates", serde_json::json!({}), Box::new(move |b| {
-                // No code embeddings are seeded in-process, so the cosine
-                // self-join yields 0 rows — but the seam MUST resolve PROJECT
-                // scope (name → folders), which is what drift would break.
-                // NOTE (gap): actual duplicate detection needs embeddings and is
-                // exercised by the daemon's own embedding tests, not here.
-                if b["scope"].as_str() == Some("project") && b["folder_count"].as_i64().unwrap_or(0) >= 1 { Ok(()) }
-                else { Err(format!("duplicates scope={:?} folder_count={:?} (want project scope over >=1 folder)", b["scope"], b["folder_count"])) }
-            })),
-            ("get_commands", serde_json::json!({}), Box::new(move |b| {
-                if arr_has(b, "commands", "raw_name", "test") { Ok(()) }
-                else { Err(format!("get_commands missing seeded 'test' command; got {}", b["commands"])) }
-            })),
+            (
+                "get_layered_context",
+                serde_json::json!({}),
+                Box::new({
+                    let t = mem_title.clone();
+                    move |b| {
+                        if arr_has(b, "memories", "title", &t) {
+                            Ok(())
+                        } else {
+                            Err(format!("seeded project memory '{t}' absent from context"))
+                        }
+                    }
+                }),
+            ),
+            (
+                "get_rules",
+                serde_json::json!({}),
+                Box::new({
+                    let ap = abs_path.clone();
+                    move |b| {
+                        if b["folder"].as_str() == Some(&ap)
+                            && b["total"].as_i64().unwrap_or(0) >= 1
+                        {
+                            Ok(())
+                        } else {
+                            Err(format!(
+                                "rules folder={:?} total={:?} (want folder={ap}, total>=1)",
+                                b["folder"], b["total"]
+                            ))
+                        }
+                    }
+                }),
+            ),
+            (
+                "search",
+                serde_json::json!({ "query": fn_name.clone() }),
+                Box::new({
+                    let f = fn_name.clone();
+                    move |b| {
+                        if arr_has(b, "functions", "name", &f) {
+                            Ok(())
+                        } else {
+                            Err(format!("search missing seeded function '{f}'"))
+                        }
+                    }
+                }),
+            ),
+            (
+                "get_project_summary",
+                serde_json::json!({}),
+                Box::new({
+                    let n = name.clone();
+                    move |b| {
+                        if b["project"]["name"].as_str() == Some(&n)
+                            && b["functions"].as_i64().unwrap_or(0) >= 1
+                        {
+                            Ok(())
+                        } else {
+                            Err(format!(
+                                "summary project={:?} functions={:?}",
+                                b["project"]["name"], b["functions"]
+                            ))
+                        }
+                    }
+                }),
+            ),
+            (
+                "get_project_conventions",
+                serde_json::json!({}),
+                Box::new(move |b| {
+                    if arr_has(b, "naming", "kind", "function") {
+                        Ok(())
+                    } else {
+                        Err(format!("conventions missing function naming; got {}", b["naming"]))
+                    }
+                }),
+            ),
+            (
+                "get_patterns",
+                serde_json::json!({ "pattern": tag }),
+                Box::new({
+                    let fp = file_path.clone();
+                    move |b| {
+                        if arr_has(b, "files", "file_path", &fp) {
+                            Ok(())
+                        } else {
+                            Err(format!("get_patterns missing tagged file '{fp}'; got {b}"))
+                        }
+                    }
+                }),
+            ),
+            (
+                "get_duplicates",
+                serde_json::json!({}),
+                Box::new(move |b| {
+                    // No code embeddings are seeded in-process, so the cosine
+                    // self-join yields 0 rows — but the seam MUST resolve PROJECT
+                    // scope (name → folders), which is what drift would break.
+                    // NOTE (gap): actual duplicate detection needs embeddings and is
+                    // exercised by the daemon's own embedding tests, not here.
+                    if b["scope"].as_str() == Some("project")
+                        && b["folder_count"].as_i64().unwrap_or(0) >= 1
+                    {
+                        Ok(())
+                    } else {
+                        Err(format!(
+                            "duplicates scope={:?} folder_count={:?} (want project scope over >=1 folder)",
+                            b["scope"], b["folder_count"]
+                        ))
+                    }
+                }),
+            ),
+            (
+                "get_commands",
+                serde_json::json!({}),
+                Box::new(move |b| {
+                    if arr_has(b, "commands", "raw_name", "test") {
+                        Ok(())
+                    } else {
+                        Err(format!(
+                            "get_commands missing seeded 'test' command; got {}",
+                            b["commands"]
+                        ))
+                    }
+                }),
+            ),
         ];
 
         for (tool, args, check) in &cases {
             let req = daemon_request_for(tool, args, cwd, Some(&name))
                 .unwrap_or_else(|| panic!("daemon_request_for returned None for '{tool}' (project resolved) — the proxy stopped shaping a daemon request"));
             let (status, body) = send_shaped(&app, &req).await;
-            assert_eq!(status, StatusCode::OK,
+            assert_eq!(
+                status,
+                StatusCode::OK,
                 "{tool}: expected HTTP 200, got {status} — proxy request shape ({} {}) drifted from the daemon.\nbody={body}",
-                match req.method { sensei_mcp::HttpMethod::Get => "GET", sensei_mcp::HttpMethod::Post => "POST", sensei_mcp::HttpMethod::Put => "PUT", sensei_mcp::HttpMethod::Delete => "DELETE" },
-                req.path);
+                match req.method {
+                    sensei_mcp::HttpMethod::Get => "GET",
+                    sensei_mcp::HttpMethod::Post => "POST",
+                    sensei_mcp::HttpMethod::Put => "PUT",
+                    sensei_mcp::HttpMethod::Delete => "DELETE",
+                },
+                req.path
+            );
             // The /api/mcp/call proxy answers 200 even for an unrecognized tool,
             // carrying {"error":"Unknown tool: …"} — treat that as drift too.
             if req.path == "/api/mcp/call" {
-                assert!(body.get("error").and_then(|e| e.as_str()).is_none(),
-                    "{tool}: daemon mcp proxy returned an error (tool-name drift?): {}", body["error"]);
+                assert!(
+                    body.get("error").and_then(|e| e.as_str()).is_none(),
+                    "{tool}: daemon mcp proxy returned an error (tool-name drift?): {}",
+                    body["error"]
+                );
             }
             check(&body).unwrap_or_else(|e| panic!("{tool}: request crossed the seam but did NOT genuinely resolve the seeded project: {e}"));
         }
@@ -1963,15 +2902,24 @@ mod tests {
         let by_uuid = daemon_request_for(
             "get_layered_context",
             &serde_json::json!({ "project_id": pid.to_string() }),
-            cwd, Some(&name),
-        ).unwrap();
-        assert!(by_uuid.query.iter().any(|(k, v)| k == "project_id" && v == &pid.to_string()),
-            "explicit uuid must ride on ?project_id=");
+            cwd,
+            Some(&name),
+        )
+        .unwrap();
+        assert!(
+            by_uuid.query.iter().any(|(k, v)| k == "project_id" && v == &pid.to_string()),
+            "explicit uuid must ride on ?project_id="
+        );
         let (st_uuid, body_uuid) = send_shaped(&app, &by_uuid).await;
         assert_eq!(st_uuid, StatusCode::OK, "context by explicit uuid must keep working");
-        assert!(body_uuid["memories"].as_array().unwrap().iter()
+        assert!(
+            body_uuid["memories"]
+                .as_array()
+                .unwrap()
+                .iter()
                 .any(|m| m["title"].as_str() == Some(mem_title.as_str())),
-            "project=name and project_id=uuid must resolve to the SAME project → same seeded memory");
+            "project=name and project_id=uuid must resolve to the SAME project → same seeded memory"
+        );
     }
 
     // ── find_projects: folder-scoped project discovery crosses the seam ──────
@@ -1993,17 +2941,28 @@ mod tests {
         // Seed: a project with ONE folder under `base`.
         let pid = state.pg.ensure_test_project(&format!("fp-{short}")).await.unwrap();
         let name = state.pg.get_project(&pid).await.unwrap().unwrap()["name"]
-            .as_str().unwrap().to_string();
-        let root = state.pg.add_watch_root(&base, &format!("fp-{short}"), &serde_json::json!([]))
-            .await.unwrap();
-        state.pg.upsert_folder(&root, "git", &name, "repo", &under, None, Some(&pid))
-            .await.unwrap();
+            .as_str()
+            .unwrap()
+            .to_string();
+        let root = state
+            .pg
+            .add_watch_root(&base, &format!("fp-{short}"), &serde_json::json!([]))
+            .await
+            .unwrap();
+        state
+            .pg
+            .upsert_folder(&root, "git", &name, "repo", &under, None, Some(&pid))
+            .await
+            .unwrap();
 
         // Shape guard: no `under` arg → default to the call cwd.
-        let dflt = daemon_request_for("find_projects", &serde_json::json!({}), &base, None).unwrap();
+        let dflt =
+            daemon_request_for("find_projects", &serde_json::json!({}), &base, None).unwrap();
         assert_eq!(dflt.path, "/api/projects");
-        assert!(dflt.query.iter().any(|(k, v)| k == "under" && v == &base),
-            "find_projects with no `under` arg must default to the call cwd");
+        assert!(
+            dflt.query.iter().any(|(k, v)| k == "under" && v == &base),
+            "find_projects with no `under` arg must default to the call cwd"
+        );
 
         let names = |b: &serde_json::Value| -> Vec<String> {
             b.as_array()
@@ -2013,22 +2972,37 @@ mod tests {
 
         // Under `base` → the seeded project appears.
         let req = daemon_request_for(
-            "find_projects", &serde_json::json!({ "under": base.clone() }), "/irrelevant/cwd", None,
-        ).unwrap();
+            "find_projects",
+            &serde_json::json!({ "under": base.clone() }),
+            "/irrelevant/cwd",
+            None,
+        )
+        .unwrap();
         let (status, body) = send_shaped(&app, &req).await;
-        assert_eq!(status, StatusCode::OK,
-            "find_projects must reach GET /api/projects?under=<path>; body={body}");
-        assert!(names(&body).contains(&name),
-            "a project with a folder under `{base}` must be in the scoped list");
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "find_projects must reach GET /api/projects?under=<path>; body={body}"
+        );
+        assert!(
+            names(&body).contains(&name),
+            "a project with a folder under `{base}` must be in the scoped list"
+        );
 
         // Under a sibling that only shares the textual prefix → project is gone.
         let sib = daemon_request_for(
-            "find_projects", &serde_json::json!({ "under": format!("{base}-other") }), "/x", None,
-        ).unwrap();
+            "find_projects",
+            &serde_json::json!({ "under": format!("{base}-other") }),
+            "/x",
+            None,
+        )
+        .unwrap();
         let (st_sib, body_sib) = send_shaped(&app, &sib).await;
         assert_eq!(st_sib, StatusCode::OK);
-        assert!(!names(&body_sib).contains(&name),
-            "sibling `{base}-other` must NOT include the project (path boundary)");
+        assert!(
+            !names(&body_sib).contains(&name),
+            "sibling `{base}-other` must NOT include the project (path boundary)"
+        );
 
         state.pg.delete_project(&pid).await.unwrap();
     }
@@ -2089,10 +3063,7 @@ mod tests {
         // Reporting 404 there would 404 the id the enqueue endpoint just handed
         // back — the most likely instant for a caller to look it up.
         let (app, state) = test_app().await;
-        let id = state
-            .task_queue
-            .enqueue(Task::new(TaskKind::IngestCaptures, "", ""))
-            .await;
+        let id = state.task_queue.enqueue(Task::new(TaskKind::IngestCaptures, "", "")).await;
         let (status, body) = req(app, "GET", &format!("/api/tasks/{id}"), None).await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body["status"], "queued", "{body:?}");
@@ -2109,32 +3080,56 @@ mod tests {
         let name = format!("fpc-{short}");
         let pid = state.pg.ensure_test_project(&name).await.unwrap();
         let pname = state.pg.get_project(&pid).await.unwrap().unwrap()["name"]
-            .as_str().unwrap().to_string();
-        let root = state.pg.add_watch_root(&base, &name, &serde_json::json!([]))
-            .await.unwrap();
+            .as_str()
+            .unwrap()
+            .to_string();
+        let root = state.pg.add_watch_root(&base, &name, &serde_json::json!([])).await.unwrap();
 
         // One git repo root + many nested `kind:'folder'` descendants.
-        state.pg.upsert_folder(&root, "git", &pname, "repo", &format!("{base}/repo"), None, Some(&pid))
-            .await.unwrap();
+        state
+            .pg
+            .upsert_folder(&root, "git", &pname, "repo", &format!("{base}/repo"), None, Some(&pid))
+            .await
+            .unwrap();
         for i in 0..40 {
-            state.pg.upsert_folder(
-                &root, "folder", &format!("d{i}"), &format!("repo/src/d{i}"),
-                &format!("{base}/repo/src/d{i}"), None, Some(&pid),
-            ).await.unwrap();
+            state
+                .pg
+                .upsert_folder(
+                    &root,
+                    "folder",
+                    &format!("d{i}"),
+                    &format!("repo/src/d{i}"),
+                    &format!("{base}/repo/src/d{i}"),
+                    None,
+                    Some(&pid),
+                )
+                .await
+                .unwrap();
         }
 
         // Scoped (find_projects) → compact folders.
         let req = daemon_request_for(
-            "find_projects", &serde_json::json!({ "under": base.clone() }), "/x", None,
-        ).unwrap();
+            "find_projects",
+            &serde_json::json!({ "under": base.clone() }),
+            "/x",
+            None,
+        )
+        .unwrap();
         let (status, body) = send_shaped(&app, &req).await;
         assert_eq!(status, StatusCode::OK);
-        let proj = body.as_array().unwrap().iter()
+        let proj = body
+            .as_array()
+            .unwrap()
+            .iter()
             .find(|p| p["name"].as_str() == Some(&pname))
             .expect("seeded project must be in the scoped list");
 
         let folders = proj["folders"].as_array().unwrap();
-        assert_eq!(folders.len(), 1, "scoped response must carry ONLY the repo root, not the 40 descendants");
+        assert_eq!(
+            folders.len(),
+            1,
+            "scoped response must carry ONLY the repo root, not the 40 descendants"
+        );
         assert!(
             folders.iter().all(|f| matches!(f["kind"].as_str(), Some("git") | Some("standalone"))),
             "no `kind:'folder'` rows may leak into the scoped response",
@@ -2150,13 +3145,18 @@ mod tests {
         // Un-`under` (the app path: GET /api/projects, no query) → full tree
         // unchanged. Exercise the real handler branch and assert the seeded
         // project still carries all 41 folders including `kind:'folder'` rows.
-        let resp = app.clone().oneshot(
-            Request::builder().uri("/api/projects").body(Body::empty()).unwrap()
-        ).await.unwrap();
+        let resp = app
+            .clone()
+            .oneshot(Request::builder().uri("/api/projects").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
         let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
         let all: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-        let app_proj = all.as_array().unwrap().iter()
+        let app_proj = all
+            .as_array()
+            .unwrap()
+            .iter()
             .find(|p| p["name"].as_str() == Some(&pname))
             .expect("un-scoped list must include the seeded project");
         let app_folders = app_proj["folders"].as_array().unwrap();
@@ -2247,10 +3247,12 @@ mod tests {
 
         // ── session_outcomes: 3 first-try + 1 corrected + 1 in-flight (excluded) ──
         for _ in 0..3 {
-            let sid = seed_metrics_session(pg, &fid, &pid, Some("completed"), Some(true), 0, ts).await;
+            let sid =
+                seed_metrics_session(pg, &fid, &pid, Some("completed"), Some(true), 0, ts).await;
             seed_metrics_turn(pg, &sid, 2, ts).await; // 3×2 = 6 first-try tool-calls
         }
-        let corrected = seed_metrics_session(pg, &fid, &pid, Some("corrected"), Some(false), 2, ts).await;
+        let corrected =
+            seed_metrics_session(pg, &fid, &pid, Some("corrected"), Some(false), 2, ts).await;
         seed_metrics_turn(pg, &corrected, 6, ts).await; // 6 corrected tool-calls
         let inflight = seed_metrics_session(pg, &fid, &pid, None, None, 0, ts).await; // outcome NULL
         seed_metrics_turn(pg, &inflight, 5, ts).await; // must be excluded from every metric
@@ -2322,7 +3324,10 @@ mod tests {
         const REQUIRED_GROUPS: [&str; 6] =
             ["session_outcomes", "churn", "quality", "autonomy", "knowledge", "coverage"];
         for g in REQUIRED_GROUPS {
-            assert!(base_names.iter().any(|t| t == g), "base group `{g}` is active in the registry: {base_names:?}");
+            assert!(
+                base_names.iter().any(|t| t == g),
+                "base group `{g}` is active in the registry: {base_names:?}"
+            );
         }
         // Enqueue the per-project PARENT only: ComputeProjectMetrics freezes one
         // frozen as_of, fans out one ComputeGroupMetrics per active base group, and
@@ -2378,26 +3383,63 @@ mod tests {
             mtype.insert(r.metric.clone(), r.metric_type.clone());
         }
         let get = |k: &str| {
-            *val.get(k)
-                .unwrap_or_else(|| panic!("BLOCKER: group produced NO project daily row for metric `{k}`"))
+            *val.get(k).unwrap_or_else(|| {
+                panic!("BLOCKER: group produced NO project daily row for metric `{k}`")
+            })
         };
 
         assert!(close(get("ftr"), 0.75), "ftr = 3/4 = 0.75 (got {})", get("ftr"));
-        assert!(close(get("rework_ratio"), 0.5), "rework_ratio = 6/12 = 0.5 (got {})", get("rework_ratio"));
-        assert!(close(get("throughput"), 4.0), "throughput = 4 measurable sessions (got {})", get("throughput"));
-        assert!(close(get("churn_rate"), 2.0), "churn_rate = 2 distinct files changed by the day's commit (got {})", get("churn_rate"));
-        assert!(close(get("churn_concentration"), 4.0 / 6.0), "churn_concentration = top-file line-churn 4 / total 6 (got {})", get("churn_concentration"));
-        assert!(close(get("rework_density"), 0.25), "rework_density = 1/4 = 0.25 (got {})", get("rework_density"));
+        assert!(
+            close(get("rework_ratio"), 0.5),
+            "rework_ratio = 6/12 = 0.5 (got {})",
+            get("rework_ratio")
+        );
+        assert!(
+            close(get("throughput"), 4.0),
+            "throughput = 4 measurable sessions (got {})",
+            get("throughput")
+        );
+        assert!(
+            close(get("churn_rate"), 2.0),
+            "churn_rate = 2 distinct files changed by the day's commit (got {})",
+            get("churn_rate")
+        );
+        assert!(
+            close(get("churn_concentration"), 4.0 / 6.0),
+            "churn_concentration = top-file line-churn 4 / total 6 (got {})",
+            get("churn_concentration")
+        );
+        assert!(
+            close(get("rework_density"), 0.25),
+            "rework_density = 1/4 = 0.25 (got {})",
+            get("rework_density")
+        );
         // duplication_ratio / module_quality (quality group) are GIT-worktree + qlty-
         // sourced; config-pinning measures them when the qlty CLI is present — asserted
         // (qlty-gated) below, alongside the row count.
-        assert!(close(get("interruption_rate"), 0.4), "interruption_rate = 4/10 = 0.4 (got {})", get("interruption_rate"));
-        assert!(close(get("run_completion"), 0.8), "run_completion = 4/5 = 0.8 (got {})", get("run_completion"));
-        assert!(close(get("memory_promotion"), 0.5), "memory_promotion = 2/4 = 0.5 (got {})", get("memory_promotion"));
+        assert!(
+            close(get("interruption_rate"), 0.4),
+            "interruption_rate = 4/10 = 0.4 (got {})",
+            get("interruption_rate")
+        );
+        assert!(
+            close(get("run_completion"), 0.8),
+            "run_completion = 4/5 = 0.8 (got {})",
+            get("run_completion")
+        );
+        assert!(
+            close(get("memory_promotion"), 0.5),
+            "memory_promotion = 2/4 = 0.5 (got {})",
+            get("memory_promotion")
+        );
         // (unused_tools RETIRED — replaced by the tool_usage_by_repository view; not computed.)
         // context_pressure_rate: 0 of the 4 measurable sessions carried a context-
         // pressure trouble signal → 0/4 = 0.0 (an honest zero — a real row, not fabricated).
-        assert!(close(get("context_pressure_rate"), 0.0), "context_pressure_rate = 0/4 = 0.0 (no pressure signals seeded) (got {})", get("context_pressure_rate"));
+        assert!(
+            close(get("context_pressure_rate"), 0.0),
+            "context_pressure_rate = 0/4 = 0.0 (no pressure signals seeded) (got {})",
+            get("context_pressure_rate")
+        );
 
         // 11 base metric rows; no composite. The five session_outcomes metrics
         // (ftr, rework_ratio, throughput, time_to_useful_result, context_pressure_rate),
@@ -2413,16 +3455,39 @@ mod tests {
         // WITHOUT qlty it is honest-empty. Gate on qlty so the E2E passes both locally
         // and on a bare CI — never a fabricated score either way.
         let base_rows = 11;
-        let qlty_present = std::process::Command::new("qlty").arg("--version").output()
-            .map(|o| o.status.success()).unwrap_or(false);
+        let qlty_present = std::process::Command::new("qlty")
+            .arg("--version")
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
         if qlty_present {
-            assert_eq!(rows.len(), base_rows + 2, "base metrics + config-pinned duplication_ratio + module_quality");
-            assert!(val.contains_key("duplication_ratio"), "config-pinning → duplication_ratio measured (qlty present)");
-            assert!(val.contains_key("module_quality"), "config-pinning → module_quality measured (qlty present)");
+            assert_eq!(
+                rows.len(),
+                base_rows + 2,
+                "base metrics + config-pinned duplication_ratio + module_quality"
+            );
+            assert!(
+                val.contains_key("duplication_ratio"),
+                "config-pinning → duplication_ratio measured (qlty present)"
+            );
+            assert!(
+                val.contains_key("module_quality"),
+                "config-pinning → module_quality measured (qlty present)"
+            );
         } else {
-            assert_eq!(rows.len(), base_rows, "base metrics only (quality honest-empty without the qlty CLI)");
-            assert!(!val.contains_key("duplication_ratio"), "duplication_ratio honest-empty (no qlty CLI — never fabricated)");
-            assert!(!val.contains_key("module_quality"), "module_quality honest-empty (no qlty CLI — never fabricated)");
+            assert_eq!(
+                rows.len(),
+                base_rows,
+                "base metrics only (quality honest-empty without the qlty CLI)"
+            );
+            assert!(
+                !val.contains_key("duplication_ratio"),
+                "duplication_ratio honest-empty (no qlty CLI — never fabricated)"
+            );
+            assert!(
+                !val.contains_key("module_quality"),
+                "module_quality honest-empty (no qlty CLI — never fabricated)"
+            );
         }
 
         // ── RETIRED HEALTH: the barrier ran (drained above) but wrote NO composite ──
@@ -2433,8 +3498,10 @@ mod tests {
             !active.iter().any(|m| m.key == "project_health"),
             "project_health is retired → absent from the active registry",
         );
-        assert!(!val.contains_key("project_health"),
-            "no project_health value row: the retired composite is never computed (honest-empty, not a fabricated score)");
+        assert!(
+            !val.contains_key("project_health"),
+            "no project_health value row: the retired composite is never computed (honest-empty, not a fabricated score)"
+        );
         let (ph_rows,): (i64,) = query_as(
             "SELECT count(*) FROM sensei.project_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
               WHERE pm.project_id = $1 AND m.key = 'project_health'",
@@ -2448,10 +3515,18 @@ mod tests {
         // ── NEVER-FABRICATE: every ratio/pct row carries numerator + denominator ──
         for r in &rows {
             if r.metric_type == "ratio" || r.metric_type == "pct" {
-                assert!(r.props.get("numerator").and_then(|v| v.as_i64()).is_some(),
-                    "ratio/pct `{}` carries props.numerator: {}", r.metric, r.props);
-                assert!(r.props.get("denominator").and_then(|v| v.as_i64()).is_some(),
-                    "ratio/pct `{}` carries props.denominator: {}", r.metric, r.props);
+                assert!(
+                    r.props.get("numerator").and_then(|v| v.as_i64()).is_some(),
+                    "ratio/pct `{}` carries props.numerator: {}",
+                    r.metric,
+                    r.props
+                );
+                assert!(
+                    r.props.get("denominator").and_then(|v| v.as_i64()).is_some(),
+                    "ratio/pct `{}` carries props.denominator: {}",
+                    r.metric,
+                    r.props
+                );
             }
         }
         // Honest-absence spot-check: a metric in a seeded group that is deliberately
@@ -2464,58 +3539,114 @@ mod tests {
         .fetch_one(pg.pool())
         .await
         .unwrap();
-        assert_eq!(fcr_rows, 0, "honest-absence: false_crash_rate produced NO row (never fabricated)");
-        assert!(!val.contains_key("false_crash_rate"), "false_crash_rate is not in the read surface");
+        assert_eq!(
+            fcr_rows, 0,
+            "honest-absence: false_crash_rate produced NO row (never fabricated)"
+        );
+        assert!(
+            !val.contains_key("false_crash_rate"),
+            "false_crash_rate is not in the read surface"
+        );
 
         // ── ENDPOINT 1: GET /api/metrics/registry serves every ACTIVE metric + facets ──
         let (st, body) = req(app.clone(), "GET", "/api/metrics/registry", None).await;
         assert_eq!(st, StatusCode::OK, "{body}");
         let reg = body["metrics"].as_array().expect("registry metrics array");
         for k in [
-            "ftr", "rework_ratio", "throughput", "time_to_useful_result", "churn_rate",
-            "churn_concentration", "rework_density", "duplication_ratio", "interruption_rate",
-            "run_completion", "memory_promotion",
+            "ftr",
+            "rework_ratio",
+            "throughput",
+            "time_to_useful_result",
+            "churn_rate",
+            "churn_concentration",
+            "rework_density",
+            "duplication_ratio",
+            "interruption_rate",
+            "run_completion",
+            "memory_promotion",
         ] {
-            let m = reg.iter().find(|m| m["key"].as_str() == Some(k))
+            let m = reg
+                .iter()
+                .find(|m| m["key"].as_str() == Some(k))
                 .unwrap_or_else(|| panic!("registry endpoint serves `{k}`"));
-            assert!(m["purpose"].as_str().is_some_and(|s| !s.is_empty()), "`{k}` carries a purpose facet");
-            assert!(m["direction"].as_str().is_some_and(|s| !s.is_empty()), "`{k}` carries a direction facet");
+            assert!(
+                m["purpose"].as_str().is_some_and(|s| !s.is_empty()),
+                "`{k}` carries a purpose facet"
+            );
+            assert!(
+                m["direction"].as_str().is_some_and(|s| !s.is_empty()),
+                "`{k}` carries a direction facet"
+            );
         }
         // The retired composite + the retired unused_tools are served by NEITHER the
         // registry (active-only) …
-        assert!(!reg.iter().any(|m| m["key"].as_str() == Some("project_health")),
-            "registry endpoint does NOT serve the retired project_health");
-        assert!(!reg.iter().any(|m| m["key"].as_str() == Some("unused_tools")),
-            "registry endpoint does NOT serve the retired unused_tools (→ tool_usage_by_repository view)");
+        assert!(
+            !reg.iter().any(|m| m["key"].as_str() == Some("project_health")),
+            "registry endpoint does NOT serve the retired project_health"
+        );
+        assert!(
+            !reg.iter().any(|m| m["key"].as_str() == Some("unused_tools")),
+            "registry endpoint does NOT serve the retired unused_tools (→ tool_usage_by_repository view)"
+        );
 
         // ── ENDPOINT 2: GET /api/projects/{id}/metrics returns the seeded data ──
-        let (st, body) = req(app.clone(), "GET", &format!("/api/projects/{pid}/metrics"), None).await;
+        let (st, body) =
+            req(app.clone(), "GET", &format!("/api/projects/{pid}/metrics"), None).await;
         assert_eq!(st, StatusCode::OK, "{body}");
         let ms = body["metrics"].as_array().expect("project metrics array");
-        assert_eq!(ms.len(), if qlty_present { base_rows + 2 } else { base_rows },
-            "endpoint returns the latest-per-metric rows (base + config-pinned quality when qlty present; no retired composite)");
+        assert_eq!(
+            ms.len(),
+            if qlty_present { base_rows + 2 } else { base_rows },
+            "endpoint returns the latest-per-metric rows (base + config-pinned quality when qlty present; no retired composite)"
+        );
         // … nor the values endpoint: the retired project_health has no row to serve.
-        assert!(!ms.iter().any(|m| m["metric"].as_str() == Some("project_health")),
-            "values endpoint does NOT carry the retired project_health");
-        let e_ftr = ms.iter().find(|m| m["metric"].as_str() == Some("ftr")).expect("ftr present on the endpoint");
+        assert!(
+            !ms.iter().any(|m| m["metric"].as_str() == Some("project_health")),
+            "values endpoint does NOT carry the retired project_health"
+        );
+        let e_ftr = ms
+            .iter()
+            .find(|m| m["metric"].as_str() == Some("ftr"))
+            .expect("ftr present on the endpoint");
         assert!(close(e_ftr["value"].as_f64().unwrap(), 0.75), "endpoint ftr = 0.75");
-        assert_eq!(e_ftr["direction"].as_str(), Some("higher_better"), "facet: ftr direction attached");
-        assert!(e_ftr["purpose"].as_str().is_some_and(|s| !s.is_empty()), "facet: ftr purpose attached");
-        assert!(e_ftr["props"]["numerator"].as_i64().is_some() && e_ftr["props"]["denominator"].as_i64().is_some(),
-            "endpoint ftr carries numerator/denominator facets");
+        assert_eq!(
+            e_ftr["direction"].as_str(),
+            Some("higher_better"),
+            "facet: ftr direction attached"
+        );
+        assert!(
+            e_ftr["purpose"].as_str().is_some_and(|s| !s.is_empty()),
+            "facet: ftr purpose attached"
+        );
+        assert!(
+            e_ftr["props"]["numerator"].as_i64().is_some()
+                && e_ftr["props"]["denominator"].as_i64().is_some(),
+            "endpoint ftr carries numerator/denominator facets"
+        );
         for m in ms {
             let t = m["metric_type"].as_str().unwrap_or("");
             if t == "ratio" || t == "pct" {
-                assert!(m["props"]["numerator"].as_i64().is_some(),
-                    "endpoint ratio/pct `{}` carries props.numerator", m["metric"]);
-                assert!(m["props"]["denominator"].as_i64().is_some(),
-                    "endpoint ratio/pct `{}` carries props.denominator", m["metric"]);
+                assert!(
+                    m["props"]["numerator"].as_i64().is_some(),
+                    "endpoint ratio/pct `{}` carries props.numerator",
+                    m["metric"]
+                );
+                assert!(
+                    m["props"]["denominator"].as_i64().is_some(),
+                    "endpoint ratio/pct `{}` carries props.denominator",
+                    m["metric"]
+                );
             }
         }
 
         // ── ENDPOINT 3: GET /api/projects/{id}/metrics/{key}?grain=weekly re-derives Σnum/Σden ──
-        let (st, body) = req(app.clone(), "GET",
-            &format!("/api/projects/{pid}/metrics/rework_ratio?grain=weekly"), None).await;
+        let (st, body) = req(
+            app.clone(),
+            "GET",
+            &format!("/api/projects/{pid}/metrics/rework_ratio?grain=weekly"),
+            None,
+        )
+        .await;
         assert_eq!(st, StatusCode::OK, "{body}");
         assert_eq!(body["grain"], "weekly");
         assert_eq!(body["metric"].as_str(), Some("rework_ratio"));
@@ -2524,7 +3655,10 @@ mod tests {
         let wk_val = series.last().unwrap()["value"].as_f64().expect("weekly value");
         let rr_num = props["rework_ratio"]["numerator"].as_f64().unwrap();
         let rr_den = props["rework_ratio"]["denominator"].as_f64().unwrap();
-        assert!(close(wk_val, rr_num / rr_den), "weekly rework_ratio re-derives Σnum/Σden = {rr_num}/{rr_den}");
+        assert!(
+            close(wk_val, rr_num / rr_den),
+            "weekly rework_ratio re-derives Σnum/Σden = {rr_num}/{rr_den}"
+        );
         assert!(close(wk_val, 0.5), "weekly rework_ratio = 0.5");
 
         // ── FTR PARITY: store daily == get_ftr_daily == direct base arithmetic; headline == Σnum/Σden ──
@@ -2537,20 +3671,46 @@ mod tests {
         .fetch_one(pg.pool())
         .await
         .unwrap();
-        assert!(close(direct_rate, 0.75) && direct_count == 4, "direct FTR base = 0.75 over 4 measurable sessions");
-        assert!(close(get("ftr"), direct_rate), "store daily ftr == avg(case when ftr) over the measurable base");
+        assert!(
+            close(direct_rate, 0.75) && direct_count == 4,
+            "direct FTR base = 0.75 over 4 measurable sessions"
+        );
+        assert!(
+            close(get("ftr"), direct_rate),
+            "store daily ftr == avg(case when ftr) over the measurable base"
+        );
 
         let ftr_daily = pg.get_ftr_daily(Some(&pid), 14).await.unwrap();
         assert_eq!(ftr_daily.len(), 1, "one daily ftr row for the project");
-        assert!(close(ftr_daily[0]["ftr_rate"].as_f64().unwrap(), 0.75), "get_ftr_daily ftr_rate = 0.75");
-        assert_eq!(ftr_daily[0]["session_count"].as_i64(), Some(4), "get_ftr_daily session_count = 4");
-        assert!(close(ftr_daily[0]["ftr_rate"].as_f64().unwrap(), get("ftr")),
-            "get_ftr_daily (store-backed) == the store daily ftr value");
+        assert!(
+            close(ftr_daily[0]["ftr_rate"].as_f64().unwrap(), 0.75),
+            "get_ftr_daily ftr_rate = 0.75"
+        );
+        assert_eq!(
+            ftr_daily[0]["session_count"].as_i64(),
+            Some(4),
+            "get_ftr_daily session_count = 4"
+        );
+        assert!(
+            close(ftr_daily[0]["ftr_rate"].as_f64().unwrap(), get("ftr")),
+            "get_ftr_daily (store-backed) == the store daily ftr value"
+        );
 
         let headline = pg.get_project_ftr(&pid).await.unwrap();
-        assert!(close(headline["ftr14d"].as_f64().unwrap(), 0.75), "get_project_ftr ftr14d == Σnum/Σden = 3/4 = 0.75");
-        assert_eq!(headline["sessions7d"].as_i64(), Some(4), "get_project_ftr sessions7d == Σdenominator = 4");
-        let rate = pg.get_project_ftr_rate(&pid).await.unwrap().expect("ftr rate present for a project with ftr rows");
+        assert!(
+            close(headline["ftr14d"].as_f64().unwrap(), 0.75),
+            "get_project_ftr ftr14d == Σnum/Σden = 3/4 = 0.75"
+        );
+        assert_eq!(
+            headline["sessions7d"].as_i64(),
+            Some(4),
+            "get_project_ftr sessions7d == Σdenominator = 4"
+        );
+        let rate = pg
+            .get_project_ftr_rate(&pid)
+            .await
+            .unwrap()
+            .expect("ftr rate present for a project with ftr rows");
         assert!(close(rate, 0.75), "get_project_ftr_rate == 0.75 headline");
 
         // ── CLEANUP: purge the no-FK tables, then the project + folder (cascades) ──

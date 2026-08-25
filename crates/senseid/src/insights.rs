@@ -71,7 +71,7 @@ pub fn rec_copy_inputs(r: &serde_json::Value) -> (InsightKind, serde_json::Value
         "title": r["title"], "why": r["why"], "impact": r["impact"],
     });
     let fallback = FallbackCopy {
-        title:  r["title"].as_str().unwrap_or_default().to_string(),
+        title: r["title"].as_str().unwrap_or_default().to_string(),
         detail: r["why"].as_str().unwrap_or_default().to_string(),
     };
     (InsightKind::InsightRecurringPattern, facts, fallback)
@@ -188,7 +188,8 @@ mod tests {
         assert_eq!(fb1, fb2, "both endpoints build the identical fallback");
         // The load-bearing invariant: one warm serves both screens.
         assert_eq!(
-            facts_hash(k1, &f1), facts_hash(k2, &f2),
+            facts_hash(k1, &f1),
+            facts_hash(k2, &f2),
             "get_insights and get_project_recommendations must share the insight-copy cache key"
         );
     }
@@ -216,7 +217,10 @@ mod tests {
         });
         let before_keys: Vec<String> = r.as_object().unwrap().keys().cloned().collect();
 
-        apply_rec_copy(&mut r, InsightCopy { title: "mentor title".into(), detail: "mentor why".into() });
+        apply_rec_copy(
+            &mut r,
+            InsightCopy { title: "mentor title".into(), detail: "mentor why".into() },
+        );
 
         // Same key set — no field added or removed (wire shape unchanged).
         let after_keys: Vec<String> = r.as_object().unwrap().keys().cloned().collect();

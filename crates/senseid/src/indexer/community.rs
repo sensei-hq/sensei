@@ -14,7 +14,9 @@ pub async fn detect_communities_for_folder(
     folder_id: &uuid::Uuid,
 ) -> Result<u32, String> {
     // Load all nodes for this folder.
-    let mut nodes = pg.get_nodes_by_folder(folder_id).await
+    let mut nodes = pg
+        .get_nodes_by_folder(folder_id)
+        .await
         .map_err(|e| format!("Failed to load nodes: {}", e))?;
 
     if nodes.is_empty() {
@@ -52,12 +54,12 @@ pub async fn detect_communities_for_folder(
     // being dropped, so coverage is ~100 % of nodes (invariant 5). Re-point each
     // such singleton's label at its file node's label; a lone file (no children,
     // no edges) keeps its own label and forms a one-node community.
-    let singletons: Vec<usize> = groups.values()
-        .filter(|members| members.len() == 1)
-        .map(|members| members[0])
-        .collect();
+    let singletons: Vec<usize> =
+        groups.values().filter(|members| members.len() == 1).map(|members| members[0]).collect();
     if !singletons.is_empty() {
-        let file_idx_by_path: HashMap<&str, usize> = nodes.iter().enumerate()
+        let file_idx_by_path: HashMap<&str, usize> = nodes
+            .iter()
+            .enumerate()
             .filter(|(_, node)| node["kind"].as_str() == Some("file"))
             .filter_map(|(i, node)| node["file_path"].as_str().map(|fp| (fp, i)))
             .collect();
@@ -84,17 +86,20 @@ pub async fn detect_communities_for_folder(
     // nodes are natural-key sorted, a community's MIN member index IS its min
     // natural key; rank by it and assign community_id = 1..k, so an identical
     // tree always yields the same ids regardless of raw label values (invariant 2).
-    let mut kept: Vec<(usize, Vec<usize>)> = groups.into_values()
-        .map(|mut members| { members.sort_unstable(); (members[0], members) })
+    let mut kept: Vec<(usize, Vec<usize>)> = groups
+        .into_values()
+        .map(|mut members| {
+            members.sort_unstable();
+            (members[0], members)
+        })
         .collect();
     kept.sort_by_key(|(min_idx, _)| *min_idx);
 
     let mut assignments = Vec::with_capacity(kept.len());
     for (rank, (_min_idx, members)) in kept.iter().enumerate() {
         let label = generate_community_label(&nodes, members);
-        let member_node_ids: Vec<uuid::Uuid> = members.iter()
-            .filter_map(|&idx| uuid::Uuid::parse_str(&node_ids[idx]).ok())
-            .collect();
+        let member_node_ids: Vec<uuid::Uuid> =
+            members.iter().filter_map(|&idx| uuid::Uuid::parse_str(&node_ids[idx]).ok()).collect();
         // D4.5 god nodes: the community's top-5 members by `degree` (the hubs).
         // Rank by degree desc, tie-break on member index asc (== natural key, since
         // nodes are sorted) so the set is deterministic for an unchanged graph.
@@ -104,7 +109,9 @@ pub async fn detect_communities_for_folder(
             let db = nodes[b]["degree"].as_i64().unwrap_or(0);
             db.cmp(&da).then_with(|| a.cmp(&b))
         });
-        let god_node_ids: Vec<uuid::Uuid> = by_degree.iter().take(5)
+        let god_node_ids: Vec<uuid::Uuid> = by_degree
+            .iter()
+            .take(5)
             .filter_map(|&idx| uuid::Uuid::parse_str(&node_ids[idx]).ok())
             .collect();
         assignments.push(crate::db::pg_store::CommunityAssignment {
@@ -122,7 +129,9 @@ pub async fn detect_communities_for_folder(
 
     tracing::info!(
         "detect_communities: folder {} — {} communities from {} nodes",
-        folder_id, community_count, nodes.len()
+        folder_id,
+        community_count,
+        nodes.len()
     );
     Ok(community_count)
 }
@@ -164,7 +173,9 @@ async fn build_adjacency(
     let mut adj: Vec<Vec<usize>> = vec![Vec::new(); nodes.len()];
 
     for kind in &["calls", "imports", "extends", "references"] {
-        let edges = pg.get_edges_by_kind(folder_id, kind).await
+        let edges = pg
+            .get_edges_by_kind(folder_id, kind)
+            .await
             .map_err(|e| format!("Failed to load {} edges: {}", kind, e))?;
 
         for edge in &edges {
@@ -214,7 +225,8 @@ fn label_propagation(adjacency: &[Vec<usize>], n: usize, max_iterations: usize) 
             }
 
             // Pick the most frequent label (ties broken by smallest label)
-            let best = counts.into_iter()
+            let best = counts
+                .into_iter()
                 .max_by(|a, b| a.1.cmp(&b.1).then_with(|| b.0.cmp(&a.0)))
                 .map(|(label, _)| label)
                 .unwrap_or(labels[i]);
@@ -242,20 +254,17 @@ fn generate_community_label(nodes: &[serde_json::Value], members: &[usize]) -> S
         *kind_counts.entry(kind).or_insert(0) += 1;
     }
 
-    let dominant_kind = kind_counts.into_iter()
+    let dominant_kind = kind_counts
+        .into_iter()
         .max_by_key(|&(_, count)| count)
         .map(|(kind, _)| kind)
         .unwrap_or("mixed");
 
     // Use first member's file_path for context
-    let first_file = members.first()
-        .and_then(|&idx| nodes[idx]["file_path"].as_str())
-        .unwrap_or("unknown");
+    let first_file =
+        members.first().and_then(|&idx| nodes[idx]["file_path"].as_str()).unwrap_or("unknown");
 
-    let dir = std::path::Path::new(first_file)
-        .parent()
-        .and_then(|p| p.to_str())
-        .unwrap_or("");
+    let dir = std::path::Path::new(first_file).parent().and_then(|p| p.to_str()).unwrap_or("");
 
     format!("{} ({})", dominant_kind, dir)
 }
@@ -280,7 +289,10 @@ pub async fn enrich_community_descriptions(
     gateway: &gateway::Gateway,
     folder_id: &uuid::Uuid,
 ) {
-    let communities = match pg.list_communities_with_god_nodes(folder_id, DESCRIPTION_ENRICH_CAP).await {
+    let communities = match pg
+        .list_communities_with_god_nodes(folder_id, DESCRIPTION_ENRICH_CAP)
+        .await
+    {
         Ok(c) => c,
         Err(e) => {
             tracing::warn!(error = %e, folder = %folder_id, "enrich_community_descriptions: list failed");
@@ -293,7 +305,8 @@ pub async fn enrich_community_descriptions(
         let meta = pg.get_node_name_kind(&god_ids).await.unwrap_or_default();
         let by_id: HashMap<uuid::Uuid, (String, String)> =
             meta.into_iter().map(|(id, name, kind)| (id, (name, kind))).collect();
-        let god: Vec<serde_json::Value> = god_ids.iter()
+        let god: Vec<serde_json::Value> = god_ids
+            .iter()
             .filter_map(|id| by_id.get(id))
             .map(|(name, kind)| serde_json::json!({ "name": name, "kind": kind }))
             .collect();
@@ -301,7 +314,8 @@ pub async fn enrich_community_descriptions(
 
         // Only overwrite the honest-empty placeholder on a real model success.
         if let Some((text, source)) = generate_description(pg, gateway, &facts).await
-            && let Err(e) = pg.set_community_description(folder_id, community_id, &text, source).await
+            && let Err(e) =
+                pg.set_community_description(folder_id, community_id, &text, source).await
         {
             tracing::warn!(error = %e, folder = %folder_id, community_id, "enrich_community_descriptions: set failed");
         }
@@ -320,12 +334,20 @@ async fn generate_description(
 ) -> Option<(String, &'static str)> {
     use crate::analysis::insight_copy::{self, CopyLimits, InsightKind};
 
-    let copy = match insight_copy::read_cached_copy(pg, InsightKind::CommunityDescription, facts).await {
-        Some(c) => Some(c),
-        None => insight_copy::generate_and_cache(
-            pg, gateway, InsightKind::CommunityDescription, facts, CopyLimits::default(),
-        ).await,
-    };
+    let copy =
+        match insight_copy::read_cached_copy(pg, InsightKind::CommunityDescription, facts).await {
+            Some(c) => Some(c),
+            None => {
+                insight_copy::generate_and_cache(
+                    pg,
+                    gateway,
+                    InsightKind::CommunityDescription,
+                    facts,
+                    CopyLimits::default(),
+                )
+                .await
+            }
+        };
     copy.map(|c| (c.detail, "insight-copy"))
 }
 
@@ -340,28 +362,34 @@ mod tests {
         // parents. The natural key — which orders nodes for the deterministic
         // community-id assignment — must separate them (parent_id) and be TOTAL (id),
         // so the result never depends on the DB's unspecified row order for a tie.
-        let mk = |parent: &str, id: &str| serde_json::json!({
-            "file_path": "a.rs", "line_start": 5, "kind": "method", "name": "fmt",
-            "parent_id": parent, "id": id,
-        });
+        let mk = |parent: &str, id: &str| {
+            serde_json::json!({
+                "file_path": "a.rs", "line_start": 5, "kind": "method", "name": "fmt",
+                "parent_id": parent, "id": id,
+            })
+        };
         // Same (file,line,kind,name), different enclosing type → distinct keys.
-        assert_ne!(natural_key(&mk("p-A", "n-1")), natural_key(&mk("p-B", "n-2")),
-            "different parents disambiguate an otherwise-identical key");
+        assert_ne!(
+            natural_key(&mk("p-A", "n-1")),
+            natural_key(&mk("p-B", "n-2")),
+            "different parents disambiguate an otherwise-identical key"
+        );
         // Even a full tie on parent is broken by id → the order is total.
-        assert_ne!(natural_key(&mk("p-A", "n-1")), natural_key(&mk("p-A", "n-2")),
-            "id breaks a full tie so the sort order is total (deterministic)");
-        assert!(natural_key(&mk("p-A", "n-1")) < natural_key(&mk("p-A", "n-2")),
-            "when all else ties, ordering is by id");
+        assert_ne!(
+            natural_key(&mk("p-A", "n-1")),
+            natural_key(&mk("p-A", "n-2")),
+            "id breaks a full tie so the sort order is total (deterministic)"
+        );
+        assert!(
+            natural_key(&mk("p-A", "n-1")) < natural_key(&mk("p-A", "n-2")),
+            "when all else ties, ordering is by id"
+        );
     }
 
     #[test]
     fn label_propagation_basic() {
         // Triangle: 0-1, 1-2, 0-2 → all should converge to same label
-        let adj = vec![
-            vec![1, 2],
-            vec![0, 2],
-            vec![0, 1],
-        ];
+        let adj = vec![vec![1, 2], vec![0, 2], vec![0, 1]];
         let labels = label_propagation(&adj, 3, 20);
         assert_eq!(labels[0], labels[1]);
         assert_eq!(labels[1], labels[2]);
@@ -370,12 +398,7 @@ mod tests {
     #[test]
     fn label_propagation_disconnected() {
         // Two disconnected pairs: 0-1, 2-3
-        let adj = vec![
-            vec![1],
-            vec![0],
-            vec![3],
-            vec![2],
-        ];
+        let adj = vec![vec![1], vec![0], vec![3], vec![2]];
         let labels = label_propagation(&adj, 4, 20);
         assert_eq!(labels[0], labels[1]);
         assert_eq!(labels[2], labels[3]);
@@ -385,11 +408,7 @@ mod tests {
     #[test]
     fn label_propagation_isolated_nodes() {
         // Node 0 connected to 1, node 2 isolated
-        let adj = vec![
-            vec![1],
-            vec![0],
-            vec![],
-        ];
+        let adj = vec![vec![1], vec![0], vec![]];
         let labels = label_propagation(&adj, 3, 20);
         assert_eq!(labels[0], labels[1]);
         // Node 2 keeps its original label

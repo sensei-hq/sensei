@@ -139,11 +139,8 @@ pub async fn audit_index_integrity(
     present_roots: &[WatchRootRef],
     repair: bool,
 ) -> AuditReport {
-    let mut report = AuditReport {
-        repair,
-        roots_present: present_roots.len() as u32,
-        ..Default::default()
-    };
+    let mut report =
+        AuditReport { repair, roots_present: present_roots.len() as u32, ..Default::default() };
     if present_roots.is_empty() {
         // Nothing confirmed present on disk — never operate (unmounted-volume
         // safety). The global structural heals are gated on this too.
@@ -229,7 +226,9 @@ pub async fn audit_index_integrity(
     if repair && report.nested_standalone > 0 {
         match pg.heal_nested_standalone_roots().await {
             Ok(n) => tracing::info!(healed = n, "index_audit: re-absorbed nested standalone roots"),
-            Err(e) => tracing::warn!(error = %e, "index_audit: heal_nested_standalone_roots failed"),
+            Err(e) => {
+                tracing::warn!(error = %e, "index_audit: heal_nested_standalone_roots failed")
+            }
         }
     }
 
@@ -247,8 +246,12 @@ pub async fn audit_index_integrity(
     }
     if repair && report.duplicate_name_projects > 0 {
         match pg.heal_duplicate_name_projects().await {
-            Ok(n) => tracing::info!(healed = n, "index_audit: merged duplicate-name phantom projects"),
-            Err(e) => tracing::warn!(error = %e, "index_audit: heal_duplicate_name_projects failed"),
+            Ok(n) => {
+                tracing::info!(healed = n, "index_audit: merged duplicate-name phantom projects")
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "index_audit: heal_duplicate_name_projects failed")
+            }
         }
     }
 
@@ -319,7 +322,10 @@ pub fn spawn(pg: Arc<PgStore>) {
 
 async fn run(pg: Arc<PgStore>) {
     let secs = parse_interval(pg.get_config(INTERVAL_KEY).await.ok().flatten());
-    tracing::info!(interval_secs = secs, "index_audit: started (periodic invariant self-audit + repair)");
+    tracing::info!(
+        interval_secs = secs,
+        "index_audit: started (periodic invariant self-audit + repair)"
+    );
     let mut ticker = tokio::time::interval(Duration::from_secs(secs));
     loop {
         ticker.tick().await; // first tick fires immediately
@@ -327,7 +333,11 @@ async fn run(pg: Arc<PgStore>) {
 
         // Watermark-gated: skip if a prior audit ran within the interval (e.g. a
         // recent restart). Non-fatal on a read failure — treat as due.
-        let last = pg.get_config(LAST_RUN_KEY).await.ok().flatten()
+        let last = pg
+            .get_config(LAST_RUN_KEY)
+            .await
+            .ok()
+            .flatten()
             .and_then(|v| v.trim().parse::<i64>().ok());
         if !due_for_audit(now_ms, last, secs) {
             tracing::debug!("index_audit: not due yet (recent watermark) — skipping this tick");
@@ -341,11 +351,15 @@ async fn run(pg: Arc<PgStore>) {
                 ghost_folders = report.ghost_folders,
                 nested_standalone = report.nested_standalone,
                 duplicate_name_projects = report.duplicate_name_projects,
-                roots_present = report.roots_present, roots_absent = report.roots_absent,
+                roots_present = report.roots_present,
+                roots_absent = report.roots_absent,
                 "index_audit: repaired index drift",
             );
         } else {
-            tracing::debug!(roots_present = report.roots_present, "index_audit: index invariant-clean");
+            tracing::debug!(
+                roots_present = report.roots_present,
+                "index_audit: index invariant-clean"
+            );
         }
 
         // Record the run watermark (non-fatal — the in-memory cadence keeps going).
@@ -413,7 +427,8 @@ mod tests {
         std::fs::write(repo.join("live.rs"), "fn a() {}\n").unwrap();
 
         let (root, root_id) = present_root(&pg, repo).await;
-        let fid = pg.upsert_repo_kind(&root_id, "git", "repo", &repo.to_string_lossy()).await.unwrap();
+        let fid =
+            pg.upsert_repo_kind(&root_id, "git", "repo", &repo.to_string_lossy()).await.unwrap();
         // live.rs exists on disk; gone.rs does not.
         pg.upsert_node(&fid, "function", "a", "live.rs", None, None, None, None).await.unwrap();
         pg.upsert_node(&fid, "struct", "Gone", "gone.rs", None, None, None, None).await.unwrap();
@@ -421,8 +436,10 @@ mod tests {
         // READ-ONLY first: detects the orphan without mutating.
         let doctor = audit_index_integrity(&pg, std::slice::from_ref(&root), false).await;
         assert_eq!(doctor.orphan_files, 1, "doctor detects the vanished file");
-        assert!(pg.list_indexed_files(&fid).await.unwrap().iter().any(|p| p == "gone.rs"),
-            "read-only doctor must NOT prune");
+        assert!(
+            pg.list_indexed_files(&fid).await.unwrap().iter().any(|p| p == "gone.rs"),
+            "read-only doctor must NOT prune"
+        );
 
         // REPAIR: prunes the orphan, keeps the live node.
         let rep = audit_index_integrity(&pg, std::slice::from_ref(&root), true).await;
@@ -432,7 +449,10 @@ mod tests {
         assert!(!files.contains(&"gone.rs".to_string()), "vanished file pruned");
 
         // IDEMPOTENT: re-run finds nothing.
-        assert_eq!(audit_index_integrity(&pg, std::slice::from_ref(&root), true).await.orphan_files, 0);
+        assert_eq!(
+            audit_index_integrity(&pg, std::slice::from_ref(&root), true).await.orphan_files,
+            0
+        );
 
         pg.remove_watch_root(&root_id).await.unwrap();
     }
@@ -445,31 +465,69 @@ mod tests {
         std::fs::create_dir_all(&repo).unwrap();
 
         let (root, root_id) = present_root(&pg, tmp.path()).await;
-        let repo_fid = pg.upsert_repo_kind(&root_id, "git", "repo", &repo.to_string_lossy()).await.unwrap();
+        let repo_fid =
+            pg.upsert_repo_kind(&root_id, "git", "repo", &repo.to_string_lossy()).await.unwrap();
         // Live subfolder (dir present) vs ghost subfolder (dir absent, has a node).
         let live_dir = repo.join("live");
         std::fs::create_dir_all(&live_dir).unwrap();
-        pg.upsert_subfolder(&root_id, "live", "live", &live_dir.to_string_lossy(), Some(&repo_fid), None).await.unwrap();
+        pg.upsert_subfolder(
+            &root_id,
+            "live",
+            "live",
+            &live_dir.to_string_lossy(),
+            Some(&repo_fid),
+            None,
+        )
+        .await
+        .unwrap();
         let gone = repo.join("gone"); // never created on disk
-        let gone_fid = pg.upsert_subfolder(&root_id, "gone", "gone", &gone.to_string_lossy(), Some(&repo_fid), None).await.unwrap();
-        pg.upsert_node(&gone_fid, "struct", "Ghost", "gone/x.rs", None, None, None, None).await.unwrap();
+        let gone_fid = pg
+            .upsert_subfolder(
+                &root_id,
+                "gone",
+                "gone",
+                &gone.to_string_lossy(),
+                Some(&repo_fid),
+                None,
+            )
+            .await
+            .unwrap();
+        pg.upsert_node(&gone_fid, "struct", "Ghost", "gone/x.rs", None, None, None, None)
+            .await
+            .unwrap();
 
         // READ-ONLY: detects the ghost, leaves the row.
         let doctor = audit_index_integrity(&pg, std::slice::from_ref(&root), false).await;
         assert_eq!(doctor.ghost_folders, 1, "doctor detects the ghost folder");
-        assert!(pg.list_folders_by_root(&root_id).await.unwrap().iter()
-            .any(|r| r["abs_path"].as_str() == Some(gone.to_string_lossy().as_ref())),
-            "read-only doctor must NOT delete the ghost row");
+        assert!(
+            pg.list_folders_by_root(&root_id)
+                .await
+                .unwrap()
+                .iter()
+                .any(|r| r["abs_path"].as_str() == Some(gone.to_string_lossy().as_ref())),
+            "read-only doctor must NOT delete the ghost row"
+        );
 
         // REPAIR: prunes the ghost, keeps the live subfolder.
-        assert_eq!(audit_index_integrity(&pg, std::slice::from_ref(&root), true).await.ghost_folders, 1);
-        let abs: HashSet<String> = pg.list_folders_by_root(&root_id).await.unwrap()
-            .iter().filter_map(|r| r["abs_path"].as_str().map(String::from)).collect();
+        assert_eq!(
+            audit_index_integrity(&pg, std::slice::from_ref(&root), true).await.ghost_folders,
+            1
+        );
+        let abs: HashSet<String> = pg
+            .list_folders_by_root(&root_id)
+            .await
+            .unwrap()
+            .iter()
+            .filter_map(|r| r["abs_path"].as_str().map(String::from))
+            .collect();
         assert!(!abs.contains(&gone.to_string_lossy().to_string()), "ghost folder pruned");
         assert!(abs.contains(&live_dir.to_string_lossy().to_string()), "live subfolder kept");
 
         // IDEMPOTENT.
-        assert_eq!(audit_index_integrity(&pg, std::slice::from_ref(&root), true).await.ghost_folders, 0);
+        assert_eq!(
+            audit_index_integrity(&pg, std::slice::from_ref(&root), true).await.ghost_folders,
+            0
+        );
 
         pg.remove_watch_root(&root_id).await.unwrap();
     }
@@ -484,11 +542,38 @@ mod tests {
 
         let (root, root_id) = present_root(&pg, tmp.path()).await;
         // A git repo with its own project.
-        let gpid = pg.create_project(&format!("mono-{}", uuid::Uuid::new_v4().simple()), None, None).await.unwrap();
-        pg.upsert_folder(&root_id, "git", "monorepo", "monorepo", &repo.to_string_lossy(), None, Some(&gpid)).await.unwrap();
+        let gpid = pg
+            .create_project(&format!("mono-{}", uuid::Uuid::new_v4().simple()), None, None)
+            .await
+            .unwrap();
+        pg.upsert_folder(
+            &root_id,
+            "git",
+            "monorepo",
+            "monorepo",
+            &repo.to_string_lossy(),
+            None,
+            Some(&gpid),
+        )
+        .await
+        .unwrap();
         // A standalone root mis-scoped INSIDE the repo, attributed to a DIFFERENT project.
-        let spid = pg.create_project(&format!("sub-{}", uuid::Uuid::new_v4().simple()), None, None).await.unwrap();
-        let s_fid = pg.upsert_folder(&root_id, "standalone", "sub", "sub", &nested.to_string_lossy(), None, Some(&spid)).await.unwrap();
+        let spid = pg
+            .create_project(&format!("sub-{}", uuid::Uuid::new_v4().simple()), None, None)
+            .await
+            .unwrap();
+        let s_fid = pg
+            .upsert_folder(
+                &root_id,
+                "standalone",
+                "sub",
+                "sub",
+                &nested.to_string_lossy(),
+                None,
+                Some(&spid),
+            )
+            .await
+            .unwrap();
 
         // Detection is confirmed via the deterministic doctor test on the
         // root-scoped classes; here we assert the REPAIR OUTCOME on our own unique
@@ -497,9 +582,16 @@ mod tests {
         // — but after a repair pass MY nested standalone is guaranteed re-absorbed.
         audit_index_integrity(&pg, std::slice::from_ref(&root), true).await;
         let (kind, pid): (String, Option<uuid::Uuid>) = sqlx_core::query_as::query_as(
-            "SELECT kind::text, project_id FROM sensei.folders WHERE id = $1")
-            .bind(s_fid).fetch_one(pg.pool()).await.unwrap();
-        assert_eq!(kind, "folder", "nested standalone re-absorbed as a folder of the enclosing repo");
+            "SELECT kind::text, project_id FROM sensei.folders WHERE id = $1",
+        )
+        .bind(s_fid)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        assert_eq!(
+            kind, "folder",
+            "nested standalone re-absorbed as a folder of the enclosing repo"
+        );
         assert_eq!(pid, Some(gpid), "re-absorbed folder re-pointed to the repo's project");
 
         pg.remove_watch_root(&root_id).await.unwrap();
@@ -516,7 +608,17 @@ mod tests {
         let name = format!("dupname-{}", uuid::Uuid::new_v4().simple());
         // Survivor: a folder-bearing project.
         let survivor = pg.create_project(&name, None, None).await.unwrap();
-        pg.upsert_folder(&root_id, "git", "repo", "repo", &repo.to_string_lossy(), None, Some(&survivor)).await.unwrap();
+        pg.upsert_folder(
+            &root_id,
+            "git",
+            "repo",
+            "repo",
+            &repo.to_string_lossy(),
+            None,
+            Some(&survivor),
+        )
+        .await
+        .unwrap();
         // Phantom: a same-name, 0-folder, discovery project.
         let phantom = pg.create_project(&name, None, None).await.unwrap();
 
@@ -556,28 +658,81 @@ mod tests {
         let (root, root_id) = present_root(&pg, tmp.path()).await;
 
         // (a) git repo with a project + a present + vanished FILE node (orphan class).
-        let gpid = pg.create_project(&format!("mono-{}", uuid::Uuid::new_v4().simple()), None, None).await.unwrap();
-        let repo_fid = pg.upsert_folder(&root_id, "git", "monorepo", "monorepo", &repo.to_string_lossy(), None, Some(&gpid)).await.unwrap();
-        pg.upsert_node(&repo_fid, "function", "a", "live.rs", None, None, None, None).await.unwrap();
-        pg.upsert_node(&repo_fid, "struct", "Gone", "gone.rs", None, None, None, None).await.unwrap();
+        let gpid = pg
+            .create_project(&format!("mono-{}", uuid::Uuid::new_v4().simple()), None, None)
+            .await
+            .unwrap();
+        let repo_fid = pg
+            .upsert_folder(
+                &root_id,
+                "git",
+                "monorepo",
+                "monorepo",
+                &repo.to_string_lossy(),
+                None,
+                Some(&gpid),
+            )
+            .await
+            .unwrap();
+        pg.upsert_node(&repo_fid, "function", "a", "live.rs", None, None, None, None)
+            .await
+            .unwrap();
+        pg.upsert_node(&repo_fid, "struct", "Gone", "gone.rs", None, None, None, None)
+            .await
+            .unwrap();
 
         // (b) ghost subfolder (dir absent) with a node (ghost-folder class).
         let ghost_dir = repo.join("ghost"); // never created on disk
-        let ghost_fid = pg.upsert_subfolder(&root_id, "ghost", "ghost", &ghost_dir.to_string_lossy(), Some(&repo_fid), None).await.unwrap();
-        pg.upsert_node(&ghost_fid, "struct", "Ghost", "ghost/x.rs", None, None, None, None).await.unwrap();
+        let ghost_fid = pg
+            .upsert_subfolder(
+                &root_id,
+                "ghost",
+                "ghost",
+                &ghost_dir.to_string_lossy(),
+                Some(&repo_fid),
+                None,
+            )
+            .await
+            .unwrap();
+        pg.upsert_node(&ghost_fid, "struct", "Ghost", "ghost/x.rs", None, None, None, None)
+            .await
+            .unwrap();
 
         // (c) standalone root mis-scoped inside the repo (nested-standalone class).
         let nested = repo.join("crates").join("sub");
         std::fs::create_dir_all(&nested).unwrap();
-        let spid = pg.create_project(&format!("sub-{}", uuid::Uuid::new_v4().simple()), None, None).await.unwrap();
-        pg.upsert_folder(&root_id, "standalone", "sub", "sub", &nested.to_string_lossy(), None, Some(&spid)).await.unwrap();
+        let spid = pg
+            .create_project(&format!("sub-{}", uuid::Uuid::new_v4().simple()), None, None)
+            .await
+            .unwrap();
+        pg.upsert_folder(
+            &root_id,
+            "standalone",
+            "sub",
+            "sub",
+            &nested.to_string_lossy(),
+            None,
+            Some(&spid),
+        )
+        .await
+        .unwrap();
 
         // (d) duplicate-name phantom project (duplicate-name class).
         let dupname = format!("dupname-{}", uuid::Uuid::new_v4().simple());
         let survivor = pg.create_project(&dupname, None, None).await.unwrap();
         let extra_repo = tmp.path().join("dup");
         std::fs::create_dir_all(&extra_repo).unwrap();
-        pg.upsert_folder(&root_id, "git", "dup", "dup", &extra_repo.to_string_lossy(), None, Some(&survivor)).await.unwrap();
+        pg.upsert_folder(
+            &root_id,
+            "git",
+            "dup",
+            "dup",
+            &extra_repo.to_string_lossy(),
+            None,
+            Some(&survivor),
+        )
+        .await
+        .unwrap();
         let phantom = pg.create_project(&dupname, None, None).await.unwrap();
 
         // One repair pass fixes every class it can see. The per-root classes
@@ -592,14 +747,26 @@ mod tests {
         // DB may hold unrelated structural rows from concurrent tests, so we check
         // our constructed drift converged rather than global zero).
         let files = pg.list_indexed_files(&repo_fid).await.unwrap();
-        assert!(files.contains(&"live.rs".to_string()) && !files.contains(&"gone.rs".to_string()),
-            "orphan gone, live kept");
-        let abs: HashSet<String> = pg.list_folders_by_root(&root_id).await.unwrap()
-            .iter().filter_map(|r| r["abs_path"].as_str().map(String::from)).collect();
+        assert!(
+            files.contains(&"live.rs".to_string()) && !files.contains(&"gone.rs".to_string()),
+            "orphan gone, live kept"
+        );
+        let abs: HashSet<String> = pg
+            .list_folders_by_root(&root_id)
+            .await
+            .unwrap()
+            .iter()
+            .filter_map(|r| r["abs_path"].as_str().map(String::from))
+            .collect();
         assert!(!abs.contains(&ghost_dir.to_string_lossy().to_string()), "ghost folder gone");
-        assert_eq!(pg.get_repo_by_path(&nested.to_string_lossy()).await.unwrap()
-            .map(|r| r["kind"].as_str().unwrap_or("").to_string()), Some("folder".to_string()),
-            "nested standalone now a folder of the repo");
+        assert_eq!(
+            pg.get_repo_by_path(&nested.to_string_lossy())
+                .await
+                .unwrap()
+                .map(|r| r["kind"].as_str().unwrap_or("").to_string()),
+            Some("folder".to_string()),
+            "nested standalone now a folder of the repo"
+        );
         assert!(pg.get_project(&phantom).await.unwrap().is_none(), "phantom merged");
 
         // A second full audit over this root is a no-op for the per-root classes.
@@ -618,8 +785,14 @@ mod tests {
         std::fs::create_dir_all(&present).unwrap();
         let absent = tmp.path().join("absent"); // never created on disk
 
-        let pid = pg.add_watch_root(&present.to_string_lossy(), "present", &serde_json::json!([])).await.unwrap();
-        let aid = pg.add_watch_root(&absent.to_string_lossy(), "absent", &serde_json::json!([])).await.unwrap();
+        let pid = pg
+            .add_watch_root(&present.to_string_lossy(), "present", &serde_json::json!([]))
+            .await
+            .unwrap();
+        let aid = pg
+            .add_watch_root(&absent.to_string_lossy(), "absent", &serde_json::json!([]))
+            .await
+            .unwrap();
 
         // run_audit sweeps ALL watch roots (shared DB), so assert on the totals it
         // must reflect our two contribute to, not an exact global count.

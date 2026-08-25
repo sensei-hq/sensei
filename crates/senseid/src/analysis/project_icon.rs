@@ -77,10 +77,8 @@ pub enum IconDecision {
 /// when it has a non-empty `value` and its `source` is absent or is not one of
 /// sensei's inference tags.
 fn is_author_set(existing: &Value) -> bool {
-    let has_value = existing
-        .get("value")
-        .and_then(Value::as_str)
-        .is_some_and(|v| !v.trim().is_empty());
+    let has_value =
+        existing.get("value").and_then(Value::as_str).is_some_and(|v| !v.trim().is_empty());
     if !has_value {
         return false;
     }
@@ -93,10 +91,8 @@ fn is_author_set(existing: &Value) -> bool {
 /// The priority rank of a prior *machine* icon, or `None` when the stored icon
 /// is empty (no value) — an empty slot is always writable.
 fn machine_rank(existing: &Value) -> Option<u8> {
-    let has_value = existing
-        .get("value")
-        .and_then(Value::as_str)
-        .is_some_and(|v| !v.trim().is_empty());
+    let has_value =
+        existing.get("value").and_then(Value::as_str).is_some_and(|v| !v.trim().is_empty());
     if !has_value {
         return None;
     }
@@ -469,8 +465,21 @@ mod tests {
     /// emit. If a new detector label lands without a kanji, this test fails —
     /// forcing a mapping or a documented fallthrough decision.
     const DETECTOR_STACK_LABELS: &[&str] = &[
-        "rust", "ruby", "php", "svelte", "react", "vue", "nextjs", "typescript",
-        "python", "dotnet", "java", "gradle", "maven", "go", "swift",
+        "rust",
+        "ruby",
+        "php",
+        "svelte",
+        "react",
+        "vue",
+        "nextjs",
+        "typescript",
+        "python",
+        "dotnet",
+        "java",
+        "gradle",
+        "maven",
+        "go",
+        "swift",
     ];
 
     #[test]
@@ -609,10 +618,8 @@ mod tests {
         // Only repo `b` actually has the asset.
         std::fs::write(b.path().join("logo.png"), b"PNG").unwrap();
 
-        let roots = vec![
-            a.path().to_string_lossy().to_string(),
-            b.path().to_string_lossy().to_string(),
-        ];
+        let roots =
+            vec![a.path().to_string_lossy().to_string(), b.path().to_string_lossy().to_string()];
         assert_eq!(serve_icon_from_roots(&roots, "logo.png"), Some(("image/png", b"PNG".to_vec())));
         // No repo has it → None (→ the handler 404s).
         assert_eq!(serve_icon_from_roots(&roots, "missing.svg"), None);

@@ -131,7 +131,10 @@ mod tests {
 
     #[test]
     fn clean_prose_and_short_values_are_not_flagged() {
-        assert!(scan("The importer resolves the folder by abs_path and reuses the shared helper.").is_empty());
+        assert!(
+            scan("The importer resolves the folder by abs_path and reuses the shared helper.")
+                .is_empty()
+        );
         assert!(scan("set the timeout to 30 and retries to 3").is_empty());
         // A short/placeholder value under the length floor is not flagged.
         assert!(scan("password: x").is_empty());

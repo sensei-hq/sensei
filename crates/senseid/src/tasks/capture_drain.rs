@@ -59,10 +59,7 @@ pub fn hook_event_fields(payload: &serde_json::Value) -> HookEventFields<'_> {
         event_type: payload["hook_event_name"].as_str().unwrap_or("unknown"),
         tool_name: payload["tool_name"].as_str(),
         cwd: payload["cwd"].as_str(),
-        success: payload
-            .get("exit_code")
-            .and_then(|v| v.as_i64())
-            .map(|c| c == 0),
+        success: payload.get("exit_code").and_then(|v| v.as_i64()).map(|c| c == 0),
     }
 }
 
@@ -99,11 +96,7 @@ pub fn sanitize_nul(v: &mut serde_json::Value) {
 /// The event timestamp (epoch ms): a positive `ts` field on the payload when
 /// present, otherwise `now_ms` (the drain-time fallback for legacy lines).
 fn event_ts(payload: &serde_json::Value, now_ms: i64) -> i64 {
-    payload
-        .get("ts")
-        .and_then(|v| v.as_i64())
-        .filter(|t| *t > 0)
-        .unwrap_or(now_ms)
+    payload.get("ts").and_then(|v| v.as_i64()).filter(|t| *t > 0).unwrap_or(now_ms)
 }
 
 /// Parse a JSONL spool into `(events, skipped)`. Blank lines and lines that
@@ -222,10 +215,7 @@ async fn import_file(pg: &PgStore, path: &Path) -> Result<DrainStats, String> {
     // doesn't force an otherwise-good event into quarantine.
     events.iter_mut().for_each(sanitize_nul);
     let now_ms = chrono::Utc::now().timestamp_millis();
-    let mut stats = DrainStats {
-        skipped,
-        ..Default::default()
-    };
+    let mut stats = DrainStats { skipped, ..Default::default() };
     let mut rejected: Vec<&serde_json::Value> = Vec::new();
     let mut last_err = String::new();
 
@@ -257,10 +247,7 @@ async fn import_file(pg: &PgStore, path: &Path) -> Result<DrainStats, String> {
     // Nothing landed but rows errored → the DB is the problem, not the data.
     // Leave the file in place and retry next tick; don't quarantine real events.
     if stats.imported == 0 && stats.duplicate == 0 && !rejected.is_empty() {
-        return Err(format!(
-            "all {} inserts failed (DB unavailable?): {last_err}",
-            rejected.len()
-        ));
+        return Err(format!("all {} inserts failed (DB unavailable?): {last_err}", rejected.len()));
     }
 
     // Some rows landed → the failures are payloads the DB genuinely rejects.

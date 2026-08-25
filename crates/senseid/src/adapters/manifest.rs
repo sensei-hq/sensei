@@ -50,9 +50,7 @@ pub trait ManifestAdapter: Send + Sync {
         }
         let Some(dot) = filename.rfind('.') else { return false };
         let ext = &filename[dot + 1..];
-        self.manifest_extensions()
-            .iter()
-            .any(|e| e.eq_ignore_ascii_case(ext))
+        self.manifest_extensions().iter().any(|e| e.eq_ignore_ascii_case(ext))
     }
 
     /// Ecosystem slug matching the `sensei.library_ecosystem` DDL enum.
@@ -145,11 +143,14 @@ pub struct DiscoveredCommand {
 /// subcommand itself so uniqueness on (folder_id, raw_name) is stable across
 /// scans.
 pub fn conventional_commands(cli: &str, entries: &[(&str, &str)]) -> Vec<DiscoveredCommand> {
-    entries.iter().map(|(sub, verb)| DiscoveredCommand {
-        raw_name: (*sub).to_string(),
-        command_line: format!("{cli} {sub}"),
-        category: Some(canonical_verb(verb)),
-    }).collect()
+    entries
+        .iter()
+        .map(|(sub, verb)| DiscoveredCommand {
+            raw_name: (*sub).to_string(),
+            command_line: format!("{cli} {sub}"),
+            category: Some(canonical_verb(verb)),
+        })
+        .collect()
 }
 
 /// Interns a category string to the `&'static` form the DDL check constraint
@@ -168,7 +169,9 @@ fn canonical_verb(verb: &str) -> &'static str {
         "docs" => "docs",
         "start" => "start",
         "dev" => "dev",
-        other => panic!("unknown canonical verb: {other} — extend canonical_verb / command_category vocabulary"),
+        other => panic!(
+            "unknown canonical verb: {other} — extend canonical_verb / command_category vocabulary"
+        ),
     }
 }
 
@@ -187,17 +190,40 @@ pub mod command_category {
     pub fn categorise(name: &str) -> Option<&'static str> {
         let n = name.to_ascii_lowercase();
         // Order matters: more-specific patterns first.
-        if n.contains("e2e") || n.contains("end-to-end") { return Some("e2e"); }
-        if n.contains("typecheck") || n.contains("type-check") || n == "tsc" { return Some("typecheck"); }
-        if n.contains("bench") { return Some("bench"); }
-        if n.contains("format") || n.contains("prettier") || n.contains("rustfmt") { return Some("format"); }
-        if n.contains("lint") || n.contains("clippy") || n.contains("eslint") || n.contains("ruff") { return Some("lint"); }
-        if n.contains("docs") || n == "doc" || n.contains("docgen") { return Some("docs"); }
-        if n.contains("test") { return Some("test"); }
-        if n.contains("build") || n == "compile" { return Some("build"); }
-        if n == "dev" || n.contains("watch") || n.starts_with("dev:") { return Some("dev"); }
-        if n == "start" || n.starts_with("start:") { return Some("start"); }
-        if n == "run" || n.starts_with("run:") { return Some("run"); }
+        if n.contains("e2e") || n.contains("end-to-end") {
+            return Some("e2e");
+        }
+        if n.contains("typecheck") || n.contains("type-check") || n == "tsc" {
+            return Some("typecheck");
+        }
+        if n.contains("bench") {
+            return Some("bench");
+        }
+        if n.contains("format") || n.contains("prettier") || n.contains("rustfmt") {
+            return Some("format");
+        }
+        if n.contains("lint") || n.contains("clippy") || n.contains("eslint") || n.contains("ruff")
+        {
+            return Some("lint");
+        }
+        if n.contains("docs") || n == "doc" || n.contains("docgen") {
+            return Some("docs");
+        }
+        if n.contains("test") {
+            return Some("test");
+        }
+        if n.contains("build") || n == "compile" {
+            return Some("build");
+        }
+        if n == "dev" || n.contains("watch") || n.starts_with("dev:") {
+            return Some("dev");
+        }
+        if n == "start" || n.starts_with("start:") {
+            return Some("start");
+        }
+        if n == "run" || n.starts_with("run:") {
+            return Some("run");
+        }
         None
     }
 
@@ -349,10 +375,8 @@ pub fn registered_adapters() -> &'static [&'static dyn ManifestAdapter] {
 /// know "is there a known manifest in this directory?" without knowing which
 /// ecosystem it belongs to.
 pub fn all_manifest_filenames() -> Vec<&'static str> {
-    let mut out: Vec<&'static str> = registered_adapters()
-        .iter()
-        .flat_map(|a| a.manifest_filenames().iter().copied())
-        .collect();
+    let mut out: Vec<&'static str> =
+        registered_adapters().iter().flat_map(|a| a.manifest_filenames().iter().copied()).collect();
     out.sort();
     out.dedup();
     out
@@ -488,7 +512,11 @@ mod tests {
             let has_test = cmds.iter().any(|c| c.category == Some("test"));
             match adapter.ecosystem() {
                 "cargo" | "go" | "maven" | "nuget" | "swiftpm" | "rubygems" => {
-                    assert!(has_test, "{} adapter must emit a `test` conventional command on empty content", adapter.ecosystem());
+                    assert!(
+                        has_test,
+                        "{} adapter must emit a `test` conventional command on empty content",
+                        adapter.ecosystem()
+                    );
                 }
                 _ => { /* content-driven adapters (npm/composer/pyproject) are fine with empty */ }
             }

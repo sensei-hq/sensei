@@ -191,10 +191,7 @@ async fn daily_run_completion(
         super::day_filter(ANCHOR_RUN_COMPLETION, as_of),
     );
     let q = sqlx_core::query_as::query_as::<_, DayRunCompletion>(&sql).bind(project_id);
-    super::bind_day(q, window_days, as_of)
-        .fetch_all(pg.pool())
-        .await
-        .map_err(|e| e.to_string())
+    super::bind_day(q, window_days, as_of).fetch_all(pg.pool()).await.map_err(|e| e.to_string())
 }
 
 /// Build the ratio props for a row: exact `numerator` + `denominator` and the
@@ -271,8 +268,17 @@ pub(super) async fn compute(
             // identity=NULL (single local user, I-C), commit_sha=NULL (day cadence,
             // I-D), folder_id/session_id=NULL (not in the identity).
             pg.upsert_project_metric_repo(
-                &mid, &repository_id, SCOPE_USER, None, None,
-                day, GRAIN_DAILY, value, &props, SOURCE_MEASURED)
+                &mid,
+                &repository_id,
+                SCOPE_USER,
+                None,
+                None,
+                day,
+                GRAIN_DAILY,
+                value,
+                &props,
+                SOURCE_MEASURED,
+            )
             .await?;
             written += 1;
         }
@@ -296,8 +302,17 @@ pub(super) async fn compute(
                 let value = done_count as f64 / started_count as f64;
                 let props = ratio_props(done_count, started_count);
                 pg.upsert_project_metric_repo(
-                    &mid, &repository_id, SCOPE_USER, None, None,
-                    day, GRAIN_DAILY, value, &props, SOURCE_MEASURED)
+                    &mid,
+                    &repository_id,
+                    SCOPE_USER,
+                    None,
+                    None,
+                    day,
+                    GRAIN_DAILY,
+                    value,
+                    &props,
+                    SOURCE_MEASURED,
+                )
                 .await?;
                 written += 1;
             }
@@ -371,20 +386,39 @@ mod tests {
         }
 
         let written = compute(&ctx, &pid.to_string(), None).await.unwrap();
-        assert_eq!(written, 2, "interruption_rate daily + run_completion daily (false_crash_rate skipped)");
+        assert_eq!(
+            written, 2,
+            "interruption_rate daily + run_completion daily (false_crash_rate skipped)"
+        );
 
         let daily = daily_rows(pg, &pid).await;
 
-        let ir = daily.iter().find(|r| r.0 == "interruption_rate").expect("interruption_rate row present");
+        let ir = daily
+            .iter()
+            .find(|r| r.0 == "interruption_rate")
+            .expect("interruption_rate row present");
         assert!((ir.1 - 0.96).abs() < 1e-9, "interruption_rate value = 24/25 = 0.96");
         assert_eq!(ir.2["numerator"].as_i64(), Some(24), "interruption numerator = # Stop events");
-        assert_eq!(ir.2["denominator"].as_i64(), Some(25), "interruption denominator = # UserPromptSubmit events");
+        assert_eq!(
+            ir.2["denominator"].as_i64(),
+            Some(25),
+            "interruption denominator = # UserPromptSubmit events"
+        );
         assert_eq!(ir.2["low_n"].as_bool(), Some(false), "denominator 25 >= 10 → not low_n");
 
-        let rc = daily.iter().find(|r| r.0 == "run_completion").expect("run_completion row present");
+        let rc =
+            daily.iter().find(|r| r.0 == "run_completion").expect("run_completion row present");
         assert!((rc.1 - 5.0 / 9.0).abs() < 1e-9, "run_completion value = 5/9");
-        assert_eq!(rc.2["numerator"].as_i64(), Some(5), "run_completion numerator = # runs reaching done");
-        assert_eq!(rc.2["denominator"].as_i64(), Some(9), "run_completion denominator = # runs started");
+        assert_eq!(
+            rc.2["numerator"].as_i64(),
+            Some(5),
+            "run_completion numerator = # runs reaching done"
+        );
+        assert_eq!(
+            rc.2["denominator"].as_i64(),
+            Some(9),
+            "run_completion denominator = # runs started"
+        );
         assert_eq!(rc.2["low_n"].as_bool(), Some(true), "denominator 9 < 10 → low_n");
 
         // Repo grain (I-A/I-C/I-D): BOTH rows are keyed to the fixture's repository
@@ -417,11 +451,12 @@ mod tests {
         // ── Idempotency: re-run backfills in place, never duplicates ──
         let again = compute(&ctx, &pid.to_string(), None).await.unwrap();
         assert_eq!(again, 2, "re-run recomputes the same rows");
-        let (total,): (i64,) = query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
-            .bind(pid)
-            .fetch_one(pg.pool())
-            .await
-            .unwrap();
+        let (total,): (i64,) =
+            query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
+                .bind(pid)
+                .fetch_one(pg.pool())
+                .await
+                .unwrap();
         assert_eq!(total, 2, "idempotent upsert — still 2 rows after a second run");
 
         purge_runs(pg, &[&pid]).await;
@@ -435,19 +470,18 @@ mod tests {
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
-        let pid = pg
-            .create_project(&format!("_test:autonomy-empty:{uniq}"), None, None)
-            .await
-            .unwrap();
+        let pid =
+            pg.create_project(&format!("_test:autonomy-empty:{uniq}"), None, None).await.unwrap();
 
         let written = compute(&ctx, &pid.to_string(), None).await.unwrap();
         assert_eq!(written, 0, "no events/runs in the window → zero rows written");
 
-        let (total,): (i64,) = query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
-            .bind(pid)
-            .fetch_one(pg.pool())
-            .await
-            .unwrap();
+        let (total,): (i64,) =
+            query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
+                .bind(pid)
+                .fetch_one(pg.pool())
+                .await
+                .unwrap();
         assert_eq!(total, 0, "no project_metrics rows for an empty project (never fabricated)");
 
         cleanup_metrics_fixture(pg, &pid, None, &[]).await;
@@ -463,10 +497,8 @@ mod tests {
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
-        let pid = pg
-            .create_project(&format!("_test:autonomy-norepo:{uniq}"), None, None)
-            .await
-            .unwrap();
+        let pid =
+            pg.create_project(&format!("_test:autonomy-norepo:{uniq}"), None, None).await.unwrap();
         purge_runs(pg, &[&pid]).await;
 
         // Runs exist, but the project has no repository-linked folder.
@@ -479,14 +511,21 @@ mod tests {
         );
 
         let written = compute(&ctx, &pid.to_string(), None).await.unwrap();
-        assert_eq!(written, 0, "runs present but no primary repository → run_completion cannot be attributed → honest-empty skip");
+        assert_eq!(
+            written, 0,
+            "runs present but no primary repository → run_completion cannot be attributed → honest-empty skip"
+        );
 
-        let (total,): (i64,) = query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
-            .bind(pid)
-            .fetch_one(pg.pool())
-            .await
-            .unwrap();
-        assert_eq!(total, 0, "no rows when the project has no repository (never a fabricated repository)");
+        let (total,): (i64,) =
+            query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
+                .bind(pid)
+                .fetch_one(pg.pool())
+                .await
+                .unwrap();
+        assert_eq!(
+            total, 0,
+            "no rows when the project has no repository (never a fabricated repository)"
+        );
 
         purge_runs(pg, &[&pid]).await;
         cleanup_metrics_fixture(pg, &pid, None, &[]).await;
@@ -513,13 +552,23 @@ mod tests {
         // No Stop events and no runs.
 
         let written = compute(&ctx, &pid.to_string(), None).await.unwrap();
-        assert_eq!(written, 1, "interruption_rate real-zero row; run_completion has no runs → no row");
+        assert_eq!(
+            written, 1,
+            "interruption_rate real-zero row; run_completion has no runs → no row"
+        );
 
         let daily = daily_rows(pg, &pid).await;
-        let ir = daily.iter().find(|r| r.0 == "interruption_rate").expect("real-zero interruption_rate row IS written");
+        let ir = daily
+            .iter()
+            .find(|r| r.0 == "interruption_rate")
+            .expect("real-zero interruption_rate row IS written");
         assert!(ir.1.abs() < 1e-9, "value is a real 0.0 (0 Stop over 3 UserPromptSubmit)");
         assert_eq!(ir.2["numerator"].as_i64(), Some(0), "numerator = 0 (no Stop events)");
-        assert_eq!(ir.2["denominator"].as_i64(), Some(3), "denominator = 3 (real denominator → row written)");
+        assert_eq!(
+            ir.2["denominator"].as_i64(),
+            Some(3),
+            "denominator = 3 (real denominator → row written)"
+        );
         assert_eq!(ir.2["low_n"].as_bool(), Some(true), "denominator 3 < 10 → low_n");
 
         purge_assistant_events(pg, &[&csid]).await;
@@ -545,13 +594,17 @@ mod tests {
         }
 
         let written = compute(&ctx, &pid.to_string(), None).await.unwrap();
-        assert_eq!(written, 0, "denominator 0 (no UserPromptSubmit) → no interruption_rate row (never a fabricated 0/0)");
+        assert_eq!(
+            written, 0,
+            "denominator 0 (no UserPromptSubmit) → no interruption_rate row (never a fabricated 0/0)"
+        );
 
-        let (total,): (i64,) = query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
-            .bind(pid)
-            .fetch_one(pg.pool())
-            .await
-            .unwrap();
+        let (total,): (i64,) =
+            query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
+                .bind(pid)
+                .fetch_one(pg.pool())
+                .await
+                .unwrap();
         assert_eq!(total, 0, "no rows at all for a Stop-only day");
 
         purge_assistant_events(pg, &[&csid]).await;
@@ -586,9 +639,16 @@ mod tests {
 
         compute(&ctx, &pid_10.to_string(), None).await.unwrap();
         let daily_10 = daily_rows(pg, &pid_10).await;
-        let ir_10 = daily_10.iter().find(|r| r.0 == "interruption_rate").expect("interruption_rate row (den 10)");
+        let ir_10 = daily_10
+            .iter()
+            .find(|r| r.0 == "interruption_rate")
+            .expect("interruption_rate row (den 10)");
         assert_eq!(ir_10.2["denominator"].as_i64(), Some(10), "denominator is exactly 10");
-        assert_eq!(ir_10.2["low_n"].as_bool(), Some(false), "denominator == 10 is NOT low_n (rule is `< 10`)");
+        assert_eq!(
+            ir_10.2["low_n"].as_bool(),
+            Some(false),
+            "denominator == 10 is NOT low_n (rule is `< 10`)"
+        );
 
         // ── denominator == 9 → low_n = true (one below the threshold) ──
         let uniq_9 = uuid::Uuid::new_v4();
@@ -606,9 +666,16 @@ mod tests {
 
         compute(&ctx, &pid_9.to_string(), None).await.unwrap();
         let daily_9 = daily_rows(pg, &pid_9).await;
-        let ir_9 = daily_9.iter().find(|r| r.0 == "interruption_rate").expect("interruption_rate row (den 9)");
+        let ir_9 = daily_9
+            .iter()
+            .find(|r| r.0 == "interruption_rate")
+            .expect("interruption_rate row (den 9)");
         assert_eq!(ir_9.2["denominator"].as_i64(), Some(9), "denominator is exactly 9");
-        assert_eq!(ir_9.2["low_n"].as_bool(), Some(true), "denominator == 9 IS low_n (one below the threshold)");
+        assert_eq!(
+            ir_9.2["low_n"].as_bool(),
+            Some(true),
+            "denominator == 9 IS low_n (one below the threshold)"
+        );
 
         purge_assistant_events(pg, &[&csid_10, &csid_9]).await;
         cleanup_metrics_fixture(pg, &pid_10, Some(&fid_10), &[]).await;
@@ -657,16 +724,28 @@ mod tests {
         }
 
         let written = compute(&ctx, &pid_a.to_string(), None).await.unwrap();
-        assert_eq!(written, 2, "only A's own events/runs produce rows (interruption + run_completion)");
+        assert_eq!(
+            written, 2,
+            "only A's own events/runs produce rows (interruption + run_completion)"
+        );
 
         let daily = daily_rows(pg, &pid_a).await;
-        let ir = daily.iter().find(|r| r.0 == "interruption_rate").expect("A's interruption_rate row");
+        let ir =
+            daily.iter().find(|r| r.0 == "interruption_rate").expect("A's interruption_rate row");
         assert_eq!(ir.2["numerator"].as_i64(), Some(4), "A's Stop count only (B's 10 excluded)");
-        assert_eq!(ir.2["denominator"].as_i64(), Some(5), "A's UserPromptSubmit only (2 → 15 if B leaked)");
+        assert_eq!(
+            ir.2["denominator"].as_i64(),
+            Some(5),
+            "A's UserPromptSubmit only (2 → 15 if B leaked)"
+        );
         assert!((ir.1 - 4.0 / 5.0).abs() < 1e-9, "A interruption_rate = 4/5 = 0.8");
         let rc = daily.iter().find(|r| r.0 == "run_completion").expect("A's run_completion row");
         assert_eq!(rc.2["numerator"].as_i64(), Some(1), "A's done runs only (B's 5 excluded)");
-        assert_eq!(rc.2["denominator"].as_i64(), Some(2), "A's started runs only (2 → 7 if B leaked)");
+        assert_eq!(
+            rc.2["denominator"].as_i64(),
+            Some(2),
+            "A's started runs only (2 → 7 if B leaked)"
+        );
         assert!((rc.1 - 0.5).abs() < 1e-9, "A run_completion = 1/2 = 0.5");
 
         // A's rows are attributed to A's OWN repository (not B's) — repo-grain
@@ -719,11 +798,17 @@ mod tests {
 
         // Incremental run (as_of=None): the 60-day-old day is out of window → NO rows.
         let incr = compute(&ctx, &pid.to_string(), None).await.unwrap();
-        assert_eq!(incr, 0, "the 60-day-old day is outside the rolling window → no incremental rows");
+        assert_eq!(
+            incr, 0,
+            "the 60-day-old day is outside the rolling window → no incremental rows"
+        );
 
         // Backfill run (as_of=Some(day)): computes exactly that day's metrics.
         let written = compute(&ctx, &pid.to_string(), Some(day)).await.unwrap();
-        assert_eq!(written, 2, "as_of=Some(D) computes the historical day (interruption_rate + run_completion)");
+        assert_eq!(
+            written, 2,
+            "as_of=Some(D) computes the historical day (interruption_rate + run_completion)"
+        );
 
         // Both daily rows are stamped `computed_on = day` (the true occurrence day,
         // 60 days ago) — proof the past-dated rows reach the daily roll-up.
@@ -737,23 +822,34 @@ mod tests {
         .fetch_one(pg.pool())
         .await
         .unwrap();
-        assert_eq!(days, 2, "interruption_rate + run_completion daily rows stamped computed_on = the historical day");
+        assert_eq!(
+            days, 2,
+            "interruption_rate + run_completion daily rows stamped computed_on = the historical day"
+        );
 
         let daily = daily_rows(pg, &pid).await;
-        let ir = daily.iter().find(|r| r.0 == "interruption_rate").expect("interruption_rate row present");
+        let ir = daily
+            .iter()
+            .find(|r| r.0 == "interruption_rate")
+            .expect("interruption_rate row present");
         assert!((ir.1 - 2.0 / 5.0).abs() < 1e-9, "interruption_rate value = 2/5 = 0.4");
-        let rc = daily.iter().find(|r| r.0 == "run_completion").expect("run_completion row present");
+        let rc =
+            daily.iter().find(|r| r.0 == "run_completion").expect("run_completion row present");
         assert!((rc.1 - 0.5).abs() < 1e-9, "run_completion value = 1/2 = 0.5");
 
         // Idempotent: re-backfilling the same day upserts in place (no duplicate rows).
         let again = compute(&ctx, &pid.to_string(), Some(day)).await.unwrap();
         assert_eq!(again, 2, "re-running the same day backfills in place");
-        let (total,): (i64,) = query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
-            .bind(pid)
-            .fetch_one(pg.pool())
-            .await
-            .unwrap();
-        assert_eq!(total, 2, "idempotent upsert — still 2 rows after a second backfill of the same day");
+        let (total,): (i64,) =
+            query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
+                .bind(pid)
+                .fetch_one(pg.pool())
+                .await
+                .unwrap();
+        assert_eq!(
+            total, 2,
+            "idempotent upsert — still 2 rows after a second backfill of the same day"
+        );
 
         purge_runs(pg, &[&pid]).await;
         purge_assistant_events(pg, &[&csid]).await;
@@ -794,7 +890,10 @@ mod tests {
         }
 
         let written = compute(&ctx, &pid.to_string(), Some(historical_day)).await.unwrap();
-        assert_eq!(written, 1, "the back-dated events land on their historical day (interruption_rate only; no runs)");
+        assert_eq!(
+            written, 1,
+            "the back-dated events land on their historical day (interruption_rate only; no runs)"
+        );
 
         // The daily row is stamped `computed_on = the client-ts day`, NOT today.
         let (hist_rows,): (i64,) = query_as(
@@ -807,7 +906,10 @@ mod tests {
         .fetch_one(pg.pool())
         .await
         .unwrap();
-        assert_eq!(hist_rows, 1, "interruption_rate row filed on the client-ts day (created_at path would misfile/miss it)");
+        assert_eq!(
+            hist_rows, 1,
+            "interruption_rate row filed on the client-ts day (created_at path would misfile/miss it)"
+        );
 
         // Nothing filed on today (the created_at day) — the anchor is the ts, period.
         let (today_rows,): (i64,) = query_as(
@@ -819,10 +921,16 @@ mod tests {
         .fetch_one(pg.pool())
         .await
         .unwrap();
-        assert_eq!(today_rows, 0, "no row on today's date — created_at (insert time) is NOT the anchor");
+        assert_eq!(
+            today_rows, 0,
+            "no row on today's date — created_at (insert time) is NOT the anchor"
+        );
 
         let daily = daily_rows(pg, &pid).await;
-        let ir = daily.iter().find(|r| r.0 == "interruption_rate").expect("interruption_rate row present");
+        let ir = daily
+            .iter()
+            .find(|r| r.0 == "interruption_rate")
+            .expect("interruption_rate row present");
         assert!((ir.1 - 2.0 / 5.0).abs() < 1e-9, "interruption_rate value = 2/5 = 0.4");
 
         purge_assistant_events(pg, &[&csid]).await;

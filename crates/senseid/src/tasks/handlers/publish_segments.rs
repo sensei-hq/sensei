@@ -13,8 +13,8 @@
 //! Zero-knowledge (D10): only todo `content` (a short human phrase) becomes a
 //! segment title — never tool args, file contents, or diffs.
 
-use super::super::executor::TaskContext;
 use super::super::Task;
+use super::super::executor::TaskContext;
 use crate::dojo::client::DojoClient;
 use crate::dojo::relay_project::{parse_todos, session_update, title_from_cwd, todos_to_segments};
 
@@ -91,10 +91,8 @@ pub async fn publish_relay_segments(ctx: &TaskContext, task: &Task) -> Result<u3
 #[cfg(test)]
 mod tests {
     use super::*;
-    
-    
+
     use crate::tasks::TaskKind;
-    
 
     use crate::tasks::test_support::make_ctx;
 

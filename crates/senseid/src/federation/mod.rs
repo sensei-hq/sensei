@@ -11,7 +11,7 @@
 //! dojo-mind's global `/v1/rules` + API-key plane.
 
 use crate::db::pg_store::{InsertMemory, KnowledgeSource, MemoryPushPayload, PgStore};
-use dojo_protocol::{content_hash, PublishedRule, PullResponse};
+use dojo_protocol::{PublishedRule, PullResponse, content_hash};
 
 /// HTTP client for all federation calls. Bounded connect + total timeouts so a
 /// hung/unreachable dojo can never wedge the (sequential) pull loop or pile up
@@ -39,7 +39,7 @@ pub fn build_published_rule(p: &MemoryPushPayload, origin_repo: Option<&str>) ->
         impact: p.impact.clone(),
         enforcement: p.enforcement.clone(),
         origin_repo: origin_repo.map(|s| s.to_string()),
-        published_by: "senseid".to_string(),       // dojo overrides from the API key's member
+        published_by: "senseid".to_string(), // dojo overrides from the API key's member
         published_at: "1970-01-01T00:00:00Z".to_string(), // dojo overrides with now()
     }
 }
@@ -51,21 +51,40 @@ pub async fn push_promoted(pg: &PgStore, memory_id: uuid::Uuid) {
     let payload = match pg.memory_push_payload(&memory_id).await {
         Ok(Some(p)) => p,
         Ok(None) => return,
-        Err(e) => { tracing::warn!(error = %e, "federation: push payload load failed"); return; }
+        Err(e) => {
+            tracing::warn!(error = %e, "federation: push payload load failed");
+            return;
+        }
     };
-    if payload.origin != "promoted" { return; }
-    let namespace_id = match resolve_memory_namespace_id(pg, &memory_id).await { Some(id) => id, None => return };
+    if payload.origin != "promoted" {
+        return;
+    }
+    let namespace_id = match resolve_memory_namespace_id(pg, &memory_id).await {
+        Some(id) => id,
+        None => return,
+    };
     match pg.namespace_is_shareable(&namespace_id).await {
         Ok(true) => {}
         Ok(false) => return,
-        Err(e) => { tracing::warn!(error = %e, "federation: namespace shareability check failed"); return; }
+        Err(e) => {
+            tracing::warn!(error = %e, "federation: namespace shareability check failed");
+            return;
+        }
     }
-    let sources = match pg.list_knowledge_sources().await { Ok(s) => s, Err(e) => { tracing::warn!(error = %e, "federation: list sources failed"); return; } };
+    let sources = match pg.list_knowledge_sources().await {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::warn!(error = %e, "federation: list sources failed");
+            return;
+        }
+    };
     let pr = build_published_rule(&payload, None);
     let client = http_client();
-    for src in sources.into_iter().filter(|s| s.enabled
-        && matches!(s.direction.as_str(), "push" | "both")
-        && (s.namespace_id.is_none() || s.namespace_id == Some(namespace_id))) {
+    for src in sources.into_iter().filter(|s| {
+        s.enabled
+            && matches!(s.direction.as_str(), "push" | "both")
+            && (s.namespace_id.is_none() || s.namespace_id == Some(namespace_id))
+    }) {
         if let Err(e) = push_one(pg, &client, &src, &pr, memory_id).await {
             tracing::warn!(source = %src.name, error = %e, "federation: push failed");
         }
@@ -74,10 +93,17 @@ pub async fn push_promoted(pg: &PgStore, memory_id: uuid::Uuid) {
 
 async fn resolve_memory_namespace_id(pg: &PgStore, memory_id: &uuid::Uuid) -> Option<uuid::Uuid> {
     let row: Option<(Option<uuid::Uuid>,)> = match sqlx_core::query_as::query_as(
-        "SELECT namespace_id FROM sensei.memories WHERE id = $1")
-        .bind(memory_id).fetch_optional(pg.pool()).await {
+        "SELECT namespace_id FROM sensei.memories WHERE id = $1",
+    )
+    .bind(memory_id)
+    .fetch_optional(pg.pool())
+    .await
+    {
         Ok(r) => r,
-        Err(e) => { tracing::warn!(error = %e, "federation: resolve namespace query failed"); return None; }
+        Err(e) => {
+            tracing::warn!(error = %e, "federation: resolve namespace query failed");
+            return None;
+        }
     };
     row.and_then(|(n,)| n)
 }
@@ -93,36 +119,65 @@ fn rules_url(base: &str) -> String {
 }
 
 async fn push_one(
-    pg: &PgStore, client: &reqwest::Client, src: &KnowledgeSource,
-    pr: &PublishedRule, memory_id: uuid::Uuid,
+    pg: &PgStore,
+    client: &reqwest::Client,
+    src: &KnowledgeSource,
+    pr: &PublishedRule,
+    memory_id: uuid::Uuid,
 ) -> Result<(), String> {
     // The Keychain credential is the per-membership device token (D1), attached as
     // the Bearer exactly as before — only the credential kind + URL plane changed.
     let key = crate::gateway_keys::get_key(&src.credential_ref).map_err(|e| e.to_string())?;
-    let resp = client.post(rules_url(&src.url))
-        .bearer_auth(key).json(pr).send().await.map_err(|e| e.to_string())?;
-    if !resp.status().is_success() { return Err(format!("dojo returned {}", resp.status())); }
+    let resp = client
+        .post(rules_url(&src.url))
+        .bearer_auth(key)
+        .json(pr)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err(format!("dojo returned {}", resp.status()));
+    }
     let pubresp: dojo_protocol::PublishResponse = resp.json().await.map_err(|e| e.to_string())?;
     let remote_id = uuid::Uuid::parse_str(&pubresp.id).map_err(|e| e.to_string())?;
-    pg.upsert_federated_memory(&src.id, &remote_id, &pr.content_hash, Some(&memory_id), pubresp.seq).await?;
+    pg.upsert_federated_memory(
+        &src.id,
+        &remote_id,
+        &pr.content_hash,
+        Some(&memory_id),
+        pubresp.seq,
+    )
+    .await?;
     Ok(())
 }
 
 /// Result of one pull pass over a source.
 #[derive(Debug, Default, Clone, serde::Serialize)]
 pub struct PullStats {
-    pub applied: usize, pub tombstoned: usize, pub linked: usize, pub new_cursor: i64,
+    pub applied: usize,
+    pub tombstoned: usize,
+    pub linked: usize,
+    pub new_cursor: i64,
 }
 
 /// Pull one source's deltas since its cursor and apply them. Idempotent via the
 /// ledger (which is also the echo-guard for rules this daemon pushed). Advances last_seq.
-pub async fn pull_source(pg: &PgStore, client: &reqwest::Client, src: &KnowledgeSource)
-    -> Result<PullStats, String> {
+pub async fn pull_source(
+    pg: &PgStore,
+    client: &reqwest::Client,
+    src: &KnowledgeSource,
+) -> Result<PullStats, String> {
     let key = crate::gateway_keys::get_key(&src.credential_ref).map_err(|e| e.to_string())?;
-    let resp = client.get(rules_url(&src.url))
+    let resp = client
+        .get(rules_url(&src.url))
         .query(&[("since", src.last_seq.to_string())])
-        .bearer_auth(key).send().await.map_err(|e| e.to_string())?;
-    if !resp.status().is_success() { return Err(format!("dojo returned {}", resp.status())); }
+        .bearer_auth(key)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err(format!("dojo returned {}", resp.status()));
+    }
     let page: PullResponse = resp.json().await.map_err(|e| e.to_string())?;
     let mut stats = PullStats { new_cursor: page.cursor, ..Default::default() };
 
@@ -180,26 +235,63 @@ async fn apply_pulled_rule(
             } else {
                 RuleOutcome::Linked // content re-sync of already-known rules = follow-up (#55-adjacent)
             };
-            pg.upsert_federated_memory(&src.id, &remote_id, &pulled.rule.content_hash, link.memory_id.as_ref(), pulled.seq).await?;
+            pg.upsert_federated_memory(
+                &src.id,
+                &remote_id,
+                &pulled.rule.content_hash,
+                link.memory_id.as_ref(),
+                pulled.seq,
+            )
+            .await?;
             Ok(outcome)
         }
         None if tombstoned => {
-            pg.upsert_federated_memory(&src.id, &remote_id, &pulled.rule.content_hash, None, pulled.seq).await?;
+            pg.upsert_federated_memory(
+                &src.id,
+                &remote_id,
+                &pulled.rule.content_hash,
+                None,
+                pulled.seq,
+            )
+            .await?;
             Ok(RuleOutcome::Skipped)
         }
         None => {
-            let ns = pg.upsert_namespace(&pulled.rule.scope_key, &pulled.rule.namespace_name, &pulled.rule.namespace_slug).await?;
-            let mem = pg.insert_memory(&InsertMemory {
-                project_id: None, scope: "global".into(), scope_filter: None,
-                mtype: pulled.rule.rule_type.clone(),
-                title: pulled.rule.title.clone(), content: pulled.rule.content.clone(),
-                impact: pulled.rule.impact.clone(), tags: vec![], triage_signal: None,
-                status: "active".into(), namespace_id: Some(ns),
-                enforcement: Some(pulled.rule.enforcement.clone()),
-                origin: Some("federated".into()), source_id: Some(src.id),
-                spine_slot: None, feature: None,
-            }).await?;
-            pg.upsert_federated_memory(&src.id, &remote_id, &pulled.rule.content_hash, Some(&mem), pulled.seq).await?;
+            let ns = pg
+                .upsert_namespace(
+                    &pulled.rule.scope_key,
+                    &pulled.rule.namespace_name,
+                    &pulled.rule.namespace_slug,
+                )
+                .await?;
+            let mem = pg
+                .insert_memory(&InsertMemory {
+                    project_id: None,
+                    scope: "global".into(),
+                    scope_filter: None,
+                    mtype: pulled.rule.rule_type.clone(),
+                    title: pulled.rule.title.clone(),
+                    content: pulled.rule.content.clone(),
+                    impact: pulled.rule.impact.clone(),
+                    tags: vec![],
+                    triage_signal: None,
+                    status: "active".into(),
+                    namespace_id: Some(ns),
+                    enforcement: Some(pulled.rule.enforcement.clone()),
+                    origin: Some("federated".into()),
+                    source_id: Some(src.id),
+                    spine_slot: None,
+                    feature: None,
+                })
+                .await?;
+            pg.upsert_federated_memory(
+                &src.id,
+                &remote_id,
+                &pulled.rule.content_hash,
+                Some(&mem),
+                pulled.seq,
+            )
+            .await?;
             Ok(RuleOutcome::Applied)
         }
     }
@@ -213,12 +305,20 @@ pub fn run_pull_loop(pg: PgStore, interval_secs: u64) {
         loop {
             tick.tick().await;
             let sources = match pg.list_knowledge_sources().await {
-                Ok(s) => s, Err(e) => { tracing::warn!(error=%e, "federation: list sources failed"); continue; }
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::warn!(error=%e, "federation: list sources failed");
+                    continue;
+                }
             };
-            for src in sources.into_iter().filter(|s| s.enabled && matches!(s.direction.as_str(), "pull" | "both")) {
+            for src in sources
+                .into_iter()
+                .filter(|s| s.enabled && matches!(s.direction.as_str(), "pull" | "both"))
+            {
                 match pull_source(&pg, &client, &src).await {
-                    Ok(st) if st.applied + st.tombstoned > 0 =>
-                        tracing::info!(source=%src.name, applied=st.applied, tombstoned=st.tombstoned, "federation: pulled"),
+                    Ok(st) if st.applied + st.tombstoned > 0 => {
+                        tracing::info!(source=%src.name, applied=st.applied, tombstoned=st.tombstoned, "federation: pulled")
+                    }
                     Ok(_) => {}
                     Err(e) => tracing::warn!(source=%src.name, error=%e, "federation: pull failed"),
                 }
@@ -230,10 +330,13 @@ pub fn run_pull_loop(pg: PgStore, interval_secs: u64) {
                 Ok(memberships) => {
                     for m in memberships.into_iter().filter(|m| m.enabled) {
                         match crate::collective::inbox::pull_membership(&pg, &m).await {
-                            Ok(o) if o.inserted > 0 =>
-                                tracing::info!(membership=%m.id, inserted=o.inserted, cursor=o.new_cursor, "dojo: pulled downstream artifacts"),
+                            Ok(o) if o.inserted > 0 => {
+                                tracing::info!(membership=%m.id, inserted=o.inserted, cursor=o.new_cursor, "dojo: pulled downstream artifacts")
+                            }
                             Ok(_) => {}
-                            Err(e) => tracing::warn!(membership=%m.id, error=%e, "dojo: downstream pull failed"),
+                            Err(e) => {
+                                tracing::warn!(membership=%m.id, error=%e, "dojo: downstream pull failed")
+                            }
                         }
                     }
                 }
@@ -251,9 +354,15 @@ mod tests {
     #[test]
     fn builds_published_rule_with_content_hash_and_namespace_identity() {
         let p = MemoryPushPayload {
-            title: "TDD".into(), content: "  Always use TDD  ".into(), impact: None,
-            enforcement: "mandatory".into(), rule_type: "convention".into(), origin: "promoted".into(),
-            scope_key: "organization".into(), slug: "sensei-hq".into(), name: "Sensei HQ".into(),
+            title: "TDD".into(),
+            content: "  Always use TDD  ".into(),
+            impact: None,
+            enforcement: "mandatory".into(),
+            rule_type: "convention".into(),
+            origin: "promoted".into(),
+            scope_key: "organization".into(),
+            slug: "sensei-hq".into(),
+            name: "Sensei HQ".into(),
         };
         let pr = build_published_rule(&p, Some("sensei/daemon"));
         // content_hash normalizes (trim+lowercase) — matches dojo-protocol.
@@ -269,11 +378,17 @@ mod tests {
     #[tokio::test]
     async fn e2e_daemon_pulls_a_rule_published_on_the_dojo() {
         use crate::db::pg_store::{NewKnowledgeSource, PgStore};
-        use axum::{extract::{Query, State}, routing::get, Json, Router};
-        use dojo_protocol::{content_hash, PublishedRule, PullResponse, PulledRule};
+        use axum::{
+            Json, Router,
+            extract::{Query, State},
+            routing::get,
+        };
+        use dojo_protocol::{PublishedRule, PullResponse, PulledRule, content_hash};
         use std::collections::HashMap;
         use std::sync::Arc;
-        let Ok(pg) = PgStore::connect_test().await else { return; }; // skip if no test DB
+        let Ok(pg) = PgStore::connect_test().await else {
+            return;
+        }; // skip if no test DB
 
         // Seed the `organization` scope used by the pulled rule (sensei_test is empty;
         // production data is seeded via staging.import_scopes — we replicate the one row
@@ -282,8 +397,11 @@ mod tests {
         sqlx_core::query::query(
             "INSERT INTO sensei.scopes(key, name, level, shareable)
              VALUES ('organization', 'Organization', 20, true)
-             ON CONFLICT (key) DO UPDATE SET shareable = EXCLUDED.shareable")
-            .execute(pg.pool()).await.unwrap();
+             ON CONFLICT (key) DO UPDATE SET shareable = EXCLUDED.shareable",
+        )
+        .execute(pg.pool())
+        .await
+        .unwrap();
 
         // 1. Stand up a tiny axum stub for the Worker's TENANT-PATH rules endpoint
         // `GET /v1/t/{origin}/{org}/rules` on an ephemeral port (D1 — rules now ride
@@ -334,7 +452,9 @@ mod tests {
             .with_state(Arc::new(content.clone()));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
-        tokio::spawn(async move { axum::serve(listener, app).await.unwrap(); });
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         // The source `url` is the tenant base `{registry}/v1/t/{origin}/{org}` the
         // Worker mounts rules under — the daemon appends `/rules` (D1). This is the
@@ -346,10 +466,17 @@ mod tests {
         let client = crate::federation::http_client();
         let cref = format!("dojo-e2e-{}", uuid::Uuid::new_v4());
         crate::gateway_keys::set_key(&cref, "device-token-e2e").unwrap();
-        let src_id = pg.create_knowledge_source(&NewKnowledgeSource {
-            kind: "hive_mind".into(), name: "E2E".into(), url: dojo_url,
-            namespace_id: None, credential_ref: cref.clone(), direction: "pull".into(),
-        }).await.unwrap();
+        let src_id = pg
+            .create_knowledge_source(&NewKnowledgeSource {
+                kind: "hive_mind".into(),
+                name: "E2E".into(),
+                url: dojo_url,
+                namespace_id: None,
+                credential_ref: cref.clone(),
+                direction: "pull".into(),
+            })
+            .await
+            .unwrap();
         let src = pg.get_knowledge_source(&src_id).await.unwrap().unwrap();
 
         // 3. Pull.
@@ -366,13 +493,21 @@ mod tests {
         // 5. Cleanup (cascade ledger via source delete; remove memory + keychain entry,
         // the namespace the pull created, and the seeded scope row).
         sqlx_core::query::query("DELETE FROM sensei.memories WHERE content=$1")
-            .bind(&content).execute(pg.pool()).await.unwrap();
+            .bind(&content)
+            .execute(pg.pool())
+            .await
+            .unwrap();
         pg.delete_knowledge_source(&src_id).await.unwrap();
         let _ = crate::gateway_keys::delete_key(&cref);
         sqlx_core::query::query(
-            "DELETE FROM sensei.namespaces WHERE scope_key='organization' AND slug='e2e-org'")
-            .execute(pg.pool()).await.unwrap();
+            "DELETE FROM sensei.namespaces WHERE scope_key='organization' AND slug='e2e-org'",
+        )
+        .execute(pg.pool())
+        .await
+        .unwrap();
         sqlx_core::query::query("DELETE FROM sensei.scopes WHERE key='organization'")
-            .execute(pg.pool()).await.unwrap();
+            .execute(pg.pool())
+            .await
+            .unwrap();
     }
 }

@@ -129,7 +129,10 @@ pub fn artifact_path(repo_root: &Path, kind: ArtifactKind, slug: &str) -> PathBu
 ///
 /// Returns the repo-relative path written (for display + `materialized_ref`).
 pub fn write_artifact(
-    repo_root: &Path, kind: ArtifactKind, slug: &str, content: &str,
+    repo_root: &Path,
+    kind: ArtifactKind,
+    slug: &str,
+    content: &str,
 ) -> Result<PathBuf, String> {
     let path = artifact_path(repo_root, kind, slug);
     // Defense-in-depth: the path must live under repo_root.
@@ -140,7 +143,8 @@ pub fn write_artifact(
     if path.exists() {
         return Err(format!(
             "a {} named '{slug}' already exists at {}; rename the recommendation title or edit that file",
-            kind.as_str(), path.display()
+            kind.as_str(),
+            path.display()
         ));
     }
     if let Some(parent) = path.parent() {
@@ -157,7 +161,10 @@ mod tests {
 
     #[test]
     fn slugify_kebabs_and_bounds_and_falls_back() {
-        assert_eq!(slugify("Establish Core Architectural Guardian!", "agent"), "establish-core-architectural-guardian");
+        assert_eq!(
+            slugify("Establish Core Architectural Guardian!", "agent"),
+            "establish-core-architectural-guardian"
+        );
         assert_eq!(slugify("  DBD  Schema//Diff  ", "skill"), "dbd-schema-diff");
         assert_eq!(slugify("", "agent"), "agent", "empty → fallback");
         assert_eq!(slugify("!!! @@@", "skill"), "skill", "all-punctuation → fallback");
@@ -168,7 +175,11 @@ mod tests {
 
     #[test]
     fn skill_md_has_frontmatter_and_body() {
-        let md = render_skill_md("schema-diff-guard", "Use when computing a schema diff in dbd-core.", "Do X then Y.");
+        let md = render_skill_md(
+            "schema-diff-guard",
+            "Use when computing a schema diff in dbd-core.",
+            "Do X then Y.",
+        );
         assert!(md.starts_with("---\nname: schema-diff-guard\ndescription: Use when"));
         assert!(md.contains("# Schema Diff Guard"), "title-cased heading");
         assert!(md.contains("Do X then Y."));
@@ -177,7 +188,11 @@ mod tests {
 
     #[test]
     fn agent_md_has_frontmatter_tools_and_body() {
-        let md = render_agent_md("dbd-guardian", "Reviews cross-layer changes.", "You are an Architectural Review Agent...");
+        let md = render_agent_md(
+            "dbd-guardian",
+            "Reviews cross-layer changes.",
+            "You are an Architectural Review Agent...",
+        );
         assert!(md.contains("\nname: dbd-guardian\n"));
         assert!(md.contains("\ntools: Read, Grep, Glob, Bash, mcp__plugin_sensei_sensei__*\n"));
         assert!(md.contains("\nmodel: sonnet\n"));
@@ -187,8 +202,14 @@ mod tests {
     #[test]
     fn artifact_paths_match_claude_convention() {
         let root = Path::new("/repo");
-        assert_eq!(artifact_path(root, ArtifactKind::Skill, "s").to_str().unwrap(), "/repo/.claude/skills/s/SKILL.md");
-        assert_eq!(artifact_path(root, ArtifactKind::Agent, "a").to_str().unwrap(), "/repo/.claude/agents/a.md");
+        assert_eq!(
+            artifact_path(root, ArtifactKind::Skill, "s").to_str().unwrap(),
+            "/repo/.claude/skills/s/SKILL.md"
+        );
+        assert_eq!(
+            artifact_path(root, ArtifactKind::Agent, "a").to_str().unwrap(),
+            "/repo/.claude/agents/a.md"
+        );
     }
 
     #[test]
@@ -196,10 +217,15 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("sensei-mat-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         let rel = write_artifact(&dir, ArtifactKind::Agent, "guardian", "content").unwrap();
-        assert_eq!(rel.to_str().unwrap(), ".claude/agents/guardian.md", "returns repo-relative path");
+        assert_eq!(
+            rel.to_str().unwrap(),
+            ".claude/agents/guardian.md",
+            "returns repo-relative path"
+        );
         assert!(dir.join(".claude/agents/guardian.md").exists());
         // Second write to the same slug refuses to clobber.
-        let err = write_artifact(&dir, ArtifactKind::Agent, "guardian", "other").expect_err("no clobber");
+        let err =
+            write_artifact(&dir, ArtifactKind::Agent, "guardian", "other").expect_err("no clobber");
         assert!(err.contains("already exists"), "got: {err}");
         std::fs::remove_dir_all(&dir).ok();
     }

@@ -4,7 +4,7 @@
 //! that doesn't exist (lost when `_legacy/database.rs` was deleted).
 
 use crate::database;
-use crate::health::resolver::{Resolver, ResolveOutcome};
+use crate::health::resolver::{ResolveOutcome, Resolver};
 use crate::health::types::{ComponentId, Remedy};
 
 /// Bootstrap crate's Cargo.toml version. The `make bump` flow keeps this in
@@ -16,8 +16,12 @@ pub struct DatabaseResolver {
 }
 
 impl Resolver for DatabaseResolver {
-    fn id(&self) -> &'static str { "db_setup" }
-    fn resolves(&self) -> &'static [ComponentId] { &[ComponentId::Database] }
+    fn id(&self) -> &'static str {
+        "db_setup"
+    }
+    fn resolves(&self) -> &'static [ComponentId] {
+        &[ComponentId::Database]
+    }
 
     fn resolve(&self, _targets: &[ComponentId]) -> ResolveOutcome {
         match database::setup(&self.db_name, APP_VERSION) {
@@ -81,8 +85,10 @@ mod tests {
         let r = db_failed_remedy("sensei_test", "bang".to_string());
         assert_eq!(r.script, "createdb sensei_test");
         assert!(r.message.contains("bang"));
-        assert!(r.message.contains("dbd"),
-            "remedy message should explain that dbd handles the extension + schema");
+        assert!(
+            r.message.contains("dbd"),
+            "remedy message should explain that dbd handles the extension + schema"
+        );
     }
 
     #[test]

@@ -40,7 +40,8 @@ pub const MIN_GAIN: f64 = 0.15;
 /// two qualifying models, or the lead is too small — no recommendation rather
 /// than a noisy one). Deterministic: ties broken by more sessions, then name.
 pub fn recommend_model(stats: &[ModelStat], min_sessions: i64, min_gain: f64) -> Option<ModelReco> {
-    let mut qualifying: Vec<&ModelStat> = stats.iter().filter(|s| s.sessions >= min_sessions).collect();
+    let mut qualifying: Vec<&ModelStat> =
+        stats.iter().filter(|s| s.sessions >= min_sessions).collect();
     if qualifying.len() < 2 {
         return None; // need a comparison to say "prefer X over Y"
     }
@@ -70,11 +71,7 @@ pub fn recommend_model(stats: &[ModelStat], min_sessions: i64, min_gain: f64) ->
 
 /// Urgency for a model recommendation: a large FTR lead is worth surfacing high.
 pub fn reco_urgency(gain: f64) -> &'static str {
-    if gain >= 0.30 {
-        "high"
-    } else {
-        "medium"
-    }
+    if gain >= 0.30 { "high" } else { "medium" }
 }
 
 /// Canonicalize a model label so casing/spacing variants aggregate: providers
@@ -133,7 +130,9 @@ pub fn fold_model_stats(raw: Vec<(String, String, i64, i64)>) -> Vec<ModelStat> 
 /// Fold raw effectiveness rows into the per-`(provider, canonical_model)` JSON
 /// the endpoint serves. Input: `(provider, model, sessions, ftr_sessions,
 /// corrections_sum, turns_sum)`. Merges label variants; rounds rates.
-pub fn fold_effectiveness(raw: Vec<(String, String, i64, i64, i64, i64)>) -> Vec<serde_json::Value> {
+pub fn fold_effectiveness(
+    raw: Vec<(String, String, i64, i64, i64, i64)>,
+) -> Vec<serde_json::Value> {
     use std::collections::HashMap;
     // key → (sessions, ftr_sessions, corrections, turns)
     let mut acc: HashMap<(String, String), (i64, i64, i64, i64)> = HashMap::new();
@@ -220,7 +219,11 @@ mod tests {
         assert_eq!(normalize_model("gpt-4.1"), "gpt-4.1");
         assert_eq!(normalize_model("GPT-5 mini"), "gpt-5-mini");
         assert_eq!(normalize_model("Grok Code Fast 1"), "grok-code-fast-1");
-        assert_eq!(normalize_model("  Claude   Opus  4.5 "), "claude-opus-4.5", "collapses runs + trims");
+        assert_eq!(
+            normalize_model("  Claude   Opus  4.5 "),
+            "claude-opus-4.5",
+            "collapses runs + trims"
+        );
         // conservative: version-format + tags are NOT unified (kept distinct)
         assert_ne!(normalize_model("claude-3.7-sonnet"), normalize_model("claude-3-7-sonnet"));
         assert_eq!(normalize_model("gemma4:latest"), "gemma4:latest", "tag preserved");
