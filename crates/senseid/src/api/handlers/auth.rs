@@ -167,12 +167,37 @@ pub(crate) async fn callback(
                 // documents.
                 let refresh = tokens.refresh_token.clone();
                 let who = persona.clone();
+                // Capture GitHub's token NOW or lose it: GoTrue returns it only
+                // at the exchange and prunes its flow_state row afterwards, so
+                // there is no later query that recovers it. This is the token
+                // read:org exists for — provisioning cannot list organisations
+                // without it, and would report "none" rather than "never asked".
+                let provider = tokens.provider_token.clone();
+                let provider_refresh = tokens.provider_refresh_token.clone();
                 let stored = tokio::task::spawn_blocking(move || {
+                    if let Some(pt) = provider.as_deref() {
+                        // Non-fatal: a failed provider-token write costs
+                        // provisioning, not the sign-in itself.
+                        if let Err(e) = session::store_provider_token(&who, pt) {
+                            tracing::warn!(error = %e, "could not store the GitHub token");
+                        }
+                    }
+                    if let Some(pr) = provider_refresh.as_deref() {
+                        let _ = session::store_provider_refresh_token(&who, pr);
+                    }
                     session::store_refresh_token(&who, &refresh)
                 })
                 .await;
                 match stored {
-                    Ok(Ok(())) => Json(serde_json::json!({ "ok": true, "signedIn": true, "persona": persona })),
+                    Ok(Ok(())) => Json(serde_json::json!({
+                        "ok": true,
+                        "signedIn": true,
+                        "persona": persona,
+                        // Whether org provisioning will be possible for this
+                        // persona — surfaced so a missing token is visible now
+                        // rather than as an empty org list later.
+                        "canReadOrgs": tokens.provider_token.is_some(),
+                    })),
                     Ok(Err(e)) => Json(serde_json::json!({
                         "ok": false,
                         "error": format!("signed in, but the refresh token could not be stored: {e}"),
@@ -306,5 +331,75 @@ pub(crate) async fn status(Query(p): Query<PersonaQuery>) -> Json<serde_json::Va
             "error": format!("could not reach Supabase: {e}"),
             "supabaseUrl": supabase_url(),
         })),
+    }
+}
+
+/// `GET /api/auth/orgs?persona=…` — the GitHub organisations this persona can see.
+///
+/// The first step of provisioning: an org becomes a tenant. Reads GitHub
+/// directly with the stored provider token, because Supabase records the user's
+/// PROFILE but never calls `/user/orgs` — the `read:org` scope grants the right
+/// to ask, it does not fetch anything.
+///
+/// Fails loudly when the token is missing rather than returning an empty list. A
+/// bare `[]` is indistinguishable from "this user belongs to no organisations",
+/// which is the wrong conclusion to hand a provisioning step that would then
+/// create nothing and report success.
+pub(crate) async fn orgs(Query(p): Query<PersonaQuery>) -> Json<serde_json::Value> {
+    let who = p.persona.clone();
+    let token = match tokio::task::spawn_blocking(move || session::load_provider_token(&who)).await {
+        Ok(Ok(t)) => t,
+        _ => {
+            return Json(serde_json::json!({
+                "ok": false,
+                "persona": p.persona,
+                "error": "no GitHub token stored for this persona — sign in again to capture one",
+                "detail": "the provider token is returned only at the exchange; a session created before it was captured has none",
+            }))
+        }
+    };
+
+    let resp = crate::federation::http_client()
+        .get("https://api.github.com/user/orgs")
+        .header("Authorization", format!("Bearer {token}"))
+        .header("Accept", "application/vnd.github+json")
+        // GitHub rejects requests without one.
+        .header("User-Agent", "sensei")
+        .send()
+        .await;
+
+    match resp {
+        Ok(r) if r.status().is_success() => {
+            let body: serde_json::Value = r.json().await.unwrap_or_default();
+            let orgs: Vec<serde_json::Value> = body
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .map(|o| {
+                            serde_json::json!({
+                                // `login` is the durable natural key an org is
+                                // known by — the tenant key is built from it, so
+                                // both sides converge without sharing a uuid.
+                                "login": o["login"],
+                                "githubId": o["id"],
+                                "tenantKey": format!("github/{}", o["login"].as_str().unwrap_or_default()),
+                            })
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            Json(serde_json::json!({ "ok": true, "persona": p.persona, "orgs": orgs }))
+        }
+        Ok(r) => {
+            let status = r.status().as_u16();
+            let body = r.text().await.unwrap_or_default();
+            // 403 here usually means the org enforces SSO or the token lacks
+            // read:org — worth saying, because the symptom is an empty list.
+            Json(serde_json::json!({
+                "ok": false, "persona": p.persona,
+                "error": "GitHub rejected the org request", "status": status, "detail": body,
+            }))
+        }
+        Err(e) => Json(serde_json::json!({ "ok": false, "persona": p.persona, "error": e.to_string() })),
     }
 }
