@@ -274,7 +274,7 @@ async fn ingest_one(
     // never-synthesized historical session still gets imported). Load the
     // content only if there's something to do.
     let prose_fresh = matches!(
-        pg.get_transcript_cursor(adapter.source(), key).await,
+        pg.get_capture_watermark(adapter.source(), key).await,
         Ok(Some(prev)) if prev >= stamp
     );
     let needs_synth = !pg.session_has_events(&session_id).await.unwrap_or(true);
@@ -304,7 +304,7 @@ async fn ingest_one(
         turns = pg
             .upsert_transcript_turns(adapter.source(), &session_id, adapter.family(), provider, model_name, &parsed.turns)
             .await?;
-        pg.set_transcript_cursor(adapter.source(), key, Some(&session_id), stamp, parsed.turns.len() as i32)
+        pg.set_capture_watermark(adapter.source(), key, Some(&session_id), stamp, parsed.turns.len() as i32)
             .await?;
     }
     // 2. historical-bootstrap: synthesize the session + events if not already
@@ -690,7 +690,7 @@ mod tests {
         let pool = pg.pool();
         sqlx_core::query::query("DELETE FROM activity.assistant_events WHERE session_id=$1").bind(&sid).execute(pool).await.ok();
         sqlx_core::query::query("DELETE FROM activity.transcript_turns WHERE session_id=$1").bind(&sid).execute(pool).await.ok();
-        sqlx_core::query::query("DELETE FROM activity.transcript_cursor WHERE session_id=$1").bind(&sid).execute(pool).await.ok();
+        sqlx_core::query::query("DELETE FROM activity.capture_watermarks WHERE session_id=$1").bind(&sid).execute(pool).await.ok();
         std::fs::remove_dir_all(&root).ok();
     }
 
@@ -777,7 +777,7 @@ mod tests {
         let pool = pg.pool();
         sqlx_core::query::query("DELETE FROM activity.assistant_events WHERE session_id=$1").bind(&sid).execute(pool).await.ok();
         sqlx_core::query::query("DELETE FROM activity.transcript_turns WHERE session_id=$1").bind(&sid).execute(pool).await.ok();
-        sqlx_core::query::query("DELETE FROM activity.transcript_cursor WHERE session_id=$1").bind(&sid).execute(pool).await.ok();
+        sqlx_core::query::query("DELETE FROM activity.capture_watermarks WHERE session_id=$1").bind(&sid).execute(pool).await.ok();
         sqlx_core::query::query("DELETE FROM activity.sessions WHERE client_session_id=$1").bind(&sid).execute(pool).await.ok();
         sqlx_core::query::query("DELETE FROM sensei.folders WHERE id=$1").bind(fid).execute(pool).await.ok();
         sqlx_core::query::query("DELETE FROM sensei.folders_to_watch WHERE id=$1").bind(root).execute(pool).await.ok();

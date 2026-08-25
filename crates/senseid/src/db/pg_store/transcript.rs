@@ -58,19 +58,19 @@ impl PgStore {
     }
 
     /// Last-ingested mtime (ns) for a transcript file, or None if never seen.
-    pub async fn get_transcript_cursor(&self, source: &str, file_path: &str) -> Result<Option<i64>, String> {
+    pub async fn get_capture_watermark(&self, source: &str, file_path: &str) -> Result<Option<i64>, String> {
         let row: Option<(i64,)> = sqlx_core::query_as::query_as(
-            "SELECT last_mtime_ns FROM activity.transcript_cursor WHERE source = $1 AND file_path = $2"
+            "SELECT last_mtime_ns FROM activity.capture_watermarks WHERE source = $1 AND file_path = $2"
         ).bind(source).bind(file_path).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(row.map(|r| r.0))
     }
 
     /// Advance the ingest cursor for a transcript file (idempotent upsert).
-    pub async fn set_transcript_cursor(
+    pub async fn set_capture_watermark(
         &self, source: &str, file_path: &str, session_id: Option<&str>, mtime_ns: i64, turns: i32,
     ) -> Result<(), String> {
         sqlx_core::query::query(
-            "INSERT INTO activity.transcript_cursor
+            "INSERT INTO activity.capture_watermarks
                 (source, file_path, session_id, last_mtime_ns, turns_ingested, updated_at)
              VALUES($1, $2, $3, $4, $5, now())
              ON CONFLICT(source, file_path) DO UPDATE SET
