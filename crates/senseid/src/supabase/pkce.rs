@@ -89,6 +89,21 @@ pub fn authorize_url(
     url
 }
 
+/// Add GitHub's `login` hint — which account to sign in as.
+///
+/// Solves the multi-identity trap: the browser usually already holds a GitHub
+/// session, so "Connect" for a SECOND persona silently reuses the first
+/// account and links the wrong identity — with no error, because the flow
+/// succeeded, just as the wrong person.
+///
+/// Verified against a live instance: Supabase forwards `login` through to
+/// GitHub. It is a HINT, not a guarantee — GitHub suggests the account rather
+/// than forcing a re-auth — so the UI should still say which identity it expects
+/// and offer a private window as the certain path.
+pub fn with_login_hint(url: &str, github_login: &str) -> String {
+    format!("{url}&login={}", urlencode(github_login))
+}
+
 /// Percent-encode a query-parameter value.
 ///
 /// Hand-rolled over the unreserved set rather than pulling in a crate: the
@@ -192,6 +207,17 @@ mod tests {
 
         let multi = authorize_url("http://x", "github", "http://cb", "c", &["read:org", "repo"]);
         assert!(multi.contains("scopes=read%3Aorg%20repo"), "space-separated: {multi}");
+    }
+
+    #[test]
+    fn the_login_hint_is_appended_and_encoded() {
+        // Without it, connecting a second persona silently reuses whichever
+        // GitHub account the browser already holds — succeeding as the wrong
+        // person, which is worse than failing.
+        let base = authorize_url("http://x", "github", "http://cb", "c", &[]);
+        let hinted = with_login_hint(&base, "sensei-hq");
+        assert!(hinted.contains("&login=sensei-hq"), "{hinted}");
+        assert!(with_login_hint(&base, "a b").contains("login=a%20b"), "hint is encoded");
     }
 
     #[test]
