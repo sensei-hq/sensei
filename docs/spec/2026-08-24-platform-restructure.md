@@ -790,27 +790,44 @@ so the whole shared graph can be established in one authenticated pass.
 
 ### Ownership
 
-| dōjō owns — sensei mirrors                     | sensei owns — pushes up                    |
-|------------------------------------------------|--------------------------------------------|
-| principal / verified identity, claimed aliases  | git-discovered emails not yet verified     |
-| tenants, teams, memberships                     | folders and paths (machine-specific)       |
-| repositories, repositories_in_projects          | `repository_metrics` VALUES                |
-| `metrics` registry, `metric_activations`        | attribution / client identifiers           |
+**dōjō-FIRST — created in dōjō, then mirrored down.** Nothing exists locally
+until dōjō has said so:
 
-Two entries are load-bearing and not negotiable by convenience:
+| entity                                       | created by                    |
+|----------------------------------------------|-------------------------------|
+| principal / verified identity, claimed aliases | dōjō, at sign-in            |
+| tenants                                       | dōjō, from the GitHub orgs   |
+| teams, memberships                            | dōjō                         |
+| `metrics` registry, `metric_activations`      | dōjō (product-managed)       |
 
-* **Folders and paths never go up.** They name a person's disk.
-* **Attribution and client identifiers never go up.** See `attribution.rs` — that
-  constraint predates this document and is not relaxed by dōjō owning the graph.
+**LOCAL-first, id claimed on connect.** Discovered by sensei because only sensei
+can see the disk, then registered with dōjō, which mints the id:
 
-### The offline case
+| entity                       | discovered by | id minted by |
+|------------------------------|---------------|--------------|
+| repositories                 | sensei        | dōjō         |
+| repositories_in_projects     | sensei        | dōjō         |
 
-sensei discovers repositories locally, including with no session and no network,
-and must keep doing so. So "dōjō mints the id" cannot mean "block until dōjō
-answers".
+**LOCAL only — never leaves the machine:**
 
-A locally-discovered repository is written with its `repo_key` and `dojo_id NULL`,
-and a task claims the id when connectivity returns. `repo_key` is already the
+* folders and paths — they name a person's disk
+* attribution and client identifiers — see `attribution.rs`
+* git-discovered emails not yet verified against an account
+
+**LOCAL, pushed up:** `repository_metrics` VALUES — computed where the code is.
+
+The two "never leaves" entries are not negotiable by convenience — that
+constraint predates this document and is not relaxed by dōjō owning the graph.
+
+### Repositories are local-first, always
+
+Not merely a fallback for being offline. sensei discovers repositories by walking
+the disk, which dōjō cannot do, so discovery ALWAYS originates locally — including
+with no session and no network. "dōjō mints the id" therefore cannot mean "block
+until dōjō answers".
+
+A discovered repository is written with its `repo_key` and `dojo_id NULL`, and a
+task claims the id on the next dōjō connect. `repo_key` is already the
 machine-independent join key, so it carries the mapping in the meantime.
 
 `dojo_id IS NULL` reads as "not registered yet", which is TRUE — it is not a
@@ -825,15 +842,17 @@ pushing them, sensei asks dōjō to provision and then pulls the result:
 
     SyncGitHubIdentity   → dōjō upserts the principal + claimed aliases
     ProvisionTenants     → dōjō creates tenants from the GitHub orgs
-    SyncOrgRepositories  → dōjō registers repositories
-    PullSharedGraph      → sensei mirrors ids into its local rows
+    PullSharedGraph      → sensei mirrors identity + tenancy ids
+    ClaimRepositoryIds   → sensei presents locally-discovered repo_keys,
+                           dōjō registers them and returns their ids
     PushMetricValues     → sensei sends values keyed by the dōjō ids
 
-Only the last step originates in sensei, which is the point: values are computed
-locally because that is where the code is, and nothing else is.
+Identity and tenancy flow DOWN; repositories and their metrics flow UP and get
+their ids stamped on the way. Only sensei can see the disk, and only dōjō can
+mint an id that means the same thing on two machines.
 
-**Blocked on:** the kavach double-`resolve` bug — every write leg is a POST and
-POST bodies currently arrive empty. See `docs/backlog.md`.
+**Unblocked 2026-08-25:** the kavach double-`resolve` bug (POST bodies arriving
+empty) is fixed in kavach 1.1.0 and dōjō is on it.
 
 ## 4. Surfaces
 
