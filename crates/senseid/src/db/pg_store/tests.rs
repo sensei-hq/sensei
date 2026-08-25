@@ -6569,3 +6569,59 @@
         assert!(synced_at.is_some(), "the last agreement time survives a later failure");
     }
 
+    #[tokio::test]
+    async fn a_verified_login_replaces_a_guessed_label_but_not_a_chosen_one() {
+        // The `sensei-hq` vs `sensei-hq-org` case. Before OAuth a label can only
+        // be inferred from an email domain or a repo owner, and inference is
+        // wrong; after OAuth the login is known. But once a user has verified and
+        // then renamed, a later sign-in must not silently overwrite their choice.
+        let s = pg_store().await;
+        let uniq = uuid::Uuid::new_v4();
+        let gh_id: i64 = (uniq.as_u128() % 1_000_000) as i64 + 900_000;
+        let guessed = format!("guess-{uniq}");
+
+        // Discovered from git: a guessed label, unverified.
+        let pid = s.upsert_persona(&guessed, true).await.unwrap();
+        let id = s.link_persona_identity(&guessed, "real-login", gh_id, &[]).await.unwrap();
+        assert_eq!(id, pid, "verification lands on the existing persona");
+
+        let (label, login, verified): (String, Option<String>, Option<chrono::DateTime<chrono::Utc>>) =
+            query_as("SELECT label, github_login, verified_at FROM sensei.personas WHERE id = $1")
+                .bind(id).fetch_one(s.pool()).await.unwrap();
+        assert_eq!(label, "real-login", "the guess is replaced by the verified login");
+        assert_eq!(login.as_deref(), Some("real-login"));
+        assert!(verified.is_some());
+
+        // The user renames it, then signs in again.
+        sqlx_core::query::query("UPDATE sensei.personas SET label = 'my-name' WHERE id = $1")
+            .bind(id).execute(s.pool()).await.unwrap();
+        s.link_persona_identity("ignored", "real-login", gh_id, &[]).await.unwrap();
+        let (after,): (String,) = query_as("SELECT label FROM sensei.personas WHERE id = $1")
+            .bind(id).fetch_one(s.pool()).await.unwrap();
+
+        sqlx_core::query::query("DELETE FROM sensei.personas WHERE id = $1")
+            .bind(id).execute(s.pool()).await.unwrap();
+        assert_eq!(after, "my-name", "a chosen display name survives re-verification");
+    }
+
+    #[tokio::test]
+    async fn a_renamed_github_login_still_matches_the_same_persona() {
+        // Matching on the login would fork one human into two personas the day
+        // they rename themselves. The numeric id cannot be renamed, so it wins.
+        let s = pg_store().await;
+        let uniq = uuid::Uuid::new_v4();
+        let gh_id: i64 = (uniq.as_u128() % 1_000_000) as i64 + 800_000;
+
+        let first = s.link_persona_identity(&format!("a-{uniq}"), "old-login", gh_id, &[]).await.unwrap();
+        let second = s.link_persona_identity(&format!("b-{uniq}"), "new-login", gh_id, &[]).await.unwrap();
+
+        let (login,): (Option<String>,) =
+            query_as("SELECT github_login FROM sensei.personas WHERE id = $1")
+                .bind(first).fetch_one(s.pool()).await.unwrap();
+        sqlx_core::query::query("DELETE FROM sensei.personas WHERE id = ANY($1)")
+            .bind(vec![first, second]).execute(s.pool()).await.ok();
+
+        assert_eq!(first, second, "the same GitHub id resolves to one persona");
+        assert_eq!(login.as_deref(), Some("new-login"), "and the login is updated in place");
+    }
+
