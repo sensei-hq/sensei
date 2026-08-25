@@ -132,8 +132,12 @@ pub fn spawn_version_commit_watcher(
     tokio::spawn(async move {
         wait_for_scan_drain(&queue).await;
         match pg.set_config(LAST_VERSION_KEY, &version).await {
-            Ok(_) => tracing::info!("version rescan: scan drained — recorded {LAST_VERSION_KEY}={version}"),
-            Err(e) => tracing::warn!(error = %e, "version rescan: recording {LAST_VERSION_KEY} after drain failed; rebuild may re-trigger next boot"),
+            Ok(_) => tracing::info!(
+                "version rescan: scan drained — recorded {LAST_VERSION_KEY}={version}"
+            ),
+            Err(e) => {
+                tracing::warn!(error = %e, "version rescan: recording {LAST_VERSION_KEY} after drain failed; rebuild may re-trigger next boot")
+            }
         }
     })
 }
@@ -166,6 +170,10 @@ async fn wait_for_scan_drain(queue: &TaskQueue) {
 }
 
 #[cfg(test)]
+// Test gates are blocking `std::sync::Mutex` held across awaits ON PURPOSE —
+// see `crate::tasks::test_support::TestGate` for why an async mutex loses
+// wakeups across per-test runtimes. One allow per test module, not per site.
+#[allow(clippy::await_holding_lock)]
 mod tests {
     use super::*;
     use std::time::Duration;
@@ -197,10 +205,7 @@ mod tests {
 
     /// Count ScanRoot tasks in a drained set targeting a specific root path.
     fn scanroots_for<'a>(tasks: &'a [Task], root_path: &str) -> Vec<&'a Task> {
-        tasks
-            .iter()
-            .filter(|t| t.kind == TaskKind::ScanRoot && t.path == root_path)
-            .collect()
+        tasks.iter().filter(|t| t.kind == TaskKind::ScanRoot && t.path == root_path).collect()
     }
 
     /// Serialises the tests below.
@@ -211,8 +216,8 @@ mod tests {
     /// `0.0.0-old` while the other had already deleted it, so the read came back
     /// `None`. There is no way to scope a fixed global key per test, so the
     /// contention is serialised instead of pretended away.
-    static VERSION_KEY_LOCK: std::sync::LazyLock<tokio::sync::Mutex<()>> =
-        std::sync::LazyLock::new(|| tokio::sync::Mutex::new(()));
+    static VERSION_KEY_LOCK: crate::tasks::test_support::TestGate =
+        crate::tasks::test_support::TestGate::new();
 
     /// End-to-end D2 contract: a version change re-scans WITHOUT committing the
     /// version; an aborted (never-committed) rescan re-triggers next boot; the
@@ -221,7 +226,7 @@ mod tests {
     /// mirroring the in-memory queue being recreated on every daemon start.
     #[tokio::test]
     async fn rescan_is_crash_safe_then_commits_and_is_idempotent() {
-        let _serialised = VERSION_KEY_LOCK.lock().await;
+        let _serialised = VERSION_KEY_LOCK.enter();
         let pg = PgStore::connect_test().await.unwrap();
 
         // A watch root we can assert a ScanRoot targets. The shared test DB may
@@ -246,7 +251,11 @@ mod tests {
             maybe_rescan_on_version_change(&pg, &q1, current).await,
             "version change must trigger a rebuild",
         );
-        assert_eq!(scanroots_for(&drain_all(&q1).await, &root_path).len(), 1, "one ScanRoot for our root");
+        assert_eq!(
+            scanroots_for(&drain_all(&q1).await, &root_path).len(),
+            1,
+            "one ScanRoot for our root"
+        );
         assert_eq!(
             pg.get_config(LAST_VERSION_KEY).await.unwrap().as_deref(),
             Some("0.0.0-old"),
@@ -265,7 +274,11 @@ mod tests {
             maybe_rescan_on_version_change(&pg, &q2, current).await,
             "an uncommitted (aborted) rescan must re-trigger next boot",
         );
-        assert_eq!(scanroots_for(&drain_all(&q2).await, &root_path).len(), 1, "ScanRoot re-enqueued after abort");
+        assert_eq!(
+            scanroots_for(&drain_all(&q2).await, &root_path).len(),
+            1,
+            "ScanRoot re-enqueued after abort"
+        );
 
         // The commit watcher must hold off while work is in flight, then record
         // the version once the queue drains. Drive it with a controlled task so
@@ -295,7 +308,10 @@ mod tests {
             !maybe_rescan_on_version_change(&pg, &q3, current).await,
             "same version must not re-trigger once committed",
         );
-        assert!(scanroots_for(&drain_all(&q3).await, &root_path).is_empty(), "no rescan on a committed version");
+        assert!(
+            scanroots_for(&drain_all(&q3).await, &root_path).is_empty(),
+            "no rescan on a committed version"
+        );
 
         // Cleanup shared-DB state.
         pg.remove_watch_root(&rid).await.unwrap();
@@ -307,7 +323,7 @@ mod tests {
         // Single-writer (D6e/W5): a version-bump rescan must not stack a second
         // ScanRoot for a root the reconcile tick is already scanning — the race
         // the review flagged. Without the guard the root would show 2 ScanRoots.
-        let _serialised = VERSION_KEY_LOCK.lock().await;
+        let _serialised = VERSION_KEY_LOCK.enter();
         let pg = PgStore::connect_test().await.unwrap();
         let tmp = tempfile::tempdir().unwrap();
         let root_path = tmp.path().to_string_lossy().to_string();

@@ -162,7 +162,10 @@ mod tests {
 
     #[test]
     fn inherent_method() {
-        assert_eq!(method("rust", "senseid", "widget", "Widget", "new"), "rust·senseid·widget·Widget·new");
+        assert_eq!(
+            method("rust", "senseid", "widget", "Widget", "new"),
+            "rust·senseid·widget·Widget·new"
+        );
     }
 
     #[test]
@@ -180,6 +183,9 @@ mod tests {
 
     #[test]
     fn lib_symbol() {
-        assert_eq!(lib("serde_json", "serde_json", "from_str"), "lib·serde_json·serde_json·from_str");
+        assert_eq!(
+            lib("serde_json", "serde_json", "from_str"),
+            "lib·serde_json·serde_json·from_str"
+        );
     }
 }

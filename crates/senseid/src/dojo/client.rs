@@ -62,7 +62,9 @@ impl DojoClientError {
         match self {
             DojoClientError::Network(_) => true,
             DojoClientError::Status(code) => (500..=599).contains(code),
-            DojoClientError::Decode(_) | DojoClientError::Keychain(_) | DojoClientError::Join(_) => false,
+            DojoClientError::Decode(_)
+            | DojoClientError::Keychain(_)
+            | DojoClientError::Join(_) => false,
         }
     }
 }
@@ -90,7 +92,9 @@ fn encode_path_segment(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for b in s.bytes() {
         match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => out.push(b as char),
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                out.push(b as char)
+            }
             _ => out.push_str(&format!("%{b:02X}")),
         }
     }
@@ -104,11 +108,7 @@ fn encode_path_segment(s: &str) -> String {
 /// (Contrast [`encode_path_segment`] / [`DojoClient::artifacts_url`], which target the
 /// dojo-mind artifacts mount that takes the whole tenant_key as ONE encoded segment.)
 fn encode_tenant_path(tenant_key: &str) -> String {
-    tenant_key
-        .split('/')
-        .map(encode_path_segment)
-        .collect::<Vec<_>>()
-        .join("/")
+    tenant_key.split('/').map(encode_path_segment).collect::<Vec<_>>().join("/")
 }
 
 impl DojoClient {
@@ -203,7 +203,10 @@ impl DojoClient {
     /// [`DojoClientError::Decode`]. Errors are returned, never panicked — the
     /// caller (the pull loop) logs and moves on so a downstream pull can never
     /// wedge the rules-federation pull it runs beside.
-    pub async fn pull_artifacts(&self, since: i64) -> Result<ArtifactPullResponse, DojoClientError> {
+    pub async fn pull_artifacts(
+        &self,
+        since: i64,
+    ) -> Result<ArtifactPullResponse, DojoClientError> {
         let token = self.bearer_async().await?;
         let resp = self
             .http
@@ -382,10 +385,8 @@ impl DojoClient {
         run_id: &str,
         segments: &[RelaySegment],
     ) -> Result<(), DojoClientError> {
-        let publish = RelaySegmentsPublish {
-            run_id: run_id.to_string(),
-            segments: segments.to_vec(),
-        };
+        let publish =
+            RelaySegmentsPublish { run_id: run_id.to_string(), segments: segments.to_vec() };
         self.relay_post("segments", &publish).await
     }
 
@@ -403,9 +404,7 @@ impl DojoClient {
         // Non-idempotent: retry only on provably-pre-insert failures (see post_retry)
         // so a dropped response can't duplicate the gate.
         let resp = self.post_retry("inbox", item, false).await?;
-        resp.json::<RelayInboxAck>()
-            .await
-            .map_err(|e| DojoClientError::Decode(e.to_string()))
+        resp.json::<RelayInboxAck>().await.map_err(|e| DojoClientError::Decode(e.to_string()))
     }
 
     /// Poll inbox rows since a cursor (`GET relay/inbox?since={cursor}`) — the
@@ -426,9 +425,7 @@ impl DojoClient {
         if !status.is_success() {
             return Err(DojoClientError::Status(status.as_u16()));
         }
-        resp.json::<RelayInboxPull>()
-            .await
-            .map_err(|e| DojoClientError::Decode(e.to_string()))
+        resp.json::<RelayInboxPull>().await.map_err(|e| DojoClientError::Decode(e.to_string()))
     }
 
     /// Block (bounded) until a raised inbox row is answered, then return its
@@ -537,7 +534,8 @@ mod tests {
 
     #[test]
     fn base_url_trims_trailing_slash() {
-        let c = DojoClient::for_membership(&membership("http://localhost:7755/github/acme/", "dojo-x"));
+        let c =
+            DojoClient::for_membership(&membership("http://localhost:7755/github/acme/", "dojo-x"));
         assert_eq!(c.base_url(), "http://localhost:7755/github/acme");
     }
 
@@ -545,7 +543,8 @@ mod tests {
     fn artifacts_url_encodes_tenant_as_single_segment() {
         // tenant_key "github/acme" must ride as ONE segment (`github%2Facme`)
         // under the registry root — NOT under the dojo_url tenant path.
-        let c = DojoClient::for_membership(&membership("http://localhost:7755/github/acme", "dojo-x"));
+        let c =
+            DojoClient::for_membership(&membership("http://localhost:7755/github/acme", "dojo-x"));
         assert_eq!(c.artifacts_url(), "http://localhost:7755/v1/t/github%2Facme/artifacts");
     }
 
@@ -569,10 +568,11 @@ mod tests {
     #[tokio::test]
     #[cfg_attr(not(target_os = "macos"), ignore)]
     async fn pull_artifacts_forwards_since_and_parses_response() {
-        use axum::{extract::Query, routing::get, Json, Router};
+        use axum::{Json, Router, extract::Query, routing::get};
         use dojo_protocol::{
-            artifact_signature, ArtifactKind, ArtifactPayload, ArtifactPullResponse, ArtifactScope,
-            ArtifactStatus, Attribution, AttributionMode, PrinciplePayload, PublishedArtifact, PulledArtifact,
+            ArtifactKind, ArtifactPayload, ArtifactPullResponse, ArtifactScope, ArtifactStatus,
+            Attribution, AttributionMode, PrinciplePayload, PublishedArtifact, PulledArtifact,
+            artifact_signature,
         };
         use std::collections::HashMap;
 
@@ -582,7 +582,8 @@ mod tests {
         async fn artifacts(Query(q): Query<HashMap<String, String>>) -> Json<ArtifactPullResponse> {
             let since: i64 = q.get("since").and_then(|s| s.parse().ok()).unwrap_or(-1);
             let payload = ArtifactPayload::Principle(PrinciplePayload { rationale: None });
-            let (title, body) = ("prefer small functions".to_string(), "keep units testable".to_string());
+            let (title, body) =
+                ("prefer small functions".to_string(), "keep units testable".to_string());
             let artifact = PublishedArtifact {
                 signature: artifact_signature(ArtifactKind::Principle, &title, &body, &payload),
                 tenant_key: "github/acme".into(),
@@ -602,7 +603,12 @@ mod tests {
                 published_at: None,
             };
             Json(ArtifactPullResponse {
-                artifacts: vec![PulledArtifact { id: "art-1".into(), seq: since + 1, status: ArtifactStatus::Published, artifact }],
+                artifacts: vec![PulledArtifact {
+                    id: "art-1".into(),
+                    seq: since + 1,
+                    status: ArtifactStatus::Published,
+                    artifact,
+                }],
                 cursor: since,
             })
         }
@@ -610,7 +616,9 @@ mod tests {
         let app = Router::new().route("/v1/t/{tenant}/artifacts", get(artifacts));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
-        tokio::spawn(async move { axum::serve(listener, app).await.unwrap(); });
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
         let cref = format!("dojo-pull-{}", uuid::Uuid::new_v4());
@@ -644,31 +652,25 @@ mod tests {
         // The Worker relay routes are /v1/t/[origin]/[org]/relay/… — the tenant_key's
         // '/' is a real path separator (two segments), NOT an encoded %2F. (Regression
         // guard: the daemon previously sent github%2Facme → the Worker 404'd.)
-        let c = DojoClient::for_membership(&membership("http://localhost:7755/github/acme", "dojo-x"));
-        assert_eq!(
-            c.relay_url("inbox"),
-            "http://localhost:7755/v1/t/github/acme/relay/inbox"
-        );
+        let c =
+            DojoClient::for_membership(&membership("http://localhost:7755/github/acme", "dojo-x"));
+        assert_eq!(c.relay_url("inbox"), "http://localhost:7755/v1/t/github/acme/relay/inbox");
     }
 
     #[tokio::test]
     #[cfg_attr(not(target_os = "macos"), ignore)]
     async fn relay_post_retries_transient_failures() {
-        use axum::{extract::State, routing::post, Router};
+        use axum::{Router, extract::State, routing::post};
         use dojo_protocol::relay::{RelayRunStatus, RelaySessionUpdate};
-        use std::sync::atomic::{AtomicUsize, Ordering};
         use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
 
         // Fake Worker that 400s the first two hits (mimicking the vite dev Worker's
         // cold-route body-drop) then 200s — proving post_retry retries a transient
         // non-2xx and eventually succeeds.
         async fn session(State(hits): State<Arc<AtomicUsize>>) -> axum::http::StatusCode {
             let n = hits.fetch_add(1, Ordering::SeqCst);
-            if n < 2 {
-                axum::http::StatusCode::BAD_REQUEST
-            } else {
-                axum::http::StatusCode::OK
-            }
+            if n < 2 { axum::http::StatusCode::BAD_REQUEST } else { axum::http::StatusCode::OK }
         }
         let hits = Arc::new(AtomicUsize::new(0));
         let app = Router::new()
@@ -676,7 +678,9 @@ mod tests {
             .with_state(hits.clone());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
-        tokio::spawn(async move { axum::serve(listener, app).await.unwrap(); });
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
         let cref = format!("dojo-relay-retry-{}", uuid::Uuid::new_v4());
@@ -712,12 +716,12 @@ mod tests {
     #[tokio::test]
     #[cfg_attr(not(target_os = "macos"), ignore)]
     async fn raise_inbox_item_does_not_retry_ambiguous_failures() {
-        use axum::{extract::State, routing::post, Router};
+        use axum::{Router, extract::State, routing::post};
         use dojo_protocol::relay::{
             RelayInboxItem, RelayInboxKind, RelayInboxStatus, RelayMessageDirection,
         };
-        use std::sync::atomic::{AtomicUsize, Ordering};
         use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
 
         // A 5xx may have created the row, so a non-idempotent raise must NOT retry —
         // else it duplicates the gate (the exact bug dogfooding hit). Exactly ONE
@@ -732,7 +736,9 @@ mod tests {
             .with_state(hits.clone());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
-        tokio::spawn(async move { axum::serve(listener, app).await.unwrap(); });
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
         let cref = format!("dojo-raise-noretry-{}", uuid::Uuid::new_v4());
@@ -763,7 +769,7 @@ mod tests {
     #[tokio::test]
     #[cfg_attr(not(target_os = "macos"), ignore)]
     async fn poll_inbox_forwards_since_and_parses_response() {
-        use axum::{extract::Query, routing::get, Json, Router};
+        use axum::{Json, Router, extract::Query, routing::get};
         use dojo_protocol::relay::{
             RelayInboxItem, RelayInboxKind, RelayInboxPull, RelayInboxStatus, RelayMessageDirection,
         };
@@ -794,7 +800,9 @@ mod tests {
         let app = Router::new().route("/v1/t/{origin}/{org}/relay/inbox", get(inbox));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
-        tokio::spawn(async move { axum::serve(listener, app).await.unwrap(); });
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
         let cref = format!("dojo-relay-poll-{}", uuid::Uuid::new_v4());
@@ -816,7 +824,7 @@ mod tests {
     #[tokio::test]
     #[cfg_attr(not(target_os = "macos"), ignore)]
     async fn relay_publishes_serialize_and_succeed() {
-        use axum::{routing::post, Json, Router};
+        use axum::{Json, Router, routing::post};
         use dojo_protocol::relay::{
             GateSeverity, RelayInboxItem, RelayInboxKind, RelayMessageDirection, RelayRunStatus,
             RelaySegment, RelaySegmentsPublish, RelaySessionUpdate, SegmentState,
@@ -846,7 +854,9 @@ mod tests {
             .route("/v1/t/{origin}/{org}/relay/inbox", post(inbox));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
-        tokio::spawn(async move { axum::serve(listener, app).await.unwrap(); });
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
         let cref = format!("dojo-relay-pub-{}", uuid::Uuid::new_v4());
@@ -933,7 +943,7 @@ mod tests {
     #[tokio::test]
     #[cfg_attr(not(target_os = "macos"), ignore)]
     async fn publish_session_update_returning_id_decodes_the_cloud_session_id() {
-        use axum::{routing::post, Json, Router};
+        use axum::{Json, Router, routing::post};
         use dojo_protocol::relay::{RelayRunStatus, RelaySessionUpdate};
 
         // The Worker's `POST relay/session` returns `{ id }` — the upserted cloud
@@ -951,7 +961,9 @@ mod tests {
         let app = Router::new().route("/v1/t/{origin}/{org}/relay/session", post(session));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
-        tokio::spawn(async move { axum::serve(listener, app).await.unwrap(); });
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
         let cref = format!("dojo-sess-id-{}", uuid::Uuid::new_v4());
@@ -988,7 +1000,7 @@ mod tests {
     #[tokio::test]
     #[cfg_attr(not(target_os = "macos"), ignore)]
     async fn await_reply_returns_reply_once_answered() {
-        use axum::{extract::Query, routing::get, Json, Router};
+        use axum::{Json, Router, extract::Query, routing::get};
         use dojo_protocol::relay::{
             RelayInboxItem, RelayInboxKind, RelayInboxPull, RelayInboxStatus, RelayMessageDirection,
         };
@@ -1027,7 +1039,9 @@ mod tests {
         let app = Router::new().route("/v1/t/{origin}/{org}/relay/inbox", get(inbox));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
-        tokio::spawn(async move { axum::serve(listener, app).await.unwrap(); });
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
         let cref = format!("dojo-await-{}", uuid::Uuid::new_v4());
@@ -1050,7 +1064,7 @@ mod tests {
     #[tokio::test]
     #[cfg_attr(not(target_os = "macos"), ignore)]
     async fn await_reply_returns_none_on_timeout() {
-        use axum::{extract::Query, routing::get, Json, Router};
+        use axum::{Json, Router, extract::Query, routing::get};
         use dojo_protocol::relay::{
             RelayInboxItem, RelayInboxKind, RelayInboxPull, RelayInboxStatus, RelayMessageDirection,
         };
@@ -1080,7 +1094,9 @@ mod tests {
         let app = Router::new().route("/v1/t/{origin}/{org}/relay/inbox", get(inbox));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
-        tokio::spawn(async move { axum::serve(listener, app).await.unwrap(); });
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
         let cref = format!("dojo-await-to-{}", uuid::Uuid::new_v4());

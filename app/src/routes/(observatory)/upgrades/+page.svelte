@@ -136,7 +136,7 @@
     </div>
 
     <!-- title -->
-    <p class="text-[13px] text-ink m-0 leading-snug font-medium">{up.title}</p>
+    <p class="text-sm text-ink m-0 leading-snug font-medium">{up.title}</p>
 
     <!-- why with 2-line clamp so the card stays a consistent height -->
     {#if up.why}
@@ -167,7 +167,7 @@
     <section class="mb-8" data-upgrade-bucket={kind}>
       <!-- bucket header mirrors the mockup: big kanji + title + count + sub -->
       <div class="flex items-baseline gap-3 mb-1">
-        <span class="kanji text-[22px] {toneClass(kind)}">{meta.kanji}</span>
+        <span class="kanji text-xl {toneClass(kind)}">{meta.kanji}</span>
         <h2 class="display text-lg font-normal m-0">{meta.title}</h2>
         <span class="font-mono text-xs {toneClass(kind)}">{items.length}</span>
       </div>
@@ -182,7 +182,6 @@
 {/snippet}
 
 <PageHeader
-  variant="h2"
   eyebrow="Observatory · Upgrades"
   kanji="贈"
   title="Upgrades waiting for your call."

@@ -10,19 +10,19 @@ impl PgStore {
             "INSERT INTO activity.runs
                 (project_id, plan_ref, goal, dojo_session_id, max_concurrency,
                  author_name, author_email, plan_graph)
-             VALUES($1, COALESCE($2, ''), $3, $4, COALESCE($5, 1), $6, $7, $8) RETURNING id"
+             VALUES($1, COALESCE($2, ''), $3, $4, COALESCE($5, 1), $6, $7, $8) RETURNING id",
         )
-            .bind(new.project_id)
-            .bind(new.plan_ref.as_deref())
-            .bind(new.goal.as_deref())
-            .bind(new.dojo_session_id)
-            .bind(new.max_concurrency)
-            .bind(new.author_name.as_deref())
-            .bind(new.author_email.as_deref())
-            .bind(new.plan_graph.as_ref())
-            .fetch_one(&self.pool)
-            .await
-            .map_err(|e| e.to_string())?;
+        .bind(new.project_id)
+        .bind(new.plan_ref.as_deref())
+        .bind(new.goal.as_deref())
+        .bind(new.dojo_session_id)
+        .bind(new.max_concurrency)
+        .bind(new.author_name.as_deref())
+        .bind(new.author_email.as_deref())
+        .bind(new.plan_graph.as_ref())
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(id)
     }
 
@@ -35,13 +35,12 @@ impl PgStore {
         &self,
         run_id: &uuid::Uuid,
     ) -> Result<Option<serde_json::Value>, String> {
-        let row: Option<(Option<serde_json::Value>,)> = sqlx_core::query_as::query_as(
-            "SELECT plan_graph FROM activity.runs WHERE id = $1",
-        )
-            .bind(run_id)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(|e| e.to_string())?;
+        let row: Option<(Option<serde_json::Value>,)> =
+            sqlx_core::query_as::query_as("SELECT plan_graph FROM activity.runs WHERE id = $1")
+                .bind(run_id)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(|e| e.to_string())?;
         Ok(row.and_then(|(g,)| g))
     }
 
@@ -56,11 +55,11 @@ impl PgStore {
         sqlx_core::query::query(
             "UPDATE activity.runs SET plan_graph = $2, updated_at = now() WHERE id = $1",
         )
-            .bind(run_id)
-            .bind(graph)
-            .execute(&self.pool)
-            .await
-            .map_err(|e| e.to_string())?;
+        .bind(run_id)
+        .bind(graph)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(())
     }
 
@@ -76,19 +75,32 @@ impl PgStore {
         let row: Option<(Option<String>, Option<String>)> = sqlx_core::query_as::query_as(
             "SELECT author_name, author_email FROM activity.runs WHERE id = $1",
         )
-            .bind(run_id)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(|e| e.to_string())?;
+        .bind(run_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(row.unwrap_or((None, None)))
     }
 
     /// Fetch one run by id, or `None` if it does not exist.
     pub async fn get_run(&self, id: &uuid::Uuid) -> Result<Option<Run>, String> {
         let row: Option<(
-            uuid::Uuid, Option<uuid::Uuid>, String, Option<String>, String, Option<String>,
-            Option<String>, Option<String>, Option<String>, Option<uuid::Uuid>,
-            i32, String, Option<String>, Option<String>, String, String,
+            uuid::Uuid,
+            Option<uuid::Uuid>,
+            String,
+            Option<String>,
+            String,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<uuid::Uuid>,
+            i32,
+            String,
+            Option<String>,
+            Option<String>,
+            String,
+            String,
         )> = sqlx_core::query_as::query_as(&format!("{} WHERE id = $1", Self::RUN_SELECT))
             .bind(id)
             .fetch_optional(&self.pool)
@@ -128,18 +140,31 @@ impl PgStore {
         project_id: &uuid::Uuid,
     ) -> Result<Option<Run>, String> {
         let row: Option<(
-            uuid::Uuid, Option<uuid::Uuid>, String, Option<String>, String, Option<String>,
-            Option<String>, Option<String>, Option<String>, Option<uuid::Uuid>,
-            i32, String, Option<String>, Option<String>, String, String,
+            uuid::Uuid,
+            Option<uuid::Uuid>,
+            String,
+            Option<String>,
+            String,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<uuid::Uuid>,
+            i32,
+            String,
+            Option<String>,
+            Option<String>,
+            String,
+            String,
         )> = sqlx_core::query_as::query_as(&format!(
             "{} WHERE project_id = $1 AND status IN ('running', 'stalled') \
              ORDER BY started_at DESC LIMIT 1",
             Self::RUN_SELECT
         ))
-            .bind(project_id)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(|e| e.to_string())?;
+        .bind(project_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         row.map(Self::map_run_row).transpose()
     }
 
@@ -169,10 +194,21 @@ impl PgStore {
         // Agent progress on a stalled run = it's back → revive to running first,
         // so the appended events + the fresh heartbeat land on a running row.
         if run.status == dojo_protocol::relay::RelayRunStatus::Stalled {
-            self.update_run_status(&run.id, dojo_protocol::relay::RelayRunStatus::Running, None, None)
-                .await?;
-            self.append_run_event(&run.id, crate::runs::RunEventKind::Recovered, Some(phase), None,
-                &serde_json::json!({ "via": "update_phase", "revived": true })).await?;
+            self.update_run_status(
+                &run.id,
+                dojo_protocol::relay::RelayRunStatus::Running,
+                None,
+                None,
+            )
+            .await?;
+            self.append_run_event(
+                &run.id,
+                crate::runs::RunEventKind::Recovered,
+                Some(phase),
+                None,
+                &serde_json::json!({ "via": "update_phase", "revived": true }),
+            )
+            .await?;
         }
         let detail = serde_json::json!({ "via": "update_phase" });
         for (kind, ph) in &events {
@@ -202,11 +238,11 @@ impl PgStore {
               WHERE run_id = $1 AND kind::text <> ALL($2)
               ORDER BY created_at DESC, id DESC LIMIT 1",
         )
-            .bind(run_id)
-            .bind(&excluded)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(|e| e.to_string())?;
+        .bind(run_id)
+        .bind(&excluded)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(row.map(|(ts,)| ts))
     }
 
@@ -226,15 +262,15 @@ impl PgStore {
                     paused_until = $3::timestamptz,
                     pause_reason = $4,
                     updated_at   = now()
-              WHERE id = $1"
+              WHERE id = $1",
         )
-            .bind(id)
-            .bind(status.as_db_str())
-            .bind(paused_until)
-            .bind(pause_reason)
-            .execute(&self.pool)
-            .await
-            .map_err(|e| e.to_string())?;
+        .bind(id)
+        .bind(status.as_db_str())
+        .bind(paused_until)
+        .bind(pause_reason)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(())
     }
 
@@ -248,14 +284,14 @@ impl PgStore {
         sqlx_core::query::query(
             "UPDATE activity.runs
                 SET current_phase = $2, current_feature = $3, updated_at = now()
-              WHERE id = $1"
+              WHERE id = $1",
         )
-            .bind(id)
-            .bind(phase)
-            .bind(feature)
-            .execute(&self.pool)
-            .await
-            .map_err(|e| e.to_string())?;
+        .bind(id)
+        .bind(phase)
+        .bind(feature)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(())
     }
 
@@ -263,12 +299,12 @@ impl PgStore {
     /// Also refreshes `updated_at`.
     pub async fn touch_run_heartbeat(&self, id: &uuid::Uuid) -> Result<(), String> {
         sqlx_core::query::query(
-            "UPDATE activity.runs SET heartbeat_at = now(), updated_at = now() WHERE id = $1"
+            "UPDATE activity.runs SET heartbeat_at = now(), updated_at = now() WHERE id = $1",
         )
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(|e| e.to_string())?;
+        .bind(id)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(())
     }
 
@@ -283,29 +319,33 @@ impl PgStore {
         dojo_session_id: &uuid::Uuid,
     ) -> Result<(), String> {
         sqlx_core::query::query(
-            "UPDATE activity.runs SET dojo_session_id = $2, updated_at = now() WHERE id = $1"
+            "UPDATE activity.runs SET dojo_session_id = $2, updated_at = now() WHERE id = $1",
         )
-            .bind(id)
-            .bind(dojo_session_id)
-            .execute(&self.pool)
-            .await
-            .map_err(|e| e.to_string())?;
+        .bind(id)
+        .bind(dojo_session_id)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(())
     }
 
     /// Mark a run terminal — sets `status` (expected `Done`/`Failed`) and stamps
     /// `completed_at = now()` (+ `updated_at`).
-    pub async fn complete_run(&self, id: &uuid::Uuid, status: RelayRunStatus) -> Result<(), String> {
+    pub async fn complete_run(
+        &self,
+        id: &uuid::Uuid,
+        status: RelayRunStatus,
+    ) -> Result<(), String> {
         sqlx_core::query::query(
             "UPDATE activity.runs
                 SET status = $2::sensei.run_status, completed_at = now(), updated_at = now()
-              WHERE id = $1"
+              WHERE id = $1",
         )
-            .bind(id)
-            .bind(status.as_db_str())
-            .execute(&self.pool)
-            .await
-            .map_err(|e| e.to_string())?;
+        .bind(id)
+        .bind(status.as_db_str())
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(())
     }
 
@@ -322,37 +362,48 @@ impl PgStore {
     ) -> Result<i64, String> {
         let (id,): (i64,) = sqlx_core::query_as::query_as(
             "INSERT INTO activity.run_events(run_id, kind, phase, feature, detail)
-             VALUES($1, $2::sensei.run_event_kind, $3, $4, $5) RETURNING id"
+             VALUES($1, $2::sensei.run_event_kind, $3, $4, $5) RETURNING id",
         )
-            .bind(run_id)
-            .bind(kind.as_db_str())
-            .bind(phase)
-            .bind(feature)
-            .bind(detail)
-            .fetch_one(&self.pool)
-            .await
-            .map_err(|e| e.to_string())?;
+        .bind(run_id)
+        .bind(kind.as_db_str())
+        .bind(phase)
+        .bind(feature)
+        .bind(detail)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(id)
     }
 
     /// A run's cadence events, newest first, capped at `limit`. `kind` arrives
     /// as text and is parsed with [`RunEventKind::from_db_str`]; an unknown
     /// value is a hard error, never a silent skip.
-    pub async fn list_run_events(&self, run_id: &uuid::Uuid, limit: i64) -> Result<Vec<RunEvent>, String> {
-        let rows: Vec<(i64, uuid::Uuid, String, Option<String>, Option<String>, serde_json::Value, String)> =
-            sqlx_core::query_as::query_as(
-                "SELECT id, run_id, kind::text, phase, feature, detail,
+    pub async fn list_run_events(
+        &self,
+        run_id: &uuid::Uuid,
+        limit: i64,
+    ) -> Result<Vec<RunEvent>, String> {
+        let rows: Vec<(
+            i64,
+            uuid::Uuid,
+            String,
+            Option<String>,
+            Option<String>,
+            serde_json::Value,
+            String,
+        )> = sqlx_core::query_as::query_as(
+            "SELECT id, run_id, kind::text, phase, feature, detail,
                         to_json(created_at)#>>'{}'
                    FROM activity.run_events
                   WHERE run_id = $1
                   ORDER BY created_at DESC, id DESC
-                  LIMIT $2"
-            )
-                .bind(run_id)
-                .bind(limit)
-                .fetch_all(&self.pool)
-                .await
-                .map_err(|e| e.to_string())?;
+                  LIMIT $2",
+        )
+        .bind(run_id)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         rows.into_iter()
             .map(|(id, run_id, kind, phase, feature, detail, created_at)| {
                 let kind = RunEventKind::from_db_str(&kind)
@@ -379,11 +430,11 @@ impl PgStore {
               WHERE status = 'paused'::sensei.run_status
                 AND paused_until IS NOT NULL
                 AND paused_until <= now()
-             RETURNING id"
+             RETURNING id",
         )
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|e| e.to_string())?;
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(rows.into_iter().map(|(id,)| id).collect())
     }
 
@@ -515,5 +566,4 @@ impl PgStore {
         .map_err(|e| e.to_string())?;
         Ok(row)
     }
-
 }

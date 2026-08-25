@@ -10,6 +10,25 @@ set search_path to sensei, extensions;
 -- processes newer commits. The engine advances a group's watermark ONLY when that
 -- group's compute succeeds, so a failed group holds its cursor and retries the same
 -- range on the next run (fail-closed: a failing group never silently skips days).
+-- How far metric computation has got, per repository × metric group.
+--
+-- One of TWO watermark tables. The other is `activity.capture_watermarks`
+-- (capture source × unit → mtime). They answer the same question — "how far have
+-- I got" — and deliberately remain SEPARATE rather than one generic
+-- `pipeline_watermarks`:
+--
+--   * this one keys on a real `repository_id uuid` with ON DELETE CASCADE
+--     (verified by `metric_watermarks_pk_and_cascade_on_repository_delete`). A
+--     generic `scope_key text` cannot reference sensei.repositories, so merging
+--     would trade a tested integrity guarantee for a shared name.
+--   * the cursors are different types with different meanings: a sealed-through
+--     DATE plus a commit sha here, an mtime in nanoseconds plus a count there.
+--   * they sit either side of the local/shared boundary — activity.* is raw
+--     capture that never leaves the machine.
+--
+-- The unification is in the VOCABULARY, not the storage: both are `*_watermarks`,
+-- both carry `updated_at`, both mean "everything before this point is done".
+
 create table if not exists metric_watermarks (
   repository_id uuid        not null references sensei.repositories(id) on delete cascade
 , metric_group  text        not null

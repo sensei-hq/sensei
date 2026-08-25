@@ -1,9 +1,12 @@
 //! Shared tree-sitter helpers used by multiple language adapters.
 //! Every adapter gets these via `use super::common::*` or selective imports.
 
-use tree_sitter::Node;
+use crate::ir::{
+    ClassKind, IRBase, IRClass, IRConstant, IRFunction, IRImport, IRMethod, IRModule, IRParam,
+    IRParsedFile, Visibility,
+};
 use crate::types::{ParsedSymbol, SymbolKind};
-use crate::ir::{IRBase, IRFunction, IRMethod, IRClass, IRParam, IRImport, IRConstant, IRParsedFile, IRModule, ClassKind, Visibility};
+use tree_sitter::Node;
 
 /// Extract the text of a named field from a tree-sitter node.
 pub fn field_text(node: &Node, field: &str, src: &[u8]) -> String {
@@ -73,7 +76,10 @@ pub fn extract_script_blocks(source: &str) -> Vec<(String, u32, bool)> {
 /// the block's position in the file. The component's module is its file path (a
 /// `.svelte`/`.vue` file is one module), so `.ts`↔SFC imports merge in the shared
 /// `typescript` namespace. Returns None with no resolvable package (no package.json).
-pub(crate) fn sfc_fqn_output(abs_path: &str, content: &str) -> Option<crate::languages::fqn::FqnFileOutput> {
+pub(crate) fn sfc_fqn_output(
+    abs_path: &str,
+    content: &str,
+) -> Option<crate::languages::fqn::FqnFileOutput> {
     use crate::languages::typescript::typescript_fqn;
     let ctx = typescript_fqn::ts_file_context(abs_path)?;
     let mut out = crate::languages::fqn::FqnFileOutput {
@@ -101,10 +107,15 @@ pub(crate) fn sfc_fqn_output(abs_path: &str, content: &str) -> Option<crate::lan
 /// Build an IRFunction from common fields. Used by all adapters.
 #[allow(clippy::too_many_arguments)]
 pub fn ir_function(
-    name: String, node: &Node, _lines: &[&str],
-    is_exported: bool, is_async: bool,
-    params: Vec<IRParam>, return_type: Option<String>,
-    docstring: Option<String>, decorators: Vec<String>,
+    name: String,
+    node: &Node,
+    _lines: &[&str],
+    is_exported: bool,
+    is_async: bool,
+    params: Vec<IRParam>,
+    return_type: Option<String>,
+    docstring: Option<String>,
+    decorators: Vec<String>,
     body_text: &str,
 ) -> IRFunction {
     IRFunction {
@@ -129,11 +140,17 @@ pub fn ir_function(
 /// Build an IRMethod from common fields. Used by all adapters.
 #[allow(clippy::too_many_arguments)]
 pub fn ir_method(
-    name: String, node: &Node,
-    is_exported: bool, is_async: bool, is_static: bool,
-    params: Vec<IRParam>, return_type: Option<String>,
-    docstring: Option<String>, decorators: Vec<String>,
-    visibility: Visibility, body_text: &str,
+    name: String,
+    node: &Node,
+    is_exported: bool,
+    is_async: bool,
+    is_static: bool,
+    params: Vec<IRParam>,
+    return_type: Option<String>,
+    docstring: Option<String>,
+    decorators: Vec<String>,
+    visibility: Visibility,
+    body_text: &str,
 ) -> IRMethod {
     IRMethod {
         base: IRBase {
@@ -158,8 +175,11 @@ pub fn ir_method(
 
 /// Build an IRClass from common fields. Used by all adapters.
 pub fn ir_class(
-    name: String, node: &Node, kind: ClassKind,
-    is_exported: bool, docstring: Option<String>,
+    name: String,
+    node: &Node,
+    kind: ClassKind,
+    is_exported: bool,
+    docstring: Option<String>,
     decorators: Vec<String>,
 ) -> IRClass {
     IRClass {
@@ -180,11 +200,12 @@ pub fn ir_class(
 
 /// Build a minimal IRParsedFile wrapper.
 pub fn ir_parsed_file(
-    file_path: &str, language: &str,
-    module: IRModule, classes: Vec<IRClass>,
+    file_path: &str,
+    language: &str,
+    module: IRModule,
+    classes: Vec<IRClass>,
 ) -> IRParsedFile {
-    let ext = std::path::Path::new(file_path).extension()
-        .and_then(|e| e.to_str()).unwrap_or("");
+    let ext = std::path::Path::new(file_path).extension().and_then(|e| e.to_str()).unwrap_or("");
     let tag = crate::tasks::processors::types::classify_file_tag(file_path, ext);
     let is_test = tag == "test" || tag == "e2e";
     IRParsedFile {
@@ -199,16 +220,23 @@ pub fn ir_parsed_file(
 
 /// Build an IRModule with file metadata.
 pub fn ir_module(
-    file_path: &str, language: &str,
-    functions: Vec<IRFunction>, constants: Vec<IRConstant>,
-    imports: Vec<IRImport>, is_test: bool,
+    file_path: &str,
+    language: &str,
+    functions: Vec<IRFunction>,
+    constants: Vec<IRConstant>,
+    imports: Vec<IRImport>,
+    is_test: bool,
 ) -> IRModule {
-    let ext = std::path::Path::new(file_path).extension()
-        .and_then(|e| e.to_str()).map(|e| format!(".{}", e));
+    let ext = std::path::Path::new(file_path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| format!(".{}", e));
     IRModule {
         base: IRBase {
-            name: std::path::Path::new(file_path).file_stem()
-                .map(|s| s.to_string_lossy().to_string()).unwrap_or_default(),
+            name: std::path::Path::new(file_path)
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_default(),
             file: file_path.into(),
             extension: ext,
             language: Some(language.into()),
@@ -258,7 +286,8 @@ mod tests {
 
     #[test]
     fn extract_script_blocks_single() {
-        let source = "<template><div>hi</div></template>\n<script lang=\"ts\">\nconst x = 1;\n</script>";
+        let source =
+            "<template><div>hi</div></template>\n<script lang=\"ts\">\nconst x = 1;\n</script>";
         let blocks = extract_script_blocks(source);
         assert_eq!(blocks.len(), 1);
         assert!(blocks[0].0.contains("const x = 1"));
@@ -267,7 +296,8 @@ mod tests {
 
     #[test]
     fn extract_script_blocks_multiple() {
-        let source = "<script>\nlet a = 1;\n</script>\n<script setup lang=\"ts\">\nlet b = 2;\n</script>";
+        let source =
+            "<script>\nlet a = 1;\n</script>\n<script setup lang=\"ts\">\nlet b = 2;\n</script>";
         let blocks = extract_script_blocks(source);
         assert_eq!(blocks.len(), 2);
         assert!(blocks[0].0.contains("let a"));

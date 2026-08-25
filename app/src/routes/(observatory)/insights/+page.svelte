@@ -153,7 +153,7 @@
 
 <div class="flex flex-col h-full">
   <PageHeader
-    variant="h1"
+    size="lg"
     kanji="今"
     eyebrow="Observatory · Insights"
     title="What needs you, what's working, what's quiet."

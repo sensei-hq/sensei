@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { SectionHead, Banner, Btn, Icon, StanceDial, LadderRung } from '$lib/components/kit';
+	import { SectionHead, Btn, Icon, StanceDial, LadderRung } from '$lib/components/kit';
 	import type { KitStanceDial, KitLadderRung } from '$lib/components/kit/types';
 	import { personalRungs } from '$lib/personal-view';
 
@@ -25,21 +25,15 @@
 	const rungs = $derived(personalRungs(ladder));
 </script>
 
-<div class="flex flex-col p-8 gap-6">
-	<SectionHead eyebrow="You · standing rules" title="Your constitution">
+<div class="flex flex-col p-4 gap-4 md:p-8 md:gap-6">
+	<SectionHead
+		kanji="静" eyebrow="You · standing rules" title="Your constitution"
+		description="Everything sensei keeps is derived and stays on your machine. Your stance sets how far a session runs and what surfaces to a dōjō. A classification change alters which rules apply — never what leaves."
+	>
 		{#snippet right()}
 			<Btn size="sm" variant="ghost" icon="box" onclick={onGoPacks}>Rule packs →</Btn>
 		{/snippet}
 	</SectionHead>
-
-	<Banner
-		kanji="静"
-		tone="neutral"
-		title="Everything sensei keeps is derived and stays on your machine."
-	>
-		Your stance sets how far a session runs and what surfaces to a dōjō. A classification change
-		alters which rules apply — never what leaves.
-	</Banner>
 
 	<div class="grid gap-4 grid-cols-1 md:grid-cols-3">
 		{#each stance as dial (dial.id)}

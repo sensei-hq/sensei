@@ -1,10 +1,6 @@
-use axum::{
-    extract::State,
-    http::StatusCode,
-    response::Json,
-};
-use serde::Deserialize;
 use crate::api::state::AppState;
+use axum::{extract::State, http::StatusCode, response::Json};
+use serde::Deserialize;
 
 // ── Unified Query ───────────────────────────────────────────────────────────
 
@@ -34,10 +30,18 @@ pub(crate) async fn unified_query(
     let result = if q.contains("lib") || q.contains("dependenc") || q.contains("package") {
         // Library query
         query_libs(&state, &q, &repo_id, &body.solution_id).await?
-    } else if q.contains("function") || q.contains("method") || q.contains("fn ") || q.contains("def ") {
+    } else if q.contains("function")
+        || q.contains("method")
+        || q.contains("fn ")
+        || q.contains("def ")
+    {
         // Function search
         query_functions(&state, &q, &repo_id).await?
-    } else if q.contains("type") || q.contains("interface") || q.contains("class") || q.contains("struct") {
+    } else if q.contains("type")
+        || q.contains("interface")
+        || q.contains("class")
+        || q.contains("struct")
+    {
         // Type search
         query_types(&state, &q, &repo_id).await?
     } else if q.contains("who calls") || q.contains("callers") || q.contains("called by") {
@@ -46,10 +50,18 @@ pub(crate) async fn unified_query(
     } else if q.contains("calls") || q.contains("callees") || q.contains("depends on") {
         // Callee traceability
         query_callees(&state, &q, &repo_id).await?
-    } else if q.contains("file") || q.contains("component") || q.contains("tagged") || q.contains("framework") {
+    } else if q.contains("file")
+        || q.contains("component")
+        || q.contains("tagged")
+        || q.contains("framework")
+    {
         // File/tag search
         query_files(&state, &q, &repo_id).await?
-    } else if q.contains("pattern") || q.contains("hook") || q.contains("middleware") || q.contains("route") {
+    } else if q.contains("pattern")
+        || q.contains("hook")
+        || q.contains("middleware")
+        || q.contains("route")
+    {
         // Pattern search (via tags)
         query_patterns(&state, &q, &repo_id).await?
     } else if q.contains("doc") || q.contains("readme") || q.contains("drift") {
@@ -68,23 +80,40 @@ pub(crate) async fn unified_query(
 
 /// Resolve a repo_id / project name / project UUID to a list of folder UUIDs
 /// (project-scoped). Returns an empty Vec if unknown.
-pub(crate) async fn resolve_scope_ids(state: &AppState, repo_id: &str) -> Result<Vec<uuid::Uuid>, StatusCode> {
-    if repo_id.is_empty() { return Ok(vec![]); } // genuine: no repo → empty scope
+pub(crate) async fn resolve_scope_ids(
+    state: &AppState,
+    repo_id: &str,
+) -> Result<Vec<uuid::Uuid>, StatusCode> {
+    if repo_id.is_empty() {
+        return Ok(vec![]);
+    } // genuine: no repo → empty scope
     // A DB error is NOT an empty scope — propagate it so callers 500 rather than
     // return "no results" for a repo that in fact has code.
-    state.pg.scope_folder_ids(repo_id).await
-        .map_err(|e| { tracing::warn!(error = %e, repo_id, "resolve_scope_ids: scope_folder_ids failed"); StatusCode::INTERNAL_SERVER_ERROR })
+    state.pg.scope_folder_ids(repo_id).await.map_err(|e| {
+        tracing::warn!(error = %e, repo_id, "resolve_scope_ids: scope_folder_ids failed");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })
 }
 
 /// Resolve a repo_id string to a single folder UUID.
 /// Kept for callers that still need a single UUID (e.g. session/community ops).
-pub(crate) async fn resolve_folder_id(state: &AppState, repo_id: &str) -> Result<Option<uuid::Uuid>, StatusCode> {
+pub(crate) async fn resolve_folder_id(
+    state: &AppState,
+    repo_id: &str,
+) -> Result<Option<uuid::Uuid>, StatusCode> {
     Ok(resolve_scope_ids(state, repo_id).await?.into_iter().next())
 }
 
-pub(crate) async fn query_libs(state: &AppState, q: &str, repo_id: &str, _solution_id: &Option<String>) -> Result<serde_json::Value, StatusCode> {
-    let repos = state.pg.list_repositories().await
-        .map_err(|e| { tracing::warn!(error = %e, repo_id = %repo_id, "query_libs: list_repositories failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+pub(crate) async fn query_libs(
+    state: &AppState,
+    q: &str,
+    repo_id: &str,
+    _solution_id: &Option<String>,
+) -> Result<serde_json::Value, StatusCode> {
+    let repos = state.pg.list_repositories().await.map_err(|e| {
+        tracing::warn!(error = %e, repo_id = %repo_id, "query_libs: list_repositories failed");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
 
     let filtered: Vec<&serde_json::Value> = if !repo_id.is_empty() {
         repos.iter().filter(|p| p["name"].as_str() == Some(repo_id)).collect()
@@ -105,8 +134,10 @@ pub(crate) async fn query_libs(state: &AppState, q: &str, repo_id: &str, _soluti
     }
 
     // Also search libraries from PgStore
-    let lib_docs = state.pg.list_libraries().await
-        .map_err(|e| { tracing::warn!(error = %e, "query_libs: list_libraries failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+    let lib_docs = state.pg.list_libraries().await.map_err(|e| {
+        tracing::warn!(error = %e, "query_libs: list_libraries failed");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
     let _term = extract_search_term(q);
 
     Ok(serde_json::json!({
@@ -119,7 +150,11 @@ pub(crate) async fn query_libs(state: &AppState, q: &str, repo_id: &str, _soluti
     }))
 }
 
-pub(crate) async fn query_functions(state: &AppState, q: &str, repo_id: &str) -> Result<serde_json::Value, StatusCode> {
+pub(crate) async fn query_functions(
+    state: &AppState,
+    q: &str,
+    repo_id: &str,
+) -> Result<serde_json::Value, StatusCode> {
     let term = extract_search_term(q);
     let ids = resolve_scope_ids(state, repo_id).await?;
     let results = if !ids.is_empty() {
@@ -137,7 +172,11 @@ pub(crate) async fn query_functions(state: &AppState, q: &str, repo_id: &str) ->
     }))
 }
 
-pub(crate) async fn query_types(state: &AppState, q: &str, repo_id: &str) -> Result<serde_json::Value, StatusCode> {
+pub(crate) async fn query_types(
+    state: &AppState,
+    q: &str,
+    repo_id: &str,
+) -> Result<serde_json::Value, StatusCode> {
     let term = extract_search_term(q);
     let ids = resolve_scope_ids(state, repo_id).await?;
     let results = if !ids.is_empty() {
@@ -155,10 +194,16 @@ pub(crate) async fn query_types(state: &AppState, q: &str, repo_id: &str) -> Res
     }))
 }
 
-pub(crate) async fn query_callers(state: &AppState, q: &str, repo_id: &str) -> Result<serde_json::Value, StatusCode> {
+pub(crate) async fn query_callers(
+    state: &AppState,
+    q: &str,
+    repo_id: &str,
+) -> Result<serde_json::Value, StatusCode> {
     let term = extract_search_term(q);
-    let results = state.pg.get_callers_by_name(repo_id, &term).await
-        .map_err(|e| { tracing::warn!(error = %e, repo_id = %repo_id, "query_callers: get_callers_by_name failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+    let results = state.pg.get_callers_by_name(repo_id, &term).await.map_err(|e| {
+        tracing::warn!(error = %e, repo_id = %repo_id, "query_callers: get_callers_by_name failed");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
     Ok(serde_json::json!({
         "type": "callers",
         "query": q,
@@ -167,10 +212,16 @@ pub(crate) async fn query_callers(state: &AppState, q: &str, repo_id: &str) -> R
     }))
 }
 
-pub(crate) async fn query_callees(state: &AppState, q: &str, repo_id: &str) -> Result<serde_json::Value, StatusCode> {
+pub(crate) async fn query_callees(
+    state: &AppState,
+    q: &str,
+    repo_id: &str,
+) -> Result<serde_json::Value, StatusCode> {
     let term = extract_search_term(q);
-    let results = state.pg.get_callees_by_name(repo_id, &term).await
-        .map_err(|e| { tracing::warn!(error = %e, repo_id = %repo_id, "query_callees: get_callees_by_name failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+    let results = state.pg.get_callees_by_name(repo_id, &term).await.map_err(|e| {
+        tracing::warn!(error = %e, repo_id = %repo_id, "query_callees: get_callees_by_name failed");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
     Ok(serde_json::json!({
         "type": "callees",
         "query": q,
@@ -179,28 +230,51 @@ pub(crate) async fn query_callees(state: &AppState, q: &str, repo_id: &str) -> R
     }))
 }
 
-pub(crate) async fn query_files(state: &AppState, q: &str, repo_id: &str) -> Result<serde_json::Value, StatusCode> {
+pub(crate) async fn query_files(
+    state: &AppState,
+    q: &str,
+    repo_id: &str,
+) -> Result<serde_json::Value, StatusCode> {
     let term = extract_search_term(q);
-    let results = state.pg.get_files_by_tag(repo_id, &term).await
-        .map_err(|e| { tracing::warn!(error = %e, repo_id = %repo_id, "query_files: get_files_by_tag failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+    let results = state.pg.get_files_by_tag(repo_id, &term).await.map_err(|e| {
+        tracing::warn!(error = %e, repo_id = %repo_id, "query_files: get_files_by_tag failed");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
     Ok(serde_json::json!({ "type": "files", "query": q, "results": results }))
 }
 
-pub(crate) async fn query_patterns(state: &AppState, q: &str, repo_id: &str) -> Result<serde_json::Value, StatusCode> {
-    let tag = if q.contains("hook") { "hook" }
-        else if q.contains("middleware") { "middleware" }
-        else if q.contains("route") { "route" }
-        else if q.contains("handler") { "handler" }
-        else if q.contains("component") { "component" }
-        else { &extract_search_term(q) };
+pub(crate) async fn query_patterns(
+    state: &AppState,
+    q: &str,
+    repo_id: &str,
+) -> Result<serde_json::Value, StatusCode> {
+    let tag = if q.contains("hook") {
+        "hook"
+    } else if q.contains("middleware") {
+        "middleware"
+    } else if q.contains("route") {
+        "route"
+    } else if q.contains("handler") {
+        "handler"
+    } else if q.contains("component") {
+        "component"
+    } else {
+        &extract_search_term(q)
+    };
     let results = state.pg.get_files_by_tag(repo_id, tag).await
         .map_err(|e| { tracing::warn!(error = %e, repo_id = %repo_id, tag = %tag, "query_patterns: get_files_by_tag failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
     Ok(serde_json::json!({ "type": "patterns", "query": q, "pattern": tag, "results": results }))
 }
 
-pub(crate) async fn query_docs(state: &AppState, q: &str, repo_id: &str) -> Result<serde_json::Value, StatusCode> {
-    let drifted = state.pg.get_doc_drift(repo_id).await
-        .map_err(|e| { tracing::warn!(error = %e, repo_id = %repo_id, "query_docs: get_doc_drift failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+pub(crate) async fn query_docs(
+    state: &AppState,
+    q: &str,
+    repo_id: &str,
+) -> Result<serde_json::Value, StatusCode> {
+    let drifted = state.pg.get_doc_drift(repo_id).await.map_err(|e| {
+        tracing::warn!(error = %e, repo_id = %repo_id, "query_docs: get_doc_drift failed");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
     Ok(serde_json::json!({
         "type": "docs",
         "query": q,
@@ -208,7 +282,10 @@ pub(crate) async fn query_docs(state: &AppState, q: &str, repo_id: &str) -> Resu
     }))
 }
 
-pub(crate) async fn query_communities(state: &AppState, repo_id: &str) -> Result<serde_json::Value, StatusCode> {
+pub(crate) async fn query_communities(
+    state: &AppState,
+    repo_id: &str,
+) -> Result<serde_json::Value, StatusCode> {
     // Communities are stored per-folder; aggregate across all scoped folders.
     let ids = resolve_scope_ids(state, repo_id).await?;
     let communities = state.pg.list_communities_scoped(&ids).await
@@ -219,27 +296,40 @@ pub(crate) async fn query_communities(state: &AppState, repo_id: &str) -> Result
     }))
 }
 
-pub(crate) async fn query_general(state: &AppState, q: &str, repo_id: &str) -> Result<serde_json::Value, StatusCode> {
+pub(crate) async fn query_general(
+    state: &AppState,
+    q: &str,
+    repo_id: &str,
+) -> Result<serde_json::Value, StatusCode> {
     let term = extract_search_term(q);
     let ids = resolve_scope_ids(state, repo_id).await?;
     let (functions, types) = if !ids.is_empty() {
-        let fns_lex = state.pg.search_functions_scoped(&ids, &term).await
-            .map_err(|e| { tracing::warn!(error = %e, "query_general: search_functions_scoped failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
-        let tys_lex = state.pg.search_types_scoped(&ids, &term).await
-            .map_err(|e| { tracing::warn!(error = %e, "query_general: search_types_scoped failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+        let fns_lex = state.pg.search_functions_scoped(&ids, &term).await.map_err(|e| {
+            tracing::warn!(error = %e, "query_general: search_functions_scoped failed");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+        let tys_lex = state.pg.search_types_scoped(&ids, &term).await.map_err(|e| {
+            tracing::warn!(error = %e, "query_general: search_types_scoped failed");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
         // Embed once, fuse the semantic candidates into both node result sets.
         // (fuse_semantic/embed_query stay fail-open — a missing embedding degrades
         // to the lexical order, which is additive, not error-masking.)
         let query_vec = embed_query(state, q).await;
-        let fns = fuse_semantic(state, query_vec.as_ref(), &ids, fns_lex, FUNCTION_KINDS, function_hit).await;
-        let tys = fuse_semantic(state, query_vec.as_ref(), &ids, tys_lex, TYPE_KINDS, type_hit).await;
+        let fns =
+            fuse_semantic(state, query_vec.as_ref(), &ids, fns_lex, FUNCTION_KINDS, function_hit)
+                .await;
+        let tys =
+            fuse_semantic(state, query_vec.as_ref(), &ids, tys_lex, TYPE_KINDS, type_hit).await;
         (fns, tys)
     } else {
         (vec![], vec![])
     };
 
-    let lib_docs = state.pg.list_libraries().await
-        .map_err(|e| { tracing::warn!(error = %e, "query_general: list_libraries failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+    let lib_docs = state.pg.list_libraries().await.map_err(|e| {
+        tracing::warn!(error = %e, "query_general: list_libraries failed");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
 
     Ok(serde_json::json!({
         "type": "general",
@@ -263,30 +353,48 @@ pub(crate) async fn query_general(state: &AppState, q: &str, repo_id: &str) -> R
 /// indexed as a symbol. Each item is tagged `via: "symbol" | "grep"`. Fail-open:
 /// no repo roots / an empty grep / an unreadable file degrade to the symbol arm
 /// (or an empty snippet), never an error.
-pub(crate) async fn context_pack(state: &AppState, q: &str, repo_id: &str) -> Result<serde_json::Value, StatusCode> {
+pub(crate) async fn context_pack(
+    state: &AppState,
+    q: &str,
+    repo_id: &str,
+) -> Result<serde_json::Value, StatusCode> {
     let general = query_general(state, q, repo_id).await?;
     // Collect top-k symbol ids in ranked order (functions first, then types).
     let mut ordered_ids: Vec<uuid::Uuid> = Vec::new();
     for key in ["functions", "types"] {
         if let Some(arr) = general.get(key).and_then(|v| v.as_array()) {
             for it in arr {
-                if ordered_ids.len() >= CONTEXT_PACK_K { break; }
-                if let Some(id) = it.get("id").and_then(|v| v.as_str()).and_then(|s| uuid::Uuid::parse_str(s).ok()) {
+                if ordered_ids.len() >= CONTEXT_PACK_K {
+                    break;
+                }
+                if let Some(id) = it
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .and_then(|s| uuid::Uuid::parse_str(s).ok())
+                {
                     ordered_ids.push(id);
                 }
             }
         }
-        if ordered_ids.len() >= CONTEXT_PACK_K { break; }
+        if ordered_ids.len() >= CONTEXT_PACK_K {
+            break;
+        }
     }
 
-    let locs = state.pg.node_locations(&ordered_ids).await
-        .map_err(|e| { tracing::warn!(error = %e, "context_pack: node_locations failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+    let locs = state.pg.node_locations(&ordered_ids).await.map_err(|e| {
+        tracing::warn!(error = %e, "context_pack: node_locations failed");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
     let mut items: Vec<serde_json::Value> = Vec::new();
     // Files already packed by the symbol arm — the grep arm skips them so a
     // symbol and a comment in the same file don't produce two near-dupe entries.
     let mut packed_files: std::collections::HashSet<String> = std::collections::HashSet::new();
     for id in &ordered_ids {
-        let Some((_, abs_path, file_path, ls, le, kind, name, sig)) = locs.iter().find(|l| &l.0 == id) else { continue };
+        let Some((_, abs_path, file_path, ls, le, kind, name, sig)) =
+            locs.iter().find(|l| &l.0 == id)
+        else {
+            continue;
+        };
         let snippet = std::fs::read_to_string(std::path::Path::new(abs_path).join(file_path))
             .ok()
             .map(|c| extract_snippet(&c, *ls, *le, SNIPPET_MAX_LINES))
@@ -301,7 +409,9 @@ pub(crate) async fn context_pack(state: &AppState, q: &str, repo_id: &str) -> Re
     // Content-grep arm: concepts that live only in file content.
     items.extend(grep_context_items(state, repo_id, &extract_search_term(q), &packed_files).await);
 
-    Ok(serde_json::json!({ "type": "context_pack", "query": q, "count": items.len(), "items": items }))
+    Ok(
+        serde_json::json!({ "type": "context_pack", "query": q, "count": items.len(), "items": items }),
+    )
 }
 
 /// The content-grep arm of `context_pack`: up to `CONTEXT_PACK_GREP_K` raw
@@ -435,7 +545,13 @@ pub(crate) struct GrepOpts {
 
 impl Default for GrepOpts {
     fn default() -> Self {
-        Self { max_matches: 12, max_per_file: 2, max_files: 5000, max_file_bytes: 512 * 1024, max_line_len: 240 }
+        Self {
+            max_matches: 12,
+            max_per_file: 2,
+            max_files: 5000,
+            max_file_bytes: 512 * 1024,
+            max_line_len: 240,
+        }
     }
 }
 
@@ -589,15 +705,8 @@ pub(crate) fn fuse_rankings(lexical: &[Hit], semantic: &[Hit]) -> Vec<Hit> {
         }
     }
     // Stable sort by score desc keeps first-seen order on exact ties.
-    order.sort_by(|a, b| {
-        scores[b]
-            .partial_cmp(&scores[a])
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
-    order
-        .into_iter()
-        .filter_map(|id| items.remove(&id).map(|item| Hit { id, item }))
-        .collect()
+    order.sort_by(|a, b| scores[b].partial_cmp(&scores[a]).unwrap_or(std::cmp::Ordering::Equal));
+    order.into_iter().filter_map(|id| items.remove(&id).map(|item| Hit { id, item })).collect()
 }
 
 /// Convert JSON result items into `Hit`s keyed by their `id` field. Items
@@ -674,7 +783,8 @@ async fn fuse_semantic(
     let Some(query_vec) = query_vec else {
         return lexical;
     };
-    let sem_rows = match state.pg.semantic_search_nodes(ids, query_vec, kinds, SEM_CANDIDATES).await {
+    let sem_rows = match state.pg.semantic_search_nodes(ids, query_vec, kinds, SEM_CANDIDATES).await
+    {
         Ok(rows) => rows,
         Err(e) => {
             tracing::warn!(error = %e, "fuse_semantic: semantic_search_nodes failed — keyword-only ranking");
@@ -686,32 +796,69 @@ async fn fuse_semantic(
     }
     let semantic: Vec<serde_json::Value> = sem_rows.into_iter().map(projector).collect();
     let mut fused: Vec<serde_json::Value> =
-        fuse_rankings(&to_hits(lexical), &to_hits(semantic))
-            .into_iter()
-            .map(|h| h.item)
-            .collect();
+        fuse_rankings(&to_hits(lexical), &to_hits(semantic)).into_iter().map(|h| h.item).collect();
     fused.truncate(HYBRID_MAX);
     fused
 }
 
 /// Extract the most meaningful search term from a natural language query.
 pub(crate) fn extract_search_term(q: &str) -> String {
-    let stop_words = ["find", "search", "show", "get", "list", "what", "which", "where",
-        "how", "the", "in", "for", "from", "all", "me", "that", "are", "is",
-        "function", "functions", "method", "methods", "type", "types", "class",
-        "interface", "lib", "libs", "library", "libraries", "file", "files",
-        "who", "calls", "called", "by", "does", "do", "callers", "callees",
-        "pattern", "patterns", "doc", "docs", "a", "an", "of", "with"];
+    let stop_words = [
+        "find",
+        "search",
+        "show",
+        "get",
+        "list",
+        "what",
+        "which",
+        "where",
+        "how",
+        "the",
+        "in",
+        "for",
+        "from",
+        "all",
+        "me",
+        "that",
+        "are",
+        "is",
+        "function",
+        "functions",
+        "method",
+        "methods",
+        "type",
+        "types",
+        "class",
+        "interface",
+        "lib",
+        "libs",
+        "library",
+        "libraries",
+        "file",
+        "files",
+        "who",
+        "calls",
+        "called",
+        "by",
+        "does",
+        "do",
+        "callers",
+        "callees",
+        "pattern",
+        "patterns",
+        "doc",
+        "docs",
+        "a",
+        "an",
+        "of",
+        "with",
+    ];
 
-    let words: Vec<&str> = q.split_whitespace()
-        .filter(|w| !stop_words.contains(&w.to_lowercase().as_str()))
-        .collect();
+    let words: Vec<&str> =
+        q.split_whitespace().filter(|w| !stop_words.contains(&w.to_lowercase().as_str())).collect();
 
     // Return the longest non-stop word (likely the most specific)
-    words.into_iter()
-        .max_by_key(|w| w.len())
-        .unwrap_or("")
-        .to_string()
+    words.into_iter().max_by_key(|w| w.len()).unwrap_or("").to_string()
 }
 
 #[cfg(test)]
@@ -741,18 +888,32 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
         // Match lives only in a comment + a string literal — never a symbol name.
-        fs::write(root.join("a.rs"), "// TextEmbed capability\nfn foo() {}\nlet x = \"TextEmbed\";\n").unwrap();
+        fs::write(
+            root.join("a.rs"),
+            "// TextEmbed capability\nfn foo() {}\nlet x = \"TextEmbed\";\n",
+        )
+        .unwrap();
         fs::write(root.join("b.txt"), "nothing relevant here\n").unwrap();
         fs::create_dir_all(root.join("vendor")).unwrap();
         fs::write(root.join("vendor/c.rs"), "TextEmbed inside an excluded subtree\n").unwrap();
 
         let roots = vec![(root.to_path_buf(), vec!["vendor".to_string()])];
-        let opts = GrepOpts { max_matches: 10, max_per_file: 1, max_files: 100, max_file_bytes: 1 << 20, max_line_len: 240 };
+        let opts = GrepOpts {
+            max_matches: 10,
+            max_per_file: 1,
+            max_files: 100,
+            max_file_bytes: 1 << 20,
+            max_line_len: 240,
+        };
 
         // Case-insensitive query; per-file cap 1 keeps only a.rs's first hit;
         // the `vendor/` subtree is pruned; b.txt doesn't match.
         let hits = content_grep(&roots, "textembed", &opts);
-        assert_eq!(hits.len(), 1, "one match: a.rs line 1 (per-file cap 1, vendor excluded, b.txt no match)");
+        assert_eq!(
+            hits.len(),
+            1,
+            "one match: a.rs line 1 (per-file cap 1, vendor excluded, b.txt no match)"
+        );
         assert_eq!(hits[0].rel_path, "a.rs");
         assert_eq!(hits[0].line_no, 1);
         assert!(hits[0].line.contains("TextEmbed"), "returns the matching line text");
@@ -760,7 +921,11 @@ mod tests {
         // Raising the per-file cap surfaces the second in-file match (the string).
         let opts2 = GrepOpts { max_per_file: 5, ..opts };
         let more = content_grep(&roots, "textembed", &opts2);
-        assert_eq!(more.len(), 2, "both a.rs matches with a higher per-file cap; vendor still excluded");
+        assert_eq!(
+            more.len(),
+            2,
+            "both a.rs matches with a higher per-file cap; vendor still excluded"
+        );
         assert_eq!(more[1].line_no, 3);
 
         // Empty / whitespace term → no matches (never greps for nothing).
@@ -783,7 +948,11 @@ mod tests {
         let lexical = [hit("A"), hit("B"), hit("C")];
         let semantic = [hit("C"), hit("D")];
         let fused = fuse_rankings(&lexical, &semantic);
-        assert_eq!(ids(&fused), vec!["C", "A", "B", "D"], "shared-in-both C leads; single-list order preserved");
+        assert_eq!(
+            ids(&fused),
+            vec!["C", "A", "B", "D"],
+            "shared-in-both C leads; single-list order preserved"
+        );
         assert_eq!(fused.len(), 4, "C is de-duplicated, not counted twice");
     }
 

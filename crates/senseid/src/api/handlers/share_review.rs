@@ -11,7 +11,11 @@
 //!   contribute path for that batch (client-work dereference is mandatory and
 //!   cannot be overridden — the strip is enforced in [`crate::dojo::contribute`]).
 
-use axum::{extract::{Path, State}, http::StatusCode, response::Json};
+use axum::{
+    extract::{Path, State},
+    http::StatusCode,
+    response::Json,
+};
 
 use crate::api::state::AppState;
 use crate::collective::anonymize::ContributorIdentity;
@@ -29,9 +33,8 @@ pub(crate) async fn next_batch(
     let contributor = ContributorIdentity {
         user_key: state.pg.get_or_create_contributor_key().await.map_err(internal)?,
     };
-    let preview = contribute::preview_batch(&state.pg, batch_id, &contributor)
-        .await
-        .map_err(internal)?;
+    let preview =
+        contribute::preview_batch(&state.pg, batch_id, &contributor).await.map_err(internal)?;
     Ok(Json(serde_json::json!({ "batch": preview })))
 }
 

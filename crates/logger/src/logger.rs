@@ -1,9 +1,9 @@
 //! Logger — structured logger with context propagation (kavach pattern).
 
+use crate::types::{LogEntry, LogLevel};
+use crate::writer::LogWriter;
 use serde_json::Value;
 use std::sync::Arc;
-use crate::types::{LogLevel, LogEntry};
-use crate::writer::LogWriter;
 
 /// Structured logger with context propagation.
 ///
@@ -30,12 +30,7 @@ impl Logger {
     /// - `level`: minimum level to log
     /// - `running_on`: "daemon", "cli", "mcp", "app"
     /// - `module`: top-level module ("tasks", "api", "indexer", "gateway")
-    pub fn new(
-        writer: Arc<LogWriter>,
-        level: LogLevel,
-        running_on: &str,
-        module: &str,
-    ) -> Self {
+    pub fn new(writer: Arc<LogWriter>, level: LogLevel, running_on: &str, module: &str) -> Self {
         Self {
             writer,
             level,
@@ -113,7 +108,9 @@ impl Logger {
     // ── Core ────────────────────────────────────────────────────────────
 
     async fn log(&self, level: LogLevel, message: &str, data: Option<Value>, error: Option<Value>) {
-        if level > self.level { return; }
+        if level > self.level {
+            return;
+        }
 
         let entry = LogEntry {
             level: level.as_str().to_string(),

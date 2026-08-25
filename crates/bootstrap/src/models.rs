@@ -24,10 +24,10 @@ use crate::hardware::ModelTier;
 /// decision. Absent, the reasoning chain falls through to `gemma3:27b`.
 pub fn required_models(tier: &ModelTier) -> Vec<&'static str> {
     match tier {
-        ModelTier::Minimum     => vec!["gemma2:2b", "all-minilm", "gemma3:12b"],
+        ModelTier::Minimum => vec!["gemma2:2b", "all-minilm", "gemma3:12b"],
         ModelTier::Recommended => vec!["gemma2:2b", "all-minilm", "gemma3:27b", "qwen3:14b"],
         // TODO: add the full MOE panel models (phi-4:14b, llama4-scout:17b) once finalised.
-        ModelTier::Full        => vec!["gemma2:2b", "all-minilm", "gemma3:27b", "qwen3:14b"],
+        ModelTier::Full => vec!["gemma2:2b", "all-minilm", "gemma3:27b", "qwen3:14b"],
     }
 }
 
@@ -35,9 +35,7 @@ pub fn required_models(tier: &ModelTier) -> Vec<&'static str> {
 
 /// List models currently available in Ollama.
 pub fn list() -> Vec<String> {
-    let output = Command::new("ollama")
-        .args(["list"])
-        .output();
+    let output = Command::new("ollama").args(["list"]).output();
 
     match output {
         Ok(o) if o.status.success() => {
@@ -59,7 +57,8 @@ pub fn missing_models(tier: &ModelTier) -> Vec<String> {
     let installed = list();
     let required = required_models(tier);
 
-    required.into_iter()
+    required
+        .into_iter()
         .filter(|model| {
             !installed.iter().any(|installed_name| {
                 // Match "gemma3:27b" against "gemma3:27b" or "gemma3:27b-q4_0" etc.

@@ -11,9 +11,9 @@
 //! Never 500s on a missing identity or un-indexed folder — it degrades to the
 //! user's default / the enum fallback stance.
 
+use axum::Json;
 use axum::extract::{Query, State};
 use axum::http::StatusCode;
-use axum::Json;
 use serde::Deserialize;
 
 use crate::api::state::AppState;
@@ -31,9 +31,7 @@ fn resolve_who_where(under: Option<&str>, user: Option<&str>) -> (String, String
     let dir = under
         .filter(|s| !s.is_empty())
         .map(|s| s.to_string())
-        .or_else(|| {
-            std::env::current_dir().ok().map(|p| p.to_string_lossy().into_owned())
-        })
+        .or_else(|| std::env::current_dir().ok().map(|p| p.to_string_lossy().into_owned()))
         .unwrap_or_default();
     let user_key = user
         .filter(|s| !s.is_empty())
@@ -98,8 +96,10 @@ pub(crate) async fn set_stance(
     let user = body.get("user").and_then(serde_json::Value::as_str);
     let (dir, user_key) = resolve_who_where(under, user);
     if user_key.is_empty() {
-        return Err(err(StatusCode::BAD_REQUEST,
-            "no user: pass `user` or run where a git identity resolves"));
+        return Err(err(
+            StatusCode::BAD_REQUEST,
+            "no user: pass `user` or run where a git identity resolves",
+        ));
     }
 
     let input = StanceInput::from_request(&body).map_err(|e| err(StatusCode::BAD_REQUEST, &e))?;
@@ -107,24 +107,48 @@ pub(crate) async fn set_stance(
     // Where: an omitted / always-on scope → the default row (namespace_id NULL);
     // a real scope must resolve to a namespace for this folder, else 400 (never a
     // silent default write).
-    let scope = body.get("scope").and_then(serde_json::Value::as_str)
-        .filter(|s| !s.is_empty());
+    let scope = body.get("scope").and_then(serde_json::Value::as_str).filter(|s| !s.is_empty());
     let namespace_id = match scope {
         None | Some("user") | Some("general") => None,
         Some(scope_key) => {
-            let folder_id = state.pg.get_repo_by_path(&dir).await.ok().flatten()
+            let folder_id = state
+                .pg
+                .get_repo_by_path(&dir)
+                .await
+                .ok()
+                .flatten()
                 .and_then(|f| crate::api::util::json_uuid(&f["id"]))
-                .ok_or_else(|| err(StatusCode::BAD_REQUEST,
-                    "scope given but the folder is not an indexed repo"))?;
-            Some(state.pg.namespace_for_folder_scope(&folder_id, scope_key).await
-                .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?
-                .ok_or_else(|| err(StatusCode::BAD_REQUEST,
-                    &format!("this folder has no namespace at scope {scope_key:?}")))?)
+                .ok_or_else(|| {
+                    err(
+                        StatusCode::BAD_REQUEST,
+                        "scope given but the folder is not an indexed repo",
+                    )
+                })?;
+            Some(
+                state
+                    .pg
+                    .namespace_for_folder_scope(&folder_id, scope_key)
+                    .await
+                    .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?
+                    .ok_or_else(|| {
+                        err(
+                            StatusCode::BAD_REQUEST,
+                            &format!("this folder has no namespace at scope {scope_key:?}"),
+                        )
+                    })?,
+            )
         }
     };
 
-    let updated_at = state.pg
-        .upsert_stance(&user_key, namespace_id.as_ref(), &input.autonomy, &input.sharing, &input.review)
+    let updated_at = state
+        .pg
+        .upsert_stance(
+            &user_key,
+            namespace_id.as_ref(),
+            &input.autonomy,
+            &input.sharing,
+            &input.review,
+        )
         .await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
 

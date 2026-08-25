@@ -11,7 +11,7 @@
         <span class="kanji text-accent mr-1.5 opacity-80">礼</span>· Welcome
     </div>
     <h1
-        class="display text-[54px] font-light leading-[1.08] m-0 mb-8 tracking-tight"
+        class="display text-4xl font-light leading-[1.08] m-0 mb-8 tracking-tight"
     >
         A teacher does not<br />
         <span class="text-accent">write the code.</span>
@@ -33,7 +33,7 @@
     >
         {#each pillars as pillar}
             <div>
-                <div class="kanji text-[26px] text-accent mb-2">
+                <div class="kanji text-2xl text-accent mb-2">
                     {pillar.kanji}
                 </div>
                 <div class="display text-xl">{pillar.title}</div>

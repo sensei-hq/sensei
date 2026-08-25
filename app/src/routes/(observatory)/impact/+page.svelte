@@ -33,30 +33,30 @@
 <div class="flex flex-col h-full" data-impact-total={data.total}>
   <!-- Header — kanji + eyebrow + title + description + 4 verdict counts -->
   <div class="flex items-center gap-5 pt-5 pb-4 px-6 border-b border-paper-edge">
-    <span class="kanji text-[40px] text-accent leading-none">果</span>
+    <span class="kanji text-3xl text-accent leading-none">果</span>
     <div class="flex-1 min-w-0">
       <p class="m-0 mb-1"><Eyebrow>Observatory · Change impact</Eyebrow></p>
-      <h1 class="display text-[22px] font-normal m-0">Did sensei's advice actually work?</h1>
-      <p class="text-[13px] text-ink-mute mt-1 mb-0 max-w-[720px] leading-relaxed">
+      <h1 class="display text-xl font-normal m-0">Did sensei's advice actually work?</h1>
+      <p class="text-sm text-ink-mute mt-1 mb-0 max-w-[720px] leading-relaxed">
         Each accepted recommendation gets a measurement window. FTR baseline
         vs current is compared. The MOE panel writes the reasoning.
       </p>
     </div>
     <div class="flex gap-5 pl-5 border-l border-paper-edge">
       <div class="text-center">
-        <div class="font-mono text-[17px] font-light text-success">{data.buckets.positive.length}</div>
+        <div class="font-mono text-lg font-light text-success">{data.buckets.positive.length}</div>
         <div class="text-xs uppercase tracking-wider text-ink-faint mt-1">positive</div>
       </div>
       <div class="text-center">
-        <div class="font-mono text-[17px] font-light text-ink">{data.buckets.neutral.length}</div>
+        <div class="font-mono text-lg font-light text-ink">{data.buckets.neutral.length}</div>
         <div class="text-xs uppercase tracking-wider text-ink-faint mt-1">neutral</div>
       </div>
       <div class="text-center">
-        <div class="font-mono text-[17px] font-light text-warning">{data.buckets.negative.length}</div>
+        <div class="font-mono text-lg font-light text-warning">{data.buckets.negative.length}</div>
         <div class="text-xs uppercase tracking-wider text-ink-faint mt-1">negative</div>
       </div>
       <div class="text-center">
-        <div class="font-mono text-[17px] font-light text-ink-soft">{data.buckets.pending.length}</div>
+        <div class="font-mono text-lg font-light text-ink-soft">{data.buckets.pending.length}</div>
         <div class="text-xs uppercase tracking-wider text-ink-faint mt-1">pending</div>
       </div>
     </div>
@@ -87,7 +87,7 @@
             onclick={() => (openId = r.id)}
           >
             <div class="flex items-center gap-2">
-              <span class="kanji text-[13px] {toneClass(vm.tone)}">{vm.glyph}</span>
+              <span class="kanji text-sm {toneClass(vm.tone)}">{vm.glyph}</span>
               <span class="text-xs uppercase tracking-wider {toneClass(vm.tone)}">{r.verdict}</span>
               <span class="flex-1"></span>
               <span
@@ -98,7 +98,7 @@
                 data-ftr-delta
               >{formatDeltaPct(r.ftrDelta)}</span>
             </div>
-            <div class="text-[13px] mt-1 leading-snug font-medium truncate"
+            <div class="text-sm mt-1 leading-snug font-medium truncate"
                  class:text-ink={isOpen}
                  class:text-ink-mute={!isOpen}>{r.title}</div>
             <div class="font-mono text-xs text-ink-faint mt-1 truncate">{r.projectName}</div>
@@ -118,7 +118,7 @@
           <span>{open.status}</span>
         </div>
 
-        <h2 class="display text-[28px] font-light mt-0 mb-4 leading-tight tracking-tight text-ink">
+        <h2 class="display text-2xl font-light mt-0 mb-4 leading-tight tracking-tight text-ink">
           {open.title}
         </h2>
 
@@ -136,7 +136,7 @@
               class:border-warning={openVm.tone === 'warning'}
               class:border-paper-edge={openVm.tone === 'ink'}
             >
-              <span class="kanji text-[13px] {toneClass(openVm.tone)}">{openVm.glyph}</span>
+              <span class="kanji text-sm {toneClass(openVm.tone)}">{openVm.glyph}</span>
               <span class="text-xs uppercase tracking-wider font-medium {toneClass(openVm.tone)}">
                 {openVm.label}
               </span>

@@ -13,19 +13,19 @@
 //! deadline (5s × N components = 13s of wall time) on closed ports, because
 //! the same long-timeout PortChecker was used for both phases.
 
+use crate::health::checker::{CheckOutcome, Checker};
 use std::net::{SocketAddr, TcpStream};
 use std::time::Duration;
-use crate::health::checker::{Checker, CheckOutcome};
 
 pub const DEFAULT_PORT_TIMEOUT: Duration = Duration::from_millis(400);
 
 pub struct PortChecker {
-    pub label:   &'static str,
-    pub port:    u16,
+    pub label: &'static str,
+    pub port: u16,
     pub timeout: Duration,
     /// Sleep-loop until the port comes up (or the deadline lapses).
     /// `false` = single attempt; `true` = retry every 250ms until `timeout`.
-    pub retry:   bool,
+    pub retry: bool,
 }
 
 impl PortChecker {
@@ -45,19 +45,33 @@ impl PortChecker {
 impl Checker for PortChecker {
     fn check(&self) -> CheckOutcome {
         let addr: SocketAddr = ([127, 0, 0, 1], self.port).into();
-        tracing::debug!(check = "port", label = self.label, port = self.port, timeout_ms = self.timeout.as_millis() as u64, retry = self.retry, "probing");
+        tracing::debug!(
+            check = "port",
+            label = self.label,
+            port = self.port,
+            timeout_ms = self.timeout.as_millis() as u64,
+            retry = self.retry,
+            "probing"
+        );
 
         if !self.retry {
             // Single attempt — closed ports return ECONNREFUSED in ~ms.
             return match TcpStream::connect_timeout(&addr, self.timeout) {
                 Ok(_) => {
-                    tracing::debug!(check = "port", label = self.label, port = self.port, result = "open", "port reachable");
+                    tracing::debug!(
+                        check = "port",
+                        label = self.label,
+                        port = self.port,
+                        result = "open",
+                        "port reachable"
+                    );
                     CheckOutcome::ready_no_version()
                 }
                 Err(e) => {
                     tracing::info!(check = "port", label = self.label, port = self.port, result = "closed", error = %e, "port not listening");
                     CheckOutcome::failed(format!(
-                        "{} not listening on :{}: {e}", self.label, self.port,
+                        "{} not listening on :{}: {e}",
+                        self.label, self.port,
                     ))
                 }
             };
@@ -71,14 +85,22 @@ impl Checker for PortChecker {
         loop {
             match TcpStream::connect_timeout(&addr, DEFAULT_PORT_TIMEOUT) {
                 Ok(_) => {
-                    tracing::debug!(check = "port", label = self.label, port = self.port, result = "open", elapsed_ms = start.elapsed().as_millis() as u64, "port reachable");
+                    tracing::debug!(
+                        check = "port",
+                        label = self.label,
+                        port = self.port,
+                        result = "open",
+                        elapsed_ms = start.elapsed().as_millis() as u64,
+                        "port reachable"
+                    );
                     return CheckOutcome::ready_no_version();
                 }
                 Err(e) => {
                     if std::time::Instant::now() >= deadline {
                         tracing::info!(check = "port", label = self.label, port = self.port, result = "closed", error = %e, "port not listening");
                         return CheckOutcome::failed(format!(
-                            "{} not listening on :{}: {e}", self.label, self.port,
+                            "{} not listening on :{}: {e}",
+                            self.label, self.port,
                         ));
                     }
                     std::thread::sleep(Duration::from_millis(250));

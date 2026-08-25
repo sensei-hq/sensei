@@ -6,7 +6,7 @@
 
 use super::workspace::resolve_glob_members;
 use super::{FsSignals, ManifestAdapter, ParsedManifest};
-use crate::indexer::lib_indexer::{parse_cargo_deps, DepVersion};
+use crate::indexer::lib_indexer::{DepVersion, parse_cargo_deps};
 use crate::types::PackageInfo;
 use std::path::Path;
 
@@ -34,11 +34,7 @@ impl ManifestAdapter for CargoManifestAdapter {
     }
 
     fn is_workspace_root(&self, content: &str) -> bool {
-        content
-            .parse::<toml::Value>()
-            .ok()
-            .and_then(|v| v.get("workspace").cloned())
-            .is_some()
+        content.parse::<toml::Value>().ok().and_then(|v| v.get("workspace").cloned()).is_some()
     }
 
     fn parse_manifest(&self, content: &str) -> ParsedManifest {
@@ -52,10 +48,7 @@ impl ManifestAdapter for CargoManifestAdapter {
         ParsedManifest {
             name: pkg.get("name").and_then(|v| v.as_str()).map(|s| s.to_string()),
             version: pkg.get("version").and_then(|v| v.as_str()).map(|s| s.to_string()),
-            description: pkg
-                .get("description")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string()),
+            description: pkg.get("description").and_then(|v| v.as_str()).map(|s| s.to_string()),
         }
     }
 
@@ -112,7 +105,9 @@ impl ManifestAdapter for CargoManifestAdapter {
         //    Skip any path already registered as a workspace member above.
         for dir_name in CARGO_FALLBACK_DIRS {
             let dir = repo_root.join(dir_name);
-            if !dir.is_dir() { continue; }
+            if !dir.is_dir() {
+                continue;
+            }
             let Ok(entries) = std::fs::read_dir(&dir) else { continue };
             for entry in entries.flatten() {
                 if !entry.path().is_dir() {
@@ -143,16 +138,19 @@ impl ManifestAdapter for CargoManifestAdapter {
     /// aliases could be layered in via a follow-up; the conventional set is
     /// what covers 90%+ of "how do I test this Rust project" answers.
     fn parse_commands(&self, _content: &str) -> Vec<super::DiscoveredCommand> {
-        super::conventional_commands("cargo", &[
-            ("test",    "test"),
-            ("build",   "build"),
-            ("check",   "typecheck"),
-            ("clippy",  "lint"),
-            ("fmt",     "format"),
-            ("bench",   "bench"),
-            ("doc",     "docs"),
-            ("run",     "run"),
-        ])
+        super::conventional_commands(
+            "cargo",
+            &[
+                ("test", "test"),
+                ("build", "build"),
+                ("check", "typecheck"),
+                ("clippy", "lint"),
+                ("fmt", "format"),
+                ("bench", "bench"),
+                ("doc", "docs"),
+                ("run", "run"),
+            ],
+        )
     }
 }
 
@@ -172,19 +170,16 @@ fn cargo_toml_member(repo_root: &Path, rel_path: &str) -> Option<PackageInfo> {
     if !cargo_toml.exists() {
         return None;
     }
-    let manifest = std::fs::read_to_string(&cargo_toml)
-        .ok()
-        .and_then(|c| c.parse::<toml::Value>().ok());
+    let manifest =
+        std::fs::read_to_string(&cargo_toml).ok().and_then(|c| c.parse::<toml::Value>().ok());
     let pkg = manifest.as_ref().and_then(|v| v.get("package"));
     let name = pkg
         .and_then(|p| p.get("name"))
         .and_then(|n| n.as_str())
         .map(|s| s.to_string())
         .unwrap_or_else(|| rel_path.to_string());
-    let version = pkg
-        .and_then(|p| p.get("version"))
-        .and_then(|n| n.as_str())
-        .map(|s| s.to_string());
+    let version =
+        pkg.and_then(|p| p.get("version")).and_then(|n| n.as_str()).map(|s| s.to_string());
     let private = cargo_publish_disabled(pkg);
     Some(PackageInfo {
         name,
@@ -280,10 +275,7 @@ mod tests {
     #[test]
     fn stack_labels_always_rust() {
         assert_eq!(CargoManifestAdapter.stack_labels(""), vec!["rust"]);
-        assert_eq!(
-            CargoManifestAdapter.stack_labels("[workspace]\nmembers=[]"),
-            vec!["rust"]
-        );
+        assert_eq!(CargoManifestAdapter.stack_labels("[workspace]\nmembers=[]"), vec!["rust"]);
     }
 
     #[test]
@@ -304,10 +296,7 @@ mod tests {
         let lib_content = "[package]\nname=\"c\"\n\n[lib]";
         let parsed = CargoManifestAdapter.parse_manifest(lib_content);
         let fs = FsSignals::default();
-        assert_eq!(
-            CargoManifestAdapter.infer_role(&parsed, lib_content, &fs),
-            Some("library")
-        );
+        assert_eq!(CargoManifestAdapter.infer_role(&parsed, lib_content, &fs), Some("library"));
     }
 
     #[test]

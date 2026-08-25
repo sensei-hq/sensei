@@ -39,10 +39,8 @@ pub async fn rank_for_project(ctx: &TaskContext, project_id: &uuid::Uuid) -> Res
         .collect();
 
     // id → factors, for the explainability breakdown persisted alongside.
-    let factors: HashMap<uuid::Uuid, (String, String, Option<f64>, i32)> = pending
-        .into_iter()
-        .map(|(id, a, u, c, m)| (id, (a, u, c, m)))
-        .collect();
+    let factors: HashMap<uuid::Uuid, (String, String, Option<f64>, i32)> =
+        pending.into_iter().map(|(id, a, u, c, m)| (id, (a, u, c, m))).collect();
 
     let ranked = ranking::rank_and_focal(scored);
     let mut written = 0u32;

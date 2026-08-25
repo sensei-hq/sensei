@@ -32,10 +32,10 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use chrono::Utc;
 use crate::db::pg_store::PgStore;
 use crate::tasks::queue::TaskQueue;
 use crate::tasks::{Task, TaskKind};
+use chrono::Utc;
 
 /// Reconcile every 5 minutes by default. The mtime-gated re-scan makes a no-op
 /// pass stat-only, so a frequent cadence closes fs-watcher gaps quickly without
@@ -130,7 +130,10 @@ async fn reconcile_tick(queue: &TaskQueue, pg: &PgStore, now_ms: i64) -> u32 {
 
     let enqueued = enqueue_reconcile_scans(queue, pg).await;
     if enqueued > 0 {
-        tracing::info!(roots = enqueued, "reconcile_scheduler: cheap re-scan enqueued (watcher safety net)");
+        tracing::info!(
+            roots = enqueued,
+            "reconcile_scheduler: cheap re-scan enqueued (watcher safety net)"
+        );
     }
     // Non-fatal: log on failure; the in-memory cadence keeps running.
     if let Err(e) = pg.set_config(LAST_RUN_KEY, &now_ms.to_string()).await {
@@ -194,13 +197,16 @@ async fn watcher_watchdog(queue: &Arc<TaskQueue>, pg: &PgStore, now_ms: i64, sta
     if health.healthy() {
         if definitive {
             tracing::warn!(
-                thread_alive = alive, stream_healthy = stream_ok,
-                last_event_at_ms = last, stall_ms,
+                thread_alive = alive,
+                stream_healthy = stream_ok,
+                last_event_at_ms = last,
+                stall_ms,
                 "watcher_watchdog: watch thread dead/degraded — forcing reconcile + restart",
             );
         } else {
             tracing::info!(
-                last_event_at_ms = last, stall_ms,
+                last_event_at_ms = last,
+                stall_ms,
                 "watcher_watchdog: no fs events past the stall window — forcing reconcile + re-establishing stream",
             );
         }
@@ -234,7 +240,11 @@ async fn watcher_watchdog(queue: &Arc<TaskQueue>, pg: &PgStore, now_ms: i64, sta
 async fn run(queue: Arc<TaskQueue>, pg: Arc<PgStore>) {
     let secs = parse_interval(pg.get_config("reconcile.interval_secs").await.ok().flatten());
     let stall_ms = parse_stall_secs(pg.get_config(WATCHER_STALL_KEY).await.ok().flatten()) * 1000;
-    tracing::info!(interval_secs = secs, watcher_stall_ms = stall_ms, "reconcile_scheduler: started (boot + frequent watcher safety net + liveness watchdog)");
+    tracing::info!(
+        interval_secs = secs,
+        watcher_stall_ms = stall_ms,
+        "reconcile_scheduler: started (boot + frequent watcher safety net + liveness watchdog)"
+    );
     let mut ticker = tokio::time::interval(Duration::from_secs(secs));
     let mut first = true;
     loop {
@@ -247,10 +257,16 @@ async fn run(queue: Arc<TaskQueue>, pg: Arc<PgStore>) {
         // to log when the boot pass runs shortly after a prior run.
         if first {
             first = false;
-            let last = pg.get_config(LAST_RUN_KEY).await.ok().flatten()
+            let last = pg
+                .get_config(LAST_RUN_KEY)
+                .await
+                .ok()
+                .flatten()
                 .and_then(|v| v.trim().parse::<i64>().ok());
             if !due_for_reconcile(now_ms, last, secs) {
-                tracing::debug!("reconcile_scheduler: boot reconcile running despite a recent watermark (drift-safety over storm-guard)");
+                tracing::debug!(
+                    "reconcile_scheduler: boot reconcile running despite a recent watermark (drift-safety over storm-guard)"
+                );
             }
         }
 

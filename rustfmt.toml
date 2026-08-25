@@ -1,0 +1,13 @@
+# The house style, encoded so `cargo fmt` agrees with it.
+#
+# Until now the crates were never rustfmt-formatted, so any editor with
+# format-on-save silently produced a 300-file diff inside whatever commit
+# happened to be open. This file plus one formatting pass ends that: from here a
+# feature diff contains only the feature.
+#
+# "Max" lets every width heuristic run up to max_width instead of rustfmt's much
+# tighter defaults (struct literals wrap past 18 characters out of the box). That
+# keeps short struct literals, calls and match arms on one line, which is how
+# this codebase is already written — the alternative would have reflowed 55k
+# lines to impose a density the code does not use.
+use_small_heuristics = "Max"

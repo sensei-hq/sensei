@@ -117,7 +117,9 @@ async fn classify_chunk(gateway: &Gateway, prompts: &[&str]) -> Option<Vec<Promp
         Ok(resp) if resp.success => {
             let classes = resp.content.as_deref().and_then(|c| parse_response(c, prompts.len()));
             if classes.is_none() {
-                tracing::warn!("prompt_classify: unparseable/short LLM response — chunk falls back to regex");
+                tracing::warn!(
+                    "prompt_classify: unparseable/short LLM response — chunk falls back to regex"
+                );
             }
             classes
         }
@@ -157,7 +159,10 @@ mod tests {
 
     #[test]
     fn unknown_labels_map_to_neither() {
-        assert_eq!(parse_response(r#"["bogus","Correction"]"#, 2), Some(vec![PromptClass::Neither, PromptClass::Correction]));
+        assert_eq!(
+            parse_response(r#"["bogus","Correction"]"#, 2),
+            Some(vec![PromptClass::Neither, PromptClass::Correction])
+        );
     }
 
     #[test]

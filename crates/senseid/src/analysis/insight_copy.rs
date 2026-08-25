@@ -60,8 +60,16 @@ const TEMPERATURE: f32 = 0.3;
 /// insensitive substring) rejects the copy → the caller falls back. `game-chang`
 /// catches "game-changing" / "game-changer".
 const BANNED_WORDS: &[&str] = &[
-    "leverage", "seamless", "seamlessly", "effortless", "effortlessly",
-    "robust", "powerful", "supercharge", "unlock", "game-chang",
+    "leverage",
+    "seamless",
+    "seamlessly",
+    "effortless",
+    "effortlessly",
+    "robust",
+    "powerful",
+    "supercharge",
+    "unlock",
+    "game-chang",
 ];
 
 /// Third-person references to the reader. The mentor speaks *to* the developer,
@@ -170,52 +178,75 @@ impl InsightKind {
     /// type, then states what to write and to include the specific facts.
     pub fn task_line(&self) -> &'static str {
         match self {
-            InsightKind::ToolWarn =>
-                "Kind: tool_warn. Warn the developer that one tool is failing often. Name the tool and its error rate. Suggest a fix or a replacement.",
-            InsightKind::ToolOpportunity =>
-                "Kind: tool_opportunity. Point out a tool the developer rarely uses but that fits their current work. Name it and say when to reach for it.",
-            InsightKind::ToolDormant =>
-                "Kind: tool_dormant. Tell the developer one specific tool has gone dormant. Include the tool name. Suggest what to do.",
-            InsightKind::ToolWorkhorse =>
-                "Kind: tool_workhorse. Note one tool the developer leans on the most. Name it and the call count. Keep it a quiet observation, not praise.",
-            InsightKind::ToolsDormantSummary =>
-                "Kind: tools_dormant_summary. Summarise how many tools have gone dormant. Give the count and suggest a prune or a review.",
-            InsightKind::ToolsWorkhorseSummary =>
-                "Kind: tools_workhorse_summary. Summarise which few tools carry most of the work. Give the count and what it implies.",
-            InsightKind::MemoryProposedAdopt =>
-                "Kind: memory_proposed_adopt. Describe a proposed memory worth adopting. Say what it captures and why to keep it.",
-            InsightKind::MemoryProposedReview =>
-                "Kind: memory_proposed_review. Describe a proposed memory that needs a human look before adoption. Say what is uncertain.",
-            InsightKind::PatternPromoted =>
-                "Kind: pattern_promoted. Note a recurring pattern that has been promoted to a convention. Name it and what it standardises.",
-            InsightKind::DriftDetected =>
-                "Kind: drift_detected. Point out where the code and its documentation have drifted apart. Name the symbol or doc and what no longer matches.",
-            InsightKind::HeroKoanEarly =>
-                "Kind: hero_koan_early. Write a short reflective line for a developer early in working with sensei. Ground it in one thing you observed.",
-            InsightKind::HeroKoanMature =>
-                "Kind: hero_koan_mature. Write a short reflective line grounded in a trend you observed. Write a complete sentence, not a phrase or a label.",
-            InsightKind::InsightRecurringPattern =>
-                "Kind: insight_recurring_pattern. Name the recurring pattern in the work — what repeats and what it points to. Be concrete about the repeated thing.",
-            InsightKind::InsightAdopted =>
-                "Kind: insight_adopted. Note that a suggested change has been adopted. Say what changed and the effect so far.",
-            InsightKind::InsightDrift =>
-                "Kind: insight_drift. Note that a past habit or convention has started to slip. Say what changed and what to watch.",
-            InsightKind::FtrLift =>
-                "Kind: ftr_lift. Report that first-try resolution improved. Give the before and after and what likely helped.",
-            InsightKind::FtrRegression =>
-                "Kind: ftr_regression. Report that first-try resolution dropped. Give the before and after and where to look.",
-            InsightKind::SessionRetrospective =>
-                "Kind: session_retrospective. Summarise what this coding session accomplished. The title is a short headline of the main work; the detail states the outcome and any corrections. Ground both in the facts. Write plainly, sentence case.",
-            InsightKind::SessionMetricObservation =>
-                "Kind: session_metric_observation. These are software-engineering signals about a code repository — its files, sessions, and tools — never business or customer metrics (e.g. \"churn\" here means code churn, not customers leaving). Read the given `meaning` field for what this metric measures. In one plain line, say what THIS coding session contributed to THIS metric, grounded strictly in the given facts (outcome, first-try, corrections, turns, task, summary) — never invent a number. The title is a 2-4 word label; the detail is the one-line observation.",
-            InsightKind::CommunityDescription =>
-                "Kind: community_description. In one plain sentence, say what this cluster of code is responsible for, grounded in the given hub symbols and their kinds. Name the shared responsibility; do not list every symbol. The title is a short 2-4 word name for the cluster; the detail is the sentence.",
-            InsightKind::MetricNarrativeHeadline =>
-                "Kind: metric_narrative_headline. These are software-engineering signals about a code repository — its files, sessions, and tools — never business, sales, or customer metrics (e.g. \"churn\" here means code churn, not customers leaving). Summarise how the project's signals moved this period, reading the facts as a whole. The title is one plain sentence naming how many signals moved and the overall direction; the detail is one sentence naming the most important shifts and what they suggest. Ground both strictly in the given facts — never invent a number.",
-            InsightKind::MetricSignalInsight =>
-                "Kind: metric_signal_insight. This is a software-engineering signal about a code repository — its files, sessions, and tools — never a business or customer metric (e.g. \"churn\" here means code churn, not customers leaving). Read the given `meaning` field for what it actually measures. In one or two plain sentences, say how this metric is trending for the project. When a `trend` fact is given, report its `assessment` (improving, worsening, or steady) as the overall trend over `trend.window` — this is the direction the chart shows; you may add the `recent` step as the latest move, but only if you mark it as recent, and never present that one step as the overall trend. When no `trend` is given, describe only the `recent` step and say it is recent. Use only the given numbers — never invent one, and never call the metric improving when the given `assessment` is worsening. The title is a 2-4 word label; the detail is the observation.",
-            InsightKind::MetricDayExplainer =>
-                "Kind: metric_day_explainer. This is a software-engineering signal about a code repository — its files, sessions, and tools — never a business or customer metric (e.g. \"churn\" here means code churn, not customers leaving). Read the given `meaning` field for what this metric measures. In one plain line, explain why THIS day's value is what it is, grounded strictly in the given numbers (value, prev_value, delta, and the day's session counts) and the `day` context — never invent a number, and never state a direction the given `delta` does not support. The title is a 2-4 word label; the detail is that one line.",
+            InsightKind::ToolWarn => {
+                "Kind: tool_warn. Warn the developer that one tool is failing often. Name the tool and its error rate. Suggest a fix or a replacement."
+            }
+            InsightKind::ToolOpportunity => {
+                "Kind: tool_opportunity. Point out a tool the developer rarely uses but that fits their current work. Name it and say when to reach for it."
+            }
+            InsightKind::ToolDormant => {
+                "Kind: tool_dormant. Tell the developer one specific tool has gone dormant. Include the tool name. Suggest what to do."
+            }
+            InsightKind::ToolWorkhorse => {
+                "Kind: tool_workhorse. Note one tool the developer leans on the most. Name it and the call count. Keep it a quiet observation, not praise."
+            }
+            InsightKind::ToolsDormantSummary => {
+                "Kind: tools_dormant_summary. Summarise how many tools have gone dormant. Give the count and suggest a prune or a review."
+            }
+            InsightKind::ToolsWorkhorseSummary => {
+                "Kind: tools_workhorse_summary. Summarise which few tools carry most of the work. Give the count and what it implies."
+            }
+            InsightKind::MemoryProposedAdopt => {
+                "Kind: memory_proposed_adopt. Describe a proposed memory worth adopting. Say what it captures and why to keep it."
+            }
+            InsightKind::MemoryProposedReview => {
+                "Kind: memory_proposed_review. Describe a proposed memory that needs a human look before adoption. Say what is uncertain."
+            }
+            InsightKind::PatternPromoted => {
+                "Kind: pattern_promoted. Note a recurring pattern that has been promoted to a convention. Name it and what it standardises."
+            }
+            InsightKind::DriftDetected => {
+                "Kind: drift_detected. Point out where the code and its documentation have drifted apart. Name the symbol or doc and what no longer matches."
+            }
+            InsightKind::HeroKoanEarly => {
+                "Kind: hero_koan_early. Write a short reflective line for a developer early in working with sensei. Ground it in one thing you observed."
+            }
+            InsightKind::HeroKoanMature => {
+                "Kind: hero_koan_mature. Write a short reflective line grounded in a trend you observed. Write a complete sentence, not a phrase or a label."
+            }
+            InsightKind::InsightRecurringPattern => {
+                "Kind: insight_recurring_pattern. Name the recurring pattern in the work — what repeats and what it points to. Be concrete about the repeated thing."
+            }
+            InsightKind::InsightAdopted => {
+                "Kind: insight_adopted. Note that a suggested change has been adopted. Say what changed and the effect so far."
+            }
+            InsightKind::InsightDrift => {
+                "Kind: insight_drift. Note that a past habit or convention has started to slip. Say what changed and what to watch."
+            }
+            InsightKind::FtrLift => {
+                "Kind: ftr_lift. Report that first-try resolution improved. Give the before and after and what likely helped."
+            }
+            InsightKind::FtrRegression => {
+                "Kind: ftr_regression. Report that first-try resolution dropped. Give the before and after and where to look."
+            }
+            InsightKind::SessionRetrospective => {
+                "Kind: session_retrospective. Summarise what this coding session accomplished. The title is a short headline of the main work; the detail states the outcome and any corrections. Ground both in the facts. Write plainly, sentence case."
+            }
+            InsightKind::SessionMetricObservation => {
+                "Kind: session_metric_observation. These are software-engineering signals about a code repository — its files, sessions, and tools — never business or customer metrics (e.g. \"churn\" here means code churn, not customers leaving). Read the given `meaning` field for what this metric measures. In one plain line, say what THIS coding session contributed to THIS metric, grounded strictly in the given facts (outcome, first-try, corrections, turns, task, summary) — never invent a number. The title is a 2-4 word label; the detail is the one-line observation."
+            }
+            InsightKind::CommunityDescription => {
+                "Kind: community_description. In one plain sentence, say what this cluster of code is responsible for, grounded in the given hub symbols and their kinds. Name the shared responsibility; do not list every symbol. The title is a short 2-4 word name for the cluster; the detail is the sentence."
+            }
+            InsightKind::MetricNarrativeHeadline => {
+                "Kind: metric_narrative_headline. These are software-engineering signals about a code repository — its files, sessions, and tools — never business, sales, or customer metrics (e.g. \"churn\" here means code churn, not customers leaving). Summarise how the project's signals moved this period, reading the facts as a whole. The title is one plain sentence naming how many signals moved and the overall direction; the detail is one sentence naming the most important shifts and what they suggest. Ground both strictly in the given facts — never invent a number."
+            }
+            InsightKind::MetricSignalInsight => {
+                "Kind: metric_signal_insight. This is a software-engineering signal about a code repository — its files, sessions, and tools — never a business or customer metric (e.g. \"churn\" here means code churn, not customers leaving). Read the given `meaning` field for what it actually measures. In one or two plain sentences, say how this metric is trending for the project. When a `trend` fact is given, report its `assessment` (improving, worsening, or steady) as the overall trend over `trend.window` — this is the direction the chart shows; you may add the `recent` step as the latest move, but only if you mark it as recent, and never present that one step as the overall trend. When no `trend` is given, describe only the `recent` step and say it is recent. Use only the given numbers — never invent one, and never call the metric improving when the given `assessment` is worsening. The title is a 2-4 word label; the detail is the observation."
+            }
+            InsightKind::MetricDayExplainer => {
+                "Kind: metric_day_explainer. This is a software-engineering signal about a code repository — its files, sessions, and tools — never a business or customer metric (e.g. \"churn\" here means code churn, not customers leaving). Read the given `meaning` field for what this metric measures. In one plain line, explain why THIS day's value is what it is, grounded strictly in the given numbers (value, prev_value, delta, and the day's session counts) and the `day` context — never invent a number, and never state a direction the given `delta` does not support. The title is a 2-4 word label; the detail is that one line."
+            }
         }
     }
 }
@@ -321,7 +352,12 @@ fn write_canonical(v: &serde_json::Value, out: &mut String) {
 /// When `retry` is set (the second, corrective attempt in [`generate_and_cache`])
 /// a short corrective instruction is appended telling the model exactly why the
 /// previous reply was rejected.
-fn build_prompt(kind: InsightKind, facts: &serde_json::Value, limits: CopyLimits, retry: bool) -> (String, String) {
+fn build_prompt(
+    kind: InsightKind,
+    facts: &serde_json::Value,
+    limits: CopyLimits,
+    retry: bool,
+) -> (String, String) {
     let facts_json = serde_json::to_string(facts).unwrap_or_else(|_| "{}".to_string());
     // DRY: the banned line is derived from BANNED_WORDS, the same list voice_ok
     // enforces. Never hand-maintain a second copy.
@@ -367,7 +403,8 @@ pub fn parse_and_validate(content: &str, limits: CopyLimits) -> Option<InsightCo
     }
     let v: serde_json::Value = serde_json::from_str(&content[start..=end]).ok()?;
     let title = v.get("title").and_then(|t| t.as_str()).map(str::trim).filter(|s| !s.is_empty())?;
-    let detail = v.get("detail").and_then(|t| t.as_str()).map(str::trim).filter(|s| !s.is_empty())?;
+    let detail =
+        v.get("detail").and_then(|t| t.as_str()).map(str::trim).filter(|s| !s.is_empty())?;
 
     // Char limits — over-limit is rejected, never truncated.
     if title.chars().count() > limits.title || detail.chars().count() > limits.detail {
@@ -479,7 +516,9 @@ async fn call_once(
         credentials: std::collections::HashMap::new(),
     };
 
-    match tokio::time::timeout(Duration::from_millis(WARM_TIMEOUT_MS), gateway.execute(&request)).await {
+    match tokio::time::timeout(Duration::from_millis(WARM_TIMEOUT_MS), gateway.execute(&request))
+        .await
+    {
         Ok(Ok(resp)) if resp.success => {
             match resp.content.as_deref().and_then(|c| parse_and_validate(c, limits)) {
                 Some(copy) => WarmAttempt::Ok(copy, resp.model),
@@ -524,7 +563,14 @@ pub async fn generate_and_cache(
                 LAST_FAIL_MS.store(0, Ordering::Relaxed);
                 // Provider not exposed on the response; model id is.
                 store
-                    .upsert_insight_copy(kind.as_str(), &h, &copy.title, &copy.detail, None, model.as_deref())
+                    .upsert_insight_copy(
+                        kind.as_str(),
+                        &h,
+                        &copy.title,
+                        &copy.detail,
+                        None,
+                        model.as_deref(),
+                    )
                     .await;
                 return Some(copy);
             }
@@ -537,16 +583,21 @@ pub async fn generate_and_cache(
                         "insight_copy: model reply failed validation after retry — copy not cached",
                         Some(serde_json::json!({ "kind": kind.as_str() })),
                     ).await;
-                    tracing::warn!(kind = kind.as_str(), "insight_copy: model reply failed validation after retry — copy not cached");
+                    tracing::warn!(
+                        kind = kind.as_str(),
+                        "insight_copy: model reply failed validation after retry — copy not cached"
+                    );
                 }
                 // First miss — fall through to the corrective retry.
             }
             WarmAttempt::Failed(err) => {
                 LAST_FAIL_MS.store(now_ms(), Ordering::Relaxed);
-                warm_logger(store).warn(
-                    "insight_copy: gateway error — 60s back-off, copy not cached",
-                    Some(serde_json::json!({ "kind": kind.as_str(), "error": err })),
-                ).await;
+                warm_logger(store)
+                    .warn(
+                        "insight_copy: gateway error — 60s back-off, copy not cached",
+                        Some(serde_json::json!({ "kind": kind.as_str(), "error": err })),
+                    )
+                    .await;
                 tracing::debug!(error = %err, kind = kind.as_str(), "insight_copy: gateway error — 60s back-off, copy not cached");
                 return None;
             }
@@ -681,7 +732,10 @@ mod tests {
     fn facts_hash_changes_with_facts() {
         let a = json!({ "short": "get-callers", "days_since_last_use": 42 });
         let b = json!({ "short": "get-callers", "days_since_last_use": 41 });
-        assert_ne!(facts_hash(InsightKind::ToolDormant, &a), facts_hash(InsightKind::ToolDormant, &b));
+        assert_ne!(
+            facts_hash(InsightKind::ToolDormant, &a),
+            facts_hash(InsightKind::ToolDormant, &b)
+        );
     }
 
     #[test]
@@ -700,7 +754,8 @@ mod tests {
 
     #[test]
     fn parse_tolerates_code_fences() {
-        let c = "```json\n{\"title\":\"a quiet tool\",\"detail\":\"short and plain detail line\"}\n```";
+        let c =
+            "```json\n{\"title\":\"a quiet tool\",\"detail\":\"short and plain detail line\"}\n```";
         let got = parse_and_validate(c, CopyLimits::default()).unwrap();
         assert_eq!(got.title, "a quiet tool");
     }
@@ -745,8 +800,12 @@ mod tests {
 
     #[test]
     fn parse_rejects_empty_fields() {
-        assert!(parse_and_validate(r#"{"title":"","detail":"x"}"#, CopyLimits::default()).is_none());
-        assert!(parse_and_validate(r#"{"title":"x","detail":"  "}"#, CopyLimits::default()).is_none());
+        assert!(
+            parse_and_validate(r#"{"title":"","detail":"x"}"#, CopyLimits::default()).is_none()
+        );
+        assert!(
+            parse_and_validate(r#"{"title":"x","detail":"  "}"#, CopyLimits::default()).is_none()
+        );
         assert!(parse_and_validate("not json", CopyLimits::default()).is_none());
     }
 
@@ -754,12 +813,18 @@ mod tests {
     fn parse_rejects_third_person_reference() {
         // The mentor speaks to the reader, not about them. (Persona review.)
         let c = r#"{"title":"a recurring pattern","detail":"The developer provides the same prompt each time."}"#;
-        assert!(parse_and_validate(c, CopyLimits::default()).is_none(), "\"the developer\" rejected");
+        assert!(
+            parse_and_validate(c, CopyLimits::default()).is_none(),
+            "\"the developer\" rejected"
+        );
         let c2 = r#"{"title":"a recurring pattern","detail":"the user keeps correcting the same thing."}"#;
         assert!(parse_and_validate(c2, CopyLimits::default()).is_none(), "\"the user\" rejected");
         // Second-person / subject-less copy passes.
         let ok = r#"{"title":"a recurring pattern","detail":"the same prompt structure repeats across corrections."}"#;
-        assert!(parse_and_validate(ok, CopyLimits::default()).is_some(), "direct observation passes");
+        assert!(
+            parse_and_validate(ok, CopyLimits::default()).is_some(),
+            "direct observation passes"
+        );
     }
 
     #[test]
@@ -811,7 +876,8 @@ mod tests {
     #[test]
     fn build_prompt_has_all_sections() {
         let facts = json!({ "short": "get-callers", "days_since_last_use": 42 });
-        let (system, user) = build_prompt(InsightKind::ToolDormant, &facts, CopyLimits::default(), false);
+        let (system, user) =
+            build_prompt(InsightKind::ToolDormant, &facts, CopyLimits::default(), false);
         assert!(system.contains("quiet mentor"));
         assert!(user.contains("<task>") && user.contains("Kind: tool_dormant."));
         assert!(user.contains("<facts>") && user.contains("get-callers"));
@@ -825,7 +891,8 @@ mod tests {
     #[test]
     fn build_prompt_contains_banned_words_and_budget_from_source() {
         let facts = json!({ "short": "get-callers", "days_since_last_use": 42 });
-        let (_system, user) = build_prompt(InsightKind::ToolDormant, &facts, CopyLimits::default(), false);
+        let (_system, user) =
+            build_prompt(InsightKind::ToolDormant, &facts, CopyLimits::default(), false);
         // The char-budget instruction must be present and model-actionable.
         assert!(user.contains("Count the characters; do not exceed 180."));
         // Every banned word must appear in the prompt, derived FROM BANNED_WORDS
@@ -845,8 +912,10 @@ mod tests {
     #[test]
     fn retry_prompt_contains_corrective_instruction() {
         let facts = json!({ "short": "get-callers" });
-        let (_system, base) = build_prompt(InsightKind::ToolDormant, &facts, CopyLimits::default(), false);
-        let (_system, retry) = build_prompt(InsightKind::ToolDormant, &facts, CopyLimits::default(), true);
+        let (_system, base) =
+            build_prompt(InsightKind::ToolDormant, &facts, CopyLimits::default(), false);
+        let (_system, retry) =
+            build_prompt(InsightKind::ToolDormant, &facts, CopyLimits::default(), true);
         assert!(!base.contains("previous reply was rejected"));
         assert!(retry.contains("<correction>"));
         assert!(retry.contains("previous reply was rejected"));

@@ -37,8 +37,8 @@ begin
 
   -- ── Packs (global library: owner_namespace_id = null) ────────────────────
   insert into sensei.rule_packs
-    (slug, name, kanji, area, source, summary, enforcement, owner_namespace_id, status, published_by)
-  select v.slug, v.name, v.kanji, v.area::sensei.rule_pack_area, v.source, v.summary,
+    (slug, name, kanji, area, attribution, summary, enforcement, owner_namespace_id, status, published_by)
+  select v.slug, v.name, v.kanji, v.area::sensei.rule_pack_area, v.attribution, v.summary,
          v.enforcement::sensei.enforcement, null, 'active', 'sensei'
   from (values
     ('default-principles', 'Default constitution — principles', '憲', 'principles',
@@ -57,12 +57,12 @@ begin
      'sensei default constitution (stack templates)',
      'Opt-in, per-stack coding templates (Rust · TypeScript/Svelte · Python) a project adopts when the stack matches — seeded but not auto-adopted.',
      'recommended')
-  ) as v(slug, name, kanji, area, source, summary, enforcement)
+  ) as v(slug, name, kanji, area, attribution, summary, enforcement)
   on conflict (slug) where owner_namespace_id is null
     do update set name        = excluded.name,
                   kanji       = excluded.kanji,
                   area        = excluded.area,
-                  source      = excluded.source,
+                  attribution = excluded.attribution,
                   summary     = excluded.summary,
                   enforcement = excluded.enforcement,
                   status      = excluded.status,

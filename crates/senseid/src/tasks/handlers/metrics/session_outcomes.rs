@@ -124,10 +124,7 @@ async fn daily_session_aggregates(
         super::day_filter(DAY_ANCHOR, as_of),
     );
     let q = sqlx_core::query_as::query_as::<_, DayAgg>(&sql).bind(project_id);
-    super::bind_day(q, window_days, as_of)
-        .fetch_all(pg.pool())
-        .await
-        .map_err(|e| e.to_string())
+    super::bind_day(q, window_days, as_of).fetch_all(pg.pool()).await.map_err(|e| e.to_string())
 }
 
 /// Per-(day × repository) tool-call sums for `rework_ratio`: `corrected_tool_calls`
@@ -159,10 +156,7 @@ async fn daily_rework(
         super::day_filter(DAY_ANCHOR, as_of),
     );
     let q = sqlx_core::query_as::query_as::<_, DayRework>(&sql).bind(project_id);
-    super::bind_day(q, window_days, as_of)
-        .fetch_all(pg.pool())
-        .await
-        .map_err(|e| e.to_string())
+    super::bind_day(q, window_days, as_of).fetch_all(pg.pool()).await.map_err(|e| e.to_string())
 }
 
 /// Per-(day × repository) median `time_to_useful_result` (seconds). For each
@@ -210,10 +204,7 @@ async fn daily_time_to_useful(
         super::day_filter(DAY_ANCHOR, as_of),
     );
     let q = sqlx_core::query_as::query_as::<_, DayTtur>(&sql).bind(project_id);
-    super::bind_day(q, window_days, as_of)
-        .fetch_all(pg.pool())
-        .await
-        .map_err(|e| e.to_string())
+    super::bind_day(q, window_days, as_of).fetch_all(pg.pool()).await.map_err(|e| e.to_string())
 }
 
 /// Per-(day × repository) context-pressure counts: `(day, repository_id,
@@ -245,10 +236,7 @@ async fn daily_context_pressure(
     );
     let q = sqlx_core::query_as::query_as::<_, (chrono::NaiveDate, uuid::Uuid, i64, i64)>(&sql)
         .bind(project_id);
-    super::bind_day(q, window_days, as_of)
-        .fetch_all(pg.pool())
-        .await
-        .map_err(|e| e.to_string())
+    super::bind_day(q, window_days, as_of).fetch_all(pg.pool()).await.map_err(|e| e.to_string())
 }
 
 /// Per-(day × repository) token-volume sums: `(day, repository_id, sum_in,
@@ -278,12 +266,10 @@ async fn daily_token_volume(
           ORDER BY 1, 2",
         super::day_filter(DAY_ANCHOR, as_of),
     );
-    let q = sqlx_core::query_as::query_as::<_, (chrono::NaiveDate, uuid::Uuid, i64, i64, i64)>(&sql)
-        .bind(project_id);
-    super::bind_day(q, window_days, as_of)
-        .fetch_all(pg.pool())
-        .await
-        .map_err(|e| e.to_string())
+    let q =
+        sqlx_core::query_as::query_as::<_, (chrono::NaiveDate, uuid::Uuid, i64, i64, i64)>(&sql)
+            .bind(project_id);
+    super::bind_day(q, window_days, as_of).fetch_all(pg.pool()).await.map_err(|e| e.to_string())
 }
 
 /// Per-(day × repository) mean active session duration in SECONDS: `(day,
@@ -313,10 +299,7 @@ async fn daily_session_duration(
     );
     let q = sqlx_core::query_as::query_as::<_, (chrono::NaiveDate, uuid::Uuid, f64, i64)>(&sql)
         .bind(project_id);
-    super::bind_day(q, window_days, as_of)
-        .fetch_all(pg.pool())
-        .await
-        .map_err(|e| e.to_string())
+    super::bind_day(q, window_days, as_of).fetch_all(pg.pool()).await.map_err(|e| e.to_string())
 }
 
 /// Per-(day × repository) `tokens_per_result`: `(day, repository_id,
@@ -348,10 +331,7 @@ async fn daily_tokens_per_result(
     );
     let q = sqlx_core::query_as::query_as::<_, (chrono::NaiveDate, uuid::Uuid, i64, i64)>(&sql)
         .bind(project_id);
-    super::bind_day(q, window_days, as_of)
-        .fetch_all(pg.pool())
-        .await
-        .map_err(|e| e.to_string())
+    super::bind_day(q, window_days, as_of).fetch_all(pg.pool()).await.map_err(|e| e.to_string())
 }
 
 /// Per-(day × repository) edit-before-read counts for `incomplete_analysis_rate`:
@@ -404,10 +384,7 @@ async fn daily_incomplete_analysis(
     );
     let q = sqlx_core::query_as::query_as::<_, (chrono::NaiveDate, uuid::Uuid, i64, i64)>(&sql)
         .bind(project_id);
-    super::bind_day(q, window_days, as_of)
-        .fetch_all(pg.pool())
-        .await
-        .map_err(|e| e.to_string())
+    super::bind_day(q, window_days, as_of).fetch_all(pg.pool()).await.map_err(|e| e.to_string())
 }
 
 /// Compute the `session_outcomes` group for one project.
@@ -476,8 +453,16 @@ pub(super) async fn compute(
                     "correction_count": correction_count,
                 });
                 pg.upsert_project_metric_repo(
-                    &mid, &project_id, Some(&repository_id), SCOPE_USER, None, None,
-                    None, None, day, GRAIN_DAILY, value, &props, SOURCE_MEASURED,
+                    &mid,
+                    &repository_id,
+                    SCOPE_USER,
+                    None,
+                    None,
+                    day,
+                    GRAIN_DAILY,
+                    value,
+                    &props,
+                    SOURCE_MEASURED,
                 )
                 .await?;
                 written += 1;
@@ -486,8 +471,16 @@ pub(super) async fn compute(
                 // count-type: value IS the count; no numerator/denominator needed.
                 let props = serde_json::json!({});
                 pg.upsert_project_metric_repo(
-                    &mid, &project_id, Some(&repository_id), SCOPE_USER, None, None,
-                    None, None, day, GRAIN_DAILY, session_count as f64, &props, SOURCE_MEASURED,
+                    &mid,
+                    &repository_id,
+                    SCOPE_USER,
+                    None,
+                    None,
+                    day,
+                    GRAIN_DAILY,
+                    session_count as f64,
+                    &props,
+                    SOURCE_MEASURED,
                 )
                 .await?;
                 written += 1;
@@ -511,8 +504,16 @@ pub(super) async fn compute(
                 "denominator": total_tool_calls,
             });
             pg.upsert_project_metric_repo(
-                &mid, &project_id, Some(&repository_id), SCOPE_USER, None, None,
-                None, None, day, GRAIN_DAILY, value, &props, SOURCE_MEASURED,
+                &mid,
+                &repository_id,
+                SCOPE_USER,
+                None,
+                None,
+                day,
+                GRAIN_DAILY,
+                value,
+                &props,
+                SOURCE_MEASURED,
             )
             .await?;
             written += 1;
@@ -528,8 +529,16 @@ pub(super) async fn compute(
         {
             let props = serde_json::json!({ "n": n });
             pg.upsert_project_metric_repo(
-                &mid, &project_id, Some(&repository_id), SCOPE_USER, None, None,
-                None, None, day, GRAIN_DAILY, median_secs, &props, SOURCE_MEASURED,
+                &mid,
+                &repository_id,
+                SCOPE_USER,
+                None,
+                None,
+                day,
+                GRAIN_DAILY,
+                median_secs,
+                &props,
+                SOURCE_MEASURED,
             )
             .await?;
             written += 1;
@@ -549,8 +558,16 @@ pub(super) async fn compute(
             let value = pressured as f64 / total as f64;
             let props = serde_json::json!({ "numerator": pressured, "denominator": total });
             pg.upsert_project_metric_repo(
-                &mid, &project_id, Some(&repository_id), SCOPE_USER, None, None,
-                None, None, day, GRAIN_DAILY, value, &props, SOURCE_MEASURED,
+                &mid,
+                &repository_id,
+                SCOPE_USER,
+                None,
+                None,
+                day,
+                GRAIN_DAILY,
+                value,
+                &props,
+                SOURCE_MEASURED,
             )
             .await?;
             written += 1;
@@ -564,27 +581,52 @@ pub(super) async fn compute(
         for (day, repository_id, sum_in, sum_out, n) in
             daily_token_volume(pg, &project_id, window_days, as_of).await?
         {
-            let props = serde_json::json!({ "sessions": n, "tokens_in": sum_in, "tokens_out": sum_out });
+            let props =
+                serde_json::json!({ "sessions": n, "tokens_in": sum_in, "tokens_out": sum_out });
             if let Some(mid) = tokens_day_id {
                 pg.upsert_project_metric_repo(
-                    &mid, &project_id, Some(&repository_id), SCOPE_USER, None, None,
-                    None, None, day, GRAIN_DAILY, (sum_in + sum_out) as f64, &props, SOURCE_MEASURED,
+                    &mid,
+                    &repository_id,
+                    SCOPE_USER,
+                    None,
+                    None,
+                    day,
+                    GRAIN_DAILY,
+                    (sum_in + sum_out) as f64,
+                    &props,
+                    SOURCE_MEASURED,
                 )
                 .await?;
                 written += 1;
             }
             if let Some(mid) = tokens_in_id {
                 pg.upsert_project_metric_repo(
-                    &mid, &project_id, Some(&repository_id), SCOPE_USER, None, None,
-                    None, None, day, GRAIN_DAILY, sum_in as f64, &props, SOURCE_MEASURED,
+                    &mid,
+                    &repository_id,
+                    SCOPE_USER,
+                    None,
+                    None,
+                    day,
+                    GRAIN_DAILY,
+                    sum_in as f64,
+                    &props,
+                    SOURCE_MEASURED,
                 )
                 .await?;
                 written += 1;
             }
             if let Some(mid) = tokens_out_id {
                 pg.upsert_project_metric_repo(
-                    &mid, &project_id, Some(&repository_id), SCOPE_USER, None, None,
-                    None, None, day, GRAIN_DAILY, sum_out as f64, &props, SOURCE_MEASURED,
+                    &mid,
+                    &repository_id,
+                    SCOPE_USER,
+                    None,
+                    None,
+                    day,
+                    GRAIN_DAILY,
+                    sum_out as f64,
+                    &props,
+                    SOURCE_MEASURED,
                 )
                 .await?;
                 written += 1;
@@ -600,8 +642,16 @@ pub(super) async fn compute(
         {
             let props = serde_json::json!({ "n": n });
             pg.upsert_project_metric_repo(
-                &mid, &project_id, Some(&repository_id), SCOPE_USER, None, None,
-                None, None, day, GRAIN_DAILY, avg_secs, &props, SOURCE_MEASURED,
+                &mid,
+                &repository_id,
+                SCOPE_USER,
+                None,
+                None,
+                day,
+                GRAIN_DAILY,
+                avg_secs,
+                &props,
+                SOURCE_MEASURED,
             )
             .await?;
             written += 1;
@@ -621,8 +671,16 @@ pub(super) async fn compute(
             let value = sum_out as f64 / completed as f64;
             let props = serde_json::json!({ "numerator": sum_out, "denominator": completed });
             pg.upsert_project_metric_repo(
-                &mid, &project_id, Some(&repository_id), SCOPE_USER, None, None,
-                None, None, day, GRAIN_DAILY, value, &props, SOURCE_MEASURED,
+                &mid,
+                &repository_id,
+                SCOPE_USER,
+                None,
+                None,
+                day,
+                GRAIN_DAILY,
+                value,
+                &props,
+                SOURCE_MEASURED,
             )
             .await?;
             written += 1;
@@ -642,8 +700,16 @@ pub(super) async fn compute(
             let value = flagged as f64 / measurable as f64;
             let props = serde_json::json!({ "numerator": flagged, "denominator": measurable });
             pg.upsert_project_metric_repo(
-                &mid, &project_id, Some(&repository_id), SCOPE_USER, None, None,
-                None, None, day, GRAIN_DAILY, value, &props, SOURCE_MEASURED,
+                &mid,
+                &repository_id,
+                SCOPE_USER,
+                None,
+                None,
+                day,
+                GRAIN_DAILY,
+                value,
+                &props,
+                SOURCE_MEASURED,
             )
             .await?;
             written += 1;
@@ -676,10 +742,12 @@ mod tests {
         // (ftr=false, 2 corrections, 6 tool-calls). Σ measurable tool-calls = 12.
         let ts = chrono::Utc::now() - chrono::Duration::hours(2);
         for _ in 0..3 {
-            let sid = seed_metrics_session(pg, &fid, &pid, Some("completed"), Some(true), 0, ts).await;
+            let sid =
+                seed_metrics_session(pg, &fid, &pid, Some("completed"), Some(true), 0, ts).await;
             seed_metrics_turn(pg, &sid, 2, ts).await;
         }
-        let corrected = seed_metrics_session(pg, &fid, &pid, Some("corrected"), Some(false), 2, ts).await;
+        let corrected =
+            seed_metrics_session(pg, &fid, &pid, Some("corrected"), Some(false), 2, ts).await;
         seed_metrics_turn(pg, &corrected, 6, ts).await;
         // An in-flight session (outcome NULL, ftr NULL) on the SAME day, WITH
         // tool-calls — it is not yet measurable and MUST be excluded from every
@@ -689,15 +757,18 @@ mod tests {
         seed_metrics_turn(pg, &inflight, 5, ts).await;
 
         let written = compute(&ctx, &pid.to_string(), None).await.unwrap();
-        assert_eq!(written, 5, "5 repo-grain daily rows (ftr, rework, throughput, time_to_useful, context_pressure); per-session grain retired");
+        assert_eq!(
+            written, 5,
+            "5 repo-grain daily rows (ftr, rework, throughput, time_to_useful, context_pressure); per-session grain retired"
+        );
 
-        // ── Repo-grain proof: the daily rows are scope=user, keyed on the session's
-        //    repository, folder_id/session_id NULL, grain=daily ──────────────
+        // ── Repo-grain proof: the daily rows are scope=user, keyed on the
+        //    session's repository, grain=daily. The folder_id/session_id columns
+        //    this used to assert were NULL have since been dropped from the
+        //    store, so that half of the invariant is now structural.
         let rid = repository_for_folder(pg, &fid).await;
-        let (row_repo, row_scope, row_grain, row_folder, row_session): (
-            Option<uuid::Uuid>, String, String, Option<uuid::Uuid>, Option<uuid::Uuid>,
-        ) = query_as(
-            "SELECT pm.repository_id, pm.scope::text, pm.grain::text, pm.folder_id, pm.session_id \
+        let (row_repo, row_scope, row_grain): (uuid::Uuid, String, String) = query_as(
+            "SELECT pm.repository_id, pm.scope::text, pm.grain::text \
                FROM sensei.project_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
               WHERE pm.project_id = $1 AND m.key = 'ftr'",
         )
@@ -705,28 +776,57 @@ mod tests {
         .fetch_one(pg.pool())
         .await
         .unwrap();
-        assert_eq!(row_repo, Some(rid), "the ftr daily row is keyed on the session's repository");
+        assert_eq!(row_repo, rid, "the ftr daily row is keyed on the session's repository");
         assert_eq!(row_scope, "user", "the local-user default-project value is scope=user");
         assert_eq!(row_grain, "daily", "the row is daily grain (per-session grain retired)");
-        assert_eq!(row_folder, None, "no folder_id under the repo-grain identity (I-A)");
-        assert_eq!(row_session, None, "no session_id under the repo-grain identity (I-A)");
 
         // ── Daily rows ────────────────────────────────────────────────────
         let daily = daily_rows(pg, &pid).await;
 
         let ftr = daily.iter().find(|r| r.0 == "ftr").expect("ftr daily row present");
-        assert!((ftr.1 - 0.75).abs() < 1e-9, "ftr value = 3/4 = 0.75 (avg(case when ftr) over the measurable base)");
-        assert_eq!(ftr.2["numerator"].as_i64(), Some(3), "ftr numerator = # first-try sessions (in-flight excluded)");
-        assert_eq!(ftr.2["denominator"].as_i64(), Some(4), "ftr denominator = session_count (in-flight excluded)");
-        assert_eq!(ftr.2["correction_count"].as_i64(), Some(2), "correction_count = Σ corrections (display)");
+        assert!(
+            (ftr.1 - 0.75).abs() < 1e-9,
+            "ftr value = 3/4 = 0.75 (avg(case when ftr) over the measurable base)"
+        );
+        assert_eq!(
+            ftr.2["numerator"].as_i64(),
+            Some(3),
+            "ftr numerator = # first-try sessions (in-flight excluded)"
+        );
+        assert_eq!(
+            ftr.2["denominator"].as_i64(),
+            Some(4),
+            "ftr denominator = session_count (in-flight excluded)"
+        );
+        assert_eq!(
+            ftr.2["correction_count"].as_i64(),
+            Some(2),
+            "correction_count = Σ corrections (display)"
+        );
 
-        let rework = daily.iter().find(|r| r.0 == "rework_ratio").expect("rework_ratio daily row present");
-        assert!((rework.1 - 0.5).abs() < 1e-9, "rework value = 6/12 = 0.5 (in-flight's 5 tool-calls excluded)");
-        assert_eq!(rework.2["numerator"].as_i64(), Some(6), "rework numerator = corrected-session tool-calls");
-        assert_eq!(rework.2["denominator"].as_i64(), Some(12), "rework denominator = all measurable tool-calls");
+        let rework =
+            daily.iter().find(|r| r.0 == "rework_ratio").expect("rework_ratio daily row present");
+        assert!(
+            (rework.1 - 0.5).abs() < 1e-9,
+            "rework value = 6/12 = 0.5 (in-flight's 5 tool-calls excluded)"
+        );
+        assert_eq!(
+            rework.2["numerator"].as_i64(),
+            Some(6),
+            "rework numerator = corrected-session tool-calls"
+        );
+        assert_eq!(
+            rework.2["denominator"].as_i64(),
+            Some(12),
+            "rework denominator = all measurable tool-calls"
+        );
 
-        let throughput = daily.iter().find(|r| r.0 == "throughput").expect("throughput daily row present");
-        assert!((throughput.1 - 4.0).abs() < 1e-9, "throughput value = 4 measurable sessions (in-flight excluded)");
+        let throughput =
+            daily.iter().find(|r| r.0 == "throughput").expect("throughput daily row present");
+        assert!(
+            (throughput.1 - 4.0).abs() < 1e-9,
+            "throughput value = 4 measurable sessions (in-flight excluded)"
+        );
 
         // ── FTR parity (Phase-8 consolidation check) ──────────────────────
         // Asserted against the ARITHMETIC the retired `sensei.ftr_daily` view
@@ -742,9 +842,13 @@ mod tests {
         .fetch_one(pg.pool())
         .await
         .unwrap();
-        assert!((fd_rate - ftr.1).abs() < 1e-9, "computed daily ftr value == avg(case when ftr) over the measurable base (old ftr_daily arithmetic)");
+        assert!(
+            (fd_rate - ftr.1).abs() < 1e-9,
+            "computed daily ftr value == avg(case when ftr) over the measurable base (old ftr_daily arithmetic)"
+        );
         assert_eq!(
-            Some(fd_count), ftr.2["denominator"].as_i64(),
+            Some(fd_count),
+            ftr.2["denominator"].as_i64(),
             "ftr denominator == count(*) over the measurable base (old ftr_daily.session_count)",
         );
 
@@ -756,16 +860,20 @@ mod tests {
         .fetch_one(pg.pool())
         .await
         .unwrap();
-        assert_eq!(session_grain_rows, 0, "no per-session grain rows (retired under the repo-grain identity)");
+        assert_eq!(
+            session_grain_rows, 0,
+            "no per-session grain rows (retired under the repo-grain identity)"
+        );
 
         // ── Idempotency: re-run backfills in place, never duplicates ──────
         let again = compute(&ctx, &pid.to_string(), None).await.unwrap();
         assert_eq!(again, 5, "re-run recomputes the same rows");
-        let (total,): (i64,) = query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
-            .bind(pid)
-            .fetch_one(pg.pool())
-            .await
-            .unwrap();
+        let (total,): (i64,) =
+            query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
+                .bind(pid)
+                .fetch_one(pg.pool())
+                .await
+                .unwrap();
         assert_eq!(total, 5, "idempotent upsert — still 5 rows after a second run");
 
         cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
@@ -862,25 +970,39 @@ mod tests {
         // the old ftr_daily arithmetic over the seed.
         let daily = pg.get_ftr_daily(Some(&pid), 14).await.unwrap();
         let today = (chrono::Utc::now()).date_naive().to_string();
-        let row = daily.iter().find(|r| r["day"].as_str() == Some(today.as_str()))
+        let row = daily
+            .iter()
+            .find(|r| r["day"].as_str() == Some(today.as_str()))
             .expect("today's daily ftr row present");
-        assert!((row["ftr_rate"].as_f64().unwrap() - 0.75).abs() < 1e-9,
-            "store daily ftr_rate == avg(case when ftr) over seeds = 0.75");
-        assert_eq!(row["session_count"].as_i64(), Some(4),
-            "store session_count == count(*) over the measurable base = 4");
+        assert!(
+            (row["ftr_rate"].as_f64().unwrap() - 0.75).abs() < 1e-9,
+            "store daily ftr_rate == avg(case when ftr) over seeds = 0.75"
+        );
+        assert_eq!(
+            row["session_count"].as_i64(),
+            Some(4),
+            "store session_count == count(*) over the measurable base = 4"
+        );
 
         // Store-derived 14d headline (get_project_ftr reads project_metric_daily)
         // == the old project_ftr_metrics formula (Σnum/Σden over 14d) over the seed.
         let ftr = pg.get_project_ftr(&pid).await.unwrap();
-        assert!((ftr["ftr14d"].as_f64().unwrap() - 0.75).abs() < 1e-9,
-            "store ftr14d == Σnumerator/Σdenominator over 14d = 3/4 = 0.75");
-        assert_eq!(ftr["sessions7d"].as_i64(), Some(4),
-            "store sessions7d == Σdenominator over 7d = 4");
+        assert!(
+            (ftr["ftr14d"].as_f64().unwrap() - 0.75).abs() < 1e-9,
+            "store ftr14d == Σnumerator/Σdenominator over 14d = 3/4 = 0.75"
+        );
+        assert_eq!(
+            ftr["sessions7d"].as_i64(),
+            Some(4),
+            "store sessions7d == Σdenominator over 7d = 4"
+        );
 
         // And the shared rate helper the legacy surfaces call agrees.
         let rate = pg.get_project_ftr_rate(&pid).await.unwrap();
-        assert!((rate.expect("rate present for a project with ftr rows") - 0.75).abs() < 1e-9,
-            "get_project_ftr_rate == the same 14d headline number");
+        assert!(
+            (rate.expect("rate present for a project with ftr rows") - 0.75).abs() < 1e-9,
+            "get_project_ftr_rate == the same 14d headline number"
+        );
 
         cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
     }
@@ -909,12 +1031,19 @@ mod tests {
 
         let ftr = pg.get_project_ftr(&pid).await.unwrap();
         let headline = ftr["ftr14d"].as_f64().expect("ftr14d present");
-        assert!((headline - 2.0 / 3.0).abs() < 1e-9,
-            "headline = 2/3 over the 3 measurable sessions (in-flight excluded)");
-        let last = ftr["ftrTrend"].as_array().and_then(|a| a.last()).and_then(|v| v.as_f64())
+        assert!(
+            (headline - 2.0 / 3.0).abs() < 1e-9,
+            "headline = 2/3 over the 3 measurable sessions (in-flight excluded)"
+        );
+        let last = ftr["ftrTrend"]
+            .as_array()
+            .and_then(|a| a.last())
+            .and_then(|v| v.as_f64())
             .expect("trend has a last point");
-        assert!((last - headline).abs() < 1e-9,
-            "trend's last point agrees with the headline (same `outcome is not null` base)");
+        assert!(
+            (last - headline).abs() < 1e-9,
+            "trend's last point agrees with the headline (same `outcome is not null` base)"
+        );
 
         cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
     }
@@ -942,9 +1071,17 @@ mod tests {
         let daily = daily_rows(pg, &pid).await;
         let ftr = daily.iter().find(|r| r.0 == "ftr").expect("ftr daily row present");
         assert!((ftr.1 - 0.5).abs() < 1e-9, "ftr = 1/2 — the empty session is excluded (not 2/3)");
-        assert_eq!(ftr.2["denominator"].as_i64(), Some(2), "ftr denominator excludes the empty session");
-        let throughput = daily.iter().find(|r| r.0 == "throughput").expect("throughput daily row present");
-        assert!((throughput.1 - 2.0).abs() < 1e-9, "throughput = 2 measurable sessions (empty excluded)");
+        assert_eq!(
+            ftr.2["denominator"].as_i64(),
+            Some(2),
+            "ftr denominator excludes the empty session"
+        );
+        let throughput =
+            daily.iter().find(|r| r.0 == "throughput").expect("throughput daily row present");
+        assert!(
+            (throughput.1 - 2.0).abs() < 1e-9,
+            "throughput = 2 measurable sessions (empty excluded)"
+        );
 
         cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
     }
@@ -956,19 +1093,17 @@ mod tests {
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
-        let pid = pg
-            .create_project(&format!("_test:so-empty:{uniq}"), None, None)
-            .await
-            .unwrap();
+        let pid = pg.create_project(&format!("_test:so-empty:{uniq}"), None, None).await.unwrap();
 
         let written = compute(&ctx, &pid.to_string(), None).await.unwrap();
         assert_eq!(written, 0, "no sessions in the window → zero rows written");
 
-        let (total,): (i64,) = query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
-            .bind(pid)
-            .fetch_one(pg.pool())
-            .await
-            .unwrap();
+        let (total,): (i64,) =
+            query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
+                .bind(pid)
+                .fetch_one(pg.pool())
+                .await
+                .unwrap();
         assert_eq!(total, 0, "no project_metrics rows for an empty project (never fabricated)");
 
         cleanup_metrics_fixture(pg, &pid, None, &[]).await;
@@ -1011,8 +1146,15 @@ mod tests {
         .fetch_all(pg.pool())
         .await
         .unwrap();
-        assert_eq!(rows.len(), 1, "exactly one repository's ftr row — the orphan session is not fabricated into a repository");
-        assert!((rows[0].0 - 1.0).abs() < 1e-9, "ftr = 1/1 over the resolvable repository (orphan excluded, not 1/2)");
+        assert_eq!(
+            rows.len(),
+            1,
+            "exactly one repository's ftr row — the orphan session is not fabricated into a repository"
+        );
+        assert!(
+            (rows[0].0 - 1.0).abs() < 1e-9,
+            "ftr = 1/1 over the resolvable repository (orphan excluded, not 1/2)"
+        );
         assert_eq!(rows[0].1, 1, "denominator counts only the resolvable session");
         assert!(written > 0, "the resolvable repository still wrote its rows");
 
@@ -1032,7 +1174,8 @@ mod tests {
         // 2 completed sessions, each with a turn but ZERO tool-calls → the day appears
         // in the rework aggregate with total_tool_calls = 0 (exercises the skip path).
         for _ in 0..2 {
-            let sid = seed_metrics_session(pg, &fid, &pid, Some("completed"), Some(true), 0, ts).await;
+            let sid =
+                seed_metrics_session(pg, &fid, &pid, Some("completed"), Some(true), 0, ts).await;
             seed_metrics_turn(pg, &sid, 0, ts).await;
         }
 
@@ -1046,8 +1189,14 @@ mod tests {
         .fetch_one(pg.pool())
         .await
         .unwrap();
-        assert_eq!(rework_rows, 0, "no rework_ratio row when total tool-calls is 0 (never a fabricated 0/0)");
-        assert_eq!(written, 4, "ftr + throughput + time_to_useful + context_pressure repo-grain daily; rework skipped");
+        assert_eq!(
+            rework_rows, 0,
+            "no rework_ratio row when total tool-calls is 0 (never a fabricated 0/0)"
+        );
+        assert_eq!(
+            written, 4,
+            "ftr + throughput + time_to_useful + context_pressure repo-grain daily; rework skipped"
+        );
 
         cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
     }
@@ -1062,18 +1211,36 @@ mod tests {
         let (pid, fid) = seed_metrics_project_folder(pg, &uniq).await;
         let ts = chrono::Utc::now() - chrono::Duration::hours(2);
         for _ in 0..2 {
-            let sid = seed_metrics_session(pg, &fid, &pid, Some("corrected"), Some(false), 1, ts).await;
+            let sid =
+                seed_metrics_session(pg, &fid, &pid, Some("corrected"), Some(false), 1, ts).await;
             seed_metrics_turn(pg, &sid, 3, ts).await;
         }
 
         let written = compute(&ctx, &pid.to_string(), None).await.unwrap();
-        assert_eq!(written, 5, "ftr (0.0) + rework + throughput + time_to_useful + context_pressure repo-grain daily");
+        assert_eq!(
+            written, 5,
+            "ftr (0.0) + rework + throughput + time_to_useful + context_pressure repo-grain daily"
+        );
 
         let daily = daily_rows(pg, &pid).await;
-        let ftr = daily.iter().find(|r| r.0 == "ftr").expect("ftr daily row present (a real zero is still written)");
-        assert!(ftr.1.abs() < 1e-9, "ftr value is a real 0.0 (0 numerator over a real denominator)");
-        assert_eq!(ftr.2["numerator"].as_i64(), Some(0), "ftr numerator = 0 (no first-try sessions)");
-        assert_eq!(ftr.2["denominator"].as_i64(), Some(2), "ftr denominator = 2 (real denominator → row written, not skipped)");
+        let ftr = daily
+            .iter()
+            .find(|r| r.0 == "ftr")
+            .expect("ftr daily row present (a real zero is still written)");
+        assert!(
+            ftr.1.abs() < 1e-9,
+            "ftr value is a real 0.0 (0 numerator over a real denominator)"
+        );
+        assert_eq!(
+            ftr.2["numerator"].as_i64(),
+            Some(0),
+            "ftr numerator = 0 (no first-try sessions)"
+        );
+        assert_eq!(
+            ftr.2["denominator"].as_i64(),
+            Some(2),
+            "ftr denominator = 2 (real denominator → row written, not skipped)"
+        );
 
         cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
     }
@@ -1111,13 +1278,21 @@ mod tests {
         compute(&ctx, &pid.to_string(), None).await.unwrap();
 
         let daily = daily_rows(pg, &pid).await;
-        let ttur = daily.iter().find(|r| r.0 == "time_to_useful_result")
+        let ttur = daily
+            .iter()
+            .find(|r| r.0 == "time_to_useful_result")
             .expect("time_to_useful_result daily row present");
         // median([10, 20, 30]) = 20; D (correction-only) + in-flight excluded.
-        assert!((ttur.1 - 20.0).abs() < 1e-6,
-            "median first-useful latency = median(10,20,30) = 20s, got {}", ttur.1);
-        assert_eq!(ttur.2["n"].as_i64(), Some(3),
-            "n = 3 sessions with a usable turn (correction-only + in-flight excluded)");
+        assert!(
+            (ttur.1 - 20.0).abs() < 1e-6,
+            "median first-useful latency = median(10,20,30) = 20s, got {}",
+            ttur.1
+        );
+        assert_eq!(
+            ttur.2["n"].as_i64(),
+            Some(3),
+            "n = 3 sessions with a usable turn (correction-only + in-flight excluded)"
+        );
 
         cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
     }
@@ -1132,7 +1307,8 @@ mod tests {
         let (pid, fid) = seed_metrics_project_folder(pg, &uniq).await;
         let t = chrono::Utc::now() - chrono::Duration::hours(2);
         for _ in 0..2 {
-            let s = seed_metrics_session(pg, &fid, &pid, Some("corrected"), Some(false), 1, t).await;
+            let s =
+                seed_metrics_session(pg, &fid, &pid, Some("corrected"), Some(false), 1, t).await;
             seed_metrics_turn_ex(pg, &s, 1, t, t + chrono::Duration::seconds(4), true, 1).await;
         }
 
@@ -1146,7 +1322,10 @@ mod tests {
         .fetch_one(pg.pool())
         .await
         .unwrap();
-        assert_eq!(rows, 0, "no usable turn in any session → no time_to_useful_result row (never a fabricated 0)");
+        assert_eq!(
+            rows, 0,
+            "no usable turn in any session → no time_to_useful_result row (never a fabricated 0)"
+        );
 
         cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
     }
@@ -1175,17 +1354,29 @@ mod tests {
         let daily = daily_rows(pg, &pid).await;
 
         let tpd = daily.iter().find(|r| r.0 == "tokens_per_day").expect("tokens_per_day row");
-        assert!((tpd.1 - 500.0).abs() < 1e-9, "tokens_per_day = (100+20)+(300+80) = 500 (summed across sessions)");
+        assert!(
+            (tpd.1 - 500.0).abs() < 1e-9,
+            "tokens_per_day = (100+20)+(300+80) = 500 (summed across sessions)"
+        );
         let tin = daily.iter().find(|r| r.0 == "tokens_in_per_day").expect("tokens_in_per_day row");
         assert!((tin.1 - 400.0).abs() < 1e-9, "tokens_in_per_day = 100+300");
-        let tout = daily.iter().find(|r| r.0 == "tokens_out_per_day").expect("tokens_out_per_day row");
+        let tout =
+            daily.iter().find(|r| r.0 == "tokens_out_per_day").expect("tokens_out_per_day row");
         assert!((tout.1 - 100.0).abs() < 1e-9, "tokens_out_per_day = 20+80");
         let dur = daily.iter().find(|r| r.0 == "session_duration").expect("session_duration row");
         assert!((dur.1 - 90.0).abs() < 1e-6, "session_duration = avg(60,120) = 90s");
         let tpr = daily.iter().find(|r| r.0 == "tokens_per_result").expect("tokens_per_result row");
         assert!((tpr.1 - 50.0).abs() < 1e-9, "tokens_per_result = 100 out / 2 completed = 50");
-        assert_eq!(tpr.2["numerator"].as_i64(), Some(100), "tpr numerator = Σ output tokens over completed");
-        assert_eq!(tpr.2["denominator"].as_i64(), Some(2), "tpr denominator = # completed token-bearing sessions");
+        assert_eq!(
+            tpr.2["numerator"].as_i64(),
+            Some(100),
+            "tpr numerator = Σ output tokens over completed"
+        );
+        assert_eq!(
+            tpr.2["denominator"].as_i64(),
+            Some(2),
+            "tpr denominator = # completed token-bearing sessions"
+        );
 
         cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
     }
@@ -1204,7 +1395,13 @@ mod tests {
 
         // Seed a completed client-session (needs client_session_id to join events +
         // outcome to be measurable) and return its id string.
-        async fn completed(pg: &PgStore, fid: &uuid::Uuid, pid: &uuid::Uuid, csid: &str, t: chrono::DateTime<chrono::Utc>) {
+        async fn completed(
+            pg: &PgStore,
+            fid: &uuid::Uuid,
+            pid: &uuid::Uuid,
+            csid: &str,
+            t: chrono::DateTime<chrono::Utc>,
+        ) {
             let sid = seed_metrics_client_session(pg, fid, pid, csid, t).await;
             sqlx_core::query::query("UPDATE activity.sessions SET outcome='completed'::sensei.session_outcome, ftr=true WHERE id=$1")
                 .bind(sid).execute(pg.pool()).await.unwrap();
@@ -1225,15 +1422,32 @@ mod tests {
 
         compute(&ctx, &pid.to_string(), None).await.unwrap();
         let daily = daily_rows(pg, &pid).await;
-        let ia = daily.iter().find(|r| r.0 == "incomplete_analysis_rate").expect("incomplete_analysis_rate row");
-        assert!((ia.1 - 2.0 / 3.0).abs() < 1e-9, "flagged(b,c)=2 / measurable(a,b,c)=3 = 2/3; d (no edit) excluded");
-        assert_eq!(ia.2["numerator"].as_i64(), Some(2), "flagged = edit-before-read sessions (b + c)");
-        assert_eq!(ia.2["denominator"].as_i64(), Some(3), "measurable = sessions with ≥1 edit (a,b,c); d excluded");
+        let ia = daily
+            .iter()
+            .find(|r| r.0 == "incomplete_analysis_rate")
+            .expect("incomplete_analysis_rate row");
+        assert!(
+            (ia.1 - 2.0 / 3.0).abs() < 1e-9,
+            "flagged(b,c)=2 / measurable(a,b,c)=3 = 2/3; d (no edit) excluded"
+        );
+        assert_eq!(
+            ia.2["numerator"].as_i64(),
+            Some(2),
+            "flagged = edit-before-read sessions (b + c)"
+        );
+        assert_eq!(
+            ia.2["denominator"].as_i64(),
+            Some(3),
+            "measurable = sessions with ≥1 edit (a,b,c); d excluded"
+        );
 
         // clean up the events (keyed on the unique client_session_ids)
         for cs in [&a, &b, &c, &d] {
             sqlx_core::query::query("DELETE FROM activity.assistant_events WHERE session_id=$1")
-                .bind(cs).execute(pg.pool()).await.ok();
+                .bind(cs)
+                .execute(pg.pool())
+                .await
+                .ok();
         }
         cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
     }
@@ -1260,11 +1474,17 @@ mod tests {
         // Incremental run (as_of=None): the 60-day-old day is out of window → NO rows
         // (honest-empty for the recent window, never a fabricated backfill).
         let incr = compute(&ctx, &pid.to_string(), None).await.unwrap();
-        assert_eq!(incr, 0, "the 60-day-old day is outside the rolling window → no incremental rows");
+        assert_eq!(
+            incr, 0,
+            "the 60-day-old day is outside the rolling window → no incremental rows"
+        );
 
         // Backfill run (as_of=Some(day)): computes exactly that day's metrics.
         let written = compute(&ctx, &pid.to_string(), Some(day)).await.unwrap();
-        assert!(written > 0, "as_of=Some(D) computes the historical day D (window-only behavior would still write 0)");
+        assert!(
+            written > 0,
+            "as_of=Some(D) computes the historical day D (window-only behavior would still write 0)"
+        );
 
         // The daily `ftr` row is stamped `computed_on = day` (the true occurrence
         // day, 60 days ago) at repo grain — proof the past-dated row reaches the
@@ -1278,7 +1498,10 @@ mod tests {
         .fetch_one(pg.pool())
         .await
         .unwrap();
-        assert_eq!(ftr_days, 1, "a daily ftr row is stamped computed_on = the session's true day (60 days ago)");
+        assert_eq!(
+            ftr_days, 1,
+            "a daily ftr row is stamped computed_on = the session's true day (60 days ago)"
+        );
 
         // Idempotent: re-backfilling the same day upserts in place (no duplicate row).
         let again = compute(&ctx, &pid.to_string(), Some(day)).await.unwrap();

@@ -9,7 +9,11 @@
 //! - `GET  /api/instruments/verdicts/summary?session_id=…` — used/partial/
 //!   ignored counts for the session, StatBlock shape.
 
-use axum::{extract::{Query, State}, http::StatusCode, response::Json};
+use axum::{
+    extract::{Query, State},
+    http::StatusCode,
+    response::Json,
+};
 use serde::Deserialize;
 
 use crate::api::state::AppState;
@@ -43,7 +47,8 @@ pub(crate) async fn classify(
             "session_id required (fleet-wide backfill is a separate task, not this endpoint)",
         ));
     };
-    let n = verdict_classifier::classify_session(&state.pg, &sid).await
+    let n = verdict_classifier::classify_session(&state.pg, &sid)
+        .await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
     Ok(Json(serde_json::json!({"session_id": sid, "verdicts_written": n})))
 }
@@ -53,7 +58,10 @@ pub(crate) async fn list(
     State(state): State<AppState>,
     Query(q): Query<SessionQuery>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let rows = state.pg.get_verdicts_for_session(&q.session_id).await
+    let rows = state
+        .pg
+        .get_verdicts_for_session(&q.session_id)
+        .await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
     Ok(Json(serde_json::json!({"verdicts": rows})))
 }
@@ -63,7 +71,10 @@ pub(crate) async fn summary(
     State(state): State<AppState>,
     Query(q): Query<SessionQuery>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let sum = state.pg.get_verdict_summary_for_session(&q.session_id).await
+    let sum = state
+        .pg
+        .get_verdict_summary_for_session(&q.session_id)
+        .await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
     Ok(Json(sum))
 }

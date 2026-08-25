@@ -26,7 +26,6 @@
 		needs = [],
 		stats,
 		resolved,
-		mobile = false,
 		onOpenProject,
 		onAct
 	}: {
@@ -35,21 +34,20 @@
 		needs?: KitNeed[];
 		stats?: KitOrgStats;
 		resolved?: Record<string, string>;
-		mobile?: boolean;
 		onOpenProject?: (p: KitProject) => void;
 		onAct?: (item: KitNeed, action: NeedsAction) => void;
 	} = $props();
 </script>
 
-<div class="flex flex-col {mobile ? 'p-4 gap-4' : 'p-8 gap-6'}">
+<div class="flex flex-col p-4 gap-4 md:p-8 md:gap-6">
 	<SectionHead
 		eyebrow={orgName + ' · jurisdiction'}
 		title={projects.length + ' projects under this dōjō'}
 	/>
 
-	{#if !mobile && stats}
+	{#if stats}
 		<div
-			class="bg-paper-soft border-paper-edge flex items-center rounded-lg border"
+			class="bg-paper-soft border-paper-edge hidden items-center rounded-lg border md:flex"
 			style="padding: 16px 32px; gap: 48px"
 		>
 			{#if stats.members != null}
@@ -69,13 +67,7 @@
 		</div>
 	{/if}
 
-	<NeedsYouBand
-		items={needs}
-		{resolved}
-		title="Needs a maintainer"
-		{mobile}
-		{onAct}
-	/>
+	<NeedsYouBand items={needs} {resolved} title="Needs a maintainer" {onAct} />
 
 	<ListSection icon="folder" title="Projects" count={projects.length}>
 		{#snippet right()}
@@ -83,7 +75,7 @@
 		{/snippet}
 		{#if projects.length}
 			{#each projects as p (p.id)}
-				<ProjectRow {p} onopen={onOpenProject} showDojo={false} compact={mobile} />
+				<ProjectRow {p} onopen={onOpenProject} showDojo={false} />
 			{/each}
 		{:else}
 			<EmptyState kanji="空" title="No projects in this jurisdiction yet.">

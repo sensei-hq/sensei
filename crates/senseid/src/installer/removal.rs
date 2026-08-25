@@ -3,7 +3,7 @@
 use std::fs;
 use std::path::Path;
 
-use super::{cache_dir, home, plugin_dir, sensei_dir, RemoveRequest, RemoveResult};
+use super::{RemoveRequest, RemoveResult, cache_dir, home, plugin_dir, sensei_dir};
 
 // ── Remove ──────────────────────────────────────────────────────────────────
 
@@ -32,7 +32,11 @@ fn remove_with(
 ) -> RemoveResult {
     let mut result = RemoveResult {
         // CLI uninstall path — no SSE consumer.
-        acps_removed: if run_uninstall { crate::assistants::remove_selected(&[], None) } else { vec![] },
+        acps_removed: if run_uninstall {
+            crate::assistants::remove_selected(&[], None)
+        } else {
+            vec![]
+        },
         ..Default::default()
     };
 
@@ -87,7 +91,9 @@ fn remove_cache(result: &mut RemoveResult, cache: &Path) {
 
 /// Remove all .md files in a directory. Removes the directory if empty afterward.
 fn remove_md_files_in(dir: &std::path::Path) -> u32 {
-    if !dir.exists() { return 0; }
+    if !dir.exists() {
+        return 0;
+    }
     let mut count = 0u32;
     if let Ok(entries) = fs::read_dir(dir) {
         for entry in entries.flatten() {
@@ -276,5 +282,4 @@ mod tests {
         assert!(dir.join("file.md.bak").exists());
         assert!(dir.join("no_ext").exists());
     }
-
 }

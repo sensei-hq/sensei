@@ -1,9 +1,9 @@
+use crate::api::state::AppState;
 use axum::{
     extract::{Path, Query, State},
-    http::{header, StatusCode},
+    http::{StatusCode, header},
     response::{IntoResponse, Json, Response},
 };
-use crate::api::state::AppState;
 
 // ── Sessions ────────────────────────────────────────────────────────────────
 
@@ -43,8 +43,10 @@ pub(crate) async fn get_sessions_stub(
     } else {
         // 500 comfortably covers the real corpus within any range window; range +
         // project narrow it. The digest aggregates these client-side per day.
-        state.pg.list_all_sessions(500, range_days, project.as_ref()).await
-            .map_err(|e| { tracing::warn!(error = %e, "get_sessions_stub: list_all_sessions failed"); StatusCode::INTERNAL_SERVER_ERROR })?
+        state.pg.list_all_sessions(500, range_days, project.as_ref()).await.map_err(|e| {
+            tracing::warn!(error = %e, "get_sessions_stub: list_all_sessions failed");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?
     };
     let total = sessions.len();
     let completed = sessions.iter().filter(|s| s["outcome"].as_str() == Some("completed")).count();
@@ -66,7 +68,11 @@ pub(crate) async fn create_session(
 
     let folder_id = match uuid::Uuid::parse_str(folder_str) {
         Ok(id) => id,
-        Err(_) => return Json(serde_json::json!({"ok": false, "error": "invalid repoId (expected UUID)"})),
+        Err(_) => {
+            return Json(
+                serde_json::json!({"ok": false, "error": "invalid repoId (expected UUID)"}),
+            );
+        }
     };
 
     match state.pg.create_session(&folder_id, task, acp_id).await {
@@ -104,20 +110,12 @@ pub(crate) async fn get_session_tool_timeline(
     if id.is_empty() {
         return Err(StatusCode::BAD_REQUEST);
     }
-    let limit: i32 = q
-        .get("limit")
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(200)
-        .clamp(1, 1000);
+    let limit: i32 = q.get("limit").and_then(|v| v.parse().ok()).unwrap_or(200).clamp(1, 1000);
 
-    let calls = state
-        .pg
-        .get_session_tool_calls(&id, limit)
-        .await
-        .map_err(|e| {
-            tracing::error!(error = %e, session = %id, "get_session_tool_calls failed");
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+    let calls = state.pg.get_session_tool_calls(&id, limit).await.map_err(|e| {
+        tracing::error!(error = %e, session = %id, "get_session_tool_calls failed");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
 
     Ok(Json(serde_json::json!({
         "sessionId": id,
@@ -143,11 +141,7 @@ pub(crate) async fn get_session_replay(
     if id.is_empty() {
         return Err(StatusCode::BAD_REQUEST);
     }
-    let limit: i32 = q
-        .get("limit")
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(200)
-        .clamp(1, 1000);
+    let limit: i32 = q.get("limit").and_then(|v| v.parse().ok()).unwrap_or(200).clamp(1, 1000);
     let classify_first = q.get("classify").is_some_and(|v| v == "true" || v == "1");
 
     // Resolve the observatory session UUID → assistant-events client
@@ -162,19 +156,17 @@ pub(crate) async fn get_session_replay(
     // already-resolved client_session_id — some callers already pass that
     // shape.
     let client_sid: String = match uuid::Uuid::parse_str(&id) {
-        Ok(uuid) => {
-            match state.pg.get_session_client_id(&uuid).await {
-                Ok(Some(csid)) => csid,
-                Ok(None) => {
-                    tracing::warn!(session = %id, "replay: no session row for UUID; treating id as client_session_id");
-                    id.clone()
-                }
-                Err(e) => {
-                    tracing::error!(error = %e, session = %id, "replay: get_session_client_id failed");
-                    return Err(StatusCode::INTERNAL_SERVER_ERROR);
-                }
+        Ok(uuid) => match state.pg.get_session_client_id(&uuid).await {
+            Ok(Some(csid)) => csid,
+            Ok(None) => {
+                tracing::warn!(session = %id, "replay: no session row for UUID; treating id as client_session_id");
+                id.clone()
             }
-        }
+            Err(e) => {
+                tracing::error!(error = %e, session = %id, "replay: get_session_client_id failed");
+                return Err(StatusCode::INTERNAL_SERVER_ERROR);
+            }
+        },
         Err(_) => id.clone(),
     };
 
@@ -190,14 +182,10 @@ pub(crate) async fn get_session_replay(
         0
     };
 
-    let calls = state
-        .pg
-        .get_session_replay_timeline(&client_sid, limit)
-        .await
-        .map_err(|e| {
-            tracing::error!(error = %e, session = %client_sid, "get_session_replay_timeline failed");
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+    let calls = state.pg.get_session_replay_timeline(&client_sid, limit).await.map_err(|e| {
+        tracing::error!(error = %e, session = %client_sid, "get_session_replay_timeline failed");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
 
     let summary = state
         .pg
@@ -224,7 +212,11 @@ pub(crate) async fn update_session_handler(
 ) -> Json<serde_json::Value> {
     let session_id = match uuid::Uuid::parse_str(&id) {
         Ok(uid) => uid,
-        Err(_) => return Json(serde_json::json!({"ok": false, "error": "invalid session id (expected UUID)"})),
+        Err(_) => {
+            return Json(
+                serde_json::json!({"ok": false, "error": "invalid session id (expected UUID)"}),
+            );
+        }
     };
 
     // PgStore complete_session: outcome, ftr, turns, corrections + optional summary/tokens.
@@ -233,15 +225,28 @@ pub(crate) async fn update_session_handler(
     let turns = body["turns"].as_i64().unwrap_or(0) as i32;
     let corrections = body["corrections"].as_i64().unwrap_or(0) as i32;
     let summary = body["summary"].as_str().filter(|s| !s.is_empty());
-    let tokens_in = body["tokensIn"].as_i64().or_else(|| body["tokens_in"].as_i64()).map(|n| n as i32);
-    let tokens_out = body["tokensOut"].as_i64().or_else(|| body["tokens_out"].as_i64()).map(|n| n as i32);
+    let tokens_in =
+        body["tokensIn"].as_i64().or_else(|| body["tokens_in"].as_i64()).map(|n| n as i32);
+    let tokens_out =
+        body["tokensOut"].as_i64().or_else(|| body["tokens_out"].as_i64()).map(|n| n as i32);
 
-    match state.pg.complete_session(&session_id, outcome, ftr, turns, corrections, summary, tokens_in, tokens_out).await {
+    match state
+        .pg
+        .complete_session(
+            &session_id,
+            outcome,
+            ftr,
+            turns,
+            corrections,
+            summary,
+            tokens_in,
+            tokens_out,
+        )
+        .await
+    {
         Ok(_) => {
             // Fire-and-forget: enqueue verdict measurement after session ends
-            let task = crate::tasks::Task::new(
-                crate::tasks::TaskKind::MeasureVerdicts, "", "",
-            );
+            let task = crate::tasks::Task::new(crate::tasks::TaskKind::MeasureVerdicts, "", "");
             state.task_queue.enqueue(task).await;
             Json(serde_json::json!({"ok": true}))
         }
@@ -265,16 +270,27 @@ pub(crate) async fn ingest_hook_event(
     // Same field mapping the capture drain uses when it imports dead-lettered
     // events from ~/.sensei/events.jsonl, so the live and recovery paths agree
     // column-for-column (crate::tasks::capture_drain::hook_event_fields).
-    let f  = crate::tasks::capture_drain::hook_event_fields(&payload);
+    let f = crate::tasks::capture_drain::hook_event_fields(&payload);
     let ts = chrono::Utc::now().timestamp_millis();
 
     // Always return 200 so a DB hiccup never blocks the hook — but DON'T
     // swallow the error silently: a failing capture insert is exactly how
     // capture dies invisibly (the bug the capture watchdog exists to catch).
     // Log it so it's inspectable in the daemon log / public.logs.
-    if let Err(e) = state.pg.insert_hook_event(
-        f.session_id, f.family, f.event_type, f.tool_name, f.cwd, ts, f.success, &payload,
-    ).await {
+    if let Err(e) = state
+        .pg
+        .insert_hook_event(
+            f.session_id,
+            f.family,
+            f.event_type,
+            f.tool_name,
+            f.cwd,
+            ts,
+            f.success,
+            &payload,
+        )
+        .await
+    {
         tracing::warn!(error = %e, event_type = f.event_type, family = f.family, "ingest_hook_event: insert failed");
     }
 
@@ -282,9 +298,8 @@ pub(crate) async fn ingest_hook_event(
     // project it into the relay and push to enrolled dojos. Fire-and-forget so
     // the publish (a DB read + bounded HTTP posts) never blocks the hook.
     if f.tool_name == Some("TodoWrite") && !f.session_id.is_empty() {
-        let task = crate::tasks::Task::new(
-            crate::tasks::TaskKind::PublishRelaySegments, "", f.session_id,
-        );
+        let task =
+            crate::tasks::Task::new(crate::tasks::TaskKind::PublishRelaySegments, "", f.session_id);
         state.task_queue.enqueue(task).await;
     }
 
@@ -293,20 +308,29 @@ pub(crate) async fn ingest_hook_event(
     // its cwd resolves to; Stop/SessionEnd marks it completed. Best-effort —
     // events whose cwd is under no indexed folder simply aren't attributed.
     if !f.session_id.is_empty()
-        && let Some(cwd) = f.cwd {
-            match state.pg.find_folder_for_path(cwd).await {
-                Ok(Some((folder_id, project_id))) => {
-                    let is_end = matches!(f.event_type, "Stop" | "SessionEnd");
-                    if let Err(e) = state.pg.record_session_event(
-                        f.session_id, &folder_id, project_id.as_ref(), f.family, is_end,
-                    ).await {
-                        tracing::warn!(error = %e, event_type = f.event_type, "ingest_hook_event: record_session_event failed");
-                    }
+        && let Some(cwd) = f.cwd
+    {
+        match state.pg.find_folder_for_path(cwd).await {
+            Ok(Some((folder_id, project_id))) => {
+                let is_end = matches!(f.event_type, "Stop" | "SessionEnd");
+                if let Err(e) = state
+                    .pg
+                    .record_session_event(
+                        f.session_id,
+                        &folder_id,
+                        project_id.as_ref(),
+                        f.family,
+                        is_end,
+                    )
+                    .await
+                {
+                    tracing::warn!(error = %e, event_type = f.event_type, "ingest_hook_event: record_session_event failed");
                 }
-                Ok(None) => {} // cwd not under any indexed folder — nothing to attribute
-                Err(e) => tracing::warn!(error = %e, "ingest_hook_event: find_folder_for_path failed"),
             }
+            Ok(None) => {} // cwd not under any indexed folder — nothing to attribute
+            Err(e) => tracing::warn!(error = %e, "ingest_hook_event: find_folder_for_path failed"),
         }
+    }
 
     // Return a small JSON body (not a bare 200). The MCP proxy that routes
     // `log_event` here decodes every 2xx as JSON; an empty body surfaces as
@@ -453,7 +477,12 @@ pub(crate) async fn hook_gate(
         return gate_decision("allow", "not gated");
     }
     if let Some(hb) = &hard_block {
-        tracing::info!(session_id, tool_name, category = hb.category, "hook_gate: hard-block classified — raising gate");
+        tracing::info!(
+            session_id,
+            tool_name,
+            category = hb.category,
+            "hook_gate: hard-block classified — raising gate"
+        );
     }
 
     // Fail-open: a non-uuid session (non-Claude harness) would 500 the Worker
@@ -477,8 +506,11 @@ pub(crate) async fn hook_gate(
     // never turns into a cross-tenant *block* — but surface the ambiguity rather
     // than silently picking, so a multi-dōjō setup is visible in the logs.
     if memberships.len() > 1 {
-        tracing::warn!(session_id, count = memberships.len(),
-            "hook_gate: multiple enabled memberships — asking the first (multi-dōjō gating deferred)");
+        tracing::warn!(
+            session_id,
+            count = memberships.len(),
+            "hook_gate: multiple enabled memberships — asking the first (multi-dōjō gating deferred)"
+        );
     }
     let Some(membership) = memberships.into_iter().next() else {
         return gate_decision("allow", "no dojo enrolled");
@@ -533,10 +565,7 @@ pub(crate) async fn hook_gate(
     };
 
     // Block (bounded < Claude's 60s hook cap) for the human's answer.
-    match client
-        .await_reply(&ack.id, ack.seq, std::time::Duration::from_secs(50))
-        .await
-    {
+    match client.await_reply(&ack.id, ack.seq, std::time::Duration::from_secs(50)).await {
         Ok(reply) => {
             let decision = decision_from_reply(reply.as_ref());
             let reason = match (decision, reply.is_some()) {
@@ -581,7 +610,8 @@ pub(crate) async fn hook_nudge(
     State(state): State<AppState>,
     Json(payload): Json<serde_json::Value>,
 ) -> Json<serde_json::Value> {
-    let Some(session_id) = payload["session_id"].as_str().and_then(|s| s.parse::<uuid::Uuid>().ok())
+    let Some(session_id) =
+        payload["session_id"].as_str().and_then(|s| s.parse::<uuid::Uuid>().ok())
     else {
         return Json(serde_json::json!({ "nudge": false }));
     };
@@ -621,15 +651,17 @@ pub(crate) struct StateQuery {
 /// than a stale mirror). This replaces the per-repo `.sensei/state.yaml`.
 fn workflow_state_md(ws: &serde_json::Value) -> String {
     const FIELDS: [&str; 6] = [
-        "active_phase", "active_plan", "active_task",
-        "active_issue", "last_checkpoint", "rules_hash",
+        "active_phase",
+        "active_plan",
+        "active_task",
+        "active_issue",
+        "last_checkpoint",
+        "rules_hash",
     ];
     let mut out = String::new();
     for f in FIELDS {
-        let rendered = ws[f]
-            .as_str()
-            .map(str::to_string)
-            .or_else(|| ws[f].as_i64().map(|n| n.to_string()));
+        let rendered =
+            ws[f].as_str().map(str::to_string).or_else(|| ws[f].as_i64().map(|n| n.to_string()));
         if let Some(val) = rendered.filter(|s| !s.is_empty()) {
             out.push_str(f);
             out.push_str(": ");
@@ -666,7 +698,8 @@ pub(crate) async fn get_workflow_state(
             "active_issue": null,
             "last_checkpoint": null,
             "rules_hash": null,
-        })).into_response(),
+        }))
+        .into_response(),
     }
 }
 
@@ -675,15 +708,18 @@ pub(crate) async fn update_workflow_state(
     Path(project): Path<String>,
     Json(body): Json<serde_json::Value>,
 ) -> Json<serde_json::Value> {
-    let result = state.pg.upsert_workflow_state(
-        &project,
-        body["active_phase"].as_str(),
-        body["active_plan"].as_str(),
-        body["active_task"].as_str(),
-        body["active_issue"].as_i64(),
-        body["last_checkpoint"].as_str(),
-        body["rules_hash"].as_str(),
-    ).await;
+    let result = state
+        .pg
+        .upsert_workflow_state(
+            &project,
+            body["active_phase"].as_str(),
+            body["active_plan"].as_str(),
+            body["active_task"].as_str(),
+            body["active_issue"].as_i64(),
+            body["last_checkpoint"].as_str(),
+            body["rules_hash"].as_str(),
+        )
+        .await;
 
     if let Err(e) = result {
         return Json(serde_json::json!({"ok": false, "error": e}));
@@ -770,7 +806,10 @@ mod tests {
             task_queue: queue,
             pg,
             gateway,
-            event_tx: { let (tx, _) = tokio::sync::broadcast::channel(16); tx },
+            event_tx: {
+                let (tx, _) = tokio::sync::broadcast::channel(16);
+                tx
+            },
             breaker: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
             provisioning: None,
         }))
@@ -778,7 +817,9 @@ mod tests {
 
     #[tokio::test]
     async fn hook_nudge_fires_once_per_unconfirmed_session() {
-        let Some(state) = make_state().await else { return; };
+        let Some(state) = make_state().await else {
+            return;
+        };
         // Fresh session with no playbook_run row at all → session_has_confirmed_run
         // is Ok(false), so the first call should nudge.
         let session_id = uuid::Uuid::new_v4();
@@ -797,7 +838,9 @@ mod tests {
 
     #[tokio::test]
     async fn hook_nudge_missing_session_id_is_fail_open() {
-        let Some(state) = make_state().await else { return; };
+        let Some(state) = make_state().await else {
+            return;
+        };
         let Json(body) = hook_nudge(State(state), Json(serde_json::json!({}))).await;
         assert_eq!(body["nudge"], serde_json::json!(false));
     }

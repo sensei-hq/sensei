@@ -62,7 +62,7 @@ describe('kit primitives render', () => {
 		expect(getByText('this month')).toBeTruthy();
 	});
 
-	it('ProjectRow (full grid) shows name, repo, classification and needs count', () => {
+	it('ProjectRow shows name, repo, classification and needs count', () => {
 		const { getByText } = render(ProjectRow, { p: projects[0] });
 		expect(getByText('lumen-auth')).toBeTruthy();
 		expect(getByText('acme/lumen-auth')).toBeTruthy();
@@ -70,10 +70,21 @@ describe('kit primitives render', () => {
 		expect(getByText('notice')).toBeTruthy();
 	});
 
-	it('ProjectRow (compact) renders the phone-friendly stacked row', () => {
-		const { getByText } = render(ProjectRow, { p: projects[0], compact: true });
+	it('ProjectRow is one row at every width — phone cells always, table cells at md', () => {
+		// Replaces a `compact` prop that rendered a second, near-identical block.
+		// The phone cells (name · repo · needs · phase · lastRun) are unconditional;
+		// the four table-only cells are in the DOM but hidden below md, so CSS — not
+		// a prop — picks the layout.
+		const { getByText, container } = render(ProjectRow, { p: projects[0] });
 		expect(getByText('lumen-auth')).toBeTruthy();
 		expect(getByText('8m')).toBeTruthy();
+		const row = container.querySelector('button')!;
+		expect(row.className).toContain('flex');
+		expect(row.className).toContain('md:grid');
+		// classification is a table-only cell: present, but phone-hidden.
+		const cls = getByText('company').closest('span[class*="hidden"]');
+		expect(cls).toBeTruthy();
+		expect(cls!.className).toContain('md:flex');
 	});
 
 	it('MyDojoRow shows the dōjō identity, meta and needs chip', () => {

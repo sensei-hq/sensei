@@ -91,7 +91,10 @@ mod tests {
         assert_eq!(m.version, ">=1.3");
         assert_eq!(m.skills.len(), 1);
         assert_eq!(m.skills[0].focus, "styling");
-        assert_eq!(m.skills[0].path.as_deref(), Some("packages/cli/skills/semantic-styles-rokkit/SKILL.md"));
+        assert_eq!(
+            m.skills[0].path.as_deref(),
+            Some("packages/cli/skills/semantic-styles-rokkit/SKILL.md")
+        );
         assert_eq!(m.agents[0].name, "rokkit-styles-reviewer");
         assert!(m.tools.is_empty());
     }
@@ -113,7 +116,10 @@ mod tests {
     #[test]
     fn an_entry_with_neither_path_nor_body_still_parses() {
         // The parser is lenient; the ingestion is what skips a bodyless entry (+logs).
-        let m = parse_library_manifest(r#"{"library":"x","version":"1","skills":[{"name":"s","focus":"f"}]}"#).unwrap();
+        let m = parse_library_manifest(
+            r#"{"library":"x","version":"1","skills":[{"name":"s","focus":"f"}]}"#,
+        )
+        .unwrap();
         assert!(m.skills[0].path.is_none() && m.skills[0].body.is_none());
     }
 }

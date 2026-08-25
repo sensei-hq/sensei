@@ -1,7 +1,6 @@
 <script lang="ts">
 	import {
 		SectionHead,
-		Banner,
 		Btn,
 		Chip,
 		Icon,
@@ -27,7 +26,6 @@
 		policies = [],
 		audit = [],
 		me = 'You',
-		mobile = false,
 		onSetRole
 	}: {
 		orgName: string;
@@ -36,7 +34,6 @@
 		policies?: KitRolePolicy[];
 		audit?: KitChatTurn[];
 		me?: string;
-		mobile?: boolean;
 		/** Change a member's role (admin). Called with the row + the chosen role;
 		 *  absent = read-only (fixture render). The row must carry a `userId`. */
 		onSetRole?: (member: KitMember, role: string) => void;
@@ -63,8 +60,11 @@
 	}
 </script>
 
-<div class="flex flex-col {mobile ? 'p-4 gap-4' : 'p-8 gap-6'}">
-	<SectionHead eyebrow={orgName + ' · ' + current.eyebrow} title={current.title}>
+<div class="flex flex-col p-4 gap-4 md:p-8 md:gap-6">
+	<SectionHead
+		kanji="規" eyebrow={orgName + ' · ' + current.eyebrow} title={current.title}
+		description="Roles are additive and derived from git. developer → maintainer → lead → admin. A role only ever adds capability."
+	>
 		{#snippet right()}
 			<Btn size="sm" icon="add-circle">{current.cta}</Btn>
 		{/snippet}
@@ -131,9 +131,6 @@
 	{:else if active === 'policies'}
 		<!-- Policies — the additive role-policy grid. -->
 		<div class="flex flex-col gap-3">
-			<Banner kanji="規" tone="neutral" title="Roles are additive and derived from git.">
-				developer → maintainer → lead → admin. A role only ever adds capability.
-			</Banner>
 			{#each policies as r (r.id)}
 				<div
 					class="bg-paper-soft border-paper-edge flex items-center gap-4 rounded-lg border"

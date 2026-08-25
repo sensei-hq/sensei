@@ -61,7 +61,10 @@ $$;
 -- Revoke from `authenticated` too (not just PUBLIC): CREATE OR REPLACE FUNCTION preserves
 -- prior grants, so a stale `to authenticated` grant from an earlier deploy must be revoked
 -- explicitly, or the anon/authenticated-callable-definer-RPC advisor persists.
-revoke all on function dojo.set_pack_adoption(text, text, text, boolean) from public, authenticated;
+-- One grantee per statement: dbd's parser rejects a comma-separated grantee list
+-- on REVOKE, and an unparseable file is dropped from the entity set silently.
+revoke all on function dojo.set_pack_adoption(text, text, text, boolean) from public;
+revoke all on function dojo.set_pack_adoption(text, text, text, boolean) from authenticated;
 -- service_role only: the dōjō /v1 route calls this via the service_role client (see
 -- rulepacks-data.ts setPackAdoption). NOT granted to `authenticated` — no client calls it,
 -- so it isn't exposed as an anon/authenticated-callable SECURITY DEFINER RPC (advisor 0016xx).

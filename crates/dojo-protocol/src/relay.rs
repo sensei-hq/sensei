@@ -70,10 +70,7 @@ impl RelayRunStatus {
 
     /// States that need the human (drives the "needs you" band).
     pub fn needs_attention(&self) -> bool {
-        matches!(
-            self,
-            RelayRunStatus::Blocked | RelayRunStatus::Stalled | RelayRunStatus::Crashed
-        )
+        matches!(self, RelayRunStatus::Blocked | RelayRunStatus::Stalled | RelayRunStatus::Crashed)
     }
 }
 
@@ -192,10 +189,8 @@ pub enum RelayMessageDirection {
 }
 
 impl RelayMessageDirection {
-    pub const ALL: [RelayMessageDirection; 2] = [
-        RelayMessageDirection::AgentToHuman,
-        RelayMessageDirection::HumanToAgent,
-    ];
+    pub const ALL: [RelayMessageDirection; 2] =
+        [RelayMessageDirection::AgentToHuman, RelayMessageDirection::HumanToAgent];
 
     /// MUST match `relay_message_direction.ddl`.
     pub fn as_db_str(&self) -> &'static str {
@@ -504,7 +499,8 @@ mod tests {
 
     #[test]
     fn segment_state_db_strings_match_ddl() {
-        let expected = ["pending", "active", "done", "skipped", "failed", "blocked", "needs_review"];
+        let expected =
+            ["pending", "active", "done", "skipped", "failed", "blocked", "needs_review"];
         let got: Vec<&str> = SegmentState::ALL.iter().map(|v| v.as_db_str()).collect();
         assert_eq!(got, expected);
         for v in SegmentState::ALL {
@@ -601,7 +597,8 @@ mod tests {
 
         // With a project set, the slug rides the wire (drives seat attribution).
         let seated = RelaySessionUpdate { project_slug: Some("my-proj".into()), ..u };
-        let jv: serde_json::Value = serde_json::from_str(&serde_json::to_string(&seated).unwrap()).unwrap();
+        let jv: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&seated).unwrap()).unwrap();
         assert_eq!(jv["project_slug"], json!("my-proj"));
     }
 
@@ -659,12 +656,16 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(&js).unwrap();
         assert_eq!(v["agent"], json!("general-purpose"));
         assert_eq!(v["model"], json!("sonnet"));
-        assert_eq!(v["spec_ref"], json!("docs/plan/2026-07-26-automated-run/tasks/register-plan.md"));
+        assert_eq!(
+            v["spec_ref"],
+            json!("docs/plan/2026-07-26-automated-run/tasks/register-plan.md")
+        );
 
         // Unset plan fields are omitted from the wire — backward-compatible with the
         // cadence-derived + TodoWrite segments that never author them.
         let bare = RelaySegment { agent: None, model: None, spec_ref: None, ..task };
-        let bj: serde_json::Value = serde_json::from_str(&serde_json::to_string(&bare).unwrap()).unwrap();
+        let bj: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&bare).unwrap()).unwrap();
         assert!(bj.get("agent").is_none(), "None agent omitted");
         assert!(bj.get("model").is_none(), "None model omitted");
         assert!(bj.get("spec_ref").is_none(), "None spec_ref omitted");

@@ -23,5 +23,5 @@
     class="w-[18px] h-[18px] object-contain rounded-sm shrink-0"
   />
 {:else}
-  <span class="kanji text-accent text-[18px] leading-none shrink-0">{icon.glyph}</span>
+  <span class="kanji text-accent text-lg leading-none shrink-0">{icon.glyph}</span>
 {/if}

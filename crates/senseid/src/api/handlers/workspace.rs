@@ -1,19 +1,19 @@
+use crate::api::state::AppState;
 use axum::{
     extract::{Path, State},
     http::StatusCode,
     response::{Json, Sse, sse::Event},
 };
 use serde::Deserialize;
-use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::StreamExt;
-use crate::api::state::AppState;
+use tokio_stream::wrappers::BroadcastStream;
 
 // ── Repos CRUD ──────────────────────────────────────────────────────────────
 
-pub(crate) async fn list_projects(State(state): State<AppState>) -> Result<Json<Vec<serde_json::Value>>, StatusCode> {
-    state.pg.list_repositories().await
-        .map(Json)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+pub(crate) async fn list_projects(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<serde_json::Value>>, StatusCode> {
+    state.pg.list_repositories().await.map(Json).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
 #[derive(Deserialize)]
@@ -29,17 +29,25 @@ pub(crate) async fn create_project(
     State(state): State<AppState>,
     Json(body): Json<CreateProjectBody>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let name = body.name.unwrap_or_else(|| body.path.split('/').next_back().unwrap_or("unknown").to_string());
+    let name = body
+        .name
+        .unwrap_or_else(|| body.path.split('/').next_back().unwrap_or("unknown").to_string());
 
     // Look up or create a watch root for the parent directory
     let parent_path = std::path::Path::new(&body.path)
         .parent()
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_else(|| body.path.clone());
-    let root_id = state.pg.add_watch_root(&parent_path, "auto", &serde_json::json!([])).await
+    let root_id = state
+        .pg
+        .add_watch_root(&parent_path, "auto", &serde_json::json!([]))
+        .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let folder_id = state.pg.upsert_repo(&root_id, &name, &body.path).await
+    let folder_id = state
+        .pg
+        .upsert_repo(&root_id, &name, &body.path)
+        .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     Ok(Json(serde_json::json!({"ok": true, "folderId": folder_id})))
@@ -51,10 +59,14 @@ pub(crate) async fn update_project(
     Json(body): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     // Look up folder by name (old string repo_id)
-    let folder = state.pg.get_repo_by_name(&repo_id).await
+    let folder = state
+        .pg
+        .get_repo_by_name(&repo_id)
+        .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
-    let folder_id = folder["id"].as_str()
+    let folder_id = folder["id"]
+        .as_str()
         .and_then(|s| uuid::Uuid::parse_str(s).ok())
         .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
 
@@ -67,7 +79,10 @@ pub(crate) async fn update_project(
         props.insert("status".into(), serde_json::json!(status));
     }
 
-    state.pg.set_folder_props(&folder_id, &serde_json::Value::Object(props)).await
+    state
+        .pg
+        .set_folder_props(&folder_id, &serde_json::Value::Object(props))
+        .await
         .map(|_| Json(serde_json::json!({"ok": true})))
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
@@ -76,7 +91,10 @@ pub(crate) async fn delete_project(
     State(state): State<AppState>,
     Path(repo_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    state.pg.delete_repo_by_name(&repo_id).await
+    state
+        .pg
+        .delete_repo_by_name(&repo_id)
+        .await
         .map(|_| Json(serde_json::json!({"ok": true})))
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
@@ -102,7 +120,10 @@ pub(crate) async fn update_folder(
     if let Some(role) = body.role.as_deref() {
         // Accept empty string as "clear the role" — daemon stores it as NULL.
         let role_arg = if role.is_empty() { None } else { Some(role) };
-        state.pg.update_folder_role(&folder_id, role_arg).await
+        state
+            .pg
+            .update_folder_role(&folder_id, role_arg)
+            .await
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     }
     Ok(Json(serde_json::json!({"ok": true})))
@@ -131,28 +152,43 @@ pub(crate) async fn remap_folder_endpoint(
         return Err(StatusCode::BAD_REQUEST);
     }
     // `new` must be a real, indexed folder — the destination we attribute history to.
-    let new_id = state.pg.folder_id_by_abs_path(new).await
+    let new_id = state
+        .pg
+        .folder_id_by_abs_path(new)
+        .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
     // `old` may still carry a stale husk row (re-point it) or be already gone (alias only).
-    let old_id = state.pg.folder_id_by_abs_path(old).await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let old_id =
+        state.pg.folder_id_by_abs_path(old).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     if old_id == Some(new_id) {
         return Err(StatusCode::BAD_REQUEST); // old and new are the same folder
     }
     let remapped = match old_id {
         Some(oid) => {
-            state.pg.remap_folder(&oid, old, &new_id).await
+            state
+                .pg
+                .remap_folder(&oid, old, &new_id)
+                .await
                 .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
             true
         }
         None => {
-            state.pg.add_folder_path_alias(old, &new_id, "manual").await
+            state
+                .pg
+                .add_folder_path_alias(old, &new_id, "manual")
+                .await
                 .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
             false
         }
     };
-    let sessions_repaired = state.pg.repair_orphaned_sessions().await.unwrap_or(0);
+    // BOTH repairs, via the shared definition. A remap is precisely the event that
+    // makes a previously unresolvable cwd resolvable, so running only the
+    // events-based half here left exactly the sessions this endpoint exists to
+    // recover unattached. Cheap and bounded (two idempotent statements), so it
+    // stays inline — the caller is asking "what did my remap recover?" and a task
+    // id would not answer that.
+    let sessions_repaired = crate::transcript::repair_sessions(&state.pg).await;
     Ok(Json(serde_json::json!({
         "ok": true,
         "old": old,
@@ -170,21 +206,22 @@ pub(crate) async fn exclude_project(
     Path(repo_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     // Look up folder path before deleting
-    let folder = state.pg.get_repo_by_name(&repo_id).await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let path = folder.as_ref()
-        .and_then(|f| f["abs_path"].as_str())
-        .unwrap_or_default()
-        .to_string();
+    let folder =
+        state.pg.get_repo_by_name(&repo_id).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let path = folder.as_ref().and_then(|f| f["abs_path"].as_str()).unwrap_or_default().to_string();
 
     // Clear indexed nodes before deleting the folder record
     if let Some(folder_id) = folder.as_ref().and_then(|f| crate::api::util::json_uuid(&f["id"]))
-        && let Err(e) = state.pg.delete_nodes_by_folder(&folder_id).await {
-            tracing::warn!(error = %e, %folder_id, "exclude_project: failed to delete nodes for folder");
-        }
+        && let Err(e) = state.pg.delete_nodes_by_folder(&folder_id).await
+    {
+        tracing::warn!(error = %e, %folder_id, "exclude_project: failed to delete nodes for folder");
+    }
 
     // Delete the folder record (exclusions now handled by watcher)
-    state.pg.delete_repo_by_name(&repo_id).await
+    state
+        .pg
+        .delete_repo_by_name(&repo_id)
+        .await
         .map(|_| Json(serde_json::json!({"ok": true, "excluded": path})))
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
@@ -207,7 +244,10 @@ pub(crate) async fn add_project_tag(
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     // PgStore tags are a controlled vocabulary (tag, category).
     // Register the tag in the vocabulary; per-entity tagging uses folder props.
-    state.pg.add_tag(&body.tag, Some("repo")).await
+    state
+        .pg
+        .add_tag(&body.tag, Some("repo"))
+        .await
         .map(|_| Json(serde_json::json!({"ok": true})))
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
@@ -217,7 +257,10 @@ pub(crate) async fn remove_project_tag(
     Path((_repo_id, tag)): Path<(String, String)>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     // PgStore tags are a controlled vocabulary. Remove from vocabulary.
-    state.pg.remove_tag(&tag).await
+    state
+        .pg
+        .remove_tag(&tag)
+        .await
         .map(|_| Json(serde_json::json!({"ok": true})))
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
@@ -253,43 +296,62 @@ pub(crate) async fn sync_readme_frontmatter(
     Json(body): Json<FrontmatterSyncBody>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     // Opt-in gate.
-    let enabled = state.pg.get_config("sync_readme_frontmatter").await
+    let enabled = state
+        .pg
+        .get_config("sync_readme_frontmatter")
+        .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
-        .as_deref() == Some("true");
+        .as_deref()
+        == Some("true");
     if !enabled {
         return Err((StatusCode::CONFLICT, "sync_readme_frontmatter is not enabled".to_string()));
     }
 
-    let folder = state.pg.get_repo_by_path(&body.folder).await
+    let folder = state
+        .pg
+        .get_repo_by_path(&body.folder)
+        .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
         .ok_or((StatusCode::NOT_FOUND, "folder not indexed".to_string()))?;
     let folder_id = crate::api::util::json_uuid(&folder["id"])
         .ok_or((StatusCode::INTERNAL_SERVER_ERROR, "folder has no id".to_string()))?;
 
     let fm = crate::tasks::processors::metadata::Frontmatter {
-        organization: body.organization, client: body.client, project: body.project,
-        team: body.team, role: body.role, stack: body.stack,
-        summary: body.summary, tagline: body.tagline, icon: body.icon, icon_dark: body.icon_dark,
+        organization: body.organization,
+        client: body.client,
+        project: body.project,
+        team: body.team,
+        role: body.role,
+        stack: body.stack,
+        summary: body.summary,
+        tagline: body.tagline,
+        icon: body.icon,
+        icon_dark: body.icon_dark,
     };
 
     // Merge into the existing README (or create README.md if none exists).
     let repo = std::path::Path::new(&body.folder);
-    let readme = ["README.md", "readme.md", "Readme.md", "README"].iter()
+    let readme = ["README.md", "readme.md", "Readme.md", "README"]
+        .iter()
         .map(|n| repo.join(n))
         .find(|p| p.exists())
         .unwrap_or_else(|| repo.join("README.md"));
     let existing = std::fs::read_to_string(&readme).unwrap_or_default();
     let merged = crate::tasks::processors::metadata::merge_frontmatter(&existing, &fm);
-    std::fs::write(&readme, &merged)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("write {}: {e}", readme.display())))?;
+    std::fs::write(&readme, &merged).map_err(|e| {
+        (StatusCode::INTERNAL_SERVER_ERROR, format!("write {}: {e}", readme.display()))
+    })?;
 
     // Echo-loop guard: update the stored frontmatter snapshot so the watcher's
-    // reconcile_identity (DB-only — it never writes the README) sees no change
+    // reconcile_repo_metadata (DB-only — it never writes the README) sees no change
     // and skips the redundant re-reconcile our own write would otherwise trigger.
     let snapshot = serde_json::json!({
         "frontmatter": serde_json::to_value(&fm).unwrap_or(serde_json::Value::Null),
     });
-    state.pg.set_folder_props(&folder_id, &snapshot).await
+    state
+        .pg
+        .set_folder_props(&folder_id, &snapshot)
+        .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
     Ok(Json(serde_json::json!({ "ok": true, "readme": readme.display().to_string() })))
@@ -299,10 +361,7 @@ pub(crate) async fn sync_readme_frontmatter(
 
 fn expand_tilde(path: &str) -> String {
     if let Some(stripped) = path.strip_prefix("~/") {
-        sensei_bootstrap::home_dir()
-            .join(stripped)
-            .to_string_lossy()
-            .to_string()
+        sensei_bootstrap::home_dir().join(stripped).to_string_lossy().to_string()
     } else {
         path.to_string()
     }
@@ -342,13 +401,10 @@ pub(crate) async fn add_watch_root(
     let excluded_json = serde_json::Value::Array(
         body.excluded.iter().map(|s| serde_json::Value::String(s.clone())).collect(),
     );
-    let id = state.pg
-        .add_watch_root(&expanded, &name, &excluded_json)
-        .await
-        .map_err(|e| {
-            tracing::error!("add_watch_root: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+    let id = state.pg.add_watch_root(&expanded, &name, &excluded_json).await.map_err(|e| {
+        tracing::error!("add_watch_root: {}", e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
 
     // Register the new root with the live watcher singleton and (re)start it.
     // The mutex is std, so the lock scope must not span an await.
@@ -367,9 +423,7 @@ pub(crate) async fn add_watch_root(
             }
         }
     };
-    if watching
-        && let Err(e) = state.pg.update_watch_status(&id, "watching").await
-    {
+    if watching && let Err(e) = state.pg.update_watch_status(&id, "watching").await {
         tracing::warn!(error = %e, %id, "add_watch_root: update_watch_status watching failed");
     }
 
@@ -403,26 +457,31 @@ pub(crate) async fn update_watch_root(
 
     // Snapshot the root's path + current exclusions so we can diff (added prune,
     // removed re-scan) per the DDL semantics.
-    let Some((root_path, old_excluded)) = state.pg.get_watch_root(&uuid).await
-        .map_err(|e| { tracing::error!(error = %e, %uuid, "update_watch_root: get_watch_root failed"); StatusCode::INTERNAL_SERVER_ERROR })?
+    let Some((root_path, old_excluded)) = state.pg.get_watch_root(&uuid).await.map_err(|e| {
+        tracing::error!(error = %e, %uuid, "update_watch_root: get_watch_root failed");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?
     else {
         return Err(StatusCode::NOT_FOUND);
     };
 
     let excluded_json = body.excluded.as_ref().map(|list| {
-        serde_json::Value::Array(list.iter().map(|s| serde_json::Value::String(s.clone())).collect())
+        serde_json::Value::Array(
+            list.iter().map(|s| serde_json::Value::String(s.clone())).collect(),
+        )
     });
-    state.pg
-        .update_watch_root(&uuid, body.name.as_deref(), excluded_json.as_ref())
-        .await
-        .map_err(|e| {
+    state.pg.update_watch_root(&uuid, body.name.as_deref(), excluded_json.as_ref()).await.map_err(
+        |e| {
             tracing::error!(error = %e, %uuid, "update_watch_root: DB write failed");
             StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+        },
+    )?;
 
     let mut pruned_folders: u64 = 0;
     if let Some(new_list) = body.excluded.as_ref() {
-        let abs = |entry: &str| format!("{}/{}", root_path.trim_end_matches('/'), entry.trim_start_matches('/'));
+        let abs = |entry: &str| {
+            format!("{}/{}", root_path.trim_end_matches('/'), entry.trim_start_matches('/'))
+        };
         // Added entries → delete the matching subtree (folders + children).
         for entry in new_list.iter().filter(|e| !old_excluded.contains(*e)) {
             pruned_folders += state.pg.prune_under_prefix(&abs(entry)).await.unwrap_or_else(|e| {
@@ -442,12 +501,20 @@ pub(crate) async fn update_watch_root(
         // takes effect immediately, not on next daemon restart.
         // Fail closed: never register the live watcher with an empty exclusion
         // set on a read error (it would then watch/index the excluded subtree).
-        let prefixes = state.pg.root_exclusion_prefixes(&root_path).await
+        let prefixes = state
+            .pg
+            .root_exclusion_prefixes(&root_path)
+            .await
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
         let w_mutex = crate::watcher::root_watcher::RootWatcher::instance(state.task_queue.clone());
         match w_mutex.lock() {
-            Ok(mut w) => { w.register(std::path::PathBuf::from(&root_path), prefixes); let _ = w.start(); }
-            Err(e) => tracing::warn!(error = %e, %uuid, "update_watch_root: RootWatcher mutex poisoned; DB updated, live state stale"),
+            Ok(mut w) => {
+                w.register(std::path::PathBuf::from(&root_path), prefixes);
+                let _ = w.start();
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, %uuid, "update_watch_root: RootWatcher mutex poisoned; DB updated, live state stale")
+            }
         }
     }
 
@@ -474,7 +541,9 @@ pub(crate) struct ScanBody {
     pub _max_depth: u32,
 }
 
-fn default_depth() -> u32 { 4 }
+fn default_depth() -> u32 {
+    4
+}
 
 pub(crate) async fn scan_folder(
     State(state): State<AppState>,
@@ -491,9 +560,7 @@ pub(crate) async fn scan_folder(
     }
 
     // Enqueue ScanRoot task — runs asynchronously via task workers
-    let task = crate::tasks::Task::new(
-        crate::tasks::TaskKind::ScanRoot, "", &root_path,
-    );
+    let task = crate::tasks::Task::new(crate::tasks::TaskKind::ScanRoot, "", &root_path);
     let task_id = state.task_queue.enqueue(task).await;
 
     Ok(Json(serde_json::json!({"ok": true, "scanning": true, "taskId": task_id})))
@@ -538,13 +605,15 @@ pub(crate) async fn scan_suggestions(State(state): State<AppState>) -> Json<serd
             None
         }
     }
-        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
-        .unwrap_or(serde_json::json!([]));
+    .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+    .unwrap_or(serde_json::json!([]));
     Json(suggestions)
 }
 
 /// List configured scan roots with their scan status.
-pub(crate) async fn scan_roots(State(state): State<AppState>) -> Result<Json<serde_json::Value>, StatusCode> {
+pub(crate) async fn scan_roots(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
     // A DB error is a 500 — never masked as an empty root list (which reads as
     // "no scan roots configured" and hides the failure).
     let mut roots = state.pg.list_watch_roots().await.map_err(|e| {
@@ -559,9 +628,10 @@ pub(crate) async fn scan_roots(State(state): State<AppState>) -> Result<Json<ser
     })?;
     for root in &mut roots {
         let root_path = root["path"].as_str().unwrap_or("");
-        let count = repos.iter().filter(|r| {
-            r["abs_path"].as_str().unwrap_or("").starts_with(root_path)
-        }).count();
+        let count = repos
+            .iter()
+            .filter(|r| r["abs_path"].as_str().unwrap_or("").starts_with(root_path))
+            .count();
         root["repos_found"] = serde_json::json!(count);
         root["scanned"] = serde_json::json!(count > 0);
     }
@@ -587,12 +657,15 @@ pub(crate) async fn index_project(
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     // Clear errors for this project (PgStore expects UUID)
     if let Ok(folder_id) = uuid::Uuid::parse_str(&body.repo_id)
-        && let Err(e) = state.pg.clear_index_errors(&folder_id).await {
-            tracing::warn!(error = %e, %folder_id, "index_project: failed to clear index errors");
-        }
+        && let Err(e) = state.pg.clear_index_errors(&folder_id).await
+    {
+        tracing::warn!(error = %e, %folder_id, "index_project: failed to clear index errors");
+    }
 
     let task = crate::tasks::Task::new(
-        crate::tasks::TaskKind::ProcessGitFolder, &body.repo_id, &body.repo_path,
+        crate::tasks::TaskKind::ProcessGitFolder,
+        &body.repo_id,
+        &body.repo_path,
     );
     let task_id = state.task_queue.enqueue(task).await;
 
@@ -604,9 +677,7 @@ pub(crate) async fn index_project(
     })))
 }
 
-pub(crate) async fn task_status(
-    State(state): State<AppState>,
-) -> Json<serde_json::Value> {
+pub(crate) async fn task_status(State(state): State<AppState>) -> Json<serde_json::Value> {
     let status = state.task_queue.status().await;
     let progress = state.task_queue.progress().await;
     Json(serde_json::json!({ "queue": status, "repos": progress }))
@@ -621,55 +692,48 @@ pub(crate) async fn index_doctor(State(state): State<AppState>) -> Json<serde_js
     Json(serde_json::to_value(&report).unwrap_or_else(|_| serde_json::json!({})))
 }
 
-pub(crate) async fn index_progress_sse(
-    State(state): State<AppState>,
-) -> Sse<impl tokio_stream::Stream<Item = Result<Event, std::convert::Infallible>>> {
-    let rx = state.task_queue.sender().subscribe();
-    let stream = BroadcastStream::new(rx)
-        .filter_map(|result| {
-            match result {
-                Ok(event) => {
-                    let data = serde_json::to_string(&event).unwrap_or_default();
-                    Some(Ok(Event::default().data(data)))
-                }
-                Err(_) => None,
-            }
-        });
-    Sse::new(stream)
-}
-
+/// Every task event, for every task — the firehose behind both
+/// `/api/tasks/progress` and `/api/index/progress`.
+///
+/// Live-only: a subscriber sees what happens from the moment it attaches and
+/// nothing before, so it cannot answer "what happened to task N". Use
+/// `/api/tasks/{id}/events` for that — it opens with a snapshot from the durable
+/// log first.
+///
+/// This was two byte-identical functions serving the two routes. They never
+/// diverged, but nothing prevented it — a filter added to one would silently not
+/// apply to the other.
 pub(crate) async fn task_progress_sse(
     State(state): State<AppState>,
 ) -> Sse<impl tokio_stream::Stream<Item = Result<Event, std::convert::Infallible>>> {
     let rx = state.task_queue.sender().subscribe();
-    let stream = BroadcastStream::new(rx)
-        .filter_map(|result| {
-            match result {
-                Ok(event) => {
-                    let data = serde_json::to_string(&event).unwrap_or_default();
-                    Some(Ok(Event::default().data(data)))
-                }
-                Err(_) => None,
-            }
-        });
+    let stream = BroadcastStream::new(rx).filter_map(|result| match result {
+        Ok(event) => {
+            let data = serde_json::to_string(&event).unwrap_or_default();
+            Some(Ok(Event::default().data(data)))
+        }
+        Err(_) => None,
+    });
     Sse::new(stream)
 }
 
 // ── Index Errors ────────────────────────────────────────────────────────────
 
-pub(crate) async fn list_index_errors(State(state): State<AppState>) -> Result<Json<Vec<serde_json::Value>>, StatusCode> {
-    state.pg.get_index_errors(None).await
-        .map(Json)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+pub(crate) async fn list_index_errors(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<serde_json::Value>>, StatusCode> {
+    state.pg.get_index_errors(None).await.map(Json).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
 pub(crate) async fn list_repo_index_errors(
     State(state): State<AppState>,
     Path(repo_id): Path<String>,
 ) -> Result<Json<Vec<serde_json::Value>>, StatusCode> {
-    let folder_id = uuid::Uuid::parse_str(&repo_id)
-        .map_err(|_| StatusCode::BAD_REQUEST)?;
-    state.pg.get_index_errors(Some(&folder_id)).await
+    let folder_id = uuid::Uuid::parse_str(&repo_id).map_err(|_| StatusCode::BAD_REQUEST)?;
+    state
+        .pg
+        .get_index_errors(Some(&folder_id))
+        .await
         .map(Json)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }

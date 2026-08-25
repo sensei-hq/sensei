@@ -53,9 +53,9 @@ pub struct Cluster {
     pub signature: String,
     pub representative_text: String, // normalized snippet of the seed (earliest) member
     pub count: usize,
-    pub last_seen_ms: i64, // max ts across members
+    pub last_seen_ms: i64,            // max ts across members
     pub project_ids: Vec<uuid::Uuid>, // distinct, sorted
-    pub member_idxs: Vec<usize>, // indices into the input slice
+    pub member_idxs: Vec<usize>,      // indices into the input slice
 }
 
 /// A row ready to upsert into `inference.corrections`. Plain data carrier shared
@@ -236,13 +236,13 @@ mod tests {
     #[test]
     fn similarity_default_when_config_unparseable() {
         assert_eq!(parse_similarity_threshold(Some("not a number")), SIMILARITY_THRESHOLD);
-        assert_eq!(parse_similarity_threshold(Some("")),             SIMILARITY_THRESHOLD);
+        assert_eq!(parse_similarity_threshold(Some("")), SIMILARITY_THRESHOLD);
     }
 
     #[test]
     fn similarity_default_when_out_of_range() {
         assert_eq!(parse_similarity_threshold(Some("-0.1")), SIMILARITY_THRESHOLD);
-        assert_eq!(parse_similarity_threshold(Some("1.1")),  SIMILARITY_THRESHOLD);
+        assert_eq!(parse_similarity_threshold(Some("1.1")), SIMILARITY_THRESHOLD);
     }
 
     #[test]
@@ -260,7 +260,7 @@ mod tests {
     #[test]
     fn cluster_min_default_when_zero_or_negative() {
         // usize can't be negative, but zero is invalid — reject it.
-        assert_eq!(parse_cluster_min(Some("0")),  CORRECTION_CLUSTER_MIN);
+        assert_eq!(parse_cluster_min(Some("0")), CORRECTION_CLUSTER_MIN);
     }
 
     #[test]
@@ -351,7 +351,11 @@ mod tests {
     #[test]
     fn normalize_treats_unicode_symbols_as_word_boundaries() {
         assert_eq!(super::normalize("fix—this"), "fix this", "em-dash is a boundary, not dropped");
-        assert_eq!(super::normalize("use \u{201c}state\u{201d} now"), "use state now", "curly quotes");
+        assert_eq!(
+            super::normalize("use \u{201c}state\u{201d} now"),
+            "use state now",
+            "curly quotes"
+        );
         assert_eq!(super::normalize("a…b"), "a b", "ellipsis is a boundary");
     }
 

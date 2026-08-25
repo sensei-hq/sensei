@@ -63,15 +63,10 @@ impl ManifestAdapter for SwiftPmManifestAdapter {
     fn parse_manifest(&self, content: &str) -> ParsedManifest {
         // `Package(name: "Foo", ...)` — extract the first `name:` arg.
         static NAME: OnceLock<Regex> = OnceLock::new();
-        let re = NAME.get_or_init(|| {
-            Regex::new(r#"Package\s*\([^)]*name\s*:\s*"([^"]+)""#).unwrap()
-        });
+        let re =
+            NAME.get_or_init(|| Regex::new(r#"Package\s*\([^)]*name\s*:\s*"([^"]+)""#).unwrap());
         let name = re.captures(content).map(|c| c.get(1).unwrap().as_str().to_string());
-        ParsedManifest {
-            name,
-            version: None,
-            description: None,
-        }
+        ParsedManifest { name, version: None, description: None }
     }
 
     fn stack_labels(&self, _content: &str) -> Vec<&'static str> {
@@ -80,11 +75,10 @@ impl ManifestAdapter for SwiftPmManifestAdapter {
 
     /// Conventional Swift Package Manager verbs.
     fn parse_commands(&self, _content: &str) -> Vec<super::DiscoveredCommand> {
-        super::conventional_commands("swift", &[
-            ("test",   "test"),
-            ("build",  "build"),
-            ("run",    "run"),
-        ])
+        super::conventional_commands(
+            "swift",
+            &[("test", "test"), ("build", "build"), ("run", "run")],
+        )
     }
 }
 
@@ -93,9 +87,7 @@ fn package_url_re() -> &'static Regex {
     // `.package(url: "https://…", from: "1.2.3")` — capture the URL, then
     // the remainder of the args up to the closing paren so `parse_dependencies`
     // can pull out a version.
-    RE.get_or_init(|| {
-        Regex::new(r#"\.package\s*\(\s*url\s*:\s*"([^"]+)"([^)]*)\)"#).unwrap()
-    })
+    RE.get_or_init(|| Regex::new(r#"\.package\s*\(\s*url\s*:\s*"([^"]+)"([^)]*)\)"#).unwrap())
 }
 
 fn version_re() -> &'static Regex {
@@ -122,10 +114,7 @@ fn package_name_from_url(url: &str) -> String {
     // Try to get the last two segments of the path so `github.com/vendor/pkg`
     // becomes `vendor/pkg` — matches Composer / rubygems-style names and
     // avoids collisions across forks.
-    let after_scheme = cleaned
-        .rsplit_once("://")
-        .map(|(_, r)| r)
-        .unwrap_or(cleaned);
+    let after_scheme = cleaned.rsplit_once("://").map(|(_, r)| r).unwrap_or(cleaned);
     let parts: Vec<&str> = after_scheme.split('/').collect();
     if parts.len() >= 2 {
         // Drop the host; keep the last two segments.
@@ -202,9 +191,6 @@ mod tests {
             "apple/swift-log"
         );
         // Trailing slash tolerated.
-        assert_eq!(
-            package_name_from_url("https://gitlab.com/vendor/pkg/"),
-            "vendor/pkg"
-        );
+        assert_eq!(package_name_from_url("https://gitlab.com/vendor/pkg/"), "vendor/pkg");
     }
 }

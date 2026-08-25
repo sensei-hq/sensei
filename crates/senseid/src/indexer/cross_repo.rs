@@ -45,7 +45,8 @@ fn detect_git_subtrees(repo_path: &std::path::Path) -> Vec<(String, String)> {
                         let dir = &rest[..end];
                         let full_path = repo_path.join(dir);
                         if full_path.is_dir() && !subtrees.iter().any(|(n, _)| n == dir) {
-                            subtrees.push((dir.to_string(), full_path.to_string_lossy().to_string()));
+                            subtrees
+                                .push((dir.to_string(), full_path.to_string_lossy().to_string()));
                         }
                     }
                 }

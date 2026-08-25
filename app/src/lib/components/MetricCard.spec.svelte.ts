@@ -13,7 +13,7 @@ afterEach(() => {
 function card(over: Partial<MetricCardVM> = {}): MetricCardVM {
     return {
         key: 'ftr',
-        name: 'First-turn resolution (FTR)',
+        name: 'First-turn resolution',
         value: '100%',
         sub: '2 / 2',
         trend: { label: '+29 pt', dir: 'up', tone: 'good' },
@@ -36,7 +36,7 @@ describe('MetricCard', () => {
         const root = mount(card());
         expect(q(root, '[data-component="metric-value"]')?.textContent?.trim()).toBe('100%');
         expect(q(root, '[data-component="metric-sub"]')?.textContent?.trim()).toBe('2 / 2');
-        expect(root.textContent).toContain('First-turn resolution (FTR)');
+        expect(root.textContent).toContain('First-turn resolution');
     });
 
     it('renders the trend chip and carries its tone on a data attribute', () => {

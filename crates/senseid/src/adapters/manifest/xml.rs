@@ -7,9 +7,9 @@
 //! CDATA, self-closing tags, attributes on tags we care about — that any
 //! regex approach handles incorrectly.
 
+use quick_xml::Reader;
 use quick_xml::events::Event;
 use quick_xml::name::QName;
-use quick_xml::Reader;
 
 /// The path of open element names from document root down to the current
 /// event, used by callers to distinguish e.g. `<project><groupId>` from
@@ -23,18 +23,14 @@ pub struct XmlPath<'a>(pub &'a [String]);
 impl XmlPath<'_> {
     /// True when the current path matches exactly `expected`, top-down.
     pub fn is(&self, expected: &[&str]) -> bool {
-        self.0.len() == expected.len()
-            && self.0.iter().zip(expected).all(|(a, b)| a == b)
+        self.0.len() == expected.len() && self.0.iter().zip(expected).all(|(a, b)| a == b)
     }
 
     /// True when the current path ends with `suffix`, top-down.
     #[allow(dead_code)]
     pub fn ends_with(&self, suffix: &[&str]) -> bool {
         self.0.len() >= suffix.len()
-            && self.0[self.0.len() - suffix.len()..]
-                .iter()
-                .zip(suffix)
-                .all(|(a, b)| a == b)
+            && self.0[self.0.len() - suffix.len()..].iter().zip(suffix).all(|(a, b)| a == b)
     }
 }
 
@@ -98,7 +94,10 @@ where
                     let s = txt.into_owned();
                     if !s.trim().is_empty() {
                         current_text = Some(match current_text.take() {
-                            Some(mut prev) => { prev.push_str(&s); prev }
+                            Some(mut prev) => {
+                                prev.push_str(&s);
+                                prev
+                            }
                             None => s,
                         });
                     }
@@ -108,7 +107,10 @@ where
                 if let Ok(raw) = std::str::from_utf8(e.as_ref()) {
                     let s = raw.to_string();
                     current_text = Some(match current_text.take() {
-                        Some(mut prev) => { prev.push_str(&s); prev }
+                        Some(mut prev) => {
+                            prev.push_str(&s);
+                            prev
+                        }
                         None => s,
                     });
                 }
@@ -206,11 +208,8 @@ mod tests {
     #[test]
     fn walk_leaves_handles_cdata() {
         let mut seen: Vec<String> = Vec::new();
-        walk_leaves(
-            r#"<r><d><![CDATA[hello <world>]]></d></r>"#,
-            |_, t| seen.push(t.to_string()),
-        )
-        .unwrap();
+        walk_leaves(r#"<r><d><![CDATA[hello <world>]]></d></r>"#, |_, t| seen.push(t.to_string()))
+            .unwrap();
         assert_eq!(seen, vec!["hello <world>".to_string()]);
     }
 
@@ -235,12 +234,8 @@ mod tests {
         assert_eq!(
             ops,
             vec![
-                "enter:r",
-                "enter:a", "leaf:a", "exit:a",
-                "enter:b",
-                "enter:c", "leaf:c", "exit:c",
-                "exit:b",
-                "exit:r",
+                "enter:r", "enter:a", "leaf:a", "exit:a", "enter:b", "enter:c", "leaf:c", "exit:c",
+                "exit:b", "exit:r",
             ],
         );
     }

@@ -177,10 +177,24 @@ describe('relativeWhen', () => {
 });
 
 describe('shortDayLabel', () => {
-  it('reads Today / Yest / −N relative to now', () => {
+  it('reads Today / Yest, then a real mm/dd date — never a −N offset', () => {
     expect(shortDayLabel(dayKey(isoDaysAgo(0)), NOW)).toBe('Today');
     expect(shortDayLabel(dayKey(isoDaysAgo(1)), NOW)).toBe('Yest');
-    expect(shortDayLabel(dayKey(isoDaysAgo(4)), NOW)).toBe('−4');
+
+    // Older days carry the date itself, so a bar can be matched against a
+    // commit or a calendar instead of forcing arithmetic off an implicit today.
+    const older = dayKey(isoDaysAgo(4));
+    const [, m, d] = older.split('-');
+    expect(shortDayLabel(older, NOW)).toBe(`${m}/${d}`);
+    expect(shortDayLabel(older, NOW)).not.toContain('−');
+  });
+
+  it('zero-pads month and day so the axis stays aligned', () => {
+    expect(shortDayLabel('2026-03-07', new Date('2026-04-01T12:00:00'))).toBe('03/07');
+  });
+
+  it('is empty for a missing key', () => {
+    expect(shortDayLabel('', NOW)).toBe('');
   });
 });
 

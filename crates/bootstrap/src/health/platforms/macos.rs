@@ -12,9 +12,9 @@
 //! IMPORTANT: `checker_for` uses exhaustive `match id { ... }` (no `_ =>`).
 //! Adding a new ComponentId is a compile error here until handled.
 
-use crate::config::{POSTGRES_PORT, OLLAMA_PORT, SenseiConfig};
+use crate::config::{OLLAMA_PORT, POSTGRES_PORT, SenseiConfig};
 use crate::health::checker::Checker;
-use crate::health::checkers::{BinaryChecker, PortChecker, AndChecker, PostgresDatabaseChecker};
+use crate::health::checkers::{AndChecker, BinaryChecker, PortChecker, PostgresDatabaseChecker};
 // Note: Ollama deliberately uses *only* PortChecker (not AndChecker over the
 // CLI binary too). Sensei talks to Ollama via HTTP on `OLLAMA_PORT`; the
 // `ollama` CLI on PATH is incidental. This matters when Ollama is installed
@@ -23,8 +23,8 @@ use crate::health::checkers::{BinaryChecker, PortChecker, AndChecker, PostgresDa
 use crate::health::provider::PlatformProvider;
 use crate::health::resolver::Resolver;
 use crate::health::resolvers::{
-    DatabaseResolver, DaemonStartResolver,
-    PostgresInstallResolver, OllamaInstallResolver, SenseiInstallResolver,
+    DaemonStartResolver, DatabaseResolver, OllamaInstallResolver, PostgresInstallResolver,
+    SenseiInstallResolver,
 };
 use crate::health::types::{ComponentId, PackageManagerId, Platform, Remedy};
 
@@ -35,7 +35,9 @@ impl PlatformProvider for MacOSProvider {
         if cfg!(target_os = "linux") { Platform::Linux } else { Platform::Macos }
     }
 
-    fn package_manager_id(&self) -> PackageManagerId { PackageManagerId::Homebrew }
+    fn package_manager_id(&self) -> PackageManagerId {
+        PackageManagerId::Homebrew
+    }
 
     fn package_manager_checker(&self) -> Box<dyn Checker> {
         Box::new(BinaryChecker::with_version("brew", "--version"))
@@ -49,9 +51,14 @@ impl PlatformProvider for MacOSProvider {
         // so closed ports report failed in ~ms instead of paying the full
         // patient deadline (which used to add 13s of wasted wall time).
         const POSTGRES_PORT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
-        const OLLAMA_PORT_TIMEOUT:   std::time::Duration = std::time::Duration::from_secs(5);
-        const DAEMON_PORT_TIMEOUT:   std::time::Duration = std::time::Duration::from_secs(3);
-        fn port(label: &'static str, port: u16, retry: bool, recheck_timeout: std::time::Duration) -> Box<dyn Checker> {
+        const OLLAMA_PORT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+        const DAEMON_PORT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
+        fn port(
+            label: &'static str,
+            port: u16,
+            retry: bool,
+            recheck_timeout: std::time::Duration,
+        ) -> Box<dyn Checker> {
             if retry {
                 Box::new(PortChecker::with_timeout(label, port, recheck_timeout))
             } else {
@@ -71,11 +78,13 @@ impl PlatformProvider for MacOSProvider {
                     Box::new(BinaryChecker::new(cfg.senseid_binary())),
                     Box::new(BinaryChecker::new(cfg.sensei_mcp_binary())),
                 ]))
-            },
-            ComponentId::Database => Box::new(PostgresDatabaseChecker {
-                db_name: SenseiConfig::from_env().db_name,
-            }),
-            ComponentId::Daemon => port("daemon", SenseiConfig::from_env().daemon_port, retry, DAEMON_PORT_TIMEOUT),
+            }
+            ComponentId::Database => {
+                Box::new(PostgresDatabaseChecker { db_name: SenseiConfig::from_env().db_name })
+            }
+            ComponentId::Daemon => {
+                port("daemon", SenseiConfig::from_env().daemon_port, retry, DAEMON_PORT_TIMEOUT)
+            }
         }
     }
 

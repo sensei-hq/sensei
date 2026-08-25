@@ -10,8 +10,8 @@
 //! Never 500s: a missing git binary or a non-repo dir yields a `user` with null
 //! fields rather than an error — the caller degrades gracefully.
 
-use axum::extract::{Query, State};
 use axum::Json;
+use axum::extract::{Query, State};
 use serde::Deserialize;
 
 use crate::api::state::AppState;
@@ -34,11 +34,7 @@ pub(crate) async fn get_user(
     let dir = q
         .under
         .filter(|s| !s.is_empty())
-        .or_else(|| {
-            std::env::current_dir()
-                .ok()
-                .map(|p| p.to_string_lossy().into_owned())
-        })
+        .or_else(|| std::env::current_dir().ok().map(|p| p.to_string_lossy().into_owned()))
         .unwrap_or_default();
 
     let user = read_git_user(std::path::Path::new(&dir));

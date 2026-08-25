@@ -1,10 +1,58 @@
 use super::*;
 
+/// One `activity.task_executions` row as selected by [`TASK_EXECUTION_COLUMNS`].
+/// The alias and the column list travel together — changing one without the
+/// other is a decode error at runtime, so neither is written out twice.
+type TaskExecutionRow = (
+    i64,                                   // task_id
+    Option<i64>,                           // parent_task_id
+    String,                                // task_kind
+    String,                                // folder_path
+    String,                                // path
+    String,                                // status
+    Option<i32>,                           // items_processed
+    Option<i32>,                           // duration_ms
+    i32,                                   // retry_number
+    Option<String>,                        // error_message
+    chrono::DateTime<chrono::Utc>,         // started_at
+    Option<chrono::DateTime<chrono::Utc>>, // completed_at
+);
+
+/// Select list matching [`TaskExecutionRow`], field for field and in order.
+const TASK_EXECUTION_COLUMNS: &str = "task_id, parent_task_id, task_kind::text, folder_path, path, \
+     status, items_processed, duration_ms, retry_number, error_message, started_at, completed_at";
+
+/// One execution row as the wire shape a follower reads.
+///
+/// `items_processed` is the handler's own return value (rows written, files
+/// queued …) — the only place a caller can learn what the work actually DID, so
+/// it is carried through rather than reduced to a status.
+fn task_execution_json(r: TaskExecutionRow) -> serde_json::Value {
+    serde_json::json!({
+        "taskId": r.0,
+        "parentTaskId": r.1,
+        "kind": r.2,
+        "folderPath": r.3,
+        "path": r.4,
+        "status": r.5,
+        "itemsProcessed": r.6,
+        "durationMs": r.7,
+        "retryNumber": r.8,
+        "error": r.9,
+        "startedAt": r.10,
+        "completedAt": r.11,
+    })
+}
+
 #[allow(dead_code, clippy::too_many_arguments, clippy::type_complexity)]
 impl PgStore {
     pub async fn log_index_error(
-        &self, folder_id: &uuid::Uuid, file_path: &str, error: &str,
-        adapter: Option<&str>, phase: Option<&str>,
+        &self,
+        folder_id: &uuid::Uuid,
+        file_path: &str,
+        error: &str,
+        adapter: Option<&str>,
+        phase: Option<&str>,
     ) -> Result<(), String> {
         sqlx_core::query::query(
             "INSERT INTO sensei.index_errors(folder_id, file_path, error, adapter, phase) VALUES($1, $2, $3, $4, $5)"
@@ -16,7 +64,10 @@ impl PgStore {
         Ok(())
     }
 
-    pub async fn get_index_errors(&self, folder_id: Option<&uuid::Uuid>) -> Result<Vec<serde_json::Value>, String> {
+    pub async fn get_index_errors(
+        &self,
+        folder_id: Option<&uuid::Uuid>,
+    ) -> Result<Vec<serde_json::Value>, String> {
         let rows: Vec<(uuid::Uuid, String, String, Option<String>, Option<String>, chrono::DateTime<chrono::Utc>)> = match folder_id {
             Some(fid) => sqlx_core::query_as::query_as(
                 "SELECT folder_id, file_path, error, adapter, phase, created_at FROM sensei.index_errors WHERE folder_id = $1 ORDER BY created_at DESC"
@@ -26,12 +77,15 @@ impl PgStore {
             ).fetch_all(&self.pool).await,
         }.map_err(|e| e.to_string())?;
 
-        Ok(rows.into_iter().map(|(fid, fp, err, adapter, phase, ts)| {
-            serde_json::json!({
-                "folder_id": fid, "file_path": fp, "error": err,
-                "adapter": adapter, "phase": phase, "created_at": ts.to_rfc3339(),
+        Ok(rows
+            .into_iter()
+            .map(|(fid, fp, err, adapter, phase, ts)| {
+                serde_json::json!({
+                    "folder_id": fid, "file_path": fp, "error": err,
+                    "adapter": adapter, "phase": phase, "created_at": ts.to_rfc3339(),
+                })
             })
-        }).collect())
+            .collect())
     }
 
     pub async fn clear_index_errors(&self, folder_id: &uuid::Uuid) -> Result<(), String> {
@@ -48,12 +102,12 @@ impl PgStore {
     /// this enforces a retention window. Returns the number of rows removed.
     pub async fn prune_logs(&self, days: i32) -> Result<u64, String> {
         let r = sqlx_core::query::query(
-            "DELETE FROM public.logs WHERE logged_at < now() - (interval '1 day' * $1)"
+            "DELETE FROM public.logs WHERE logged_at < now() - (interval '1 day' * $1)",
         )
-            .bind(days)
-            .execute(&self.pool)
-            .await
-            .map_err(|e| e.to_string())?;
+        .bind(days)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(r.rows_affected())
     }
 
@@ -94,7 +148,11 @@ impl PgStore {
     ///
     /// Ordering respects FKs: children first (transcript_turns / assistant_events
     /// keyed by client_session_id), then sessions (which cascades turns).
-    pub async fn prune_activity(&self, days: i32, backstop_days: i32) -> Result<ActivityPruneCounts, String> {
+    pub async fn prune_activity(
+        &self,
+        days: i32,
+        backstop_days: i32,
+    ) -> Result<ActivityPruneCounts, String> {
         let mut tx = self.pool.begin().await.map_err(|e| e.to_string())?;
 
         // (1) Snapshot eligible sessions once — used for every child delete
@@ -132,79 +190,109 @@ impl PgStore {
                                 AND pm.grain = 'daily'
                                 AND pm.computed_on = date_trunc('day', s.started_at)::date
                                 AND m.capture_source = 'session')
-                     OR s.started_at < now() - (interval '1 day' * $2))"
+                     OR s.started_at < now() - (interval '1 day' * $2))",
         )
-            .bind(days)
-            .bind(backstop_days)
-            .fetch_all(&mut *tx).await.map_err(|e| e.to_string())?;
+        .bind(days)
+        .bind(backstop_days)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(|e| e.to_string())?;
         if eligible.is_empty() {
             // Even with no eligible sessions, orphan assistant_events by ts
             // are still a valid target.
             let cutoff_ms = self.cutoff_millis(days);
             let ae = sqlx_core::query::query(
                 // NOT EXISTS instead of NOT IN because sessions.client_session_id
-            // is nullable — a NULL in the NOT IN subquery poisons the whole
-            // predicate under ANSI three-valued logic.
+                // is nullable — a NULL in the NOT IN subquery poisons the whole
+                // predicate under ANSI three-valued logic.
+                "DELETE FROM activity.assistant_events ae
+              WHERE ae.ts < $1
+                AND (ae.session_id = ''
+                     OR NOT EXISTS (
+                        SELECT 1 FROM activity.sessions s
+                         WHERE s.client_session_id = ae.session_id))",
+            )
+            .bind(cutoff_ms)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| e.to_string())?;
+            tx.commit().await.map_err(|e| e.to_string())?;
+            return Ok(ActivityPruneCounts {
+                assistant_events: ae.rows_affected(),
+                ..Default::default()
+            });
+        }
+        let session_uuids: Vec<uuid::Uuid> = eligible.iter().map(|(u, _)| *u).collect();
+        let client_ids: Vec<String> = eligible.iter().map(|(_, c)| c.clone()).collect();
+
+        // (2) Count turns that will cascade on the session delete — for the
+        //     log line; the DELETE itself happens via CASCADE below.
+        let turns_count: (i64,) = sqlx_core::query_as::query_as(
+            "SELECT COUNT(*) FROM activity.turns WHERE session_id = ANY($1::uuid[])",
+        )
+        .bind(&session_uuids)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(|e| e.to_string())?;
+
+        // (3) transcript_turns keyed by client_session_id (text, no FK).
+        let tt = sqlx_core::query::query(
+            "DELETE FROM activity.transcript_turns WHERE session_id = ANY($1::text[])",
+        )
+        .bind(&client_ids)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| e.to_string())?;
+
+        // (4) assistant_events for the same client_session_ids.
+        let ae_session = sqlx_core::query::query(
+            "DELETE FROM activity.assistant_events WHERE session_id = ANY($1::text[])",
+        )
+        .bind(&client_ids)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| e.to_string())?;
+
+        // (5) sessions — cascades turns.
+        let sess =
+            sqlx_core::query::query("DELETE FROM activity.sessions WHERE id = ANY($1::uuid[])")
+                .bind(&session_uuids)
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| e.to_string())?;
+
+        // (6) Session-less orphan assistant_events by ts. Runs after the
+        //     session-scoped prune so we don't double-count.
+        //
+        //     NOT EXISTS, never NOT IN — the same reason the eligible-empty path
+        //     above spells it out: `sessions.client_session_id` is NULLABLE, and
+        //     under ANSI three-valued logic a single NULL in a `NOT IN` subquery
+        //     makes the predicate NULL for EVERY row, so the DELETE silently
+        //     matches nothing. This path had the `NOT IN` form, so orphan events
+        //     were never reclaimed once any session carried a NULL client id —
+        //     which is the normal case for a session anchored without one (e.g.
+        //     an AI-start row). A retention leak that only showed up as a flaky
+        //     test, because it passed exactly when no such session happened to
+        //     exist.
+        let cutoff_ms = self.cutoff_millis(days);
+        let ae_orphan = sqlx_core::query::query(
             "DELETE FROM activity.assistant_events ae
               WHERE ae.ts < $1
                 AND (ae.session_id = ''
                      OR NOT EXISTS (
                         SELECT 1 FROM activity.sessions s
-                         WHERE s.client_session_id = ae.session_id))"
-            )
-                .bind(cutoff_ms)
-                .execute(&mut *tx).await.map_err(|e| e.to_string())?;
-            tx.commit().await.map_err(|e| e.to_string())?;
-            return Ok(ActivityPruneCounts { assistant_events: ae.rows_affected(), ..Default::default() });
-        }
-        let session_uuids: Vec<uuid::Uuid> = eligible.iter().map(|(u, _)| *u).collect();
-        let client_ids:    Vec<String>     = eligible.iter().map(|(_, c)| c.clone()).collect();
-
-        // (2) Count turns that will cascade on the session delete — for the
-        //     log line; the DELETE itself happens via CASCADE below.
-        let turns_count: (i64,) = sqlx_core::query_as::query_as(
-            "SELECT COUNT(*) FROM activity.turns WHERE session_id = ANY($1::uuid[])"
+                         WHERE s.client_session_id = ae.session_id))",
         )
-            .bind(&session_uuids)
-            .fetch_one(&mut *tx).await.map_err(|e| e.to_string())?;
-
-        // (3) transcript_turns keyed by client_session_id (text, no FK).
-        let tt = sqlx_core::query::query(
-            "DELETE FROM activity.transcript_turns WHERE session_id = ANY($1::text[])"
-        )
-            .bind(&client_ids)
-            .execute(&mut *tx).await.map_err(|e| e.to_string())?;
-
-        // (4) assistant_events for the same client_session_ids.
-        let ae_session = sqlx_core::query::query(
-            "DELETE FROM activity.assistant_events WHERE session_id = ANY($1::text[])"
-        )
-            .bind(&client_ids)
-            .execute(&mut *tx).await.map_err(|e| e.to_string())?;
-
-        // (5) sessions — cascades turns.
-        let sess = sqlx_core::query::query(
-            "DELETE FROM activity.sessions WHERE id = ANY($1::uuid[])"
-        )
-            .bind(&session_uuids)
-            .execute(&mut *tx).await.map_err(|e| e.to_string())?;
-
-        // (6) Session-less orphan assistant_events by ts. Runs after the
-        //     session-scoped prune so we don't double-count.
-        let cutoff_ms = self.cutoff_millis(days);
-        let ae_orphan = sqlx_core::query::query(
-            "DELETE FROM activity.assistant_events WHERE ts < $1
-               AND (session_id = '' OR session_id NOT IN
-                    (SELECT client_session_id FROM activity.sessions))"
-        )
-            .bind(cutoff_ms)
-            .execute(&mut *tx).await.map_err(|e| e.to_string())?;
+        .bind(cutoff_ms)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| e.to_string())?;
 
         tx.commit().await.map_err(|e| e.to_string())?;
 
         Ok(ActivityPruneCounts {
-            sessions:         sess.rows_affected(),
-            turns:            turns_count.0.max(0) as u64,
+            sessions: sess.rows_affected(),
+            turns: turns_count.0.max(0) as u64,
             transcript_turns: tt.rows_affected(),
             assistant_events: ae_session.rows_affected() + ae_orphan.rows_affected(),
         })
@@ -229,12 +317,17 @@ impl PgStore {
     }
 
     /// Execute a parameterized query returning unresolved edges.
-    pub async fn execute_raw_query(&self, sql: &str, folder_id: &uuid::Uuid) -> Result<Vec<serde_json::Value>, String> {
-        let rows: Vec<(uuid::Uuid, uuid::Uuid, Option<String>, String)> = sqlx_core::query_as::query_as(sql)
-            .bind(folder_id)
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|e| e.to_string())?;
+    pub async fn execute_raw_query(
+        &self,
+        sql: &str,
+        folder_id: &uuid::Uuid,
+    ) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(uuid::Uuid, uuid::Uuid, Option<String>, String)> =
+            sqlx_core::query_as::query_as(sql)
+                .bind(folder_id)
+                .fetch_all(&self.pool)
+                .await
+                .map_err(|e| e.to_string())?;
         Ok(rows.into_iter().map(|(id, src, tgt_name, kind)| {
             serde_json::json!({ "id": id, "source_id": src, "target_name": tgt_name, "kind": kind })
         }).collect())
@@ -364,7 +457,7 @@ impl PgStore {
     ) -> Result<uuid::Uuid, String> {
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "INSERT INTO activity.task_executions(task_id, parent_task_id, task_kind, folder_path, path, status, retry_number)
-             VALUES($1, $2, $3, $4, $5, 'running', $6) RETURNING id"
+             VALUES($1, $2, $3::sensei.task_execution_kind, $4, $5, 'running', $6) RETURNING id"
         )
         .bind(task_id)
         .bind(parent_task_id)
@@ -409,7 +502,7 @@ impl PgStore {
         sqlx_core::query::query(
             "UPDATE activity.task_executions
                 SET status = 'failed', duration_ms = $2, error_message = $3, completed_at = now()
-              WHERE id = $1"
+              WHERE id = $1",
         )
         .bind(id)
         .bind(duration_ms)
@@ -418,6 +511,135 @@ impl PgStore {
         .await
         .map_err(|e| format!("fail_task_execution: {}", e))?;
         Ok(())
+    }
+
+    /// Every execution row for one queue task id, newest attempt first.
+    ///
+    /// A task id can have MORE than one row: a retry inserts a fresh row with an
+    /// incremented `retry_number`. Returning all of them (rather than the latest)
+    /// is what makes a retried task honest to a follower — "succeeded on attempt
+    /// 3 after two failures" and "succeeded first time" are different stories and
+    /// collapsing them would hide the failures.
+    ///
+    /// `since` MUST be the issuing queue's session start. Task ids restart at 1
+    /// with every daemon, so this table holds many unrelated rows per id — an
+    /// unscoped lookup for id 1 returns a pile of other sessions' tasks, of other
+    /// KINDS, which is worse than returning nothing.
+    pub async fn task_execution_attempts(
+        &self,
+        task_id: i64,
+        since: chrono::DateTime<chrono::Utc>,
+    ) -> Result<Vec<serde_json::Value>, String> {
+        let sql = format!(
+            "SELECT {TASK_EXECUTION_COLUMNS} FROM activity.task_executions \
+              WHERE task_id = $1 AND started_at >= $2 \
+              ORDER BY retry_number DESC, started_at DESC"
+        );
+        let rows: Vec<TaskExecutionRow> = sqlx_core::query_as::query_as(&sql)
+            .bind(task_id)
+            .bind(since)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| format!("task_execution_attempts: {e}"))?;
+        Ok(rows.into_iter().map(task_execution_json).collect())
+    }
+
+    /// Execution rows for the CHILDREN of one queue task id.
+    ///
+    /// A dispatcher (`IngestCaptures` enqueues one task per transcript) has
+    /// no meaningful progress of its own — it finishes in milliseconds having
+    /// queued thousands of children. Following the parent alone would report
+    /// "completed" while the actual ingestion had barely started, so a follower
+    /// needs the children to see real progress.
+    /// `since` scopes to the issuing queue's session, for the same reason as
+    /// [`task_execution_attempts`] — parent ids restart at 1 too.
+    pub async fn child_task_executions(
+        &self,
+        parent_task_id: i64,
+        since: chrono::DateTime<chrono::Utc>,
+    ) -> Result<Vec<serde_json::Value>, String> {
+        let sql = format!(
+            "SELECT {TASK_EXECUTION_COLUMNS} FROM activity.task_executions \
+              WHERE parent_task_id = $1 AND started_at >= $2 ORDER BY started_at"
+        );
+        let rows: Vec<TaskExecutionRow> = sqlx_core::query_as::query_as(&sql)
+            .bind(parent_task_id)
+            .bind(since)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| format!("child_task_executions: {e}"))?;
+        Ok(rows.into_iter().map(task_execution_json).collect())
+    }
+
+    /// Roll up task executions older than `days` into `task_execution_daily`,
+    /// then delete the raw rows — except failures, which are kept for
+    /// `failed_days` because their `error_message`/`path`/`retry_number` are the
+    /// whole reason to keep a log at all (and they are rare: 32,664 of 4.8M).
+    ///
+    /// Rollup happens BEFORE the delete, in one transaction, so a crash between
+    /// the two cannot lose rows that were never aggregated.
+    ///
+    /// Idempotent: the upsert keys on `(day, task_kind, status)` and REPLACES
+    /// the bucket rather than adding to it, so re-running over a day already
+    /// rolled up yields the same numbers. That matters because the raw rows are
+    /// gone after the first pass — an additive upsert would double-count every
+    /// re-run and there would be no source left to correct it from.
+    pub async fn rollup_and_prune_task_executions(
+        &self,
+        days: i32,
+        failed_days: i32,
+    ) -> Result<(u64, u64), String> {
+        let mut tx = self.pool.begin().await.map_err(|e| e.to_string())?;
+
+        // Aggregate every eligible row, failures included: the daily counts
+        // should describe the whole day even though the failed rows themselves
+        // survive a while longer.
+        let rolled = sqlx_core::query::query(
+            "INSERT INTO activity.task_execution_daily
+                 (day, task_kind, status, runs, failures, items_processed, p50_ms, p95_ms, max_ms, rolled_up_at)
+             -- `::text::` is deliberate, not redundant: it makes the rollup work
+             -- whether `task_executions.task_kind` is still text or already the
+             -- enum, so the migration can roll up BEFORE converting the column
+             -- (converting 4.8M rows first would rewrite the whole table).
+             SELECT started_at::date, task_kind::text::sensei.task_execution_kind, status, count(*),
+                    count(*) FILTER (WHERE status = 'failed'),
+                    sum(items_processed),
+                    percentile_disc(0.5) WITHIN GROUP (ORDER BY duration_ms)::int,
+                    percentile_disc(0.95) WITHIN GROUP (ORDER BY duration_ms)::int,
+                    max(duration_ms),
+                    now()
+               FROM activity.task_executions
+              WHERE started_at < now() - (interval '1 day' * $1)
+              GROUP BY 1, 2, 3
+             ON CONFLICT (day, task_kind, status) DO UPDATE SET
+                    runs = excluded.runs,
+                    failures = excluded.failures,
+                    items_processed = excluded.items_processed,
+                    p50_ms = excluded.p50_ms,
+                    p95_ms = excluded.p95_ms,
+                    max_ms = excluded.max_ms,
+                    rolled_up_at = excluded.rolled_up_at",
+        )
+        .bind(days)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| format!("rollup_task_executions: {e}"))?
+        .rows_affected();
+
+        let pruned = sqlx_core::query::query(
+            "DELETE FROM activity.task_executions
+              WHERE started_at < now() - (interval '1 day' * $1)
+                AND (status <> 'failed' OR started_at < now() - (interval '1 day' * $2))",
+        )
+        .bind(days)
+        .bind(failed_days)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| format!("prune_task_executions: {e}"))?
+        .rows_affected();
+
+        tx.commit().await.map_err(|e| e.to_string())?;
+        Ok((rolled, pruned))
     }
 
     /// Boot reconcile (D6b/W2): terminate task-execution rows still `running`
@@ -437,7 +659,7 @@ impl PgStore {
                 SET status = 'failed',
                     error_message = 'orphaned: daemon restarted while task was running',
                     completed_at = now()
-              WHERE status = 'running' AND started_at < $1"
+              WHERE status = 'running' AND started_at < $1",
         )
         .bind(session_start)
         .execute(&self.pool)
@@ -447,5 +669,4 @@ impl PgStore {
     }
 
     // ── Knowledge Sources (federation endpoints) ──────────────────────
-
 }

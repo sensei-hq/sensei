@@ -6,21 +6,22 @@
 	import Spark from './Spark.svelte';
 	import type { KitProject } from './types';
 
-	// A project row (kit K2ProjectRow) — the list workhorse. `compact` is the
-	// phone-friendly stacked row (name · repo · needs · phase · lastRun); the full
-	// grid variant is the desktop table row (adds classification, dōjō, note,
-	// sparkline). `showDojo` adds the owning-dōjō column to the grid. The grid uses
-	// an inline `grid-template-columns` (geometry the utility scale doesn't model);
-	// wrap it in an `overflow-x-auto` container for narrow widths.
+	// A project row (kit K2ProjectRow) — the list workhorse, one row at every width.
+	// Below `md` it is a flex row (icon · name/repo · needs · phase · lastRun);
+	// from `md` up it becomes the table row, and the four extra cells
+	// (classification, dōjō, note, sparkline) un-hide into the grid. The shared
+	// cells appear in the same relative order in both, which is what lets one
+	// markup serve both instead of two near-identical blocks behind a `compact`
+	// flag. `showDojo` adds the owning-dōjō column. `grid-template-columns` is
+	// inline because the track list is dynamic geometry the utility scale doesn't
+	// model; it is inert below `md`, where the row is flex.
 	let {
 		p,
 		showDojo = true,
-		compact = false,
 		onopen
 	}: {
 		p: KitProject;
 		showDojo?: boolean;
-		compact?: boolean;
 		onopen?: (p: KitProject) => void;
 	} = $props();
 
@@ -31,18 +32,26 @@
 	);
 </script>
 
-{#if compact}
-	<button
-		type="button"
-		onclick={() => onopen?.(p)}
-		class="border-paper-edge flex w-full cursor-pointer items-center gap-3 border-b bg-transparent text-left"
-		style="padding: 12px 16px"
-	>
-		<Icon name="folder" size={18} toneClass="text-accent" />
-		<div style="min-width: 0; flex: 1">
-			<div class="text-ink truncate text-sm font-medium" style="line-height: 1.2">{p.name}</div>
-			<div class="mono text-ink-faint truncate text-xs" style="margin-top: 1px">{p.repo}</div>
-		</div>
+<button
+	type="button"
+	onclick={() => onopen?.(p)}
+	class="border-paper-edge flex w-full cursor-pointer items-center gap-3 border-b bg-transparent px-4 py-3 text-left md:grid"
+	style="grid-template-columns: {cols}"
+>
+	<Icon name="folder" size={18} toneClass="text-accent" />
+	<div class="min-w-0 flex-1">
+		<div class="text-ink truncate text-sm font-medium" style="line-height: 1.2">{p.name}</div>
+		<div class="mono text-ink-faint truncate text-xs" style="margin-top: 1px">{p.repo}</div>
+	</div>
+	<span class="hidden items-center md:flex"><ClassChip kind={p.classification} /></span>
+	{#if showDojo}
+		<span class="text-ink-mute hidden truncate text-xs md:block">{p.dojoName || ''}</span>
+	{/if}
+	<span class="text-ink-mute hidden truncate text-xs md:block">{p.note || ''}</span>
+	<span class="hidden items-center justify-start md:flex">
+		{#if p.spark}<Spark data={p.spark} />{/if}
+	</span>
+	<span class="flex flex-shrink-0 items-center">
 		{#if (p.needs ?? 0) > 0}
 			<Chip
 				icon="bell"
@@ -51,43 +60,7 @@
 				edgeClass="border-accent-soft">{p.needs}</Chip
 			>
 		{/if}
-		<PhasePill phase={p.phase} />
-		<span
-			class="mono text-ink-faint flex-shrink-0 text-xs"
-			style="width: 34px; text-align: right">{p.lastRun}</span
-		>
-	</button>
-{:else}
-	<button
-		type="button"
-		onclick={() => onopen?.(p)}
-		class="border-paper-edge grid w-full cursor-pointer items-center border-b bg-transparent text-left"
-		style="grid-template-columns: {cols}; gap: 12px; padding: 12px 16px"
-	>
-		<Icon name="folder" size={18} toneClass="text-accent" />
-		<div style="min-width: 0">
-			<div class="text-ink truncate text-sm font-medium" style="line-height: 1.2">{p.name}</div>
-			<div class="mono text-ink-faint truncate text-xs" style="margin-top: 1px">{p.repo}</div>
-		</div>
-		<span class="flex items-center"><ClassChip kind={p.classification} /></span>
-		{#if showDojo}
-			<span class="text-ink-mute truncate text-xs">{p.dojoName || ''}</span>
-		{/if}
-		<span class="text-ink-mute truncate text-xs">{p.note || ''}</span>
-		<span class="flex items-center" style="justify-content: flex-start">
-			{#if p.spark}<Spark data={p.spark} />{/if}
-		</span>
-		<span class="flex items-center">
-			{#if (p.needs ?? 0) > 0}
-				<Chip
-					icon="bell"
-					toneClass="text-accent"
-					softClass="bg-accent-soft"
-					edgeClass="border-accent-soft">{p.needs}</Chip
-				>
-			{/if}
-		</span>
-		<span class="flex items-center justify-center"><PhasePill phase={p.phase} /></span>
-		<span class="mono text-ink-faint text-xs" style="text-align: right">{p.lastRun}</span>
-	</button>
-{/if}
+	</span>
+	<span class="flex flex-shrink-0 items-center justify-center"><PhasePill phase={p.phase} /></span>
+	<span class="mono text-ink-faint w-[34px] flex-shrink-0 text-right text-xs">{p.lastRun}</span>
+</button>

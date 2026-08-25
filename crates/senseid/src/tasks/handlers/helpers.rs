@@ -92,10 +92,7 @@ fn sniff_content(path: &std::path::Path) -> Option<ScanSkipReason> {
 /// reconciles instead of the file looking changed forever. The extension test
 /// comes first because it is a pure string compare — the content sniff only
 /// reads the head of files the cheap test didn't already settle.
-pub(crate) fn classify_unscannable(
-    path: &std::path::Path,
-    ext: &str,
-) -> Option<ScanSkipReason> {
+pub(crate) fn classify_unscannable(path: &std::path::Path, ext: &str) -> Option<ScanSkipReason> {
     if is_binary_ext(ext) {
         return Some(ScanSkipReason::UnsupportedFormat);
     }
@@ -120,11 +117,7 @@ pub(crate) fn build_globset() -> &'static globset::GlobSet {
 /// instead of indexing hundreds of MB of dependencies.
 pub(crate) fn build_walker(path: &std::path::Path) -> ignore::WalkBuilder {
     let mut b = ignore::WalkBuilder::new(path);
-    b.hidden(true)
-        .git_ignore(true)
-        .git_global(true)
-        .git_exclude(true)
-        .require_git(false);
+    b.hidden(true).git_ignore(true).git_global(true).git_exclude(true).require_git(false);
     b
 }
 
@@ -147,14 +140,12 @@ pub(crate) fn build_walker(path: &std::path::Path) -> ignore::WalkBuilder {
 ///
 /// Costs one directory read, so callers handling a batch should group by parent
 /// and call this once per directory.
-pub(crate) fn visible_files_in_dir(dir: &std::path::Path) -> std::collections::HashSet<std::path::PathBuf> {
+pub(crate) fn visible_files_in_dir(
+    dir: &std::path::Path,
+) -> std::collections::HashSet<std::path::PathBuf> {
     let mut w = build_walker(dir);
     w.max_depth(Some(1));
-    w.build()
-        .flatten()
-        .filter(|e| e.path().is_file())
-        .map(|e| e.path().to_path_buf())
-        .collect()
+    w.build().flatten().filter(|e| e.path().is_file()).map(|e| e.path().to_path_buf()).collect()
 }
 
 /// Flip a folder to `indexed` at the terminal community barrier (D4.1),
@@ -233,7 +224,8 @@ mod tests {
 
         let latin1 = dir.path().join("c.htm");
         // 0xE9 ('é' in latin-1) is invalid as a standalone UTF-8 byte.
-        std::fs::write(&latin1, [b'<', b'p', b'>', 0xE9, 0xE9, 0xE9, b'<', b'/', b'p', b'>']).unwrap();
+        std::fs::write(&latin1, [b'<', b'p', b'>', 0xE9, 0xE9, 0xE9, b'<', b'/', b'p', b'>'])
+            .unwrap();
         assert!(is_probably_binary(&latin1), "non-UTF8 text => skip");
 
         let missing = dir.path().join("nope");

@@ -11,10 +11,7 @@ use std::path::Path;
 /// glob are also accepted verbatim.
 pub(crate) fn resolve_glob_members(repo_path: &Path, pattern: &str) -> Vec<String> {
     let mut results = Vec::new();
-    let clean = pattern
-        .trim_end_matches("/**")
-        .trim_end_matches("/*")
-        .trim_end_matches('/');
+    let clean = pattern.trim_end_matches("/**").trim_end_matches("/*").trim_end_matches('/');
     let target_dir = repo_path.join(clean);
     if target_dir.is_dir() {
         if let Ok(entries) = std::fs::read_dir(&target_dir) {
@@ -40,18 +37,12 @@ pub(crate) fn resolve_glob_members(repo_path: &Path, pattern: &str) -> Vec<Strin
 pub(crate) fn extract_npm_workspace_patterns(pkg: &serde_json::Value) -> Vec<String> {
     let ws = pkg.get("workspaces");
     if let Some(arr) = ws.and_then(|w| w.as_array()) {
-        return arr
-            .iter()
-            .filter_map(|v| v.as_str().map(|s| s.to_string()))
-            .collect();
+        return arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect();
     }
     if let Some(obj) = ws.and_then(|w| w.as_object())
         && let Some(packages) = obj.get("packages").and_then(|p| p.as_array())
     {
-        return packages
-            .iter()
-            .filter_map(|v| v.as_str().map(|s| s.to_string()))
-            .collect();
+        return packages.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect();
     }
     vec![]
 }
@@ -104,14 +95,16 @@ mod tests {
 
     #[test]
     fn extract_patterns_from_array_form() {
-        let pkg: serde_json::Value = serde_json::from_str(r#"{"workspaces":["packages/*","apps/*"]}"#).unwrap();
+        let pkg: serde_json::Value =
+            serde_json::from_str(r#"{"workspaces":["packages/*","apps/*"]}"#).unwrap();
         let patterns = extract_npm_workspace_patterns(&pkg);
         assert_eq!(patterns, vec!["packages/*", "apps/*"]);
     }
 
     #[test]
     fn extract_patterns_from_yarn_object_form() {
-        let pkg: serde_json::Value = serde_json::from_str(r#"{"workspaces":{"packages":["packages/*"]}}"#).unwrap();
+        let pkg: serde_json::Value =
+            serde_json::from_str(r#"{"workspaces":{"packages":["packages/*"]}}"#).unwrap();
         let patterns = extract_npm_workspace_patterns(&pkg);
         assert_eq!(patterns, vec!["packages/*"]);
     }

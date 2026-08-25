@@ -6,8 +6,8 @@ use serde_json::Value;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum LogLevel {
     Error = 1,
-    Warn  = 2,
-    Info  = 3,
+    Warn = 2,
+    Info = 3,
     Debug = 4,
     Trace = 5,
 }
@@ -16,8 +16,8 @@ impl LogLevel {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Error => "error",
-            Self::Warn  => "warn",
-            Self::Info  => "info",
+            Self::Warn => "warn",
+            Self::Info => "info",
             Self::Debug => "debug",
             Self::Trace => "trace",
         }
@@ -26,11 +26,11 @@ impl LogLevel {
     pub fn parse(s: &str) -> Self {
         match s {
             "error" => Self::Error,
-            "warn"  => Self::Warn,
-            "info"  => Self::Info,
+            "warn" => Self::Warn,
+            "info" => Self::Info,
             "debug" => Self::Debug,
             "trace" => Self::Trace,
-            _       => Self::Error,
+            _ => Self::Error,
         }
     }
 }
