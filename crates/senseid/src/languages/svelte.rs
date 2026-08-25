@@ -1,12 +1,14 @@
-use super::common::extract_script_blocks;
-use crate::types::{ParsedFile, ParsedSymbol, SymbolKind};
-use crate::ir::IRParsedFile;
 use super::LanguageAdapter;
+use super::common::extract_script_blocks;
+use crate::ir::IRParsedFile;
+use crate::types::{ParsedFile, ParsedSymbol, SymbolKind};
 
 pub struct SvelteAdapter;
 
 impl LanguageAdapter for SvelteAdapter {
-    fn language(&self) -> &str { "svelte" }
+    fn language(&self) -> &str {
+        "svelte"
+    }
 
     fn fqn_output(&self, abs_path: &str, content: &str) -> Option<super::fqn::FqnFileOutput> {
         super::common::sfc_fqn_output(abs_path, content)
@@ -52,9 +54,12 @@ impl LanguageAdapter for SvelteAdapter {
                 // Detect Svelte 5 runes
                 if (sym.kind == SymbolKind::Const || sym.kind == SymbolKind::Function)
                     && let Some(sig) = &sym.signature
-                        && (sig.contains("$state") || sig.contains("$derived") || sig.contains("$effect")) {
-                            sym.kind = SymbolKind::Hook;
-                        }
+                    && (sig.contains("$state")
+                        || sig.contains("$derived")
+                        || sig.contains("$effect"))
+                {
+                    sym.kind = SymbolKind::Hook;
+                }
                 all_symbols.push(sym);
             }
             all_imports.extend(parsed.imports);
@@ -74,7 +79,11 @@ impl LanguageAdapter for SvelteAdapter {
 pub fn parse_to_ir(source: &str, file_path: &str) -> IRParsedFile {
     let blocks = extract_script_blocks(source);
     if blocks.is_empty() {
-        return IRParsedFile { file_path: file_path.into(), language: "svelte".into(), ..Default::default() };
+        return IRParsedFile {
+            file_path: file_path.into(),
+            language: "svelte".into(),
+            ..Default::default()
+        };
     }
     // Parse the first (main) script block with TS adapter
     let script = &blocks[0].0;
@@ -89,7 +98,9 @@ pub fn parse_to_ir(source: &str, file_path: &str) -> IRParsedFile {
 mod tests {
     use super::*;
 
-    fn parse(src: &str) -> ParsedFile { SvelteAdapter.parse(src, "App.svelte") }
+    fn parse(src: &str) -> ParsedFile {
+        SvelteAdapter.parse(src, "App.svelte")
+    }
 
     #[test]
     fn svelte_script_fqn() {
@@ -103,10 +114,16 @@ mod tests {
         let content = "<script lang=\"ts\">\nimport { helper } from './util';\nexport function build() { helper(); }\n</script>\n<div>hi</div>\n";
         std::fs::write(&file, content).unwrap();
         let out = SvelteAdapter.fqn_output(&file.to_string_lossy(), content).unwrap();
-        assert!(out.defs.iter().any(|d| d.fqn == "typescript·app·Card·build"),
-            "component script def, got: {:?}", out.defs.iter().map(|d| &d.fqn).collect::<Vec<_>>());
-        assert!(out.refs.iter().any(|r| r.target_fqn.as_deref() == Some("typescript·app·util·helper")),
-            "relative import resolved from the SFC, got: {:?}", out.refs);
+        assert!(
+            out.defs.iter().any(|d| d.fqn == "typescript·app·Card·build"),
+            "component script def, got: {:?}",
+            out.defs.iter().map(|d| &d.fqn).collect::<Vec<_>>()
+        );
+        assert!(
+            out.refs.iter().any(|r| r.target_fqn.as_deref() == Some("typescript·app·util·helper")),
+            "relative import resolved from the SFC, got: {:?}",
+            out.refs
+        );
     }
 
     #[test]
@@ -118,7 +135,9 @@ mod tests {
 
     #[test]
     fn svelte_script_extraction() {
-        let pf = parse("<script lang=\"ts\">\nimport { onMount } from 'svelte';\nfunction hello() { return 1; }\n</script>");
+        let pf = parse(
+            "<script lang=\"ts\">\nimport { onMount } from 'svelte';\nfunction hello() { return 1; }\n</script>",
+        );
         let names: Vec<&str> = pf.symbols.iter().map(|s| s.name.as_str()).collect();
         assert!(names.contains(&"hello"));
         assert_eq!(pf.imports.len(), 1);
@@ -127,13 +146,20 @@ mod tests {
 
     #[test]
     fn svelte_rune_detection() {
-        let pf = parse("<script lang=\"ts\">\nlet count = $state(0);\nlet doubled = $derived(count * 2);\n</script>");
-        let hooks: Vec<&str> = pf.symbols.iter()
+        let pf = parse(
+            "<script lang=\"ts\">\nlet count = $state(0);\nlet doubled = $derived(count * 2);\n</script>",
+        );
+        let hooks: Vec<&str> = pf
+            .symbols
+            .iter()
             .filter(|s| s.kind == SymbolKind::Hook)
             .map(|s| s.name.as_str())
             .collect();
-        assert!(hooks.contains(&"count") || hooks.contains(&"doubled"),
-            "Expected rune-based symbols to be detected as hooks, got: {:?}", hooks);
+        assert!(
+            hooks.contains(&"count") || hooks.contains(&"doubled"),
+            "Expected rune-based symbols to be detected as hooks, got: {:?}",
+            hooks
+        );
     }
 
     #[test]
@@ -144,7 +170,9 @@ mod tests {
 
     #[test]
     fn extract_blocks() {
-        let blocks = extract_script_blocks("<script lang=\"ts\">\ncode1\n</script>\n<template/>\n<script context=\"module\">\ncode2\n</script>");
+        let blocks = extract_script_blocks(
+            "<script lang=\"ts\">\ncode1\n</script>\n<template/>\n<script context=\"module\">\ncode2\n</script>",
+        );
         assert_eq!(blocks.len(), 2);
         assert!(blocks[0].2); // is_ts
         assert!(blocks[0].0.contains("code1"));

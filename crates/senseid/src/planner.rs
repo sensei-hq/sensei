@@ -120,9 +120,7 @@ pub fn parse_plan(content: &str) -> Option<Plan> {
         for feature in &mut phase.features {
             feature.title = feature.title.trim().to_string();
             feature.scope = feature.scope.trim().to_string();
-            feature
-                .acceptance_criteria
-                .retain(|c| !c.trim().is_empty());
+            feature.acceptance_criteria.retain(|c| !c.trim().is_empty());
             feature.dependencies.retain(|d| !d.trim().is_empty());
         }
         phase.features.retain(|f| !f.title.is_empty());
@@ -133,11 +131,8 @@ pub fn parse_plan(content: &str) -> Option<Plan> {
         return None;
     }
     // Every surviving feature must carry an observable acceptance criterion.
-    let all_features_verifiable = plan
-        .phases
-        .iter()
-        .flat_map(|p| &p.features)
-        .all(|f| !f.acceptance_criteria.is_empty());
+    let all_features_verifiable =
+        plan.phases.iter().flat_map(|p| &p.features).all(|f| !f.acceptance_criteria.is_empty());
     if !all_features_verifiable {
         return None;
     }
@@ -166,10 +161,7 @@ pub fn render_plan_md(plan: &Plan) -> String {
                 md.push_str(&format!("- **Scope:** {}\n", feature.scope));
             }
             if !feature.dependencies.is_empty() {
-                md.push_str(&format!(
-                    "- **Depends on:** {}\n",
-                    feature.dependencies.join(", ")
-                ));
+                md.push_str(&format!("- **Depends on:** {}\n", feature.dependencies.join(", ")));
             }
         }
     }
@@ -195,7 +187,9 @@ pub async fn generate_plan(
         let user_msg = if attempt == 0 {
             user.clone()
         } else {
-            format!("{user}\n\nYour previous reply was not valid JSON. Return ONLY the JSON object.")
+            format!(
+                "{user}\n\nYour previous reply was not valid JSON. Return ONLY the JSON object."
+            )
         };
         let request = InferenceRequest {
             capability: Capability::TextChat,

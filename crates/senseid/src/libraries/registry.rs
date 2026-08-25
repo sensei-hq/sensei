@@ -15,7 +15,8 @@ use async_trait::async_trait;
 /// be driven by a stub in tests. `None` = couldn't determine (→ no notice).
 #[async_trait]
 pub trait VersionSource: Send + Sync {
-    async fn latest(&self, ecosystem: &str, name: &str, local_path: Option<&str>) -> Option<String>;
+    async fn latest(&self, ecosystem: &str, name: &str, local_path: Option<&str>)
+    -> Option<String>;
 }
 
 /// The registry endpoint returning the latest version for `ecosystem`/`name`, or
@@ -54,7 +55,8 @@ pub fn extract_latest(ecosystem: &str, body: &str) -> Option<String> {
     let s = match ecosystem {
         "npm" => v.get("version").and_then(|x| x.as_str()),
         "cargo" => v.get("crate").and_then(|c| {
-            c.get("max_stable_version").and_then(|x| x.as_str())
+            c.get("max_stable_version")
+                .and_then(|x| x.as_str())
                 .or_else(|| c.get("max_version").and_then(|x| x.as_str()))
         }),
         "pypi" => v.get("info").and_then(|i| i.get("version")).and_then(|x| x.as_str()),
@@ -87,7 +89,12 @@ pub struct HttpVersionSource;
 
 #[async_trait]
 impl VersionSource for HttpVersionSource {
-    async fn latest(&self, ecosystem: &str, name: &str, local_path: Option<&str>) -> Option<String> {
+    async fn latest(
+        &self,
+        ecosystem: &str,
+        name: &str,
+        local_path: Option<&str>,
+    ) -> Option<String> {
         if let Some(lp) = local_path
             && let Some(v) = local_latest(lp)
         {
@@ -110,24 +117,59 @@ mod tests {
 
     #[test]
     fn registry_urls_per_ecosystem() {
-        assert_eq!(registry_latest_url("npm", "svelte").unwrap(), "https://registry.npmjs.org/svelte/latest");
-        assert_eq!(registry_latest_url("cargo", "serde").unwrap(), "https://crates.io/api/v1/crates/serde");
-        assert_eq!(registry_latest_url("pypi", "requests").unwrap(), "https://pypi.org/pypi/requests/json");
-        assert_eq!(registry_latest_url("go", "github.com/BurntSushi/toml").unwrap(),
-            "https://proxy.golang.org/github.com/!burnt!sushi/toml/@latest", "go module capitals are escaped");
+        assert_eq!(
+            registry_latest_url("npm", "svelte").unwrap(),
+            "https://registry.npmjs.org/svelte/latest"
+        );
+        assert_eq!(
+            registry_latest_url("cargo", "serde").unwrap(),
+            "https://crates.io/api/v1/crates/serde"
+        );
+        assert_eq!(
+            registry_latest_url("pypi", "requests").unwrap(),
+            "https://pypi.org/pypi/requests/json"
+        );
+        assert_eq!(
+            registry_latest_url("go", "github.com/BurntSushi/toml").unwrap(),
+            "https://proxy.golang.org/github.com/!burnt!sushi/toml/@latest",
+            "go module capitals are escaped"
+        );
         assert!(registry_latest_url("maven", "x").is_none(), "deferred ecosystem → None");
         assert!(registry_latest_url("docs", "x").is_none());
     }
 
     #[test]
     fn extract_latest_per_ecosystem_shape() {
-        assert_eq!(extract_latest("npm", r#"{"version":"4.2.19","name":"svelte"}"#).as_deref(), Some("4.2.19"));
-        assert_eq!(extract_latest("pypi", r#"{"info":{"version":"2.31.0"}}"#).as_deref(), Some("2.31.0"));
-        assert_eq!(extract_latest("go", r#"{"Version":"v1.2.3","Time":"..."}"#).as_deref(), Some("v1.2.3"));
+        assert_eq!(
+            extract_latest("npm", r#"{"version":"4.2.19","name":"svelte"}"#).as_deref(),
+            Some("4.2.19")
+        );
+        assert_eq!(
+            extract_latest("pypi", r#"{"info":{"version":"2.31.0"}}"#).as_deref(),
+            Some("2.31.0")
+        );
+        assert_eq!(
+            extract_latest("go", r#"{"Version":"v1.2.3","Time":"..."}"#).as_deref(),
+            Some("v1.2.3")
+        );
         // crates.io prefers max_stable_version, falls back to max_version.
-        assert_eq!(extract_latest("cargo", r#"{"crate":{"max_stable_version":"1.0.219","max_version":"1.0.220-beta"}}"#).as_deref(), Some("1.0.219"));
-        assert_eq!(extract_latest("cargo", r#"{"crate":{"max_stable_version":null,"max_version":"0.1.0-rc1"}}"#).as_deref(), Some("0.1.0-rc1"),
-            "null max_stable_version falls back to max_version");
+        assert_eq!(
+            extract_latest(
+                "cargo",
+                r#"{"crate":{"max_stable_version":"1.0.219","max_version":"1.0.220-beta"}}"#
+            )
+            .as_deref(),
+            Some("1.0.219")
+        );
+        assert_eq!(
+            extract_latest(
+                "cargo",
+                r#"{"crate":{"max_stable_version":null,"max_version":"0.1.0-rc1"}}"#
+            )
+            .as_deref(),
+            Some("0.1.0-rc1"),
+            "null max_stable_version falls back to max_version"
+        );
         // Shape miss → None (fail-closed).
         assert!(extract_latest("npm", r#"{"nope":1}"#).is_none());
         assert!(extract_latest("cargo", "not json").is_none());

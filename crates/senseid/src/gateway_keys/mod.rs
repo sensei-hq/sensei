@@ -33,13 +33,7 @@ pub enum KeychainError {
 pub fn set_key(router_id: &str, key: &str) -> Result<(), KeychainError> {
     let service = service_name(router_id);
     let output = Command::new("/usr/bin/security")
-        .args([
-            "add-generic-password",
-            "-s", &service,
-            "-a", ACCOUNT,
-            "-w", key,
-            "-U",
-        ])
+        .args(["add-generic-password", "-s", &service, "-a", ACCOUNT, "-w", key, "-U"])
         .output()?;
     if !output.status.success() {
         return Err(KeychainError::CommandFailed(
@@ -59,12 +53,7 @@ pub fn set_key(router_id: &str, key: &str) -> Result<(), KeychainError> {
 pub fn get_key(router_id: &str) -> Result<String, KeychainError> {
     let service = service_name(router_id);
     let output = Command::new("/usr/bin/security")
-        .args([
-            "find-generic-password",
-            "-s", &service,
-            "-a", ACCOUNT,
-            "-w",
-        ])
+        .args(["find-generic-password", "-s", &service, "-a", ACCOUNT, "-w"])
         .output()?;
     if !output.status.success() {
         if output.status.code() == Some(44) {
@@ -86,11 +75,7 @@ pub fn get_key(router_id: &str) -> Result<String, KeychainError> {
 pub fn delete_key(router_id: &str) -> Result<(), KeychainError> {
     let service = service_name(router_id);
     let output = Command::new("/usr/bin/security")
-        .args([
-            "delete-generic-password",
-            "-s", &service,
-            "-a", ACCOUNT,
-        ])
+        .args(["delete-generic-password", "-s", &service, "-a", ACCOUNT])
         .output()?;
     if !output.status.success() {
         if output.status.code() == Some(44) {

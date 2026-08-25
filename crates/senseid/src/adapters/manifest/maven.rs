@@ -18,7 +18,7 @@
 //!   would need distinguishing "declared version" from "used version".
 //! - `<parent>` inheritance across pom.xml files.
 
-use super::xml::{walk, walk_leaves, XmlEvent, XmlPath};
+use super::xml::{XmlEvent, XmlPath, walk, walk_leaves};
 use super::{ManifestAdapter, ParsedManifest};
 use crate::indexer::lib_indexer::DepVersion;
 use crate::types::PackageInfo;
@@ -68,10 +68,10 @@ impl ManifestAdapter for MavenManifestAdapter {
                         return;
                     }
                     match path.0[3].as_str() {
-                        "groupId"    => d.group    = Some(text.to_string()),
+                        "groupId" => d.group = Some(text.to_string()),
                         "artifactId" => d.artifact = Some(text.to_string()),
-                        "version"    => d.version  = Some(text.to_string()),
-                        "scope"      => d.scope    = Some(text.to_string()),
+                        "version" => d.version = Some(text.to_string()),
+                        "scope" => d.scope = Some(text.to_string()),
                         _ => {}
                     }
                 }
@@ -198,14 +198,17 @@ impl ManifestAdapter for MavenManifestAdapter {
     /// Conventional Maven lifecycle verbs. `test` / `package` / `install` /
     /// `clean` / `verify` cover the ~90% of "how do I build this" answers.
     fn parse_commands(&self, _content: &str) -> Vec<super::DiscoveredCommand> {
-        super::conventional_commands("mvn", &[
-            ("test",     "test"),
-            ("compile",  "build"),
-            ("package",  "build"),
-            ("install",  "build"),
-            ("verify",   "test"),
-            ("clean",    "run"),
-        ])
+        super::conventional_commands(
+            "mvn",
+            &[
+                ("test", "test"),
+                ("compile", "build"),
+                ("package", "build"),
+                ("install", "build"),
+                ("verify", "test"),
+                ("clean", "run"),
+            ],
+        )
     }
 }
 

@@ -1,23 +1,31 @@
 //! Root watcher — watches registered directories for file changes and enqueues tasks.
 //! Singleton pattern: use `RootWatcher::instance(queue)` to access.
 
+use crate::db::pg_store::PgStore;
+use crate::languages;
+use crate::tasks::queue::TaskQueue;
+use crate::tasks::{Task, TaskKind};
+use notify::{Event, EventKind, RecursiveMode, Watcher};
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
-use std::collections::{HashMap, HashSet};
-use notify::{Watcher, RecursiveMode, Event, EventKind};
-use crate::tasks::{Task, TaskKind};
-use crate::tasks::queue::TaskQueue;
-use crate::db::pg_store::PgStore;
-use crate::languages;
 
 const DEBOUNCE_MS: u64 = 500;
 
 const EXCLUDE_DIRS: &[&str] = &[
-    "node_modules", "dist", "build", "target", ".git",
-    ".next", ".svelte-kit", "__pycache__", ".venv", "venv",
+    "node_modules",
+    "dist",
+    "build",
+    "target",
+    ".git",
+    ".next",
+    ".svelte-kit",
+    "__pycache__",
+    ".venv",
+    "venv",
 ];
 
 // ── Types ────────────────────────────────────────────────────────────────
@@ -83,19 +91,35 @@ impl WatcherHealth {
         }
     }
 
-    pub fn last_event_at_ms(&self) -> i64 { self.last_event_at_ms.load(Ordering::Relaxed) }
-    pub fn started_at_ms(&self) -> i64 { self.started_at_ms.load(Ordering::Relaxed) }
-    pub fn roots_watched(&self) -> usize { self.roots_watched.load(Ordering::Relaxed) }
-    pub fn stream_healthy(&self) -> bool { self.stream_healthy.load(Ordering::Relaxed) }
-    pub fn thread_alive(&self) -> bool { self.thread_alive.load(Ordering::Relaxed) }
-    pub fn healthy(&self) -> bool { self.healthy.load(Ordering::Relaxed) }
+    pub fn last_event_at_ms(&self) -> i64 {
+        self.last_event_at_ms.load(Ordering::Relaxed)
+    }
+    pub fn started_at_ms(&self) -> i64 {
+        self.started_at_ms.load(Ordering::Relaxed)
+    }
+    pub fn roots_watched(&self) -> usize {
+        self.roots_watched.load(Ordering::Relaxed)
+    }
+    pub fn stream_healthy(&self) -> bool {
+        self.stream_healthy.load(Ordering::Relaxed)
+    }
+    pub fn thread_alive(&self) -> bool {
+        self.thread_alive.load(Ordering::Relaxed)
+    }
+    pub fn healthy(&self) -> bool {
+        self.healthy.load(Ordering::Relaxed)
+    }
 
     /// Heartbeat — record that the stream just delivered an event.
-    fn touch(&self, now_ms: i64) { self.last_event_at_ms.store(now_ms, Ordering::Relaxed); }
+    fn touch(&self, now_ms: i64) {
+        self.last_event_at_ms.store(now_ms, Ordering::Relaxed);
+    }
 
     /// The notify callback reported an error — the stream can no longer be
     /// trusted. Never swallowed silently: the caller also logs it.
-    fn mark_stream_error(&self) { self.stream_healthy.store(false, Ordering::Relaxed); }
+    fn mark_stream_error(&self) {
+        self.stream_healthy.store(false, Ordering::Relaxed);
+    }
 
     /// Called by the watch thread once it is up and watching. Resets the stall
     /// clock so a fresh (re)start isn't immediately flagged stalled.
@@ -115,7 +139,9 @@ impl WatcherHealth {
     }
 
     /// Watchdog sets the overall verdict (surfaced by the status API).
-    pub fn set_healthy(&self, v: bool) { self.healthy.store(v, Ordering::Relaxed); }
+    pub fn set_healthy(&self, v: bool) {
+        self.healthy.store(v, Ordering::Relaxed);
+    }
 }
 
 /// Flips `thread_alive` false whenever the watch thread unwinds — break, return,
@@ -123,7 +149,9 @@ impl WatcherHealth {
 /// forever and the watchdog would never restart it.
 struct AliveGuard(Arc<WatcherHealth>);
 impl Drop for AliveGuard {
-    fn drop(&mut self) { self.0.on_thread_exit(); }
+    fn drop(&mut self) {
+        self.0.on_thread_exit();
+    }
 }
 
 /// Pure watchdog verdict: is the watch thread stalled? A dead thread is stalled
@@ -145,10 +173,7 @@ pub(crate) fn watcher_is_stalled(
 /// (so `/a/proj` is NOT treated as a prefix of `/a/project`). Pure — reused by
 /// the branch-switch and rescan reconcile paths to pick which root to re-scan.
 pub(crate) fn watch_root_for_path(path: &Path, roots: &[PathBuf]) -> Option<PathBuf> {
-    roots.iter()
-        .filter(|r| path.starts_with(r))
-        .max_by_key(|r| r.as_os_str().len())
-        .cloned()
+    roots.iter().filter(|r| path.starts_with(r)).max_by_key(|r| r.as_os_str().len()).cloned()
 }
 
 /// Given an FSEvents rescan/overflow event's paths and the watch roots, return
@@ -175,8 +200,14 @@ pub(crate) fn rescan_reconcile_roots(paths: &[PathBuf], roots: &[PathBuf]) -> Ve
 /// (skips when a `ScanRoot` is already in flight) so watcher-driven reconciles
 /// never stack on top of a running scan. Fire-and-forget onto the tokio runtime
 /// because the caller is the (non-async) watch thread.
-fn enqueue_scanroot_reconcile(rt: &tokio::runtime::Handle, queue: &Arc<TaskQueue>, roots: Vec<PathBuf>) {
-    if roots.is_empty() { return; }
+fn enqueue_scanroot_reconcile(
+    rt: &tokio::runtime::Handle,
+    queue: &Arc<TaskQueue>,
+    roots: Vec<PathBuf>,
+) {
+    if roots.is_empty() {
+        return;
+    }
     let q = queue.clone();
     rt.spawn(async move {
         if q.has_pending_kind(TaskKind::ScanRoot).await {
@@ -274,9 +305,8 @@ impl RootWatcher {
 
         let stop = self.stop_flag.clone();
         let roots: Vec<PathBuf> = self.roots.keys().cloned().collect();
-        let exclusions: Vec<String> = self.roots.values()
-            .flat_map(|r| r.excluded.clone())
-            .collect();
+        let exclusions: Vec<String> =
+            self.roots.values().flat_map(|r| r.excluded.clone()).collect();
         let queue = self.queue.clone();
         let health = self.health.clone();
         let store = self.store.clone();
@@ -304,7 +334,9 @@ impl RootWatcher {
             for root in &roots {
                 match watcher.watch(root, RecursiveMode::Recursive) {
                     Ok(()) => watched += 1,
-                    Err(e) => tracing::warn!(error = %e, root = %root.display(), "failed to watch root"),
+                    Err(e) => {
+                        tracing::warn!(error = %e, root = %root.display(), "failed to watch root")
+                    }
                 }
             }
 
@@ -367,15 +399,21 @@ impl RootWatcher {
                                 continue;
                             }
 
-                            if change_kind != ChangeKind::Delete && !path.is_file() { continue; }
-                            if !RootWatcher::should_watch_path(&path, &exclusions) { continue; }
+                            if change_kind != ChangeKind::Delete && !path.is_file() {
+                                continue;
+                            }
+                            if !RootWatcher::should_watch_path(&path, &exclusions) {
+                                continue;
+                            }
 
                             pending.insert(path, change_kind);
                             last_event = std::time::Instant::now();
                         }
                     }
                     Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-                        if !pending.is_empty() && last_event.elapsed() >= Duration::from_millis(DEBOUNCE_MS) {
+                        if !pending.is_empty()
+                            && last_event.elapsed() >= Duration::from_millis(DEBOUNCE_MS)
+                        {
                             let batch: HashMap<PathBuf, ChangeKind> = std::mem::take(&mut pending);
                             let q = queue.clone();
                             let s = store.clone();
@@ -400,9 +438,10 @@ impl RootWatcher {
         }
         self.stop_flag.store(true, std::sync::atomic::Ordering::Release);
         if let Some(handle) = self.thread.take()
-            && handle.join().is_err() {
-                tracing::error!("RootWatcher thread panicked during shutdown");
-            }
+            && handle.join().is_err()
+        {
+            tracing::error!("RootWatcher thread panicked during shutdown");
+        }
         self.status = WatcherStatus::Stopped("manual".into());
     }
 
@@ -436,7 +475,8 @@ impl RootWatcher {
             return false;
         }
 
-        let ext = path.extension()
+        let ext = path
+            .extension()
             .and_then(|e| e.to_str())
             .map(|e| format!(".{}", e))
             .unwrap_or_default();
@@ -475,7 +515,10 @@ impl RootWatcher {
         store: Option<&PgStore>,
     ) {
         let Some(store) = store else {
-            tracing::warn!(count = changes.len(), "process_batch: no PgStore — cannot resolve owning repos; batch dropped");
+            tracing::warn!(
+                count = changes.len(),
+                "process_batch: no PgStore — cannot resolve owning repos; batch dropped"
+            );
             return;
         };
         // Exclusions are enforced at the event level by `should_watch_path` (each
@@ -489,7 +532,9 @@ impl RootWatcher {
                 }
                 // Not under any indexed repo yet — a full scan must index it first.
                 Ok(None) => {}
-                Err(e) => tracing::warn!(error = %e, path = %path.display(), "process_batch: repo_root_for_path failed"),
+                Err(e) => {
+                    tracing::warn!(error = %e, path = %path.display(), "process_batch: repo_root_for_path failed")
+                }
             }
         }
 
@@ -517,43 +562,52 @@ impl RootWatcher {
             // a file we can positively see AND that the ignore rules hide is
             // skipped.
             let mut visible_by_dir: HashMap<PathBuf, HashSet<PathBuf>> = HashMap::new();
-            let is_ignored = |path: &PathBuf,
-                              cache: &mut HashMap<PathBuf, HashSet<PathBuf>>| -> bool {
-                if !path.exists() {
-                    return false;
-                }
-                match path.parent() {
-                    Some(parent) => !cache
-                        .entry(parent.to_path_buf())
-                        .or_insert_with(|| {
-                            crate::tasks::handlers::helpers::visible_files_in_dir(parent)
-                        })
-                        .contains(path),
-                    None => false,
-                }
-            };
+            let is_ignored =
+                |path: &PathBuf, cache: &mut HashMap<PathBuf, HashSet<PathBuf>>| -> bool {
+                    if !path.exists() {
+                        return false;
+                    }
+                    match path.parent() {
+                        Some(parent) => !cache
+                            .entry(parent.to_path_buf())
+                            .or_insert_with(|| {
+                                crate::tasks::handlers::helpers::visible_files_in_dir(parent)
+                            })
+                            .contains(path),
+                        None => false,
+                    }
+                };
 
             let mut deleted_dirs: HashSet<PathBuf> = HashSet::new();
             for (path, kind) in &changes {
                 if *kind == ChangeKind::Delete
                     && let Some(parent) = path.parent()
-                        && !parent.exists() && !deleted_dirs.contains(parent) {
-                            deleted_dirs.insert(parent.to_path_buf());
-                        }
+                    && !parent.exists()
+                    && !deleted_dirs.contains(parent)
+                {
+                    deleted_dirs.insert(parent.to_path_buf());
+                }
             }
 
             for dir in &deleted_dirs {
-                queue.enqueue(Task::new(TaskKind::DeleteFolder, &repo_path, &dir.to_string_lossy())).await;
+                queue
+                    .enqueue(Task::new(TaskKind::DeleteFolder, &repo_path, &dir.to_string_lossy()))
+                    .await;
             }
 
             for (path, kind) in &changes {
                 if let Some(parent) = path.parent()
-                    && deleted_dirs.contains(parent) { continue; }
+                    && deleted_dirs.contains(parent)
+                {
+                    continue;
+                }
 
                 let abs_path = path.to_string_lossy().to_string();
                 match kind {
                     ChangeKind::Delete => {
-                        let id = queue.enqueue(Task::new(TaskKind::DeleteFile, &repo_path, &abs_path)).await;
+                        let id = queue
+                            .enqueue(Task::new(TaskKind::DeleteFile, &repo_path, &abs_path))
+                            .await;
                         file_task_ids.push(id);
                     }
                     ChangeKind::Create | ChangeKind::Modify => {
@@ -562,11 +616,13 @@ impl RootWatcher {
                                 "watcher: path is ignored by the scan's ignore rules — not enqueueing");
                             continue;
                         }
-                        let rel_dir = path.parent()
+                        let rel_dir = path
+                            .parent()
                             .and_then(|p| p.strip_prefix(&repo_path).ok())
                             .map(|p| p.to_string_lossy().replace('\\', "/"))
                             .unwrap_or_default();
-                        let mod_name = if rel_dir.is_empty() { "(root)".to_string() } else { rel_dir };
+                        let mod_name =
+                            if rel_dir.is_empty() { "(root)".to_string() } else { rel_dir };
                         let mod_id = format!("mod:{}:{}", repo_path, mod_name);
 
                         let task = Task::new(TaskKind::ProcessFile, &repo_path, &abs_path)
@@ -579,14 +635,17 @@ impl RootWatcher {
                         // parent; the handler no-ops unless that parent is a
                         // project root AND the frontmatter actually changed (so a
                         // subfolder README, or a write-back echo, costs nothing).
-                        if path.file_name()
-                            .and_then(|n| n.to_str())
-                            .is_some_and(|n| n.eq_ignore_ascii_case("readme.md") || n.eq_ignore_ascii_case("readme"))
-                            && let Some(parent) = path.parent()
+                        if path.file_name().and_then(|n| n.to_str()).is_some_and(|n| {
+                            n.eq_ignore_ascii_case("readme.md") || n.eq_ignore_ascii_case("readme")
+                        }) && let Some(parent) = path.parent()
                         {
-                            queue.enqueue(
-                                Task::new(TaskKind::ReconcileRepoMetadata, &parent.to_string_lossy(), &parent.to_string_lossy())
-                            ).await;
+                            queue
+                                .enqueue(Task::new(
+                                    TaskKind::ReconcileRepoMetadata,
+                                    &parent.to_string_lossy(),
+                                    &parent.to_string_lossy(),
+                                ))
+                                .await;
                         }
                     }
                 }
@@ -599,10 +658,11 @@ impl RootWatcher {
                 // at emit (Phase 7.1) — there is no ResolveEdges pass. (Community
                 // detection + degree recompute stay periodic — the analyzer
                 // scheduler runs DetectCommunities; per-edit clustering is wasteful.)
-                queue.enqueue(
-                    Task::new(TaskKind::EmbedNodes, &repo_path, "")
-                        .blocked_by(file_task_ids)
-                ).await;
+                queue
+                    .enqueue(
+                        Task::new(TaskKind::EmbedNodes, &repo_path, "").blocked_by(file_task_ids),
+                    )
+                    .await;
             }
         }
     }
@@ -657,10 +717,7 @@ mod tests {
     #[test]
     fn register_stores_exclusions() {
         let mut watcher = make_watcher();
-        watcher.register(
-            PathBuf::from("/tmp/project"),
-            vec!["node_modules".into(), "dist".into()],
-        );
+        watcher.register(PathBuf::from("/tmp/project"), vec!["node_modules".into(), "dist".into()]);
         let root = &watcher.roots()[&PathBuf::from("/tmp/project")];
         assert_eq!(root.excluded, vec!["node_modules", "dist"]);
     }
@@ -731,7 +788,9 @@ mod tests {
     #[test]
     fn classify_modify_event() {
         assert_eq!(
-            RootWatcher::classify_event(&EventKind::Modify(notify::event::ModifyKind::Data(notify::event::DataChange::Content))),
+            RootWatcher::classify_event(&EventKind::Modify(notify::event::ModifyKind::Data(
+                notify::event::DataChange::Content
+            ))),
             ChangeKind::Modify,
         );
     }
@@ -768,12 +827,18 @@ mod tests {
 
     #[test]
     fn should_not_watch_node_modules() {
-        assert!(!RootWatcher::should_watch_path(&PathBuf::from("/project/node_modules/foo/index.js"), &[]));
+        assert!(!RootWatcher::should_watch_path(
+            &PathBuf::from("/project/node_modules/foo/index.js"),
+            &[]
+        ));
     }
 
     #[test]
     fn should_not_watch_custom_exclusion() {
-        assert!(!RootWatcher::should_watch_path(&PathBuf::from("/project/vendor/lib.rs"), &["vendor".into()]));
+        assert!(!RootWatcher::should_watch_path(
+            &PathBuf::from("/project/vendor/lib.rs"),
+            &["vendor".into()]
+        ));
     }
 
     #[test]
@@ -782,8 +847,14 @@ mod tests {
         // path segment — a file under it is ignored, a sibling sharing the prefix
         // string is not.
         let ex = vec!["/Users/x/Developer/Code".to_string()];
-        assert!(!RootWatcher::should_watch_path(&PathBuf::from("/Users/x/Developer/Code/repo/lib.rs"), &ex));
-        assert!(RootWatcher::should_watch_path(&PathBuf::from("/Users/x/Developer/Coder/lib.rs"), &ex));
+        assert!(!RootWatcher::should_watch_path(
+            &PathBuf::from("/Users/x/Developer/Code/repo/lib.rs"),
+            &ex
+        ));
+        assert!(RootWatcher::should_watch_path(
+            &PathBuf::from("/Users/x/Developer/Coder/lib.rs"),
+            &ex
+        ));
     }
 
     // ── is_branch_switch ──────────────────────────────────────────────
@@ -973,8 +1044,16 @@ mod tests {
 
     async fn cleanup_watch_repo(pg: &PgStore, root_id: &uuid::Uuid) {
         let pool = pg.pool();
-        sqlx_core::query::query("DELETE FROM sensei.folders WHERE root_id=$1").bind(root_id).execute(pool).await.ok();
-        sqlx_core::query::query("DELETE FROM sensei.folders_to_watch WHERE id=$1").bind(root_id).execute(pool).await.ok();
+        sqlx_core::query::query("DELETE FROM sensei.folders WHERE root_id=$1")
+            .bind(root_id)
+            .execute(pool)
+            .await
+            .ok();
+        sqlx_core::query::query("DELETE FROM sensei.folders_to_watch WHERE id=$1")
+            .bind(root_id)
+            .execute(pool)
+            .await
+            .ok();
     }
 
     /// The watcher must not enqueue a file the scan's ignore rules hide, and must
@@ -1011,7 +1090,8 @@ mod tests {
         RootWatcher::process_batch(changes, &queue, Some(&pg)).await;
 
         let snap = queue.snapshot().await;
-        let queued: Vec<String> = snap.iter()
+        let queued: Vec<String> = snap
+            .iter()
             .filter(|(k, _, _)| *k == TaskKind::ProcessFile)
             .map(|(_, _, p)| p.clone())
             .collect();
@@ -1071,9 +1151,14 @@ mod tests {
 
         let snap = queue.snapshot().await;
         assert!(snap.iter().any(|(k, _, _)| *k == TaskKind::ProcessFile), "ProcessFile enqueued");
-        assert!(snap.iter().any(|(k, _, _)| *k == TaskKind::EmbedNodes), "EmbedNodes enqueued (search freshness)");
-        assert!(!snap.iter().any(|(k, _, _)| k.to_string() == "resolve_edges"),
-            "no ResolveEdges pass — FQN edges resolve at emit");
+        assert!(
+            snap.iter().any(|(k, _, _)| *k == TaskKind::EmbedNodes),
+            "EmbedNodes enqueued (search freshness)"
+        );
+        assert!(
+            !snap.iter().any(|(k, _, _)| k.to_string() == "resolve_edges"),
+            "no ResolveEdges pass — FQN edges resolve at emit"
+        );
         let pf = snap.iter().find(|(k, _, _)| *k == TaskKind::ProcessFile).unwrap();
         assert_eq!(pf.1, repo, "ProcessFile folder_path is the resolved repo abs_path, not a name");
         cleanup_watch_repo(&pg, &root_id).await;
@@ -1086,7 +1171,14 @@ mod tests {
         let pg = PgStore::connect_test().await.unwrap();
         let dir = tempfile::tempdir().unwrap(); // unique watch root
         let repo = dir.path().join("repo").to_string_lossy().to_string();
-        let root_id = pg.add_watch_root(&dir.path().to_string_lossy(), &format!("wt-{}", uuid::Uuid::new_v4()), &serde_json::json!([])).await.unwrap();
+        let root_id = pg
+            .add_watch_root(
+                &dir.path().to_string_lossy(),
+                &format!("wt-{}", uuid::Uuid::new_v4()),
+                &serde_json::json!([]),
+            )
+            .await
+            .unwrap();
         pg.upsert_repo_kind(&root_id, "git", "repo", &repo).await.unwrap();
 
         let src = dir.path().join("repo").join("src");
@@ -1110,7 +1202,10 @@ mod tests {
         let pg = PgStore::connect_test().await.unwrap();
         let queue = Arc::new(TaskQueue::new());
         let mut changes = HashMap::new();
-        changes.insert(PathBuf::from(format!("/_test/nonexistent/{}/file.rs", uuid::Uuid::new_v4())), ChangeKind::Modify);
+        changes.insert(
+            PathBuf::from(format!("/_test/nonexistent/{}/file.rs", uuid::Uuid::new_v4())),
+            ChangeKind::Modify,
+        );
         RootWatcher::process_batch(changes, &queue, Some(&pg)).await;
         let status = queue.status().await;
         assert_eq!(status.pending + status.blocked, 0);

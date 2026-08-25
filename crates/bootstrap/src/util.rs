@@ -15,8 +15,8 @@ use std::process::Command;
 /// scripts dropped binaries there, and continuing to look in it would
 /// keep a stale copy alive after the user upgrades via brew.
 const EXTRA_BIN_DIRS: &[&str] = &[
-    "/opt/homebrew/bin",        // macOS Apple Silicon Homebrew
-    "/usr/local/bin",           // macOS Intel Homebrew, common Linux
+    "/opt/homebrew/bin",              // macOS Apple Silicon Homebrew
+    "/usr/local/bin",                 // macOS Intel Homebrew, common Linux
     "/home/linuxbrew/.linuxbrew/bin", // Linuxbrew on dedicated user
 ];
 
@@ -31,8 +31,8 @@ const EXTRA_BIN_DIRS: &[&str] = &[
 /// to `which`. Scanning the opt prefix's `postgresql*` subdirs catches
 /// them.
 const EXTRA_BIN_OPT_PREFIXES: &[&str] = &[
-    "/opt/homebrew/opt",  // macOS Apple Silicon Homebrew
-    "/usr/local/opt",     // macOS Intel Homebrew
+    "/opt/homebrew/opt", // macOS Apple Silicon Homebrew
+    "/usr/local/opt",    // macOS Intel Homebrew
 ];
 
 /// Subdir name prefixes inside an `opt` directory that we'll scan for
@@ -80,12 +80,8 @@ pub fn which_binary(name: &str) -> Option<String> {
     if let Ok(output) = Command::new(cmd).arg(name).output()
         && output.status.success()
     {
-        let path = String::from_utf8_lossy(&output.stdout)
-            .lines()
-            .next()
-            .unwrap_or("")
-            .trim()
-            .to_string();
+        let path =
+            String::from_utf8_lossy(&output.stdout).lines().next().unwrap_or("").trim().to_string();
         if !path.is_empty() {
             return Some(path);
         }
@@ -119,10 +115,7 @@ pub fn which_binary(name: &str) -> Option<String> {
         for entry in entries.flatten() {
             let entry_name = entry.file_name();
             let entry_name = entry_name.to_string_lossy();
-            if !EXTRA_BIN_OPT_SUBDIR_PREFIXES
-                .iter()
-                .any(|p| entry_name.starts_with(p))
-            {
+            if !EXTRA_BIN_OPT_SUBDIR_PREFIXES.iter().any(|p| entry_name.starts_with(p)) {
                 continue;
             }
             let candidate = entry.path().join("bin").join(name);
@@ -187,10 +180,7 @@ mod tests {
             for entry in entries.flatten() {
                 let name = entry.file_name();
                 let name = name.to_string_lossy().into_owned();
-                if EXTRA_BIN_OPT_SUBDIR_PREFIXES
-                    .iter()
-                    .any(|p| name.starts_with(p))
-                {
+                if EXTRA_BIN_OPT_SUBDIR_PREFIXES.iter().any(|p| name.starts_with(p)) {
                     let candidate = entry.path().join("bin").join("psql");
                     if candidate.exists() {
                         keg_only_psql = Some(candidate.to_string_lossy().into_owned());

@@ -5,8 +5,12 @@ impl PgStore {
     /// Upsert parsed transcript turns for a (source, session). Idempotent by
     /// (source, session_id, turn_index). Returns the number of rows written.
     pub async fn upsert_transcript_turns(
-        &self, source: &str, session_id: &str, family: &str,
-        provider: Option<&str>, model: Option<&str>,
+        &self,
+        source: &str,
+        session_id: &str,
+        family: &str,
+        provider: Option<&str>,
+        model: Option<&str>,
         turns: &[crate::transcript::TranscriptTurn],
     ) -> Result<u32, String> {
         let mut n = 0u32;
@@ -58,7 +62,11 @@ impl PgStore {
     }
 
     /// Last-ingested mtime (ns) for a transcript file, or None if never seen.
-    pub async fn get_capture_watermark(&self, source: &str, file_path: &str) -> Result<Option<i64>, String> {
+    pub async fn get_capture_watermark(
+        &self,
+        source: &str,
+        file_path: &str,
+    ) -> Result<Option<i64>, String> {
         let row: Option<(i64,)> = sqlx_core::query_as::query_as(
             "SELECT last_mtime_ns FROM activity.capture_watermarks WHERE source = $1 AND file_path = $2"
         ).bind(source).bind(file_path).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
@@ -67,7 +75,12 @@ impl PgStore {
 
     /// Advance the ingest cursor for a transcript file (idempotent upsert).
     pub async fn set_capture_watermark(
-        &self, source: &str, file_path: &str, session_id: Option<&str>, mtime_ns: i64, turns: i32,
+        &self,
+        source: &str,
+        file_path: &str,
+        session_id: Option<&str>,
+        mtime_ns: i64,
+        turns: i32,
     ) -> Result<(), String> {
         sqlx_core::query::query(
             "INSERT INTO activity.capture_watermarks
@@ -77,9 +90,16 @@ impl PgStore {
                session_id     = EXCLUDED.session_id,
                last_mtime_ns  = EXCLUDED.last_mtime_ns,
                turns_ingested = EXCLUDED.turns_ingested,
-               updated_at     = now()"
-        ).bind(source).bind(file_path).bind(session_id).bind(mtime_ns).bind(turns)
-            .execute(&self.pool).await.map_err(|e| e.to_string())?;
+               updated_at     = now()",
+        )
+        .bind(source)
+        .bind(file_path)
+        .bind(session_id)
+        .bind(mtime_ns)
+        .bind(turns)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(())
     }
 
@@ -91,22 +111,40 @@ impl PgStore {
     /// when a session has no captured transcript, in which case the analyzer falls
     /// back to the sparse hook stream.
     pub async fn get_transcript_turns_for_session(
-        &self, client_session_id: &str,
+        &self,
+        client_session_id: &str,
     ) -> Result<(Vec<crate::transcript::TranscriptTurn>, Option<String>), String> {
-        let rows: Vec<(i32, Option<String>, String, Option<chrono::DateTime<chrono::Utc>>, Option<String>)> =
-            sqlx_core::query_as::query_as(
-                "SELECT turn_index, user_text, assistant_text, started_at, family
+        let rows: Vec<(
+            i32,
+            Option<String>,
+            String,
+            Option<chrono::DateTime<chrono::Utc>>,
+            Option<String>,
+        )> = sqlx_core::query_as::query_as(
+            "SELECT turn_index, user_text, assistant_text, started_at, family
                    FROM activity.transcript_turns
-                  WHERE session_id = $1 ORDER BY turn_index"
-            ).bind(client_session_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+                  WHERE session_id = $1 ORDER BY turn_index",
+        )
+        .bind(client_session_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         // family is uniform per session — take the first non-empty one.
         let family = rows.iter().find_map(|r| r.4.clone().filter(|f| !f.trim().is_empty()));
-        let turns = rows.into_iter().map(|(turn_index, user_text, assistant_text, started_at, _family)| {
-            crate::transcript::TranscriptTurn { turn_index, user_text, assistant_text, started_at, ..Default::default() }
-        }).collect();
+        let turns = rows
+            .into_iter()
+            .map(|(turn_index, user_text, assistant_text, started_at, _family)| {
+                crate::transcript::TranscriptTurn {
+                    turn_index,
+                    user_text,
+                    assistant_text,
+                    started_at,
+                    ..Default::default()
+                }
+            })
+            .collect();
         Ok((turns, family))
     }
 
     // ── Historical-bootstrap import (#75) ────────────────────────────────────
-
 }

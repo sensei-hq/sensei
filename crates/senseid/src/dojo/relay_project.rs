@@ -35,9 +35,7 @@ pub fn parse_todos(payload: &serde_json::Value) -> Vec<Todo> {
         .and_then(|ti| ti.get("todos"))
         .and_then(|t| t.as_array())
         .map(|arr| {
-            arr.iter()
-                .filter_map(|v| serde_json::from_value::<Todo>(v.clone()).ok())
-                .collect()
+            arr.iter().filter_map(|v| serde_json::from_value::<Todo>(v.clone()).ok()).collect()
         })
         .unwrap_or_default()
 }
@@ -100,14 +98,9 @@ pub fn title_from_cwd(cwd: Option<&str>) -> String {
 /// `None` — the todo outline carries no phase/goal/timing.
 pub fn session_update(run_id: &str, title: &str, segments: &[RelaySegment]) -> RelaySessionUpdate {
     let progress_total = segments.len() as i32;
-    let progress_done = segments
-        .iter()
-        .filter(|s| s.state == SegmentState::Done)
-        .count() as i32;
-    let current_feature = segments
-        .iter()
-        .find(|s| s.state == SegmentState::Active)
-        .map(|s| s.title.clone());
+    let progress_done = segments.iter().filter(|s| s.state == SegmentState::Done).count() as i32;
+    let current_feature =
+        segments.iter().find(|s| s.state == SegmentState::Active).map(|s| s.title.clone());
     RelaySessionUpdate {
         run_id: run_id.to_string(),
         status: RelayRunStatus::Running,
@@ -181,7 +174,8 @@ mod tests {
     #[test]
     fn projection_carries_no_code_or_diffs() {
         // Only the todo `content` is copied into title — never tool args/diffs.
-        let todos = parse_todos(&json!({"tool_input": {"todos": [{"content": "x", "status": "pending"}]}}));
+        let todos =
+            parse_todos(&json!({"tool_input": {"todos": [{"content": "x", "status": "pending"}]}}));
         let segs = todos_to_segments(&todos);
         assert_eq!(segs[0].title, "x");
         assert!(segs[0].detail.is_none() && segs[0].summary.is_none());

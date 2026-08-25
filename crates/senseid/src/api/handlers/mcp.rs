@@ -1,11 +1,7 @@
-use axum::{
-    extract::State,
-    http::StatusCode,
-    response::Json,
-};
+use super::query::{resolve_folder_id, resolve_scope_ids};
 use crate::api::state::AppState;
 use crate::api::util::json_uuid;
-use super::query::{resolve_folder_id, resolve_scope_ids};
+use axum::{extract::State, http::StatusCode, response::Json};
 
 // ── MCP Tool Proxy ──────────────────────────────────────────────────────────
 
@@ -26,7 +22,8 @@ pub(crate) async fn mcp_call_tool(
     let tool = body["tool"].as_str().unwrap_or("");
     let params = &body["params"];
     let repo_id = params["repoId"].as_str().unwrap_or("");
-    let query = params["query"].as_str().or(params["q"].as_str()).or(params["name"].as_str()).unwrap_or("");
+    let query =
+        params["query"].as_str().or(params["q"].as_str()).or(params["name"].as_str()).unwrap_or("");
 
     let result = match tool {
         "search" => {
@@ -79,7 +76,10 @@ pub(crate) async fn mcp_call_tool(
             serde_json::json!({"communities": communities})
         }
         "get_doc_drift" => {
-            let drift = state.pg.get_doc_drift(repo_id).await.map_err(|e| { tracing::warn!(error = %e, repo_id, "mcp get_doc_drift: get_doc_drift failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+            let drift = state.pg.get_doc_drift(repo_id).await.map_err(|e| {
+                tracing::warn!(error = %e, repo_id, "mcp get_doc_drift: get_doc_drift failed");
+                StatusCode::INTERNAL_SERVER_ERROR
+            })?;
             serde_json::json!({"drift": drift})
         }
         "search_lib_docs" => {
@@ -89,7 +89,10 @@ pub(crate) async fn mcp_call_tool(
         "get_lib_docs" => {
             let name = params["name"].as_str().filter(|s| !s.is_empty()).unwrap_or(query);
             let component = params["component"].as_str().filter(|s| !s.is_empty());
-            let pages = state.pg.get_library_pages(name, component).await.map_err(|e| { tracing::warn!(error = %e, name, "mcp get_lib_docs: get_library_pages failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+            let pages = state.pg.get_library_pages(name, component).await.map_err(|e| {
+                tracing::warn!(error = %e, name, "mcp get_lib_docs: get_library_pages failed");
+                StatusCode::INTERNAL_SERVER_ERROR
+            })?;
             if pages.is_empty() {
                 serde_json::json!({
                     "library": name,
@@ -106,13 +109,20 @@ pub(crate) async fn mcp_call_tool(
             } else {
                 // No component → the overview (null-component pages) + the list of
                 // available components so the caller can drill in.
-                let overview: Vec<_> = pages.iter().filter(|p| p["component"].is_null()).cloned().collect();
-                let components: Vec<_> = pages.iter().filter_map(|p| p["component"].as_str().map(str::to_string)).collect();
+                let overview: Vec<_> =
+                    pages.iter().filter(|p| p["component"].is_null()).cloned().collect();
+                let components: Vec<_> = pages
+                    .iter()
+                    .filter_map(|p| p["component"].as_str().map(str::to_string))
+                    .collect();
                 serde_json::json!({ "library": name, "overview": overview, "components": components })
             }
         }
         "list_projects" => {
-            let repos = state.pg.list_repositories().await.map_err(|e| { tracing::warn!(error = %e, "mcp list_projects: list_repositories failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+            let repos = state.pg.list_repositories().await.map_err(|e| {
+                tracing::warn!(error = %e, "mcp list_projects: list_repositories failed");
+                StatusCode::INTERNAL_SERVER_ERROR
+            })?;
             serde_json::json!({"projects": repos})
         }
         "create_session" => {
@@ -123,7 +133,9 @@ pub(crate) async fn mcp_call_tool(
             if let Some(folder) = folder {
                 if let Some(folder_id) = json_uuid(&folder["id"]) {
                     match state.pg.create_session(&folder_id, task, None).await {
-                        Ok(session_id) => serde_json::json!({"ok": true, "sessionId": session_id.to_string()}),
+                        Ok(session_id) => {
+                            serde_json::json!({"ok": true, "sessionId": session_id.to_string()})
+                        }
                         Err(e) => serde_json::json!({"error": e}),
                     }
                 } else {
@@ -143,8 +155,10 @@ pub(crate) async fn mcp_call_tool(
                 // A failed write is a 500, not a fabricated `{"ok": true}`. summary +
                 // tokensIn/tokensOut are persisted (were previously advertised but dropped).
                 let summary = params["summary"].as_str().filter(|s| !s.is_empty());
-                let tokens_in = params["tokensIn"].as_str().and_then(|s| s.trim().parse::<i32>().ok());
-                let tokens_out = params["tokensOut"].as_str().and_then(|s| s.trim().parse::<i32>().ok());
+                let tokens_in =
+                    params["tokensIn"].as_str().and_then(|s| s.trim().parse::<i32>().ok());
+                let tokens_out =
+                    params["tokensOut"].as_str().and_then(|s| s.trim().parse::<i32>().ok());
                 state.pg.complete_session(
                     &session_id,
                     outcome,
@@ -172,7 +186,7 @@ pub(crate) async fn mcp_call_tool(
                 // classify it and store the matching source_type. If no url is
                 // given, fall back to the auto-discovery probes.
                 let (target, source_type): (Option<String>, &str) = if !explicit_url.is_empty() {
-                    use crate::indexer::lib_indexer::{detect_lib_source, LibSource};
+                    use crate::indexer::lib_indexer::{LibSource, detect_lib_source};
                     let st = match detect_lib_source(explicit_url) {
                         LibSource::LocalDir(_) => "local",
                         LibSource::GitHubTree { .. } => "http",
@@ -186,14 +200,26 @@ pub(crate) async fn mcp_call_tool(
                 match target {
                     Some(url) => {
                         // Upsert the library record with the resolved source_type.
-                        match state.pg.upsert_library(name, "npm", version, None, Some(source_type), Some(&url)).await {
+                        match state
+                            .pg
+                            .upsert_library(
+                                name,
+                                "npm",
+                                version,
+                                None,
+                                Some(source_type),
+                                Some(&url),
+                            )
+                            .await
+                        {
                             Ok(lib_id) => {
                                 // Enqueue IndexLibrary task for async ingestion.
                                 let task = crate::tasks::Task::new(
                                     crate::tasks::TaskKind::IndexLibrary,
                                     &lib_id.to_string(),
                                     name,
-                                ).with_url(&url);
+                                )
+                                .with_url(&url);
                                 let task_id = state.task_queue.enqueue(task).await;
 
                                 serde_json::json!({
@@ -206,7 +232,9 @@ pub(crate) async fn mcp_call_tool(
                                     "status": "indexing",
                                 })
                             }
-                            Err(e) => serde_json::json!({"error": format!("Failed to create library: {}", e)}),
+                            Err(e) => {
+                                serde_json::json!({"error": format!("Failed to create library: {}", e)})
+                            }
                         }
                     }
                     None => {
@@ -253,12 +281,18 @@ pub(crate) async fn mcp_call_tool(
             })
         }
         "get_metrics" => {
-            let folder = state.pg.get_repo_by_name(repo_id).await.map_err(|e| { tracing::warn!(error = %e, repo_id, "mcp get_metrics: get_repo_by_name failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+            let folder = state.pg.get_repo_by_name(repo_id).await.map_err(|e| {
+                tracing::warn!(error = %e, repo_id, "mcp get_metrics: get_repo_by_name failed");
+                StatusCode::INTERNAL_SERVER_ERROR
+            })?;
             if let Some(folder) = folder {
                 if let Some(folder_id) = json_uuid(&folder["id"]) {
                     let sessions = state.pg.list_sessions_by_folder(&folder_id, 100).await.map_err(|e| { tracing::warn!(error = %e, %folder_id, "mcp get_metrics: list_sessions_by_folder failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
                     let session_count = sessions.len();
-                    let completed = sessions.iter().filter(|s| s["outcome"].as_str() == Some("completed")).count();
+                    let completed = sessions
+                        .iter()
+                        .filter(|s| s["outcome"].as_str() == Some("completed"))
+                        .count();
                     // FTR is store-backed (project_metrics, metric='ftr') — the SAME
                     // number the Phase-7 endpoints serve. Honest-absent (null) when
                     // the folder has no project or no ftr rows; NEVER a fabricated 0.
@@ -328,8 +362,10 @@ async fn discover_lib_url(name: &str, explicit_url: &str) -> Option<String> {
     let timeout = if explicit_url.is_empty() { 5 } else { 15 };
 
     for url in &urls {
-        if let Ok(content) = crate::indexer::lib_indexer::fetch_lib_url_with_timeout(url, timeout).await
-            && content.len() > 50 {
+        if let Ok(content) =
+            crate::indexer::lib_indexer::fetch_lib_url_with_timeout(url, timeout).await
+            && content.len() > 50
+        {
             return Some(url.clone());
         }
     }

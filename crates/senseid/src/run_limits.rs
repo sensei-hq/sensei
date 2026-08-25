@@ -80,10 +80,7 @@ pub fn detect_limit(output: &str, now: DateTime<Utc>) -> Option<LimitHit> {
         return None;
     }
     let reset_at = parse_reset_at(&lower, now);
-    Some(LimitHit {
-        reset_at,
-        reason: "rate/usage limit reached".to_string(),
-    })
+    Some(LimitHit { reset_at, reason: "rate/usage limit reached".to_string() })
 }
 
 /// The intended pause deadline for a limit hit.
@@ -150,8 +147,7 @@ fn parse_reset_at(lower: &str, now: DateTime<Utc>) -> Option<DateTime<Utc>> {
 /// The longest/latest match wins (see the `max` below), so "resets at 3pm"
 /// still yields the tail "3pm", not "at 3pm".
 fn reset_tail(lower: &str) -> Option<&str> {
-    const MARKERS: [&str; 5] =
-        ["reset at ", "resets at ", "reset to ", "resets ", "reset "];
+    const MARKERS: [&str; 5] = ["reset at ", "resets at ", "reset to ", "resets ", "reset "];
     let mut best: Option<usize> = None;
     for m in MARKERS {
         if let Some(idx) = lower.rfind(m) {
@@ -451,11 +447,7 @@ fn first_day_number(s: &str) -> Option<u32> {
         i += 1;
     }
     let day: u32 = s[start..i].parse().ok()?;
-    if (1..=31).contains(&day) {
-        Some(day)
-    } else {
-        None
-    }
+    if (1..=31).contains(&day) { Some(day) } else { None }
 }
 
 #[cfg(test)]

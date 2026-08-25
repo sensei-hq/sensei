@@ -20,7 +20,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use uuid::Uuid;
 
-use super::process_util::{output_with_timeout, TimedOutcome};
+use super::process_util::{TimedOutcome, output_with_timeout};
 
 thread_local! {
     /// Scoped recorder for the current thread. Set by [`scoped`], read by
@@ -168,14 +168,8 @@ fn cap_stdio(mut s: String) -> String {
 /// enough for a human to read.
 fn render_cmd(cmd: &Command) -> String {
     let program = cmd.get_program().to_string_lossy();
-    let args: Vec<String> = cmd.get_args()
-        .map(|a| a.to_string_lossy().into_owned())
-        .collect();
-    if args.is_empty() {
-        program.into_owned()
-    } else {
-        format!("{} {}", program, args.join(" "))
-    }
+    let args: Vec<String> = cmd.get_args().map(|a| a.to_string_lossy().into_owned()).collect();
+    if args.is_empty() { program.into_owned() } else { format!("{} {}", program, args.join(" ")) }
 }
 
 /// Configuration for a traced command invocation.
@@ -211,18 +205,8 @@ pub fn run_traced(
             cap_stdio(String::from_utf8_lossy(&o.stderr).into_owned()),
             o.status.success(),
         ),
-        TimedOutcome::TimedOut => (
-            None,
-            String::new(),
-            format!("timed out after {ms}ms"),
-            false,
-        ),
-        TimedOutcome::Failed(e) => (
-            None,
-            String::new(),
-            format!("spawn failed: {e}"),
-            false,
-        ),
+        TimedOutcome::TimedOut => (None, String::new(), format!("timed out after {ms}ms"), false),
+        TimedOutcome::Failed(e) => (None, String::new(), format!("spawn failed: {e}"), false),
     };
 
     let is_fix = matches!(spec.action_type, ActionType::Resolve);

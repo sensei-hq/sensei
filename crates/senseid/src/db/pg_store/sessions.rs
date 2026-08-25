@@ -22,9 +22,22 @@ impl PgStore {
         // not parse a Postgres interval); tokens_in/out + provider/model come from the
         // transcript capture (NULL when the source carried none — never a fabricated 0).
         type SessionRow = (
-            uuid::Uuid, Option<String>, String, Option<String>, Option<String>,
-            Option<bool>, i32, i32, chrono::DateTime<chrono::Utc>, Option<chrono::DateTime<chrono::Utc>>,
-            Option<String>, Option<i32>, Option<i32>, Option<f64>, Option<String>, Option<String>,
+            uuid::Uuid,
+            Option<String>,
+            String,
+            Option<String>,
+            Option<String>,
+            Option<bool>,
+            i32,
+            i32,
+            chrono::DateTime<chrono::Utc>,
+            Option<chrono::DateTime<chrono::Utc>>,
+            Option<String>,
+            Option<i32>,
+            Option<i32>,
+            Option<f64>,
+            Option<String>,
+            Option<String>,
         );
         let rows: Vec<SessionRow> = sqlx_core::query_as::query_as(
             "SELECT s.id, p.name, s.task, s.summary, s.outcome::text, s.ftr, s.turns, s.corrections,
@@ -36,33 +49,60 @@ impl PgStore {
                AND ($3::uuid IS NULL OR s.project_id = $3)
              ORDER BY s.started_at DESC LIMIT $1"
         ).bind(limit).bind(range_days).bind(project).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
-        Ok(rows.into_iter().map(|(id, project, task, summary, outcome, ftr, turns, corrections, started, completed, agent, tokens_in, tokens_out, duration_secs, provider, model)| {
-            serde_json::json!({
-                "id": id,
-                "project": project,
-                "task": task,
-                "summary": summary,
-                "outcome": outcome,
-                "ftr": ftr,
-                "turns": turns,
-                "corrections": corrections,
-                "startedAt": started.to_rfc3339(),
-                "completedAt": completed.map(|c| c.to_rfc3339()),
-                "agent": agent,
-                "tokensIn": tokens_in,
-                "tokensOut": tokens_out,
-                "durationSecs": duration_secs,
-                "provider": provider,
-                "model": model,
-            })
-        }).collect())
+        Ok(rows
+            .into_iter()
+            .map(
+                |(
+                    id,
+                    project,
+                    task,
+                    summary,
+                    outcome,
+                    ftr,
+                    turns,
+                    corrections,
+                    started,
+                    completed,
+                    agent,
+                    tokens_in,
+                    tokens_out,
+                    duration_secs,
+                    provider,
+                    model,
+                )| {
+                    serde_json::json!({
+                        "id": id,
+                        "project": project,
+                        "task": task,
+                        "summary": summary,
+                        "outcome": outcome,
+                        "ftr": ftr,
+                        "turns": turns,
+                        "corrections": corrections,
+                        "startedAt": started.to_rfc3339(),
+                        "completedAt": completed.map(|c| c.to_rfc3339()),
+                        "agent": agent,
+                        "tokensIn": tokens_in,
+                        "tokensOut": tokens_out,
+                        "durationSecs": duration_secs,
+                        "provider": provider,
+                        "model": model,
+                    })
+                },
+            )
+            .collect())
     }
 
     // ── Extensions ────────────────────────────────────────────────────
 
     pub async fn create_snapshot(
-        &self, session_id: &uuid::Uuid, folder_id: &uuid::Uuid, kind: &str,
-        progress: &str, next_step: Option<&str>, completed_steps: &[String],
+        &self,
+        session_id: &uuid::Uuid,
+        folder_id: &uuid::Uuid,
+        kind: &str,
+        progress: &str,
+        next_step: Option<&str>,
+        completed_steps: &[String],
     ) -> Result<uuid::Uuid, String> {
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "INSERT INTO activity.snapshots(session_id, folder_id, kind, progress_summary, next_step_hint, completed_steps) VALUES($1, $2, $3::sensei.snapshot_kind, $4, $5, $6) RETURNING id"
@@ -71,7 +111,10 @@ impl PgStore {
         Ok(row.0)
     }
 
-    pub async fn get_latest_snapshot(&self, session_id: &uuid::Uuid) -> Result<Option<serde_json::Value>, String> {
+    pub async fn get_latest_snapshot(
+        &self,
+        session_id: &uuid::Uuid,
+    ) -> Result<Option<serde_json::Value>, String> {
         let row: Option<(uuid::Uuid, String, String, Option<String>, Vec<String>, chrono::DateTime<chrono::Utc>)> =
             sqlx_core::query_as::query_as(
                 "SELECT id, kind::text, progress_summary, next_step_hint, completed_steps, created_at FROM activity.snapshots WHERE session_id = $1 ORDER BY created_at DESC LIMIT 1"
@@ -83,7 +126,12 @@ impl PgStore {
 
     // ── Detected Patterns (inference) ──────────────────────────────────
 
-    pub async fn create_session(&self, folder_id: &uuid::Uuid, task: &str, acp_id: Option<&str>) -> Result<uuid::Uuid, String> {
+    pub async fn create_session(
+        &self,
+        folder_id: &uuid::Uuid,
+        task: &str,
+        acp_id: Option<&str>,
+    ) -> Result<uuid::Uuid, String> {
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "INSERT INTO activity.sessions(folder_id, task, acp_id) VALUES($1, $2, $3) RETURNING id"
         ).bind(folder_id).bind(task).bind(acp_id)
@@ -92,9 +140,15 @@ impl PgStore {
     }
 
     pub async fn complete_session(
-        &self, id: &uuid::Uuid, outcome: &str, ftr: bool,
-        turns: i32, corrections: i32,
-        summary: Option<&str>, tokens_in: Option<i32>, tokens_out: Option<i32>,
+        &self,
+        id: &uuid::Uuid,
+        outcome: &str,
+        ftr: bool,
+        turns: i32,
+        corrections: i32,
+        summary: Option<&str>,
+        tokens_in: Option<i32>,
+        tokens_out: Option<i32>,
     ) -> Result<(), String> {
         // summary/tokens are COALESCE'd so a caller that omits them doesn't wipe a
         // previously-set value; these columns exist on activity.sessions and were
@@ -114,8 +168,12 @@ impl PgStore {
     /// completed when `is_end` (Stop / SessionEnd). Idempotent per
     /// client_session_id so every hook event of a session folds into one row (#31).
     pub async fn record_session_event(
-        &self, client_session_id: &str, folder_id: &uuid::Uuid,
-        project_id: Option<&uuid::Uuid>, family: &str, is_end: bool,
+        &self,
+        client_session_id: &str,
+        folder_id: &uuid::Uuid,
+        project_id: Option<&uuid::Uuid>,
+        family: &str,
+        is_end: bool,
     ) -> Result<uuid::Uuid, String> {
         // Derive the durable repo anchor from folder_id in the SAME write (spec 2026-08-18):
         // repo_anchor_for walks folder_id's abs_path up to its owning repo, so the session
@@ -159,8 +217,12 @@ impl PgStore {
     /// not the UUID.
     pub async fn get_session_client_id(&self, id: &uuid::Uuid) -> Result<Option<String>, String> {
         let row: Option<(Option<String>,)> = sqlx_core::query_as::query_as(
-            "SELECT client_session_id FROM activity.sessions WHERE id = $1"
-        ).bind(id).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
+            "SELECT client_session_id FROM activity.sessions WHERE id = $1",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(row.and_then(|(c,)| c))
     }
 
@@ -173,19 +235,41 @@ impl PgStore {
                         tokens_in, tokens_out, EXTRACT(EPOCH FROM duration)::float8, provider, model FROM activity.sessions WHERE id = $1"
             ).bind(id).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
 
-        Ok(row.map(|(id, fid, task, acp, outcome, ftr, turns, corr, started, completed, tokens_in, tokens_out, duration_secs, provider, model)| {
-            serde_json::json!({
-                "id": id, "folder_id": fid, "task": task, "acp_id": acp,
-                "outcome": outcome, "ftr": ftr, "turns": turns, "corrections": corr,
-                "started_at": started.to_rfc3339(),
-                "completed_at": completed.map(|t| t.to_rfc3339()),
-                "tokensIn": tokens_in, "tokensOut": tokens_out, "durationSecs": duration_secs,
-                "provider": provider, "model": model,
-            })
-        }))
+        Ok(row.map(
+            |(
+                id,
+                fid,
+                task,
+                acp,
+                outcome,
+                ftr,
+                turns,
+                corr,
+                started,
+                completed,
+                tokens_in,
+                tokens_out,
+                duration_secs,
+                provider,
+                model,
+            )| {
+                serde_json::json!({
+                    "id": id, "folder_id": fid, "task": task, "acp_id": acp,
+                    "outcome": outcome, "ftr": ftr, "turns": turns, "corrections": corr,
+                    "started_at": started.to_rfc3339(),
+                    "completed_at": completed.map(|t| t.to_rfc3339()),
+                    "tokensIn": tokens_in, "tokensOut": tokens_out, "durationSecs": duration_secs,
+                    "provider": provider, "model": model,
+                })
+            },
+        ))
     }
 
-    pub async fn list_sessions_by_folder(&self, folder_id: &uuid::Uuid, limit: i64) -> Result<Vec<serde_json::Value>, String> {
+    pub async fn list_sessions_by_folder(
+        &self,
+        folder_id: &uuid::Uuid,
+        limit: i64,
+    ) -> Result<Vec<serde_json::Value>, String> {
         let rows: Vec<(uuid::Uuid, String, Option<String>, Option<bool>, i32, chrono::DateTime<chrono::Utc>)> =
             sqlx_core::query_as::query_as(
                 "SELECT id, task, outcome::text, ftr, corrections, started_at FROM activity.sessions WHERE folder_id = $1 ORDER BY started_at DESC LIMIT $2"
@@ -215,7 +299,7 @@ impl PgStore {
         let row: (i64,) = sqlx_core::query_as::query_as(
             "INSERT INTO activity.assistant_events \
              (session_id, family, event_type, tool_name, cwd, ts, success, payload) \
-             VALUES($1, $2::sensei.assistant_family, $3, $4, $5, $6, $7, $8) RETURNING id"
+             VALUES($1, $2::sensei.assistant_family, $3, $4, $5, $6, $7, $8) RETURNING id",
         )
         .bind(session_id)
         .bind(assistant_family)
@@ -348,11 +432,19 @@ impl PgStore {
 
     /// All assistant events for one session (by its string `session_id`),
     /// oldest-first, projected to the fields session enrichment reads (#66).
-    pub async fn get_hook_events_for_session(&self, client_session_id: &str) -> Result<Vec<serde_json::Value>, String> {
-        let rows: Vec<(String, Option<String>, i64, serde_json::Value)> = sqlx_core::query_as::query_as(
-            "SELECT event_type, tool_name, ts, payload FROM activity.assistant_events
-             WHERE session_id = $1 ORDER BY ts"
-        ).bind(client_session_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+    pub async fn get_hook_events_for_session(
+        &self,
+        client_session_id: &str,
+    ) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(String, Option<String>, i64, serde_json::Value)> =
+            sqlx_core::query_as::query_as(
+                "SELECT event_type, tool_name, ts, payload FROM activity.assistant_events
+             WHERE session_id = $1 ORDER BY ts",
+            )
+            .bind(client_session_id)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
         Ok(rows.into_iter().map(|(event_type, tool_name, ts, payload)| {
             serde_json::json!({ "event_type": event_type, "tool_name": tool_name, "ts": ts, "payload": payload })
         }).collect())
@@ -367,8 +459,12 @@ impl PgStore {
     ) -> Result<Vec<(i64, String, Option<String>, i64, serde_json::Value)>, String> {
         sqlx_core::query_as::query_as(
             "SELECT id, event_type, tool_name, ts, payload FROM activity.assistant_events
-             WHERE session_id = $1 ORDER BY ts"
-        ).bind(client_session_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())
+             WHERE session_id = $1 ORDER BY ts",
+        )
+        .bind(client_session_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())
     }
 
     /// Mark a project's captured sessions for RE-enrichment (a backfill request) —
@@ -376,12 +472,19 @@ impl PgStore {
     /// from scratch with the current logic (used while metrics are being refined).
     /// Only sessions with a `client_session_id` (hook/transcript-captured) are
     /// reset. Returns the number of sessions marked.
-    pub async fn reset_project_sessions_for_reenrichment(&self, project_id: &uuid::Uuid) -> Result<u64, String> {
+    pub async fn reset_project_sessions_for_reenrichment(
+        &self,
+        project_id: &uuid::Uuid,
+    ) -> Result<u64, String> {
         let res = sqlx_core::query::query(
             "UPDATE activity.sessions s SET analyzed_at = NULL
                FROM sensei.folders f
-              WHERE f.id = s.folder_id AND f.project_id = $1 AND s.client_session_id IS NOT NULL"
-        ).bind(project_id).execute(&self.pool).await.map_err(|e| e.to_string())?;
+              WHERE f.id = s.folder_id AND f.project_id = $1 AND s.client_session_id IS NOT NULL",
+        )
+        .bind(project_id)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(res.rows_affected())
     }
 
@@ -392,7 +495,9 @@ impl PgStore {
     /// RAW-invocation count, distinct from the `unused_tools` metric's
     /// verdict-based `used_tools`. Ordered by calls desc; capped by `limit`.
     pub async fn get_project_tool_breakdown(
-        &self, project_id: &uuid::Uuid, limit: i64,
+        &self,
+        project_id: &uuid::Uuid,
+        limit: i64,
     ) -> Result<Vec<serde_json::Value>, String> {
         let rows: Vec<(String, i64, i64, i64)> = sqlx_core::query_as::query_as(
             "SELECT e.tool,
@@ -407,8 +512,13 @@ impl PgStore {
                 AND jsonb_typeof(s.props->'tool_usage') = 'object'
               GROUP BY e.tool
               ORDER BY calls DESC, e.tool
-              LIMIT $2"
-        ).bind(project_id).bind(limit).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+              LIMIT $2",
+        )
+        .bind(project_id)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(rows.into_iter().map(|(tool, calls, failed, sessions)| {
             serde_json::json!({ "tool": tool, "calls": calls, "failed": failed, "sessions": sessions })
         }).collect())
@@ -418,13 +528,22 @@ impl PgStore {
     /// in-session `command_invoked{action:resume}` marker, so it was reopened /
     /// continued — the read path shows "resumed" and never treats it as abandoned.
     /// Idempotent; guarded so a steady-state re-enrich changes 0 rows.
-    pub async fn set_session_resumed(&self, session_id: &uuid::Uuid, resumed: bool) -> Result<u64, String> {
+    pub async fn set_session_resumed(
+        &self,
+        session_id: &uuid::Uuid,
+        resumed: bool,
+    ) -> Result<u64, String> {
         let res = sqlx_core::query::query(
             "UPDATE activity.sessions
                 SET props = coalesce(props, '{}'::jsonb) || jsonb_build_object('resumed', $2::bool)
               WHERE id = $1
-                AND coalesce((props->>'resumed')::bool, false) IS DISTINCT FROM $2"
-        ).bind(session_id).bind(resumed).execute(&self.pool).await.map_err(|e| e.to_string())?;
+                AND coalesce((props->>'resumed')::bool, false) IS DISTINCT FROM $2",
+        )
+        .bind(session_id)
+        .bind(resumed)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(res.rows_affected())
     }
 
@@ -432,11 +551,20 @@ impl PgStore {
     /// transcript moments grounding its signals. Computed off-wire during
     /// enrichment; the drill-down reads it back verbatim. Guarded so a steady-state
     /// re-enrich changes 0 rows.
-    pub async fn set_session_evidence(&self, session_id: &uuid::Uuid, evidence: &serde_json::Value) -> Result<u64, String> {
+    pub async fn set_session_evidence(
+        &self,
+        session_id: &uuid::Uuid,
+        evidence: &serde_json::Value,
+    ) -> Result<u64, String> {
         let res = sqlx_core::query::query(
             "UPDATE activity.sessions SET evidence = $2
-              WHERE id = $1 AND evidence IS DISTINCT FROM $2"
-        ).bind(session_id).bind(evidence).execute(&self.pool).await.map_err(|e| e.to_string())?;
+              WHERE id = $1 AND evidence IS DISTINCT FROM $2",
+        )
+        .bind(session_id)
+        .bind(evidence)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(res.rows_affected())
     }
 
@@ -444,18 +572,31 @@ impl PgStore {
     /// Claude trouble hint with its context-pressure correlation. `null` removes
     /// the key (most sessions have no trouble). Guarded so a steady-state re-enrich
     /// changes 0 rows.
-    pub async fn set_session_trouble(&self, session_id: &uuid::Uuid, trouble: &serde_json::Value) -> Result<u64, String> {
+    pub async fn set_session_trouble(
+        &self,
+        session_id: &uuid::Uuid,
+        trouble: &serde_json::Value,
+    ) -> Result<u64, String> {
         let res = if trouble.is_null() {
             sqlx_core::query::query(
                 "UPDATE activity.sessions SET props = props - 'trouble'
-                  WHERE id = $1 AND props ? 'trouble'"
-            ).bind(session_id).execute(&self.pool).await.map_err(|e| e.to_string())?
+                  WHERE id = $1 AND props ? 'trouble'",
+            )
+            .bind(session_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?
         } else {
             sqlx_core::query::query(
                 "UPDATE activity.sessions
                     SET props = coalesce(props, '{}'::jsonb) || jsonb_build_object('trouble', $2)
-                  WHERE id = $1 AND (props->'trouble') IS DISTINCT FROM $2"
-            ).bind(session_id).bind(trouble).execute(&self.pool).await.map_err(|e| e.to_string())?
+                  WHERE id = $1 AND (props->'trouble') IS DISTINCT FROM $2",
+            )
+            .bind(session_id)
+            .bind(trouble)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?
         };
         Ok(res.rows_affected())
     }
@@ -473,8 +614,12 @@ impl PgStore {
     ) -> Result<Option<(serde_json::Value, Option<String>)>, String> {
         let row: Option<(serde_json::Value, Option<String>)> = sqlx_core::query_as::query_as(
             "SELECT payload, cwd FROM activity.assistant_events
-             WHERE session_id = $1 AND tool_name = 'TodoWrite' ORDER BY ts DESC LIMIT 1"
-        ).bind(session_id).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
+             WHERE session_id = $1 AND tool_name = 'TodoWrite' ORDER BY ts DESC LIMIT 1",
+        )
+        .bind(session_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(row)
     }
 
@@ -485,7 +630,9 @@ impl PgStore {
         &self,
         rows: &[(String, i64, Option<String>, &'static str, f32, String)],
     ) -> Result<usize, String> {
-        if rows.is_empty() { return Ok(0); }
+        if rows.is_empty() {
+            return Ok(0);
+        }
         let mut tx = self.pool.begin().await.map_err(|e| e.to_string())?;
         for (session_id, event_id, tool_name, verdict, confidence, reason) in rows {
             sqlx_core::query::query(
@@ -497,7 +644,7 @@ impl PgStore {
                     verdict = EXCLUDED.verdict, \
                     confidence = EXCLUDED.confidence, \
                     reason = EXCLUDED.reason, \
-                    classified_at = now()"
+                    classified_at = now()",
             )
             .bind(session_id)
             .bind(event_id)
@@ -529,7 +676,10 @@ impl PgStore {
     /// window; the parametrised-days form mirrors `get_verdict_split_per_tool`.
     /// Session-less events (`session_id = ''`) are excluded — they'd otherwise
     /// collapse every unattached event into one pseudo-session.
-    pub async fn unclassified_verdict_sessions(&self, window_days: i32) -> Result<Vec<String>, String> {
+    pub async fn unclassified_verdict_sessions(
+        &self,
+        window_days: i32,
+    ) -> Result<Vec<String>, String> {
         let rows: Vec<(String,)> = sqlx_core::query_as::query_as(
             "SELECT DISTINCT h.session_id
                FROM activity.assistant_events h
@@ -567,7 +717,7 @@ impl PgStore {
                FROM sensei.tool_call_verdicts
               WHERE classified_at > now() - ($1::int || ' days')::interval
               GROUP BY tool_name
-              HAVING count(*) > 0"
+              HAVING count(*) > 0",
         )
         .bind(days)
         .fetch_all(&self.pool)
@@ -595,19 +745,19 @@ impl PgStore {
         limit: i32,
     ) -> Result<Vec<serde_json::Value>, String> {
         let rows: Vec<(
-            i64,                                              // pre_id (call_id)
-            Option<i64>,                                      // post_id
-            String,                                           // tool_name
-            String,                                           // family
-            serde_json::Value,                                // request
-            Option<serde_json::Value>,                        // response
-            Option<bool>,                                     // success
-            i64,                                              // pre_ts
-            Option<i64>,                                      // post_ts
-            Option<i64>,                                      // duration_ms
-            Option<String>,                                   // verdict
-            Option<f32>,                                      // confidence
-            Option<String>,                                   // reason
+            i64,                       // pre_id (call_id)
+            Option<i64>,               // post_id
+            String,                    // tool_name
+            String,                    // family
+            serde_json::Value,         // request
+            Option<serde_json::Value>, // response
+            Option<bool>,              // success
+            i64,                       // pre_ts
+            Option<i64>,               // post_ts
+            Option<i64>,               // duration_ms
+            Option<String>,            // verdict
+            Option<f32>,               // confidence
+            Option<String>,            // reason
         )> = sqlx_core::query_as::query_as(
             "WITH pre AS (
                 SELECT session_id, family::text AS family, tool_name,
@@ -647,7 +797,7 @@ impl PgStore {
                             AND pre.seq        = post.seq
               LEFT JOIN sensei.tool_call_verdicts v ON v.event_id = post.post_id
              ORDER BY pre.pre_ts ASC
-             LIMIT $2"
+             LIMIT $2",
         )
         .bind(session_id)
         .bind(limit as i64)
@@ -655,27 +805,43 @@ impl PgStore {
         .await
         .map_err(|e| e.to_string())?;
 
-        Ok(rows.into_iter().map(|(
-            pre_id, post_id, tool_name, family, request, response, success,
-            pre_ts, post_ts, duration_ms, verdict, confidence, reason,
-        )| {
-            serde_json::json!({
-                "callId":         pre_id,
-                "postEventId":    post_id,
-                "toolName":       tool_name,
-                "family":         family,
-                "request":        request,
-                "response":       response,
-                "success":        success,
-                "startedAtMs":    pre_ts,
-                "completedAtMs":  post_ts,
-                "durationMs":     duration_ms,
-                "inFlight":       post_ts.is_none(),
-                "verdict":        verdict,    // null when unclassified
-                "confidence":     confidence,
-                "verdictReason":  reason,
-            })
-        }).collect())
+        Ok(rows
+            .into_iter()
+            .map(
+                |(
+                    pre_id,
+                    post_id,
+                    tool_name,
+                    family,
+                    request,
+                    response,
+                    success,
+                    pre_ts,
+                    post_ts,
+                    duration_ms,
+                    verdict,
+                    confidence,
+                    reason,
+                )| {
+                    serde_json::json!({
+                        "callId":         pre_id,
+                        "postEventId":    post_id,
+                        "toolName":       tool_name,
+                        "family":         family,
+                        "request":        request,
+                        "response":       response,
+                        "success":        success,
+                        "startedAtMs":    pre_ts,
+                        "completedAtMs":  post_ts,
+                        "durationMs":     duration_ms,
+                        "inFlight":       post_ts.is_none(),
+                        "verdict":        verdict,    // null when unclassified
+                        "confidence":     confidence,
+                        "verdictReason":  reason,
+                    })
+                },
+            )
+            .collect())
     }
 
     // ── #84 Track 2 Slice A — mcp_servers ─────────────────────────────────
@@ -686,30 +852,40 @@ impl PgStore {
         &self,
         client_session_id: &str,
     ) -> Result<Vec<serde_json::Value>, String> {
-        let rows: Vec<(i64, Option<String>, String, f32, Option<String>, chrono::DateTime<chrono::Utc>, i64)> =
-            sqlx_core::query_as::query_as(
-                "SELECT v.event_id, v.tool_name, v.verdict, v.confidence, v.reason,
+        let rows: Vec<(
+            i64,
+            Option<String>,
+            String,
+            f32,
+            Option<String>,
+            chrono::DateTime<chrono::Utc>,
+            i64,
+        )> = sqlx_core::query_as::query_as(
+            "SELECT v.event_id, v.tool_name, v.verdict, v.confidence, v.reason,
                         v.classified_at, ae.ts
                    FROM sensei.tool_call_verdicts v
                    JOIN activity.assistant_events ae ON ae.id = v.event_id
                   WHERE v.session_id = $1
-               ORDER BY ae.ts"
-            )
-            .bind(client_session_id)
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|e| e.to_string())?;
-        Ok(rows.into_iter().map(|(event_id, tool_name, verdict, confidence, reason, classified_at, ts)| {
-            serde_json::json!({
-                "event_id":       event_id,
-                "tool_name":      tool_name,
-                "verdict":        verdict,
-                "confidence":     confidence,
-                "reason":         reason,
-                "classified_at":  classified_at.to_rfc3339(),
-                "ts":             ts,
+               ORDER BY ae.ts",
+        )
+        .bind(client_session_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(rows
+            .into_iter()
+            .map(|(event_id, tool_name, verdict, confidence, reason, classified_at, ts)| {
+                serde_json::json!({
+                    "event_id":       event_id,
+                    "tool_name":      tool_name,
+                    "verdict":        verdict,
+                    "confidence":     confidence,
+                    "reason":         reason,
+                    "classified_at":  classified_at.to_rfc3339(),
+                    "ts":             ts,
+                })
             })
-        }).collect())
+            .collect())
     }
 
     /// Session-level summary of verdicts — the counts by outcome. Cheap to
@@ -720,7 +896,7 @@ impl PgStore {
     ) -> Result<serde_json::Value, String> {
         let rows: Vec<(String, i64)> = sqlx_core::query_as::query_as(
             "SELECT verdict, count(*)::bigint FROM sensei.tool_call_verdicts
-              WHERE session_id = $1 GROUP BY verdict"
+              WHERE session_id = $1 GROUP BY verdict",
         )
         .bind(client_session_id)
         .fetch_all(&self.pool)
@@ -752,7 +928,10 @@ impl PgStore {
     /// assistant_events newer than the last analysis. Lets the scheduler skip
     /// unchanged sessions so enrichment cost scales with NEW activity, not total
     /// history (#67 incremental).
-    pub async fn get_project_sessions_needing_enrichment(&self, project_id: &uuid::Uuid) -> Result<Vec<(uuid::Uuid, String, Option<uuid::Uuid>)>, String> {
+    pub async fn get_project_sessions_needing_enrichment(
+        &self,
+        project_id: &uuid::Uuid,
+    ) -> Result<Vec<(uuid::Uuid, String, Option<uuid::Uuid>)>, String> {
         // coalesce to the repo anchor so a session whose raw folder was pruned (folder_id
         // SET NULL) still reports a folder to scope pattern derivation to; Option-decoded
         // in case both are null (a fully unattached session).
@@ -786,10 +965,22 @@ impl PgStore {
         day: chrono::NaiveDate,
     ) -> Result<Vec<serde_json::Value>, String> {
         type Row = (
-            Option<String>, chrono::DateTime<chrono::Utc>, Option<String>,
-            Option<bool>, i32, i32, String, Option<String>,
-            Option<serde_json::Value>, Option<bool>, Option<serde_json::Value>,
-            Option<i32>, Option<i32>, Option<f64>, Option<String>, Option<String>,
+            Option<String>,
+            chrono::DateTime<chrono::Utc>,
+            Option<String>,
+            Option<bool>,
+            i32,
+            i32,
+            String,
+            Option<String>,
+            Option<serde_json::Value>,
+            Option<bool>,
+            Option<serde_json::Value>,
+            Option<i32>,
+            Option<i32>,
+            Option<f64>,
+            Option<String>,
+            Option<String>,
         );
         let rows: Vec<Row> = sqlx_core::query_as::query_as(
             "SELECT s.client_session_id, s.started_at, s.outcome::text, s.ftr,
@@ -811,37 +1002,61 @@ impl PgStore {
         .map_err(|e| e.to_string())?;
         Ok(rows
             .into_iter()
-            .map(|(client_session_id, started_at, outcome, ftr, turns, corrections, task, summary, evidence, resumed, trouble, tokens_in, tokens_out, duration_secs, provider, model)| {
-                serde_json::json!({
-                    "client_session_id": client_session_id,
-                    "started_at":        started_at.to_rfc3339(),
-                    "outcome":           outcome,
-                    "ftr":               ftr,
-                    "turns":             turns,
-                    "corrections":       corrections,
-                    "task":              task,
-                    "summary":           summary,
-                    "evidence":          evidence,
-                    "resumed":           resumed.unwrap_or(false),
-                    "trouble":           trouble,
-                    "tokensIn":          tokens_in,
-                    "tokensOut":         tokens_out,
-                    "durationSecs":      duration_secs,
-                    "provider":          provider,
-                    "model":             model,
-                })
-            })
+            .map(
+                |(
+                    client_session_id,
+                    started_at,
+                    outcome,
+                    ftr,
+                    turns,
+                    corrections,
+                    task,
+                    summary,
+                    evidence,
+                    resumed,
+                    trouble,
+                    tokens_in,
+                    tokens_out,
+                    duration_secs,
+                    provider,
+                    model,
+                )| {
+                    serde_json::json!({
+                        "client_session_id": client_session_id,
+                        "started_at":        started_at.to_rfc3339(),
+                        "outcome":           outcome,
+                        "ftr":               ftr,
+                        "turns":             turns,
+                        "corrections":       corrections,
+                        "task":              task,
+                        "summary":           summary,
+                        "evidence":          evidence,
+                        "resumed":           resumed.unwrap_or(false),
+                        "trouble":           trouble,
+                        "tokensIn":          tokens_in,
+                        "tokensOut":         tokens_out,
+                        "durationSecs":      duration_secs,
+                        "provider":          provider,
+                        "model":             model,
+                    })
+                },
+            )
             .collect())
     }
 
     /// `(project_id, latest_session_activity)` for every project with attributed
     /// sessions — drives the analyzer scheduler's "what changed since last run"
     /// check (#67).
-    pub async fn get_projects_with_session_activity(&self) -> Result<Vec<(uuid::Uuid, chrono::DateTime<chrono::Utc>)>, String> {
+    pub async fn get_projects_with_session_activity(
+        &self,
+    ) -> Result<Vec<(uuid::Uuid, chrono::DateTime<chrono::Utc>)>, String> {
         let rows: Vec<(uuid::Uuid, chrono::DateTime<chrono::Utc>)> = sqlx_core::query_as::query_as(
             "SELECT project_id, max(GREATEST(started_at, COALESCE(completed_at, started_at)))
-             FROM activity.sessions WHERE project_id IS NOT NULL GROUP BY project_id"
-        ).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+             FROM activity.sessions WHERE project_id IS NOT NULL GROUP BY project_id",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(rows)
     }
 
@@ -854,7 +1069,12 @@ impl PgStore {
     /// `folders = Some(ids)` scopes derivation to just those folders (incremental
     /// re-derive — only folders touched by newly-enriched sessions); `None` =
     /// the whole project (full refresh / on-demand).
-    pub async fn get_file_churn_stats(&self, project_id: &uuid::Uuid, min_session_edits: i64, folders: Option<&[uuid::Uuid]>) -> Result<Vec<(uuid::Uuid, String, i64, i64)>, String> {
+    pub async fn get_file_churn_stats(
+        &self,
+        project_id: &uuid::Uuid,
+        min_session_edits: i64,
+        folders: Option<&[uuid::Uuid]>,
+    ) -> Result<Vec<(uuid::Uuid, String, i64, i64)>, String> {
         let rows: Vec<(uuid::Uuid, String, i64, i64)> = sqlx_core::query_as::query_as(
             "WITH per_session AS (
                  SELECT s.folder_id,
@@ -875,8 +1095,14 @@ impl PgStore {
                     sum(edits)::bigint AS total_edits
              FROM per_session
              GROUP BY folder_id, file
-             HAVING max(edits) >= $2"
-        ).bind(project_id).bind(min_session_edits).bind(folders.map(<[uuid::Uuid]>::to_vec)).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+             HAVING max(edits) >= $2",
+        )
+        .bind(project_id)
+        .bind(min_session_edits)
+        .bind(folders.map(<[uuid::Uuid]>::to_vec))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(rows)
     }
 
@@ -885,7 +1111,11 @@ impl PgStore {
     /// session_id, prompt)` for every UserPromptSubmit carrying prompt text.
     /// `folders = Some(ids)` scopes to those folders (incremental re-derive);
     /// `None` = whole project.
-    pub async fn get_project_prompts(&self, project_id: &uuid::Uuid, folders: Option<&[uuid::Uuid]>) -> Result<Vec<(uuid::Uuid, String, String)>, String> {
+    pub async fn get_project_prompts(
+        &self,
+        project_id: &uuid::Uuid,
+        folders: Option<&[uuid::Uuid]>,
+    ) -> Result<Vec<(uuid::Uuid, String, String)>, String> {
         let rows: Vec<(uuid::Uuid, String, String)> = sqlx_core::query_as::query_as(
             "SELECT s.folder_id, ae.session_id, ae.payload->>'prompt'
              FROM activity.assistant_events ae
@@ -894,8 +1124,13 @@ impl PgStore {
                AND ($2::uuid[] IS NULL OR s.folder_id = ANY($2))
                AND ae.event_type = 'UserPromptSubmit'
                AND ae.payload->>'prompt' IS NOT NULL
-             ORDER BY ae.ts"
-        ).bind(project_id).bind(folders.map(<[uuid::Uuid]>::to_vec)).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+             ORDER BY ae.ts",
+        )
+        .bind(project_id)
+        .bind(folders.map(<[uuid::Uuid]>::to_vec))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(rows)
     }
 
@@ -954,7 +1189,9 @@ impl PgStore {
                 // REAL start/end from the surviving events, or a historical repaired session
                 // masquerades as "today" and pollutes the recency ordering + FTR/quality time
                 // windows (mirrors set_session_history in the #75 cold-start synthesis path).
-                if let Err(e) = self.set_session_history(&session_id, started_ms, completed_ms).await {
+                if let Err(e) =
+                    self.set_session_history(&session_id, started_ms, completed_ms).await
+                {
                     tracing::warn!(error = %e, session = %session_id, "repair_orphaned_sessions: set_session_history failed");
                 }
                 repaired += 1;
@@ -1035,7 +1272,11 @@ impl PgStore {
                 // polluting recency order and every time-windowed metric.
                 if let (Some(a), Some(b)) = (started, completed)
                     && let Err(e) = self
-                        .set_session_history(&session_id, a.timestamp_millis(), b.timestamp_millis())
+                        .set_session_history(
+                            &session_id,
+                            a.timestamp_millis(),
+                            b.timestamp_millis(),
+                        )
                         .await
                 {
                     tracing::warn!(error = %e, session = %session_id,
@@ -1051,8 +1292,12 @@ impl PgStore {
     /// so the importer never double-counts a live-captured (or already-imported) session.
     pub async fn session_has_events(&self, client_session_id: &str) -> Result<bool, String> {
         let row: (bool,) = sqlx_core::query_as::query_as(
-            "SELECT EXISTS(SELECT 1 FROM activity.assistant_events WHERE session_id = $1)"
-        ).bind(client_session_id).fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
+            "SELECT EXISTS(SELECT 1 FROM activity.assistant_events WHERE session_id = $1)",
+        )
+        .bind(client_session_id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(row.0)
     }
 
@@ -1062,24 +1307,41 @@ impl PgStore {
     /// capture existed. `false` when the row is absent (a new session gets its
     /// metadata via synthesis) or already attempted (skip the wasteful re-read, even
     /// for a token-less source like a Zed thread). Keys on `meta_synced_at IS NULL`.
-    pub async fn session_needs_meta_backfill(&self, client_session_id: &str) -> Result<bool, String> {
+    pub async fn session_needs_meta_backfill(
+        &self,
+        client_session_id: &str,
+    ) -> Result<bool, String> {
         let row: Option<(Option<chrono::DateTime<chrono::Utc>>,)> = sqlx_core::query_as::query_as(
-            "SELECT meta_synced_at FROM activity.sessions WHERE client_session_id = $1"
-        ).bind(client_session_id).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
+            "SELECT meta_synced_at FROM activity.sessions WHERE client_session_id = $1",
+        )
+        .bind(client_session_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(matches!(row, Some((None,))))
     }
 
     /// Mark a session as synthesized from a historical transcript (#75) and set
     /// its real historical start/end from the transcript timestamps (so it
     /// doesn't masquerade as "today" in the FTR/quality time windows).
-    pub async fn set_session_history(&self, client_session_id: &str, started_ms: i64, completed_ms: i64) -> Result<(), String> {
+    pub async fn set_session_history(
+        &self,
+        client_session_id: &str,
+        started_ms: i64,
+        completed_ms: i64,
+    ) -> Result<(), String> {
         sqlx_core::query::query(
             "UPDATE activity.sessions SET backfilled = true,
                  started_at   = to_timestamp($2::float8 / 1000.0),
                  completed_at = to_timestamp($3::float8 / 1000.0)
-             WHERE client_session_id = $1"
-        ).bind(client_session_id).bind(started_ms).bind(completed_ms)
-            .execute(&self.pool).await.map_err(|e| e.to_string())?;
+             WHERE client_session_id = $1",
+        )
+        .bind(client_session_id)
+        .bind(started_ms)
+        .bind(completed_ms)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(())
     }
 
@@ -1091,8 +1353,12 @@ impl PgStore {
     /// fabricated default/zero. Powers effectiveness-by-model + token-usage reporting.
     /// A no-op (0 rows) when the session row doesn't exist yet.
     pub async fn set_session_metadata(
-        &self, client_session_id: &str, provider: Option<&str>, model: Option<&str>,
-        tokens_in: Option<i32>, tokens_out: Option<i32>,
+        &self,
+        client_session_id: &str,
+        provider: Option<&str>,
+        model: Option<&str>,
+        tokens_in: Option<i32>,
+        tokens_out: Option<i32>,
         split: Option<&crate::transcript::SessionTokens>,
     ) -> Result<(), String> {
         // COALESCE throughout: a source that reports no split must not erase what
@@ -1131,8 +1397,15 @@ impl PgStore {
     /// and merges `tool_usage` into `props` — deliberately does NOT touch
     /// `completed_at` (owned by the hook-stream session derivation, #31).
     pub async fn update_session_metrics(
-        &self, session_id: &uuid::Uuid, turns: i32, corrections: i32, outcome: &str,
-        ftr: bool, duration_ms: i64, module: Option<&str>, tool_usage: &serde_json::Value,
+        &self,
+        session_id: &uuid::Uuid,
+        turns: i32,
+        corrections: i32,
+        outcome: &str,
+        ftr: bool,
+        duration_ms: i64,
+        module: Option<&str>,
+        tool_usage: &serde_json::Value,
     ) -> Result<(), String> {
         sqlx_core::query::query(
             "UPDATE activity.sessions
@@ -1140,10 +1413,19 @@ impl PgStore {
                     corrections = $5, duration = make_interval(secs => $6::float8 / 1000.0),
                     module = $7, analyzed_at = now(),
                     props = props || jsonb_build_object('tool_usage', $8::jsonb)
-              WHERE id = $1"
-        ).bind(session_id).bind(outcome).bind(ftr).bind(turns).bind(corrections)
-            .bind(duration_ms).bind(module).bind(tool_usage)
-            .execute(&self.pool).await.map_err(|e| e.to_string())?;
+              WHERE id = $1",
+        )
+        .bind(session_id)
+        .bind(outcome)
+        .bind(ftr)
+        .bind(turns)
+        .bind(corrections)
+        .bind(duration_ms)
+        .bind(module)
+        .bind(tool_usage)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(())
     }
 
@@ -1160,11 +1442,20 @@ impl PgStore {
     /// to correct a now-stale line — a session whose outcome flipped
     /// `abandoned → completed` can't keep an "abandoned" summary. Nothing else
     /// writes `summary`, so this never clobbers a non-sensei value.
-    pub async fn set_session_summary(&self, session_id: &uuid::Uuid, summary: &str) -> Result<u64, String> {
+    pub async fn set_session_summary(
+        &self,
+        session_id: &uuid::Uuid,
+        summary: &str,
+    ) -> Result<u64, String> {
         let res = sqlx_core::query::query(
             "UPDATE activity.sessions SET summary = $2
-              WHERE id = $1 AND summary IS DISTINCT FROM $2"
-        ).bind(session_id).bind(summary).execute(&self.pool).await.map_err(|e| e.to_string())?;
+              WHERE id = $1 AND summary IS DISTINCT FROM $2",
+        )
+        .bind(session_id)
+        .bind(summary)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(res.rows_affected())
     }
 
@@ -1173,9 +1464,16 @@ impl PgStore {
     /// started_ms, ended_ms, duration_ms, is_correction, triage_signal,
     /// tool_calls}]` — ms epochs/durations are converted to timestamptz/interval
     /// here. Idempotent (delete + reinsert), so re-enrichment never duplicates.
-    pub async fn replace_session_turns(&self, session_id: &uuid::Uuid, turns: &serde_json::Value) -> Result<(), String> {
+    pub async fn replace_session_turns(
+        &self,
+        session_id: &uuid::Uuid,
+        turns: &serde_json::Value,
+    ) -> Result<(), String> {
         sqlx_core::query::query("DELETE FROM activity.turns WHERE session_id = $1")
-            .bind(session_id).execute(&self.pool).await.map_err(|e| e.to_string())?;
+            .bind(session_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
         sqlx_core::query::query(
             "INSERT INTO activity.turns
                (session_id, turn_number, segment, started_at, ended_at, duration, is_correction, triage_signal, tool_calls)
@@ -1200,7 +1498,9 @@ impl PgStore {
     /// the other session metrics use. Newest-first, capped at `limit` (the per-tick
     /// batch cap so one project can't dominate the queue).
     pub async fn sessions_needing_process_analysis(
-        &self, project_id: &uuid::Uuid, limit: i64,
+        &self,
+        project_id: &uuid::Uuid,
+        limit: i64,
     ) -> Result<Vec<(uuid::Uuid, String)>, String> {
         sqlx_core::query_as::query_as(
             "SELECT id, client_session_id
@@ -1280,28 +1580,49 @@ impl PgStore {
     /// multi-repo membership chip). Newest first, capped at `limit`. Duration
     /// and relative time are formatted client-side from the ISO timestamps, the
     /// same as the shared RecentSessions component.
-    pub async fn list_recent_project_sessions_with_role(&self, project_id: &uuid::Uuid, limit: i64) -> Result<Vec<serde_json::Value>, String> {
+    pub async fn list_recent_project_sessions_with_role(
+        &self,
+        project_id: &uuid::Uuid,
+        limit: i64,
+    ) -> Result<Vec<serde_json::Value>, String> {
         #[allow(clippy::type_complexity)]
-        let rows: Vec<(uuid::Uuid, Option<String>, Option<bool>, i32, chrono::DateTime<chrono::Utc>, Option<chrono::DateTime<chrono::Utc>>, Option<String>)> =
-            sqlx_core::query_as::query_as(
-                "SELECT s.id, s.task, s.ftr, s.corrections, s.started_at, s.completed_at, f.role::text
+        let rows: Vec<(
+            uuid::Uuid,
+            Option<String>,
+            Option<bool>,
+            i32,
+            chrono::DateTime<chrono::Utc>,
+            Option<chrono::DateTime<chrono::Utc>>,
+            Option<String>,
+        )> = sqlx_core::query_as::query_as(
+            "SELECT s.id, s.task, s.ftr, s.corrections, s.started_at, s.completed_at, f.role::text
                  FROM activity.sessions s
                  LEFT JOIN sensei.folders f ON f.id = s.folder_id
                  WHERE s.project_id = $1
-                 ORDER BY s.started_at DESC LIMIT $2"
-            ).bind(project_id).bind(limit).fetch_all(&self.pool).await
-            .map_err(|e| { tracing::error!(error = %e, "list_recent_project_sessions_with_role failed"); e.to_string() })?;
-        Ok(rows.into_iter().map(|(id, task, ftr, corrections, started, completed, role)| {
-            serde_json::json!({
-                "id": id,
-                "title": task,
-                "ftr": ftr,
-                "corrections": corrections,
-                "startedAt": started.to_rfc3339(),
-                "completedAt": completed.map(|t| t.to_rfc3339()),
-                "role": role,
+                 ORDER BY s.started_at DESC LIMIT $2",
+        )
+        .bind(project_id)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, "list_recent_project_sessions_with_role failed");
+            e.to_string()
+        })?;
+        Ok(rows
+            .into_iter()
+            .map(|(id, task, ftr, corrections, started, completed, role)| {
+                serde_json::json!({
+                    "id": id,
+                    "title": task,
+                    "ftr": ftr,
+                    "corrections": corrections,
+                    "startedAt": started.to_rfc3339(),
+                    "completedAt": completed.map(|t| t.to_rfc3339()),
+                    "role": role,
+                })
             })
-        }).collect())
+            .collect())
     }
 
     /// Return the paired PreToolUse / PostToolUse timeline for an assistant
@@ -1316,17 +1637,17 @@ impl PgStore {
         limit: i32,
     ) -> Result<Vec<serde_json::Value>, String> {
         let rows: Vec<(
-            i64,                                            // call_id
-            String,                                         // tool_name
-            String,                                         // family
-            serde_json::Value,                              // request
-            Option<serde_json::Value>,                      // response
-            Option<bool>,                                   // success
-            i64,                                            // started_at_ms
-            Option<i64>,                                    // completed_at_ms
-            Option<i64>,                                    // duration_ms
-            chrono::DateTime<chrono::Utc>,                  // started_at
-            Option<chrono::DateTime<chrono::Utc>>,          // completed_at
+            i64,                                   // call_id
+            String,                                // tool_name
+            String,                                // family
+            serde_json::Value,                     // request
+            Option<serde_json::Value>,             // response
+            Option<bool>,                          // success
+            i64,                                   // started_at_ms
+            Option<i64>,                           // completed_at_ms
+            Option<i64>,                           // duration_ms
+            chrono::DateTime<chrono::Utc>,         // started_at
+            Option<chrono::DateTime<chrono::Utc>>, // completed_at
         )> = sqlx_core::query_as::query_as(
             "SELECT call_id, tool_name, family::text, request, response, success,
                     started_at_ms, completed_at_ms, duration_ms,
@@ -1334,7 +1655,7 @@ impl PgStore {
                FROM sensei.session_tool_calls
               WHERE session_id = $1
               ORDER BY started_at_ms ASC
-              LIMIT $2"
+              LIMIT $2",
         )
         .bind(session_id)
         .bind(limit as i64)
@@ -1342,29 +1663,46 @@ impl PgStore {
         .await
         .map_err(|e| e.to_string())?;
 
-        Ok(rows.into_iter().map(|(
-            call_id, tool_name, family, request, response, success,
-            started_at_ms, completed_at_ms, duration_ms,
-            started_at, completed_at,
-        )| {
-            serde_json::json!({
-                "callId":         call_id,
-                "toolName":       tool_name,
-                "family":         family,
-                "request":        request,
-                "response":       response,
-                "success":        success,
-                "startedAtMs":    started_at_ms,
-                "completedAtMs":  completed_at_ms,
-                "durationMs":     duration_ms,
-                "startedAt":      started_at.to_rfc3339(),
-                "completedAt":    completed_at.map(|t| t.to_rfc3339()),
-                "inFlight":       completed_at_ms.is_none(),
-            })
-        }).collect())
+        Ok(rows
+            .into_iter()
+            .map(
+                |(
+                    call_id,
+                    tool_name,
+                    family,
+                    request,
+                    response,
+                    success,
+                    started_at_ms,
+                    completed_at_ms,
+                    duration_ms,
+                    started_at,
+                    completed_at,
+                )| {
+                    serde_json::json!({
+                        "callId":         call_id,
+                        "toolName":       tool_name,
+                        "family":         family,
+                        "request":        request,
+                        "response":       response,
+                        "success":        success,
+                        "startedAtMs":    started_at_ms,
+                        "completedAtMs":  completed_at_ms,
+                        "durationMs":     duration_ms,
+                        "startedAt":      started_at.to_rfc3339(),
+                        "completedAt":    completed_at.map(|t| t.to_rfc3339()),
+                        "inFlight":       completed_at_ms.is_none(),
+                    })
+                },
+            )
+            .collect())
     }
 
-    pub async fn list_sessions_by_project(&self, project_id: &uuid::Uuid, limit: i64) -> Result<Vec<serde_json::Value>, String> {
+    pub async fn list_sessions_by_project(
+        &self,
+        project_id: &uuid::Uuid,
+        limit: i64,
+    ) -> Result<Vec<serde_json::Value>, String> {
         // Extended shape (T3 Slice 1.4): the Sessions screen needs model,
         // provider, turns, corrections, and completed_at so the row can
         // render date / model / turns / corrections / FTR / outcome
@@ -1373,38 +1711,57 @@ impl PgStore {
         // resilient.
         #[allow(clippy::type_complexity)]
         let rows: Vec<(
-            uuid::Uuid,                                     // id
-            String,                                         // task
-            Option<bool>,                                   // ftr
-            Option<String>,                                 // outcome
-            chrono::DateTime<chrono::Utc>,                  // started_at
-            Option<chrono::DateTime<chrono::Utc>>,          // completed_at
-            i32,                                            // turns
-            i32,                                            // corrections
-            Option<String>,                                 // provider
-            Option<String>,                                 // model
+            uuid::Uuid,                            // id
+            String,                                // task
+            Option<bool>,                          // ftr
+            Option<String>,                        // outcome
+            chrono::DateTime<chrono::Utc>,         // started_at
+            Option<chrono::DateTime<chrono::Utc>>, // completed_at
+            i32,                                   // turns
+            i32,                                   // corrections
+            Option<String>,                        // provider
+            Option<String>,                        // model
         )> = sqlx_core::query_as::query_as(
-                "SELECT id, task, ftr, outcome::text, started_at, completed_at,
+            "SELECT id, task, ftr, outcome::text, started_at, completed_at,
                         turns, corrections, provider, model
                  FROM activity.sessions WHERE project_id = $1
-                 ORDER BY started_at DESC LIMIT $2"
-            ).bind(project_id).bind(limit)
-            .fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+                 ORDER BY started_at DESC LIMIT $2",
+        )
+        .bind(project_id)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
 
-        Ok(rows.into_iter().map(|(id, task, ftr, outcome, started, completed, turns, corrections, provider, model)| {
-            serde_json::json!({
-                "id":           id,
-                "task":         task,
-                "ftr":          ftr,
-                "outcome":      outcome,
-                "startedAt":    started.to_rfc3339(),
-                "completedAt":  completed.map(|t| t.to_rfc3339()),
-                "turns":        turns,
-                "corrections":  corrections,
-                "provider":     provider,
-                "model":        model,
-            })
-        }).collect())
+        Ok(rows
+            .into_iter()
+            .map(
+                |(
+                    id,
+                    task,
+                    ftr,
+                    outcome,
+                    started,
+                    completed,
+                    turns,
+                    corrections,
+                    provider,
+                    model,
+                )| {
+                    serde_json::json!({
+                        "id":           id,
+                        "task":         task,
+                        "ftr":          ftr,
+                        "outcome":      outcome,
+                        "startedAt":    started.to_rfc3339(),
+                        "completedAt":  completed.map(|t| t.to_rfc3339()),
+                        "turns":        turns,
+                        "corrections":  corrections,
+                        "provider":     provider,
+                        "model":        model,
+                    })
+                },
+            )
+            .collect())
     }
-
 }

@@ -79,10 +79,7 @@ async fn daily_cache_reuse(
         super::day_filter("s.started_at", as_of),
     );
     let q = sqlx_core::query_as::query_as::<_, DayRow>(&sql).bind(project_id);
-    super::bind_day(q, window_days, as_of)
-        .fetch_all(pg.pool())
-        .await
-        .map_err(|e| e.to_string())
+    super::bind_day(q, window_days, as_of).fetch_all(pg.pool()).await.map_err(|e| e.to_string())
 }
 
 pub(super) async fn compute(
@@ -119,7 +116,8 @@ pub(super) async fn compute(
             GRAIN_DAILY,
             mean_ratio,
             &props,
-            SOURCE_MEASURED)
+            SOURCE_MEASURED,
+        )
         .await?;
         written += 1;
     }

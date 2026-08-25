@@ -3,11 +3,11 @@
 //! breaker, and fires notifications. The pure parts (config keys, tick policy)
 //! are unit-tested; the loop is thin glue.
 
-use std::collections::HashMap;
-use std::sync::Mutex;
-use crate::assistants::health::{capture_freshness, AdapterCheck, AdapterHealth, CheckStatus};
+use crate::assistants::health::{AdapterCheck, AdapterHealth, CheckStatus, capture_freshness};
 use crate::db::pg_store::PgStore;
 use crate::notifications::{Notifier, NotifyLevel};
+use std::collections::HashMap;
+use std::sync::Mutex;
 
 pub const DEFAULT_WINDOW_HOURS: f64 = 24.0;
 pub const DEFAULT_EXCLUDE_WEEKENDS: bool = true;
@@ -18,10 +18,15 @@ pub const DEFAULT_EXCLUDE_WEEKENDS: bool = true;
 const CLAUDE_FAMILY: &str = "claude";
 
 #[derive(Debug, Clone, Copy)]
-pub struct CaptureWindow { pub hours: f64, pub exclude_weekends: bool }
+pub struct CaptureWindow {
+    pub hours: f64,
+    pub exclude_weekends: bool,
+}
 
 impl Default for CaptureWindow {
-    fn default() -> Self { Self { hours: DEFAULT_WINDOW_HOURS, exclude_weekends: DEFAULT_EXCLUDE_WEEKENDS } }
+    fn default() -> Self {
+        Self { hours: DEFAULT_WINDOW_HOURS, exclude_weekends: DEFAULT_EXCLUDE_WEEKENDS }
+    }
 }
 
 /// Parse the two config strings into a CaptureWindow, falling back to defaults
@@ -31,10 +36,13 @@ pub fn parse_window(hours: Option<&str>, exclude_weekends: Option<&str>) -> Capt
         // Reject NaN AND infinities — `"inf"` parses to f64::INFINITY and would
         // silently make the staleness check a permanent no-op (everything is
         // `<= INFINITY`). Only a finite, positive window is meaningful.
-        hours: hours.and_then(|s| s.trim().parse::<f64>().ok())
+        hours: hours
+            .and_then(|s| s.trim().parse::<f64>().ok())
             .filter(|h| h.is_finite() && *h > 0.0)
             .unwrap_or(DEFAULT_WINDOW_HOURS),
-        exclude_weekends: exclude_weekends.and_then(|s| s.trim().parse::<bool>().ok()).unwrap_or(DEFAULT_EXCLUDE_WEEKENDS),
+        exclude_weekends: exclude_weekends
+            .and_then(|s| s.trim().parse::<bool>().ok())
+            .unwrap_or(DEFAULT_EXCLUDE_WEEKENDS),
     }
 }
 
@@ -43,10 +51,14 @@ pub fn parse_window(hours: Option<&str>, exclude_weekends: Option<&str>) -> Capt
 /// is logged (not swallowed silently — a missing key and an unreachable DB must
 /// be distinguishable in the log) and falls back to defaults.
 pub async fn load_window(pg: &PgStore) -> CaptureWindow {
-    let hours = pg.get_config("capture.max_inactivity_hours").await
-        .unwrap_or_else(|e| { tracing::warn!(error = %e, "capture watchdog: read capture.max_inactivity_hours failed"); None });
-    let weekends = pg.get_config("capture.exclude_weekends").await
-        .unwrap_or_else(|e| { tracing::warn!(error = %e, "capture watchdog: read capture.exclude_weekends failed"); None });
+    let hours = pg.get_config("capture.max_inactivity_hours").await.unwrap_or_else(|e| {
+        tracing::warn!(error = %e, "capture watchdog: read capture.max_inactivity_hours failed");
+        None
+    });
+    let weekends = pg.get_config("capture.exclude_weekends").await.unwrap_or_else(|e| {
+        tracing::warn!(error = %e, "capture watchdog: read capture.exclude_weekends failed");
+        None
+    });
     parse_window(hours.as_deref(), weekends.as_deref())
 }
 
@@ -68,11 +80,15 @@ pub async fn health_report(pg: &PgStore, now_ms: i64) -> Vec<AdapterHealth> {
         .configured_assistants;
     let mut out = Vec::new();
     for status in crate::assistants::detect() {
-        if !is_opted_in(&status.id, &opted_in) { continue; }
+        if !is_opted_in(&status.id, &opted_in) {
+            continue;
+        }
         let mut checks = config_health_for(&status.id);
         if status.family == CLAUDE_FAMILY {
-            let last = pg.latest_hook_event_ts(CLAUDE_FAMILY).await
-                .unwrap_or_else(|e| { tracing::warn!(error = %e, "capture watchdog: latest_hook_event_ts failed"); None });
+            let last = pg.latest_hook_event_ts(CLAUDE_FAMILY).await.unwrap_or_else(|e| {
+                tracing::warn!(error = %e, "capture watchdog: latest_hook_event_ts failed");
+                None
+            });
             checks.push(capture_freshness(last, now_ms, window.hours, window.exclude_weekends));
         }
         out.push(AdapterHealth::new(&status.id, &status.family, checks, true));
@@ -83,23 +99,33 @@ pub async fn health_report(pg: &PgStore, now_ms: i64) -> Vec<AdapterHealth> {
 /// config_health for an adapter id, via the registry. Returns a single Unknown
 /// check if the id is not in the registry (defensive).
 fn config_health_for(adapter_id: &str) -> Vec<AdapterCheck> {
-    crate::assistants::config_health_for_id(adapter_id)
-        .unwrap_or_else(|| vec![AdapterCheck::new("configured", "configured", CheckStatus::Unknown,
-            Some(format!("unknown adapter {adapter_id}")))])
+    crate::assistants::config_health_for_id(adapter_id).unwrap_or_else(|| {
+        vec![AdapterCheck::new(
+            "configured",
+            "configured",
+            CheckStatus::Unknown,
+            Some(format!("unknown adapter {adapter_id}")),
+        )]
+    })
 }
 
 /// Per-adapter watchdog state. `suspended` short-circuits future ticks;
 /// `stale_notified` dedups the events-stale warning so it fires once per
 /// stale episode, not every hour.
 #[derive(Default)]
-pub struct AdapterWatch { pub suspended: Option<String>, pub stale_notified: bool }
+pub struct AdapterWatch {
+    pub suspended: Option<String>,
+    pub stale_notified: bool,
+}
 
 pub type BreakerMap = Mutex<HashMap<String, AdapterWatch>>;
 
 /// The config-side checks whose failure justifies an auto-reinstall.
 fn config_side_failing(h: &AdapterHealth) -> bool {
-    h.checks.iter().any(|c| c.status == CheckStatus::Fail
-        && matches!(c.id.as_str(), "marketplace" | "plugin" | "enabled" | "hooks"))
+    h.checks.iter().any(|c| {
+        c.status == CheckStatus::Fail
+            && matches!(c.id.as_str(), "marketplace" | "plugin" | "enabled" | "hooks")
+    })
 }
 
 fn events_failing(h: &AdapterHealth) -> bool {
@@ -109,7 +135,14 @@ fn events_failing(h: &AdapterHealth) -> bool {
 /// What a tick did — returned so the async caller (`run_sweep`) can write the
 /// DB audit trail without `tick_adapter` itself needing to be async.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TickOutcome { Skipped, Healthy, StaleWarned, StaleAlreadyNotified, Resolved, Suspended }
+pub enum TickOutcome {
+    Skipped,
+    Healthy,
+    StaleWarned,
+    StaleAlreadyNotified,
+    Resolved,
+    Suspended,
+}
 
 /// Decide + act for one adapter. `resolve_fn` runs the reinstall for its side
 /// effect; whether repair worked is judged by `recheck_fn` (the oracle), not by
@@ -123,7 +156,9 @@ pub fn tick_adapter(
     resolve_fn: &dyn Fn(),
     recheck_fn: &dyn Fn() -> AdapterHealth,
 ) -> TickOutcome {
-    if watch.suspended.is_some() { return TickOutcome::Skipped; }
+    if watch.suspended.is_some() {
+        return TickOutcome::Skipped;
+    }
 
     if config_side_failing(health) {
         resolve_fn();
@@ -136,9 +171,11 @@ pub fn tick_adapter(
             watch.suspended = Some(reason);
             return TickOutcome::Suspended;
         } else {
-            notifier.notify(NotifyLevel::Info,
+            notifier.notify(
+                NotifyLevel::Info,
                 &format!("{} capture auto-resolved", health.family),
-                "A config check failed and was repaired by reinstalling the plugin.");
+                "A config check failed and was repaired by reinstalling the plugin.",
+            );
             watch.stale_notified = false;
             return TickOutcome::Resolved;
         }
@@ -162,15 +199,22 @@ use std::sync::Arc;
 
 /// Resolve a single adapter by id (re-run configure) and return the report.
 /// Clears any breaker suspension for that adapter (explicit manual retry).
-pub fn resolve_adapter(adapter_id: &str, breaker: &BreakerMap) -> crate::assistants::AdapterResolveReport {
+pub fn resolve_adapter(
+    adapter_id: &str,
+    breaker: &BreakerMap,
+) -> crate::assistants::AdapterResolveReport {
     if let Ok(mut map) = breaker.lock() {
         let e = map.entry(adapter_id.to_string()).or_default();
         e.suspended = None;
         e.stale_notified = false;
     }
-    crate::assistants::resolve_by_id(adapter_id).unwrap_or_else(|| crate::assistants::AdapterResolveReport {
-        adapter_id: adapter_id.to_string(), ok: false, actions: vec![],
-        errors: vec![format!("unknown adapter {adapter_id}")],
+    crate::assistants::resolve_by_id(adapter_id).unwrap_or_else(|| {
+        crate::assistants::AdapterResolveReport {
+            adapter_id: adapter_id.to_string(),
+            ok: false,
+            actions: vec![],
+            errors: vec![format!("unknown adapter {adapter_id}")],
+        }
     })
 }
 
@@ -191,8 +235,16 @@ pub async fn run_sweep(
         // daemon logger). Warn on any non-Ok verdict so it's queryable; info
         // otherwise. Logger methods are async, so all logging stays here in the
         // async body — `tick_adapter` is sync and returns what it did.
-        let summary = format!("adapter {} status={:?} checks=[{}]", h.adapter_id, h.status,
-            h.checks.iter().map(|c| format!("{}:{:?}", c.id, c.status)).collect::<Vec<_>>().join(","));
+        let summary = format!(
+            "adapter {} status={:?} checks=[{}]",
+            h.adapter_id,
+            h.status,
+            h.checks
+                .iter()
+                .map(|c| format!("{}:{:?}", c.id, c.status))
+                .collect::<Vec<_>>()
+                .join(",")
+        );
         if h.status == CheckStatus::Ok {
             logger.info(&summary, None).await;
         } else {
@@ -207,8 +259,12 @@ pub async fn run_sweep(
         let id = h.adapter_id.clone();
         let fam = h.family.clone();
         let outcome = tick_adapter(
-            &h, &mut watch, notifier.as_ref(),
-            &|| { crate::assistants::resolve_by_id(&id); },
+            &h,
+            &mut watch,
+            notifier.as_ref(),
+            &|| {
+                crate::assistants::resolve_by_id(&id);
+            },
             // Re-read config health LAZILY inside the closure so the recheck
             // reflects state AFTER the reinstall. A snapshot computed before
             // tick_adapter would always equal the pre-resolve (failing) state
@@ -226,10 +282,21 @@ pub async fn run_sweep(
         // Log what the policy decided (resolution / suspension is the important
         // audit signal — it means the daemon mutated the user's config or gave up).
         match outcome {
-            TickOutcome::Resolved  => logger.warn(&format!("watchdog auto-resolved {}", h.adapter_id), None).await,
-            TickOutcome::Suspended => logger.error(
-                &format!("watchdog SUSPENDED {} — auto-repair failed, manual action needed", h.adapter_id),
-                None, None).await,
+            TickOutcome::Resolved => {
+                logger.warn(&format!("watchdog auto-resolved {}", h.adapter_id), None).await
+            }
+            TickOutcome::Suspended => {
+                logger
+                    .error(
+                        &format!(
+                            "watchdog SUSPENDED {} — auto-repair failed, manual action needed",
+                            h.adapter_id
+                        ),
+                        None,
+                        None,
+                    )
+                    .await
+            }
             _ => {}
         }
     }
@@ -275,7 +342,9 @@ mod tests {
 
     struct Rec(Mutex<Vec<(NotifyLevel, String)>>);
     impl Notifier for Rec {
-        fn notify(&self, l: NotifyLevel, t: &str, _b: &str) { self.0.lock().unwrap().push((l, t.into())); }
+        fn notify(&self, l: NotifyLevel, t: &str, _b: &str) {
+            self.0.lock().unwrap().push((l, t.into()));
+        }
     }
     fn health(checks: Vec<(&str, CheckStatus)>) -> AdapterHealth {
         let cs = checks.into_iter().map(|(id, s)| AdapterCheck::new(id, id, s, None)).collect();
@@ -330,7 +399,7 @@ mod tests {
         // must produce a fresh Warn, not stay silent.
         let rec = Rec(Mutex::new(vec![]));
         let mut w = AdapterWatch::default();
-        let stale   = health(vec![("plugin", CheckStatus::Ok), ("events", CheckStatus::Fail)]);
+        let stale = health(vec![("plugin", CheckStatus::Ok), ("events", CheckStatus::Fail)]);
         let healthy = health(vec![("plugin", CheckStatus::Ok), ("events", CheckStatus::Ok)]);
         tick_adapter(&stale, &mut w, &rec, &|| panic!("must not resolve"), &|| stale.clone());
         assert!(w.stale_notified, "set after first warn");

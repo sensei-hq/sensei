@@ -1,9 +1,9 @@
 //! Corrections aggregation read API (#65 step 5).
 
 use axum::{
+    Json,
     extract::{Path, State},
     http::StatusCode,
-    Json,
 };
 
 use crate::api::state::AppState;
@@ -26,15 +26,11 @@ pub(crate) async fn project_corrections(
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     // Name-or-uuid: AI callers pass a project name; raw Uuid::parse_str 400s on
     // it (silent empty). Resolve → 404 when no such project (#100).
-    let project_id = crate::api::util::resolve_project_uuid(&state, &id).await?
-        .ok_or(StatusCode::NOT_FOUND)?;
-    let data = state
-        .pg
-        .list_corrections_for_project(&project_id)
-        .await
-        .map_err(|e| {
-            tracing::error!("project_corrections: {e}");
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+    let project_id =
+        crate::api::util::resolve_project_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
+    let data = state.pg.list_corrections_for_project(&project_id).await.map_err(|e| {
+        tracing::error!("project_corrections: {e}");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
     Ok(Json(data))
 }

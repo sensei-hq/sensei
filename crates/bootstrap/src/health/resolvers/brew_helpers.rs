@@ -6,11 +6,11 @@
 //! pure function over the stderr text — extracted for exhaustive unit
 //! testing without invoking brew.
 
-use std::path::{Path, PathBuf};
-use std::process::Command;
 use crate::health::resolver::ResolveOutcome;
 use crate::health::types::Remedy;
 use crate::util::which_binary;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BrewError {
@@ -66,7 +66,7 @@ fn truncate_to_tail(stderr: &str, max_bytes: usize) -> String {
 pub fn brew_install(formula: &str, args: &[&str]) -> Result<(), BrewError> {
     let brew = match which_binary("brew") {
         Some(p) => p,
-        None    => {
+        None => {
             tracing::warn!(formula = formula, "brew not on PATH");
             return Err(BrewError::BrewNotFound);
         }
@@ -105,16 +105,20 @@ pub(crate) fn overwrite_link_remedy(formula: &str, path: &Path) -> Remedy {
             "Couldn't link `{formula}` because `{}` already exists. If you installed it elsewhere (e.g. .dmg or Postgres.app) you can keep that and skip this step. To switch to the brew install, run the script below.",
             path.display(),
         ),
-        script:  format!("brew link --overwrite {formula}"),
-        url:     None,
+        script: format!("brew link --overwrite {formula}"),
+        url: None,
     }
 }
 
 pub(crate) fn tap_missing_remedy(formula: &str) -> Remedy {
     Remedy {
-        message: format!("Couldn't find `{formula}`. Run the script below to add the tap, then re-check."),
-        script:  format!("brew tap sensei-hq/tap https://github.com/sensei-hq/homebrew-tap && brew install {formula}"),
-        url:     None,
+        message: format!(
+            "Couldn't find `{formula}`. Run the script below to add the tap, then re-check."
+        ),
+        script: format!(
+            "brew tap sensei-hq/tap https://github.com/sensei-hq/homebrew-tap && brew install {formula}"
+        ),
+        url: None,
     }
 }
 
@@ -141,17 +145,21 @@ pub(crate) fn generic_brew_remedy(formula: &str, stderr_tail: &str) -> Remedy {
             "Couldn't install `{formula}` automatically. Last brew output was:\n\n```\n{stderr_tail}\n```\n\nRun the script below to retry."
         ),
         script,
-        url:     None,
+        url: None,
     }
 }
 
 pub(crate) fn brew_install_to_outcome(formula: &str, args: &[&str]) -> ResolveOutcome {
     match brew_install(formula, args) {
-        Ok(())                                => ResolveOutcome::Resolved,
-        Err(BrewError::BrewNotFound)          => ResolveOutcome::NeedsHumanAction(homebrew_install_remedy()),
-        Err(BrewError::LinkConflict { path }) => ResolveOutcome::NeedsHumanAction(overwrite_link_remedy(formula, &path)),
-        Err(BrewError::TapMissing)            => ResolveOutcome::NeedsHumanAction(tap_missing_remedy(formula)),
-        Err(BrewError::Other(stderr))         => ResolveOutcome::NeedsHumanAction(generic_brew_remedy(formula, &stderr)),
+        Ok(()) => ResolveOutcome::Resolved,
+        Err(BrewError::BrewNotFound) => ResolveOutcome::NeedsHumanAction(homebrew_install_remedy()),
+        Err(BrewError::LinkConflict { path }) => {
+            ResolveOutcome::NeedsHumanAction(overwrite_link_remedy(formula, &path))
+        }
+        Err(BrewError::TapMissing) => ResolveOutcome::NeedsHumanAction(tap_missing_remedy(formula)),
+        Err(BrewError::Other(stderr)) => {
+            ResolveOutcome::NeedsHumanAction(generic_brew_remedy(formula, &stderr))
+        }
     }
 }
 
@@ -161,7 +169,7 @@ pub(crate) fn brew_install_to_outcome(formula: &str, args: &[&str]) -> ResolveOu
 pub fn brew_services_start(service: &str) -> Result<(), BrewError> {
     let brew = match which_binary("brew") {
         Some(p) => p,
-        None    => {
+        None => {
             tracing::warn!(service = service, "brew not on PATH");
             return Err(BrewError::BrewNotFound);
         }
@@ -180,7 +188,9 @@ pub fn brew_services_start(service: &str) -> Result<(), BrewError> {
     let stderr = String::from_utf8_lossy(&output.stderr);
     // `brew services start` exits non-zero when the service is already
     // running; that's a success for us.
-    if stderr.contains("already started") || stderr.contains("Service `") && stderr.contains("` already started") {
+    if stderr.contains("already started")
+        || stderr.contains("Service `") && stderr.contains("` already started")
+    {
         tracing::info!(service = service, "service already started (treated as ok)");
         return Ok(());
     }
@@ -194,7 +204,7 @@ pub(crate) fn brew_services_start_remedy(service: &str, stderr_tail: &str) -> Re
             "Couldn't start `{service}` automatically. Last brew output was:\n\n```\n{stderr_tail}\n```\n\nRun the script below to retry."
         ),
         script: format!("brew services start {service}"),
-        url:    None,
+        url: None,
     }
 }
 
@@ -210,12 +220,16 @@ pub(crate) fn brew_install_and_start_to_outcome(
     match brew_install_to_outcome(formula, args) {
         ResolveOutcome::Resolved => match brew_services_start(service) {
             Ok(()) => ResolveOutcome::Resolved,
-            Err(BrewError::BrewNotFound) =>
-                ResolveOutcome::NeedsHumanAction(homebrew_install_remedy()),
-            Err(BrewError::Other(stderr)) =>
-                ResolveOutcome::NeedsHumanAction(brew_services_start_remedy(service, &stderr)),
-            Err(other) =>
-                ResolveOutcome::NeedsHumanAction(brew_services_start_remedy(service, &format!("{other:?}"))),
+            Err(BrewError::BrewNotFound) => {
+                ResolveOutcome::NeedsHumanAction(homebrew_install_remedy())
+            }
+            Err(BrewError::Other(stderr)) => {
+                ResolveOutcome::NeedsHumanAction(brew_services_start_remedy(service, &stderr))
+            }
+            Err(other) => ResolveOutcome::NeedsHumanAction(brew_services_start_remedy(
+                service,
+                &format!("{other:?}"),
+            )),
         },
         not_resolved => not_resolved,
     }
@@ -353,8 +367,13 @@ Please create a new installation in /opt/homebrew using one of the
         // `brew install sensei-hq/tap/sensei` 404s. The remedy script the
         // user copy-pastes must chain `--HEAD` so their manual retry isn't
         // trapped in the same 404 loop (just like the Makefile already does).
-        let r = generic_brew_remedy("sensei-hq/tap/sensei", "Failed to download resource \"sensei (0.2.15)\"");
-        assert_eq!(r.script, "brew install sensei-hq/tap/sensei || brew install --HEAD sensei-hq/tap/sensei");
-
+        let r = generic_brew_remedy(
+            "sensei-hq/tap/sensei",
+            "Failed to download resource \"sensei (0.2.15)\"",
+        );
+        assert_eq!(
+            r.script,
+            "brew install sensei-hq/tap/sensei || brew install --HEAD sensei-hq/tap/sensei"
+        );
     }
 }

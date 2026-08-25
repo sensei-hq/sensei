@@ -50,7 +50,10 @@ mod tests {
 
     #[test]
     fn kanji_falls_back_for_image_or_missing_or_blank() {
-        assert_eq!(kanji_from_icon(&json!({ "kind": "image", "value": "logo.png" })), DEFAULT_KANJI);
+        assert_eq!(
+            kanji_from_icon(&json!({ "kind": "image", "value": "logo.png" })),
+            DEFAULT_KANJI
+        );
         assert_eq!(kanji_from_icon(&json!({ "kind": "kanji", "value": "  " })), DEFAULT_KANJI);
         assert_eq!(kanji_from_icon(&json!({})), DEFAULT_KANJI);
         assert_eq!(kanji_from_icon(&Value::Null), DEFAULT_KANJI);

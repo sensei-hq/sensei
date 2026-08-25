@@ -111,16 +111,12 @@ async fn run_created_response(
     state: &AppState,
     run: crate::runs::Run,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    let memberships = crate::tasks::handlers::resolve_run_memberships(&state.pg, &run)
-        .await
-        .unwrap_or_default();
+    let memberships =
+        crate::tasks::handlers::resolve_run_memberships(&state.pg, &run).await.unwrap_or_default();
     let track_url = crate::resolution::Resolution::from_unique(memberships.iter())
         .resolved()
         .map(|m| crate::dojo::memberships::dojo_run_url(&m.registry_url, &run.id));
-    (
-        StatusCode::CREATED,
-        Json(serde_json::json!({ "run": run, "track_url": track_url })),
-    )
+    (StatusCode::CREATED, Json(serde_json::json!({ "run": run, "track_url": track_url })))
 }
 
 /// POST /api/runs — create a daemon-owned run (P3.8 run-control; the MCP
@@ -145,9 +141,9 @@ pub(crate) async fn create_run(
     if goal.is_empty() {
         return Err(StatusCode::BAD_REQUEST);
     }
-    let (project_id, author_name, author_email) =
-        resolve_project_and_author(&state, &body).await?;
-    let plan_ref = body["plan_ref"].as_str().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
+    let (project_id, author_name, author_email) = resolve_project_and_author(&state, &body).await?;
+    let plan_ref =
+        body["plan_ref"].as_str().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
     let max_concurrency = body["max_concurrency"].as_i64().map(|n| n as i32);
 
     let new = NewRun {
@@ -204,8 +200,14 @@ pub(crate) async fn pause_run(
         Some(id) => Some(id),
         None => match body["project"].as_str().map(str::trim).filter(|s| !s.is_empty()) {
             Some(p) => match crate::api::util::resolve_project_uuid(&state, p).await? {
-                Some(pid) => state.pg.active_run_for_project(&pid).await
-                    .map_err(|e| { tracing::warn!(error = %e, "pause_run: active_run_for_project failed"); StatusCode::INTERNAL_SERVER_ERROR })?
+                Some(pid) => state
+                    .pg
+                    .active_run_for_project(&pid)
+                    .await
+                    .map_err(|e| {
+                        tracing::warn!(error = %e, "pause_run: active_run_for_project failed");
+                        StatusCode::INTERNAL_SERVER_ERROR
+                    })?
                     .map(|r| r.id),
                 None => None,
             },
@@ -216,10 +218,8 @@ pub(crate) async fn pause_run(
         return Err(StatusCode::NOT_FOUND);
     };
 
-    if let Err(e) = state
-        .pg
-        .update_run_status(&run_id, RelayRunStatus::Paused, Some(until), reason)
-        .await
+    if let Err(e) =
+        state.pg.update_run_status(&run_id, RelayRunStatus::Paused, Some(until), reason).await
     {
         tracing::error!(error = %e, "pause_run failed");
         return Err(StatusCode::INTERNAL_SERVER_ERROR);
@@ -257,7 +257,8 @@ pub(crate) async fn register_plan(
 ) -> Result<(StatusCode, Json<serde_json::Value>), StatusCode> {
     // Reject with a MESSAGE (in the 400 body), not a bare status — the caller
     // (register_plan MCP tool / an executor) needs to know WHAT to fix.
-    let bad = |msg: String| Ok((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": msg }))));
+    let bad =
+        |msg: String| Ok((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": msg }))));
 
     let goal = body["goal"].as_str().map(str::trim).unwrap_or("");
     if goal.is_empty() {
@@ -280,9 +281,9 @@ pub(crate) async fn register_plan(
         return bad(format!("invalid plan graph: {e}"));
     }
 
-    let (project_id, author_name, author_email) =
-        resolve_project_and_author(&state, &body).await?;
-    let plan_ref = body["plan_ref"].as_str().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
+    let (project_id, author_name, author_email) = resolve_project_and_author(&state, &body).await?;
+    let plan_ref =
+        body["plan_ref"].as_str().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
     let max_concurrency = body["max_concurrency"].as_i64().map(|n| n as i32);
 
     // Normalize (fills the default per-task state) before storing the jsonb.
@@ -427,10 +428,17 @@ pub(crate) async fn report_run_outcome(
         tracing::error!(error = %e, run = %id, "report_run_outcome: complete_run failed");
         return Err(StatusCode::INTERNAL_SERVER_ERROR);
     }
-    let kind = if status == RelayRunStatus::Done { RunEventKind::Done } else { RunEventKind::Failed };
+    let kind =
+        if status == RelayRunStatus::Done { RunEventKind::Done } else { RunEventKind::Failed };
     let _ = state
         .pg
-        .append_run_event(&run_id, kind, None, None, &serde_json::json!({ "summary": summary, "via": "report_run_outcome" }))
+        .append_run_event(
+            &run_id,
+            kind,
+            None,
+            None,
+            &serde_json::json!({ "summary": summary, "via": "report_run_outcome" }),
+        )
         .await;
 
     // A terminal run drops out of `list_active_runs`, so the scheduler stops
@@ -469,14 +477,13 @@ pub(crate) async fn get_pending_nudges(
         }
     };
     let empty = || Ok(Json(serde_json::json!({ "nudges": [] })));
-    let memberships =
-        match crate::tasks::handlers::resolve_run_memberships(&state.pg, &run).await {
-            Ok(m) => m,
-            Err(e) => {
-                tracing::warn!(error = %e, run = %id, "get_pending_nudges: membership resolve failed (fail-soft)");
-                return empty();
-            }
-        };
+    let memberships = match crate::tasks::handlers::resolve_run_memberships(&state.pg, &run).await {
+        Ok(m) => m,
+        Err(e) => {
+            tracing::warn!(error = %e, run = %id, "get_pending_nudges: membership resolve failed (fail-soft)");
+            return empty();
+        }
+    };
     // Poll THIS run's dōjō only. Exactly one resolved → use it; ambiguous
     // (unbound run, several enabled dōjōs) → surface nothing rather than an
     // arbitrary tenant's inbox.
@@ -521,7 +528,10 @@ mod tests {
             task_queue: queue,
             pg,
             gateway,
-            event_tx: { let (tx, _) = tokio::sync::broadcast::channel(16); tx },
+            event_tx: {
+                let (tx, _) = tokio::sync::broadcast::channel(16);
+                tx
+            },
             breaker: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
             provisioning: None,
         }))
@@ -529,19 +539,26 @@ mod tests {
 
     async fn del(state: &AppState, id: &uuid::Uuid) {
         sqlx_core::query::query("DELETE FROM activity.runs WHERE id = $1")
-            .bind(id).execute(state.pg.pool()).await.unwrap();
+            .bind(id)
+            .execute(state.pg.pool())
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
     async fn get_run_bad_uuid_is_400() {
-        let Some(state) = make_state().await else { return; };
+        let Some(state) = make_state().await else {
+            return;
+        };
         let err = get_run(State(state), Path("not-a-uuid".into())).await.unwrap_err();
         assert_eq!(err, StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]
     async fn get_run_unknown_is_404() {
-        let Some(state) = make_state().await else { return; };
+        let Some(state) = make_state().await else {
+            return;
+        };
         let missing = uuid::Uuid::new_v4().to_string();
         let err = get_run(State(state), Path(missing)).await.unwrap_err();
         assert_eq!(err, StatusCode::NOT_FOUND);
@@ -549,33 +566,41 @@ mod tests {
 
     #[tokio::test]
     async fn create_run_empty_goal_is_400() {
-        let Some(state) = make_state().await else { return; };
+        let Some(state) = make_state().await else {
+            return;
+        };
         // No DB row created — the guard rejects before any insert.
-        let err = create_run(State(state), Json(serde_json::json!({ "goal": "   " })))
-            .await.unwrap_err();
+        let err =
+            create_run(State(state), Json(serde_json::json!({ "goal": "   " }))).await.unwrap_err();
         assert_eq!(err, StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]
     async fn create_run_unresolvable_project_is_400() {
-        let Some(state) = make_state().await else { return; };
+        let Some(state) = make_state().await else {
+            return;
+        };
         // A given project that resolves to nothing is a 400 (intent not dropped).
         let err = create_run(
             State(state),
             Json(serde_json::json!({ "goal": "do a thing", "project": "no-such-project-xyzzy" })),
         )
-        .await.unwrap_err();
+        .await
+        .unwrap_err();
         assert_eq!(err, StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]
     async fn create_run_happy_path_returns_201_and_running_run() {
-        let Some(state) = make_state().await else { return; };
+        let Some(state) = make_state().await else {
+            return;
+        };
         let (status, Json(body)) = create_run(
             State(state.clone()),
             Json(serde_json::json!({ "goal": "ship the thing", "plan_ref": "docs/plan/x.md" })),
         )
-        .await.unwrap();
+        .await
+        .unwrap();
         assert_eq!(status, StatusCode::CREATED);
         assert_eq!(body["run"]["goal"], serde_json::json!("ship the thing"));
         assert_eq!(body["run"]["plan_ref"], serde_json::json!("docs/plan/x.md"));
@@ -592,16 +617,26 @@ mod tests {
 
     #[tokio::test]
     async fn list_and_get_return_run_with_events() {
-        let Some(state) = make_state().await else { return; };
+        let Some(state) = make_state().await else {
+            return;
+        };
         let id = state.pg.create_run(&NewRun::default()).await.unwrap();
-        state.pg
-            .append_run_event(&id, RunEventKind::Housekeeping, None, None, &serde_json::json!({ "tick": true }))
-            .await.unwrap();
+        state
+            .pg
+            .append_run_event(
+                &id,
+                RunEventKind::Housekeeping,
+                None,
+                None,
+                &serde_json::json!({ "tick": true }),
+            )
+            .await
+            .unwrap();
 
         // list_runs includes the active run.
         let Json(list) = list_runs(State(state.clone())).await.unwrap();
-        let ids: Vec<&str> = list["runs"].as_array().unwrap()
-            .iter().filter_map(|r| r["id"].as_str()).collect();
+        let ids: Vec<&str> =
+            list["runs"].as_array().unwrap().iter().filter_map(|r| r["id"].as_str()).collect();
         assert!(ids.contains(&id.to_string().as_str()), "active run listed");
 
         // get_run returns the run + its events.
@@ -617,17 +652,25 @@ mod tests {
 
     #[tokio::test]
     async fn register_plan_rejects_bad_input() {
-        let Some(state) = make_state().await else { return; };
+        let Some(state) = make_state().await else {
+            return;
+        };
         // Bad input surfaces as `Ok((400, {error}))` — the daemon reports WHY the
         // graph was rejected in the body (see the sibling success test) — NOT an
         // `Err(StatusCode)`. Assert the status on the returned tuple.
         // Missing plan → 400.
-        let (status, _) = register_plan(State(state.clone()), Json(serde_json::json!({ "goal": "g" })))
-            .await.unwrap();
+        let (status, _) =
+            register_plan(State(state.clone()), Json(serde_json::json!({ "goal": "g" })))
+                .await
+                .unwrap();
         assert_eq!(status, StatusCode::BAD_REQUEST);
         // Empty goal → 400.
-        let (status, _) = register_plan(State(state.clone()), Json(serde_json::json!({ "goal": "  ", "plan": { "phases": [] } })))
-            .await.unwrap();
+        let (status, _) = register_plan(
+            State(state.clone()),
+            Json(serde_json::json!({ "goal": "  ", "plan": { "phases": [] } })),
+        )
+        .await
+        .unwrap();
         assert_eq!(status, StatusCode::BAD_REQUEST);
         // A cyclic graph is rejected (validate gate).
         let cyclic = serde_json::json!({ "goal": "g", "plan": { "phases": [{ "title": "P", "tasks": [
@@ -640,7 +683,9 @@ mod tests {
 
     #[tokio::test]
     async fn register_plan_stores_graph_and_returns_running_run() {
-        let Some(state) = make_state().await else { return; };
+        let Some(state) = make_state().await else {
+            return;
+        };
         let plan = serde_json::json!({ "goal": "ship register_plan", "plan": { "phases": [
             { "title": "Schema", "tasks": [{ "id": "t1", "title": "columns", "agent": "general-purpose", "model": "sonnet" }] },
             { "title": "Daemon", "tasks": [{ "id": "t2", "title": "handler", "model": "opus", "deps": ["t1"] }] }
@@ -649,7 +694,10 @@ mod tests {
         assert_eq!(status, StatusCode::CREATED);
         assert_eq!(body["run"]["status"], serde_json::json!("running"));
         // register_plan surfaces the same track_url handoff field as start_run.
-        assert!(body.get("track_url").is_some(), "register_plan response carries the track_url field");
+        assert!(
+            body.get("track_url").is_some(),
+            "register_plan response carries the track_url field"
+        );
         let id = uuid::Uuid::parse_str(body["run"]["id"].as_str().unwrap()).unwrap();
         // The authored graph is persisted (publish_run will project it), with the
         // default per-task state filled in on normalize.
@@ -661,26 +709,45 @@ mod tests {
 
     #[tokio::test]
     async fn update_task_status_flips_state_bad_state_and_unknown_task() {
-        let Some(state) = make_state().await else { return; };
+        let Some(state) = make_state().await else {
+            return;
+        };
         let (_s, Json(body)) = register_plan(
             State(state.clone()),
             Json(serde_json::json!({ "goal": "g", "plan": { "phases": [
                 { "title": "P", "tasks": [{ "id": "t1", "title": "x" }] }
             ]}})),
-        ).await.unwrap();
+        )
+        .await
+        .unwrap();
         let id = uuid::Uuid::parse_str(body["run"]["id"].as_str().unwrap()).unwrap();
 
         // Bad state → 400.
-        let e = update_task_status(State(state.clone()), Path((id.to_string(), "t1".into())),
-            Json(serde_json::json!({ "state": "not-a-state" }))).await.unwrap_err();
+        let e = update_task_status(
+            State(state.clone()),
+            Path((id.to_string(), "t1".into())),
+            Json(serde_json::json!({ "state": "not-a-state" })),
+        )
+        .await
+        .unwrap_err();
         assert_eq!(e, StatusCode::BAD_REQUEST);
         // Unknown task → 404 (never a silent no-op).
-        let e = update_task_status(State(state.clone()), Path((id.to_string(), "ghost".into())),
-            Json(serde_json::json!({ "state": "active" }))).await.unwrap_err();
+        let e = update_task_status(
+            State(state.clone()),
+            Path((id.to_string(), "ghost".into())),
+            Json(serde_json::json!({ "state": "active" })),
+        )
+        .await
+        .unwrap_err();
         assert_eq!(e, StatusCode::NOT_FOUND);
         // Happy: flip t1 → done, persisted in the graph.
-        let Json(ok) = update_task_status(State(state.clone()), Path((id.to_string(), "t1".into())),
-            Json(serde_json::json!({ "state": "done" }))).await.unwrap();
+        let Json(ok) = update_task_status(
+            State(state.clone()),
+            Path((id.to_string(), "t1".into())),
+            Json(serde_json::json!({ "state": "done" })),
+        )
+        .await
+        .unwrap();
         assert_eq!(ok["state"], serde_json::json!("done"));
         let g = state.pg.run_plan_graph(&id).await.unwrap().unwrap();
         assert_eq!(g["phases"][0]["tasks"][0]["state"], serde_json::json!("done"));
@@ -689,35 +756,62 @@ mod tests {
 
     #[tokio::test]
     async fn update_task_status_404_when_run_has_no_graph() {
-        let Some(state) = make_state().await else { return; };
+        let Some(state) = make_state().await else {
+            return;
+        };
         let id = state.pg.create_run(&NewRun::default()).await.unwrap(); // graph-less run
-        let e = update_task_status(State(state.clone()), Path((id.to_string(), "t1".into())),
-            Json(serde_json::json!({ "state": "active" }))).await.unwrap_err();
+        let e = update_task_status(
+            State(state.clone()),
+            Path((id.to_string(), "t1".into())),
+            Json(serde_json::json!({ "state": "active" })),
+        )
+        .await
+        .unwrap_err();
         assert_eq!(e, StatusCode::NOT_FOUND);
         del(&state, &id).await;
     }
 
     #[tokio::test]
     async fn report_run_outcome_marks_terminal_or_rejects() {
-        let Some(state) = make_state().await else { return; };
+        let Some(state) = make_state().await else {
+            return;
+        };
         let id = state.pg.create_run(&NewRun::default()).await.unwrap();
         // Bad outcome → 400.
-        let e = report_run_outcome(State(state.clone()), Path(id.to_string()),
-            Json(serde_json::json!({ "outcome": "meh" }))).await.unwrap_err();
+        let e = report_run_outcome(
+            State(state.clone()),
+            Path(id.to_string()),
+            Json(serde_json::json!({ "outcome": "meh" })),
+        )
+        .await
+        .unwrap_err();
         assert_eq!(e, StatusCode::BAD_REQUEST);
         // Unknown run → 404.
-        let e = report_run_outcome(State(state.clone()), Path(uuid::Uuid::new_v4().to_string()),
-            Json(serde_json::json!({ "outcome": "done" }))).await.unwrap_err();
+        let e = report_run_outcome(
+            State(state.clone()),
+            Path(uuid::Uuid::new_v4().to_string()),
+            Json(serde_json::json!({ "outcome": "done" })),
+        )
+        .await
+        .unwrap_err();
         assert_eq!(e, StatusCode::NOT_FOUND);
         // Happy: done, terminal + completed_at stamped.
-        let Json(body) = report_run_outcome(State(state.clone()), Path(id.to_string()),
-            Json(serde_json::json!({ "outcome": "done", "summary": "all green" }))).await.unwrap();
+        let Json(body) = report_run_outcome(
+            State(state.clone()),
+            Path(id.to_string()),
+            Json(serde_json::json!({ "outcome": "done", "summary": "all green" })),
+        )
+        .await
+        .unwrap();
         assert_eq!(body["run"]["status"], serde_json::json!("done"));
         assert!(body["run"]["completed_at"].is_string(), "completed_at stamped");
         // Terminal runs leave list_active_runs, so completion must enqueue a final
         // federation push — else dojo keeps the stale "running" status.
         assert!(
-            state.task_queue.has_pending_kind_path(crate::tasks::TaskKind::PublishRun, &id.to_string()).await,
+            state
+                .task_queue
+                .has_pending_kind_path(crate::tasks::TaskKind::PublishRun, &id.to_string())
+                .await,
             "report_run_outcome enqueues a final PublishRun for the terminal status"
         );
         del(&state, &id).await;
@@ -725,17 +819,21 @@ mod tests {
 
     #[tokio::test]
     async fn get_pending_nudges_validates_and_fails_soft_without_dojo() {
-        let Some(state) = make_state().await else { return; };
+        let Some(state) = make_state().await else {
+            return;
+        };
         // Bad uuid → 400.
         let e = get_pending_nudges(State(state.clone()), Path("nope".into())).await.unwrap_err();
         assert_eq!(e, StatusCode::BAD_REQUEST);
         // Unknown run → 404.
         let e = get_pending_nudges(State(state.clone()), Path(uuid::Uuid::new_v4().to_string()))
-            .await.unwrap_err();
+            .await
+            .unwrap_err();
         assert_eq!(e, StatusCode::NOT_FOUND);
         // A real run with no enrolled dojo → empty nudges (fail-soft), not a 500.
         let id = state.pg.create_run(&NewRun::default()).await.unwrap();
-        let Json(body) = get_pending_nudges(State(state.clone()), Path(id.to_string())).await.unwrap();
+        let Json(body) =
+            get_pending_nudges(State(state.clone()), Path(id.to_string())).await.unwrap();
         assert_eq!(body["nudges"], serde_json::json!([]));
         del(&state, &id).await;
     }

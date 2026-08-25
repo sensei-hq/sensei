@@ -79,11 +79,14 @@ mod tests {
         let cmd = Command::new("true");
         match output_with_timeout(cmd, Duration::from_secs(2)) {
             TimedOutcome::Done(out) => assert!(out.status.success()),
-            other => panic!("expected Done, got {:?}", match other {
-                TimedOutcome::TimedOut => "TimedOut",
-                TimedOutcome::Failed(_) => "Failed",
-                _ => "?",
-            }),
+            other => panic!(
+                "expected Done, got {:?}",
+                match other {
+                    TimedOutcome::TimedOut => "TimedOut",
+                    TimedOutcome::Failed(_) => "Failed",
+                    _ => "?",
+                }
+            ),
         }
     }
 

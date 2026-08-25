@@ -25,7 +25,7 @@
 //! is infinite, and charging the whole fee to "nothing" would call an idle
 //! stretch infinitely expensive rather than idle).
 
-use crate::cost::{Subscription, COST_WINDOW_DAYS, SUBSCRIPTION_CONFIG_KEY};
+use crate::cost::{COST_WINDOW_DAYS, SUBSCRIPTION_CONFIG_KEY, Subscription};
 use crate::db::pg_store::PgStore;
 use crate::tasks::executor::TaskContext;
 
@@ -123,7 +123,8 @@ pub(super) async fn compute(
         GRAIN_DAILY,
         value,
         &props,
-        SOURCE_MEASURED)
+        SOURCE_MEASURED,
+    )
     .await?;
 
     Ok(1)

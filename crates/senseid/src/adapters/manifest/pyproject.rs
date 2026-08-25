@@ -10,7 +10,7 @@
 //! local-source parsing land in a later chunk once the trait shape is stable.
 
 use super::{ManifestAdapter, ParsedManifest};
-use crate::indexer::lib_indexer::{parse_pyproject_deps, DepVersion};
+use crate::indexer::lib_indexer::{DepVersion, parse_pyproject_deps};
 
 pub struct PyprojectManifestAdapter;
 
@@ -34,7 +34,9 @@ impl ManifestAdapter for PyprojectManifestAdapter {
         content
             .parse::<toml::Value>()
             .ok()
-            .and_then(|v| v.get("tool").and_then(|t| t.get("uv")).and_then(|u| u.get("workspace")).cloned())
+            .and_then(|v| {
+                v.get("tool").and_then(|t| t.get("uv")).and_then(|u| u.get("workspace")).cloned()
+            })
             .is_some()
     }
 
@@ -48,10 +50,7 @@ impl ManifestAdapter for PyprojectManifestAdapter {
         ParsedManifest {
             name: proj.get("name").and_then(|v| v.as_str()).map(|s| s.to_string()),
             version: proj.get("version").and_then(|v| v.as_str()).map(|s| s.to_string()),
-            description: proj
-                .get("description")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string()),
+            description: proj.get("description").and_then(|v| v.as_str()).map(|s| s.to_string()),
         }
     }
 
@@ -76,7 +75,9 @@ impl ManifestAdapter for PyprojectManifestAdapter {
         let mut emit = |section: Option<&toml::Value>, runner: &str| {
             let Some(scripts) = section.and_then(|v| v.as_table()) else { return };
             for name in scripts.keys() {
-                if name.is_empty() { continue; }
+                if name.is_empty() {
+                    continue;
+                }
                 out.push(super::DiscoveredCommand {
                     raw_name: name.clone(),
                     command_line: format!("{runner} {name}"),
@@ -85,13 +86,19 @@ impl ManifestAdapter for PyprojectManifestAdapter {
             }
         };
         emit(pyp.get("tool").and_then(|t| t.get("pdm")).and_then(|p| p.get("scripts")), "pdm run");
-        emit(pyp.get("tool").and_then(|t| t.get("poetry")).and_then(|p| p.get("scripts")), "poetry run");
+        emit(
+            pyp.get("tool").and_then(|t| t.get("poetry")).and_then(|p| p.get("scripts")),
+            "poetry run",
+        );
         emit(pyp.get("project").and_then(|p| p.get("scripts")), "python -m");
-        emit(pyp.get("tool")
-            .and_then(|t| t.get("hatch"))
-            .and_then(|h| h.get("envs"))
-            .and_then(|e| e.get("default"))
-            .and_then(|d| d.get("scripts")), "hatch run");
+        emit(
+            pyp.get("tool")
+                .and_then(|t| t.get("hatch"))
+                .and_then(|h| h.get("envs"))
+                .and_then(|e| e.get("default"))
+                .and_then(|d| d.get("scripts")),
+            "hatch run",
+        );
         out
     }
 }
@@ -103,10 +110,7 @@ mod tests {
     #[test]
     fn ecosystem_and_filenames() {
         assert_eq!(PyprojectManifestAdapter.ecosystem(), "pypi");
-        assert_eq!(
-            PyprojectManifestAdapter.manifest_filenames(),
-            &["pyproject.toml"]
-        );
+        assert_eq!(PyprojectManifestAdapter.manifest_filenames(), &["pyproject.toml"]);
     }
 
     #[test]

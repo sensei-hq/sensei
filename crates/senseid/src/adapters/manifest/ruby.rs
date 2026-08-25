@@ -39,10 +39,8 @@ impl ManifestAdapter for RubyManifestAdapter {
             if name.is_empty() {
                 continue;
             }
-            let version = cap
-                .get(2)
-                .map(|m| m.as_str().to_string())
-                .unwrap_or_else(|| "*".to_string());
+            let version =
+                cap.get(2).map(|m| m.as_str().to_string()).unwrap_or_else(|| "*".to_string());
             let rest = cap.get(3).map(|m| m.as_str()).unwrap_or("");
             let dev = is_dev_group(rest);
             out.push(DepVersion {
@@ -74,11 +72,10 @@ impl ManifestAdapter for RubyManifestAdapter {
     /// exec …` is the runtime wrapper. Rake task discovery from Rakefile
     /// itself is a follow-up (Ruby DSL parse is out of scope for this cut).
     fn parse_commands(&self, _content: &str) -> Vec<super::DiscoveredCommand> {
-        super::conventional_commands("bundle", &[
-            ("exec rake test", "test"),
-            ("exec rake",      "run"),
-            ("install",        "run"),
-        ])
+        super::conventional_commands(
+            "bundle",
+            &[("exec rake test", "test"), ("exec rake", "run"), ("install", "run")],
+        )
     }
 }
 
@@ -91,10 +88,7 @@ fn gem_re() -> &'static Regex {
     RE.get_or_init(|| {
         // (?m) enables ^ multiline. \b keeps `gem` a word so `polygem` doesn't
         // match.
-        Regex::new(
-            r#"(?m)^\s*gem\s+['"]([^'"]+)['"](?:\s*,\s*['"]([^'"]+)['"])?([^\n]*)"#,
-        )
-        .unwrap()
+        Regex::new(r#"(?m)^\s*gem\s+['"]([^'"]+)['"](?:\s*,\s*['"]([^'"]+)['"])?([^\n]*)"#).unwrap()
     })
 }
 
@@ -110,12 +104,9 @@ fn strip_ruby_comments(content: &str) -> String {
 fn is_dev_group(rest: &str) -> bool {
     static GROUP_ONE: OnceLock<Regex> = OnceLock::new();
     static GROUP_MANY: OnceLock<Regex> = OnceLock::new();
-    let one = GROUP_ONE.get_or_init(|| {
-        Regex::new(r"group\s*:\s*:(development|test)\b").unwrap()
-    });
-    let many = GROUP_MANY.get_or_init(|| {
-        Regex::new(r"groups?\s*:\s*\[[^\]]*(:development|:test)[^\]]*\]").unwrap()
-    });
+    let one = GROUP_ONE.get_or_init(|| Regex::new(r"group\s*:\s*:(development|test)\b").unwrap());
+    let many = GROUP_MANY
+        .get_or_init(|| Regex::new(r"groups?\s*:\s*\[[^\]]*(:development|:test)[^\]]*\]").unwrap());
     one.is_match(rest) || many.is_match(rest)
 }
 

@@ -1,7 +1,9 @@
+use sensei_bootstrap::{MCP_REGISTRY_KEY, SENSEI_MCP_BIN};
 use std::path::PathBuf;
-use sensei_bootstrap::{SENSEI_MCP_BIN, MCP_REGISTRY_KEY};
 
-pub(crate) fn home() -> PathBuf { crate::paths::home() }
+pub(crate) fn home() -> PathBuf {
+    crate::paths::home()
+}
 
 /// Default integration check for assistants that wire sensei as an MCP
 /// server — Cursor, Zed, etc. Looks for the sensei MCP entry in the
@@ -9,7 +11,9 @@ pub(crate) fn home() -> PathBuf { crate::paths::home() }
 /// check (`is_configured()` in claude_code.rs) since it integrates via
 /// `claude plugin install`, not via the settings.json MCP block.
 pub(crate) fn check_mcp_in_config(config_path: &std::path::Path, mcp_key: &str) -> bool {
-    if !config_path.exists() { return false; }
+    if !config_path.exists() {
+        return false;
+    }
     // Uses json5 (not serde_json) so files with a preserved JSONC
     // header — either the user's original comments (Zed's shipping
     // `settings.json`) or ones we round-tripped through
@@ -93,19 +97,25 @@ fn leading_jsonc_prefix(s: &str) -> &str {
 /// object at `mcp_key`, write back. The entry name is mode-aware via
 /// [`MCP_REGISTRY_KEY`] — dev runs target `"sensei-dev"`, prod `"sensei"`.
 pub(crate) fn remove_sensei_from_json(path: &std::path::Path, mcp_key: &str) -> bool {
-    if !path.exists() { return false; }
+    if !path.exists() {
+        return false;
+    }
     let raw = std::fs::read_to_string(path).ok().unwrap_or_default();
-    let mut v = match json5::from_str::<serde_json::Value>(&raw) { Ok(v) => v, Err(_) => return false };
+    let mut v = match json5::from_str::<serde_json::Value>(&raw) {
+        Ok(v) => v,
+        Err(_) => return false,
+    };
     if let Some(servers) = v.get_mut(mcp_key).and_then(|s| s.as_object_mut())
-        && servers.remove(MCP_REGISTRY_KEY).is_some() {
-            let prefix = leading_jsonc_prefix(&raw);
-            let body = serde_json::to_string_pretty(&v).unwrap();
-            let out = format!("{prefix}{body}");
-            if let Err(e) = std::fs::write(path, out) {
-                tracing::warn!(error = %e, path = %path.display(), "remove_sensei_from_json: failed to write config back");
-            }
-            return true;
+        && servers.remove(MCP_REGISTRY_KEY).is_some()
+    {
+        let prefix = leading_jsonc_prefix(&raw);
+        let body = serde_json::to_string_pretty(&v).unwrap();
+        let out = format!("{prefix}{body}");
+        if let Err(e) = std::fs::write(path, out) {
+            tracing::warn!(error = %e, path = %path.display(), "remove_sensei_from_json: failed to write config back");
         }
+        return true;
+    }
     false
 }
 

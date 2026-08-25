@@ -1,13 +1,17 @@
-use tree_sitter::{Parser, Node};
-use crate::types::{ParsedFile, ParsedSymbol, ParsedImport, SymbolKind};
-use crate::ir::{IRParam, IRImport, IRParsedFile, ClassKind, Visibility};
-use super::common::{field_text, make_symbol, ir_method, ir_class, ir_module, ir_parsed_file, node_text};
 use super::LanguageAdapter;
+use super::common::{
+    field_text, ir_class, ir_method, ir_module, ir_parsed_file, make_symbol, node_text,
+};
+use crate::ir::{ClassKind, IRImport, IRParam, IRParsedFile, Visibility};
+use crate::types::{ParsedFile, ParsedImport, ParsedSymbol, SymbolKind};
+use tree_sitter::{Node, Parser};
 
 pub struct JavaAdapter;
 
 impl LanguageAdapter for JavaAdapter {
-    fn language(&self) -> &str { "java" }
+    fn language(&self) -> &str {
+        "java"
+    }
 
     fn fqn_output(&self, _abs_path: &str, content: &str) -> Option<super::fqn::FqnFileOutput> {
         Some(java_fqn::produce_fqns(content))
@@ -46,10 +50,22 @@ impl LanguageAdapter for JavaAdapter {
 }
 
 fn empty(path: &str) -> ParsedFile {
-    ParsedFile { file_path: path.into(), language: "java".into(), symbols: vec![], edges: vec![], imports: vec![] }
+    ParsedFile {
+        file_path: path.into(),
+        language: "java".into(),
+        symbols: vec![],
+        edges: vec![],
+        imports: vec![],
+    }
 }
 
-fn walk(node: &Node, src: &[u8], lines: &[&str], symbols: &mut Vec<ParsedSymbol>, imports: &mut Vec<ParsedImport>) {
+fn walk(
+    node: &Node,
+    src: &[u8],
+    lines: &[&str],
+    symbols: &mut Vec<ParsedSymbol>,
+    imports: &mut Vec<ParsedImport>,
+) {
     for i in 0..node.child_count() {
         let child = node.child(i).unwrap();
         match child.kind() {
@@ -63,20 +79,37 @@ fn walk(node: &Node, src: &[u8], lines: &[&str], symbols: &mut Vec<ParsedSymbol>
             }
             "interface_declaration" => {
                 let name = field_text(&child, "name", src);
-                symbols.push(make_sym(name.clone(), SymbolKind::Interface, &child, lines, src, has_modifier(&child, src, "public")));
+                symbols.push(make_sym(
+                    name.clone(),
+                    SymbolKind::Interface,
+                    &child,
+                    lines,
+                    src,
+                    has_modifier(&child, src, "public"),
+                ));
                 if let Some(body) = child.child_by_field_name("body") {
                     extract_members(&body, src, lines, symbols, &name);
                 }
             }
             "enum_declaration" => {
                 let name = field_text(&child, "name", src);
-                symbols.push(make_sym(name, SymbolKind::Enum, &child, lines, src, has_modifier(&child, src, "public")));
+                symbols.push(make_sym(
+                    name,
+                    SymbolKind::Enum,
+                    &child,
+                    lines,
+                    src,
+                    has_modifier(&child, src, "public"),
+                ));
             }
             "import_declaration" => {
                 let text = child.utf8_text(src).unwrap_or_default();
-                let path = text.trim_start_matches("import ")
+                let path = text
+                    .trim_start_matches("import ")
                     .trim_start_matches("static ")
-                    .trim_end_matches(';').trim().to_string();
+                    .trim_end_matches(';')
+                    .trim()
+                    .to_string();
                 let name = path.rsplit('.').next().unwrap_or(&path).to_string();
                 imports.push(ParsedImport { target_path: path, names: vec![name] });
             }
@@ -85,43 +118,77 @@ fn walk(node: &Node, src: &[u8], lines: &[&str], symbols: &mut Vec<ParsedSymbol>
     }
 }
 
-fn extract_members(body: &Node, src: &[u8], lines: &[&str], symbols: &mut Vec<ParsedSymbol>, class_name: &str) {
+fn extract_members(
+    body: &Node,
+    src: &[u8],
+    lines: &[&str],
+    symbols: &mut Vec<ParsedSymbol>,
+    class_name: &str,
+) {
     for i in 0..body.child_count() {
         let child = body.child(i).unwrap();
         match child.kind() {
             "method_declaration" | "constructor_declaration" => {
                 let name = field_text(&child, "name", src);
                 if !name.is_empty() {
-                    let mut sym = make_sym(name, SymbolKind::Method, &child, lines, src, has_modifier(&child, src, "public"));
+                    let mut sym = make_sym(
+                        name,
+                        SymbolKind::Method,
+                        &child,
+                        lines,
+                        src,
+                        has_modifier(&child, src, "public"),
+                    );
                     sym.parent = Some(class_name.to_string());
                     symbols.push(sym);
                 }
             }
             "field_declaration" => {
-                if has_modifier(&child, src, "static") && has_modifier(&child, src, "final")
-                    && let Some(declarator) = find_child_kind(&child, "variable_declarator") {
-                        let name = field_text(&declarator, "name", src);
-                        if !name.is_empty() {
-                            symbols.push(make_sym(name, SymbolKind::Const, &child, lines, src, has_modifier(&child, src, "public")));
-                        }
+                if has_modifier(&child, src, "static")
+                    && has_modifier(&child, src, "final")
+                    && let Some(declarator) = find_child_kind(&child, "variable_declarator")
+                {
+                    let name = field_text(&declarator, "name", src);
+                    if !name.is_empty() {
+                        symbols.push(make_sym(
+                            name,
+                            SymbolKind::Const,
+                            &child,
+                            lines,
+                            src,
+                            has_modifier(&child, src, "public"),
+                        ));
                     }
+                }
             }
             _ => {}
         }
     }
 }
 
-fn make_sym(name: String, kind: SymbolKind, node: &Node, lines: &[&str], src: &[u8], is_exported: bool) -> ParsedSymbol {
+fn make_sym(
+    name: String,
+    kind: SymbolKind,
+    node: &Node,
+    lines: &[&str],
+    src: &[u8],
+    is_exported: bool,
+) -> ParsedSymbol {
     make_symbol(name, kind, node, lines, is_exported, extract_javadoc(node, src))
 }
 
 fn extract_javadoc(node: &Node, src: &[u8]) -> Option<String> {
     let prev = node.prev_sibling()?;
-    if prev.kind() != "block_comment" { return None; }
+    if prev.kind() != "block_comment" {
+        return None;
+    }
     let text = prev.utf8_text(src).ok()?;
-    if !text.starts_with("/**") { return None; }
+    if !text.starts_with("/**") {
+        return None;
+    }
     let inner = text.trim_start_matches("/**").trim_end_matches("*/").trim();
-    let cleaned: Vec<&str> = inner.lines()
+    let cleaned: Vec<&str> = inner
+        .lines()
         .map(|l| l.trim().trim_start_matches('*').trim())
         .filter(|l| !l.is_empty())
         .collect();
@@ -133,7 +200,9 @@ fn has_modifier(node: &Node, src: &[u8], keyword: &str) -> bool {
         let c = node.child(i).unwrap();
         if c.kind() == "modifiers" {
             let text = c.utf8_text(src).unwrap_or_default();
-            if text.contains(keyword) { return true; }
+            if text.contains(keyword) {
+                return true;
+            }
         }
     }
     false
@@ -142,7 +211,9 @@ fn has_modifier(node: &Node, src: &[u8], keyword: &str) -> bool {
 fn find_child_kind<'a>(node: &'a Node, kind: &str) -> Option<Node<'a>> {
     for i in 0..node.child_count() {
         let c = node.child(i).unwrap();
-        if c.kind() == kind { return Some(c); }
+        if c.kind() == kind {
+            return Some(c);
+        }
     }
     None
 }
@@ -153,7 +224,13 @@ pub fn parse_to_ir(source: &str, file_path: &str) -> IRParsedFile {
     parser.set_language(&tree_sitter_java::LANGUAGE.into()).expect("java");
     let tree = match parser.parse(source, None) {
         Some(t) => t,
-        None => return IRParsedFile { file_path: file_path.into(), language: "java".into(), ..Default::default() },
+        None => {
+            return IRParsedFile {
+                file_path: file_path.into(),
+                language: "java".into(),
+                ..Default::default()
+            };
+        }
     };
     let _lines: Vec<&str> = source.lines().collect();
     let root = tree.root_node();
@@ -175,37 +252,63 @@ pub fn parse_to_ir(source: &str, file_path: &str) -> IRParsedFile {
                     _ => ClassKind::Class,
                 };
                 let is_pub = has_modifier(&child, src, "public");
-                let mut class = ir_class(name, &child, kind, is_pub, extract_javadoc(&child, src), collect_java_annotations(&child, src));
+                let mut class = ir_class(
+                    name,
+                    &child,
+                    kind,
+                    is_pub,
+                    extract_javadoc(&child, src),
+                    collect_java_annotations(&child, src),
+                );
 
                 // Extract implements/extends
                 if let Some(sc) = child.child_by_field_name("superclass") {
                     class.extends = Some(sc.utf8_text(src).unwrap_or_default().to_string());
                 }
                 if let Some(ifaces) = child.child_by_field_name("interfaces") {
-                    class.implements = ifaces.utf8_text(src).unwrap_or_default()
-                        .split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+                    class.implements = ifaces
+                        .utf8_text(src)
+                        .unwrap_or_default()
+                        .split(',')
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                        .collect();
                 }
 
                 // Extract methods from body
                 if let Some(body) = child.child_by_field_name("body") {
                     for j in 0..body.child_count() {
                         if let Some(member) = body.child(j)
-                            && (member.kind() == "method_declaration" || member.kind() == "constructor_declaration") {
-                                let mname = field_text(&member, "name", src);
-                                let mparams = extract_java_params(&member, src);
-                                let ret = field_text(&member, "type", src);
-                                let is_static = has_modifier(&member, src, "static");
-                                let vis = if has_modifier(&member, src, "public") { Visibility::Public }
-                                    else if has_modifier(&member, src, "private") { Visibility::Private }
-                                    else if has_modifier(&member, src, "protected") { Visibility::Protected }
-                                    else { Visibility::Internal };
-                                class.methods.push(ir_method(
-                                    mname, &member, vis == Visibility::Public, false, is_static,
-                                    mparams, if ret.is_empty() { None } else { Some(ret) },
-                                    extract_javadoc(&member, src),
-                                    collect_java_annotations(&member, src), vis, &node_text(&member, src),
-                                ));
-                            }
+                            && (member.kind() == "method_declaration"
+                                || member.kind() == "constructor_declaration")
+                        {
+                            let mname = field_text(&member, "name", src);
+                            let mparams = extract_java_params(&member, src);
+                            let ret = field_text(&member, "type", src);
+                            let is_static = has_modifier(&member, src, "static");
+                            let vis = if has_modifier(&member, src, "public") {
+                                Visibility::Public
+                            } else if has_modifier(&member, src, "private") {
+                                Visibility::Private
+                            } else if has_modifier(&member, src, "protected") {
+                                Visibility::Protected
+                            } else {
+                                Visibility::Internal
+                            };
+                            class.methods.push(ir_method(
+                                mname,
+                                &member,
+                                vis == Visibility::Public,
+                                false,
+                                is_static,
+                                mparams,
+                                if ret.is_empty() { None } else { Some(ret) },
+                                extract_javadoc(&member, src),
+                                collect_java_annotations(&member, src),
+                                vis,
+                                &node_text(&member, src),
+                            ));
+                        }
                     }
                 }
                 classes.push(class);
@@ -214,7 +317,11 @@ pub fn parse_to_ir(source: &str, file_path: &str) -> IRParsedFile {
                 let text = child.utf8_text(src).unwrap_or_default();
                 let path = text.trim_start_matches("import ").trim_end_matches(';').trim();
                 let name = path.rsplit('.').next().unwrap_or(path).to_string();
-                imports.push(IRImport { source: path.to_string(), names: vec![name], is_reexport: false });
+                imports.push(IRImport {
+                    source: path.to_string(),
+                    names: vec![name],
+                    is_reexport: false,
+                });
             }
             _ => {}
         }
@@ -230,15 +337,16 @@ fn extract_java_params(node: &Node, src: &[u8]) -> Vec<IRParam> {
     if let Some(param_list) = node.child_by_field_name("parameters") {
         for i in 0..param_list.child_count() {
             if let Some(p) = param_list.child(i)
-                && (p.kind() == "formal_parameter" || p.kind() == "spread_parameter") {
-                    let ptype = field_text(&p, "type", src);
-                    let pname = field_text(&p, "name", src);
-                    params.push(IRParam {
-                        name: pname,
-                        type_: if ptype.is_empty() { None } else { Some(ptype) },
-                        ..Default::default()
-                    });
-                }
+                && (p.kind() == "formal_parameter" || p.kind() == "spread_parameter")
+            {
+                let ptype = field_text(&p, "type", src);
+                let pname = field_text(&p, "name", src);
+                params.push(IRParam {
+                    name: pname,
+                    type_: if ptype.is_empty() { None } else { Some(ptype) },
+                    ..Default::default()
+                });
+            }
         }
     }
     params
@@ -267,24 +375,31 @@ fn collect_java_annotations(node: &Node, src: &[u8]) -> Vec<String> {
 // imported class resolves to ITS package's fqn; JDK-family packages (java./javax./…)
 // are treated as external `lib` nodes (there is no project-wide package registry).
 pub(crate) mod java_fqn {
-    use super::{Node, Parser, SymbolKind};
     use super::super::fqn::{self, FileFqnContext, FqnDefinition, FqnFileOutput, FqnReference};
+    use super::{Node, Parser, SymbolKind};
     use std::collections::{HashMap, HashSet};
 
     const JAVA_LANG: &str = "java";
     const JAVA_CALL_DENYLIST: &[&str] = &[
-        "toString", "equals", "hashCode", "get", "set", "put", "add", "remove",
-        "size", "length", "isEmpty", "println", "print", "printf", "format",
-        "contains", "stream", "collect", "forEach", "build", "iterator", "next",
+        "toString", "equals", "hashCode", "get", "set", "put", "add", "remove", "size", "length",
+        "isEmpty", "println", "print", "printf", "format", "contains", "stream", "collect",
+        "forEach", "build", "iterator", "next",
     ];
 
-    fn text(node: &Node, src: &[u8]) -> String { node.utf8_text(src).unwrap_or_default().to_string() }
-    fn field(node: &Node, name: &str, src: &[u8]) -> String { node.child_by_field_name(name).map(|n| text(&n, src)).unwrap_or_default() }
-    fn is_pascal(s: &str) -> bool { s.chars().next().is_some_and(|c| c.is_ascii_uppercase()) }
+    fn text(node: &Node, src: &[u8]) -> String {
+        node.utf8_text(src).unwrap_or_default().to_string()
+    }
+    fn field(node: &Node, name: &str, src: &[u8]) -> String {
+        node.child_by_field_name(name).map(|n| text(&n, src)).unwrap_or_default()
+    }
+    fn is_pascal(s: &str) -> bool {
+        s.chars().next().is_some_and(|c| c.is_ascii_uppercase())
+    }
     /// JDK / well-known runtime roots → treated as external dependencies.
     fn is_external_pkg(pkg: &str) -> bool {
         ["java.", "javax.", "kotlin.", "android.", "sun.", "scala.", "jakarta."]
-            .iter().any(|p| pkg.starts_with(p))
+            .iter()
+            .any(|p| pkg.starts_with(p))
     }
 
     pub fn produce_fqns(source: &str) -> FqnFileOutput {
@@ -313,8 +428,12 @@ pub(crate) mod java_fqn {
                 }
                 "import_declaration" => {
                     let raw = text(&child, src);
-                    let path = raw.trim_start_matches("import ").trim_start_matches("static ")
-                        .trim_end_matches(';').trim().to_string();
+                    let path = raw
+                        .trim_start_matches("import ")
+                        .trim_start_matches("static ")
+                        .trim_end_matches(';')
+                        .trim()
+                        .to_string();
                     if !path.is_empty() && !path.ends_with('*') {
                         let leaf = path.rsplit('.').next().unwrap_or(&path).to_string();
                         imports.insert(leaf, path);
@@ -325,7 +444,11 @@ pub(crate) mod java_fqn {
         }
         let ctx = FileFqnContext { package, module: String::new() };
 
-        let mut out = FqnFileOutput { package: ctx.package.clone(), module: String::new(), ..Default::default() };
+        let mut out = FqnFileOutput {
+            package: ctx.package.clone(),
+            module: String::new(),
+            ..Default::default()
+        };
         let lines: Vec<&str> = source.lines().collect();
         walk(&root, src, &lines, &ctx, &imports, None, &mut out);
         out
@@ -333,15 +456,22 @@ pub(crate) mod java_fqn {
 
     #[allow(clippy::too_many_arguments)]
     fn walk(
-        node: &Node, src: &[u8], lines: &[&str], ctx: &FileFqnContext,
-        imports: &HashMap<String, String>, class: Option<&str>, out: &mut FqnFileOutput,
+        node: &Node,
+        src: &[u8],
+        lines: &[&str],
+        ctx: &FileFqnContext,
+        imports: &HashMap<String, String>,
+        class: Option<&str>,
+        out: &mut FqnFileOutput,
     ) {
         for i in 0..node.child_count() {
             let child = node.child(i).unwrap();
             match child.kind() {
                 "class_declaration" | "interface_declaration" | "enum_declaration" => {
                     let name = field(&child, "name", src);
-                    if name.is_empty() { continue; }
+                    if name.is_empty() {
+                        continue;
+                    }
                     let kind = match child.kind() {
                         "interface_declaration" => SymbolKind::Interface,
                         "enum_declaration" => SymbolKind::Enum,
@@ -349,12 +479,17 @@ pub(crate) mod java_fqn {
                     };
                     out.defs.push(FqnDefinition {
                         fqn: fqn::item(JAVA_LANG, &ctx.package, "", &name),
-                        name: name.clone(), kind,
+                        name: name.clone(),
+                        kind,
                         line_start: child.start_position().row as u32 + 1,
                         line_end: child.end_position().row as u32 + 1,
                         is_exported: true,
-                        signature: lines.get(child.start_position().row).map(|l| l.trim().to_string()),
-                        docstring: None, parent_type: None, parent_fqn: None,
+                        signature: lines
+                            .get(child.start_position().row)
+                            .map(|l| l.trim().to_string()),
+                        docstring: None,
+                        parent_type: None,
+                        parent_fqn: None,
                     });
                     if let Some(body) = child.child_by_field_name("body") {
                         walk(&body, src, lines, ctx, imports, Some(&name), out);
@@ -363,7 +498,9 @@ pub(crate) mod java_fqn {
                 "method_declaration" | "constructor_declaration" => {
                     let Some(cls) = class else { continue };
                     let name = field(&child, "name", src);
-                    if name.is_empty() { continue; }
+                    if name.is_empty() {
+                        continue;
+                    }
                     let fqn_str = fqn::method(JAVA_LANG, &ctx.package, "", cls, &name);
                     out.defs.push(FqnDefinition {
                         fqn: fqn_str.clone(),
@@ -372,7 +509,9 @@ pub(crate) mod java_fqn {
                         line_start: child.start_position().row as u32 + 1,
                         line_end: child.end_position().row as u32 + 1,
                         is_exported: true,
-                        signature: lines.get(child.start_position().row).map(|l| l.trim().to_string()),
+                        signature: lines
+                            .get(child.start_position().row)
+                            .map(|l| l.trim().to_string()),
                         docstring: None,
                         parent_type: Some(cls.to_string()),
                         parent_fqn: Some(fqn::item(JAVA_LANG, &ctx.package, "", cls)),
@@ -380,7 +519,9 @@ pub(crate) mod java_fqn {
                     if let Some(body) = child.child_by_field_name("body") {
                         let bindings = build_bindings(&child, src);
                         let mut seen = HashSet::new();
-                        collect_calls(&body, src, ctx, imports, cls, &bindings, &fqn_str, &mut seen, out);
+                        collect_calls(
+                            &body, src, ctx, imports, cls, &bindings, &fqn_str, &mut seen, out,
+                        );
                     }
                 }
                 _ => {}
@@ -414,9 +555,13 @@ pub(crate) mod java_fqn {
             if child.kind() == "local_variable_declaration" {
                 let ty = field(&child, "type", src);
                 if !ty.is_empty()
-                    && let Some(decl) = (0..child.child_count()).find_map(|j| child.child(j).filter(|c| c.kind() == "variable_declarator")) {
+                    && let Some(decl) = (0..child.child_count())
+                        .find_map(|j| child.child(j).filter(|c| c.kind() == "variable_declarator"))
+                {
                     let nm = field(&decl, "name", src);
-                    if !nm.is_empty() { map.insert(nm, base_type(&ty)); }
+                    if !nm.is_empty() {
+                        map.insert(nm, base_type(&ty));
+                    }
                 }
             }
             collect_locals(&child, src, map);
@@ -431,20 +576,29 @@ pub(crate) mod java_fqn {
 
     #[allow(clippy::too_many_arguments)]
     fn collect_calls(
-        node: &Node, src: &[u8], ctx: &FileFqnContext, imports: &HashMap<String, String>,
-        class: &str, bindings: &HashMap<String, String>, caller_fqn: &str,
-        seen: &mut HashSet<String>, out: &mut FqnFileOutput,
+        node: &Node,
+        src: &[u8],
+        ctx: &FileFqnContext,
+        imports: &HashMap<String, String>,
+        class: &str,
+        bindings: &HashMap<String, String>,
+        caller_fqn: &str,
+        seen: &mut HashSet<String>,
+        out: &mut FqnFileOutput,
     ) {
         for i in 0..node.child_count() {
             let child = node.child(i).unwrap();
             if child.kind() == "method_invocation"
-                && let Some((target_fqn, is_lib, target_name)) = resolve_call(&child, src, ctx, imports, class, bindings)
+                && let Some((target_fqn, is_lib, target_name)) =
+                    resolve_call(&child, src, ctx, imports, class, bindings)
                 && seen.insert(target_fqn.clone().unwrap_or_else(|| format!("?{target_name}")))
             {
                 out.refs.push(FqnReference {
                     caller_fqn: caller_fqn.to_string(),
                     caller_line: child.start_position().row as u32 + 1,
-                    target_fqn, target_name, is_lib,
+                    target_fqn,
+                    target_name,
+                    is_lib,
                 });
             }
             collect_calls(&child, src, ctx, imports, class, bindings, caller_fqn, seen, out);
@@ -452,18 +606,32 @@ pub(crate) mod java_fqn {
     }
 
     fn resolve_call(
-        mi: &Node, src: &[u8], ctx: &FileFqnContext, imports: &HashMap<String, String>,
-        class: &str, bindings: &HashMap<String, String>,
+        mi: &Node,
+        src: &[u8],
+        ctx: &FileFqnContext,
+        imports: &HashMap<String, String>,
+        class: &str,
+        bindings: &HashMap<String, String>,
     ) -> Option<(Option<String>, bool, String)> {
         let method = field(mi, "name", src);
-        if method.is_empty() || JAVA_CALL_DENYLIST.contains(&method.as_str()) { return None; }
+        if method.is_empty() || JAVA_CALL_DENYLIST.contains(&method.as_str()) {
+            return None;
+        }
         let obj = mi.child_by_field_name("object");
         match obj {
             // Unqualified `m()` → the enclosing class's method.
-            None => Some((Some(fqn::method(JAVA_LANG, &ctx.package, "", class, &method)), false, method)),
+            None => Some((
+                Some(fqn::method(JAVA_LANG, &ctx.package, "", class, &method)),
+                false,
+                method,
+            )),
             Some(o) => {
                 if o.kind() == "this" {
-                    return Some((Some(fqn::method(JAVA_LANG, &ctx.package, "", class, &method)), false, method));
+                    return Some((
+                        Some(fqn::method(JAVA_LANG, &ctx.package, "", class, &method)),
+                        false,
+                        method,
+                    ));
                 }
                 if o.kind() == "identifier" {
                     let oname = text(&o, src);
@@ -472,12 +640,20 @@ pub(crate) mod java_fqn {
                         // package) or as a same-package class.
                         return Some(match imports.get(&oname) {
                             Some(fqcn) => resolve_type_call(fqcn, &method),
-                            None => (Some(fqn::method(JAVA_LANG, &ctx.package, "", &oname, &method)), false, method),
+                            None => (
+                                Some(fqn::method(JAVA_LANG, &ctx.package, "", &oname, &method)),
+                                false,
+                                method,
+                            ),
                         });
                     }
                     if let Some(ty) = bindings.get(&oname) {
                         // Instance receiver — its class's method (same package, best effort).
-                        return Some((Some(fqn::method(JAVA_LANG, &ctx.package, "", ty, &method)), false, method));
+                        return Some((
+                            Some(fqn::method(JAVA_LANG, &ctx.package, "", ty, &method)),
+                            false,
+                            method,
+                        ));
                     }
                 }
                 // Unknown receiver → no wrong merge.
@@ -504,7 +680,9 @@ pub(crate) mod java_fqn {
 mod tests {
     use super::*;
 
-    fn parse(src: &str) -> ParsedFile { JavaAdapter.parse(src, "Test.java") }
+    fn parse(src: &str) -> ParsedFile {
+        JavaAdapter.parse(src, "Test.java")
+    }
 
     // ── FQN producer (Phase 6.3) ────────────────────────────────────────────
     use crate::languages::fqn::{FqnFileOutput, FqnReference};
@@ -512,22 +690,31 @@ mod tests {
         out.defs.iter().find(|d| d.name == name).map(|d| d.fqn.as_str()).unwrap_or("<no-def>")
     }
     fn ref_to<'a>(out: &'a FqnFileOutput, target_name: &str) -> &'a FqnReference {
-        out.refs.iter().find(|r| r.target_name == target_name)
+        out.refs
+            .iter()
+            .find(|r| r.target_name == target_name)
             .unwrap_or_else(|| panic!("no ref to `{target_name}` in {:?}", out.refs))
     }
 
     #[test]
     fn java_def_fqn() {
-        let out = java_fqn::produce_fqns("package com.app;\nclass Widget {\n    void spin() {}\n}\n");
+        let out =
+            java_fqn::produce_fqns("package com.app;\nclass Widget {\n    void spin() {}\n}\n");
         assert_eq!(def_fqn(&out, "Widget"), "java·com.app·Widget", "class carries its package");
         assert_eq!(def_fqn(&out, "spin"), "java·com.app·Widget·spin", "method nests on its class");
     }
 
     #[test]
     fn java_ref_fqn_import() {
-        let out = java_fqn::produce_fqns("package com.app;\nimport a.b.Helper;\nclass C {\n    void use() { Helper.run(); }\n}\n");
+        let out = java_fqn::produce_fqns(
+            "package com.app;\nimport a.b.Helper;\nclass C {\n    void use() { Helper.run(); }\n}\n",
+        );
         let r = ref_to(&out, "run");
-        assert_eq!(r.target_fqn.as_deref(), Some("java·a.b·Helper·run"), "imported project class resolves to its own package");
+        assert_eq!(
+            r.target_fqn.as_deref(),
+            Some("java·a.b·Helper·run"),
+            "imported project class resolves to its own package"
+        );
         assert!(!r.is_lib);
         assert_eq!(r.caller_fqn, "java·com.app·C·use");
     }
@@ -536,15 +723,29 @@ mod tests {
     fn java_method_scope() {
         let src = "package com.app;\nclass Engine {\n    void run() {\n        this.tick();\n        Gadget g = new Gadget();\n        g.spin();\n    }\n    void tick() {}\n}\n";
         let out = java_fqn::produce_fqns(src);
-        assert_eq!(ref_to(&out, "tick").target_fqn.as_deref(), Some("java·com.app·Engine·tick"), "this.m → enclosing class");
-        assert_eq!(ref_to(&out, "spin").target_fqn.as_deref(), Some("java·com.app·Gadget·spin"), "Type v = new Type(); v.m() → Type.m (0.7 binding)");
+        assert_eq!(
+            ref_to(&out, "tick").target_fqn.as_deref(),
+            Some("java·com.app·Engine·tick"),
+            "this.m → enclosing class"
+        );
+        assert_eq!(
+            ref_to(&out, "spin").target_fqn.as_deref(),
+            Some("java·com.app·Gadget·spin"),
+            "Type v = new Type(); v.m() → Type.m (0.7 binding)"
+        );
     }
 
     #[test]
     fn java_external_is_lib() {
-        let out = java_fqn::produce_fqns("package com.app;\nimport java.util.List;\nclass C {\n    void f() { List.of(); }\n}\n");
+        let out = java_fqn::produce_fqns(
+            "package com.app;\nimport java.util.List;\nclass C {\n    void f() { List.of(); }\n}\n",
+        );
         let r = ref_to(&out, "of");
-        assert_eq!(r.target_fqn.as_deref(), Some("lib·java·java.util.List·of"), "JDK class → lib node");
+        assert_eq!(
+            r.target_fqn.as_deref(),
+            Some("lib·java·java.util.List·of"),
+            "JDK class → lib node"
+        );
         assert!(r.is_lib);
     }
 
@@ -566,7 +767,9 @@ mod tests {
 
     #[test]
     fn parses_methods() {
-        let pf = parse("public class Svc {\n  public void run() {}\n  private int calc() { return 0; }\n}");
+        let pf = parse(
+            "public class Svc {\n  public void run() {}\n  private int calc() { return 0; }\n}",
+        );
         let methods: Vec<_> = pf.symbols.iter().filter(|s| s.kind == SymbolKind::Method).collect();
         assert_eq!(methods.len(), 2);
         assert!(methods[0].is_exported); // public
@@ -603,7 +806,9 @@ mod tests {
 
     #[test]
     fn method_parent_set_on_class() {
-        let pf = parse("public class Svc {\n  public void run() {}\n  private int calc() { return 0; }\n}");
+        let pf = parse(
+            "public class Svc {\n  public void run() {}\n  private int calc() { return 0; }\n}",
+        );
         let svc = pf.symbols.iter().find(|s| s.name == "Svc").unwrap();
         assert!(svc.parent.is_none(), "class should have no parent");
         let run = pf.symbols.iter().find(|s| s.name == "run").unwrap();
@@ -630,11 +835,14 @@ mod tests {
 
     // ── IR Tests ──────────────────────────────────────────────────────
 
-    fn parse_ir(src: &str) -> IRParsedFile { parse_to_ir(src, "Test.java") }
+    fn parse_ir(src: &str) -> IRParsedFile {
+        parse_to_ir(src, "Test.java")
+    }
 
     #[test]
     fn ir_class_with_methods() {
-        let pf = parse_ir("public class Svc {\n  public String getName(int id) { return null; }\n}");
+        let pf =
+            parse_ir("public class Svc {\n  public String getName(int id) { return null; }\n}");
         assert_eq!(pf.classes.len(), 1);
         assert_eq!(pf.classes[0].base.name, "Svc");
         assert_eq!(pf.classes[0].methods.len(), 1);

@@ -18,7 +18,10 @@ impl PgStore {
     /// level desc (most-specific first), then strength. Structuring (dedup +
     /// mandatory-lock) is done by `crate::governance::structure_ruleset` so it
     /// stays pure.
-    pub async fn resolve_rules_raw(&self, folder_id: &uuid::Uuid) -> Result<Vec<crate::governance::RawRule>, String> {
+    pub async fn resolve_rules_raw(
+        &self,
+        folder_id: &uuid::Uuid,
+    ) -> Result<Vec<crate::governance::RawRule>, String> {
         let rows: Vec<(uuid::Uuid, String, String, Option<String>, String, String, Option<String>)> =
             sqlx_core::query_as::query_as(
                 "SELECT m.id, m.title, m.content, m.impact, m.enforcement::text,
@@ -46,11 +49,20 @@ impl PgStore {
             .fetch_all(&self.pool)
             .await
             .map_err(|e| e.to_string())?;
-        Ok(rows.into_iter().map(|(id, title, content, impact, enforcement, scope, namespace)| {
-            crate::governance::RawRule {
-                id: id.to_string(), title, content, impact, enforcement, scope, namespace,
-            }
-        }).collect())
+        Ok(rows
+            .into_iter()
+            .map(|(id, title, content, impact, enforcement, scope, namespace)| {
+                crate::governance::RawRule {
+                    id: id.to_string(),
+                    title,
+                    content,
+                    impact,
+                    enforcement,
+                    scope,
+                    namespace,
+                }
+            })
+            .collect())
     }
 
     /// The LOCAL authoritative raw ruleset for a folder — resolved memories
@@ -295,9 +307,16 @@ impl PgStore {
     /// [`Self::resolve_rules_raw`] for its own repo. Same ordering as
     /// `resolve_rules_raw` but with no folder dimension.
     pub async fn resolve_global_rules(&self) -> Result<Vec<crate::governance::RawRule>, String> {
-        let rows: Vec<(uuid::Uuid, String, String, Option<String>, String, String, Option<String>)> =
-            sqlx_core::query_as::query_as(
-                "SELECT m.id, m.title, m.content, m.impact, m.enforcement::text,
+        let rows: Vec<(
+            uuid::Uuid,
+            String,
+            String,
+            Option<String>,
+            String,
+            String,
+            Option<String>,
+        )> = sqlx_core::query_as::query_as(
+            "SELECT m.id, m.title, m.content, m.impact, m.enforcement::text,
                         COALESCE(n.scope_key, 'general') AS scope,
                         n.name AS namespace
                    FROM sensei.memories m
@@ -311,15 +330,24 @@ impl PgStore {
                   ORDER BY m.enforcement DESC,
                            COALESCE(n.level, s.level, 0) DESC,
                            m.strength DESC",
-            )
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|e| e.to_string())?;
-        Ok(rows.into_iter().map(|(id, title, content, impact, enforcement, scope, namespace)| {
-            crate::governance::RawRule {
-                id: id.to_string(), title, content, impact, enforcement, scope, namespace,
-            }
-        }).collect())
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(rows
+            .into_iter()
+            .map(|(id, title, content, impact, enforcement, scope, namespace)| {
+                crate::governance::RawRule {
+                    id: id.to_string(),
+                    title,
+                    content,
+                    impact,
+                    enforcement,
+                    scope,
+                    namespace,
+                }
+            })
+            .collect())
     }
 
     // ── Governance Tier-2: consolidated (LLM-merged, approved) rulesets ──
@@ -328,7 +356,11 @@ impl PgStore {
     pub async fn next_ruleset_version(&self, scope: &str) -> Result<i32, String> {
         let row: (Option<i32>,) = sqlx_core::query_as::query_as(
             "SELECT max(version) FROM sensei.consolidated_rulesets WHERE scope = $1",
-        ).bind(scope).fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
+        )
+        .bind(scope)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(row.0.unwrap_or(0) + 1)
     }
 
@@ -344,23 +376,40 @@ impl PgStore {
     /// Insert a new consolidated ruleset version.
     #[allow(clippy::too_many_arguments)]
     pub async fn insert_consolidated_ruleset(
-        &self, scope: &str, version: i32, content: &str, conflicts: &serde_json::Value,
-        model: Option<&str>, source_hash: &str, status: &str,
+        &self,
+        scope: &str,
+        version: i32,
+        content: &str,
+        conflicts: &serde_json::Value,
+        model: Option<&str>,
+        source_hash: &str,
+        status: &str,
     ) -> Result<uuid::Uuid, String> {
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "INSERT INTO sensei.consolidated_rulesets
                 (scope, version, content, conflicts, model, source_hash, status)
              VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id",
         )
-            .bind(scope).bind(version).bind(content).bind(conflicts)
-            .bind(model).bind(source_hash).bind(status)
-            .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
+        .bind(scope)
+        .bind(version)
+        .bind(content)
+        .bind(conflicts)
+        .bind(model)
+        .bind(source_hash)
+        .bind(status)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(row.0)
     }
 
     /// Fetch a scope's consolidated ruleset: the row with `status` when given
     /// (e.g. "approved"), else the latest version.
-    pub async fn get_consolidated_ruleset(&self, scope: &str, status: Option<&str>) -> Result<Option<serde_json::Value>, String> {
+    pub async fn get_consolidated_ruleset(
+        &self,
+        scope: &str,
+        status: Option<&str>,
+    ) -> Result<Option<serde_json::Value>, String> {
         let row: Option<(uuid::Uuid, i32, String, serde_json::Value, Option<String>, String)> = match status {
             Some(s) => sqlx_core::query_as::query_as(
                 "SELECT id, version, content, conflicts, model, status FROM sensei.consolidated_rulesets
@@ -371,21 +420,30 @@ impl PgStore {
                   WHERE scope = $1 ORDER BY version DESC LIMIT 1",
             ).bind(scope).fetch_optional(&self.pool).await,
         }.map_err(|e| e.to_string())?;
-        Ok(row.map(|(id, version, content, conflicts, model, status)| serde_json::json!({
-            "id": id, "version": version, "content": content,
-            "conflicts": conflicts, "model": model, "status": status,
-        })))
+        Ok(row.map(|(id, version, content, conflicts, model, status)| {
+            serde_json::json!({
+                "id": id, "version": version, "content": content,
+                "conflicts": conflicts, "model": model, "status": status,
+            })
+        }))
     }
 
     /// Approve a consolidated ruleset: supersede the scope's prior approved
     /// version, then mark this one approved. Returns (scope, content).
-    pub async fn approve_consolidated_ruleset(&self, id: &uuid::Uuid) -> Result<Option<(String, String)>, String> {
+    pub async fn approve_consolidated_ruleset(
+        &self,
+        id: &uuid::Uuid,
+    ) -> Result<Option<(String, String)>, String> {
         sqlx_core::query::query(
             "UPDATE sensei.consolidated_rulesets SET status = 'superseded'
               WHERE status = 'approved'
                 AND scope = (SELECT scope FROM sensei.consolidated_rulesets WHERE id = $1)
                 AND id <> $1",
-        ).bind(id).execute(&self.pool).await.map_err(|e| e.to_string())?;
+        )
+        .bind(id)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         let row: Option<(String, String)> = sqlx_core::query_as::query_as(
             "UPDATE sensei.consolidated_rulesets SET status = 'approved' WHERE id = $1 RETURNING scope, content",
         ).bind(id).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
@@ -395,7 +453,11 @@ impl PgStore {
     /// Active memories anchored to (slot[, feature]) for a project. `feature=None`
     /// matches project-scope (feature IS NULL); `Some(f)` matches that feature.
     pub async fn list_memories_for_slot(
-        &self, project_id: &uuid::Uuid, slot: &str, feature: Option<&str>, limit: i64,
+        &self,
+        project_id: &uuid::Uuid,
+        slot: &str,
+        feature: Option<&str>,
+        limit: i64,
     ) -> Result<Vec<serde_json::Value>, String> {
         let rows: Vec<(uuid::Uuid, String, String, Option<String>)> =
             sqlx_core::query_as::query_as(
@@ -403,9 +465,15 @@ impl PgStore {
                   WHERE status='active' AND project_id = $1
                     AND spine_slot = $2::sensei.spine_slot
                     AND feature IS NOT DISTINCT FROM $3
-                  ORDER BY strength DESC, modified_at DESC LIMIT $4"
-            ).bind(project_id).bind(slot).bind(feature).bind(limit)
-            .fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+                  ORDER BY strength DESC, modified_at DESC LIMIT $4",
+            )
+            .bind(project_id)
+            .bind(slot)
+            .bind(feature)
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
         Ok(rows.into_iter().map(|(id, title, content, feature)|
             serde_json::json!({ "id": id, "title": title, "content": content, "feature": feature })
         ).collect())
@@ -414,22 +482,35 @@ impl PgStore {
     pub async fn assemble_context(
         &self,
         project_id: uuid::Uuid,
-        stack_ids:  &[String],
-        tags:       Option<&[String]>,
-        limit:      i64,
-        slot:       Option<(&str, Option<&str>)>,
+        stack_ids: &[String],
+        tags: Option<&[String]>,
+        limit: i64,
+        slot: Option<(&str, Option<&str>)>,
     ) -> Result<serde_json::Value, String> {
         let allowed = ["active", "reinforced", "battle_tested", "challenged"];
         let allowed_owned: Vec<String> = allowed.iter().map(|s| s.to_string()).collect();
         let stack_owned: Vec<String> = stack_ids.to_vec();
         let tags_owned: Option<Vec<String>> = tags.map(|t| t.to_vec());
 
-        let rows: Vec<(uuid::Uuid, Option<uuid::Uuid>, String, Option<String>, String, String, String,
-                       Option<String>, f64, String, i32, i32,
-                       Option<chrono::DateTime<chrono::Utc>>, Vec<String>, Option<String>,
-                       chrono::DateTime<chrono::Utc>)> =
-            sqlx_core::query_as::query_as(
-                "SELECT id, project_id, scope::text, scope_filter, type::text, title, content,
+        let rows: Vec<(
+            uuid::Uuid,
+            Option<uuid::Uuid>,
+            String,
+            Option<String>,
+            String,
+            String,
+            String,
+            Option<String>,
+            f64,
+            String,
+            i32,
+            i32,
+            Option<chrono::DateTime<chrono::Utc>>,
+            Vec<String>,
+            Option<String>,
+            chrono::DateTime<chrono::Utc>,
+        )> = sqlx_core::query_as::query_as(
+            "SELECT id, project_id, scope::text, scope_filter, type::text, title, content,
                         impact, strength::float8, status::text, reinforced_count, violated_count,
                         last_relevant_at, tags, triage_signal, modified_at
                    FROM sensei.memories
@@ -441,11 +522,16 @@ impl PgStore {
                     )
                     AND ($4::text[] IS NULL OR tags && $4)
                   ORDER BY strength DESC, last_relevant_at DESC NULLS LAST, modified_at DESC
-                  LIMIT $5"
-            )
-            .bind(&allowed_owned).bind(project_id).bind(&stack_owned)
-            .bind(&tags_owned).bind(limit)
-            .fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+                  LIMIT $5",
+        )
+        .bind(&allowed_owned)
+        .bind(project_id)
+        .bind(&stack_owned)
+        .bind(&tags_owned)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
 
         // Telemetry: log one memory_loads row per delivered memory ("did injected
         // memory help?" — loads here vs applied/ignored outcomes there). The status
@@ -465,31 +551,38 @@ impl PgStore {
                      SELECT id FROM sensei.memories WHERE id = ANY($1::uuid[]) FOR SHARE
                  )
                  INSERT INTO activity.memory_loads (memory_id, project_id, source)
-                 SELECT id, $2, 'get_layered_context' FROM existing"
+                 SELECT id, $2, 'get_layered_context' FROM existing",
             )
-                .bind(&memory_ids).bind(project_id)
-                .execute(&self.pool).await;
+            .bind(&memory_ids)
+            .bind(project_id)
+            .execute(&self.pool)
+            .await;
             if let Err(e) = logged {
                 tracing::warn!(error = %e, count = memory_ids.len(),
                     "assemble_context: failed to log memory loads (non-fatal — context still delivered)");
             }
         }
 
-        let mut memories: Vec<serde_json::Value> = rows.into_iter().map(|r| serde_json::json!({
-            "id":               r.0,
-            "scope":            r.2,
-            "scope_filter":     r.3,
-            "type":             r.4,
-            "title":            r.5,
-            "content":          r.6,
-            "impact":           r.7,
-            "strength":         r.8,
-            "applied_count":    r.10,
-            "violated_count":   r.11,
-            "last_relevant_at": r.12.map(|t| t.to_rfc3339()),
-            "tags":             r.13,
-            "updated_at":       r.15.to_rfc3339(),
-        })).collect();
+        let mut memories: Vec<serde_json::Value> = rows
+            .into_iter()
+            .map(|r| {
+                serde_json::json!({
+                    "id":               r.0,
+                    "scope":            r.2,
+                    "scope_filter":     r.3,
+                    "type":             r.4,
+                    "title":            r.5,
+                    "content":          r.6,
+                    "impact":           r.7,
+                    "strength":         r.8,
+                    "applied_count":    r.10,
+                    "violated_count":   r.11,
+                    "last_relevant_at": r.12.map(|t| t.to_rfc3339()),
+                    "tags":             r.13,
+                    "updated_at":       r.15.to_rfc3339(),
+                })
+            })
+            .collect();
 
         // Slot hint: lead the bundle with slot-anchored memories, deduped against
         // the general blend above (a slot-anchored memory that also matched the
@@ -497,7 +590,8 @@ impl PgStore {
         if let Some((s, feature)) = slot {
             let anchored = self.list_memories_for_slot(&project_id, s, feature, limit).await?;
             if !anchored.is_empty() {
-                let anchored_ids: std::collections::HashSet<String> = anchored.iter()
+                let anchored_ids: std::collections::HashSet<String> = anchored
+                    .iter()
                     .filter_map(|m| m["id"].as_str().map(|s| s.to_string()))
                     .collect();
                 memories.retain(|m| {
@@ -510,7 +604,8 @@ impl PgStore {
         }
 
         // Version = max modified_at across the set (stable identifier for cache validation).
-        let version = memories.iter()
+        let version = memories
+            .iter()
             .filter_map(|m| m["updated_at"].as_str().map(|s| s.to_string()))
             .max()
             .unwrap_or_default();
@@ -522,5 +617,4 @@ impl PgStore {
             "cache_until": cache_until,
         }))
     }
-
 }

@@ -3,7 +3,7 @@
 use std::fs;
 use std::path::Path;
 
-use super::{cache_dir, sensei_dir, Catalog, MARKETPLACE_CATALOG, MARKETPLACE_REPO};
+use super::{Catalog, MARKETPLACE_CATALOG, MARKETPLACE_REPO, cache_dir, sensei_dir};
 
 // ── Catalog fetch/cache ──────────────────────────────────────────────────────
 
@@ -15,13 +15,14 @@ pub fn fetch_catalog() -> Result<Catalog, String> {
     // Check cache
     if cached_path.exists()
         && let Ok(content) = fs::read_to_string(&cached_path)
-            && let Ok(catalog) = serde_json::from_str::<Catalog>(&content) {
-                let cached_ver = catalog.version.as_deref().unwrap_or("");
-                let saved_ver = load_marketplace_version();
-                if !cached_ver.is_empty() && cached_ver == saved_ver {
-                    return Ok(catalog);
-                }
-            }
+        && let Ok(catalog) = serde_json::from_str::<Catalog>(&content)
+    {
+        let cached_ver = catalog.version.as_deref().unwrap_or("");
+        let saved_ver = load_marketplace_version();
+        if !cached_ver.is_empty() && cached_ver == saved_ver {
+            return Ok(catalog);
+        }
+    }
 
     // Download fresh
     let url = format!("{}/{}", MARKETPLACE_REPO, MARKETPLACE_CATALOG);
@@ -73,9 +74,7 @@ pub(super) fn load_or_download(cache: &Path, path: &str) -> Result<String, Strin
 
 pub(super) fn load_marketplace_version() -> String {
     let dir = sensei_dir();
-    sensei_bootstrap::SenseiLocalConfig::load(&dir)
-        .marketplace_version
-        .unwrap_or_default()
+    sensei_bootstrap::SenseiLocalConfig::load(&dir).marketplace_version.unwrap_or_default()
 }
 
 pub(super) fn save_marketplace_version(version: &str) {
@@ -89,8 +88,8 @@ pub(super) fn save_marketplace_version(version: &str) {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::CatalogItem;
+    use super::*;
     use std::fs;
 
     // ── Catalog deserialization ────────────────────────────────────────

@@ -3,8 +3,8 @@
 
 use std::fs;
 
-use super::{cache_dir, home, Catalog, CatalogItem};
 use super::catalog::{fetch_catalog, load_or_download, save_marketplace_version};
+use super::{Catalog, CatalogItem, cache_dir, home};
 
 // ── Marketplace install ──────────────────────────────────────────────────────
 
@@ -48,7 +48,10 @@ pub(super) fn install_marketplace(
             _ => continue,
         };
         if let Some(parent) = dest.parent()
-            && let Err(e) = fs::create_dir_all(parent) { tracing::warn!(dir = %parent.display(), error = %e, "failed to create marketplace dest directory"); }
+            && let Err(e) = fs::create_dir_all(parent)
+        {
+            tracing::warn!(dir = %parent.display(), error = %e, "failed to create marketplace dest directory");
+        }
         fs::write(&dest, &content).map_err(|e| e.to_string())?;
     }
 
@@ -88,10 +91,12 @@ fn remove_stale_in(dir: &std::path::Path, keep: &std::collections::HashSet<Strin
     if let Ok(entries) = fs::read_dir(dir) {
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().to_string();
-            if name.ends_with(".md") && !keep.contains(&name)
-                && fs::remove_file(entry.path()).is_ok() {
-                    removed += 1;
-                }
+            if name.ends_with(".md")
+                && !keep.contains(&name)
+                && fs::remove_file(entry.path()).is_ok()
+            {
+                removed += 1;
+            }
         }
     }
     removed

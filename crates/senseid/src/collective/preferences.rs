@@ -26,7 +26,8 @@ pub const CADENCES: [&str; 3] = ["manual", "daily", "weekly"];
 /// Shareable categories, in display order (spec Purpose list:
 /// memory · pattern · rule · prompt · guard · skill · agent). A per-category
 /// toggle gates whether that kind of insight may enter the next share batch.
-pub const CATEGORIES: [&str; 7] = ["memory", "pattern", "rule", "prompt", "guard", "skill", "agent"];
+pub const CATEGORIES: [&str; 7] =
+    ["memory", "pattern", "rule", "prompt", "guard", "skill", "agent"];
 
 /// Default destination — nothing leaves the machine until the user opts in.
 const DEFAULT_DESTINATION: &str = "none";
@@ -98,7 +99,10 @@ fn parse_categories(body: &serde_json::Value) -> Result<BTreeMap<String, bool>, 
         Some(serde_json::Value::Object(map)) => {
             for (k, v) in map {
                 if !CATEGORIES.contains(&k.as_str()) {
-                    return Err(format!("unknown category: {k:?} (allowed: {})", CATEGORIES.join(", ")));
+                    return Err(format!(
+                        "unknown category: {k:?} (allowed: {})",
+                        CATEGORIES.join(", ")
+                    ));
                 }
                 let b = v.as_bool().ok_or_else(|| format!("category {k:?} must be a boolean"))?;
                 out.insert(k.clone(), b);
@@ -122,7 +126,10 @@ impl CollectivePreferences {
             destination: parse_enum_field(body, "destination", &DESTINATIONS, DEFAULT_DESTINATION)?,
             cadence: parse_enum_field(body, "cadence", &CADENCES, DEFAULT_CADENCE)?,
             attribution_default: parse_enum_field(
-                body, "attribution_default", &attribution_modes(), DEFAULT_ATTRIBUTION,
+                body,
+                "attribution_default",
+                &attribution_modes(),
+                DEFAULT_ATTRIBUTION,
             )?,
             categories: parse_categories(body)?,
             updated_at: None,
@@ -162,10 +169,18 @@ pub async fn get(pg: &PgStore) -> Result<CollectivePreferences, String> {
 
 /// Upsert the (already-validated) preferences and return the saved shape with the
 /// store-assigned `updated_at`.
-pub async fn set(pg: &PgStore, prefs: CollectivePreferences) -> Result<CollectivePreferences, String> {
+pub async fn set(
+    pg: &PgStore,
+    prefs: CollectivePreferences,
+) -> Result<CollectivePreferences, String> {
     let categories = serde_json::to_value(&prefs.categories).map_err(|e| e.to_string())?;
     let updated_at = pg
-        .set_collective_preferences(&prefs.destination, &prefs.cadence, &categories, &prefs.attribution_default)
+        .set_collective_preferences(
+            &prefs.destination,
+            &prefs.cadence,
+            &categories,
+            &prefs.attribution_default,
+        )
         .await?;
     Ok(CollectivePreferences { updated_at: Some(updated_at), ..prefs })
 }
@@ -175,8 +190,7 @@ pub async fn set(pg: &PgStore, prefs: CollectivePreferences) -> Result<Collectiv
 /// clobber each other's expected state on the shared singleton.
 #[cfg(test)]
 pub(crate) fn test_lock() -> &'static crate::tasks::test_support::TestGate {
-    static LOCK: crate::tasks::test_support::TestGate =
-        crate::tasks::test_support::TestGate::new();
+    static LOCK: crate::tasks::test_support::TestGate = crate::tasks::test_support::TestGate::new();
     &LOCK
 }
 
@@ -272,8 +286,12 @@ mod tests {
     #[test]
     fn from_request_rejects_non_object_body_and_wrong_typed_fields() {
         assert!(CollectivePreferences::from_request(&serde_json::json!("nope")).is_err());
-        assert!(CollectivePreferences::from_request(&serde_json::json!({ "destination": 7 })).is_err());
-        assert!(CollectivePreferences::from_request(&serde_json::json!({ "categories": [] })).is_err());
+        assert!(
+            CollectivePreferences::from_request(&serde_json::json!({ "destination": 7 })).is_err()
+        );
+        assert!(
+            CollectivePreferences::from_request(&serde_json::json!({ "categories": [] })).is_err()
+        );
     }
 
     #[test]

@@ -5,9 +5,9 @@ use super::types::ComponentStatus;
 
 #[derive(Debug, Clone)]
 pub struct CheckOutcome {
-    pub status:  ComponentStatus,  // Ready or Failed (Pending/Checking are orchestrator-set)
+    pub status: ComponentStatus, // Ready or Failed (Pending/Checking are orchestrator-set)
     pub version: Option<String>,
-    pub detail:  Option<String>,   // failure detail when status==Failed
+    pub detail: Option<String>, // failure detail when status==Failed
 }
 
 impl CheckOutcome {

@@ -18,11 +18,7 @@ impl PgStore {
     ///
     /// Idempotent on `lower(label)` so a re-run of a seed/backfill converges
     /// instead of erroring or duplicating.
-    pub async fn upsert_persona(
-        &self,
-        label: &str,
-        is_self: bool,
-    ) -> Result<uuid::Uuid, String> {
+    pub async fn upsert_persona(&self, label: &str, is_self: bool) -> Result<uuid::Uuid, String> {
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "INSERT INTO sensei.personas(label, is_self) VALUES($1, $2) \
              ON CONFLICT (lower(label)) DO UPDATE SET is_self = EXCLUDED.is_self, \

@@ -8,13 +8,13 @@
 //!
 //! Context is a flexible jsonb bag. Callers inject module, method, task_id, etc.
 
+pub mod logger;
 pub mod types;
 pub mod writer;
-pub mod logger;
 
-pub use types::{LogLevel, LogEntry};
-pub use writer::LogWriter;
 pub use logger::Logger;
+pub use types::{LogEntry, LogLevel};
+pub use writer::LogWriter;
 
 #[cfg(test)]
 mod tests {
@@ -30,7 +30,9 @@ mod tests {
 
     #[test]
     fn log_level_round_trip() {
-        for level in [LogLevel::Error, LogLevel::Warn, LogLevel::Info, LogLevel::Debug, LogLevel::Trace] {
+        for level in
+            [LogLevel::Error, LogLevel::Warn, LogLevel::Info, LogLevel::Debug, LogLevel::Trace]
+        {
             assert_eq!(LogLevel::parse(level.as_str()), level);
         }
     }

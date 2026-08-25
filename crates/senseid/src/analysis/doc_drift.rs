@@ -119,9 +119,8 @@ fn is_candidate_identifier(raw: &str) -> bool {
     }
     // Compound-shape requirement — see module docs.
     let has_underscore = bytes.contains(&b'_');
-    let has_case_transition = bytes
-        .windows(2)
-        .any(|w| w[0].is_ascii_lowercase() && w[1].is_ascii_uppercase());
+    let has_case_transition =
+        bytes.windows(2).any(|w| w[0].is_ascii_lowercase() && w[1].is_ascii_uppercase());
     if !(has_underscore || has_case_transition || had_call_marker) {
         return false;
     }
@@ -205,10 +204,7 @@ mod tests {
         // a doc mentioning `CLOUDFLARE_API_TOKEN` or `CF_PAGES` isn't drift.
         // A snake_case symbol alongside them still passes.
         let content = "Set `CLOUDFLARE_API_TOKEN` and `CF_PAGES`, then call `process_event`.";
-        assert_eq!(
-            extract_identifier_mentions(content),
-            vec!["process_event".to_string()],
-        );
+        assert_eq!(extract_identifier_mentions(content), vec!["process_event".to_string()],);
     }
 
     #[test]
@@ -239,11 +235,9 @@ mod tests {
 
     #[test]
     fn skips_stopwords_short_tokens_and_digits() {
-        let content = "Use `if` (skip) or `x` (short) or `9lives` (bad start), but keep `parse_line`.";
-        assert_eq!(
-            extract_identifier_mentions(content),
-            vec!["parse_line".to_string()],
-        );
+        let content =
+            "Use `if` (skip) or `x` (short) or `9lives` (bad start), but keep `parse_line`.";
+        assert_eq!(extract_identifier_mentions(content), vec!["parse_line".to_string()],);
     }
 
     #[test]
@@ -251,10 +245,7 @@ mod tests {
         // `parse()` — bare word + call marker — is a clear code reference
         // even without a compound shape.
         let content = "Then `parse()` is invoked.";
-        assert_eq!(
-            extract_identifier_mentions(content),
-            vec!["parse".to_string()],
-        );
+        assert_eq!(extract_identifier_mentions(content), vec!["parse".to_string()],);
     }
 
     #[test]
@@ -279,10 +270,7 @@ Back to prose: `still_counted`.";
     #[test]
     fn ignores_unmatched_backticks() {
         let content = "Half-open ` never closes on this line.\nBut `closed_pair` is fine.";
-        assert_eq!(
-            extract_identifier_mentions(content),
-            vec!["closed_pair".to_string()],
-        );
+        assert_eq!(extract_identifier_mentions(content), vec!["closed_pair".to_string()],);
     }
 
     #[test]

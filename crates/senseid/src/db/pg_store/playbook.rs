@@ -3,10 +3,14 @@ use super::*;
 #[allow(dead_code, clippy::too_many_arguments, clippy::type_complexity)]
 impl PgStore {
     pub async fn list_playbooks(&self) -> Result<Vec<serde_json::Value>, String> {
-        let rows: Vec<(String, String, String, String, Option<String>)> = sqlx_core::query_as::query_as(
-            "SELECT name, title, when_to_use, opening_tone, method_ref
-               FROM sensei.playbooks WHERE enabled ORDER BY name"
-        ).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        let rows: Vec<(String, String, String, String, Option<String>)> =
+            sqlx_core::query_as::query_as(
+                "SELECT name, title, when_to_use, opening_tone, method_ref
+               FROM sensei.playbooks WHERE enabled ORDER BY name",
+            )
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
         Ok(rows.into_iter().map(|(name,title,wtu,tone,mref)| serde_json::json!({
             "name":name,"title":title,"when_to_use":wtu,"opening_tone":tone,"method_ref":mref
         })).collect())
@@ -15,41 +19,74 @@ impl PgStore {
     /// Fetch a single playbook by name (any enabled state), for enriching a
     /// recommendation response with its `opening_tone` + `when_to_use`.
     pub async fn get_playbook(&self, name: &str) -> Result<Option<serde_json::Value>, String> {
-        let row: Option<(String, String, String, String, Option<String>)> = sqlx_core::query_as::query_as(
-            "SELECT name, title, when_to_use, opening_tone, method_ref
-               FROM sensei.playbooks WHERE name = $1"
-        ).bind(name).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
+        let row: Option<(String, String, String, String, Option<String>)> =
+            sqlx_core::query_as::query_as(
+                "SELECT name, title, when_to_use, opening_tone, method_ref
+               FROM sensei.playbooks WHERE name = $1",
+            )
+            .bind(name)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
         Ok(row.map(|(name, title, wtu, tone, mref)| serde_json::json!({
             "name": name, "title": title, "when_to_use": wtu, "opening_tone": tone, "method_ref": mref
         })))
     }
 
     pub async fn list_intake_guide(&self) -> Result<Vec<serde_json::Value>, String> {
-        let rows: Vec<(String, Option<String>, String, Option<String>)> = sqlx_core::query_as::query_as(
-            "SELECT kind, axis, prompt, help FROM sensei.intake_guide WHERE enabled
-              ORDER BY (kind='frame') DESC, axis"
-        ).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
-        Ok(rows.into_iter().map(|(kind,axis,prompt,help)| serde_json::json!({
-            "kind":kind,"axis":axis,"prompt":prompt,"help":help
-        })).collect())
+        let rows: Vec<(String, Option<String>, String, Option<String>)> =
+            sqlx_core::query_as::query_as(
+                "SELECT kind, axis, prompt, help FROM sensei.intake_guide WHERE enabled
+              ORDER BY (kind='frame') DESC, axis",
+            )
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(rows
+            .into_iter()
+            .map(|(kind, axis, prompt, help)| {
+                serde_json::json!({
+                    "kind":kind,"axis":axis,"prompt":prompt,"help":help
+                })
+            })
+            .collect())
     }
 
     /// Returns the rule set as pure `crate::playbook::Rule`s (ready for the resolver).
     pub async fn list_playbook_rules(&self) -> Result<Vec<crate::playbook::Rule>, String> {
-        use crate::playbook::{Rule, Lifecycle, Intent, Risk};
-        let rows: Vec<(uuid::Uuid, String, Option<String>, Option<String>, Option<String>, String, String, i32, i32)> =
-            sqlx_core::query_as::query_as(
-                "SELECT id, name, match_lifecycle::text, match_intent::text, match_risk::text,
+        use crate::playbook::{Intent, Lifecycle, Risk, Rule};
+        let rows: Vec<(
+            uuid::Uuid,
+            String,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            String,
+            String,
+            i32,
+            i32,
+        )> = sqlx_core::query_as::query_as(
+            "SELECT id, name, match_lifecycle::text, match_intent::text, match_risk::text,
                         playbook, rationale, priority, coalesce(base_priority, priority)
-                   FROM sensei.playbook_rules WHERE enabled ORDER BY priority DESC"
-            ).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
-        Ok(rows.into_iter().map(|(id,name,lf,it,rk,pb,rat,pri,base_pri)| Rule {
-            id: Some(id), name,
-            match_lifecycle: lf.as_deref().and_then(Lifecycle::parse),
-            match_intent:    it.as_deref().and_then(Intent::parse),
-            match_risk:      rk.as_deref().and_then(Risk::parse),
-            playbook: pb, rationale: rat, priority: pri, base_priority: base_pri,
-        }).collect())
+                   FROM sensei.playbook_rules WHERE enabled ORDER BY priority DESC",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(rows
+            .into_iter()
+            .map(|(id, name, lf, it, rk, pb, rat, pri, base_pri)| Rule {
+                id: Some(id),
+                name,
+                match_lifecycle: lf.as_deref().and_then(Lifecycle::parse),
+                match_intent: it.as_deref().and_then(Intent::parse),
+                match_risk: rk.as_deref().and_then(Risk::parse),
+                playbook: pb,
+                rationale: rat,
+                priority: pri,
+                base_priority: base_pri,
+            })
+            .collect())
     }
 
     /// Snapshot the session's outcome onto confirmed, not-yet-attributed runs. Returns rows updated.
@@ -59,24 +96,41 @@ impl PgStore {
                 SET outcome = s.outcome::text, outcome_ftr = s.ftr
                FROM activity.sessions s
               WHERE pr.session_id = s.id AND pr.confirmed
-                AND pr.outcome IS NULL AND s.outcome IS NOT NULL"
-        ).execute(&self.pool).await.map_err(|e| e.to_string())?;
+                AND pr.outcome IS NULL AND s.outcome IS NOT NULL",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(res.rows_affected())
     }
 
-    pub async fn playbook_combo_stats(&self) -> Result<Vec<crate::playbook::ComboPlaybookStat>, String> {
-        use crate::playbook::{ComboPlaybookStat, Lifecycle, Intent, Risk};
+    pub async fn playbook_combo_stats(
+        &self,
+    ) -> Result<Vec<crate::playbook::ComboPlaybookStat>, String> {
+        use crate::playbook::{ComboPlaybookStat, Intent, Lifecycle, Risk};
         let rows: Vec<(String, String, String, String, i64, f64)> = sqlx_core::query_as::query_as(
             "SELECT lifecycle::text, intent::text, risk::text, playbook,
                     count(*)::int8, avg(outcome_ftr::int)::float8
                FROM sensei.playbook_run
               WHERE confirmed AND outcome_ftr IS NOT NULL
-              GROUP BY lifecycle, intent, risk, playbook"
-        ).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
-        Ok(rows.into_iter().filter_map(|(l,i,r,pb,n,ftr)| Some(ComboPlaybookStat {
-            lifecycle: Lifecycle::parse(&l)?, intent: Intent::parse(&i)?, risk: Risk::parse(&r)?,
-            playbook: pb, n, ftr_rate: ftr,
-        })).collect())
+              GROUP BY lifecycle, intent, risk, playbook",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(rows
+            .into_iter()
+            .filter_map(|(l, i, r, pb, n, ftr)| {
+                Some(ComboPlaybookStat {
+                    lifecycle: Lifecycle::parse(&l)?,
+                    intent: Intent::parse(&i)?,
+                    risk: Risk::parse(&r)?,
+                    playbook: pb,
+                    n,
+                    ftr_rate: ftr,
+                })
+            })
+            .collect())
     }
 
     /// Confirmed+attributed sample size + FTR rate for one exact (lifecycle, intent,
@@ -88,16 +142,28 @@ impl PgStore {
     /// signal). Returns `(n confirmed+attributed runs, avg FTR)` for the combo
     /// within `project_id`.
     pub async fn playbook_combo_trust(
-        &self, lifecycle: &str, intent: &str, risk: &str, playbook: &str, project_id: &uuid::Uuid,
+        &self,
+        lifecycle: &str,
+        intent: &str,
+        risk: &str,
+        playbook: &str,
+        project_id: &uuid::Uuid,
     ) -> Result<(i64, f64), String> {
         let row: (i64, f64) = sqlx_core::query_as::query_as(
             "SELECT count(*)::int8, coalesce(avg(outcome_ftr::int)::float8, 0.0)
                FROM sensei.playbook_run
               WHERE confirmed AND outcome_ftr IS NOT NULL
                 AND lifecycle=$1::sensei.chunk_lifecycle AND intent=$2::sensei.chunk_intent
-                AND risk=$3::sensei.chunk_risk AND playbook=$4 AND project_id=$5"
-        ).bind(lifecycle).bind(intent).bind(risk).bind(playbook).bind(project_id)
-         .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
+                AND risk=$3::sensei.chunk_risk AND playbook=$4 AND project_id=$5",
+        )
+        .bind(lifecycle)
+        .bind(intent)
+        .bind(risk)
+        .bind(playbook)
+        .bind(project_id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(row)
     }
 
@@ -107,10 +173,19 @@ impl PgStore {
     /// both feed the §9 measurement of local-model usefulness.
     #[allow(clippy::too_many_arguments)]
     pub async fn insert_playbook_run(
-        &self, session_id: Option<uuid::Uuid>, feature: Option<&str>,
-        lifecycle: &str, intent: &str, risk: &str,
-        rule_id: Option<uuid::Uuid>, playbook: &str, rationale: &str, confirmed: bool,
-        classified_by: Option<&str>, model_fallback: bool, project_id: uuid::Uuid,
+        &self,
+        session_id: Option<uuid::Uuid>,
+        feature: Option<&str>,
+        lifecycle: &str,
+        intent: &str,
+        risk: &str,
+        rule_id: Option<uuid::Uuid>,
+        playbook: &str,
+        rationale: &str,
+        confirmed: bool,
+        classified_by: Option<&str>,
+        model_fallback: bool,
+        project_id: uuid::Uuid,
     ) -> Result<uuid::Uuid, String> {
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "INSERT INTO sensei.playbook_run
@@ -131,8 +206,12 @@ impl PgStore {
     /// one that already confirmed a playbook is left alone.
     pub async fn session_has_confirmed_run(&self, session_id: &uuid::Uuid) -> Result<bool, String> {
         let row: (bool,) = sqlx_core::query_as::query_as(
-            "SELECT exists(SELECT 1 FROM sensei.playbook_run WHERE session_id = $1 AND confirmed)"
-        ).bind(session_id).fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
+            "SELECT exists(SELECT 1 FROM sensei.playbook_run WHERE session_id = $1 AND confirmed)",
+        )
+        .bind(session_id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(row.0)
     }
 
@@ -144,7 +223,11 @@ impl PgStore {
     pub async fn apply_learn_plan(&self, plan: &crate::playbook::LearnPlan) -> Result<(), String> {
         for (id, new_priority) in &plan.reweights {
             sqlx_core::query::query("UPDATE sensei.playbook_rules SET priority = $2 WHERE id = $1")
-                .bind(id).bind(new_priority).execute(&self.pool).await.map_err(|e| e.to_string())?;
+                .bind(id)
+                .bind(new_priority)
+                .execute(&self.pool)
+                .await
+                .map_err(|e| e.to_string())?;
         }
         for p in &plan.proposals {
             sqlx_core::query::query(
@@ -190,8 +273,12 @@ impl PgStore {
     /// the caller can 404 instead of fabricating `{accepted}` for a no-op UPDATE.
     pub async fn accept_playbook_rule(&self, id: &uuid::Uuid) -> Result<bool, String> {
         let res = sqlx_core::query::query(
-            "UPDATE sensei.playbook_rules SET enabled=true WHERE id=$1 AND source='learned'"
-        ).bind(id).execute(&self.pool).await.map_err(|e| e.to_string())?;
+            "UPDATE sensei.playbook_rules SET enabled=true WHERE id=$1 AND source='learned'",
+        )
+        .bind(id)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(res.rows_affected() > 0)
     }
 
@@ -202,10 +289,18 @@ impl PgStore {
         let rows: Vec<(Option<String>, Option<bool>, i64, f64)> = sqlx_core::query_as::query_as(
             "SELECT classified_by, model_fallback, count(*)::int8, avg(outcome_ftr::int)::float8
                FROM sensei.playbook_run WHERE confirmed AND outcome_ftr IS NOT NULL
-              GROUP BY classified_by, model_fallback ORDER BY count(*) DESC"
-        ).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
-        Ok(rows.into_iter().map(|(cb,mf,n,ftr)| serde_json::json!({
-            "classified_by": cb, "model_fallback": mf, "n": n, "ftr_rate": ftr
-        })).collect())
+              GROUP BY classified_by, model_fallback ORDER BY count(*) DESC",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(rows
+            .into_iter()
+            .map(|(cb, mf, n, ftr)| {
+                serde_json::json!({
+                    "classified_by": cb, "model_fallback": mf, "n": n, "ftr_rate": ftr
+                })
+            })
+            .collect())
     }
 }

@@ -1,7 +1,7 @@
 //! Project summary extraction from README and config files.
 
-use std::path::Path;
 use serde::Serialize;
+use std::path::Path;
 
 /// Extracted project summary from README or config files.
 #[derive(Debug, Clone, Serialize, Default)]
@@ -46,9 +46,7 @@ pub fn extract_summary(repo_path: &Path) -> ProjectSummary {
     }
 
     // Infer status from signals
-    if repo_path.join("DEPRECATED.md").is_file()
-        || repo_path.join(".archived").is_file()
-    {
+    if repo_path.join("DEPRECATED.md").is_file() || repo_path.join(".archived").is_file() {
         summary.status = Some("archived".into());
     }
 
@@ -67,14 +65,26 @@ pub(crate) fn extract_first_paragraph(content: &str) -> Option<String> {
             in_frontmatter = !in_frontmatter;
             continue;
         }
-        if in_frontmatter { continue; }
+        if in_frontmatter {
+            continue;
+        }
 
         // Skip headings, badges, empty lines
-        if trimmed.is_empty() { continue; }
-        if trimmed.starts_with('#') { continue; }
-        if trimmed.starts_with('[') && trimmed.contains("![") { continue; } // badge
-        if trimmed.starts_with("![") { continue; } // image
-        if trimmed.starts_with('<') { continue; } // HTML
+        if trimmed.is_empty() {
+            continue;
+        }
+        if trimmed.starts_with('#') {
+            continue;
+        }
+        if trimmed.starts_with('[') && trimmed.contains("![") {
+            continue;
+        } // badge
+        if trimmed.starts_with("![") {
+            continue;
+        } // image
+        if trimmed.starts_with('<') {
+            continue;
+        } // HTML
 
         let desc = trimmed.to_string();
         // Cap at 200 chars
@@ -93,20 +103,15 @@ mod tests {
 
     #[test]
     fn extract_first_paragraph_skips_frontmatter_and_headings() {
-        let content = "---\ntitle: Test\n---\n# My Project\n\nThis is the description.\n\nMore text.";
-        assert_eq!(
-            extract_first_paragraph(content).as_deref(),
-            Some("This is the description.")
-        );
+        let content =
+            "---\ntitle: Test\n---\n# My Project\n\nThis is the description.\n\nMore text.";
+        assert_eq!(extract_first_paragraph(content).as_deref(), Some("This is the description."));
     }
 
     #[test]
     fn extract_first_paragraph_skips_badges() {
         let content = "# Title\n\n[![badge](https://img.shields.io/foo)]\n\nReal description here.";
-        assert_eq!(
-            extract_first_paragraph(content).as_deref(),
-            Some("Real description here.")
-        );
+        assert_eq!(extract_first_paragraph(content).as_deref(), Some("Real description here."));
     }
 
     #[test]
@@ -115,7 +120,8 @@ mod tests {
         fs::write(
             dir.path().join("package.json"),
             r#"{"name": "acme", "description": "The Acme platform"}"#,
-        ).unwrap();
+        )
+        .unwrap();
 
         let summary = extract_summary(dir.path());
         assert_eq!(summary.description.as_deref(), Some("The Acme platform"));
@@ -136,7 +142,8 @@ mod tests {
         fs::write(
             dir.path().join("Cargo.toml"),
             "[package]\nname = \"c\"\ndescription = \"A Rust thing\"",
-        ).unwrap();
+        )
+        .unwrap();
         let summary = extract_summary(dir.path());
         assert_eq!(summary.description.as_deref(), Some("A Rust thing"));
     }
@@ -149,7 +156,8 @@ mod tests {
         fs::write(
             dir.path().join("pyproject.toml"),
             "[project]\nname = \"y\"\ndescription = \"A python thing\"\n",
-        ).unwrap();
+        )
+        .unwrap();
         let summary = extract_summary(dir.path());
         assert_eq!(summary.description.as_deref(), Some("A python thing"));
     }

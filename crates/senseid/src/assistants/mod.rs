@@ -1,23 +1,23 @@
-mod helpers;
-mod trait_def;
 mod claude_code;
-mod mcp_file;
 mod health;
+mod helpers;
+mod mcp_file;
+mod trait_def;
 mod watchdog;
 pub use health::{
-    business_elapsed_hours, capture_freshness,
-    AdapterCheck, AdapterHealth, AdapterResolveReport, CheckStatus,
+    AdapterCheck, AdapterHealth, AdapterResolveReport, CheckStatus, business_elapsed_hours,
+    capture_freshness,
 };
-pub use watchdog::{health_report, run_sweep, resolve_adapter, BreakerMap, CaptureWindow};
+pub use watchdog::{BreakerMap, CaptureWindow, health_report, resolve_adapter, run_sweep};
 
+use crate::api::events::{AssistantPartEvent, AssistantPartStatus, StateEvent};
+use claude_code::ClaudeCodeAssistant;
+use helpers::find_mcp_binary;
+use mcp_file::{McpEntryFormat, McpFileAssistant};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use tokio::sync::broadcast;
 use trait_def::Assistant;
-use claude_code::ClaudeCodeAssistant;
-use mcp_file::{McpFileAssistant, McpEntryFormat};
-use helpers::find_mcp_binary;
-use crate::api::events::{AssistantPartEvent, AssistantPartStatus, StateEvent};
 
 // ── Registry ───────────────────────────────────────────────────────────────
 
@@ -31,8 +31,10 @@ fn all_assistants() -> Vec<Box<dyn Assistant>> {
     vec![
         Box::new(ClaudeCodeAssistant),
         Box::new(McpFileAssistant {
-            id: "claude-desktop", name: "Claude Desktop",
-            family_id: Some("claude"), family_label: Some("Claude"),
+            id: "claude-desktop",
+            name: "Claude Desktop",
+            family_id: Some("claude"),
+            family_label: Some("Claude"),
             mcp_key: "mcpServers",
             config_rel: "Library/Application Support/Claude/claude_desktop_config.json",
             entry_format: McpEntryFormat::Standard,
@@ -41,8 +43,10 @@ fn all_assistants() -> Vec<Box<dyn Assistant>> {
             home_paths: &[],
         }),
         Box::new(McpFileAssistant {
-            id: "cursor", name: "Cursor",
-            family_id: None, family_label: None,
+            id: "cursor",
+            name: "Cursor",
+            family_id: None,
+            family_label: None,
             mcp_key: "mcpServers",
             config_rel: ".cursor/mcp.json",
             entry_format: McpEntryFormat::Standard,
@@ -51,8 +55,10 @@ fn all_assistants() -> Vec<Box<dyn Assistant>> {
             home_paths: &[],
         }),
         Box::new(McpFileAssistant {
-            id: "windsurf", name: "Windsurf",
-            family_id: None, family_label: None,
+            id: "windsurf",
+            name: "Windsurf",
+            family_id: None,
+            family_label: None,
             mcp_key: "mcpServers",
             config_rel: ".codeium/windsurf/mcp_config.json",
             entry_format: McpEntryFormat::Standard,
@@ -61,8 +67,10 @@ fn all_assistants() -> Vec<Box<dyn Assistant>> {
             home_paths: &[],
         }),
         Box::new(McpFileAssistant {
-            id: "zed", name: "Zed",
-            family_id: None, family_label: None,
+            id: "zed",
+            name: "Zed",
+            family_id: None,
+            family_label: None,
             mcp_key: "mcpServers",
             config_rel: ".config/zed/settings.json",
             entry_format: McpEntryFormat::Standard,
@@ -71,8 +79,10 @@ fn all_assistants() -> Vec<Box<dyn Assistant>> {
             home_paths: &[".config/zed/settings.json"],
         }),
         Box::new(McpFileAssistant {
-            id: "kiro", name: "Kiro",
-            family_id: None, family_label: None,
+            id: "kiro",
+            name: "Kiro",
+            family_id: None,
+            family_label: None,
             mcp_key: "mcpServers",
             config_rel: ".kiro/settings/mcp.json",
             entry_format: McpEntryFormat::Standard,
@@ -81,8 +91,10 @@ fn all_assistants() -> Vec<Box<dyn Assistant>> {
             home_paths: &[],
         }),
         Box::new(McpFileAssistant {
-            id: "opencode", name: "OpenCode",
-            family_id: None, family_label: None,
+            id: "opencode",
+            name: "OpenCode",
+            family_id: None,
+            family_label: None,
             mcp_key: "mcp",
             config_rel: ".config/opencode/opencode.json",
             entry_format: McpEntryFormat::OpenCode,
@@ -91,8 +103,10 @@ fn all_assistants() -> Vec<Box<dyn Assistant>> {
             home_paths: &[".config/opencode/opencode.json", ".local/bin/opencode"],
         }),
         Box::new(McpFileAssistant {
-            id: "vscode", name: "VS Code",
-            family_id: None, family_label: None,
+            id: "vscode",
+            name: "VS Code",
+            family_id: None,
+            family_label: None,
             mcp_key: "mcpServers",
             config_rel: ".vscode/mcp.json",
             entry_format: McpEntryFormat::Standard,
@@ -202,7 +216,9 @@ pub fn detect_families() -> Vec<AssistantFamily> {
         let variant_parts = asst.parts();
 
         if let Some(existing) = families.iter_mut().find(|f| f.family == fam_id) {
-            if status.installed { existing.installed = true; }
+            if status.installed {
+                existing.installed = true;
+            }
             existing.members.push(status);
             for part in variant_parts {
                 if !existing.parts.iter().any(|p| p.id == part.id) {
@@ -262,7 +278,9 @@ pub fn configure(
         match asst.configure(&mcp_cmd) {
             Ok(ok) => {
                 result.configured.push(asst.id().to_string());
-                if ok.plugin { result.plugin_installed = true; }
+                if ok.plugin {
+                    result.plugin_installed = true;
+                }
                 // Soft failures stay in `warnings` — the assistant did
                 // configure successfully, but a side-effect (e.g. dev-hook
                 // entries) didn't. Merging them into `errors` was hiding the
@@ -285,7 +303,8 @@ pub fn configure(
     // already completed, the local config just won't reflect the run.
     let sensei_dir = crate::paths::sensei_dir();
     let mut local_cfg = sensei_bootstrap::SenseiLocalConfig::load(&sensei_dir);
-    local_cfg.configured_assistants = targets.iter()
+    local_cfg.configured_assistants = targets
+        .iter()
         .filter(|a| result.configured.contains(&a.id().to_string()))
         .map(|a| a.id().to_string())
         .collect();
@@ -394,7 +413,10 @@ pub fn remove_selected(
                 Some(asst.id().to_string())
             } else {
                 emit_parts(
-                    event_tx, &family, &parts, AssistantPartStatus::Error,
+                    event_tx,
+                    &family,
+                    &parts,
+                    AssistantPartStatus::Error,
                     Some("remove failed"),
                 );
                 None
@@ -415,7 +437,9 @@ pub fn installed_mcp_keys() -> HashSet<String> {
     let mut keys = HashSet::new();
     for asst in all_assistants() {
         let path = asst.config_path();
-        if !path.exists() { continue; }
+        if !path.exists() {
+            continue;
+        }
         let content = match std::fs::read_to_string(&path) {
             Ok(c) => c,
             Err(e) => {
@@ -445,7 +469,7 @@ pub fn installed_mcp_keys() -> HashSet<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use helpers::{upsert_sensei_in_json, remove_sensei_from_json};
+    use helpers::{remove_sensei_from_json, upsert_sensei_in_json};
     use sensei_bootstrap::MCP_REGISTRY_KEY;
 
     // ── ConfigureResult: warnings vs errors ───────────────────────────────────
@@ -453,10 +477,16 @@ mod tests {
     #[test]
     fn configure_result_default_has_empty_warnings_and_errors() {
         let r = ConfigureResult::default();
-        assert!(r.warnings.is_empty(),
-            "default ConfigureResult must not carry warnings (got: {:?})", r.warnings);
-        assert!(r.errors.is_empty(),
-            "default ConfigureResult must not carry errors (got: {:?})", r.errors);
+        assert!(
+            r.warnings.is_empty(),
+            "default ConfigureResult must not carry warnings (got: {:?})",
+            r.warnings
+        );
+        assert!(
+            r.errors.is_empty(),
+            "default ConfigureResult must not carry errors (got: {:?})",
+            r.errors
+        );
         assert!(r.configured.is_empty());
         assert!(!r.plugin_installed);
     }
@@ -491,7 +521,8 @@ mod tests {
 
         upsert_sensei_in_json(&path, "mcpServers", entry).unwrap();
 
-        let content: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let content: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(content["mcpServers"][MCP_REGISTRY_KEY]["command"], "sensei-mcp");
     }
 
@@ -503,14 +534,18 @@ mod tests {
         // and unrelated top-level keys that must not be touched.
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("settings.json");
-        std::fs::write(&path, r#"// Zed settings
+        std::fs::write(
+            &path,
+            r#"// Zed settings
 {
   "terminal": { "dock": "right" },
   "mcpServers": {
     "other-tool": { "command": "other-mcp" }, // keep this
   },
   "file_types": { "SQL": ["ddl", "sql"] },
-}"#).unwrap();
+}"#,
+        )
+        .unwrap();
 
         let entry = serde_json::json!({"command": "sensei-mcp", "args": []});
         upsert_sensei_in_json(&path, "mcpServers", entry).unwrap();
@@ -518,7 +553,8 @@ mod tests {
         // Written file preserves the leading `// Zed settings` header (#51),
         // so the assertion uses json5 (JSONC-tolerant) rather than strict
         // serde_json.
-        let content: serde_json::Value = json5::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let content: serde_json::Value =
+            json5::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         // Sensei entry added
         assert_eq!(content["mcpServers"][MCP_REGISTRY_KEY]["command"], "sensei-mcp");
         // Sibling mcpServer preserved
@@ -532,7 +568,10 @@ mod tests {
     fn upsert_jsonc_updates_existing_sensei_without_touching_siblings() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("settings.json");
-        std::fs::write(&path, format!(r#"// existing config
+        std::fs::write(
+            &path,
+            format!(
+                r#"// existing config
 {{
   "vim_mode": false,
   "mcpServers": {{
@@ -540,12 +579,16 @@ mod tests {
     "{MCP_REGISTRY_KEY}": {{ "command": "old-binary" }},
     "postgres": {{ "command": "pg-mcp" }},
   }},
-}}"#)).unwrap();
+}}"#
+            ),
+        )
+        .unwrap();
 
         let entry = serde_json::json!({"command": "sensei-mcp"});
         upsert_sensei_in_json(&path, "mcpServers", entry).unwrap();
 
-        let content: serde_json::Value = json5::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let content: serde_json::Value =
+            json5::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(content["mcpServers"][MCP_REGISTRY_KEY]["command"], "sensei-mcp");
         assert_eq!(content["mcpServers"]["postgres"]["command"], "pg-mcp");
         assert_eq!(content["vim_mode"], false);
@@ -555,18 +598,25 @@ mod tests {
     fn remove_sensei_from_jsonc_preserves_other_content() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("settings.json");
-        std::fs::write(&path, format!(r#"// Zed settings
+        std::fs::write(
+            &path,
+            format!(
+                r#"// Zed settings
 {{
   "terminal": {{ "dock": "right" }}, // trailing comma
   "mcpServers": {{
     "{MCP_REGISTRY_KEY}": {{ "command": "sensei-mcp" }},
     "svelte": {{ "command": "svelte-mcp" }},
   }},
-}}"#)).unwrap();
+}}"#
+            ),
+        )
+        .unwrap();
 
         assert!(remove_sensei_from_json(&path, "mcpServers"));
 
-        let content: serde_json::Value = json5::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let content: serde_json::Value =
+            json5::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         assert!(content["mcpServers"][MCP_REGISTRY_KEY].is_null());
         assert_eq!(content["mcpServers"]["svelte"]["command"], "svelte-mcp");
         assert_eq!(content["terminal"]["dock"], "right");
@@ -576,12 +626,17 @@ mod tests {
     fn upsert_preserves_existing_servers() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("mcp.json");
-        std::fs::write(&path, r#"{"mcpServers":{"svelte":{"command":"npx","args":["-y","svelte-mcp"]}}}"#).unwrap();
+        std::fs::write(
+            &path,
+            r#"{"mcpServers":{"svelte":{"command":"npx","args":["-y","svelte-mcp"]}}}"#,
+        )
+        .unwrap();
 
         let entry = serde_json::json!({"command": "sensei-mcp"});
         upsert_sensei_in_json(&path, "mcpServers", entry).unwrap();
 
-        let content: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let content: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(content["mcpServers"][MCP_REGISTRY_KEY]["command"], "sensei-mcp");
         assert_eq!(content["mcpServers"]["svelte"]["command"], "npx");
     }
@@ -590,12 +645,17 @@ mod tests {
     fn upsert_overwrites_existing_sensei_entry() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("mcp.json");
-        std::fs::write(&path, format!(r#"{{"mcpServers":{{"{MCP_REGISTRY_KEY}":{{"command":"old-binary"}}}}}}"#)).unwrap();
+        std::fs::write(
+            &path,
+            format!(r#"{{"mcpServers":{{"{MCP_REGISTRY_KEY}":{{"command":"old-binary"}}}}}}"#),
+        )
+        .unwrap();
 
         let entry = serde_json::json!({"command": "sensei-mcp"});
         upsert_sensei_in_json(&path, "mcpServers", entry).unwrap();
 
-        let content: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let content: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(content["mcpServers"][MCP_REGISTRY_KEY]["command"], "sensei-mcp");
     }
 
@@ -615,10 +675,12 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("opencode.json");
 
-        let entry = serde_json::json!({"type": "local", "command": ["sensei-mcp", ""], "enabled": true});
+        let entry =
+            serde_json::json!({"type": "local", "command": ["sensei-mcp", ""], "enabled": true});
         upsert_sensei_in_json(&path, "mcp", entry).unwrap();
 
-        let content: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let content: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(content["mcp"][MCP_REGISTRY_KEY]["type"], "local");
         assert_eq!(content["mcp"][MCP_REGISTRY_KEY]["enabled"], true);
     }
@@ -639,7 +701,8 @@ mod tests {
         std::fs::write(&path, r#"{"mcpServers":{"svelte":{"command":"npx"}}}"#).unwrap();
 
         assert!(!remove_sensei_from_json(&path, "mcpServers"));
-        let content: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let content: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         assert!(content["mcpServers"]["svelte"].is_object());
     }
 
@@ -651,7 +714,8 @@ mod tests {
 
         assert!(remove_sensei_from_json(&path, "mcpServers"));
 
-        let content: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let content: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         assert!(content["mcpServers"][MCP_REGISTRY_KEY].is_null());
         assert_eq!(content["mcpServers"]["svelte"]["command"], "npx");
     }
@@ -660,11 +724,16 @@ mod tests {
     fn remove_sensei_only_server() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("mcp.json");
-        std::fs::write(&path, format!(r#"{{"mcpServers":{{"{MCP_REGISTRY_KEY}":{{"command":"sensei-mcp"}}}}}}"#)).unwrap();
+        std::fs::write(
+            &path,
+            format!(r#"{{"mcpServers":{{"{MCP_REGISTRY_KEY}":{{"command":"sensei-mcp"}}}}}}"#),
+        )
+        .unwrap();
 
         assert!(remove_sensei_from_json(&path, "mcpServers"));
 
-        let content: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let content: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         assert!(content["mcpServers"][MCP_REGISTRY_KEY].is_null());
         assert!(content["mcpServers"].as_object().unwrap().is_empty());
     }
@@ -689,13 +758,15 @@ mod tests {
         let entry = serde_json::json!({"command": "sensei-mcp"});
         upsert_sensei_in_json(&path, "mcpServers", entry).unwrap();
 
-        let content: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let content: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         assert!(content["mcpServers"][MCP_REGISTRY_KEY].is_object());
         assert!(content["mcpServers"]["svelte"].is_object());
 
         assert!(remove_sensei_from_json(&path, "mcpServers"));
 
-        let content: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let content: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         assert!(content["mcpServers"][MCP_REGISTRY_KEY].is_null());
         assert_eq!(content["mcpServers"]["svelte"]["command"], "npx");
     }
@@ -705,7 +776,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("mcp.json");
 
-        upsert_sensei_in_json(&path, "mcpServers", serde_json::json!({"command": "sensei-mcp"})).unwrap();
+        upsert_sensei_in_json(&path, "mcpServers", serde_json::json!({"command": "sensei-mcp"}))
+            .unwrap();
         assert!(path.exists());
 
         assert!(remove_sensei_from_json(&path, "mcpServers"));
@@ -721,11 +793,13 @@ mod tests {
         let entry = serde_json::json!({"command": "sensei-mcp", "args": []});
         upsert_sensei_in_json(&config_path, "mcpServers", entry).unwrap();
 
-        let content: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
+        let content: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
         assert_eq!(content["mcpServers"][MCP_REGISTRY_KEY]["command"], "sensei-mcp");
 
         assert!(remove_sensei_from_json(&config_path, "mcpServers"));
-        let content: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
+        let content: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
         assert!(content["mcpServers"][MCP_REGISTRY_KEY].is_null());
     }
 
@@ -734,10 +808,12 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("opencode.json");
 
-        let entry = serde_json::json!({"type": "local", "command": ["sensei-mcp", ""], "enabled": true});
+        let entry =
+            serde_json::json!({"type": "local", "command": ["sensei-mcp", ""], "enabled": true});
         upsert_sensei_in_json(&path, "mcp", entry).unwrap();
 
-        let content: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let content: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(content["mcp"][MCP_REGISTRY_KEY]["type"], "local");
         assert_eq!(content["mcp"][MCP_REGISTRY_KEY]["enabled"], true);
         let cmd = content["mcp"][MCP_REGISTRY_KEY]["command"].as_array().unwrap();
@@ -762,7 +838,11 @@ mod tests {
             assert!(!asst.id().is_empty(), "empty id");
             assert!(!asst.name().is_empty(), "empty name for {}", asst.id());
             assert!(!asst.mcp_key().is_empty(), "empty mcp_key for {}", asst.id());
-            assert!(!asst.config_path().as_os_str().is_empty(), "empty config_path for {}", asst.id());
+            assert!(
+                !asst.config_path().as_os_str().is_empty(),
+                "empty config_path for {}",
+                asst.id()
+            );
         }
     }
 
@@ -800,7 +880,7 @@ mod tests {
         let (tx, mut rx) = tokio::sync::broadcast::channel::<StateEvent>(16);
         let parts = vec![
             AssistantPart { id: "plugins".into(), label: "plugins".into() },
-            AssistantPart { id: "skills".into(),  label: "skills".into() },
+            AssistantPart { id: "skills".into(), label: "skills".into() },
         ];
 
         emit_parts(Some(&tx), "claude", &parts, AssistantPartStatus::Configuring, None);
@@ -820,7 +900,13 @@ mod tests {
         let (tx, mut rx) = tokio::sync::broadcast::channel::<StateEvent>(8);
         let parts = vec![AssistantPart { id: "mcp".into(), label: "mcp server".into() }];
 
-        emit_parts(Some(&tx), "cursor", &parts, AssistantPartStatus::Error, Some("permission denied"));
+        emit_parts(
+            Some(&tx),
+            "cursor",
+            &parts,
+            AssistantPartStatus::Error,
+            Some("permission denied"),
+        );
 
         let evt = rx.recv().await.unwrap();
         assert_eq!(evt.data["status"], "error");
@@ -839,8 +925,11 @@ mod tests {
         emit_parts(Some(&tx), "zed", &parts, AssistantPartStatus::Done, None);
 
         let evt = rx.recv().await.unwrap();
-        assert!(evt.data.get("error").is_none(),
-            "error key should be absent on success, got {:?}", evt.data);
+        assert!(
+            evt.data.get("error").is_none(),
+            "error key should be absent on success, got {:?}",
+            evt.data
+        );
     }
 
     #[test]
@@ -873,7 +962,8 @@ mod tests {
         // explicitly — skills/commands/agents all invoke sensei through
         // it, so it belongs in the chip list alongside the others rather
         // than being hidden as an implementation detail of the plugin.
-        let claude = all_assistants().into_iter()
+        let claude = all_assistants()
+            .into_iter()
             .find(|a| a.id() == "claude-code")
             .expect("claude-code registered");
         let ids: Vec<String> = claude.parts().into_iter().map(|p| p.id).collect();
@@ -903,7 +993,9 @@ mod tests {
         // ids in the union — the UI renders one chip per id and a dup
         // would break the React-style key invariant on the chip list.
         let families = detect_families();
-        let claude = families.iter().find(|f| f.family == "claude")
+        let claude = families
+            .iter()
+            .find(|f| f.family == "claude")
             .expect("claude family should be present");
         let ids: Vec<&str> = claude.parts.iter().map(|p| p.id.as_str()).collect();
         assert_eq!(ids, ["plugins", "skills", "commands", "agents", "mcp"]);
@@ -915,10 +1007,14 @@ mod tests {
         // here so a future serde change (renaming `parts`, dropping fields)
         // would fail loudly instead of silently breaking the wizard card.
         let families = detect_families();
-        let cursor = families.iter().find(|f| f.family == "cursor")
+        let cursor = families
+            .iter()
+            .find(|f| f.family == "cursor")
             .expect("cursor family should be present");
         let json = serde_json::to_value(cursor).unwrap();
-        let parts = json.get("parts").and_then(|p| p.as_array())
+        let parts = json
+            .get("parts")
+            .and_then(|p| p.as_array())
             .expect("parts array on AssistantFamily JSON");
         assert_eq!(parts.len(), 1);
         assert_eq!(parts[0]["id"], "mcp");
@@ -929,7 +1025,16 @@ mod tests {
     fn expected_assistants_are_registered() {
         let assistants = all_assistants();
         let ids: Vec<&str> = assistants.iter().map(|a| a.id()).collect();
-        for expected in ["claude-desktop", "claude-code", "cursor", "windsurf", "zed", "kiro", "opencode", "vscode"] {
+        for expected in [
+            "claude-desktop",
+            "claude-code",
+            "cursor",
+            "windsurf",
+            "zed",
+            "kiro",
+            "opencode",
+            "vscode",
+        ] {
             assert!(ids.contains(&expected), "missing assistant: {}", expected);
         }
         assert_eq!(ids.len(), 8, "unexpected number of assistants");
@@ -953,7 +1058,8 @@ mod tests {
         assert!(r.errors.is_empty());
         assert!(
             r.actions.iter().any(|a| a.contains("no upgrade action")),
-            "no-op note should surface as an action; got {:?}", r.actions
+            "no-op note should surface as an action; got {:?}",
+            r.actions
         );
     }
 
@@ -991,7 +1097,8 @@ mod tests {
         let entry = serde_json::json!({"command": "sensei-mcp"});
         upsert_sensei_in_json(&path, "mcpServers", entry).unwrap();
 
-        let content: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let content: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(content["mcpServers"][MCP_REGISTRY_KEY]["command"], "sensei-mcp");
     }
 

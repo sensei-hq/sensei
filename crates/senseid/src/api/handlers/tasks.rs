@@ -30,8 +30,8 @@ use axum::{
     extract::{Path, State},
     http::StatusCode,
     response::{
-        sse::{Event, Sse},
         Json,
+        sse::{Event, Sse},
     },
 };
 use tokio_stream::StreamExt;
@@ -44,9 +44,7 @@ use crate::tasks::progress::TaskEvent;
 ///
 /// Pure so the aggregation is testable without a queue or a database.
 pub(crate) fn summarize_children(children: &[serde_json::Value]) -> serde_json::Value {
-    let count = |s: &str| {
-        children.iter().filter(|c| c["status"].as_str() == Some(s)).count()
-    };
+    let count = |s: &str| children.iter().filter(|c| c["status"].as_str() == Some(s)).count();
     let (completed, failed, running) = (count("completed"), count("failed"), count("running"));
     serde_json::json!({
         "total": children.len(),
@@ -99,14 +97,10 @@ pub(crate) async fn get_task(
     Path(id): Path<u64>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let since = state.task_queue.session_start();
-    let attempts = state
-        .pg
-        .task_execution_attempts(id as i64, since)
-        .await
-        .map_err(|e| {
-            tracing::warn!(error = %e, task_id = id, "get_task: attempts read failed");
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+    let attempts = state.pg.task_execution_attempts(id as i64, since).await.map_err(|e| {
+        tracing::warn!(error = %e, task_id = id, "get_task: attempts read failed");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
     let children = state.pg.child_task_executions(id as i64, since).await.map_err(|e| {
         tracing::warn!(error = %e, task_id = id, "get_task: children read failed");
         StatusCode::INTERNAL_SERVER_ERROR
@@ -228,16 +222,15 @@ pub(crate) async fn list_kinds() -> Json<serde_json::Value> {
     let mut by_pipeline: BTreeMap<String, Vec<serde_json::Value>> = BTreeMap::new();
     for k in crate::tasks::TaskKind::ALL {
         let i = k.info();
-        by_pipeline
-            .entry(format!("{:?}", i.pipeline).to_lowercase())
-            .or_default()
-            .push(serde_json::json!({
+        by_pipeline.entry(format!("{:?}", i.pipeline).to_lowercase()).or_default().push(
+            serde_json::json!({
                 "kind": i.name,
                 "stage": format!("{:?}", i.stage).to_lowercase(),
                 "budgetSecs": i.budget_secs,
                 "highPriority": i.high_priority,
                 "retryable": i.retryable,
-            }));
+            }),
+        );
     }
     Json(serde_json::json!({ "pipelines": by_pipeline }))
 }
@@ -307,10 +300,7 @@ mod tests {
         // It carries no task id, so forwarding it would send every follower
         // another follower's noise.
         assert_eq!(
-            event_task_id(&TaskEvent::FolderQueued {
-                folder_path: "/x".into(),
-                files_total: 3,
-            }),
+            event_task_id(&TaskEvent::FolderQueued { folder_path: "/x".into(), files_total: 3 }),
             None
         );
     }

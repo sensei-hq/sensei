@@ -41,9 +41,15 @@ mod tests {
     // Smoke: a tiny test impl to lock the trait shape against future changes.
     struct NoopResolver;
     impl Resolver for NoopResolver {
-        fn id(&self) -> &'static str { "noop" }
-        fn resolves(&self) -> &'static [ComponentId] { &[ComponentId::Daemon] }
-        fn resolve(&self, _: &[ComponentId]) -> ResolveOutcome { ResolveOutcome::Resolved }
+        fn id(&self) -> &'static str {
+            "noop"
+        }
+        fn resolves(&self) -> &'static [ComponentId] {
+            &[ComponentId::Daemon]
+        }
+        fn resolve(&self, _: &[ComponentId]) -> ResolveOutcome {
+            ResolveOutcome::Resolved
+        }
         fn fallback_remedy(&self) -> Remedy {
             Remedy { message: "fallback".into(), script: "noop".into(), url: None }
         }
@@ -62,7 +68,9 @@ mod tests {
         let r = ResolveOutcome::Resolved;
         let _ = r.clone();
         let r2 = ResolveOutcome::NeedsHumanAction(Remedy {
-            message: "m".into(), script: "s".into(), url: None,
+            message: "m".into(),
+            script: "s".into(),
+            url: None,
         });
         let _ = r2.clone();
     }

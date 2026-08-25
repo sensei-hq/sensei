@@ -103,13 +103,7 @@ impl AgentCommand {
     /// the inherited cwd. Chain [`AgentCommand::with_cwd`] /
     /// [`AgentCommand::with_stdin`] to set the rest.
     pub fn new(program: impl Into<String>, args: Vec<String>, timeout: Duration) -> Self {
-        Self {
-            program: program.into(),
-            args,
-            cwd: None,
-            stdin: None,
-            timeout,
-        }
+        Self { program: program.into(), args, cwd: None, stdin: None, timeout }
     }
 
     /// Run the child in `cwd`.
@@ -150,18 +144,12 @@ pub async fn run_agent(cmd: &AgentCommand) -> Result<AgentOutput, AgentSpawnErro
         .stderr(Stdio::piped())
         // Close stdin unless the caller supplies input, so the child never
         // blocks on a read from an inherited-but-empty stdin.
-        .stdin(if cmd.stdin.is_some() {
-            Stdio::piped()
-        } else {
-            Stdio::null()
-        })
+        .stdin(if cmd.stdin.is_some() { Stdio::piped() } else { Stdio::null() })
         // Belt-and-braces: if this future is cancelled and the Child handle is
         // dropped, tokio SIGKILLs + reaps the child rather than leaking it.
         .kill_on_drop(true);
 
-    let mut child = command
-        .spawn()
-        .map_err(|e| AgentSpawnError::Spawn(e.to_string()))?;
+    let mut child = command.spawn().map_err(|e| AgentSpawnError::Spawn(e.to_string()))?;
 
     // Take the stdin handle (if any) BEFORE we spawn the drains and start
     // waiting. We write to it concurrently with — and under the same deadline
@@ -225,9 +213,7 @@ pub async fn run_agent(cmd: &AgentCommand) -> Result<AgentOutput, AgentSpawnErro
             // Deadline hit — either the child ran long or the stdin write
             // blocked on a full pipe. Either way: SIGKILL then reap so no
             // zombie is left behind, and report a timeout.
-            child
-                .start_kill()
-                .map_err(|e| AgentSpawnError::Killed(format!("start_kill: {e}")))?;
+            child.start_kill().map_err(|e| AgentSpawnError::Killed(format!("start_kill: {e}")))?;
             child
                 .wait()
                 .await
@@ -241,12 +227,7 @@ pub async fn run_agent(cmd: &AgentCommand) -> Result<AgentOutput, AgentSpawnErro
     let stdout = join_drain(stdout_task).await;
     let stderr = join_drain(stderr_task).await;
 
-    Ok(AgentOutput {
-        stdout,
-        stderr,
-        exit_code,
-        timed_out,
-    })
+    Ok(AgentOutput { stdout, stderr, exit_code, timed_out })
 }
 
 /// Write `input` to the child's stdin (if any) and close the pipe so the child
@@ -356,25 +337,16 @@ mod tests {
             .output()
             .expect("ps should run");
         let listing = String::from_utf8_lossy(&ps.stdout);
-        let lingering: Vec<&str> = listing
-            .lines()
-            .filter(|l| l.contains(&marker) && !l.contains("ps -A"))
-            .collect();
-        assert!(
-            lingering.is_empty(),
-            "child survived kill+reap: {lingering:?}"
-        );
+        let lingering: Vec<&str> =
+            listing.lines().filter(|l| l.contains(&marker) && !l.contains("ps -A")).collect();
+        assert!(lingering.is_empty(), "child survived kill+reap: {lingering:?}");
     }
 
     #[tokio::test]
     async fn stdin_is_piped_to_child() {
         let cmd = AgentCommand::new("cat", vec![], short()).with_stdin("piped input");
         let out = run_agent(&cmd).await.expect("cat should run");
-        assert!(
-            out.stdout.contains("piped input"),
-            "stdout was {:?}",
-            out.stdout
-        );
+        assert!(out.stdout.contains("piped input"), "stdout was {:?}", out.stdout);
         assert_eq!(out.exit_code, Some(0));
         assert!(!out.timed_out);
     }
@@ -420,16 +392,12 @@ mod tests {
         // hard error or a hang: the child exited cleanly, so we expect a normal
         // (not-timed-out) result with the child's success exit code.
         let payload = "y".repeat(256 * 1024);
-        let cmd = AgentCommand::new(
-            "sh",
-            vec!["-c".into(), "head -c 10 >/dev/null".into()],
-            short(),
-        )
-        .with_stdin(payload);
+        let cmd =
+            AgentCommand::new("sh", vec!["-c".into(), "head -c 10 >/dev/null".into()], short())
+                .with_stdin(payload);
         let started = Instant::now();
-        let out = run_agent(&cmd)
-            .await
-            .expect("short-reading child should not surface a hard error");
+        let out =
+            run_agent(&cmd).await.expect("short-reading child should not surface a hard error");
         let elapsed = started.elapsed();
 
         assert!(!out.timed_out, "short-reading child hit the timeout");
@@ -438,19 +406,12 @@ mod tests {
             Some(0),
             "short-reading child should exit cleanly despite the parent's EPIPE"
         );
-        assert!(
-            elapsed < Duration::from_secs(3),
-            "short-reading child hung: elapsed {elapsed:?}"
-        );
+        assert!(elapsed < Duration::from_secs(3), "short-reading child hung: elapsed {elapsed:?}");
     }
 
     #[tokio::test]
     async fn spawn_failure_for_missing_program() {
-        let cmd = AgentCommand::new(
-            "definitely_not_a_real_program_xyzzy_42",
-            vec![],
-            short(),
-        );
+        let cmd = AgentCommand::new("definitely_not_a_real_program_xyzzy_42", vec![], short());
         let err = run_agent(&cmd).await.expect_err("nonexistent program");
         match err {
             AgentSpawnError::Spawn(_) => {}
@@ -466,10 +427,7 @@ mod tests {
         let dir = std::env::temp_dir();
         let cmd = AgentCommand::new("pwd", vec![], short()).with_cwd(&dir);
         let out = run_agent(&cmd).await.expect("pwd should run");
-        let last = dir
-            .file_name()
-            .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_default();
+        let last = dir.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
         assert!(
             out.stdout.trim().ends_with(&last) || out.stdout.trim() == dir.to_string_lossy(),
             "pwd {:?} did not reflect cwd {:?}",

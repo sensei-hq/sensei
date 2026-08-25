@@ -6,10 +6,10 @@
 //! This is `crate::libraries` — distinct from `crate::api::handlers::libraries` (the
 //! HTTP handlers) and `crate::adapters::manifest` (per-ecosystem dependency parsing).
 
-pub mod manifest;
-pub mod version;
-pub mod registry;
 pub mod advisory;
+pub mod manifest;
+pub mod registry;
+pub mod version;
 
 use std::path::Path;
 
@@ -48,12 +48,18 @@ fn resolve_body(root: &Path, body: &mut Option<String>, path: Option<&str>, name
     }
     let Some(p) = path else { return };
     if p.contains("..") {
-        tracing::warn!(entry = name, path = p, "load_manifest: refusing a manifest path that escapes the library root");
+        tracing::warn!(
+            entry = name,
+            path = p,
+            "load_manifest: refusing a manifest path that escapes the library root"
+        );
         return;
     }
     match std::fs::read_to_string(root.join(p)) {
         Ok(text) => *body = Some(text),
-        Err(e) => tracing::warn!(entry = name, path = p, error = %e, "load_manifest: could not read manifest entry file, skipping it"),
+        Err(e) => {
+            tracing::warn!(entry = name, path = p, error = %e, "load_manifest: could not read manifest entry file, skipping it")
+        }
     }
 }
 
@@ -75,14 +81,21 @@ mod tests {
                   {"name":"missing","focus":"x","path":"skills/nope.md"},
                   {"name":"escape","focus":"y","path":"../secret"}
                 ]}"#,
-        ).unwrap();
+        )
+        .unwrap();
 
         let (version, skills, _agents) = load_manifest_from_root(root).unwrap();
         assert_eq!(version, ">=1.3");
         let styling = skills.iter().find(|s| s.focus == "styling").unwrap();
         assert_eq!(styling.body.as_deref(), Some("# styling body"), "path resolved to file body");
-        assert!(skills.iter().find(|s| s.name == "missing").unwrap().body.is_none(), "unreadable path → no body");
-        assert!(skills.iter().find(|s| s.name == "escape").unwrap().body.is_none(), "`..` path is refused");
+        assert!(
+            skills.iter().find(|s| s.name == "missing").unwrap().body.is_none(),
+            "unreadable path → no body"
+        );
+        assert!(
+            skills.iter().find(|s| s.name == "escape").unwrap().body.is_none(),
+            "`..` path is refused"
+        );
     }
 
     #[test]
@@ -91,4 +104,3 @@ mod tests {
         assert!(load_manifest_from_root(dir.path()).is_none());
     }
 }
-

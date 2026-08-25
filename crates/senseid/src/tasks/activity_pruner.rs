@@ -48,9 +48,7 @@ const DEFAULT_EXECUTION_FAILED_RETENTION_DAYS: i32 = 90;
 /// Positive-integer config with a default — shared by the two execution-retention
 /// knobs so neither can drift from the other's parsing rules.
 fn parse_positive(cfg: Option<String>, default: i32) -> i32 {
-    cfg.and_then(|v| v.trim().parse::<i32>().ok())
-        .filter(|n| *n > 0)
-        .unwrap_or(default)
+    cfg.and_then(|v| v.trim().parse::<i32>().ok()).filter(|n| *n > 0).unwrap_or(default)
 }
 
 fn parse_interval(cfg: Option<String>) -> u64 {
@@ -121,7 +119,8 @@ async fn run(pg: Arc<PgStore>) {
         );
         match pg.rollup_and_prune_task_executions(exec_days, exec_failed_days).await {
             Ok((rolled, pruned)) if pruned > 0 => tracing::info!(
-                rolled, pruned,
+                rolled,
+                pruned,
                 "activity_pruner: rolled up + reclaimed task_executions older than {exec_days}d \
                  (failures kept {exec_failed_days}d)",
             ),
@@ -175,7 +174,10 @@ mod tests {
     fn parse_retention_falls_back_on_missing_invalid_or_nonpositive() {
         // Pin the documented default to the literal 90 so changing the const trips
         // this test instead of silently altering the retention window.
-        assert_eq!(DEFAULT_RETENTION_DAYS, 90, "documented raw-activity retention default is 90 days");
+        assert_eq!(
+            DEFAULT_RETENTION_DAYS, 90,
+            "documented raw-activity retention default is 90 days"
+        );
         assert_eq!(parse_retention(None), DEFAULT_RETENTION_DAYS);
         assert_eq!(parse_retention(Some("x".into())), DEFAULT_RETENTION_DAYS);
         assert_eq!(parse_retention(Some("0".into())), DEFAULT_RETENTION_DAYS);

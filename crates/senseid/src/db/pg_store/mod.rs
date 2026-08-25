@@ -1,8 +1,11 @@
-use std::time::Duration;
-use sqlx_postgres::{PgPool, PgPoolOptions};
-use sensei_bootstrap::{DB_POOL_MAX_CONNECTIONS, DB_POOL_MIN_CONNECTIONS, DB_POOL_ACQUIRE_TIMEOUT_SECS, DB_POOL_IDLE_TIMEOUT_SECS, DB_POOL_MAX_LIFETIME_SECS};
-use dojo_protocol::relay::RelayRunStatus;
 use crate::runs::{NewRun, Run, RunEvent, RunEventKind};
+use dojo_protocol::relay::RelayRunStatus;
+use sensei_bootstrap::{
+    DB_POOL_ACQUIRE_TIMEOUT_SECS, DB_POOL_IDLE_TIMEOUT_SECS, DB_POOL_MAX_CONNECTIONS,
+    DB_POOL_MAX_LIFETIME_SECS, DB_POOL_MIN_CONNECTIONS,
+};
+use sqlx_postgres::{PgPool, PgPoolOptions};
+use std::time::Duration;
 
 /// PostgreSQL store.
 /// Schema is managed by `dbd apply`, not by this code.
@@ -61,15 +64,15 @@ pub const PROJECT_MATURITIES: [&str; 4] = ["discovery", "active", "maintenance",
 /// [`PROJECT_MATURITIES`] before the write.
 #[derive(Debug, Default, Clone)]
 pub struct ProjectPatch<'a> {
-    pub name:          Option<&'a str>,
-    pub description:   Option<&'a str>,
-    pub maturity:      Option<&'a str>,
-    pub client:        Option<&'a str>,
-    pub goal:          Option<&'a str>,
+    pub name: Option<&'a str>,
+    pub description: Option<&'a str>,
+    pub maturity: Option<&'a str>,
+    pub client: Option<&'a str>,
+    pub goal: Option<&'a str>,
     pub preferred_acp: Option<&'a str>,
-    pub icon:          Option<&'a serde_json::Value>,
-    pub stack:         Option<&'a serde_json::Value>,
-    pub links:         Option<&'a serde_json::Value>,
+    pub icon: Option<&'a serde_json::Value>,
+    pub stack: Option<&'a serde_json::Value>,
+    pub links: Option<&'a serde_json::Value>,
 }
 
 /// Per-table row counts from a single `PgStore::prune_activity` run (#74).
@@ -77,10 +80,10 @@ pub struct ProjectPatch<'a> {
 /// per-field conversions.
 #[derive(Debug, Default, Clone, Copy, serde::Serialize)]
 pub struct ActivityPruneCounts {
-    pub sessions:          u64,
-    pub turns:             u64,
-    pub transcript_turns:  u64,
-    pub assistant_events:  u64,
+    pub sessions: u64,
+    pub turns: u64,
+    pub transcript_turns: u64,
+    pub assistant_events: u64,
 }
 
 /// One community to write via [`PgStore::replace_communities_for_folder`] (D4):
@@ -111,57 +114,57 @@ pub struct EdgeSpec {
 
 #[derive(Clone)]
 pub struct InsertMemory {
-    pub project_id:    Option<uuid::Uuid>,
-    pub scope:         String,
-    pub scope_filter:  Option<String>,
-    pub mtype:         String,    // memory_type enum value
-    pub title:         String,
-    pub content:       String,
-    pub impact:        Option<String>,
-    pub tags:          Vec<String>,
+    pub project_id: Option<uuid::Uuid>,
+    pub scope: String,
+    pub scope_filter: Option<String>,
+    pub mtype: String, // memory_type enum value
+    pub title: String,
+    pub content: String,
+    pub impact: Option<String>,
+    pub tags: Vec<String>,
     pub triage_signal: Option<String>,
-    pub status:        String,    // memory_status enum value
+    pub status: String, // memory_status enum value
     // Governance plane: where the rule applies (namespace) + its authority.
-    pub namespace_id:  Option<uuid::Uuid>,
-    pub enforcement:   Option<String>, // enforcement enum value; None → DB default 'recommended'
-    pub origin:        Option<String>, // None → DB default 'learned'
-    pub source_id:     Option<uuid::Uuid>, // provenance: knowledge_sources.id for origin='federated'
+    pub namespace_id: Option<uuid::Uuid>,
+    pub enforcement: Option<String>, // enforcement enum value; None → DB default 'recommended'
+    pub origin: Option<String>,      // None → DB default 'learned'
+    pub source_id: Option<uuid::Uuid>, // provenance: knowledge_sources.id for origin='federated'
     // Spine anchoring (memory-anchoring design 2026-07-18): which doc-slot this
     // memory belongs to, and — for feature-scoped slots — which feature. Both
     // nullable; None/None = unanchored.
-    pub spine_slot:    Option<String>, // sensei.spine_slot enum value
-    pub feature:       Option<String>,
+    pub spine_slot: Option<String>, // sensei.spine_slot enum value
+    pub feature: Option<String>,
 }
 
 pub struct OutcomeRow {
-    pub memory_id:  uuid::Uuid,
+    pub memory_id: uuid::Uuid,
     pub session_id: Option<uuid::Uuid>,
-    pub outcome:    String,
-    pub context:    Option<String>,
+    pub outcome: String,
+    pub context: Option<String>,
 }
 
 /// Input for registering a federation endpoint.
 pub struct NewKnowledgeSource {
-    pub kind:           String,
-    pub name:           String,
-    pub url:            String,
-    pub namespace_id:   Option<uuid::Uuid>,
+    pub kind: String,
+    pub name: String,
+    pub url: String,
+    pub namespace_id: Option<uuid::Uuid>,
     pub credential_ref: String,
-    pub direction:      String, // push | pull | both
+    pub direction: String, // push | pull | both
 }
 
 /// A registered federation endpoint (row of sensei.knowledge_sources).
 #[derive(Debug, Clone)]
 pub struct KnowledgeSource {
-    pub id:             uuid::Uuid,
-    pub kind:           String,
-    pub name:           String,
-    pub url:            String,
-    pub namespace_id:   Option<uuid::Uuid>,
+    pub id: uuid::Uuid,
+    pub kind: String,
+    pub name: String,
+    pub url: String,
+    pub namespace_id: Option<uuid::Uuid>,
     pub credential_ref: String,
-    pub direction:      String,
-    pub last_seq:       i64,
-    pub enabled:        bool,
+    pub direction: String,
+    pub last_seq: i64,
+    pub enabled: bool,
 }
 
 /// Input for registering a daemon-side Dōjō connection
@@ -170,43 +173,43 @@ pub struct KnowledgeSource {
 pub struct NewDojoMembership {
     /// The service membership id (`dojo.memberships.id`); becomes the local PK
     /// and the value `sensei.projects.dojo_id` points at. Service-assigned.
-    pub id:                  uuid::Uuid,
-    pub registry_url:        String,
-    pub tenant_key:          String,
-    pub dojo_url:            String,
-    pub kind:                String, // employer | client | community | personal
+    pub id: uuid::Uuid,
+    pub registry_url: String,
+    pub tenant_key: String,
+    pub dojo_url: String,
+    pub kind: String, // employer | client | community | personal
     /// Git-remote owner slugs this membership covers (lowercased) — feeds
     /// infer-at-detect auto-bind. Empty for memberships with no org coverage.
-    pub org_slugs:           Vec<String>,
-    pub role:                String,
-    pub authenticated_via:   String,
+    pub org_slugs: Vec<String>,
+    pub role: String,
+    pub authenticated_via: String,
     pub attribution_default: String,
-    pub credential_ref:      String,
-    pub sync_status:         String,
+    pub credential_ref: String,
+    pub sync_status: String,
 }
 
 /// A daemon-side Dōjō connection (row of `sensei.dojo_memberships`). Carries
 /// `credential_ref` for C6/C7 token resolution; the API view omits it.
 #[derive(Debug, Clone)]
 pub struct DojoMembership {
-    pub id:                  uuid::Uuid,
-    pub registry_url:        String,
-    pub tenant_key:          String,
-    pub dojo_url:            String,
-    pub kind:                String,
+    pub id: uuid::Uuid,
+    pub registry_url: String,
+    pub tenant_key: String,
+    pub dojo_url: String,
+    pub kind: String,
     /// Git-remote owner slugs this membership covers (lowercased). Drives
     /// infer-at-detect auto-bind (see `dojo/routing.rs::infer_binding`).
-    pub org_slugs:           Vec<String>,
-    pub role:                String,
-    pub authenticated_via:   String,
+    pub org_slugs: Vec<String>,
+    pub role: String,
+    pub authenticated_via: String,
     pub attribution_default: String,
-    pub credential_ref:      String,
-    pub sync_status:         String,
-    pub last_seq:            i64,
+    pub credential_ref: String,
+    pub sync_status: String,
+    pub last_seq: i64,
     /// RFC-3339 text (SELECTed as `::text`) so the API can serialize it without
     /// pulling chrono into the row tuple. `None` until the first heartbeat.
-    pub last_heartbeat_at:   Option<String>,
-    pub enabled:             bool,
+    pub last_heartbeat_at: Option<String>,
+    pub enabled: bool,
 }
 
 /// A row of `sensei.collective_preferences` — the single-row collective sharing
@@ -214,17 +217,17 @@ pub struct DojoMembership {
 /// raw jsonb toggle map; `updated_at` is RFC-3339 text (SELECTed `::text`).
 #[derive(Debug, Clone)]
 pub struct CollectivePrefsRow {
-    pub destination:         String,
-    pub cadence:             String,
-    pub categories:          serde_json::Value,
+    pub destination: String,
+    pub cadence: String,
+    pub categories: serde_json::Value,
     pub attribution_default: String,
-    pub updated_at:          String,
+    pub updated_at: String,
 }
 
 /// A federated_memories ledger row.
 #[derive(Debug, Clone)]
 pub struct FederatedLink {
-    pub memory_id:  Option<uuid::Uuid>,
+    pub memory_id: Option<uuid::Uuid>,
     pub remote_seq: i64,
 }
 
@@ -235,9 +238,9 @@ pub struct FederatedLink {
 /// runs regardless — a raw content is still gated, never trusted).
 #[derive(Debug, Clone)]
 pub struct ShareBatchItem {
-    pub memory_id:   uuid::Uuid,
-    pub title:       String,
-    pub body:        String,
+    pub memory_id: uuid::Uuid,
+    pub title: String,
+    pub body: String,
     /// `sensei.memory_type` string — drives artifact-kind mapping (pattern → the
     /// `pattern` artifact; everything else → `principle`).
     pub memory_type: String,
@@ -246,15 +249,15 @@ pub struct ShareBatchItem {
 /// Snapshot needed to publish a memory to a dojo (+ namespace identity + origin/scope_key for gating).
 #[derive(Debug, Clone)]
 pub struct MemoryPushPayload {
-    pub title:       String,
-    pub content:     String,
-    pub impact:      Option<String>,
+    pub title: String,
+    pub content: String,
+    pub impact: Option<String>,
     pub enforcement: String,
-    pub rule_type:   String,
-    pub origin:      String,
-    pub scope_key:   String,
-    pub slug:        String,
-    pub name:        String,
+    pub rule_type: String,
+    pub origin: String,
+    pub scope_key: String,
+    pub slug: String,
+    pub name: String,
 }
 
 /// Parse a git remote URL into its source-identifier tokens (owner + repo),
@@ -308,21 +311,21 @@ pub(crate) fn remote_owner_slug(url: &str) -> Option<String> {
 /// columns as `f64`.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct Metric {
-    pub id:              uuid::Uuid,
-    pub key:             String,
-    pub name:            String,
-    pub description:     String,
-    pub family:          String,
-    pub metric_type:     String,
-    pub unit:            Option<String>,
-    pub direction:       String,
-    pub purpose:         String,
-    pub how_to_read:     String,
-    pub formula:         String,
-    pub task_name:       String,
-    pub weight:          f64,
-    pub target:          Option<f64>,
-    pub effective_from:  chrono::NaiveDate,
+    pub id: uuid::Uuid,
+    pub key: String,
+    pub name: String,
+    pub description: String,
+    pub family: String,
+    pub metric_type: String,
+    pub unit: Option<String>,
+    pub direction: String,
+    pub purpose: String,
+    pub how_to_read: String,
+    pub formula: String,
+    pub task_name: String,
+    pub weight: f64,
+    pub target: Option<f64>,
+    pub effective_from: chrono::NaiveDate,
     pub effective_until: Option<chrono::NaiveDate>,
 }
 
@@ -333,15 +336,15 @@ pub struct Metric {
 /// `sensei.metrics`. Trend (prior/delta) is deferred to the Phase 7 endpoint.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct ProjectMetricRow {
-    pub metric:      String,
-    pub date:        chrono::NaiveDate,
-    pub value:       f64,
-    pub props:       serde_json::Value,
-    pub name:        String,
+    pub metric: String,
+    pub date: chrono::NaiveDate,
+    pub value: f64,
+    pub props: serde_json::Value,
+    pub name: String,
     pub metric_type: String,
-    pub unit:        Option<String>,
-    pub direction:   String,
-    pub purpose:     String,
+    pub unit: Option<String>,
+    pub direction: String,
+    pub purpose: String,
     pub how_to_read: String,
 }
 
@@ -354,11 +357,11 @@ pub struct ProjectMetricRow {
 /// registry re-join.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct ProjectMetricTrendRow {
-    pub metric:    String,
-    pub period:    chrono::NaiveDate,
-    pub value:     f64,
-    pub prior:     Option<f64>,
-    pub delta:     Option<f64>,
+    pub metric: String,
+    pub period: chrono::NaiveDate,
+    pub value: f64,
+    pub prior: Option<f64>,
+    pub delta: Option<f64>,
     pub direction: String,
 }
 
@@ -370,8 +373,8 @@ pub struct ProjectMetricTrendRow {
 /// travels with the row so the UI can colour the series without a registry re-join.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct ProjectMetricSeriesPoint {
-    pub period:    chrono::NaiveDate,
-    pub value:     f64,
+    pub period: chrono::NaiveDate,
+    pub value: f64,
     pub direction: String,
     /// The per-datapoint explainer — the one-line "why this day's value is what it
     /// is" companion (`props->>'explainer'`), present only at DAILY grain and only
@@ -389,7 +392,7 @@ pub struct ProjectMetricSeriesPoint {
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct ProjectMetricSeries {
     pub formula: Option<String>,
-    pub points:  Vec<ProjectMetricSeriesPoint>,
+    pub points: Vec<ProjectMetricSeriesPoint>,
 }
 
 /// The descriptive facets of ONE metric by registry key — its display `name` and
@@ -401,10 +404,9 @@ pub struct ProjectMetricSeries {
 /// (honest-null, never a fabricated meaning).
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct MetricMeaning {
-    pub name:        String,
+    pub name: String,
     pub how_to_read: String,
 }
-
 
 mod commands;
 mod config;
@@ -418,25 +420,27 @@ mod logs;
 mod mcp;
 mod memory;
 mod metrics;
-mod personas;
-pub(crate) mod sync;
 mod patterns;
+mod personas;
 mod playbook;
 mod projects;
 mod repo_key;
 mod runs;
 mod sessions;
+pub(crate) mod sync;
 mod transcript;
 pub(crate) use repo_key::normalize_repo_key;
 
+#[cfg(test)]
+mod knowledge_tests;
+#[cfg(test)]
+mod pack_resolution_tests;
 #[cfg(test)]
 // Test gates are blocking `std::sync::Mutex` held across awaits ON PURPOSE —
 // see `crate::tasks::test_support::TestGate` for why an async mutex loses
 // wakeups across per-test runtimes. One allow per test module, not per site.
 #[allow(clippy::await_holding_lock)]
-mod tests;
-#[cfg(test)]
-mod knowledge_tests;
+mod playbook_tests;
 #[cfg(test)]
 // `resume_test_guard()` is a blocking `std::sync::Mutex` held across awaits on
 // purpose — see `crate::tasks::test_support::TestGate` for why an async mutex loses
@@ -449,9 +453,7 @@ mod run_tests;
 // see `crate::tasks::test_support::TestGate` for why an async mutex loses
 // wakeups across per-test runtimes. One allow per test module, not per site.
 #[allow(clippy::await_holding_lock)]
-mod playbook_tests;
-#[cfg(test)]
-mod pack_resolution_tests;
+mod tests;
 
 #[allow(dead_code, clippy::too_many_arguments, clippy::type_complexity)]
 // PgStore API surface — methods wired up incrementally; SQLx tuple return types
@@ -520,8 +522,9 @@ impl PgStore {
     /// that surfaces. Override with `TEST_DATABASE_URL` for ad-hoc targets (e.g. a
     /// forked snapshot for debugging).
     pub async fn connect_test() -> Result<Self, String> {
-        let url = std::env::var("TEST_DATABASE_URL")
-            .unwrap_or_else(|_| format!("postgresql://localhost:{}/sensei_test", sensei_bootstrap::POSTGRES_PORT));
+        let url = std::env::var("TEST_DATABASE_URL").unwrap_or_else(|_| {
+            format!("postgresql://localhost:{}/sensei_test", sensei_bootstrap::POSTGRES_PORT)
+        });
         Self::connect_with(&url, 0, 4).await
     }
 
@@ -537,8 +540,7 @@ impl PgStore {
     /// `::text` cast is space-separated, NOT RFC-3339); this matches
     /// `chrono::to_rfc3339()` used elsewhere without pulling chrono into the row
     /// tuple. Shared by every run SELECT.
-    const RUN_SELECT: &'static str =
-        "SELECT id, project_id, plan_ref, goal, status::text,
+    const RUN_SELECT: &'static str = "SELECT id, project_id, plan_ref, goal, status::text,
                 to_json(paused_until)#>>'{}',
                 pause_reason, current_phase, current_feature, dojo_session_id,
                 max_concurrency,
@@ -555,22 +557,61 @@ impl PgStore {
     #[allow(clippy::type_complexity)]
     fn map_run_row(
         row: (
-            uuid::Uuid, Option<uuid::Uuid>, String, Option<String>, String, Option<String>,
-            Option<String>, Option<String>, Option<String>, Option<uuid::Uuid>,
-            i32, String, Option<String>, Option<String>, String, String,
+            uuid::Uuid,
+            Option<uuid::Uuid>,
+            String,
+            Option<String>,
+            String,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<uuid::Uuid>,
+            i32,
+            String,
+            Option<String>,
+            Option<String>,
+            String,
+            String,
         ),
     ) -> Result<Run, String> {
         let (
-            id, project_id, plan_ref, goal, status, paused_until, pause_reason,
-            current_phase, current_feature, dojo_session_id, max_concurrency,
-            started_at, completed_at, heartbeat_at, created_at, updated_at,
+            id,
+            project_id,
+            plan_ref,
+            goal,
+            status,
+            paused_until,
+            pause_reason,
+            current_phase,
+            current_feature,
+            dojo_session_id,
+            max_concurrency,
+            started_at,
+            completed_at,
+            heartbeat_at,
+            created_at,
+            updated_at,
         ) = row;
         let status = RelayRunStatus::from_db_str(&status)
             .ok_or_else(|| format!("unknown run_status from DB: {status:?}"))?;
         Ok(Run {
-            id, project_id, plan_ref, goal, status, paused_until, pause_reason,
-            current_phase, current_feature, dojo_session_id, max_concurrency,
-            started_at, completed_at, heartbeat_at, created_at, updated_at,
+            id,
+            project_id,
+            plan_ref,
+            goal,
+            status,
+            paused_until,
+            pause_reason,
+            current_phase,
+            current_feature,
+            dojo_session_id,
+            max_concurrency,
+            started_at,
+            completed_at,
+            heartbeat_at,
+            created_at,
+            updated_at,
         })
     }
 
@@ -578,20 +619,33 @@ impl PgStore {
     /// [`list_root_folders_by_project`] (repo roots only). `roots_only` gates
     /// out the `kind:'folder'` descendants at the SQL level so the compact
     /// path never materializes them.
-    async fn query_folders_by_project(&self, project_id: &uuid::Uuid, roots_only: bool) -> Result<Vec<serde_json::Value>, String> {
-        let rows: Vec<(uuid::Uuid, String, String, String, String, Option<String>)> = sqlx_core::query_as::query_as(
-            "SELECT id, kind::text, name, path, abs_path, role::text
+    async fn query_folders_by_project(
+        &self,
+        project_id: &uuid::Uuid,
+        roots_only: bool,
+    ) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(uuid::Uuid, String, String, String, String, Option<String>)> =
+            sqlx_core::query_as::query_as(
+                "SELECT id, kind::text, name, path, abs_path, role::text
              FROM sensei.folders
              WHERE project_id = $1
                AND ($2 = false OR kind::text IN ('git','standalone'))
-             ORDER BY path"
-        ).bind(project_id).bind(roots_only).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
-        Ok(rows.into_iter().map(|(id, kind, name, path, abs, role)| {
-            serde_json::json!({
-                "id": id, "kind": kind, "name": name,
-                "path": path, "abs_path": abs, "role": role,
+             ORDER BY path",
+            )
+            .bind(project_id)
+            .bind(roots_only)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(rows
+            .into_iter()
+            .map(|(id, kind, name, path, abs, role)| {
+                serde_json::json!({
+                    "id": id, "kind": kind, "name": name,
+                    "path": path, "abs_path": abs, "role": role,
+                })
             })
-        }).collect())
+            .collect())
     }
 
     /// Extract the source pattern id from a recommendation's `based_on` JSON
@@ -623,8 +677,7 @@ impl PgStore {
     /// `symbol_names` history. One list so the drift `known` query and
     /// `record_symbol_names` can never drift apart. (Bare enum labels; Postgres
     /// coerces them against the `sensei.node_kind` column.)
-    const DRIFT_SYMBOL_KINDS: &'static str =
-        "'function','method','class','type','interface','const','module','struct','hook','component','enum','extension'";
+    const DRIFT_SYMBOL_KINDS: &'static str = "'function','method','class','type','interface','const','module','struct','hook','component','enum','extension'";
 
     /// Shared read: optionally filter to a project, resolve `project_ids` → a JSON
     /// array of {id, name}. The projects array is aggregated as text and parsed in
@@ -684,8 +737,7 @@ impl PgStore {
     /// `database/ddl/table/sensei/metrics.ddl` column comments. Shared by
     /// [`Self::active_metrics`] and [`Self::active_task_names`] so the two reads
     /// can't drift.
-    const ACTIVE_METRIC_PREDICATE: &str =
-        "effective_from <= current_date and (effective_until is null or effective_until > current_date)";
+    const ACTIVE_METRIC_PREDICATE: &str = "effective_from <= current_date and (effective_until is null or effective_until > current_date)";
 
     /// `(phantom_id, survivor_id)` pairs — one per name-duplicate phantom that
     /// [`Self::heal_duplicate_name_projects`] would merge. The `= 1` guard ensures
@@ -719,7 +771,10 @@ impl PgStore {
     #[allow(clippy::type_complexity)]
     async fn nested_standalone_candidates(
         &self,
-    ) -> Result<Vec<(uuid::Uuid, Option<uuid::Uuid>, uuid::Uuid, uuid::Uuid, uuid::Uuid, String)>, String> {
+    ) -> Result<
+        Vec<(uuid::Uuid, Option<uuid::Uuid>, uuid::Uuid, uuid::Uuid, uuid::Uuid, String)>,
+        String,
+    > {
         sqlx_core::query_as::query_as(
             "SELECT DISTINCT ON (s.id)
                     s.id, s.project_id, g.id, g.project_id, g.root_id, g.abs_path
@@ -732,7 +787,10 @@ impl PgStore {
               WHERE s.kind = 'standalone'::sensei.folder_kind
                 AND s.project_id IS DISTINCT FROM g.project_id
               ORDER BY s.id, length(g.abs_path) DESC",
-        ).fetch_all(&self.pool).await.map_err(|e| e.to_string())
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())
     }
 
     /// Build the FTR headline JSON shared by [`Self::get_project_ftr`] and
@@ -760,11 +818,35 @@ impl PgStore {
            FROM sensei.dojo_inbox";
 
     fn map_dojo_inbox_row(
-        row: (uuid::Uuid, uuid::Uuid, String, String, String, serde_json::Value, serde_json::Value,
-              String, Option<String>, Option<uuid::Uuid>, Option<String>, String),
+        row: (
+            uuid::Uuid,
+            uuid::Uuid,
+            String,
+            String,
+            String,
+            serde_json::Value,
+            serde_json::Value,
+            String,
+            Option<String>,
+            Option<uuid::Uuid>,
+            Option<String>,
+            String,
+        ),
     ) -> crate::collective::inbox::InboxItem {
-        let (id, membership_id, kind, title, body, scope_v, attribution_v, state, note,
-             applied_memory_id, received_at, artifact_signature) = row;
+        let (
+            id,
+            membership_id,
+            kind,
+            title,
+            body,
+            scope_v,
+            attribution_v,
+            state,
+            note,
+            applied_memory_id,
+            received_at,
+            artifact_signature,
+        ) = row;
         // A malformed jsonb is logged and defaulted, never a silent panic on read.
         let scope: dojo_protocol::ArtifactScope = serde_json::from_value(scope_v).unwrap_or_else(|e| {
             tracing::warn!(error = %e, inbox = %id, "dojo inbox: scope jsonb parse failed — defaulting to empty scope");
@@ -778,14 +860,28 @@ impl PgStore {
             }
         });
         crate::collective::inbox::InboxItem {
-            id, membership_id, kind, title, body, scope, attribution, state, note,
-            applied_memory_id, received_at, artifact_signature,
+            id,
+            membership_id,
+            kind,
+            title,
+            body,
+            scope,
+            attribution,
+            state,
+            note,
+            applied_memory_id,
+            received_at,
+            artifact_signature,
         }
     }
 
     /// Flip an inbox row to `applied` (guarded so it never clobbers a concurrent
     /// apply). Errors when the row is unknown or already applied.
-    async fn mark_dojo_inbox_applied(&self, inbox_id: uuid::Uuid, memory_id: uuid::Uuid) -> Result<(), String> {
+    async fn mark_dojo_inbox_applied(
+        &self,
+        inbox_id: uuid::Uuid,
+        memory_id: uuid::Uuid,
+    ) -> Result<(), String> {
         let res = sqlx_core::query::query(
             "UPDATE sensei.dojo_inbox SET state = 'applied', applied_memory_id = $2, note = NULL, updated_at = now()
               WHERE id = $1 AND applied_memory_id IS NULL")
@@ -806,13 +902,54 @@ impl PgStore {
     // ── Raw ──────────────────────────────────────────────────────────
 
     fn map_dojo_row(
-        row: (uuid::Uuid, String, String, String, String, Vec<String>, String, String, String, String, String, i64, Option<String>, bool),
+        row: (
+            uuid::Uuid,
+            String,
+            String,
+            String,
+            String,
+            Vec<String>,
+            String,
+            String,
+            String,
+            String,
+            String,
+            i64,
+            Option<String>,
+            bool,
+        ),
     ) -> DojoMembership {
-        let (id, registry_url, tenant_key, dojo_url, kind, org_slugs, role, authenticated_via,
-             attribution_default, credential_ref, sync_status, last_seq, last_heartbeat_at, enabled) = row;
+        let (
+            id,
+            registry_url,
+            tenant_key,
+            dojo_url,
+            kind,
+            org_slugs,
+            role,
+            authenticated_via,
+            attribution_default,
+            credential_ref,
+            sync_status,
+            last_seq,
+            last_heartbeat_at,
+            enabled,
+        ) = row;
         DojoMembership {
-            id, registry_url, tenant_key, dojo_url, kind, org_slugs, role, authenticated_via,
-            attribution_default, credential_ref, sync_status, last_seq, last_heartbeat_at, enabled,
+            id,
+            registry_url,
+            tenant_key,
+            dojo_url,
+            kind,
+            org_slugs,
+            role,
+            authenticated_via,
+            attribution_default,
+            credential_ref,
+            sync_status,
+            last_seq,
+            last_heartbeat_at,
+            enabled,
         }
     }
 
@@ -823,17 +960,17 @@ impl PgStore {
            FROM sensei.dojo_memberships";
 
     /// Collect all folder ids belonging to a project, deduped.
-    async fn folder_ids_for_project(&self, project_id: &uuid::Uuid) -> Result<Vec<uuid::Uuid>, String> {
+    async fn folder_ids_for_project(
+        &self,
+        project_id: &uuid::Uuid,
+    ) -> Result<Vec<uuid::Uuid>, String> {
         let folders = self.list_folders_by_project(project_id).await?;
-        let mut ids: Vec<uuid::Uuid> = folders
-            .iter()
-            .filter_map(|f| crate::api::util::json_uuid(&f["id"]))
-            .collect();
+        let mut ids: Vec<uuid::Uuid> =
+            folders.iter().filter_map(|f| crate::api::util::json_uuid(&f["id"])).collect();
         // folders.id is the PK so dupes can't occur today, but sort+dedup keeps
         // this robust if list_folders_by_project ever grows a join.
         ids.sort_unstable();
         ids.dedup();
         Ok(ids)
     }
-
 }

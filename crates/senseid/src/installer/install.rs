@@ -3,9 +3,8 @@
 use std::fs;
 
 use super::{
-    cache_dir, home, plugin_dir, InstalledItem, InstallResult,
-    catalog::fetch_catalog,
-    marketplace::install_marketplace,
+    InstallResult, InstalledItem, cache_dir, catalog::fetch_catalog, home,
+    marketplace::install_marketplace, plugin_dir,
 };
 
 // ── Full install ─────────────────────────────────────────────────────────────
@@ -51,14 +50,8 @@ pub fn install_hooks_only() -> Result<u32, String> {
 }
 
 /// Hook file names to install from the marketplace repo.
-const HOOK_FILES: &[&str] = &[
-    "session-start",
-    "user-prompt",
-    "pre-compact",
-    "pre-tool",
-    "post-tool",
-    "run-hook.cmd",
-];
+const HOOK_FILES: &[&str] =
+    &["session-start", "user-prompt", "pre-compact", "pre-tool", "post-tool", "run-hook.cmd"];
 
 /// Install hook scripts by downloading from the marketplace GitHub repo.
 fn install_hooks() -> Result<u32, String> {
@@ -107,9 +100,10 @@ pub fn install_item(name: &str, kind: &str) -> Result<String, String> {
     };
 
     if let Some(parent) = dest.parent()
-        && let Err(e) = fs::create_dir_all(parent) {
-            tracing::warn!(dir = %parent.display(), error = %e, "failed to create parent dir for installed item");
-        }
+        && let Err(e) = fs::create_dir_all(parent)
+    {
+        tracing::warn!(dir = %parent.display(), error = %e, "failed to create parent dir for installed item");
+    }
     fs::write(&dest, &content).map_err(|e| e.to_string())?;
     Ok(dest.to_string_lossy().into_owned())
 }
@@ -189,7 +183,7 @@ pub fn list_installed() -> Vec<InstalledItem> {
 /// stops being active as soon as the rename lands.
 pub fn set_item_enabled(name: &str, kind: &str, enabled: bool) -> Result<bool, String> {
     let subdir = match kind {
-        "skill"   => ".claude/skills",
+        "skill" => ".claude/skills",
         "command" => ".claude/commands",
         other => return Err(format!("unknown kind: {other} (expected 'skill' or 'command')")),
     };
@@ -210,11 +204,11 @@ pub fn set_item_enabled(name: &str, kind: &str, enabled: bool) -> Result<bool, S
 
     // Idempotency + find the source.
     let (source, dest, dest_dir) = match (live_path.exists(), disabled_path.exists(), enabled) {
-        (true,  _,     true)  => return Ok(false),                                       // already enabled
-        (_,     true,  false) => return Ok(false),                                       // already disabled
-        (true,  false, false) => (&live_path,     &disabled_path, &disabled_dir),        // enable → disable
-        (false, true,  true)  => (&disabled_path, &live_path,     &live_dir),            // disable → enable
-        (false, false, _)     => return Err(format!("{kind} '{name}' not found")),      // unknown
+        (true, _, true) => return Ok(false),  // already enabled
+        (_, true, false) => return Ok(false), // already disabled
+        (true, false, false) => (&live_path, &disabled_path, &disabled_dir), // enable → disable
+        (false, true, true) => (&disabled_path, &live_path, &live_dir), // disable → enable
+        (false, false, _) => return Err(format!("{kind} '{name}' not found")), // unknown
     };
 
     // Ensure the destination directory exists (first-time disable

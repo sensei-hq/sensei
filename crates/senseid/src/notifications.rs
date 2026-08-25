@@ -3,7 +3,11 @@
 //! (not `notify`) because the `notify` crate name is taken by the fs-watcher.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum NotifyLevel { Info, Warn, Critical }
+pub enum NotifyLevel {
+    Info,
+    Warn,
+    Critical,
+}
 
 pub trait Notifier: Send + Sync {
     fn notify(&self, level: NotifyLevel, title: &str, body: &str);
@@ -16,7 +20,9 @@ pub struct DesktopNotifier;
 impl Notifier for DesktopNotifier {
     fn notify(&self, level: NotifyLevel, title: &str, body: &str) {
         let prefix = match level {
-            NotifyLevel::Info => "✓", NotifyLevel::Warn => "⚠", NotifyLevel::Critical => "✗",
+            NotifyLevel::Info => "✓",
+            NotifyLevel::Warn => "⚠",
+            NotifyLevel::Critical => "✗",
         };
         let result = notify_rust::Notification::new()
             .summary(&format!("{prefix} sensei: {title}"))
@@ -25,7 +31,9 @@ impl Notifier for DesktopNotifier {
             .show();
         match result {
             Ok(_) => tracing::info!(level = ?level, %title, "desktop notification shown"),
-            Err(e) => tracing::warn!(level = ?level, %title, error = %e, "desktop notification failed"),
+            Err(e) => {
+                tracing::warn!(level = ?level, %title, error = %e, "desktop notification failed")
+            }
         }
     }
 }

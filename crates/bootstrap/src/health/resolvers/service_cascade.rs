@@ -30,18 +30,18 @@ use std::process::Command;
 
 use crate::health::resolver::ResolveOutcome;
 use crate::health::resolvers::brew_helpers::{
-    brew_install_and_start_to_outcome, brew_services_start, BrewError,
+    BrewError, brew_install_and_start_to_outcome, brew_services_start,
 };
 
 /// Declarative specification for a service-style dependency. One instance
 /// per dep — keep them `const` where possible.
 pub struct ServiceCascadeSpec {
     /// Brew formula name, e.g. `"postgresql@17"`.
-    pub formula:        &'static str,
+    pub formula: &'static str,
     /// Brew service name (often identical to formula).
-    pub service:        &'static str,
+    pub service: &'static str,
     /// Extra args for `brew install`, e.g. `&["--HEAD"]`.
-    pub install_args:   &'static [&'static str],
+    pub install_args: &'static [&'static str],
     /// Optional stage-2 launcher. Returns a `Command` configured to
     /// daemonize the service. `None` skips stage 2 entirely (right for
     /// services that need complex args we can't reliably supply).
@@ -51,11 +51,7 @@ pub struct ServiceCascadeSpec {
 /// Run the staged cascade for a service-style dependency.
 pub fn resolve_service_cascade(spec: &ServiceCascadeSpec) -> ResolveOutcome {
     // ── Stage 1 ── brew services start (formula already present case) ────
-    tracing::info!(
-        cascade_stage = 1,
-        service = spec.service,
-        "stage 1: brew services start"
-    );
+    tracing::info!(cascade_stage = 1, service = spec.service, "stage 1: brew services start");
     match brew_services_start(spec.service) {
         Ok(()) => {
             tracing::info!(cascade_stage = 1, service = spec.service, "stage 1: ok");
