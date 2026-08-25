@@ -1,11 +1,11 @@
+use crate::api::state::AppState;
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
     response::Json,
 };
-use serde::Deserialize;
 use chrono::Timelike;
-use crate::api::state::AppState;
+use serde::Deserialize;
 
 // Re-use TagBody from workspace
 use super::workspace::TagBody;
@@ -30,8 +30,8 @@ pub(crate) async fn list_solutions(
     Query(q): Query<ListSolutionsQuery>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let under = q.under.as_deref().filter(|s| !s.is_empty());
-    let projects = state.pg.list_projects_under(under).await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let projects =
+        state.pg.list_projects_under(under).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     // Enrich each project with its folder membership so the Projects setup
     // page (and any future project detail view) can render folder names,
@@ -47,17 +47,26 @@ pub(crate) async fn list_solutions(
     let compact = under.is_some();
     let mut enriched = Vec::with_capacity(projects.len());
     for mut project in projects {
-        let project_id = project["id"].as_str()
-            .and_then(|s| uuid::Uuid::parse_str(s).ok());
-        if let Some(pid) = project_id {
+        // A uuid read back out of a DB row, NOT the `{id}` of a route — this
+        // handler lists projects and takes no path parameter. Named `row_*` to
+        // say so: a route `{id}` is name-or-uuid and must go through
+        // `resolve_project_uuid`, and the #100 guard keys on that distinction.
+        let row_project_id = project["id"].as_str().and_then(|s| uuid::Uuid::parse_str(s).ok());
+        if let Some(pid) = row_project_id {
             // Fail closed: a folder-enrichment read error is a 500, not a
             // silently folder-less project (which reads as "this project has no
             // repos"). A genuinely empty result stays an empty array.
             let folders = if compact {
-                state.pg.list_root_folders_by_project(&pid).await
+                state
+                    .pg
+                    .list_root_folders_by_project(&pid)
+                    .await
                     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
             } else {
-                state.pg.list_folders_by_project(&pid).await
+                state
+                    .pg
+                    .list_folders_by_project(&pid)
+                    .await
                     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
             };
             project["folders"] = serde_json::Value::Array(folders);
@@ -93,18 +102,22 @@ pub(crate) struct CreateProjectRepo {
     label: Option<String>,
 }
 
-fn default_category() -> String { "active".to_string() }
-fn default_role() -> String { "unknown".to_string() }
+fn default_category() -> String {
+    "active".to_string()
+}
+fn default_role() -> String {
+    "unknown".to_string()
+}
 
 pub(crate) async fn create_solution(
     State(state): State<AppState>,
     Json(body): Json<CreateSolutionBody>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), StatusCode> {
-    let id = state.pg.create_project(
-        &body.name,
-        body.description.as_deref(),
-        body.client.as_deref(),
-    ).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let id = state
+        .pg
+        .create_project(&body.name, body.description.as_deref(), body.client.as_deref())
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     // TODO: repo-to-project membership not yet modeled.
 
@@ -128,12 +141,11 @@ pub(crate) async fn update_solution(
     Path(id): Path<String>,
     Json(body): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    use crate::db::pg_store::{ProjectPatch, PROJECT_MATURITIES};
+    use crate::db::pg_store::{PROJECT_MATURITIES, ProjectPatch};
 
     // Name-or-uuid: resolve so `PUT /api/projects/sensei` works, not only a uuid
     // (#100). 404 when no such project.
-    let project_id = resolve_project_uuid(&state, &id).await?
-        .ok_or(StatusCode::NOT_FOUND)?;
+    let project_id = resolve_project_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
 
     // Validate the only enum-backed field (maturity) up front → 400, not 500.
     // client/goal/preferred_acp are free text; icon/stack/links are jsonb.
@@ -146,22 +158,21 @@ pub(crate) async fn update_solution(
     }
 
     let patch = ProjectPatch {
-        name:          body.get("name").and_then(|v| v.as_str()),
-        description:   body.get("description").and_then(|v| v.as_str()),
+        name: body.get("name").and_then(|v| v.as_str()),
+        description: body.get("description").and_then(|v| v.as_str()),
         maturity,
-        client:        body.get("client").and_then(|v| v.as_str()),
-        goal:          body.get("goal").and_then(|v| v.as_str()),
+        client: body.get("client").and_then(|v| v.as_str()),
+        goal: body.get("goal").and_then(|v| v.as_str()),
         preferred_acp: body.get("preferred_acp").and_then(|v| v.as_str()),
-        icon:          jsonb_field(&body, "icon"),
-        stack:         jsonb_field(&body, "stack"),
-        links:         jsonb_field(&body, "links"),
+        icon: jsonb_field(&body, "icon"),
+        stack: jsonb_field(&body, "stack"),
+        links: jsonb_field(&body, "links"),
     };
 
-    state.pg.update_project(&project_id, &patch).await
-        .map_err(|e| {
-            tracing::error!(error = %e, "update_solution failed");
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+    state.pg.update_project(&project_id, &patch).await.map_err(|e| {
+        tracing::error!(error = %e, "update_solution failed");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
     Ok(Json(serde_json::json!({"ok": true})))
 }
 
@@ -169,9 +180,11 @@ pub(crate) async fn delete_solution(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let project_id = resolve_project_uuid(&state, &id).await?
-        .ok_or(StatusCode::NOT_FOUND)?;
-    state.pg.delete_project(&project_id).await
+    let project_id = resolve_project_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
+    state
+        .pg
+        .delete_project(&project_id)
+        .await
         .map(|_| Json(serde_json::json!({"ok": true})))
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
@@ -198,41 +211,49 @@ pub(crate) async fn merge_projects(
     State(state): State<AppState>,
     Json(body): Json<MergeProjectsBody>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let target = uuid::Uuid::parse_str(&body.target)
-        .map_err(|_| (StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({"error": "target is not a valid uuid"}))))?;
+    let target = uuid::Uuid::parse_str(&body.target).map_err(|_| {
+        (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "target is not a valid uuid"})))
+    })?;
 
     // Parse + dedupe + reject self-references up front so the DB layer only
     // sees clean input.
     let mut sources: Vec<uuid::Uuid> = Vec::with_capacity(body.sources.len());
     for s in &body.sources {
-        let uuid = uuid::Uuid::parse_str(s)
-            .map_err(|_| (StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({"error": format!("source '{}' is not a valid uuid", s)}))))?;
+        let uuid = uuid::Uuid::parse_str(s).map_err(|_| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": format!("source '{}' is not a valid uuid", s)})),
+            )
+        })?;
         if uuid == target {
-            return Err((StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({"error": "target must not appear in sources"}))));
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": "target must not appear in sources"})),
+            ));
         }
         if !sources.contains(&uuid) {
             sources.push(uuid);
         }
     }
     if sources.is_empty() {
-        return Err((StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({"error": "sources must not be empty"}))));
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "sources must not be empty"})),
+        ));
     }
 
     let mut merged = 0u32;
     for src in &sources {
-        state.pg.merge_projects(src, &target).await
-            .map_err(|e| {
-                tracing::error!(error = %e, source = %src, target = %target, "merge_projects failed");
-                (StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(serde_json::json!({
-                        "error": e,
-                        "merged_before_failure": merged,
-                    })))
-            })?;
+        state.pg.merge_projects(src, &target).await.map_err(|e| {
+            tracing::error!(error = %e, source = %src, target = %target, "merge_projects failed");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "error": e,
+                    "merged_before_failure": merged,
+                })),
+            )
+        })?;
         merged += 1;
     }
 
@@ -244,17 +265,22 @@ pub(crate) async fn add_solution_repo(
     Path(id): Path<String>,
     Json(body): Json<CreateProjectRepo>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let project_id = resolve_project_uuid(&state, &id).await?
-        .ok_or(StatusCode::NOT_FOUND)?;
+    let project_id = resolve_project_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
 
     // Look up the folder by name (old string repo_id)
-    let folder = state.pg.get_repo_by_name(&body.repo_id).await
+    let folder = state
+        .pg
+        .get_repo_by_name(&body.repo_id)
+        .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
-    let folder_id = crate::api::util::json_uuid(&folder["id"])
-        .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+    let folder_id =
+        crate::api::util::json_uuid(&folder["id"]).ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    state.pg.set_folder_project(&folder_id, &project_id, &body.role, body.label.as_deref()).await
+    state
+        .pg
+        .set_folder_project(&folder_id, &project_id, &body.role, body.label.as_deref())
+        .await
         .map(|_| Json(serde_json::json!({"ok": true})))
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
@@ -264,14 +290,20 @@ pub(crate) async fn remove_solution_repo(
     Path((_id, repo_id)): Path<(String, String)>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     // Clear folder-project association by setting props to remove project link
-    let folder = state.pg.get_repo_by_name(&repo_id).await
+    let folder = state
+        .pg
+        .get_repo_by_name(&repo_id)
+        .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
-    let folder_id = crate::api::util::json_uuid(&folder["id"])
-        .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+    let folder_id =
+        crate::api::util::json_uuid(&folder["id"]).ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
 
     // Clear the project association by setting project_id to null via props
-    state.pg.set_folder_props(&folder_id, &serde_json::json!({"project_id": null})).await
+    state
+        .pg
+        .set_folder_props(&folder_id, &serde_json::json!({"project_id": null}))
+        .await
         .map(|_| Json(serde_json::json!({"ok": true})))
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
@@ -282,7 +314,10 @@ pub(crate) async fn add_solution_tag(
     Json(body): Json<TagBody>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     // PgStore tags are a controlled vocabulary. Register in vocabulary.
-    state.pg.add_tag(&body.tag, Some("solution")).await
+    state
+        .pg
+        .add_tag(&body.tag, Some("solution"))
+        .await
         .map(|_| Json(serde_json::json!({"ok": true})))
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
@@ -292,7 +327,10 @@ pub(crate) async fn remove_solution_tag(
     Path((_id, tag)): Path<(String, String)>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     // PgStore tags are a controlled vocabulary. Remove from vocabulary.
-    state.pg.remove_tag(&tag).await
+    state
+        .pg
+        .remove_tag(&tag)
+        .await
         .map(|_| Json(serde_json::json!({"ok": true})))
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
@@ -303,18 +341,21 @@ pub(crate) async fn analyze_solution(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let project_id = resolve_project_uuid(&state, &id).await?
-        .ok_or(StatusCode::NOT_FOUND)?;
-    let project = state.pg.get_project(&project_id).await
+    let project_id = resolve_project_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
+    let project = state
+        .pg
+        .get_project(&project_id)
+        .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
 
     // On-demand analyzer trigger (#67): enqueue session enrichment / analysis
     // for this project (the scheduler does this periodically). Task::new(kind,
     // folder_path, path) — the handler reads the project id from `path`.
-    state.task_queue.enqueue(
-        crate::tasks::Task::new(crate::tasks::TaskKind::AnalyzeProject, "", &id),
-    ).await;
+    state
+        .task_queue
+        .enqueue(crate::tasks::Task::new(crate::tasks::TaskKind::AnalyzeProject, "", &id))
+        .await;
 
     // TODO: implement full cross-repo analysis
     Ok(Json(serde_json::json!({
@@ -334,11 +375,15 @@ pub(crate) async fn analyze_process(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let project_id = resolve_project_uuid(&state, &id).await?
-        .ok_or(StatusCode::NOT_FOUND)?;
-    state.task_queue.enqueue(
-        crate::tasks::Task::new(crate::tasks::TaskKind::AnalyzeSessionProcess, "", &project_id.to_string()),
-    ).await;
+    let project_id = resolve_project_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
+    state
+        .task_queue
+        .enqueue(crate::tasks::Task::new(
+            crate::tasks::TaskKind::AnalyzeSessionProcess,
+            "",
+            &project_id.to_string(),
+        ))
+        .await;
     Ok(Json(serde_json::json!({ "ok": true, "queued": true })))
 }
 
@@ -354,9 +399,7 @@ pub(crate) async fn backfill_project_sessions(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let uuid = resolve_project_uuid(&state, &id)
-        .await?
-        .ok_or(StatusCode::NOT_FOUND)?;
+    let uuid = resolve_project_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
     state
         .pg
         .get_project(&uuid)
@@ -435,25 +478,28 @@ pub(crate) async fn project_summary(
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     // Resolve to project-scoped folder ids; fall back to NOT_FOUND only if
     // neither a project name/UUID nor a repo name matches.
-    let ids = state.pg.scope_folder_ids(&repo_id).await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let ids =
+        state.pg.scope_folder_ids(&repo_id).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     if ids.is_empty() {
         return Err(StatusCode::NOT_FOUND);
     }
 
     // Derive counts across all folders in scope. A DB error is a 500 — never
     // masked as 0 counts (which would read as "this project has no code").
-    let counts = state.pg.count_nodes_by_kind_scoped(&ids).await
+    let counts = state
+        .pg
+        .count_nodes_by_kind_scoped(&ids)
+        .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let fn_count = counts.get("function").copied().unwrap_or(0)
-        + counts.get("method").copied().unwrap_or(0);
+    let fn_count =
+        counts.get("function").copied().unwrap_or(0) + counts.get("method").copied().unwrap_or(0);
     let type_count = counts.get("class").copied().unwrap_or(0)
         + counts.get("struct").copied().unwrap_or(0)
         + counts.get("interface").copied().unwrap_or(0)
         + counts.get("enum").copied().unwrap_or(0)
         + counts.get("type").copied().unwrap_or(0);
-    let edge_count = state.pg.count_edges_scoped(&ids).await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let edge_count =
+        state.pg.count_edges_scoped(&ids).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let pkg_count = counts.get("package").copied().unwrap_or(0);
     let mod_count = counts.get("module").copied().unwrap_or(0);
 
@@ -467,38 +513,38 @@ pub(crate) async fn project_summary(
     let project = match state.pg.get_project_by_name(&repo_id).await {
         Ok(Some(p)) => Some(p),
         Ok(None) => match uuid::Uuid::parse_str(&repo_id) {
-            Ok(uuid) => state.pg.get_project(&uuid).await
-                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+            Ok(uuid) => {
+                state.pg.get_project(&uuid).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+            }
             Err(_) => None,
         },
         Err(_) => return Err(StatusCode::INTERNAL_SERVER_ERROR),
     };
-    let (name, path, stack, libs, tags, status, indexed_at) =
-        if let Some(proj) = project {
-            (
-                proj["name"].clone(),
-                proj.get("path").cloned().unwrap_or(serde_json::Value::Null),
-                proj.get("stack").cloned().unwrap_or(serde_json::json!([])),
-                serde_json::json!([]),
-                proj.get("tags").cloned().unwrap_or(serde_json::json!([])),
-                // Real lifecycle (project_maturity), not a hardcoded "active".
-                proj.get("maturity").cloned().unwrap_or(serde_json::Value::Null),
-                serde_json::Value::Null,
-            )
-        } else if let Ok(Some(folder)) = state.pg.get_repo_by_name(&repo_id).await {
-            (
-                folder["name"].clone(),
-                folder["abs_path"].clone(),
-                folder.get("stack").cloned().unwrap_or(serde_json::json!([])),
-                folder.get("libs").cloned().unwrap_or(serde_json::json!([])),
-                folder.get("tags").cloned().unwrap_or(serde_json::json!([])),
-                // Real folder status, honest-null if unset — not a fabricated "active".
-                folder.get("status").cloned().unwrap_or(serde_json::Value::Null),
-                folder.get("indexed_at").cloned().unwrap_or(serde_json::Value::Null),
-            )
-        } else {
-            return Err(StatusCode::NOT_FOUND);
-        };
+    let (name, path, stack, libs, tags, status, indexed_at) = if let Some(proj) = project {
+        (
+            proj["name"].clone(),
+            proj.get("path").cloned().unwrap_or(serde_json::Value::Null),
+            proj.get("stack").cloned().unwrap_or(serde_json::json!([])),
+            serde_json::json!([]),
+            proj.get("tags").cloned().unwrap_or(serde_json::json!([])),
+            // Real lifecycle (project_maturity), not a hardcoded "active".
+            proj.get("maturity").cloned().unwrap_or(serde_json::Value::Null),
+            serde_json::Value::Null,
+        )
+    } else if let Ok(Some(folder)) = state.pg.get_repo_by_name(&repo_id).await {
+        (
+            folder["name"].clone(),
+            folder["abs_path"].clone(),
+            folder.get("stack").cloned().unwrap_or(serde_json::json!([])),
+            folder.get("libs").cloned().unwrap_or(serde_json::json!([])),
+            folder.get("tags").cloned().unwrap_or(serde_json::json!([])),
+            // Real folder status, honest-null if unset — not a fabricated "active".
+            folder.get("status").cloned().unwrap_or(serde_json::Value::Null),
+            folder.get("indexed_at").cloned().unwrap_or(serde_json::Value::Null),
+        )
+    } else {
+        return Err(StatusCode::NOT_FOUND);
+    };
 
     Ok(Json(serde_json::json!({
         "repoId": name,
@@ -524,9 +570,11 @@ pub(crate) async fn solution_graph(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let project_id = resolve_project_uuid(&state, &id).await?
-        .ok_or(StatusCode::NOT_FOUND)?;
-    let project = state.pg.get_project(&project_id).await
+    let project_id = resolve_project_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
+    let project = state
+        .pg
+        .get_project(&project_id)
+        .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
 
@@ -535,11 +583,10 @@ pub(crate) async fn solution_graph(
     // Get all repos (folders) and filter those belonging to this project.
     // Fail closed on a read error (500) — an empty repo list here would render
     // as an empty solution graph, indistinguishable from a real single-node one.
-    let all_repos = state.pg.list_repositories().await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let project_repos: Vec<&serde_json::Value> = all_repos.iter()
-        .filter(|r| r["project_id"].as_str() == Some(&id))
-        .collect();
+    let all_repos =
+        state.pg.list_repositories().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let project_repos: Vec<&serde_json::Value> =
+        all_repos.iter().filter(|r| r["project_id"].as_str() == Some(&id)).collect();
 
     let mut all_nodes = Vec::new();
     let mut all_edges = Vec::new();
@@ -563,15 +610,22 @@ pub(crate) async fn solution_graph(
     // Fetch nodes and edges in one scoped call each. Fail closed on a read
     // error (500) — a swallowed error would silently drop nodes/edges and render
     // a truncated graph as if it were complete.
-    let scoped_nodes = state.pg.get_nodes_scoped(&folder_ids).await
+    let scoped_nodes = state
+        .pg
+        .get_nodes_scoped(&folder_ids)
+        .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let scoped_edges = state.pg.get_edges_scoped(&folder_ids, "calls").await
+    let scoped_edges = state
+        .pg
+        .get_edges_scoped(&folder_ids, "calls")
+        .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     // Re-annotate nodes with repoId/role from folder metadata.
     // get_nodes_scoped returns folder_id — use it to look up the repo.
     for node in scoped_nodes {
-        let fid_opt = node.get("folder_id")
+        let fid_opt = node
+            .get("folder_id")
             .and_then(|v| v.as_str())
             .and_then(|s| uuid::Uuid::parse_str(s).ok());
         let (repo_name, role) = fid_opt
@@ -633,29 +687,33 @@ pub(crate) async fn solution_roles(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let project_id = resolve_project_uuid(&state, &id).await?
-        .ok_or(StatusCode::NOT_FOUND)?;
+    let project_id = resolve_project_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
     // Verify project exists
-    state.pg.get_project(&project_id).await
+    state
+        .pg
+        .get_project(&project_id)
+        .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
 
     // Get repos belonging to this project. Fail closed on a read error (500) —
     // an empty list would render as "this solution has no repos / roles".
-    let all_repos = state.pg.list_repositories().await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let project_repos: Vec<serde_json::Value> = all_repos.into_iter()
-        .filter(|r| r["project_id"].as_str() == Some(&id))
-        .collect();
+    let all_repos =
+        state.pg.list_repositories().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let project_repos: Vec<serde_json::Value> =
+        all_repos.into_iter().filter(|r| r["project_id"].as_str() == Some(&id)).collect();
 
     // Build simple role list from folder data
-    let roles: Vec<serde_json::Value> = project_repos.iter().map(|r| {
-        serde_json::json!({
-            "repoId": r["name"],
-            "role": r.get("role").and_then(|v| v.as_str()).unwrap_or("unknown"),
-            "label": r.get("label").and_then(|v| v.as_str()),
+    let roles: Vec<serde_json::Value> = project_repos
+        .iter()
+        .map(|r| {
+            serde_json::json!({
+                "repoId": r["name"],
+                "role": r.get("role").and_then(|v| v.as_str()).unwrap_or("unknown"),
+                "label": r.get("label").and_then(|v| v.as_str()),
+            })
         })
-    }).collect();
+        .collect();
 
     Ok(Json(serde_json::json!(roles)))
 }
@@ -671,11 +729,14 @@ pub(crate) async fn get_metrics(
     // (never masked as a miss); a genuine miss is a 404 — NOT a 200 carrying a
     // fabricated {"error":"project not found"} body a caller can't distinguish
     // from real metrics.
-    let folder = state.pg.get_repo_by_name(&project).await
+    let folder = state
+        .pg
+        .get_repo_by_name(&project)
+        .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
-    let folder_id = crate::api::util::json_uuid(&folder["id"])
-        .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+    let folder_id =
+        crate::api::util::json_uuid(&folder["id"]).ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
     let sessions = state.pg.list_sessions_by_folder(&folder_id, 100).await
         .map_err(|e| { tracing::warn!(error = %e, project = %project, "get_metrics: list_sessions_by_folder failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
     let session_count = sessions.len();
@@ -704,22 +765,28 @@ pub(crate) struct DaysQuery {
     #[serde(default = "default_days")]
     days: i32,
 }
-fn default_days() -> i32 { 14 }
+fn default_days() -> i32 {
+    14
+}
 
 #[derive(Deserialize)]
 pub(crate) struct LimitQuery {
     #[serde(default = "default_limit")]
     limit: i64,
 }
-fn default_limit() -> i64 { 10 }
+fn default_limit() -> i64 {
+    10
+}
 
 /// GET /api/observatory/ftr-daily?days=14 — holistic FTR sparkline (all projects)
 pub(crate) async fn holistic_ftr_daily(
     State(state): State<AppState>,
     axum::extract::Query(q): axum::extract::Query<DaysQuery>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let data = state.pg.get_ftr_daily(None, q.days).await
-        .map_err(|e| { tracing::error!("ftr_daily error: {}", e); StatusCode::INTERNAL_SERVER_ERROR })?;
+    let data = state.pg.get_ftr_daily(None, q.days).await.map_err(|e| {
+        tracing::error!("ftr_daily error: {}", e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
     Ok(Json(serde_json::json!({ "ftr_daily": data })))
 }
 
@@ -729,9 +796,11 @@ pub(crate) async fn project_ftr_daily(
     Path(id): Path<String>,
     axum::extract::Query(q): axum::extract::Query<DaysQuery>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let project_id = resolve_project_uuid(&state, &id).await?
-        .ok_or(StatusCode::NOT_FOUND)?;
-    let data = state.pg.get_ftr_daily(Some(&project_id), q.days).await
+    let project_id = resolve_project_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
+    let data = state
+        .pg
+        .get_ftr_daily(Some(&project_id), q.days)
+        .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(serde_json::json!({ "ftr_daily": data })))
 }
@@ -742,9 +811,11 @@ pub(crate) async fn project_hotspots(
     Path(id): Path<String>,
     axum::extract::Query(q): axum::extract::Query<DaysQuery>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let project_id = resolve_project_uuid(&state, &id).await?
-        .ok_or(StatusCode::NOT_FOUND)?;
-    let data = state.pg.get_hotspots(&project_id, q.days).await
+    let project_id = resolve_project_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
+    let data = state
+        .pg
+        .get_hotspots(&project_id, q.days)
+        .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(serde_json::json!({ "hotspots": data })))
 }
@@ -754,9 +825,11 @@ pub(crate) async fn project_quality_signals(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let project_id = resolve_project_uuid(&state, &id).await?
-        .ok_or(StatusCode::NOT_FOUND)?;
-    let data = state.pg.get_quality_signals(&project_id).await
+    let project_id = resolve_project_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
+    let data = state
+        .pg
+        .get_quality_signals(&project_id)
+        .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(data))
 }
@@ -768,8 +841,7 @@ pub(crate) async fn project_maturity(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let project_id = resolve_project_uuid(&state, &id).await?
-        .ok_or(StatusCode::NOT_FOUND)?;
+    let project_id = resolve_project_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
     let (watched, has_insights) = state
         .pg
         .get_project_maturity_inputs(&project_id)
@@ -789,8 +861,10 @@ pub(crate) async fn project_maturity(
 pub(crate) async fn tool_usage(
     State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let data = state.pg.get_tool_usage_stats().await
-        .map_err(|e| { tracing::error!("tool_usage error: {}", e); StatusCode::INTERNAL_SERVER_ERROR })?;
+    let data = state.pg.get_tool_usage_stats().await.map_err(|e| {
+        tracing::error!("tool_usage error: {}", e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
     Ok(Json(serde_json::json!({ "tools": data })))
 }
 
@@ -805,14 +879,15 @@ pub(crate) async fn tool_usage(
 pub(crate) async fn tool_signals(
     State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
+    use crate::analysis::insight_copy::{CopyLimits, copy_or_warm};
     use crate::api::handlers::tool_signals as ts;
-    use crate::analysis::insight_copy::{copy_or_warm, CopyLimits};
 
-    let rows = state.pg.get_tool_usage_stats().await
-        .map_err(|e| { tracing::error!(error = %e, "tool_signals: get_tool_usage_stats failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
-    let stats: Vec<ts::ToolUsageRow> = rows.into_iter()
-        .filter_map(|v| serde_json::from_value(v).ok())
-        .collect();
+    let rows = state.pg.get_tool_usage_stats().await.map_err(|e| {
+        tracing::error!(error = %e, "tool_signals: get_tool_usage_stats failed");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+    let stats: Vec<ts::ToolUsageRow> =
+        rows.into_iter().filter_map(|v| serde_json::from_value(v).ok()).collect();
     let raw = ts::derive_signals(&stats, chrono::Utc::now(), &ts::SignalThresholds::default());
     let mut signals = ts::curate_insights(raw);
 
@@ -829,7 +904,8 @@ pub(crate) async fn tool_signals(
     const COPY_CAP: usize = 8;
     for s in signals.iter_mut().take(COPY_CAP) {
         let (kind, facts, fb) = ts::signal_copy_inputs(s);
-        let c = copy_or_warm(&state.pg, &state.gateway, kind, &facts, CopyLimits::default(), fb).await;
+        let c =
+            copy_or_warm(&state.pg, &state.gateway, kind, &facts, CopyLimits::default(), fb).await;
         s.title = c.title;
         s.detail = c.detail;
     }
@@ -843,8 +919,10 @@ pub(crate) async fn tool_signals(
 pub(crate) async fn tool_insights(
     State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let rows = state.pg.get_latest_tool_insights().await
-        .map_err(|e| { tracing::error!(error = %e, "tool_insights: get_latest_tool_insights failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+    let rows = state.pg.get_latest_tool_insights().await.map_err(|e| {
+        tracing::error!(error = %e, "tool_insights: get_latest_tool_insights failed");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
     Ok(Json(serde_json::json!({ "insights": rows })))
 }
 
@@ -854,8 +932,10 @@ pub(crate) async fn tool_insights(
 pub(crate) async fn model_effectiveness(
     State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let data = state.pg.get_model_effectiveness().await
-        .map_err(|e| { tracing::error!("model_effectiveness error: {}", e); StatusCode::INTERNAL_SERVER_ERROR })?;
+    let data = state.pg.get_model_effectiveness().await.map_err(|e| {
+        tracing::error!("model_effectiveness error: {}", e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
     Ok(Json(serde_json::json!({ "models": data })))
 }
 
@@ -865,7 +945,10 @@ pub(crate) async fn library_usage(
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let library_id = uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?;
-    let data = state.pg.get_library_usage(&library_id).await
+    let data = state
+        .pg
+        .get_library_usage(&library_id)
+        .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(serde_json::json!({ "usage": data })))
 }
@@ -876,9 +959,11 @@ pub(crate) async fn project_teachings(
     Path(id): Path<String>,
     axum::extract::Query(q): axum::extract::Query<LimitQuery>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let project_id = resolve_project_uuid(&state, &id).await?
-        .ok_or(StatusCode::NOT_FOUND)?;
-    let data = state.pg.get_adopted_teachings(&project_id, q.limit).await
+    let project_id = resolve_project_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
+    let data = state
+        .pg
+        .get_adopted_teachings(&project_id, q.limit)
+        .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(serde_json::json!({ "teachings": data })))
 }
@@ -886,7 +971,10 @@ pub(crate) async fn project_teachings(
 // ── Observatory · Today (Slot 1) ────────────────────────────────────────────
 
 /// Compact relative-time label ("2d ago", "3h ago", "just now").
-fn relative_when(then: chrono::DateTime<chrono::Utc>, now: chrono::DateTime<chrono::Utc>) -> String {
+fn relative_when(
+    then: chrono::DateTime<chrono::Utc>,
+    now: chrono::DateTime<chrono::Utc>,
+) -> String {
     let secs = (now - then).num_seconds().max(0);
     match secs {
         0..=59 => "just now".to_string(),
@@ -904,10 +992,8 @@ fn relative_when(then: chrono::DateTime<chrono::Utc>, now: chrono::DateTime<chro
 pub(crate) async fn observatory_today(
     State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
+    use crate::analysis::insight_copy::{CopyLimits, FallbackCopy, InsightKind, copy_or_warm};
     use crate::observatory_home as home;
-    use crate::analysis::insight_copy::{
-        copy_or_warm, CopyLimits, FallbackCopy, InsightKind,
-    };
 
     let now_local = chrono::Local::now();
     let greeting = home::greeting(now_local.hour());
@@ -915,42 +1001,50 @@ pub(crate) async fn observatory_today(
 
     // Maturity is a daemon decision (aggregate across active projects), reusing
     // the shared, already-tested maturity gate.
-    let (watched, has_insights) = state.pg.get_global_maturity_inputs().await
-        .map_err(|e| { tracing::error!(error = %e, "observatory_today: maturity inputs failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
-    let sig = crate::maturity::maturity_signal(watched, has_insights, crate::maturity::MATURITY_TARGET);
+    let (watched, has_insights) = state.pg.get_global_maturity_inputs().await.map_err(|e| {
+        tracing::error!(error = %e, "observatory_today: maturity inputs failed");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+    let sig =
+        crate::maturity::maturity_signal(watched, has_insights, crate::maturity::MATURITY_TARGET);
 
     // Recent sessions — reuse the raw shape `/api/sessions` returns so the app's
     // existing RecentSessions component + toRecentSessions() render them without
     // a second shaping path. Drop content-less ghost rows (#61), cap at 5.
-    let all = state.pg.list_all_sessions(20, None, None).await
-        .map_err(|e| { tracing::error!(error = %e, "observatory_today: sessions failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
-    let recent: Vec<serde_json::Value> = all.into_iter()
+    let all = state.pg.list_all_sessions(20, None, None).await.map_err(|e| {
+        tracing::error!(error = %e, "observatory_today: sessions failed");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+    let recent: Vec<serde_json::Value> = all
+        .into_iter()
         .filter(|s| {
             let has = |k: &str| s[k].as_str().map(|v| !v.trim().is_empty()).unwrap_or(false);
             has("project") || has("task") || has("summary")
         })
         .take(5)
         .collect();
-    let recent_ids: Vec<String> = recent.iter()
-        .filter_map(|s| s["id"].as_str().map(str::to_string))
-        .take(4)
-        .collect();
+    let recent_ids: Vec<String> =
+        recent.iter().filter_map(|s| s["id"].as_str().map(str::to_string)).take(4).collect();
 
     let now = chrono::Utc::now();
     let (hero, insights, adopted) = if sig.stage == "mature" {
         let recs = state.pg.get_pending_recommendations_global(4).await
             .map_err(|e| { tracing::warn!(error = %e, "observatory_today: get_pending_recommendations_global failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
-        let rec_lite: Vec<home::RecLite> = recs.iter().map(|r| home::RecLite {
-            urgency: r["urgency"].as_str().unwrap_or("low").to_string(),
-            title:   r["title"].as_str().unwrap_or("").to_string(),
-            why:     r["why"].as_str().unwrap_or("").to_string(),
-            impact:  r["impact"].as_str().map(str::to_string),
-        }).collect();
+        let rec_lite: Vec<home::RecLite> = recs
+            .iter()
+            .map(|r| home::RecLite {
+                urgency: r["urgency"].as_str().unwrap_or("low").to_string(),
+                title: r["title"].as_str().unwrap_or("").to_string(),
+                why: r["why"].as_str().unwrap_or("").to_string(),
+                impact: r["impact"].as_str().map(str::to_string),
+            })
+            .collect();
 
         if let Some((top, rest)) = rec_lite.split_first() {
             // Honest provenance: session ids drawn from the top rec's own
             // evidence, not arbitrary recent sessions. Empty when it has none.
-            let sources = recs.first()
+            let sources = recs
+                .first()
                 .map(|r| home::session_ids_from_evidence(&r["evidence"], 3))
                 .unwrap_or_default();
             // Mature hero — route the koan title + body through insight-copy
@@ -972,9 +1066,14 @@ pub(crate) async fn observatory_today(
                 detail: hero["body"].as_str().unwrap_or_default().to_string(),
             };
             let hero_copy = copy_or_warm(
-                &state.pg, &state.gateway, InsightKind::HeroKoanMature,
-                &hero_facts, CopyLimits::default(), hero_fallback,
-            ).await;
+                &state.pg,
+                &state.gateway,
+                InsightKind::HeroKoanMature,
+                &hero_facts,
+                CopyLimits::default(),
+                hero_fallback,
+            )
+            .await;
             hero["koan"] = hero_copy.title.into();
             hero["body"] = hero_copy.detail.into();
 
@@ -994,26 +1093,38 @@ pub(crate) async fn observatory_today(
                     detail: card["text"].as_str().unwrap_or_default().to_string(),
                 };
                 let card_copy = copy_or_warm(
-                    &state.pg, &state.gateway, InsightKind::InsightRecurringPattern,
-                    &card_facts, CopyLimits::default(), card_fallback,
-                ).await;
+                    &state.pg,
+                    &state.gateway,
+                    InsightKind::InsightRecurringPattern,
+                    &card_facts,
+                    CopyLimits::default(),
+                    card_fallback,
+                )
+                .await;
                 card["text"] = card_copy.detail.into();
                 insights.push(card);
             }
 
-            let mems = state.pg.list_active_memories_global(5).await
-                .map_err(|e| { tracing::warn!(error = %e, "observatory_today: list_active_memories_global failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
-            let adopted: Vec<serde_json::Value> = mems.iter().map(|m| {
-                let when = m["modified_at"].as_str()
-                    .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
-                    .map(|t| relative_when(t.with_timezone(&chrono::Utc), now))
-                    .unwrap_or_default();
-                let scope = m["scope"].as_str().unwrap_or("project");
-                let source = m["impact"].as_str()
-                    .filter(|s| !s.trim().is_empty())
-                    .unwrap_or("adopted by sensei");
-                home::adopted_row(&when, m["title"].as_str().unwrap_or(""), scope, source)
-            }).collect();
+            let mems = state.pg.list_active_memories_global(5).await.map_err(|e| {
+                tracing::warn!(error = %e, "observatory_today: list_active_memories_global failed");
+                StatusCode::INTERNAL_SERVER_ERROR
+            })?;
+            let adopted: Vec<serde_json::Value> = mems
+                .iter()
+                .map(|m| {
+                    let when = m["modified_at"]
+                        .as_str()
+                        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                        .map(|t| relative_when(t.with_timezone(&chrono::Utc), now))
+                        .unwrap_or_default();
+                    let scope = m["scope"].as_str().unwrap_or("project");
+                    let source = m["impact"]
+                        .as_str()
+                        .filter(|s| !s.trim().is_empty())
+                        .unwrap_or("adopted by sensei");
+                    home::adopted_row(&when, m["title"].as_str().unwrap_or(""), scope, source)
+                })
+                .collect();
             (hero, insights, adopted)
         } else {
             (home::steady_hero(recent.len()), Vec::new(), Vec::new())
@@ -1046,8 +1157,10 @@ pub(crate) async fn observatory_today(
 pub(crate) async fn observatory_ftr(
     State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let data = state.pg.get_holistic_ftr().await
-        .map_err(|e| { tracing::error!(error = %e, "observatory_ftr failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+    let data = state.pg.get_holistic_ftr().await.map_err(|e| {
+        tracing::error!(error = %e, "observatory_ftr failed");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
     Ok(Json(data))
 }
 
@@ -1067,8 +1180,8 @@ pub(crate) async fn get_insights(
     State(state): State<AppState>,
     axum::extract::Query(q): axum::extract::Query<InsightsQuery>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
+    use crate::analysis::insight_copy::{CopyLimits, FallbackCopy, InsightKind, copy_or_warm};
     use crate::insights as ins;
-    use crate::analysis::insight_copy::{copy_or_warm, CopyLimits, FallbackCopy, InsightKind};
 
     let project: Option<uuid::Uuid> = match q.project.as_deref() {
         Some(p) if !p.trim().is_empty() => {
@@ -1078,20 +1191,27 @@ pub(crate) async fn get_insights(
     };
     let pref = project.as_ref();
 
-    let err = |label: &'static str| move |e: String| {
-        tracing::error!(error = %e, "get_insights: {label} failed");
-        StatusCode::INTERNAL_SERVER_ERROR
+    let err = |label: &'static str| {
+        move |e: String| {
+            tracing::error!(error = %e, "get_insights: {label} failed");
+            StatusCode::INTERNAL_SERVER_ERROR
+        }
     };
 
     // Recommendations — always shown (bucketed by urgency), tagged with a column.
-    let mut recs = state.pg.get_insights_recommendations(pref).await.map_err(err("recommendations"))?;
+    let mut recs =
+        state.pg.get_insights_recommendations(pref).await.map_err(err("recommendations"))?;
     for r in recs.iter_mut() {
         let col = ins::rec_column(r["urgency"].as_str().unwrap_or("low"));
         r["column"] = serde_json::json!(col);
     }
 
     // Memories — filtered + tagged; excluded when the bucket rule returns None.
-    let mut memories: Vec<serde_json::Value> = state.pg.get_insights_memories(pref).await.map_err(err("memories"))?
+    let mut memories: Vec<serde_json::Value> = state
+        .pg
+        .get_insights_memories(pref)
+        .await
+        .map_err(err("memories"))?
         .into_iter()
         .filter_map(|mut m| {
             let vc = m["violated_count"].as_i64().unwrap_or(0);
@@ -1103,7 +1223,11 @@ pub(crate) async fn get_insights(
         .collect();
 
     // Patterns — suggested/rule only; tagged.
-    let patterns: Vec<serde_json::Value> = state.pg.get_insights_patterns(pref).await.map_err(err("patterns"))?
+    let patterns: Vec<serde_json::Value> = state
+        .pg
+        .get_insights_patterns(pref)
+        .await
+        .map_err(err("patterns"))?
         .into_iter()
         .filter_map(|mut p| {
             ins::pattern_column(p["lifecycle"].as_str().unwrap_or("")).map(|col| {
@@ -1114,7 +1238,8 @@ pub(crate) async fn get_insights(
         .collect();
 
     // Corrections — top 3, always Now.
-    let mut corrections = state.pg.get_insights_corrections(pref, 3).await.map_err(err("corrections"))?;
+    let mut corrections =
+        state.pg.get_insights_corrections(pref, 3).await.map_err(err("corrections"))?;
     for c in corrections.iter_mut() {
         c["column"] = serde_json::json!(ins::CORRECTION_COLUMN);
     }
@@ -1143,10 +1268,19 @@ pub(crate) async fn get_insights(
         // the per-project recommendations endpoint hash to the SAME cache key
         // (one warm serves both screens).
         for r in recs.iter_mut().filter(|r| r["column"].as_str() == Some(col)) {
-            if budget == 0 { break 'cap; }
+            if budget == 0 {
+                break 'cap;
+            }
             let (kind, facts, fallback) = ins::rec_copy_inputs(r);
-            let copy = copy_or_warm(&state.pg, &state.gateway, kind,
-                &facts, CopyLimits::default(), fallback).await;
+            let copy = copy_or_warm(
+                &state.pg,
+                &state.gateway,
+                kind,
+                &facts,
+                CopyLimits::default(),
+                fallback,
+            )
+            .await;
             ins::apply_rec_copy(r, copy);
             budget -= 1;
         }
@@ -1154,7 +1288,9 @@ pub(crate) async fn get_insights(
         // otherwise it needs a human look (proposed, or violated regardless of
         // status — a live violation is never "adopt as-is").
         for m in memories.iter_mut().filter(|m| m["column"].as_str() == Some(col)) {
-            if budget == 0 { break 'cap; }
+            if budget == 0 {
+                break 'cap;
+            }
             let status = m["status"].as_str().unwrap_or("");
             let violated = m["violated_count"].as_i64().unwrap_or(0) > 0;
             let kind = if !violated && matches!(status, "active" | "reinforced" | "battle_tested") {
@@ -1162,13 +1298,21 @@ pub(crate) async fn get_insights(
             } else {
                 InsightKind::MemoryProposedReview
             };
-            let facts = serde_json::json!({ "title": m["title"], "status": status, "what": m["content"] });
+            let facts =
+                serde_json::json!({ "title": m["title"], "status": status, "what": m["content"] });
             let fallback = FallbackCopy {
-                title:  m["title"].as_str().unwrap_or_default().to_string(),
+                title: m["title"].as_str().unwrap_or_default().to_string(),
                 detail: m["content"].as_str().unwrap_or_default().to_string(),
             };
-            let copy = copy_or_warm(&state.pg, &state.gateway, kind,
-                &facts, CopyLimits::default(), fallback).await;
+            let copy = copy_or_warm(
+                &state.pg,
+                &state.gateway,
+                kind,
+                &facts,
+                CopyLimits::default(),
+                fallback,
+            )
+            .await;
             m["title"] = copy.title.into();
             m["content"] = copy.detail.into();
             budget -= 1;
@@ -1178,8 +1322,11 @@ pub(crate) async fn get_insights(
         // a prose body.
     }
     if routable > COPY_CAP {
-        tracing::debug!(routable, cap = COPY_CAP,
-            "get_insights: capped insight-copy routing to the top cards; remainder render static text");
+        tracing::debug!(
+            routable,
+            cap = COPY_CAP,
+            "get_insights: capped insight-copy routing to the top cards; remainder render static text"
+        );
     }
 
     // Per-column totals across every source type.
@@ -1203,24 +1350,27 @@ pub(crate) async fn get_insights(
         }
     }
     let all_projects = state.pg.list_projects().await.map_err(err("projects"))?;
-    let projects: Vec<serde_json::Value> = all_projects.iter().filter_map(|p| {
-        let pid = p["id"].as_str()?;
-        if !seen.contains(pid) {
-            return None;
-        }
-        let kanji = if p["icon"].get("kind").and_then(|k| k.as_str()) == Some("kanji") {
-            p["icon"].get("value").and_then(|v| v.as_str()).unwrap_or("場")
-        } else {
-            "場"
-        };
-        // last_session_at lets the Insights project filter show the 3 MOST-RECENT
-        // projects as chips (the rest reachable by search) instead of one chip per
-        // project. Already computed by list_projects; pass it through.
-        Some(serde_json::json!({
-            "id": pid, "name": p["name"], "kanji": kanji,
-            "last_session_at": p["last_session_at"],
-        }))
-    }).collect();
+    let projects: Vec<serde_json::Value> = all_projects
+        .iter()
+        .filter_map(|p| {
+            let pid = p["id"].as_str()?;
+            if !seen.contains(pid) {
+                return None;
+            }
+            let kanji = if p["icon"].get("kind").and_then(|k| k.as_str()) == Some("kanji") {
+                p["icon"].get("value").and_then(|v| v.as_str()).unwrap_or("場")
+            } else {
+                "場"
+            };
+            // last_session_at lets the Insights project filter show the 3 MOST-RECENT
+            // projects as chips (the rest reachable by search) instead of one chip per
+            // project. Already computed by list_projects; pass it through.
+            Some(serde_json::json!({
+                "id": pid, "name": p["name"], "kanji": kanji,
+                "last_session_at": p["last_session_at"],
+            }))
+        })
+        .collect();
 
     Ok(Json(serde_json::json!({
         "counts": counts,
