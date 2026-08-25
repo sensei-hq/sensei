@@ -85,6 +85,14 @@ pub struct TokenResponse {
     /// provisioning start failing weeks later with an unexplained 401.
     #[serde(default)]
     pub provider_refresh_token: Option<String>,
+    /// The authenticated user, as GoTrue returns it alongside the tokens.
+    ///
+    /// Carries `identities[]`, which is where the VERIFIED GitHub login and
+    /// numeric id live. Taking it from here rather than calling `/auth/v1/user`
+    /// again keeps the identity and the token from the same response — a second
+    /// call could, in principle, answer for a different session.
+    #[serde(default)]
+    pub user: Option<serde_json::Value>,
 }
 
 /// A live session held in memory for the process's lifetime.
@@ -239,6 +247,7 @@ mod tests {
             expires_in: 3600,
             provider_token: None,
             provider_refresh_token: None,
+            user: None,
         };
         assert_eq!(Session::from_response(&r, 100).expires_at, 3700);
     }
@@ -253,6 +262,7 @@ mod tests {
             expires_in: -5,
             provider_token: None,
             provider_refresh_token: None,
+            user: None,
         };
         assert_eq!(Session::from_response(&r, 100).expires_at, 100);
     }

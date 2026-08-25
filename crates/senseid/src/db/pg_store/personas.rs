@@ -129,56 +129,58 @@ impl PgStore {
     /// Record a persona's VERIFIED GitHub identity, and adopt the account's
     /// emails as claimed aliases.
     ///
-    /// Matches on `github_user_id` first, because a login can be renamed and the
-    /// numeric id cannot — matching on the login would create a second persona
-    /// for the same human the day they rename themselves.
+    /// `persona_hint` is only a FALLBACK. The hint is the Keychain slot the
+    /// session was loaded from, which is not evidence of who signed in — a slot
+    /// named `sensei-hq` can perfectly well hold the jerrythomas account, as it
+    /// does on this machine after an early double sign-in. Trusting it would
+    /// stamp one human's verified login onto another's persona.
     ///
-    /// The label is REPLACED by the verified login only while the persona is
-    /// still unverified. Once a user has chosen a display name, an OAuth refresh
-    /// must not silently overwrite it — `sensei-hq` reading better than
-    /// `sensei-hq-org` is a legitimate preference, not drift to correct.
+    /// Resolution runs strongest-evidence-first:
     ///
-    /// Emails arrive with `source='claimed'`: GitHub verified mailbox control,
-    /// which is a materially stronger assertion than a git commit trailer that
-    /// anyone can set to any address.
+    /// 1. `github_user_id` — the same account, definitively. Not the login: a
+    ///    login can be RENAMED and the numeric id cannot, so matching on the
+    ///    login forks one human into two personas the day they rename.
+    /// 2. `primary_email` against a live persona email — the same human under a
+    ///    name we inferred earlier. Passed explicitly rather than taken from
+    ///    `verified_emails`, which is unordered: the account's identifying
+    ///    address is a specific one, not whichever happens to sort first.
+    /// 3. The hint.
+    /// 4. A new persona labelled with the verified login.
+    ///
+    /// Steps 2 and 3 refuse to land on a persona ALREADY verified as a different
+    /// GitHub account. Two accounts sharing an address (a work address on both a
+    /// personal and an org account) would otherwise let the second sign-in
+    /// silently take over the first's persona and re-attribute its history.
     pub async fn link_persona_identity(
         &self,
         persona_hint: &str,
         github_login: &str,
         github_user_id: i64,
+        primary_email: Option<&str>,
         verified_emails: &[String],
     ) -> Result<uuid::Uuid, String> {
-        // Existing persona for this GitHub account, or the hinted one, or new.
-        let existing: Option<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
-            "SELECT id FROM sensei.personas WHERE github_user_id = $1",
-        )
-        .bind(github_user_id)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| format!("link_persona_identity (by id): {e}"))?;
-
-        let id = match existing {
-            Some((id,)) => id,
-            None => {
-                let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
-                    "INSERT INTO sensei.personas(label, is_self) VALUES($1, true) \
-                     ON CONFLICT (lower(label)) DO UPDATE SET modified_at = now() \
-                     RETURNING id",
-                )
-                .bind(persona_hint)
-                .fetch_one(&self.pool)
-                .await
-                .map_err(|e| format!("link_persona_identity (upsert): {e}"))?;
-                row.0
-            }
+        let id = match self
+            .resolve_persona_for_identity(persona_hint, github_user_id, primary_email)
+            .await?
+        {
+            Some(id) => id,
+            None => self.upsert_persona(github_login, true).await?,
         };
 
+        // The label is REPLACED by the verified login only while the persona is
+        // still unverified, and only when no other persona already holds that
+        // label. Once a user has chosen a display name, re-verification must not
+        // silently overwrite it — preferring `sensei-hq` to `sensei-hq-org` is a
+        // legitimate choice, not drift to correct.
         sqlx_core::query::query(
-            "UPDATE sensei.personas \
+            "UPDATE sensei.personas p \
                 SET github_login = $2, github_user_id = $3, verified_at = now(), \
-                    label = CASE WHEN verified_at IS NULL THEN $2 ELSE label END, \
+                    label = CASE WHEN p.verified_at IS NULL AND NOT EXISTS ( \
+                                      SELECT 1 FROM sensei.personas o \
+                                       WHERE lower(o.label) = lower($2) AND o.id <> p.id) \
+                                 THEN $2 ELSE p.label END, \
                     modified_at = now() \
-              WHERE id = $1",
+              WHERE p.id = $1",
         )
         .bind(id)
         .bind(github_login)
@@ -192,5 +194,58 @@ impl PgStore {
         }
         Ok(id)
     }
-}
 
+    /// Which existing persona this GitHub account belongs to, if any.
+    ///
+    /// See [`Self::link_persona_identity`] for why the order is what it is.
+    async fn resolve_persona_for_identity(
+        &self,
+        persona_hint: &str,
+        github_user_id: i64,
+        primary_email: Option<&str>,
+    ) -> Result<Option<uuid::Uuid>, String> {
+        let found: Option<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
+            "SELECT id FROM sensei.personas WHERE github_user_id = $1",
+        )
+        .bind(github_user_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| format!("resolve_persona_for_identity (by id): {e}"))?;
+        if let Some((id,)) = found {
+            return Ok(Some(id));
+        }
+
+        // `github_user_id IS NULL OR = $2` is the claim guard: an unverified
+        // persona is free to claim, a persona verified as THIS account is
+        // already ours, and one verified as another account is off limits.
+        if let Some(email) = primary_email {
+            let by_email: Option<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
+                "SELECT p.id FROM sensei.personas p \
+                   JOIN sensei.persona_emails pe ON pe.persona_id = p.id \
+                  WHERE pe.removed_at IS NULL AND lower(pe.email) = lower($1) \
+                    AND (p.github_user_id IS NULL OR p.github_user_id = $2) \
+                  LIMIT 1",
+            )
+            .bind(email)
+            .bind(github_user_id)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| format!("resolve_persona_for_identity (by email): {e}"))?;
+            if let Some((id,)) = by_email {
+                return Ok(Some(id));
+            }
+        }
+
+        let by_hint: Option<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
+            "SELECT id FROM sensei.personas \
+              WHERE lower(label) = lower($1) \
+                AND (github_user_id IS NULL OR github_user_id = $2)",
+        )
+        .bind(persona_hint)
+        .bind(github_user_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| format!("resolve_persona_for_identity (by hint): {e}"))?;
+        Ok(by_hint.map(|(id,)| id))
+    }
+}
