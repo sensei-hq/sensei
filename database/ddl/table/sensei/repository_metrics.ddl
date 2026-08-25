@@ -33,6 +33,12 @@ create table if not exists repository_metrics (
 , grain         metric_grain  not null
 , value         numeric       not null
 , props         jsonb         not null default '{}'
+  -- WHO computed this row — the loop-breaker for pull-else-compute. Without it
+  -- local cannot tell a value dōjō handed down from one it produced, so it
+  -- recomputes the shared value and pushes it back, forever.
+, computed_by   metric_computed_by not null default 'local'
+  -- When this row was last pushed. NULL = never shared.
+, shared_at     timestamptz
 , source        metric_source not null default 'measured'
 , modified_at   timestamptz   not null default now()
 );

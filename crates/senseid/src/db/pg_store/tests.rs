@@ -6455,3 +6455,117 @@
                  either add the kind or mark the value retired");
         }
     }
+
+    // ── Sync bookkeeping (Phase 7) ──────────────────────────────────────────
+
+    /// A shared repository with one locally-computed metric row.
+    async fn seed_sync_fixture(s: &PgStore, uniq: &uuid::Uuid) -> (uuid::Uuid, uuid::Uuid) {
+        let pid = s.create_project(&format!("_test:sync:{uniq}"), None, None).await.unwrap();
+        let rid = crate::tasks::test_support::seed_bare_repository(s, &pid, uniq).await;
+        sqlx_core::query::query("UPDATE sensei.repositories SET visibility = 'shared' WHERE id = $1")
+            .bind(rid).execute(s.pool()).await.unwrap();
+        let mid = seed_metric(s, &format!("_test:sync:{uniq}:ftr"), "ComputeFtr", 0, None).await;
+        s.upsert_project_metric_repo(
+            &mid, &rid, "user", None, None,
+            chrono::NaiveDate::from_ymd_opt(2020, 5, 1).unwrap(), "daily", 0.5,
+            &serde_json::json!({}), "measured",
+        ).await.unwrap();
+        (pid, rid)
+    }
+
+    #[tokio::test]
+    async fn a_pulled_row_is_never_pushed_back() {
+        // The loop-breaker. Without `computed_by`, a value dojo handed down is
+        // indistinguishable from one this machine produced — so it gets pushed
+        // back, pulled again, and the two sides ping-pong forever.
+        let s = pg_store().await;
+        let uniq = uuid::Uuid::new_v4();
+        let (pid, rid) = seed_sync_fixture(&s, &uniq).await;
+
+        let mine = s.unpushed_metric_rows(100).await.unwrap();
+        let before = mine.iter().filter(|r| r["repoKey"].as_str() == Some(&format!("test/bare-{uniq}"))).count();
+
+        // Same row, but marked as dojo's.
+        sqlx_core::query::query(
+            "UPDATE sensei.repository_metrics SET computed_by = 'dojo' WHERE repository_id = $1")
+            .bind(rid).execute(s.pool()).await.unwrap();
+        let after = s.unpushed_metric_rows(100).await.unwrap();
+        let after_n = after.iter().filter(|r| r["repoKey"].as_str() == Some(&format!("test/bare-{uniq}"))).count();
+
+        crate::tasks::test_support::cleanup_metrics_fixture(&s, &pid, None, &[]).await;
+
+        assert_eq!(before, 1, "a locally-computed row is queued for push");
+        assert_eq!(after_n, 0, "a dojo-computed row is NOT pushed back");
+    }
+
+    #[tokio::test]
+    async fn a_private_repository_is_skipped_not_queued() {
+        // Private is a choice, not a backlog item: its rows must never enter the
+        // push queue at all, or every private repo looks like a pending sync.
+        let s = pg_store().await;
+        let uniq = uuid::Uuid::new_v4();
+        let (pid, rid) = seed_sync_fixture(&s, &uniq).await;
+        sqlx_core::query::query("UPDATE sensei.repositories SET visibility = 'private' WHERE id = $1")
+            .bind(rid).execute(s.pool()).await.unwrap();
+
+        let rows = s.unpushed_metric_rows(100).await.unwrap();
+        let n = rows.iter().filter(|r| r["repoKey"].as_str() == Some(&format!("test/bare-{uniq}"))).count();
+
+        crate::tasks::test_support::cleanup_metrics_fixture(&s, &pid, None, &[]).await;
+        assert_eq!(n, 0, "a private repository's rows are never queued for push");
+    }
+
+    #[tokio::test]
+    async fn a_recomputed_row_is_pushed_again() {
+        // shared_at alone is not enough: a day that recomputes after being pushed
+        // must go again, or dojo keeps a stale value forever behind an
+        // already-synced marker.
+        let s = pg_store().await;
+        let uniq = uuid::Uuid::new_v4();
+        let (pid, rid) = seed_sync_fixture(&s, &uniq).await;
+        let key = format!("test/bare-{uniq}");
+
+        let ids: Vec<uuid::Uuid> = s.unpushed_metric_rows(100).await.unwrap().iter()
+            .filter(|r| r["repoKey"].as_str() == Some(&key))
+            .filter_map(|r| r["id"].as_str().and_then(|v| uuid::Uuid::parse_str(v).ok()))
+            .collect();
+        s.mark_metric_rows_shared(&ids).await.unwrap();
+        let after_push = s.unpushed_metric_rows(100).await.unwrap().iter()
+            .filter(|r| r["repoKey"].as_str() == Some(&key)).count();
+
+        // The day recomputes — modified_at moves past shared_at.
+        sqlx_core::query::query(
+            "UPDATE sensei.repository_metrics SET modified_at = now() + interval '1 second'               WHERE repository_id = $1")
+            .bind(rid).execute(s.pool()).await.unwrap();
+        let after_recompute = s.unpushed_metric_rows(100).await.unwrap().iter()
+            .filter(|r| r["repoKey"].as_str() == Some(&key)).count();
+
+        crate::tasks::test_support::cleanup_metrics_fixture(&s, &pid, None, &[]).await;
+        assert_eq!(after_push, 0, "a pushed row leaves the queue");
+        assert_eq!(after_recompute, 1, "and re-enters it when the value changes");
+    }
+
+    #[tokio::test]
+    async fn a_sync_error_keeps_when_the_sides_last_agreed() {
+        // synced_at must survive a failure. Clearing it would leave no way to tell
+        // a never-synced entity from one that has been broken since Tuesday —
+        // which is the first thing worth knowing when sync starts failing.
+        let s = pg_store().await;
+        let key = format!("github.com/test/sync-{}", uuid::Uuid::new_v4());
+        let mark = crate::db::pg_store::sync::SyncMark { entity: "repository", key: &key, direction: "push" };
+
+        s.mark_synced(&mark, Some(7)).await.unwrap();
+        s.mark_sync_error(&mark, "boom").await.unwrap();
+
+        let (state, last_error, synced_at): (String, Option<String>, Option<chrono::DateTime<chrono::Utc>>) =
+            query_as("SELECT state, last_error, synced_at FROM sensei.sync_state                        WHERE entity = 'repository' AND entity_key = $1 AND direction = 'push'")
+                .bind(&key).fetch_one(s.pool()).await.unwrap();
+
+        sqlx_core::query::query("DELETE FROM sensei.sync_state WHERE entity_key = $1")
+            .bind(&key).execute(s.pool()).await.unwrap();
+
+        assert_eq!(state, "error");
+        assert_eq!(last_error.as_deref(), Some("boom"));
+        assert!(synced_at.is_some(), "the last agreement time survives a later failure");
+    }
+

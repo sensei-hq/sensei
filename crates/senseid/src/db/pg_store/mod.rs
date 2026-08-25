@@ -419,6 +419,7 @@ mod mcp;
 mod memory;
 mod metrics;
 mod personas;
+pub(crate) mod sync;
 mod patterns;
 mod playbook;
 mod projects;
