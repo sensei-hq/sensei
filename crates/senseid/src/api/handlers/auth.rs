@@ -20,14 +20,7 @@ use serde::Deserialize;
 use std::sync::Mutex;
 
 use crate::api::state::AppState;
-use crate::supabase::{pkce, session};
-
-/// Scopes beyond the provider default (`user:email`).
-///
-/// `read:org` is what lets provisioning see the user's organisations at all —
-/// without it GitHub returns none, which reads as "you belong to no orgs" rather
-/// than "we did not ask".
-const EXTRA_SCOPES: &[&str] = &["read:org"];
+use crate::dojo_client::{dojo_auth, pkce, session};
 
 /// The in-flight verifier, between the two legs.
 ///
@@ -49,9 +42,11 @@ pub(crate) struct PersonaQuery {
     #[serde(default)]
     github_login: Option<String>,
 }
-fn default_persona() -> String { "default".to_string() }
+fn default_persona() -> String {
+    "default".to_string()
+}
 
-use crate::supabase::settings::{anon_key, url as supabase_url};
+use crate::dojo_client::settings::dojo_url;
 
 fn callback_url() -> String {
     format!(
@@ -78,21 +73,27 @@ pub(crate) async fn signin(Query(p): Query<PersonaQuery>) -> Json<serde_json::Va
         }));
     }
     let challenge = pkce::challenge_for(&verifier);
-    let mut url = pkce::authorize_url(
-        &supabase_url(),
-        "github",
-        &callback_url(),
-        &challenge,
-        EXTRA_SCOPES,
-    );
-    if let Some(login) = p.github_login.as_deref().filter(|l| !l.is_empty()) {
-        url = pkce::with_login_hint(&url, login);
-    }
-    *PENDING_VERIFIER.lock().unwrap_or_else(|e| e.into_inner()) = Some((p.persona.clone(), verifier));
+    let port = sensei_bootstrap::SenseiConfig::from_env().daemon_port;
+
+    // dōjō builds the URL. That is the point of routing through it: the daemon
+    // holds one setting — where dōjō is — and never learns which identity
+    // provider sits behind it or what key talks to it.
+    let url = match dojo_auth::start(&dojo_url(), &challenge, port, p.github_login.as_deref()).await
+    {
+        Ok(url) => url,
+        Err(e) => return Json(serde_json::json!({ "ok": false, "error": e })),
+    };
+
+    // Held only once dōjō has accepted the challenge. Storing it before would
+    // leave a stale pending flow behind a failed start, and the NEXT callback —
+    // possibly from a different attempt — would try to use it.
+    *PENDING_VERIFIER.lock().unwrap_or_else(|e| e.into_inner()) =
+        Some((p.persona.clone(), verifier));
     Json(serde_json::json!({
         "authorizeUrl": url,
         "callback": callback_url(),
         "persona": p.persona,
+        "dojo": dojo_url(),
         // The hint is not a guarantee — GitHub suggests the account rather than
         // forcing a re-auth — so the caller should show which identity is
         // expected and offer a private window as the certain path.
@@ -117,8 +118,6 @@ pub(crate) async fn callback(
     State(state): State<AppState>,
     Query(q): Query<CallbackQuery>,
 ) -> Json<serde_json::Value> {
-    let _ = &state;
-
     // The provider can redirect back with a refusal — a declined consent screen
     // is not an error to swallow, it is the answer.
     if let Some(err) = q.error {
@@ -132,104 +131,81 @@ pub(crate) async fn callback(
     let Some(code) = q.code else {
         return Json(serde_json::json!({ "ok": false, "error": "no code in callback" }));
     };
-    let Some((persona, verifier)) = PENDING_VERIFIER.lock().unwrap_or_else(|e| e.into_inner()).take() else {
+    let Some((persona, verifier)) = PENDING_VERIFIER
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .take()
+    else {
         return Json(serde_json::json!({
             "ok": false,
             "error": "no sign-in in progress — start with POST /api/auth/signin",
         }));
     };
 
-    let Some(key) = anon_key() else {
-        return Json(serde_json::json!({
-            "ok": false,
-            "error": "no dōjō key configured — set dojo_anon_key in ~/.sensei/config.json (or SUPABASE_ANON_KEY)",
-        }));
-    };
-
-    let resp = crate::federation::http_client()
-        .post(session::token_url(&supabase_url(), "pkce"))
-        .header("apikey", &key)
-        .header("Content-Type", "application/json")
-        .json(&session::pkce_exchange_body(&code, &verifier))
-        .send()
-        .await;
-
-    match resp {
-        Ok(r) if r.status().is_success() => match r.json::<session::TokenResponse>().await {
-            Ok(tokens) => {
-                // Blocking keychain write off the async runtime, as gateway_keys
-                // documents.
-                let refresh = tokens.refresh_token.clone();
-                let who = persona.clone();
-                // Capture GitHub's token NOW or lose it: GoTrue returns it only
-                // at the exchange and prunes its flow_state row afterwards, so
-                // there is no later query that recovers it. This is the token
-                // read:org exists for — provisioning cannot list organisations
-                // without it, and would report "none" rather than "never asked".
-                let provider = tokens.provider_token.clone();
-                let provider_refresh = tokens.provider_refresh_token.clone();
-                let stored = tokio::task::spawn_blocking(move || {
-                    if let Some(pt) = provider.as_deref() {
-                        // Non-fatal: a failed provider-token write costs
-                        // provisioning, not the sign-in itself.
-                        if let Err(e) = session::store_provider_token(&who, pt) {
-                            tracing::warn!(error = %e, "could not store the GitHub token");
-                        }
+    match dojo_auth::exchange(&dojo_url(), &code, &verifier).await {
+        Ok(tokens) => {
+            // Blocking keychain write off the async runtime, as gateway_keys
+            // documents.
+            let refresh = tokens.refresh_token.clone();
+            let who = persona.clone();
+            // Capture GitHub's token NOW or lose it: GoTrue returns it only
+            // at the exchange and prunes its flow_state row afterwards, so
+            // there is no later query that recovers it. This is the token
+            // read:org exists for — provisioning cannot list organisations
+            // without it, and would report "none" rather than "never asked".
+            let provider = tokens.provider_token.clone();
+            let provider_refresh = tokens.provider_refresh_token.clone();
+            let stored = tokio::task::spawn_blocking(move || {
+                if let Some(pt) = provider.as_deref() {
+                    // Non-fatal: a failed provider-token write costs
+                    // provisioning, not the sign-in itself.
+                    if let Err(e) = session::store_provider_token(&who, pt) {
+                        tracing::warn!(error = %e, "could not store the GitHub token");
                     }
-                    if let Some(pr) = provider_refresh.as_deref() {
-                        let _ = session::store_provider_refresh_token(&who, pr);
-                    }
-                    session::store_refresh_token(&who, &refresh)
-                })
-                .await;
-                // Derive the identity from AUTH rather than leaving it a guess.
-                // A persona discovered from git carries an inferred label — and
-                // inference is wrong: `sensei-hq` came from an email domain when
-                // the real login is `sensei-hq-org`. OAuth knows the answer, so
-                // record it, along with the account's verified emails as claimed
-                // aliases.
-                let linked = match tokens.user.as_ref() {
-                    Some(u) => {
-                        link_verified_identity(
-                            &state, &persona, u, tokens.provider_token.as_deref(),
-                        )
-                        .await
-                    }
-                    None => serde_json::json!({
-                        "verified": false, "reason": "the exchange returned no user" }),
-                };
-
-                match stored {
-                    Ok(Ok(())) => Json(serde_json::json!({
-                        "ok": true,
-                        "signedIn": true,
-                        "persona": persona,
-                        "identity": linked,
-                        // Whether org provisioning will be possible for this
-                        // persona — surfaced so a missing token is visible now
-                        // rather than as an empty org list later.
-                        "canReadOrgs": tokens.provider_token.is_some(),
-                    })),
-                    Ok(Err(e)) => Json(serde_json::json!({
-                        "ok": false,
-                        "error": format!("signed in, but the refresh token could not be stored: {e}"),
-                    })),
-                    Err(e) => Json(serde_json::json!({ "ok": false, "error": e.to_string() })),
                 }
+                if let Some(pr) = provider_refresh.as_deref() {
+                    let _ = session::store_provider_refresh_token(&who, pr);
+                }
+                session::store_refresh_token(&who, &refresh)
+            })
+            .await;
+            // Derive the identity from AUTH rather than leaving it a guess.
+            // A persona discovered from git carries an inferred label — and
+            // inference is wrong: `sensei-hq` came from an email domain when
+            // the real login is `sensei-hq-org`. OAuth knows the answer, so
+            // record it, along with the account's verified emails as claimed
+            // aliases.
+            let linked = match tokens.user.as_ref() {
+                Some(u) => {
+                    link_verified_identity(&state, &persona, u, tokens.provider_token.as_deref())
+                        .await
+                }
+                None => serde_json::json!({
+                        "verified": false, "reason": "the exchange returned no user" }),
+            };
+
+            match stored {
+                Ok(Ok(())) => Json(serde_json::json!({
+                    "ok": true,
+                    "signedIn": true,
+                    "persona": persona,
+                    "identity": linked,
+                    // Whether org provisioning will be possible for this
+                    // persona — surfaced so a missing token is visible now
+                    // rather than as an empty org list later.
+                    "canReadOrgs": tokens.provider_token.is_some(),
+                })),
+                Ok(Err(e)) => Json(serde_json::json!({
+                    "ok": false,
+                    "error": format!("signed in, but the refresh token could not be stored: {e}"),
+                })),
+                Err(e) => Json(serde_json::json!({ "ok": false, "error": e.to_string() })),
             }
-            Err(e) => Json(serde_json::json!({
-                "ok": false, "error": format!("token response was not readable: {e}"),
-            })),
-        },
-        // Surface the provider's own message. "invalid grant" with no context is
-        // the single most confusing failure in this flow, and the body usually
-        // says which half is wrong.
-        Ok(r) => {
-            let status = r.status().as_u16();
-            let body = r.text().await.unwrap_or_default();
-            Json(serde_json::json!({ "ok": false, "error": "token exchange rejected", "status": status, "detail": body }))
         }
-        Err(e) => Json(serde_json::json!({ "ok": false, "error": e.to_string() })),
+        // Surface dōjō's own message rather than a generic failure. "invalid
+        // grant" with no context is the most confusing outcome in this flow, and
+        // the body usually says which half is wrong.
+        Err(e) => Json(serde_json::json!({ "ok": false, "error": e })),
     }
 }
 
@@ -241,7 +217,9 @@ pub(crate) async fn callback(
 pub(crate) async fn signout(Query(p): Query<PersonaQuery>) -> Json<serde_json::Value> {
     let who = p.persona.clone();
     match tokio::task::spawn_blocking(move || session::clear_refresh_token(&who)).await {
-        Ok(Ok(())) => Json(serde_json::json!({ "ok": true, "signedIn": false, "persona": p.persona })),
+        Ok(Ok(())) => {
+            Json(serde_json::json!({ "ok": true, "signedIn": false, "persona": p.persona }))
+        }
         Ok(Err(e)) => Json(serde_json::json!({ "ok": false, "error": e.to_string() })),
         Err(e) => Json(serde_json::json!({ "ok": false, "error": e.to_string() })),
     }
@@ -262,111 +240,91 @@ pub(crate) async fn status(
     let who = p.persona.clone();
     let stored = tokio::task::spawn_blocking(move || session::load_refresh_token(&who)).await;
     let Ok(Ok(refresh)) = stored else {
-        return Json(serde_json::json!({
-            "signedIn": false, "persona": p.persona, "supabaseUrl": supabase_url() }));
-    };
-    let Some(key) = anon_key() else {
-        return Json(serde_json::json!({
-            "signedIn": false,
-            "error": "no dōjō key configured — set dojo_anon_key in ~/.sensei/config.json (or SUPABASE_ANON_KEY)",
-            "supabaseUrl": supabase_url(),
-        }));
+        return Json(
+            serde_json::json!({ "signedIn": false, "persona": p.persona, "dojo": dojo_url() }),
+        );
     };
 
-    let resp = crate::federation::http_client()
-        .post(session::token_url(&supabase_url(), "refresh_token"))
-        .header("apikey", &key)
-        .header("Content-Type", "application/json")
-        .json(&session::refresh_body(&refresh))
-        .send()
-        .await;
-
-    match resp {
-        Ok(r) if r.status().is_success() => match r.json::<session::TokenResponse>().await {
-            Ok(t) => {
-                let now = chrono::Utc::now().timestamp();
-                let s = session::Session::from_response(&t, now);
-                // Supabase rotates the refresh token on use; storing the new one
-                // is not optional — keeping the old would invalidate the session
-                // on the NEXT call, which looks like a random sign-out.
-                let rotated = t.refresh_token.clone();
-                let who2 = p.persona.clone();
-                let _ = tokio::task::spawn_blocking(move || {
-                    session::store_refresh_token(&who2, &rotated)
-                })
-                .await;
-                // Prove the access token actually authenticates, and learn WHO
-                // it authenticates as. A refresh that succeeds only shows the
-                // refresh token is live; it says nothing about whether the
-                // resulting access token is accepted, and the auth user id is
-                // what a principal is keyed to — so this is also the lookup the
-                // linking step needs.
-                let identity = crate::federation::http_client()
-                    .get(format!("{}/auth/v1/user", supabase_url().trim_end_matches('/')))
-                    .header("apikey", &key)
-                    .header("Authorization", format!("Bearer {}", s.access_token))
-                    .send()
-                    .await
-                    .ok();
-                let user: Option<serde_json::Value> = match identity {
-                    Some(r) if r.status().is_success() => r.json().await.ok(),
-                    _ => None,
-                };
-                let auth_user_id = user.as_ref().and_then(|v| v["id"].as_str().map(String::from));
-                let email = user.as_ref().and_then(|v| v["email"].as_str().map(String::from));
-
-                // Backfill the verified identity for a persona connected before
-                // this existed, so an established session need not be re-signed
-                // just to learn a login the provider already told us. The
-                // provider token was captured at the exchange and kept, because
-                // GoTrue returns it once and then prunes the flow state.
-                let linked = match user.as_ref() {
-                    Some(u) => {
-                        let who4 = p.persona.clone();
-                        let pt = tokio::task::spawn_blocking(move || {
-                            session::load_provider_token(&who4)
-                        })
-                        .await
-                        .ok()
-                        .and_then(|r| r.ok());
-                        Some(link_verified_identity(&state, &p.persona, u, pt.as_deref()).await)
-                    }
-                    None => None,
-                };
-
-                Json(serde_json::json!({
-                    "signedIn": auth_user_id.is_some(),
-                    "persona": p.persona,
-                    "authUserId": auth_user_id,
-                    "email": email,
-                    "identity": linked,
-                    "expiresAt": s.expires_at,
-                    "needsRefresh": s.needs_refresh(now),
-                    "supabaseUrl": supabase_url(),
-                }))
+    let tokens = match dojo_auth::refresh(&dojo_url(), &refresh).await {
+        Ok(t) => t,
+        Err(e) => {
+            // A REJECTED refresh token is terminal, so clear it: otherwise the
+            // daemon retries a credential the server will never accept and the
+            // user is never told to sign in again. A transport failure is NOT
+            // terminal and must not clear anything — dōjō being briefly
+            // unreachable would otherwise sign the user out for nothing.
+            let rejected = dojo_auth::status_of(&e).is_some_and(dojo_auth::is_rejection);
+            if rejected {
+                let who3 = p.persona.clone();
+                let _ =
+                    tokio::task::spawn_blocking(move || session::clear_refresh_token(&who3)).await;
             }
-            Err(e) => Json(serde_json::json!({ "signedIn": false, "error": e.to_string() })),
-        },
-        Ok(r) => {
-            // A rejected refresh token is terminal, not transient: clear it so the
-            // daemon stops retrying a credential the server will never accept and
-            // the user is told to sign in again.
-            let status = r.status().as_u16();
-            let who3 = p.persona.clone();
-            let _ = tokio::task::spawn_blocking(move || session::clear_refresh_token(&who3)).await;
-            Json(serde_json::json!({
+            return Json(serde_json::json!({
                 "signedIn": false,
-                "error": "stored session was rejected — sign in again",
-                "status": status,
-                "supabaseUrl": supabase_url(),
-            }))
+                "persona": p.persona,
+                "error": if rejected {
+                    "stored session was rejected — sign in again"
+                } else {
+                    "could not reach dōjō — the stored session was left alone"
+                },
+                "detail": e,
+                "dojo": dojo_url(),
+            }));
         }
-        Err(e) => Json(serde_json::json!({
-            "signedIn": false,
-            "error": format!("could not reach Supabase: {e}"),
-            "supabaseUrl": supabase_url(),
-        })),
-    }
+    };
+
+    let now = chrono::Utc::now().timestamp();
+    let sess = session::Session::from_response(&tokens, now);
+    // dōjō rotates the refresh token on use; storing the new one is not optional
+    // — keeping the old would invalidate the session on the NEXT call, which
+    // looks like a random sign-out.
+    let rotated = tokens.refresh_token.clone();
+    let who2 = p.persona.clone();
+    let _ =
+        tokio::task::spawn_blocking(move || session::store_refresh_token(&who2, &rotated)).await;
+
+    // Prove the ACCESS token authenticates, not merely that the refresh did.
+    // "signedIn" on the strength of a refresh alone is the lie this endpoint
+    // exists to prevent — the caller would otherwise discover it at the next sync.
+    let usable = dojo_auth::whoami(&dojo_url(), &tokens.access_token).await;
+    let auth_user_id = usable
+        .as_ref()
+        .ok()
+        .and_then(|v| v["userId"].as_str().map(String::from));
+    let email = usable
+        .as_ref()
+        .ok()
+        .and_then(|v| v["email"].as_str().map(String::from));
+
+    // Backfill the verified identity for a persona connected before this
+    // existed, so an established session need not be re-signed just to learn a
+    // login the provider already told us. The GitHub token was captured at the
+    // exchange and kept, because it is returned exactly once.
+    let linked = match tokens.user.as_ref() {
+        Some(u) => {
+            let who4 = p.persona.clone();
+            let pt = tokio::task::spawn_blocking(move || session::load_provider_token(&who4))
+                .await
+                .ok()
+                .and_then(|r| r.ok());
+            Some(link_verified_identity(&state, &p.persona, u, pt.as_deref()).await)
+        }
+        None => None,
+    };
+
+    Json(serde_json::json!({
+        "signedIn": auth_user_id.is_some(),
+        "persona": p.persona,
+        "authUserId": auth_user_id,
+        "email": email,
+        "identity": linked,
+        "expiresAt": sess.expires_at,
+        "needsRefresh": sess.needs_refresh(now),
+        "dojo": dojo_url(),
+        // Present only when the token could NOT be used — an unusable session is
+        // reported as such rather than as a bare signedIn:false.
+        "error": usable.as_ref().err(),
+    }))
 }
 
 /// `GET /api/auth/orgs?persona=…` — the GitHub organisations this persona can see.
@@ -382,7 +340,8 @@ pub(crate) async fn status(
 /// create nothing and report success.
 pub(crate) async fn orgs(Query(p): Query<PersonaQuery>) -> Json<serde_json::Value> {
     let who = p.persona.clone();
-    let token = match tokio::task::spawn_blocking(move || session::load_provider_token(&who)).await {
+    let token = match tokio::task::spawn_blocking(move || session::load_provider_token(&who)).await
+    {
         Ok(Ok(t)) => t,
         _ => {
             return Json(serde_json::json!({
@@ -390,7 +349,7 @@ pub(crate) async fn orgs(Query(p): Query<PersonaQuery>) -> Json<serde_json::Valu
                 "persona": p.persona,
                 "error": "no GitHub token stored for this persona — sign in again to capture one",
                 "detail": "the provider token is returned only at the exchange; a session created before it was captured has none",
-            }))
+            }));
         }
     };
 
@@ -435,7 +394,9 @@ pub(crate) async fn orgs(Query(p): Query<PersonaQuery>) -> Json<serde_json::Valu
                 "error": "GitHub rejected the org request", "status": status, "detail": body,
             }))
         }
-        Err(e) => Json(serde_json::json!({ "ok": false, "persona": p.persona, "error": e.to_string() })),
+        Err(e) => {
+            Json(serde_json::json!({ "ok": false, "persona": p.persona, "error": e.to_string() }))
+        }
     }
 }
 
@@ -473,7 +434,11 @@ async fn link_verified_identity(
     emails.sort();
     emails.dedup();
 
-    match state.pg.link_persona_identity(persona, login, gh_id, primary, &emails).await {
+    match state
+        .pg
+        .link_persona_identity(persona, login, gh_id, primary, &emails)
+        .await
+    {
         Ok(id) => serde_json::json!({
             "verified": true,
             "personaId": id,
@@ -501,7 +466,9 @@ fn github_identity(user: &serde_json::Value) -> Option<(&str, i64)> {
     // number from others; both name the same account, and accepting only one
     // form would silently leave the persona unverified against the other.
     let v = &i["identity_data"]["provider_id"];
-    let id = v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse().ok()))?;
+    let id = v
+        .as_i64()
+        .or_else(|| v.as_str().and_then(|s| s.parse().ok()))?;
     Some((login, id))
 }
 
@@ -590,4 +557,3 @@ mod tests {
         assert_eq!(github_identity(&serde_json::json!({ "id": "abc" })), None);
     }
 }
-

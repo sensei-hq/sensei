@@ -40,7 +40,10 @@ fn provider_account_for(persona: &str) -> String {
 
 /// Persist the GitHub token. Keychain, never Postgres — same rule as the refresh
 /// token, and more important here because this one reaches GitHub directly.
-pub fn store_provider_token(persona: &str, token: &str) -> Result<(), crate::gateway_keys::KeychainError> {
+pub fn store_provider_token(
+    persona: &str,
+    token: &str,
+) -> Result<(), crate::gateway_keys::KeychainError> {
     keychain_write(KEYCHAIN_SERVICE, &provider_account_for(persona), token)
 }
 
@@ -54,7 +57,11 @@ pub fn store_provider_refresh_token(
     persona: &str,
     token: &str,
 ) -> Result<(), crate::gateway_keys::KeychainError> {
-    keychain_write(KEYCHAIN_SERVICE, &format!("provider_refresh.{}", persona.to_lowercase()), token)
+    keychain_write(
+        KEYCHAIN_SERVICE,
+        &format!("provider_refresh.{}", persona.to_lowercase()),
+        token,
+    )
 }
 
 /// What Supabase returns from `/auth/v1/token`.
@@ -95,10 +102,15 @@ pub struct TokenResponse {
     pub user: Option<serde_json::Value>,
 }
 
-/// A live session held in memory for the process's lifetime.
+/// When the current access token runs out.
+///
+/// Only the expiry, not the token: the daemon's durable credential is the
+/// REFRESH token in the Keychain, and every caller mints a fresh access token
+/// from it. A caller that needs the token takes it from the [`TokenResponse`] it
+/// just received, which is the only place it is guaranteed current — holding a
+/// copy here would invite using a stale one.
 #[derive(Debug, Clone)]
 pub struct Session {
-    pub access_token: String,
     /// When the access token stops being usable, as an epoch second.
     pub expires_at: i64,
 }
@@ -116,33 +128,9 @@ impl Session {
 
     pub fn from_response(r: &TokenResponse, now_epoch_secs: i64) -> Self {
         Self {
-            access_token: r.access_token.clone(),
             expires_at: now_epoch_secs + r.expires_in.max(0),
         }
     }
-}
-
-/// The body for the PKCE code exchange (`grant_type=pkce`).
-///
-/// Built as a value rather than inline so the shape is testable without a
-/// network: a wrong field name here fails as "invalid grant", which reads like a
-/// credential problem rather than a serialization one.
-pub fn pkce_exchange_body(auth_code: &str, code_verifier: &str) -> serde_json::Value {
-    serde_json::json!({ "auth_code": auth_code, "code_verifier": code_verifier })
-}
-
-/// The body for a refresh (`grant_type=refresh_token`).
-pub fn refresh_body(refresh_token: &str) -> serde_json::Value {
-    serde_json::json!({ "refresh_token": refresh_token })
-}
-
-/// The token endpoint for a grant type.
-pub fn token_url(supabase_url: &str, grant_type: &str) -> String {
-    format!(
-        "{}/auth/v1/token?grant_type={}",
-        supabase_url.trim_end_matches('/'),
-        grant_type
-    )
 }
 
 /// Persist the refresh token.
@@ -151,7 +139,10 @@ pub fn token_url(supabase_url: &str, grant_type: &str) -> String {
 ///
 /// Shells out to `/usr/bin/security` (~50ms). Async callers must wrap this in
 /// `spawn_blocking`, exactly as `gateway_keys` documents.
-pub fn store_refresh_token(persona: &str, token: &str) -> Result<(), crate::gateway_keys::KeychainError> {
+pub fn store_refresh_token(
+    persona: &str,
+    token: &str,
+) -> Result<(), crate::gateway_keys::KeychainError> {
     keychain_write(KEYCHAIN_SERVICE, &account_for(persona), token)
 }
 
@@ -173,9 +164,18 @@ pub fn load_refresh_token(persona: &str) -> Result<String, crate::gateway_keys::
             // happens once and no orphan credential lingers.
             keychain_write(KEYCHAIN_SERVICE, &account_for(persona), &legacy)?;
             let _ = std::process::Command::new("/usr/bin/security")
-                .args(["delete-generic-password", "-s", KEYCHAIN_SERVICE, "-a", LEGACY_ACCOUNT])
+                .args([
+                    "delete-generic-password",
+                    "-s",
+                    KEYCHAIN_SERVICE,
+                    "-a",
+                    LEGACY_ACCOUNT,
+                ])
                 .output();
-            tracing::info!(persona, "migrated a pre-persona Supabase session into its own slot");
+            tracing::info!(
+                persona,
+                "migrated a pre-persona Supabase session into its own slot"
+            );
             Ok(legacy)
         }
     }
@@ -189,7 +189,13 @@ pub fn load_refresh_token(persona: &str) -> Result<String, crate::gateway_keys::
 pub fn clear_refresh_token(persona: &str) -> Result<(), crate::gateway_keys::KeychainError> {
     let account = account_for(persona);
     let out = std::process::Command::new("/usr/bin/security")
-        .args(["delete-generic-password", "-s", KEYCHAIN_SERVICE, "-a", &account])
+        .args([
+            "delete-generic-password",
+            "-s",
+            KEYCHAIN_SERVICE,
+            "-a",
+            &account,
+        ])
         .output()?;
     // A missing entry is success: the goal is "no token stored", and that holds.
     if out.status.success() || String::from_utf8_lossy(&out.stderr).contains("could not be found") {
@@ -201,9 +207,22 @@ pub fn clear_refresh_token(persona: &str) -> Result<(), crate::gateway_keys::Key
     }
 }
 
-fn keychain_write(service: &str, account: &str, secret: &str) -> Result<(), crate::gateway_keys::KeychainError> {
+fn keychain_write(
+    service: &str,
+    account: &str,
+    secret: &str,
+) -> Result<(), crate::gateway_keys::KeychainError> {
     let out = std::process::Command::new("/usr/bin/security")
-        .args(["add-generic-password", "-U", "-s", service, "-a", account, "-w", secret])
+        .args([
+            "add-generic-password",
+            "-U",
+            "-s",
+            service,
+            "-a",
+            account,
+            "-w",
+            secret,
+        ])
         .output()?;
     if out.status.success() {
         Ok(())
@@ -214,7 +233,10 @@ fn keychain_write(service: &str, account: &str, secret: &str) -> Result<(), crat
     }
 }
 
-fn keychain_read(service: &str, account: &str) -> Result<String, crate::gateway_keys::KeychainError> {
+fn keychain_read(
+    service: &str,
+    account: &str,
+) -> Result<String, crate::gateway_keys::KeychainError> {
     let out = std::process::Command::new("/usr/bin/security")
         .args(["find-generic-password", "-s", service, "-a", account, "-w"])
         .output()?;
@@ -232,7 +254,7 @@ mod tests {
     fn a_session_refreshes_before_it_expires_not_after() {
         // Refreshing ON expiry loses the request that discovers it, and the
         // failure is indistinguishable from a revoked credential.
-        let s = Session { access_token: "t".into(), expires_at: 1_000 };
+        let s = Session { expires_at: 1_000 };
         assert!(!s.needs_refresh(800), "not yet due");
         assert!(s.needs_refresh(941), "due inside the 60s margin");
         assert!(s.needs_refresh(1_000), "due at expiry");
@@ -268,16 +290,6 @@ mod tests {
     }
 
     #[test]
-    fn the_exchange_body_uses_the_field_names_supabase_expects() {
-        // A wrong name here comes back as "invalid grant", which reads like a bad
-        // credential rather than a bad request body.
-        let b = pkce_exchange_body("code-1", "verifier-1");
-        assert_eq!(b["auth_code"], "code-1");
-        assert_eq!(b["code_verifier"], "verifier-1");
-        assert_eq!(refresh_body("r-1")["refresh_token"], "r-1");
-    }
-
-    #[test]
     fn the_provider_token_has_its_own_slot() {
         // GitHub's token and Supabase's are different secrets with different
         // reach — this one can read repositories and organisations — so revoking
@@ -300,14 +312,5 @@ mod tests {
         // The label is user-chosen and reaches here from a query string, so
         // "Sensei-HQ" and "sensei-hq" must not become two half-signed-in states.
         assert_eq!(account_for("Sensei-HQ"), account_for("sensei-hq"));
-    }
-
-    #[test]
-    fn the_token_url_carries_the_grant_type_and_survives_a_trailing_slash() {
-        assert_eq!(
-            token_url("http://127.0.0.1:54321/", "pkce"),
-            "http://127.0.0.1:54321/auth/v1/token?grant_type=pkce"
-        );
-        assert!(token_url("http://x", "refresh_token").ends_with("grant_type=refresh_token"));
     }
 }
