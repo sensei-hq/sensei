@@ -15,6 +15,36 @@ Work is tracked as **GitHub issues** in [`sensei-hq/sensei`](https://github.com/
 
 ---
 
+## dbd drops a DDL file it cannot parse — silently, and the deploy still reports success
+
+**Found 2026-08-25** while fixing `dbd deploy --scope dojo`. dbd 0.10.12.
+
+Two files failed dbd's SQL parser and were removed from the entity set with no
+effect on the deploy's exit status:
+
+* `comment on function dojo.can_read_repository_metric(uuid, text, uuid, uuid) is …`
+  → *Expected: comment object_type, found: function*. dbd parses
+  `comment on function <name> is …` but not the form WITH an argument list.
+* `revoke all on function … from public, authenticated;`
+  → *Expected: end of statement, found: authenticated*. A comma-separated grantee
+  list is accepted on GRANT but not on REVOKE.
+
+The consequence is worse than a failed deploy: `dojo.can_read_repository_metric`
+and `dojo.set_pack_adoption` were never created on any database, and nothing said
+so. `set_pack_adoption` is called by the dōjō `/v1` rule-pack route, so that call
+has been failing against a function that does not exist. `dbd inspect` DOES
+report both, and `dbd deploy` prints the error count — but continues and finishes
+with "Fresh install at v0 — 91 entities applied", which reads as success.
+
+**Worked around in our DDL** (both changes are semantically identical): the
+COMMENT drops its argument list, and the REVOKE is split one grantee per
+statement. Both carry a comment saying why, so neither gets "tidied" back.
+
+**Upstream:** dbd should fail a deploy when a file in scope does not parse, or at
+minimum exit non-zero. A schema tool that silently omits an entity gives an
+answer indistinguishable from success.
+
+
 ## kavach calls `resolve(event)` twice — every POST body under a public rule arrives empty
 
 **Status:** RESOLVED 2026-08-25 in kavach 1.1.0; dōjō bumped to it.
