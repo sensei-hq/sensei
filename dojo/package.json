@@ -38,11 +38,11 @@
   },
   "dependencies": {
     "@block65/webcrypto-web-push": "1.0.2",
-    "@kavach/adapter-supabase": "1.0.0-next.37",
-    "@kavach/logger": "1.0.0-next.37",
-    "@kavach/sentry": "1.0.0-next.37",
-    "@kavach/ui": "1.0.0-next.37",
-    "@kavach/vite": "1.0.0-next.37",
+    "@kavach/adapter-supabase": "1.1.0",
+    "@kavach/logger": "1.1.0",
+    "@kavach/sentry": "1.1.0",
+    "@kavach/ui": "1.1.0",
+    "@kavach/vite": "1.1.0",
     "@rokkit/actions": "^1.2.0",
     "@rokkit/app": "^1.2.0",
     "@rokkit/core": "^1.2.0",
@@ -52,6 +52,6 @@
     "@rokkit/ui": "^1.2.0",
     "@rokkit/unocss": "^1.2.0",
     "@supabase/supabase-js": "^2.99.1",
-    "kavach": "1.0.0-next.37"
+    "kavach": "1.1.0"
   }
 }
