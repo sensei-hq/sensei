@@ -16,9 +16,18 @@ use serde::Deserialize;
 
 /// Keychain service namespace, matching `com.sensei.gateway.router.*`.
 const KEYCHAIN_SERVICE: &str = "com.sensei.supabase";
-/// One session per install for now; the account slot is where a per-persona
-/// session would go when a user links more than one dōjō login.
-const KEYCHAIN_ACCOUNT: &str = "refresh_token";
+
+/// The account slot for a persona's session.
+///
+/// PER PERSONA, not one per install. A single slot meant signing in as a second
+/// identity silently EVICTED the first — observed live: signing in as
+/// hi@sensei-hq.com and then as me@jerrythomas.name left only the second, with
+/// no indication the first had gone. That directly contradicts the point of
+/// personas, which exist because a user keeps working identities apart and needs
+/// both linked at once.
+fn account_for(persona: &str) -> String {
+    format!("refresh_token.{}", persona.to_lowercase())
+}
 
 /// What Supabase returns from `/auth/v1/token`.
 #[derive(Debug, Clone, Deserialize)]
@@ -86,13 +95,13 @@ pub fn token_url(supabase_url: &str, grant_type: &str) -> String {
 ///
 /// Shells out to `/usr/bin/security` (~50ms). Async callers must wrap this in
 /// `spawn_blocking`, exactly as `gateway_keys` documents.
-pub fn store_refresh_token(token: &str) -> Result<(), crate::gateway_keys::KeychainError> {
-    keychain_write(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT, token)
+pub fn store_refresh_token(persona: &str, token: &str) -> Result<(), crate::gateway_keys::KeychainError> {
+    keychain_write(KEYCHAIN_SERVICE, &account_for(persona), token)
 }
 
 /// Read the stored refresh token, if the user has signed in.
-pub fn load_refresh_token() -> Result<String, crate::gateway_keys::KeychainError> {
-    keychain_read(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT)
+pub fn load_refresh_token(persona: &str) -> Result<String, crate::gateway_keys::KeychainError> {
+    keychain_read(KEYCHAIN_SERVICE, &account_for(persona))
 }
 
 /// Forget the session — sign-out, or a refresh token the server has rejected.
@@ -100,9 +109,10 @@ pub fn load_refresh_token() -> Result<String, crate::gateway_keys::KeychainError
 /// Removing a rejected token matters: a permanently-invalid one otherwise makes
 /// every subsequent refresh fail identically, and the daemon retries forever
 /// instead of surfacing "you need to sign in again".
-pub fn clear_refresh_token() -> Result<(), crate::gateway_keys::KeychainError> {
+pub fn clear_refresh_token(persona: &str) -> Result<(), crate::gateway_keys::KeychainError> {
+    let account = account_for(persona);
     let out = std::process::Command::new("/usr/bin/security")
-        .args(["delete-generic-password", "-s", KEYCHAIN_SERVICE, "-a", KEYCHAIN_ACCOUNT])
+        .args(["delete-generic-password", "-s", KEYCHAIN_SERVICE, "-a", &account])
         .output()?;
     // A missing entry is success: the goal is "no token stored", and that holds.
     if out.status.success() || String::from_utf8_lossy(&out.stderr).contains("could not be found") {
@@ -182,6 +192,22 @@ mod tests {
         assert_eq!(b["auth_code"], "code-1");
         assert_eq!(b["code_verifier"], "verifier-1");
         assert_eq!(refresh_body("r-1")["refresh_token"], "r-1");
+    }
+
+    #[test]
+    fn each_persona_gets_its_own_keychain_slot() {
+        // The bug this fixes, found live: one slot meant signing in as a second
+        // identity evicted the first, silently. Personas exist precisely so two
+        // working identities can be linked at once.
+        assert_ne!(account_for("sensei-hq"), account_for("jerrythomas"));
+        assert!(account_for("sensei-hq").starts_with("refresh_token."));
+    }
+
+    #[test]
+    fn the_persona_slot_is_case_insensitive() {
+        // The label is user-chosen and reaches here from a query string, so
+        // "Sensei-HQ" and "sensei-hq" must not become two half-signed-in states.
+        assert_eq!(account_for("Sensei-HQ"), account_for("sensei-hq"));
     }
 
     #[test]

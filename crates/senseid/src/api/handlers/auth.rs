@@ -34,7 +34,17 @@ const EXTRA_SCOPES: &[&str] = &["read:org"];
 /// One at a time: a second sign-in started before the first completes replaces
 /// it, which is the honest behaviour — the abandoned flow's code is then
 /// unusable, and that is what we want rather than keeping stale verifiers alive.
-static PENDING_VERIFIER: Mutex<Option<String>> = Mutex::new(None);
+/// The in-flight (persona, verifier) pair.
+static PENDING_VERIFIER: Mutex<Option<(String, String)>> = Mutex::new(None);
+
+/// Which persona a sign-in is for. Defaults to the label the user is most likely
+/// to mean on a single-identity install.
+#[derive(Deserialize)]
+pub(crate) struct PersonaQuery {
+    #[serde(default = "default_persona")]
+    persona: String,
+}
+fn default_persona() -> String { "default".to_string() }
 
 fn supabase_url() -> String {
     std::env::var("SUPABASE_URL").unwrap_or_else(|_| "http://127.0.0.1:54321".into())
@@ -56,7 +66,7 @@ fn callback_url() -> String {
 /// Returns the URL to open rather than opening it here: the daemon may be
 /// headless, and a caller (the desktop app, the CLI) knows better than it does
 /// how to present a browser.
-pub(crate) async fn signin() -> Json<serde_json::Value> {
+pub(crate) async fn signin(Query(p): Query<PersonaQuery>) -> Json<serde_json::Value> {
     let verifier = pkce::generate_verifier();
     // Check our own output before sending the user to a browser. A malformed
     // verifier is rejected at the TOKEN leg — after the user has signed in — with
@@ -76,8 +86,8 @@ pub(crate) async fn signin() -> Json<serde_json::Value> {
         &challenge,
         EXTRA_SCOPES,
     );
-    *PENDING_VERIFIER.lock().unwrap_or_else(|e| e.into_inner()) = Some(verifier);
-    Json(serde_json::json!({ "authorizeUrl": url, "callback": callback_url() }))
+    *PENDING_VERIFIER.lock().unwrap_or_else(|e| e.into_inner()) = Some((p.persona.clone(), verifier));
+    Json(serde_json::json!({ "authorizeUrl": url, "callback": callback_url(), "persona": p.persona }))
 }
 
 #[derive(Deserialize)]
@@ -111,7 +121,7 @@ pub(crate) async fn callback(
     let Some(code) = q.code else {
         return Json(serde_json::json!({ "ok": false, "error": "no code in callback" }));
     };
-    let Some(verifier) = PENDING_VERIFIER.lock().unwrap_or_else(|e| e.into_inner()).take() else {
+    let Some((persona, verifier)) = PENDING_VERIFIER.lock().unwrap_or_else(|e| e.into_inner()).take() else {
         return Json(serde_json::json!({
             "ok": false,
             "error": "no sign-in in progress — start with POST /api/auth/signin",
@@ -139,12 +149,13 @@ pub(crate) async fn callback(
                 // Blocking keychain write off the async runtime, as gateway_keys
                 // documents.
                 let refresh = tokens.refresh_token.clone();
+                let who = persona.clone();
                 let stored = tokio::task::spawn_blocking(move || {
-                    session::store_refresh_token(&refresh)
+                    session::store_refresh_token(&who, &refresh)
                 })
                 .await;
                 match stored {
-                    Ok(Ok(())) => Json(serde_json::json!({ "ok": true, "signedIn": true })),
+                    Ok(Ok(())) => Json(serde_json::json!({ "ok": true, "signedIn": true, "persona": persona })),
                     Ok(Err(e)) => Json(serde_json::json!({
                         "ok": false,
                         "error": format!("signed in, but the refresh token could not be stored: {e}"),
@@ -173,9 +184,10 @@ pub(crate) async fn callback(
 /// Clearing a rejected token matters: a permanently-invalid one otherwise makes
 /// every refresh fail identically and the daemon retries forever instead of
 /// surfacing "sign in again".
-pub(crate) async fn signout() -> Json<serde_json::Value> {
-    match tokio::task::spawn_blocking(session::clear_refresh_token).await {
-        Ok(Ok(())) => Json(serde_json::json!({ "ok": true, "signedIn": false })),
+pub(crate) async fn signout(Query(p): Query<PersonaQuery>) -> Json<serde_json::Value> {
+    let who = p.persona.clone();
+    match tokio::task::spawn_blocking(move || session::clear_refresh_token(&who)).await {
+        Ok(Ok(())) => Json(serde_json::json!({ "ok": true, "signedIn": false, "persona": p.persona })),
         Ok(Err(e)) => Json(serde_json::json!({ "ok": false, "error": e.to_string() })),
         Err(e) => Json(serde_json::json!({ "ok": false, "error": e.to_string() })),
     }
@@ -189,10 +201,12 @@ pub(crate) async fn signout() -> Json<serde_json::Value> {
 /// discovers when a sync fails.
 ///
 /// Never reports the token itself.
-pub(crate) async fn status() -> Json<serde_json::Value> {
-    let stored = tokio::task::spawn_blocking(session::load_refresh_token).await;
+pub(crate) async fn status(Query(p): Query<PersonaQuery>) -> Json<serde_json::Value> {
+    let who = p.persona.clone();
+    let stored = tokio::task::spawn_blocking(move || session::load_refresh_token(&who)).await;
     let Ok(Ok(refresh)) = stored else {
-        return Json(serde_json::json!({ "signedIn": false, "supabaseUrl": supabase_url() }));
+        return Json(serde_json::json!({
+            "signedIn": false, "persona": p.persona, "supabaseUrl": supabase_url() }));
     };
     let Some(key) = anon_key() else {
         return Json(serde_json::json!({
@@ -219,8 +233,9 @@ pub(crate) async fn status() -> Json<serde_json::Value> {
                 // is not optional — keeping the old would invalidate the session
                 // on the NEXT call, which looks like a random sign-out.
                 let rotated = t.refresh_token.clone();
+                let who2 = p.persona.clone();
                 let _ = tokio::task::spawn_blocking(move || {
-                    session::store_refresh_token(&rotated)
+                    session::store_refresh_token(&who2, &rotated)
                 })
                 .await;
                 // Prove the access token actually authenticates, and learn WHO
@@ -245,6 +260,7 @@ pub(crate) async fn status() -> Json<serde_json::Value> {
                 };
                 Json(serde_json::json!({
                     "signedIn": auth_user_id.is_some(),
+                    "persona": p.persona,
                     "authUserId": auth_user_id,
                     "email": email,
                     "expiresAt": s.expires_at,
@@ -259,7 +275,8 @@ pub(crate) async fn status() -> Json<serde_json::Value> {
             // daemon stops retrying a credential the server will never accept and
             // the user is told to sign in again.
             let status = r.status().as_u16();
-            let _ = tokio::task::spawn_blocking(session::clear_refresh_token).await;
+            let who3 = p.persona.clone();
+            let _ = tokio::task::spawn_blocking(move || session::clear_refresh_token(&who3)).await;
             Json(serde_json::json!({
                 "signedIn": false,
                 "error": "stored session was rejected — sign in again",
