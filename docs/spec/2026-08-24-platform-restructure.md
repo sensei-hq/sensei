@@ -435,6 +435,236 @@ domain" from becoming "I am in your dōjō".
 Scope note: this needs `user:email` and `read:org`. Auth doc Scenario 21 already
 covers reduced scope — preserve existing rows, log, never delete.
 
+### 3.2 What Q13 strands — CORRECTED
+
+An earlier revision of this section claimed ~7,600 LOC targets the
+non-existent dōjō service and should be triaged for retirement. **That was
+wrong, and the correction matters** — acting on it would have deleted the
+confidentiality layer.
+
+Measured per file rather than in aggregate:
+
+| | LOC | Outbound refs |
+|---|---:|---|
+| `dojo/client.rs` — the HTTP transport | 1,101 | 122 |
+| `crates/dojo-protocol` — its wire types | 1,561 | (types only) |
+| **everything else in `dojo/`** | **4,979** | **0–9 each** |
+
+The 4,979 is not transport code. It is:
+
+- **`attribution.rs` (704)** — *"the confidentiality SAFETY NET … client identifiers must NEVER leave the machine"*. Transport-independent, and the highest-stakes code in the layer.
+- **`gate.rs` (1,165)** — the hook-gate decision core for the daemon↔agent control leg. Pure local logic, reached by `/hook/gate`, and **unrelated to the dōjō service entirely**.
+- **`contribute.rs` (1,259)**, `routing.rs` (419), `memberships.rs` (431), `relay_*` — building, anonymising and routing what would be published. Nine outbound references across 1,259 lines in the largest of them; the rest is local.
+
+So the accurate statement is: **~2,660 LOC is transport-bound, and it gets
+REPLACED rather than deleted** when the Supabase path lands. Every transport
+needs the privacy gate, the dereference, and the routing that sits above it —
+including the one Phase 7 builds.
+
+**Recommendation: retire nothing.** The transport is not costing anything (the
+publish path has never run — `dojo_outbox` is still 0 rows), and deleting it
+would take the confidentiality layer with it or leave the local logic with no
+output. `dojo-protocol` is also reusable as the payload schema for the Supabase
+path even when the HTTP client is not.
+
+What the earlier framing got right: nothing should be BUILT on `client.rs`
+before Phase 7 decides the transport.
+
+### 3.3 Two answers with teeth (Q12, Q17)
+
+#### Q12: wipe and reprocess, so there is no cutover at all
+
+Original concern was a dated cutover and a spliced series. **Superseded — we wipe
+derived history and reprocess from source instead.** That gives one consistent
+definition across the whole corpus with no discontinuity to explain, which is
+strictly better than splicing.
+
+Verified the sources actually survive before agreeing:
+
+| Source | DB coverage | Source on disk | Recomputable |
+|---|---|---|---|
+| **zed** | 2025-05-07 → 2026-05-15 · 1,986 turns / 222 sessions | `threads.db` **127 MB, intact** (last write 2026-05-27, matches) | ✅ all |
+| **opencode** | 2026-01-07 → 2026-08-23 · 246 turns / 30 sessions | own store, files back to 2024-12 | ✅ all |
+| **claude_code** | 2026-05-21 → 2026-08-24 · 2,007 turns / 112 sessions | **72 of 77** cursor files present | ⚠️ 5 files gone |
+
+**73 turns across 5 sessions** have no surviving transcript, all from
+**2026-07-21 → 07-23** — `strategos/gateway` (50), `dbd-rs` (10 + 1),
+`alert-platform` (10), `strategos` (2). That is **1.7% of 4,239 turns**.
+
+Those are pre-rename paths, and the renames **are** known — `folder_path_aliases`
+already holds exactly them:
+
+```
+/Users/Jerry/Developer/dbd-rs            → /Users/Jerry/Developer/dbd
+/Users/Jerry/Developer/strategos/gateway → /Users/Jerry/Developer/gateway
+/Users/Jerry/Developer/strategos/monorepo→ /Users/Jerry/Developer/torii
+```
+
+and `repair_sessions_from_transcripts` resolves through `find_folder_for_path`,
+which is alias-aware. So those sessions **attribute correctly** — the rename is
+not the problem.
+
+The problem is narrower: **the transcript files themselves are gone.** The
+directories survive holding only `memory/`, and the session UUIDs appear nowhere
+on disk. An alias resolves a *path*; it cannot resurrect a *deleted file*. So
+these 73 turns cannot be regenerated.
+
+**Which makes the blanket wipe the wrong shape.** They are already ingested and
+already attributable, so the fix is a carve-out rather than an accepted loss:
+
+> Truncate the derived layer **except rows whose source unit no longer exists**
+> (`transcript_cursor.file_path` absent on disk for a file-backed source).
+> Reprocess everything else.
+
+Zero loss, and the reprocess still yields one consistent definition.
+
+Two of the four cwds — `/Users/Jerry/Developer/strategos` and
+`/Users/Jerry/Work/Alert/repos/alert-platform` — have **no alias and no folder**,
+so 12 of those turns would orphan even with their files. Worth adding aliases
+before Phase 8 runs.
+
+And to answer the May question directly: **all 319 Claude turns predating the
+oldest surviving file are in files that still exist** — zero are in the vanished
+five. File mtime is *last write*, so a session opened 2026-05-21 and continued
+into July still has its transcript. Nothing from May is at risk.
+
+#### Do not synthesize replacement transcripts either — the data is already better preserved
+
+Considered rebuilding a transcript file from the surviving turn rows for the five
+sessions with no file. **Recommend against it**, and it turns out to be
+unnecessary.
+
+Measured, for those 5 sessions:
+
+```
+activity.transcript_turns   73 rows    user_text ×73, assistant_text ×60,
+                                       model ×73, tokens ×60,
+                                       attrs: cwd, gitBranch, uuid, parentUuid,
+                                              timestamp, version, promptId …
+activity.assistant_events   2,109 rows PreToolUse 999 · PostToolUse 940
+                                       UserPromptSubmit 46 · Stop 59
+                                       SessionStart 6 · SessionEnd 5 · PreCompact 1
+```
+
+**The events already cover the dimension a rebuild would miss.** `transcript_turns`
+retained **zero** tool content — 0 turns contain a tool block, and the 13
+empty-`assistant_text` turns are precisely the tool-only ones. A transcript
+reconstructed from those rows would represent 73 prose turns and **no tool use at
+all**, against 999 real tool calls. Every metric derived from it would be quietly
+wrong for those sessions.
+
+Three further reasons:
+
+1. **A round-trip can only lose.** rows → synthetic file → re-ingest extracts a *subset* of what the rows already hold. It cannot add information.
+2. **False provenance.** A file asserting it is a Claude transcript when it is not. Placed in `~/.claude/projects` it corrupts another tool's state; placed elsewhere, ingestion must be told it is synthetic — which is the carve-out, reached by a longer road.
+3. **`assistant_events` is kept anyway**, so the tool and structure dimensions survive the wipe untouched.
+
+**Recovery audit — every candidate source checked, all ruled out on evidence:**
+
+| Candidate | Verdict |
+|---|---|
+| Renamed transcript dirs (`dbd-rs`→`dbd`, `strategos/gateway`→`gateway`) | aliases already exist and resolve; the **files** are absent from those dirs |
+| `~/.claude/file-history` (66 dirs, 190 MB) | Claude's file-**edit version store** (`<hash>@v1/@v2`), not transcripts; none of the 5 UUIDs present |
+| Zed `threads.db` (127 MB) | covers those repos only to **2026-02-24 / 2026-03-20**; Zed's last activity anywhere is 2026-05-15, two months before |
+| `database/import/staging/assistant_events.jsonl` (66 MB) | spans **2026-06-01 → 06-15** only; 0 lines for any of the 5 session ids — and it is a *subset* seed export (15,342 lines vs 76,710 DB rows in that window), not an archive |
+| Synthetic rebuild from turn rows | possible but strictly worse — 0 tool content retained vs 999 real tool calls |
+| Whole home tree, by session UUID | not present anywhere |
+
+**Consequence — these five are barely a special case.** Because events survive,
+the per-exchange turn derivation can be recomputed for them from events, the same
+path `activity.turns` uses. Only the *prose* is unrecoverable, and the carve-out
+preserves it verbatim. Nothing needs to be fabricated.
+
+#### Do not move the transcript files — fix the mapping instead
+
+Considered moving old-named transcript dirs into their new names
+(`-…-dbd-rs/*` → `-…-dbd/`). **Recommend against it**, on three grounds:
+
+1. **It cannot recover the five.** Those UUIDs exist nowhere on disk — searched the whole home tree. Moving files cannot create files that are absent.
+2. **The directory name is a weaker cwd source than the content.** The encoding maps `/`→`-` and leaves literal `-` alone, so `-Users-Jerry-Developer-sensei-hq-sensei` is ambiguous between `sensei-hq/sensei` and `sensei/hq/sensei`. That ambiguity **is** resolvable by testing candidates against disk — verified: only `/Users/Jerry/Developer/sensei-hq/sensei` exists. But it resolves only while the path still exists, which is precisely the case where we do not need it. For a renamed or deleted folder — the case that matters — **disk cannot disambiguate** (neither `/Users/Jerry/Developer/dbd-rs` nor `/Users/Jerry/Developer/dbd/rs` exists). The adapters therefore read cwd from transcript *content* (`attrs.cwd`), which is authoritative in both cases. Reorganising by directory name changes nothing about how resolution actually works.
+3. **It would break two things for no gain.** `transcript_cursor.file_path` keys on the absolute path, so every moved file re-ingests as new. And `~/.claude/projects` is Claude Code's own state directory — its resume/index behaviour reads that layout. Mutating another tool's state to fix our attribution is the wrong direction.
+
+**What actually fixes it:** the unresolved cwds are a *mapping* gap in our own DB,
+not a filesystem one. Measured — 16 distinct cwds resolve to no folder and no
+alias:
+
+| Action | Count | Paths |
+|---|---|---|
+| **Track it** (exists on disk) | 6 | `Developer/sensei-hq`, `Developer/jovy`, `Developer/llm-rules`, `Work/Alert`, `Work/Babb`, `Work/Got-a-guy` |
+| **Add an alias** (gone) | 10 | `Developer/sensei`, `Developer/reader`, `Developer/magpie-scanner`, `jovy/wix-mirror`, `Work/AI`, `Work/Wombat`, `Work/FizzBot`, `Work/Value Pricing`, `Work/Basketball App`, `Alert/example-alert-site` |
+
+`/Users/Jerry/Developer/sensei` → `/Users/Jerry/Developer/sensei-hq/sensei` is
+almost certainly **this repo's old location**, so one alias recovers a block of
+Zed history for sensei itself.
+
+**Not in that list, and worth stating:**
+`/Users/Jerry/Work/Alert/repos/alert-platform` **already resolves** — it has an
+exact `sensei.folders` row (810 rows exist under `Alert/repos`). Its transcript
+directory `-Users-Jerry-Work-Alert-repos-alert-platform` maps correctly too; it
+simply holds **0 `.jsonl`** (only `memory/`), because the file was pruned. So that
+session needs no alias and no tracking — its 10 turns are already correctly
+attributed in the DB, and the vanished-file carve-out is what preserves them.
+The same is true of `strategos/gateway` and `dbd-rs`, which alias correctly.
+
+That is the general shape: **a missing transcript and an unresolvable cwd are
+different failures.** Only the second is fixable by mapping; the first is fixable
+only by not deleting the rows we already have.
+
+Both actions are reversible rows in our own database, and they make the reprocess
+attribute correctly without touching a single file on disk. This should run
+**before** Phase 8.
+
+#### What must NOT be wiped
+
+Everything above regenerates from a durable source. These do not:
+
+| Table | Rows | Why it cannot be regenerated |
+|---|---|---|
+| `activity.assistant_events` | 298,353 | the hook stream — **the source** `turns` derive from |
+| `sensei.memories` | 16 | `origin='authored'` rows are **user-written**; nothing can recreate them |
+| `sensei.tool_insights` | 34,697 | accumulated observation, not a pure function of transcripts |
+| `inference.recommendations` | 2,459 | LLM output — re-running costs spend **and returns different text** |
+| `inference.drift_items` | 3,032 | same |
+| `inference.detected_patterns` | 1,367 | same |
+| `activity.session_process_evidence` | 406 | LLM-derived per session; non-deterministic on re-run |
+| `sensei.playbook_rules` / `consolidated_rulesets` / `memory_outcomes` | 6 / 2 / 3 | accumulated learning, some human-accepted |
+
+`inference.communities` (76,895) regenerates from the code graph and can go.
+
+So Phase 8 is: **truncate the derived layer** (`transcript_turns`, `turns`,
+`sessions`, `repository_metrics`, watermarks, cursors), **keep events and the
+learned/authored layer**, then reprocess. The four derived columns (`segment`,
+`is_correction`, `triage_signal`, `tool_calls`) still need **redefinition** for
+per-exchange grain before the reprocess runs — that remains the real design work;
+the wipe just removes the migration and the discontinuity.
+
+#### Q17 — reuse GitHub, with one boundary
+
+Taking GitHub as the source of truth is right and removes most of the identity
+problem: its **verified emails** are verified *by GitHub* (mailbox control
+proven), which is a far stronger assertion than a git commit trailer — anyone can
+put any address in a commit. So:
+
+```
+git commit email  ──matches──►  a GitHub-verified email of the authenticated user
+                                        │
+                                        ▼
+                                  alias is CLAIMED (Q16)
+otherwise ─────────────────────► unclaimed; stays local, never attributed in dōjō
+```
+
+That closes the attribution attack from the ADR without an admin queue.
+
+**The one boundary:** the email-domain heuristic is a *suggestion*, not
+authorization. `dev@example-corp.com` proves mailbox control at that
+domain — it does **not** prove membership of the Seneca Global org. **GitHub org
+membership is the authoritative signal**; the domain merely proposes *which*
+tenant to offer. Keeping those separate is what stops "I own an address at your
+domain" from becoming "I am in your dōjō".
+
+Scope note: this needs `user:email` and `read:org`. Auth doc Scenario 21 already
+covers reduced scope — preserve existing rows, log, never delete.
+
 ### 3.2 What Q13 strands — the transport that was never live
 
 Dōjō is Supabase-backed end to end; **there is no Rust service**. That is not a
