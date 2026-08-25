@@ -23,11 +23,9 @@
 pub const AUTONOMY_VALUES: [&str; 4] =
     ["ask_always", "ask_on_guarded", "ask_on_risky", "run_freely"];
 /// Allowed `sharing` values, ascending openness — the `sensei.stance_sharing` enum.
-pub const SHARING_VALUES: [&str; 4] =
-    ["private", "patterns", "patterns_prompts", "derived"];
+pub const SHARING_VALUES: [&str; 4] = ["private", "patterns", "patterns_prompts", "derived"];
 /// Allowed `review` values, ascending strictness — the `sensei.stance_review` enum.
-pub const REVIEW_VALUES: [&str; 4] =
-    ["me_alone", "one_maintainer", "two_maintainers", "quorum"];
+pub const REVIEW_VALUES: [&str; 4] = ["me_alone", "one_maintainer", "two_maintainers", "quorum"];
 
 /// A validated stance write: the three dial values a caller wants to set. Parsed
 /// from a request body via [`StanceInput::from_request`] — an absent axis takes
@@ -120,10 +118,8 @@ impl ResolvedStance {
 pub fn pick_stance(candidates: &[StanceCandidate]) -> ResolvedStance {
     // Scoped rows carry a level; the default row is level-less. Highest level
     // (most specific rung) wins among scoped rows.
-    if let Some(c) = candidates
-        .iter()
-        .filter(|c| c.level.is_some())
-        .max_by_key(|c| c.level.unwrap())
+    if let Some(c) =
+        candidates.iter().filter(|c| c.level.is_some()).max_by_key(|c| c.level.unwrap())
     {
         return ResolvedStance {
             autonomy: c.autonomy.clone(),
@@ -273,14 +269,20 @@ mod tests {
             "autonomy": "run_freely", "sharing": "private", "review": "quorum"
         });
         let i = StanceInput::from_request(&body).unwrap();
-        assert_eq!(i, StanceInput {
-            autonomy: "run_freely".into(), sharing: "private".into(), review: "quorum".into(),
-        });
+        assert_eq!(
+            i,
+            StanceInput {
+                autonomy: "run_freely".into(),
+                sharing: "private".into(),
+                review: "quorum".into(),
+            }
+        );
     }
 
     #[test]
     fn stance_input_defaults_absent_axes_to_the_ddl_fallback() {
-        let i = StanceInput::from_request(&serde_json::json!({ "autonomy": "ask_always" })).unwrap();
+        let i =
+            StanceInput::from_request(&serde_json::json!({ "autonomy": "ask_always" })).unwrap();
         let d = ResolvedStance::fallback();
         assert_eq!(i.autonomy, "ask_always");
         assert_eq!(i.sharing, d.sharing, "absent sharing → DDL default");

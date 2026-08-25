@@ -27,8 +27,14 @@ const TOP_N: usize = 8;
 const MAX_TOKENS: u32 = 1024;
 /// Canonical recommendation action types (must match the generator + DDL comment).
 const ACTION_TYPES: [&str; 8] = [
-    "promote_pattern", "create_agent", "write_skill", "archive_memory",
-    "enrich_memory", "cross_project", "revise_rule", "audit_stale",
+    "promote_pattern",
+    "create_agent",
+    "write_skill",
+    "archive_memory",
+    "enrich_memory",
+    "cross_project",
+    "revise_rule",
+    "audit_stale",
 ];
 
 const SYSTEM: &str = "You are a senior engineer reviewing recurring signals from a developer's \
@@ -93,11 +99,7 @@ pub(crate) fn build_consolidation_prompt(findings: &[Finding]) -> String {
 /// `revise_rule` for anything unrecognized.
 fn normalize_action_type(raw: &str) -> String {
     let t = raw.trim().to_ascii_lowercase().replace([' ', '-'], "_");
-    if ACTION_TYPES.contains(&t.as_str()) {
-        t
-    } else {
-        "revise_rule".to_string()
-    }
+    if ACTION_TYPES.contains(&t.as_str()) { t } else { "revise_rule".to_string() }
 }
 
 fn normalize_urgency(raw: &str) -> String {
@@ -143,29 +145,22 @@ pub async fn consolidate_for_project(
     ctx: &TaskContext,
     project_id: &uuid::Uuid,
 ) -> Result<u32, String> {
-    let mut findings: Vec<Finding> = ctx
-        .pg()
-        .get_patterns_for_generation(project_id)
-        .await?
-        .into_iter()
-        .map(|(id, _folder_id, folder_label, name, _is_anti, instance_count, _instances)| Finding {
-            pattern_id: id,
-            name,
-            folder_label,
-            instance_count,
-        })
-        .collect();
+    let mut findings: Vec<Finding> =
+        ctx.pg()
+            .get_patterns_for_generation(project_id)
+            .await?
+            .into_iter()
+            .map(|(id, _folder_id, folder_label, name, _is_anti, instance_count, _instances)| {
+                Finding { pattern_id: id, name, folder_label, instance_count }
+            })
+            .collect();
     findings.truncate(TOP_N);
     if findings.len() < CONSOLIDATION_MIN {
         return Ok(0);
     }
 
     let signature = findings_signature(&findings);
-    if ctx
-        .pg()
-        .reasoning_trace_exists_with_signature(project_id, &signature)
-        .await
-        .unwrap_or(false)
+    if ctx.pg().reasoning_trace_exists_with_signature(project_id, &signature).await.unwrap_or(false)
     {
         return Ok(0); // already consolidated this finding-set
     }
@@ -219,7 +214,14 @@ pub async fn consolidate_for_project(
     let trigger_detail = serde_json::json!({ "signature": signature, "patterns": pattern_ids });
     let trace_id = ctx
         .pg()
-        .insert_reasoning_trace(Some(project_id), "consolidation", &trigger_detail, &models, &exchanges, &consensus)
+        .insert_reasoning_trace(
+            Some(project_id),
+            "consolidation",
+            &trigger_detail,
+            &models,
+            &exchanges,
+            &consensus,
+        )
         .await?;
 
     let based_on = serde_json::json!({ "patterns": pattern_ids });
@@ -303,7 +305,13 @@ mod tests {
     #[test]
     fn parse_rejects_missing_fields_and_non_json() {
         assert!(parse_consolidation("no json here").is_none());
-        assert!(parse_consolidation(r#"{"headline":"","reasoning":"r","prompt":"p"}"#).is_none(), "empty headline");
-        assert!(parse_consolidation(r#"{"headline":"h","reasoning":"r"}"#).is_none(), "missing prompt");
+        assert!(
+            parse_consolidation(r#"{"headline":"","reasoning":"r","prompt":"p"}"#).is_none(),
+            "empty headline"
+        );
+        assert!(
+            parse_consolidation(r#"{"headline":"h","reasoning":"r"}"#).is_none(),
+            "missing prompt"
+        );
     }
 }

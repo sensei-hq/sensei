@@ -233,8 +233,7 @@ pub fn phase_transition_events(current: Option<&str>, new: &str) -> Vec<(RunEven
 /// than awaiting.
 #[cfg(test)]
 pub(crate) fn resume_test_guard() -> std::sync::MutexGuard<'static, ()> {
-    static GATE: crate::tasks::test_support::TestGate =
-        crate::tasks::test_support::TestGate::new();
+    static GATE: crate::tasks::test_support::TestGate = crate::tasks::test_support::TestGate::new();
     GATE.enter()
 }
 
@@ -329,10 +328,7 @@ mod tests {
         for v in RunEventKind::ALL {
             assert_eq!(RunEventKind::from_db_str(v.as_db_str()), Some(v));
             // serde snake_case must agree with the DB string.
-            assert_eq!(
-                serde_json::to_string(&v).unwrap(),
-                format!("\"{}\"", v.as_db_str())
-            );
+            assert_eq!(serde_json::to_string(&v).unwrap(), format!("\"{}\"", v.as_db_str()));
         }
         assert_eq!(RunEventKind::from_db_str("nope"), None);
     }
@@ -341,9 +337,7 @@ mod tests {
     fn run_status_reuses_relay_enum() {
         // The run's status is dojo_protocol's RelayRunStatus — the same 7
         // variants sensei.run_status declares. Sanity-check the shared strings.
-        let expected = [
-            "running", "paused", "stalled", "crashed", "blocked", "done", "failed",
-        ];
+        let expected = ["running", "paused", "stalled", "crashed", "blocked", "done", "failed"];
         let got: Vec<&str> = RelayRunStatus::ALL.iter().map(|v| v.as_db_str()).collect();
         assert_eq!(got, expected);
     }

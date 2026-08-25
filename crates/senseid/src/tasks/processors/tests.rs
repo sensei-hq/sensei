@@ -29,12 +29,20 @@ fn process_fixture(rel: &str) -> crate::tasks::processors::FileProcessResult {
 }
 
 /// Process a fixture file with a subtree root for extension detection.
-fn process_fixture_subtree(rel: &str, subtree: &str) -> crate::tasks::processors::FileProcessResult {
+fn process_fixture_subtree(
+    rel: &str,
+    subtree: &str,
+) -> crate::tasks::processors::FileProcessResult {
     let root = fixtures();
     let subtree_root = root.join(subtree);
     let abs = root.join(rel);
     assert!(abs.exists(), "Fixture not found: {}", abs.display());
-    process_file(&abs.to_string_lossy(), &subtree_root.to_string_lossy(), &format!("test:{}", subtree)).unwrap()
+    process_file(
+        &abs.to_string_lossy(),
+        &subtree_root.to_string_lossy(),
+        &format!("test:{}", subtree),
+    )
+    .unwrap()
 }
 
 // ═══ Code files (from crate source — these exist in this repo) ═══

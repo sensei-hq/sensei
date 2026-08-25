@@ -305,11 +305,7 @@ mod tests {
     #[test]
     fn title_prefers_feature_then_phase_then_goal_then_fallback() {
         assert_eq!(run_title(&run(|_| {})), "run→relay bridge"); // feature wins
-        assert_eq!(
-            run_title(&run(|r| r.current_feature = None)),
-            "P1",
-            "falls back to phase"
-        );
+        assert_eq!(run_title(&run(|r| r.current_feature = None)), "P1", "falls back to phase");
         assert_eq!(
             run_title(&run(|r| {
                 r.current_feature = None;
@@ -422,7 +418,7 @@ mod tests {
         let events = vec![
             ev(1, RunEventKind::Housekeeping, None, None),
             ev(2, RunEventKind::FeatureStarted, Some("P1"), Some("x")), // feature, not a phase transition
-            ev(3, RunEventKind::PhaseStarted, None, None),               // no phase label
+            ev(3, RunEventKind::PhaseStarted, None, None),              // no phase label
         ];
         let segs = plan_events_to_segments(&events);
         assert!(segs.is_empty(), "no phase-transition event ⇒ no segments, got {segs:?}");

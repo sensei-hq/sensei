@@ -82,7 +82,13 @@ async fn resume_due(queue: &TaskQueue, pg: &PgStore) {
         // A per-run event failure is logged and skipped — it must not stop us
         // from ticking the run (the state is already flipped to running).
         if let Err(e) = pg
-            .append_run_event(&id, RunEventKind::Resumed, None, None, &serde_json::json!({ "auto": true }))
+            .append_run_event(
+                &id,
+                RunEventKind::Resumed,
+                None,
+                None,
+                &serde_json::json!({ "auto": true }),
+            )
             .await
         {
             tracing::warn!(run_id = %id, error = %e, "advance_run_scheduler: logging Resumed event failed");
@@ -171,7 +177,9 @@ mod tests {
         // `tick` calls the global `resume_due_runs`, so hold the shared resume
         // lock to serialize with the other resume-race tests.
         let _guard = crate::runs::resume_test_guard();
-        let Ok(pg) = PgStore::connect_test().await else { return; };
+        let Ok(pg) = PgStore::connect_test().await else {
+            return;
+        };
         let queue = TaskQueue::with_max_repos(16);
 
         use crate::runs::NewRun;
@@ -193,8 +201,12 @@ mod tests {
         let mut publish_paths = std::collections::HashSet::new();
         for (kind, _folder, path) in queue.snapshot().await {
             match kind {
-                TaskKind::AdvanceRun => { advance_paths.insert(path); }
-                TaskKind::PublishRun => { publish_paths.insert(path); }
+                TaskKind::AdvanceRun => {
+                    advance_paths.insert(path);
+                }
+                TaskKind::PublishRun => {
+                    publish_paths.insert(path);
+                }
                 other => panic!("unexpected task kind enqueued by tick: {other}"),
             }
         }
@@ -205,7 +217,10 @@ mod tests {
 
         for id in [a, b] {
             sqlx_core::query::query("DELETE FROM activity.runs WHERE id = $1")
-                .bind(id).execute(pg.pool()).await.unwrap();
+                .bind(id)
+                .execute(pg.pool())
+                .await
+                .unwrap();
         }
     }
 
@@ -218,7 +233,9 @@ mod tests {
         // `tick` calls the global `resume_due_runs`, so hold the shared resume
         // lock to serialize with the other resume-race tests.
         let _guard = crate::runs::resume_test_guard();
-        let Ok(pg) = PgStore::connect_test().await else { return; };
+        let Ok(pg) = PgStore::connect_test().await else {
+            return;
+        };
         let queue = TaskQueue::with_max_repos(16);
 
         use crate::runs::NewRun;
@@ -248,7 +265,10 @@ mod tests {
         assert_eq!(ours_publish, 1, "two ticks enqueue the PublishRun for a run only once");
 
         sqlx_core::query::query("DELETE FROM activity.runs WHERE id = $1")
-            .bind(run).execute(pg.pool()).await.unwrap();
+            .bind(run)
+            .execute(pg.pool())
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
@@ -263,7 +283,9 @@ mod tests {
         // scheduler, so there is no such race there).
         let _guard = crate::runs::resume_test_guard();
 
-        let Ok(pg) = PgStore::connect_test().await else { return; };
+        let Ok(pg) = PgStore::connect_test().await else {
+            return;
+        };
         let queue = TaskQueue::with_max_repos(16);
 
         use crate::runs::NewRun;
@@ -273,8 +295,14 @@ mod tests {
         pg.resume_due_runs().await.unwrap();
 
         let due = pg.create_run(&NewRun::default()).await.unwrap();
-        pg.update_run_status(&due, RelayRunStatus::Paused, Some("2000-01-01T00:00:00Z"), Some("cap"))
-            .await.unwrap();
+        pg.update_run_status(
+            &due,
+            RelayRunStatus::Paused,
+            Some("2000-01-01T00:00:00Z"),
+            Some("cap"),
+        )
+        .await
+        .unwrap();
 
         resume_due(&queue, &pg).await;
 
@@ -303,6 +331,9 @@ mod tests {
         assert!(saw_publish, "resume_due enqueues a PublishRun tick for the resumed run");
 
         sqlx_core::query::query("DELETE FROM activity.runs WHERE id = $1")
-            .bind(due).execute(pg.pool()).await.unwrap();
+            .bind(due)
+            .execute(pg.pool())
+            .await
+            .unwrap();
     }
 }

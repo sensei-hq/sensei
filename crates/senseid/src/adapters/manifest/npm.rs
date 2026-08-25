@@ -7,7 +7,7 @@
 
 use super::workspace::{extract_npm_workspace_patterns, resolve_glob_members};
 use super::{FsSignals, ManifestAdapter, ParsedManifest};
-use crate::indexer::lib_indexer::{parse_npm_deps, DepVersion};
+use crate::indexer::lib_indexer::{DepVersion, parse_npm_deps};
 use crate::types::PackageInfo;
 use std::path::Path;
 
@@ -37,10 +37,9 @@ impl ManifestAdapter for NpmManifestAdapter {
         };
         match pkg.get("workspaces") {
             Some(serde_json::Value::Array(a)) => !a.is_empty(),
-            Some(serde_json::Value::Object(o)) => o
-                .get("packages")
-                .and_then(|v| v.as_array())
-                .is_some_and(|a| !a.is_empty()),
+            Some(serde_json::Value::Object(o)) => {
+                o.get("packages").and_then(|v| v.as_array()).is_some_and(|a| !a.is_empty())
+            }
             _ => false,
         }
     }
@@ -153,17 +152,24 @@ impl ManifestAdapter for NpmManifestAdapter {
     /// [`command_category::categorise`] classifier.
     fn parse_commands(&self, content: &str) -> Vec<super::DiscoveredCommand> {
         let Ok(pkg) = serde_json::from_str::<serde_json::Value>(content) else { return Vec::new() };
-        let Some(scripts) = pkg.get("scripts").and_then(|v| v.as_object()) else { return Vec::new() };
-        scripts.iter().filter_map(|(name, _value)| {
-            if name.is_empty() { return None; }
-            Some(super::DiscoveredCommand {
-                raw_name: name.clone(),
-                // Package-manager-agnostic. The runner picks bun/npm/pnpm
-                // at exec time based on lockfile presence.
-                command_line: format!("npm run {name}"),
-                category: super::command_category::categorise(name),
+        let Some(scripts) = pkg.get("scripts").and_then(|v| v.as_object()) else {
+            return Vec::new();
+        };
+        scripts
+            .iter()
+            .filter_map(|(name, _value)| {
+                if name.is_empty() {
+                    return None;
+                }
+                Some(super::DiscoveredCommand {
+                    raw_name: name.clone(),
+                    // Package-manager-agnostic. The runner picks bun/npm/pnpm
+                    // at exec time based on lockfile presence.
+                    command_line: format!("npm run {name}"),
+                    category: super::command_category::categorise(name),
+                })
             })
-        }).collect()
+            .collect()
     }
 }
 
@@ -181,13 +187,10 @@ fn package_json_member(repo_root: &Path, rel_path: &str) -> Option<PackageInfo> 
         .as_ref()
         .and_then(|v| v.get("name").and_then(|n| n.as_str()).map(|s| s.to_string()))
         .unwrap_or_else(|| rel_path.to_string());
-    let version = pkg
-        .as_ref()
-        .and_then(|v| v.get("version").and_then(|n| n.as_str()).map(|s| s.to_string()));
-    let private = pkg
-        .as_ref()
-        .and_then(|v| v.get("private").and_then(|b| b.as_bool()))
-        .unwrap_or(false);
+    let version =
+        pkg.as_ref().and_then(|v| v.get("version").and_then(|n| n.as_str()).map(|s| s.to_string()));
+    let private =
+        pkg.as_ref().and_then(|v| v.get("private").and_then(|b| b.as_bool())).unwrap_or(false);
     Some(PackageInfo {
         name,
         path: rel_path.to_string(),
@@ -281,8 +284,10 @@ mod tests {
 
     #[test]
     fn is_workspace_root_recognises_object_workspaces_packages() {
-        assert!(NpmManifestAdapter
-            .is_workspace_root(r#"{ "workspaces": { "packages": ["packages/*"] } }"#));
+        assert!(
+            NpmManifestAdapter
+                .is_workspace_root(r#"{ "workspaces": { "packages": ["packages/*"] } }"#)
+        );
     }
 
     #[test]
@@ -327,8 +332,7 @@ mod tests {
             vec!["svelte"]
         );
         assert_eq!(
-            NpmManifestAdapter
-                .stack_labels(r#"{"devDependencies":{"@sveltejs/kit":"^2"}}"#),
+            NpmManifestAdapter.stack_labels(r#"{"devDependencies":{"@sveltejs/kit":"^2"}}"#),
             vec!["svelte"]
         );
         assert_eq!(
@@ -344,10 +348,7 @@ mod tests {
             vec!["nextjs"]
         );
         // No framework markers → generic typescript label.
-        assert_eq!(
-            NpmManifestAdapter.stack_labels(r#"{"name":"plain"}"#),
-            vec!["typescript"]
-        );
+        assert_eq!(NpmManifestAdapter.stack_labels(r#"{"name":"plain"}"#), vec!["typescript"]);
     }
 
     #[test]

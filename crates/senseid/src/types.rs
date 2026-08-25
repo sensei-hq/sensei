@@ -59,7 +59,7 @@ pub enum NodeKind {
     File,
     // Documentation hierarchy
     Doc,
-    Extension,  // marketplace skills/commands/plugins — NOT documentation
+    Extension, // marketplace skills/commands/plugins — NOT documentation
 }
 
 impl NodeKind {
@@ -139,9 +139,8 @@ impl NodeKind {
     pub fn all() -> &'static [NodeKind] {
         use NodeKind::*;
         &[
-            Package, Module, Function, Method,
-            Class, Struct, Interface, Enum, Const, Type, Component, Hook,
-            File, Doc, Extension,
+            Package, Module, Function, Method, Class, Struct, Interface, Enum, Const, Type,
+            Component, Hook, File, Doc, Extension,
         ]
     }
 }
@@ -194,9 +193,21 @@ impl HierarchyNode {
     #[allow(dead_code)]
     pub fn group(id: String, name: String, kind: NodeKind, project: String) -> Self {
         Self {
-            id, name, kind, level: None, parent_id: None, file: None, line: 0,
-            project, sig: None, body: None, docstring: None, complexity: None,
-            tags: None, doc_type: None, doc_category: None,
+            id,
+            name,
+            kind,
+            level: None,
+            parent_id: None,
+            file: None,
+            line: 0,
+            project,
+            sig: None,
+            body: None,
+            docstring: None,
+            complexity: None,
+            tags: None,
+            doc_type: None,
+            doc_category: None,
         }
     }
 
@@ -204,27 +215,63 @@ impl HierarchyNode {
     #[allow(clippy::too_many_arguments)]
     #[allow(dead_code)]
     pub fn function(
-        id: String, name: String, kind: NodeKind, file: String, line: u32,
-        sig: Option<String>, body: Option<String>, docstring: Option<String>,
-        complexity: u32, project: String,
+        id: String,
+        name: String,
+        kind: NodeKind,
+        file: String,
+        line: u32,
+        sig: Option<String>,
+        body: Option<String>,
+        docstring: Option<String>,
+        complexity: u32,
+        project: String,
     ) -> Self {
         Self {
-            id, name, kind, level: None, parent_id: None, file: Some(file), line,
-            project, sig, body, docstring, complexity: Some(complexity),
-            tags: None, doc_type: None, doc_category: None,
+            id,
+            name,
+            kind,
+            level: None,
+            parent_id: None,
+            file: Some(file),
+            line,
+            project,
+            sig,
+            body,
+            docstring,
+            complexity: Some(complexity),
+            tags: None,
+            doc_type: None,
+            doc_category: None,
         }
     }
 
     /// Create a doc/extension node.
     #[allow(dead_code)]
     pub fn doc(
-        id: String, name: String, kind: NodeKind, file: String,
-        doc_type: Option<String>, doc_category: Option<String>, project: String,
+        id: String,
+        name: String,
+        kind: NodeKind,
+        file: String,
+        doc_type: Option<String>,
+        doc_category: Option<String>,
+        project: String,
     ) -> Self {
         Self {
-            id, name, kind, level: None, parent_id: None, file: Some(file), line: 0,
-            project, sig: None, body: None, docstring: None, complexity: None,
-            tags: None, doc_type, doc_category,
+            id,
+            name,
+            kind,
+            level: None,
+            parent_id: None,
+            file: Some(file),
+            line: 0,
+            project,
+            sig: None,
+            body: None,
+            docstring: None,
+            complexity: None,
+            tags: None,
+            doc_type,
+            doc_category,
         }
     }
 }
@@ -313,10 +360,7 @@ mod tests {
                 parent: None,
             }],
             edges: vec![],
-            imports: vec![ParsedImport {
-                target_path: "os".into(),
-                names: vec!["path".into()],
-            }],
+            imports: vec![ParsedImport { target_path: "os".into(), names: vec!["path".into()] }],
         };
         let json = serde_json::to_string(&pf).unwrap();
         let pf2: ParsedFile = serde_json::from_str(&json).unwrap();
@@ -346,7 +390,9 @@ mod node_kind_schema_tests {
             assert!(
                 enum_values.contains(k.as_str()),
                 "NodeKind::{:?} emits {:?}, absent from node_kind.ddl: {:?}",
-                k, k.as_str(), enum_values
+                k,
+                k.as_str(),
+                enum_values
             );
         }
     }

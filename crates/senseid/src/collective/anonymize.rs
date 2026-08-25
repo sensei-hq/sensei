@@ -22,7 +22,9 @@
 //! surface is `dead_code`-allowed.
 #![allow(dead_code)]
 
-use crate::dojo::attribution::{dereference, Dereferenced, ProjectIdentifiers, Redaction, ResidualRisk};
+use crate::dojo::attribution::{
+    Dereferenced, ProjectIdentifiers, Redaction, ResidualRisk, dereference,
+};
 use dojo_protocol::{Attribution, AttributionMode};
 use sha2::{Digest, Sha256};
 use std::future::Future;
@@ -217,7 +219,9 @@ impl Generalizer for GatewayGeneralizer {
         use gateway::types::capability::Capability;
         use gateway::types::request::{InferenceRequest, Message, MessageRole, Payload};
         // Reuse the shipped generalise message builder + response parser (DRY).
-        use crate::api::handlers::knowledge::{build_generalise_message, parse_generalise_response};
+        use crate::api::handlers::knowledge::{
+            build_generalise_message, parse_generalise_response,
+        };
 
         let gateway = self.gateway.clone();
         let message = build_generalise_message("engineering principle", text);
@@ -244,14 +248,18 @@ impl Generalizer for GatewayGeneralizer {
                 credentials: std::collections::HashMap::new(),
             };
             match tokio::time::timeout(POLISH_TIMEOUT, gateway.execute(&request)).await {
-                Ok(Ok(resp)) if resp.success => resp.content.as_deref().and_then(parse_generalise_response),
+                Ok(Ok(resp)) if resp.success => {
+                    resp.content.as_deref().and_then(parse_generalise_response)
+                }
                 Ok(Ok(_)) => None,
                 Ok(Err(e)) => {
                     tracing::warn!(error = %e, "global-anonymise: gateway polish failed — keeping deterministic text");
                     None
                 }
                 Err(_) => {
-                    tracing::warn!("global-anonymise: gateway polish timed out — keeping deterministic text");
+                    tracing::warn!(
+                        "global-anonymise: gateway polish timed out — keeping deterministic text"
+                    );
                     None
                 }
             }
@@ -288,7 +296,11 @@ mod tests {
     }
 
     fn shape() -> ProjectShape {
-        ProjectShape { stack: vec!["rust".into()], size: Some(SizeBucket::Medium), kind: Some("web-service".into()) }
+        ProjectShape {
+            stack: vec!["rust".into()],
+            size: Some(SizeBucket::Medium),
+            kind: Some("web-service".into()),
+        }
     }
 
     fn contributor() -> ContributorIdentity {
@@ -311,7 +323,10 @@ mod tests {
     fn anon_id_is_not_the_user_key_or_project_id() {
         let id = rotating_anon_id("local-user-secret-abc", 7);
         assert_ne!(id, "local-user-secret-abc");
-        assert!(!id.contains("local-user-secret-abc"), "the user key must not appear in the anon id");
+        assert!(
+            !id.contains("local-user-secret-abc"),
+            "the user key must not appear in the anon id"
+        );
     }
 
     #[test]
@@ -365,7 +380,9 @@ mod tests {
     async fn llm_reintroducing_a_path_is_discarded_and_safe_text_kept() {
         // The model tries to sneak an absolute path back in.
         let g = MockGeneralizer {
-            response: Some("Always run migrations first, e.g. under /Users/jerry/work/acme-api/db.".into()),
+            response: Some(
+                "Always run migrations first, e.g. under /Users/jerry/work/acme-api/db.".into(),
+            ),
         };
         let art = anonymize_for_global(
             "run migrations before deploy in acme-api",
@@ -378,8 +395,16 @@ mod tests {
         .await
         .expect("deterministic base is safe");
         assert!(!art.llm_polished, "hostile LLM output must be discarded");
-        assert!(!art.text.contains("/Users/"), "reintroduced path must not survive: {:?}", art.text);
-        assert!(!art.text.to_ascii_lowercase().contains("acme"), "reintroduced repo must not survive: {:?}", art.text);
+        assert!(
+            !art.text.contains("/Users/"),
+            "reintroduced path must not survive: {:?}",
+            art.text
+        );
+        assert!(
+            !art.text.to_ascii_lowercase().contains("acme"),
+            "reintroduced repo must not survive: {:?}",
+            art.text
+        );
     }
 
     #[tokio::test]
@@ -393,17 +418,31 @@ mod tests {
             .await
             .expect("base is safe");
         assert!(!art.llm_polished);
-        assert!(!art.text.to_ascii_lowercase().contains("acme corp"), "reintroduced client survived: {:?}", art.text);
+        assert!(
+            !art.text.to_ascii_lowercase().contains("acme corp"),
+            "reintroduced client survived: {:?}",
+            art.text
+        );
     }
 
     #[tokio::test]
     async fn clean_llm_rewrite_is_used() {
         let g = MockGeneralizer {
-            response: Some("Prefer a dedicated migration tool over hand-rolled SQL when the schema churns.".into()),
+            response: Some(
+                "Prefer a dedicated migration tool over hand-rolled SQL when the schema churns."
+                    .into(),
+            ),
         };
-        let art = anonymize_for_global("run migrations before deploy in acme-api", &ctx(), shape(), &contributor(), 1, &g)
-            .await
-            .expect("base is safe");
+        let art = anonymize_for_global(
+            "run migrations before deploy in acme-api",
+            &ctx(),
+            shape(),
+            &contributor(),
+            1,
+            &g,
+        )
+        .await
+        .expect("base is safe");
         assert!(art.llm_polished, "a clean rewrite should be adopted");
         assert!(art.text.contains("migration tool"));
     }

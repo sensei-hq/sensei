@@ -13,7 +13,7 @@
 //! distinct from the display name "dotnet" so future non-nuget .NET
 //! package sources (e.g. Paket) can register as their own ecosystem.
 
-use super::xml::{attr, walk, XmlEvent, XmlPath};
+use super::xml::{XmlEvent, XmlPath, attr, walk};
 use super::{ManifestAdapter, ParsedManifest};
 use crate::indexer::lib_indexer::DepVersion;
 use crate::types::PackageInfo;
@@ -43,11 +43,7 @@ impl ManifestAdapter for DotnetManifestAdapter {
         let mut deps: Vec<DepVersion> = Vec::new();
         let _ = walk(content, |path: &XmlPath<'_>, evt: XmlEvent<'_>| {
             // <PackageReference> can nest under <ItemGroup> at various depths.
-            let at_pkg_ref = path
-                .0
-                .last()
-                .map(|s| s == "PackageReference")
-                .unwrap_or(false);
+            let at_pkg_ref = path.0.last().map(|s| s == "PackageReference").unwrap_or(false);
             if !at_pkg_ref {
                 return;
             }
@@ -112,11 +108,7 @@ impl ManifestAdapter for DotnetManifestAdapter {
                 description = Some(text.to_string());
             }
         });
-        ParsedManifest {
-            name,
-            version,
-            description,
-        }
+        ParsedManifest { name, version, description }
     }
 
     fn stack_labels(&self, _content: &str) -> Vec<&'static str> {
@@ -131,8 +123,9 @@ impl ManifestAdapter for DotnetManifestAdapter {
         };
         let sln = entries.flatten().find_map(|e| {
             let p = e.path();
-            let is_sln = p.extension().and_then(|x| x.to_str()).map(str::to_ascii_lowercase)
-                .as_deref() == Some("sln");
+            let is_sln =
+                p.extension().and_then(|x| x.to_str()).map(str::to_ascii_lowercase).as_deref()
+                    == Some("sln");
             if is_sln { Some(p) } else { None }
         });
         let Some(sln_path) = sln else { return Vec::new() };
@@ -152,14 +145,13 @@ impl ManifestAdapter for DotnetManifestAdapter {
             }
             // Only include actual per-project files (skip Solution Folders,
             // which are containers with no project file on disk).
-            let ext = child
-                .extension()
-                .and_then(|x| x.to_str())
-                .map(str::to_ascii_lowercase);
+            let ext = child.extension().and_then(|x| x.to_str()).map(str::to_ascii_lowercase);
             if !matches!(ext.as_deref(), Some("csproj") | Some("fsproj") | Some("vbproj")) {
                 continue;
             }
-            let dir = child.parent().and_then(|p| p.strip_prefix(repo_root).ok())
+            let dir = child
+                .parent()
+                .and_then(|p| p.strip_prefix(repo_root).ok())
                 .map(|p| p.to_string_lossy().to_string())
                 .unwrap_or_else(|| project.name.clone());
             let pom = std::fs::read_to_string(&child).unwrap_or_default();
@@ -178,13 +170,16 @@ impl ManifestAdapter for DotnetManifestAdapter {
     /// Conventional dotnet CLI verbs. `test` / `build` / `run` / `publish`
     /// / `restore` cover the canonical loop.
     fn parse_commands(&self, _content: &str) -> Vec<super::DiscoveredCommand> {
-        super::conventional_commands("dotnet", &[
-            ("test",     "test"),
-            ("build",    "build"),
-            ("run",      "run"),
-            ("publish",  "build"),
-            ("restore",  "run"),
-        ])
+        super::conventional_commands(
+            "dotnet",
+            &[
+                ("test", "test"),
+                ("build", "build"),
+                ("run", "run"),
+                ("publish", "build"),
+                ("restore", "run"),
+            ],
+        )
     }
 }
 
@@ -220,10 +215,7 @@ fn parse_sln_project_line(line: &str) -> Option<SlnProject> {
     }
     let name = strip_quotes(parts[0].trim())?;
     let path = strip_quotes(parts[1].trim())?;
-    Some(SlnProject {
-        name: name.to_string(),
-        path: path.to_string(),
-    })
+    Some(SlnProject { name: name.to_string(), path: path.to_string() })
 }
 
 fn strip_quotes(s: &str) -> Option<&str> {

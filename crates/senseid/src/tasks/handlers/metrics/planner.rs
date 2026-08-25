@@ -50,7 +50,7 @@ use crate::db::pg_store::PgStore;
 use crate::tasks::executor::TaskContext;
 use crate::tasks::{Task, TaskKind};
 
-use super::{MetricGroup, HEALTH_TASK_NAME};
+use super::{HEALTH_TASK_NAME, MetricGroup};
 
 /// The groups the engine fills PER-DAY (day cadence). Kept as a small enum with a
 /// stable [`Self::ALL`] so the day-keyed set is explicit and each group's
@@ -207,10 +207,7 @@ impl DayKeyedGroup {
 /// without a DB. [`compute_group`] passes a single-element slice to classify the one
 /// group it handles.
 pub(super) fn day_keyed_active(active: &[String]) -> Vec<DayKeyedGroup> {
-    DayKeyedGroup::ALL
-        .into_iter()
-        .filter(|g| active.iter().any(|t| t == g.task_name()))
-        .collect()
+    DayKeyedGroup::ALL.into_iter().filter(|g| active.iter().any(|t| t == g.task_name())).collect()
 }
 
 /// The ACTIVE base groups that are NOT day-keyed — the SNAPSHOT / forward-only groups
@@ -293,7 +290,9 @@ async fn run_computer(
         MetricGroup::Cost => super::cost::compute(ctx, project_raw, as_of).await,
         MetricGroup::Usage => super::usage::compute(ctx, project_raw, as_of).await,
         MetricGroup::Coverage => super::coverage::compute(ctx, project_raw, as_of).await,
-        MetricGroup::SessionProcess => super::session_process::compute(ctx, project_raw, as_of).await,
+        MetricGroup::SessionProcess => {
+            super::session_process::compute(ctx, project_raw, as_of).await
+        }
     }
 }
 
@@ -360,9 +359,7 @@ pub(super) async fn compute_project(ctx: &TaskContext, task: &Task) -> Result<u3
     for task_name in active.into_iter().filter(|t| t != HEALTH_TASK_NAME) {
         let id = ctx
             .queue
-            .enqueue(
-                Task::new(TaskKind::ComputeGroupMetrics, &owner, &task_name).with_as_of(as_of),
-            )
+            .enqueue(Task::new(TaskKind::ComputeGroupMetrics, &owner, &task_name).with_as_of(as_of))
             .await;
         child_ids.push(id);
     }
@@ -380,9 +377,7 @@ pub(super) async fn compute_project(ctx: &TaskContext, task: &Task) -> Result<u3
     // as_of) so the derived roll-up runs only after the components land.
     ctx.queue
         .enqueue(
-            Task::new(TaskKind::ComputeHealth, &owner, "")
-                .with_as_of(as_of)
-                .blocked_by(child_ids),
+            Task::new(TaskKind::ComputeHealth, &owner, "").with_as_of(as_of).blocked_by(child_ids),
         )
         .await;
     let enqueued = n_children as u32 + 1;
@@ -438,24 +433,14 @@ pub(super) async fn compute_group(ctx: &TaskContext, task: &Task) -> Result<u32,
 
         let group_metric = dk.group();
         let project_owned = task.folder_path.clone();
-        fill_and_seal(
-            ctx,
-            pg,
-            &project_id,
-            &task.path,
-            &repos,
-            &plan,
-            as_of,
-            move |day| {
-                let proj = project_owned.clone();
-                // The `DayFuture<'_>` annotation forces the unsize coercion from the
-                // concrete future to the boxed trait object (the `F` bound's Output).
-                let fut: DayFuture<'_> = Box::pin(async move {
-                    run_computer(ctx, group_metric, &proj, Some(day)).await
-                });
-                fut
-            },
-        )
+        fill_and_seal(ctx, pg, &project_id, &task.path, &repos, &plan, as_of, move |day| {
+            let proj = project_owned.clone();
+            // The `DayFuture<'_>` annotation forces the unsize coercion from the
+            // concrete future to the boxed trait object (the `F` bound's Output).
+            let fut: DayFuture<'_> =
+                Box::pin(async move { run_computer(ctx, group_metric, &proj, Some(day)).await });
+            fut
+        })
         .await
     } else if let Some(group) = snapshot_active(one).into_iter().next() {
         // ── SNAPSHOT (knowledge / tool) ──
@@ -500,10 +485,16 @@ mod tests {
         let old = d(2025, 5, 1); // outside the window → only reached via the unset fill
         let mid = d(2025, 6, 10);
         let out = watermark_plan_days(&[mid, old, mid], None, today, window);
-        assert!(out.contains(&old), "an unset watermark fills from the earliest data day (min_date)");
+        assert!(
+            out.contains(&old),
+            "an unset watermark fills from the earliest data day (min_date)"
+        );
         assert!(out.contains(&mid));
         for i in 0..window {
-            assert!(out.contains(&(today - chrono::Duration::days(i as i64))), "trailing window present");
+            assert!(
+                out.contains(&(today - chrono::Duration::days(i as i64))),
+                "trailing window present"
+            );
         }
         assert!(out.contains(&today), "today is always planned");
         let mut sorted = out.clone();
@@ -525,7 +516,10 @@ mod tests {
         assert!(out.contains(&after_cursor), "a day after the cursor is planned");
         assert!(out.contains(&today), "today is always planned");
         for i in 0..14u32 {
-            assert!(out.contains(&(today - chrono::Duration::days(i as i64))), "trailing window present");
+            assert!(
+                out.contains(&(today - chrono::Duration::days(i as i64))),
+                "trailing window present"
+            );
         }
     }
 
@@ -578,7 +572,10 @@ mod tests {
             vec![MetricGroup::Knowledge, MetricGroup::Coverage],
             "snapshot = knowledge/coverage; day-keyed + health excluded",
         );
-        assert!(snapshot_active(&["no_such_group".to_string()]).is_empty(), "unknown never fabricates");
+        assert!(
+            snapshot_active(&["no_such_group".to_string()]).is_empty(),
+            "unknown never fabricates"
+        );
         assert!(snapshot_active(&["health".to_string()]).is_empty());
     }
 
@@ -624,7 +621,8 @@ mod tests {
         let (ts1, ts2) = (now - chrono::Duration::days(60), now - chrono::Duration::days(30));
         let (d1, d2) = (ts1.date_naive(), ts2.date_naive());
         for ts in [ts1, ts2] {
-            let sid = seed_metrics_session(pg, &fid, &pid, Some("completed"), Some(true), 0, ts).await;
+            let sid =
+                seed_metrics_session(pg, &fid, &pid, Some("completed"), Some(true), 0, ts).await;
             seed_metrics_turn(pg, &sid, 1, ts).await;
         }
 
@@ -642,14 +640,21 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(min_day, Some(d1), "the fill starts at the earliest data day (min_date)");
-        assert!(ftr_value_on(pg, &pid, d2).await.is_some(), "the later historical day is filled too");
+        assert!(
+            ftr_value_on(pg, &pid, d2).await.is_some(),
+            "the later historical day is filled too"
+        );
 
         // A repo with NO data is an honest no-op (no rows written).
         let uniq2 = uuid::Uuid::new_v4();
         let (pid2, fid2) = seed_metrics_project_folder(pg, &uniq2).await;
         let task2 = Task::new(TaskKind::ComputeGroupMetrics, &pid2.to_string(), "session_outcomes")
             .with_as_of(today);
-        assert_eq!(compute_group(&ctx, &task2).await.unwrap(), 0, "no session data → no row (honest no-op)");
+        assert_eq!(
+            compute_group(&ctx, &task2).await.unwrap(),
+            0,
+            "no session data → no row (honest no-op)"
+        );
 
         cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
         cleanup_metrics_fixture(pg, &pid2, Some(&fid2), &[]).await;
@@ -670,9 +675,11 @@ mod tests {
         let old_day = old_ts.date_naive();
         // A first-try session on the old day (ftr → 1.0) and a NOT-first-try session
         // today (ftr → 0.0), so the two days carry distinct values.
-        let sid_old = seed_metrics_session(pg, &fid, &pid, Some("completed"), Some(true), 0, old_ts).await;
+        let sid_old =
+            seed_metrics_session(pg, &fid, &pid, Some("completed"), Some(true), 0, old_ts).await;
         seed_metrics_turn(pg, &sid_old, 1, old_ts).await;
-        let sid_today = seed_metrics_session(pg, &fid, &pid, Some("completed"), Some(false), 1, now).await;
+        let sid_today =
+            seed_metrics_session(pg, &fid, &pid, Some("completed"), Some(false), 1, now).await;
         seed_metrics_turn(pg, &sid_today, 1, now).await;
 
         let task = Task::new(TaskKind::ComputeGroupMetrics, &pid.to_string(), "session_outcomes")
@@ -705,8 +712,16 @@ mod tests {
         .unwrap();
 
         compute_group(&ctx, &task).await.unwrap();
-        assert_eq!(ftr_value_on(pg, &pid, old_day).await, Some(0.123), "a settled day is NOT recomputed");
-        assert_eq!(ftr_value_on(pg, &pid, today).await, Some(0.0), "today is always recomputed (reopened)");
+        assert_eq!(
+            ftr_value_on(pg, &pid, old_day).await,
+            Some(0.123),
+            "a settled day is NOT recomputed"
+        );
+        assert_eq!(
+            ftr_value_on(pg, &pid, today).await,
+            Some(0.0),
+            "today is always recomputed (reopened)"
+        );
 
         cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
     }
@@ -724,9 +739,14 @@ mod tests {
         // A commit 60 days back — well outside the 14-day window, so once sealed it is
         // never reopened.
         let commit_day = today - chrono::Duration::days(60);
-        git_commit_on_day(repo.path(), &commit_day.format("%Y-%m-%d").to_string(), &[("a.rs", "1\n2\n3\n")]);
+        git_commit_on_day(
+            repo.path(),
+            &commit_day.format("%Y-%m-%d").to_string(),
+            &[("a.rs", "1\n2\n3\n")],
+        );
 
-        let task = Task::new(TaskKind::ComputeGroupMetrics, &pid.to_string(), "churn").with_as_of(today);
+        let task =
+            Task::new(TaskKind::ComputeGroupMetrics, &pid.to_string(), "churn").with_as_of(today);
         compute_group(&ctx, &task).await.unwrap();
 
         // The churn_rate rows on the commit-day (scope=repo + scope=user).
@@ -765,7 +785,10 @@ mod tests {
         .fetch_one(pg.pool())
         .await
         .unwrap();
-        assert_eq!(c999, c0, "the tampered value survives — the sealed commit-day is not recomputed");
+        assert_eq!(
+            c999, c0,
+            "the tampered value survives — the sealed commit-day is not recomputed"
+        );
 
         cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
     }

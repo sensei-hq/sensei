@@ -8,9 +8,9 @@ use super::types::ComponentId;
 
 #[derive(Debug, Clone, Copy)]
 pub struct DependencySpec {
-    pub id:         ComponentId,
-    pub label:      &'static str,
-    pub note:       Option<&'static str>,
+    pub id: ComponentId,
+    pub label: &'static str,
+    pub note: Option<&'static str>,
     pub depends_on: &'static [ComponentId],
     /// Verb shown when the component is in `ComponentStatus::Installing`.
     /// Service-style deps say "starting" (brew services), database says
@@ -21,19 +21,46 @@ pub struct DependencySpec {
 }
 
 const GRAPH: [DependencySpec; 5] = [
-    DependencySpec { id: ComponentId::Postgres, label: "PostgreSQL",        note: None,
-                     depends_on: &[], installing_verb: "starting" },
-    DependencySpec { id: ComponentId::Ollama,   label: "Ollama",            note: None,
-                     depends_on: &[], installing_verb: "starting" },
-    DependencySpec { id: ComponentId::Sensei,   label: "Sensei components", note: Some("cli · mcp · daemon"),
-                     depends_on: &[], installing_verb: "installing" },
-    DependencySpec { id: ComponentId::Database, label: "Database & schema", note: Some("pgvector · sensei tables"),
-                     depends_on: &[ComponentId::Postgres], installing_verb: "setting up" },
-    DependencySpec { id: ComponentId::Daemon,   label: "Background daemon", note: None,
-                     depends_on: &[ComponentId::Database, ComponentId::Sensei], installing_verb: "starting" },
+    DependencySpec {
+        id: ComponentId::Postgres,
+        label: "PostgreSQL",
+        note: None,
+        depends_on: &[],
+        installing_verb: "starting",
+    },
+    DependencySpec {
+        id: ComponentId::Ollama,
+        label: "Ollama",
+        note: None,
+        depends_on: &[],
+        installing_verb: "starting",
+    },
+    DependencySpec {
+        id: ComponentId::Sensei,
+        label: "Sensei components",
+        note: Some("cli · mcp · daemon"),
+        depends_on: &[],
+        installing_verb: "installing",
+    },
+    DependencySpec {
+        id: ComponentId::Database,
+        label: "Database & schema",
+        note: Some("pgvector · sensei tables"),
+        depends_on: &[ComponentId::Postgres],
+        installing_verb: "setting up",
+    },
+    DependencySpec {
+        id: ComponentId::Daemon,
+        label: "Background daemon",
+        note: None,
+        depends_on: &[ComponentId::Database, ComponentId::Sensei],
+        installing_verb: "starting",
+    },
 ];
 
-pub fn dependency_specs() -> &'static [DependencySpec] { &GRAPH }
+pub fn dependency_specs() -> &'static [DependencySpec] {
+    &GRAPH
+}
 
 pub fn spec_for(id: ComponentId) -> &'static DependencySpec {
     GRAPH.iter().find(|d| d.id == id).expect("ComponentId must be in graph")
@@ -55,8 +82,8 @@ pub fn installing_verb_for(id: &str) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::types::COMPONENT_ORDER;
+    use super::*;
 
     #[test]
     fn graph_has_exactly_five_specs_in_canonical_order() {
@@ -70,19 +97,19 @@ mod tests {
     #[test]
     fn spec_labels_match_ts_defaults() {
         assert_eq!(spec_for(ComponentId::Postgres).label, "PostgreSQL");
-        assert_eq!(spec_for(ComponentId::Ollama).label,   "Ollama");
-        assert_eq!(spec_for(ComponentId::Sensei).label,   "Sensei components");
-        assert_eq!(spec_for(ComponentId::Sensei).note,    Some("cli · mcp · daemon"));
+        assert_eq!(spec_for(ComponentId::Ollama).label, "Ollama");
+        assert_eq!(spec_for(ComponentId::Sensei).label, "Sensei components");
+        assert_eq!(spec_for(ComponentId::Sensei).note, Some("cli · mcp · daemon"));
         assert_eq!(spec_for(ComponentId::Database).label, "Database & schema");
-        assert_eq!(spec_for(ComponentId::Database).note,  Some("pgvector · sensei tables"));
-        assert_eq!(spec_for(ComponentId::Daemon).label,   "Background daemon");
+        assert_eq!(spec_for(ComponentId::Database).note, Some("pgvector · sensei tables"));
+        assert_eq!(spec_for(ComponentId::Daemon).label, "Background daemon");
     }
 
     #[test]
     fn postgres_ollama_daemon_have_no_note() {
         assert_eq!(spec_for(ComponentId::Postgres).note, None);
-        assert_eq!(spec_for(ComponentId::Ollama).note,   None);
-        assert_eq!(spec_for(ComponentId::Daemon).note,   None);
+        assert_eq!(spec_for(ComponentId::Ollama).note, None);
+        assert_eq!(spec_for(ComponentId::Daemon).note, None);
     }
 
     #[test]
@@ -92,8 +119,10 @@ mod tests {
 
     #[test]
     fn daemon_depends_on_database_and_sensei() {
-        assert_eq!(spec_for(ComponentId::Daemon).depends_on,
-                   &[ComponentId::Database, ComponentId::Sensei]);
+        assert_eq!(
+            spec_for(ComponentId::Daemon).depends_on,
+            &[ComponentId::Database, ComponentId::Sensei]
+        );
     }
 
     #[test]
@@ -112,8 +141,8 @@ mod tests {
     #[test]
     fn service_style_specs_say_starting() {
         assert_eq!(spec_for(ComponentId::Postgres).installing_verb, "starting");
-        assert_eq!(spec_for(ComponentId::Ollama).installing_verb,   "starting");
-        assert_eq!(spec_for(ComponentId::Daemon).installing_verb,   "starting");
+        assert_eq!(spec_for(ComponentId::Ollama).installing_verb, "starting");
+        assert_eq!(spec_for(ComponentId::Daemon).installing_verb, "starting");
     }
 
     #[test]

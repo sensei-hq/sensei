@@ -40,11 +40,15 @@ pub(crate) async fn list(
     Query(q): Query<ListQuery>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     let pid = match q.project_id.as_deref() {
-        Some(s) if !s.is_empty() => Some(uuid::Uuid::parse_str(s)
-            .map_err(|_| err(StatusCode::BAD_REQUEST, "bad project_id"))?),
+        Some(s) if !s.is_empty() => Some(
+            uuid::Uuid::parse_str(s).map_err(|_| err(StatusCode::BAD_REQUEST, "bad project_id"))?,
+        ),
         _ => None,
     };
-    let rows = state.pg.list_mcp_servers(pid).await
+    let rows = state
+        .pg
+        .list_mcp_servers(pid)
+        .await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
     Ok(Json(serde_json::json!({"servers": rows})))
 }
@@ -55,7 +59,10 @@ pub(crate) async fn set_enabled(
     Json(body): Json<EnabledBody>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     let uuid = uuid::Uuid::parse_str(&id).map_err(|_| err(StatusCode::BAD_REQUEST, "bad id"))?;
-    let new_state = state.pg.set_mcp_server_enabled(&uuid, body.enabled).await
+    let new_state = state
+        .pg
+        .set_mcp_server_enabled(&uuid, body.enabled)
+        .await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?
         .ok_or_else(|| err(StatusCode::NOT_FOUND, "mcp server not found"))?;
     Ok(Json(serde_json::json!({"id": uuid, "enabled": new_state})))
@@ -77,7 +84,10 @@ pub(crate) async fn get_tools(
     let force = q.get("refresh").is_some_and(|v| v == "true" || v == "1");
     let allow_probe = q.get("probe").map(|v| v != "false" && v != "0").unwrap_or(true);
 
-    let cached = state.pg.get_mcp_tool_manifest(&uuid).await
+    let cached = state
+        .pg
+        .get_mcp_tool_manifest(&uuid)
+        .await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
 
     let stale = cached.as_ref().is_some_and(|c| {
@@ -101,20 +111,25 @@ pub(crate) async fn get_tools(
     }
 
     // Probe path: fetch the server config and spawn the tool manifest probe.
-    let server = state.pg.get_mcp_server_by_id(&uuid).await
+    let server = state
+        .pg
+        .get_mcp_server_by_id(&uuid)
+        .await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?
         .ok_or_else(|| err(StatusCode::NOT_FOUND, "mcp server not found"))?;
 
     let command = server.get("command").and_then(|v| v.as_str()).unwrap_or("").to_string();
-    let args: Vec<String> = server.get("args")
+    let args: Vec<String> = server
+        .get("args")
         .and_then(|v| v.as_array())
         .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
         .unwrap_or_default();
-    let env: std::collections::HashMap<String, String> = server.get("env")
+    let env: std::collections::HashMap<String, String> = server
+        .get("env")
         .and_then(|v| v.as_object())
-        .map(|obj| obj.iter()
-            .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
-            .collect())
+        .map(|obj| {
+            obj.iter().filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string()))).collect()
+        })
         .unwrap_or_default();
 
     let outcome = crate::tasks::mcp_probe::probe_tools(&command, &args, &env, None).await;
@@ -122,30 +137,41 @@ pub(crate) async fn get_tools(
     match outcome {
         crate::tasks::mcp_probe::ProbeOutcome::Ok(manifest) => {
             let tools = serde_json::Value::Array(manifest.tools.clone());
-            state.pg.upsert_mcp_tool_manifest(
-                &uuid,
-                &tools,
-                manifest.tools.len() as i32,
-                manifest.protocol_version.as_deref(),
-                manifest.server_name.as_deref(),
-                manifest.server_version.as_deref(),
-                None,
-            ).await.map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
+            state
+                .pg
+                .upsert_mcp_tool_manifest(
+                    &uuid,
+                    &tools,
+                    manifest.tools.len() as i32,
+                    manifest.protocol_version.as_deref(),
+                    manifest.server_name.as_deref(),
+                    manifest.server_version.as_deref(),
+                    None,
+                )
+                .await
+                .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
         }
         crate::tasks::mcp_probe::ProbeOutcome::Error(msg) => {
             // Cache the error so callers see WHY the probe failed and don't
             // spam retries; TTL still applies so it retries eventually.
             let empty = serde_json::Value::Array(vec![]);
-            state.pg.upsert_mcp_tool_manifest(
-                &uuid, &empty, 0, None, None, None, Some(&msg),
-            ).await.map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
+            state
+                .pg
+                .upsert_mcp_tool_manifest(&uuid, &empty, 0, None, None, None, Some(&msg))
+                .await
+                .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
         }
     }
 
     // Return the freshly-updated row.
-    let refreshed = state.pg.get_mcp_tool_manifest(&uuid).await
+    let refreshed = state
+        .pg
+        .get_mcp_tool_manifest(&uuid)
+        .await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?
-        .ok_or_else(|| err(StatusCode::INTERNAL_SERVER_ERROR, "manifest upserted but not readable"))?;
+        .ok_or_else(|| {
+            err(StatusCode::INTERNAL_SERVER_ERROR, "manifest upserted but not readable")
+        })?;
     Ok(Json(refreshed))
 }
 
@@ -158,14 +184,19 @@ pub(crate) async fn refresh(
     // multi-folder; use the first git-kind folder as the "project root"
     // for the ACP config scan, since that's where `.mcp.json`,
     // `.cursor/mcp.json`, and `.zed/settings.json` live.
-    let projects = state.pg.list_projects().await
-        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
+    let projects =
+        state.pg.list_projects().await.map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
     let mut project_roots: Vec<(uuid::Uuid, std::path::PathBuf)> = Vec::new();
     for p in projects {
-        let Some(pid) = p["id"].as_str().and_then(|s| uuid::Uuid::parse_str(s).ok()) else { continue };
+        let Some(pid) = p["id"].as_str().and_then(|s| uuid::Uuid::parse_str(s).ok()) else {
+            continue;
+        };
         // Fail closed: a per-project repo read error must not silently drop that
         // project from the ACP config scan (masking a failure as "no repos").
-        let repos = state.pg.get_project_repos(&pid).await
+        let repos = state
+            .pg
+            .get_project_repos(&pid)
+            .await
             .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
         // First repo's path is the project root.
         if let Some(first) = repos.first()
@@ -175,7 +206,8 @@ pub(crate) async fn refresh(
         }
     }
 
-    let (discovered, pruned) = mcp_discovery::run_once(&state.pg, &home, &project_roots).await
+    let (discovered, pruned) = mcp_discovery::run_once(&state.pg, &home, &project_roots)
+        .await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
 
     Ok(Json(serde_json::json!({"discovered": discovered, "pruned": pruned})))

@@ -85,10 +85,16 @@ mod tests {
             std::fs::create_dir_all(dir.join(".git")).unwrap();
         }
         let abs_path = dir.to_string_lossy().to_string();
-        let fid = pg.upsert_folder(root_id, "git", name, name, &abs_path, None, None).await.unwrap();
+        let fid =
+            pg.upsert_folder(root_id, "git", name, name, &abs_path, None, None).await.unwrap();
         sqlx_core::query::query(
-            "UPDATE sensei.folders SET status = $2::sensei.folder_status WHERE id = $1"
-        ).bind(fid).bind(status).execute(pg.pool()).await.unwrap();
+            "UPDATE sensei.folders SET status = $2::sensei.folder_status WHERE id = $1",
+        )
+        .bind(fid)
+        .bind(status)
+        .execute(pg.pool())
+        .await
+        .unwrap();
         abs_path
     }
 
@@ -96,9 +102,9 @@ mod tests {
     /// timeout per call so the test can't hang. Returns the drained tasks.
     async fn drain(queue: &TaskQueue) -> Vec<Task> {
         let mut out = Vec::new();
-        while let Ok(task) = tokio::time::timeout(
-            Duration::from_millis(50), queue.next_task(),
-        ).await {
+        while let Ok(task) =
+            tokio::time::timeout(Duration::from_millis(50), queue.next_task()).await
+        {
             out.push(task);
         }
         out
@@ -112,7 +118,8 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let base = tmp.path();
         let root_path = base.to_string_lossy().to_string();
-        let rid = pg.add_watch_root(&root_path, "resume_root", &serde_json::json!([])).await.unwrap();
+        let rid =
+            pg.add_watch_root(&root_path, "resume_root", &serde_json::json!([])).await.unwrap();
 
         let pending_a = seed(&pg, &rid, base, "a", "discovered", true).await;
         let pending_b = seed(&pg, &rid, base, "b", "queued", true).await;
@@ -125,20 +132,27 @@ mod tests {
         resume_pending_scans(&queue, &pg).await;
 
         let tasks = drain(&queue).await;
-        let paths: std::collections::BTreeSet<&str> = tasks.iter()
+        let paths: std::collections::BTreeSet<&str> = tasks
+            .iter()
             .filter(|t| t.path.starts_with(&root_path))
             .map(|t| t.path.as_str())
             .collect();
 
         assert!(paths.contains(pending_a.as_str()), "missing discovered git root: {pending_a}");
         assert!(paths.contains(pending_b.as_str()), "missing queued git root: {pending_b}");
-        assert!(!paths.contains(nogit.as_str()), "subfolder without .git should not resume: {nogit}");
+        assert!(
+            !paths.contains(nogit.as_str()),
+            "subfolder without .git should not resume: {nogit}"
+        );
         assert_eq!(paths.len(), 2, "only real git roots should resume, got {paths:?}");
 
         for t in tasks.iter().filter(|t| t.path.starts_with(&root_path)) {
             assert_eq!(t.kind, TaskKind::ProcessGitFolder, "wrong task kind: {:?}", t.kind);
             // scan_root sets folder_path = path for git roots; resume mirrors that.
-            assert_eq!(t.folder_path, t.path, "folder_path should equal path for resumed git roots");
+            assert_eq!(
+                t.folder_path, t.path,
+                "folder_path should equal path for resumed git roots"
+            );
         }
 
         pg.remove_watch_root(&rid).await.unwrap();
@@ -154,7 +168,10 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let base = tmp.path();
         let root_path = base.to_string_lossy().to_string();
-        let rid = pg.add_watch_root(&root_path, "resume_dedup_root", &serde_json::json!([])).await.unwrap();
+        let rid = pg
+            .add_watch_root(&root_path, "resume_dedup_root", &serde_json::json!([]))
+            .await
+            .unwrap();
 
         let a = seed(&pg, &rid, base, "a", "discovered", true).await;
         let b = seed(&pg, &rid, base, "b", "discovered", true).await;
@@ -183,7 +200,10 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let base = tmp.path();
         let root_path = base.to_string_lossy().to_string();
-        let rid = pg.add_watch_root(&root_path, "resume_recover_root", &serde_json::json!([])).await.unwrap();
+        let rid = pg
+            .add_watch_root(&root_path, "resume_recover_root", &serde_json::json!([]))
+            .await
+            .unwrap();
 
         let indexing = seed(&pg, &rid, base, "i", "indexing", true).await;
         let failed = seed(&pg, &rid, base, "f", "failed", true).await;
@@ -191,13 +211,19 @@ mod tests {
 
         resume_pending_scans(&queue, &pg).await;
 
-        let paths: std::collections::BTreeSet<String> = drain(&queue).await.into_iter()
+        let paths: std::collections::BTreeSet<String> = drain(&queue)
+            .await
+            .into_iter()
             .map(|t| t.path)
             .filter(|p| p.starts_with(&root_path))
             .collect();
         assert!(paths.contains(&indexing), "an interrupted `indexing` folder is recovered");
         assert!(paths.contains(&failed), "a `failed` folder is retried");
-        assert_eq!(paths.len(), 2, "only non-terminal folders resume (indexed excluded), got {paths:?}");
+        assert_eq!(
+            paths.len(),
+            2,
+            "only non-terminal folders resume (indexed excluded), got {paths:?}"
+        );
 
         pg.remove_watch_root(&rid).await.unwrap();
     }
@@ -210,16 +236,21 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let base = tmp.path();
         let root_path = base.to_string_lossy().to_string();
-        let rid = pg.add_watch_root(&root_path, "resume_empty_root", &serde_json::json!([])).await.unwrap();
+        let rid = pg
+            .add_watch_root(&root_path, "resume_empty_root", &serde_json::json!([]))
+            .await
+            .unwrap();
         seed(&pg, &rid, base, "only", "indexed", true).await;
 
         resume_pending_scans(&queue, &pg).await;
         let drained = drain(&queue).await;
-        let ours: Vec<&Task> = drained.iter()
-            .filter(|t| t.path.starts_with(&root_path))
-            .collect();
-        assert!(ours.is_empty(), "expected no tasks under {}, got {:?}",
-            root_path, ours.iter().map(|t| &t.path).collect::<Vec<_>>());
+        let ours: Vec<&Task> = drained.iter().filter(|t| t.path.starts_with(&root_path)).collect();
+        assert!(
+            ours.is_empty(),
+            "expected no tasks under {}, got {:?}",
+            root_path,
+            ours.iter().map(|t| &t.path).collect::<Vec<_>>()
+        );
 
         pg.remove_watch_root(&rid).await.unwrap();
     }

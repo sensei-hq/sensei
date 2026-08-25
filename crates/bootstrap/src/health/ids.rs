@@ -58,18 +58,9 @@ mod tests {
 
     #[test]
     fn package_manager_for_platform_returns_winget_on_windows() {
-        assert_eq!(
-            package_manager_for_platform(Platform::Windows),
-            PackageManagerId::Winget
-        );
-        assert_eq!(
-            package_manager_for_platform(Platform::Macos),
-            PackageManagerId::Homebrew
-        );
-        assert_eq!(
-            package_manager_for_platform(Platform::Linux),
-            PackageManagerId::Homebrew
-        );
+        assert_eq!(package_manager_for_platform(Platform::Windows), PackageManagerId::Winget);
+        assert_eq!(package_manager_for_platform(Platform::Macos), PackageManagerId::Homebrew);
+        assert_eq!(package_manager_for_platform(Platform::Linux), PackageManagerId::Homebrew);
     }
 
     #[test]

@@ -1,13 +1,17 @@
-use crate::types::{ParsedFile, ParsedSymbol, SymbolKind};
-use crate::ir::{IRBase, IRFunction, IRClass, IRParsedFile, ClassKind};
-use super::common::{ir_module, ir_parsed_file};
 use super::LanguageAdapter;
+use super::common::{ir_module, ir_parsed_file};
+use crate::ir::{ClassKind, IRBase, IRClass, IRFunction, IRParsedFile};
+use crate::types::{ParsedFile, ParsedSymbol, SymbolKind};
 
 pub struct CAdapter;
 
 impl LanguageAdapter for CAdapter {
-    fn language(&self) -> &str { "c" }
-    fn display_name(&self) -> &str { "C" }
+    fn language(&self) -> &str {
+        "c"
+    }
+    fn display_name(&self) -> &str {
+        "C"
+    }
 
     fn parse_to_ir(&self, source: &str, file_path: &str) -> crate::ir::IRParsedFile {
         parse_to_ir(source, file_path)
@@ -33,36 +37,46 @@ impl LanguageAdapter for CAdapter {
 
             // Function definitions: type name(params) {
             // Match patterns like: void foo(int x) {  or  int main() {
-            if !trimmed.starts_with("//") && !trimmed.starts_with("/*") && !trimmed.starts_with("*")
+            if !trimmed.starts_with("//")
+                && !trimmed.starts_with("/*")
+                && !trimmed.starts_with("*")
                 && !trimmed.starts_with("#")
-                && trimmed.contains('(') && (trimmed.ends_with('{') || trimmed.ends_with(") {"))
+                && trimmed.contains('(')
+                && (trimmed.ends_with('{') || trimmed.ends_with(") {"))
                 && let Some(name) = extract_c_function_name(trimmed)
-                    && !name.is_empty() && name.len() < 100 && !name.contains(' ') {
-                        symbols.push(ParsedSymbol {
-                            name,
-                            kind: SymbolKind::Function,
-                            signature: Some(trimmed.trim_end_matches('{').trim().to_string()),
-                            docstring: None,
-                            line_start: line_num,
-                            line_end: line_num,
-                            is_exported: true,
-                            parent: None,
-                        });
-                    }
+                && !name.is_empty()
+                && name.len() < 100
+                && !name.contains(' ')
+            {
+                symbols.push(ParsedSymbol {
+                    name,
+                    kind: SymbolKind::Function,
+                    signature: Some(trimmed.trim_end_matches('{').trim().to_string()),
+                    docstring: None,
+                    line_start: line_num,
+                    line_end: line_num,
+                    is_exported: true,
+                    parent: None,
+                });
+            }
 
             // Struct definitions: struct Name {
             if trimmed.starts_with("struct ") && trimmed.contains('{') {
-                let name = trimmed.strip_prefix("struct ")
+                let name = trimmed
+                    .strip_prefix("struct ")
                     .and_then(|s| s.split(|c: char| !c.is_alphanumeric() && c != '_').next())
                     .unwrap_or("")
                     .to_string();
                 if !name.is_empty() {
                     symbols.push(ParsedSymbol {
-                        name, kind: SymbolKind::Struct,
+                        name,
+                        kind: SymbolKind::Struct,
                         signature: Some(trimmed.to_string()),
                         docstring: None,
-                        line_start: line_num, line_end: line_num,
-                        is_exported: true, parent: None,
+                        line_start: line_num,
+                        line_end: line_num,
+                        is_exported: true,
+                        parent: None,
                     });
                 }
             }
@@ -70,18 +84,24 @@ impl LanguageAdapter for CAdapter {
             // Typedef
             if trimmed.starts_with("typedef ") {
                 // typedef struct ... Name; or typedef type Name;
-                if let Some(name) = trimmed.strip_prefix("typedef ")
+                if let Some(name) = trimmed
+                    .strip_prefix("typedef ")
                     .and_then(|s| s.trim_end_matches(';').rsplit_once(|c: char| c.is_whitespace()))
                     .map(|(_, name)| name.trim().to_string())
-                    && !name.is_empty() && !name.contains('{') {
-                        symbols.push(ParsedSymbol {
-                            name, kind: SymbolKind::Type,
-                            signature: Some(trimmed.to_string()),
-                            docstring: None,
-                            line_start: line_num, line_end: line_num,
-                            is_exported: true, parent: None,
-                        });
-                    }
+                    && !name.is_empty()
+                    && !name.contains('{')
+                {
+                    symbols.push(ParsedSymbol {
+                        name,
+                        kind: SymbolKind::Type,
+                        signature: Some(trimmed.to_string()),
+                        docstring: None,
+                        line_start: line_num,
+                        line_end: line_num,
+                        is_exported: true,
+                        parent: None,
+                    });
+                }
             }
 
             // #define constants
@@ -91,11 +111,14 @@ impl LanguageAdapter for CAdapter {
                     let name = parts[1].split('(').next().unwrap_or("").to_string();
                     if !name.is_empty() && name == name.to_uppercase() {
                         symbols.push(ParsedSymbol {
-                            name, kind: SymbolKind::Const,
+                            name,
+                            kind: SymbolKind::Const,
                             signature: Some(trimmed.to_string()),
                             docstring: None,
-                            line_start: line_num, line_end: line_num,
-                            is_exported: true, parent: None,
+                            line_start: line_num,
+                            line_end: line_num,
+                            is_exported: true,
+                            parent: None,
                         });
                     }
                 }
@@ -103,10 +126,13 @@ impl LanguageAdapter for CAdapter {
         }
 
         // Extract #include as imports
-        let imports = source.lines()
+        let imports = source
+            .lines()
             .filter(|l| l.trim().starts_with("#include"))
             .filter_map(|l| {
-                let path = l.trim().strip_prefix("#include")?
+                let path = l
+                    .trim()
+                    .strip_prefix("#include")?
                     .trim()
                     .trim_start_matches(['<', '"'])
                     .trim_end_matches(['>', '"'])
@@ -130,11 +156,15 @@ fn extract_c_function_name(line: &str) -> Option<String> {
     let paren_pos = line.find('(')?;
     let before_paren = line[..paren_pos].trim();
     // Last word before ( is the function name
-    let name = before_paren.rsplit(|c: char| c.is_whitespace() || c == '*')
+    let name = before_paren
+        .rsplit(|c: char| c.is_whitespace() || c == '*')
         .next()
         .unwrap_or("")
         .to_string();
-    if name.is_empty() || name.starts_with('#') || ["if", "while", "for", "switch", "return"].contains(&name.as_str()) {
+    if name.is_empty()
+        || name.starts_with('#')
+        || ["if", "while", "for", "switch", "return"].contains(&name.as_str())
+    {
         None
     } else {
         Some(name)
@@ -153,7 +183,8 @@ pub fn parse_to_ir(source: &str, file_path: &str) -> IRParsedFile {
                 functions.push(IRFunction {
                     base: IRBase {
                         name: sym.name.clone(),
-                        line_start: sym.line_start, line_end: sym.line_end,
+                        line_start: sym.line_start,
+                        line_end: sym.line_end,
                         docstring: sym.docstring.clone(),
                         is_exported: sym.is_exported,
                         node_type: Some("function".into()),
@@ -166,7 +197,8 @@ pub fn parse_to_ir(source: &str, file_path: &str) -> IRParsedFile {
                 classes.push(IRClass {
                     base: IRBase {
                         name: sym.name.clone(),
-                        line_start: sym.line_start, line_end: sym.line_end,
+                        line_start: sym.line_start,
+                        line_end: sym.line_end,
                         is_exported: sym.is_exported,
                         node_type: Some("class".into()),
                         ..Default::default()
@@ -179,7 +211,8 @@ pub fn parse_to_ir(source: &str, file_path: &str) -> IRParsedFile {
         }
     }
 
-    let module = ir_module(file_path, "c", functions, Vec::new(), Vec::new(), file_path.contains("test"));
+    let module =
+        ir_module(file_path, "c", functions, Vec::new(), Vec::new(), file_path.contains("test"));
     ir_parsed_file(file_path, "c", module, classes)
 }
 
@@ -187,7 +220,9 @@ pub fn parse_to_ir(source: &str, file_path: &str) -> IRParsedFile {
 mod tests {
     use super::*;
 
-    fn parse(src: &str) -> ParsedFile { CAdapter.parse(src, "test.c") }
+    fn parse(src: &str) -> ParsedFile {
+        CAdapter.parse(src, "test.c")
+    }
 
     #[test]
     fn parses_function() {

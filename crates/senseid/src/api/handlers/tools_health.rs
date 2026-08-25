@@ -5,15 +5,17 @@
 //! with `share_invoked = tools_invoked_14d / tools_registered`; sources that
 //! can't be probed degrade to `tools_registered: null` (no fabricated bar).
 
-use axum::{extract::State, http::StatusCode, response::Json};
 use crate::api::state::AppState;
+use axum::{extract::State, http::StatusCode, response::Json};
 
 /// POST /api/instruments/tools/refresh — run the full capture on demand.
 pub(crate) async fn refresh(
     State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let c = crate::tool_discovery::run_capture(&state.pg).await
-        .map_err(|e| { tracing::error!(error = %e, "tools refresh capture failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+    let c = crate::tool_discovery::run_capture(&state.pg).await.map_err(|e| {
+        tracing::error!(error = %e, "tools refresh capture failed");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
     Ok(Json(serde_json::json!({
         "discovered_servers": c.discovered,
         "builtins": c.builtins,
@@ -26,7 +28,9 @@ pub(crate) async fn refresh(
 pub(crate) async fn grid(
     State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let sources = state.pg.get_tools_health().await
-        .map_err(|e| { tracing::error!(error = %e, "get_tools_health failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+    let sources = state.pg.get_tools_health().await.map_err(|e| {
+        tracing::error!(error = %e, "get_tools_health failed");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
     Ok(Json(serde_json::json!({ "sources": sources })))
 }

@@ -1,58 +1,58 @@
-mod types;
-mod db;
-mod federation;
-mod dojo;
-mod collective;
-mod languages;
-mod indexer;
-mod config;
-mod watcher;
+mod adapters;
+pub mod agent_spawn;
+mod analysis;
 mod api;
-mod tasks;
-mod transcript;
-mod dojo_client;
-mod governance;
-mod materialize;
-mod review;
-mod secret_scan;
-mod libraries;
 pub mod assistants;
-pub mod instruments;
-pub mod installer;
-pub mod notifications;
-pub mod paths;
-pub mod ir;
-pub mod gateway_keys;
-pub mod gateway_routers;
-pub mod model_provision;
-pub mod maturity;
-pub mod memory_slot;
-pub mod playbook;
-pub mod observatory_home;
-pub mod project_overview;
-pub mod insights;
-pub mod tool_discovery;
-pub mod pattern_effectiveness;
+pub mod checker;
+mod classifiers;
+mod collective;
+mod config;
 pub mod corrections;
-pub mod verdicts;
-pub mod ranking;
-pub mod model_insight;
 pub mod correlate;
 pub mod cost;
-pub mod runs;
+mod db;
+mod dojo;
+mod dojo_client;
+mod federation;
+pub mod gateway_keys;
+pub mod gateway_routers;
 pub mod git_identity;
-pub mod resolution;
-pub mod stance;
-pub mod planner;
+mod governance;
+mod indexer;
+pub mod insights;
+pub mod installer;
+pub mod instruments;
+pub mod ir;
+mod languages;
+mod libraries;
+mod materialize;
+pub mod maturity;
+pub mod memory_slot;
+pub mod model_insight;
+pub mod model_provision;
+pub mod notifications;
+pub mod observatory_home;
+pub mod paths;
+pub mod pattern_effectiveness;
 pub mod plan_graph;
-pub mod checker;
+pub mod planner;
+pub mod playbook;
+pub mod project_overview;
+pub mod ranking;
+pub mod relay_drivers;
+pub mod resolution;
+mod review;
 pub mod run_limits;
 pub mod run_watchdog;
-pub mod agent_spawn;
-pub mod relay_drivers;
-mod classifiers;
-mod adapters;
-mod analysis;
+pub mod runs;
+mod secret_scan;
+pub mod stance;
+mod tasks;
+pub mod tool_discovery;
+mod transcript;
+mod types;
+pub mod verdicts;
+mod watcher;
 
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
@@ -100,7 +100,9 @@ enum Commands {
     ClearLogs,
 }
 
-fn sensei_dir() -> PathBuf { paths::sensei_dir() }
+fn sensei_dir() -> PathBuf {
+    paths::sensei_dir()
+}
 
 #[tokio::main]
 async fn main() {
@@ -115,7 +117,9 @@ async fn main() {
     // SAFETY: this runs at process start, before any thread that could
     // observe a torn read on the global env table.
     if let Some(inst) = &cli.instance {
-        unsafe { std::env::set_var("SENSEI_INSTANCE", inst); }
+        unsafe {
+            std::env::set_var("SENSEI_INSTANCE", inst);
+        }
     }
 
     let startup_cfg = sensei_bootstrap::SenseiConfig::from_env();
@@ -156,20 +160,21 @@ fn start_daemon(port: u16) {
     let pid_path = sensei_dir().join("serve.pid");
     if pid_path.exists()
         && let Ok(pid_str) = std::fs::read_to_string(&pid_path)
-            && let Ok(pid) = pid_str.trim().parse::<u32>() {
-                // Check if process is alive
-                let alive = Command::new("kill")
-                    .args(["-0", &pid.to_string()])
-                    .status()
-                    .map(|s| s.success())
-                    .unwrap_or(false);
-                if alive {
-                    eprintln!("senseid: already running (pid {})", pid);
-                    std::process::exit(1);
-                }
-                // Stale PID file — clean up and continue
-                std::fs::remove_file(&pid_path).ok();
-            }
+        && let Ok(pid) = pid_str.trim().parse::<u32>()
+    {
+        // Check if process is alive
+        let alive = Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if alive {
+            eprintln!("senseid: already running (pid {})", pid);
+            std::process::exit(1);
+        }
+        // Stale PID file — clean up and continue
+        std::fs::remove_file(&pid_path).ok();
+    }
 
     std::fs::create_dir_all(sensei_dir()).expect("senseid: cannot create ~/.sensei/");
     let log_path = sensei_dir().join("senseid.log");
@@ -203,7 +208,9 @@ fn start_daemon(port: u16) {
     let pid = child.id();
     // Detach: we don't wait — the daemon runs independently.
     // Reap to avoid zombie; the daemon re-parents to init/launchd.
-    std::thread::spawn(move || { let _ = child.wait(); });
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
     println!("senseid: started (pid {})", pid);
 }
 
@@ -228,9 +235,11 @@ async fn run_foreground(port: u16) {
 
 async fn stop_daemon(port: u16) {
     let client = reqwest::Client::new();
-    match client.post(format!("http://127.0.0.1:{}/stop", port))
+    match client
+        .post(format!("http://127.0.0.1:{}/stop", port))
         .timeout(std::time::Duration::from_secs(3))
-        .send().await
+        .send()
+        .await
     {
         Ok(resp) if resp.status().is_success() => {
             println!("senseid: stopped.");
@@ -241,24 +250,27 @@ async fn stop_daemon(port: u16) {
     }
     let pid_path = sensei_dir().join("serve.pid");
     if let Ok(pid_str) = std::fs::read_to_string(&pid_path)
-        && let Ok(_pid) = pid_str.trim().parse::<u32>() {
-            // Send SIGTERM via nix or command
-            if let Err(e) = std::process::Command::new("kill").arg(pid_str.trim()).status() {
-                tracing::warn!(error = %e, pid = %pid_str.trim(), "stop_daemon: failed to send SIGTERM");
-            }
-            println!("senseid: sent SIGTERM to pid {}", pid_str.trim());
-            std::fs::remove_file(&pid_path).ok();
-            return;
+        && let Ok(_pid) = pid_str.trim().parse::<u32>()
+    {
+        // Send SIGTERM via nix or command
+        if let Err(e) = std::process::Command::new("kill").arg(pid_str.trim()).status() {
+            tracing::warn!(error = %e, pid = %pid_str.trim(), "stop_daemon: failed to send SIGTERM");
         }
+        println!("senseid: sent SIGTERM to pid {}", pid_str.trim());
+        std::fs::remove_file(&pid_path).ok();
+        return;
+    }
     eprintln!("senseid: not running");
     std::process::exit(1);
 }
 
 async fn check_status(port: u16) {
     let client = reqwest::Client::new();
-    match client.get(format!("http://127.0.0.1:{}/health", port))
+    match client
+        .get(format!("http://127.0.0.1:{}/health", port))
         .timeout(std::time::Duration::from_secs(3))
-        .send().await
+        .send()
+        .await
     {
         Ok(resp) if resp.status().is_success() => {
             if let Ok(json) = resp.json::<serde_json::Value>().await {
@@ -304,4 +316,3 @@ fn clear_logs() {
         Err(_) => eprintln!("senseid: no log file to clear"),
     }
 }
-

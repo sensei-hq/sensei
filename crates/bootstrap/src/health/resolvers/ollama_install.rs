@@ -5,8 +5,8 @@
 
 use std::process::Command;
 
-use crate::health::resolver::{Resolver, ResolveOutcome};
-use crate::health::resolvers::service_cascade::{resolve_service_cascade, ServiceCascadeSpec};
+use crate::health::resolver::{ResolveOutcome, Resolver};
+use crate::health::resolvers::service_cascade::{ServiceCascadeSpec, resolve_service_cascade};
 use crate::health::types::{ComponentId, Remedy};
 
 pub struct OllamaInstallResolver;
@@ -32,14 +32,20 @@ const SPEC: ServiceCascadeSpec = ServiceCascadeSpec {
 };
 
 impl Resolver for OllamaInstallResolver {
-    fn id(&self) -> &'static str { "ollama_install" }
-    fn resolves(&self) -> &'static [ComponentId] { TARGETS }
+    fn id(&self) -> &'static str {
+        "ollama_install"
+    }
+    fn resolves(&self) -> &'static [ComponentId] {
+        TARGETS
+    }
 
     fn resolve(&self, _targets: &[ComponentId]) -> ResolveOutcome {
         resolve_service_cascade(&SPEC)
     }
 
-    fn fallback_remedy(&self) -> Remedy { ollama_fallback_remedy() }
+    fn fallback_remedy(&self) -> Remedy {
+        ollama_fallback_remedy()
+    }
 }
 
 /// Surfaces when `brew install ollama && brew services start ollama` both

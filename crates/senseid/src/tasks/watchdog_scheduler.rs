@@ -38,7 +38,7 @@ use chrono::{DateTime, Utc};
 use dojo_protocol::relay::RelayRunStatus;
 
 use crate::db::pg_store::PgStore;
-use crate::run_watchdog::{assess_run, WatchdogAction, WatchdogConfig};
+use crate::run_watchdog::{WatchdogAction, WatchdogConfig, assess_run};
 use crate::runs::RunEventKind;
 use crate::tasks::advance_run_scheduler::enqueue_advance;
 use crate::tasks::queue::TaskQueue;
@@ -146,10 +146,8 @@ async fn tick(queue: &TaskQueue, pg: &PgStore, now: DateTime<Utc>, cfg: &Watchdo
         };
         // Daemon-liveness reference: the heartbeat, or started_at for a run that
         // has never heartbeated. Both unparseable → skip (never panic on bad data).
-        let last_heartbeat = heartbeat
-            .as_deref()
-            .and_then(parse_rfc3339)
-            .or_else(|| parse_rfc3339(&started_at));
+        let last_heartbeat =
+            heartbeat.as_deref().and_then(parse_rfc3339).or_else(|| parse_rfc3339(&started_at));
         let Some(last_heartbeat) = last_heartbeat else {
             tracing::warn!(run_id = %id, "watchdog_scheduler: unparseable heartbeat/started_at; skipping");
             continue;
@@ -249,12 +247,13 @@ mod tests {
     /// Read `recovery_attempts` directly — it's deliberately not on the `Run`
     /// struct (the watchdog uses a lightweight query), so a test reads it raw.
     async fn recovery_attempts(pg: &PgStore, id: &uuid::Uuid) -> i32 {
-        let (n,): (i32,) =
-            sqlx_core::query_as::query_as("SELECT recovery_attempts FROM activity.runs WHERE id = $1")
-                .bind(id)
-                .fetch_one(pg.pool())
-                .await
-                .unwrap();
+        let (n,): (i32,) = sqlx_core::query_as::query_as(
+            "SELECT recovery_attempts FROM activity.runs WHERE id = $1",
+        )
+        .bind(id)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
         n
     }
 
@@ -266,7 +265,9 @@ mod tests {
     #[tokio::test]
     async fn tick_marks_a_stale_running_run_stalled() {
         let _guard = crate::runs::resume_test_guard();
-        let Ok(pg) = PgStore::connect_test().await else { return; };
+        let Ok(pg) = PgStore::connect_test().await else {
+            return;
+        };
         let queue = TaskQueue::with_max_repos(16);
 
         let id = pg.create_run(&NewRun::default()).await.unwrap(); // running
@@ -279,7 +280,10 @@ mod tests {
         assert_eq!(run.status, RelayRunStatus::Stalled, "stale running run → stalled");
         let kinds: Vec<RunEventKind> =
             pg.list_run_events(&id, 10).await.unwrap().into_iter().map(|e| e.kind).collect();
-        assert!(kinds.contains(&RunEventKind::Stalled), "a Stalled event was logged, got {kinds:?}");
+        assert!(
+            kinds.contains(&RunEventKind::Stalled),
+            "a Stalled event was logged, got {kinds:?}"
+        );
 
         delete_run(&pg, &id).await;
     }
@@ -287,7 +291,9 @@ mod tests {
     #[tokio::test]
     async fn tick_keeps_a_running_run_with_recent_progress_untouched() {
         let _guard = crate::runs::resume_test_guard();
-        let Ok(pg) = PgStore::connect_test().await else { return; };
+        let Ok(pg) = PgStore::connect_test().await else {
+            return;
+        };
         let queue = TaskQueue::with_max_repos(16);
 
         let id = pg.create_run(&NewRun::default()).await.unwrap();
@@ -296,9 +302,15 @@ mod tests {
         // a `::text` timestamp fails to parse and silently falls back to
         // started_at, which would false-stall a live, progressing run.
         force_liveness(&pg, &id, RelayRunStatus::Running, 3600, 0).await; // started 1h ago
-        pg.append_run_event(&id, RunEventKind::PhaseStarted, Some("P1"), None, &serde_json::json!({}))
-            .await
-            .unwrap(); // fresh progress, just now
+        pg.append_run_event(
+            &id,
+            RunEventKind::PhaseStarted,
+            Some("P1"),
+            None,
+            &serde_json::json!({}),
+        )
+        .await
+        .unwrap(); // fresh progress, just now
 
         tick(&queue, &pg, Utc::now(), &WatchdogConfig::default()).await;
 
@@ -315,7 +327,9 @@ mod tests {
     #[tokio::test]
     async fn tick_recovers_a_stalled_run_under_the_cap() {
         let _guard = crate::runs::resume_test_guard();
-        let Ok(pg) = PgStore::connect_test().await else { return; };
+        let Ok(pg) = PgStore::connect_test().await else {
+            return;
+        };
         let queue = TaskQueue::with_max_repos(16);
 
         let id = pg.create_run(&NewRun::default()).await.unwrap();
@@ -332,7 +346,10 @@ mod tests {
 
         let kinds: Vec<RunEventKind> =
             pg.list_run_events(&id, 10).await.unwrap().into_iter().map(|e| e.kind).collect();
-        assert!(kinds.contains(&RunEventKind::Recovered), "a Recovered event was logged, got {kinds:?}");
+        assert!(
+            kinds.contains(&RunEventKind::Recovered),
+            "a Recovered event was logged, got {kinds:?}"
+        );
 
         // An AdvanceRun tick was enqueued for the recovered run.
         let n = queue.status().await.pending;
@@ -351,7 +368,9 @@ mod tests {
     #[tokio::test]
     async fn tick_crashes_a_stalled_run_at_the_cap() {
         let _guard = crate::runs::resume_test_guard();
-        let Ok(pg) = PgStore::connect_test().await else { return; };
+        let Ok(pg) = PgStore::connect_test().await else {
+            return;
+        };
         let queue = TaskQueue::with_max_repos(16);
 
         let id = pg.create_run(&NewRun::default()).await.unwrap();
@@ -364,7 +383,10 @@ mod tests {
         assert_eq!(run.status, RelayRunStatus::Crashed, "exhausted recovery → crashed");
         let kinds: Vec<RunEventKind> =
             pg.list_run_events(&id, 10).await.unwrap().into_iter().map(|e| e.kind).collect();
-        assert!(kinds.contains(&RunEventKind::Crashed), "a Crashed event was logged, got {kinds:?}");
+        assert!(
+            kinds.contains(&RunEventKind::Crashed),
+            "a Crashed event was logged, got {kinds:?}"
+        );
 
         delete_run(&pg, &id).await;
     }
@@ -372,7 +394,9 @@ mod tests {
     #[tokio::test]
     async fn tick_leaves_a_fresh_running_run_untouched() {
         let _guard = crate::runs::resume_test_guard();
-        let Ok(pg) = PgStore::connect_test().await else { return; };
+        let Ok(pg) = PgStore::connect_test().await else {
+            return;
+        };
         let queue = TaskQueue::with_max_repos(16);
 
         let id = pg.create_run(&NewRun::default()).await.unwrap();

@@ -29,7 +29,8 @@ fn err(status: StatusCode, msg: &str) -> (StatusCode, Json<serde_json::Value>) {
 pub(crate) async fn list_memberships(
     State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let views = memberships::list(&state.pg).await
+    let views = memberships::list(&state.pg)
+        .await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
     Ok(Json(serde_json::to_value(views).unwrap_or(serde_json::Value::Array(vec![]))))
 }
@@ -69,10 +70,12 @@ pub(crate) async fn create_membership(
     State(state): State<AppState>,
     Json(b): Json<NewMembershipBody>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let membership_id = uuid::Uuid::parse_str(b.membership_id.trim())
-        .map_err(|_| err(StatusCode::BAD_REQUEST, "bad membership_id (expected the service membership uuid)"))?;
+    let membership_id = uuid::Uuid::parse_str(b.membership_id.trim()).map_err(|_| {
+        err(StatusCode::BAD_REQUEST, "bad membership_id (expected the service membership uuid)")
+    })?;
 
-    let registry_url = b.registry_url
+    let registry_url = b
+        .registry_url
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .unwrap_or_else(sensei_config::dojo_registry_url);
@@ -84,7 +87,9 @@ pub(crate) async fn create_membership(
     let dojo_url = memberships::derive_dojo_url(&registry_url, &tenant_key);
 
     let project_id = match b.project_id.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-        Some(s) => Some(uuid::Uuid::parse_str(s).map_err(|_| err(StatusCode::BAD_REQUEST, "bad project_id"))?),
+        Some(s) => Some(
+            uuid::Uuid::parse_str(s).map_err(|_| err(StatusCode::BAD_REQUEST, "bad project_id"))?,
+        ),
         None => None,
     };
 
@@ -100,19 +105,27 @@ pub(crate) async fn create_membership(
         // Fail closed on privacy: an omitted attribution defaults to the safest
         // conservative mode (source-dereferenced), NOT the least-private `named`.
         // Shared source of truth with collective preferences.
-        b.attribution_default.as_deref().unwrap_or(crate::collective::preferences::DEFAULT_ATTRIBUTION),
+        b.attribution_default
+            .as_deref()
+            .unwrap_or(crate::collective::preferences::DEFAULT_ATTRIBUTION),
         // A fresh pairing is mid-authentication until the first heartbeat.
         "authenticating",
-    ).map_err(|e| err(StatusCode::BAD_REQUEST, &e))?;
+    )
+    .map_err(|e| err(StatusCode::BAD_REQUEST, &e))?;
 
-    let id = memberships::register(&state.pg, conn, &b.credential).await
+    let id = memberships::register(&state.pg, conn, &b.credential)
+        .await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
 
     if let Some(pid) = project_id
-        && !memberships::bind_project(&state.pg, &pid, &id).await
+        && !memberships::bind_project(&state.pg, &pid, &id)
+            .await
             .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?
     {
-        return Err(err(StatusCode::NOT_FOUND, "membership registered but project_id not found to bind"));
+        return Err(err(
+            StatusCode::NOT_FOUND,
+            "membership registered but project_id not found to bind",
+        ));
     }
 
     Ok(Json(serde_json::json!({ "id": id.to_string() })))
@@ -135,7 +148,8 @@ pub(crate) async fn set_membership_orgs(
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     let membership_id = uuid::Uuid::parse_str(id.trim())
         .map_err(|_| err(StatusCode::BAD_REQUEST, "bad membership id"))?;
-    let updated = memberships::set_orgs(&state.pg, &membership_id, &b.org_slugs).await
+    let updated = memberships::set_orgs(&state.pg, &membership_id, &b.org_slugs)
+        .await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
     if !updated {
         return Err(err(StatusCode::NOT_FOUND, "membership not found"));
@@ -152,10 +166,12 @@ pub(crate) async fn project_binding_suggestion(
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     // Name-or-uuid (#100): resolve so a project name works, not only a uuid.
-    let project_id = crate::api::util::resolve_project_uuid(&state, id.trim()).await
+    let project_id = crate::api::util::resolve_project_uuid(&state, id.trim())
+        .await
         .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "project lookup failed"))?
         .ok_or_else(|| err(StatusCode::NOT_FOUND, "project not found"))?;
-    let suggestion = memberships::suggest_binding(&state.pg, &project_id).await
+    let suggestion = memberships::suggest_binding(&state.pg, &project_id)
+        .await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
     Ok(Json(serde_json::json!({ "suggestion": suggestion })))
 }
@@ -177,18 +193,23 @@ pub(crate) async fn bind_project_to_membership(
     Json(b): Json<BindProjectBody>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     // Name-or-uuid (#100): resolve so a project name works, not only a uuid.
-    let project_id = crate::api::util::resolve_project_uuid(&state, id.trim()).await
+    let project_id = crate::api::util::resolve_project_uuid(&state, id.trim())
+        .await
         .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "project lookup failed"))?
         .ok_or_else(|| err(StatusCode::NOT_FOUND, "project not found"))?;
     let membership_id = uuid::Uuid::parse_str(b.membership_id.trim())
         .map_err(|_| err(StatusCode::BAD_REQUEST, "bad membership_id"))?;
-    if state.pg.get_dojo_membership(&membership_id).await
+    if state
+        .pg
+        .get_dojo_membership(&membership_id)
+        .await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?
         .is_none()
     {
         return Err(err(StatusCode::NOT_FOUND, "unknown membership"));
     }
-    if !memberships::bind_project(&state.pg, &project_id, &membership_id).await
+    if !memberships::bind_project(&state.pg, &project_id, &membership_id)
+        .await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?
     {
         return Err(err(StatusCode::NOT_FOUND, "project not found"));

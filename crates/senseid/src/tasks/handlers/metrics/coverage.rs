@@ -214,7 +214,8 @@ pub(super) async fn compute(
             GRAIN_DAILY,
             value,
             &props,
-            SOURCE_MEASURED)
+            SOURCE_MEASURED,
+        )
         .await?;
         written += 1;
     }
@@ -353,8 +354,8 @@ pub(crate) async fn backfill(
 mod tests {
     use super::*;
     use crate::tasks::test_support::{
-        cleanup_metrics_fixture, daily_project_metric_rows as daily_rows, git_commit_on_day,
-        make_ctx, repository_for_folder, seed_git_project_folder, TestGate,
+        TestGate, cleanup_metrics_fixture, daily_project_metric_rows as daily_rows,
+        git_commit_on_day, make_ctx, repository_for_folder, seed_git_project_folder,
     };
 
     /// Coverage resolves its lcov path through the GLOBAL `metrics.coverage_lcov`
@@ -400,7 +401,11 @@ DA:2,0
 DA:3,1
 end_of_record
 ";
-        assert_eq!(parse_lcov(report), (2, 3), "DA fallback: hit = DA with count>0, found = all DA");
+        assert_eq!(
+            parse_lcov(report),
+            (2, 3),
+            "DA fallback: hit = DA with count>0, found = all DA"
+        );
     }
 
     #[test]
@@ -453,22 +458,27 @@ end_of_record
         assert!((value - 0.75).abs() < 1e-9, "coverage = 15 hit / 20 found = 0.75");
         assert_eq!(props["numerator"].as_i64(), Some(15), "numerator = lines hit");
         assert_eq!(props["denominator"].as_i64(), Some(20), "denominator = lines found");
-        assert_eq!(scope, "user", "coverage is scope=user (pools into the default read; no author dimension)");
+        assert_eq!(
+            scope, "user",
+            "coverage is scope=user (pools into the default read; no author dimension)"
+        );
         assert_eq!(repo_id, Some(rid), "keyed on the resolved repository_id");
         assert_eq!(identity, None, "identity NULL — coverage is not author-attributed");
         // It surfaces in the default scope=user project read (the pooled view path).
         let daily = daily_rows(pg, &pid).await;
-        let cov = daily.iter().find(|r| r.0 == "coverage").expect("coverage in the scope=user read");
+        let cov =
+            daily.iter().find(|r| r.0 == "coverage").expect("coverage in the scope=user read");
         assert!((cov.1 - 0.75).abs() < 1e-9, "the default read carries the coverage value");
 
         // Idempotent: re-run upserts in place.
         let again = compute(&ctx, &pid.to_string(), None).await.unwrap();
         assert_eq!(again, 1, "re-run recomputes the same row");
-        let (total,): (i64,) = query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
-            .bind(pid)
-            .fetch_one(pg.pool())
-            .await
-            .unwrap();
+        let (total,): (i64,) =
+            query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
+                .bind(pid)
+                .fetch_one(pg.pool())
+                .await
+                .unwrap();
         assert_eq!(total, 1, "idempotent upsert — still one row");
 
         cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
@@ -513,11 +523,12 @@ end_of_record
 
         let written = compute(&ctx, &pid.to_string(), None).await.unwrap();
         assert_eq!(written, 0, "no report → no coverage row (never a fabricated 0)");
-        let (total,): (i64,) = query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
-            .bind(pid)
-            .fetch_one(pg.pool())
-            .await
-            .unwrap();
+        let (total,): (i64,) =
+            query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
+                .bind(pid)
+                .fetch_one(pg.pool())
+                .await
+                .unwrap();
         assert_eq!(total, 0, "no rows without a report");
 
         // An lcov with 0 instrumented lines (LF:0) → also no row (no denominator).
@@ -542,11 +553,12 @@ end_of_record
         let past = chrono::NaiveDate::from_ymd_opt(2020, 1, 1).unwrap();
         let written = compute(&ctx, &pid.to_string(), Some(past)).await.unwrap();
         assert_eq!(written, 0, "historical as_of → forward-only skip → no row");
-        let (total,): (i64,) = query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
-            .bind(pid)
-            .fetch_one(pg.pool())
-            .await
-            .unwrap();
+        let (total,): (i64,) =
+            query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
+                .bind(pid)
+                .fetch_one(pg.pool())
+                .await
+                .unwrap();
         assert_eq!(total, 0, "no rows for a historical as_of");
 
         cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
@@ -560,7 +572,11 @@ end_of_record
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
         let (pid, fid, repo) = seed_git_project_folder(pg, &uniq).await;
-        write_lcov(repo.path(), "build/cov/report.lcov", "SF:src/a.rs\nLH:9\nLF:10\nend_of_record\n");
+        write_lcov(
+            repo.path(),
+            "build/cov/report.lcov",
+            "SF:src/a.rs\nLH:9\nLF:10\nend_of_record\n",
+        );
         pg.set_config(LCOV_PATH_KEY, "build/cov/report.lcov").await.unwrap();
 
         let written = compute(&ctx, &pid.to_string(), None).await.unwrap();
@@ -602,7 +618,12 @@ end_of_record
             git_commit_on_day(repo.path(), d, &[(f, "x\n")]);
         }
         // The "coverage command" just writes a fixed lcov into the worktree (LH 5/LF 10).
-        pg.set_config(COVERAGE_COMMAND_KEY, "printf 'SF:x\\nLH:5\\nLF:10\\nend_of_record\\n' > lcov.info").await.unwrap();
+        pg.set_config(
+            COVERAGE_COMMAND_KEY,
+            "printf 'SF:x\\nLH:5\\nLF:10\\nend_of_record\\n' > lcov.info",
+        )
+        .await
+        .unwrap();
 
         let written = backfill(pg, &pid.to_string(), None).await.unwrap();
 
@@ -623,7 +644,10 @@ end_of_record
 
         assert_eq!(written, 3, "one coverage row per sampled ISO-week commit");
         assert_eq!(rows.len(), 3, "three historical coverage rows");
-        assert!(rows.iter().all(|r| r.1.is_some()), "every backfill row carries a commit_sha (commit-cadence historical point)");
+        assert!(
+            rows.iter().all(|r| r.1.is_some()),
+            "every backfill row carries a commit_sha (commit-cadence historical point)"
+        );
         assert!(rows.iter().all(|r| (r.2 - 0.5).abs() < 1e-9), "value = 5 hit / 10 found = 0.5");
         let days: Vec<_> = rows.iter().map(|r| r.0.to_string()).collect();
         assert!(days.contains(&"2025-05-05".to_string()), "stamped on the commit-day, not today");
@@ -645,7 +669,12 @@ end_of_record
         for (d, f) in [("2025-05-05", "a.rs"), ("2025-05-12", "b.rs"), ("2025-05-19", "c.rs")] {
             git_commit_on_day(repo.path(), d, &[(f, "x\n")]);
         }
-        pg.set_config(COVERAGE_COMMAND_KEY, "printf 'SF:x\\nLH:5\\nLF:10\\nend_of_record\\n' > lcov.info").await.unwrap();
+        pg.set_config(
+            COVERAGE_COMMAND_KEY,
+            "printf 'SF:x\\nLH:5\\nLF:10\\nend_of_record\\n' > lcov.info",
+        )
+        .await
+        .unwrap();
 
         let task = crate::tasks::Task::new(
             crate::tasks::TaskKind::BackfillCoverage,

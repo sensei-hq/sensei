@@ -21,14 +21,8 @@
 ///
 /// Pure: takes the raw string as a param so it needs no environment to test.
 pub fn gated_tools_from_env(var: Option<&str>) -> Vec<String> {
-    var.map(|s| {
-        s.split(',')
-            .map(str::trim)
-            .filter(|t| !t.is_empty())
-            .map(str::to_string)
-            .collect()
-    })
-    .unwrap_or_default()
+    var.map(|s| s.split(',').map(str::trim).filter(|t| !t.is_empty()).map(str::to_string).collect())
+        .unwrap_or_default()
 }
 
 /// Whether a tool call should be gated: true iff its `tool_name` is in the
@@ -56,11 +50,7 @@ pub fn decision_from_reply(reply: Option<&serde_json::Value>) -> &'static str {
     // `approve: false` is an explicit decline; `approve: true`/absent is not.
     let approve_false = reply.get("approve").and_then(|v| v.as_bool()) == Some(false);
 
-    if verdict_deny || approve_false {
-        "deny"
-    } else {
-        "allow"
-    }
+    if verdict_deny || approve_false { "deny" } else { "allow" }
 }
 
 // ── Hard-block classifier (relay-engine P3.5) ────────────────────────────────
@@ -136,14 +126,12 @@ pub fn classify_hard_block(tool_name: &str, tool_input: &serde_json::Value) -> O
     match tool_name {
         "Bash" => tool_input.get("command").and_then(|v| v.as_str()).and_then(classify_bash),
         // File writes (incl. notebooks) → secret-file check.
-        "Write" | "Edit" | "MultiEdit" => tool_input
-            .get("file_path")
-            .and_then(|v| v.as_str())
-            .and_then(classify_write_path),
-        "NotebookEdit" => tool_input
-            .get("notebook_path")
-            .and_then(|v| v.as_str())
-            .and_then(classify_write_path),
+        "Write" | "Edit" | "MultiEdit" => {
+            tool_input.get("file_path").and_then(|v| v.as_str()).and_then(classify_write_path)
+        }
+        "NotebookEdit" => {
+            tool_input.get("notebook_path").and_then(|v| v.as_str()).and_then(classify_write_path)
+        }
         // Direct fetches → money/provider host check (WebFetch can't sidestep
         // the money gate the Bash `curl` path enforces).
         "WebFetch" => tool_input.get("url").and_then(|v| v.as_str()).and_then(classify_url_money),
@@ -221,7 +209,9 @@ fn classify_bash(cmd: &str) -> Option<HardBlock> {
         // clusters (`git push -uf`) are still caught.
         let force_push = split_shell_segments(cmd).iter().any(|seg| {
             word_match(seg, "push")
-                && (seg.contains("--force") || seg.contains("--force-with-lease") || has_short_flag(seg, 'f'))
+                && (seg.contains("--force")
+                    || seg.contains("--force-with-lease")
+                    || has_short_flag(seg, 'f'))
         });
         if force_push {
             return Some(HardBlock::new("main-branch", "force-push rewrites remote history"));
@@ -230,24 +220,39 @@ fn classify_bash(cmd: &str) -> Option<HardBlock> {
             return Some(HardBlock::new("destructive", "git filter-branch rewrites history"));
         }
         if cmd.contains("reset") && cmd.contains("--hard") {
-            return Some(HardBlock::new("destructive", "git reset --hard discards work irreversibly"));
+            return Some(HardBlock::new(
+                "destructive",
+                "git reset --hard discards work irreversibly",
+            ));
         }
     }
 
     // ── main/master branch changes (push/merge/rebase touching a protected branch)
     if word_match(cmd, "git") && mentions_protected_branch(cmd) {
         if word_match(cmd, "push") {
-            return Some(HardBlock::new("main-branch", "push targets a protected branch (main/master)"));
+            return Some(HardBlock::new(
+                "main-branch",
+                "push targets a protected branch (main/master)",
+            ));
         }
         if word_match(cmd, "merge") {
-            return Some(HardBlock::new("main-branch", "merge into a protected branch (main/master)"));
+            return Some(HardBlock::new(
+                "main-branch",
+                "merge into a protected branch (main/master)",
+            ));
         }
         if word_match(cmd, "rebase") {
-            return Some(HardBlock::new("main-branch", "rebase onto a protected branch (main/master)"));
+            return Some(HardBlock::new(
+                "main-branch",
+                "rebase onto a protected branch (main/master)",
+            ));
         }
     }
     // Interactive rebase rewrites history regardless of the target branch.
-    if word_match(cmd, "git") && word_match(cmd, "rebase") && (word_match(cmd, "-i") || cmd.contains("--interactive")) {
+    if word_match(cmd, "git")
+        && word_match(cmd, "rebase")
+        && (word_match(cmd, "-i") || cmd.contains("--interactive"))
+    {
         return Some(HardBlock::new("destructive", "interactive rebase rewrites history"));
     }
     // NOTE: a plain `git push` (feature branch, no protected token) is NOT a
@@ -260,7 +265,8 @@ fn classify_bash(cmd: &str) -> Option<HardBlock> {
     if word_match(cmd, "make") && word_match(cmd, "deploy") {
         return Some(HardBlock::new("deploy", "make deploy ships to an environment"));
     }
-    if cmd.contains("npm publish") || cmd.contains("cargo publish") || cmd.contains("yarn publish") {
+    if cmd.contains("npm publish") || cmd.contains("cargo publish") || cmd.contains("yarn publish")
+    {
         return Some(HardBlock::new("publish", "publishes a package to a registry"));
     }
     if word_match(cmd, "gh") && word_match(cmd, "release") {
@@ -276,7 +282,10 @@ fn classify_bash(cmd: &str) -> Option<HardBlock> {
     }
     // `git tag` paired with a push is a release cut (incl. `git push --tags`,
     // where `--tags` isn't a bounded `tag` word).
-    if word_match(cmd, "git") && word_match(cmd, "push") && (word_match(cmd, "tag") || cmd.contains("--tags")) {
+    if word_match(cmd, "git")
+        && word_match(cmd, "push")
+        && (word_match(cmd, "tag") || cmd.contains("--tags"))
+    {
         return Some(HardBlock::new("deploy", "git tag + push cuts a release"));
     }
 
@@ -315,7 +324,8 @@ fn classify_credentials(cmd: &str) -> Option<HardBlock> {
     }
     // File tokens that name secrets. `.env` (incl. `.env.*`), ssh material, and
     // generic credentials/secrets files — read OR write.
-    let secret_tokens = [".env", "id_rsa", "id_ed25519", ".pem", "credentials", "secrets", "secret_key"];
+    let secret_tokens =
+        [".env", "id_rsa", "id_ed25519", ".pem", "credentials", "secrets", "secret_key"];
     let touches_secret = secret_tokens.iter().any(|t| cmd.contains(t)) || cmd.contains(".ssh");
     if touches_secret {
         return Some(HardBlock::new("credentials", "touches a credentials/secret file"));
@@ -340,7 +350,8 @@ const PROVIDER_HOSTS: &[&str] = &[
 /// host. Conservative — a generic `curl localhost` or fetch of a docs page is
 /// NOT a hard-block (progress over asking).
 fn classify_money(cmd: &str) -> Option<HardBlock> {
-    let is_http_tool = word_match(cmd, "curl") || word_match(cmd, "wget") || word_match(cmd, "http");
+    let is_http_tool =
+        word_match(cmd, "curl") || word_match(cmd, "wget") || word_match(cmd, "http");
     if !is_http_tool {
         return None;
     }
@@ -378,7 +389,10 @@ fn classify_indirect_run(cmd: &str) -> Option<HardBlock> {
             // strip a leading path so `/bin/sh` / `./sh` still match the word.
             let word = first.rsplit('/').next().unwrap_or(first);
             if SHELLS.contains(&word) {
-                return Some(HardBlock::new("indirect-run", "pipes output into a shell interpreter"));
+                return Some(HardBlock::new(
+                    "indirect-run",
+                    "pipes output into a shell interpreter",
+                ));
             }
         }
     }
@@ -416,8 +430,9 @@ fn classify_destructive(cmd: &str) -> Option<HardBlock> {
     // no prompt), so `-f` is NOT required — `-r`/`-R`/`--recursive` all qualify.
     for segment in split_shell_segments(cmd) {
         let has_rm = word_match(segment, "rm");
-        let recursive =
-            has_short_flag(segment, 'r') || has_short_flag(segment, 'R') || segment.contains("--recursive");
+        let recursive = has_short_flag(segment, 'r')
+            || has_short_flag(segment, 'R')
+            || segment.contains("--recursive");
         if has_rm && recursive && !rm_targets_only_safe_dirs(segment) {
             return Some(HardBlock::new("destructive", "recursive delete (rm -r)"));
         }
@@ -460,7 +475,9 @@ fn rm_targets_only_safe_dirs(segment: &str) -> bool {
         let norm = tok.trim_end_matches('/');
         // reject anything that reaches outside a plain relative dir name.
         let is_safe = SAFE_RM_DIRS.contains(&norm)
-            || SAFE_RM_DIRS.iter().any(|d| norm.starts_with(&format!("{d}/")) || norm.starts_with(&format!("./{d}")));
+            || SAFE_RM_DIRS
+                .iter()
+                .any(|d| norm.starts_with(&format!("{d}/")) || norm.starts_with(&format!("./{d}")));
         if !is_safe {
             return false;
         }
@@ -586,11 +603,7 @@ pub fn needs_semantic_review(tool_name: &str, tool_input: &serde_json::Value) ->
         suspicious = true;
     }
 
-    if suspicious {
-        Some(cmd.to_string())
-    } else {
-        None
-    }
+    if suspicious { Some(cmd.to_string()) } else { None }
 }
 
 /// The categories a semantic verdict may legitimately claim — the same stable
@@ -935,16 +948,20 @@ mod tests {
             Some("credentials"),
         );
         // …a WebFetch to a normal docs host is progress.
-        assert!(classify_hard_block("WebFetch", &json!({ "url": "https://docs.rs/serde" })).is_none());
+        assert!(
+            classify_hard_block("WebFetch", &json!({ "url": "https://docs.rs/serde" })).is_none()
+        );
         // …a NotebookEdit to a normal notebook is progress.
-        assert!(classify_hard_block("NotebookEdit", &json!({ "notebook_path": "analysis.ipynb" })).is_none());
+        assert!(
+            classify_hard_block("NotebookEdit", &json!({ "notebook_path": "analysis.ipynb" }))
+                .is_none()
+        );
     }
 
     #[test]
     fn hard_block_write_edit_to_secret_files() {
         assert_eq!(
-            classify_hard_block("Write", &json!({ "file_path": "/proj/.env" }))
-                .map(|h| h.category),
+            classify_hard_block("Write", &json!({ "file_path": "/proj/.env" })).map(|h| h.category),
             Some("credentials")
         );
         assert_eq!(
@@ -953,8 +970,7 @@ mod tests {
             Some("credentials")
         );
         assert_eq!(
-            classify_hard_block("Write", &json!({ "file_path": ".env.local" }))
-                .map(|h| h.category),
+            classify_hard_block("Write", &json!({ "file_path": ".env.local" })).map(|h| h.category),
             Some("credentials")
         );
         assert_eq!(
@@ -969,7 +985,9 @@ mod tests {
         assert!(classify_hard_block("Write", &json!({ "file_path": "src/main.rs" })).is_none());
         assert!(classify_hard_block("Edit", &json!({ "file_path": "docs/README.md" })).is_none());
         // ".environment.rs" is a source file, not a dotenv — must not false-fire.
-        assert!(classify_hard_block("Write", &json!({ "file_path": "src/environment.rs" })).is_none());
+        assert!(
+            classify_hard_block("Write", &json!({ "file_path": "src/environment.rs" })).is_none()
+        );
     }
 
     #[test]
@@ -979,7 +997,10 @@ mod tests {
         assert!(classify_hard_block("Grep", &json!({ "pattern": "rm -rf" })).is_none());
         // WebFetch to a NON-provider host is progress (the provider-host case is
         // covered in hard_block_security_review_p3_fixes).
-        assert!(classify_hard_block("WebFetch", &json!({ "url": "https://example.com/docs" })).is_none());
+        assert!(
+            classify_hard_block("WebFetch", &json!({ "url": "https://example.com/docs" }))
+                .is_none()
+        );
         // Missing/empty fields default to progress (parse defensively).
         assert!(classify_hard_block("Bash", &json!({})).is_none());
         assert!(classify_hard_block("Write", &json!({})).is_none());
@@ -1068,7 +1089,10 @@ mod tests {
 
     #[test]
     fn semantic_review_only_bash() {
-        assert!(needs_semantic_review("Write", &json!({ "file_path": "x", "command": "$(x)" })).is_none());
+        assert!(
+            needs_semantic_review("Write", &json!({ "file_path": "x", "command": "$(x)" }))
+                .is_none()
+        );
         assert!(needs_semantic_review("Read", &json!({ "command": "eval x" })).is_none());
         assert!(needs_semantic_review("WebFetch", &json!({ "url": "https://x" })).is_none());
         // Bash with missing/empty command → no review.
@@ -1089,10 +1113,12 @@ mod tests {
 
     #[test]
     fn parse_semantic_verdict_dangerous_false_is_none() {
-        assert!(parse_semantic_verdict(
-            r#"{"dangerous":false,"category":"destructive","reason":"looks fine"}"#
-        )
-        .is_none());
+        assert!(
+            parse_semantic_verdict(
+                r#"{"dangerous":false,"category":"destructive","reason":"looks fine"}"#
+            )
+            .is_none()
+        );
         // missing `dangerous` → progress
         assert!(parse_semantic_verdict(r#"{"category":"deploy","reason":"x"}"#).is_none());
     }
@@ -1102,7 +1128,10 @@ mod tests {
         let fenced = "```json\n{\"dangerous\":true,\"category\":\"money\",\"reason\":\"charges a card\"}\n```";
         assert_eq!(parse_semantic_verdict(fenced).map(|h| h.category), Some("money"));
         let prose = "Here's my call:\n{\"dangerous\":true,\"category\":\"deploy\",\"reason\":\"ships to prod\"}\nDone.";
-        assert_eq!(parse_semantic_verdict(prose).map(|h| h.reason), Some("ships to prod".to_string()));
+        assert_eq!(
+            parse_semantic_verdict(prose).map(|h| h.reason),
+            Some("ships to prod".to_string())
+        );
     }
 
     #[test]
@@ -1121,8 +1150,14 @@ mod tests {
     #[test]
     fn parse_semantic_verdict_missing_reason_is_none() {
         assert!(parse_semantic_verdict(r#"{"dangerous":true,"category":"deploy"}"#).is_none());
-        assert!(parse_semantic_verdict(r#"{"dangerous":true,"category":"deploy","reason":""}"#).is_none());
-        assert!(parse_semantic_verdict(r#"{"dangerous":true,"category":"deploy","reason":"   "}"#).is_none());
+        assert!(
+            parse_semantic_verdict(r#"{"dangerous":true,"category":"deploy","reason":""}"#)
+                .is_none()
+        );
+        assert!(
+            parse_semantic_verdict(r#"{"dangerous":true,"category":"deploy","reason":"   "}"#)
+                .is_none()
+        );
     }
 
     #[test]
@@ -1152,14 +1187,14 @@ mod tests {
         // handler uses: `should_gate(...) || classify_hard_block(...).is_some()`.
         let no_allowlist: Vec<String> = gated_tools_from_env(None);
         let cmd = bash("git push origin main");
-        let gated = should_gate("Bash", &no_allowlist)
-            || classify_hard_block("Bash", &cmd).is_some();
+        let gated =
+            should_gate("Bash", &no_allowlist) || classify_hard_block("Bash", &cmd).is_some();
         assert!(gated, "hard-block must gate even with no allow-list");
 
         // And a benign command with no allow-list does NOT gate (progress).
         let benign = bash("git status");
-        let gated_benign = should_gate("Bash", &no_allowlist)
-            || classify_hard_block("Bash", &benign).is_some();
+        let gated_benign =
+            should_gate("Bash", &no_allowlist) || classify_hard_block("Bash", &benign).is_some();
         assert!(!gated_benign, "benign command must not gate");
     }
 }

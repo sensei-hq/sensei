@@ -1,17 +1,21 @@
-use crate::types::{ParsedFile, ParsedSymbol, ParsedImport, ParsedEdge, SymbolKind};
-use crate::ir::{IRBase, IRFunction, IRClass, IRMethod, IRImport, IRConstant, IRParsedFile, ClassKind};
-use super::common::{ir_module, ir_parsed_file};
 use super::LanguageAdapter;
+use super::common::{ir_module, ir_parsed_file};
+use crate::ir::{
+    ClassKind, IRBase, IRClass, IRConstant, IRFunction, IRImport, IRMethod, IRParsedFile,
+};
+use crate::types::{ParsedEdge, ParsedFile, ParsedImport, ParsedSymbol, SymbolKind};
 use oxc_allocator::Allocator;
+use oxc_ast::ast::*;
 use oxc_parser::Parser;
 use oxc_span::SourceType;
-use oxc_ast::ast::*;
 
 pub struct TypeScriptAdapter;
 pub struct JavaScriptAdapter;
 
 impl LanguageAdapter for TypeScriptAdapter {
-    fn language(&self) -> &str { "typescript" }
+    fn language(&self) -> &str {
+        "typescript"
+    }
     fn parse_to_ir(&self, source: &str, file_path: &str) -> crate::ir::IRParsedFile {
         parse_to_ir(source, file_path)
     }
@@ -19,12 +23,15 @@ impl LanguageAdapter for TypeScriptAdapter {
         parse_oxc(source, file_path)
     }
     fn fqn_output(&self, abs_path: &str, content: &str) -> Option<super::fqn::FqnFileOutput> {
-        typescript_fqn::ts_file_context(abs_path).map(|ctx| typescript_fqn::produce_fqns(content, &ctx))
+        typescript_fqn::ts_file_context(abs_path)
+            .map(|ctx| typescript_fqn::produce_fqns(content, &ctx))
     }
 }
 
 impl LanguageAdapter for JavaScriptAdapter {
-    fn language(&self) -> &str { "javascript" }
+    fn language(&self) -> &str {
+        "javascript"
+    }
     fn parse_to_ir(&self, source: &str, file_path: &str) -> crate::ir::IRParsedFile {
         parse_to_ir(source, file_path)
     }
@@ -32,7 +39,8 @@ impl LanguageAdapter for JavaScriptAdapter {
         parse_oxc(source, file_path)
     }
     fn fqn_output(&self, abs_path: &str, content: &str) -> Option<super::fqn::FqnFileOutput> {
-        typescript_fqn::ts_file_context(abs_path).map(|ctx| typescript_fqn::produce_fqns(content, &ctx))
+        typescript_fqn::ts_file_context(abs_path)
+            .map(|ctx| typescript_fqn::produce_fqns(content, &ctx))
     }
 }
 
@@ -47,7 +55,9 @@ fn parse_oxc(source: &str, file_path: &str) -> ParsedFile {
         return ParsedFile {
             file_path: file_path.into(),
             language: lang_name.into(),
-            symbols: vec![], edges: vec![], imports: vec![],
+            symbols: vec![],
+            edges: vec![],
+            imports: vec![],
         };
     }
 
@@ -61,13 +71,7 @@ fn parse_oxc(source: &str, file_path: &str) -> ParsedFile {
         extract_statement(stmt, source, &lines, &mut symbols, &mut imports, &mut edges);
     }
 
-    ParsedFile {
-        file_path: file_path.into(),
-        language: lang_name.into(),
-        symbols,
-        edges,
-        imports,
-    }
+    ParsedFile { file_path: file_path.into(), language: lang_name.into(), symbols, edges, imports }
 }
 
 fn line_col(source: &str, offset: u32) -> u32 {
@@ -76,8 +80,11 @@ fn line_col(source: &str, offset: u32) -> u32 {
 }
 
 fn extract_statement(
-    stmt: &Statement, source: &str, lines: &[&str],
-    symbols: &mut Vec<ParsedSymbol>, imports: &mut Vec<ParsedImport>,
+    stmt: &Statement,
+    source: &str,
+    lines: &[&str],
+    symbols: &mut Vec<ParsedSymbol>,
+    imports: &mut Vec<ParsedImport>,
     _edges: &mut Vec<ParsedEdge>,
 ) {
     match stmt {
@@ -85,7 +92,14 @@ fn extract_statement(
             if let Some(id) = &f.id {
                 let start = line_col(source, f.span.start);
                 let end = line_col(source, f.span.end);
-                symbols.push(make_sym(id.name.to_string(), SymbolKind::Function, start, end, lines, false));
+                symbols.push(make_sym(
+                    id.name.to_string(),
+                    SymbolKind::Function,
+                    start,
+                    end,
+                    lines,
+                    false,
+                ));
             }
         }
         Statement::ClassDeclaration(c) => {
@@ -93,7 +107,14 @@ fn extract_statement(
                 let start = line_col(source, c.span.start);
                 let end = line_col(source, c.span.end);
                 let class_name = id.name.to_string();
-                symbols.push(make_sym(class_name.clone(), SymbolKind::Class, start, end, lines, false));
+                symbols.push(make_sym(
+                    class_name.clone(),
+                    SymbolKind::Class,
+                    start,
+                    end,
+                    lines,
+                    false,
+                ));
                 extract_class_body(&c.body, source, lines, symbols, &class_name);
             }
         }
@@ -105,61 +126,104 @@ fn extract_statement(
                 extract_exported_decl(decl, source, lines, symbols);
             }
         }
-        Statement::ExportDefaultDeclaration(export) => {
-            match &export.declaration {
-                ExportDefaultDeclarationKind::FunctionDeclaration(f) => {
-                    let name = f.id.as_ref().map(|i| i.name.to_string()).unwrap_or_else(|| "default".into());
-                    let start = line_col(source, f.span.start);
-                    let end = line_col(source, f.span.end);
-                    symbols.push(make_sym(name, SymbolKind::Function, start, end, lines, true));
-                }
-                ExportDefaultDeclarationKind::ClassDeclaration(c) => {
-                    let name = c.id.as_ref().map(|i| i.name.to_string()).unwrap_or_else(|| "default".into());
-                    let start = line_col(source, c.span.start);
-                    let end = line_col(source, c.span.end);
-                    symbols.push(make_sym(name.clone(), SymbolKind::Class, start, end, lines, true));
-                    extract_class_body(&c.body, source, lines, symbols, &name);
-                }
-                ExportDefaultDeclarationKind::TSInterfaceDeclaration(iface) => {
-                    let start = line_col(source, iface.span.start);
-                    let end = line_col(source, iface.span.end);
-                    symbols.push(make_sym(iface.id.name.to_string(), SymbolKind::Interface, start, end, lines, true));
-                }
-                _ => {}
+        Statement::ExportDefaultDeclaration(export) => match &export.declaration {
+            ExportDefaultDeclarationKind::FunctionDeclaration(f) => {
+                let name =
+                    f.id.as_ref().map(|i| i.name.to_string()).unwrap_or_else(|| "default".into());
+                let start = line_col(source, f.span.start);
+                let end = line_col(source, f.span.end);
+                symbols.push(make_sym(name, SymbolKind::Function, start, end, lines, true));
             }
-        }
+            ExportDefaultDeclarationKind::ClassDeclaration(c) => {
+                let name =
+                    c.id.as_ref().map(|i| i.name.to_string()).unwrap_or_else(|| "default".into());
+                let start = line_col(source, c.span.start);
+                let end = line_col(source, c.span.end);
+                symbols.push(make_sym(name.clone(), SymbolKind::Class, start, end, lines, true));
+                extract_class_body(&c.body, source, lines, symbols, &name);
+            }
+            ExportDefaultDeclarationKind::TSInterfaceDeclaration(iface) => {
+                let start = line_col(source, iface.span.start);
+                let end = line_col(source, iface.span.end);
+                symbols.push(make_sym(
+                    iface.id.name.to_string(),
+                    SymbolKind::Interface,
+                    start,
+                    end,
+                    lines,
+                    true,
+                ));
+            }
+            _ => {}
+        },
         Statement::ImportDeclaration(import) => {
             let target = import.source.value.to_string();
-            let names: Vec<String> = import.specifiers.as_ref().map(|specs| {
-                specs.iter().map(|s| match s {
-                    ImportDeclarationSpecifier::ImportSpecifier(named) => named.local.name.to_string(),
-                    ImportDeclarationSpecifier::ImportDefaultSpecifier(def) => def.local.name.to_string(),
-                    ImportDeclarationSpecifier::ImportNamespaceSpecifier(ns) => format!("* as {}", ns.local.name),
-                }).collect()
-            }).unwrap_or_default();
+            let names: Vec<String> = import
+                .specifiers
+                .as_ref()
+                .map(|specs| {
+                    specs
+                        .iter()
+                        .map(|s| match s {
+                            ImportDeclarationSpecifier::ImportSpecifier(named) => {
+                                named.local.name.to_string()
+                            }
+                            ImportDeclarationSpecifier::ImportDefaultSpecifier(def) => {
+                                def.local.name.to_string()
+                            }
+                            ImportDeclarationSpecifier::ImportNamespaceSpecifier(ns) => {
+                                format!("* as {}", ns.local.name)
+                            }
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
             imports.push(ParsedImport { target_path: target, names });
         }
         Statement::TSInterfaceDeclaration(iface) => {
             let start = line_col(source, iface.span.start);
             let end = line_col(source, iface.span.end);
-            symbols.push(make_sym(iface.id.name.to_string(), SymbolKind::Interface, start, end, lines, false));
+            symbols.push(make_sym(
+                iface.id.name.to_string(),
+                SymbolKind::Interface,
+                start,
+                end,
+                lines,
+                false,
+            ));
         }
         Statement::TSTypeAliasDeclaration(alias) => {
             let start = line_col(source, alias.span.start);
             let end = line_col(source, alias.span.end);
-            symbols.push(make_sym(alias.id.name.to_string(), SymbolKind::Type, start, end, lines, false));
+            symbols.push(make_sym(
+                alias.id.name.to_string(),
+                SymbolKind::Type,
+                start,
+                end,
+                lines,
+                false,
+            ));
         }
         Statement::TSEnumDeclaration(en) => {
             let start = line_col(source, en.span.start);
             let end = line_col(source, en.span.end);
-            symbols.push(make_sym(en.id.name.to_string(), SymbolKind::Enum, start, end, lines, false));
+            symbols.push(make_sym(
+                en.id.name.to_string(),
+                SymbolKind::Enum,
+                start,
+                end,
+                lines,
+                false,
+            ));
         }
         _ => {}
     }
 }
 
 fn extract_exported_decl(
-    decl: &Declaration, source: &str, lines: &[&str],
+    decl: &Declaration,
+    source: &str,
+    lines: &[&str],
     symbols: &mut Vec<ParsedSymbol>,
 ) {
     match decl {
@@ -167,7 +231,14 @@ fn extract_exported_decl(
             if let Some(id) = &f.id {
                 let start = line_col(source, f.span.start);
                 let end = line_col(source, f.span.end);
-                symbols.push(make_sym(id.name.to_string(), SymbolKind::Function, start, end, lines, true));
+                symbols.push(make_sym(
+                    id.name.to_string(),
+                    SymbolKind::Function,
+                    start,
+                    end,
+                    lines,
+                    true,
+                ));
             }
         }
         Declaration::ClassDeclaration(c) => {
@@ -175,7 +246,14 @@ fn extract_exported_decl(
                 let start = line_col(source, c.span.start);
                 let end = line_col(source, c.span.end);
                 let class_name = id.name.to_string();
-                symbols.push(make_sym(class_name.clone(), SymbolKind::Class, start, end, lines, true));
+                symbols.push(make_sym(
+                    class_name.clone(),
+                    SymbolKind::Class,
+                    start,
+                    end,
+                    lines,
+                    true,
+                ));
                 extract_class_body(&c.body, source, lines, symbols, &class_name);
             }
         }
@@ -185,31 +263,56 @@ fn extract_exported_decl(
         Declaration::TSInterfaceDeclaration(iface) => {
             let start = line_col(source, iface.span.start);
             let end = line_col(source, iface.span.end);
-            symbols.push(make_sym(iface.id.name.to_string(), SymbolKind::Interface, start, end, lines, true));
+            symbols.push(make_sym(
+                iface.id.name.to_string(),
+                SymbolKind::Interface,
+                start,
+                end,
+                lines,
+                true,
+            ));
         }
         Declaration::TSTypeAliasDeclaration(alias) => {
             let start = line_col(source, alias.span.start);
             let end = line_col(source, alias.span.end);
-            symbols.push(make_sym(alias.id.name.to_string(), SymbolKind::Type, start, end, lines, true));
+            symbols.push(make_sym(
+                alias.id.name.to_string(),
+                SymbolKind::Type,
+                start,
+                end,
+                lines,
+                true,
+            ));
         }
         Declaration::TSEnumDeclaration(en) => {
             let start = line_col(source, en.span.start);
             let end = line_col(source, en.span.end);
-            symbols.push(make_sym(en.id.name.to_string(), SymbolKind::Enum, start, end, lines, true));
+            symbols.push(make_sym(
+                en.id.name.to_string(),
+                SymbolKind::Enum,
+                start,
+                end,
+                lines,
+                true,
+            ));
         }
         _ => {}
     }
 }
 
 fn extract_var_decl(
-    var: &VariableDeclaration, source: &str, lines: &[&str],
-    symbols: &mut Vec<ParsedSymbol>, is_exported: bool,
+    var: &VariableDeclaration,
+    source: &str,
+    lines: &[&str],
+    symbols: &mut Vec<ParsedSymbol>,
+    is_exported: bool,
 ) {
     for decl in &var.declarations {
         if let BindingPattern::BindingIdentifier(id) = &decl.id {
             let name = id.name.to_string();
             let kind = match &decl.init {
-                Some(Expression::ArrowFunctionExpression(_)) | Some(Expression::FunctionExpression(_)) => SymbolKind::Function,
+                Some(Expression::ArrowFunctionExpression(_))
+                | Some(Expression::FunctionExpression(_)) => SymbolKind::Function,
                 _ => SymbolKind::Const,
             };
             let start = line_col(source, decl.span.start);
@@ -220,18 +323,22 @@ fn extract_var_decl(
 }
 
 fn extract_class_body(
-    body: &ClassBody, source: &str, lines: &[&str],
-    symbols: &mut Vec<ParsedSymbol>, class_name: &str,
+    body: &ClassBody,
+    source: &str,
+    lines: &[&str],
+    symbols: &mut Vec<ParsedSymbol>,
+    class_name: &str,
 ) {
     for element in &body.body {
         if let ClassElement::MethodDefinition(m) = element
-            && let Some(name) = method_name(&m.key) {
-                let start = line_col(source, m.span.start);
-                let end = line_col(source, m.span.end);
-                let mut sym = make_sym(name, SymbolKind::Method, start, end, lines, true);
-                sym.parent = Some(class_name.to_string());
-                symbols.push(sym);
-            }
+            && let Some(name) = method_name(&m.key)
+        {
+            let start = line_col(source, m.span.start);
+            let end = line_col(source, m.span.end);
+            let mut sym = make_sym(name, SymbolKind::Method, start, end, lines, true);
+            sym.parent = Some(class_name.to_string());
+            symbols.push(sym);
+        }
     }
 }
 
@@ -244,9 +351,12 @@ fn method_name(key: &PropertyKey) -> Option<String> {
 }
 
 fn make_sym(
-    name: String, kind: SymbolKind,
-    line_start: u32, line_end: u32,
-    lines: &[&str], is_exported: bool,
+    name: String,
+    kind: SymbolKind,
+    line_start: u32,
+    line_end: u32,
+    lines: &[&str],
+    is_exported: bool,
 ) -> ParsedSymbol {
     let signature = lines.get(line_start.saturating_sub(1) as usize).map(|l| l.trim().to_string());
     ParsedSymbol {
@@ -282,11 +392,14 @@ pub fn parse_to_ir(source: &str, file_path: &str) -> IRParsedFile {
                         line_end: sym.line_end,
                         docstring: sym.docstring.clone(),
                         is_exported: sym.is_exported,
-                        node_type: Some(match sym.kind {
-                            SymbolKind::Hook => "hook",
-                            SymbolKind::Component => "component",
-                            _ => "function",
-                        }.into()),
+                        node_type: Some(
+                            match sym.kind {
+                                SymbolKind::Hook => "hook",
+                                SymbolKind::Component => "component",
+                                _ => "function",
+                            }
+                            .into(),
+                        ),
                         ..Default::default()
                     },
                     ..Default::default()
@@ -353,7 +466,14 @@ pub fn parse_to_ir(source: &str, file_path: &str) -> IRParsedFile {
         });
     }
 
-    let module = ir_module(file_path, &pf.language, functions, constants, imports, file_path.contains("test") || file_path.contains("spec"));
+    let module = ir_module(
+        file_path,
+        &pf.language,
+        functions,
+        constants,
+        imports,
+        file_path.contains("test") || file_path.contains("spec"),
+    );
     ir_parsed_file(file_path, &pf.language, module, classes)
 }
 
@@ -368,21 +488,25 @@ pub(crate) mod typescript_fqn {
     use crate::types::SymbolKind;
     use oxc_allocator::Allocator;
     use oxc_ast::ast::*;
-    use oxc_ast_visit::{walk, Visit};
+    use oxc_ast_visit::{Visit, walk};
     use oxc_parser::Parser;
     use oxc_span::SourceType;
     use std::collections::{HashMap, HashSet};
 
     const TS_LANG: &str = "typescript";
     const TS_CALL_DENYLIST: &[&str] = &[
-        "map", "filter", "forEach", "reduce", "then", "catch", "push", "pop", "get",
-        "set", "has", "add", "delete", "toString", "log", "warn", "error", "includes",
-        "find", "some", "every", "slice", "split", "join", "trim", "replace", "test",
-        "call", "apply", "bind", "keys", "values", "entries", "concat", "at",
+        "map", "filter", "forEach", "reduce", "then", "catch", "push", "pop", "get", "set", "has",
+        "add", "delete", "toString", "log", "warn", "error", "includes", "find", "some", "every",
+        "slice", "split", "join", "trim", "replace", "test", "call", "apply", "bind", "keys",
+        "values", "entries", "concat", "at",
     ];
 
     #[derive(Clone)]
-    struct ImportTarget { external: bool, module_or_pkg: String, spec: String }
+    struct ImportTarget {
+        external: bool,
+        module_or_pkg: String,
+        spec: String,
+    }
 
     fn line_of(source: &str, offset: u32) -> u32 {
         source.get(..offset as usize).map(|s| s.matches('\n').count() as u32 + 1).unwrap_or(1)
@@ -407,9 +531,15 @@ pub(crate) mod typescript_fqn {
                 if let Some(specs) = &imp.specifiers {
                     for s in specs {
                         let local = match s {
-                            ImportDeclarationSpecifier::ImportSpecifier(n) => n.local.name.to_string(),
-                            ImportDeclarationSpecifier::ImportDefaultSpecifier(d) => d.local.name.to_string(),
-                            ImportDeclarationSpecifier::ImportNamespaceSpecifier(ns) => ns.local.name.to_string(),
+                            ImportDeclarationSpecifier::ImportSpecifier(n) => {
+                                n.local.name.to_string()
+                            }
+                            ImportDeclarationSpecifier::ImportDefaultSpecifier(d) => {
+                                d.local.name.to_string()
+                            }
+                            ImportDeclarationSpecifier::ImportNamespaceSpecifier(ns) => {
+                                ns.local.name.to_string()
+                            }
                         };
                         imports.insert(local, target.clone());
                     }
@@ -417,7 +547,11 @@ pub(crate) mod typescript_fqn {
             }
         }
 
-        let mut out = FqnFileOutput { package: ctx.package.clone(), module: ctx.module.clone(), ..Default::default() };
+        let mut out = FqnFileOutput {
+            package: ctx.package.clone(),
+            module: ctx.module.clone(),
+            ..Default::default()
+        };
         for stmt in &program.body {
             walk_stmt(stmt, source, ctx, &imports, &mut out);
         }
@@ -426,11 +560,18 @@ pub(crate) mod typescript_fqn {
 
     fn classify_import(spec: &str, current_module: &str) -> ImportTarget {
         if spec.starts_with('.') {
-            ImportTarget { external: false, module_or_pkg: resolve_relative(current_module, spec), spec: spec.to_string() }
+            ImportTarget {
+                external: false,
+                module_or_pkg: resolve_relative(current_module, spec),
+                spec: spec.to_string(),
+            }
         } else {
             let pkg = if let Some(rest) = spec.strip_prefix('@') {
                 let mut it = rest.splitn(3, '/');
-                match (it.next(), it.next()) { (Some(a), Some(b)) => format!("@{a}/{b}"), _ => spec.to_string() }
+                match (it.next(), it.next()) {
+                    (Some(a), Some(b)) => format!("@{a}/{b}"),
+                    _ => spec.to_string(),
+                }
             } else {
                 spec.split('/').next().unwrap_or(spec).to_string()
             };
@@ -446,7 +587,9 @@ pub(crate) mod typescript_fqn {
         for seg in spec.split('/') {
             match seg {
                 "." | "" => {}
-                ".." => { parts.pop(); }
+                ".." => {
+                    parts.pop();
+                }
                 s => parts.push(s),
             }
         }
@@ -459,86 +602,211 @@ pub(crate) mod typescript_fqn {
     }
     fn strip_ext(s: &str) -> &str {
         for ext in [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".svelte", ".vue"] {
-            if let Some(b) = s.strip_suffix(ext) { return b; }
+            if let Some(b) = s.strip_suffix(ext) {
+                return b;
+            }
         }
         s
     }
 
-    fn walk_stmt(stmt: &Statement, source: &str, ctx: &FileFqnContext, imports: &HashMap<String, ImportTarget>, out: &mut FqnFileOutput) {
+    fn walk_stmt(
+        stmt: &Statement,
+        source: &str,
+        ctx: &FileFqnContext,
+        imports: &HashMap<String, ImportTarget>,
+        out: &mut FqnFileOutput,
+    ) {
         match stmt {
             Statement::FunctionDeclaration(f) => emit_function(f, false, ctx, imports, source, out),
             Statement::ClassDeclaration(c) => emit_class(c, false, ctx, imports, source, out),
             Statement::VariableDeclaration(v) => emit_var(v, false, ctx, imports, source, out),
             Statement::ExportNamedDeclaration(e) => {
-                if let Some(decl) = &e.declaration { emit_decl(decl, ctx, imports, source, out); }
+                if let Some(decl) = &e.declaration {
+                    emit_decl(decl, ctx, imports, source, out);
+                }
             }
             Statement::ExportDefaultDeclaration(e) => match &e.declaration {
-                ExportDefaultDeclarationKind::FunctionDeclaration(f) => emit_function(f, true, ctx, imports, source, out),
-                ExportDefaultDeclarationKind::ClassDeclaration(c) => emit_class(c, true, ctx, imports, source, out),
+                ExportDefaultDeclarationKind::FunctionDeclaration(f) => {
+                    emit_function(f, true, ctx, imports, source, out)
+                }
+                ExportDefaultDeclarationKind::ClassDeclaration(c) => {
+                    emit_class(c, true, ctx, imports, source, out)
+                }
                 _ => {}
             },
-            Statement::TSInterfaceDeclaration(i) => type_def(&i.id.name, i.span.start, i.span.end, SymbolKind::Interface, false, ctx, source, out),
-            Statement::TSTypeAliasDeclaration(a) => type_def(&a.id.name, a.span.start, a.span.end, SymbolKind::Type, false, ctx, source, out),
-            Statement::TSEnumDeclaration(en) => type_def(&en.id.name, en.span.start, en.span.end, SymbolKind::Enum, false, ctx, source, out),
+            Statement::TSInterfaceDeclaration(i) => type_def(
+                &i.id.name,
+                i.span.start,
+                i.span.end,
+                SymbolKind::Interface,
+                false,
+                ctx,
+                source,
+                out,
+            ),
+            Statement::TSTypeAliasDeclaration(a) => type_def(
+                &a.id.name,
+                a.span.start,
+                a.span.end,
+                SymbolKind::Type,
+                false,
+                ctx,
+                source,
+                out,
+            ),
+            Statement::TSEnumDeclaration(en) => type_def(
+                &en.id.name,
+                en.span.start,
+                en.span.end,
+                SymbolKind::Enum,
+                false,
+                ctx,
+                source,
+                out,
+            ),
             _ => {}
         }
     }
 
-    fn emit_decl(decl: &Declaration, ctx: &FileFqnContext, imports: &HashMap<String, ImportTarget>, source: &str, out: &mut FqnFileOutput) {
+    fn emit_decl(
+        decl: &Declaration,
+        ctx: &FileFqnContext,
+        imports: &HashMap<String, ImportTarget>,
+        source: &str,
+        out: &mut FqnFileOutput,
+    ) {
         match decl {
-            Declaration::FunctionDeclaration(f) => emit_function(f, true, ctx, imports, source, out),
+            Declaration::FunctionDeclaration(f) => {
+                emit_function(f, true, ctx, imports, source, out)
+            }
             Declaration::ClassDeclaration(c) => emit_class(c, true, ctx, imports, source, out),
             Declaration::VariableDeclaration(v) => emit_var(v, true, ctx, imports, source, out),
-            Declaration::TSInterfaceDeclaration(i) => type_def(&i.id.name, i.span.start, i.span.end, SymbolKind::Interface, true, ctx, source, out),
-            Declaration::TSTypeAliasDeclaration(a) => type_def(&a.id.name, a.span.start, a.span.end, SymbolKind::Type, true, ctx, source, out),
-            Declaration::TSEnumDeclaration(en) => type_def(&en.id.name, en.span.start, en.span.end, SymbolKind::Enum, true, ctx, source, out),
+            Declaration::TSInterfaceDeclaration(i) => type_def(
+                &i.id.name,
+                i.span.start,
+                i.span.end,
+                SymbolKind::Interface,
+                true,
+                ctx,
+                source,
+                out,
+            ),
+            Declaration::TSTypeAliasDeclaration(a) => type_def(
+                &a.id.name,
+                a.span.start,
+                a.span.end,
+                SymbolKind::Type,
+                true,
+                ctx,
+                source,
+                out,
+            ),
+            Declaration::TSEnumDeclaration(en) => type_def(
+                &en.id.name,
+                en.span.start,
+                en.span.end,
+                SymbolKind::Enum,
+                true,
+                ctx,
+                source,
+                out,
+            ),
             _ => {}
         }
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn type_def(name: &str, start: u32, end: u32, kind: SymbolKind, exported: bool, ctx: &FileFqnContext, source: &str, out: &mut FqnFileOutput) {
+    fn type_def(
+        name: &str,
+        start: u32,
+        end: u32,
+        kind: SymbolKind,
+        exported: bool,
+        ctx: &FileFqnContext,
+        source: &str,
+        out: &mut FqnFileOutput,
+    ) {
         out.defs.push(FqnDefinition {
             fqn: fqn::item(TS_LANG, &ctx.package, &ctx.module, name),
-            name: name.to_string(), kind,
-            line_start: line_of(source, start), line_end: line_of(source, end),
-            is_exported: exported, signature: sig(source, start), docstring: None,
-            parent_type: None, parent_fqn: None,
+            name: name.to_string(),
+            kind,
+            line_start: line_of(source, start),
+            line_end: line_of(source, end),
+            is_exported: exported,
+            signature: sig(source, start),
+            docstring: None,
+            parent_type: None,
+            parent_fqn: None,
         });
     }
 
-    fn emit_function(f: &Function, exported: bool, ctx: &FileFqnContext, imports: &HashMap<String, ImportTarget>, source: &str, out: &mut FqnFileOutput) {
+    fn emit_function(
+        f: &Function,
+        exported: bool,
+        ctx: &FileFqnContext,
+        imports: &HashMap<String, ImportTarget>,
+        source: &str,
+        out: &mut FqnFileOutput,
+    ) {
         let Some(id) = &f.id else { return };
         let name = id.name.to_string();
         let fqn_str = fqn::item(TS_LANG, &ctx.package, &ctx.module, &name);
         out.defs.push(FqnDefinition {
-            fqn: fqn_str.clone(), name, kind: SymbolKind::Function,
-            line_start: line_of(source, f.span.start), line_end: line_of(source, f.span.end),
-            is_exported: exported, signature: sig(source, f.span.start), docstring: None,
-            parent_type: None, parent_fqn: None,
+            fqn: fqn_str.clone(),
+            name,
+            kind: SymbolKind::Function,
+            line_start: line_of(source, f.span.start),
+            line_end: line_of(source, f.span.end),
+            is_exported: exported,
+            signature: sig(source, f.span.start),
+            docstring: None,
+            parent_type: None,
+            parent_fqn: None,
         });
-        if let Some(body) = &f.body { scan_body(body, &fqn_str, None, ctx, imports, source, out); }
+        if let Some(body) = &f.body {
+            scan_body(body, &fqn_str, None, ctx, imports, source, out);
+        }
     }
 
-    fn emit_class(c: &Class, exported: bool, ctx: &FileFqnContext, imports: &HashMap<String, ImportTarget>, source: &str, out: &mut FqnFileOutput) {
+    fn emit_class(
+        c: &Class,
+        exported: bool,
+        ctx: &FileFqnContext,
+        imports: &HashMap<String, ImportTarget>,
+        source: &str,
+        out: &mut FqnFileOutput,
+    ) {
         let Some(id) = &c.id else { return };
         let class_name = id.name.to_string();
         let class_fqn = fqn::item(TS_LANG, &ctx.package, &ctx.module, &class_name);
         out.defs.push(FqnDefinition {
-            fqn: class_fqn.clone(), name: class_name.clone(), kind: SymbolKind::Class,
-            line_start: line_of(source, c.span.start), line_end: line_of(source, c.span.end),
-            is_exported: exported, signature: sig(source, c.span.start), docstring: None,
-            parent_type: None, parent_fqn: None,
+            fqn: class_fqn.clone(),
+            name: class_name.clone(),
+            kind: SymbolKind::Class,
+            line_start: line_of(source, c.span.start),
+            line_end: line_of(source, c.span.end),
+            is_exported: exported,
+            signature: sig(source, c.span.start),
+            docstring: None,
+            parent_type: None,
+            parent_fqn: None,
         });
         for element in &c.body.body {
             if let ClassElement::MethodDefinition(m) = element
-                && let Some(name) = method_name(&m.key) {
+                && let Some(name) = method_name(&m.key)
+            {
                 let mfqn = fqn::method(TS_LANG, &ctx.package, &ctx.module, &class_name, &name);
                 out.defs.push(FqnDefinition {
-                    fqn: mfqn.clone(), name, kind: SymbolKind::Method,
-                    line_start: line_of(source, m.span.start), line_end: line_of(source, m.span.end),
-                    is_exported: true, signature: sig(source, m.span.start), docstring: None,
-                    parent_type: Some(class_name.clone()), parent_fqn: Some(class_fqn.clone()),
+                    fqn: mfqn.clone(),
+                    name,
+                    kind: SymbolKind::Method,
+                    line_start: line_of(source, m.span.start),
+                    line_end: line_of(source, m.span.end),
+                    is_exported: true,
+                    signature: sig(source, m.span.start),
+                    docstring: None,
+                    parent_type: Some(class_name.clone()),
+                    parent_fqn: Some(class_fqn.clone()),
                 });
                 if let Some(body) = &m.value.body {
                     scan_body(body, &mfqn, Some(&class_name), ctx, imports, source, out);
@@ -549,7 +817,14 @@ pub(crate) mod typescript_fqn {
 
     /// `const foo = () => {…}` / `const foo = function(){}` → a function def (arrow
     /// bodies are scanned for calls); other consts are ignored by the FQN producer.
-    fn emit_var(v: &VariableDeclaration, exported: bool, ctx: &FileFqnContext, imports: &HashMap<String, ImportTarget>, source: &str, out: &mut FqnFileOutput) {
+    fn emit_var(
+        v: &VariableDeclaration,
+        exported: bool,
+        ctx: &FileFqnContext,
+        imports: &HashMap<String, ImportTarget>,
+        source: &str,
+        out: &mut FqnFileOutput,
+    ) {
         for d in &v.declarations {
             let BindingPattern::BindingIdentifier(id) = &d.id else { continue };
             let name = id.name.to_string();
@@ -557,22 +832,36 @@ pub(crate) mod typescript_fqn {
                 Some(Expression::ArrowFunctionExpression(arrow)) => {
                     let fqn_str = fqn::item(TS_LANG, &ctx.package, &ctx.module, &name);
                     out.defs.push(FqnDefinition {
-                        fqn: fqn_str.clone(), name, kind: SymbolKind::Function,
-                        line_start: line_of(source, d.span.start), line_end: line_of(source, d.span.end),
-                        is_exported: exported, signature: sig(source, d.span.start), docstring: None,
-                        parent_type: None, parent_fqn: None,
+                        fqn: fqn_str.clone(),
+                        name,
+                        kind: SymbolKind::Function,
+                        line_start: line_of(source, d.span.start),
+                        line_end: line_of(source, d.span.end),
+                        is_exported: exported,
+                        signature: sig(source, d.span.start),
+                        docstring: None,
+                        parent_type: None,
+                        parent_fqn: None,
                     });
                     scan_body(&arrow.body, &fqn_str, None, ctx, imports, source, out);
                 }
                 Some(Expression::FunctionExpression(f)) => {
                     let fqn_str = fqn::item(TS_LANG, &ctx.package, &ctx.module, &name);
                     out.defs.push(FqnDefinition {
-                        fqn: fqn_str.clone(), name, kind: SymbolKind::Function,
-                        line_start: line_of(source, d.span.start), line_end: line_of(source, d.span.end),
-                        is_exported: exported, signature: sig(source, d.span.start), docstring: None,
-                        parent_type: None, parent_fqn: None,
+                        fqn: fqn_str.clone(),
+                        name,
+                        kind: SymbolKind::Function,
+                        line_start: line_of(source, d.span.start),
+                        line_end: line_of(source, d.span.end),
+                        is_exported: exported,
+                        signature: sig(source, d.span.start),
+                        docstring: None,
+                        parent_type: None,
+                        parent_fqn: None,
                     });
-                    if let Some(body) = &f.body { scan_body(body, &fqn_str, None, ctx, imports, source, out); }
+                    if let Some(body) = &f.body {
+                        scan_body(body, &fqn_str, None, ctx, imports, source, out);
+                    }
                 }
                 _ => {}
             }
@@ -588,14 +877,32 @@ pub(crate) mod typescript_fqn {
     }
 
     /// Collect calls in a function body, attributed to `caller_fqn`.
-    fn scan_body(body: &FunctionBody, caller_fqn: &str, class: Option<&str>, ctx: &FileFqnContext, imports: &HashMap<String, ImportTarget>, source: &str, out: &mut FqnFileOutput) {
+    fn scan_body(
+        body: &FunctionBody,
+        caller_fqn: &str,
+        class: Option<&str>,
+        ctx: &FileFqnContext,
+        imports: &HashMap<String, ImportTarget>,
+        source: &str,
+        out: &mut FqnFileOutput,
+    ) {
         let mut bindings = HashMap::new();
-        for stmt in &body.statements { collect_binding(stmt, &mut bindings); }
+        for stmt in &body.statements {
+            collect_binding(stmt, &mut bindings);
+        }
         let mut v = CallVisitor {
-            ctx, imports, class, bindings, caller_fqn,
-            source, seen: HashSet::new(), refs: Vec::new(),
+            ctx,
+            imports,
+            class,
+            bindings,
+            caller_fqn,
+            source,
+            seen: HashSet::new(),
+            refs: Vec::new(),
         };
-        for stmt in &body.statements { v.visit_statement(stmt); }
+        for stmt in &body.statements {
+            v.visit_statement(stmt);
+        }
         out.refs.append(&mut v.refs);
     }
 
@@ -605,7 +912,8 @@ pub(crate) mod typescript_fqn {
             for d in &var.declarations {
                 if let BindingPattern::BindingIdentifier(id) = &d.id
                     && let Some(Expression::NewExpression(n)) = &d.init
-                    && let Expression::Identifier(t) = &n.callee {
+                    && let Expression::Identifier(t) = &n.callee
+                {
                     map.insert(id.name.to_string(), t.name.to_string());
                 }
             }
@@ -631,7 +939,9 @@ pub(crate) mod typescript_fqn {
                     self.refs.push(FqnReference {
                         caller_fqn: self.caller_fqn.to_string(),
                         caller_line: line_of(self.source, call.span.start),
-                        target_fqn, target_name, is_lib,
+                        target_fqn,
+                        target_name,
+                        is_lib,
                     });
                 }
             }
@@ -644,15 +954,29 @@ pub(crate) mod typescript_fqn {
             match callee {
                 Expression::Identifier(id) => {
                     let name = id.name.to_string();
-                    if TS_CALL_DENYLIST.contains(&name.as_str()) { return None; }
+                    if TS_CALL_DENYLIST.contains(&name.as_str()) {
+                        return None;
+                    }
                     Some(self.resolve_name(&name))
                 }
                 Expression::StaticMemberExpression(m) => {
                     let method = m.property.name.to_string();
-                    if TS_CALL_DENYLIST.contains(&method.as_str()) { return None; }
+                    if TS_CALL_DENYLIST.contains(&method.as_str()) {
+                        return None;
+                    }
                     match &m.object {
                         Expression::ThisExpression(_) => match self.class {
-                            Some(cls) => Some((Some(fqn::method(TS_LANG, &self.ctx.package, &self.ctx.module, cls, &method)), false, method)),
+                            Some(cls) => Some((
+                                Some(fqn::method(
+                                    TS_LANG,
+                                    &self.ctx.package,
+                                    &self.ctx.module,
+                                    cls,
+                                    &method,
+                                )),
+                                false,
+                                method,
+                            )),
                             None => Some((None, false, method)),
                         },
                         Expression::Identifier(oid) => {
@@ -661,7 +985,17 @@ pub(crate) mod typescript_fqn {
                                 return Some(self.resolve_member(t, &method));
                             }
                             if let Some(ty) = self.bindings.get(oname) {
-                                return Some((Some(fqn::method(TS_LANG, &self.ctx.package, &self.ctx.module, ty, &method)), false, method));
+                                return Some((
+                                    Some(fqn::method(
+                                        TS_LANG,
+                                        &self.ctx.package,
+                                        &self.ctx.module,
+                                        ty,
+                                        &method,
+                                    )),
+                                    false,
+                                    method,
+                                ));
                             }
                             Some((None, false, method))
                         }
@@ -673,16 +1007,30 @@ pub(crate) mod typescript_fqn {
         }
         fn resolve_name(&self, name: &str) -> (Option<String>, bool, String) {
             match self.imports.get(name) {
-                Some(t) if t.external => (Some(fqn::lib(&t.module_or_pkg, &t.spec, name)), true, name.to_string()),
-                Some(t) => (Some(fqn::item(TS_LANG, &self.ctx.package, &t.module_or_pkg, name)), false, name.to_string()),
-                None => (Some(fqn::item(TS_LANG, &self.ctx.package, &self.ctx.module, name)), false, name.to_string()),
+                Some(t) if t.external => {
+                    (Some(fqn::lib(&t.module_or_pkg, &t.spec, name)), true, name.to_string())
+                }
+                Some(t) => (
+                    Some(fqn::item(TS_LANG, &self.ctx.package, &t.module_or_pkg, name)),
+                    false,
+                    name.to_string(),
+                ),
+                None => (
+                    Some(fqn::item(TS_LANG, &self.ctx.package, &self.ctx.module, name)),
+                    false,
+                    name.to_string(),
+                ),
             }
         }
         fn resolve_member(&self, t: &ImportTarget, method: &str) -> (Option<String>, bool, String) {
             if t.external {
                 (Some(fqn::lib(&t.module_or_pkg, &t.spec, method)), true, method.to_string())
             } else {
-                (Some(fqn::item(TS_LANG, &self.ctx.package, &t.module_or_pkg, method)), false, method.to_string())
+                (
+                    Some(fqn::item(TS_LANG, &self.ctx.package, &t.module_or_pkg, method)),
+                    false,
+                    method.to_string(),
+                )
             }
         }
     }
@@ -695,7 +1043,8 @@ pub(crate) mod typescript_fqn {
         while let Some(d) = dir {
             let manifest = d.join("package.json");
             if manifest.is_file()
-                && let Some(package) = package_json_name(&manifest) {
+                && let Some(package) = package_json_name(&manifest)
+            {
                 return Some(FileFqnContext { package, module: ts_module_path(file, d) });
             }
             dir = d.parent();
@@ -709,12 +1058,15 @@ pub(crate) mod typescript_fqn {
     }
     fn ts_module_path(file: &std::path::Path, pkg_root: &std::path::Path) -> String {
         let rel = file.strip_prefix(pkg_root).unwrap_or(file);
-        let mut comps: Vec<String> = rel.components().filter_map(|c| c.as_os_str().to_str().map(str::to_string)).collect();
+        let mut comps: Vec<String> =
+            rel.components().filter_map(|c| c.as_os_str().to_str().map(str::to_string)).collect();
         if let Some(last) = comps.last_mut() {
             *last = strip_ext(last).to_string();
         }
         // Strip a leading `src/` so `src/lib/util` → `lib/util`.
-        if comps.first().map(String::as_str) == Some("src") { comps.remove(0); }
+        if comps.first().map(String::as_str) == Some("src") {
+            comps.remove(0);
+        }
         comps.join("/")
     }
 }
@@ -723,35 +1075,64 @@ pub(crate) mod typescript_fqn {
 mod tests {
     use super::*;
 
-    fn parse_ts_src(src: &str) -> ParsedFile { TypeScriptAdapter.parse(src, "test.ts") }
-    fn parse_js_src(src: &str) -> ParsedFile { JavaScriptAdapter.parse(src, "test.js") }
+    fn parse_ts_src(src: &str) -> ParsedFile {
+        TypeScriptAdapter.parse(src, "test.ts")
+    }
+    fn parse_js_src(src: &str) -> ParsedFile {
+        JavaScriptAdapter.parse(src, "test.js")
+    }
 
     // ── FQN producer (Phase 6.1) ────────────────────────────────────────────
     use crate::languages::fqn::{FileFqnContext, FqnFileOutput, FqnReference};
     fn produce_ts(src: &str, package: &str, module: &str) -> FqnFileOutput {
-        typescript_fqn::produce_fqns(src, &FileFqnContext { package: package.into(), module: module.into() })
+        typescript_fqn::produce_fqns(
+            src,
+            &FileFqnContext { package: package.into(), module: module.into() },
+        )
     }
     fn def_fqn<'a>(out: &'a FqnFileOutput, name: &str) -> &'a str {
         out.defs.iter().find(|d| d.name == name).map(|d| d.fqn.as_str()).unwrap_or("<no-def>")
     }
     fn ref_to<'a>(out: &'a FqnFileOutput, target_name: &str) -> &'a FqnReference {
-        out.refs.iter().find(|r| r.target_name == target_name)
+        out.refs
+            .iter()
+            .find(|r| r.target_name == target_name)
             .unwrap_or_else(|| panic!("no ref to `{target_name}` in {:?}", out.refs))
     }
 
     #[test]
     fn ts_def_fqn() {
-        let out = produce_ts("export function top() {}\nexport class Widget {\n  spin() {}\n}\n", "app", "lib/util");
-        assert_eq!(def_fqn(&out, "top"), "typescript·app·lib/util·top", "module = package-relative path");
+        let out = produce_ts(
+            "export function top() {}\nexport class Widget {\n  spin() {}\n}\n",
+            "app",
+            "lib/util",
+        );
+        assert_eq!(
+            def_fqn(&out, "top"),
+            "typescript·app·lib/util·top",
+            "module = package-relative path"
+        );
         assert_eq!(def_fqn(&out, "Widget"), "typescript·app·lib/util·Widget");
-        assert_eq!(def_fqn(&out, "spin"), "typescript·app·lib/util·Widget·spin", "method nests on its class");
+        assert_eq!(
+            def_fqn(&out, "spin"),
+            "typescript·app·lib/util·Widget·spin",
+            "method nests on its class"
+        );
     }
 
     #[test]
     fn ts_ref_fqn_import() {
-        let out = produce_ts("import { helper } from './util';\nexport function build() { helper(); }\n", "app", "lib/builder");
+        let out = produce_ts(
+            "import { helper } from './util';\nexport function build() { helper(); }\n",
+            "app",
+            "lib/builder",
+        );
         let r = ref_to(&out, "helper");
-        assert_eq!(r.target_fqn.as_deref(), Some("typescript·app·lib/util·helper"), "relative import resolves to the sibling module");
+        assert_eq!(
+            r.target_fqn.as_deref(),
+            Some("typescript·app·lib/util·helper"),
+            "relative import resolves to the sibling module"
+        );
         assert!(!r.is_lib);
         assert_eq!(r.caller_fqn, "typescript·app·lib/builder·build");
     }
@@ -760,15 +1141,31 @@ mod tests {
     fn ts_method_scope() {
         let src = "class Engine {\n  run() {\n    this.tick();\n    const g = new Gadget();\n    g.spin();\n  }\n  tick() {}\n}\n";
         let out = produce_ts(src, "app", "engine");
-        assert_eq!(ref_to(&out, "tick").target_fqn.as_deref(), Some("typescript·app·engine·Engine·tick"), "this.m → enclosing class");
-        assert_eq!(ref_to(&out, "spin").target_fqn.as_deref(), Some("typescript·app·engine·Gadget·spin"), "const x = new T(); x.m() → T.m (0.7 binding)");
+        assert_eq!(
+            ref_to(&out, "tick").target_fqn.as_deref(),
+            Some("typescript·app·engine·Engine·tick"),
+            "this.m → enclosing class"
+        );
+        assert_eq!(
+            ref_to(&out, "spin").target_fqn.as_deref(),
+            Some("typescript·app·engine·Gadget·spin"),
+            "const x = new T(); x.m() → T.m (0.7 binding)"
+        );
     }
 
     #[test]
     fn ts_external_is_lib() {
-        let out = produce_ts("import { readFile } from 'fs';\nexport function load() { readFile('/x'); }\n", "app", "io");
+        let out = produce_ts(
+            "import { readFile } from 'fs';\nexport function load() { readFile('/x'); }\n",
+            "app",
+            "io",
+        );
         let r = ref_to(&out, "readFile");
-        assert_eq!(r.target_fqn.as_deref(), Some("lib·fs·fs·readFile"), "bare-package import → lib node");
+        assert_eq!(
+            r.target_fqn.as_deref(),
+            Some("lib·fs·fs·readFile"),
+            "bare-package import → lib node"
+        );
         assert!(r.is_lib);
     }
 
@@ -833,10 +1230,8 @@ mod tests {
 
     #[test]
     fn tsx_jsx() {
-        let pf = TypeScriptAdapter.parse(
-            "export function App() { return <div>Hello</div>; }",
-            "test.tsx",
-        );
+        let pf = TypeScriptAdapter
+            .parse("export function App() { return <div>Hello</div>; }", "test.tsx");
         assert_eq!(pf.symbols.len(), 1);
         assert_eq!(pf.symbols[0].name, "App");
     }
@@ -850,10 +1245,7 @@ mod tests {
 
     #[test]
     fn js_jsx() {
-        let pf = JavaScriptAdapter.parse(
-            "function App() { return <div/>; }",
-            "test.jsx",
-        );
+        let pf = JavaScriptAdapter.parse("function App() { return <div/>; }", "test.jsx");
         assert_eq!(pf.symbols.len(), 1);
     }
 

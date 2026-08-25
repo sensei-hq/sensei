@@ -74,8 +74,12 @@ pub struct InferredBinding {
 /// matched owner slug so the About chip can explain the suggestion. `None` when
 /// no membership covers the project's owner. Pure — matching is case-insensitive
 /// (both sides are lowercased; owners come from `remote_owner_slug`).
-pub fn infer_binding(project_owners: &[String], candidates: &[BindCandidate]) -> Option<InferredBinding> {
-    let owners: Vec<String> = project_owners.iter().map(|o| o.trim().to_ascii_lowercase()).collect();
+pub fn infer_binding(
+    project_owners: &[String],
+    candidates: &[BindCandidate],
+) -> Option<InferredBinding> {
+    let owners: Vec<String> =
+        project_owners.iter().map(|o| o.trim().to_ascii_lowercase()).collect();
     for kind in KIND_PRECEDENCE {
         for c in candidates.iter().filter(|c| c.kind == kind) {
             if let Some(matched) = c
@@ -155,7 +159,11 @@ fn ids_of(candidates: &[MembershipRef], kind: MembershipKind) -> Vec<uuid::Uuid>
     candidates.iter().filter(|m| m.kind == kind).map(|m| m.membership_id).collect()
 }
 
-fn targets_of(candidates: &[MembershipRef], kind: MembershipKind, dereference: bool) -> Vec<RouteTarget> {
+fn targets_of(
+    candidates: &[MembershipRef],
+    kind: MembershipKind,
+    dereference: bool,
+) -> Vec<RouteTarget> {
     candidates
         .iter()
         .filter(|m| m.kind == kind)
@@ -193,7 +201,11 @@ pub fn client_precedence_route(
                 dereference: is_client,
             }],
             // Client precedence: an employer must NOT also receive client work.
-            excluded: if is_client { ids_of(candidates, MembershipKind::Employer) } else { Vec::new() },
+            excluded: if is_client {
+                ids_of(candidates, MembershipKind::Employer)
+            } else {
+                Vec::new()
+            },
         };
     }
 
@@ -225,14 +237,21 @@ mod tests {
     fn client_binding_routes_to_client_dereferenced_and_excludes_employer() {
         let client = m(MembershipKind::Client);
         let employer = m(MembershipKind::Employer);
-        let d = client_precedence_route(&[client, employer], &Contribution::bound_to(client.membership_id));
+        let d = client_precedence_route(
+            &[client, employer],
+            &Contribution::bound_to(client.membership_id),
+        );
 
         assert_eq!(d.targets.len(), 1, "client work routes to exactly one Dōjō");
         assert_eq!(d.targets[0].membership_id, client.membership_id);
         assert_eq!(d.targets[0].kind, MembershipKind::Client);
         assert!(d.targets[0].dereference, "client work is source-dereferenced");
         assert!(d.has_client_target() && !d.has_employer_target(), "client wins uniquely");
-        assert_eq!(d.excluded, vec![employer.membership_id], "employer explicitly excluded, not silently dropped");
+        assert_eq!(
+            d.excluded,
+            vec![employer.membership_id],
+            "employer explicitly excluded, not silently dropped"
+        );
     }
 
     #[test]
@@ -240,7 +259,10 @@ mod tests {
         let client = m(MembershipKind::Client);
         let e1 = m(MembershipKind::Employer);
         let e2 = m(MembershipKind::Employer);
-        let d = client_precedence_route(&[e1, client, e2], &Contribution::bound_to(client.membership_id));
+        let d = client_precedence_route(
+            &[e1, client, e2],
+            &Contribution::bound_to(client.membership_id),
+        );
         assert!(!d.has_employer_target());
         assert!(d.excluded.contains(&e1.membership_id) && d.excluded.contains(&e2.membership_id));
         assert_eq!(d.excluded.len(), 2);
@@ -250,7 +272,10 @@ mod tests {
     fn employer_binding_routes_to_employer_named_not_dereferenced() {
         let employer = m(MembershipKind::Employer);
         let community = m(MembershipKind::Community);
-        let d = client_precedence_route(&[employer, community], &Contribution::bound_to(employer.membership_id));
+        let d = client_precedence_route(
+            &[employer, community],
+            &Contribution::bound_to(employer.membership_id),
+        );
         assert_eq!(d.targets.len(), 1);
         assert_eq!(d.targets[0].kind, MembershipKind::Employer);
         assert!(!d.targets[0].dereference, "employer work is org-internal, not dereferenced");
@@ -260,7 +285,8 @@ mod tests {
     #[test]
     fn community_binding_routes_to_community() {
         let community = m(MembershipKind::Community);
-        let d = client_precedence_route(&[community], &Contribution::bound_to(community.membership_id));
+        let d =
+            client_precedence_route(&[community], &Contribution::bound_to(community.membership_id));
         assert_eq!(d.targets[0].kind, MembershipKind::Community);
         assert!(!d.targets[0].dereference);
     }
@@ -268,7 +294,8 @@ mod tests {
     #[test]
     fn personal_binding_routes_to_personal() {
         let personal = m(MembershipKind::Personal);
-        let d = client_precedence_route(&[personal], &Contribution::bound_to(personal.membership_id));
+        let d =
+            client_precedence_route(&[personal], &Contribution::bound_to(personal.membership_id));
         assert_eq!(d.targets[0].kind, MembershipKind::Personal);
         assert!(!d.targets[0].dereference);
     }
@@ -333,7 +360,10 @@ mod tests {
         // when the developer also holds a client membership on another project.
         let employer = m(MembershipKind::Employer);
         let unrelated_client = m(MembershipKind::Client);
-        let d = client_precedence_route(&[employer, unrelated_client], &Contribution::bound_to(employer.membership_id));
+        let d = client_precedence_route(
+            &[employer, unrelated_client],
+            &Contribution::bound_to(employer.membership_id),
+        );
         assert_eq!(d.targets.len(), 1);
         assert_eq!(d.targets[0].kind, MembershipKind::Employer);
         assert!(!d.targets[0].dereference);
@@ -345,7 +375,8 @@ mod tests {
         // client ever also targets an employer.
         let client = m(MembershipKind::Client);
         let employer = m(MembershipKind::Employer);
-        for contribution in [Contribution::bound_to(client.membership_id), Contribution::default()] {
+        for contribution in [Contribution::bound_to(client.membership_id), Contribution::default()]
+        {
             let d = client_precedence_route(&[client, employer], &contribution);
             assert!(!(d.has_client_target() && d.has_employer_target()));
         }
@@ -373,7 +404,8 @@ mod tests {
     #[test]
     fn infer_binding_is_case_insensitive_on_both_sides() {
         let c = cand(MembershipKind::Community, &["Sensei-HQ"]);
-        let got = infer_binding(&["SENSEI-hq".into()], std::slice::from_ref(&c)).expect("case-insensitive match");
+        let got = infer_binding(&["SENSEI-hq".into()], std::slice::from_ref(&c))
+            .expect("case-insensitive match");
         assert_eq!(got.membership_id, c.membership_id);
     }
 
@@ -384,7 +416,8 @@ mod tests {
         // confidentiality-safe default the user then confirms.
         let employer = cand(MembershipKind::Employer, &["acme"]);
         let client = cand(MembershipKind::Client, &["acme"]);
-        let got = infer_binding(&["acme".into()], &[employer.clone(), client.clone()]).expect("a match");
+        let got =
+            infer_binding(&["acme".into()], &[employer.clone(), client.clone()]).expect("a match");
         assert_eq!(got.membership_id, client.membership_id, "client wins over employer");
         assert_eq!(got.kind, MembershipKind::Client);
     }
@@ -412,8 +445,9 @@ mod tests {
         // A monorepo/project can expose several remote owners; a membership
         // covering any one of them is a candidate.
         let c = cand(MembershipKind::Employer, &["acme-labs"]);
-        let got = infer_binding(&["personal-fork".into(), "acme-labs".into()], std::slice::from_ref(&c))
-            .expect("second owner matches");
+        let got =
+            infer_binding(&["personal-fork".into(), "acme-labs".into()], std::slice::from_ref(&c))
+                .expect("second owner matches");
         assert_eq!(got.matched_slug, "acme-labs");
     }
 }

@@ -21,13 +21,13 @@
 //!   is expensive, so a daily cadence keeps `inference.communities` current
 //!   without dominating the queue on hot ticks.
 
-use std::collections::HashMap;
-use std::sync::Arc;
-use std::time::Duration;
-use chrono::{DateTime, Utc};
 use crate::db::pg_store::PgStore;
 use crate::tasks::queue::TaskQueue;
 use crate::tasks::{Task, TaskKind};
+use chrono::{DateTime, Utc};
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::time::Duration;
 
 const DEFAULT_INTERVAL_SECS: u64 = 3600;
 /// Re-analyze every active project at least this often, regardless of new
@@ -240,7 +240,9 @@ async fn run(queue: Arc<TaskQueue>, pg: Arc<PgStore>) {
                 match pg.get_indexed_folder_paths_for_project(pid).await {
                     Ok(paths) => {
                         for abs_path in paths {
-                            queue.enqueue(Task::new(TaskKind::DetectCommunities, &abs_path, "")).await;
+                            queue
+                                .enqueue(Task::new(TaskKind::DetectCommunities, &abs_path, ""))
+                                .await;
                         }
                     }
                     Err(e) => {
@@ -336,9 +338,13 @@ mod tests {
         for _ in 0..n {
             kinds.push(queue.next_task().await.kind);
         }
-        let ci = kinds.iter().position(|k| *k == TaskKind::ClassifyPendingVerdicts)
+        let ci = kinds
+            .iter()
+            .position(|k| *k == TaskKind::ClassifyPendingVerdicts)
             .expect("ClassifyPendingVerdicts enqueued");
-        let ai = kinds.iter().position(|k| *k == TaskKind::AggregateToolInsights)
+        let ai = kinds
+            .iter()
+            .position(|k| *k == TaskKind::AggregateToolInsights)
             .expect("AggregateToolInsights enqueued");
         assert!(
             ci < ai,

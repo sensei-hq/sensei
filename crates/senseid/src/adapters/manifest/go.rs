@@ -12,7 +12,7 @@
 //! the workspace's members.
 
 use super::{ManifestAdapter, ParsedManifest};
-use crate::indexer::lib_indexer::{clean_version, DepVersion};
+use crate::indexer::lib_indexer::{DepVersion, clean_version};
 use crate::types::PackageInfo;
 use std::path::Path;
 
@@ -80,8 +80,8 @@ impl ManifestAdapter for GoManifestAdapter {
             .filter(|s| !s.is_empty());
         ParsedManifest {
             name,
-            version: None,       // go.mod doesn't declare a module version
-            description: None,   // no description field in go.mod
+            version: None,     // go.mod doesn't declare a module version
+            description: None, // no description field in go.mod
         }
     }
 
@@ -132,14 +132,17 @@ impl ManifestAdapter for GoManifestAdapter {
     /// enforces formatting; `go mod tidy` cleans deps. These are the same
     /// across every Go project.
     fn parse_commands(&self, _content: &str) -> Vec<super::DiscoveredCommand> {
-        super::conventional_commands("go", &[
-            ("test ./...",  "test"),
-            ("build ./...", "build"),
-            ("vet ./...",   "lint"),
-            ("fmt ./...",   "format"),
-            ("mod tidy",    "run"),
-            ("run .",       "run"),
-        ])
+        super::conventional_commands(
+            "go",
+            &[
+                ("test ./...", "test"),
+                ("build ./...", "build"),
+                ("vet ./...", "lint"),
+                ("fmt ./...", "format"),
+                ("mod tidy", "run"),
+                ("run .", "run"),
+            ],
+        )
     }
 }
 

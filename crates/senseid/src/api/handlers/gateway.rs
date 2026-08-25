@@ -1,7 +1,7 @@
 use axum::extract::State;
 use axum::response::Json;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::api::state::AppState;
 use gateway::purpose::*;
@@ -22,22 +22,22 @@ pub(crate) async fn gateway_status(State(state): State<AppState>) -> Json<Value>
 
 #[derive(Deserialize)]
 pub(crate) struct MessageInput {
-    pub role:    String,
+    pub role: String,
     pub content: String,
 }
 
 #[derive(Deserialize)]
 pub(crate) struct InferRequest {
-    pub capability:   String,
-    pub prompt:       Option<String>,
-    pub messages:     Option<Vec<MessageInput>>,
-    pub system:       Option<String>,
-    pub texts:        Option<Vec<String>>,
-    pub model:        Option<String>,
-    pub max_tokens:   Option<u32>,
+    pub capability: String,
+    pub prompt: Option<String>,
+    pub messages: Option<Vec<MessageInput>>,
+    pub system: Option<String>,
+    pub texts: Option<Vec<String>>,
+    pub model: Option<String>,
+    pub max_tokens: Option<u32>,
     /// Optional named chain to resolve through (e.g. "classify", "reasoning").
     /// Omit to resolve by capability (tier-3).
-    pub chain:        Option<String>,
+    pub chain: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -57,9 +57,9 @@ pub(crate) async fn infer(
 
     // Parse capability from string
     let capability = match body.capability.as_str() {
-        "text_chat"     => Capability::TextChat,
+        "text_chat" => Capability::TextChat,
         "text_complete" => Capability::TextComplete,
-        "text_embed"    => Capability::TextEmbed,
+        "text_embed" => Capability::TextEmbed,
         other => {
             return Json(json!({"error": format!("unsupported capability: {}", other)}));
         }
@@ -87,9 +87,8 @@ pub(crate) async fn infer(
     // Build payload
     let payload = match capability {
         Capability::TextEmbed => {
-            let texts = body.texts.unwrap_or_else(|| {
-                body.prompt.map(|p| vec![p]).unwrap_or_default()
-            });
+            let texts =
+                body.texts.unwrap_or_else(|| body.prompt.map(|p| vec![p]).unwrap_or_default());
             Payload::Embed { texts }
         }
         _ => Payload::Chat {
@@ -199,11 +198,8 @@ pub(crate) async fn consensus(
     State(state): State<AppState>,
     Json(body): Json<ConsensusRequest>,
 ) -> Json<Value> {
-    let context_section = body
-        .context
-        .as_ref()
-        .map(|c| format!("\n\nContext:\n{c}"))
-        .unwrap_or_default();
+    let context_section =
+        body.context.as_ref().map(|c| format!("\n\nContext:\n{c}")).unwrap_or_default();
 
     let signal_with_context = format!("{}{}", body.signal, context_section);
 
@@ -215,21 +211,12 @@ pub(crate) async fn consensus(
 
     match execute_purpose(&state.gateway, &purpose, &signal_with_context).await {
         Ok(result) => {
-            let proposer_output = result
-                .steps
-                .first()
-                .map(|s| s.output.clone())
-                .unwrap_or_default();
-            let challenger_output = result
-                .steps
-                .get(1)
-                .map(|s| s.output.clone())
-                .unwrap_or_default();
-            let synthesizer_output = result
-                .steps
-                .get(2)
-                .map(|s| s.output.clone())
-                .unwrap_or_default();
+            let proposer_output =
+                result.steps.first().map(|s| s.output.clone()).unwrap_or_default();
+            let challenger_output =
+                result.steps.get(1).map(|s| s.output.clone()).unwrap_or_default();
+            let synthesizer_output =
+                result.steps.get(2).map(|s| s.output.clone()).unwrap_or_default();
 
             let confidence = extract_confidence(&synthesizer_output);
 
@@ -257,15 +244,12 @@ pub(crate) fn build_consensus_purpose(
     challenger_model: Option<&str>,
     synthesizer_model: Option<&str>,
 ) -> Purpose {
-    let proposer_hint = proposer_model
-        .map(|m| ModelHint::Specific(m.to_string()))
-        .unwrap_or(ModelHint::Best);
-    let challenger_hint = challenger_model
-        .map(|m| ModelHint::Specific(m.to_string()))
-        .unwrap_or(ModelHint::Balanced);
-    let synthesizer_hint = synthesizer_model
-        .map(|m| ModelHint::Specific(m.to_string()))
-        .unwrap_or(ModelHint::Best);
+    let proposer_hint =
+        proposer_model.map(|m| ModelHint::Specific(m.to_string())).unwrap_or(ModelHint::Best);
+    let challenger_hint =
+        challenger_model.map(|m| ModelHint::Specific(m.to_string())).unwrap_or(ModelHint::Balanced);
+    let synthesizer_hint =
+        synthesizer_model.map(|m| ModelHint::Specific(m.to_string())).unwrap_or(ModelHint::Best);
 
     PurposeBuilder::new("moe_consensus")
         .description("Multi-model debate: propose \u{2192} challenge \u{2192} synthesize consensus")
@@ -365,15 +349,9 @@ mod tests {
 
     #[test]
     fn build_consensus_purpose_custom_models() {
-        let purpose = build_consensus_purpose(
-            Some("gpt-4"),
-            Some("claude-haiku"),
-            Some("gemini-pro"),
-        );
-        assert_eq!(
-            purpose.steps[0].model_hint,
-            Some(ModelHint::Specific("gpt-4".to_string())),
-        );
+        let purpose =
+            build_consensus_purpose(Some("gpt-4"), Some("claude-haiku"), Some("gemini-pro"));
+        assert_eq!(purpose.steps[0].model_hint, Some(ModelHint::Specific("gpt-4".to_string())),);
         assert_eq!(
             purpose.steps[1].model_hint,
             Some(ModelHint::Specific("claude-haiku".to_string())),
@@ -386,10 +364,7 @@ mod tests {
 
     #[test]
     fn extract_confidence_high() {
-        assert_eq!(
-            extract_confidence("CONFIDENCE: high \u{2014} all models agree"),
-            "high",
-        );
+        assert_eq!(extract_confidence("CONFIDENCE: high \u{2014} all models agree"), "high",);
     }
 
     #[test]
@@ -402,10 +377,7 @@ mod tests {
 
     #[test]
     fn extract_confidence_medium() {
-        assert_eq!(
-            extract_confidence("CONFIDENCE: medium \u{2014} partial agreement"),
-            "medium",
-        );
+        assert_eq!(extract_confidence("CONFIDENCE: medium \u{2014} partial agreement"), "medium",);
     }
 
     #[test]

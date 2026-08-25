@@ -7,9 +7,8 @@ use std::path::{Path, PathBuf};
 /// Directory names skipped during the scan walk: dependency/build output and
 /// generated/OS junk that never contains first-party source. Kept in one place
 /// so `walk_for_git` and `walk_dirs` agree.
-const IGNORED_DIRS: &[&str] = &[
-    "node_modules", "dist", "build", "target", "__pycache__", "__MACOSX",
-];
+const IGNORED_DIRS: &[&str] =
+    &["node_modules", "dist", "build", "target", "__pycache__", "__MACOSX"];
 
 /// How deep the scan walk descends from a watch root. Lifted from the old
 /// hardcoded `3` (D15): a submodule / vendored checkout nested a few levels
@@ -68,7 +67,9 @@ pub fn is_excluded(path: &Path, exclusions: &[String]) -> bool {
 }
 
 fn walk_for_git(dir: &Path, depth: u32, max_depth: u32, out: &mut Vec<PathBuf>) {
-    if depth > max_depth { return; }
+    if depth > max_depth {
+        return;
+    }
     let entries = match std::fs::read_dir(dir) {
         Ok(e) => e,
         Err(_) => return,
@@ -79,8 +80,12 @@ fn walk_for_git(dir: &Path, depth: u32, max_depth: u32, out: &mut Vec<PathBuf>) 
         // Skip symlinks: a symlinked repo (e.g. `sensei-hq/gateway` →
         // `strategos/gateway`) is already reached via its real path, so following
         // the link would classify the same repo twice → two projects.
-        if entry.file_type().map(|t| t.is_symlink()).unwrap_or(false) { continue; }
-        if !path.is_dir() { continue; }
+        if entry.file_type().map(|t| t.is_symlink()).unwrap_or(false) {
+            continue;
+        }
+        if !path.is_dir() {
+            continue;
+        }
 
         // Detect-before-prune (D15d): record a checkout even when its own
         // directory name is dotfile-prefixed or an IGNORED_DIRS build-output
@@ -97,7 +102,9 @@ fn walk_for_git(dir: &Path, depth: u32, max_depth: u32, out: &mut Vec<PathBuf>) 
         }
 
         // A non-checkout dir: prune generated / hidden dirs, else keep descending.
-        if name.starts_with('.') || IGNORED_DIRS.contains(&name.as_str()) { continue; }
+        if name.starts_with('.') || IGNORED_DIRS.contains(&name.as_str()) {
+            continue;
+        }
         walk_for_git(&path, depth + 1, max_depth, out);
     }
 }
@@ -108,7 +115,9 @@ pub fn ancestor_set(root: &Path, git_folders: &[PathBuf]) -> std::collections::H
     for gf in git_folders {
         let mut current = gf.parent();
         while let Some(p) = current {
-            if p == root { break; }
+            if p == root {
+                break;
+            }
             ancestors.insert(p.to_path_buf());
             current = p.parent();
         }
@@ -144,7 +153,9 @@ pub fn all_directories(root: &Path, max_depth: u32) -> Vec<PathBuf> {
 }
 
 fn walk_dirs(dir: &Path, depth: u32, max_depth: u32, out: &mut Vec<PathBuf>) {
-    if depth > max_depth { return; }
+    if depth > max_depth {
+        return;
+    }
     let entries = match std::fs::read_dir(dir) {
         Ok(e) => e,
         Err(_) => return,
@@ -152,8 +163,12 @@ fn walk_dirs(dir: &Path, depth: u32, max_depth: u32, out: &mut Vec<PathBuf>) {
     for entry in entries.flatten() {
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().to_string();
-        if !path.is_dir() || name.starts_with('.') { continue; }
-        if IGNORED_DIRS.contains(&name.as_str()) { continue; }
+        if !path.is_dir() || name.starts_with('.') {
+            continue;
+        }
+        if IGNORED_DIRS.contains(&name.as_str()) {
+            continue;
+        }
 
         out.push(path.clone());
         // Don't recurse into a checkout — its contents are that repo's content,
@@ -187,7 +202,8 @@ pub fn classify_folders(
     let git_set: std::collections::HashSet<&PathBuf> = git_folders.iter().collect();
     let ancestors = ancestor_set(root, git_folders);
 
-    let mut result: Vec<DiscoveredFolder> = git_folders.iter()
+    let mut result: Vec<DiscoveredFolder> = git_folders
+        .iter()
         .map(|gf| DiscoveredFolder {
             name: gf.file_name().and_then(|n| n.to_str()).unwrap_or("unknown").to_string(),
             path: gf.clone(),
@@ -200,10 +216,11 @@ pub fn classify_folders(
     let mut project_roots: Vec<PathBuf> = git_folders.to_vec();
 
     // Candidate non-git directories, shallowest first.
-    let mut candidates: Vec<&PathBuf> = all_dirs.iter()
-        .filter(|d| !git_set.contains(*d))                             // not a git repo itself
-        .filter(|d| !ancestors.contains(*d))                          // not a git-repo grouping container
-        .filter(|d| !is_inside_git_repo(d))                           // not inside ANY git repo (fs-checked, incl. a repo at/above the scan root)
+    let mut candidates: Vec<&PathBuf> = all_dirs
+        .iter()
+        .filter(|d| !git_set.contains(*d)) // not a git repo itself
+        .filter(|d| !ancestors.contains(*d)) // not a git-repo grouping container
+        .filter(|d| !is_inside_git_repo(d)) // not inside ANY git repo (fs-checked, incl. a repo at/above the scan root)
         .collect();
     candidates.sort_by_key(|d| d.components().count());
 
@@ -254,7 +271,8 @@ pub fn subfolder_tree(repo_path: &Path, file_dirs: &[PathBuf]) -> Vec<(PathBuf, 
     sorted
         .into_iter()
         .map(|d| {
-            let parent = d.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| repo_path.to_path_buf());
+            let parent =
+                d.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| repo_path.to_path_buf());
             (d, parent)
         })
         .collect()
@@ -336,8 +354,12 @@ pub fn is_monorepo(path: &Path) -> bool {
         }
     }
     // Filesystem-marker workspaces without a per-ecosystem manifest.
-    if path.join("pnpm-workspace.yaml").exists() { return true; }
-    if path.join("go.work").exists() { return true; }
+    if path.join("pnpm-workspace.yaml").exists() {
+        return true;
+    }
+    if path.join("go.work").exists() {
+        return true;
+    }
     false
 }
 
@@ -398,16 +420,17 @@ where
             // from a mere touch.
             Some((_, prev_hash)) => match hash_file(path) {
                 Some(h) if &h == prev_hash => plan.touched.push((path.clone(), *mtime, h)),
-                _ => { plan.changed.insert(path.clone()); }
+                _ => {
+                    plan.changed.insert(path.clone());
+                }
             },
             // Brand-new file: reindex (no prior to compare against, so no hash).
-            None => { plan.changed.insert(path.clone()); }
+            None => {
+                plan.changed.insert(path.clone());
+            }
         }
     }
-    plan.removed = prior.keys()
-        .filter(|path| !current_set.contains(*path))
-        .cloned()
-        .collect();
+    plan.removed = prior.keys().filter(|path| !current_set.contains(*path)).cloned().collect();
     plan
 }
 
@@ -434,12 +457,18 @@ pub fn detect_stack(path: &Path) -> Vec<String> {
     if path.join("requirements.txt").exists() && !stack.iter().any(|s| s == "python") {
         stack.push("python".into());
     }
-    if path.join("Package.swift").exists() { stack.push("swift".into()); }
-    if path.join("Gemfile").exists() { stack.push("ruby".into()); }
+    if path.join("Package.swift").exists() {
+        stack.push("swift".into());
+    }
+    if path.join("Gemfile").exists() {
+        stack.push("ruby".into());
+    }
     // .NET — solution/project manifests use globbed names (Foo.sln, Bar.csproj),
     // so scan the directory rather than checking a fixed filename. A fixed
     // global.json (SDK pin) also marks a .NET root.
-    if path.join("global.json").exists() || dir_has_ext(path, &["sln", "csproj", "fsproj", "vbproj"]) {
+    if path.join("global.json").exists()
+        || dir_has_ext(path, &["sln", "csproj", "fsproj", "vbproj"])
+    {
         stack.push("dotnet".into());
     }
     stack
@@ -462,7 +491,6 @@ pub fn infer_role(path: &Path) -> Option<&'static str> {
     )
 }
 
-
 /// Pure role classifier from manifest contents + layout flags. Precedence:
 /// tool (ships a binary) > website (web app framework) > library (publishable
 /// lib) > docs. Delegates the per-ecosystem rules to `ManifestAdapter.infer_role`
@@ -476,13 +504,9 @@ pub fn classify_role(
     has_routes: bool,
     dir_name: &str,
 ) -> Option<&'static str> {
-    use crate::adapters::manifest::{manifest_adapter_for_filename, FsSignals};
+    use crate::adapters::manifest::{FsSignals, manifest_adapter_for_filename};
 
-    let fs = FsSignals {
-        has_lib_rs,
-        has_src_routes: has_routes,
-        dir_name: dir_name.to_string(),
-    };
+    let fs = FsSignals { has_lib_rs, has_src_routes: has_routes, dir_name: dir_name.to_string() };
     let cargo_adapter = manifest_adapter_for_filename("Cargo.toml");
     let npm_adapter = manifest_adapter_for_filename("package.json");
 
@@ -528,7 +552,9 @@ fn find_subprojects_walk(dir: &Path, depth: u32, max_depth: u32, out: &mut Vec<P
     if depth >= max_depth {
         return;
     }
-    let Ok(entries) = std::fs::read_dir(dir) else { return; };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
     let manifest_filenames = crate::adapters::manifest::all_manifest_filenames();
     let manifest_extensions = crate::adapters::manifest::all_manifest_extensions();
     for entry in entries.flatten() {
@@ -558,10 +584,14 @@ fn find_subprojects_walk(dir: &Path, depth: u32, max_depth: u32, out: &mut Vec<P
 /// (lowercase, no-dot) extensions. Used for manifests whose names are globbed
 /// rather than fixed (e.g. .NET `*.csproj` / `*.sln`).
 fn dir_has_ext(path: &Path, exts: &[&str]) -> bool {
-    let Ok(entries) = std::fs::read_dir(path) else { return false; };
+    let Ok(entries) = std::fs::read_dir(path) else {
+        return false;
+    };
     for entry in entries.flatten() {
         let p = entry.path();
-        if !p.is_file() { continue; }
+        if !p.is_file() {
+            continue;
+        }
         if let Some(ext) = p.extension().and_then(|e| e.to_str())
             && exts.contains(&ext.to_ascii_lowercase().as_str())
         {
@@ -580,16 +610,22 @@ pub fn count_indexable_files(path: &Path) -> (Vec<PathBuf>, u32) {
     let walker = super::helpers::build_walker(path).build();
 
     for entry in walker.flatten() {
-        if !entry.path().is_file() { continue; }
+        if !entry.path().is_file() {
+            continue;
+        }
         let rel = entry.path().strip_prefix(path).unwrap_or(entry.path());
         let rel_str = rel.to_string_lossy();
-        if exclude.is_match(&*rel_str) { continue; }
+        if exclude.is_match(&*rel_str) {
+            continue;
+        }
 
-        let ext = entry.path().extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("");
-        if ext.is_empty() { continue; }
-        if super::helpers::is_binary_ext(ext) { continue; }
+        let ext = entry.path().extension().and_then(|e| e.to_str()).unwrap_or("");
+        if ext.is_empty() {
+            continue;
+        }
+        if super::helpers::is_binary_ext(ext) {
+            continue;
+        }
 
         files.push(entry.path().to_path_buf());
     }
@@ -726,40 +762,122 @@ mod tests {
     #[test]
     fn classify_role_tool_from_binary() {
         // Explicit Cargo [[bin]] → tool (dbd's cli crate, sensei cli/mcp).
-        assert_eq!(classify_role(Some("[package]\nname=\"cli\"\n\n[[bin]]\nname=\"dbd\""), None, false, false, "cli"), Some("tool"));
+        assert_eq!(
+            classify_role(
+                Some("[package]\nname=\"cli\"\n\n[[bin]]\nname=\"dbd\""),
+                None,
+                false,
+                false,
+                "cli"
+            ),
+            Some("tool")
+        );
         // Node package that ships a CLI (`bin` field) (rokkit packages/cli) → tool.
-        assert_eq!(classify_role(None, Some("{\"name\":\"c\",\"bin\":{\"c\":\"./c.js\"}}"), false, false, "c"), Some("tool"));
+        assert_eq!(
+            classify_role(
+                None,
+                Some("{\"name\":\"c\",\"bin\":{\"c\":\"./c.js\"}}"),
+                false,
+                false,
+                "c"
+            ),
+            Some("tool")
+        );
         // A daemon binary (main.rs, NO [[bin]], server deps) is NOT a CLI tool —
         // it stays unclassified so a frontmatter role can label it backend.
-        assert_eq!(classify_role(Some("[package]\nname=\"senseid\"\n\n[dependencies]\naxum = \"0.7\"\nclap = \"4\""), None, false, false, "senseid"), None);
+        assert_eq!(
+            classify_role(
+                Some("[package]\nname=\"senseid\"\n\n[dependencies]\naxum = \"0.7\"\nclap = \"4\""),
+                None,
+                false,
+                false,
+                "senseid"
+            ),
+            None
+        );
     }
 
     #[test]
     fn classify_role_website_from_web_framework() {
         // SvelteKit app (rokkit apps/learn, dbd site) → website.
-        assert_eq!(classify_role(None, Some("{\"name\":\"learn\",\"devDependencies\":{\"@sveltejs/kit\":\"^2\"}}"), false, true, "learn"), Some("website"));
+        assert_eq!(
+            classify_role(
+                None,
+                Some("{\"name\":\"learn\",\"devDependencies\":{\"@sveltejs/kit\":\"^2\"}}"),
+                false,
+                true,
+                "learn"
+            ),
+            Some("website")
+        );
         // Web-app markers win over the library marker (an app also has a name).
-        assert_eq!(classify_role(None, Some("{\"name\":\"site\",\"type\":\"module\",\"devDependencies\":{\"@sveltejs/kit\":\"^2\"}}"), false, true, "site"), Some("website"));
+        assert_eq!(
+            classify_role(
+                None,
+                Some(
+                    "{\"name\":\"site\",\"type\":\"module\",\"devDependencies\":{\"@sveltejs/kit\":\"^2\"}}"
+                ),
+                false,
+                true,
+                "site"
+            ),
+            Some("website")
+        );
     }
 
     #[test]
     fn classify_role_library_from_lib_crate_or_package() {
         // Rust lib crate (dbd's core crates) → library.
-        assert_eq!(classify_role(Some("[package]\nname=\"core\""), None, true, false, "core"), Some("library"));
+        assert_eq!(
+            classify_role(Some("[package]\nname=\"core\""), None, true, false, "core"),
+            Some("library")
+        );
         // Publishable node package with exports (rokkit packages/*) → library.
-        assert_eq!(classify_role(None, Some("{\"name\":\"@rokkit/ui\",\"exports\":{\".\":\"./index.js\"}}"), false, false, "ui"), Some("library"));
+        assert_eq!(
+            classify_role(
+                None,
+                Some("{\"name\":\"@rokkit/ui\",\"exports\":{\".\":\"./index.js\"}}"),
+                false,
+                false,
+                "ui"
+            ),
+            Some("library")
+        );
         // A library that only lists @sveltejs/kit as a peer/dev dep (no src/routes)
         // is NOT a website (rokkit's unocss preset) → library.
-        assert_eq!(classify_role(None, Some("{\"name\":\"@rokkit/unocss\",\"exports\":{\".\":\"./i.js\"},\"peerDependencies\":{\"@sveltejs/kit\":\"^2\"}}"), false, false, "unocss"), Some("library"));
+        assert_eq!(
+            classify_role(
+                None,
+                Some(
+                    "{\"name\":\"@rokkit/unocss\",\"exports\":{\".\":\"./i.js\"},\"peerDependencies\":{\"@sveltejs/kit\":\"^2\"}}"
+                ),
+                false,
+                false,
+                "unocss"
+            ),
+            Some("library")
+        );
         // `"type": "module"` alone must NOT read as a library entry point.
-        assert_eq!(classify_role(None, Some("{\"name\":\"x\",\"type\":\"module\"}"), false, false, "x"), None);
+        assert_eq!(
+            classify_role(None, Some("{\"name\":\"x\",\"type\":\"module\"}"), false, false, "x"),
+            None
+        );
     }
 
     #[test]
     fn classify_role_none_or_docs() {
         assert_eq!(classify_role(None, None, false, false, "misc"), None);
         // A private root manifest with no name/entry stays unclassified.
-        assert_eq!(classify_role(None, Some("{\"private\":true,\"workspaces\":[\"packages/*\"]}"), false, false, "root"), None);
+        assert_eq!(
+            classify_role(
+                None,
+                Some("{\"private\":true,\"workspaces\":[\"packages/*\"]}"),
+                false,
+                false,
+                "root"
+            ),
+            None
+        );
         assert_eq!(classify_role(None, None, false, false, "docs"), Some("docs"));
     }
 
@@ -767,7 +885,8 @@ mod tests {
     fn infer_role_reads_manifest_from_disk() {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(tmp.path().join("src")).unwrap();
-        std::fs::write(tmp.path().join("Cargo.toml"), "[package]\nname=\"c\"\n[[bin]]\nname=\"c\"").unwrap();
+        std::fs::write(tmp.path().join("Cargo.toml"), "[package]\nname=\"c\"\n[[bin]]\nname=\"c\"")
+            .unwrap();
         std::fs::write(tmp.path().join("src/main.rs"), "fn main(){}").unwrap();
         assert_eq!(infer_role(tmp.path()), Some("tool"));
     }
@@ -831,7 +950,8 @@ mod tests {
     fn find_git_folders_discovers_all() {
         let fixture = create_fixture();
         let gits = find_git_folders(fixture.path(), 3);
-        let names: Vec<&str> = gits.iter().map(|p| p.file_name().unwrap().to_str().unwrap()).collect();
+        let names: Vec<&str> =
+            gits.iter().map(|p| p.file_name().unwrap().to_str().unwrap()).collect();
         assert_eq!(names.len(), 4);
         assert!(names.contains(&"fldr_1"));
         assert!(names.contains(&"fldr_2"));
@@ -848,10 +968,14 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path();
         std::fs::create_dir_all(root.join("strategos/gateway/.git")).unwrap();
-        std::os::unix::fs::symlink(root.join("strategos/gateway"), root.join("sensei-hq_gateway")).unwrap();
+        std::os::unix::fs::symlink(root.join("strategos/gateway"), root.join("sensei-hq_gateway"))
+            .unwrap();
         let gits = find_git_folders(root, 3);
         assert_eq!(gits.len(), 1, "symlinked repo counted once, got {gits:?}");
-        assert!(gits[0].ends_with("strategos/gateway"), "canonicalized to the real path, got {gits:?}");
+        assert!(
+            gits[0].ends_with("strategos/gateway"),
+            "canonicalized to the real path, got {gits:?}"
+        );
     }
 
     // ── D15: checkout detection + nested/deep discovery ──────────────────
@@ -885,7 +1009,10 @@ mod tests {
         std::fs::create_dir_all(root.join("repo/vendor/lib/.git")).unwrap();
         let gits = find_git_folders(root, MAX_SCAN_DEPTH);
         assert!(gits.iter().any(|p| p.ends_with("repo")), "outer repo discovered: {gits:?}");
-        assert!(gits.iter().any(|p| p.ends_with("repo/vendor/lib")), "nested checkout discovered: {gits:?}");
+        assert!(
+            gits.iter().any(|p| p.ends_with("repo/vendor/lib")),
+            "nested checkout discovered: {gits:?}"
+        );
     }
 
     #[test]
@@ -899,7 +1026,10 @@ mod tests {
         std::fs::create_dir_all(&wt).unwrap();
         std::fs::write(wt.join(".git"), "gitdir: /main/.git/worktrees/wt\n").unwrap();
         let gits = find_git_folders(root, MAX_SCAN_DEPTH);
-        assert!(gits.iter().any(|p| p.ends_with("worktree")), "gitlink checkout discovered: {gits:?}");
+        assert!(
+            gits.iter().any(|p| p.ends_with("worktree")),
+            "gitlink checkout discovered: {gits:?}"
+        );
     }
 
     #[test]
@@ -910,11 +1040,15 @@ mod tests {
         let root = tmp.path();
         std::fs::create_dir_all(root.join("l1/l2/l3/l4/repo/.git")).unwrap();
         // The old bound (3) could not reach a depth-5 checkout — documents the limit.
-        assert!(!find_git_folders(root, 3).iter().any(|p| p.ends_with("repo")),
-            "depth-3 bound cannot reach a depth-5 checkout");
+        assert!(
+            !find_git_folders(root, 3).iter().any(|p| p.ends_with("repo")),
+            "depth-3 bound cannot reach a depth-5 checkout"
+        );
         // The lifted bound reaches it.
-        assert!(find_git_folders(root, MAX_SCAN_DEPTH).iter().any(|p| p.ends_with("repo")),
-            "MAX_SCAN_DEPTH reaches the deep checkout");
+        assert!(
+            find_git_folders(root, MAX_SCAN_DEPTH).iter().any(|p| p.ends_with("repo")),
+            "MAX_SCAN_DEPTH reaches the deep checkout"
+        );
     }
 
     #[test]
@@ -925,11 +1059,17 @@ mod tests {
         // IGNORED_DIRS / dotfile skip (detect-before-prune, D15d).
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path();
-        std::fs::create_dir_all(root.join("build/.git")).unwrap();        // ignored NAME, real repo
+        std::fs::create_dir_all(root.join("build/.git")).unwrap(); // ignored NAME, real repo
         std::fs::create_dir_all(root.join(".hidden_repo/.git")).unwrap(); // dotfile-prefixed repo
         let gits = find_git_folders(root, MAX_SCAN_DEPTH);
-        assert!(gits.iter().any(|p| p.ends_with("build")), "checkout named `build` detected: {gits:?}");
-        assert!(gits.iter().any(|p| p.ends_with(".hidden_repo")), "dotfile-prefixed checkout detected: {gits:?}");
+        assert!(
+            gits.iter().any(|p| p.ends_with("build")),
+            "checkout named `build` detected: {gits:?}"
+        );
+        assert!(
+            gits.iter().any(|p| p.ends_with(".hidden_repo")),
+            "dotfile-prefixed checkout detected: {gits:?}"
+        );
     }
 
     #[test]
@@ -944,8 +1084,10 @@ mod tests {
         std::fs::write(wt.join(".git"), "gitdir: /main/.git/worktrees/wt\n").unwrap();
         let dirs = all_directories(root, MAX_SCAN_DEPTH);
         assert!(dirs.iter().any(|d| d.ends_with("worktree")), "the checkout dir itself is listed");
-        assert!(!dirs.iter().any(|d| d.ends_with("worktree/src")),
-            "must NOT descend into a .git-FILE checkout (its src is repo content, not a candidate root)");
+        assert!(
+            !dirs.iter().any(|d| d.ends_with("worktree/src")),
+            "must NOT descend into a .git-FILE checkout (its src is repo content, not a candidate root)"
+        );
     }
 
     #[test]
@@ -957,8 +1099,10 @@ mod tests {
         let wt = tmp.path().join("worktree");
         std::fs::create_dir_all(wt.join("crates/x")).unwrap();
         std::fs::write(wt.join(".git"), "gitdir: /main/.git/worktrees/wt\n").unwrap();
-        assert!(is_inside_git_repo(&wt.join("crates/x")),
-            "a dir inside a .git-FILE worktree is inside a git repo");
+        assert!(
+            is_inside_git_repo(&wt.join("crates/x")),
+            "a dir inside a .git-FILE worktree is inside a git repo"
+        );
     }
 
     #[test]
@@ -996,7 +1140,8 @@ mod tests {
         let dirs = all_directories(fixture.path(), 3);
         let classified = classify_folders(fixture.path(), &gits, &dirs, has_indexable_code);
 
-        let git_names: Vec<&str> = classified.iter()
+        let git_names: Vec<&str> = classified
+            .iter()
             .filter(|f| f.kind == FolderKind::Git)
             .map(|f| f.name.as_str())
             .collect();
@@ -1080,7 +1225,8 @@ mod tests {
         let dirs = all_directories(root, 3);
         let classified = classify_folders(root, &gits, &dirs, has_indexable_code);
 
-        let quasi: Vec<&str> = classified.iter()
+        let quasi: Vec<&str> = classified
+            .iter()
             .filter(|f| f.kind == FolderKind::Standalone)
             .map(|f| f.name.as_str())
             .collect();
@@ -1134,12 +1280,16 @@ mod tests {
         let repo = tmp.path().join("repo");
         std::fs::create_dir_all(repo.join(".git")).unwrap();
         std::fs::create_dir_all(repo.join("crates/mycrate/src")).unwrap();
-        std::fs::write(repo.join("crates/mycrate/Cargo.toml"), "[package]\nname=\"mycrate\"").unwrap();
+        std::fs::write(repo.join("crates/mycrate/Cargo.toml"), "[package]\nname=\"mycrate\"")
+            .unwrap();
         std::fs::write(repo.join("crates/mycrate/src/lib.rs"), "pub fn a() {}").unwrap();
 
         // Scan rooted at the repo itself → its own `.git` is not among git_folders.
         let gits = find_git_folders(&repo, 3);
-        assert!(gits.is_empty(), "repo's own .git at the scan root is not discovered as a child git folder");
+        assert!(
+            gits.is_empty(),
+            "repo's own .git at the scan root is not discovered as a child git folder"
+        );
         let dirs = all_directories(&repo, 3);
         let classified = classify_folders(&repo, &gits, &dirs, has_indexable_code);
 
@@ -1164,7 +1314,8 @@ mod tests {
         let repo = scan_root.join("repo");
         std::fs::create_dir_all(repo.join(".git")).unwrap();
         std::fs::create_dir_all(repo.join("crates/mycrate/src")).unwrap();
-        std::fs::write(repo.join("crates/mycrate/Cargo.toml"), "[package]\nname=\"mycrate\"").unwrap();
+        std::fs::write(repo.join("crates/mycrate/Cargo.toml"), "[package]\nname=\"mycrate\"")
+            .unwrap();
         std::fs::write(repo.join("crates/mycrate/src/lib.rs"), "pub fn a() {}").unwrap();
         // A real standalone project OUTSIDE the repo — must still be discovered.
         // Manifest sits directly in `loose/` (has_indexable_code checks direct files).
@@ -1183,7 +1334,11 @@ mod tests {
         );
         // The enclosing repo IS a Git root; the outside loose project IS Standalone.
         assert!(classified.iter().any(|f| f.path == repo && f.kind == FolderKind::Git));
-        assert!(classified.iter().any(|f| f.path == scan_root.join("loose") && f.kind == FolderKind::Standalone));
+        assert!(
+            classified
+                .iter()
+                .any(|f| f.path == scan_root.join("loose") && f.kind == FolderKind::Standalone)
+        );
     }
 
     #[test]
@@ -1218,7 +1373,8 @@ mod tests {
             PathBuf::from("/repo/tests"),
         ];
         let tree = subfolder_tree(root, &dirs);
-        let names: Vec<String> = tree.iter().map(|(d, _)| d.to_string_lossy().to_string()).collect();
+        let names: Vec<String> =
+            tree.iter().map(|(d, _)| d.to_string_lossy().to_string()).collect();
 
         // The intermediate /repo/src (no direct files) is included.
         assert!(names.contains(&"/repo/src".to_string()), "intermediate missing: {names:?}");
@@ -1305,7 +1461,8 @@ mod tests {
     #[test]
     fn detect_stack_svelte() {
         let tmp = tempfile::tempdir().unwrap();
-        std::fs::write(tmp.path().join("package.json"), r#"{"dependencies":{"svelte":"^5"}}"#).unwrap();
+        std::fs::write(tmp.path().join("package.json"), r#"{"dependencies":{"svelte":"^5"}}"#)
+            .unwrap();
         assert_eq!(detect_stack(tmp.path()), vec!["svelte"]);
     }
 
@@ -1322,7 +1479,10 @@ mod tests {
         let prior = prior_of(&[("a.rs", 100, "hash_a")]);
         let current = vec![("a.rs".to_string(), 100i64)];
         let mut hash_calls = 0usize;
-        let plan = plan_reindex(&current, &prior, |_p| { hash_calls += 1; Some("x".into()) });
+        let plan = plan_reindex(&current, &prior, |_p| {
+            hash_calls += 1;
+            Some("x".into())
+        });
         assert_eq!(hash_calls, 0, "an unchanged-mtime file must never be hashed");
         assert_eq!(plan.unchanged, 1);
         assert!(plan.changed.is_empty());
@@ -1338,11 +1498,17 @@ mod tests {
         let prior = prior_of(&[("a.rs", 100, "same_hash")]);
         let current = vec![("a.rs".to_string(), 999i64)]; // mtime changed
         let mut hash_calls = 0usize;
-        let plan = plan_reindex(&current, &prior, |_p| { hash_calls += 1; Some("same_hash".into()) });
+        let plan = plan_reindex(&current, &prior, |_p| {
+            hash_calls += 1;
+            Some("same_hash".into())
+        });
         assert_eq!(hash_calls, 1, "a touched candidate is hashed once to confirm identity");
         assert!(plan.changed.is_empty(), "identical content must NOT reindex");
-        assert_eq!(plan.touched, vec![("a.rs".to_string(), 999i64, "same_hash".to_string())],
-            "touched file carries its NEW mtime so the gate hits next pass");
+        assert_eq!(
+            plan.touched,
+            vec![("a.rs".to_string(), 999i64, "same_hash".to_string())],
+            "touched file carries its NEW mtime so the gate hits next pass"
+        );
     }
 
     /// mtime drifted AND content changed: hashed once, lands in `changed`.
@@ -1351,7 +1517,10 @@ mod tests {
         let prior = prior_of(&[("a.rs", 100, "old_hash")]);
         let current = vec![("a.rs".to_string(), 200i64)];
         let mut hash_calls = 0usize;
-        let plan = plan_reindex(&current, &prior, |_p| { hash_calls += 1; Some("new_hash".into()) });
+        let plan = plan_reindex(&current, &prior, |_p| {
+            hash_calls += 1;
+            Some("new_hash".into())
+        });
         assert_eq!(hash_calls, 1);
         assert!(plan.changed.contains("a.rs"), "changed content → reindex");
         assert!(plan.touched.is_empty());
@@ -1364,7 +1533,10 @@ mod tests {
         let prior = prior_of(&[]);
         let current = vec![("new.rs".to_string(), 400i64)];
         let mut hash_calls = 0usize;
-        let plan = plan_reindex(&current, &prior, |_p| { hash_calls += 1; Some("x".into()) });
+        let plan = plan_reindex(&current, &prior, |_p| {
+            hash_calls += 1;
+            Some("x".into())
+        });
         assert_eq!(hash_calls, 0, "a new file needs no hash comparison");
         assert!(plan.changed.contains("new.rs"));
     }
@@ -1377,17 +1549,20 @@ mod tests {
         let current = vec![("bad.rs".to_string(), 200i64)]; // mtime drifted, unreadable
         let plan = plan_reindex(&current, &prior, |_p| None);
         assert_eq!(plan.removed, vec!["gone.rs".to_string()], "vanished file → removed");
-        assert!(plan.changed.contains("bad.rs"), "unreadable candidate must not be silently dropped");
+        assert!(
+            plan.changed.contains("bad.rs"),
+            "unreadable candidate must not be silently dropped"
+        );
     }
 
     /// Full mixed working tree exercised end-to-end through one call.
     #[test]
     fn plan_reindex_classifies_new_changed_touched_unchanged_removed() {
         let prior = prior_of(&[
-            ("src/a.rs", 100, "ha"),   // unchanged
-            ("src/b.rs", 200, "hb"),   // will reindex
-            ("src/t.rs", 300, "ht"),   // will be touched (same content)
-            ("src/gone.rs", 400, "hg"),// removed
+            ("src/a.rs", 100, "ha"),    // unchanged
+            ("src/b.rs", 200, "hb"),    // will reindex
+            ("src/t.rs", 300, "ht"),    // will be touched (same content)
+            ("src/gone.rs", 400, "hg"), // removed
         ]);
         let current = vec![
             ("src/a.rs".to_string(), 100),   // mtime unchanged
@@ -1413,15 +1588,18 @@ mod tests {
     fn detect_stack_dotnet() {
         // Globbed project file
         let tmp = tempfile::tempdir().unwrap();
-        std::fs::write(tmp.path().join("WebApi.csproj"), "<Project Sdk=\"Microsoft.NET.Sdk\" />").unwrap();
+        std::fs::write(tmp.path().join("WebApi.csproj"), "<Project Sdk=\"Microsoft.NET.Sdk\" />")
+            .unwrap();
         assert_eq!(detect_stack(tmp.path()), vec!["dotnet"]);
         // Solution file
         let tmp2 = tempfile::tempdir().unwrap();
-        std::fs::write(tmp2.path().join("App.sln"), "Microsoft Visual Studio Solution File").unwrap();
+        std::fs::write(tmp2.path().join("App.sln"), "Microsoft Visual Studio Solution File")
+            .unwrap();
         assert_eq!(detect_stack(tmp2.path()), vec!["dotnet"]);
         // global.json SDK pin
         let tmp3 = tempfile::tempdir().unwrap();
-        std::fs::write(tmp3.path().join("global.json"), "{\"sdk\":{\"version\":\"8.0.0\"}}").unwrap();
+        std::fs::write(tmp3.path().join("global.json"), "{\"sdk\":{\"version\":\"8.0.0\"}}")
+            .unwrap();
         assert_eq!(detect_stack(tmp3.path()), vec!["dotnet"]);
         // A .NET project root is a confident (manifest) quasi-repo, not loose code
         assert_eq!(classify_quasi_repo(tmp.path()), Some(QuasiKind::Manifest));
@@ -1467,7 +1645,8 @@ mod tests {
     #[test]
     fn is_monorepo_detects_pnpm_workspace_yaml_alone() {
         let tmp = tempfile::tempdir().unwrap();
-        std::fs::write(tmp.path().join("pnpm-workspace.yaml"), "packages:\n  - 'apps/*'\n").unwrap();
+        std::fs::write(tmp.path().join("pnpm-workspace.yaml"), "packages:\n  - 'apps/*'\n")
+            .unwrap();
         assert!(is_monorepo(tmp.path()));
     }
 
@@ -1500,7 +1679,10 @@ mod tests {
         std::fs::create_dir_all(root.join("svc")).unwrap();
         std::fs::write(root.join("svc/go.mod"), "module x\n").unwrap();
         let subs = find_subprojects(root, 3);
-        assert!(subs.iter().any(|p| p.ends_with("svc")), "go.mod folder should be a sub-project: {subs:?}");
+        assert!(
+            subs.iter().any(|p| p.ends_with("svc")),
+            "go.mod folder should be a sub-project: {subs:?}"
+        );
     }
 
     #[test]
@@ -1510,7 +1692,10 @@ mod tests {
         std::fs::create_dir_all(root.join("py_pkg")).unwrap();
         std::fs::write(root.join("py_pkg/pyproject.toml"), "[project]\nname=\"p\"\n").unwrap();
         let subs = find_subprojects(root, 3);
-        assert!(subs.iter().any(|p| p.ends_with("py_pkg")), "pyproject.toml folder should be a sub-project: {subs:?}");
+        assert!(
+            subs.iter().any(|p| p.ends_with("py_pkg")),
+            "pyproject.toml folder should be a sub-project: {subs:?}"
+        );
     }
 
     #[test]
@@ -1544,10 +1729,7 @@ mod tests {
     #[test]
     fn stale_root_kept_when_rediscovered() {
         let roots = live(&["/dev/a", "/dev/b"]);
-        assert_eq!(
-            classify_stale_root(Path::new("/dev/a"), &roots, true, true),
-            StaleAction::Keep
-        );
+        assert_eq!(classify_stale_root(Path::new("/dev/a"), &roots, true, true), StaleAction::Keep);
     }
 
     #[test]
@@ -1603,7 +1785,10 @@ mod tests {
             "a moved repo re-points its history, never deletes"
         );
         // remote match wins even when it ALSO has history (remap subsumes archive).
-        assert_eq!(decide_stale_root(StaleAction::Remove, Some(to), true), StaleDisposition::Remap(to));
+        assert_eq!(
+            decide_stale_root(StaleAction::Remove, Some(to), true),
+            StaleDisposition::Remap(to)
+        );
     }
 
     #[test]
@@ -1631,8 +1816,14 @@ mod tests {
         assert_eq!(decide_stale_root(StaleAction::Keep, Some(to), true), StaleDisposition::Keep);
         // MarkStale = old path still exists with content; a same-remote clone there
         // is a duplicate to triage, not a rename to absorb.
-        assert_eq!(decide_stale_root(StaleAction::MarkStale, Some(to), true), StaleDisposition::MarkStale);
-        assert_eq!(decide_stale_root(StaleAction::MarkStale, None, false), StaleDisposition::MarkStale);
+        assert_eq!(
+            decide_stale_root(StaleAction::MarkStale, Some(to), true),
+            StaleDisposition::MarkStale
+        );
+        assert_eq!(
+            decide_stale_root(StaleAction::MarkStale, None, false),
+            StaleDisposition::MarkStale
+        );
     }
 
     #[test]

@@ -23,7 +23,8 @@ pub fn compose_constitution(rows: Vec<RawRule>) -> RelayConstitution {
     // Dedup by normalized content, keeping the first (strongest) occurrence. Track
     // the winner's scope + mandatory flag per content so a discard names what beat
     // it. `order` preserves the strongest-first order for the effective set.
-    let mut winner: std::collections::HashMap<String, (String, bool)> = std::collections::HashMap::new();
+    let mut winner: std::collections::HashMap<String, (String, bool)> =
+        std::collections::HashMap::new();
     let mut order: Vec<String> = Vec::new();
     let mut kept: std::collections::HashMap<String, RawRule> = std::collections::HashMap::new();
     let mut conflicts: Vec<RelayConstitutionConflict> = Vec::new();

@@ -13,16 +13,16 @@ use std::collections::HashMap;
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct IRBase {
     pub name: String,
-    pub file: String,              // repo-relative path
+    pub file: String, // repo-relative path
     pub line_start: u32,
     pub line_end: u32,
 
     // Classification (universal)
-    pub extension: Option<String>,  // .rs, .md, .py, .svelte
-    pub language: Option<String>,   // rust, markdown, python, svelte
-    pub framework: Option<String>,  // sveltekit, axum, express, django
-    pub node_type: Option<String>,  // function, class, doc, config, test, module
-    pub category: Option<String>,   // design, feature, adapter, handler, utility
+    pub extension: Option<String>, // .rs, .md, .py, .svelte
+    pub language: Option<String>,  // rust, markdown, python, svelte
+    pub framework: Option<String>, // sveltekit, axum, express, django
+    pub node_type: Option<String>, // function, class, doc, config, test, module
+    pub category: Option<String>,  // design, feature, adapter, handler, utility
 
     // Content
     pub docstring: Option<String>,
@@ -38,12 +38,12 @@ pub struct IRDoc {
     pub base: IRBase,
 
     // Classification
-    pub doc_type: Option<String>,       // idea, analysis, blueprint, design, feature, etc.
+    pub doc_type: Option<String>, // idea, analysis, blueprint, design, feature, etc.
 
     // Frontmatter (all optional — may be absent initially)
-    pub frontmatter: HashMap<String, String>,  // raw key-value pairs
+    pub frontmatter: HashMap<String, String>, // raw key-value pairs
     pub status: Option<String>,
-    pub origin: Option<String>,         // parent doc path (for traceability)
+    pub origin: Option<String>, // parent doc path (for traceability)
     pub date: Option<String>,
     pub description: Option<String>,
 
@@ -53,9 +53,9 @@ pub struct IRDoc {
     pub code_blocks: Vec<IRCodeBlock>,
 
     // References found in content
-    pub file_references: Vec<String>,    // backtick file paths → COVERS edges
-    pub symbol_references: Vec<String>,  // backtick function/type names → MENTIONS edges
-    pub doc_references: Vec<String>,     // links to other docs → TRACES_TO edges
+    pub file_references: Vec<String>, // backtick file paths → COVERS edges
+    pub symbol_references: Vec<String>, // backtick function/type names → MENTIONS edges
+    pub doc_references: Vec<String>,  // links to other docs → TRACES_TO edges
 }
 
 /// A section of a document — split by headings.
@@ -65,16 +65,16 @@ pub struct IRSection {
     pub level: u8,
     pub line_start: u32,
     pub line_end: u32,
-    pub content_preview: Option<String>,  // first 200 chars
+    pub content_preview: Option<String>, // first 200 chars
 }
 
 /// A design-rationale marker (NOTE/WHY/HACK/TODO/IMPORTANT) found in a file's
 /// text — becomes a `rationale` node (D5b), the "why" absent from the graph.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IRRationale {
-    pub marker: String,   // NOTE | WHY | HACK | TODO | IMPORTANT
-    pub text: String,     // marker + trailing text on the line (capped)
-    pub line: u32,        // 1-based source line
+    pub marker: String, // NOTE | WHY | HACK | TODO | IMPORTANT
+    pub text: String,   // marker + trailing text on the line (capped)
+    pub line: u32,      // 1-based source line
 }
 
 /// A code block within a document.
@@ -110,7 +110,7 @@ pub struct IRFunction {
     pub return_type: Option<String>,
     pub is_async: bool,
     pub decorators: Vec<String>,
-    pub calls: Vec<String>,            // unresolved function names called
+    pub calls: Vec<String>, // unresolved function names called
     pub complexity: u32,
     pub body_hash: Option<String>,
 }
@@ -283,11 +283,7 @@ mod tests {
     #[test]
     fn ir_doc_without_frontmatter() {
         let doc = IRDoc {
-            base: IRBase {
-                name: "README".into(),
-                file: "README.md".into(),
-                ..Default::default()
-            },
+            base: IRBase { name: "README".into(), file: "README.md".into(), ..Default::default() },
             title: Some("Project Readme".into()),
             ..Default::default()
         };
@@ -302,8 +298,20 @@ mod tests {
     fn ir_doc_with_sections() {
         let doc = IRDoc {
             sections: vec![
-                IRSection { heading: "Problem".into(), level: 2, line_start: 5, line_end: 15, content_preview: Some("AI-assisted dev...".into()) },
-                IRSection { heading: "Solution".into(), level: 2, line_start: 16, line_end: 30, content_preview: Some("Sensei provides...".into()) },
+                IRSection {
+                    heading: "Problem".into(),
+                    level: 2,
+                    line_start: 5,
+                    line_end: 15,
+                    content_preview: Some("AI-assisted dev...".into()),
+                },
+                IRSection {
+                    heading: "Solution".into(),
+                    level: 2,
+                    line_start: 16,
+                    line_end: 30,
+                    content_preview: Some("Sensei provides...".into()),
+                },
             ],
             ..Default::default()
         };
@@ -337,8 +345,16 @@ mod tests {
                 ..Default::default()
             },
             params: vec![
-                IRParam { name: "path".into(), type_: Some("PathBuf".into()), ..Default::default() },
-                IRParam { name: "content".into(), type_: Some("&str".into()), ..Default::default() },
+                IRParam {
+                    name: "path".into(),
+                    type_: Some("PathBuf".into()),
+                    ..Default::default()
+                },
+                IRParam {
+                    name: "content".into(),
+                    type_: Some("&str".into()),
+                    ..Default::default()
+                },
             ],
             return_type: Some("Vec<Symbol>".into()),
             is_async: false,
@@ -364,16 +380,16 @@ mod tests {
             },
             class_kind: ClassKind::Struct,
             implements: vec!["LanguageAdapter".into()],
-            methods: vec![
-                IRMethod {
-                    base: IRBase { name: "parse".into(), ..Default::default() },
-                    params: vec![
-                        IRParam { name: "source".into(), type_: Some("&str".into()), ..Default::default() },
-                    ],
-                    return_type: Some("ParsedFile".into()),
+            methods: vec![IRMethod {
+                base: IRBase { name: "parse".into(), ..Default::default() },
+                params: vec![IRParam {
+                    name: "source".into(),
+                    type_: Some("&str".into()),
                     ..Default::default()
-                },
-            ],
+                }],
+                return_type: Some("ParsedFile".into()),
+                ..Default::default()
+            }],
             ..Default::default()
         };
 

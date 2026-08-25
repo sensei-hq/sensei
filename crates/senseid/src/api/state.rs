@@ -1,9 +1,9 @@
-use std::sync::Arc;
-use tokio::sync::broadcast;
+use crate::api::events::StateEvent;
 use crate::db::pg_store::PgStore;
 use crate::tasks::queue::TaskQueue;
-use crate::api::events::StateEvent;
 use gateway::Gateway;
+use std::sync::Arc;
+use tokio::sync::broadcast;
 
 pub struct SharedState {
     pub pg: PgStore,

@@ -82,7 +82,17 @@ pub const REGISTRY: &[McpEntry] = &[
         tools: 28,
         verified: true,
         // Recommended for any project that lives in git — almost everyone.
-        stack_keywords: &["github", "git", "rust", "cargo", "svelte", "typescript", "javascript", "python", "go"],
+        stack_keywords: &[
+            "github",
+            "git",
+            "rust",
+            "cargo",
+            "svelte",
+            "typescript",
+            "javascript",
+            "python",
+            "go",
+        ],
         config_names: &["github", "gh"],
     },
     McpEntry {
@@ -93,7 +103,16 @@ pub const REGISTRY: &[McpEntry] = &[
         summary: "Drive a headless browser — navigate, click, evaluate.",
         tools: 18,
         verified: true,
-        stack_keywords: &["playwright", "tauri", "svelte", "sveltekit", "react", "vue", "next", "vite"],
+        stack_keywords: &[
+            "playwright",
+            "tauri",
+            "svelte",
+            "sveltekit",
+            "react",
+            "vue",
+            "next",
+            "vite",
+        ],
         config_names: &["playwright"],
     },
     McpEntry {
@@ -130,26 +149,27 @@ pub fn list_for_stack(
     installed_keys: &std::collections::HashSet<String>,
 ) -> Vec<serde_json::Value> {
     let stack_lower: Vec<String> = stack.iter().map(|s| s.to_lowercase()).collect();
-    REGISTRY.iter().map(|m| {
-        let recommended = !m.stack_keywords.is_empty()
-            && m.stack_keywords.iter().any(|kw|
-                stack_lower.iter().any(|s| s.contains(kw))
-            );
-        let installed = m.config_names.iter().any(|n| installed_keys.contains(*n));
-        serde_json::json!({
-            "id": m.id,
-            "name": m.name,
-            "publisher": m.publisher,
-            "kind": m.kind,
-            "summary": m.summary,
-            "tools": m.tools,
-            "verified": m.verified,
-            "recommended": recommended,
-            "installed": installed,
-            "selected": recommended || installed,
-            "project_count": 0,
+    REGISTRY
+        .iter()
+        .map(|m| {
+            let recommended = !m.stack_keywords.is_empty()
+                && m.stack_keywords.iter().any(|kw| stack_lower.iter().any(|s| s.contains(kw)));
+            let installed = m.config_names.iter().any(|n| installed_keys.contains(*n));
+            serde_json::json!({
+                "id": m.id,
+                "name": m.name,
+                "publisher": m.publisher,
+                "kind": m.kind,
+                "summary": m.summary,
+                "tools": m.tools,
+                "verified": m.verified,
+                "recommended": recommended,
+                "installed": installed,
+                "selected": recommended || installed,
+                "project_count": 0,
+            })
         })
-    }).collect()
+        .collect()
 }
 
 #[cfg(test)]
@@ -157,7 +177,9 @@ mod tests {
     use super::*;
     use std::collections::HashSet;
 
-    fn empty_installed() -> HashSet<String> { HashSet::new() }
+    fn empty_installed() -> HashSet<String> {
+        HashSet::new()
+    }
 
     #[test]
     fn registry_is_nonempty_and_unique() {

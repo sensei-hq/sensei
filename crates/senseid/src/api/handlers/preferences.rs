@@ -19,7 +19,8 @@ fn err(status: StatusCode, msg: &str) -> (StatusCode, Json<serde_json::Value>) {
 pub(crate) async fn get_collective(
     State(state): State<AppState>,
 ) -> Result<Json<CollectivePreferences>, (StatusCode, Json<serde_json::Value>)> {
-    let prefs = preferences::get(&state.pg).await
+    let prefs = preferences::get(&state.pg)
+        .await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
     Ok(Json(prefs))
 }
@@ -31,9 +32,10 @@ pub(crate) async fn put_collective(
     State(state): State<AppState>,
     Json(body): Json<serde_json::Value>,
 ) -> Result<Json<CollectivePreferences>, (StatusCode, Json<serde_json::Value>)> {
-    let prefs = CollectivePreferences::from_request(&body)
-        .map_err(|e| err(StatusCode::BAD_REQUEST, &e))?;
-    let saved = preferences::set(&state.pg, prefs).await
+    let prefs =
+        CollectivePreferences::from_request(&body).map_err(|e| err(StatusCode::BAD_REQUEST, &e))?;
+    let saved = preferences::set(&state.pg, prefs)
+        .await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
     Ok(Json(saved))
 }

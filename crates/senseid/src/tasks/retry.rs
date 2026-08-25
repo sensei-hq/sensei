@@ -67,7 +67,10 @@ pub fn spawn_retry(queue: Arc<TaskQueue>, next: Task, delay: Duration) -> JoinHa
 /// the appropriate [`backoff`] and return the spawned handle; otherwise the
 /// failure is terminal and this returns `None`. The handle is ignored in
 /// production (the retry runs detached) and inspected in tests.
-pub fn schedule_if_retryable(queue: Arc<TaskQueue>, task: &Task) -> Option<JoinHandle<Option<u64>>> {
+pub fn schedule_if_retryable(
+    queue: Arc<TaskQueue>,
+    task: &Task,
+) -> Option<JoinHandle<Option<u64>>> {
     let next = plan_retry(task)?;
     let delay = backoff(next.retry_number);
     Some(spawn_retry(queue, next, delay))
@@ -102,10 +105,10 @@ mod tests {
     #[test]
     fn permanent_failure_kinds_are_not_retryable() {
         for k in [
-            TaskKind::ScanRoot,      // bad/deleted root path is permanent
-            TaskKind::ImportLib,     // missing URL is permanent
-            TaskKind::BranchSwitch,  // missing branch is permanent
-            TaskKind::ScanDocDrift,  // bad project-id payload is permanent
+            TaskKind::ScanRoot,     // bad/deleted root path is permanent
+            TaskKind::ImportLib,    // missing URL is permanent
+            TaskKind::BranchSwitch, // missing branch is permanent
+            TaskKind::ScanDocDrift, // bad project-id payload is permanent
         ] {
             assert!(!is_retryable(&k), "{k} fails for permanent reasons — not retried");
         }

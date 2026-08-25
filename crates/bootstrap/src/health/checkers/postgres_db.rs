@@ -1,8 +1,8 @@
 //! Check that the sensei database exists with pgvector + the expected
 //! `sessions` table.
 
-use crate::health::checker::{Checker, CheckOutcome};
-use crate::health::process_util::{output_with_timeout, TimedOutcome, DEFAULT_CHECKER_TIMEOUT};
+use crate::health::checker::{CheckOutcome, Checker};
+use crate::health::process_util::{DEFAULT_CHECKER_TIMEOUT, TimedOutcome, output_with_timeout};
 
 pub struct PostgresDatabaseChecker {
     pub db_name: String,
@@ -16,7 +16,7 @@ impl Checker for PostgresDatabaseChecker {
         // a clean "psql not installed" detail rather than the raw OS
         // error 2 the previous bare-name spawn surfaced.
         let mut exists_cmd = match crate::util::command_for("psql") {
-            Ok(c)  => c,
+            Ok(c) => c,
             Err(e) => return CheckOutcome::failed(e),
         };
         // 1) database exists?
@@ -24,22 +24,32 @@ impl Checker for PostgresDatabaseChecker {
         // Without this, psql defaults to a DB named after the OS user
         // (e.g. "Jerry" on macOS) and fails with `database "Jerry" does not
         // exist` before it can even run the existence query.
-        exists_cmd.args(["-d", "postgres", "-tAc", &format!("SELECT 1 FROM pg_database WHERE datname='{}'", self.db_name)]);
+        exists_cmd.args([
+            "-d",
+            "postgres",
+            "-tAc",
+            &format!("SELECT 1 FROM pg_database WHERE datname='{}'", self.db_name),
+        ]);
         match output_with_timeout(exists_cmd, DEFAULT_CHECKER_TIMEOUT) {
-            TimedOutcome::Done(o) if o.status.success() && String::from_utf8_lossy(&o.stdout).trim() == "1" => {
+            TimedOutcome::Done(o)
+                if o.status.success() && String::from_utf8_lossy(&o.stdout).trim() == "1" =>
+            {
                 tracing::debug!(check = "postgres_db", db = %self.db_name, "database exists");
             }
             TimedOutcome::Done(o) => {
                 tracing::info!(check = "postgres_db", db = %self.db_name, result = "not_found", exit = %o.status, "database does not exist");
                 return CheckOutcome::failed(format!(
                     "database {} not found (psql exit {}): {}",
-                    self.db_name, o.status, String::from_utf8_lossy(&o.stderr).trim()
+                    self.db_name,
+                    o.status,
+                    String::from_utf8_lossy(&o.stderr).trim()
                 ));
             }
             TimedOutcome::TimedOut => {
                 tracing::warn!(check = "postgres_db", db = %self.db_name, "psql existence probe timed out");
                 return CheckOutcome::failed(format!(
-                    "psql timed out probing database existence after {}s", DEFAULT_CHECKER_TIMEOUT.as_secs()
+                    "psql timed out probing database existence after {}s",
+                    DEFAULT_CHECKER_TIMEOUT.as_secs()
                 ));
             }
             TimedOutcome::Failed(e) => {
@@ -52,11 +62,10 @@ impl Checker for PostgresDatabaseChecker {
         // the schema is the stable "is deploy done" signal, and survives
         // DDL reorganization (tables move between `sensei`/`activity`/
         // `extensions` schemas as the model evolves).
-        let check_sql =
-            "SELECT 1 FROM pg_extension WHERE extname='vector' UNION ALL \
+        let check_sql = "SELECT 1 FROM pg_extension WHERE extname='vector' UNION ALL \
              SELECT 1 FROM information_schema.schemata WHERE schema_name='sensei'";
         let mut probe_cmd = match crate::util::command_for("psql") {
-            Ok(c)  => c,
+            Ok(c) => c,
             Err(e) => return CheckOutcome::failed(e),
         };
         probe_cmd.args(["-d", &self.db_name, "-tAc", check_sql]);
@@ -69,20 +78,22 @@ impl Checker for PostgresDatabaseChecker {
                 } else {
                     tracing::info!(check = "postgres_db", db = %self.db_name, result = "schema_incomplete", rows = count, "missing pgvector or sensei schema");
                     CheckOutcome::failed(
-                        "database exists but pgvector or sensei schema missing".to_string()
+                        "database exists but pgvector or sensei schema missing".to_string(),
                     )
                 }
             }
             TimedOutcome::Done(o) => {
                 tracing::warn!(check = "postgres_db", db = %self.db_name, exit = %o.status, "schema probe non-zero exit");
                 CheckOutcome::failed(format!(
-                    "schema probe failed: {}", String::from_utf8_lossy(&o.stderr).trim()
+                    "schema probe failed: {}",
+                    String::from_utf8_lossy(&o.stderr).trim()
                 ))
             }
             TimedOutcome::TimedOut => {
                 tracing::warn!(check = "postgres_db", db = %self.db_name, "schema probe timed out");
                 CheckOutcome::failed(format!(
-                    "psql timed out on schema probe after {}s", DEFAULT_CHECKER_TIMEOUT.as_secs()
+                    "psql timed out on schema probe after {}s",
+                    DEFAULT_CHECKER_TIMEOUT.as_secs()
                 ))
             }
             TimedOutcome::Failed(e) => {

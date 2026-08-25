@@ -11,30 +11,29 @@
 //!   * util::*                      — small utilities (unchanged).
 
 pub mod config;
-pub mod util;
 pub mod database;
-pub mod health;
 pub mod hardware;
+pub mod health;
 pub mod models;
 pub mod tracing_init;
 pub mod upgrade;
+pub mod util;
 
 pub use config::{
+    BREW_PATHS, BREW_TAP, DAEMON_PORT, DB_POOL_ACQUIRE_TIMEOUT_SECS, DB_POOL_IDLE_TIMEOUT_SECS,
+    DB_POOL_MAX_CONNECTIONS, DB_POOL_MAX_LIFETIME_SECS, DB_POOL_MIN_CONNECTIONS, GITHUB_ORG,
+    GITHUB_REPO, HOMEBREW_TAP_REPO, HOMEBREW_TAP_URL, MARKETPLACE_RAW_URL, MARKETPLACE_REPO,
+    MCP_REGISTRY_KEY, OLLAMA_PORT, POSTGRES_PORT, SENSEI_BIN, SENSEI_MCP_BIN, SENSEID_BIN,
     SenseiConfig, SenseiLocalConfig, home_dir,
-    BREW_PATHS, BREW_TAP, GITHUB_ORG, GITHUB_REPO,
-    HOMEBREW_TAP_REPO, HOMEBREW_TAP_URL,
-    MARKETPLACE_RAW_URL, MARKETPLACE_REPO,
-    DAEMON_PORT, OLLAMA_PORT, POSTGRES_PORT,
-    SENSEI_BIN, SENSEID_BIN, SENSEI_MCP_BIN, MCP_REGISTRY_KEY,
-    DB_POOL_MIN_CONNECTIONS, DB_POOL_MAX_CONNECTIONS, DB_POOL_ACQUIRE_TIMEOUT_SECS, DB_POOL_IDLE_TIMEOUT_SECS,
-    DB_POOL_MAX_LIFETIME_SECS,
 };
+pub use hardware::{HardwareInfo, ModelTier};
 #[allow(unused_imports)]
 pub use health::*;
-pub use hardware::{HardwareInfo, ModelTier};
 
 /// Daemon port for the current mode.
-pub fn daemon_port() -> u16 { SenseiConfig::from_env().daemon_port }
+pub fn daemon_port() -> u16 {
+    SenseiConfig::from_env().daemon_port
+}
 
 /// Lazily-initialised config singleton.
 pub fn config() -> &'static SenseiConfig {
@@ -44,4 +43,6 @@ pub fn config() -> &'static SenseiConfig {
 }
 
 /// Shorthand for `config().daemon_url()`.
-pub fn daemon_url() -> String { config().daemon_url() }
+pub fn daemon_url() -> String {
+    config().daemon_url()
+}

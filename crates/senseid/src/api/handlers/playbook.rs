@@ -1,9 +1,9 @@
 //! Front-door intake: axes -> playbook recommendation (§8).
 
-use axum::{extract::State, http::StatusCode, Json};
+use axum::{Json, extract::State, http::StatusCode};
 
 use crate::api::state::AppState;
-use crate::playbook::{recommend, Axes, Intent, Lifecycle, Risk};
+use crate::playbook::{Axes, Intent, Lifecycle, Risk, recommend};
 
 /// GET /api/playbook/guide -> { frame, axes: [{axis, prompt, help}], playbooks: [...] }
 ///
@@ -15,10 +15,10 @@ pub(crate) async fn get_intake_guide(
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     // Fail closed: a DB error must not read as an empty guide/catalog — that
     // would present the intake questionnaire as if no playbooks were configured.
-    let guide = state.pg.list_intake_guide().await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let playbooks = state.pg.list_playbooks().await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let guide =
+        state.pg.list_intake_guide().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let playbooks =
+        state.pg.list_playbooks().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let frame = guide
         .iter()
         .find(|g| g["kind"] == "frame")
@@ -49,7 +49,9 @@ pub(crate) async fn recommend_playbook(
     );
 
     let (axes, classified_by, model_fallback) = match direct_axes {
-        (Some(lf), Some(it), Some(rk)) => (Axes { lifecycle: lf, intent: it, risk: rk }, "manual".to_string(), false),
+        (Some(lf), Some(it), Some(rk)) => {
+            (Axes { lifecycle: lf, intent: it, risk: rk }, "manual".to_string(), false)
+        }
         _ => {
             let Some(chunk) = body["chunk"].as_str().filter(|s| !s.is_empty()) else {
                 return Json(serde_json::json!({
@@ -79,8 +81,11 @@ pub(crate) async fn recommend_playbook(
     // no repo, no code graph, no rules scope to compute trust against). Require a
     // resolvable project and NEVER fabricate one on a miss (no-fabrication rule);
     // both persist and the auto-select trust query scope to it.
-    let project_ident = body["project"].as_str().or_else(|| body["project_id"].as_str())
-        .map(str::trim).filter(|s| !s.is_empty());
+    let project_ident = body["project"]
+        .as_str()
+        .or_else(|| body["project_id"].as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
     let Some(ident) = project_ident else {
         return Json(serde_json::json!({
             "error": "project (id or name) is required — a playbook run always happens in a project"
@@ -88,7 +93,9 @@ pub(crate) async fn recommend_playbook(
     };
     let project_id = match crate::api::util::resolve_project_uuid(&state, ident).await {
         Ok(Some(pid)) => pid,
-        Ok(None) => return Json(serde_json::json!({ "error": format!("unknown project: {ident}") })),
+        Ok(None) => {
+            return Json(serde_json::json!({ "error": format!("unknown project: {ident}") }));
+        }
         Err(_) => return Json(serde_json::json!({ "error": "failed to resolve project" })),
     };
 
@@ -122,17 +129,32 @@ pub(crate) async fn recommend_playbook(
     // Enrich the response with the chosen playbook's tone so the caller (the
     // /sensei:intake procedure) can adopt it as posture without a second round-trip.
     let pb = state.pg.get_playbook(&rec.playbook).await.ok().flatten();
-    let opening_tone = pb.as_ref().and_then(|p| p["opening_tone"].as_str()).unwrap_or("").to_string();
+    let opening_tone =
+        pb.as_ref().and_then(|p| p["opening_tone"].as_str()).unwrap_or("").to_string();
     let when_to_use = pb.as_ref().and_then(|p| p["when_to_use"].as_str()).unwrap_or("").to_string();
 
     // Auto-select-on-trust: only low-risk chunks, only with proven FTR history.
     let (auto_select, trust_n, trust_ftr) = if matches!(axes.risk, crate::playbook::Risk::Low) {
-        match state.pg.playbook_combo_trust(
-            axes.lifecycle.as_str(), axes.intent.as_str(), axes.risk.as_str(), &rec.playbook, &project_id).await {
+        match state
+            .pg
+            .playbook_combo_trust(
+                axes.lifecycle.as_str(),
+                axes.intent.as_str(),
+                axes.risk.as_str(),
+                &rec.playbook,
+                &project_id,
+            )
+            .await
+        {
             Ok((n, ftr)) => (crate::playbook::is_trusted(axes.risk, n, ftr), n, ftr),
-            Err(e) => { tracing::warn!(error=%e, "recommend_playbook: trust query failed — no auto-select"); (false, 0, 0.0) }
+            Err(e) => {
+                tracing::warn!(error=%e, "recommend_playbook: trust query failed — no auto-select");
+                (false, 0, 0.0)
+            }
         }
-    } else { (false, 0, 0.0) };
+    } else {
+        (false, 0, 0.0)
+    };
 
     // Workstream D: suggest the skills/agents provided by the libraries this project
     // uses ("this repo uses rokkit → load its styling skill / config reviewer"). FAIL
@@ -163,7 +185,9 @@ pub(crate) async fn recommend_playbook(
                 obj.insert("suggested_agents".into(), caps["suggested_agents"].clone());
             }
         }
-        Err(e) => tracing::warn!(error = %e, "recommend_playbook: library-capability suggestion failed — omitting"),
+        Err(e) => {
+            tracing::warn!(error = %e, "recommend_playbook: library-capability suggestion failed — omitting")
+        }
     }
     Json(resp)
 }
@@ -176,13 +200,23 @@ pub(crate) async fn recommend_playbook(
 pub(crate) fn heuristic_axes(text: &str, has_existing_code: bool, blast: i64) -> Axes {
     let t = text.to_lowercase();
     let lifecycle = if has_existing_code { Lifecycle::Stable } else { Lifecycle::Greenfield };
-    let intent = if t.contains("bug") || t.contains("fix") || t.contains("crash") || t.contains("regression") {
+    let intent = if t.contains("bug")
+        || t.contains("fix")
+        || t.contains("crash")
+        || t.contains("regression")
+    {
         Intent::Bug
-    } else if t.contains("ui") || t.contains("design") || t.contains("mockup") || t.contains("screen") {
+    } else if t.contains("ui")
+        || t.contains("design")
+        || t.contains("mockup")
+        || t.contains("screen")
+    {
         Intent::Ux
     } else if t.contains("improve") || t.contains("enhance") || t.contains("tweak") {
         Intent::Enhancement
-    } else if !has_existing_code && (t.contains("explore") || t.contains("spike") || t.contains("try")) {
+    } else if !has_existing_code
+        && (t.contains("explore") || t.contains("spike") || t.contains("try"))
+    {
         Intent::Explore
     } else {
         Intent::Feature
@@ -249,7 +283,8 @@ enhancement = improving something existing, bug = fixing a defect. \
     };
 
     match tokio::time::timeout(std::time::Duration::from_secs(8), fut).await {
-        Ok(Ok(resp)) if resp.success => match resp.content.as_deref().and_then(parse_axes_response) {
+        Ok(Ok(resp)) if resp.success => match resp.content.as_deref().and_then(parse_axes_response)
+        {
             Some(axes) => Classification {
                 axes,
                 classified_by: resp.model.unwrap_or_else(|| "gateway".to_string()),
@@ -263,7 +298,9 @@ enhancement = improving something existing, bug = fixing a defect. \
             }
         },
         Ok(Ok(_)) => {
-            tracing::warn!("classify_chunk: gateway response not successful — falling back to heuristic");
+            tracing::warn!(
+                "classify_chunk: gateway response not successful — falling back to heuristic"
+            );
             fallback()
         }
         Ok(Err(e)) => {
@@ -297,9 +334,7 @@ fn parse_axes_response(content: &str) -> Option<Axes> {
 /// The MCP tool layer forwards flags as strings; direct HTTP callers send bools.
 /// Shared by the `confirm` and `preview` flags on `recommend_playbook`.
 fn parse_bool_flag(v: &serde_json::Value) -> bool {
-    v.as_bool()
-        .or_else(|| v.as_str().map(|s| s.eq_ignore_ascii_case("true")))
-        .unwrap_or(false)
+    v.as_bool().or_else(|| v.as_str().map(|s| s.eq_ignore_ascii_case("true"))).unwrap_or(false)
 }
 
 /// Whether a `recommend_playbook` call should record a `playbook_run`. Preview
@@ -316,7 +351,10 @@ fn should_persist(body: &serde_json::Value) -> bool {
 pub(crate) async fn list_rule_proposals(
     State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let proposals = state.pg.list_playbook_rule_proposals().await
+    let proposals = state
+        .pg
+        .list_playbook_rule_proposals()
+        .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(serde_json::json!({ "proposals": proposals })))
 }
@@ -331,12 +369,19 @@ pub(crate) async fn accept_rule(
 ) -> (StatusCode, Json<serde_json::Value>) {
     let uid = match id.parse() {
         Ok(u) => u,
-        Err(_) => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "invalid id"}))),
+        Err(_) => {
+            return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "invalid id"})));
+        }
     };
     match state.pg.accept_playbook_rule(&uid).await {
         Ok(true) => (StatusCode::OK, Json(serde_json::json!({"accepted": id}))),
         // No matching learned proposal — 404, never a fabricated {accepted}.
-        Ok(false) => (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": format!("no learned playbook proposal with id {id}")}))),
+        Ok(false) => (
+            StatusCode::NOT_FOUND,
+            Json(
+                serde_json::json!({"error": format!("no learned playbook proposal with id {id}")}),
+            ),
+        ),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e}))),
     }
 }
@@ -349,8 +394,8 @@ pub(crate) async fn accept_rule(
 pub(crate) async fn model_stats(
     State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let stats = state.pg.playbook_model_stats().await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let stats =
+        state.pg.playbook_model_stats().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(serde_json::json!({ "stats": stats })))
 }
 
@@ -360,7 +405,11 @@ mod classify_tests {
 
     #[test]
     fn heuristic_bug_on_stable() {
-        let a = heuristic_axes("fix the crash when the token refreshes", /*has_existing_code=*/true, /*blast=*/2);
+        let a = heuristic_axes(
+            "fix the crash when the token refreshes",
+            /*has_existing_code=*/ true,
+            /*blast=*/ 2,
+        );
         assert_eq!(a.intent.as_str(), "bug");
         assert_eq!(a.lifecycle.as_str(), "stable");
     }
@@ -386,9 +435,9 @@ mod classify_tests {
     #[test]
     fn preview_flag_skips_persist() {
         use serde_json::json;
-        assert!(should_persist(&json!({})));                   // no preview → persist
+        assert!(should_persist(&json!({}))); // no preview → persist
         assert!(should_persist(&json!({ "preview": false }))); // explicit false → persist
-        assert!(!should_persist(&json!({ "preview": true })));  // preview → skip
+        assert!(!should_persist(&json!({ "preview": true }))); // preview → skip
         assert!(!should_persist(&json!({ "preview": "true" }))); // string form → skip
     }
 }

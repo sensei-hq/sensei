@@ -22,7 +22,10 @@
 //! is pure + deterministic (these free functions) so it's unit-testable without
 //! a database.
 
-use super::{TurnFacts, SessionTokens, ParsedTranscript, SynthEvent, SynthSession, TranscriptAdapter, TranscriptTurn, UnitRef};
+use super::{
+    ParsedTranscript, SessionTokens, SynthEvent, SynthSession, TranscriptAdapter, TranscriptTurn,
+    TurnFacts, UnitRef,
+};
 use std::io::Read;
 use std::path::PathBuf;
 
@@ -88,9 +91,7 @@ impl TranscriptAdapter for ZedAdapter {
                 return Vec::new();
             }
         };
-        let rows = stmt.query_map([], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
-        });
+        let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)));
         let Ok(rows) = rows else { return Vec::new() };
         rows.flatten()
             .filter_map(|(id, updated_at)| {
@@ -121,7 +122,11 @@ impl TranscriptAdapter for ZedAdapter {
             .ok()?;
         let json = decompress_zstd(&blob)?;
         if json.len() > MAX_THREAD_BYTES {
-            tracing::warn!(thread = key, size_mb = json.len() / 1_048_576, "zed: skipping oversized thread");
+            tracing::warn!(
+                thread = key,
+                size_mb = json.len() / 1_048_576,
+                "zed: skipping oversized thread"
+            );
             return None;
         }
         Some(json)
@@ -150,9 +155,7 @@ fn decompress_zstd(blob: &[u8]) -> Option<String> {
         .read_to_end(&mut out)
         .map_err(|e| tracing::warn!(error = %e, "zed: zstd decompress failed"))
         .ok()?;
-    String::from_utf8(out)
-        .map_err(|_| tracing::warn!("zed: thread JSON not valid UTF-8"))
-        .ok()
+    String::from_utf8(out).map_err(|_| tracing::warn!("zed: thread JSON not valid UTF-8")).ok()
 }
 
 /// Total `(tokens_in, tokens_out)` for a Zed thread. Zed records usage per model
@@ -195,7 +198,9 @@ pub fn extract_tokens(content: &str) -> Option<SessionTokens> {
         // None until at least one request reports it, so "no thread reported
         // caching" never collapses into "cached nothing".
         let add = |slot: &mut Option<i64>, v: Option<i64>| {
-            if let Some(v) = v { *slot = Some(slot.unwrap_or(0) + v); }
+            if let Some(v) = v {
+                *slot = Some(slot.unwrap_or(0) + v);
+            }
         };
         for u in reqs.values() {
             let t = usage(u);
@@ -220,7 +225,6 @@ pub fn extract_model(content: &str) -> Option<(String, String)> {
     Some((provider, model))
 }
 
-
 /// Thread-level attributes Zed exposes, promoted where they carry signal.
 ///
 /// Zed records far less per message than Claude or OpenCode: usage is
@@ -232,7 +236,8 @@ fn thread_facts(v: &serde_json::Value) -> TurnFacts {
     // Zed has no stop_reason, but it flags WHY a thread stopped short. Mapped onto
     // the same column so the deterministic context-pressure signal is comparable
     // across sources instead of living in a Zed-only field.
-    let stop_reason = if v.get("exceeded_window_error").is_some_and(|x| !x.is_null() && x != false) {
+    let stop_reason = if v.get("exceeded_window_error").is_some_and(|x| !x.is_null() && x != false)
+    {
         Some("exceeded_window".to_string())
     } else if v.get("tool_use_limit_reached").and_then(|x| x.as_bool()) == Some(true) {
         Some("tool_use_limit".to_string())
@@ -292,7 +297,8 @@ pub fn parse_zed_thread(content: &str) -> Vec<TranscriptTurn> {
     // describe the THREAD, not the turn, and Zed records nothing finer.
     let facts = thread_facts(&v);
     let attrs = thread_attrs(&v);
-    let prompt_total = msgs.iter().filter(|m| m.is_user && !m.text.trim().is_empty()).count() as i64;
+    let prompt_total =
+        msgs.iter().filter(|m| m.is_user && !m.text.trim().is_empty()).count() as i64;
     let mut turns: Vec<TranscriptTurn> = Vec::new();
     let mut cur: Option<TranscriptTurn> = None;
     let mut idx = 0i32;
@@ -579,9 +585,7 @@ fn push_prose(buf: &mut String, s: &str) {
 
 /// Parse an ISO-8601/RFC-3339 timestamp to epoch milliseconds.
 fn parse_iso_ms(s: &str) -> Option<i64> {
-    chrono::DateTime::parse_from_rfc3339(s)
-        .ok()
-        .map(|d| d.timestamp_millis())
+    chrono::DateTime::parse_from_rfc3339(s).ok().map(|d| d.timestamp_millis())
 }
 
 #[cfg(test)]
@@ -670,7 +674,11 @@ mod tests {
         assert_eq!(turns.len(), 2);
         let first = turns[0].started_at.expect("first turn is stamped");
         let second = turns[1].started_at.expect("second turn is stamped");
-        assert_eq!(first.to_rfc3339(), "2026-05-15T10:00:00+00:00", "first sits at the window start");
+        assert_eq!(
+            first.to_rfc3339(),
+            "2026-05-15T10:00:00+00:00",
+            "first sits at the window start"
+        );
         assert_eq!(second.to_rfc3339(), "2026-05-15T10:30:00+00:00", "last sits at updated_at");
         assert!(first < second, "turns stay monotonic");
     }
@@ -681,10 +689,7 @@ mod tests {
         // start keeps it inside the session rather than at its close.
         let turns = parse_zed_thread(V2);
         assert_eq!(turns.len(), 1);
-        assert_eq!(
-            turns[0].started_at.unwrap().to_rfc3339(),
-            "2026-03-01T12:00:00+00:00"
-        );
+        assert_eq!(turns[0].started_at.unwrap().to_rfc3339(), "2026-03-01T12:00:00+00:00");
     }
 
     #[test]
@@ -711,7 +716,10 @@ mod tests {
         let last_ev = sess.events.iter().map(|e| e.ts).max().unwrap();
         for t in &turns {
             let ms = t.started_at.unwrap().timestamp_millis();
-            assert!((first_ev..=last_ev).contains(&ms), "turn {ms} outside [{first_ev}, {last_ev}]");
+            assert!(
+                (first_ev..=last_ev).contains(&ms),
+                "turn {ms} outside [{first_ev}, {last_ev}]"
+            );
         }
     }
 
@@ -772,7 +780,11 @@ mod tests {
         assert_eq!(s.events[0].prompt.as_deref(), Some("fix the toc builder"));
         let tool = s.events.iter().find(|e| e.event_type == "PostToolUse").unwrap();
         assert_eq!(tool.tool_name.as_deref(), Some("edit_file"));
-        assert_eq!(tool.file_path.as_deref(), Some("/Users/Jerry/Developer/rokkit/src/toc.ts"), "file_path mined from raw_input");
+        assert_eq!(
+            tool.file_path.as_deref(),
+            Some("/Users/Jerry/Developer/rokkit/src/toc.ts"),
+            "file_path mined from raw_input"
+        );
     }
 
     #[test]

@@ -120,14 +120,8 @@ const COMMIT_MARK: char = '\u{1}';
 /// Shared with the `quality` group (worktree/commit resolution) so the git shell-out
 /// helper lives in exactly one place.
 pub(super) fn run_git(root: &str, args: &[&str]) -> Option<String> {
-    let out = std::process::Command::new("git")
-        .args(args)
-        .current_dir(root)
-        .output()
-        .ok()?;
-    out.status
-        .success()
-        .then(|| String::from_utf8_lossy(&out.stdout).into_owned())
+    let out = std::process::Command::new("git").args(args).current_dir(root).output().ok()?;
+    out.status.success().then(|| String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
 /// The local git author identities to attribute the `scope = 'user'` churn twin to.
@@ -138,10 +132,7 @@ pub(super) fn run_git(root: &str, args: &[&str]) -> Option<String> {
 /// `scope = 'user'` rows for that repository (honest-empty, never a fabricated
 /// author — I-E). Reuses the shared identity helper rather than re-reading git config.
 fn local_identities(root: &str) -> Vec<String> {
-    crate::git_identity::read_git_user(std::path::Path::new(root))
-        .email
-        .into_iter()
-        .collect()
+    crate::git_identity::read_git_user(std::path::Path::new(root)).email.into_iter().collect()
 }
 
 /// The pre-AI history floor for one repository's git-cadence metrics — how far back a
@@ -183,7 +174,9 @@ pub(super) async fn repo_history_floor(
         B::Off => RepoFloor::From(ai_start),
         // Extend the floor back N commits before the first AI commit; fewer than N
         // pre-AI commits (or git absent) → floor at the AI-start (no fabricated day).
-        B::Commits(n) => RepoFloor::From(nth_commit_day_before(root, ai_start, n).unwrap_or(ai_start)),
+        B::Commits(n) => {
+            RepoFloor::From(nth_commit_day_before(root, ai_start, n).unwrap_or(ai_start))
+        }
         B::Full => RepoFloor::All, // handled above; kept exhaustive.
     })
 }
@@ -197,14 +190,19 @@ fn nth_commit_day_before(root: &str, day: NaiveDate, n: u32) -> Option<NaiveDate
     let out = run_git(
         root,
         &[
-            "log", "--first-parent", "--no-merges", "--before", &before, "-n",
-            &n.to_string(), "--date=short", "--pretty=format:%cd",
+            "log",
+            "--first-parent",
+            "--no-merges",
+            "--before",
+            &before,
+            "-n",
+            &n.to_string(),
+            "--date=short",
+            "--pretty=format:%cd",
         ],
     )?;
     // The last line is the oldest of the (up to) N commits before `day` — the floor.
-    out.lines()
-        .last()
-        .and_then(|l| NaiveDate::parse_from_str(l.trim(), GIT_DATE_FMT).ok())
+    out.lines().last().and_then(|l| NaiveDate::parse_from_str(l.trim(), GIT_DATE_FMT).ok())
 }
 
 /// Parse `git log --numstat --date=short --pretty=format:'\x01%cd'` output into
@@ -226,8 +224,7 @@ fn parse_numstat_log(stdout: &str) -> HashMap<NaiveDate, HashMap<String, i64>> {
         let Some(day) = current else { continue };
         // numstat body: added \t deleted \t path (path may itself contain tabs).
         let mut parts = line.splitn(3, '\t');
-        let (Some(add), Some(del), Some(path)) = (parts.next(), parts.next(), parts.next())
-        else {
+        let (Some(add), Some(del), Some(path)) = (parts.next(), parts.next(), parts.next()) else {
             continue;
         };
         if path.is_empty() {
@@ -246,10 +243,8 @@ fn parse_numstat_log(stdout: &str) -> HashMap<NaiveDate, HashMap<String, i64>> {
 /// the planner (`DayKeyedGroup::Churn::data_days`) so its per-day discovery and this
 /// module's per-day compute read the SAME committer-day field and can't drift.
 pub(super) fn git_commit_days(root: &str) -> Vec<NaiveDate> {
-    let Some(out) = run_git(
-        root,
-        &["log", "--no-merges", "--date=short", "--pretty=format:%cd"],
-    ) else {
+    let Some(out) = run_git(root, &["log", "--no-merges", "--date=short", "--pretty=format:%cd"])
+    else {
         return Vec::new();
     };
     let mut days: std::collections::BTreeSet<NaiveDate> = std::collections::BTreeSet::new();
@@ -280,18 +275,22 @@ fn git_day_file_churn(
 ) -> HashMap<NaiveDate, HashMap<String, i64>> {
     let (lo, hi) = match as_of {
         Some(d) => (d, d),
-        None => (
-            today - chrono::Duration::days((window_days.max(1) - 1) as i64),
-            today,
-        ),
+        None => (today - chrono::Duration::days((window_days.max(1) - 1) as i64), today),
     };
     let since = (lo - chrono::Duration::days(2)).format(GIT_DATE_FMT).to_string();
     let until = (hi + chrono::Duration::days(2)).format(GIT_DATE_FMT).to_string();
     let pretty = format!("--pretty=format:{COMMIT_MARK}%cd");
     let author_flag = author.map(|email| format!("--author={email}"));
     let mut args: Vec<&str> = vec![
-        "log", "--no-merges", "--numstat", "--date=short", &pretty, "--since", &since,
-        "--until", &until,
+        "log",
+        "--no-merges",
+        "--numstat",
+        "--date=short",
+        &pretty,
+        "--since",
+        &since,
+        "--until",
+        &until,
     ];
     if let Some(ref a) = author_flag {
         args.push(a);
@@ -426,8 +425,17 @@ pub(super) async fn compute(
                     if let Some(mid) = churn_rate_id {
                         let no_props = serde_json::json!({});
                         pg.upsert_project_metric_repo(
-                            &mid, &repository_id, scope, author, None, day, GRAIN_DAILY, files.len() as f64, &no_props,
-                            SOURCE_MEASURED)
+                            &mid,
+                            &repository_id,
+                            scope,
+                            author,
+                            None,
+                            day,
+                            GRAIN_DAILY,
+                            files.len() as f64,
+                            &no_props,
+                            SOURCE_MEASURED,
+                        )
                         .await?;
                         written += 1;
                     }
@@ -453,7 +461,17 @@ pub(super) async fn compute(
                         let props =
                             serde_json::json!({ "numerator": numerator, "denominator": total });
                         pg.upsert_project_metric_repo(
-                            &mid, &repository_id, scope, author, None, day, GRAIN_DAILY, value, &props, SOURCE_MEASURED)
+                            &mid,
+                            &repository_id,
+                            scope,
+                            author,
+                            None,
+                            day,
+                            GRAIN_DAILY,
+                            value,
+                            &props,
+                            SOURCE_MEASURED,
+                        )
                         .await?;
                         written += 1;
                     }
@@ -490,7 +508,17 @@ pub(super) async fn compute(
                 let props =
                     serde_json::json!({ "numerator": rework_total, "denominator": project_files });
                 pg.upsert_project_metric_repo(
-                    &mid, &repository_id, SCOPE_USER, None, None, day, GRAIN_DAILY, value, &props, SOURCE_MEASURED)
+                    &mid,
+                    &repository_id,
+                    SCOPE_USER,
+                    None,
+                    None,
+                    day,
+                    GRAIN_DAILY,
+                    value,
+                    &props,
+                    SOURCE_MEASURED,
+                )
                 .await?;
                 written += 1;
             }
@@ -567,7 +595,10 @@ mod tests {
         // (honest-empty for the recent window, never a fabricated backfill). No file
         // nodes seeded → no rework_density row either.
         let incr = compute(&ctx, &pid.to_string(), None).await.unwrap();
-        assert_eq!(incr, 0, "the 60-day-old commit-day is outside the rolling window → no incremental churn rows");
+        assert_eq!(
+            incr, 0,
+            "the 60-day-old commit-day is outside the rolling window → no incremental churn rows"
+        );
 
         // Backfill (as_of=Some(D)): computes exactly that day's churn, DUAL scope —
         // scope=repo (rate+conc) + scope=user (rate+conc) = 4 rows. rework_density is
@@ -579,11 +610,23 @@ mod tests {
         let daily = daily_rows(pg, &pid).await;
         let rate = daily.iter().find(|r| r.0 == "churn_rate").expect("churn_rate scope=user row");
         assert!((rate.1 - 2.0).abs() < 1e-9, "churn_rate = 2 distinct files changed (a.rs, b.rs)");
-        let conc = daily.iter().find(|r| r.0 == "churn_concentration").expect("churn_concentration row");
+        let conc =
+            daily.iter().find(|r| r.0 == "churn_concentration").expect("churn_concentration row");
         // top ceil(20% of 2) = 1 busiest file = a.rs (4) / total line-churn 6.
-        assert!((conc.1 - 4.0 / 6.0).abs() < 1e-9, "concentration = top-file line-churn 4 / total 6");
-        assert_eq!(conc.2["numerator"].as_i64(), Some(4), "concentration numerator = busiest-20% line-churn");
-        assert_eq!(conc.2["denominator"].as_i64(), Some(6), "concentration denominator = total line-churn");
+        assert!(
+            (conc.1 - 4.0 / 6.0).abs() < 1e-9,
+            "concentration = top-file line-churn 4 / total 6"
+        );
+        assert_eq!(
+            conc.2["numerator"].as_i64(),
+            Some(4),
+            "concentration numerator = busiest-20% line-churn"
+        );
+        assert_eq!(
+            conc.2["denominator"].as_i64(),
+            Some(6),
+            "concentration denominator = total line-churn"
+        );
 
         // computed_on is stamped to the true commit day D (60 days ago); the row is
         // keyed to the resolved repository at scope=user (I-A/I-B).
@@ -597,17 +640,24 @@ mod tests {
         .fetch_one(pg.pool())
         .await
         .unwrap();
-        assert_eq!(rate_on_d, 1, "one scope=user churn_rate row stamped computed_on = the commit's day D");
+        assert_eq!(
+            rate_on_d, 1,
+            "one scope=user churn_rate row stamped computed_on = the commit's day D"
+        );
 
         // Idempotent: re-backfilling the same day upserts in place (still 4 rows).
         let again = compute(&ctx, &pid.to_string(), Some(d)).await.unwrap();
         assert_eq!(again, 4, "re-running the same day backfills in place");
-        let (total,): (i64,) = query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
-            .bind(pid)
-            .fetch_one(pg.pool())
-            .await
-            .unwrap();
-        assert_eq!(total, 4, "idempotent upsert — still 4 rows (2 scope=repo + 2 scope=user) after a second backfill");
+        let (total,): (i64,) =
+            query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
+                .bind(pid)
+                .fetch_one(pg.pool())
+                .await
+                .unwrap();
+        assert_eq!(
+            total, 4,
+            "idempotent upsert — still 4 rows (2 scope=repo + 2 scope=user) after a second backfill"
+        );
 
         cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
     }
@@ -634,7 +684,11 @@ mod tests {
         // (scope, identity, repository_id, folder_id, session_id, commit_sha, grain)
         #[allow(clippy::type_complexity)]
         let rows: Vec<(
-            String, Option<String>, Option<uuid::Uuid>, Option<String>, String,
+            String,
+            Option<String>,
+            Option<uuid::Uuid>,
+            Option<String>,
+            String,
         )> = query_as(
             "SELECT pm.scope::text, pm.identity, pm.repository_id, pm.commit_sha, pm.grain::text \
                FROM sensei.project_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
@@ -646,7 +700,11 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(rows.len(), 2, "one scope=repo twin + one scope=user twin for the single repository");
+        assert_eq!(
+            rows.len(),
+            2,
+            "one scope=repo twin + one scope=user twin for the single repository"
+        );
 
         // scope=repo: whole-tree, all authors, identity NULL (sorts first).
         let (scope_r, ident_r, repo_r, sha_r, grain_r) = &rows[0];
@@ -659,7 +717,11 @@ mod tests {
         // scope=user: author-filtered, identity = the checkout's git email.
         let (scope_u, ident_u, repo_u, sha_u, grain_u) = &rows[1];
         assert_eq!(scope_u, "user", "the local-user value is scope=user");
-        assert_eq!(ident_u.as_deref(), Some("test@sensei.test"), "scope=user identity = the checkout git email (I-C)");
+        assert_eq!(
+            ident_u.as_deref(),
+            Some("test@sensei.test"),
+            "scope=user identity = the checkout git email (I-C)"
+        );
         assert_eq!(*repo_u, Some(rid), "keyed on the resolved repository_id (I-A)");
         assert_eq!(*sha_u, None, "commit_sha is NULL for a day-bucketed aggregate (I-D)");
         assert_eq!(grain_u, "daily", "grain is daily (I-A)");
@@ -701,7 +763,11 @@ mod tests {
         assert!((rate.1 - 6.0).abs() < 1e-9, "churn_rate = 6 distinct files changed");
         let conc = daily.iter().find(|r| r.0 == "churn_concentration").expect("concentration row");
         assert_eq!(conc.2["denominator"].as_i64(), Some(11), "denominator = total line-churn (11)");
-        assert_eq!(conc.2["numerator"].as_i64(), Some(7), "numerator = top ceil(6×0.2)=2 files (4+3=7), NOT top-1 (4)");
+        assert_eq!(
+            conc.2["numerator"].as_i64(),
+            Some(7),
+            "numerator = top ceil(6×0.2)=2 files (4+3=7), NOT top-1 (4)"
+        );
         assert!((conc.1 - 7.0 / 11.0).abs() < 1e-9, "value = 7/11");
 
         cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
@@ -724,12 +790,24 @@ mod tests {
         }
 
         let written = compute(&ctx, &pid.to_string(), None).await.unwrap();
-        assert_eq!(written, 1, "only the rework_density project row (0.0 over 3 files); no git churn rows");
+        assert_eq!(
+            written, 1,
+            "only the rework_density project row (0.0 over 3 files); no git churn rows"
+        );
 
         let daily = daily_rows(pg, &pid).await;
-        assert!(!daily.iter().any(|r| r.0 == "churn_rate"), "no churn_rate row for a non-git root (honest-empty)");
-        assert!(!daily.iter().any(|r| r.0 == "churn_concentration"), "no churn_concentration row for a non-git root");
-        let rd = daily.iter().find(|r| r.0 == "rework_density").expect("rework_density row IS written (DB-sourced)");
+        assert!(
+            !daily.iter().any(|r| r.0 == "churn_rate"),
+            "no churn_rate row for a non-git root (honest-empty)"
+        );
+        assert!(
+            !daily.iter().any(|r| r.0 == "churn_concentration"),
+            "no churn_concentration row for a non-git root"
+        );
+        let rd = daily
+            .iter()
+            .find(|r| r.0 == "rework_density")
+            .expect("rework_density row IS written (DB-sourced)");
         assert!(rd.1.abs() < 1e-9, "rework_density = 0 rework over 3 real files = 0.0");
 
         cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
@@ -744,19 +822,18 @@ mod tests {
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
-        let pid = pg
-            .create_project(&format!("_test:churn-empty:{uniq}"), None, None)
-            .await
-            .unwrap();
+        let pid =
+            pg.create_project(&format!("_test:churn-empty:{uniq}"), None, None).await.unwrap();
 
         let written = compute(&ctx, &pid.to_string(), None).await.unwrap();
         assert_eq!(written, 0, "no repository / rework / files → zero rows written");
 
-        let (total,): (i64,) = query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
-            .bind(pid)
-            .fetch_one(pg.pool())
-            .await
-            .unwrap();
+        let (total,): (i64,) =
+            query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
+                .bind(pid)
+                .fetch_one(pg.pool())
+                .await
+                .unwrap();
         assert_eq!(total, 0, "no project_metrics rows for an empty project (never fabricated)");
 
         cleanup_metrics_fixture(pg, &pid, None, &[]).await;
@@ -783,12 +860,23 @@ mod tests {
         seed_detected_pattern(pg, &pid_a, Some(&fid_a), "correction-prone", true).await;
 
         let written_a = compute(&ctx, &pid_a.to_string(), None).await.unwrap();
-        assert_eq!(written_a, 1, "one PROJECT-level rework_density row (non-git root → no churn rows; per-module rows retired)");
+        assert_eq!(
+            written_a, 1,
+            "one PROJECT-level rework_density row (non-git root → no churn rows; per-module rows retired)"
+        );
 
         let daily_a = daily_rows(pg, &pid_a).await;
-        let rd = daily_a.iter().find(|r| r.0 == "rework_density").expect("rework_density project row");
-        assert!((rd.1 - 0.5).abs() < 1e-9, "rework_density = 2 rework files / 4 project files = 0.5");
-        assert_eq!(rd.2["numerator"].as_i64(), Some(2), "numerator = # rework-flagged files (correction-prone excluded)");
+        let rd =
+            daily_a.iter().find(|r| r.0 == "rework_density").expect("rework_density project row");
+        assert!(
+            (rd.1 - 0.5).abs() < 1e-9,
+            "rework_density = 2 rework files / 4 project files = 0.5"
+        );
+        assert_eq!(
+            rd.2["numerator"].as_i64(),
+            Some(2),
+            "numerator = # rework-flagged files (correction-prone excluded)"
+        );
         assert_eq!(rd.2["denominator"].as_i64(), Some(4), "denominator = # project files");
 
         // Repo grain retires the per-module rows. This used to assert
@@ -803,12 +891,16 @@ mod tests {
         seed_detected_pattern(pg, &pid_b, Some(&fid_b), "rework: x.rs", true).await;
 
         let written_b = compute(&ctx, &pid_b.to_string(), None).await.unwrap();
-        assert_eq!(written_b, 0, "0 project files → no denominator → NO rework_density row (never a fabricated 0/0)");
-        let (total_b,): (i64,) = query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
-            .bind(pid_b)
-            .fetch_one(pg.pool())
-            .await
-            .unwrap();
+        assert_eq!(
+            written_b, 0,
+            "0 project files → no denominator → NO rework_density row (never a fabricated 0/0)"
+        );
+        let (total_b,): (i64,) =
+            query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
+                .bind(pid_b)
+                .fetch_one(pg.pool())
+                .await
+                .unwrap();
         assert_eq!(total_b, 0, "no rows at all for the zero-project-files project");
 
         cleanup_metrics_fixture(pg, &pid_a, Some(&fid_a), &[]).await;
@@ -829,13 +921,26 @@ mod tests {
         }
 
         let written = compute(&ctx, &pid.to_string(), None).await.unwrap();
-        assert_eq!(written, 1, "one PROJECT-level rework_density row (real 0.0); no churn rows on a non-git root");
+        assert_eq!(
+            written, 1,
+            "one PROJECT-level rework_density row (real 0.0); no churn rows on a non-git root"
+        );
 
         let daily = daily_rows(pg, &pid).await;
-        let rd = daily.iter().find(|r| r.0 == "rework_density").expect("rework_density row IS written for a REAL zero");
-        assert!(rd.1.abs() < 1e-9, "value is a real 0.0 (0 rework over 3 real files), not a suppressed row");
+        let rd = daily
+            .iter()
+            .find(|r| r.0 == "rework_density")
+            .expect("rework_density row IS written for a REAL zero");
+        assert!(
+            rd.1.abs() < 1e-9,
+            "value is a real 0.0 (0 rework over 3 real files), not a suppressed row"
+        );
         assert_eq!(rd.2["numerator"].as_i64(), Some(0), "numerator = 0 (no rework-flagged files)");
-        assert_eq!(rd.2["denominator"].as_i64(), Some(3), "denominator = 3 project files (real denominator → row written)");
+        assert_eq!(
+            rd.2["denominator"].as_i64(),
+            Some(3),
+            "denominator = 3 project files (real denominator → row written)"
+        );
 
         cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
     }
@@ -859,14 +964,21 @@ mod tests {
 
         let past = chrono::NaiveDate::from_ymd_opt(2020, 1, 1).unwrap();
         let written = compute(&ctx, &pid.to_string(), Some(past)).await.unwrap();
-        assert_eq!(written, 0, "historical as_of → rework_density (forward-only) skipped, non-git root → no churn → zero rows");
+        assert_eq!(
+            written, 0,
+            "historical as_of → rework_density (forward-only) skipped, non-git root → no churn → zero rows"
+        );
 
-        let (total,): (i64,) = query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
-            .bind(pid)
-            .fetch_one(pg.pool())
-            .await
-            .unwrap();
-        assert_eq!(total, 0, "no project_metrics rows for a historical as_of (never a fabricated snapshot)");
+        let (total,): (i64,) =
+            query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
+                .bind(pid)
+                .fetch_one(pg.pool())
+                .await
+                .unwrap();
+        assert_eq!(
+            total, 0,
+            "no project_metrics rows for a historical as_of (never a fabricated snapshot)"
+        );
 
         cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
     }
@@ -928,18 +1040,24 @@ mod tests {
 
         // off → floor at the first AI day.
         match repo_history_floor(pg, &rid, &root, BaselineHistory::Off).await.unwrap() {
-            RepoFloor::From(d) => assert_eq!(d, ai_day, "off floors at the first AI transcript day"),
+            RepoFloor::From(d) => {
+                assert_eq!(d, ai_day, "off floors at the first AI transcript day")
+            }
             _ => panic!("off → From(ai_start)"),
         }
         // full → no floor.
         assert!(
-            matches!(repo_history_floor(pg, &rid, &root, BaselineHistory::Full).await.unwrap(), RepoFloor::All),
+            matches!(
+                repo_history_floor(pg, &rid, &root, BaselineHistory::Full).await.unwrap(),
+                RepoFloor::All
+            ),
             "full → All (no floor)",
         );
         // Commits(2) → the 2nd-newest commit before the AI day (2025-03-03).
         match repo_history_floor(pg, &rid, &root, BaselineHistory::Commits(2)).await.unwrap() {
             RepoFloor::From(d) => assert_eq!(
-                d, NaiveDate::from_ymd_opt(2025, 3, 3).unwrap(),
+                d,
+                NaiveDate::from_ymd_opt(2025, 3, 3).unwrap(),
                 "N=2 → 2 commits before the AI day",
             ),
             _ => panic!("Commits(2) → From(nth-before)"),
@@ -947,7 +1065,8 @@ mod tests {
         // Commits(50), only 3 pre-AI commits → clamp to the OLDEST commit (never fabricated earlier).
         match repo_history_floor(pg, &rid, &root, BaselineHistory::Commits(50)).await.unwrap() {
             RepoFloor::From(d) => assert_eq!(
-                d, NaiveDate::from_ymd_opt(2025, 3, 1).unwrap(),
+                d,
+                NaiveDate::from_ymd_opt(2025, 3, 1).unwrap(),
                 "N beyond history → the oldest commit day",
             ),
             _ => panic!("Commits(50) → oldest commit"),
@@ -956,15 +1075,24 @@ mod tests {
         // No AI activity: off/N → Skip, full → All.
         clear_ai_sessions(pg, &fid).await;
         assert!(
-            matches!(repo_history_floor(pg, &rid, &root, BaselineHistory::Off).await.unwrap(), RepoFloor::Skip),
+            matches!(
+                repo_history_floor(pg, &rid, &root, BaselineHistory::Off).await.unwrap(),
+                RepoFloor::Skip
+            ),
             "no AI + off → Skip",
         );
         assert!(
-            matches!(repo_history_floor(pg, &rid, &root, BaselineHistory::Commits(3)).await.unwrap(), RepoFloor::Skip),
+            matches!(
+                repo_history_floor(pg, &rid, &root, BaselineHistory::Commits(3)).await.unwrap(),
+                RepoFloor::Skip
+            ),
             "no AI + N → Skip",
         );
         assert!(
-            matches!(repo_history_floor(pg, &rid, &root, BaselineHistory::Full).await.unwrap(), RepoFloor::All),
+            matches!(
+                repo_history_floor(pg, &rid, &root, BaselineHistory::Full).await.unwrap(),
+                RepoFloor::All
+            ),
             "no AI + full → All",
         );
 
@@ -985,21 +1113,32 @@ mod tests {
         // Replace the fixture's 2000 AI-start with a MID anchor 40 days ago.
         clear_ai_sessions(pg, &fid).await;
         let ai_day = (chrono::Utc::now() - chrono::Duration::days(40)).date_naive();
-        seed_repo_ai_start(pg, &fid, &pid, &format!("{}T00:00:00Z", ai_day.format("%Y-%m-%d"))).await;
+        seed_repo_ai_start(pg, &fid, &pid, &format!("{}T00:00:00Z", ai_day.format("%Y-%m-%d")))
+            .await;
 
         // A commit BEFORE the AI-start (60 days ago) and one AFTER (20 days ago).
         let pre = (chrono::Utc::now() - chrono::Duration::days(60)).date_naive();
         let post = (chrono::Utc::now() - chrono::Duration::days(20)).date_naive();
         git_commit_on_day(repo.path(), &pre.format("%Y-%m-%d").to_string(), &[("a.rs", "1\n2\n")]);
-        git_commit_on_day(repo.path(), &post.format("%Y-%m-%d").to_string(), &[("b.rs", "1\n2\n3\n")]);
+        git_commit_on_day(
+            repo.path(),
+            &post.format("%Y-%m-%d").to_string(),
+            &[("b.rs", "1\n2\n3\n")],
+        );
 
         // Default (off): the PRE-AI day is floored out → nothing written.
         let pre_written = compute(&ctx, &pid.to_string(), Some(pre)).await.unwrap();
-        assert_eq!(pre_written, 0, "a commit-day before the first AI transcript is floored out by default");
+        assert_eq!(
+            pre_written, 0,
+            "a commit-day before the first AI transcript is floored out by default"
+        );
 
         // The POST-AI day computes normally (dual scope repo + user = 4 rows).
         let post_written = compute(&ctx, &pid.to_string(), Some(post)).await.unwrap();
-        assert_eq!(post_written, 4, "a commit-day on/after the AI-start computes churn (repo + user scope)");
+        assert_eq!(
+            post_written, 4,
+            "a commit-day on/after the AI-start computes churn (repo + user scope)"
+        );
 
         cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
     }
@@ -1021,10 +1160,16 @@ mod tests {
 
         // (tool_name, cwd, payload) — an MCP plugin call in the repo, a Bash call, and a builtin.
         let events: [(&str, Option<&str>, serde_json::Value); 3] = [
-            ("mcp__plugin_sensei_sensei__get_project_conventions", Some(root.as_str()),
-             serde_json::json!({"tool_input": {"repoId": "sensei"}})),
-            ("Bash", Some(root.as_str()),
-             serde_json::json!({"tool_input": {"command": "cargo build", "description": "build"}})),
+            (
+                "mcp__plugin_sensei_sensei__get_project_conventions",
+                Some(root.as_str()),
+                serde_json::json!({"tool_input": {"repoId": "sensei"}}),
+            ),
+            (
+                "Bash",
+                Some(root.as_str()),
+                serde_json::json!({"tool_input": {"command": "cargo build", "description": "build"}}),
+            ),
             ("Read", None, serde_json::json!({"tool_input": {"file_path": "/x"}})),
         ];
         for (tool_name, cwd, payload) in &events {
@@ -1055,20 +1200,32 @@ mod tests {
         assert!(total >= 3, "enriched at least the 3 seeded events (got {total})");
 
         #[allow(clippy::type_complexity)]
-        let rows: Vec<(String, Option<uuid::Uuid>, Option<String>, Option<String>, Option<String>, Option<String>)> =
-            query_as(
-                "SELECT tool_name, repository_id, plugin, method, tool_kind, call_info \
+        let rows: Vec<(
+            String,
+            Option<uuid::Uuid>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+        )> = query_as(
+            "SELECT tool_name, repository_id, plugin, method, tool_kind, call_info \
                    FROM activity.assistant_events WHERE session_id = $1 ORDER BY tool_name",
-            )
-            .bind(&sid)
-            .fetch_all(pg.pool())
-            .await
-            .unwrap();
-        let by = |t: &str| rows.iter().find(|r| r.0 == t).unwrap_or_else(|| panic!("row for {t}")).clone();
+        )
+        .bind(&sid)
+        .fetch_all(pg.pool())
+        .await
+        .unwrap();
+        let by = |t: &str| {
+            rows.iter().find(|r| r.0 == t).unwrap_or_else(|| panic!("row for {t}")).clone()
+        };
 
         let mcp = by("mcp__plugin_sensei_sensei__get_project_conventions");
         assert_eq!(mcp.2.as_deref(), Some("sensei"), "plugin parsed from mcp__plugin_<plugin>_");
-        assert_eq!(mcp.3.as_deref(), Some("get_project_conventions"), "method = segment after final __");
+        assert_eq!(
+            mcp.3.as_deref(),
+            Some("get_project_conventions"),
+            "method = segment after final __"
+        );
         assert_eq!(mcp.4.as_deref(), Some("mcp"), "tool_kind = mcp");
         assert_eq!(mcp.1, Some(rid), "repository_id resolved from cwd via repo_anchor_for");
 
@@ -1082,10 +1239,17 @@ mod tests {
         assert_eq!(read.1, None, "no cwd → no repository_id (honest-empty)");
 
         // Idempotent: a second pass enriches nothing (all enriched_at set).
-        assert_eq!(pg.enrich_assistant_events(100).await.unwrap(), 0, "re-run enriches nothing (enriched_at set)");
+        assert_eq!(
+            pg.enrich_assistant_events(100).await.unwrap(),
+            0,
+            "re-run enriches nothing (enriched_at set)"
+        );
 
         sqlx_core::query::query("DELETE FROM activity.assistant_events WHERE session_id = $1")
-            .bind(&sid).execute(pg.pool()).await.unwrap();
+            .bind(&sid)
+            .execute(pg.pool())
+            .await
+            .unwrap();
         cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
     }
 
@@ -1105,21 +1269,59 @@ mod tests {
         let rid = repository_for_folder(pg, &fid).await;
         let day = chrono::Utc::now().date_naive();
 
-        let cov = *pg.active_metric_ids("coverage").await.unwrap().get("coverage").expect("coverage seeded");
-        let mq = *pg.active_metric_ids("quality").await.unwrap().get("module_quality").expect("module_quality seeded");
+        let cov = *pg
+            .active_metric_ids("coverage")
+            .await
+            .unwrap()
+            .get("coverage")
+            .expect("coverage seeded");
+        let mq = *pg
+            .active_metric_ids("quality")
+            .await
+            .unwrap()
+            .get("module_quality")
+            .expect("module_quality seeded");
 
         // ratio metrics pool Σnum/Σden in project_metric_daily → value = num/den.
-        pg.upsert_project_metric_repo(&cov, &rid, "user", None, None, day, "daily",
-            0.86, &serde_json::json!({"numerator": 86, "denominator": 100}), "measured").await.unwrap();
-        pg.upsert_project_metric_repo(&mq, &rid, "user", None, None, day, "daily",
-            0.001, &serde_json::json!({"numerator": 1, "denominator": 1000}), "measured").await.unwrap();
+        pg.upsert_project_metric_repo(
+            &cov,
+            &rid,
+            "user",
+            None,
+            None,
+            day,
+            "daily",
+            0.86,
+            &serde_json::json!({"numerator": 86, "denominator": 100}),
+            "measured",
+        )
+        .await
+        .unwrap();
+        pg.upsert_project_metric_repo(
+            &mq,
+            &rid,
+            "user",
+            None,
+            None,
+            day,
+            "daily",
+            0.001,
+            &serde_json::json!({"numerator": 1, "denominator": 1000}),
+            "measured",
+        )
+        .await
+        .unwrap();
 
         let ratings: Vec<(String, Option<i32>)> = query_as(
             "SELECT metric, rating FROM sensei.metric_ratings WHERE project_id = $1 ORDER BY metric",
         ).bind(pid).fetch_all(pg.pool()).await.unwrap();
         let rating_of = |k: &str| ratings.iter().find(|r| r.0 == k).and_then(|r| r.1);
         assert_eq!(rating_of("coverage"), Some(4), "coverage 0.86 → rating 4 (below 0.90)");
-        assert_eq!(rating_of("module_quality"), Some(5), "maintainability 0.001 → rating 5 (below every threshold, best band)");
+        assert_eq!(
+            rating_of("module_quality"),
+            Some(5),
+            "maintainability 0.001 → rating 5 (below every threshold, best band)"
+        );
 
         let (health, rated): (i32, i32) = query_as(
             "SELECT health_score, rated_metrics FROM sensei.project_health_score WHERE project_id = $1",

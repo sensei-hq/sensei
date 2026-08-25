@@ -52,18 +52,9 @@ mod tests {
     fn a_trailing_slash_is_trimmed() {
         // Callers append `/v1/auth/cli/...`; a doubled slash does not route, and
         // the failure reads as a missing endpoint rather than a config typo.
-        assert_eq!(
-            normalize("https://dojo.sensei-hq.com/"),
-            "https://dojo.sensei-hq.com"
-        );
-        assert_eq!(
-            normalize("https://dojo.sensei-hq.com///"),
-            "https://dojo.sensei-hq.com"
-        );
-        assert_eq!(
-            normalize("  https://dojo.sensei-hq.com  "),
-            "https://dojo.sensei-hq.com"
-        );
+        assert_eq!(normalize("https://dojo.sensei-hq.com/"), "https://dojo.sensei-hq.com");
+        assert_eq!(normalize("https://dojo.sensei-hq.com///"), "https://dojo.sensei-hq.com");
+        assert_eq!(normalize("  https://dojo.sensei-hq.com  "), "https://dojo.sensei-hq.com");
     }
 
     #[test]

@@ -57,11 +57,7 @@ pub fn store_provider_refresh_token(
     persona: &str,
     token: &str,
 ) -> Result<(), crate::gateway_keys::KeychainError> {
-    keychain_write(
-        KEYCHAIN_SERVICE,
-        &format!("provider_refresh.{}", persona.to_lowercase()),
-        token,
-    )
+    keychain_write(KEYCHAIN_SERVICE, &format!("provider_refresh.{}", persona.to_lowercase()), token)
 }
 
 /// What Supabase returns from `/auth/v1/token`.
@@ -127,9 +123,7 @@ impl Session {
     }
 
     pub fn from_response(r: &TokenResponse, now_epoch_secs: i64) -> Self {
-        Self {
-            expires_at: now_epoch_secs + r.expires_in.max(0),
-        }
+        Self { expires_at: now_epoch_secs + r.expires_in.max(0) }
     }
 }
 
@@ -164,18 +158,9 @@ pub fn load_refresh_token(persona: &str) -> Result<String, crate::gateway_keys::
             // happens once and no orphan credential lingers.
             keychain_write(KEYCHAIN_SERVICE, &account_for(persona), &legacy)?;
             let _ = std::process::Command::new("/usr/bin/security")
-                .args([
-                    "delete-generic-password",
-                    "-s",
-                    KEYCHAIN_SERVICE,
-                    "-a",
-                    LEGACY_ACCOUNT,
-                ])
+                .args(["delete-generic-password", "-s", KEYCHAIN_SERVICE, "-a", LEGACY_ACCOUNT])
                 .output();
-            tracing::info!(
-                persona,
-                "migrated a pre-persona Supabase session into its own slot"
-            );
+            tracing::info!(persona, "migrated a pre-persona Supabase session into its own slot");
             Ok(legacy)
         }
     }
@@ -189,13 +174,7 @@ pub fn load_refresh_token(persona: &str) -> Result<String, crate::gateway_keys::
 pub fn clear_refresh_token(persona: &str) -> Result<(), crate::gateway_keys::KeychainError> {
     let account = account_for(persona);
     let out = std::process::Command::new("/usr/bin/security")
-        .args([
-            "delete-generic-password",
-            "-s",
-            KEYCHAIN_SERVICE,
-            "-a",
-            &account,
-        ])
+        .args(["delete-generic-password", "-s", KEYCHAIN_SERVICE, "-a", &account])
         .output()?;
     // A missing entry is success: the goal is "no token stored", and that holds.
     if out.status.success() || String::from_utf8_lossy(&out.stderr).contains("could not be found") {
@@ -213,16 +192,7 @@ fn keychain_write(
     secret: &str,
 ) -> Result<(), crate::gateway_keys::KeychainError> {
     let out = std::process::Command::new("/usr/bin/security")
-        .args([
-            "add-generic-password",
-            "-U",
-            "-s",
-            service,
-            "-a",
-            account,
-            "-w",
-            secret,
-        ])
+        .args(["add-generic-password", "-U", "-s", service, "-a", account, "-w", secret])
         .output()?;
     if out.status.success() {
         Ok(())

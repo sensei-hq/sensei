@@ -273,8 +273,8 @@ mod tests {
     fn paused_blocked_terminal_are_healthy_even_when_stale() {
         let old = ago(24 * 60 * 60); // a full day stale on both signals
         for status in [
-            RelayRunStatus::Paused,   // intentional / limit-wait — auto-resumes
-            RelayRunStatus::Blocked,  // waiting on a human — not a stall
+            RelayRunStatus::Paused,  // intentional / limit-wait — auto-resumes
+            RelayRunStatus::Blocked, // waiting on a human — not a stall
             RelayRunStatus::Done,
             RelayRunStatus::Failed,
             RelayRunStatus::Crashed,

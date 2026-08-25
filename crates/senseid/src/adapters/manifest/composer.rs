@@ -69,16 +69,25 @@ impl ManifestAdapter for ComposerManifestAdapter {
     /// class table like npm's. Each entry becomes a `composer <name>`
     /// invocation with the shared category classifier.
     fn parse_commands(&self, content: &str) -> Vec<super::DiscoveredCommand> {
-        let Ok(json) = serde_json::from_str::<serde_json::Value>(content) else { return Vec::new() };
-        let Some(scripts) = json.get("scripts").and_then(|v| v.as_object()) else { return Vec::new() };
-        scripts.iter().filter_map(|(name, _)| {
-            if name.is_empty() { return None; }
-            Some(super::DiscoveredCommand {
-                raw_name: name.clone(),
-                command_line: format!("composer {name}"),
-                category: super::command_category::categorise(name),
+        let Ok(json) = serde_json::from_str::<serde_json::Value>(content) else {
+            return Vec::new();
+        };
+        let Some(scripts) = json.get("scripts").and_then(|v| v.as_object()) else {
+            return Vec::new();
+        };
+        scripts
+            .iter()
+            .filter_map(|(name, _)| {
+                if name.is_empty() {
+                    return None;
+                }
+                Some(super::DiscoveredCommand {
+                    raw_name: name.clone(),
+                    command_line: format!("composer {name}"),
+                    category: super::command_category::categorise(name),
+                })
             })
-        }).collect()
+            .collect()
     }
 }
 

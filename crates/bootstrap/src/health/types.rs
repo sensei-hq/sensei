@@ -122,13 +122,10 @@ impl HealthPayload {
         // INV-1: needs-action ⇔ remedy.is_some()
         match (self.status, self.remedy.as_ref()) {
             (HealthStatus::NeedsAction, None) => {
-                return Err("HealthPayload: needs-action requires a remedy".to_string())
+                return Err("HealthPayload: needs-action requires a remedy".to_string());
             }
             (s, Some(_)) if s != HealthStatus::NeedsAction => {
-                return Err(format!(
-                    "HealthPayload: status={:?} must not carry a remedy",
-                    s
-                ))
+                return Err(format!("HealthPayload: status={:?} must not carry a remedy", s));
             }
             _ => {}
         }
@@ -196,104 +193,48 @@ mod tests {
 
     #[test]
     fn health_status_serializes_kebab_case() {
-        assert_eq!(
-            serde_json::to_string(&HealthStatus::NeedsAction).unwrap(),
-            "\"needs-action\""
-        );
-        assert_eq!(
-            serde_json::to_string(&HealthStatus::Checking).unwrap(),
-            "\"checking\""
-        );
-        assert_eq!(
-            serde_json::to_string(&HealthStatus::Resolving).unwrap(),
-            "\"resolving\""
-        );
+        assert_eq!(serde_json::to_string(&HealthStatus::NeedsAction).unwrap(), "\"needs-action\"");
+        assert_eq!(serde_json::to_string(&HealthStatus::Checking).unwrap(), "\"checking\"");
+        assert_eq!(serde_json::to_string(&HealthStatus::Resolving).unwrap(), "\"resolving\"");
         assert_eq!(serde_json::to_string(&HealthStatus::Ok).unwrap(), "\"ok\"");
     }
 
     #[test]
     fn component_status_serializes_lowercase() {
-        assert_eq!(
-            serde_json::to_string(&ComponentStatus::Ready).unwrap(),
-            "\"ready\""
-        );
-        assert_eq!(
-            serde_json::to_string(&ComponentStatus::Pending).unwrap(),
-            "\"pending\""
-        );
-        assert_eq!(
-            serde_json::to_string(&ComponentStatus::Checking).unwrap(),
-            "\"checking\""
-        );
-        assert_eq!(
-            serde_json::to_string(&ComponentStatus::Installing).unwrap(),
-            "\"installing\""
-        );
-        assert_eq!(
-            serde_json::to_string(&ComponentStatus::Failed).unwrap(),
-            "\"failed\""
-        );
+        assert_eq!(serde_json::to_string(&ComponentStatus::Ready).unwrap(), "\"ready\"");
+        assert_eq!(serde_json::to_string(&ComponentStatus::Pending).unwrap(), "\"pending\"");
+        assert_eq!(serde_json::to_string(&ComponentStatus::Checking).unwrap(), "\"checking\"");
+        assert_eq!(serde_json::to_string(&ComponentStatus::Installing).unwrap(), "\"installing\"");
+        assert_eq!(serde_json::to_string(&ComponentStatus::Failed).unwrap(), "\"failed\"");
     }
 
     #[test]
     fn component_id_serializes_lowercase() {
-        assert_eq!(
-            serde_json::to_string(&ComponentId::Postgres).unwrap(),
-            "\"postgres\""
-        );
-        assert_eq!(
-            serde_json::to_string(&ComponentId::Ollama).unwrap(),
-            "\"ollama\""
-        );
-        assert_eq!(
-            serde_json::to_string(&ComponentId::Sensei).unwrap(),
-            "\"sensei\""
-        );
-        assert_eq!(
-            serde_json::to_string(&ComponentId::Database).unwrap(),
-            "\"database\""
-        );
-        assert_eq!(
-            serde_json::to_string(&ComponentId::Daemon).unwrap(),
-            "\"daemon\""
-        );
+        assert_eq!(serde_json::to_string(&ComponentId::Postgres).unwrap(), "\"postgres\"");
+        assert_eq!(serde_json::to_string(&ComponentId::Ollama).unwrap(), "\"ollama\"");
+        assert_eq!(serde_json::to_string(&ComponentId::Sensei).unwrap(), "\"sensei\"");
+        assert_eq!(serde_json::to_string(&ComponentId::Database).unwrap(), "\"database\"");
+        assert_eq!(serde_json::to_string(&ComponentId::Daemon).unwrap(), "\"daemon\"");
     }
 
     #[test]
     fn package_manager_id_serializes_lowercase() {
-        assert_eq!(
-            serde_json::to_string(&PackageManagerId::Homebrew).unwrap(),
-            "\"homebrew\""
-        );
-        assert_eq!(
-            serde_json::to_string(&PackageManagerId::Winget).unwrap(),
-            "\"winget\""
-        );
+        assert_eq!(serde_json::to_string(&PackageManagerId::Homebrew).unwrap(), "\"homebrew\"");
+        assert_eq!(serde_json::to_string(&PackageManagerId::Winget).unwrap(), "\"winget\"");
     }
 
     #[test]
     fn platform_serializes_lowercase() {
-        assert_eq!(
-            serde_json::to_string(&Platform::Macos).unwrap(),
-            "\"macos\""
-        );
-        assert_eq!(
-            serde_json::to_string(&Platform::Linux).unwrap(),
-            "\"linux\""
-        );
-        assert_eq!(
-            serde_json::to_string(&Platform::Windows).unwrap(),
-            "\"windows\""
-        );
+        assert_eq!(serde_json::to_string(&Platform::Macos).unwrap(), "\"macos\"");
+        assert_eq!(serde_json::to_string(&Platform::Linux).unwrap(), "\"linux\"");
+        assert_eq!(serde_json::to_string(&Platform::Windows).unwrap(), "\"windows\"");
     }
 
     // ── HealthEvent tagged-union ──
 
     #[test]
     fn health_event_phase_serializes_with_kind_tag() {
-        let ev = HealthEvent::Phase {
-            phase: HealthStatus::Checking,
-        };
+        let ev = HealthEvent::Phase { phase: HealthStatus::Checking };
         let s = serde_json::to_string(&ev).unwrap();
         assert_eq!(s, r#"{"kind":"phase","phase":"checking"}"#);
     }
@@ -317,11 +258,7 @@ mod tests {
     #[test]
     fn health_event_remedy_carries_remedy_object() {
         let ev = HealthEvent::Remedy {
-            remedy: Remedy {
-                message: "m".into(),
-                script: "s".into(),
-                url: None,
-            },
+            remedy: Remedy { message: "m".into(), script: "s".into(), url: None },
         };
         let json: serde_json::Value =
             serde_json::from_str(&serde_json::to_string(&ev).unwrap()).unwrap();
@@ -367,10 +304,7 @@ mod tests {
             serde_json::from_str(&serde_json::to_string(&p).unwrap()).unwrap();
         assert_eq!(json["uptimeSeconds"], 42);
         assert_eq!(json["packageManager"]["id"], "homebrew");
-        assert!(
-            json.get("uptime_seconds").is_none(),
-            "snake_case must NOT appear"
-        );
+        assert!(json.get("uptime_seconds").is_none(), "snake_case must NOT appear");
     }
 
     #[test]
@@ -407,11 +341,7 @@ mod tests {
     #[test]
     fn validate_non_needs_action_with_remedy_fails() {
         let mut p = mock_ok_payload();
-        p.remedy = Some(Remedy {
-            message: "x".into(),
-            script: "y".into(),
-            url: None,
-        });
+        p.remedy = Some(Remedy { message: "x".into(), script: "y".into(), url: None });
         let err = p.validate().unwrap_err();
         assert!(err.contains("must not carry a remedy"));
     }
@@ -420,30 +350,21 @@ mod tests {
     fn validate_components_length_must_be_five() {
         let mut p = mock_ok_payload();
         p.components.pop();
-        assert!(p
-            .validate()
-            .unwrap_err()
-            .contains("expected 5 components, got 4"));
+        assert!(p.validate().unwrap_err().contains("expected 5 components, got 4"));
     }
 
     #[test]
     fn validate_components_must_be_in_canonical_order() {
         let mut p = mock_ok_payload();
         p.components.swap(0, 1);
-        assert!(p
-            .validate()
-            .unwrap_err()
-            .contains("components[0].id must be \"postgres\""));
+        assert!(p.validate().unwrap_err().contains("components[0].id must be \"postgres\""));
     }
 
     #[test]
     fn validate_macos_must_use_homebrew() {
         let mut p = mock_ok_payload();
         p.package_manager.id = "winget".into();
-        assert!(p
-            .validate()
-            .unwrap_err()
-            .contains("packageManager.id=\"homebrew\""));
+        assert!(p.validate().unwrap_err().contains("packageManager.id=\"homebrew\""));
     }
 
     #[test]
@@ -451,9 +372,6 @@ mod tests {
         let mut p = mock_ok_payload();
         p.platform = Platform::Windows;
         p.package_manager.id = "homebrew".into();
-        assert!(p
-            .validate()
-            .unwrap_err()
-            .contains("packageManager.id=\"winget\""));
+        assert!(p.validate().unwrap_err().contains("packageManager.id=\"winget\""));
     }
 }

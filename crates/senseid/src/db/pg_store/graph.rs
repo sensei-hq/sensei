@@ -16,71 +16,122 @@ fn is_identity_conflict(e: &sqlx_core::error::Error) -> bool {
 #[allow(dead_code, clippy::too_many_arguments, clippy::type_complexity)]
 impl PgStore {
     /// BM25-style keyword ranking: matches nodes by name/signature/docstring.
-    pub async fn rank_bm25(&self, folder_id: &uuid::Uuid, query: &str) -> Result<Vec<(String, f64)>, String> {
-        let rows: Vec<(String, f64)> = sqlx_core::query_as::query_as(
-            "SELECT file_path, score FROM sensei.rank_bm25($1, $2)"
-        ).bind(folder_id).bind(query)
-            .fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+    pub async fn rank_bm25(
+        &self,
+        folder_id: &uuid::Uuid,
+        query: &str,
+    ) -> Result<Vec<(String, f64)>, String> {
+        let rows: Vec<(String, f64)> =
+            sqlx_core::query_as::query_as("SELECT file_path, score FROM sensei.rank_bm25($1, $2)")
+                .bind(folder_id)
+                .bind(query)
+                .fetch_all(&self.pool)
+                .await
+                .map_err(|e| e.to_string())?;
         Ok(rows)
     }
 
     // ── Graph (typed wrappers) ─────────────────────────────────────────
 
     pub async fn merge_function(
-        &self, folder_id: &uuid::Uuid, name: &str, file_path: &str,
-        signature: Option<&str>, line_start: Option<i32>, line_end: Option<i32>,
+        &self,
+        folder_id: &uuid::Uuid,
+        name: &str,
+        file_path: &str,
+        signature: Option<&str>,
+        line_start: Option<i32>,
+        line_end: Option<i32>,
         parent_id: Option<&uuid::Uuid>,
     ) -> Result<uuid::Uuid, String> {
-        self.upsert_node(folder_id, "function", name, file_path, parent_id, signature, line_start, line_end).await
+        self.upsert_node(
+            folder_id, "function", name, file_path, parent_id, signature, line_start, line_end,
+        )
+        .await
     }
 
     pub async fn merge_file(
-        &self, folder_id: &uuid::Uuid, name: &str, file_path: &str,
+        &self,
+        folder_id: &uuid::Uuid,
+        name: &str,
+        file_path: &str,
     ) -> Result<uuid::Uuid, String> {
         self.upsert_node(folder_id, "file", name, file_path, None, None, None, None).await
     }
 
     pub async fn merge_type(
-        &self, folder_id: &uuid::Uuid, name: &str, file_path: &str,
-        kind: &str, line_start: Option<i32>,
+        &self,
+        folder_id: &uuid::Uuid,
+        name: &str,
+        file_path: &str,
+        kind: &str,
+        line_start: Option<i32>,
     ) -> Result<uuid::Uuid, String> {
         self.upsert_node(folder_id, kind, name, file_path, None, None, line_start, None).await
     }
 
     pub async fn merge_doc(
-        &self, folder_id: &uuid::Uuid, name: &str, file_path: &str,
+        &self,
+        folder_id: &uuid::Uuid,
+        name: &str,
+        file_path: &str,
     ) -> Result<uuid::Uuid, String> {
         self.upsert_node(folder_id, "doc", name, file_path, None, None, None, None).await
     }
 
     pub async fn project_exists(&self, folder_id: &uuid::Uuid) -> Result<bool, String> {
         let row: (bool,) = sqlx_core::query_as::query_as(
-            "SELECT EXISTS(SELECT 1 FROM sensei.nodes WHERE folder_id = $1)"
-        ).bind(folder_id).fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
+            "SELECT EXISTS(SELECT 1 FROM sensei.nodes WHERE folder_id = $1)",
+        )
+        .bind(folder_id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(row.0)
     }
 
-    pub async fn search_functions(&self, folder_id: &uuid::Uuid, query: &str) -> Result<Vec<serde_json::Value>, String> {
+    pub async fn search_functions(
+        &self,
+        folder_id: &uuid::Uuid,
+        query: &str,
+    ) -> Result<Vec<serde_json::Value>, String> {
         self.search_functions_scoped(std::slice::from_ref(folder_id), query).await
     }
 
-    pub async fn search_types(&self, folder_id: &uuid::Uuid, query: &str) -> Result<Vec<serde_json::Value>, String> {
+    pub async fn search_types(
+        &self,
+        folder_id: &uuid::Uuid,
+        query: &str,
+    ) -> Result<Vec<serde_json::Value>, String> {
         self.search_types_scoped(std::slice::from_ref(folder_id), query).await
     }
 
-    pub async fn count_nodes_by_kind(&self, folder_id: &uuid::Uuid) -> Result<std::collections::HashMap<String, i64>, String> {
+    pub async fn count_nodes_by_kind(
+        &self,
+        folder_id: &uuid::Uuid,
+    ) -> Result<std::collections::HashMap<String, i64>, String> {
         self.count_nodes_by_kind_scoped(std::slice::from_ref(folder_id)).await
     }
 
     pub async fn delete_node(&self, node_id: &uuid::Uuid) -> Result<(), String> {
         sqlx_core::query::query("DELETE FROM sensei.nodes WHERE id = $1")
-            .bind(node_id).execute(&self.pool).await.map_err(|e| e.to_string())?;
+            .bind(node_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
         Ok(())
     }
 
-    pub async fn delete_nodes_by_file(&self, folder_id: &uuid::Uuid, file_path: &str) -> Result<(), String> {
+    pub async fn delete_nodes_by_file(
+        &self,
+        folder_id: &uuid::Uuid,
+        file_path: &str,
+    ) -> Result<(), String> {
         sqlx_core::query::query("DELETE FROM sensei.nodes WHERE folder_id = $1 AND file_path = $2")
-            .bind(folder_id).bind(file_path).execute(&self.pool).await.map_err(|e| e.to_string())?;
+            .bind(folder_id)
+            .bind(file_path)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
         Ok(())
     }
 
@@ -92,8 +143,12 @@ impl PgStore {
     pub async fn list_indexed_files(&self, folder_id: &uuid::Uuid) -> Result<Vec<String>, String> {
         let rows: Vec<(String,)> = sqlx_core::query_as::query_as(
             "SELECT DISTINCT file_path FROM sensei.nodes
-              WHERE folder_id = $1 AND kind::text <> 'module' AND file_path <> ''"
-        ).bind(folder_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+              WHERE folder_id = $1 AND kind::text <> 'module' AND file_path <> ''",
+        )
+        .bind(folder_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(rows.into_iter().map(|(p,)| p).collect())
     }
 
@@ -106,10 +161,19 @@ impl PgStore {
     /// Merge into a node's `props` jsonb (D5b): used to stamp a `section` node's
     /// `level` and real `line_start` (the identity key carries a NULL line so
     /// section identity is line-independent — 0.4). Idempotent (`props || $2`).
-    pub async fn set_node_props(&self, node_id: &uuid::Uuid, props: &serde_json::Value) -> Result<(), String> {
+    pub async fn set_node_props(
+        &self,
+        node_id: &uuid::Uuid,
+        props: &serde_json::Value,
+    ) -> Result<(), String> {
         sqlx_core::query::query(
-            "UPDATE sensei.nodes SET props = props || $2, modified_at = now() WHERE id = $1"
-        ).bind(node_id).bind(props).execute(&self.pool).await.map_err(|e| e.to_string())?;
+            "UPDATE sensei.nodes SET props = props || $2, modified_at = now() WHERE id = $1",
+        )
+        .bind(node_id)
+        .bind(props)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(())
     }
 
@@ -117,11 +181,20 @@ impl PgStore {
     /// [`Self::upsert_node_ex`] for the many callers that don't carry visibility
     /// (file/section/rationale/module nodes, tests).
     pub async fn upsert_node(
-        &self, folder_id: &uuid::Uuid, kind: &str, name: &str, file_path: &str,
-        parent_id: Option<&uuid::Uuid>, signature: Option<&str>,
-        line_start: Option<i32>, line_end: Option<i32>,
+        &self,
+        folder_id: &uuid::Uuid,
+        kind: &str,
+        name: &str,
+        file_path: &str,
+        parent_id: Option<&uuid::Uuid>,
+        signature: Option<&str>,
+        line_start: Option<i32>,
+        line_end: Option<i32>,
     ) -> Result<uuid::Uuid, String> {
-        self.upsert_node_ex(folder_id, kind, name, file_path, parent_id, signature, line_start, line_end, false).await
+        self.upsert_node_ex(
+            folder_id, kind, name, file_path, parent_id, signature, line_start, line_end, false,
+        )
+        .await
     }
 
     /// Upsert a node carrying `is_exported` (the code-symbol path passes the
@@ -130,9 +203,16 @@ impl PgStore {
     /// pub↔private is kept current.
     #[allow(clippy::too_many_arguments)]
     pub async fn upsert_node_ex(
-        &self, folder_id: &uuid::Uuid, kind: &str, name: &str, file_path: &str,
-        parent_id: Option<&uuid::Uuid>, signature: Option<&str>,
-        line_start: Option<i32>, line_end: Option<i32>, is_exported: bool,
+        &self,
+        folder_id: &uuid::Uuid,
+        kind: &str,
+        name: &str,
+        file_path: &str,
+        parent_id: Option<&uuid::Uuid>,
+        signature: Option<&str>,
+        line_start: Option<i32>,
+        line_end: Option<i32>,
+        is_exported: bool,
     ) -> Result<uuid::Uuid, String> {
         // ON CONFLICT targets nodes_unique_identity (folder_id, file_path, kind, name,
         // parent_id, line_start NULLS NOT DISTINCT). DO UPDATE keeps the row STABLE on
@@ -241,9 +321,20 @@ impl PgStore {
                 // Keyed on the identity columns so we update exactly the row that
                 // blocked us — NULLS NOT DISTINCT mirrors the index semantics.
                 self.adopt_node_by_identity(
-                    folder_id, fqn, kind, name, language, resolved,
-                    file_path, signature, line_start, line_end, is_exported, parent_id,
-                ).await?
+                    folder_id,
+                    fqn,
+                    kind,
+                    name,
+                    language,
+                    resolved,
+                    file_path,
+                    signature,
+                    line_start,
+                    line_end,
+                    is_exported,
+                    parent_id,
+                )
+                .await?
             }
             Err(e) => return Err(e.to_string()),
         };
@@ -288,11 +379,22 @@ impl PgStore {
                  AND name       = $4
                  AND parent_id  IS NOT DISTINCT FROM $12
                  AND line_start IS NOT DISTINCT FROM $9
-             RETURNING id"
+             RETURNING id",
         )
-        .bind(folder_id).bind(fqn).bind(kind).bind(name).bind(language).bind(resolved)
-        .bind(file_path).bind(signature).bind(line_start).bind(line_end).bind(is_exported).bind(parent_id)
-        .fetch_one(&self.pool).await
+        .bind(folder_id)
+        .bind(fqn)
+        .bind(kind)
+        .bind(name)
+        .bind(language)
+        .bind(resolved)
+        .bind(file_path)
+        .bind(signature)
+        .bind(line_start)
+        .bind(line_end)
+        .bind(is_exported)
+        .bind(parent_id)
+        .fetch_one(&self.pool)
+        .await
         .map_err(|e| format!("adopt node by identity ({name}): {e}"))
     }
 
@@ -319,10 +421,14 @@ impl PgStore {
                     jsonb_build_object('package', $3::text))
              ON CONFLICT (folder_id, fqn) WHERE fqn IS NOT NULL DO UPDATE
                SET resolved = true, modified_at = now()
-             RETURNING id"
+             RETURNING id",
         )
-        .bind(folder_id).bind(&pkg_fqn).bind(package)
-        .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
+        .bind(folder_id)
+        .bind(&pkg_fqn)
+        .bind(package)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
 
         // The symbol, parented under its package container.
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
@@ -335,17 +441,26 @@ impl PgStore {
                    parent_id   = COALESCE(EXCLUDED.parent_id, nodes.parent_id),
                    props       = nodes.props || jsonb_build_object('package', $5::text),
                    modified_at = now()
-             RETURNING id"
+             RETURNING id",
         )
-        .bind(folder_id).bind(fqn).bind(name).bind(container.0).bind(package)
-        .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
+        .bind(folder_id)
+        .bind(fqn)
+        .bind(name)
+        .bind(container.0)
+        .bind(package)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(row.0)
     }
 
     /// External dependencies referenced by a repo — one row per `lib_package` with
     /// how many of its symbols the repo actually uses (`{package, symbol_count}`).
     /// The graph-visible "what we depend on and how much".
-    pub async fn list_dependencies(&self, folder_id: &uuid::Uuid) -> Result<Vec<serde_json::Value>, String> {
+    pub async fn list_dependencies(
+        &self,
+        folder_id: &uuid::Uuid,
+    ) -> Result<Vec<serde_json::Value>, String> {
         let rows: Vec<(String, i64)> = sqlx_core::query_as::query_as(
             "SELECT p.name, count(s.id)
                FROM sensei.nodes p
@@ -355,7 +470,7 @@ impl PgStore {
                 AND s.kind = 'lib_symbol'::sensei.node_kind
               WHERE p.folder_id = $1 AND p.kind = 'lib_package'::sensei.node_kind
               GROUP BY p.name
-              ORDER BY count(s.id) DESC, p.name"
+              ORDER BY count(s.id) DESC, p.name",
         )
         .bind(folder_id)
         .fetch_all(&self.pool)
@@ -366,7 +481,10 @@ impl PgStore {
         }).collect())
     }
 
-    pub async fn get_nodes_by_folder(&self, folder_id: &uuid::Uuid) -> Result<Vec<serde_json::Value>, String> {
+    pub async fn get_nodes_by_folder(
+        &self,
+        folder_id: &uuid::Uuid,
+    ) -> Result<Vec<serde_json::Value>, String> {
         self.get_nodes_scoped(std::slice::from_ref(folder_id)).await
     }
 
@@ -465,9 +583,13 @@ impl PgStore {
     /// falls back to line 1 (a one-line snippet). Used by `context_pack`.
     #[allow(clippy::type_complexity)]
     pub async fn node_locations(
-        &self, ids: &[uuid::Uuid],
-    ) -> Result<Vec<(uuid::Uuid, String, String, i32, i32, String, String, Option<String>)>, String> {
-        if ids.is_empty() { return Ok(Vec::new()); }
+        &self,
+        ids: &[uuid::Uuid],
+    ) -> Result<Vec<(uuid::Uuid, String, String, i32, i32, String, String, Option<String>)>, String>
+    {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
         sqlx_core::query_as::query_as(
             "SELECT n.id, f.abs_path, n.file_path,
                     COALESCE(n.line_start, 1),
@@ -490,7 +612,12 @@ impl PgStore {
     /// strongest first. Trivial functions (< 4 lines) are skipped — they bound
     /// the O(n²) self-join and avoid false positives from boilerplate. On-demand
     /// review query, not a hot path.
-    pub async fn find_duplicates(&self, folder_id: &uuid::Uuid, min_similarity: f64, limit: i64) -> Result<Vec<serde_json::Value>, String> {
+    pub async fn find_duplicates(
+        &self,
+        folder_id: &uuid::Uuid,
+        min_similarity: f64,
+        limit: i64,
+    ) -> Result<Vec<serde_json::Value>, String> {
         let max_distance = 1.0 - min_similarity;
         let rows: Vec<(String, String, Option<i32>, String, String, Option<i32>, f64)> =
             sqlx_core::query_as::query_as(
@@ -518,13 +645,16 @@ impl PgStore {
             .fetch_all(&self.pool)
             .await
             .map_err(|e| e.to_string())?;
-        Ok(rows.into_iter().map(|(na, fa, la, nb, fb, lb, sim)| {
-            serde_json::json!({
-                "a": { "name": na, "file": fa, "line": la },
-                "b": { "name": nb, "file": fb, "line": lb },
-                "similarity": (sim * 10000.0).round() / 10000.0,
+        Ok(rows
+            .into_iter()
+            .map(|(na, fa, la, nb, fb, lb, sim)| {
+                serde_json::json!({
+                    "a": { "name": na, "file": fa, "line": la },
+                    "b": { "name": nb, "file": fb, "line": lb },
+                    "similarity": (sim * 10000.0).round() / 10000.0,
+                })
             })
-        }).collect())
+            .collect())
     }
 
     /// Multi-folder variant of `find_duplicates` (#54). Runs the same
@@ -575,13 +705,16 @@ impl PgStore {
             .fetch_all(&self.pool)
             .await
             .map_err(|e| e.to_string())?;
-        Ok(rows.into_iter().map(|(na, fa, la, nb, fb, lb, sim)| {
-            serde_json::json!({
-                "a": { "name": na, "file": fa, "line": la },
-                "b": { "name": nb, "file": fb, "line": lb },
-                "similarity": (sim * 10000.0).round() / 10000.0,
+        Ok(rows
+            .into_iter()
+            .map(|(na, fa, la, nb, fb, lb, sim)| {
+                serde_json::json!({
+                    "a": { "name": na, "file": fa, "line": la },
+                    "b": { "name": nb, "file": fb, "line": lb },
+                    "similarity": (sim * 10000.0).round() / 10000.0,
+                })
             })
-        }).collect())
+            .collect())
     }
 
     /// Abs paths of folders that still have embeddable nodes without an
@@ -604,7 +737,11 @@ impl PgStore {
         Ok(rows.into_iter().map(|(p,)| p).collect())
     }
 
-    pub async fn get_nodes_by_file(&self, folder_id: &uuid::Uuid, file_path: &str) -> Result<Vec<serde_json::Value>, String> {
+    pub async fn get_nodes_by_file(
+        &self,
+        folder_id: &uuid::Uuid,
+        file_path: &str,
+    ) -> Result<Vec<serde_json::Value>, String> {
         let rows: Vec<(uuid::Uuid, String, String, Option<uuid::Uuid>, Option<i32>)> = sqlx_core::query_as::query_as(
             "SELECT id, kind::text, name, parent_id, line_start FROM sensei.nodes WHERE folder_id = $1 AND file_path = $2 ORDER BY line_start"
         ).bind(folder_id).bind(file_path).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
@@ -615,14 +752,26 @@ impl PgStore {
 
     pub async fn delete_nodes_by_folder(&self, folder_id: &uuid::Uuid) -> Result<(), String> {
         sqlx_core::query::query("DELETE FROM sensei.nodes WHERE folder_id = $1")
-            .bind(folder_id).execute(&self.pool).await.map_err(|e| e.to_string())?;
+            .bind(folder_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
         Ok(())
     }
 
-    pub async fn update_node_community(&self, node_id: &uuid::Uuid, community_id: i32) -> Result<(), String> {
-        sqlx_core::query::query("UPDATE sensei.nodes SET community_id = $2, modified_at = now() WHERE id = $1")
-            .bind(node_id).bind(community_id)
-            .execute(&self.pool).await.map_err(|e| e.to_string())?;
+    pub async fn update_node_community(
+        &self,
+        node_id: &uuid::Uuid,
+        community_id: i32,
+    ) -> Result<(), String> {
+        sqlx_core::query::query(
+            "UPDATE sensei.nodes SET community_id = $2, modified_at = now() WHERE id = $1",
+        )
+        .bind(node_id)
+        .bind(community_id)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(())
     }
 
@@ -635,9 +784,13 @@ impl PgStore {
     /// `DO UPDATE SET modified_at = now()` (not `DO NOTHING`) so `RETURNING id`
     /// is always the surviving row's id.
     pub async fn insert_edge(
-        &self, folder_id: &uuid::Uuid, source_id: &uuid::Uuid,
-        target_id: Option<&uuid::Uuid>, target_name: Option<&str>,
-        target_file: Option<&str>, kind: &str,
+        &self,
+        folder_id: &uuid::Uuid,
+        source_id: &uuid::Uuid,
+        target_id: Option<&uuid::Uuid>,
+        target_name: Option<&str>,
+        target_file: Option<&str>,
+        kind: &str,
     ) -> Result<uuid::Uuid, String> {
         let row: (uuid::Uuid,) = if let Some(tid) = target_id {
             sqlx_core::query_as::query_as(
@@ -645,9 +798,15 @@ impl PgStore {
                  VALUES($1, $2, $3, $4::sensei.edge_kind)
                  ON CONFLICT (folder_id, source_id, target_id, kind) WHERE target_id IS NOT NULL
                    DO UPDATE SET modified_at = now()
-                 RETURNING id"
-            ).bind(folder_id).bind(source_id).bind(tid).bind(kind)
-                .fetch_one(&self.pool).await.map_err(|e| e.to_string())?
+                 RETURNING id",
+            )
+            .bind(folder_id)
+            .bind(source_id)
+            .bind(tid)
+            .bind(kind)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?
         } else {
             sqlx_core::query_as::query_as(
                 "INSERT INTO sensei.edges(folder_id, source_id, target_name, target_file, kind)
@@ -661,7 +820,10 @@ impl PgStore {
         Ok(row.0)
     }
 
-    pub async fn get_callers(&self, node_id: &uuid::Uuid) -> Result<Vec<serde_json::Value>, String> {
+    pub async fn get_callers(
+        &self,
+        node_id: &uuid::Uuid,
+    ) -> Result<Vec<serde_json::Value>, String> {
         let rows: Vec<(uuid::Uuid, uuid::Uuid, String)> = sqlx_core::query_as::query_as(
             "SELECT e.id, e.source_id, e.kind::text FROM sensei.edges e WHERE e.target_id = $1 AND e.kind = 'calls'::sensei.edge_kind"
         ).bind(node_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
@@ -670,7 +832,10 @@ impl PgStore {
         }).collect())
     }
 
-    pub async fn get_callees(&self, node_id: &uuid::Uuid) -> Result<Vec<serde_json::Value>, String> {
+    pub async fn get_callees(
+        &self,
+        node_id: &uuid::Uuid,
+    ) -> Result<Vec<serde_json::Value>, String> {
         let rows: Vec<(uuid::Uuid, Option<uuid::Uuid>, Option<String>, String)> = sqlx_core::query_as::query_as(
             "SELECT e.id, e.target_id, e.target_name, e.kind::text FROM sensei.edges e WHERE e.source_id = $1 AND e.kind = 'calls'::sensei.edge_kind"
         ).bind(node_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
@@ -690,7 +855,11 @@ impl PgStore {
     /// single-writer-per-folder invariant (W5/D6e): a folder's graph writes run as
     /// one barrier task at a time and the unique index is folder-scoped — so no
     /// concurrent resolve can race the `NOT EXISTS`.
-    pub async fn resolve_edge(&self, edge_id: &uuid::Uuid, target_id: &uuid::Uuid) -> Result<(), String> {
+    pub async fn resolve_edge(
+        &self,
+        edge_id: &uuid::Uuid,
+        target_id: &uuid::Uuid,
+    ) -> Result<(), String> {
         let res = sqlx_core::query::query(
             "UPDATE sensei.edges e
                 SET target_id = $2, modified_at = now()
@@ -701,14 +870,22 @@ impl PgStore {
                        AND d.source_id = e.source_id
                        AND d.target_id = $2
                        AND d.kind = e.kind
-                       AND d.id <> e.id)"
-        ).bind(edge_id).bind(target_id).execute(&self.pool).await.map_err(|e| e.to_string())?;
+                       AND d.id <> e.id)",
+        )
+        .bind(edge_id)
+        .bind(target_id)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         if res.rows_affected() == 0 {
             // A resolved edge to the same target already exists (or this edge is
             // already gone): this unresolved edge is redundant — drop it so the
             // graph converges to the single resolved edge.
             sqlx_core::query::query("DELETE FROM sensei.edges WHERE id = $1")
-                .bind(edge_id).execute(&self.pool).await.map_err(|e| e.to_string())?;
+                .bind(edge_id)
+                .execute(&self.pool)
+                .await
+                .map_err(|e| e.to_string())?;
         }
         Ok(())
     }
@@ -723,21 +900,35 @@ impl PgStore {
     /// set yields the same rows (the per-edge `ON CONFLICT` also absorbs a
     /// duplicate pair within the input set).
     pub async fn replace_edges_of_kind(
-        &self, folder_id: &uuid::Uuid, kind: &str, edges: &[EdgeSpec],
+        &self,
+        folder_id: &uuid::Uuid,
+        kind: &str,
+        edges: &[EdgeSpec],
     ) -> Result<(), String> {
         let mut tx = self.pool.begin().await.map_err(|e| e.to_string())?;
         sqlx_core::query::query(
-            "DELETE FROM sensei.edges WHERE folder_id = $1 AND kind = $2::sensei.edge_kind"
-        ).bind(folder_id).bind(kind).execute(&mut *tx).await.map_err(|e| e.to_string())?;
+            "DELETE FROM sensei.edges WHERE folder_id = $1 AND kind = $2::sensei.edge_kind",
+        )
+        .bind(folder_id)
+        .bind(kind)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| e.to_string())?;
         for e in edges {
             if let Some(tid) = e.target_id {
                 sqlx_core::query::query(
                     "INSERT INTO sensei.edges(folder_id, source_id, target_id, kind)
                      VALUES($1, $2, $3, $4::sensei.edge_kind)
                      ON CONFLICT (folder_id, source_id, target_id, kind) WHERE target_id IS NOT NULL
-                       DO UPDATE SET modified_at = now()"
-                ).bind(folder_id).bind(e.source_id).bind(tid).bind(kind)
-                    .execute(&mut *tx).await.map_err(|e2| e2.to_string())?;
+                       DO UPDATE SET modified_at = now()",
+                )
+                .bind(folder_id)
+                .bind(e.source_id)
+                .bind(tid)
+                .bind(kind)
+                .execute(&mut *tx)
+                .await
+                .map_err(|e2| e2.to_string())?;
             } else {
                 sqlx_core::query::query(
                     "INSERT INTO sensei.edges(folder_id, source_id, target_name, target_file, kind)
@@ -761,7 +952,10 @@ impl PgStore {
     /// (their out-edges cascade via the `source_id` FK). One transaction. Returns
     /// nodes pruned. An empty `kept_ids` prunes ALL of the file's nodes.
     pub async fn prune_file_nodes(
-        &self, folder_id: &uuid::Uuid, file_path: &str, kept_ids: &[uuid::Uuid],
+        &self,
+        folder_id: &uuid::Uuid,
+        file_path: &str,
+        kept_ids: &[uuid::Uuid],
     ) -> Result<u64, String> {
         let mut tx = self.pool.begin().await.map_err(|e| e.to_string())?;
         sqlx_core::query::query(
@@ -770,11 +964,23 @@ impl PgStore {
                 AND target_name IS NOT NULL
                 AND target_id IN (
                     SELECT id FROM sensei.nodes
-                     WHERE folder_id = $1 AND file_path = $2 AND id <> ALL($3))"
-        ).bind(folder_id).bind(file_path).bind(kept_ids).execute(&mut *tx).await.map_err(|e| e.to_string())?;
+                     WHERE folder_id = $1 AND file_path = $2 AND id <> ALL($3))",
+        )
+        .bind(folder_id)
+        .bind(file_path)
+        .bind(kept_ids)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| e.to_string())?;
         let res = sqlx_core::query::query(
-            "DELETE FROM sensei.nodes WHERE folder_id = $1 AND file_path = $2 AND id <> ALL($3)"
-        ).bind(folder_id).bind(file_path).bind(kept_ids).execute(&mut *tx).await.map_err(|e| e.to_string())?;
+            "DELETE FROM sensei.nodes WHERE folder_id = $1 AND file_path = $2 AND id <> ALL($3)",
+        )
+        .bind(folder_id)
+        .bind(file_path)
+        .bind(kept_ids)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| e.to_string())?;
         tx.commit().await.map_err(|e| e.to_string())?;
         Ok(res.rows_affected())
     }
@@ -785,14 +991,21 @@ impl PgStore {
     /// clear them so the caller can re-insert the current set (replace, not
     /// append). Returns rows deleted; an empty `source_ids` is a no-op.
     pub async fn delete_edges_from_sources(
-        &self, folder_id: &uuid::Uuid, source_ids: &[uuid::Uuid],
+        &self,
+        folder_id: &uuid::Uuid,
+        source_ids: &[uuid::Uuid],
     ) -> Result<u64, String> {
         if source_ids.is_empty() {
             return Ok(0);
         }
         let res = sqlx_core::query::query(
-            "DELETE FROM sensei.edges WHERE folder_id = $1 AND source_id = ANY($2)"
-        ).bind(folder_id).bind(source_ids).execute(&self.pool).await.map_err(|e| e.to_string())?;
+            "DELETE FROM sensei.edges WHERE folder_id = $1 AND source_id = ANY($2)",
+        )
+        .bind(folder_id)
+        .bind(source_ids)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(res.rows_affected())
     }
 
@@ -802,7 +1015,11 @@ impl PgStore {
     /// the target nodes are dropped). They become an honest unresolved residual,
     /// re-pointed when the calling file is next processed (FQN edges resolve at
     /// emit — Phase 7.1 retired the resolve_edges pass). Returns edges un-resolved.
-    pub async fn unresolve_edges_to_file(&self, folder_id: &uuid::Uuid, file_path: &str) -> Result<u64, String> {
+    pub async fn unresolve_edges_to_file(
+        &self,
+        folder_id: &uuid::Uuid,
+        file_path: &str,
+    ) -> Result<u64, String> {
         let res = sqlx_core::query::query(
             "UPDATE sensei.edges SET target_id = NULL, modified_at = now()
               WHERE folder_id = $1
@@ -812,7 +1029,11 @@ impl PgStore {
         Ok(res.rows_affected())
     }
 
-    pub async fn get_edges_by_kind(&self, folder_id: &uuid::Uuid, kind: &str) -> Result<Vec<serde_json::Value>, String> {
+    pub async fn get_edges_by_kind(
+        &self,
+        folder_id: &uuid::Uuid,
+        kind: &str,
+    ) -> Result<Vec<serde_json::Value>, String> {
         self.get_edges_scoped(std::slice::from_ref(folder_id), kind).await
     }
 
@@ -822,7 +1043,11 @@ impl PgStore {
     /// `scope` is resolved via [`scope_folder_ids`]: a project name/UUID expands
     /// to all of that project's folders; a bare folder name falls back to just
     /// that folder.
-    pub async fn get_callers_by_name(&self, scope: &str, target: &str) -> Result<Vec<serde_json::Value>, String> {
+    pub async fn get_callers_by_name(
+        &self,
+        scope: &str,
+        target: &str,
+    ) -> Result<Vec<serde_json::Value>, String> {
         let folder_ids = self.scope_folder_ids(scope).await?;
         if folder_ids.is_empty() {
             return Ok(vec![]);
@@ -831,8 +1056,13 @@ impl PgStore {
             "SELECT source_name, source_kind::text, source_file, source_line
                FROM sensei.call_graph
               WHERE folder_id = ANY($1) AND target_name = $2 AND edge_kind = 'calls'
-              ORDER BY source_file, source_line LIMIT 100"
-        ).bind(&folder_ids[..]).bind(target).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+              ORDER BY source_file, source_line LIMIT 100",
+        )
+        .bind(&folder_ids[..])
+        .bind(target)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(rows.into_iter().map(|(name, kind, file, line)| {
             serde_json::json!({ "name": name, "kind": kind, "file_path": file, "line_start": line })
         }).collect())
@@ -842,17 +1072,32 @@ impl PgStore {
     /// `scope` is resolved via [`scope_folder_ids`]: a project name/UUID expands
     /// to all of that project's folders; a bare folder name falls back to just
     /// that folder.
-    pub async fn get_callees_by_name(&self, scope: &str, source: &str) -> Result<Vec<serde_json::Value>, String> {
+    pub async fn get_callees_by_name(
+        &self,
+        scope: &str,
+        source: &str,
+    ) -> Result<Vec<serde_json::Value>, String> {
         let folder_ids = self.scope_folder_ids(scope).await?;
         if folder_ids.is_empty() {
             return Ok(vec![]);
         }
-        let rows: Vec<(Option<String>, Option<String>, Option<String>, Option<i32>, Option<String>)> = sqlx_core::query_as::query_as(
+        let rows: Vec<(
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<i32>,
+            Option<String>,
+        )> = sqlx_core::query_as::query_as(
             "SELECT target_name, target_kind::text, target_file, target_line, unresolved_target
                FROM sensei.call_graph
               WHERE folder_id = ANY($1) AND source_name = $2 AND edge_kind = 'calls'
-              ORDER BY target_file, target_line LIMIT 100"
-        ).bind(&folder_ids[..]).bind(source).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+              ORDER BY target_file, target_line LIMIT 100",
+        )
+        .bind(&folder_ids[..])
+        .bind(source)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(rows.into_iter().map(|(name, kind, file, line, unresolved)| {
             let display_name = name.or(unresolved).unwrap_or_default();
             serde_json::json!({ "name": display_name, "kind": kind, "file_path": file, "line_start": line })
@@ -860,15 +1105,25 @@ impl PgStore {
     }
 
     /// Get files matching a tag via the file_tags view.
-    pub async fn get_files_by_tag(&self, folder_name: &str, tag: &str) -> Result<Vec<serde_json::Value>, String> {
+    pub async fn get_files_by_tag(
+        &self,
+        folder_name: &str,
+        tag: &str,
+    ) -> Result<Vec<serde_json::Value>, String> {
         let rows: Vec<(uuid::Uuid, String, Vec<String>)> = sqlx_core::query_as::query_as(
             "SELECT id, file_path, tags FROM sensei.file_tags
               WHERE folder = $1 AND $2 = ANY(tags)
-              ORDER BY file_path LIMIT 200"
-        ).bind(folder_name).bind(tag).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
-        Ok(rows.into_iter().map(|(id, fp, tags)| {
-            serde_json::json!({ "id": id, "file_path": fp, "tags": tags })
-        }).collect())
+              ORDER BY file_path LIMIT 200",
+        )
+        .bind(folder_name)
+        .bind(tag)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(rows
+            .into_iter()
+            .map(|(id, fp, tags)| serde_json::json!({ "id": id, "file_path": fp, "tags": tags }))
+            .collect())
     }
 
     /// Get doc coverage with drift detection via the doc_coverage view.
@@ -877,8 +1132,12 @@ impl PgStore {
             "SELECT doc_name, doc_file, code_name, code_file, drifted
                FROM sensei.doc_coverage
               WHERE folder = $1
-              ORDER BY drifted DESC, doc_file LIMIT 200"
-        ).bind(folder_name).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+              ORDER BY drifted DESC, doc_file LIMIT 200",
+        )
+        .bind(folder_name)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(rows.into_iter().map(|(doc_name, doc_file, code_name, code_file, drifted)| {
             serde_json::json!({ "doc": doc_name, "docFile": doc_file, "code": code_name, "codeFile": code_file, "drifted": drifted })
         }).collect())
@@ -887,8 +1146,12 @@ impl PgStore {
     /// Count all edges across multiple folders (project-scoped variant).
     pub async fn count_edges_scoped(&self, folder_ids: &[uuid::Uuid]) -> Result<i64, String> {
         let row: (i64,) = sqlx_core::query_as::query_as(
-            "SELECT COUNT(*) FROM sensei.edges WHERE folder_id = ANY($1)"
-        ).bind(folder_ids).fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
+            "SELECT COUNT(*) FROM sensei.edges WHERE folder_id = ANY($1)",
+        )
+        .bind(folder_ids)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(row.0)
     }
 
@@ -898,14 +1161,29 @@ impl PgStore {
     }
 
     /// Delete nodes whose file_path starts with a given prefix (for folder deletion).
-    pub async fn delete_nodes_by_path_prefix(&self, folder_id: &uuid::Uuid, prefix: &str) -> Result<u64, String> {
+    pub async fn delete_nodes_by_path_prefix(
+        &self,
+        folder_id: &uuid::Uuid,
+        prefix: &str,
+    ) -> Result<u64, String> {
         let result = sqlx_core::query::query(
-            "DELETE FROM sensei.nodes WHERE folder_id = $1 AND file_path LIKE $2 || '%'"
-        ).bind(folder_id).bind(prefix).execute(&self.pool).await.map_err(|e| e.to_string())?;
+            "DELETE FROM sensei.nodes WHERE folder_id = $1 AND file_path LIKE $2 || '%'",
+        )
+        .bind(folder_id)
+        .bind(prefix)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(result.rows_affected())
     }
 
-    pub async fn upsert_community(&self, folder_id: &uuid::Uuid, community_id: i32, label: &str, node_count: i32) -> Result<uuid::Uuid, String> {
+    pub async fn upsert_community(
+        &self,
+        folder_id: &uuid::Uuid,
+        community_id: i32,
+        label: &str,
+        node_count: i32,
+    ) -> Result<uuid::Uuid, String> {
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "INSERT INTO inference.communities(folder_id, community_id, label, node_count)
              VALUES($1, $2, $3, $4)
@@ -932,7 +1210,10 @@ impl PgStore {
     /// transactions that pinned the xmin horizon, and autovacuum could never
     /// reclaim the dead tuples → `sensei.nodes` bloated unboundedly. Returns rows
     /// changed.
-    pub async fn recompute_degrees_for_folder(&self, folder_id: &uuid::Uuid) -> Result<u64, String> {
+    pub async fn recompute_degrees_for_folder(
+        &self,
+        folder_id: &uuid::Uuid,
+    ) -> Result<u64, String> {
         let res = sqlx_core::query::query(
             "UPDATE sensei.nodes n
                 SET degree = COALESCE(d.deg, 0), modified_at = now()
@@ -959,12 +1240,21 @@ impl PgStore {
     /// `lib_package` nodes (file_path NULL) are never matched (external deps aren't
     /// test). Returns rows changed.
     pub async fn set_nodes_is_test_for_file(
-        &self, folder_id: &uuid::Uuid, file_path: &str, is_test: bool,
+        &self,
+        folder_id: &uuid::Uuid,
+        file_path: &str,
+        is_test: bool,
     ) -> Result<u64, String> {
         let res = sqlx_core::query::query(
             "UPDATE sensei.nodes SET is_test = $3, modified_at = now()
-              WHERE folder_id = $1 AND file_path = $2 AND is_test IS DISTINCT FROM $3"
-        ).bind(folder_id).bind(file_path).bind(is_test).execute(&self.pool).await.map_err(|e| e.to_string())?;
+              WHERE folder_id = $1 AND file_path = $2 AND is_test IS DISTINCT FROM $3",
+        )
+        .bind(folder_id)
+        .bind(file_path)
+        .bind(is_test)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(res.rows_affected())
     }
 
@@ -976,11 +1266,16 @@ impl PgStore {
     /// `community_id`s (invariant 5) — and atomic (a crash can't leave a
     /// half-assigned folder). An empty `communities` just clears the folder.
     pub async fn replace_communities_for_folder(
-        &self, folder_id: &uuid::Uuid, communities: &[CommunityAssignment],
+        &self,
+        folder_id: &uuid::Uuid,
+        communities: &[CommunityAssignment],
     ) -> Result<u64, String> {
         let mut tx = self.pool.begin().await.map_err(|e| e.to_string())?;
         sqlx_core::query::query("DELETE FROM inference.communities WHERE folder_id = $1")
-            .bind(folder_id).execute(&mut *tx).await.map_err(|e| e.to_string())?;
+            .bind(folder_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| e.to_string())?;
         // Assign members FIRST, each guarded by `IS DISTINCT FROM`, THEN NULL only
         // the leftovers (nodes that had a community but are in none of the new ones)
         // — instead of null-all-then-reset. `community_id` is deterministic for an
@@ -1005,9 +1300,14 @@ impl PgStore {
             if !c.member_node_ids.is_empty() {
                 let res = sqlx_core::query::query(
                     "UPDATE sensei.nodes SET community_id = $2, modified_at = now()
-                      WHERE folder_id = $1 AND id = ANY($3) AND community_id IS DISTINCT FROM $2"
-                ).bind(folder_id).bind(c.community_id).bind(&c.member_node_ids)
-                    .execute(&mut *tx).await.map_err(|e| e.to_string())?;
+                      WHERE folder_id = $1 AND id = ANY($3) AND community_id IS DISTINCT FROM $2",
+                )
+                .bind(folder_id)
+                .bind(c.community_id)
+                .bind(&c.member_node_ids)
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| e.to_string())?;
                 changed += res.rows_affected();
                 all_members.extend_from_slice(&c.member_node_ids);
             }
@@ -1018,14 +1318,22 @@ impl PgStore {
         // member set nulls all assigned nodes — matching the old clear-all.
         let cleared = sqlx_core::query::query(
             "UPDATE sensei.nodes SET community_id = NULL, modified_at = now()
-              WHERE folder_id = $1 AND community_id IS NOT NULL AND id <> ALL($2)"
-        ).bind(folder_id).bind(&all_members).execute(&mut *tx).await.map_err(|e| e.to_string())?;
+              WHERE folder_id = $1 AND community_id IS NOT NULL AND id <> ALL($2)",
+        )
+        .bind(folder_id)
+        .bind(&all_members)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| e.to_string())?;
         changed += cleared.rows_affected();
         tx.commit().await.map_err(|e| e.to_string())?;
         Ok(changed)
     }
 
-    pub async fn list_communities(&self, folder_id: &uuid::Uuid) -> Result<Vec<serde_json::Value>, String> {
+    pub async fn list_communities(
+        &self,
+        folder_id: &uuid::Uuid,
+    ) -> Result<Vec<serde_json::Value>, String> {
         let rows: Vec<(uuid::Uuid, String, i32)> = sqlx_core::query_as::query_as(
             "SELECT id, label, node_count FROM inference.communities WHERE folder_id = $1 ORDER BY node_count DESC"
         ).bind(folder_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
@@ -1038,8 +1346,13 @@ impl PgStore {
     /// are stored per-folder and the repo root usually owns them, so a caller must
     /// aggregate over every scope folder — a single-folder lookup (a leaf) misses
     /// them (the #G5a `get_communities` bug).
-    pub async fn list_communities_scoped(&self, folder_ids: &[uuid::Uuid]) -> Result<Vec<serde_json::Value>, String> {
-        if folder_ids.is_empty() { return Ok(vec![]); }
+    pub async fn list_communities_scoped(
+        &self,
+        folder_ids: &[uuid::Uuid],
+    ) -> Result<Vec<serde_json::Value>, String> {
+        if folder_ids.is_empty() {
+            return Ok(vec![]);
+        }
         let rows: Vec<(uuid::Uuid, String, i32)> = sqlx_core::query_as::query_as(
             "SELECT id, label, node_count FROM inference.communities WHERE folder_id = ANY($1) ORDER BY node_count DESC"
         ).bind(folder_ids).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
@@ -1055,17 +1368,27 @@ impl PgStore {
     /// counted where it actually is now). Also carries `god_node_ids`. Ordered by
     /// live count desc. This is what turns the flat "scattered circles" overview
     /// into one sized by real per-community membership.
-    pub async fn list_communities_live_scoped(&self, folder_ids: &[uuid::Uuid]) -> Result<Vec<serde_json::Value>, String> {
-        if folder_ids.is_empty() { return Ok(vec![]); }
-        let rows: Vec<(uuid::Uuid, Option<String>, i64, Vec<uuid::Uuid>)> = sqlx_core::query_as::query_as(
-            "SELECT c.id, c.label, count(n.id) AS live_count, c.god_node_ids
+    pub async fn list_communities_live_scoped(
+        &self,
+        folder_ids: &[uuid::Uuid],
+    ) -> Result<Vec<serde_json::Value>, String> {
+        if folder_ids.is_empty() {
+            return Ok(vec![]);
+        }
+        let rows: Vec<(uuid::Uuid, Option<String>, i64, Vec<uuid::Uuid>)> =
+            sqlx_core::query_as::query_as(
+                "SELECT c.id, c.label, count(n.id) AS live_count, c.god_node_ids
                FROM inference.communities c
                LEFT JOIN sensei.nodes n
                  ON n.folder_id = c.folder_id AND n.community_id = c.community_id
               WHERE c.folder_id = ANY($1)
               GROUP BY c.id, c.label, c.god_node_ids
-              ORDER BY live_count DESC, c.id"
-        ).bind(folder_ids).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+              ORDER BY live_count DESC, c.id",
+            )
+            .bind(folder_ids)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
         Ok(rows.into_iter().map(|(id, label, count, gods)| {
             serde_json::json!({ "id": id, "label": label.unwrap_or_default(), "node_count": count, "god_node_ids": gods })
         }).collect())
@@ -1075,27 +1398,44 @@ impl PgStore {
     /// input to description enrichment (D4.5). Bounded by `limit` so a huge cold
     /// repo enriches only its most significant clusters per detect run.
     pub async fn list_communities_with_god_nodes(
-        &self, folder_id: &uuid::Uuid, limit: i64,
+        &self,
+        folder_id: &uuid::Uuid,
+        limit: i64,
     ) -> Result<Vec<(i32, String, i32, Vec<uuid::Uuid>)>, String> {
         let rows: Vec<(i32, Option<String>, i32, Vec<uuid::Uuid>)> = sqlx_core::query_as::query_as(
             "SELECT community_id, label, node_count, god_node_ids
                FROM inference.communities
               WHERE folder_id = $1
               ORDER BY node_count DESC, community_id
-              LIMIT $2"
-        ).bind(folder_id).bind(limit).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
-        Ok(rows.into_iter().map(|(cid, label, n, gods)| (cid, label.unwrap_or_default(), n, gods)).collect())
+              LIMIT $2",
+        )
+        .bind(folder_id)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(rows
+            .into_iter()
+            .map(|(cid, label, n, gods)| (cid, label.unwrap_or_default(), n, gods))
+            .collect())
     }
 
     /// `(id, name, kind)` for a set of node ids — builds community description
     /// facts from the god-node hubs. Empty input is a no-op.
     pub async fn get_node_name_kind(
-        &self, ids: &[uuid::Uuid],
+        &self,
+        ids: &[uuid::Uuid],
     ) -> Result<Vec<(uuid::Uuid, String, String)>, String> {
-        if ids.is_empty() { return Ok(vec![]); }
+        if ids.is_empty() {
+            return Ok(vec![]);
+        }
         let rows: Vec<(uuid::Uuid, String, String)> = sqlx_core::query_as::query_as(
-            "SELECT id, name, kind::text FROM sensei.nodes WHERE id = ANY($1)"
-        ).bind(ids).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+            "SELECT id, name, kind::text FROM sensei.nodes WHERE id = ANY($1)",
+        )
+        .bind(ids)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(rows)
     }
 
@@ -1104,16 +1444,26 @@ impl PgStore {
     /// authoritative write (D4.5). Only called on a successful insight-copy
     /// generation — a failure leaves the honest-empty NULL/`'null'` as written.
     pub async fn set_community_description(
-        &self, folder_id: &uuid::Uuid, community_id: i32, description: &str, source: &str,
+        &self,
+        folder_id: &uuid::Uuid,
+        community_id: i32,
+        description: &str,
+        source: &str,
     ) -> Result<(), String> {
         sqlx_core::query::query(
             "UPDATE inference.communities
                 SET description = $3,
                     props = props || jsonb_build_object('source', $4::text),
                     modified_at = now()
-              WHERE folder_id = $1 AND community_id = $2"
-        ).bind(folder_id).bind(community_id).bind(description).bind(source)
-            .execute(&self.pool).await.map_err(|e| e.to_string())?;
+              WHERE folder_id = $1 AND community_id = $2",
+        )
+        .bind(folder_id)
+        .bind(community_id)
+        .bind(description)
+        .bind(source)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(())
     }
 
@@ -1131,10 +1481,8 @@ impl PgStore {
              ON CONFLICT (name) DO UPDATE SET last_seen = now()",
             kinds = Self::DRIFT_SYMBOL_KINDS
         );
-        let res = sqlx_core::query::query(&sql)
-            .execute(&self.pool)
-            .await
-            .map_err(|e| e.to_string())?;
+        let res =
+            sqlx_core::query::query(&sql).execute(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(res.rows_affected())
     }
 
@@ -1153,18 +1501,19 @@ impl PgStore {
         //    on-disk content each pass. Capped at 500 docs per run so a
         //    heavy project doesn't stall the request.
         #[allow(clippy::type_complexity)]
-        let doc_rows: Vec<(uuid::Uuid, uuid::Uuid, String, String)> = sqlx_core::query_as::query_as(
-            "SELECT n.id, n.folder_id, f.abs_path, n.file_path
+        let doc_rows: Vec<(uuid::Uuid, uuid::Uuid, String, String)> =
+            sqlx_core::query_as::query_as(
+                "SELECT n.id, n.folder_id, f.abs_path, n.file_path
                FROM sensei.nodes n
                JOIN sensei.folders f ON f.id = n.folder_id
               WHERE f.project_id = $1
                 AND n.kind = 'doc'
-              LIMIT 500"
-        )
-        .bind(project_id)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| e.to_string())?;
+              LIMIT 500",
+            )
+            .bind(project_id)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
 
         let scanned_docs = doc_rows.len();
 
@@ -1188,7 +1537,8 @@ impl PgStore {
         .fetch_all(&self.pool)
         .await
         .map_err(|e| e.to_string())?;
-        let mut known: std::collections::HashSet<String> = code_names.into_iter().map(|(n,)| n).collect();
+        let mut known: std::collections::HashSet<String> =
+            code_names.into_iter().map(|(n,)| n).collect();
 
         // Also treat DB schema identifiers as known: docs legitimately reference
         // table / column / view names and enum labels (`project_id`, `created_at`,
@@ -1205,7 +1555,7 @@ impl PgStore {
              SELECT e.enumlabel
                FROM pg_enum e JOIN pg_type t ON t.oid = e.enumtypid
                JOIN pg_namespace ns ON ns.oid = t.typnamespace
-              WHERE ns.nspname IN ('sensei','inference','activity','governance')"
+              WHERE ns.nspname IN ('sensei','inference','activity','governance')",
         )
         .fetch_all(&self.pool)
         .await
@@ -1222,12 +1572,11 @@ impl PgStore {
         if let Err(e) = self.record_symbol_names().await {
             tracing::warn!(error = %e, "scan_project_doc_drift: record_symbol_names failed — history not refreshed this pass");
         }
-        let ever_rows: Vec<(String,)> = sqlx_core::query_as::query_as(
-            "SELECT name FROM sensei.symbol_names"
-        )
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| e.to_string())?;
+        let ever_rows: Vec<(String,)> =
+            sqlx_core::query_as::query_as("SELECT name FROM sensei.symbol_names")
+                .fetch_all(&self.pool)
+                .await
+                .map_err(|e| e.to_string())?;
         let ever_symbols: std::collections::HashSet<String> =
             ever_rows.into_iter().map(|(n,)| n).collect();
 
@@ -1255,7 +1604,7 @@ impl PgStore {
                 let existing: Option<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
                     "SELECT id FROM inference.drift_items
                       WHERE doc_node_id = $1 AND detail = $2 AND resolved_at IS NULL
-                      LIMIT 1"
+                      LIMIT 1",
                 )
                 .bind(doc_id)
                 .bind(&detail)
@@ -1273,7 +1622,7 @@ impl PgStore {
                 sqlx_core::query::query(
                     "INSERT INTO inference.drift_items
                         (folder_id, doc_node_id, code_node_id, status, detail)
-                     VALUES ($1, $2, $2, 'broken', $3)"
+                     VALUES ($1, $2, $2, 'broken', $3)",
                 )
                 .bind(folder_id)
                 .bind(doc_id)
@@ -1294,7 +1643,7 @@ impl PgStore {
                JOIN sensei.folders f ON f.id = di.folder_id
               WHERE f.project_id = $1
                 AND di.status = 'broken'
-                AND di.resolved_at IS NULL"
+                AND di.resolved_at IS NULL",
         )
         .bind(project_id)
         .fetch_all(&self.pool)
@@ -1312,7 +1661,7 @@ impl PgStore {
                 sqlx_core::query::query(
                     "UPDATE inference.drift_items
                         SET status = 'current', resolved_at = now()
-                      WHERE id = $1"
+                      WHERE id = $1",
                 )
                 .bind(drift_id)
                 .execute(&self.pool)
@@ -1386,7 +1735,10 @@ impl PgStore {
     /// recomputes the full set per file (so a file that loses its last hook is
     /// cleared), scoped to one watch root. Runs in the scan reconcile. Returns
     /// file nodes whose tags changed.
-    pub async fn tag_file_nodes_by_framework_kind(&self, root_id: &uuid::Uuid) -> Result<u64, String> {
+    pub async fn tag_file_nodes_by_framework_kind(
+        &self,
+        root_id: &uuid::Uuid,
+    ) -> Result<u64, String> {
         // Tag each `file` node with the framework roles it plays, so `get_patterns`
         // / `get_file_tags` answer "which files are components / hooks / routes /
         // middleware". Two signals, merged into `tags` and recomputed each scan
@@ -1441,7 +1793,11 @@ impl PgStore {
     }
 
     /// Search functions across multiple folders (project-scoped variant).
-    pub async fn search_functions_scoped(&self, folder_ids: &[uuid::Uuid], query: &str) -> Result<Vec<serde_json::Value>, String> {
+    pub async fn search_functions_scoped(
+        &self,
+        folder_ids: &[uuid::Uuid],
+        query: &str,
+    ) -> Result<Vec<serde_json::Value>, String> {
         let rows: Vec<(uuid::Uuid, String, String, Option<String>, Option<i32>)> = sqlx_core::query_as::query_as(
             "SELECT id, name, file_path, signature, line_start FROM sensei.nodes
              WHERE folder_id = ANY($1) AND kind IN ('function'::sensei.node_kind, 'method'::sensei.node_kind)
@@ -1455,7 +1811,11 @@ impl PgStore {
     }
 
     /// Search types across multiple folders (project-scoped variant).
-    pub async fn search_types_scoped(&self, folder_ids: &[uuid::Uuid], query: &str) -> Result<Vec<serde_json::Value>, String> {
+    pub async fn search_types_scoped(
+        &self,
+        folder_ids: &[uuid::Uuid],
+        query: &str,
+    ) -> Result<Vec<serde_json::Value>, String> {
         let rows: Vec<(uuid::Uuid, String, String, Option<i32>)> = sqlx_core::query_as::query_as(
             "SELECT id, name, file_path, line_start FROM sensei.nodes
              WHERE folder_id = ANY($1) AND kind IN ('class'::sensei.node_kind, 'struct'::sensei.node_kind, 'interface'::sensei.node_kind, 'enum'::sensei.node_kind, 'type'::sensei.node_kind)
@@ -1469,15 +1829,25 @@ impl PgStore {
     }
 
     /// Count nodes by kind across multiple folders (project-scoped variant).
-    pub async fn count_nodes_by_kind_scoped(&self, folder_ids: &[uuid::Uuid]) -> Result<std::collections::HashMap<String, i64>, String> {
+    pub async fn count_nodes_by_kind_scoped(
+        &self,
+        folder_ids: &[uuid::Uuid],
+    ) -> Result<std::collections::HashMap<String, i64>, String> {
         let rows: Vec<(String, i64)> = sqlx_core::query_as::query_as(
-            "SELECT kind::text, COUNT(*) FROM sensei.nodes WHERE folder_id = ANY($1) GROUP BY kind"
-        ).bind(folder_ids).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+            "SELECT kind::text, COUNT(*) FROM sensei.nodes WHERE folder_id = ANY($1) GROUP BY kind",
+        )
+        .bind(folder_ids)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(rows.into_iter().collect())
     }
 
     /// Get all nodes across multiple folders (project-scoped variant).
-    pub async fn get_nodes_scoped(&self, folder_ids: &[uuid::Uuid]) -> Result<Vec<serde_json::Value>, String> {
+    pub async fn get_nodes_scoped(
+        &self,
+        folder_ids: &[uuid::Uuid],
+    ) -> Result<Vec<serde_json::Value>, String> {
         // file_path is Option: reference stubs + lib_symbol nodes have none. The
         // whole-graph projection must decode them without erroring (they serialize
         // to a null file_path); NULLs sort last under ORDER BY file_path.
@@ -1493,7 +1863,11 @@ impl PgStore {
     }
 
     /// Get edges by kind across multiple folders (project-scoped variant).
-    pub async fn get_edges_scoped(&self, folder_ids: &[uuid::Uuid], kind: &str) -> Result<Vec<serde_json::Value>, String> {
+    pub async fn get_edges_scoped(
+        &self,
+        folder_ids: &[uuid::Uuid],
+        kind: &str,
+    ) -> Result<Vec<serde_json::Value>, String> {
         self.get_edges_scoped_kinds(folder_ids, &[kind]).await
     }
 
@@ -1501,12 +1875,22 @@ impl PgStore {
     /// layout set is `calls,imports,extends` (+`implements` once emitted), not the
     /// single `calls` the node view used to fetch. Each row carries its `kind` so
     /// the client can style/overlay per relationship type.
-    pub async fn get_edges_scoped_kinds(&self, folder_ids: &[uuid::Uuid], kinds: &[&str]) -> Result<Vec<serde_json::Value>, String> {
+    pub async fn get_edges_scoped_kinds(
+        &self,
+        folder_ids: &[uuid::Uuid],
+        kinds: &[&str],
+    ) -> Result<Vec<serde_json::Value>, String> {
         let kinds_owned: Vec<String> = kinds.iter().map(|k| k.to_string()).collect();
-        let rows: Vec<(uuid::Uuid, uuid::Uuid, Option<uuid::Uuid>, Option<String>, String)> = sqlx_core::query_as::query_as(
-            "SELECT id, source_id, target_id, target_name, kind::text FROM sensei.edges
-              WHERE folder_id = ANY($1) AND kind::text = ANY($2)"
-        ).bind(folder_ids).bind(&kinds_owned).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        let rows: Vec<(uuid::Uuid, uuid::Uuid, Option<uuid::Uuid>, Option<String>, String)> =
+            sqlx_core::query_as::query_as(
+                "SELECT id, source_id, target_id, target_name, kind::text FROM sensei.edges
+              WHERE folder_id = ANY($1) AND kind::text = ANY($2)",
+            )
+            .bind(folder_ids)
+            .bind(&kinds_owned)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
         Ok(rows.into_iter().map(|(id, src, tgt, name, kind)| {
             serde_json::json!({ "id": id, "source_id": src, "target_id": tgt, "target_name": name, "kind": kind })
         }).collect())
@@ -1519,5 +1903,4 @@ impl PgStore {
     // when set); a chain-with-a-role IS the role assignment. Utility
     // chains (consensus-*) keep role=null and stay invisible to the
     // wizard.
-
 }

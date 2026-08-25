@@ -7,33 +7,33 @@
 //! there is no `resolve_edges` pass. Barrier tasks (resolve_libs,
 //! build_connections, detect_communities) wait for all dependencies to complete.
 
-pub mod queue;
-pub mod executor;
-#[cfg(test)]
-pub(crate) mod test_support;
-pub mod retry;
-pub mod handlers;
-pub mod progress;
-pub mod progress_emitter;
-pub mod analyzer_scheduler;
-pub mod metrics_scheduler;
-pub mod advance_run_scheduler;
-pub mod watchdog_scheduler;
-pub mod contribute_scheduler;
-pub mod log_pruner;
 pub mod activity_pruner;
-pub mod library_update_scheduler;
+pub mod advance_run_scheduler;
+pub mod analyzer_scheduler;
 pub mod capture_drain;
-pub mod reconcile_scheduler;
+pub mod contribute_scheduler;
+pub mod executor;
+pub mod handlers;
 pub mod index_audit;
-pub mod processors;
-pub mod resume;
-pub mod version_rescan;
-pub mod verdict_classifier;
+pub mod library_update_scheduler;
+pub mod log_pruner;
 pub mod mcp_discovery;
 pub mod mcp_probe;
+pub mod metrics_scheduler;
+pub mod processors;
+pub mod progress;
+pub mod progress_emitter;
+pub mod queue;
+pub mod reconcile_scheduler;
+pub mod resume;
+pub mod retry;
+#[cfg(test)]
+pub(crate) mod test_support;
+pub mod verdict_classifier;
+pub mod version_rescan;
+pub mod watchdog_scheduler;
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use std::time::Instant;
 
 // ── Task kinds ──────────────────────────────────────────────────────────────
@@ -174,7 +174,6 @@ impl std::fmt::Display for TaskKind {
     }
 }
 
-
 // ── Kind metadata ───────────────────────────────────────────────────────────
 
 /// Which pipeline a task kind belongs to.
@@ -291,48 +290,301 @@ impl TaskKind {
     /// The single source of per-kind truth.
     pub const fn info(&self) -> KindInfo {
         match self {
-            Self::ScanRoot => KindInfo { name: "scan_root", pipeline: Pipeline::Index, stage: Stage::Discover, budget_secs: 600, high_priority: false, retryable: false },
-            Self::ProcessGitFolder => KindInfo { name: "process_git_folder", pipeline: Pipeline::Index, stage: Stage::Discover, budget_secs: 600, high_priority: false, retryable: true },
-            Self::ProcessFolder => KindInfo { name: "process_folder", pipeline: Pipeline::Index, stage: Stage::Discover, budget_secs: 180, high_priority: false, retryable: true },
-            Self::ProcessFile => KindInfo { name: "process_file", pipeline: Pipeline::Index, stage: Stage::Ingest, budget_secs: 180, high_priority: false, retryable: true },
-            Self::DeleteFile => KindInfo { name: "delete_file", pipeline: Pipeline::Index, stage: Stage::Ingest, budget_secs: 180, high_priority: false, retryable: false },
-            Self::DeleteFolder => KindInfo { name: "delete_folder", pipeline: Pipeline::Index, stage: Stage::Ingest, budget_secs: 180, high_priority: false, retryable: false },
-            Self::BranchSwitch => KindInfo { name: "branch_switch", pipeline: Pipeline::Index, stage: Stage::Ingest, budget_secs: 180, high_priority: false, retryable: false },
-            Self::ExtractDeps => KindInfo { name: "extract_deps", pipeline: Pipeline::Index, stage: Stage::Derive, budget_secs: 180, high_priority: false, retryable: false },
-            Self::BuildConnections => KindInfo { name: "build_connections", pipeline: Pipeline::Index, stage: Stage::Derive, budget_secs: 600, high_priority: false, retryable: true },
-            Self::EmbedNodes => KindInfo { name: "embed_nodes", pipeline: Pipeline::Index, stage: Stage::Derive, budget_secs: 600, high_priority: false, retryable: false },
-            Self::DetectCommunities => KindInfo { name: "detect_communities", pipeline: Pipeline::Index, stage: Stage::Aggregate, budget_secs: 1800, high_priority: false, retryable: true },
-            Self::ResolveLibs => KindInfo { name: "resolve_libs", pipeline: Pipeline::Library, stage: Stage::Discover, budget_secs: 600, high_priority: false, retryable: false },
-            Self::ImportLib => KindInfo { name: "import_lib", pipeline: Pipeline::Library, stage: Stage::Ingest, budget_secs: 600, high_priority: false, retryable: false },
-            Self::IndexLibrary => KindInfo { name: "index_library", pipeline: Pipeline::Library, stage: Stage::Ingest, budget_secs: 600, high_priority: false, retryable: false },
-            Self::IndexLibraryPage => KindInfo { name: "index_library_page", pipeline: Pipeline::Library, stage: Stage::Ingest, budget_secs: 600, high_priority: false, retryable: false },
-            Self::IngestCaptures => KindInfo { name: "ingest_captures", pipeline: Pipeline::Activity, stage: Stage::Coordinate, budget_secs: 180, high_priority: false, retryable: false },
-            Self::IngestCapture => KindInfo { name: "ingest_capture", pipeline: Pipeline::Activity, stage: Stage::Ingest, budget_secs: 180, high_priority: false, retryable: false },
-            Self::AnalyzeProject => KindInfo { name: "analyze_project", pipeline: Pipeline::Activity, stage: Stage::Derive, budget_secs: 600, high_priority: true, retryable: false },
-            Self::AnalyzeSessionProcess => KindInfo { name: "analyze_session_process", pipeline: Pipeline::Activity, stage: Stage::Derive, budget_secs: 600, high_priority: false, retryable: false },
-            Self::ReconcileRepoMetadata => KindInfo { name: "reconcile_repo_metadata", pipeline: Pipeline::Activity, stage: Stage::Derive, budget_secs: 180, high_priority: false, retryable: false },
-            Self::ComputeProjectMetrics => KindInfo { name: "compute_project_metrics", pipeline: Pipeline::Metrics, stage: Stage::Coordinate, budget_secs: 180, high_priority: true, retryable: false },
-            Self::ComputeGroupMetrics => KindInfo { name: "compute_group_metrics", pipeline: Pipeline::Metrics, stage: Stage::Derive, budget_secs: 600, high_priority: true, retryable: true },
-            Self::ComputeHealth => KindInfo { name: "compute_health", pipeline: Pipeline::Metrics, stage: Stage::Aggregate, budget_secs: 600, high_priority: true, retryable: true },
-            Self::BackfillCoverage => KindInfo { name: "backfill_coverage", pipeline: Pipeline::Metrics, stage: Stage::Ingest, budget_secs: 7200, high_priority: false, retryable: false },
-            Self::MeasureVerdicts => KindInfo { name: "measure_verdicts", pipeline: Pipeline::Inference, stage: Stage::Derive, budget_secs: 180, high_priority: false, retryable: false },
-            Self::ClassifyPendingVerdicts => KindInfo { name: "classify_pending_verdicts", pipeline: Pipeline::Inference, stage: Stage::Derive, budget_secs: 600, high_priority: false, retryable: false },
-            Self::AggregateCorrections => KindInfo { name: "aggregate_corrections", pipeline: Pipeline::Inference, stage: Stage::Aggregate, budget_secs: 600, high_priority: false, retryable: false },
-            Self::AggregateToolInsights => KindInfo { name: "aggregate_tool_insights", pipeline: Pipeline::Inference, stage: Stage::Aggregate, budget_secs: 180, high_priority: false, retryable: false },
-            Self::ConsolidateGovernance => KindInfo { name: "consolidate_governance", pipeline: Pipeline::Inference, stage: Stage::Aggregate, budget_secs: 600, high_priority: false, retryable: false },
-            Self::WarmInsightCopy => KindInfo { name: "warm_insight_copy", pipeline: Pipeline::Inference, stage: Stage::Derive, budget_secs: 600, high_priority: false, retryable: false },
-            Self::LearnPlaybooks => KindInfo { name: "learn_playbooks", pipeline: Pipeline::Inference, stage: Stage::Derive, budget_secs: 180, high_priority: false, retryable: false },
-            Self::ScanDocDrift => KindInfo { name: "scan_doc_drift", pipeline: Pipeline::Inference, stage: Stage::Derive, budget_secs: 600, high_priority: false, retryable: false },
-            Self::PublishRelaySegments => KindInfo { name: "publish_relay_segments", pipeline: Pipeline::Inference, stage: Stage::Publish, budget_secs: 180, high_priority: false, retryable: false },
-            Self::AdvanceRun => KindInfo { name: "advance_run", pipeline: Pipeline::Inference, stage: Stage::Publish, budget_secs: 180, high_priority: false, retryable: false },
-            Self::PublishRun => KindInfo { name: "publish_run", pipeline: Pipeline::Inference, stage: Stage::Publish, budget_secs: 180, high_priority: false, retryable: false },
+            Self::ScanRoot => KindInfo {
+                name: "scan_root",
+                pipeline: Pipeline::Index,
+                stage: Stage::Discover,
+                budget_secs: 600,
+                high_priority: false,
+                retryable: false,
+            },
+            Self::ProcessGitFolder => KindInfo {
+                name: "process_git_folder",
+                pipeline: Pipeline::Index,
+                stage: Stage::Discover,
+                budget_secs: 600,
+                high_priority: false,
+                retryable: true,
+            },
+            Self::ProcessFolder => KindInfo {
+                name: "process_folder",
+                pipeline: Pipeline::Index,
+                stage: Stage::Discover,
+                budget_secs: 180,
+                high_priority: false,
+                retryable: true,
+            },
+            Self::ProcessFile => KindInfo {
+                name: "process_file",
+                pipeline: Pipeline::Index,
+                stage: Stage::Ingest,
+                budget_secs: 180,
+                high_priority: false,
+                retryable: true,
+            },
+            Self::DeleteFile => KindInfo {
+                name: "delete_file",
+                pipeline: Pipeline::Index,
+                stage: Stage::Ingest,
+                budget_secs: 180,
+                high_priority: false,
+                retryable: false,
+            },
+            Self::DeleteFolder => KindInfo {
+                name: "delete_folder",
+                pipeline: Pipeline::Index,
+                stage: Stage::Ingest,
+                budget_secs: 180,
+                high_priority: false,
+                retryable: false,
+            },
+            Self::BranchSwitch => KindInfo {
+                name: "branch_switch",
+                pipeline: Pipeline::Index,
+                stage: Stage::Ingest,
+                budget_secs: 180,
+                high_priority: false,
+                retryable: false,
+            },
+            Self::ExtractDeps => KindInfo {
+                name: "extract_deps",
+                pipeline: Pipeline::Index,
+                stage: Stage::Derive,
+                budget_secs: 180,
+                high_priority: false,
+                retryable: false,
+            },
+            Self::BuildConnections => KindInfo {
+                name: "build_connections",
+                pipeline: Pipeline::Index,
+                stage: Stage::Derive,
+                budget_secs: 600,
+                high_priority: false,
+                retryable: true,
+            },
+            Self::EmbedNodes => KindInfo {
+                name: "embed_nodes",
+                pipeline: Pipeline::Index,
+                stage: Stage::Derive,
+                budget_secs: 600,
+                high_priority: false,
+                retryable: false,
+            },
+            Self::DetectCommunities => KindInfo {
+                name: "detect_communities",
+                pipeline: Pipeline::Index,
+                stage: Stage::Aggregate,
+                budget_secs: 1800,
+                high_priority: false,
+                retryable: true,
+            },
+            Self::ResolveLibs => KindInfo {
+                name: "resolve_libs",
+                pipeline: Pipeline::Library,
+                stage: Stage::Discover,
+                budget_secs: 600,
+                high_priority: false,
+                retryable: false,
+            },
+            Self::ImportLib => KindInfo {
+                name: "import_lib",
+                pipeline: Pipeline::Library,
+                stage: Stage::Ingest,
+                budget_secs: 600,
+                high_priority: false,
+                retryable: false,
+            },
+            Self::IndexLibrary => KindInfo {
+                name: "index_library",
+                pipeline: Pipeline::Library,
+                stage: Stage::Ingest,
+                budget_secs: 600,
+                high_priority: false,
+                retryable: false,
+            },
+            Self::IndexLibraryPage => KindInfo {
+                name: "index_library_page",
+                pipeline: Pipeline::Library,
+                stage: Stage::Ingest,
+                budget_secs: 600,
+                high_priority: false,
+                retryable: false,
+            },
+            Self::IngestCaptures => KindInfo {
+                name: "ingest_captures",
+                pipeline: Pipeline::Activity,
+                stage: Stage::Coordinate,
+                budget_secs: 180,
+                high_priority: false,
+                retryable: false,
+            },
+            Self::IngestCapture => KindInfo {
+                name: "ingest_capture",
+                pipeline: Pipeline::Activity,
+                stage: Stage::Ingest,
+                budget_secs: 180,
+                high_priority: false,
+                retryable: false,
+            },
+            Self::AnalyzeProject => KindInfo {
+                name: "analyze_project",
+                pipeline: Pipeline::Activity,
+                stage: Stage::Derive,
+                budget_secs: 600,
+                high_priority: true,
+                retryable: false,
+            },
+            Self::AnalyzeSessionProcess => KindInfo {
+                name: "analyze_session_process",
+                pipeline: Pipeline::Activity,
+                stage: Stage::Derive,
+                budget_secs: 600,
+                high_priority: false,
+                retryable: false,
+            },
+            Self::ReconcileRepoMetadata => KindInfo {
+                name: "reconcile_repo_metadata",
+                pipeline: Pipeline::Activity,
+                stage: Stage::Derive,
+                budget_secs: 180,
+                high_priority: false,
+                retryable: false,
+            },
+            Self::ComputeProjectMetrics => KindInfo {
+                name: "compute_project_metrics",
+                pipeline: Pipeline::Metrics,
+                stage: Stage::Coordinate,
+                budget_secs: 180,
+                high_priority: true,
+                retryable: false,
+            },
+            Self::ComputeGroupMetrics => KindInfo {
+                name: "compute_group_metrics",
+                pipeline: Pipeline::Metrics,
+                stage: Stage::Derive,
+                budget_secs: 600,
+                high_priority: true,
+                retryable: true,
+            },
+            Self::ComputeHealth => KindInfo {
+                name: "compute_health",
+                pipeline: Pipeline::Metrics,
+                stage: Stage::Aggregate,
+                budget_secs: 600,
+                high_priority: true,
+                retryable: true,
+            },
+            Self::BackfillCoverage => KindInfo {
+                name: "backfill_coverage",
+                pipeline: Pipeline::Metrics,
+                stage: Stage::Ingest,
+                budget_secs: 7200,
+                high_priority: false,
+                retryable: false,
+            },
+            Self::MeasureVerdicts => KindInfo {
+                name: "measure_verdicts",
+                pipeline: Pipeline::Inference,
+                stage: Stage::Derive,
+                budget_secs: 180,
+                high_priority: false,
+                retryable: false,
+            },
+            Self::ClassifyPendingVerdicts => KindInfo {
+                name: "classify_pending_verdicts",
+                pipeline: Pipeline::Inference,
+                stage: Stage::Derive,
+                budget_secs: 600,
+                high_priority: false,
+                retryable: false,
+            },
+            Self::AggregateCorrections => KindInfo {
+                name: "aggregate_corrections",
+                pipeline: Pipeline::Inference,
+                stage: Stage::Aggregate,
+                budget_secs: 600,
+                high_priority: false,
+                retryable: false,
+            },
+            Self::AggregateToolInsights => KindInfo {
+                name: "aggregate_tool_insights",
+                pipeline: Pipeline::Inference,
+                stage: Stage::Aggregate,
+                budget_secs: 180,
+                high_priority: false,
+                retryable: false,
+            },
+            Self::ConsolidateGovernance => KindInfo {
+                name: "consolidate_governance",
+                pipeline: Pipeline::Inference,
+                stage: Stage::Aggregate,
+                budget_secs: 600,
+                high_priority: false,
+                retryable: false,
+            },
+            Self::WarmInsightCopy => KindInfo {
+                name: "warm_insight_copy",
+                pipeline: Pipeline::Inference,
+                stage: Stage::Derive,
+                budget_secs: 600,
+                high_priority: false,
+                retryable: false,
+            },
+            Self::LearnPlaybooks => KindInfo {
+                name: "learn_playbooks",
+                pipeline: Pipeline::Inference,
+                stage: Stage::Derive,
+                budget_secs: 180,
+                high_priority: false,
+                retryable: false,
+            },
+            Self::ScanDocDrift => KindInfo {
+                name: "scan_doc_drift",
+                pipeline: Pipeline::Inference,
+                stage: Stage::Derive,
+                budget_secs: 600,
+                high_priority: false,
+                retryable: false,
+            },
+            Self::PublishRelaySegments => KindInfo {
+                name: "publish_relay_segments",
+                pipeline: Pipeline::Inference,
+                stage: Stage::Publish,
+                budget_secs: 180,
+                high_priority: false,
+                retryable: false,
+            },
+            Self::AdvanceRun => KindInfo {
+                name: "advance_run",
+                pipeline: Pipeline::Inference,
+                stage: Stage::Publish,
+                budget_secs: 180,
+                high_priority: false,
+                retryable: false,
+            },
+            Self::PublishRun => KindInfo {
+                name: "publish_run",
+                pipeline: Pipeline::Inference,
+                stage: Stage::Publish,
+                budget_secs: 180,
+                high_priority: false,
+                retryable: false,
+            },
         }
     }
 
-    pub const fn pipeline(&self) -> Pipeline { self.info().pipeline }
-    pub const fn stage(&self) -> Stage { self.info().stage }
-    pub const fn is_retryable(&self) -> bool { self.info().retryable }
-    pub const fn is_high_priority(&self) -> bool { self.info().high_priority }
+    pub const fn pipeline(&self) -> Pipeline {
+        self.info().pipeline
+    }
+    pub const fn stage(&self) -> Stage {
+        self.info().stage
+    }
+    pub const fn is_retryable(&self) -> bool {
+        self.info().retryable
+    }
+    pub const fn is_high_priority(&self) -> bool {
+        self.info().high_priority
+    }
 
     /// Watchdog cap for this kind.
     pub const fn watchdog_timeout(&self) -> std::time::Duration {
@@ -344,7 +596,7 @@ impl TaskKind {
 #[serde(rename_all = "snake_case")]
 pub enum TaskStatus {
     Pending,
-    Blocked,    // has unmet dependencies
+    Blocked, // has unmet dependencies
     Running,
     Completed,
     Failed,
@@ -356,12 +608,12 @@ pub enum TaskStatus {
 pub struct Task {
     pub id: u64,
     pub kind: TaskKind,
-    pub folder_path: String,             // git folder abs path — used for grouping and DB lookups
-    pub path: String,                    // file/folder/root path (what this task operates on)
-    pub parent_task_id: Option<u64>,     // for hierarchy tracking
-    pub module_id: Option<String>,       // for process_file: which module this file belongs to
-    pub branch: Option<String>,          // git branch name (for branch-aware indexing)
-    pub url: Option<String>,             // for import_lib: library docs URL
+    pub folder_path: String, // git folder abs path — used for grouping and DB lookups
+    pub path: String,        // file/folder/root path (what this task operates on)
+    pub parent_task_id: Option<u64>, // for hierarchy tracking
+    pub module_id: Option<String>, // for process_file: which module this file belongs to
+    pub branch: Option<String>, // git branch name (for branch-aware indexing)
+    pub url: Option<String>, // for import_lib: library docs URL
     /// Target `computed_on` day for a metrics compute (`ComputeGroupMetrics`).
     /// `None` = the incremental "today" run (rolling-window behavior preserved).
     /// `Some(D)` = compute the single historical day `D` (the backfill/gap-fill
@@ -369,9 +621,9 @@ pub struct Task {
     /// backfill resumes on the same day.
     pub as_of: Option<chrono::NaiveDate>,
     pub status: TaskStatus,
-    pub depends_on: Vec<u64>,            // won't run until these complete
+    pub depends_on: Vec<u64>, // won't run until these complete
     pub error: Option<String>,
-    pub retry_number: u32,               // 0 = first attempt; bumped per bounded retry (D6c)
+    pub retry_number: u32, // 0 = first attempt; bumped per bounded retry (D6c)
     pub _created_at: Instant,
     pub started_at: Option<Instant>,
     pub completed_at: Option<Instant>,
@@ -636,9 +888,16 @@ mod tests {
         assert_eq!(next.parent_task_id, Some(7));
         assert_eq!(next.module_id, Some("mod:repo:src".to_string()));
         assert_eq!(next.branch, Some("main".to_string()), "retry preserves branch identity");
-        assert_eq!(next.url, Some("https://example.test/pkg".to_string()), "retry preserves url identity");
-        assert_eq!(next.as_of, chrono::NaiveDate::from_ymd_opt(2025, 6, 1),
-            "retry preserves the target computed_on day so an interrupted backfill resumes");
+        assert_eq!(
+            next.url,
+            Some("https://example.test/pkg".to_string()),
+            "retry preserves url identity"
+        );
+        assert_eq!(
+            next.as_of,
+            chrono::NaiveDate::from_ymd_opt(2025, 6, 1),
+            "retry preserves the target computed_on day so an interrupted backfill resumes"
+        );
         // The attempt count advances by exactly one.
         assert_eq!(next.retry_number, 2, "retry() bumps retry_number");
         // Runtime state is reset — a fresh, re-enqueueable attempt.
@@ -697,8 +956,10 @@ mod tests {
         // watchdog-killed into a retry-timeout loop.
         assert!(TaskKind::DetectCommunities.watchdog_timeout() > long);
         // Coverage runs the project's real test suite per commit — the widest.
-        assert!(TaskKind::BackfillCoverage.watchdog_timeout()
-                > TaskKind::DetectCommunities.watchdog_timeout());
+        assert!(
+            TaskKind::BackfillCoverage.watchdog_timeout()
+                > TaskKind::DetectCommunities.watchdog_timeout()
+        );
 
         // Iterating ALL rather than a hand-copied list: the old version repeated
         // every variant here, so a new kind was covered only if someone
@@ -730,8 +991,10 @@ mod tests {
         for k in TaskKind::ALL {
             let n = k.info().name;
             assert!(!n.is_empty(), "{k} has an empty name");
-            assert!(n.chars().all(|c| c.is_ascii_lowercase() || c == '_'),
-                "{k} name {n:?} must be snake_case to match the DB enum");
+            assert!(
+                n.chars().all(|c| c.is_ascii_lowercase() || c == '_'),
+                "{k} name {n:?} must be snake_case to match the DB enum"
+            );
             assert_eq!(k.to_string(), n, "Display must be the descriptor name");
         }
     }
@@ -744,15 +1007,19 @@ mod tests {
         for k in TaskKind::ALL {
             let i = k.info();
             if i.stage == Stage::Coordinate {
-                assert!(i.budget_secs <= 180,
+                assert!(
+                    i.budget_secs <= 180,
                     "{k} coordinates but claims a {}s budget — coordinators enqueue, they do not work",
-                    i.budget_secs);
+                    i.budget_secs
+                );
             }
         }
         // The metrics chain is what preempts a boot re-index; nothing else should.
         for k in TaskKind::ALL.iter().filter(|k| k.is_high_priority()) {
-            assert!(matches!(k.pipeline(), Pipeline::Metrics | Pipeline::Activity),
-                "{k} claims high priority outside the metrics chain");
+            assert!(
+                matches!(k.pipeline(), Pipeline::Metrics | Pipeline::Activity),
+                "{k} claims high priority outside the metrics chain"
+            );
         }
     }
 
@@ -807,8 +1074,12 @@ mod tests {
         let stamp = t.as_of_stamp_ns().expect("a bounded task yields a stamp");
         // 2026-06-01T00:00:00Z in epoch nanoseconds.
         let expected = chrono::NaiveDate::from_ymd_opt(2026, 6, 1)
-            .unwrap().and_hms_opt(0, 0, 0).unwrap()
-            .and_utc().timestamp_nanos_opt().unwrap();
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_utc()
+            .timestamp_nanos_opt()
+            .unwrap();
         assert_eq!(stamp, expected, "the bound is the day's UTC midnight, in ns");
 
         // The units it must compare against are mtime nanoseconds, so a unit from

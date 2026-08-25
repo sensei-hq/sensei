@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
-use gateway::adapters::noop::NoopAdapter;
+use gateway::Gateway;
 use gateway::adapters::AdapterRegistry;
+use gateway::adapters::noop::NoopAdapter;
 use gateway::circuit_breaker::{CircuitBreakerConfig, CircuitBreakerManager};
 use gateway::types::config::GatewayConfig;
-use gateway::Gateway;
 
 use crate::gateway_keys;
 
@@ -86,9 +86,7 @@ pub async fn init_gateway(
     let adapters = AdapterRegistry::new();
 
     // Always register noop as fallback
-    adapters
-        .register(Arc::new(NoopAdapter))
-        .await;
+    adapters.register(Arc::new(NoopAdapter)).await;
 
     // Optional in-process embedding adapters. Each is only active when
     // the daemon binary is built with the matching `embedded-*` cargo
@@ -103,27 +101,31 @@ pub async fn init_gateway(
         match crate::api::gateway_embedded::register_fastembed(&adapters, &dir, &model_id).await {
             Ok(id) => tracing::info!(
                 "Gateway: FastembedAdapter registered as '{}' for model '{}' from {}",
-                id, model_id, dir
+                id,
+                model_id,
+                dir
             ),
             Err(e) => tracing::warn!(
                 "Gateway: FastembedAdapter from SENSEI_FASTEMBED_DIR={} failed: {}",
-                dir, e
+                dir,
+                e
             ),
         }
     }
     #[cfg(feature = "embedded-ort")]
     if let Ok(dir) = std::env::var("SENSEI_ORT_DIR") {
-        let model_id = std::env::var("SENSEI_ORT_MODEL_ID")
-            .unwrap_or_else(|_| "ort-default".to_string());
+        let model_id =
+            std::env::var("SENSEI_ORT_MODEL_ID").unwrap_or_else(|_| "ort-default".to_string());
         match crate::api::gateway_embedded::register_ort(&adapters, &dir, &model_id).await {
             Ok(id) => tracing::info!(
                 "Gateway: OrtAdapter registered as '{}' for model '{}' from {}",
-                id, model_id, dir
+                id,
+                model_id,
+                dir
             ),
-            Err(e) => tracing::warn!(
-                "Gateway: OrtAdapter from SENSEI_ORT_DIR={} failed: {}",
-                dir, e
-            ),
+            Err(e) => {
+                tracing::warn!("Gateway: OrtAdapter from SENSEI_ORT_DIR={} failed: {}", dir, e)
+            }
         }
     }
     // Embedded in-process llama.cpp, exposed as a single `embedded-llama`
@@ -150,8 +152,9 @@ pub async fn init_gateway(
     // `mut` is used only in the `embedded-llama-cpp` block; the default build
     // leaves it `None`, so silence the unused-mut lint there.
     #[allow(unused_mut)]
-    let mut provisioning_service: Option<Arc<crate::api::model_provisioning::ModelProvisioning>> =
-        None;
+    let mut provisioning_service: Option<
+        Arc<crate::api::model_provisioning::ModelProvisioning>,
+    > = None;
     // The managed-store dir the provisioning service downloads into (== the dir
     // the embedded-llama adapter resolves from). `Some` only when the embedded
     // adapter path ran; `None` disables provisioning entirely.
@@ -163,8 +166,8 @@ pub async fn init_gateway(
             "Gateway: embedded-llama adapter skipped for named instance — inference degrades to fallback"
         );
     } else {
-        use local_providers::adapters::EmbeddedLlamaAdapter;
         use local_engine::registry::{ChainedResolver, ManagedResolver, OllamaResolver};
+        use local_providers::adapters::EmbeddedLlamaAdapter;
 
         // Managed-store dir the embedded-llama adapter resolves from AND the
         // provisioning service downloads into — one path so a freshly-pulled GGUF
@@ -179,9 +182,7 @@ pub async fn init_gateway(
         let resolver: Arc<dyn local_engine::registry::ModelResolver> = Arc::new(
             ChainedResolver::new()
                 .push(Arc::new(ManagedResolver::new(managed_dir.clone())))
-                .push(Arc::new(OllamaResolver::new(
-                    crate::paths::home().join(".ollama/models"),
-                ))),
+                .push(Arc::new(OllamaResolver::new(crate::paths::home().join(".ollama/models")))),
         );
 
         match EmbeddedLlamaAdapter::with_shared_backend("embedded-llama", resolver) {
@@ -189,9 +190,7 @@ pub async fn init_gateway(
                 tracing::info!(
                     "Gateway: embedded-llama adapter registered (resolver: managed → ollama)"
                 );
-                adapters
-                    .register(Arc::new(adapter))
-                    .await;
+                adapters.register(Arc::new(adapter)).await;
             }
             Err(e) => tracing::warn!("Gateway: embedded-llama adapter unavailable: {e}"),
         }
@@ -215,9 +214,7 @@ pub async fn init_gateway(
         match gateway::adapters::ollama::OllamaAdapter::new() {
             Ok(adapter) => {
                 tracing::info!("Gateway: Ollama adapter registered");
-                adapters
-                    .register(Arc::new(adapter))
-                    .await;
+                adapters.register(Arc::new(adapter)).await;
             }
             Err(e) => tracing::warn!("Gateway: Ollama adapter failed to initialize: {}", e),
         }
@@ -344,10 +341,7 @@ pub async fn init_gateway(
     gw.refresh_router_keys(keychain_api_key).await;
 
     let adapter_list = gw.list_adapters().await;
-    tracing::info!(
-        "Gateway initialized (unconfigured) with adapters: {:?}",
-        adapter_list
-    );
+    tracing::info!("Gateway initialized (unconfigured) with adapters: {:?}", adapter_list);
 
     (Arc::new(gw), provisioning_service)
 }
@@ -381,9 +375,7 @@ fn embedded_catalog(config: &GatewayConfig) -> Vec<(String, String)> {
                 .clone()
                 .or_else(|| config.models.get(&entry.model).and_then(|m| m.api_model_id.clone()))
                 .unwrap_or_else(|| entry.model.clone());
-            catalog
-                .entry(pullable_id)
-                .or_insert_with(|| entry.model.clone());
+            catalog.entry(pullable_id).or_insert_with(|| entry.model.clone());
         }
     }
     catalog.into_iter().collect()
@@ -402,234 +394,297 @@ fn baseline_production_config() -> GatewayConfig {
     use std::collections::HashMap;
 
     let mut routers: HashMap<String, RouterConfig> = HashMap::new();
-    routers.insert("openai".into(), RouterConfig {
-        url: "https://api.openai.com".into(),
-        api_key_env: Some("OPENAI_API_KEY".into()),
-        api_key: None,
-        enabled: true,
-        timeout_ms: Some(120_000),
-        headers: HashMap::new(),
-    });
-    routers.insert("anthropic".into(), RouterConfig {
-        url: "https://api.anthropic.com".into(),
-        api_key_env: Some("ANTHROPIC_API_KEY".into()),
-        api_key: None,
-        enabled: true,
-        timeout_ms: Some(120_000),
-        headers: HashMap::new(),
-    });
-    routers.insert("ollama".into(), RouterConfig {
-        url: format!("http://localhost:{}", sensei_bootstrap::OLLAMA_PORT),
-        api_key_env: None,
-        api_key: None,
-        enabled: true,
-        timeout_ms: Some(120_000),
-        headers: HashMap::new(),
-    });
+    routers.insert(
+        "openai".into(),
+        RouterConfig {
+            url: "https://api.openai.com".into(),
+            api_key_env: Some("OPENAI_API_KEY".into()),
+            api_key: None,
+            enabled: true,
+            timeout_ms: Some(120_000),
+            headers: HashMap::new(),
+        },
+    );
+    routers.insert(
+        "anthropic".into(),
+        RouterConfig {
+            url: "https://api.anthropic.com".into(),
+            api_key_env: Some("ANTHROPIC_API_KEY".into()),
+            api_key: None,
+            enabled: true,
+            timeout_ms: Some(120_000),
+            headers: HashMap::new(),
+        },
+    );
+    routers.insert(
+        "ollama".into(),
+        RouterConfig {
+            url: format!("http://localhost:{}", sensei_bootstrap::OLLAMA_PORT),
+            api_key_env: None,
+            api_key: None,
+            enabled: true,
+            timeout_ms: Some(120_000),
+            headers: HashMap::new(),
+        },
+    );
     // In-process embedded llama.cpp, exposed as a single `embedded-llama`
     // router (#79). Only serves requests when the daemon is built with
     // `embedded-llama-cpp` and the registry can resolve the model bytes
     // (managed dir or ollama cache) — otherwise the adapter is absent / the
     // model unresolvable and the chain falls through to ollama.
-    routers.insert("embedded-llama".into(), RouterConfig {
-        url: "embedded://embedded-llama".into(),
-        api_key_env: None,
-        api_key: None,
-        enabled: true,
-        timeout_ms: Some(120_000),
-        headers: HashMap::new(),
-    });
+    routers.insert(
+        "embedded-llama".into(),
+        RouterConfig {
+            url: "embedded://embedded-llama".into(),
+            api_key_env: None,
+            api_key: None,
+            enabled: true,
+            timeout_ms: Some(120_000),
+            headers: HashMap::new(),
+        },
+    );
     // OpenAI-compatible aggregators. The adapter implementation is the
     // same as OpenAI's; each router has its own base URL + key env var.
-    routers.insert("openrouter".into(), RouterConfig {
-        url: "https://openrouter.ai/api/v1".into(),
-        api_key_env: Some("OPENROUTER_API_KEY".into()),
-        api_key: None,
-        enabled: true,
-        timeout_ms: Some(120_000),
-        headers: HashMap::new(),
-    });
-    routers.insert("vercel".into(), RouterConfig {
-        url: "https://ai-gateway.vercel.sh/v1".into(),
-        api_key_env: Some("AI_GATEWAY_API_KEY".into()),
-        api_key: None,
-        enabled: true,
-        timeout_ms: Some(120_000),
-        headers: HashMap::new(),
-    });
-    routers.insert("nvidia".into(), RouterConfig {
-        url: "https://integrate.api.nvidia.com/v1".into(),
-        api_key_env: Some("NVIDIA_API_KEY".into()),
-        api_key: None,
-        enabled: true,
-        timeout_ms: Some(120_000),
-        headers: HashMap::new(),
-    });
+    routers.insert(
+        "openrouter".into(),
+        RouterConfig {
+            url: "https://openrouter.ai/api/v1".into(),
+            api_key_env: Some("OPENROUTER_API_KEY".into()),
+            api_key: None,
+            enabled: true,
+            timeout_ms: Some(120_000),
+            headers: HashMap::new(),
+        },
+    );
+    routers.insert(
+        "vercel".into(),
+        RouterConfig {
+            url: "https://ai-gateway.vercel.sh/v1".into(),
+            api_key_env: Some("AI_GATEWAY_API_KEY".into()),
+            api_key: None,
+            enabled: true,
+            timeout_ms: Some(120_000),
+            headers: HashMap::new(),
+        },
+    );
+    routers.insert(
+        "nvidia".into(),
+        RouterConfig {
+            url: "https://integrate.api.nvidia.com/v1".into(),
+            api_key_env: Some("NVIDIA_API_KEY".into()),
+            api_key: None,
+            enabled: true,
+            timeout_ms: Some(120_000),
+            headers: HashMap::new(),
+        },
+    );
     // Google Gemini uses its own (non-OpenAI) wire format — see
     // adapters::gemini for the format and auth header details.
-    routers.insert("gemini".into(), RouterConfig {
-        url: "https://generativelanguage.googleapis.com/v1beta".into(),
-        api_key_env: Some("GEMINI_API_KEY".into()),
-        api_key: None,
-        enabled: true,
-        timeout_ms: Some(120_000),
-        headers: HashMap::new(),
-    });
+    routers.insert(
+        "gemini".into(),
+        RouterConfig {
+            url: "https://generativelanguage.googleapis.com/v1beta".into(),
+            api_key_env: Some("GEMINI_API_KEY".into()),
+            api_key: None,
+            enabled: true,
+            timeout_ms: Some(120_000),
+            headers: HashMap::new(),
+        },
+    );
     // AWS Bedrock — the SDK handles auth via the credential-provider
     // chain (AWS_ACCESS_KEY_ID / shared credentials / IAM role) and the
     // request URL is derived from the chosen region, so the
     // RouterConfig.url + api_key fields aren't used. The url is set to
     // a non-empty placeholder so existing config-validation paths that
     // require a non-empty url stay happy.
-    routers.insert("bedrock".into(), RouterConfig {
-        url: "aws://bedrock".into(),
-        api_key_env: Some("AWS_ACCESS_KEY_ID".into()),
-        api_key: None,
-        enabled: true,
-        timeout_ms: Some(120_000),
-        headers: HashMap::new(),
-    });
+    routers.insert(
+        "bedrock".into(),
+        RouterConfig {
+            url: "aws://bedrock".into(),
+            api_key_env: Some("AWS_ACCESS_KEY_ID".into()),
+            api_key: None,
+            enabled: true,
+            timeout_ms: Some(120_000),
+            headers: HashMap::new(),
+        },
+    );
 
     let mut models: HashMap<String, ModelConfig> = HashMap::new();
-    models.insert("dall-e-3".into(), ModelConfig {
-        id: "dall-e-3".into(),
-        api_model_id: Some("dall-e-3".into()),
-        provider: "openai".into(),
-        capabilities: vec![Capability::ImageGenerate],
-        context_window: 0,
-        max_output_tokens: 0,
-        pricing: None,
-        // Image-gen models: lineage/family isn't a meaningful panel axis here.
-        family: None,
-    });
-    models.insert("gpt-image-1".into(), ModelConfig {
-        id: "gpt-image-1".into(),
-        api_model_id: Some("gpt-image-1".into()),
-        provider: "openai".into(),
-        capabilities: vec![Capability::ImageGenerate],
-        context_window: 0,
-        max_output_tokens: 0,
-        pricing: None,
-        family: None,
-    });
-    models.insert("gpt-4o-mini".into(), ModelConfig {
-        id: "gpt-4o-mini".into(),
-        api_model_id: Some("gpt-4o-mini".into()),
-        provider: "openai".into(),
-        capabilities: vec![Capability::TextChat],
-        context_window: 128_000,
-        max_output_tokens: 16_384,
-        pricing: None,
-        family: family_for_baseline("gpt-4o-mini"),
-    });
-    models.insert("claude-sonnet".into(), ModelConfig {
-        id: "claude-sonnet".into(),
-        api_model_id: Some("claude-sonnet-4-5".into()),
-        provider: "anthropic".into(),
-        capabilities: vec![Capability::TextChat],
-        context_window: 200_000,
-        max_output_tokens: 8_192,
-        pricing: None,
-        family: family_for_baseline("claude-sonnet"),
-    });
+    models.insert(
+        "dall-e-3".into(),
+        ModelConfig {
+            id: "dall-e-3".into(),
+            api_model_id: Some("dall-e-3".into()),
+            provider: "openai".into(),
+            capabilities: vec![Capability::ImageGenerate],
+            context_window: 0,
+            max_output_tokens: 0,
+            pricing: None,
+            // Image-gen models: lineage/family isn't a meaningful panel axis here.
+            family: None,
+        },
+    );
+    models.insert(
+        "gpt-image-1".into(),
+        ModelConfig {
+            id: "gpt-image-1".into(),
+            api_model_id: Some("gpt-image-1".into()),
+            provider: "openai".into(),
+            capabilities: vec![Capability::ImageGenerate],
+            context_window: 0,
+            max_output_tokens: 0,
+            pricing: None,
+            family: None,
+        },
+    );
+    models.insert(
+        "gpt-4o-mini".into(),
+        ModelConfig {
+            id: "gpt-4o-mini".into(),
+            api_model_id: Some("gpt-4o-mini".into()),
+            provider: "openai".into(),
+            capabilities: vec![Capability::TextChat],
+            context_window: 128_000,
+            max_output_tokens: 16_384,
+            pricing: None,
+            family: family_for_baseline("gpt-4o-mini"),
+        },
+    );
+    models.insert(
+        "claude-sonnet".into(),
+        ModelConfig {
+            id: "claude-sonnet".into(),
+            api_model_id: Some("claude-sonnet-4-5".into()),
+            provider: "anthropic".into(),
+            capabilities: vec![Capability::TextChat],
+            context_window: 200_000,
+            max_output_tokens: 8_192,
+            pricing: None,
+            family: family_for_baseline("claude-sonnet"),
+        },
+    );
     // One representative model per OpenAI-compatible aggregator so the
     // router entries above have something to dispatch to out of the box.
     // The DB-load path / setup wizard can add more once table-driven
     // configuration lands.
-    models.insert("openrouter-claude-sonnet-4-5".into(), ModelConfig {
-        id: "openrouter-claude-sonnet-4-5".into(),
-        api_model_id: Some("anthropic/claude-sonnet-4-5".into()),
-        provider: "openrouter".into(),
-        capabilities: vec![Capability::TextChat],
-        context_window: 200_000,
-        max_output_tokens: 8_192,
-        pricing: None,
-        family: family_for_baseline("openrouter-claude-sonnet-4-5"),
-    });
-    models.insert("vercel-gpt-4o".into(), ModelConfig {
-        id: "vercel-gpt-4o".into(),
-        api_model_id: Some("openai/gpt-4o".into()),
-        provider: "vercel".into(),
-        capabilities: vec![Capability::TextChat],
-        context_window: 128_000,
-        max_output_tokens: 16_384,
-        pricing: None,
-        family: family_for_baseline("vercel-gpt-4o"),
-    });
-    models.insert("nvidia-llama-3.1-70b-instruct".into(), ModelConfig {
-        id: "nvidia-llama-3.1-70b-instruct".into(),
-        api_model_id: Some("meta/llama-3.1-70b-instruct".into()),
-        provider: "nvidia".into(),
-        capabilities: vec![Capability::TextChat],
-        context_window: 128_000,
-        max_output_tokens: 4_096,
-        pricing: None,
-        family: family_for_baseline("nvidia-llama-3.1-70b-instruct"),
-    });
+    models.insert(
+        "openrouter-claude-sonnet-4-5".into(),
+        ModelConfig {
+            id: "openrouter-claude-sonnet-4-5".into(),
+            api_model_id: Some("anthropic/claude-sonnet-4-5".into()),
+            provider: "openrouter".into(),
+            capabilities: vec![Capability::TextChat],
+            context_window: 200_000,
+            max_output_tokens: 8_192,
+            pricing: None,
+            family: family_for_baseline("openrouter-claude-sonnet-4-5"),
+        },
+    );
+    models.insert(
+        "vercel-gpt-4o".into(),
+        ModelConfig {
+            id: "vercel-gpt-4o".into(),
+            api_model_id: Some("openai/gpt-4o".into()),
+            provider: "vercel".into(),
+            capabilities: vec![Capability::TextChat],
+            context_window: 128_000,
+            max_output_tokens: 16_384,
+            pricing: None,
+            family: family_for_baseline("vercel-gpt-4o"),
+        },
+    );
+    models.insert(
+        "nvidia-llama-3.1-70b-instruct".into(),
+        ModelConfig {
+            id: "nvidia-llama-3.1-70b-instruct".into(),
+            api_model_id: Some("meta/llama-3.1-70b-instruct".into()),
+            provider: "nvidia".into(),
+            capabilities: vec![Capability::TextChat],
+            context_window: 128_000,
+            max_output_tokens: 4_096,
+            pricing: None,
+            family: family_for_baseline("nvidia-llama-3.1-70b-instruct"),
+        },
+    );
     // Gemini — one chat model + one embedding model so both
     // capabilities the adapter supports have a dispatch target.
-    models.insert("gemini-2.0-flash".into(), ModelConfig {
-        id: "gemini-2.0-flash".into(),
-        api_model_id: Some("gemini-2.0-flash".into()),
-        provider: "gemini".into(),
-        capabilities: vec![Capability::TextChat],
-        context_window: 1_048_576,
-        max_output_tokens: 8_192,
-        pricing: None,
-        family: family_for_baseline("gemini-2.0-flash"),
-    });
-    models.insert("gemini-text-embedding-004".into(), ModelConfig {
-        id: "gemini-text-embedding-004".into(),
-        api_model_id: Some("text-embedding-004".into()),
-        provider: "gemini".into(),
-        capabilities: vec![Capability::TextEmbed],
-        context_window: 2_048,
-        max_output_tokens: 0,
-        pricing: None,
-        family: family_for_baseline("gemini-text-embedding-004"),
-    });
+    models.insert(
+        "gemini-2.0-flash".into(),
+        ModelConfig {
+            id: "gemini-2.0-flash".into(),
+            api_model_id: Some("gemini-2.0-flash".into()),
+            provider: "gemini".into(),
+            capabilities: vec![Capability::TextChat],
+            context_window: 1_048_576,
+            max_output_tokens: 8_192,
+            pricing: None,
+            family: family_for_baseline("gemini-2.0-flash"),
+        },
+    );
+    models.insert(
+        "gemini-text-embedding-004".into(),
+        ModelConfig {
+            id: "gemini-text-embedding-004".into(),
+            api_model_id: Some("text-embedding-004".into()),
+            provider: "gemini".into(),
+            capabilities: vec![Capability::TextEmbed],
+            context_window: 2_048,
+            max_output_tokens: 0,
+            pricing: None,
+            family: family_for_baseline("gemini-text-embedding-004"),
+        },
+    );
     // Bedrock — Claude Sonnet 3.5 v2 is the most broadly-available
     // chat model. Additional Bedrock models (Llama, Mistral, Titan)
     // can be added through the DB-driven config path.
-    models.insert("bedrock-claude-3-5-sonnet".into(), ModelConfig {
-        id: "bedrock-claude-3-5-sonnet".into(),
-        api_model_id: Some("anthropic.claude-3-5-sonnet-20241022-v2:0".into()),
-        provider: "bedrock".into(),
-        capabilities: vec![Capability::TextChat],
-        context_window: 200_000,
-        max_output_tokens: 8_192,
-        pricing: None,
-        family: family_for_baseline("bedrock-claude-3-5-sonnet"),
-    });
+    models.insert(
+        "bedrock-claude-3-5-sonnet".into(),
+        ModelConfig {
+            id: "bedrock-claude-3-5-sonnet".into(),
+            api_model_id: Some("anthropic.claude-3-5-sonnet-20241022-v2:0".into()),
+            provider: "bedrock".into(),
+            capabilities: vec![Capability::TextChat],
+            context_window: 200_000,
+            max_output_tokens: 8_192,
+            pricing: None,
+            family: family_for_baseline("bedrock-claude-3-5-sonnet"),
+        },
+    );
     // Local embedding model (Ollama). 384-dim — matches sensei.nodes.embedding
     // vector(384). Used by the EmbedNodes indexing task and semantic search.
     // NOTE: the embedding space dimension is a schema contract; a different-dim
     // model (e.g. gemini-text-embedding-004 at 768) cannot be swapped in without
     // a matching DDL change to the embedding column.
-    models.insert("all-minilm".into(), ModelConfig {
-        id: "all-minilm".into(),
-        api_model_id: Some("all-minilm".into()),
-        provider: "ollama".into(),
-        capabilities: vec![Capability::TextEmbed],
-        context_window: 512,
-        max_output_tokens: 0,
-        pricing: None,
-        family: family_for_baseline("all-minilm"),
-    });
+    models.insert(
+        "all-minilm".into(),
+        ModelConfig {
+            id: "all-minilm".into(),
+            api_model_id: Some("all-minilm".into()),
+            provider: "ollama".into(),
+            capabilities: vec![Capability::TextEmbed],
+            context_window: 512,
+            max_output_tokens: 0,
+            pricing: None,
+            family: family_for_baseline("all-minilm"),
+        },
+    );
     // Local chat model (Ollama gemma4). The PRIMARY TextChat candidate so the
     // gateway works offline / without a cloud API key — used by infer, consensus,
     // and the governance Tier-2 consolidation merge. Cloud models remain as
     // fallback. The DB-driven config (Layer 2) can re-prioritise per role.
-    models.insert("gemma4".into(), ModelConfig {
-        id: "gemma4".into(),
-        api_model_id: Some("gemma4:latest".into()),
-        provider: "ollama".into(),
-        capabilities: vec![Capability::TextChat],
-        context_window: 8_192,
-        max_output_tokens: 4_096,
-        pricing: None,
-        family: family_for_baseline("gemma4"),
-    });
+    models.insert(
+        "gemma4".into(),
+        ModelConfig {
+            id: "gemma4".into(),
+            api_model_id: Some("gemma4:latest".into()),
+            provider: "ollama".into(),
+            capabilities: vec![Capability::TextChat],
+            context_window: 8_192,
+            max_output_tokens: 4_096,
+            pricing: None,
+            family: family_for_baseline("gemma4"),
+        },
+    );
     // In-process embedded chat (llama.cpp via the `embedded-llama` router).
     // PREFERRED candidate when registered; the `embedded-llama` adapter
     // resolves `gemma2:2b` from the managed dir or the ollama cache. Absent /
@@ -643,29 +698,35 @@ fn baseline_production_config() -> GatewayConfig {
     // this leg while the model is being pulled degrades to a terminal
     // `ModelNotReady { model: "gemma2:2b" }` rather than a generic failure — and
     // serves it the instant the pull reaches `Ready`.
-    models.insert("gemma2:2b".into(), ModelConfig {
-        id: "gemma2:2b".into(),
-        api_model_id: Some("gemma2:2b".into()),
-        provider: "embedded-llama".into(),
-        capabilities: vec![Capability::TextChat],
-        context_window: 8_192,
-        max_output_tokens: 4_096,
-        pricing: None,
-        family: family_for_baseline("gemma2:2b"),
-    });
+    models.insert(
+        "gemma2:2b".into(),
+        ModelConfig {
+            id: "gemma2:2b".into(),
+            api_model_id: Some("gemma2:2b".into()),
+            provider: "embedded-llama".into(),
+            capabilities: vec![Capability::TextChat],
+            context_window: 8_192,
+            max_output_tokens: 4_096,
+            pricing: None,
+            family: family_for_baseline("gemma2:2b"),
+        },
+    );
 
     let mut chains: HashMap<String, FallbackChainConfig> = HashMap::new();
-    chains.insert("image_generate".into(), FallbackChainConfig {
-        id: "image_generate".into(),
-        capability: Capability::ImageGenerate,
-        models: vec![ChainEntry {
-            model: "dall-e-3".into(),
-            router: Some("openai".into()),
-            api_model_id: None,
-            priority: 1,
-        }],
-        fallback_triggers: vec![FallbackTrigger::RateLimit, FallbackTrigger::Timeout],
-    });
+    chains.insert(
+        "image_generate".into(),
+        FallbackChainConfig {
+            id: "image_generate".into(),
+            capability: Capability::ImageGenerate,
+            models: vec![ChainEntry {
+                model: "dall-e-3".into(),
+                router: Some("openai".into()),
+                api_model_id: None,
+                priority: 1,
+            }],
+            fallback_triggers: vec![FallbackTrigger::RateLimit, FallbackTrigger::Timeout],
+        },
+    );
     // Shared TextChat fallback order: in-process embedded → local ollama → cloud.
     // `text_chat` serves lightweight tasks (e.g. the L2 prompt classifier);
     // `reasoning` serves heavier analysis (#70 consolidation / recommendations).
@@ -673,53 +734,105 @@ fn baseline_production_config() -> GatewayConfig {
     // daemon), gemma4 the working local default today, cloud as last resort.
     let chat_candidates = || {
         vec![
-            ChainEntry { model: "gemma2:2b".into(),      router: Some("embedded-llama".into()), api_model_id: None, priority: 1 },
-            ChainEntry { model: "gemma4".into(),         router: Some("ollama".into()),         api_model_id: None, priority: 2 },
-            ChainEntry { model: "claude-sonnet".into(),  router: Some("anthropic".into()),      api_model_id: None, priority: 3 },
-            ChainEntry { model: "gpt-4o-mini".into(),    router: Some("openai".into()),         api_model_id: None, priority: 4 },
+            ChainEntry {
+                model: "gemma2:2b".into(),
+                router: Some("embedded-llama".into()),
+                api_model_id: None,
+                priority: 1,
+            },
+            ChainEntry {
+                model: "gemma4".into(),
+                router: Some("ollama".into()),
+                api_model_id: None,
+                priority: 2,
+            },
+            ChainEntry {
+                model: "claude-sonnet".into(),
+                router: Some("anthropic".into()),
+                api_model_id: None,
+                priority: 3,
+            },
+            ChainEntry {
+                model: "gpt-4o-mini".into(),
+                router: Some("openai".into()),
+                api_model_id: None,
+                priority: 4,
+            },
         ]
     };
-    let chat_triggers = || vec![FallbackTrigger::RateLimit, FallbackTrigger::Timeout, FallbackTrigger::ProviderError];
-    chains.insert("text_chat".into(), FallbackChainConfig {
-        id: "text_chat".into(),
-        capability: Capability::TextChat,
-        models: chat_candidates(),
-        fallback_triggers: chat_triggers(),
-    });
-    chains.insert("reasoning".into(), FallbackChainConfig {
-        id: "reasoning".into(),
-        capability: Capability::TextChat,
-        models: chat_candidates(),
-        fallback_triggers: chat_triggers(),
-    });
+    let chat_triggers = || {
+        vec![FallbackTrigger::RateLimit, FallbackTrigger::Timeout, FallbackTrigger::ProviderError]
+    };
+    chains.insert(
+        "text_chat".into(),
+        FallbackChainConfig {
+            id: "text_chat".into(),
+            capability: Capability::TextChat,
+            models: chat_candidates(),
+            fallback_triggers: chat_triggers(),
+        },
+    );
+    chains.insert(
+        "reasoning".into(),
+        FallbackChainConfig {
+            id: "reasoning".into(),
+            capability: Capability::TextChat,
+            models: chat_candidates(),
+            fallback_triggers: chat_triggers(),
+        },
+    );
     // Mentor-voice insight copy (crates/senseid/src/analysis/insight_copy.rs).
     // LOCAL-ONLY by design: the two local legs only — no claude/gpt fallback —
     // so insight copy still generates offline and never spends a cloud call on
     // card text. The producer time-boxes each call and degrades to a static
     // template when both local legs are unavailable.
-    chains.insert("insight-copy".into(), FallbackChainConfig {
-        id: "insight-copy".into(),
-        capability: Capability::TextChat,
-        models: vec![
-            ChainEntry { model: "gemma2:2b".into(),      router: Some("embedded-llama".into()), api_model_id: None, priority: 1 },
-            ChainEntry { model: "gemma4".into(),         router: Some("ollama".into()),         api_model_id: None, priority: 2 },
-        ],
-        fallback_triggers: vec![FallbackTrigger::RateLimit, FallbackTrigger::Timeout, FallbackTrigger::ProviderError],
-    });
+    chains.insert(
+        "insight-copy".into(),
+        FallbackChainConfig {
+            id: "insight-copy".into(),
+            capability: Capability::TextChat,
+            models: vec![
+                ChainEntry {
+                    model: "gemma2:2b".into(),
+                    router: Some("embedded-llama".into()),
+                    api_model_id: None,
+                    priority: 1,
+                },
+                ChainEntry {
+                    model: "gemma4".into(),
+                    router: Some("ollama".into()),
+                    api_model_id: None,
+                    priority: 2,
+                },
+            ],
+            fallback_triggers: vec![
+                FallbackTrigger::RateLimit,
+                FallbackTrigger::Timeout,
+                FallbackTrigger::ProviderError,
+            ],
+        },
+    );
     // Embedding chain — intentionally 384-dim models only, to honour the
     // sensei.nodes.embedding vector(384) contract. Do NOT add a 768-dim model
     // (e.g. gemini-text-embedding-004) here without first migrating the column.
-    chains.insert("embed".into(), FallbackChainConfig {
-        id: "embed".into(),
-        capability: Capability::TextEmbed,
-        models: vec![ChainEntry {
-            model: "all-minilm".into(),
-            router: Some("ollama".into()),
-            api_model_id: None,
-            priority: 1,
-        }],
-        fallback_triggers: vec![FallbackTrigger::RateLimit, FallbackTrigger::Timeout, FallbackTrigger::ProviderError],
-    });
+    chains.insert(
+        "embed".into(),
+        FallbackChainConfig {
+            id: "embed".into(),
+            capability: Capability::TextEmbed,
+            models: vec![ChainEntry {
+                model: "all-minilm".into(),
+                router: Some("ollama".into()),
+                api_model_id: None,
+                priority: 1,
+            }],
+            fallback_triggers: vec![
+                FallbackTrigger::RateLimit,
+                FallbackTrigger::Timeout,
+                FallbackTrigger::ProviderError,
+            ],
+        },
+    );
 
     GatewayConfig {
         routers,
@@ -775,7 +888,8 @@ fn merge_baseline_capability_gaps(db: &mut GatewayConfig, baseline: &GatewayConf
         }
         tracing::info!(
             "Gateway: grafting baseline chain '{}' ({:?}) — DB config has no chain for that capability",
-            name, chain.capability
+            name,
+            chain.capability
         );
         graft_chain(db, baseline, name, chain);
     }
@@ -801,7 +915,9 @@ fn merge_required_named_chains(db: &mut GatewayConfig, baseline: &GatewayConfig)
                 graft_chain(db, baseline, name, chain);
             }
             None => {
-                tracing::warn!("Gateway: required named chain '{name}' absent from baseline config");
+                tracing::warn!(
+                    "Gateway: required named chain '{name}' absent from baseline config"
+                );
             }
         }
     }
@@ -818,9 +934,7 @@ async fn register_openai_compatible(adapters: &AdapterRegistry, id: &str) {
     match gateway::adapters::openai::OpenAIAdapter::with_id(id) {
         Ok(adapter) => {
             tracing::info!("Gateway: OpenAI-compatible adapter registered as '{id}'");
-            adapters
-                .register(Arc::new(adapter))
-                .await;
+            adapters.register(Arc::new(adapter)).await;
         }
         Err(e) => tracing::warn!("Gateway: '{id}' adapter failed: {e}"),
     }
@@ -849,9 +963,7 @@ pub async fn init_gateway_test() -> Arc<Gateway> {
     use std::collections::HashMap;
 
     let adapters = AdapterRegistry::new();
-    adapters
-        .register(Arc::new(NoopAdapter))
-        .await;
+    adapters.register(Arc::new(NoopAdapter)).await;
 
     // Tests need a minimal config so execute() doesn't return NotConfigured
     let mut routers = HashMap::new();
@@ -928,64 +1040,104 @@ mod tests {
         // model whose embedded-router api id differs from the config id
         // (`all-minilm-l6-v2` → pullable `all-minilm`, as the DB seed maps it).
         let mut models: HashMap<String, ModelConfig> = HashMap::new();
-        models.insert("gemma2:2b".into(), ModelConfig {
-            id: "gemma2:2b".into(),
-            api_model_id: Some("gemma2:2b".into()),
-            provider: "embedded-llama".into(),
-            capabilities: vec![Capability::TextChat],
-            context_window: 8192,
-            max_output_tokens: 4096,
-            pricing: None,
-            family: family_for_baseline("gemma2:2b"),
-        });
-        models.insert("all-minilm-l6-v2".into(), ModelConfig {
-            id: "all-minilm-l6-v2".into(),
-            api_model_id: Some("all-minilm-l6-v2".into()),
-            provider: "embedded-llama".into(),
-            capabilities: vec![Capability::TextEmbed],
-            context_window: 512,
-            max_output_tokens: 0,
-            pricing: None,
-            family: family_for_baseline("all-minilm-l6-v2"),
-        });
+        models.insert(
+            "gemma2:2b".into(),
+            ModelConfig {
+                id: "gemma2:2b".into(),
+                api_model_id: Some("gemma2:2b".into()),
+                provider: "embedded-llama".into(),
+                capabilities: vec![Capability::TextChat],
+                context_window: 8192,
+                max_output_tokens: 4096,
+                pricing: None,
+                family: family_for_baseline("gemma2:2b"),
+            },
+        );
+        models.insert(
+            "all-minilm-l6-v2".into(),
+            ModelConfig {
+                id: "all-minilm-l6-v2".into(),
+                api_model_id: Some("all-minilm-l6-v2".into()),
+                provider: "embedded-llama".into(),
+                capabilities: vec![Capability::TextEmbed],
+                context_window: 512,
+                max_output_tokens: 0,
+                pricing: None,
+                family: family_for_baseline("all-minilm-l6-v2"),
+            },
+        );
 
         let mut chains: HashMap<String, FallbackChainConfig> = HashMap::new();
         // A chat chain: embedded gemma2:2b leg + a cloud leg (must NOT appear).
-        chains.insert("reasoning".into(), FallbackChainConfig {
-            id: "reasoning".into(),
-            capability: Capability::TextChat,
-            models: vec![
-                ChainEntry { model: "gemma2:2b".into(), router: Some("embedded-llama".into()), api_model_id: None, priority: 1 },
-                ChainEntry { model: "claude-sonnet".into(), router: Some("anthropic".into()), api_model_id: None, priority: 2 },
-            ],
-            fallback_triggers: vec![],
-        });
+        chains.insert(
+            "reasoning".into(),
+            FallbackChainConfig {
+                id: "reasoning".into(),
+                capability: Capability::TextChat,
+                models: vec![
+                    ChainEntry {
+                        model: "gemma2:2b".into(),
+                        router: Some("embedded-llama".into()),
+                        api_model_id: None,
+                        priority: 1,
+                    },
+                    ChainEntry {
+                        model: "claude-sonnet".into(),
+                        router: Some("anthropic".into()),
+                        api_model_id: None,
+                        priority: 2,
+                    },
+                ],
+                fallback_triggers: vec![],
+            },
+        );
         // A second chat chain repeats the embedded gemma2:2b leg → deduped.
-        chains.insert("classify".into(), FallbackChainConfig {
-            id: "classify".into(),
-            capability: Capability::TextChat,
-            models: vec![
-                ChainEntry { model: "gemma2:2b".into(), router: Some("embedded-llama".into()), api_model_id: None, priority: 1 },
-                ChainEntry { model: "gemma3:12b".into(), router: Some("ollama".into()), api_model_id: None, priority: 2 },
-            ],
-            fallback_triggers: vec![],
-        });
+        chains.insert(
+            "classify".into(),
+            FallbackChainConfig {
+                id: "classify".into(),
+                capability: Capability::TextChat,
+                models: vec![
+                    ChainEntry {
+                        model: "gemma2:2b".into(),
+                        router: Some("embedded-llama".into()),
+                        api_model_id: None,
+                        priority: 1,
+                    },
+                    ChainEntry {
+                        model: "gemma3:12b".into(),
+                        router: Some("ollama".into()),
+                        api_model_id: None,
+                        priority: 2,
+                    },
+                ],
+                fallback_triggers: vec![],
+            },
+        );
         // An embed chain whose embedded leg overrides the api id at the ENTRY
         // level → pullable id comes from the entry, not the model.
-        chains.insert("embed".into(), FallbackChainConfig {
-            id: "embed".into(),
-            capability: Capability::TextEmbed,
-            models: vec![
-                ChainEntry {
-                    model: "all-minilm-l6-v2".into(),
-                    router: Some("embedded-llama".into()),
-                    api_model_id: Some("all-minilm".into()),
-                    priority: 1,
-                },
-                ChainEntry { model: "all-minilm-l6-v2".into(), router: Some("ollama".into()), api_model_id: None, priority: 2 },
-            ],
-            fallback_triggers: vec![],
-        });
+        chains.insert(
+            "embed".into(),
+            FallbackChainConfig {
+                id: "embed".into(),
+                capability: Capability::TextEmbed,
+                models: vec![
+                    ChainEntry {
+                        model: "all-minilm-l6-v2".into(),
+                        router: Some("embedded-llama".into()),
+                        api_model_id: Some("all-minilm".into()),
+                        priority: 1,
+                    },
+                    ChainEntry {
+                        model: "all-minilm-l6-v2".into(),
+                        router: Some("ollama".into()),
+                        api_model_id: None,
+                        priority: 2,
+                    },
+                ],
+                fallback_triggers: vec![],
+            },
+        );
 
         let config = GatewayConfig {
             routers: HashMap::new(),
@@ -1020,39 +1172,58 @@ mod tests {
 
         let mut models: HashMap<String, ModelConfig> = HashMap::new();
         // Model-level api id set; used when the entry doesn't override it.
-        models.insert("model-with-api".into(), ModelConfig {
-            id: "model-with-api".into(),
-            api_model_id: Some("api-from-model".into()),
-            provider: "embedded-llama".into(),
-            capabilities: vec![Capability::TextChat],
-            context_window: 8192,
-            max_output_tokens: 4096,
-            pricing: None,
-            family: None,
-        });
+        models.insert(
+            "model-with-api".into(),
+            ModelConfig {
+                id: "model-with-api".into(),
+                api_model_id: Some("api-from-model".into()),
+                provider: "embedded-llama".into(),
+                capabilities: vec![Capability::TextChat],
+                context_window: 8192,
+                max_output_tokens: 4096,
+                pricing: None,
+                family: None,
+            },
+        );
         // No api id anywhere → falls back to the config id.
-        models.insert("bare-model".into(), ModelConfig {
-            id: "bare-model".into(),
-            api_model_id: None,
-            provider: "embedded-llama".into(),
-            capabilities: vec![Capability::TextChat],
-            context_window: 8192,
-            max_output_tokens: 4096,
-            pricing: None,
-            family: None,
-        });
+        models.insert(
+            "bare-model".into(),
+            ModelConfig {
+                id: "bare-model".into(),
+                api_model_id: None,
+                provider: "embedded-llama".into(),
+                capabilities: vec![Capability::TextChat],
+                context_window: 8192,
+                max_output_tokens: 4096,
+                pricing: None,
+                family: None,
+            },
+        );
 
         let mut chains: HashMap<String, FallbackChainConfig> = HashMap::new();
-        chains.insert("c".into(), FallbackChainConfig {
-            id: "c".into(),
-            capability: Capability::TextChat,
-            models: vec![
-                // Entry override wins over the model-level api id.
-                ChainEntry { model: "model-with-api".into(), router: Some("embedded-llama".into()), api_model_id: Some("api-from-entry".into()), priority: 1 },
-                ChainEntry { model: "bare-model".into(), router: Some("embedded-llama".into()), api_model_id: None, priority: 2 },
-            ],
-            fallback_triggers: vec![],
-        });
+        chains.insert(
+            "c".into(),
+            FallbackChainConfig {
+                id: "c".into(),
+                capability: Capability::TextChat,
+                models: vec![
+                    // Entry override wins over the model-level api id.
+                    ChainEntry {
+                        model: "model-with-api".into(),
+                        router: Some("embedded-llama".into()),
+                        api_model_id: Some("api-from-entry".into()),
+                        priority: 1,
+                    },
+                    ChainEntry {
+                        model: "bare-model".into(),
+                        router: Some("embedded-llama".into()),
+                        api_model_id: None,
+                        priority: 2,
+                    },
+                ],
+                fallback_triggers: vec![],
+            },
+        );
 
         let config = GatewayConfig {
             routers: HashMap::new(),
@@ -1124,19 +1295,13 @@ mod tests {
             );
             let r = &cfg.routers[id];
             assert!(r.enabled, "router '{id}' should be enabled by default");
-            assert!(
-                r.api_key_env.is_some(),
-                "router '{id}' should ship an api_key_env reference"
-            );
+            assert!(r.api_key_env.is_some(), "router '{id}' should ship an api_key_env reference");
         }
 
         // Each provider ships at least one representative model so the
         // routers have something to dispatch to out of the box.
-        let providers_with_models: std::collections::HashSet<&str> = cfg
-            .models
-            .values()
-            .map(|m| m.provider.as_str())
-            .collect();
+        let providers_with_models: std::collections::HashSet<&str> =
+            cfg.models.values().map(|m| m.provider.as_str()).collect();
         for id in ["openrouter", "vercel", "nvidia", "gemini", "bedrock"] {
             assert!(
                 providers_with_models.contains(id),
@@ -1218,7 +1383,10 @@ mod tests {
         // The capability-gap merge alone does NOT add the named insight-copy
         // chain either (TextChat is covered) — that is the bug the required-
         // named graft fixes; see the test below.
-        assert!(!db.chains.contains_key("insight-copy"), "named TextChat chain NOT grafted by capability-gap merge");
+        assert!(
+            !db.chains.contains_key("insight-copy"),
+            "named TextChat chain NOT grafted by capability-gap merge"
+        );
     }
 
     /// A DB config whose `TextChat` capability is already covered (e.g. a

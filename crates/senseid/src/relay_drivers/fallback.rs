@@ -140,11 +140,8 @@ impl FallbackDriver {
     /// Pass an empty string for a bare `"fallback"` backend.
     pub fn new(tool: impl Into<String>, idle_after: Duration) -> Self {
         let tool = tool.into();
-        let id_cache = if tool.is_empty() {
-            "fallback".to_string()
-        } else {
-            format!("fallback:{tool}")
-        };
+        let id_cache =
+            if tool.is_empty() { "fallback".to_string() } else { format!("fallback:{tool}") };
         Self { tool, idle_after, id_cache }
     }
 
@@ -201,9 +198,7 @@ mod tests {
     // A fixed "now" so tests are deterministic. 2026-06-15T10:00:00Z (a Monday,
     // matching the health.rs fixtures) in epoch ms.
     fn now() -> i64 {
-        chrono::DateTime::parse_from_rfc3339("2026-06-15T10:00:00Z")
-            .unwrap()
-            .timestamp_millis()
+        chrono::DateTime::parse_from_rfc3339("2026-06-15T10:00:00Z").unwrap().timestamp_millis()
     }
 
     // ---- the pure coarse_status collapse ----
@@ -222,10 +217,7 @@ mod tests {
     fn stale_activity_is_idle() {
         // 10 minutes ago, threshold 5 min → past window → Idle.
         let ten_min_ago = now() - 600_000;
-        assert_eq!(
-            coarse_status(Some(ten_min_ago), now(), IDLE_AFTER, false),
-            CoarseStatus::Idle
-        );
+        assert_eq!(coarse_status(Some(ten_min_ago), now(), IDLE_AFTER, false), CoarseStatus::Idle);
     }
 
     #[test]
@@ -238,15 +230,9 @@ mod tests {
     fn terminal_is_done_regardless_of_recency() {
         // Terminal wins over any timestamp: recent, stale, or none → Done.
         let one_sec_ago = now() - 1_000;
-        assert_eq!(
-            coarse_status(Some(one_sec_ago), now(), IDLE_AFTER, true),
-            CoarseStatus::Done
-        );
+        assert_eq!(coarse_status(Some(one_sec_ago), now(), IDLE_AFTER, true), CoarseStatus::Done);
         let ten_min_ago = now() - 600_000;
-        assert_eq!(
-            coarse_status(Some(ten_min_ago), now(), IDLE_AFTER, true),
-            CoarseStatus::Done
-        );
+        assert_eq!(coarse_status(Some(ten_min_ago), now(), IDLE_AFTER, true), CoarseStatus::Done);
         assert_eq!(coarse_status(None, now(), IDLE_AFTER, true), CoarseStatus::Done);
     }
 
@@ -265,10 +251,7 @@ mod tests {
     fn just_past_boundary_is_idle() {
         // One millisecond past the threshold → Idle (the exclusive far side).
         let just_past = now() - IDLE_AFTER.as_millis() as i64 - 1;
-        assert_eq!(
-            coarse_status(Some(just_past), now(), IDLE_AFTER, false),
-            CoarseStatus::Idle
-        );
+        assert_eq!(coarse_status(Some(just_past), now(), IDLE_AFTER, false), CoarseStatus::Idle);
     }
 
     #[test]
@@ -293,10 +276,7 @@ mod tests {
         // A very old timestamp (days ago) → far past any minutes-scale threshold
         // → Idle. Guards against any overflow in the elapsed math at scale.
         let days_ago = now() - 10 * 24 * 3_600_000;
-        assert_eq!(
-            coarse_status(Some(days_ago), now(), IDLE_AFTER, false),
-            CoarseStatus::Idle
-        );
+        assert_eq!(coarse_status(Some(days_ago), now(), IDLE_AFTER, false), CoarseStatus::Idle);
     }
 
     #[test]

@@ -18,8 +18,8 @@
 //! schema source at runtime, so DDL changes can be tested locally before
 //! pushing a release tag.
 
-use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
 
 // ── Project-wide constants ────────────────────────────────────────────────────
 
@@ -157,20 +157,13 @@ pub struct SenseiConfig {
 
 impl SenseiConfig {
     pub fn from_env() -> Self {
-        let instance = std::env::var("SENSEI_INSTANCE")
-            .ok()
-            .filter(|s| !s.is_empty());
+        let instance = std::env::var("SENSEI_INSTANCE").ok().filter(|s| !s.is_empty());
         let (db_name, dir_suffix) = match instance.as_deref() {
             Some(name) => (format!("sensei_{name}"), format!(".sensei-{name}")),
-            None       => ("sensei".to_string(),    ".sensei".to_string()),
+            None => ("sensei".to_string(), ".sensei".to_string()),
         };
         let db_url = format!("postgresql://localhost:{POSTGRES_PORT}/{db_name}");
-        Self {
-            daemon_port: DAEMON_PORT,
-            db_name,
-            db_url,
-            dir_suffix,
-        }
+        Self { daemon_port: DAEMON_PORT, db_name, db_url, dir_suffix }
     }
 
     /// Daemon base URL derived from the configured port.
@@ -179,7 +172,9 @@ impl SenseiConfig {
     }
 
     /// Daemon binary name.
-    pub fn daemon_binary(&self) -> &'static str { SENSEID_BIN }
+    pub fn daemon_binary(&self) -> &'static str {
+        SENSEID_BIN
+    }
 
     /// Sensei data directory (`~/.sensei/`).
     pub fn sensei_dir(&self) -> PathBuf {
@@ -197,20 +192,28 @@ impl SenseiConfig {
     }
 
     /// Returns the sensei CLI binary name.
-    pub fn sensei_binary(&self) -> &'static str { SENSEI_BIN }
+    pub fn sensei_binary(&self) -> &'static str {
+        SENSEI_BIN
+    }
 
     /// Returns the senseid daemon binary name.
-    pub fn senseid_binary(&self) -> &'static str { SENSEID_BIN }
+    pub fn senseid_binary(&self) -> &'static str {
+        SENSEID_BIN
+    }
 
     /// Returns the sensei homebrew tap formula slug.
-    pub fn sensei_tap_formula(&self) -> &'static str { BREW_TAP }
+    pub fn sensei_tap_formula(&self) -> &'static str {
+        BREW_TAP
+    }
 
     /// Returns the bare brew formula name (no tap prefix). Matches the formula
     /// filename in `homebrew/Formula/` and the registered service name in the
     /// formula's `service do` block. Use with `brew services start <name>` /
     /// `brew services stop <name>` — the tap-qualified slug only works for
     /// `brew install`.
-    pub fn brew_service_name(&self) -> &'static str { "sensei" }
+    pub fn brew_service_name(&self) -> &'static str {
+        "sensei"
+    }
 
     /// Returns the full `brew install <formula>` script. Suitable for direct
     /// copy/paste in a shell or for display in a [`Remedy`].
@@ -219,10 +222,14 @@ impl SenseiConfig {
     }
 
     /// Returns the sensei-mcp binary name.
-    pub fn sensei_mcp_binary(&self) -> &'static str { SENSEI_MCP_BIN }
+    pub fn sensei_mcp_binary(&self) -> &'static str {
+        SENSEI_MCP_BIN
+    }
 
     /// Returns the MCP registry key.
-    pub fn mcp_registry_key(&self) -> &'static str { MCP_REGISTRY_KEY }
+    pub fn mcp_registry_key(&self) -> &'static str {
+        MCP_REGISTRY_KEY
+    }
 
     /// Resolve the database schema source string for dbd-core's
     /// `resolve_source()`.
@@ -320,7 +327,10 @@ mod tests {
         // sqlx rejects a pool with min_connections > max_connections at build
         // time, and a floor that swallows the whole pool would leave no elastic
         // headroom. Keep the warm floor a strict, non-zero fraction of the max.
-        assert!(DB_POOL_MIN_CONNECTIONS >= 1, "keep a warm floor so first queries don't cold-connect");
+        assert!(
+            DB_POOL_MIN_CONNECTIONS >= 1,
+            "keep a warm floor so first queries don't cold-connect"
+        );
         assert!(
             DB_POOL_MIN_CONNECTIONS < DB_POOL_MAX_CONNECTIONS,
             "warm floor ({DB_POOL_MIN_CONNECTIONS}) must leave room to grow up to the ceiling ({DB_POOL_MAX_CONNECTIONS})"
@@ -360,16 +370,20 @@ mod tests {
         // before returning.
 
         // 1. Default — no env var set.
-        unsafe { std::env::remove_var("SENSEI_INSTANCE"); }
+        unsafe {
+            std::env::remove_var("SENSEI_INSTANCE");
+        }
         let cfg = SenseiConfig::from_env();
         assert_eq!(cfg.daemon_port, 7744);
-        assert_eq!(cfg.db_name,    "sensei");
+        assert_eq!(cfg.db_name, "sensei");
         assert_eq!(cfg.dir_suffix, ".sensei");
 
         // 2. Override — SENSEI_INSTANCE=e2e.
-        unsafe { std::env::set_var("SENSEI_INSTANCE", "e2e"); }
+        unsafe {
+            std::env::set_var("SENSEI_INSTANCE", "e2e");
+        }
         let cfg = SenseiConfig::from_env();
-        assert_eq!(cfg.db_name,    "sensei_e2e",  "DB derived from instance");
+        assert_eq!(cfg.db_name, "sensei_e2e", "DB derived from instance");
         assert_eq!(cfg.dir_suffix, ".sensei-e2e", "dir derived from instance");
         assert!(
             cfg.db_url.ends_with("/sensei_e2e"),
@@ -380,12 +394,16 @@ mod tests {
         assert_eq!(cfg.daemon_port, 7744);
 
         // 3. Empty value — falls back to default.
-        unsafe { std::env::set_var("SENSEI_INSTANCE", ""); }
+        unsafe {
+            std::env::set_var("SENSEI_INSTANCE", "");
+        }
         let cfg = SenseiConfig::from_env();
-        assert_eq!(cfg.db_name,    "sensei", "empty instance falls back to default");
+        assert_eq!(cfg.db_name, "sensei", "empty instance falls back to default");
         assert_eq!(cfg.dir_suffix, ".sensei");
 
-        unsafe { std::env::remove_var("SENSEI_INSTANCE"); }
+        unsafe {
+            std::env::remove_var("SENSEI_INSTANCE");
+        }
     }
 
     #[test]
@@ -462,7 +480,9 @@ mod tests {
         // test in this binary reads SENSEI_DDL_DIR and the var is cleared
         // before returning.
 
-        unsafe { std::env::remove_var("SENSEI_DDL_DIR"); }
+        unsafe {
+            std::env::remove_var("SENSEI_DDL_DIR");
+        }
         let cfg = SenseiConfig::from_env();
         assert_eq!(
             cfg.db_schema_source("1.2.3"),
@@ -470,7 +490,9 @@ mod tests {
             "default → GitHub tag",
         );
 
-        unsafe { std::env::set_var("SENSEI_DDL_DIR", "/tmp/test-ddl"); }
+        unsafe {
+            std::env::set_var("SENSEI_DDL_DIR", "/tmp/test-ddl");
+        }
         let cfg = SenseiConfig::from_env();
         assert_eq!(
             cfg.db_schema_source("1.2.3"),
@@ -478,6 +500,8 @@ mod tests {
             "SENSEI_DDL_DIR set → override path",
         );
 
-        unsafe { std::env::remove_var("SENSEI_DDL_DIR"); }
+        unsafe {
+            std::env::remove_var("SENSEI_DDL_DIR");
+        }
     }
 }

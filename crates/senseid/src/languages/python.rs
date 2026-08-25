@@ -1,13 +1,17 @@
-use tree_sitter::{Parser, Node};
-use crate::types::{ParsedFile, ParsedSymbol, ParsedEdge, ParsedImport, SymbolKind};
-use crate::ir::{IRBase, IRFunction, IRClass, IRParam, IRImport, IRConstant, IRParsedFile, ClassKind, Visibility};
-use super::common::{ir_function, ir_method, ir_class, ir_module, ir_parsed_file, node_text};
 use super::LanguageAdapter;
+use super::common::{ir_class, ir_function, ir_method, ir_module, ir_parsed_file, node_text};
+use crate::ir::{
+    ClassKind, IRBase, IRClass, IRConstant, IRFunction, IRImport, IRParam, IRParsedFile, Visibility,
+};
+use crate::types::{ParsedEdge, ParsedFile, ParsedImport, ParsedSymbol, SymbolKind};
+use tree_sitter::{Node, Parser};
 
 pub struct PythonAdapter;
 
 impl LanguageAdapter for PythonAdapter {
-    fn language(&self) -> &str { "python" }
+    fn language(&self) -> &str {
+        "python"
+    }
 
     fn fqn_output(&self, abs_path: &str, content: &str) -> Option<super::fqn::FqnFileOutput> {
         python_fqn::python_file_context(abs_path).map(|ctx| python_fqn::produce_fqns(content, &ctx))
@@ -56,7 +60,13 @@ pub fn parse_to_ir(source: &str, file_path: &str) -> IRParsedFile {
 
     let tree = match parser.parse(source, None) {
         Some(t) => t,
-        None => return IRParsedFile { file_path: file_path.into(), language: "python".into(), ..Default::default() },
+        None => {
+            return IRParsedFile {
+                file_path: file_path.into(),
+                language: "python".into(),
+                ..Default::default()
+            };
+        }
     };
 
     let lines: Vec<&str> = source.lines().collect();
@@ -68,16 +78,29 @@ pub fn parse_to_ir(source: &str, file_path: &str) -> IRParsedFile {
     let mut imports = Vec::new();
     let mut constants = Vec::new();
 
-    walk_ir_py(&root, src, &lines, &mut functions, &mut classes, &mut imports, &mut constants, None);
+    walk_ir_py(
+        &root,
+        src,
+        &lines,
+        &mut functions,
+        &mut classes,
+        &mut imports,
+        &mut constants,
+        None,
+    );
 
-    let is_test = file_path.contains("test") || source.contains("import pytest") || source.contains("import unittest");
+    let is_test = file_path.contains("test")
+        || source.contains("import pytest")
+        || source.contains("import unittest");
     let module = ir_module(file_path, "python", functions, constants, imports, is_test);
     ir_parsed_file(file_path, "python", module, classes)
 }
 
 #[allow(clippy::too_many_arguments)]
 fn walk_ir_py(
-    node: &Node, src: &[u8], lines: &[&str],
+    node: &Node,
+    src: &[u8],
+    lines: &[&str],
     functions: &mut Vec<IRFunction>,
     classes: &mut Vec<IRClass>,
     imports: &mut Vec<IRImport>,
@@ -96,15 +119,25 @@ fn walk_ir_py(
                         Some(f) => (f, decos),
                         None => {
                             // Might be a decorated class
-                            if let Some(cls) = (0..child.child_count())
-                                .find_map(|j| child.child(j).filter(|c| c.kind() == "class_definition"))
-                            {
-                                let name = cls.child_by_field_name("name")
+                            if let Some(cls) = (0..child.child_count()).find_map(|j| {
+                                child.child(j).filter(|c| c.kind() == "class_definition")
+                            }) {
+                                let name = cls
+                                    .child_by_field_name("name")
                                     .map(|n| n.utf8_text(src).unwrap_or_default().to_string())
                                     .unwrap_or_default();
-                                let mut class = ir_class(name, &cls, ClassKind::Class,
-                                    !cls.child_by_field_name("name").map(|n| n.utf8_text(src).unwrap_or_default().starts_with('_')).unwrap_or(false),
-                                    extract_docstring(&cls, src), collect_py_decorators(&child, src));
+                                let mut class = ir_class(
+                                    name,
+                                    &cls,
+                                    ClassKind::Class,
+                                    !cls.child_by_field_name("name")
+                                        .map(|n| {
+                                            n.utf8_text(src).unwrap_or_default().starts_with('_')
+                                        })
+                                        .unwrap_or(false),
+                                    extract_docstring(&cls, src),
+                                    collect_py_decorators(&child, src),
+                                );
                                 class.extends = extract_py_base_class(&cls, src);
                                 if let Some(body) = cls.child_by_field_name("body") {
                                     walk_ir_py_methods(&body, src, &mut class);
@@ -118,7 +151,8 @@ fn walk_ir_py(
                     (child, Vec::new())
                 };
 
-                let name = func_node.child_by_field_name("name")
+                let name = func_node
+                    .child_by_field_name("name")
                     .map(|n| n.utf8_text(src).unwrap_or_default().to_string())
                     .unwrap_or_default();
                 let is_exported = !name.starts_with('_');
@@ -129,17 +163,35 @@ fn walk_ir_py(
                 let body_text = node_text(&func_node, src);
 
                 if class_ctx.is_none() {
-                    functions.push(ir_function(name, &func_node, lines, is_exported, is_async, params, return_type, docstring, decorators, &body_text));
+                    functions.push(ir_function(
+                        name,
+                        &func_node,
+                        lines,
+                        is_exported,
+                        is_async,
+                        params,
+                        return_type,
+                        docstring,
+                        decorators,
+                        &body_text,
+                    ));
                 }
                 // Methods are handled in walk_ir_py_methods
             }
             "class_definition" => {
-                let name = child.child_by_field_name("name")
+                let name = child
+                    .child_by_field_name("name")
                     .map(|n| n.utf8_text(src).unwrap_or_default().to_string())
                     .unwrap_or_default();
                 let is_exported = !name.starts_with('_');
-                let mut class = ir_class(name, &child, ClassKind::Class, is_exported,
-                    extract_docstring(&child, src), Vec::new());
+                let mut class = ir_class(
+                    name,
+                    &child,
+                    ClassKind::Class,
+                    is_exported,
+                    extract_docstring(&child, src),
+                    Vec::new(),
+                );
                 class.extends = extract_py_base_class(&child, src);
                 if let Some(body) = child.child_by_field_name("body") {
                     walk_ir_py_methods(&body, src, &mut class);
@@ -149,22 +201,25 @@ fn walk_ir_py(
             "expression_statement" if class_ctx.is_none() => {
                 if let Some(expr) = child.child(0)
                     && expr.kind() == "assignment"
-                        && let Some(left) = expr.child_by_field_name("left") {
-                            let name = left.utf8_text(src).unwrap_or_default().to_string();
-                            if left.kind() == "identifier" && name == name.to_uppercase() && name.len() > 1 {
-                                constants.push(IRConstant {
-                                    base: IRBase {
-                                        name, is_exported: true,
-                                        line_start: child.start_position().row as u32 + 1,
-                                        line_end: child.end_position().row as u32 + 1,
-                                        node_type: Some("const".into()),
-                                        ..Default::default()
-                                    },
-                                    type_: None,
-                                    value_preview: Some(node_text(&expr, src).chars().take(100).collect()),
-                                });
-                            }
-                        }
+                    && let Some(left) = expr.child_by_field_name("left")
+                {
+                    let name = left.utf8_text(src).unwrap_or_default().to_string();
+                    if left.kind() == "identifier" && name == name.to_uppercase() && name.len() > 1
+                    {
+                        constants.push(IRConstant {
+                            base: IRBase {
+                                name,
+                                is_exported: true,
+                                line_start: child.start_position().row as u32 + 1,
+                                line_end: child.end_position().row as u32 + 1,
+                                node_type: Some("const".into()),
+                                ..Default::default()
+                            },
+                            type_: None,
+                            value_preview: Some(node_text(&expr, src).chars().take(100).collect()),
+                        });
+                    }
+                }
             }
             "import_statement" | "import_from_statement" => {
                 extract_py_imports(&child, src, imports);
@@ -181,7 +236,9 @@ fn walk_ir_py_methods(body: &Node, src: &[u8], class: &mut IRClass) {
             "function_definition" => (child, Vec::new()),
             "decorated_definition" => {
                 let decos = collect_py_decorators(&child, src);
-                match (0..child.child_count()).find_map(|j| child.child(j).filter(|c| c.kind() == "function_definition")) {
+                match (0..child.child_count())
+                    .find_map(|j| child.child(j).filter(|c| c.kind() == "function_definition"))
+                {
                     Some(f) => (f, decos),
                     None => continue,
                 }
@@ -189,7 +246,8 @@ fn walk_ir_py_methods(body: &Node, src: &[u8], class: &mut IRClass) {
             _ => continue,
         };
 
-        let name = func_node.child_by_field_name("name")
+        let name = func_node
+            .child_by_field_name("name")
             .map(|n| n.utf8_text(src).unwrap_or_default().to_string())
             .unwrap_or_default();
         let is_exported = !name.starts_with('_');
@@ -198,7 +256,11 @@ fn walk_ir_py_methods(body: &Node, src: &[u8], class: &mut IRClass) {
         let body_text = node_text(&func_node, src);
 
         class.methods.push(ir_method(
-            name, &func_node, is_exported, is_async, is_static,
+            name,
+            &func_node,
+            is_exported,
+            is_async,
+            is_static,
             extract_py_params(&func_node, src),
             extract_py_return_type(&func_node, src),
             extract_docstring(&func_node, src),
@@ -220,28 +282,42 @@ fn extract_py_params(node: &Node, src: &[u8]) -> Vec<IRParam> {
                         if name != "self" && name != "cls" {
                             params.push(IRParam { name, ..Default::default() });
                         } else {
-                            params.push(IRParam { name, type_: Some("Self".into()), ..Default::default() });
+                            params.push(IRParam {
+                                name,
+                                type_: Some("Self".into()),
+                                ..Default::default()
+                            });
                         }
                     }
                     "typed_parameter" => {
-                        let name = p.child_by_field_name("name")
+                        let name = p
+                            .child_by_field_name("name")
                             .or_else(|| p.child(0))
                             .map(|n| n.utf8_text(src).unwrap_or_default().to_string())
                             .unwrap_or_default();
-                        let type_ = p.child_by_field_name("type")
+                        let type_ = p
+                            .child_by_field_name("type")
                             .map(|t| t.utf8_text(src).unwrap_or_default().to_string());
                         params.push(IRParam { name, type_, ..Default::default() });
                     }
                     "default_parameter" | "typed_default_parameter" => {
-                        let name = p.child_by_field_name("name")
+                        let name = p
+                            .child_by_field_name("name")
                             .or_else(|| p.child(0))
                             .map(|n| n.utf8_text(src).unwrap_or_default().to_string())
                             .unwrap_or_default();
-                        let type_ = p.child_by_field_name("type")
+                        let type_ = p
+                            .child_by_field_name("type")
                             .map(|t| t.utf8_text(src).unwrap_or_default().to_string());
-                        let default = p.child_by_field_name("value")
+                        let default = p
+                            .child_by_field_name("value")
                             .map(|v| v.utf8_text(src).unwrap_or_default().to_string());
-                        params.push(IRParam { name, type_, default_value: default, is_optional: true });
+                        params.push(IRParam {
+                            name,
+                            type_,
+                            default_value: default,
+                            is_optional: true,
+                        });
                     }
                     _ => {}
                 }
@@ -268,9 +344,10 @@ fn collect_py_decorators(decorated_node: &Node, src: &[u8]) -> Vec<String> {
     let mut decos = Vec::new();
     for i in 0..decorated_node.child_count() {
         if let Some(c) = decorated_node.child(i)
-            && c.kind() == "decorator" {
-                decos.push(c.utf8_text(src).unwrap_or_default().trim().to_string());
-            }
+            && c.kind() == "decorator"
+        {
+            decos.push(c.utf8_text(src).unwrap_or_default().trim().to_string());
+        }
     }
     decos
 }
@@ -280,11 +357,12 @@ fn extract_py_imports(node: &Node, src: &[u8], imports: &mut Vec<IRImport>) {
         "import_statement" => {
             for j in 0..node.child_count() {
                 if let Some(c) = node.child(j)
-                    && c.kind() == "dotted_name" {
-                        let text = c.utf8_text(src).unwrap_or_default().to_string();
-                        let name = text.rsplit('.').next().unwrap_or(&text).to_string();
-                        imports.push(IRImport { source: text, names: vec![name], is_reexport: false });
-                    }
+                    && c.kind() == "dotted_name"
+                {
+                    let text = c.utf8_text(src).unwrap_or_default().to_string();
+                    let name = text.rsplit('.').next().unwrap_or(&text).to_string();
+                    imports.push(IRImport { source: text, names: vec![name], is_reexport: false });
+                }
             }
         }
         "import_from_statement" => {
@@ -295,7 +373,11 @@ fn extract_py_imports(node: &Node, src: &[u8], imports: &mut Vec<IRImport>) {
                     match c.kind() {
                         "dotted_name" | "relative_import" => {
                             let text = c.utf8_text(src).unwrap_or_default().to_string();
-                            if target.is_empty() { target = text; } else { names.push(text); }
+                            if target.is_empty() {
+                                target = text;
+                            } else {
+                                names.push(text);
+                            }
                         }
                         "aliased_import" => {
                             if let Some(n) = c.child_by_field_name("name") {
@@ -324,17 +406,24 @@ fn empty_file(path: &str) -> ParsedFile {
     }
 }
 
-fn extract_symbols(node: &Node, src: &[u8], lines: &[&str], symbols: &mut Vec<ParsedSymbol>, class_name: Option<&str>) {
+fn extract_symbols(
+    node: &Node,
+    src: &[u8],
+    lines: &[&str],
+    symbols: &mut Vec<ParsedSymbol>,
+    class_name: Option<&str>,
+) {
     for i in 0..node.child_count() {
         let child = node.child(i).unwrap();
         match child.kind() {
             "function_definition" => {
-                let name = child.child_by_field_name("name")
+                let name = child
+                    .child_by_field_name("name")
                     .map(|n| n.utf8_text(src).unwrap_or_default().to_string())
                     .unwrap_or_default();
-                let kind = if class_name.is_some() { SymbolKind::Method } else { SymbolKind::Function };
-                let sig = lines.get(child.start_position().row)
-                    .map(|l| l.trim().to_string());
+                let kind =
+                    if class_name.is_some() { SymbolKind::Method } else { SymbolKind::Function };
+                let sig = lines.get(child.start_position().row).map(|l| l.trim().to_string());
                 let docstring = extract_docstring(&child, src);
                 symbols.push(ParsedSymbol {
                     name: name.clone(),
@@ -348,11 +437,11 @@ fn extract_symbols(node: &Node, src: &[u8], lines: &[&str], symbols: &mut Vec<Pa
                 });
             }
             "class_definition" => {
-                let name = child.child_by_field_name("name")
+                let name = child
+                    .child_by_field_name("name")
                     .map(|n| n.utf8_text(src).unwrap_or_default().to_string())
                     .unwrap_or_default();
-                let sig = lines.get(child.start_position().row)
-                    .map(|l| l.trim().to_string());
+                let sig = lines.get(child.start_position().row).map(|l| l.trim().to_string());
                 let docstring = extract_docstring(&child, src);
                 symbols.push(ParsedSymbol {
                     name: name.clone(),
@@ -373,21 +462,25 @@ fn extract_symbols(node: &Node, src: &[u8], lines: &[&str], symbols: &mut Vec<Pa
                 // Top-level constant: FOO = ...
                 if let Some(expr) = child.child(0)
                     && expr.kind() == "assignment"
-                        && let Some(left) = expr.child_by_field_name("left") {
-                            let name = left.utf8_text(src).unwrap_or_default().to_string();
-                            if left.kind() == "identifier" && name == name.to_uppercase() && name.len() > 1 {
-                                symbols.push(ParsedSymbol {
-                                    name,
-                                    kind: SymbolKind::Const,
-                                    signature: lines.get(child.start_position().row).map(|l| l.trim().to_string()),
-                                    docstring: None,
-                                    line_start: child.start_position().row as u32 + 1,
-                                    line_end: child.end_position().row as u32 + 1,
-                                    is_exported: true,
-                                    parent: None,
-                                });
-                            }
-                        }
+                    && let Some(left) = expr.child_by_field_name("left")
+                {
+                    let name = left.utf8_text(src).unwrap_or_default().to_string();
+                    if left.kind() == "identifier" && name == name.to_uppercase() && name.len() > 1
+                    {
+                        symbols.push(ParsedSymbol {
+                            name,
+                            kind: SymbolKind::Const,
+                            signature: lines
+                                .get(child.start_position().row)
+                                .map(|l| l.trim().to_string()),
+                            docstring: None,
+                            line_start: child.start_position().row as u32 + 1,
+                            line_end: child.end_position().row as u32 + 1,
+                            is_exported: true,
+                            parent: None,
+                        });
+                    }
+                }
             }
             _ => {}
         }
@@ -397,15 +490,19 @@ fn extract_symbols(node: &Node, src: &[u8], lines: &[&str], symbols: &mut Vec<Pa
 fn extract_docstring(node: &Node, src: &[u8]) -> Option<String> {
     let body = node.child_by_field_name("body")?;
     let first = body.child(0)?;
-    if first.kind() != "expression_statement" { return None; }
+    if first.kind() != "expression_statement" {
+        return None;
+    }
     let str_node = first.child(0)?;
-    if str_node.kind() != "string" { return None; }
+    if str_node.kind() != "string" {
+        return None;
+    }
 
     let text = str_node.utf8_text(src).ok()?;
     let trimmed = if text.starts_with("\"\"\"") || text.starts_with("'''") {
-        text[3..text.len()-3].trim()
+        text[3..text.len() - 3].trim()
     } else if text.starts_with('"') || text.starts_with('\'') {
-        text[1..text.len()-1].trim()
+        text[1..text.len() - 1].trim()
     } else {
         text.trim()
     };
@@ -458,14 +555,17 @@ fn extract_imports(root: &Node, src: &[u8], imports: &mut Vec<ParsedImport>) {
 }
 
 fn extract_edges(root: &Node, symbols: &[ParsedSymbol]) -> Vec<ParsedEdge> {
-    let known_names: std::collections::HashSet<&str> = symbols.iter()
+    let known_names: std::collections::HashSet<&str> = symbols
+        .iter()
         .filter(|s| matches!(s.kind, SymbolKind::Function | SymbolKind::Method))
         .map(|s| s.name.as_str())
         .collect();
 
     let mut edges = Vec::new();
     for sym in symbols {
-        if !matches!(sym.kind, SymbolKind::Function | SymbolKind::Method) { continue; }
+        if !matches!(sym.kind, SymbolKind::Function | SymbolKind::Method) {
+            continue;
+        }
         // Walk the tree to find call expressions within this symbol's range
         find_calls(root, sym, &known_names, &mut edges);
     }
@@ -473,12 +573,18 @@ fn extract_edges(root: &Node, symbols: &[ParsedSymbol]) -> Vec<ParsedEdge> {
 }
 
 #[allow(clippy::only_used_in_recursion)] // known and edges accumulate across recursive traversal
-fn find_calls(node: &Node, caller: &ParsedSymbol, known: &std::collections::HashSet<&str>, edges: &mut Vec<ParsedEdge>) {
+fn find_calls(
+    node: &Node,
+    caller: &ParsedSymbol,
+    known: &std::collections::HashSet<&str>,
+    edges: &mut Vec<ParsedEdge>,
+) {
     if node.kind() == "call"
         && let Some(func) = node.child_by_field_name("function")
-            && func.kind() == "identifier" {
-                // We need the text — for now skip (requires source bytes)
-            }
+        && func.kind() == "identifier"
+    {
+        // We need the text — for now skip (requires source bytes)
+    }
     for i in 0..node.child_count() {
         if let Some(child) = node.child(i) {
             let row = child.start_position().row as u32 + 1;
@@ -495,18 +601,47 @@ fn find_calls(node: &Node, caller: &ParsedSymbol, known: &std::collections::Hash
 // nest under it; a call resolves via the import map (from/import), `self` → the
 // enclosing class, a bounded `x = Type()` binding, or (external module) a lib node.
 pub(crate) mod python_fqn {
-    use super::{Node, Parser, SymbolKind};
     use super::super::fqn::{self, FileFqnContext, FqnDefinition, FqnFileOutput, FqnReference};
+    use super::{Node, Parser, SymbolKind};
     use std::collections::{HashMap, HashSet};
 
     const PY_LANG: &str = "python";
 
     /// Ubiquitous builtin/method names whose call-sites carry no navigation signal.
     const PY_CALL_DENYLIST: &[&str] = &[
-        "append", "extend", "get", "keys", "values", "items", "format", "join",
-        "split", "strip", "lower", "upper", "len", "print", "isinstance", "super",
-        "range", "enumerate", "zip", "map", "filter", "list", "dict", "set", "str",
-        "int", "float", "bool", "add", "update", "pop", "sort", "sorted",
+        "append",
+        "extend",
+        "get",
+        "keys",
+        "values",
+        "items",
+        "format",
+        "join",
+        "split",
+        "strip",
+        "lower",
+        "upper",
+        "len",
+        "print",
+        "isinstance",
+        "super",
+        "range",
+        "enumerate",
+        "zip",
+        "map",
+        "filter",
+        "list",
+        "dict",
+        "set",
+        "str",
+        "int",
+        "float",
+        "bool",
+        "add",
+        "update",
+        "pop",
+        "sort",
+        "sorted",
     ];
 
     fn text(node: &Node, src: &[u8]) -> String {
@@ -535,8 +670,7 @@ pub(crate) mod python_fqn {
     fn base_py_type(t: &str) -> String {
         let t = t.trim();
         // Optional[X] / List[X] wrappers → inner.
-        if let Some(inner) = t.strip_suffix(']')
-            .and_then(|s| s.split_once('[').map(|(_, r)| r)) {
+        if let Some(inner) = t.strip_suffix(']').and_then(|s| s.split_once('[').map(|(_, r)| r)) {
             return base_py_type(inner);
         }
         let base = t.split('[').next().unwrap_or(t).trim();
@@ -586,7 +720,9 @@ pub(crate) mod python_fqn {
                             }
                             // `import a.b as x` binds `x` → `a.b`.
                             "aliased_import" => {
-                                if let (Some(n), Some(a)) = (c.child_by_field_name("name"), c.child_by_field_name("alias")) {
+                                if let (Some(n), Some(a)) =
+                                    (c.child_by_field_name("name"), c.child_by_field_name("alias"))
+                                {
                                     imports.insert(text(&a, src), text(&n, src));
                                 }
                             }
@@ -601,14 +737,21 @@ pub(crate) mod python_fqn {
                     for j in 0..child.child_count() {
                         let c = child.child(j).unwrap();
                         match c.kind() {
-                            "dotted_name" | "relative_import" if base.is_empty() => base = text(&c, src),
+                            "dotted_name" | "relative_import" if base.is_empty() => {
+                                base = text(&c, src)
+                            }
                             "dotted_name" => {
                                 let name = text(&c, src);
                                 imports.insert(name.clone(), format!("{base}.{name}"));
                             }
                             "aliased_import" => {
-                                if let (Some(n), Some(a)) = (c.child_by_field_name("name"), c.child_by_field_name("alias")) {
-                                    imports.insert(text(&a, src), format!("{}.{}", base, text(&n, src)));
+                                if let (Some(n), Some(a)) =
+                                    (c.child_by_field_name("name"), c.child_by_field_name("alias"))
+                                {
+                                    imports.insert(
+                                        text(&a, src),
+                                        format!("{}.{}", base, text(&n, src)),
+                                    );
                                 }
                             }
                             _ => {}
@@ -622,16 +765,22 @@ pub(crate) mod python_fqn {
 
     #[allow(clippy::too_many_arguments)]
     fn walk(
-        node: &Node, src: &[u8], lines: &[&str], ctx: &FileFqnContext,
+        node: &Node,
+        src: &[u8],
+        lines: &[&str],
+        ctx: &FileFqnContext,
         imports: &HashMap<String, String>,
-        class: Option<&str>, out: &mut FqnFileOutput,
+        class: Option<&str>,
+        out: &mut FqnFileOutput,
     ) {
         for i in 0..node.child_count() {
             let child = unwrap_decorated(&node.child(i).unwrap());
             match child.kind() {
                 "function_definition" => {
                     let name = field(&child, "name", src);
-                    if name.is_empty() { continue; }
+                    if name.is_empty() {
+                        continue;
+                    }
                     let is_exported = !name.starts_with('_');
                     let (fqn_str, kind, parent_type, parent_fqn) = match class {
                         Some(cls) => (
@@ -640,7 +789,12 @@ pub(crate) mod python_fqn {
                             Some(cls.to_string()),
                             Some(fqn::item(PY_LANG, &ctx.package, &ctx.module, cls)),
                         ),
-                        None => (fqn::item(PY_LANG, &ctx.package, &ctx.module, &name), SymbolKind::Function, None, None),
+                        None => (
+                            fqn::item(PY_LANG, &ctx.package, &ctx.module, &name),
+                            SymbolKind::Function,
+                            None,
+                            None,
+                        ),
                     };
                     out.defs.push(FqnDefinition {
                         fqn: fqn_str.clone(),
@@ -649,7 +803,9 @@ pub(crate) mod python_fqn {
                         line_start: child.start_position().row as u32 + 1,
                         line_end: child.end_position().row as u32 + 1,
                         is_exported,
-                        signature: lines.get(child.start_position().row).map(|l| l.trim().to_string()),
+                        signature: lines
+                            .get(child.start_position().row)
+                            .map(|l| l.trim().to_string()),
                         docstring: None,
                         parent_type,
                         parent_fqn,
@@ -657,12 +813,16 @@ pub(crate) mod python_fqn {
                     if let Some(body) = child.child_by_field_name("body") {
                         let bindings = build_bindings(&child, src);
                         let mut seen = HashSet::new();
-                        collect_calls(&body, src, ctx, imports, class, &bindings, &fqn_str, &mut seen, out);
+                        collect_calls(
+                            &body, src, ctx, imports, class, &bindings, &fqn_str, &mut seen, out,
+                        );
                     }
                 }
                 "class_definition" => {
                     let name = field(&child, "name", src);
-                    if name.is_empty() { continue; }
+                    if name.is_empty() {
+                        continue;
+                    }
                     out.defs.push(FqnDefinition {
                         fqn: fqn::item(PY_LANG, &ctx.package, &ctx.module, &name),
                         name: name.clone(),
@@ -670,7 +830,9 @@ pub(crate) mod python_fqn {
                         line_start: child.start_position().row as u32 + 1,
                         line_end: child.end_position().row as u32 + 1,
                         is_exported: !name.starts_with('_'),
-                        signature: lines.get(child.start_position().row).map(|l| l.trim().to_string()),
+                        signature: lines
+                            .get(child.start_position().row)
+                            .map(|l| l.trim().to_string()),
                         docstring: None,
                         parent_type: None,
                         parent_fqn: None,
@@ -692,7 +854,9 @@ pub(crate) mod python_fqn {
                 let p = params.child(i).unwrap();
                 if p.kind() == "typed_parameter"
                     && let Some(ty) = p.child_by_field_name("type")
-                    && let Some(nm) = (0..p.child_count()).find_map(|j| p.child(j).filter(|c| c.kind() == "identifier")) {
+                    && let Some(nm) = (0..p.child_count())
+                        .find_map(|j| p.child(j).filter(|c| c.kind() == "identifier"))
+                {
                     map.insert(text(&nm, src), base_py_type(&text(&ty, src)));
                 }
             }
@@ -700,14 +864,26 @@ pub(crate) mod python_fqn {
         if let Some(body) = fn_node.child_by_field_name("body") {
             for i in 0..body.child_count() {
                 let stmt = body.child(i).unwrap();
-                if stmt.kind() != "expression_statement" { continue; }
-                let Some(assign) = stmt.child(0).filter(|c| c.kind() == "assignment") else { continue };
-                let (Some(l), Some(r)) = (assign.child_by_field_name("left"), assign.child_by_field_name("right")) else { continue };
-                if l.kind() == "identifier" && r.kind() == "call"
+                if stmt.kind() != "expression_statement" {
+                    continue;
+                }
+                let Some(assign) = stmt.child(0).filter(|c| c.kind() == "assignment") else {
+                    continue;
+                };
+                let (Some(l), Some(r)) =
+                    (assign.child_by_field_name("left"), assign.child_by_field_name("right"))
+                else {
+                    continue;
+                };
+                if l.kind() == "identifier"
+                    && r.kind() == "call"
                     && let Some(f) = r.child_by_field_name("function")
-                    && f.kind() == "identifier" {
+                    && f.kind() == "identifier"
+                {
                     let tn = text(&f, src);
-                    if is_pascal(&tn) { map.insert(text(&l, src), tn); }
+                    if is_pascal(&tn) {
+                        map.insert(text(&l, src), tn);
+                    }
                 }
             }
         }
@@ -716,17 +892,26 @@ pub(crate) mod python_fqn {
 
     #[allow(clippy::too_many_arguments)]
     fn collect_calls(
-        node: &Node, src: &[u8], ctx: &FileFqnContext, imports: &HashMap<String, String>,
-        class: Option<&str>, bindings: &HashMap<String, String>, caller_fqn: &str,
-        seen: &mut HashSet<String>, out: &mut FqnFileOutput,
+        node: &Node,
+        src: &[u8],
+        ctx: &FileFqnContext,
+        imports: &HashMap<String, String>,
+        class: Option<&str>,
+        bindings: &HashMap<String, String>,
+        caller_fqn: &str,
+        seen: &mut HashSet<String>,
+        out: &mut FqnFileOutput,
     ) {
         for i in 0..node.child_count() {
             let child = node.child(i).unwrap();
             // A nested function's calls belong to it, not the enclosing one.
-            if child.kind() == "function_definition" { continue; }
+            if child.kind() == "function_definition" {
+                continue;
+            }
             if child.kind() == "call"
                 && let Some(func) = child.child_by_field_name("function")
-                && let Some((target_fqn, is_lib, target_name)) = resolve_call(&func, src, ctx, imports, class, bindings)
+                && let Some((target_fqn, is_lib, target_name)) =
+                    resolve_call(&func, src, ctx, imports, class, bindings)
                 && seen.insert(target_fqn.clone().unwrap_or_else(|| format!("?{target_name}")))
             {
                 out.refs.push(FqnReference {
@@ -742,13 +927,19 @@ pub(crate) mod python_fqn {
     }
 
     fn resolve_call(
-        func: &Node, src: &[u8], ctx: &FileFqnContext, imports: &HashMap<String, String>,
-        class: Option<&str>, bindings: &HashMap<String, String>,
+        func: &Node,
+        src: &[u8],
+        ctx: &FileFqnContext,
+        imports: &HashMap<String, String>,
+        class: Option<&str>,
+        bindings: &HashMap<String, String>,
     ) -> Option<(Option<String>, bool, String)> {
         match func.kind() {
             "identifier" => {
                 let name = text(func, src);
-                if PY_CALL_DENYLIST.contains(&name.as_str()) { return None; }
+                if PY_CALL_DENYLIST.contains(&name.as_str()) {
+                    return None;
+                }
                 if let Some(dotted) = imports.get(&name) {
                     Some(classify(dotted, ctx, &name))
                 } else {
@@ -760,13 +951,19 @@ pub(crate) mod python_fqn {
                 let obj = func.child_by_field_name("object")?;
                 let attr = func.child_by_field_name("attribute")?;
                 let method = text(&attr, src);
-                if PY_CALL_DENYLIST.contains(&method.as_str()) { return None; }
+                if PY_CALL_DENYLIST.contains(&method.as_str()) {
+                    return None;
+                }
                 if obj.kind() == "identifier" {
                     let obj_name = text(&obj, src);
                     // self.method() / cls.method() → the enclosing class's method.
                     if obj_name == "self" || obj_name == "cls" {
                         return match class {
-                            Some(cls) => Some((Some(fqn::method(PY_LANG, &ctx.package, &ctx.module, cls, &method)), false, method)),
+                            Some(cls) => Some((
+                                Some(fqn::method(PY_LANG, &ctx.package, &ctx.module, cls, &method)),
+                                false,
+                                method,
+                            )),
                             None => Some((None, false, method)),
                         };
                     }
@@ -776,7 +973,11 @@ pub(crate) mod python_fqn {
                     }
                     // A bounded `x = Type()` receiver → the type's method.
                     if let Some(ty) = bindings.get(&obj_name) {
-                        return Some((Some(fqn::method(PY_LANG, &ctx.package, &ctx.module, ty, &method)), false, method));
+                        return Some((
+                            Some(fqn::method(PY_LANG, &ctx.package, &ctx.module, ty, &method)),
+                            false,
+                            method,
+                        ));
                     }
                 }
                 // Unknown receiver (out of the bounded 0.7 scope) → no wrong merge.
@@ -788,16 +989,22 @@ pub(crate) mod python_fqn {
 
     /// Classify a dotted path as current-package (internal) vs a dependency, and
     /// build the target fqn. `target_name` is the bare leaf.
-    fn classify(dotted: &str, ctx: &FileFqnContext, target_name: &str) -> (Option<String>, bool, String) {
+    fn classify(
+        dotted: &str,
+        ctx: &FileFqnContext,
+        target_name: &str,
+    ) -> (Option<String>, bool, String) {
         let segs: Vec<&str> = dotted.split('.').collect();
         let leaf = segs.last().copied().unwrap_or("");
         let first = segs.first().copied().unwrap_or("");
         if first == ctx.package {
             // Internal: module = segments between the package and the leaf.
-            let module = if segs.len() > 2 { segs[1..segs.len() - 1].join(".") } else { String::new() };
+            let module =
+                if segs.len() > 2 { segs[1..segs.len() - 1].join(".") } else { String::new() };
             (Some(fqn::item(PY_LANG, &ctx.package, &module, leaf)), false, target_name.to_string())
         } else {
-            let path = if segs.len() >= 2 { segs[..segs.len() - 1].join(".") } else { first.to_string() };
+            let path =
+                if segs.len() >= 2 { segs[..segs.len() - 1].join(".") } else { first.to_string() };
             (Some(fqn::lib(first, &path, leaf)), true, target_name.to_string())
         }
     }
@@ -826,7 +1033,9 @@ pub(crate) mod python_fqn {
         pkg_dirs.reverse(); // top-first: [package, sub, …]
         let package = pkg_dirs[0].clone();
         let mut mods: Vec<&str> = pkg_dirs[1..].iter().map(String::as_str).collect();
-        if stem != "__init__" { mods.push(&stem); }
+        if stem != "__init__" {
+            mods.push(&stem);
+        }
         Some(FileFqnContext { package, module: mods.join(".") })
     }
 }
@@ -842,13 +1051,18 @@ mod tests {
     // ── FQN producer (Phase 6.2) ────────────────────────────────────────────
     use crate::languages::fqn::{FileFqnContext, FqnFileOutput, FqnReference};
     fn produce_py(src: &str, package: &str, module: &str) -> FqnFileOutput {
-        python_fqn::produce_fqns(src, &FileFqnContext { package: package.into(), module: module.into() })
+        python_fqn::produce_fqns(
+            src,
+            &FileFqnContext { package: package.into(), module: module.into() },
+        )
     }
     fn def_fqn<'a>(out: &'a FqnFileOutput, name: &str) -> &'a str {
         out.defs.iter().find(|d| d.name == name).map(|d| d.fqn.as_str()).unwrap_or("<no-def>")
     }
     fn ref_to<'a>(out: &'a FqnFileOutput, target_name: &str) -> &'a FqnReference {
-        out.refs.iter().find(|r| r.target_name == target_name)
+        out.refs
+            .iter()
+            .find(|r| r.target_name == target_name)
             .unwrap_or_else(|| panic!("no ref to `{target_name}` in {:?}", out.refs))
     }
 
@@ -856,18 +1070,28 @@ mod tests {
     fn py_def_fqn() {
         let out = produce_py(
             "def top():\n    pass\nclass Widget:\n    def __init__(self):\n        pass\n    def spin(self):\n        pass\n",
-            "mypkg", "app",
+            "mypkg",
+            "app",
         );
         assert_eq!(def_fqn(&out, "top"), "python·mypkg·app·top", "module-level function");
         assert_eq!(def_fqn(&out, "Widget"), "python·mypkg·app·Widget", "class");
-        assert_eq!(def_fqn(&out, "spin"), "python·mypkg·app·Widget·spin", "method nests on its class");
+        assert_eq!(
+            def_fqn(&out, "spin"),
+            "python·mypkg·app·Widget·spin",
+            "method nests on its class"
+        );
     }
 
     #[test]
     fn py_ref_fqn_import() {
-        let out = produce_py("from mypkg.util import helper\ndef use():\n    helper()\n", "mypkg", "app");
+        let out =
+            produce_py("from mypkg.util import helper\ndef use():\n    helper()\n", "mypkg", "app");
         let r = ref_to(&out, "helper");
-        assert_eq!(r.target_fqn.as_deref(), Some("python·mypkg·util·helper"), "resolved via the from-import map (same package → internal)");
+        assert_eq!(
+            r.target_fqn.as_deref(),
+            Some("python·mypkg·util·helper"),
+            "resolved via the from-import map (same package → internal)"
+        );
         assert!(!r.is_lib);
         assert_eq!(r.caller_fqn, "python·mypkg·app·use");
     }
@@ -876,15 +1100,27 @@ mod tests {
     fn py_method_scope() {
         let src = "class Engine:\n    def run(self):\n        self.tick()\n        g = Gadget()\n        g.spin()\n    def tick(self):\n        pass\n";
         let out = produce_py(src, "mypkg", "engine");
-        assert_eq!(ref_to(&out, "tick").target_fqn.as_deref(), Some("python·mypkg·engine·Engine·tick"), "self.method → enclosing class");
-        assert_eq!(ref_to(&out, "spin").target_fqn.as_deref(), Some("python·mypkg·engine·Gadget·spin"), "x = Gadget(); x.spin() → Gadget.spin (0.7 binding)");
+        assert_eq!(
+            ref_to(&out, "tick").target_fqn.as_deref(),
+            Some("python·mypkg·engine·Engine·tick"),
+            "self.method → enclosing class"
+        );
+        assert_eq!(
+            ref_to(&out, "spin").target_fqn.as_deref(),
+            Some("python·mypkg·engine·Gadget·spin"),
+            "x = Gadget(); x.spin() → Gadget.spin (0.7 binding)"
+        );
     }
 
     #[test]
     fn py_external_is_lib() {
         let out = produce_py("import json\ndef load(s):\n    json.loads(s)\n", "mypkg", "io");
         let r = ref_to(&out, "loads");
-        assert_eq!(r.target_fqn.as_deref(), Some("lib·json·json·loads"), "external module call → lib node");
+        assert_eq!(
+            r.target_fqn.as_deref(),
+            Some("lib·json·json·loads"),
+            "external module call → lib node"
+        );
         assert!(r.is_lib);
     }
 
@@ -903,7 +1139,11 @@ mod tests {
 
         let pf = parse(&source); // must not panic
         let names: Vec<&str> = pf.symbols.iter().map(|s| s.name.as_str()).collect();
-        assert!(names.contains(&"last_fn"), "expected last_fn, got {:?}", &names[names.len().saturating_sub(5)..]);
+        assert!(
+            names.contains(&"last_fn"),
+            "expected last_fn, got {:?}",
+            &names[names.len().saturating_sub(5)..]
+        );
         assert!(names.contains(&"LastClass"), "expected LastClass");
         assert!(names.contains(&"method"), "expected method");
     }
@@ -921,7 +1161,9 @@ mod tests {
 
     #[test]
     fn parses_class_with_methods() {
-        let pf = parse("class Foo:\n    def bar(self):\n        pass\n    def _private(self):\n        pass\n");
+        let pf = parse(
+            "class Foo:\n    def bar(self):\n        pass\n    def _private(self):\n        pass\n",
+        );
         assert_eq!(pf.symbols.len(), 3); // Foo + bar + _private
         assert_eq!(pf.symbols[0].kind, SymbolKind::Class);
         assert_eq!(pf.symbols[0].name, "Foo");
@@ -961,7 +1203,7 @@ mod tests {
     #[test]
     fn complex_class() {
         let pf = parse(
-            "class UserService:\n    \"\"\"Manages users.\"\"\"\n    def __init__(self, db):\n        self.db = db\n    def get_user(self, uid):\n        \"\"\"Fetch user.\"\"\"\n        return self.db.query(uid)\n"
+            "class UserService:\n    \"\"\"Manages users.\"\"\"\n    def __init__(self, db):\n        self.db = db\n    def get_user(self, uid):\n        \"\"\"Fetch user.\"\"\"\n        return self.db.query(uid)\n",
         );
         assert_eq!(pf.symbols.len(), 3);
         assert_eq!(pf.symbols[0].name, "UserService");
@@ -981,7 +1223,9 @@ mod tests {
 
     #[test]
     fn method_parent_set_on_class() {
-        let pf = parse("class Dog:\n    def bark(self):\n        pass\n    def sit(self):\n        pass\n");
+        let pf = parse(
+            "class Dog:\n    def bark(self):\n        pass\n    def sit(self):\n        pass\n",
+        );
         let dog = pf.symbols.iter().find(|s| s.name == "Dog").unwrap();
         assert!(dog.parent.is_none(), "class should have no parent");
         let bark = pf.symbols.iter().find(|s| s.name == "bark").unwrap();
@@ -994,7 +1238,7 @@ mod tests {
     #[test]
     fn method_parent_on_complex_class() {
         let pf = parse(
-            "class UserService:\n    def __init__(self, db):\n        self.db = db\n    def get_user(self, uid):\n        return self.db.query(uid)\n"
+            "class UserService:\n    def __init__(self, db):\n        self.db = db\n    def get_user(self, uid):\n        return self.db.query(uid)\n",
         );
         let init = pf.symbols.iter().find(|s| s.name == "__init__").unwrap();
         assert_eq!(init.parent.as_deref(), Some("UserService"));
@@ -1016,11 +1260,14 @@ mod tests {
 
     // ── IR Tests ──────────────────────────────────────────────────────
 
-    fn parse_ir(src: &str) -> IRParsedFile { parse_to_ir(src, "test.py") }
+    fn parse_ir(src: &str) -> IRParsedFile {
+        parse_to_ir(src, "test.py")
+    }
 
     #[test]
     fn ir_function_with_typed_params() {
-        let pf = parse_ir("def hello(name: str, count: int = 5) -> str:\n    return name * count\n");
+        let pf =
+            parse_ir("def hello(name: str, count: int = 5) -> str:\n    return name * count\n");
         let func = &pf.modules[0].functions[0];
         assert_eq!(func.base.name, "hello");
         assert_eq!(func.params.len(), 2);
@@ -1033,7 +1280,9 @@ mod tests {
 
     #[test]
     fn ir_class_with_methods_and_inheritance() {
-        let pf = parse_ir("class Dog(Animal):\n    \"\"\"A dog.\"\"\"\n    def bark(self) -> str:\n        return 'woof'\n");
+        let pf = parse_ir(
+            "class Dog(Animal):\n    \"\"\"A dog.\"\"\"\n    def bark(self) -> str:\n        return 'woof'\n",
+        );
         assert_eq!(pf.classes.len(), 1);
         assert_eq!(pf.classes[0].base.name, "Dog");
         assert_eq!(pf.classes[0].extends, Some("Animal".into()));

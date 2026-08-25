@@ -128,7 +128,9 @@ pub fn materialize(base: &Path, layout: &Layout) -> ScaffoldReport {
         let result = match entry {
             Entry::Dir(_) => fs::create_dir_all(&target),
             Entry::File { contents, .. } => match target.parent() {
-                Some(parent) => fs::create_dir_all(parent).and_then(|_| fs::write(&target, contents)),
+                Some(parent) => {
+                    fs::create_dir_all(parent).and_then(|_| fs::write(&target, contents))
+                }
                 None => fs::write(&target, contents),
             },
         };
@@ -143,10 +145,7 @@ pub fn materialize(base: &Path, layout: &Layout) -> ScaffoldReport {
 /// Scaffold the canonical structure into `target`. Derives the project name from
 /// the directory name and stamps today's date (via the crate's `format_date`).
 pub fn run(target: &Path) -> ScaffoldReport {
-    let name = target
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("project");
+    let name = target.file_name().and_then(|n| n.to_str()).unwrap_or("project");
     let date = crate::format_date();
     let layout = canonical_layout(name, &date);
     materialize(target, &layout)
@@ -294,10 +293,7 @@ fn baseline_md(kind: BaselineKind, date: &str) -> String {
             ("Quality", "qlty.sh score"),
             ("Security", "semgrep / deps scan"),
             ("Churn + velocity", "git signal"),
-            (
-                "Design system",
-                "rokkit tokens + component catalog (no hand-rolled primitives)",
-            ),
+            ("Design system", "rokkit tokens + component catalog (no hand-rolled primitives)"),
         ],
         BaselineKind::Content => &[
             ("Format", "style-guide conformance"),
@@ -509,7 +505,9 @@ mod tests {
             .entries
             .iter()
             .find_map(|e| match e {
-                Entry::File { path, contents } if path == "docs/features/checkout/brief.md" => Some(contents),
+                Entry::File { path, contents } if path == "docs/features/checkout/brief.md" => {
+                    Some(contents)
+                }
                 _ => None,
             })
             .expect("brief.md present");

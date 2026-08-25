@@ -86,8 +86,24 @@ pub fn manifests() -> Vec<McpToolManifest> {
             kind: McpToolKind::Query,
             summary: "Search functions and types by name across a project.",
             inputs: vec![
-                McpToolInput { key: "query", kind: McpInputKind::Text, required: true, label: "Query", placeholder: Some("PgStore"), default: None, options: None },
-                McpToolInput { key: "repoId", kind: McpInputKind::Text, required: true, label: "Project", placeholder: Some("sensei"), default: None, options: None },
+                McpToolInput {
+                    key: "query",
+                    kind: McpInputKind::Text,
+                    required: true,
+                    label: "Query",
+                    placeholder: Some("PgStore"),
+                    default: None,
+                    options: None,
+                },
+                McpToolInput {
+                    key: "repoId",
+                    kind: McpInputKind::Text,
+                    required: true,
+                    label: "Project",
+                    placeholder: Some("sensei"),
+                    default: None,
+                    options: None,
+                },
             ],
             example: McpToolExample {
                 response: "types: [PgStore]\nfunctions: [get_tools_health, get_project_summary, ...]",
@@ -100,8 +116,24 @@ pub fn manifests() -> Vec<McpToolManifest> {
             kind: McpToolKind::Query,
             summary: "Get details for a function or type by name.",
             inputs: vec![
-                McpToolInput { key: "name", kind: McpInputKind::Text, required: true, label: "Symbol", placeholder: Some("PgStore"), default: None, options: None },
-                McpToolInput { key: "repoId", kind: McpInputKind::Text, required: true, label: "Project", placeholder: Some("sensei"), default: None, options: None },
+                McpToolInput {
+                    key: "name",
+                    kind: McpInputKind::Text,
+                    required: true,
+                    label: "Symbol",
+                    placeholder: Some("PgStore"),
+                    default: None,
+                    options: None,
+                },
+                McpToolInput {
+                    key: "repoId",
+                    kind: McpInputKind::Text,
+                    required: true,
+                    label: "Project",
+                    placeholder: Some("sensei"),
+                    default: None,
+                    options: None,
+                },
             ],
             example: McpToolExample {
                 response: "PgStore · crates/senseid/src/db/pg_store.rs\n  struct — the daemon's Postgres access layer",
@@ -114,8 +146,24 @@ pub fn manifests() -> Vec<McpToolManifest> {
             kind: McpToolKind::Query,
             summary: "Return functions that call the given symbol.",
             inputs: vec![
-                McpToolInput { key: "name", kind: McpInputKind::Text, required: true, label: "Callee", placeholder: Some("upsert_referenced_library"), default: None, options: None },
-                McpToolInput { key: "repoId", kind: McpInputKind::Text, required: true, label: "Project", placeholder: Some("sensei"), default: None, options: None },
+                McpToolInput {
+                    key: "name",
+                    kind: McpInputKind::Text,
+                    required: true,
+                    label: "Callee",
+                    placeholder: Some("upsert_referenced_library"),
+                    default: None,
+                    options: None,
+                },
+                McpToolInput {
+                    key: "repoId",
+                    kind: McpInputKind::Text,
+                    required: true,
+                    label: "Project",
+                    placeholder: Some("sensei"),
+                    default: None,
+                    options: None,
+                },
             ],
             example: McpToolExample {
                 response: "3 callers of upsert_referenced_library:\n  extract_deps  · libraries.rs:249\n  extract_dep_versions · lib_indexer.rs:88\n  seed_library · pg_store.rs:1914",
@@ -128,8 +176,24 @@ pub fn manifests() -> Vec<McpToolManifest> {
             kind: McpToolKind::Query,
             summary: "Return functions the given symbol calls.",
             inputs: vec![
-                McpToolInput { key: "name", kind: McpInputKind::Text, required: true, label: "Caller", placeholder: Some("extract_deps"), default: None, options: None },
-                McpToolInput { key: "repoId", kind: McpInputKind::Text, required: true, label: "Project", placeholder: Some("sensei"), default: None, options: None },
+                McpToolInput {
+                    key: "name",
+                    kind: McpInputKind::Text,
+                    required: true,
+                    label: "Caller",
+                    placeholder: Some("extract_deps"),
+                    default: None,
+                    options: None,
+                },
+                McpToolInput {
+                    key: "repoId",
+                    kind: McpInputKind::Text,
+                    required: true,
+                    label: "Project",
+                    placeholder: Some("sensei"),
+                    default: None,
+                    options: None,
+                },
             ],
             example: McpToolExample {
                 response: "extract_deps calls:\n  upsert_referenced_library\n  upsert_project_dependency\n  parse_cargo_deps",
@@ -142,8 +206,24 @@ pub fn manifests() -> Vec<McpToolManifest> {
             kind: McpToolKind::Query,
             summary: "Return files matching a framework tag (svelte, react, tauri, …).",
             inputs: vec![
-                McpToolInput { key: "tag", kind: McpInputKind::Text, required: true, label: "Tag", placeholder: Some("svelte"), default: None, options: None },
-                McpToolInput { key: "repoId", kind: McpInputKind::Text, required: true, label: "Project", placeholder: Some("sensei"), default: None, options: None },
+                McpToolInput {
+                    key: "tag",
+                    kind: McpInputKind::Text,
+                    required: true,
+                    label: "Tag",
+                    placeholder: Some("svelte"),
+                    default: None,
+                    options: None,
+                },
+                McpToolInput {
+                    key: "repoId",
+                    kind: McpInputKind::Text,
+                    required: true,
+                    label: "Project",
+                    placeholder: Some("sensei"),
+                    default: None,
+                    options: None,
+                },
             ],
             example: McpToolExample {
                 response: "27 files tagged 'svelte':\n  src/routes/+page.svelte\n  src/lib/components/Card.svelte\n  ... +25 more",
@@ -155,9 +235,15 @@ pub fn manifests() -> Vec<McpToolManifest> {
             name: "get_communities",
             kind: McpToolKind::Query,
             summary: "Return code architecture clusters (community detection).",
-            inputs: vec![
-                McpToolInput { key: "repoId", kind: McpInputKind::Text, required: true, label: "Project", placeholder: Some("sensei"), default: None, options: None },
-            ],
+            inputs: vec![McpToolInput {
+                key: "repoId",
+                kind: McpInputKind::Text,
+                required: true,
+                label: "Project",
+                placeholder: Some("sensei"),
+                default: None,
+                options: None,
+            }],
             example: McpToolExample {
                 response: "4 communities:\n  1. api/ (34 nodes)\n  2. tasks/ (52 nodes)\n  3. adapters/ (18 nodes)\n  4. db/ (23 nodes)",
             },
@@ -168,9 +254,15 @@ pub fn manifests() -> Vec<McpToolManifest> {
             name: "get_doc_drift",
             kind: McpToolKind::Query,
             summary: "Return docs whose claims contradict the current code.",
-            inputs: vec![
-                McpToolInput { key: "repoId", kind: McpInputKind::Text, required: true, label: "Project", placeholder: Some("sensei"), default: None, options: None },
-            ],
+            inputs: vec![McpToolInput {
+                key: "repoId",
+                kind: McpInputKind::Text,
+                required: true,
+                label: "Project",
+                placeholder: Some("sensei"),
+                default: None,
+                options: None,
+            }],
             example: McpToolExample {
                 response: "2 drift signals:\n  README.md — references deleted `parse_ini_deps`\n  docs/backlog.md — describes 'pending' feature shipped 2 weeks ago",
             },
@@ -181,9 +273,15 @@ pub fn manifests() -> Vec<McpToolManifest> {
             name: "search_lib_docs",
             kind: McpToolKind::Query,
             summary: "Search across all indexed library documentation.",
-            inputs: vec![
-                McpToolInput { key: "query", kind: McpInputKind::Text, required: true, label: "Query", placeholder: Some("dbd deploy"), default: None, options: None },
-            ],
+            inputs: vec![McpToolInput {
+                key: "query",
+                kind: McpInputKind::Text,
+                required: true,
+                label: "Query",
+                placeholder: Some("dbd deploy"),
+                default: None,
+                options: None,
+            }],
             example: McpToolExample {
                 response: "5 pages match 'dbd deploy':\n  dbd-rs · deploy — apply DDL to the target DB\n  dbd-rs · combine — bundle DDL into init.sql\n  ...",
             },
@@ -195,8 +293,24 @@ pub fn manifests() -> Vec<McpToolManifest> {
             kind: McpToolKind::Query,
             summary: "Fetch a library's overview or a specific component's docs.",
             inputs: vec![
-                McpToolInput { key: "name", kind: McpInputKind::Text, required: true, label: "Library", placeholder: Some("rokkit"), default: None, options: None },
-                McpToolInput { key: "component", kind: McpInputKind::Text, required: false, label: "Component", placeholder: Some("List"), default: None, options: None },
+                McpToolInput {
+                    key: "name",
+                    kind: McpInputKind::Text,
+                    required: true,
+                    label: "Library",
+                    placeholder: Some("rokkit"),
+                    default: None,
+                    options: None,
+                },
+                McpToolInput {
+                    key: "component",
+                    kind: McpInputKind::Text,
+                    required: false,
+                    label: "Component",
+                    placeholder: Some("List"),
+                    default: None,
+                    options: None,
+                },
             ],
             example: McpToolExample {
                 response: "rokkit / List:\n  A grouped list component with keyboard navigation.\n  Props: items, value, fields, onselect, onchange",
@@ -220,8 +334,24 @@ pub fn manifests() -> Vec<McpToolManifest> {
             kind: McpToolKind::Query,
             summary: "Natural-language query routed across the code graph.",
             inputs: vec![
-                McpToolInput { key: "q", kind: McpInputKind::Text, required: true, label: "Question", placeholder: Some("what calls scan_root?"), default: None, options: None },
-                McpToolInput { key: "repoId", kind: McpInputKind::Text, required: true, label: "Project", placeholder: Some("sensei"), default: None, options: None },
+                McpToolInput {
+                    key: "q",
+                    kind: McpInputKind::Text,
+                    required: true,
+                    label: "Question",
+                    placeholder: Some("what calls scan_root?"),
+                    default: None,
+                    options: None,
+                },
+                McpToolInput {
+                    key: "repoId",
+                    kind: McpInputKind::Text,
+                    required: true,
+                    label: "Project",
+                    placeholder: Some("sensei"),
+                    default: None,
+                    options: None,
+                },
             ],
             example: McpToolExample {
                 response: "Use POST /api/query directly for unified NL query handling.",
@@ -233,9 +363,15 @@ pub fn manifests() -> Vec<McpToolManifest> {
             name: "get_project_summary",
             kind: McpToolKind::Query,
             summary: "Return project stats and identifying metadata.",
-            inputs: vec![
-                McpToolInput { key: "repoId", kind: McpInputKind::Text, required: true, label: "Project", placeholder: Some("sensei"), default: None, options: None },
-            ],
+            inputs: vec![McpToolInput {
+                key: "repoId",
+                kind: McpInputKind::Text,
+                required: true,
+                label: "Project",
+                placeholder: Some("sensei"),
+                default: None,
+                options: None,
+            }],
             example: McpToolExample {
                 response: "sensei:\n  functions: 812   types: 143\n  stack: rust, typescript, svelte\n  role: library",
             },
@@ -246,9 +382,15 @@ pub fn manifests() -> Vec<McpToolManifest> {
             name: "get_metrics",
             kind: McpToolKind::Query,
             summary: "Return project quality metrics: FTR, session count, corrections.",
-            inputs: vec![
-                McpToolInput { key: "repoId", kind: McpInputKind::Text, required: true, label: "Project", placeholder: Some("sensei"), default: None, options: None },
-            ],
+            inputs: vec![McpToolInput {
+                key: "repoId",
+                kind: McpInputKind::Text,
+                required: true,
+                label: "Project",
+                placeholder: Some("sensei"),
+                default: None,
+                options: None,
+            }],
             example: McpToolExample {
                 response: "sensei · 76 sessions · FTR 0.83 · 12 corrections · avg 4.2 turns",
             },
@@ -260,8 +402,24 @@ pub fn manifests() -> Vec<McpToolManifest> {
             kind: McpToolKind::Query,
             summary: "Daily FTR sparkline data for a project.",
             inputs: vec![
-                McpToolInput { key: "repoId", kind: McpInputKind::Text, required: true, label: "Project", placeholder: Some("sensei"), default: None, options: None },
-                McpToolInput { key: "days", kind: McpInputKind::Number, required: false, label: "Window (days)", placeholder: None, default: Some("14"), options: None },
+                McpToolInput {
+                    key: "repoId",
+                    kind: McpInputKind::Text,
+                    required: true,
+                    label: "Project",
+                    placeholder: Some("sensei"),
+                    default: None,
+                    options: None,
+                },
+                McpToolInput {
+                    key: "days",
+                    kind: McpInputKind::Number,
+                    required: false,
+                    label: "Window (days)",
+                    placeholder: None,
+                    default: Some("14"),
+                    options: None,
+                },
             ],
             example: McpToolExample {
                 response: "14d FTR (sensei):\n  06/18 0.75  06/19 0.80  06/20 0.83  ...  07/01 0.88",
@@ -274,8 +432,24 @@ pub fn manifests() -> Vec<McpToolManifest> {
             kind: McpToolKind::Query,
             summary: "Files with the highest rework / correction frequency.",
             inputs: vec![
-                McpToolInput { key: "repoId", kind: McpInputKind::Text, required: true, label: "Project", placeholder: Some("sensei"), default: None, options: None },
-                McpToolInput { key: "days", kind: McpInputKind::Number, required: false, label: "Window (days)", placeholder: None, default: Some("7"), options: None },
+                McpToolInput {
+                    key: "repoId",
+                    kind: McpInputKind::Text,
+                    required: true,
+                    label: "Project",
+                    placeholder: Some("sensei"),
+                    default: None,
+                    options: None,
+                },
+                McpToolInput {
+                    key: "days",
+                    kind: McpInputKind::Number,
+                    required: false,
+                    label: "Window (days)",
+                    placeholder: None,
+                    default: Some("7"),
+                    options: None,
+                },
             ],
             example: McpToolExample {
                 response: "7d hotspots (sensei):\n  scan_logic.rs   6 rework, 2 corrections\n  detector.rs     4 rework\n  libraries.rs    3 rework",
@@ -287,9 +461,15 @@ pub fn manifests() -> Vec<McpToolManifest> {
             name: "get_quality_signals",
             kind: McpToolKind::Query,
             summary: "Roll-up: FTR, pattern compliance, doc drift, test pass rate.",
-            inputs: vec![
-                McpToolInput { key: "repoId", kind: McpInputKind::Text, required: true, label: "Project", placeholder: Some("sensei"), default: None, options: None },
-            ],
+            inputs: vec![McpToolInput {
+                key: "repoId",
+                kind: McpInputKind::Text,
+                required: true,
+                label: "Project",
+                placeholder: Some("sensei"),
+                default: None,
+                options: None,
+            }],
             example: McpToolExample {
                 response: "sensei signals:\n  FTR 0.83   Doc drift 2   Pattern compliance 0.91   Tests OK",
             },
@@ -302,12 +482,26 @@ pub fn manifests() -> Vec<McpToolManifest> {
             kind: McpToolKind::Action,
             summary: "Open a new work session on a project.",
             inputs: vec![
-                McpToolInput { key: "repoId", kind: McpInputKind::Text, required: true, label: "Project", placeholder: Some("sensei"), default: None, options: None },
-                McpToolInput { key: "task", kind: McpInputKind::Text, required: false, label: "Task", placeholder: Some("Fix scanner bug"), default: Some("untitled"), options: None },
+                McpToolInput {
+                    key: "repoId",
+                    kind: McpInputKind::Text,
+                    required: true,
+                    label: "Project",
+                    placeholder: Some("sensei"),
+                    default: None,
+                    options: None,
+                },
+                McpToolInput {
+                    key: "task",
+                    kind: McpInputKind::Text,
+                    required: false,
+                    label: "Task",
+                    placeholder: Some("Fix scanner bug"),
+                    default: Some("untitled"),
+                    options: None,
+                },
             ],
-            example: McpToolExample {
-                response: "{ ok: true, sessionId: \"6a0c3b1a-…\" }",
-            },
+            example: McpToolExample { response: "{ ok: true, sessionId: \"6a0c3b1a-…\" }" },
         },
         McpToolManifest {
             mcp: "sensei",
@@ -316,14 +510,44 @@ pub fn manifests() -> Vec<McpToolManifest> {
             kind: McpToolKind::Action,
             summary: "Close a session with an outcome verdict.",
             inputs: vec![
-                McpToolInput { key: "sessionId", kind: McpInputKind::Text, required: true, label: "Session", placeholder: Some("6a0c3b1a-…"), default: None, options: None },
-                McpToolInput { key: "outcome", kind: McpInputKind::Enum, required: false, label: "Outcome", placeholder: None, default: Some("completed"), options: Some(vec!["completed", "abandoned", "interrupted"]) },
-                McpToolInput { key: "turns", kind: McpInputKind::Number, required: false, label: "Turns", placeholder: None, default: Some("0"), options: None },
-                McpToolInput { key: "corrections", kind: McpInputKind::Number, required: false, label: "Corrections", placeholder: None, default: Some("0"), options: None },
+                McpToolInput {
+                    key: "sessionId",
+                    kind: McpInputKind::Text,
+                    required: true,
+                    label: "Session",
+                    placeholder: Some("6a0c3b1a-…"),
+                    default: None,
+                    options: None,
+                },
+                McpToolInput {
+                    key: "outcome",
+                    kind: McpInputKind::Enum,
+                    required: false,
+                    label: "Outcome",
+                    placeholder: None,
+                    default: Some("completed"),
+                    options: Some(vec!["completed", "abandoned", "interrupted"]),
+                },
+                McpToolInput {
+                    key: "turns",
+                    kind: McpInputKind::Number,
+                    required: false,
+                    label: "Turns",
+                    placeholder: None,
+                    default: Some("0"),
+                    options: None,
+                },
+                McpToolInput {
+                    key: "corrections",
+                    kind: McpInputKind::Number,
+                    required: false,
+                    label: "Corrections",
+                    placeholder: None,
+                    default: Some("0"),
+                    options: None,
+                },
             ],
-            example: McpToolExample {
-                response: "{ ok: true }",
-            },
+            example: McpToolExample { response: "{ ok: true }" },
         },
         McpToolManifest {
             mcp: "sensei",
@@ -332,9 +556,33 @@ pub fn manifests() -> Vec<McpToolManifest> {
             kind: McpToolKind::Action,
             summary: "Register a library for doc indexing (local dir, GitHub tree, or llms.txt URL).",
             inputs: vec![
-                McpToolInput { key: "name", kind: McpInputKind::Text, required: true, label: "Library", placeholder: Some("rokkit"), default: None, options: None },
-                McpToolInput { key: "url", kind: McpInputKind::Text, required: false, label: "Source URL", placeholder: Some("https://github.com/jerrythomas/rokkit/tree/main/docs"), default: None, options: None },
-                McpToolInput { key: "version", kind: McpInputKind::Text, required: false, label: "Version", placeholder: Some("1.3.1"), default: None, options: None },
+                McpToolInput {
+                    key: "name",
+                    kind: McpInputKind::Text,
+                    required: true,
+                    label: "Library",
+                    placeholder: Some("rokkit"),
+                    default: None,
+                    options: None,
+                },
+                McpToolInput {
+                    key: "url",
+                    kind: McpInputKind::Text,
+                    required: false,
+                    label: "Source URL",
+                    placeholder: Some("https://github.com/jerrythomas/rokkit/tree/main/docs"),
+                    default: None,
+                    options: None,
+                },
+                McpToolInput {
+                    key: "version",
+                    kind: McpInputKind::Text,
+                    required: false,
+                    label: "Version",
+                    placeholder: Some("1.3.1"),
+                    default: None,
+                    options: None,
+                },
             ],
             example: McpToolExample {
                 response: "{ ok: true, libName: \"rokkit\", taskId: \"…\", status: \"indexing\" }",
@@ -381,13 +629,15 @@ mod tests {
                     assert!(
                         input.options.as_ref().is_some_and(|o| !o.is_empty()),
                         "{}.{}: enum input must supply options",
-                        m.name, input.key
+                        m.name,
+                        input.key
                     );
                 } else {
                     assert!(
                         input.options.is_none(),
                         "{}.{}: only enum inputs may set options",
-                        m.name, input.key
+                        m.name,
+                        input.key
                     );
                 }
             }
@@ -424,11 +674,25 @@ mod tests {
         // tool lands in manifests() without a mcp_call_tool branch, this test
         // fails loudly.
         const DISPATCHED: &[&str] = &[
-            "search", "get_symbol", "get_callers", "get_callees", "get_file_tags",
-            "get_communities", "get_doc_drift", "search_lib_docs", "get_lib_docs",
-            "list_projects", "create_session", "update_session", "add_library",
-            "query", "get_project_summary", "get_metrics", "get_ftr_daily",
-            "get_hotspots", "get_quality_signals",
+            "search",
+            "get_symbol",
+            "get_callers",
+            "get_callees",
+            "get_file_tags",
+            "get_communities",
+            "get_doc_drift",
+            "search_lib_docs",
+            "get_lib_docs",
+            "list_projects",
+            "create_session",
+            "update_session",
+            "add_library",
+            "query",
+            "get_project_summary",
+            "get_metrics",
+            "get_ftr_daily",
+            "get_hotspots",
+            "get_quality_signals",
         ];
         for m in manifests() {
             assert!(

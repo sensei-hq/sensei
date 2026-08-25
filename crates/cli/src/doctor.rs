@@ -15,7 +15,10 @@
 //! Exit code: 0 if the terminal payload is Ok, 1 otherwise.
 
 use owo_colors::{OwoColorize, Stream};
-use sensei_bootstrap::{self as bootstrap, Component, HealthEvent, HealthPayload, HealthStatus, ComponentStatus, SenseiConfig};
+use sensei_bootstrap::{
+    self as bootstrap, Component, ComponentStatus, HealthEvent, HealthPayload, HealthStatus,
+    SenseiConfig,
+};
 
 const CARGO_PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -25,15 +28,31 @@ const CARGO_PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
 // Each helper returns a fully-rendered String so callers can compose them
 // without fighting the opaque colour wrappers in match arms.
 
-fn green(s: &str)  -> String { format!("{}", s.if_supports_color(Stream::Stdout, |t| t.green())) }
-fn red(s: &str)    -> String { format!("{}", s.if_supports_color(Stream::Stdout, |t| t.red())) }
-fn yellow(s: &str) -> String { format!("{}", s.if_supports_color(Stream::Stdout, |t| t.yellow())) }
-fn blue(s: &str)   -> String { format!("{}", s.if_supports_color(Stream::Stdout, |t| t.blue())) }
-fn cyan(s: &str)   -> String { format!("{}", s.if_supports_color(Stream::Stdout, |t| t.cyan())) }
-fn dim(s: &str)    -> String { format!("{}", s.if_supports_color(Stream::Stdout, |t| t.dimmed())) }
-fn bold(s: &str)   -> String { format!("{}", s.if_supports_color(Stream::Stdout, |t| t.bold())) }
+fn green(s: &str) -> String {
+    format!("{}", s.if_supports_color(Stream::Stdout, |t| t.green()))
+}
+fn red(s: &str) -> String {
+    format!("{}", s.if_supports_color(Stream::Stdout, |t| t.red()))
+}
+fn yellow(s: &str) -> String {
+    format!("{}", s.if_supports_color(Stream::Stdout, |t| t.yellow()))
+}
+fn blue(s: &str) -> String {
+    format!("{}", s.if_supports_color(Stream::Stdout, |t| t.blue()))
+}
+fn cyan(s: &str) -> String {
+    format!("{}", s.if_supports_color(Stream::Stdout, |t| t.cyan()))
+}
+fn dim(s: &str) -> String {
+    format!("{}", s.if_supports_color(Stream::Stdout, |t| t.dimmed()))
+}
+fn bold(s: &str) -> String {
+    format!("{}", s.if_supports_color(Stream::Stdout, |t| t.bold()))
+}
 
-fn verb_for_component(c: &Component) -> &str { &c.installing_verb }
+fn verb_for_component(c: &Component) -> &str {
+    &c.installing_verb
+}
 
 // ── Entry point ─────────────────────────────────────────────────────────────
 
@@ -41,14 +60,15 @@ pub fn run(fix: bool) -> i32 {
     bootstrap::tracing_init::install_console("sensei_bootstrap=warn");
 
     println!("{}", bold(&format!("sensei doctor  {}", dim(&format!("v{CARGO_PKG_VERSION}")))));
-    println!("{}", dim("Diagnoses your bootstrap dependencies. Set RUST_LOG=sensei_bootstrap=info"));
+    println!(
+        "{}",
+        dim("Diagnoses your bootstrap dependencies. Set RUST_LOG=sensei_bootstrap=info")
+    );
     println!("{}", dim("for verbose library tracing under each line."));
     println!();
 
-    let terminal: HealthPayload = bootstrap::health::check_and_resolve(
-        CARGO_PKG_VERSION,
-        &print_event,
-    );
+    let terminal: HealthPayload =
+        bootstrap::health::check_and_resolve(CARGO_PKG_VERSION, &print_event);
 
     println!();
     print_terminal(&terminal);
@@ -63,9 +83,9 @@ fn print_event(ev: HealthEvent) {
     match ev {
         HealthEvent::Phase { phase } => {
             let label = match phase {
-                HealthStatus::Checking   => cyan("● checking"),
-                HealthStatus::Resolving  => yellow("● resolving"),
-                HealthStatus::Ok         => green("● ok"),
+                HealthStatus::Checking => cyan("● checking"),
+                HealthStatus::Resolving => yellow("● resolving"),
+                HealthStatus::Ok => green("● ok"),
                 HealthStatus::NeedsAction => red("● needs action"),
             };
             println!("\n{label}");
@@ -75,19 +95,19 @@ fn print_event(ev: HealthEvent) {
             let detail = patch.detail.flatten();
             let version = patch.version.flatten();
             let icon_status = match status {
-                Some(ComponentStatus::Ready)      => green("✓"),
+                Some(ComponentStatus::Ready) => green("✓"),
                 Some(ComponentStatus::Installing) => yellow("…"),
-                Some(ComponentStatus::Failed)     => red("✗"),
+                Some(ComponentStatus::Failed) => red("✗"),
                 Some(ComponentStatus::Pending) | Some(ComponentStatus::Checking) | None => dim("·"),
             };
             let id_col = format!("{:<10}", id);
             let status_word = match status {
-                Some(ComponentStatus::Ready)      => green("ready"),
+                Some(ComponentStatus::Ready) => green("ready"),
                 Some(ComponentStatus::Installing) => yellow(bootstrap::installing_verb_for(&id)),
-                Some(ComponentStatus::Failed)     => red("failed"),
-                Some(ComponentStatus::Pending)    => dim("pending"),
-                Some(ComponentStatus::Checking)   => cyan("checking"),
-                None                              => dim("—"),
+                Some(ComponentStatus::Failed) => red("failed"),
+                Some(ComponentStatus::Pending) => dim("pending"),
+                Some(ComponentStatus::Checking) => cyan("checking"),
+                None => dim("—"),
             };
             let mut tail = String::new();
             if let Some(v) = version.filter(|v| !v.is_empty()) {
@@ -103,7 +123,7 @@ fn print_event(ev: HealthEvent) {
             // consolidated one is printed by print_terminal at the bottom,
             // so here we just hint that one was proposed.
             println!("  {} {}", yellow("⚠"), dim("remedy proposed — see summary below"));
-            let _ = remedy;  // we don't print the script per-component
+            let _ = remedy; // we don't print the script per-component
         }
         HealthEvent::Report { payload } => {
             // The first Report is the initial check's verdict — render
@@ -112,11 +132,11 @@ fn print_event(ev: HealthEvent) {
             // events; only resolve does).
             for c in &payload.components {
                 let (icon, status_word) = match c.status {
-                    ComponentStatus::Ready      => (green("✓"), green("ready")),
+                    ComponentStatus::Ready => (green("✓"), green("ready")),
                     ComponentStatus::Installing => (yellow("…"), yellow(verb_for_component(c))),
-                    ComponentStatus::Failed     => (red("✗"),    red("failed")),
-                    ComponentStatus::Pending    => (dim("·"),    dim("pending")),
-                    ComponentStatus::Checking   => (cyan("·"),   cyan("checking")),
+                    ComponentStatus::Failed => (red("✗"), red("failed")),
+                    ComponentStatus::Pending => (dim("·"), dim("pending")),
+                    ComponentStatus::Checking => (cyan("·"), cyan("checking")),
                 };
                 let mut tail = String::new();
                 if let Some(v) = c.version.as_deref().filter(|v| !v.is_empty()) {
@@ -128,10 +148,10 @@ fn print_event(ev: HealthEvent) {
                 println!("  {icon} {:<10} {status_word}{tail}", c.id);
             }
             let label = match payload.status {
-                HealthStatus::Ok          => green("ok"),
+                HealthStatus::Ok => green("ok"),
                 HealthStatus::NeedsAction => red("needs action"),
-                HealthStatus::Checking    => cyan("checking"),
-                HealthStatus::Resolving   => yellow("resolving"),
+                HealthStatus::Checking => cyan("checking"),
+                HealthStatus::Resolving => yellow("resolving"),
             };
             println!("  {} {}", blue("⤳"), bold(&label));
         }
@@ -153,10 +173,23 @@ fn print_capture_section(fix: bool) -> i32 {
         .build()
         .expect("build http client");
 
-    let health: serde_json::Value = match client.get(format!("{base}/api/assistants/health")).send() {
-        Ok(r) => match r.json() { Ok(j) => j, Err(e) => { println!("  {} {}", red("✗"), dim(&format!("bad response: {e}"))); return 1; } },
+    let health: serde_json::Value = match client.get(format!("{base}/api/assistants/health")).send()
+    {
+        Ok(r) => match r.json() {
+            Ok(j) => j,
+            Err(e) => {
+                println!("  {} {}", red("✗"), dim(&format!("bad response: {e}")));
+                return 1;
+            }
+        },
         Err(_) => {
-            println!("  {} {}", red("✗"), dim("daemon unreachable — cannot verify capture. Is senseid running? `sensei start`"));
+            println!(
+                "  {} {}",
+                red("✗"),
+                dim(
+                    "daemon unreachable — cannot verify capture. Is senseid running? `sensei start`"
+                )
+            );
             return 1;
         }
     };
@@ -181,7 +214,10 @@ fn print_capture_section(fix: bool) -> i32 {
             let (gi, _) = status_glyph(cstatus);
             println!("    {} {:<12} {}", gi, cid, dim(detail));
         }
-        if astatus == "fail" { worst_fail = 1; failing_ids.push(id.to_string()); }
+        if astatus == "fail" {
+            worst_fail = 1;
+            failing_ids.push(id.to_string());
+        }
     }
 
     if fix && !failing_ids.is_empty() {
@@ -189,13 +225,19 @@ fn print_capture_section(fix: bool) -> i32 {
         for id in &failing_ids {
             println!("  {} resolving {}…", yellow("…"), id);
             let body = serde_json::json!({ "adapter_id": id });
-            match client.post(format!("{base}/api/assistants/resolve")).json(&body).send()
+            match client
+                .post(format!("{base}/api/assistants/resolve"))
+                .json(&body)
+                .send()
                 .and_then(|r| r.json::<serde_json::Value>())
             {
                 Ok(rep) => {
                     let ok = rep["ok"].as_bool().unwrap_or(false);
-                    if ok { println!("    {} resolved", green("✓")); }
-                    else { println!("    {} failed: {}", red("✗"), dim(&rep["errors"].to_string())); }
+                    if ok {
+                        println!("    {} resolved", green("✓"));
+                    } else {
+                        println!("    {} failed: {}", red("✗"), dim(&rep["errors"].to_string()));
+                    }
                 }
                 Err(e) => println!("    {} request failed: {}", red("✗"), dim(&e.to_string())),
             }
@@ -203,7 +245,12 @@ fn print_capture_section(fix: bool) -> i32 {
         println!("{}", dim("Re-run `sensei doctor` to confirm."));
     } else if worst_fail == 1 {
         println!();
-        println!("{}", dim("Run `sensei doctor --fix` to auto-resolve, or restart your Claude session if only `events` is stale."));
+        println!(
+            "{}",
+            dim(
+                "Run `sensei doctor --fix` to auto-resolve, or restart your Claude session if only `events` is stale."
+            )
+        );
     }
 
     worst_fail
@@ -212,10 +259,10 @@ fn print_capture_section(fix: bool) -> i32 {
 /// Map a status string to a coloured glyph.
 fn status_glyph(s: &str) -> (String, &'static str) {
     match s {
-        "ok"   => (green("✓"), "ok"),
+        "ok" => (green("✓"), "ok"),
         "warn" => (yellow("⚠"), "warn"),
         "fail" => (red("✗"), "fail"),
-        _       => (dim("·"), "unknown"),
+        _ => (dim("·"), "unknown"),
     }
 }
 
@@ -225,9 +272,9 @@ fn print_terminal(t: &HealthPayload) {
     let bar = "─".repeat(60);
     println!("{}", dim(&bar));
     let header = match t.status {
-        HealthStatus::Ok          => green("✓ All five components healthy."),
+        HealthStatus::Ok => green("✓ All five components healthy."),
         HealthStatus::NeedsAction => red("✗ One or more components need attention."),
-        _                          => yellow(&format!("{:?}", t.status)),
+        _ => yellow(&format!("{:?}", t.status)),
     };
     println!("{}", bold(&header));
     println!();
@@ -235,11 +282,11 @@ fn print_terminal(t: &HealthPayload) {
     // Per-component table.
     for c in &t.components {
         let (icon, status_word) = match c.status {
-            ComponentStatus::Ready      => (green("✓"), green("ready")),
+            ComponentStatus::Ready => (green("✓"), green("ready")),
             ComponentStatus::Installing => (yellow("…"), yellow(verb_for_component(c))),
-            ComponentStatus::Failed     => (red("✗"),   red("failed")),
-            ComponentStatus::Pending    => (dim("·"),   dim("pending")),
-            ComponentStatus::Checking   => (cyan("·"),  cyan("checking")),
+            ComponentStatus::Failed => (red("✗"), red("failed")),
+            ComponentStatus::Pending => (dim("·"), dim("pending")),
+            ComponentStatus::Checking => (cyan("·"), cyan("checking")),
         };
         let mut tail = String::new();
         if let Some(v) = c.version.as_deref().filter(|v| !v.is_empty()) {

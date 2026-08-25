@@ -131,10 +131,8 @@ pub(crate) async fn callback(
     let Some(code) = q.code else {
         return Json(serde_json::json!({ "ok": false, "error": "no code in callback" }));
     };
-    let Some((persona, verifier)) = PENDING_VERIFIER
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .take()
+    let Some((persona, verifier)) =
+        PENDING_VERIFIER.lock().unwrap_or_else(|e| e.into_inner()).take()
     else {
         return Json(serde_json::json!({
             "ok": false,
@@ -287,14 +285,8 @@ pub(crate) async fn status(
     // "signedIn" on the strength of a refresh alone is the lie this endpoint
     // exists to prevent — the caller would otherwise discover it at the next sync.
     let usable = dojo_auth::whoami(&dojo_url(), &tokens.access_token).await;
-    let auth_user_id = usable
-        .as_ref()
-        .ok()
-        .and_then(|v| v["userId"].as_str().map(String::from));
-    let email = usable
-        .as_ref()
-        .ok()
-        .and_then(|v| v["email"].as_str().map(String::from));
+    let auth_user_id = usable.as_ref().ok().and_then(|v| v["userId"].as_str().map(String::from));
+    let email = usable.as_ref().ok().and_then(|v| v["email"].as_str().map(String::from));
 
     // Backfill the verified identity for a persona connected before this
     // existed, so an established session need not be re-signed just to learn a
@@ -434,11 +426,7 @@ async fn link_verified_identity(
     emails.sort();
     emails.dedup();
 
-    match state
-        .pg
-        .link_persona_identity(persona, login, gh_id, primary, &emails)
-        .await
-    {
+    match state.pg.link_persona_identity(persona, login, gh_id, primary, &emails).await {
         Ok(id) => serde_json::json!({
             "verified": true,
             "personaId": id,
@@ -457,18 +445,14 @@ async fn link_verified_identity(
 /// than assumed to be first — taking `identities[0]` would read a Google or
 /// email identity's fields and find neither.
 fn github_identity(user: &serde_json::Value) -> Option<(&str, i64)> {
-    let i = user["identities"]
-        .as_array()?
-        .iter()
-        .find(|i| i["provider"].as_str() == Some("github"))?;
+    let i =
+        user["identities"].as_array()?.iter().find(|i| i["provider"].as_str() == Some("github"))?;
     let login = i["identity_data"]["user_name"].as_str()?;
     // GitHub's id arrives as a JSON string from some GoTrue versions and a
     // number from others; both name the same account, and accepting only one
     // form would silently leave the persona unverified against the other.
     let v = &i["identity_data"]["provider_id"];
-    let id = v
-        .as_i64()
-        .or_else(|| v.as_str().and_then(|s| s.parse().ok()))?;
+    let id = v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse().ok()))?;
     Some((login, id))
 }
 

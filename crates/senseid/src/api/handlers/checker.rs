@@ -1,9 +1,9 @@
 //! D-CHECKER endpoint — run a repo's adopted checker-backed rules and return the
 //! pass/fail verdicts. See [`crate::checker`].
 
-use axum::{extract::State, http::StatusCode, Json};
+use axum::{Json, extract::State, http::StatusCode};
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::api::state::AppState;
 
@@ -29,12 +29,9 @@ pub(crate) async fn run_checkers(
         body.project.as_deref(),
     )
     .await?;
-    let runs = crate::checker::run_checkers(
-        &state.pg,
-        &folder_id,
-        std::path::Path::new(&folder_path),
-    )
-    .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e }))))?;
+    let runs =
+        crate::checker::run_checkers(&state.pg, &folder_id, std::path::Path::new(&folder_path))
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e }))))?;
     Ok(Json(json!({ "folder": folder_path, "runs": runs })))
 }

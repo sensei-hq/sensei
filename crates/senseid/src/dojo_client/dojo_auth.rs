@@ -39,10 +39,7 @@ pub async fn start(
         req = req.query(&[("login", login)]);
     }
 
-    let r = req
-        .send()
-        .await
-        .map_err(|e| format!("could not reach dōjō: {e}"))?;
+    let r = req.send().await.map_err(|e| format!("could not reach dōjō: {e}"))?;
     let status = r.status();
     let body = r.text().await.unwrap_or_default();
     if !status.is_success() {
@@ -56,12 +53,7 @@ pub async fn start(
 
 /// Trade the code and verifier for a session.
 pub async fn exchange(dojo_url: &str, code: &str, verifier: &str) -> Result<TokenResponse, String> {
-    post(
-        dojo_url,
-        "token",
-        serde_json::json!({ "code": code, "verifier": verifier }),
-    )
-    .await
+    post(dojo_url, "token", serde_json::json!({ "code": code, "verifier": verifier })).await
 }
 
 /// Prove an access token is usable, and learn who it authenticates as.
@@ -87,12 +79,7 @@ pub async fn whoami(dojo_url: &str, access_token: &str) -> Result<serde_json::Va
 
 /// Trade a stored refresh token for a live session.
 pub async fn refresh(dojo_url: &str, refresh_token: &str) -> Result<TokenResponse, String> {
-    post(
-        dojo_url,
-        "refresh",
-        serde_json::json!({ "refresh_token": refresh_token }),
-    )
-    .await
+    post(dojo_url, "refresh", serde_json::json!({ "refresh_token": refresh_token })).await
 }
 
 /// POST a body to a leg and parse the session out of the response.
@@ -162,18 +149,9 @@ mod tests {
         // One setting drives all three, so a wrong base fails everywhere at once
         // rather than leaving a half-working sign-in.
         let d = "https://dojo.sensei-hq.com";
-        assert_eq!(
-            endpoint(d, "start"),
-            "https://dojo.sensei-hq.com/v1/auth/cli/start"
-        );
-        assert_eq!(
-            endpoint(d, "token"),
-            "https://dojo.sensei-hq.com/v1/auth/cli/token"
-        );
-        assert_eq!(
-            endpoint(d, "refresh"),
-            "https://dojo.sensei-hq.com/v1/auth/cli/refresh"
-        );
+        assert_eq!(endpoint(d, "start"), "https://dojo.sensei-hq.com/v1/auth/cli/start");
+        assert_eq!(endpoint(d, "token"), "https://dojo.sensei-hq.com/v1/auth/cli/token");
+        assert_eq!(endpoint(d, "refresh"), "https://dojo.sensei-hq.com/v1/auth/cli/refresh");
     }
 
     #[test]
@@ -199,10 +177,7 @@ mod tests {
     fn the_status_is_recoverable_from_a_failure_message() {
         // This is what decides whether the stored session is DELETED, so it must
         // not rest on matching prose that a later edit can reword.
-        assert_eq!(
-            status_of(&dojo_error(401, r#"{"error":"bad token"}"#)),
-            Some(401)
-        );
+        assert_eq!(status_of(&dojo_error(401, r#"{"error":"bad token"}"#)), Some(401));
         assert_eq!(status_of(&dojo_error(502, "")), Some(502));
         assert_eq!(status_of("could not reach dōjō: connection refused"), None);
         assert_eq!(status_of("dōjō returned no authorizeUrl"), None);

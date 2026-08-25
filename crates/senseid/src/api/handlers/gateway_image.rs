@@ -1,7 +1,7 @@
 //! POST /api/gateway/image/generate — text → image via the gateway.
 
 use axum::{extract::State, http::StatusCode, response::Json};
-use base64::{engine::general_purpose::STANDARD, Engine};
+use base64::{Engine, engine::general_purpose::STANDARD};
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 
@@ -12,29 +12,31 @@ use gateway::types::request::{InferenceRequest, Payload};
 
 #[derive(Deserialize)]
 pub(crate) struct ImageGenerateBody {
-    pub prompt:       String,
+    pub prompt: String,
     #[serde(default)]
-    pub model:        Option<String>,
+    pub model: Option<String>,
     #[serde(default)]
-    pub router:       Option<String>,
+    pub router: Option<String>,
     #[serde(default)]
-    pub size:         Option<String>,
+    pub size: Option<String>,
     #[serde(default)]
-    pub quality:      Option<String>,
+    pub quality: Option<String>,
     #[serde(default)]
-    pub style:        Option<String>,
+    pub style: Option<String>,
     #[serde(default = "default_n")]
-    pub n:            u8,
+    pub n: u8,
     /// MUST be absolute. MCP tool resolves relative paths upstream.
     /// When omitted, daemon writes to ~/.sensei/generated/<hash>.png.
     #[serde(default)]
-    pub output_path:  Option<String>,
+    pub output_path: Option<String>,
     /// Escape hatch for the $HOME safety guard. Default false.
     #[serde(default)]
     pub allow_outside_home: bool,
 }
 
-fn default_n() -> u8 { 1 }
+fn default_n() -> u8 {
+    1
+}
 
 /// Resolve `model` to (model_for_request, router_override).
 fn split_model_router(
@@ -59,7 +61,9 @@ fn default_cache_path(prompt: &str, provider: &str, model: Option<&str>) -> Path
     let mut hasher = Sha256::new();
     hasher.update(prompt);
     hasher.update(provider);
-    if let Some(m) = model { hasher.update(m); }
+    if let Some(m) = model {
+        hasher.update(m);
+    }
     let hash = hex::encode(hasher.finalize());
     home_dir()
         .unwrap_or_else(|| PathBuf::from("/tmp"))
@@ -69,23 +73,33 @@ fn default_cache_path(prompt: &str, provider: &str, model: Option<&str>) -> Path
 }
 
 fn path_is_safe(path: &Path, allow_outside_home: bool) -> bool {
-    if allow_outside_home { return true; }
-    let Some(home) = home_dir() else { return true; }; // can't enforce — be permissive
-    if path.starts_with(&home) { return true; }
-    if path.starts_with("/tmp") { return true; }
+    if allow_outside_home {
+        return true;
+    }
+    let Some(home) = home_dir() else {
+        return true;
+    }; // can't enforce — be permissive
+    if path.starts_with(&home) {
+        return true;
+    }
+    if path.starts_with("/tmp") {
+        return true;
+    }
     #[cfg(target_os = "macos")]
-    if path.starts_with("/private/tmp") { return true; }
+    if path.starts_with("/private/tmp") {
+        return true;
+    }
     false
 }
 
 /// Detect the image format from magic bytes and return the appropriate extension.
 fn detect_extension(bytes: &[u8]) -> &'static str {
     match bytes {
-        [0xFF, 0xD8, 0xFF, ..]                                                    => "jpg",
-        [0x89, b'P', b'N', b'G', ..]                                              => "png",
-        [b'R', b'I', b'F', b'F', _, _, _, _, b'W', b'E', b'B', b'P', ..]        => "webp",
-        [b'G', b'I', b'F', b'8', ..]                                              => "gif",
-        _                                                                          => "png",
+        [0xFF, 0xD8, 0xFF, ..] => "jpg",
+        [0x89, b'P', b'N', b'G', ..] => "png",
+        [b'R', b'I', b'F', b'F', _, _, _, _, b'W', b'E', b'B', b'P', ..] => "webp",
+        [b'G', b'I', b'F', b'8', ..] => "gif",
+        _ => "png",
     }
 }
 
@@ -111,28 +125,31 @@ pub(crate) async fn image_generate(
         };
         if entry.needs_key {
             let rid_owned = rid.to_string();
-            let key_present = tokio::task::spawn_blocking(move || {
-                crate::gateway_keys::has_key(&rid_owned)
-            }).await.unwrap_or(false);
+            let key_present =
+                tokio::task::spawn_blocking(move || crate::gateway_keys::has_key(&rid_owned))
+                    .await
+                    .unwrap_or(false);
             if !key_present {
-                return Err(err(StatusCode::BAD_REQUEST,
-                    &format!("{} router key not configured", rid)));
+                return Err(err(
+                    StatusCode::BAD_REQUEST,
+                    &format!("{} router key not configured", rid),
+                ));
             }
         }
     }
 
     let payload = Payload::ImageGenerate {
-        prompt:  body.prompt.clone(),
-        size:    body.size,
+        prompt: body.prompt.clone(),
+        size: body.size,
         quality: body.quality,
-        style:   body.style,
-        n:       body.n,
+        style: body.style,
+        n: body.n,
     };
     let request = InferenceRequest {
         capability: Capability::ImageGenerate,
         model,
         router: router_override.clone(),
-        chain:  None,
+        chain: None,
         payload,
         budget: None,
         auth: None,
@@ -142,7 +159,10 @@ pub(crate) async fn image_generate(
         credentials: std::collections::HashMap::new(),
     };
 
-    let response = state.gateway.execute(&request).await
+    let response = state
+        .gateway
+        .execute(&request)
+        .await
         .map_err(|e| err(StatusCode::BAD_GATEWAY, &e.to_string()))?;
 
     let images = response.images.unwrap_or_default();
@@ -160,8 +180,10 @@ pub(crate) async fn image_generate(
         return Err(err(StatusCode::BAD_REQUEST, "output_path must be absolute"));
     }
     if !path_is_safe(&base, body.allow_outside_home) {
-        return Err(err(StatusCode::BAD_REQUEST,
-            "output path outside $HOME blocked (pass allow_outside_home=true to override)"));
+        return Err(err(
+            StatusCode::BAD_REQUEST,
+            "output path outside $HOME blocked (pass allow_outside_home=true to override)",
+        ));
     }
 
     let mut written = Vec::with_capacity(images.len());
@@ -178,9 +200,7 @@ pub(crate) async fn image_generate(
                 .send()
                 .await
                 .map_err(|e| err(StatusCode::BAD_GATEWAY, &e.to_string()))?;
-            resp.bytes().await
-                .map_err(|e| err(StatusCode::BAD_GATEWAY, &e.to_string()))?
-                .to_vec()
+            resp.bytes().await.map_err(|e| err(StatusCode::BAD_GATEWAY, &e.to_string()))?.to_vec()
         } else {
             return Err(err(StatusCode::BAD_GATEWAY, "image had neither b64_json nor url"));
         };
@@ -204,10 +224,12 @@ pub(crate) async fn image_generate(
             base.with_file_name(format!("{stem}-{}.{ext}", i + 1))
         };
         if let Some(parent) = path.parent() {
-            tokio::fs::create_dir_all(parent).await
+            tokio::fs::create_dir_all(parent)
+                .await
                 .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()))?;
         }
-        tokio::fs::write(&path, &bytes).await
+        tokio::fs::write(&path, &bytes)
+            .await
             .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()))?;
         written.push(path.display().to_string());
     }
@@ -280,7 +302,10 @@ mod tests {
     fn detect_extension_identifies_formats() {
         assert_eq!(detect_extension(&[0xFF, 0xD8, 0xFF, 0xE0]), "jpg");
         assert_eq!(detect_extension(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]), "png");
-        assert_eq!(detect_extension(&[b'R', b'I', b'F', b'F', 0, 0, 0, 0, b'W', b'E', b'B', b'P']), "webp");
+        assert_eq!(
+            detect_extension(&[b'R', b'I', b'F', b'F', 0, 0, 0, 0, b'W', b'E', b'B', b'P']),
+            "webp"
+        );
         assert_eq!(detect_extension(b"GIF89a"), "gif");
         assert_eq!(detect_extension(&[0x00, 0x01, 0x02]), "png"); // unknown → default
     }

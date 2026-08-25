@@ -21,10 +21,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
+use axum::Router;
 use axum::body::Body;
 use axum::http::Request;
-use axum::Router;
-use tokio::time::{sleep, Instant};
+use tokio::time::{Instant, sleep};
 use tower::ServiceExt;
 
 /// Backoff policy for a retrying connect. `max_elapsed = None` retries forever
@@ -204,10 +204,10 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicU32, Ordering};
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
     use axum::routing::get;
+    use std::sync::atomic::{AtomicU32, Ordering};
     use tower::ServiceExt;
 
     /// A tiny router with a single `/x` route that returns the given marker text.

@@ -11,7 +11,7 @@
 //! so gating is out-of-band and the driver does not own it (relay-engine §5/§7).
 
 use super::trait_def::{DriveCapability, DriveStep, RunDriver};
-use crate::agent_spawn::{run_agent, AgentCommand, AgentOutput, AgentSpawnError};
+use crate::agent_spawn::{AgentCommand, AgentOutput, AgentSpawnError, run_agent};
 
 /// Drives a run by spawning `claude -p <prompt>` headless (the P3 mechanism).
 pub struct ClaudeDriver {

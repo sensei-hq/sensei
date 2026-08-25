@@ -1,12 +1,12 @@
 //! Scan phase: discover folders, classify, enqueue ProcessGitFolder.
 //! Only emits activity events. Project + folder events come from ProcessGitFolder.
 
-use std::path::Path;
-use std::time::Instant;
 use super::super::executor::TaskContext;
 use super::super::{Task, TaskKind};
 use super::scan_logic::{self, FolderKind};
 use crate::api::events::*;
+use std::path::Path;
+use std::time::Instant;
 
 // ── Scan Root ──────────────────────────────────────────────────────────────
 
@@ -17,7 +17,9 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
     }
 
     let start = Instant::now();
-    let emit = |evt: StateEvent| { let _ = ctx.app_state.event_tx.send(evt); };
+    let emit = |evt: StateEvent| {
+        let _ = ctx.app_state.event_tx.send(evt);
+    };
 
     // Resolve the EFFECTIVE watch root. Watch roots stay top-level: if this scan
     // targets a path inside an existing watch root, index under that root instead
@@ -25,7 +27,10 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
     // repo via repo_root_for_path). Only a path under no existing root becomes a
     // new watch root.
     let root_name = root.file_name().and_then(|n| n.to_str()).unwrap_or("root");
-    let (root_id, watch_root_path) = match ctx.pg().enclosing_watch_root(&task.path).await
+    let (root_id, watch_root_path) = match ctx
+        .pg()
+        .enclosing_watch_root(&task.path)
+        .await
         .map_err(|e| format!("enclosing_watch_root: {e}"))?
     {
         Some((id, path)) => {
@@ -36,7 +41,10 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
             (id, path)
         }
         None => {
-            let id = ctx.pg().add_watch_root(&task.path, root_name, &serde_json::json!([])).await
+            let id = ctx
+                .pg()
+                .add_watch_root(&task.path, root_name, &serde_json::json!([]))
+                .await
                 .map_err(|e| format!("Failed to register watch root: {}", e))?;
             (id, task.path.clone())
         }
@@ -46,7 +54,10 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
     // relative entries resolved to absolute `root/entry` prefixes). Filter the
     // discovered set so excluded subtrees are never classified as projects; the
     // watcher gets the same list so it ignores changes there.
-    let exclusions = ctx.pg().root_exclusion_prefixes(&watch_root_path).await
+    let exclusions = ctx
+        .pg()
+        .root_exclusion_prefixes(&watch_root_path)
+        .await
         .map_err(|e| format!("read exclusions for {watch_root_path}: {e}"))?;
 
     // 1. Find all git folders
@@ -70,9 +81,8 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
         .into_iter()
         .filter(|p| !scan_logic::is_excluded(p, &exclusions))
         .collect();
-    let classified = scan_logic::classify_folders(
-        root, &git_folders, &all_dirs, scan_logic::has_indexable_code,
-    );
+    let classified =
+        scan_logic::classify_folders(root, &git_folders, &all_dirs, scan_logic::has_indexable_code);
 
     // Emit discover activity for quasi-repos (git folders were emitted above).
     for f in &classified {
@@ -103,7 +113,10 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
                 // user to keep / organise / discard. Manifest-backed roots and real git
                 // repos are confident; clear any stale flag on them.
                 let needs_review = f.kind == FolderKind::Standalone
-                    && matches!(scan_logic::classify_quasi_repo(&f.path), Some(scan_logic::QuasiKind::LooseCode));
+                    && matches!(
+                        scan_logic::classify_quasi_repo(&f.path),
+                        Some(scan_logic::QuasiKind::LooseCode)
+                    );
                 if needs_review {
                     if let Err(e) = ctx.pg().tag_folder(&fid, "needs-review").await {
                         tracing::warn!(error = %e, folder_id = %fid, "scan_root: tag_folder needs-review failed");
@@ -118,15 +131,21 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
                 if f.kind == FolderKind::Git {
                     let remotes = read_git_remotes(&path_str);
                     if !remotes.is_empty()
-                        && let Err(e) = ctx.pg().update_folder_remotes(&fid, &serde_json::Value::Array(remotes)).await {
+                        && let Err(e) = ctx
+                            .pg()
+                            .update_folder_remotes(&fid, &serde_json::Value::Array(remotes))
+                            .await
+                    {
                         tracing::warn!(error = %e, folder_id = %fid, "scan_root: update_folder_remotes failed");
                     }
                 }
             }
-            Err(e) => tracing::warn!(error = %e, path = %path_str, "scan_root: upsert_repo_kind failed"),
+            Err(e) => {
+                tracing::warn!(error = %e, path = %path_str, "scan_root: upsert_repo_kind failed")
+            }
         }
-        let process_task = Task::for_folder(TaskKind::ProcessGitFolder, &path_str)
-            .with_parent(task.id);
+        let process_task =
+            Task::for_folder(TaskKind::ProcessGitFolder, &path_str).with_parent(task.id);
         // Single-writer (D6e/W5): skip if this folder is already being scanned,
         // so a concurrent ScanRoot can't fan out a second ProcessGitFolder for it.
         let _ = ctx.queue.enqueue_unique(process_task).await;
@@ -138,17 +157,22 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
     //     later `reconcile_roots` no longer sees it as a stale root. Then prune
     //     roots the scan no longer discovers (a root that lost its `.git`, was
     //     emptied, or moved lingers forever as a phantom project otherwise).
-    let reabsorbed = ctx.pg().heal_nested_standalone_roots().await
-        .unwrap_or_else(|e| { tracing::warn!(error = %e, "scan_root: heal_nested_standalone_roots failed"); 0 });
+    let reabsorbed = ctx.pg().heal_nested_standalone_roots().await.unwrap_or_else(|e| {
+        tracing::warn!(error = %e, "scan_root: heal_nested_standalone_roots failed");
+        0
+    });
     let live: std::collections::HashSet<std::path::PathBuf> =
         classified.iter().map(|f| f.path.clone()).collect();
-    let ReconcileRootsOutcome { removed, marked, remapped, archived } = reconcile_roots(ctx.pg(), &root_id, &live).await;
+    let ReconcileRootsOutcome { removed, marked, remapped, archived } =
+        reconcile_roots(ctx.pg(), &root_id, &live).await;
     // Populate the canonical `sensei.repositories` registry + `folders.repository_id`
     // from the git roots' captured remotes (the repo-grain metric grain, D10). Runs
     // after the upsert loop stamped remote_urls. Best-effort — a failure is logged,
     // never fatal to the scan.
-    let repos_assigned = ctx.pg().assign_repositories(&root_id).await
-        .unwrap_or_else(|e| { tracing::warn!(error = %e, "scan_root: assign_repositories failed"); 0 });
+    let repos_assigned = ctx.pg().assign_repositories(&root_id).await.unwrap_or_else(|e| {
+        tracing::warn!(error = %e, "scan_root: assign_repositories failed");
+        0
+    });
     // Then prune ghost folder subtrees whose directory was deleted/moved on disk
     // (e.g. a renamed sub-crate). `reconcile_roots` only prunes project ROOTS and
     // `prune_vanished` only reconciles files *within* an indexed folder, so nothing
@@ -159,29 +183,53 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
     // subfolder still holds a duplicate of under the project's canonical root
     // owner. Twin-guarded (never removes a uniquely-held symbol); self-heals the
     // pre-fix #101 double-index residue and blocks future accumulation.
-    let deduped = ctx.pg().dedup_structural_folder_nodes(&root_id).await
-        .unwrap_or_else(|e| { tracing::warn!(error = %e, "scan_root: dedup_structural_folder_nodes failed"); 0 });
-    let orphaned = ctx.pg().mark_orphaned_projects().await.unwrap_or_else(|e| { tracing::warn!(error = %e, "scan_root: mark_orphaned_projects failed"); 0 });
+    let deduped = ctx.pg().dedup_structural_folder_nodes(&root_id).await.unwrap_or_else(|e| {
+        tracing::warn!(error = %e, "scan_root: dedup_structural_folder_nodes failed");
+        0
+    });
+    let orphaned = ctx.pg().mark_orphaned_projects().await.unwrap_or_else(|e| {
+        tracing::warn!(error = %e, "scan_root: mark_orphaned_projects failed");
+        0
+    });
     // Delete the provably-empty phantom projects (no folder / session / artifact)
     // — pre-#101 residue that would otherwise inflate the project count.
-    let pruned_projects = ctx.pg().prune_empty_projects(60).await.unwrap_or_else(|e| { tracing::warn!(error = %e, "scan_root: prune_empty_projects failed"); 0 });
+    let pruned_projects = ctx.pg().prune_empty_projects(60).await.unwrap_or_else(|e| {
+        tracing::warn!(error = %e, "scan_root: prune_empty_projects failed");
+        0
+    });
     // Tag file nodes with the framework kinds of the symbols they contain
     // (hook/component) so `get_patterns` / `get_file_tags` return real files.
-    let tagged = ctx.pg().tag_file_nodes_by_framework_kind(&root_id).await
-        .unwrap_or_else(|e| { tracing::warn!(error = %e, "scan_root: tag_file_nodes_by_framework_kind failed"); 0 });
+    let tagged = ctx.pg().tag_file_nodes_by_framework_kind(&root_id).await.unwrap_or_else(|e| {
+        tracing::warn!(error = %e, "scan_root: tag_file_nodes_by_framework_kind failed");
+        0
+    });
     if tagged > 0 {
         tracing::info!("scan_root reconcile: framework-tagged {tagged} file node(s)");
     }
     if reabsorbed > 0 {
-        tracing::info!("scan_root reconcile: re-absorbed {reabsorbed} nested standalone root(s) into their enclosing repo's project");
+        tracing::info!(
+            "scan_root reconcile: re-absorbed {reabsorbed} nested standalone root(s) into their enclosing repo's project"
+        );
     }
-    if removed > 0 || marked > 0 || remapped > 0 || archived > 0 || ghosts > 0 || deduped > 0 || pruned_projects > 0 || repos_assigned > 0 {
+    if removed > 0
+        || marked > 0
+        || remapped > 0
+        || archived > 0
+        || ghosts > 0
+        || deduped > 0
+        || pruned_projects > 0
+        || repos_assigned > 0
+    {
         emit(StateEvent::activity(ActivityEvent::new(
             ActivityLevel::Info,
-            &format!("reconcile · {removed} stale roots removed · {remapped} moved roots remapped · {archived} vanished roots archived · {ghosts} ghost folders pruned · {deduped} duplicate nodes deduped · {pruned_projects} empty projects purged · {repos_assigned} folders linked to repositories · {marked} flagged stale · {orphaned} projects re-tagged"),
+            &format!(
+                "reconcile · {removed} stale roots removed · {remapped} moved roots remapped · {archived} vanished roots archived · {ghosts} ghost folders pruned · {deduped} duplicate nodes deduped · {pruned_projects} empty projects purged · {repos_assigned} folders linked to repositories · {marked} flagged stale · {orphaned} projects re-tagged"
+            ),
             start.elapsed().as_secs_f64(),
         )));
-        tracing::info!("scan_root reconcile: removed={removed} remapped={remapped} archived={archived} ghost_folders={ghosts} deduped_nodes={deduped} empty_projects_purged={pruned_projects} repos_assigned={repos_assigned} marked={marked} orphaned_retagged={orphaned}");
+        tracing::info!(
+            "scan_root reconcile: removed={removed} remapped={remapped} archived={archived} ghost_folders={ghosts} deduped_nodes={deduped} empty_projects_purged={pruned_projects} repos_assigned={repos_assigned} marked={marked} orphaned_retagged={orphaned}"
+        );
     }
 
     // 5. Register watcher
@@ -189,7 +237,9 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
         let watcher = crate::watcher::root_watcher::RootWatcher::instance(ctx.queue.clone());
         match watcher.lock() {
             Ok(mut w) => w.register(std::path::PathBuf::from(&task.path), exclusions.clone()),
-            Err(e) => tracing::warn!(error = %e, path = %task.path, "scan_root: RootWatcher lock poisoned, watch root not registered"),
+            Err(e) => {
+                tracing::warn!(error = %e, path = %task.path, "scan_root: RootWatcher lock poisoned, watch root not registered")
+            }
         }
     }
 
@@ -203,8 +253,12 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
         start.elapsed().as_secs_f64(),
     )));
 
-    tracing::info!("scan_root: {} git, {} standalone project roots in {}",
-        git_count, quasi_count, task.path);
+    tracing::info!(
+        "scan_root: {} git, {} standalone project roots in {}",
+        git_count,
+        quasi_count,
+        task.path
+    );
     Ok((git_count + quasi_count) as u32)
 }
 
@@ -230,7 +284,11 @@ pub(crate) struct ReconcileRootsOutcome {
 fn remote_urls_of(v: &serde_json::Value) -> Vec<String> {
     v.get("remote_urls")
         .and_then(|r| r.as_array())
-        .map(|arr| arr.iter().filter_map(|e| e.get("url").and_then(|u| u.as_str()).map(String::from)).collect())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|e| e.get("url").and_then(|u| u.as_str()).map(String::from))
+                .collect()
+        })
         .unwrap_or_default()
 }
 
@@ -275,14 +333,22 @@ async fn reconcile_roots(
             let remotes = remote_urls_of(r);
             let remote_match = match pg.find_live_root_by_remote(&remotes, &live_abs).await {
                 Ok(m) => m,
-                Err(e) => { tracing::warn!(error = %e, path = %abs, "reconcile: find_live_root_by_remote failed, keeping root this pass"); continue; }
+                Err(e) => {
+                    tracing::warn!(error = %e, path = %abs, "reconcile: find_live_root_by_remote failed, keeping root this pass");
+                    continue;
+                }
             };
             let has_history = if remote_match.is_none() {
                 match pg.folder_has_sessions(&id).await {
                     Ok(h) => h,
-                    Err(e) => { tracing::warn!(error = %e, path = %abs, "reconcile: folder_has_sessions failed, keeping root this pass"); continue; }
+                    Err(e) => {
+                        tracing::warn!(error = %e, path = %abs, "reconcile: folder_has_sessions failed, keeping root this pass");
+                        continue;
+                    }
                 }
-            } else { false };
+            } else {
+                false
+            };
             (remote_match, has_history)
         } else {
             (None, false)
@@ -290,30 +356,42 @@ async fn reconcile_roots(
 
         match scan_logic::decide_stale_root(base, remote_match, has_history) {
             StaleDisposition::Keep => {}
-            StaleDisposition::Remap(to) => {
-                match pg.remap_folder(&id, abs, &to).await {
-                    Ok(_) => { out.remapped += 1; tracing::info!("reconcile: remapped moved root {abs} → {to} (git remote match)"); }
-                    Err(e) => tracing::warn!(error = %e, path = %abs, "reconcile: remap_folder failed"),
+            StaleDisposition::Remap(to) => match pg.remap_folder(&id, abs, &to).await {
+                Ok(_) => {
+                    out.remapped += 1;
+                    tracing::info!(
+                        "reconcile: remapped moved root {abs} → {to} (git remote match)"
+                    );
                 }
-            }
-            StaleDisposition::Archive => {
-                match pg.archive_folder(&id).await {
-                    Ok(_) => { out.archived += 1; tracing::info!("reconcile: archived vanished history-bearing root {abs}"); }
-                    Err(e) => tracing::warn!(error = %e, path = %abs, "reconcile: archive_folder failed"),
+                Err(e) => tracing::warn!(error = %e, path = %abs, "reconcile: remap_folder failed"),
+            },
+            StaleDisposition::Archive => match pg.archive_folder(&id).await {
+                Ok(_) => {
+                    out.archived += 1;
+                    tracing::info!("reconcile: archived vanished history-bearing root {abs}");
                 }
-            }
-            StaleDisposition::Remove => {
-                match pg.delete_folder_tree(&id).await {
-                    Ok(_) => { out.removed += 1; tracing::info!("reconcile: removed stale root {abs}"); }
-                    Err(e) => tracing::warn!(error = %e, path = %abs, "reconcile: delete_folder_tree failed"),
+                Err(e) => {
+                    tracing::warn!(error = %e, path = %abs, "reconcile: archive_folder failed")
                 }
-            }
-            StaleDisposition::MarkStale => {
-                match pg.tag_folder(&id, "stale").await {
-                    Ok(_) => { out.marked += 1; tracing::info!("reconcile: flagged stale root {abs}"); }
-                    Err(e) => tracing::warn!(error = %e, path = %abs, "reconcile: tag_folder stale failed"),
+            },
+            StaleDisposition::Remove => match pg.delete_folder_tree(&id).await {
+                Ok(_) => {
+                    out.removed += 1;
+                    tracing::info!("reconcile: removed stale root {abs}");
                 }
-            }
+                Err(e) => {
+                    tracing::warn!(error = %e, path = %abs, "reconcile: delete_folder_tree failed")
+                }
+            },
+            StaleDisposition::MarkStale => match pg.tag_folder(&id, "stale").await {
+                Ok(_) => {
+                    out.marked += 1;
+                    tracing::info!("reconcile: flagged stale root {abs}");
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, path = %abs, "reconcile: tag_folder stale failed")
+                }
+            },
         }
     }
     out
@@ -341,10 +419,7 @@ async fn reconcile_roots(
 /// Orchestration only: it delegates detection to [`detect_vanished_folders`] and
 /// deletion to [`apply_folder_prune`], so the read-only index integrity audit can
 /// reuse the exact same ghost-folder detection without mutating anything.
-async fn prune_vanished_folders(
-    pg: &crate::db::pg_store::PgStore,
-    root_id: &uuid::Uuid,
-) -> u64 {
+async fn prune_vanished_folders(pg: &crate::db::pg_store::PgStore, root_id: &uuid::Uuid) -> u64 {
     apply_folder_prune(pg, &detect_vanished_folders(pg, root_id).await).await
 }
 
@@ -365,7 +440,8 @@ pub(crate) async fn detect_vanished_folders(
 
     // Present project roots — a subfolder is eligible only when the root it lives
     // under is confirmed on disk (guards against an unmounted volume / moved repo).
-    let present_roots: Vec<String> = recorded.iter()
+    let present_roots: Vec<String> = recorded
+        .iter()
         .filter(|r| matches!(r["kind"].as_str().unwrap_or(""), "git" | "standalone" | "subtree"))
         .filter_map(|r| r["abs_path"].as_str().map(String::from))
         .filter(|abs| dir_present(std::path::Path::new(abs)))
@@ -409,8 +485,15 @@ pub(crate) async fn apply_folder_prune(
     let mut pruned = 0u64;
     for (id, abs) in ghosts {
         match pg.delete_folder_tree(id).await {
-            Ok(()) => { pruned += 1; tracing::info!("prune_vanished_folders: pruned ghost folder subtree {abs} (dir gone)"); }
-            Err(e) => tracing::warn!(error = %e, path = %abs, "prune_vanished_folders: delete_folder_tree failed"),
+            Ok(()) => {
+                pruned += 1;
+                tracing::info!(
+                    "prune_vanished_folders: pruned ghost folder subtree {abs} (dir gone)"
+                );
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, path = %abs, "prune_vanished_folders: delete_folder_tree failed")
+            }
         }
     }
     pruned
@@ -470,9 +553,8 @@ pub async fn branch_switch(ctx: &TaskContext, task: &Task) -> Result<u32, String
 
     let folder = ctx.pg().get_repo_by_path(&task.folder_path).await
         .unwrap_or_else(|e| { tracing::warn!(error = %e, path = %task.folder_path, "branch_switch: get_repo_by_path failed"); None });
-    let folder_name = folder.as_ref()
-        .and_then(|f| f["name"].as_str())
-        .unwrap_or_else(|| task.folder_name());
+    let folder_name =
+        folder.as_ref().and_then(|f| f["name"].as_str()).unwrap_or_else(|| task.folder_name());
 
     // No wipe. A branch switch is just an incremental re-index: git rewrites
     // exactly the files that differ between the two branches (updating their
@@ -546,12 +628,12 @@ fn read_git_remotes(repo_path: &str) -> Vec<serde_json::Value> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use std::sync::Arc;
-    use crate::tasks::queue::TaskQueue;
-    use crate::tasks::Task;
-    use crate::api::state::SharedState;
     use super::super::super::executor::TaskContext;
+    use super::*;
+    use crate::api::state::SharedState;
+    use crate::tasks::Task;
+    use crate::tasks::queue::TaskQueue;
+    use std::sync::Arc;
 
     #[test]
     fn parse_git_remote_config_extracts_name_url_pairs() {
@@ -589,7 +671,8 @@ mod tests {
         })
     }
 
-    async fn make_ctx_with_events() -> (Arc<TaskContext>, tokio::sync::broadcast::Receiver<StateEvent>) {
+    async fn make_ctx_with_events()
+    -> (Arc<TaskContext>, tokio::sync::broadcast::Receiver<StateEvent>) {
         let queue = Arc::new(TaskQueue::new());
         let gateway = crate::api::gateway_init::init_gateway_test().await;
         let (event_tx, event_rx) = tokio::sync::broadcast::channel(256);
@@ -648,44 +731,125 @@ mod tests {
 
         let repo = root.join("repo");
         std::fs::create_dir_all(&repo).unwrap();
-        let root_id = ctx.pg().add_watch_root(&root_str, "dedup", &serde_json::json!([])).await.unwrap();
+        let root_id =
+            ctx.pg().add_watch_root(&root_str, "dedup", &serde_json::json!([])).await.unwrap();
         // Both the repo root and its member share ONE project (as in prod, where
         // ProcessGitFolder attributes them) — the twin-guard scopes by project.
         let pid = ctx.pg().create_project("dedup-proj", None, None).await.unwrap();
-        let repo_fid = ctx.pg().upsert_repo_kind(&root_id, "git", "repo", &repo.to_string_lossy()).await.unwrap();
+        let repo_fid = ctx
+            .pg()
+            .upsert_repo_kind(&root_id, "git", "repo", &repo.to_string_lossy())
+            .await
+            .unwrap();
         ctx.pg().set_folder_project(&repo_fid, &pid, "root", None).await.unwrap();
 
         // The canonical git-root copies, stored repo-relative: a code symbol AND
         // a `file` node (whose `name` IS the repo-relative path).
-        let root_twin = ctx.pg().upsert_node(&repo_fid, "function", "run_task", "crates/member/src/lib.rs", None, None, None, None).await.unwrap();
-        let root_file = ctx.pg().upsert_node(&repo_fid, "file", "crates/member/src/lib.rs", "crates/member/src/lib.rs", None, None, None, None).await.unwrap();
+        let root_twin = ctx
+            .pg()
+            .upsert_node(
+                &repo_fid,
+                "function",
+                "run_task",
+                "crates/member/src/lib.rs",
+                None,
+                None,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        let root_file = ctx
+            .pg()
+            .upsert_node(
+                &repo_fid,
+                "file",
+                "crates/member/src/lib.rs",
+                "crates/member/src/lib.rs",
+                None,
+                None,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
 
         // A structural member subfolder carrying residue (subfolder-relative paths).
         let member = repo.join("crates/member");
         std::fs::create_dir_all(&member).unwrap();
-        let member_fid = ctx.pg().upsert_subfolder(&root_id, "member", "crates/member", &member.to_string_lossy(), Some(&repo_fid), Some(&pid)).await.unwrap();
+        let member_fid = ctx
+            .pg()
+            .upsert_subfolder(
+                &root_id,
+                "member",
+                "crates/member",
+                &member.to_string_lossy(),
+                Some(&repo_fid),
+                Some(&pid),
+            )
+            .await
+            .unwrap();
         // A duplicate of the git-root symbol → pruned (name equal, path-suffix twin).
-        let dup = ctx.pg().upsert_node(&member_fid, "function", "run_task", "src/lib.rs", None, None, None, None).await.unwrap();
+        let dup = ctx
+            .pg()
+            .upsert_node(&member_fid, "function", "run_task", "src/lib.rs", None, None, None, None)
+            .await
+            .unwrap();
         // A duplicate `file` node → pruned via NAME path-suffix ("src/lib.rs" ⊂
         // "crates/member/src/lib.rs"), the case a name-EQUAL rule would miss.
-        let dup_file = ctx.pg().upsert_node(&member_fid, "file", "src/lib.rs", "src/lib.rs", None, None, None, None).await.unwrap();
+        let dup_file = ctx
+            .pg()
+            .upsert_node(&member_fid, "file", "src/lib.rs", "src/lib.rs", None, None, None, None)
+            .await
+            .unwrap();
         // A symbol the root does NOT hold → KEPT (never lose a unique).
-        let unique = ctx.pg().upsert_node(&member_fid, "function", "orphan_only", "src/gone.rs", None, None, None, None).await.unwrap();
+        let unique = ctx
+            .pg()
+            .upsert_node(
+                &member_fid,
+                "function",
+                "orphan_only",
+                "src/gone.rs",
+                None,
+                None,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
         // A `file` node the root does NOT hold → KEPT (guard protects unique files too).
-        let unique_file = ctx.pg().upsert_node(&member_fid, "file", "src/gone.rs", "src/gone.rs", None, None, None, None).await.unwrap();
+        let unique_file = ctx
+            .pg()
+            .upsert_node(&member_fid, "file", "src/gone.rs", "src/gone.rs", None, None, None, None)
+            .await
+            .unwrap();
 
         let pruned = ctx.pg().dedup_structural_folder_nodes(&root_id).await.unwrap();
         assert_eq!(pruned, 2, "the two root-twin duplicates (symbol + file) are pruned");
 
-        for (id, msg) in [(dup, "symbol duplicate pruned"), (dup_file, "file-node duplicate pruned")] {
-            let (alive,): (i64,) = sqlx_core::query_as::query_as("SELECT count(*) FROM sensei.nodes WHERE id=$1")
-                .bind(id).fetch_one(ctx.pg().pool()).await.unwrap();
+        for (id, msg) in
+            [(dup, "symbol duplicate pruned"), (dup_file, "file-node duplicate pruned")]
+        {
+            let (alive,): (i64,) =
+                sqlx_core::query_as::query_as("SELECT count(*) FROM sensei.nodes WHERE id=$1")
+                    .bind(id)
+                    .fetch_one(ctx.pg().pool())
+                    .await
+                    .unwrap();
             assert_eq!(alive, 0, "{msg}");
         }
-        for (id, msg) in [(unique, "unique symbol preserved"), (unique_file, "unique file preserved"),
-                          (root_twin, "canonical git-root symbol untouched"), (root_file, "canonical git-root file untouched")] {
-            let (alive,): (i64,) = sqlx_core::query_as::query_as("SELECT count(*) FROM sensei.nodes WHERE id=$1")
-                .bind(id).fetch_one(ctx.pg().pool()).await.unwrap();
+        for (id, msg) in [
+            (unique, "unique symbol preserved"),
+            (unique_file, "unique file preserved"),
+            (root_twin, "canonical git-root symbol untouched"),
+            (root_file, "canonical git-root file untouched"),
+        ] {
+            let (alive,): (i64,) =
+                sqlx_core::query_as::query_as("SELECT count(*) FROM sensei.nodes WHERE id=$1")
+                    .bind(id)
+                    .fetch_one(ctx.pg().pool())
+                    .await
+                    .unwrap();
             assert_eq!(alive, 1, "{msg}");
         }
     }
@@ -698,9 +862,28 @@ mod tests {
         let ctx = make_ctx().await;
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path();
-        let root_id = ctx.pg().add_watch_root(&root.to_string_lossy(), "comm", &serde_json::json!([])).await.unwrap();
-        let repo_fid = ctx.pg().upsert_repo_kind(&root_id, "git", "repo", &root.join("repo").to_string_lossy()).await.unwrap();
-        let sub_fid = ctx.pg().upsert_subfolder(&root_id, "sub", "repo/sub", &root.join("repo/sub").to_string_lossy(), Some(&repo_fid), None).await.unwrap();
+        let root_id = ctx
+            .pg()
+            .add_watch_root(&root.to_string_lossy(), "comm", &serde_json::json!([]))
+            .await
+            .unwrap();
+        let repo_fid = ctx
+            .pg()
+            .upsert_repo_kind(&root_id, "git", "repo", &root.join("repo").to_string_lossy())
+            .await
+            .unwrap();
+        let sub_fid = ctx
+            .pg()
+            .upsert_subfolder(
+                &root_id,
+                "sub",
+                "repo/sub",
+                &root.join("repo/sub").to_string_lossy(),
+                Some(&repo_fid),
+                None,
+            )
+            .await
+            .unwrap();
         ctx.pg().upsert_community(&repo_fid, 1, "auth cluster", 42).await.unwrap();
         ctx.pg().upsert_community(&sub_fid, 2, "util cluster", 7).await.unwrap();
 
@@ -719,24 +902,48 @@ mod tests {
         let ctx = make_ctx().await;
         let phantom = ctx.pg().create_project("phantom-crate", None, None).await.unwrap();
         // Age it past the mid-population grace window so the prune can see it.
-        sqlx_core::query::query("UPDATE sensei.projects SET modified_at = now() - interval '2 minutes' WHERE id=$1")
-            .bind(phantom).execute(ctx.pg().pool()).await.unwrap();
+        sqlx_core::query::query(
+            "UPDATE sensei.projects SET modified_at = now() - interval '2 minutes' WHERE id=$1",
+        )
+        .bind(phantom)
+        .execute(ctx.pg().pool())
+        .await
+        .unwrap();
 
         let tmp = tempfile::tempdir().unwrap();
-        let root_id = ctx.pg().add_watch_root(&tmp.path().to_string_lossy(), "pp", &serde_json::json!([])).await.unwrap();
+        let root_id = ctx
+            .pg()
+            .add_watch_root(&tmp.path().to_string_lossy(), "pp", &serde_json::json!([]))
+            .await
+            .unwrap();
         let live = ctx.pg().create_project("live-repo", None, None).await.unwrap();
-        let repo_fid = ctx.pg().upsert_repo_kind(&root_id, "git", "live", &tmp.path().join("live").to_string_lossy()).await.unwrap();
+        let repo_fid = ctx
+            .pg()
+            .upsert_repo_kind(&root_id, "git", "live", &tmp.path().join("live").to_string_lossy())
+            .await
+            .unwrap();
         ctx.pg().set_folder_project(&repo_fid, &live, "root", None).await.unwrap();
-        ctx.pg().upsert_node(&repo_fid, "function", "f", "live/lib.rs", None, None, None, None).await.unwrap();
+        ctx.pg()
+            .upsert_node(&repo_fid, "function", "f", "live/lib.rs", None, None, None, None)
+            .await
+            .unwrap();
 
         // Global `rows_affected` is racy in the shared test DB (a concurrent
         // scan's reconcile prunes too), so assert on our specific rows below.
         ctx.pg().prune_empty_projects(60).await.unwrap();
-        let (ph_alive,): (i64,) = sqlx_core::query_as::query_as("SELECT count(*) FROM sensei.projects WHERE id=$1")
-            .bind(phantom).fetch_one(ctx.pg().pool()).await.unwrap();
+        let (ph_alive,): (i64,) =
+            sqlx_core::query_as::query_as("SELECT count(*) FROM sensei.projects WHERE id=$1")
+                .bind(phantom)
+                .fetch_one(ctx.pg().pool())
+                .await
+                .unwrap();
         assert_eq!(ph_alive, 0, "empty phantom project deleted");
-        let (live_alive,): (i64,) = sqlx_core::query_as::query_as("SELECT count(*) FROM sensei.projects WHERE id=$1")
-            .bind(live).fetch_one(ctx.pg().pool()).await.unwrap();
+        let (live_alive,): (i64,) =
+            sqlx_core::query_as::query_as("SELECT count(*) FROM sensei.projects WHERE id=$1")
+                .bind(live)
+                .fetch_one(ctx.pg().pool())
+                .await
+                .unwrap();
         assert_eq!(live_alive, 1, "populated project kept");
     }
 
@@ -750,22 +957,33 @@ mod tests {
         std::fs::create_dir_all(root.join("keep/.git")).unwrap();
         std::fs::write(root.join("keep/Cargo.toml"), "[package]\nname=\"keep\"").unwrap();
         std::fs::create_dir_all(root.join("Archive/skipme/.git")).unwrap();
-        std::fs::write(root.join("Archive/skipme/Cargo.toml"), "[package]\nname=\"skipme\"").unwrap();
+        std::fs::write(root.join("Archive/skipme/Cargo.toml"), "[package]\nname=\"skipme\"")
+            .unwrap();
 
         let ctx = make_ctx().await;
         // Per-root exclusion: the watch root has excluded=["Archive"] (relative).
         // scan_root reads it via root_exclusion_prefixes(task.path).
-        ctx.pg().add_watch_root(&root.to_string_lossy(), "wt", &serde_json::json!(["Archive"])).await.unwrap();
+        ctx.pg()
+            .add_watch_root(&root.to_string_lossy(), "wt", &serde_json::json!(["Archive"]))
+            .await
+            .unwrap();
 
         let task = Task::new(TaskKind::ScanRoot, "", &root.to_string_lossy());
         scan_root(&ctx, &task).await.unwrap();
 
-        let pgf: Vec<String> = ctx.queue.snapshot().await.into_iter()
+        let pgf: Vec<String> = ctx
+            .queue
+            .snapshot()
+            .await
+            .into_iter()
             .filter(|(k, _, _)| *k == TaskKind::ProcessGitFolder)
             .map(|(_, _, path)| path)
             .collect();
         assert!(pgf.iter().any(|p| p.ends_with("/keep")), "kept repo enqueued, got {pgf:?}");
-        assert!(!pgf.iter().any(|p| p.contains("/skipme")), "excluded repo NOT enqueued, got {pgf:?}");
+        assert!(
+            !pgf.iter().any(|p| p.contains("/skipme")),
+            "excluded repo NOT enqueued, got {pgf:?}"
+        );
     }
 
     #[tokio::test]
@@ -778,19 +996,34 @@ mod tests {
         std::fs::write(root.join("sub/repo/Cargo.toml"), "[package]\nname=\"r\"").unwrap();
 
         let ctx = make_ctx().await;
-        let parent_id = ctx.pg().add_watch_root(&root.to_string_lossy(), "top", &serde_json::json!([])).await.unwrap();
+        let parent_id = ctx
+            .pg()
+            .add_watch_root(&root.to_string_lossy(), "top", &serde_json::json!([]))
+            .await
+            .unwrap();
 
         // Scan the SUB-PATH — must reuse the top-level root, not create a new one.
         let task = Task::new(TaskKind::ScanRoot, "", &root.join("sub").to_string_lossy());
         scan_root(&ctx, &task).await.unwrap();
 
         let enc = ctx.pg().enclosing_watch_root(&root.join("sub").to_string_lossy()).await.unwrap();
-        assert_eq!(enc.map(|(_, p)| p), Some(root.to_string_lossy().to_string()),
-            "no watch root registered at root/sub — the top-level root encloses it");
+        assert_eq!(
+            enc.map(|(_, p)| p),
+            Some(root.to_string_lossy().to_string()),
+            "no watch root registered at root/sub — the top-level root encloses it"
+        );
 
         let pool = ctx.pg().pool();
-        sqlx_core::query::query("DELETE FROM sensei.folders WHERE root_id=$1").bind(parent_id).execute(pool).await.ok();
-        sqlx_core::query::query("DELETE FROM sensei.folders_to_watch WHERE id=$1").bind(parent_id).execute(pool).await.ok();
+        sqlx_core::query::query("DELETE FROM sensei.folders WHERE root_id=$1")
+            .bind(parent_id)
+            .execute(pool)
+            .await
+            .ok();
+        sqlx_core::query::query("DELETE FROM sensei.folders_to_watch WHERE id=$1")
+            .bind(parent_id)
+            .execute(pool)
+            .await
+            .ok();
     }
 
     #[tokio::test]
@@ -803,23 +1036,35 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path();
         std::fs::create_dir_all(root.join("mono/.git")).unwrap();
-        std::fs::write(root.join("mono/Cargo.toml"), "[workspace]\nmembers=[\"crates/*\"]").unwrap();
+        std::fs::write(root.join("mono/Cargo.toml"), "[workspace]\nmembers=[\"crates/*\"]")
+            .unwrap();
         std::fs::create_dir_all(root.join("mono/crates/mycrate/src")).unwrap();
-        std::fs::write(root.join("mono/crates/mycrate/Cargo.toml"), "[package]\nname=\"mycrate\"").unwrap();
+        std::fs::write(root.join("mono/crates/mycrate/Cargo.toml"), "[package]\nname=\"mycrate\"")
+            .unwrap();
         std::fs::write(root.join("mono/crates/mycrate/src/lib.rs"), "pub fn a() {}").unwrap();
 
         let ctx = make_ctx().await;
         let task = Task::new(TaskKind::ScanRoot, "", &root.to_string_lossy());
         scan_root(&ctx, &task).await.unwrap();
 
-        let pgf: Vec<String> = ctx.queue.snapshot().await.into_iter()
+        let pgf: Vec<String> = ctx
+            .queue
+            .snapshot()
+            .await
+            .into_iter()
             .filter(|(k, _, _)| *k == TaskKind::ProcessGitFolder)
             .map(|(_, _, path)| path)
             .collect();
         assert_eq!(pgf.len(), 1, "exactly one ProcessGitFolder (the repo), got {pgf:?}");
-        assert!(pgf[0].ends_with("/mono"), "the ProcessGitFolder targets the repo root, got {pgf:?}");
+        assert!(
+            pgf[0].ends_with("/mono"),
+            "the ProcessGitFolder targets the repo root, got {pgf:?}"
+        );
         let member = root.join("mono/crates/mycrate").to_string_lossy().to_string();
-        assert!(!pgf.iter().any(|p| p == &member), "no ProcessGitFolder for a workspace member, got {pgf:?}");
+        assert!(
+            !pgf.iter().any(|p| p == &member),
+            "no ProcessGitFolder for a workspace member, got {pgf:?}"
+        );
     }
 
     #[tokio::test]
@@ -840,7 +1085,11 @@ mod tests {
         let task = Task::new(TaskKind::ScanRoot, "", &root.to_string_lossy());
         scan_root(&ctx, &task).await.unwrap();
 
-        let pgf: Vec<String> = ctx.queue.snapshot().await.into_iter()
+        let pgf: Vec<String> = ctx
+            .queue
+            .snapshot()
+            .await
+            .into_iter()
             .filter(|(k, _, p)| *k == TaskKind::ProcessGitFolder && *p == repo_path)
             .map(|(_, _, p)| p)
             .collect();
@@ -870,13 +1119,23 @@ mod tests {
         //  - `ghost`: kind=git whose path no longer exists on disk → must be removed
         //  - `group`: kind=git now an ancestor-of-git (no live owner) → must be flagged
         //  - `revived`: kind=git that lost `.git` but still has code → relabel standalone
-        let root_id = ctx.pg().add_watch_root(&root_str, "root", &serde_json::json!([])).await.unwrap();
+        let root_id =
+            ctx.pg().add_watch_root(&root_str, "root", &serde_json::json!([])).await.unwrap();
         let ghost = root.join("ghost"); // never created on disk
-        ctx.pg().upsert_repo_kind(&root_id, "git", "ghost", &ghost.to_string_lossy()).await.unwrap();
+        ctx.pg()
+            .upsert_repo_kind(&root_id, "git", "ghost", &ghost.to_string_lossy())
+            .await
+            .unwrap();
         let group = root.join("group");
-        ctx.pg().upsert_repo_kind(&root_id, "git", "group", &group.to_string_lossy()).await.unwrap();
+        ctx.pg()
+            .upsert_repo_kind(&root_id, "git", "group", &group.to_string_lossy())
+            .await
+            .unwrap();
         let revived = root.join("revived");
-        ctx.pg().upsert_repo_kind(&root_id, "git", "revived", &revived.to_string_lossy()).await.unwrap();
+        ctx.pg()
+            .upsert_repo_kind(&root_id, "git", "revived", &revived.to_string_lossy())
+            .await
+            .unwrap();
 
         let task = Task::new(TaskKind::ScanRoot, "", &root_str);
         scan_root(&ctx, &task).await.unwrap();
@@ -888,31 +1147,52 @@ mod tests {
         );
 
         // group (exists with content, but no live owner) → kept and tagged `stale`
-        let group_row = ctx.pg().get_repo_by_path(&group.to_string_lossy()).await.unwrap()
+        let group_row = ctx
+            .pg()
+            .get_repo_by_path(&group.to_string_lossy())
+            .await
+            .unwrap()
             .expect("contentful stale root should be marked, not deleted");
-        let tags: Vec<String> = group_row["tags"].as_array().unwrap_or(&vec![]).iter()
-            .filter_map(|t| t.as_str().map(String::from)).collect();
+        let tags: Vec<String> = group_row["tags"]
+            .as_array()
+            .unwrap_or(&vec![])
+            .iter()
+            .filter_map(|t| t.as_str().map(String::from))
+            .collect();
         assert!(tags.contains(&"stale".to_string()), "group should be tagged stale, got {tags:?}");
 
         // alive remains a live git root, untouched
         assert!(
-            ctx.pg().get_repo_by_path(&root.join("alive").to_string_lossy()).await.unwrap().is_some(),
+            ctx.pg()
+                .get_repo_by_path(&root.join("alive").to_string_lossy())
+                .await
+                .unwrap()
+                .is_some(),
             "live git repo should remain"
         );
 
         // revived (lost .git, still has code) → relabelled standalone, not stale/removed
-        let revived_row = ctx.pg().get_repo_by_path(&revived.to_string_lossy()).await.unwrap()
+        let revived_row = ctx
+            .pg()
+            .get_repo_by_path(&revived.to_string_lossy())
+            .await
+            .unwrap()
             .expect("revived quasi-repo should remain");
-        assert_eq!(revived_row["kind"], "standalone", "former git root with code should relabel standalone");
+        assert_eq!(
+            revived_row["kind"], "standalone",
+            "former git root with code should relabel standalone"
+        );
     }
 
     #[tokio::test]
     async fn upsert_repo_kind_relabels_git_standalone_but_preserves_subtree() {
         let ctx = make_ctx().await;
         let tmp = tempfile::tempdir().unwrap();
-        let root_id = ctx.pg()
+        let root_id = ctx
+            .pg()
             .add_watch_root(&tmp.path().to_string_lossy(), "r", &serde_json::json!([]))
-            .await.unwrap();
+            .await
+            .unwrap();
 
         // git ⇄ standalone is authoritative on re-registration.
         let p1 = tmp.path().join("a").to_string_lossy().to_string();
@@ -948,27 +1228,45 @@ mod tests {
         scan_root(&ctx, &task).await.unwrap();
 
         let tags_of = |row: &serde_json::Value| -> Vec<String> {
-            row["tags"].as_array().map(|a| a.iter().filter_map(|t| t.as_str().map(String::from)).collect())
+            row["tags"]
+                .as_array()
+                .map(|a| a.iter().filter_map(|t| t.as_str().map(String::from)).collect())
                 .unwrap_or_default()
         };
 
         // manifest → standalone, NOT flagged
-        let manifest = ctx.pg().get_repo_by_path(&root.join("manifest-proj").to_string_lossy())
-            .await.unwrap().expect("manifest quasi-repo should be registered");
+        let manifest = ctx
+            .pg()
+            .get_repo_by_path(&root.join("manifest-proj").to_string_lossy())
+            .await
+            .unwrap()
+            .expect("manifest quasi-repo should be registered");
         assert_eq!(manifest["kind"], "standalone");
-        assert!(!tags_of(&manifest).contains(&"needs-review".to_string()),
-            "manifest-backed quasi-repo should not be flagged");
+        assert!(
+            !tags_of(&manifest).contains(&"needs-review".to_string()),
+            "manifest-backed quasi-repo should not be flagged"
+        );
 
         // loose code → standalone, flagged needs-review
-        let loose = ctx.pg().get_repo_by_path(&root.join("loose-code").to_string_lossy())
-            .await.unwrap().expect("loose quasi-repo should be registered");
+        let loose = ctx
+            .pg()
+            .get_repo_by_path(&root.join("loose-code").to_string_lossy())
+            .await
+            .unwrap()
+            .expect("loose quasi-repo should be registered");
         assert_eq!(loose["kind"], "standalone");
-        assert!(tags_of(&loose).contains(&"needs-review".to_string()),
-            "loose-code quasi-repo should be flagged needs-review");
+        assert!(
+            tags_of(&loose).contains(&"needs-review".to_string()),
+            "loose-code quasi-repo should be flagged needs-review"
+        );
 
         // data only → not promoted
         assert!(
-            ctx.pg().get_repo_by_path(&root.join("data-only").to_string_lossy()).await.unwrap().is_none(),
+            ctx.pg()
+                .get_repo_by_path(&root.join("data-only").to_string_lossy())
+                .await
+                .unwrap()
+                .is_none(),
             "data-only folder should not be promoted to a project root"
         );
     }
@@ -978,14 +1276,30 @@ mod tests {
         let ctx = make_ctx().await;
         let tmp = tempfile::tempdir().unwrap();
         let repo_path = tmp.path().to_string_lossy().to_string();
-        let root_id = ctx.pg().add_watch_root(&repo_path, "pv", &serde_json::json!([])).await.unwrap();
+        let root_id =
+            ctx.pg().add_watch_root(&repo_path, "pv", &serde_json::json!([])).await.unwrap();
         let fid = ctx.pg().upsert_repo(&root_id, "pv-repo", &repo_path).await.unwrap();
 
         // Two indexed files: a.rs (still on disk) and a moved-away b.rs (orphan),
         // plus a module node (abs dir path) that must never be pruned.
         ctx.pg().upsert_node(&fid, "file", "a.rs", "a.rs", None, None, None, None).await.unwrap();
-        ctx.pg().upsert_node(&fid, "struct", "Gone", "crates/hive-mind/src/config.rs", None, None, None, None).await.unwrap();
-        ctx.pg().upsert_node(&fid, "module", "src", &format!("{repo_path}/src"), None, None, None, None).await.unwrap();
+        ctx.pg()
+            .upsert_node(
+                &fid,
+                "struct",
+                "Gone",
+                "crates/hive-mind/src/config.rs",
+                None,
+                None,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        ctx.pg()
+            .upsert_node(&fid, "module", "src", &format!("{repo_path}/src"), None, None, None, None)
+            .await
+            .unwrap();
         ctx.pg().upsert_scan_state(&fid, "crates/hive-mind/src/config.rs", 1, "h").await.unwrap();
 
         // Live working-tree set: only a.rs survives.
@@ -998,7 +1312,10 @@ mod tests {
         assert!(!files.iter().any(|p| p.contains("hive-mind")), "vanished file's nodes are gone");
         // The vanished file's scan-state row was cleared too.
         let ss = ctx.pg().list_scan_state(&fid).await.unwrap();
-        assert!(ss.iter().all(|(p, _)| !p.contains("hive-mind")), "scan_state for the vanished file cleared");
+        assert!(
+            ss.iter().all(|(p, _)| !p.contains("hive-mind")),
+            "scan_state for the vanished file cleared"
+        );
     }
 
     #[tokio::test]
@@ -1011,24 +1328,96 @@ mod tests {
         // A present git repo — the enclosing project root, confirmed on disk.
         let repo = root.join("repo");
         std::fs::create_dir_all(&repo).unwrap();
-        let root_id = ctx.pg().add_watch_root(&root_str, "pvf", &serde_json::json!([])).await.unwrap();
-        let repo_fid = ctx.pg().upsert_repo_kind(&root_id, "git", "repo", &repo.to_string_lossy()).await.unwrap();
+        let root_id =
+            ctx.pg().add_watch_root(&root_str, "pvf", &serde_json::json!([])).await.unwrap();
+        let repo_fid = ctx
+            .pg()
+            .upsert_repo_kind(&root_id, "git", "repo", &repo.to_string_lossy())
+            .await
+            .unwrap();
 
         // A LIVE subfolder: its dir exists on disk → must be KEPT with its node.
         let live_dir = repo.join("live");
         std::fs::create_dir_all(&live_dir).unwrap();
-        let live_fid = ctx.pg().upsert_subfolder(&root_id, "live", "live", &live_dir.to_string_lossy(), Some(&repo_fid), None).await.unwrap();
-        let live_node = ctx.pg().upsert_node(&live_fid, "struct", "Kept", "live/mod.rs", None, None, None, None).await.unwrap();
+        let live_fid = ctx
+            .pg()
+            .upsert_subfolder(
+                &root_id,
+                "live",
+                "live",
+                &live_dir.to_string_lossy(),
+                Some(&repo_fid),
+                None,
+            )
+            .await
+            .unwrap();
+        let live_node = ctx
+            .pg()
+            .upsert_node(&live_fid, "struct", "Kept", "live/mod.rs", None, None, None, None)
+            .await
+            .unwrap();
 
         // A GHOST subtree: `gone/` (renamed/moved away) + its child `gone/sub/` no
         // longer exist on disk, yet still carry folder rows + nodes/edge/scan_state.
-        let gone_dir = repo.join("gone");     // NOT created on disk
-        let gone_sub = gone_dir.join("sub");  // NOT created on disk
-        let gone_fid = ctx.pg().upsert_subfolder(&root_id, "gone", "gone", &gone_dir.to_string_lossy(), Some(&repo_fid), None).await.unwrap();
-        let sub_fid = ctx.pg().upsert_subfolder(&root_id, "sub", "gone/sub", &gone_sub.to_string_lossy(), Some(&gone_fid), None).await.unwrap();
-        let ghost_a = ctx.pg().upsert_node(&gone_fid, "struct", "HiveConfig", "gone/config.rs", None, None, None, None).await.unwrap();
-        let ghost_b = ctx.pg().upsert_node(&sub_fid, "struct", "HiveStore", "gone/sub/store.rs", None, None, None, None).await.unwrap();
-        let ghost_edge = ctx.pg().insert_edge(&gone_fid, &ghost_a, Some(&ghost_b), None, None, "references").await.unwrap();
+        let gone_dir = repo.join("gone"); // NOT created on disk
+        let gone_sub = gone_dir.join("sub"); // NOT created on disk
+        let gone_fid = ctx
+            .pg()
+            .upsert_subfolder(
+                &root_id,
+                "gone",
+                "gone",
+                &gone_dir.to_string_lossy(),
+                Some(&repo_fid),
+                None,
+            )
+            .await
+            .unwrap();
+        let sub_fid = ctx
+            .pg()
+            .upsert_subfolder(
+                &root_id,
+                "sub",
+                "gone/sub",
+                &gone_sub.to_string_lossy(),
+                Some(&gone_fid),
+                None,
+            )
+            .await
+            .unwrap();
+        let ghost_a = ctx
+            .pg()
+            .upsert_node(
+                &gone_fid,
+                "struct",
+                "HiveConfig",
+                "gone/config.rs",
+                None,
+                None,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        let ghost_b = ctx
+            .pg()
+            .upsert_node(
+                &sub_fid,
+                "struct",
+                "HiveStore",
+                "gone/sub/store.rs",
+                None,
+                None,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        let ghost_edge = ctx
+            .pg()
+            .insert_edge(&gone_fid, &ghost_a, Some(&ghost_b), None, None, "references")
+            .await
+            .unwrap();
         ctx.pg().upsert_scan_state(&gone_fid, "gone/config.rs", 1, "h").await.unwrap();
 
         // Prune: both ghost folder rows go, the live one stays.
@@ -1036,25 +1425,59 @@ mod tests {
         assert_eq!(pruned, 2, "both ghost folder rows (gone + gone/sub) should be pruned");
 
         // Ghost folder rows removed; repo + live folder rows survive.
-        let abs_paths: std::collections::HashSet<String> = ctx.pg().list_folders_by_root(&root_id).await.unwrap()
-            .iter().filter_map(|r| r["abs_path"].as_str().map(String::from)).collect();
-        assert!(!abs_paths.contains(&gone_dir.to_string_lossy().to_string()), "ghost folder row pruned");
-        assert!(!abs_paths.contains(&gone_sub.to_string_lossy().to_string()), "ghost child folder row pruned");
-        assert!(abs_paths.contains(&live_dir.to_string_lossy().to_string()), "live folder row kept");
+        let abs_paths: std::collections::HashSet<String> = ctx
+            .pg()
+            .list_folders_by_root(&root_id)
+            .await
+            .unwrap()
+            .iter()
+            .filter_map(|r| r["abs_path"].as_str().map(String::from))
+            .collect();
+        assert!(
+            !abs_paths.contains(&gone_dir.to_string_lossy().to_string()),
+            "ghost folder row pruned"
+        );
+        assert!(
+            !abs_paths.contains(&gone_sub.to_string_lossy().to_string()),
+            "ghost child folder row pruned"
+        );
+        assert!(
+            abs_paths.contains(&live_dir.to_string_lossy().to_string()),
+            "live folder row kept"
+        );
         assert!(abs_paths.contains(&repo.to_string_lossy().to_string()), "repo root kept");
 
         // Cascade: ghost nodes + edge + scan_state gone; live node survives.
-        let (ghost_nodes,): (i64,) = sqlx_core::query_as::query_as("SELECT count(*) FROM sensei.nodes WHERE id = ANY($1)")
-            .bind(vec![ghost_a, ghost_b]).fetch_one(ctx.pg().pool()).await.unwrap();
+        let (ghost_nodes,): (i64,) =
+            sqlx_core::query_as::query_as("SELECT count(*) FROM sensei.nodes WHERE id = ANY($1)")
+                .bind(vec![ghost_a, ghost_b])
+                .fetch_one(ctx.pg().pool())
+                .await
+                .unwrap();
         assert_eq!(ghost_nodes, 0, "ghost nodes cascade-deleted");
-        let (live_nodes,): (i64,) = sqlx_core::query_as::query_as("SELECT count(*) FROM sensei.nodes WHERE id = $1")
-            .bind(live_node).fetch_one(ctx.pg().pool()).await.unwrap();
+        let (live_nodes,): (i64,) =
+            sqlx_core::query_as::query_as("SELECT count(*) FROM sensei.nodes WHERE id = $1")
+                .bind(live_node)
+                .fetch_one(ctx.pg().pool())
+                .await
+                .unwrap();
         assert_eq!(live_nodes, 1, "live node preserved");
-        let (edge_count,): (i64,) = sqlx_core::query_as::query_as("SELECT count(*) FROM sensei.edges WHERE id = $1")
-            .bind(ghost_edge).fetch_one(ctx.pg().pool()).await.unwrap();
+        let (edge_count,): (i64,) =
+            sqlx_core::query_as::query_as("SELECT count(*) FROM sensei.edges WHERE id = $1")
+                .bind(ghost_edge)
+                .fetch_one(ctx.pg().pool())
+                .await
+                .unwrap();
         assert_eq!(edge_count, 0, "ghost edge cascade-deleted");
-        assert!(ctx.pg().list_scan_state(&gone_fid).await.unwrap().is_empty(), "ghost scan_state cascade-deleted");
-        assert_eq!(ctx.pg().list_indexed_files(&live_fid).await.unwrap(), vec!["live/mod.rs".to_string()], "live folder's nodes intact");
+        assert!(
+            ctx.pg().list_scan_state(&gone_fid).await.unwrap().is_empty(),
+            "ghost scan_state cascade-deleted"
+        );
+        assert_eq!(
+            ctx.pg().list_indexed_files(&live_fid).await.unwrap(),
+            vec!["live/mod.rs".to_string()],
+            "live folder's nodes intact"
+        );
 
         // Idempotent: a second run prunes nothing.
         assert_eq!(prune_vanished_folders(ctx.pg(), &root_id).await, 0, "re-run is a no-op");
@@ -1070,21 +1493,60 @@ mod tests {
         let root = tmp.path();
         let repo = root.join("repo");
         std::fs::create_dir_all(&repo).unwrap();
-        let root_id = ctx.pg().add_watch_root(&root.to_string_lossy(), "pvfwm", &serde_json::json!([])).await.unwrap();
-        let repo_fid = ctx.pg().upsert_repo_kind(&root_id, "git", "repo", &repo.to_string_lossy()).await.unwrap();
+        let root_id = ctx
+            .pg()
+            .add_watch_root(&root.to_string_lossy(), "pvfwm", &serde_json::json!([]))
+            .await
+            .unwrap();
+        let repo_fid = ctx
+            .pg()
+            .upsert_repo_kind(&root_id, "git", "repo", &repo.to_string_lossy())
+            .await
+            .unwrap();
 
         // A LIVE member (dir exists) and a GHOST member (dir never created).
         let live = repo.join("packages/live");
         std::fs::create_dir_all(&live).unwrap();
-        ctx.pg().upsert_subfolder_kind(&root_id, "workspace_member", "live", "packages/live", &live.to_string_lossy(), Some(&repo_fid), None).await.unwrap();
+        ctx.pg()
+            .upsert_subfolder_kind(
+                &root_id,
+                "workspace_member",
+                "live",
+                "packages/live",
+                &live.to_string_lossy(),
+                Some(&repo_fid),
+                None,
+            )
+            .await
+            .unwrap();
         let gone = repo.join("packages/gone"); // NOT created on disk
-        ctx.pg().upsert_subfolder_kind(&root_id, "workspace_member", "gone", "packages/gone", &gone.to_string_lossy(), Some(&repo_fid), None).await.unwrap();
+        ctx.pg()
+            .upsert_subfolder_kind(
+                &root_id,
+                "workspace_member",
+                "gone",
+                "packages/gone",
+                &gone.to_string_lossy(),
+                Some(&repo_fid),
+                None,
+            )
+            .await
+            .unwrap();
 
         let pruned = prune_vanished_folders(ctx.pg(), &root_id).await;
         assert_eq!(pruned, 1, "the vanished workspace_member is ghost-pruned");
-        let abs_paths: std::collections::HashSet<String> = ctx.pg().list_folders_by_root(&root_id).await.unwrap()
-            .iter().filter_map(|r| r["abs_path"].as_str().map(String::from)).collect();
-        assert!(!abs_paths.contains(&gone.to_string_lossy().to_string()), "ghost member row pruned");
+        let abs_paths: std::collections::HashSet<String> = ctx
+            .pg()
+            .list_folders_by_root(&root_id)
+            .await
+            .unwrap()
+            .iter()
+            .filter_map(|r| r["abs_path"].as_str().map(String::from))
+            .collect();
+        assert!(
+            !abs_paths.contains(&gone.to_string_lossy().to_string()),
+            "ghost member row pruned"
+        );
         assert!(abs_paths.contains(&live.to_string_lossy().to_string()), "live member row kept");
         assert!(abs_paths.contains(&repo.to_string_lossy().to_string()), "repo root kept");
     }
@@ -1095,24 +1557,45 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path();
         let root_str = root.to_string_lossy().to_string();
-        let root_id = ctx.pg().add_watch_root(&root_str, "pvf_absent", &serde_json::json!([])).await.unwrap();
+        let root_id =
+            ctx.pg().add_watch_root(&root_str, "pvf_absent", &serde_json::json!([])).await.unwrap();
 
         // A project root whose OWN directory is absent on disk (never created) —
         // simulates an unmounted volume / moved repo. reconcile_roots owns this;
         // prune_vanished_folders must NOT touch anything under it.
         let absent_repo = root.join("absent-repo"); // NOT created on disk
-        let repo_fid = ctx.pg().upsert_repo_kind(&root_id, "git", "absent-repo", &absent_repo.to_string_lossy()).await.unwrap();
-        let sub = absent_repo.join("src");           // also absent
-        let sub_fid = ctx.pg().upsert_subfolder(&root_id, "src", "src", &sub.to_string_lossy(), Some(&repo_fid), None).await.unwrap();
-        let node = ctx.pg().upsert_node(&sub_fid, "struct", "Untouched", "src/lib.rs", None, None, None, None).await.unwrap();
+        let repo_fid = ctx
+            .pg()
+            .upsert_repo_kind(&root_id, "git", "absent-repo", &absent_repo.to_string_lossy())
+            .await
+            .unwrap();
+        let sub = absent_repo.join("src"); // also absent
+        let sub_fid = ctx
+            .pg()
+            .upsert_subfolder(&root_id, "src", "src", &sub.to_string_lossy(), Some(&repo_fid), None)
+            .await
+            .unwrap();
+        let node = ctx
+            .pg()
+            .upsert_node(&sub_fid, "struct", "Untouched", "src/lib.rs", None, None, None, None)
+            .await
+            .unwrap();
 
         // Prune: enclosing root absent → nothing under it is pruned.
         let pruned = prune_vanished_folders(ctx.pg(), &root_id).await;
-        assert_eq!(pruned, 0, "an absent root must not have its subtree pruned (unmounted-volume safety)");
+        assert_eq!(
+            pruned, 0,
+            "an absent root must not have its subtree pruned (unmounted-volume safety)"
+        );
 
         // The subfolder row + its node survive.
-        let (exists,): (bool,) = sqlx_core::query_as::query_as("SELECT EXISTS(SELECT 1 FROM sensei.nodes WHERE id = $1)")
-            .bind(node).fetch_one(ctx.pg().pool()).await.unwrap();
+        let (exists,): (bool,) = sqlx_core::query_as::query_as(
+            "SELECT EXISTS(SELECT 1 FROM sensei.nodes WHERE id = $1)",
+        )
+        .bind(node)
+        .fetch_one(ctx.pg().pool())
+        .await
+        .unwrap();
         assert!(exists, "subtree under an absent root must be preserved");
     }
 
@@ -1131,24 +1614,25 @@ mod tests {
         scan_root(&ctx, &task).await.unwrap();
 
         let mut events = vec![];
-        while let Ok(evt) = rx.try_recv() { events.push(evt); }
+        while let Ok(evt) = rx.try_recv() {
+            events.push(evt);
+        }
 
         // ALL events must be activity — no project or folder events from ScanRoot
         for evt in &events {
-            assert_eq!(evt.entity, "activity",
-                "ScanRoot should only emit activity events, got entity={}", evt.entity);
+            assert_eq!(
+                evt.entity, "activity",
+                "ScanRoot should only emit activity events, got entity={}",
+                evt.entity
+            );
         }
 
         // Discover events: 2 git + 1 quasi-repo = 3 (code-less `notes` is skipped)
-        let discovers: Vec<_> = events.iter()
-            .filter(|e| e.data["level"] == "discover")
-            .collect();
+        let discovers: Vec<_> = events.iter().filter(|e| e.data["level"] == "discover").collect();
         assert_eq!(discovers.len(), 3, "expected 3 discover events, got {}", discovers.len());
 
         // Info summary
-        let infos: Vec<_> = events.iter()
-            .filter(|e| e.data["level"] == "info")
-            .collect();
+        let infos: Vec<_> = events.iter().filter(|e| e.data["level"] == "info").collect();
         assert_eq!(infos.len(), 1);
         let msg = infos[0].data["message"].as_str().unwrap();
         assert!(msg.contains("2 git"), "summary: {}", msg);

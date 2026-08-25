@@ -4,10 +4,10 @@
 //! external clients) gets the same `HealthPayload` shape the bootstrap
 //! crate produces.
 
+use crate::api::state::AppState;
 use axum::{extract::State, response::Json};
 use sensei_bootstrap::{self as bootstrap, HealthPayload};
 use std::time::Instant;
-use crate::api::state::AppState;
 
 static START_TIME: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
 
@@ -20,9 +20,9 @@ fn uptime_seconds() -> u64 {
 }
 
 pub(crate) async fn health() -> Json<HealthPayload> {
-    let mut payload = tokio::task::spawn_blocking(|| {
-        bootstrap::check(env!("CARGO_PKG_VERSION"))
-    }).await.expect("health check task panicked");
+    let mut payload = tokio::task::spawn_blocking(|| bootstrap::check(env!("CARGO_PKG_VERSION")))
+        .await
+        .expect("health check task panicked");
     payload.uptime_seconds = uptime_seconds();
     // Report the daemon's own DB-connection mode. The component probe above only
     // says whether Postgres is reachable; this says whether *this* daemon has a
@@ -39,12 +39,16 @@ pub(crate) async fn watcher_status(State(state): State<AppState>) -> Json<serde_
 
     if let Ok(w) = watcher.lock() {
         let status = format!("{:?}", w.status());
-        let roots: Vec<serde_json::Value> = w.roots().iter().map(|(path, root)| {
-            serde_json::json!({
-                "path": path.to_string_lossy(),
-                "excluded": root.excluded,
+        let roots: Vec<serde_json::Value> = w
+            .roots()
+            .iter()
+            .map(|(path, root)| {
+                serde_json::json!({
+                    "path": path.to_string_lossy(),
+                    "excluded": root.excluded,
+                })
             })
-        }).collect();
+            .collect();
         // Liveness surface (P1): so a stalled/dead watcher is never silent again.
         // The watchdog owns `healthy`; `last_event_at_ms` is the heartbeat the
         // watch thread updates on every fs event, queryable from out here.

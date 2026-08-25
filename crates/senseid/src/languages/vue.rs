@@ -1,12 +1,14 @@
-use super::common::extract_script_blocks;
-use crate::types::{ParsedFile, ParsedSymbol, SymbolKind};
-use crate::ir::IRParsedFile;
 use super::LanguageAdapter;
+use super::common::extract_script_blocks;
+use crate::ir::IRParsedFile;
+use crate::types::{ParsedFile, ParsedSymbol, SymbolKind};
 
 pub struct VueAdapter;
 
 impl LanguageAdapter for VueAdapter {
-    fn language(&self) -> &str { "vue" }
+    fn language(&self) -> &str {
+        "vue"
+    }
 
     fn fqn_output(&self, abs_path: &str, content: &str) -> Option<super::fqn::FqnFileOutput> {
         super::common::sfc_fqn_output(abs_path, content)
@@ -48,7 +50,8 @@ impl LanguageAdapter for VueAdapter {
                 sym.line_end += offset;
                 // Detect Vue composables (useXxx pattern)
                 if (sym.kind == SymbolKind::Function || sym.kind == SymbolKind::Const)
-                    && sym.name.starts_with("use") && sym.name.len() > 3
+                    && sym.name.starts_with("use")
+                    && sym.name.len() > 3
                     && sym.name.chars().nth(3).is_some_and(|c| c.is_uppercase())
                 {
                     sym.kind = SymbolKind::Hook;
@@ -68,12 +71,15 @@ impl LanguageAdapter for VueAdapter {
     }
 }
 
-
 /// Parse Vue SFC into IR — delegates script blocks to TypeScript adapter.
 pub fn parse_to_ir(source: &str, file_path: &str) -> IRParsedFile {
     let blocks = extract_script_blocks(source);
     if blocks.is_empty() {
-        return IRParsedFile { file_path: file_path.into(), language: "vue".into(), ..Default::default() };
+        return IRParsedFile {
+            file_path: file_path.into(),
+            language: "vue".into(),
+            ..Default::default()
+        };
     }
     let script = &blocks[0].0;
     let ext = if blocks[0].2 { "component.vue.ts" } else { "component.vue.js" };
@@ -87,7 +93,9 @@ pub fn parse_to_ir(source: &str, file_path: &str) -> IRParsedFile {
 mod tests {
     use super::*;
 
-    fn parse(src: &str) -> ParsedFile { VueAdapter.parse(src, "App.vue") }
+    fn parse(src: &str) -> ParsedFile {
+        VueAdapter.parse(src, "App.vue")
+    }
 
     #[test]
     fn vue_script_fqn() {
@@ -100,22 +108,32 @@ mod tests {
         let content = "<script lang=\"ts\">\nimport { helper } from './util';\nexport function build() { helper(); }\n</script>\n<template><div/></template>\n";
         std::fs::write(&file, content).unwrap();
         let out = VueAdapter.fqn_output(&file.to_string_lossy(), content).unwrap();
-        assert!(out.defs.iter().any(|d| d.fqn == "typescript·app·Card·build"),
-            "component script def, got: {:?}", out.defs.iter().map(|d| &d.fqn).collect::<Vec<_>>());
-        assert!(out.refs.iter().any(|r| r.target_fqn.as_deref() == Some("typescript·app·util·helper")),
-            "relative import resolved from the Vue SFC, got: {:?}", out.refs);
+        assert!(
+            out.defs.iter().any(|d| d.fqn == "typescript·app·Card·build"),
+            "component script def, got: {:?}",
+            out.defs.iter().map(|d| &d.fqn).collect::<Vec<_>>()
+        );
+        assert!(
+            out.refs.iter().any(|r| r.target_fqn.as_deref() == Some("typescript·app·util·helper")),
+            "relative import resolved from the Vue SFC, got: {:?}",
+            out.refs
+        );
     }
 
     #[test]
     fn vue_component_name() {
-        let pf = parse("<script setup>\nconst msg = 'hello'\n</script>\n<template><div>{{ msg }}</div></template>");
+        let pf = parse(
+            "<script setup>\nconst msg = 'hello'\n</script>\n<template><div>{{ msg }}</div></template>",
+        );
         assert_eq!(pf.symbols[0].name, "App");
         assert_eq!(pf.symbols[0].kind, SymbolKind::Component);
     }
 
     #[test]
     fn vue_script_setup() {
-        let pf = parse("<script setup lang=\"ts\">\nimport { ref } from 'vue';\nconst count = ref(0);\nfunction increment() { count.value++ }\n</script>");
+        let pf = parse(
+            "<script setup lang=\"ts\">\nimport { ref } from 'vue';\nconst count = ref(0);\nfunction increment() { count.value++ }\n</script>",
+        );
         let names: Vec<&str> = pf.symbols.iter().map(|s| s.name.as_str()).collect();
         assert!(names.contains(&"increment"));
         assert!(names.contains(&"count"));
@@ -124,8 +142,12 @@ mod tests {
 
     #[test]
     fn vue_composable_detection() {
-        let pf = parse("<script setup lang=\"ts\">\nfunction useCounter() { return { count: 0 } }\n</script>");
-        let hooks: Vec<&str> = pf.symbols.iter()
+        let pf = parse(
+            "<script setup lang=\"ts\">\nfunction useCounter() { return { count: 0 } }\n</script>",
+        );
+        let hooks: Vec<&str> = pf
+            .symbols
+            .iter()
             .filter(|s| s.kind == SymbolKind::Hook)
             .map(|s| s.name.as_str())
             .collect();

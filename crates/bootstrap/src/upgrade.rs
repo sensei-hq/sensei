@@ -41,11 +41,7 @@ impl UpgradeEvent {
         Self { step, status: "failed", error: Some(error) }
     }
     fn complete(any_failed: bool) -> Self {
-        Self {
-            step: "complete",
-            status: if any_failed { "partial" } else { "ok" },
-            error: None,
-        }
+        Self { step: "complete", status: if any_failed { "partial" } else { "ok" }, error: None }
     }
 }
 
@@ -120,11 +116,7 @@ fn brew_upgrade_sensei() -> Result<(), String> {
     {
         return Ok(());
     }
-    Err(format!(
-        "brew upgrade {formula} exited {}: {}",
-        output.status,
-        stderr.trim(),
-    ))
+    Err(format!("brew upgrade {formula} exited {}: {}", output.status, stderr.trim(),))
 }
 
 #[cfg(test)]
@@ -136,11 +128,7 @@ mod tests {
     /// step outcomes — no `brew`, no Postgres, so it can never hang.
     fn steps_for(prereqs: Result<(), String>, db: Result<(), String>) -> (bool, Vec<&'static str>) {
         let events: Mutex<Vec<UpgradeEvent>> = Mutex::new(Vec::new());
-        let ok = run_with(
-            |e| events.lock().unwrap().push(e),
-            move || prereqs,
-            move || db,
-        );
+        let ok = run_with(|e| events.lock().unwrap().push(e), move || prereqs, move || db);
         let steps = events.into_inner().unwrap().iter().map(|e| e.step).collect();
         (ok, steps)
     }
@@ -174,13 +162,13 @@ mod tests {
         // events precede all db_deploy events, which precede complete.
         let (_ok, steps) = steps_for(Ok(()), Err("no database in test".into()));
         assert_eq!(steps.first(), Some(&"prereqs"));
-        assert_eq!(steps.last(),  Some(&"complete"));
+        assert_eq!(steps.last(), Some(&"complete"));
         assert!(steps.contains(&"db_deploy"), "must emit db_deploy step");
         let first_db = steps.iter().position(|s| *s == "db_deploy").unwrap();
         let last_prereq = steps.iter().rposition(|s| *s == "prereqs").unwrap();
         let complete = steps.iter().position(|s| *s == "complete").unwrap();
         assert!(last_prereq < first_db, "all prereqs events before db_deploy");
-        assert!(first_db < complete,    "all db_deploy events before complete");
+        assert!(first_db < complete, "all db_deploy events before complete");
     }
 
     #[test]
@@ -188,10 +176,7 @@ mod tests {
         let (ok, steps) = steps_for(Ok(()), Ok(()));
         assert!(ok, "both steps Ok → run returns true");
         // Success path emits done (not failed) for each step, ending in complete.
-        assert_eq!(
-            steps,
-            vec!["prereqs", "prereqs", "db_deploy", "db_deploy", "complete"]
-        );
+        assert_eq!(steps, vec!["prereqs", "prereqs", "db_deploy", "db_deploy", "complete"]);
     }
 
     #[test]

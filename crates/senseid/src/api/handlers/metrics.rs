@@ -37,11 +37,7 @@ use crate::api::state::AppState;
 pub(crate) async fn get_metrics_registry(
     State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let metrics = state
-        .pg
-        .active_metrics()
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let metrics = state.pg.active_metrics().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(serde_json::json!({ "metrics": metrics, "count": metrics.len() })))
 }
 
@@ -59,9 +55,8 @@ pub(crate) async fn get_project_metrics(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let uuid = crate::api::util::resolve_project_uuid(&state, &id)
-        .await?
-        .ok_or(StatusCode::NOT_FOUND)?;
+    let uuid =
+        crate::api::util::resolve_project_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
     state
         .pg
         .get_project(&uuid)
@@ -69,27 +64,19 @@ pub(crate) async fn get_project_metrics(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    let rows = state
-        .pg
-        .get_project_metrics(&uuid)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let rows =
+        state.pg.get_project_metrics(&uuid).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let trend = state
         .pg
         .get_project_metric_trend(&uuid)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let trend_by_metric: std::collections::HashMap<String, (Option<f64>, Option<f64>)> = trend
-        .into_iter()
-        .map(|t| (t.metric, (t.prior, t.delta)))
-        .collect();
+    let trend_by_metric: std::collections::HashMap<String, (Option<f64>, Option<f64>)> =
+        trend.into_iter().map(|t| (t.metric, (t.prior, t.delta))).collect();
 
     let mut metrics = Vec::with_capacity(rows.len());
     for row in rows {
-        let (prior, delta) = trend_by_metric
-            .get(&row.metric)
-            .copied()
-            .unwrap_or((None, None));
+        let (prior, delta) = trend_by_metric.get(&row.metric).copied().unwrap_or((None, None));
         let mut value =
             serde_json::to_value(&row).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
         if let Some(obj) = value.as_object_mut() {
@@ -157,9 +144,8 @@ pub(crate) async fn get_project_metric_series(
     if !SERIES_GRAINS.contains(&grain) {
         return Err(StatusCode::BAD_REQUEST);
     }
-    let uuid = crate::api::util::resolve_project_uuid(&state, &id)
-        .await?
-        .ok_or(StatusCode::NOT_FOUND)?;
+    let uuid =
+        crate::api::util::resolve_project_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
     state
         .pg
         .get_project(&uuid)
@@ -224,9 +210,8 @@ pub(crate) async fn get_project_tools(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let uuid = crate::api::util::resolve_project_uuid(&state, &id)
-        .await?
-        .ok_or(StatusCode::NOT_FOUND)?;
+    let uuid =
+        crate::api::util::resolve_project_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
     state
         .pg
         .get_project(&uuid)
@@ -252,9 +237,8 @@ pub(crate) async fn get_project_metric_day_sessions(
         .as_deref()
         .and_then(|d| chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d").ok())
         .ok_or(StatusCode::BAD_REQUEST)?;
-    let uuid = crate::api::util::resolve_project_uuid(&state, &id)
-        .await?
-        .ok_or(StatusCode::NOT_FOUND)?;
+    let uuid =
+        crate::api::util::resolve_project_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
     state
         .pg
         .get_project(&uuid)
@@ -288,7 +272,10 @@ pub(crate) async fn get_project_metric_day_sessions(
     // comment above — the warm is off-wire, never on this request path).
     for session in &mut sessions {
         let facts = crate::analysis::session_metric_note::SessionMetricFacts::from_session_row(
-            session, &key, &label, &how_to_read,
+            session,
+            &key,
+            &label,
+            &how_to_read,
         );
         let obs = crate::analysis::session_metric_note::session_metric_observation(
             &state.pg,

@@ -36,12 +36,7 @@ pub struct MaturitySignal {
 /// shown a stable enough pattern.
 pub fn maturity_signal(watched: i64, has_insights: bool, target: i64) -> MaturitySignal {
     let mature = watched >= target && has_insights;
-    MaturitySignal {
-        stage: if mature { "mature" } else { "early" },
-        watched,
-        target,
-        has_insights,
-    }
+    MaturitySignal { stage: if mature { "mature" } else { "early" }, watched, target, has_insights }
 }
 
 #[cfg(test)]

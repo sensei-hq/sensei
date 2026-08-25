@@ -40,11 +40,11 @@
 //! heartbeat would never go stale and the watchdog could never escalate it — so
 //! a `stalled` run is a deliberate no-op tick here (see the status match below).
 
-use super::super::executor::TaskContext;
 use super::super::Task;
+use super::super::executor::TaskContext;
 use crate::agent_spawn::AgentOutput;
-use crate::relay_drivers::{driver_for, DriveStep, RunDriver};
-use crate::run_limits::{detect_limit, resolve_paused_until, LimitHit};
+use crate::relay_drivers::{DriveStep, RunDriver, driver_for};
+use crate::run_limits::{LimitHit, detect_limit, resolve_paused_until};
 use crate::runs::{Run, RunEventKind};
 use std::time::Duration;
 
@@ -149,10 +149,8 @@ impl DriveConfig {
     ///   enables the drive; anything else (incl. unset) keeps it OFF.
     /// - `SENSEI_RUN_AGENT_CMD` — the program to exec, default `"claude"`.
     pub fn from_env() -> Self {
-        let enabled = std::env::var("SENSEI_RUN_DRIVE")
-            .ok()
-            .map(|v| Self::is_truthy(&v))
-            .unwrap_or(false);
+        let enabled =
+            std::env::var("SENSEI_RUN_DRIVE").ok().map(|v| Self::is_truthy(&v)).unwrap_or(false);
         let agent_cmd = std::env::var("SENSEI_RUN_AGENT_CMD")
             .ok()
             .filter(|s| !s.trim().is_empty())
@@ -180,11 +178,7 @@ pub async fn advance_run(ctx: &TaskContext, task: &Task) -> Result<u32, String> 
     };
 
     // A run that was completed/deleted between enqueue and dispatch is empty work.
-    let Some(run) = ctx
-        .pg()
-        .get_run(&run_id)
-        .await
-        .map_err(|e| format!("get_run failed: {e}"))?
+    let Some(run) = ctx.pg().get_run(&run_id).await.map_err(|e| format!("get_run failed: {e}"))?
     else {
         return Ok(0);
     };
@@ -271,12 +265,7 @@ async fn drive_run(ctx: &TaskContext, cfg: &DriveConfig, run: &Run) -> Result<()
     let cwd = match resolve_cwd(ctx, run).await? {
         Some(dir) => dir,
         None => {
-            return flag(
-                ctx,
-                run,
-                "no resolvable project working directory; skipping drive",
-            )
-            .await;
+            return flag(ctx, run, "no resolvable project working directory; skipping drive").await;
         }
     };
 
@@ -407,7 +396,12 @@ async fn apply_outcome(
             // supersedes the exit code.
             tracing::info!(run_id = %run_id, %paused_until, "relay drive: paused on limit; will auto-resume");
             ctx.pg()
-                .update_run_status(run_id, RelayRunStatus::Paused, Some(&paused_until), Some(&reason))
+                .update_run_status(
+                    run_id,
+                    RelayRunStatus::Paused,
+                    Some(&paused_until),
+                    Some(&reason),
+                )
                 .await
                 .map_err(|e| format!("update_run_status(Paused) failed: {e}"))?;
             // Logical detail only: reason + reset window. Never raw output/code.
@@ -494,11 +488,7 @@ async fn resolve_cwd(ctx: &TaskContext, run: &Run) -> Result<Option<std::path::P
         return Ok(None);
     };
     let dir = std::path::PathBuf::from(&path);
-    if dir.is_dir() {
-        Ok(Some(dir))
-    } else {
-        Ok(None)
-    }
+    if dir.is_dir() { Ok(Some(dir)) } else { Ok(None) }
 }
 
 /// Emit a `Flagged` run_event with a short logical note (heartbeat is already
@@ -521,13 +511,8 @@ async fn resolve_run_stance(
     run: &Run,
     cwd: &std::path::Path,
 ) -> crate::stance::ResolvedStance {
-    let author_email = ctx
-        .pg()
-        .run_author(&run.id)
-        .await
-        .ok()
-        .and_then(|(_, email)| email)
-        .unwrap_or_default();
+    let author_email =
+        ctx.pg().run_author(&run.id).await.ok().and_then(|(_, email)| email).unwrap_or_default();
     // No attributable author → strict. (resolve_stance("") would match no row
     // and hand back the permissive fallback(), so short-circuit before that.)
     if author_email.is_empty() {
@@ -594,8 +579,8 @@ mod tests {
     use super::*;
     use crate::api::state::SharedState;
     use crate::runs::NewRun;
-    use crate::tasks::queue::TaskQueue;
     use crate::tasks::TaskKind;
+    use crate::tasks::queue::TaskQueue;
     use dojo_protocol::relay::RelayRunStatus;
     use std::sync::Arc;
 
@@ -607,31 +592,45 @@ mod tests {
             task_queue: queue.clone(),
             pg,
             gateway,
-            event_tx: { let (tx, _) = tokio::sync::broadcast::channel(16); tx },
+            event_tx: {
+                let (tx, _) = tokio::sync::broadcast::channel(16);
+                tx
+            },
             breaker: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
             provisioning: None,
         });
-        Some(Arc::new(TaskContext { queue, app_state, _graph_path: None, logger: sensei_logger::Logger::noop() }))
+        Some(Arc::new(TaskContext {
+            queue,
+            app_state,
+            _graph_path: None,
+            logger: sensei_logger::Logger::noop(),
+        }))
     }
 
     #[tokio::test]
     async fn empty_run_id_is_empty_work() {
         // No DB needed — the empty-path guard short-circuits before any query.
-        let Some(ctx) = make_ctx().await else { return; };
+        let Some(ctx) = make_ctx().await else {
+            return;
+        };
         let task = Task::new(TaskKind::AdvanceRun, "", "");
         assert_eq!(advance_run(&ctx, &task).await.unwrap(), 0);
     }
 
     #[tokio::test]
     async fn non_uuid_run_id_is_empty_work() {
-        let Some(ctx) = make_ctx().await else { return; };
+        let Some(ctx) = make_ctx().await else {
+            return;
+        };
         let task = Task::new(TaskKind::AdvanceRun, "", "not-a-uuid");
         assert_eq!(advance_run(&ctx, &task).await.unwrap(), 0);
     }
 
     #[tokio::test]
     async fn unknown_run_is_empty_work() {
-        let Some(ctx) = make_ctx().await else { return; };
+        let Some(ctx) = make_ctx().await else {
+            return;
+        };
         let id = uuid::Uuid::new_v4().to_string();
         let task = Task::new(TaskKind::AdvanceRun, "", &id);
         assert_eq!(advance_run(&ctx, &task).await.unwrap(), 0);
@@ -639,7 +638,9 @@ mod tests {
 
     #[tokio::test]
     async fn running_run_heartbeats_and_logs() {
-        let Some(ctx) = make_ctx().await else { return; };
+        let Some(ctx) = make_ctx().await else {
+            return;
+        };
         let pg = ctx.pg();
         let id = pg.create_run(&NewRun::default()).await.unwrap(); // defaults to running
 
@@ -661,11 +662,19 @@ mod tests {
 
     #[tokio::test]
     async fn paused_run_is_noop() {
-        let Some(ctx) = make_ctx().await else { return; };
+        let Some(ctx) = make_ctx().await else {
+            return;
+        };
         let pg = ctx.pg();
         let id = pg.create_run(&NewRun::default()).await.unwrap();
-        pg.update_run_status(&id, RelayRunStatus::Paused, Some("2999-01-01T00:00:00Z"), Some("cap"))
-            .await.unwrap();
+        pg.update_run_status(
+            &id,
+            RelayRunStatus::Paused,
+            Some("2999-01-01T00:00:00Z"),
+            Some("cap"),
+        )
+        .await
+        .unwrap();
 
         let task = Task::new(TaskKind::AdvanceRun, "", &id.to_string());
         assert_eq!(advance_run(&ctx, &task).await.unwrap(), 0, "a paused run is a no-op tick");
@@ -673,14 +682,19 @@ mod tests {
         // No heartbeat, no event.
         let run = pg.get_run(&id).await.unwrap().unwrap();
         assert!(run.heartbeat_at.is_none(), "paused run is not heartbeated");
-        assert!(pg.list_run_events(&id, 10).await.unwrap().is_empty(), "no event for a paused tick");
+        assert!(
+            pg.list_run_events(&id, 10).await.unwrap().is_empty(),
+            "no event for a paused tick"
+        );
 
         pg_delete_run(pg, &id).await;
     }
 
     #[tokio::test]
     async fn terminal_run_is_noop() {
-        let Some(ctx) = make_ctx().await else { return; };
+        let Some(ctx) = make_ctx().await else {
+            return;
+        };
         let pg = ctx.pg();
         let id = pg.create_run(&NewRun::default()).await.unwrap();
         pg.complete_run(&id, RelayRunStatus::Done).await.unwrap();
@@ -698,7 +712,9 @@ mod tests {
         // owns stalled runs. Critically, advance_run must NOT heartbeat a stalled
         // run — a fresh heartbeat would mask the staleness the watchdog escalates
         // on. So: returns 0, no new event, heartbeat unchanged.
-        let Some(ctx) = make_ctx().await else { return; };
+        let Some(ctx) = make_ctx().await else {
+            return;
+        };
         let pg = ctx.pg();
         let id = pg.create_run(&NewRun::default()).await.unwrap();
         pg.update_run_status(&id, RelayRunStatus::Stalled, None, None).await.unwrap();
@@ -719,7 +735,10 @@ mod tests {
 
     async fn pg_delete_run(pg: &crate::db::pg_store::PgStore, id: &uuid::Uuid) {
         sqlx_core::query::query("DELETE FROM activity.runs WHERE id = $1")
-            .bind(id).execute(pg.pool()).await.unwrap();
+            .bind(id)
+            .execute(pg.pool())
+            .await
+            .unwrap();
     }
 
     // ── P3.3b drive ────────────────────────────────────────────────────
@@ -761,7 +780,12 @@ mod tests {
         Utc.with_ymd_and_hms(2026, 7, 17, 8, 0, 0).unwrap()
     }
 
-    fn out_with(stdout: &str, stderr: &str, exit_code: Option<i32>, timed_out: bool) -> AgentOutput {
+    fn out_with(
+        stdout: &str,
+        stderr: &str,
+        exit_code: Option<i32>,
+        timed_out: bool,
+    ) -> AgentOutput {
         AgentOutput { stdout: stdout.into(), stderr: stderr.into(), exit_code, timed_out }
     }
 
@@ -867,10 +891,8 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let abs = dir.to_string_lossy().into_owned();
 
-        let project_id = pg
-            .create_project(&format!("drive-test-{uniq}"), None, None)
-            .await
-            .unwrap();
+        let project_id =
+            pg.create_project(&format!("drive-test-{uniq}"), None, None).await.unwrap();
         let root_id = pg
             .add_watch_root(&format!("/_test/drive/{uniq}"), "drive_root", &serde_json::json!([]))
             .await
@@ -889,9 +911,15 @@ mod tests {
     ) {
         // Deleting the watch root cascades its folders; then drop the project.
         sqlx_core::query::query("DELETE FROM sensei.folders_to_watch WHERE id = $1")
-            .bind(root_id).execute(pg.pool()).await.ok();
+            .bind(root_id)
+            .execute(pg.pool())
+            .await
+            .ok();
         sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
-            .bind(project_id).execute(pg.pool()).await.ok();
+            .bind(project_id)
+            .execute(pg.pool())
+            .await
+            .ok();
         std::fs::remove_dir_all(dir).ok();
     }
 
@@ -901,7 +929,9 @@ mod tests {
         // P3.2 behavior: one housekeeping tick, NO FeatureStarted. We do not set
         // SENSEI_RUN_DRIVE at all, so this asserts the OFF-by-default posture
         // without touching env (and thus without racing enabled tests).
-        let Some(ctx) = make_ctx().await else { return; };
+        let Some(ctx) = make_ctx().await else {
+            return;
+        };
         let pg = ctx.pg();
         // Even give it a resolvable goal — disabled means it still must not fire.
         let id = pg
@@ -925,7 +955,9 @@ mod tests {
 
     #[tokio::test]
     async fn enabled_drive_with_stub_emits_feature_started_then_done() {
-        let Some(ctx) = make_ctx().await else { return; };
+        let Some(ctx) = make_ctx().await else {
+            return;
+        };
         let pg = ctx.pg();
         // A real dir so resolve_cwd yields a spawnable cwd.
         let (project_id, root_id, dir) = seed_project_with_cwd(pg).await;
@@ -950,14 +982,21 @@ mod tests {
         // Events are newest-first.
         let kinds: Vec<RunEventKind> =
             pg.list_run_events(&id, 10).await.unwrap().into_iter().map(|e| e.kind).collect();
-        assert!(kinds.contains(&RunEventKind::FeatureStarted), "expected FeatureStarted, got {kinds:?}");
+        assert!(
+            kinds.contains(&RunEventKind::FeatureStarted),
+            "expected FeatureStarted, got {kinds:?}"
+        );
         assert!(kinds.contains(&RunEventKind::FeatureDone), "expected FeatureDone, got {kinds:?}");
         assert!(!kinds.contains(&RunEventKind::Flagged), "clean exit should not Flag");
 
         // current_feature was set to the short label; status left Running.
         let run = pg.get_run(&id).await.unwrap().unwrap();
         assert_eq!(run.current_feature.as_deref(), Some("drive the next step"));
-        assert_eq!(run.status, RelayRunStatus::Running, "0-exit leaves the run Running for the next tick");
+        assert_eq!(
+            run.status,
+            RelayRunStatus::Running,
+            "0-exit leaves the run Running for the next tick"
+        );
 
         pg_delete_run(pg, &id).await;
         cleanup_project(pg, &project_id, &root_id, &dir).await;
@@ -965,7 +1004,9 @@ mod tests {
 
     #[tokio::test]
     async fn enabled_drive_blocked_by_ask_always_author_stance() {
-        let Some(ctx) = make_ctx().await else { return; };
+        let Some(ctx) = make_ctx().await else {
+            return;
+        };
         let pg = ctx.pg();
         let (project_id, root_id, dir) = seed_project_with_cwd(pg).await;
 
@@ -1017,7 +1058,9 @@ mod tests {
 
     #[tokio::test]
     async fn enabled_drive_without_project_flags_and_does_not_spawn() {
-        let Some(ctx) = make_ctx().await else { return; };
+        let Some(ctx) = make_ctx().await else {
+            return;
+        };
         let pg = ctx.pg();
         // No project_id → no cwd. Use a bogus agent program to PROVE no spawn
         // happens (a spawn attempt of this name would surface a Spawn error path
@@ -1043,7 +1086,9 @@ mod tests {
 
     #[tokio::test]
     async fn enabled_drive_with_empty_goal_flags() {
-        let Some(ctx) = make_ctx().await else { return; };
+        let Some(ctx) = make_ctx().await else {
+            return;
+        };
         let pg = ctx.pg();
         let (project_id, root_id, dir) = seed_project_with_cwd(pg).await;
 
@@ -1070,7 +1115,9 @@ mod tests {
 
     #[tokio::test]
     async fn enabled_drive_nonzero_exit_flags_and_stays_running() {
-        let Some(ctx) = make_ctx().await else { return; };
+        let Some(ctx) = make_ctx().await else {
+            return;
+        };
         let pg = ctx.pg();
         let (project_id, root_id, dir) = seed_project_with_cwd(pg).await;
 
@@ -1137,7 +1184,9 @@ mod tests {
         // and must NOT emit FeatureDone (the limit supersedes the 0 exit). No
         // real claude is spawned. `resume_due_runs` (tested elsewhere) then
         // auto-resumes when paused_until elapses.
-        let Some(ctx) = make_ctx().await else { return; };
+        let Some(ctx) = make_ctx().await else {
+            return;
+        };
         let pg = ctx.pg();
         let (project_id, root_id, dir) = seed_project_with_cwd(pg).await;
 
@@ -1167,7 +1216,11 @@ mod tests {
 
         // The run is Paused with a future paused_until…
         let run = pg.get_run(&id).await.unwrap().unwrap();
-        assert_eq!(run.status, RelayRunStatus::Paused, "a limit pauses the run (never fails/stops)");
+        assert_eq!(
+            run.status,
+            RelayRunStatus::Paused,
+            "a limit pauses the run (never fails/stops)"
+        );
         let paused_until = run.paused_until.as_deref().expect("paused_until must be set");
         let pu = chrono::DateTime::parse_from_rfc3339(paused_until).unwrap();
         assert!(pu.with_timezone(&chrono::Utc) > chrono::Utc::now(), "paused into the future");
@@ -1177,7 +1230,10 @@ mod tests {
         let kinds: Vec<RunEventKind> =
             pg.list_run_events(&id, 10).await.unwrap().into_iter().map(|e| e.kind).collect();
         assert!(kinds.contains(&RunEventKind::FeatureStarted), "step was announced");
-        assert!(kinds.contains(&RunEventKind::PausedOnLimit), "expected PausedOnLimit, got {kinds:?}");
+        assert!(
+            kinds.contains(&RunEventKind::PausedOnLimit),
+            "expected PausedOnLimit, got {kinds:?}"
+        );
         assert!(!kinds.contains(&RunEventKind::FeatureDone), "a limit supersedes the exit code");
         assert!(!kinds.contains(&RunEventKind::Flagged), "a limit is a pause, not a flag");
 

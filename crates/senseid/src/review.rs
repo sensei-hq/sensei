@@ -100,8 +100,8 @@ fn is_test_or_doc(p: &str) -> bool {
 /// True for a production source file by extension — drives `Review`.
 fn is_source(p: &str) -> bool {
     const EXTS: &[&str] = &[
-        ".rs", ".ts", ".tsx", ".js", ".jsx", ".svelte", ".py", ".go", ".rb", ".java",
-        ".kt", ".swift", ".c", ".cc", ".cpp", ".h", ".css", ".scss",
+        ".rs", ".ts", ".tsx", ".js", ".jsx", ".svelte", ".py", ".go", ".rb", ".java", ".kt",
+        ".swift", ".c", ".cc", ".cpp", ".h", ".css", ".scss",
     ];
     EXTS.iter().any(|e| p.ends_with(e))
 }
@@ -129,9 +129,23 @@ fn classify_path(path: &str) -> (RiskClass, Option<&'static str>) {
 fn task_is_sensitive(task: &str) -> bool {
     let t = task.to_ascii_lowercase();
     const KW: &[&str] = &[
-        "delete", "drop ", "truncate", "wipe", "purge", "migrat", "auth", "password",
-        "secret", "credential", "payment", "billing", "security", "permission",
-        "rls", "encrypt", "decrypt",
+        "delete",
+        "drop ",
+        "truncate",
+        "wipe",
+        "purge",
+        "migrat",
+        "auth",
+        "password",
+        "secret",
+        "credential",
+        "payment",
+        "billing",
+        "security",
+        "permission",
+        "rls",
+        "encrypt",
+        "decrypt",
     ];
     KW.iter().any(|k| t.contains(k))
 }
@@ -144,7 +158,10 @@ pub fn resolve_risk_class(paths: &[String], task: Option<&str>) -> RiskAssessmen
     if paths.is_empty() {
         return RiskAssessment {
             class: RiskClass::Review,
-            reasons: vec!["no changed paths provided — cannot assess blast radius, defaulting to review".into()],
+            reasons: vec![
+                "no changed paths provided — cannot assess blast radius, defaulting to review"
+                    .into(),
+            ],
         };
     }
 
@@ -157,7 +174,9 @@ pub fn resolve_risk_class(paths: &[String], task: Option<&str>) -> RiskAssessmen
             class = c;
         }
         match c {
-            RiskClass::Approve => approve_reasons.push(format!("{p} → {}", reason.unwrap_or("sensitive"))),
+            RiskClass::Approve => {
+                approve_reasons.push(format!("{p} → {}", reason.unwrap_or("sensitive")))
+            }
             RiskClass::Review => source_count += 1,
             RiskClass::Auto => {}
         }
@@ -173,7 +192,8 @@ pub fn resolve_risk_class(paths: &[String], task: Option<&str>) -> RiskAssessmen
         && task_is_sensitive(t)
     {
         class = RiskClass::Review;
-        reasons.push("task describes a sensitive/destructive operation → escalated to review".into());
+        reasons
+            .push("task describes a sensitive/destructive operation → escalated to review".into());
     }
 
     if reasons.is_empty() {
@@ -196,7 +216,11 @@ mod tests {
         assert_eq!(class_of(&["crates/senseid/src/auth/session.rs"]), RiskClass::Approve);
         assert_eq!(class_of(&["dojo/src/lib/billing/invoice.ts"]), RiskClass::Approve);
         assert_eq!(class_of(&["database/ddl/table/sensei/folders.ddl"]), RiskClass::Approve);
-        assert_eq!(class_of(&["crates/senseid/src/resolution.rs"]), RiskClass::Approve, "the fail-closed identity resolver");
+        assert_eq!(
+            class_of(&["crates/senseid/src/resolution.rs"]),
+            RiskClass::Approve,
+            "the fail-closed identity resolver"
+        );
         assert_eq!(class_of(&["dojo/migrations/003_rls.sql"]), RiskClass::Approve);
         assert_eq!(class_of(&["crates/senseid/src/dojo/credentials.rs"]), RiskClass::Approve);
     }
@@ -233,7 +257,11 @@ mod tests {
     fn the_highest_risk_path_wins() {
         // A docs+source+auth mix classifies as the max (approve).
         assert_eq!(
-            class_of(&["docs/x.md", "crates/senseid/src/util.rs", "crates/senseid/src/auth/mod.rs"]),
+            class_of(&[
+                "docs/x.md",
+                "crates/senseid/src/util.rs",
+                "crates/senseid/src/auth/mod.rs"
+            ]),
             RiskClass::Approve
         );
         // docs + source (no sensitive) → review.
@@ -256,15 +284,21 @@ mod tests {
         );
         // But a task can never de-escalate a real approve.
         let ddl = vec!["database/ddl/x.ddl".to_string()];
-        assert_eq!(resolve_risk_class(&ddl, Some("just a comment tweak")).class, RiskClass::Approve);
+        assert_eq!(
+            resolve_risk_class(&ddl, Some("just a comment tweak")).class,
+            RiskClass::Approve
+        );
     }
 
     #[test]
     fn reasons_name_the_sensitive_files() {
         let a = resolve_risk_class(&["crates/senseid/src/auth/mod.rs".to_string()], None);
         assert_eq!(a.class, RiskClass::Approve);
-        assert!(a.reasons.iter().any(|r| r.contains("auth/mod.rs") && r.contains("authentication")),
-            "the approve reason names the file + why: {:?}", a.reasons);
+        assert!(
+            a.reasons.iter().any(|r| r.contains("auth/mod.rs") && r.contains("authentication")),
+            "the approve reason names the file + why: {:?}",
+            a.reasons
+        );
     }
 
     #[test]

@@ -56,8 +56,7 @@ pub fn challenge_for(verifier: &str) -> String {
 /// length.
 pub fn is_valid_verifier(v: &str) -> bool {
     (MIN_VERIFIER_LEN..=MAX_VERIFIER_LEN).contains(&v.len())
-        && v.chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '.' | '_' | '~'))
+        && v.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '.' | '_' | '~'))
 }
 
 #[cfg(test)]
@@ -68,11 +67,7 @@ mod tests {
     fn a_generated_verifier_is_rfc_valid() {
         for _ in 0..20 {
             let v = generate_verifier();
-            assert!(
-                is_valid_verifier(&v),
-                "not RFC-valid: {v:?} (len {})",
-                v.len()
-            );
+            assert!(is_valid_verifier(&v), "not RFC-valid: {v:?} (len {})", v.len());
         }
     }
 
@@ -91,10 +86,7 @@ mod tests {
         // "invalid grant" at the second leg that reads like a credential problem,
         // so it is worth pinning against the spec rather than against ourselves.
         let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
-        assert_eq!(
-            challenge_for(verifier),
-            "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
-        );
+        assert_eq!(challenge_for(verifier), "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM");
     }
 
     #[test]
@@ -116,13 +108,7 @@ mod tests {
         // '+' and '/' are standard-base64 alphabet, not base64URL. A generator
         // that used the wrong engine would produce them, and the failure would
         // otherwise surface only at the exchange.
-        assert!(!is_valid_verifier(&format!(
-            "{}+",
-            "a".repeat(MIN_VERIFIER_LEN)
-        )));
-        assert!(!is_valid_verifier(&format!(
-            "{}/",
-            "a".repeat(MIN_VERIFIER_LEN)
-        )));
+        assert!(!is_valid_verifier(&format!("{}+", "a".repeat(MIN_VERIFIER_LEN))));
+        assert!(!is_valid_verifier(&format!("{}/", "a".repeat(MIN_VERIFIER_LEN))));
     }
 }

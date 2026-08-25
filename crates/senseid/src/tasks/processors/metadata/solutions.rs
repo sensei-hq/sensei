@@ -1,8 +1,8 @@
 //! Solution grouping — suggest which repos belong together.
 #![allow(dead_code)]
 
-use std::path::Path;
 use serde::Serialize;
+use std::path::Path;
 
 /// Suggested solution grouping for discovered repos.
 #[derive(Debug, Clone, Serialize)]
@@ -44,10 +44,8 @@ pub fn suggest_solutions(repos: &[(String, String)]) -> Vec<SolutionMatch> {
     }
 
     // Strategy 2: Name prefix (only for repos not already grouped)
-    let remaining: Vec<(String, String)> = repos.iter()
-        .filter(|(id, _)| !assigned.contains(id))
-        .cloned()
-        .collect();
+    let remaining: Vec<(String, String)> =
+        repos.iter().filter(|(id, _)| !assigned.contains(id)).cloned().collect();
 
     let prefix_groups = group_by_name_prefix(&remaining);
     for (prefix, repo_ids) in &prefix_groups {
@@ -65,19 +63,27 @@ pub fn suggest_solutions(repos: &[(String, String)]) -> Vec<SolutionMatch> {
 
 /// Group repos by their immediate parent directory name.
 fn group_by_parent_folder(repos: &[(String, String)]) -> Vec<(String, Vec<String>)> {
-    let mut groups: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+    let mut groups: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
 
     for (repo_id, repo_path) in repos {
         if let Some(parent) = Path::new(repo_path).parent() {
-            let parent_name = parent.file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("")
-                .to_string();
+            let parent_name = parent.file_name().and_then(|n| n.to_str()).unwrap_or("").to_string();
             // Skip generic parent names
             if !parent_name.is_empty()
-                && !matches!(parent_name.as_str(),
-                    "Developer" | "dev" | "projects" | "repos" | "src" | "code"
-                    | "workspace" | "workspaces" | "home" | "Users" | "Home"
+                && !matches!(
+                    parent_name.as_str(),
+                    "Developer"
+                        | "dev"
+                        | "projects"
+                        | "repos"
+                        | "src"
+                        | "code"
+                        | "workspace"
+                        | "workspaces"
+                        | "home"
+                        | "Users"
+                        | "Home"
                 )
             {
                 groups.entry(parent_name).or_default().push(repo_id.clone());
@@ -90,7 +96,8 @@ fn group_by_parent_folder(repos: &[(String, String)]) -> Vec<(String, Vec<String
 
 /// Group repos by common name prefix (split on `-`, `_`, `.`).
 fn group_by_name_prefix(repos: &[(String, String)]) -> Vec<(String, Vec<String>)> {
-    let mut groups: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+    let mut groups: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
 
     for (repo_id, _) in repos {
         let prefix = extract_name_prefix(repo_id);
@@ -107,11 +114,7 @@ fn group_by_name_prefix(repos: &[(String, String)]) -> Vec<(String, Vec<String>)
 pub(crate) fn extract_name_prefix(name: &str) -> String {
     // Split on common separators
     let parts: Vec<&str> = name.split(['-', '_', '.']).collect();
-    if parts.len() >= 2 {
-        parts[0].to_string()
-    } else {
-        String::new()
-    }
+    if parts.len() >= 2 { parts[0].to_string() } else { String::new() }
 }
 
 #[cfg(test)]

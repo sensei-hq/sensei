@@ -26,8 +26,8 @@
 //! phase/feature labels, timestamps) — never code, diffs, or tool output. The
 //! mapping is the pure, unit-tested [`crate::dojo::relay_run_project`].
 
-use super::super::executor::TaskContext;
 use super::super::Task;
+use super::super::executor::TaskContext;
 use crate::db::pg_store::DojoMembership;
 use crate::dojo::client::DojoClient;
 use crate::dojo::relay_nudge::pickup_nudges;
@@ -58,11 +58,7 @@ pub async fn publish_run(ctx: &TaskContext, task: &Task) -> Result<u32, String> 
     };
 
     // A run completed/deleted between enqueue and dispatch is empty work.
-    let Some(run) = ctx
-        .pg()
-        .get_run(&run_id)
-        .await
-        .map_err(|e| format!("get_run failed: {e}"))?
+    let Some(run) = ctx.pg().get_run(&run_id).await.map_err(|e| format!("get_run failed: {e}"))?
     else {
         return Ok(0);
     };
@@ -303,8 +299,8 @@ mod tests {
     use super::*;
     use crate::api::state::SharedState;
     use crate::runs::NewRun;
-    use crate::tasks::queue::TaskQueue;
     use crate::tasks::TaskKind;
+    use crate::tasks::queue::TaskQueue;
     use std::sync::Arc;
 
     async fn make_ctx() -> Option<Arc<TaskContext>> {
@@ -315,16 +311,27 @@ mod tests {
             task_queue: queue.clone(),
             pg,
             gateway,
-            event_tx: { let (tx, _) = tokio::sync::broadcast::channel(16); tx },
+            event_tx: {
+                let (tx, _) = tokio::sync::broadcast::channel(16);
+                tx
+            },
             breaker: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
             provisioning: None,
         });
-        Some(Arc::new(TaskContext { queue, app_state, _graph_path: None, logger: sensei_logger::Logger::noop() }))
+        Some(Arc::new(TaskContext {
+            queue,
+            app_state,
+            _graph_path: None,
+            logger: sensei_logger::Logger::noop(),
+        }))
     }
 
     async fn del_run(pg: &crate::db::pg_store::PgStore, id: &uuid::Uuid) {
         sqlx_core::query::query("DELETE FROM activity.runs WHERE id = $1")
-            .bind(id).execute(pg.pool()).await.unwrap();
+            .bind(id)
+            .execute(pg.pool())
+            .await
+            .unwrap();
     }
 
     /// Serialises every test whose expectation depends on HOW MANY enabled
@@ -344,21 +351,27 @@ mod tests {
 
     #[tokio::test]
     async fn empty_run_id_is_empty_work() {
-        let Some(ctx) = make_ctx().await else { return; };
+        let Some(ctx) = make_ctx().await else {
+            return;
+        };
         let task = Task::new(TaskKind::PublishRun, "", "");
         assert_eq!(publish_run(&ctx, &task).await.unwrap(), 0);
     }
 
     #[tokio::test]
     async fn non_uuid_run_id_is_empty_work() {
-        let Some(ctx) = make_ctx().await else { return; };
+        let Some(ctx) = make_ctx().await else {
+            return;
+        };
         let task = Task::new(TaskKind::PublishRun, "", "not-a-uuid");
         assert_eq!(publish_run(&ctx, &task).await.unwrap(), 0);
     }
 
     #[tokio::test]
     async fn unknown_run_is_empty_work() {
-        let Some(ctx) = make_ctx().await else { return; };
+        let Some(ctx) = make_ctx().await else {
+            return;
+        };
         let id = uuid::Uuid::new_v4().to_string();
         let task = Task::new(TaskKind::PublishRun, "", &id);
         assert_eq!(publish_run(&ctx, &task).await.unwrap(), 0);
@@ -369,7 +382,9 @@ mod tests {
         // A real run but (typically) no enrolled dojo in the test DB → empty work,
         // not an error. Exercises the get_run + membership-resolve path end to end.
         let _serialised = MEMBERSHIP_COUNT_LOCK.enter();
-        let Some(ctx) = make_ctx().await else { return; };
+        let Some(ctx) = make_ctx().await else {
+            return;
+        };
         let pg = ctx.pg();
         let id = pg.create_run(&NewRun::default()).await.unwrap();
         let task = Task::new(TaskKind::PublishRun, "", &id.to_string());
@@ -392,13 +407,15 @@ mod tests {
         let _serialised = MEMBERSHIP_COUNT_LOCK.enter();
         use crate::db::pg_store::NewDojoMembership;
         use crate::runs::RunEventKind;
-        use axum::{extract::Query, routing::get, routing::post, Json, Router};
+        use axum::{Json, Router, extract::Query, routing::get, routing::post};
         use dojo_protocol::relay::{RelayInboxPull, RelaySegmentsPublish, RelaySessionUpdate};
         use std::collections::HashMap;
-        use std::sync::atomic::{AtomicUsize, Ordering};
         use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
 
-        let Some(ctx) = make_ctx().await else { return; };
+        let Some(ctx) = make_ctx().await else {
+            return;
+        };
         let pg = ctx.pg();
 
         // Stub Worker: session returns {id}, segments asserts the projected plan,
@@ -434,7 +451,9 @@ mod tests {
             );
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
-        tokio::spawn(async move { axum::serve(listener, app).await.unwrap(); });
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
         // Seed a membership pointing at the stub, with a keychain token.
@@ -463,9 +482,27 @@ mod tests {
         // liveness instant to federate — a fresh run is NULL until first ticked.
         pg.touch_run_heartbeat(&id).await.unwrap();
         // Plan phases via cadence events: P1 started+done, P2 started.
-        pg.append_run_event(&id, RunEventKind::PhaseStarted, Some("P1"), None, &serde_json::json!({})).await.unwrap();
-        pg.append_run_event(&id, RunEventKind::PhaseDone, Some("P1"), None, &serde_json::json!({})).await.unwrap();
-        pg.append_run_event(&id, RunEventKind::PhaseStarted, Some("P2"), None, &serde_json::json!({})).await.unwrap();
+        pg.append_run_event(
+            &id,
+            RunEventKind::PhaseStarted,
+            Some("P1"),
+            None,
+            &serde_json::json!({}),
+        )
+        .await
+        .unwrap();
+        pg.append_run_event(&id, RunEventKind::PhaseDone, Some("P1"), None, &serde_json::json!({}))
+            .await
+            .unwrap();
+        pg.append_run_event(
+            &id,
+            RunEventKind::PhaseStarted,
+            Some("P2"),
+            None,
+            &serde_json::json!({}),
+        )
+        .await
+        .unwrap();
 
         let task = Task::new(TaskKind::PublishRun, "", &id.to_string());
         let n = publish_run(&ctx, &task).await.unwrap();
@@ -482,7 +519,10 @@ mod tests {
 
         del_run(pg, &id).await;
         sqlx_core::query::query("DELETE FROM sensei.dojo_memberships WHERE id = $1")
-            .bind(mid).execute(pg.pool()).await.unwrap();
+            .bind(mid)
+            .execute(pg.pool())
+            .await
+            .unwrap();
         crate::gateway_keys::delete_key(&cref).unwrap();
     }
 
@@ -496,12 +536,16 @@ mod tests {
     async fn full_bridge_authors_plan_graph_segments() {
         let _serialised = MEMBERSHIP_COUNT_LOCK.enter();
         use crate::db::pg_store::NewDojoMembership;
-        use axum::{extract::Query, routing::get, routing::post, Json, Router};
-        use dojo_protocol::relay::{RelayInboxPull, RelaySegment, RelaySegmentsPublish, RelaySessionUpdate};
+        use axum::{Json, Router, extract::Query, routing::get, routing::post};
+        use dojo_protocol::relay::{
+            RelayInboxPull, RelaySegment, RelaySegmentsPublish, RelaySessionUpdate,
+        };
         use std::collections::HashMap;
         use std::sync::{Arc, Mutex};
 
-        let Some(ctx) = make_ctx().await else { return; };
+        let Some(ctx) = make_ctx().await else {
+            return;
+        };
         let pg = ctx.pg();
 
         let captured: Arc<Mutex<Vec<RelaySegment>>> = Arc::new(Mutex::new(Vec::new()));
@@ -529,7 +573,9 @@ mod tests {
             );
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
-        tokio::spawn(async move { axum::serve(listener, app).await.unwrap(); });
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
         let mid = uuid::Uuid::new_v4();
@@ -557,10 +603,8 @@ mod tests {
                 { "id": "t2", "title": "two", "model": "opus", "deps": ["t1"] }
             ]}]
         });
-        let id = pg
-            .create_run(&NewRun { plan_graph: Some(graph), ..Default::default() })
-            .await
-            .unwrap();
+        let id =
+            pg.create_run(&NewRun { plan_graph: Some(graph), ..Default::default() }).await.unwrap();
         pg.touch_run_heartbeat(&id).await.unwrap();
 
         let task = Task::new(TaskKind::PublishRun, "", &id.to_string());
@@ -579,7 +623,10 @@ mod tests {
 
         del_run(pg, &id).await;
         sqlx_core::query::query("DELETE FROM sensei.dojo_memberships WHERE id = $1")
-            .bind(mid).execute(pg.pool()).await.unwrap();
+            .bind(mid)
+            .execute(pg.pool())
+            .await
+            .unwrap();
         crate::gateway_keys::delete_key(&cref).unwrap();
     }
 }

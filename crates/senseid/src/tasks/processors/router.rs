@@ -1,12 +1,16 @@
 //! File router — selects the right processor based on file extension.
 
-use std::path::Path;
 use super::types::*;
-use super::{code, doc, config};
+use super::{code, config, doc};
+use std::path::Path;
 
 /// Process a single file. Routes to the correct processor by extension.
 /// Pure function — no DB, no side effects.
-pub fn process_file(abs_path: &str, repo_path: &str, repo_id: &str) -> Result<FileProcessResult, String> {
+pub fn process_file(
+    abs_path: &str,
+    repo_path: &str,
+    repo_id: &str,
+) -> Result<FileProcessResult, String> {
     let file_path = Path::new(abs_path);
 
     if !file_path.exists() {
@@ -14,27 +18,19 @@ pub fn process_file(abs_path: &str, repo_path: &str, repo_id: &str) -> Result<Fi
     }
 
     let repo = Path::new(repo_path);
-    let rel_path = file_path.strip_prefix(repo)
-        .unwrap_or(file_path)
-        .to_string_lossy().to_string();
+    let rel_path = file_path.strip_prefix(repo).unwrap_or(file_path).to_string_lossy().to_string();
 
-    let ext = file_path.extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("");
+    let ext = file_path.extension().and_then(|e| e.to_str()).unwrap_or("");
 
-    let raw = std::fs::read_to_string(file_path)
-        .map_err(|e| format!("Failed to read: {}", e))?;
+    let raw = std::fs::read_to_string(file_path).map_err(|e| format!("Failed to read: {}", e))?;
 
     // Normalize line endings to LF before any parsing. tree-sitter byte offsets
     // and the per-line / byte buffers used for text extraction must agree; a
     // CRLF file otherwise yields node byte-ranges (counted over the CRLF source)
     // that overshoot a CR-stripped extraction buffer and panic the parser
     // (observed on CRLF-terminated .py files). Avoids the realloc for LF files.
-    let content = if raw.contains('\r') {
-        raw.replace("\r\n", "\n").replace('\r', "\n")
-    } else {
-        raw
-    };
+    let content =
+        if raw.contains('\r') { raw.replace("\r\n", "\n").replace('\r', "\n") } else { raw };
 
     // Route by file type
     match ext {

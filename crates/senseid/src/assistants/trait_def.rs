@@ -1,7 +1,7 @@
-use std::path::PathBuf;
 use super::helpers::check_mcp_in_config;
 use super::{AssistantPart, AssistantStatus};
 use crate::assistants::health::{AdapterCheck, AdapterResolveReport, CheckStatus};
+use std::path::PathBuf;
 
 /// Result of configuring an Assistant. `plugin` is true when `claude plugin install` succeeded.
 pub(crate) struct AssistantConfigureOk {
@@ -44,7 +44,8 @@ pub(crate) trait Assistant {
     /// check derived from `is_configured()`. Override for richer adapters.
     fn config_health(&self) -> Vec<AdapterCheck> {
         let status = if self.is_configured() { CheckStatus::Ok } else { CheckStatus::Fail };
-        let detail = (status == CheckStatus::Fail).then(|| "sensei not configured in this assistant".to_string());
+        let detail = (status == CheckStatus::Fail)
+            .then(|| "sensei not configured in this assistant".to_string());
         vec![AdapterCheck::new("configured", "configured", status, detail)]
     }
 
@@ -79,10 +80,14 @@ pub(crate) trait Assistant {
 
     /// Family ID for UI grouping. Assistants in the same family show as one card.
     /// Default: same as id (each Assistant is its own family).
-    fn family(&self) -> &str { self.id() }
+    fn family(&self) -> &str {
+        self.id()
+    }
 
     /// Display name for the family (used when grouped).
-    fn family_name(&self) -> &str { self.name() }
+    fn family_name(&self) -> &str {
+        self.name()
+    }
 
     /// Capability parts this Assistant configures. Drives the per-part chips
     /// shown on each AssistantCard in the setup wizard. Default = one `mcp`
@@ -117,13 +122,26 @@ mod tests {
     use super::*;
 
     #[derive(Default)]
-    struct StubAssistant { configured: bool, configure_fails: bool }
+    struct StubAssistant {
+        configured: bool,
+        configure_fails: bool,
+    }
     impl Assistant for StubAssistant {
-        fn id(&self) -> &str { "stub" }
-        fn name(&self) -> &str { "Stub" }
-        fn mcp_key(&self) -> &str { "mcpServers" }
-        fn config_path(&self) -> PathBuf { PathBuf::from("/dev/null") }
-        fn detect(&self) -> bool { true }
+        fn id(&self) -> &str {
+            "stub"
+        }
+        fn name(&self) -> &str {
+            "Stub"
+        }
+        fn mcp_key(&self) -> &str {
+            "mcpServers"
+        }
+        fn config_path(&self) -> PathBuf {
+            PathBuf::from("/dev/null")
+        }
+        fn detect(&self) -> bool {
+            true
+        }
         fn configure(&self, _mcp_cmd: &str) -> Result<AssistantConfigureOk, String> {
             if self.configure_fails {
                 Err("configure boom".to_string())
@@ -131,14 +149,24 @@ mod tests {
                 Ok(AssistantConfigureOk { plugin: false, warnings: vec![] })
             }
         }
-        fn remove(&self) -> bool { true }
-        fn is_configured(&self) -> bool { self.configured }
+        fn remove(&self) -> bool {
+            true
+        }
+        fn is_configured(&self) -> bool {
+            self.configured
+        }
     }
 
     #[test]
     fn default_config_health_reflects_is_configured() {
-        assert_eq!(StubAssistant { configured: true, ..Default::default() }.config_health()[0].status, CheckStatus::Ok);
-        assert_eq!(StubAssistant { configured: false, ..Default::default() }.config_health()[0].status, CheckStatus::Fail);
+        assert_eq!(
+            StubAssistant { configured: true, ..Default::default() }.config_health()[0].status,
+            CheckStatus::Ok
+        );
+        assert_eq!(
+            StubAssistant { configured: false, ..Default::default() }.config_health()[0].status,
+            CheckStatus::Fail
+        );
     }
 
     #[test]

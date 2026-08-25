@@ -3,7 +3,7 @@
 use axum::Json;
 use serde::Deserialize;
 
-use crate::review::{resolve_risk_class, RiskAssessment};
+use crate::review::{RiskAssessment, resolve_risk_class};
 
 #[derive(Deserialize)]
 pub(crate) struct RiskClassBody {

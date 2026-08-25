@@ -37,10 +37,8 @@ pub(crate) async fn list(
     State(state): State<AppState>,
     Query(q): Query<UpgradesQuery>,
 ) -> ApiResult {
-    let include_muted = q
-        .include_muted
-        .as_deref()
-        .is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true"));
+    let include_muted =
+        q.include_muted.as_deref().is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true"));
     let items = state.pg.list_dojo_inbox(include_muted).await.map_err(internal)?;
     let unread_count = inbox::unread_count(&items);
     Ok(Json(serde_json::json!({ "artifacts": items, "unread_count": unread_count })))

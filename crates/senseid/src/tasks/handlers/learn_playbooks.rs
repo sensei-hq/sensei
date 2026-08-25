@@ -8,8 +8,8 @@
 //! are computed off the immutable `base_priority`, and proposals upsert via
 //! the learned partial-unique index.
 
-use super::super::executor::TaskContext;
 use super::super::Task;
+use super::super::executor::TaskContext;
 
 pub async fn learn_playbooks(ctx: &TaskContext, _task: &Task) -> Result<u32, String> {
     // Fail closed: a transient DB error on any of these reads aborts the tick

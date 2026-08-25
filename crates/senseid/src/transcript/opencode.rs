@@ -21,7 +21,10 @@
 //!
 //! Timestamps are unix milliseconds.
 
-use super::{TurnFacts, SessionTokens, ParsedTranscript, SynthEvent, SynthSession, TranscriptAdapter, TranscriptTurn, UnitRef};
+use super::{
+    ParsedTranscript, SessionTokens, SynthEvent, SynthSession, TranscriptAdapter, TranscriptTurn,
+    TurnFacts, UnitRef,
+};
 use std::path::PathBuf;
 
 /// Cap stored assistant prose per turn (matches Claude/Zed adapters).
@@ -69,9 +72,7 @@ impl TranscriptAdapter for OpenCodeAdapter {
                 return Vec::new();
             }
         };
-        let rows = stmt.query_map([], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
-        });
+        let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)));
         let Ok(rows) = rows else { return Vec::new() };
         rows.flatten()
             .filter_map(|(id, time_updated)| {
@@ -82,13 +83,9 @@ impl TranscriptAdapter for OpenCodeAdapter {
 
     fn stamp_for(&self, key: &str) -> Option<i64> {
         let conn = self.open()?;
-        conn.query_row(
-            "SELECT time_updated FROM session WHERE id = ?1",
-            [key],
-            |r| r.get(0),
-        )
-        .ok()
-        .filter(|&v: &i64| v > 0)
+        conn.query_row("SELECT time_updated FROM session WHERE id = ?1", [key], |r| r.get(0))
+            .ok()
+            .filter(|&v: &i64| v > 0)
     }
 
     fn session_id_for(&self, key: &str) -> Option<String> {
@@ -116,21 +113,21 @@ impl TranscriptAdapter for OpenCodeAdapter {
         let rows = stmt
             .query_map([key], |r| {
                 Ok((
-                    r.get::<_, Option<String>>(0)?,   // directory
-                    r.get::<_, Option<String>>(1)?,   // model
-                    r.get::<_, Option<String>>(2)?,   // agent
-                    r.get::<_, Option<String>>(3)?,   // project_id
-                    r.get::<_, String>(4)?,            // message.id
-                    r.get::<_, String>(5)?,            // message.data
-                    r.get::<_, i64>(6)?,               // message.time_created
-                    r.get::<_, Option<String>>(7)?,   // part.data
-                    r.get::<_, Option<i64>>(8)?,      // part.time_created
-                    r.get::<_, Option<i64>>(9)?,      // session.tokens_input
-                    r.get::<_, Option<i64>>(10)?,     // session.tokens_output
-                    r.get::<_, Option<i64>>(11)?,     // session.tokens_reasoning
-                    r.get::<_, Option<i64>>(12)?,     // session.tokens_cache_read
-                    r.get::<_, Option<i64>>(13)?,     // session.tokens_cache_write
-                    r.get::<_, Option<f64>>(14)?,     // session.cost (metered; 0.0 on a plan)
+                    r.get::<_, Option<String>>(0)?, // directory
+                    r.get::<_, Option<String>>(1)?, // model
+                    r.get::<_, Option<String>>(2)?, // agent
+                    r.get::<_, Option<String>>(3)?, // project_id
+                    r.get::<_, String>(4)?,         // message.id
+                    r.get::<_, String>(5)?,         // message.data
+                    r.get::<_, i64>(6)?,            // message.time_created
+                    r.get::<_, Option<String>>(7)?, // part.data
+                    r.get::<_, Option<i64>>(8)?,    // part.time_created
+                    r.get::<_, Option<i64>>(9)?,    // session.tokens_input
+                    r.get::<_, Option<i64>>(10)?,   // session.tokens_output
+                    r.get::<_, Option<i64>>(11)?,   // session.tokens_reasoning
+                    r.get::<_, Option<i64>>(12)?,   // session.tokens_cache_read
+                    r.get::<_, Option<i64>>(13)?,   // session.tokens_cache_write
+                    r.get::<_, Option<f64>>(14)?,   // session.cost (metered; 0.0 on a plan)
                 ))
             })
             .ok()?;
@@ -165,9 +162,11 @@ impl TranscriptAdapter for OpenCodeAdapter {
                 cost = row.14;
             }
             let msg_id = row.4;
-            let msg_data: serde_json::Value = serde_json::from_str(&row.5).unwrap_or(serde_json::json!({}));
+            let msg_data: serde_json::Value =
+                serde_json::from_str(&row.5).unwrap_or(serde_json::json!({}));
             let msg_time = row.6;
-            let part_data: Option<serde_json::Value> = row.7.map(|d| serde_json::from_str(&d).unwrap_or(serde_json::json!({})));
+            let part_data: Option<serde_json::Value> =
+                row.7.map(|d| serde_json::from_str(&d).unwrap_or(serde_json::json!({})));
             let part_time = row.8;
 
             if cur_msg_id.as_deref() != Some(&msg_id) {
@@ -252,12 +251,16 @@ pub fn parse_opencode_messages(content: &str) -> Vec<TranscriptTurn> {
                 // Check if this user message has only summary/diff parts (no real text).
                 // A user message with only a summary and no text content is a
                 // compaction boundary — not a real prompt.
-                let has_text = msg.get("parts")
+                let has_text = msg
+                    .get("parts")
                     .and_then(|p| p.as_array())
                     .map(|parts| {
                         parts.iter().any(|part| {
                             let pd = part.get("data");
-                            let typ = pd.and_then(|d| d.get("type")).and_then(|t| t.as_str()).unwrap_or("");
+                            let typ = pd
+                                .and_then(|d| d.get("type"))
+                                .and_then(|t| t.as_str())
+                                .unwrap_or("");
                             typ == "text"
                         })
                     })
@@ -276,7 +279,9 @@ pub fn parse_opencode_messages(content: &str) -> Vec<TranscriptTurn> {
                 idx += 1;
                 let mut facts = TurnFacts::default();
                 // The attributes live on `data`, not on the row wrapper.
-                if let Some(d) = msg.get("data") { merge_facts(&mut facts, d); }
+                if let Some(d) = msg.get("data") {
+                    merge_facts(&mut facts, d);
+                }
                 cur = Some(TranscriptTurn {
                     turn_index: idx,
                     user_text: Some(trimmed.to_string()),
@@ -289,7 +294,9 @@ pub fn parse_opencode_messages(content: &str) -> Vec<TranscriptTurn> {
             "assistant" => {
                 if let Some(t) = cur.as_mut() {
                     // Usage sums across the turn's assistant messages.
-                    if let Some(d) = msg.get("data") { merge_facts(&mut t.facts, d); }
+                    if let Some(d) = msg.get("data") {
+                        merge_facts(&mut t.facts, d);
+                    }
                     let text = extract_text_from_parts(msg);
                     let trimmed = text.trim();
                     if !trimmed.is_empty() {
@@ -337,12 +344,16 @@ pub fn parse_opencode_session(content: &str) -> Option<SynthSession> {
 
         match role {
             "user" => {
-                let has_text = msg.get("parts")
+                let has_text = msg
+                    .get("parts")
                     .and_then(|p| p.as_array())
                     .map(|parts| {
                         parts.iter().any(|part| {
                             let pd = part.get("data");
-                            let typ = pd.and_then(|d| d.get("type")).and_then(|t| t.as_str()).unwrap_or("");
+                            let typ = pd
+                                .and_then(|d| d.get("type"))
+                                .and_then(|t| t.as_str())
+                                .unwrap_or("");
                             typ == "text"
                         })
                     })
@@ -370,24 +381,30 @@ pub fn parse_opencode_session(content: &str) -> Option<SynthSession> {
                 if let Some(parts) = msg.get("parts").and_then(|p| p.as_array()) {
                     for part in parts {
                         let pd = part.get("data");
-                        let typ = pd.and_then(|d| d.get("type")).and_then(|t| t.as_str()).unwrap_or("");
+                        let typ =
+                            pd.and_then(|d| d.get("type")).and_then(|t| t.as_str()).unwrap_or("");
                         if typ == "tool" {
-                            let tool_name = pd.and_then(|d| d.get("tool")).and_then(|t| t.as_str()).unwrap_or("").to_string();
+                            let tool_name = pd
+                                .and_then(|d| d.get("tool"))
+                                .and_then(|t| t.as_str())
+                                .unwrap_or("")
+                                .to_string();
                             let state = pd.and_then(|d| d.get("state"));
                             let tool_input = state.and_then(|s| s.get("input")).cloned();
-                            let file_path = tool_input
-                                .as_ref()
-                                .and_then(|i| {
-                                    for k in ["file_path", "path", "command", "filePath"] {
-                                        if let Some(p) = i.get(k).and_then(|p| p.as_str())
-                                            && !p.is_empty()
-                                        {
-                                            return Some(p.to_string());
-                                        }
+                            let file_path = tool_input.as_ref().and_then(|i| {
+                                for k in ["file_path", "path", "command", "filePath"] {
+                                    if let Some(p) = i.get(k).and_then(|p| p.as_str())
+                                        && !p.is_empty()
+                                    {
+                                        return Some(p.to_string());
                                     }
-                                    None
-                                });
-                            let part_time = part.get("time_created").and_then(|t| t.as_i64()).unwrap_or(time_created);
+                                }
+                                None
+                            });
+                            let part_time = part
+                                .get("time_created")
+                                .and_then(|t| t.as_i64())
+                                .unwrap_or(time_created);
                             if !tool_name.is_empty() {
                                 events.push(SynthEvent {
                                     event_type: "PostToolUse".into(),
@@ -418,7 +435,10 @@ pub fn parse_opencode_session(content: &str) -> Option<SynthSession> {
         tool_input: None,
         ts: max_ts,
     });
-    Some(SynthSession { cwds: if directory.is_empty() { Vec::new() } else { vec![directory] }, events })
+    Some(SynthSession {
+        cwds: if directory.is_empty() { Vec::new() } else { vec![directory] },
+        events,
+    })
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -492,19 +512,15 @@ pub fn extract_dominant_model(content: &str) -> Option<(String, String)> {
             *counts.entry(key).or_default() += 1;
         }
     }
-    counts
-        .into_iter()
-        .max_by(|a, b| a.1.cmp(&b.1).then_with(|| b.0.cmp(&a.0)))
-        .map(|(model, _)| {
-            let parts: Vec<&str> = model.splitn(2, '/').collect();
-            if parts.len() == 2 {
-                (parts[0].to_string(), parts[1].to_string())
-            } else {
-                ("opencode".to_string(), model)
-            }
-        })
+    counts.into_iter().max_by(|a, b| a.1.cmp(&b.1).then_with(|| b.0.cmp(&a.0))).map(|(model, _)| {
+        let parts: Vec<&str> = model.splitn(2, '/').collect();
+        if parts.len() == 2 {
+            (parts[0].to_string(), parts[1].to_string())
+        } else {
+            ("opencode".to_string(), model)
+        }
+    })
 }
-
 
 /// Promoted per-message attributes for OpenCode.
 ///
@@ -517,17 +533,25 @@ fn merge_facts(facts: &mut TurnFacts, msg: &serde_json::Value) {
         v.and_then(|x| x.as_str()).filter(|x| !x.is_empty()).map(str::to_string)
     };
     // `agent`/`mode` are OpenCode's nearest equivalents to skill/effort.
-    if facts.skill.is_none() { facts.skill = str_of(msg.get("agent")); }
-    if facts.effort.is_none() { facts.effort = str_of(msg.get("mode")); }
+    if facts.skill.is_none() {
+        facts.skill = str_of(msg.get("agent"));
+    }
+    if facts.effort.is_none() {
+        facts.effort = str_of(msg.get("mode"));
+    }
     // A message with a parent is subagent work.
     if facts.is_sidechain.is_none() && msg.get("parentID").is_some() {
         facts.is_sidechain = Some(true);
     }
-    if let Some(f) = str_of(msg.get("finish")) { facts.stop_reason = Some(f); }
+    if let Some(f) = str_of(msg.get("finish")) {
+        facts.stop_reason = Some(f);
+    }
 
     let Some(t) = msg.get("tokens") else { return };
     let add = |slot: &mut Option<i64>, n: Option<i64>| {
-        if let Some(n) = n { *slot = Some(slot.unwrap_or(0) + n); }
+        if let Some(n) = n {
+            *slot = Some(slot.unwrap_or(0) + n);
+        }
     };
     add(&mut facts.tokens_in, t.get("input").and_then(|x| x.as_i64()));
     add(&mut facts.tokens_out, t.get("output").and_then(|x| x.as_i64()));
@@ -609,7 +633,8 @@ mod tests {
                                      "cache": {"read": 100, "write": 0}}},
                  "parts": [{"data": {"type": "text", "text": "done"}}]}
             ]
-        }).to_string();
+        })
+        .to_string();
         let turns = parse_opencode_messages(&blob);
         assert_eq!(turns.len(), 1);
         let f = &turns[0].facts;
@@ -718,10 +743,7 @@ mod tests {
     fn parse_session_reconstructs_events() {
         let s = parse_opencode_session(&sample_session()).unwrap();
         let kinds: Vec<&str> = s.events.iter().map(|e| e.event_type.as_str()).collect();
-        assert_eq!(
-            kinds,
-            vec!["UserPromptSubmit", "PostToolUse", "UserPromptSubmit", "Stop"],
-        );
+        assert_eq!(kinds, vec!["UserPromptSubmit", "PostToolUse", "UserPromptSubmit", "Stop"],);
         assert_eq!(s.events[0].prompt.as_deref(), Some("fix the parser"));
         let tool = s.events.iter().find(|e| e.event_type == "PostToolUse").unwrap();
         assert_eq!(tool.tool_name.as_deref(), Some("Edit"));
@@ -754,10 +776,16 @@ mod tests {
     fn model_extraction_from_session_level_json_object() {
         // OpenCode's current schema stores session.model as a serialized JSON object;
         // the load_content blob carries it verbatim as a string. Parse out id/providerID.
-        let model_json = serde_json::json!({"id": "some-model", "providerID": "opencode", "variant": "default"}).to_string();
+        let model_json =
+            serde_json::json!({"id": "some-model", "providerID": "opencode", "variant": "default"})
+                .to_string();
         let content = serde_json::json!({ "model": model_json, "messages": [] }).to_string();
         let m = extract_dominant_model(&content).unwrap();
-        assert_eq!(m, ("opencode".to_string(), "some-model".to_string()), "structured id/providerID wins over the raw JSON blob");
+        assert_eq!(
+            m,
+            ("opencode".to_string(), "some-model".to_string()),
+            "structured id/providerID wins over the raw JSON blob"
+        );
     }
 
     #[test]
@@ -841,7 +869,8 @@ mod tests {
         let with = serde_json::json!({
             "tokens_input": 3474319, "tokens_output": 334525, "tokens_reasoning": 607047,
             "tokens_cache_read": 128858240, "tokens_cache_write": 0, "messages": []
-        }).to_string();
+        })
+        .to_string();
         // Split: fresh 3,474,319 with 128,858,240 read from cache — 97.4% of the
         // input, and the reason folding them prices ~8x high.
         let t = extract_tokens(&with).expect("usage parsed");
@@ -850,13 +879,17 @@ mod tests {
         assert_eq!(t.reasoning, Some(607_047), "reasoning stays its own field");
         assert_eq!(t.total_input(), 132_332_559, "the folded meaning is still available");
         // plain input/output with no cache/reasoning keys still works
-        let plain = serde_json::json!({"tokens_input": 100, "tokens_output": 40, "messages": []}).to_string();
+        let plain = serde_json::json!({"tokens_input": 100, "tokens_output": 40, "messages": []})
+            .to_string();
         let p2 = extract_tokens(&plain).expect("usage parsed");
         assert_eq!((p2.input, p2.output), (100, 40));
         // Absent cache keys stay None — "not reported" is not "cached nothing".
         assert_eq!((p2.cache_read, p2.cache_write), (None, None));
         // absent or all-zero → None (honest-empty, never a fabricated 0)
         assert_eq!(extract_tokens(&serde_json::json!({"messages": []}).to_string()), None);
-        assert_eq!(extract_tokens(&serde_json::json!({"tokens_input": 0, "tokens_output": 0}).to_string()), None);
+        assert_eq!(
+            extract_tokens(&serde_json::json!({"tokens_input": 0, "tokens_output": 0}).to_string()),
+            None
+        );
     }
 }

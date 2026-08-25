@@ -3,12 +3,14 @@
 //! deterministically cluster, summarize each surviving cluster (graceful), and
 //! upsert idempotently by signature (then prune stale signatures).
 
-use super::super::executor::TaskContext;
 use super::super::Task;
+use super::super::executor::TaskContext;
 use super::analyze::correction_signal;
-use super::corrections_llm::{summarize_cluster, ClusterSummary};
-use super::prompt_classify::{classify_batch, PromptClass};
-use crate::corrections::{self, parse_cluster_min, parse_similarity_threshold, Cluster, CorrItem, CorrectionRow};
+use super::corrections_llm::{ClusterSummary, summarize_cluster};
+use super::prompt_classify::{PromptClass, classify_batch};
+use crate::corrections::{
+    self, Cluster, CorrItem, CorrectionRow, parse_cluster_min, parse_similarity_threshold,
+};
 
 /// Per-batch embedding wall-clock cap — a stalled backend must not wedge the task.
 const EMBED_TIMEOUT_SECS: u64 = 30;
@@ -106,13 +108,16 @@ async fn embed_items(ctx: &TaskContext, items: &[CorrItem]) -> Option<Vec<Vec<f3
                 let embs = resp.embeddings.unwrap_or_default();
                 if embs.len() != batch.len() {
                     tracing::warn!(
-                        got = embs.len(), expected = batch.len(),
+                        got = embs.len(),
+                        expected = batch.len(),
                         "aggregate_corrections: embedding count mismatch — lexical fallback"
                     );
                     return None;
                 }
                 if embs.iter().any(|e| e.len() != EMBED_DIM) {
-                    tracing::warn!("aggregate_corrections: unexpected embedding width — lexical fallback");
+                    tracing::warn!(
+                        "aggregate_corrections: unexpected embedding width — lexical fallback"
+                    );
                     return None;
                 }
                 out.extend(embs);
@@ -145,7 +150,12 @@ pub async fn aggregate_corrections(ctx: &TaskContext, _task: &Task) -> Result<u3
     let mut candidates: Vec<CorrItem> = all
         .into_iter()
         .filter(|(_, _, _, _, prompt)| correction_signal(prompt).is_some())
-        .map(|(project_id, _pname, session_id, ts, prompt)| CorrItem { project_id, session_id, ts, prompt })
+        .map(|(project_id, _pname, session_id, ts, prompt)| CorrItem {
+            project_id,
+            session_id,
+            ts,
+            prompt,
+        })
         .collect();
 
     if candidates.is_empty() {
@@ -172,7 +182,9 @@ pub async fn aggregate_corrections(ctx: &TaskContext, _task: &Task) -> Result<u3
     // If the LLM confidently rejected every regex candidate, do NOT prune: a
     // single (fallible) classification pass shouldn't wipe existing corrections.
     if items.is_empty() {
-        tracing::info!("aggregate_corrections: LLM filtered all candidates — preserving existing rows");
+        tracing::info!(
+            "aggregate_corrections: LLM filtered all candidates — preserving existing rows"
+        );
         return Ok(0);
     }
 
@@ -224,11 +236,16 @@ pub async fn aggregate_corrections(ctx: &TaskContext, _task: &Task) -> Result<u3
         keep.push(row.signature.clone());
         match ctx.pg().upsert_correction(row).await {
             Ok(_) => written += 1,
-            Err(e) => tracing::warn!(error = %e, signature = %row.signature, "aggregate_corrections: upsert failed"),
+            Err(e) => {
+                tracing::warn!(error = %e, signature = %row.signature, "aggregate_corrections: upsert failed")
+            }
         }
     }
     let pruned = ctx.pg().delete_corrections_not_in(&keep).await.unwrap_or(0);
-    tracing::info!("aggregate_corrections: {written} upserted ({} rows), {pruned} pruned", rows.len());
+    tracing::info!(
+        "aggregate_corrections: {written} upserted ({} rows), {pruned} pruned",
+        rows.len()
+    );
     Ok(written)
 }
 
@@ -243,7 +260,11 @@ mod tests {
     #[test]
     fn build_rows_drops_singletons_and_uses_summary_then_snippet() {
         let p = uuid::Uuid::new_v4();
-        let items = vec![item(p, 100, "use $state"), item(p, 200, "use $state please"), item(p, 300, "lone")];
+        let items = vec![
+            item(p, 100, "use $state"),
+            item(p, 200, "use $state please"),
+            item(p, 300, "lone"),
+        ];
         let clusters = vec![
             Cluster {
                 signature: "corr-a".into(),
@@ -263,7 +284,11 @@ mod tests {
             },
         ];
         let summaries = vec![
-            Some(ClusterSummary { text: "Use $state".into(), suggestion: Some("reinforce".into()), memory_id: None }),
+            Some(ClusterSummary {
+                text: "Use $state".into(),
+                suggestion: Some("reinforce".into()),
+                memory_id: None,
+            }),
             None,
         ];
         let rows = build_rows(&clusters, &summaries, &items, 2);

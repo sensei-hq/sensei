@@ -1,8 +1,12 @@
-use super::common::{field_text, make_symbol, ir_function, ir_method, ir_class, ir_module, ir_parsed_file, node_text};
-use tree_sitter::{Language, Parser, Node};
-use crate::types::{ParsedFile, ParsedSymbol, ParsedImport, SymbolKind};
-use crate::ir::{IRFunction, IRClass, IRParam, IRImport, IRConstant, IRParsedFile, ClassKind, Visibility};
 use super::LanguageAdapter;
+use super::common::{
+    field_text, ir_class, ir_function, ir_method, ir_module, ir_parsed_file, make_symbol, node_text,
+};
+use crate::ir::{
+    ClassKind, IRClass, IRConstant, IRFunction, IRImport, IRParam, IRParsedFile, Visibility,
+};
+use crate::types::{ParsedFile, ParsedImport, ParsedSymbol, SymbolKind};
+use tree_sitter::{Language, Node, Parser};
 
 unsafe extern "C" {
     fn tree_sitter_swift() -> Language;
@@ -11,7 +15,9 @@ unsafe extern "C" {
 pub struct SwiftAdapter;
 
 impl LanguageAdapter for SwiftAdapter {
-    fn language(&self) -> &str { "swift" }
+    fn language(&self) -> &str {
+        "swift"
+    }
 
     fn parse_to_ir(&self, source: &str, file_path: &str) -> crate::ir::IRParsedFile {
         parse_to_ir(source, file_path)
@@ -46,33 +52,63 @@ impl LanguageAdapter for SwiftAdapter {
 }
 
 fn empty(path: &str) -> ParsedFile {
-    ParsedFile { file_path: path.into(), language: "swift".into(), symbols: vec![], edges: vec![], imports: vec![] }
+    ParsedFile {
+        file_path: path.into(),
+        language: "swift".into(),
+        symbols: vec![],
+        edges: vec![],
+        imports: vec![],
+    }
 }
 
-fn walk(node: &Node, src: &[u8], lines: &[&str], symbols: &mut Vec<ParsedSymbol>, imports: &mut Vec<ParsedImport>) {
+fn walk(
+    node: &Node,
+    src: &[u8],
+    lines: &[&str],
+    symbols: &mut Vec<ParsedSymbol>,
+    imports: &mut Vec<ParsedImport>,
+) {
     walk_with_parent(node, src, lines, symbols, imports, None);
 }
 
-fn walk_with_parent(node: &Node, src: &[u8], lines: &[&str], symbols: &mut Vec<ParsedSymbol>, imports: &mut Vec<ParsedImport>, class_name: Option<&str>) {
+fn walk_with_parent(
+    node: &Node,
+    src: &[u8],
+    lines: &[&str],
+    symbols: &mut Vec<ParsedSymbol>,
+    imports: &mut Vec<ParsedImport>,
+    class_name: Option<&str>,
+) {
     for i in 0..node.child_count() {
         let child = node.child(i).unwrap();
         match child.kind() {
             "function_declaration" => {
                 let name = field_text(&child, "name", src);
-                if name.is_empty() { continue; }
-                let is_pub = has_access_modifier(&child, src, "public") || has_access_modifier(&child, src, "open");
-                let kind = if class_name.is_some() { SymbolKind::Method } else { SymbolKind::Function };
+                if name.is_empty() {
+                    continue;
+                }
+                let is_pub = has_access_modifier(&child, src, "public")
+                    || has_access_modifier(&child, src, "open");
+                let kind =
+                    if class_name.is_some() { SymbolKind::Method } else { SymbolKind::Function };
                 let mut sym = make_sym(name, kind, &child, lines, src, is_pub);
                 sym.parent = class_name.map(|s| s.to_string());
                 symbols.push(sym);
             }
             "class_declaration" => {
                 let name = find_type_name(&child, src);
-                if name.is_empty() { continue; }
-                let is_pub = has_access_modifier(&child, src, "public") || has_access_modifier(&child, src, "open");
-                let kind = if has_keyword(&child, "struct") { SymbolKind::Struct }
-                    else if has_keyword(&child, "enum") { SymbolKind::Enum }
-                    else { SymbolKind::Class };
+                if name.is_empty() {
+                    continue;
+                }
+                let is_pub = has_access_modifier(&child, src, "public")
+                    || has_access_modifier(&child, src, "open");
+                let kind = if has_keyword(&child, "struct") {
+                    SymbolKind::Struct
+                } else if has_keyword(&child, "enum") {
+                    SymbolKind::Enum
+                } else {
+                    SymbolKind::Class
+                };
                 symbols.push(make_sym(name.clone(), kind, &child, lines, src, is_pub));
                 for j in 0..child.child_count() {
                     let cc = child.child(j).unwrap();
@@ -84,38 +120,58 @@ fn walk_with_parent(node: &Node, src: &[u8], lines: &[&str], symbols: &mut Vec<P
             "protocol_declaration" => {
                 let name = field_text(&child, "name", src);
                 if !name.is_empty() {
-                    symbols.push(make_sym(name, SymbolKind::Interface, &child, lines, src, has_access_modifier(&child, src, "public")));
+                    symbols.push(make_sym(
+                        name,
+                        SymbolKind::Interface,
+                        &child,
+                        lines,
+                        src,
+                        has_access_modifier(&child, src, "public"),
+                    ));
                 }
             }
             "typealias_declaration" => {
                 let name = field_text(&child, "name", src);
                 if !name.is_empty() {
-                    symbols.push(make_sym(name, SymbolKind::Type, &child, lines, src, has_access_modifier(&child, src, "public")));
+                    symbols.push(make_sym(
+                        name,
+                        SymbolKind::Type,
+                        &child,
+                        lines,
+                        src,
+                        has_access_modifier(&child, src, "public"),
+                    ));
                 }
             }
             "import_declaration" => {
                 let text = child.utf8_text(src).unwrap_or_default();
-                let module = text.strip_prefix("import")
-                    .map(|s| s.trim().to_string())
-                    .unwrap_or_default();
+                let module =
+                    text.strip_prefix("import").map(|s| s.trim().to_string()).unwrap_or_default();
                 if !module.is_empty() {
                     imports.push(ParsedImport { target_path: module, names: vec![] });
                 }
             }
-            "property_declaration"
-                if class_name.is_none() => {
-                    let name = find_pattern_name(&child, src);
-                    if !name.is_empty() {
-                        symbols.push(make_sym(name, SymbolKind::Const, &child, lines, src, has_access_modifier(&child, src, "public")));
-                    }
+            "property_declaration" if class_name.is_none() => {
+                let name = find_pattern_name(&child, src);
+                if !name.is_empty() {
+                    symbols.push(make_sym(
+                        name,
+                        SymbolKind::Const,
+                        &child,
+                        lines,
+                        src,
+                        has_access_modifier(&child, src, "public"),
+                    ));
                 }
+            }
             "init_declaration" => {
                 let mut sym = make_sym("init".into(), SymbolKind::Method, &child, lines, src, true);
                 sym.parent = class_name.map(|s| s.to_string());
                 symbols.push(sym);
             }
             "deinit_declaration" => {
-                let mut sym = make_sym("deinit".into(), SymbolKind::Method, &child, lines, src, true);
+                let mut sym =
+                    make_sym("deinit".into(), SymbolKind::Method, &child, lines, src, true);
                 sym.parent = class_name.map(|s| s.to_string());
                 symbols.push(sym);
             }
@@ -138,8 +194,9 @@ fn walk_with_parent(node: &Node, src: &[u8], lines: &[&str], symbols: &mut Vec<P
 fn has_keyword(node: &Node, keyword: &str) -> bool {
     for i in 0..node.child_count() {
         let child = node.child(i).unwrap();
-        if !child.is_named()
-            && child.kind() == keyword { return true; }
+        if !child.is_named() && child.kind() == keyword {
+            return true;
+        }
     }
     false
 }
@@ -147,7 +204,9 @@ fn has_keyword(node: &Node, keyword: &str) -> bool {
 fn find_type_name(node: &Node, src: &[u8]) -> String {
     // Try field "name" first, then look for type_identifier child
     let name = field_text(node, "name", src);
-    if !name.is_empty() { return name; }
+    if !name.is_empty() {
+        return name;
+    }
     for i in 0..node.child_count() {
         let child = node.child(i).unwrap();
         if child.kind() == "type_identifier" || child.kind() == "simple_identifier" {
@@ -179,25 +238,37 @@ fn has_access_modifier(node: &Node, src: &[u8], modifier: &str) -> bool {
         let k = child.kind();
         if k.contains("modifier") || k == "attribute" {
             let text = child.utf8_text(src).unwrap_or_default();
-            if text.contains(modifier) { return true; }
+            if text.contains(modifier) {
+                return true;
+            }
         }
     }
     false
 }
 
-fn make_sym(name: String, kind: SymbolKind, node: &Node, lines: &[&str], src: &[u8], is_exported: bool) -> ParsedSymbol {
+fn make_sym(
+    name: String,
+    kind: SymbolKind,
+    node: &Node,
+    lines: &[&str],
+    src: &[u8],
+    is_exported: bool,
+) -> ParsedSymbol {
     make_symbol(name, kind, node, lines, is_exported, extract_doc_comment(node, src))
 }
 
 fn extract_doc_comment(node: &Node, src: &[u8]) -> Option<String> {
     let prev = node.prev_sibling()?;
-    if prev.kind() != "comment" && prev.kind() != "multiline_comment" { return None; }
+    if prev.kind() != "comment" && prev.kind() != "multiline_comment" {
+        return None;
+    }
     let text = prev.utf8_text(src).ok()?;
     if text.starts_with("///") {
         Some(text.trim_start_matches('/').trim().to_string())
     } else if text.starts_with("/**") {
         let inner = text.trim_start_matches("/**").trim_end_matches("*/").trim();
-        let cleaned: Vec<&str> = inner.lines()
+        let cleaned: Vec<&str> = inner
+            .lines()
             .map(|l| l.trim().trim_start_matches('*').trim())
             .filter(|l| !l.is_empty())
             .collect();
@@ -214,7 +285,13 @@ pub fn parse_to_ir(source: &str, file_path: &str) -> IRParsedFile {
     parser.set_language(&lang).expect("swift");
     let tree = match parser.parse(source, None) {
         Some(t) => t,
-        None => return IRParsedFile { file_path: file_path.into(), language: "swift".into(), ..Default::default() },
+        None => {
+            return IRParsedFile {
+                file_path: file_path.into(),
+                language: "swift".into(),
+                ..Default::default()
+            };
+        }
     };
     let lines: Vec<&str> = source.lines().collect();
     let root = tree.root_node();
@@ -223,22 +300,56 @@ pub fn parse_to_ir(source: &str, file_path: &str) -> IRParsedFile {
     let mut classes = Vec::new();
     let mut imports = Vec::new();
     let mut constants = Vec::new();
-    walk_ir_swift(&root, src, &lines, &mut functions, &mut classes, &mut imports, &mut constants, None);
-    let module = ir_module(file_path, "swift", functions, constants, imports, file_path.contains("Test"));
+    walk_ir_swift(
+        &root,
+        src,
+        &lines,
+        &mut functions,
+        &mut classes,
+        &mut imports,
+        &mut constants,
+        None,
+    );
+    let module =
+        ir_module(file_path, "swift", functions, constants, imports, file_path.contains("Test"));
     ir_parsed_file(file_path, "swift", module, classes)
 }
 
 #[allow(clippy::too_many_arguments)]
-fn walk_ir_swift(node: &Node, src: &[u8], lines: &[&str], functions: &mut Vec<IRFunction>, classes: &mut Vec<IRClass>, imports: &mut Vec<IRImport>, _constants: &mut Vec<IRConstant>, class_ctx: Option<&str>) {
+fn walk_ir_swift(
+    node: &Node,
+    src: &[u8],
+    lines: &[&str],
+    functions: &mut Vec<IRFunction>,
+    classes: &mut Vec<IRClass>,
+    imports: &mut Vec<IRImport>,
+    _constants: &mut Vec<IRConstant>,
+    class_ctx: Option<&str>,
+) {
     for i in 0..node.child_count() {
         let child = node.child(i).unwrap();
         match child.kind() {
             "function_declaration" if class_ctx.is_none() => {
                 let name = field_text(&child, "name", src);
-                let is_pub = !node_text(&child, src).starts_with("private") && !node_text(&child, src).starts_with("fileprivate");
-                functions.push(ir_function(name, &child, lines, is_pub, node_text(&child, src).contains("async"), extract_swift_params(&child, src), extract_swift_return(&child, src), extract_doc_comment(&child, src), Vec::new(), &node_text(&child, src)));
+                let is_pub = !node_text(&child, src).starts_with("private")
+                    && !node_text(&child, src).starts_with("fileprivate");
+                functions.push(ir_function(
+                    name,
+                    &child,
+                    lines,
+                    is_pub,
+                    node_text(&child, src).contains("async"),
+                    extract_swift_params(&child, src),
+                    extract_swift_return(&child, src),
+                    extract_doc_comment(&child, src),
+                    Vec::new(),
+                    &node_text(&child, src),
+                ));
             }
-            "class_declaration" | "struct_declaration" | "protocol_declaration" | "enum_declaration" => {
+            "class_declaration"
+            | "struct_declaration"
+            | "protocol_declaration"
+            | "enum_declaration" => {
                 let name = field_text(&child, "name", src);
                 let kind = match child.kind() {
                     "struct_declaration" => ClassKind::Struct,
@@ -247,15 +358,35 @@ fn walk_ir_swift(node: &Node, src: &[u8], lines: &[&str], functions: &mut Vec<IR
                     _ => ClassKind::Class,
                 };
                 let is_pub = !node_text(&child, src).starts_with("private");
-                let mut class = ir_class(name, &child, kind, is_pub, extract_doc_comment(&child, src), Vec::new());
+                let mut class = ir_class(
+                    name,
+                    &child,
+                    kind,
+                    is_pub,
+                    extract_doc_comment(&child, src),
+                    Vec::new(),
+                );
                 // Extract methods from body
                 if let Some(body) = child.child_by_field_name("body") {
                     for j in 0..body.child_count() {
                         if let Some(m) = body.child(j)
-                            && m.kind() == "function_declaration" {
-                                let mname = field_text(&m, "name", src);
-                                class.methods.push(ir_method(mname, &m, true, node_text(&m, src).contains("async"), node_text(&m, src).contains("static"), extract_swift_params(&m, src), extract_swift_return(&m, src), extract_doc_comment(&m, src), Vec::new(), Visibility::Public, &node_text(&m, src)));
-                            }
+                            && m.kind() == "function_declaration"
+                        {
+                            let mname = field_text(&m, "name", src);
+                            class.methods.push(ir_method(
+                                mname,
+                                &m,
+                                true,
+                                node_text(&m, src).contains("async"),
+                                node_text(&m, src).contains("static"),
+                                extract_swift_params(&m, src),
+                                extract_swift_return(&m, src),
+                                extract_doc_comment(&m, src),
+                                Vec::new(),
+                                Visibility::Public,
+                                &node_text(&m, src),
+                            ));
+                        }
                     }
                 }
                 classes.push(class);
@@ -263,7 +394,11 @@ fn walk_ir_swift(node: &Node, src: &[u8], lines: &[&str], functions: &mut Vec<IR
             "import_declaration" => {
                 let text = node_text(&child, src);
                 let path = text.trim_start_matches("import ").trim();
-                imports.push(IRImport { source: path.into(), names: vec![path.into()], is_reexport: false });
+                imports.push(IRImport {
+                    source: path.into(),
+                    names: vec![path.into()],
+                    is_reexport: false,
+                });
             }
             _ => {}
         }
@@ -275,13 +410,18 @@ fn extract_swift_params(node: &Node, src: &[u8]) -> Vec<IRParam> {
     if let Some(pl) = node.child_by_field_name("parameters") {
         for i in 0..pl.child_count() {
             if let Some(p) = pl.child(i)
-                && p.kind() == "parameter" {
-                    let name = field_text(&p, "name", src);
-                    let type_ = field_text(&p, "type", src);
-                    if !name.is_empty() {
-                        params.push(IRParam { name, type_: if type_.is_empty() { None } else { Some(type_) }, ..Default::default() });
-                    }
+                && p.kind() == "parameter"
+            {
+                let name = field_text(&p, "name", src);
+                let type_ = field_text(&p, "type", src);
+                if !name.is_empty() {
+                    params.push(IRParam {
+                        name,
+                        type_: if type_.is_empty() { None } else { Some(type_) },
+                        ..Default::default()
+                    });
                 }
+            }
         }
     }
     params
@@ -290,16 +430,20 @@ fn extract_swift_params(node: &Node, src: &[u8]) -> Vec<IRParam> {
 fn extract_swift_return(node: &Node, src: &[u8]) -> Option<String> {
     let text = node_text(node, src);
     if let Some(pos) = text.find("->") {
-        let ret = text[pos+2..].trim().split('{').next()?.trim();
+        let ret = text[pos + 2..].trim().split('{').next()?.trim();
         if ret.is_empty() { None } else { Some(ret.to_string()) }
-    } else { None }
+    } else {
+        None
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn parse(src: &str) -> ParsedFile { SwiftAdapter.parse(src, "test.swift") }
+    fn parse(src: &str) -> ParsedFile {
+        SwiftAdapter.parse(src, "test.swift")
+    }
 
     #[test]
     fn swift_function() {
@@ -373,7 +517,9 @@ mod tests {
 
     #[test]
     fn method_parent_on_struct() {
-        let pf = parse("struct Point {\n    var x: Int\n    var y: Int\n    func distance() -> Double { return 0.0 }\n}");
+        let pf = parse(
+            "struct Point {\n    var x: Int\n    var y: Int\n    func distance() -> Double { return 0.0 }\n}",
+        );
         let dist = pf.symbols.iter().find(|s| s.name == "distance").unwrap();
         assert_eq!(dist.parent.as_deref(), Some("Point"));
     }
@@ -398,7 +544,9 @@ mod tests {
         assert!(drawable.parent.is_none());
     }
 
-    fn parse_ir(src: &str) -> IRParsedFile { parse_to_ir(src, "test.swift") }
+    fn parse_ir(src: &str) -> IRParsedFile {
+        parse_to_ir(src, "test.swift")
+    }
 
     #[test]
     fn ir_class_with_method() {

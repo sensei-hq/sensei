@@ -5,9 +5,9 @@
 //! Letting the daemon do this keeps the wire shape stable and means a new
 //! recommendation rule lands without a frontend release.
 
-use axum::{extract::State, http::StatusCode, response::Json};
 use crate::api::state::AppState;
 use crate::instruments::{McpEntry, REGISTRY};
+use axum::{extract::State, http::StatusCode, response::Json};
 
 /// Per-project stack — `project_count` for each MCP is the number of these
 /// projects whose stack matches any of the MCP's keywords.
@@ -15,13 +15,16 @@ async fn per_project_stacks(state: &AppState) -> Result<Vec<Vec<String>>, Status
     // Fail closed: a DB error must not read as "no projects / no stacks" — that
     // would silently zero every recommendation + project_count as if the user's
     // stack matched nothing (the #109 audit).
-    let projects = state.pg.list_projects().await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let projects = state.pg.list_projects().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let mut stacks = Vec::with_capacity(projects.len());
     for project in &projects {
-        let Some(pid) = project["id"].as_str().and_then(|s| uuid::Uuid::parse_str(s).ok())
-        else { continue };
-        let folders = state.pg.list_folders_by_project(&pid).await
+        let Some(pid) = project["id"].as_str().and_then(|s| uuid::Uuid::parse_str(s).ok()) else {
+            continue;
+        };
+        let folders = state
+            .pg
+            .list_folders_by_project(&pid)
+            .await
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
         let mut stack: Vec<String> = vec![];
         for folder in &folders {
@@ -41,10 +44,10 @@ async fn per_project_stacks(state: &AppState) -> Result<Vec<Vec<String>>, Status
 /// True when any of this MCP's keywords appears as a substring in any tag
 /// of the given (already-lowercased) project stack.
 fn entry_matches_project(entry: &McpEntry, project_stack: &[String]) -> bool {
-    if entry.stack_keywords.is_empty() { return false; }
-    entry.stack_keywords.iter().any(|kw|
-        project_stack.iter().any(|s| s.contains(kw))
-    )
+    if entry.stack_keywords.is_empty() {
+        return false;
+    }
+    entry.stack_keywords.iter().any(|kw| project_stack.iter().any(|s| s.contains(kw)))
 }
 
 pub(crate) async fn list_instruments(
@@ -55,9 +58,7 @@ pub(crate) async fn list_instruments(
     // Flat union of every project's stack, used for the top-level
     // `recommended` flag (a single project that uses Postgres is enough
     // for Postgres MCP to show up in the recommendation set).
-    let flat_stack: Vec<String> = project_stacks.iter()
-        .flat_map(|s| s.iter().cloned())
-        .collect();
+    let flat_stack: Vec<String> = project_stacks.iter().flat_map(|s| s.iter().cloned()).collect();
 
     // Probing config files is cheap (~handful of small JSON reads) but it's
     // pure synchronous IO — move it off the runtime so a slow disk doesn't
@@ -72,9 +73,8 @@ pub(crate) async fn list_instruments(
     for value in mcps.iter_mut() {
         let id = value["id"].as_str().unwrap_or("");
         if let Some(entry) = REGISTRY.iter().find(|e| e.id == id) {
-            let count = project_stacks.iter()
-                .filter(|stack| entry_matches_project(entry, stack))
-                .count();
+            let count =
+                project_stacks.iter().filter(|stack| entry_matches_project(entry, stack)).count();
             value["project_count"] = serde_json::json!(count);
         }
     }
