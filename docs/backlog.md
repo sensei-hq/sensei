@@ -15,6 +15,43 @@ Work is tracked as **GitHub issues** in [`sensei-hq/sensei`](https://github.com/
 
 ---
 
+## kavach calls `resolve(event)` twice — every POST body under a public rule arrives empty
+
+**Status:** BLOCKER for dōjō's `/v1` POST API. Upstream fix needed in
+[jerrythomas/kavach](https://github.com/jerrythomas/kavach) (`packages/auth`,
+pinned here at `1.0.0-next.37`).
+
+In `node_modules/kavach/src/kavach.js`, `handleUnauthorizedAccess` returns
+`resolve(event)` when access is ALLOWED — a `Promise`, not a `Response`. The
+caller, `handleRouteProtection`, then tests `protection instanceof Response`,
+which is false for a Promise, so it falls through to its own `return
+resolve(event)` at the end. `resolve` therefore runs twice for every permitted
+route. The first run drains the request body stream; the second sees an empty
+body.
+
+GET is unaffected (no body). Every POST through a permitted route loses its body.
+
+Reproduced 2026-08-25 against dōjō dev: `POST /v1/auth/cli/refresh` with
+`Content-Length: 25` reached the handler with `request.text() === ''`. Replacing
+`hooks.server.ts` with a bare `resolve(event)` made the same request arrive
+intact, and restoring kavach reproduced the empty body immediately.
+
+This is NOT specific to the new CLI-auth endpoints. It affects every existing
+`/v1` POST that reads `request.json()` once the caller is authenticated —
+`/v1/you/dojos`, `/v1/you/contributions/adopt`, `/v1/you/invites/accept`,
+`/v1/you/rule-packs/[slug]/adopt`, `/v1/you/github/sync`. Those all call
+`resolveCaller` first, which reads only headers, so an unauthenticated probe 401s
+before touching the body and hides the fault.
+
+**Fix (upstream):** `handleUnauthorizedAccess` should return the guard Response or
+`null`/`undefined`, and let `handleRouteProtection` own the single `resolve` call.
+
+**Not worked around here.** Buffering the body in `hooks.server.ts` and passing it
+via `locals` would mean every handler reads its body from a non-standard place —
+a workaround for a library bug spread across the whole API surface. Per the
+project rule on silent workarounds, this is recorded rather than hidden.
+
+
 ## Open GitHub issues (12)
 
 ### Epics

@@ -9,6 +9,7 @@
 //! "only repositories this person can reach" on every query, instead of every
 //! endpoint remembering to check.
 
+pub mod dojo_auth;
 pub mod pkce;
 pub mod session;
 pub mod settings;

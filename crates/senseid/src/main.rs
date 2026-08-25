@@ -10,7 +10,7 @@ mod watcher;
 mod api;
 mod tasks;
 mod transcript;
-mod supabase;
+mod dojo_client;
 mod governance;
 mod materialize;
 mod review;
