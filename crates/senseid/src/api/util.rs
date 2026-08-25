@@ -8,7 +8,8 @@
 /// human-readable reason. Shared by the federation and Dōjō registration paths.
 pub(crate) fn require_secure_url(raw: &str, resource: &str) -> Result<reqwest::Url, String> {
     let parsed = reqwest::Url::parse(raw).map_err(|_| format!("invalid {resource}"))?;
-    let is_loopback = matches!(parsed.host_str(), Some("127.0.0.1") | Some("::1") | Some("localhost"));
+    let is_loopback =
+        matches!(parsed.host_str(), Some("127.0.0.1") | Some("::1") | Some("localhost"));
     if parsed.scheme() != "https" && !is_loopback {
         return Err(format!("non-loopback {resource} must be https"));
     }
@@ -94,9 +95,7 @@ pub(crate) async fn resolve_existing_project(
     state: &crate::api::state::AppState,
     id: &str,
 ) -> Result<uuid::Uuid, axum::http::StatusCode> {
-    let uuid = resolve_project_uuid(state, id)
-        .await?
-        .ok_or(axum::http::StatusCode::NOT_FOUND)?;
+    let uuid = resolve_project_uuid(state, id).await?.ok_or(axum::http::StatusCode::NOT_FOUND)?;
     state
         .pg
         .get_project(&uuid)
@@ -115,6 +114,59 @@ mod tests {
     /// `let project_id = …Uuid::parse_str` smell so the 2026-07-07 fix can't
     /// regress. (Non-project uuids — chain/memory/session ids — are unaffected;
     /// the pattern keys on the `project_id` binding specifically.)
+    /// Split source into `;`-terminated statements, each collapsed to one line
+    /// and paired with the line it starts on.
+    ///
+    /// Comments are dropped first so a `//` mentioning the pattern in prose —
+    /// this file's own docs, for instance — cannot be read as code.
+    fn statements(src: &str) -> Vec<(usize, String)> {
+        let mut out = Vec::new();
+        let mut current = String::new();
+        let mut start = 1;
+        for (i, line) in src.lines().enumerate() {
+            let code = match line.find("//") {
+                Some(at) => &line[..at],
+                None => line,
+            };
+            let code = code.trim();
+            if code.is_empty() {
+                continue;
+            }
+            if current.is_empty() {
+                start = i + 1;
+            } else {
+                current.push(' ');
+            }
+            current.push_str(code);
+            if code.ends_with(';') || code.ends_with('{') || code.ends_with('}') {
+                out.push((start, current.clone()));
+                current.clear();
+            }
+        }
+        if !current.is_empty() {
+            out.push((start, current));
+        }
+        out
+    }
+
+    #[test]
+    fn the_statement_scanner_sees_through_a_line_break() {
+        // The property the guard depends on: wrapping a statement must not hide
+        // it. Without this, the #100 guard is one `cargo fmt` away from silence.
+        let wrapped = "    let project_id = id\n        .and_then(|s| Uuid::parse_str(s).ok());\n";
+        let found = statements(wrapped)
+            .iter()
+            .any(|(_, s)| s.starts_with("let project_id") && s.contains("Uuid::parse_str"));
+        assert!(found, "a wrapped statement must still be matched");
+    }
+
+    #[test]
+    fn the_statement_scanner_ignores_comments() {
+        // Otherwise this very file's documentation would report itself.
+        let commented = "    // let project_id = Uuid::parse_str(&id);\n";
+        assert!(statements(commented).is_empty(), "prose must not read as code");
+    }
+
     #[test]
     fn no_handler_parses_a_project_id_raw() {
         let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/src/api/handlers");
@@ -125,16 +177,18 @@ mod tests {
                 continue;
             }
             let src = std::fs::read_to_string(&path).unwrap();
-            for (i, line) in src.lines().enumerate() {
-                let l = line.trim_start();
-                if l.starts_with("let project_id")
-                    && l.contains("Uuid::parse_str")
-                {
+            // Scan STATEMENTS, not lines. A line-based scan is defeated by
+            // nothing more than a line break — rustfmt joined one of these in
+            // 2026-08-25 and the guard suddenly saw a violation it had been
+            // blind to, which means the reverse was equally possible: wrap the
+            // offending statement and the guard goes quiet.
+            for (i, stmt) in statements(&src) {
+                if stmt.starts_with("let project_id") && stmt.contains("Uuid::parse_str") {
                     offenders.push(format!(
                         "{}:{}: {}",
                         path.file_name().unwrap().to_string_lossy(),
-                        i + 1,
-                        l.trim()
+                        i,
+                        stmt
                     ));
                 }
             }
@@ -155,7 +209,10 @@ mod tests {
             task_queue: std::sync::Arc::new(crate::tasks::queue::TaskQueue::new()),
             pg,
             gateway: crate::api::gateway_init::init_gateway_test().await,
-            event_tx: { let (tx, _) = tokio::sync::broadcast::channel(16); tx },
+            event_tx: {
+                let (tx, _) = tokio::sync::broadcast::channel(16);
+                tx
+            },
             breaker: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
             provisioning: None,
         }))
@@ -180,14 +237,8 @@ mod tests {
 
         // Both the uuid and the project NAME resolve to the same existing id
         // (the name-or-uuid contract, then the get_project existence check).
-        assert_eq!(
-            super::resolve_existing_project(&state, &pid.to_string()).await.unwrap(),
-            pid,
-        );
-        assert_eq!(
-            super::resolve_existing_project(&state, &name).await.unwrap(),
-            pid,
-        );
+        assert_eq!(super::resolve_existing_project(&state, &pid.to_string()).await.unwrap(), pid,);
+        assert_eq!(super::resolve_existing_project(&state, &name).await.unwrap(), pid,);
 
         sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
             .bind(pid)
