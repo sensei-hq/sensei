@@ -6582,7 +6582,7 @@
 
         // Discovered from git: a guessed label, unverified.
         let pid = s.upsert_persona(&guessed, true).await.unwrap();
-        let id = s.link_persona_identity(&guessed, "real-login", gh_id, &[]).await.unwrap();
+        let id = s.link_persona_identity(&guessed, "real-login", gh_id, None, &[]).await.unwrap();
         assert_eq!(id, pid, "verification lands on the existing persona");
 
         let (label, login, verified): (String, Option<String>, Option<chrono::DateTime<chrono::Utc>>) =
@@ -6595,7 +6595,7 @@
         // The user renames it, then signs in again.
         sqlx_core::query::query("UPDATE sensei.personas SET label = 'my-name' WHERE id = $1")
             .bind(id).execute(s.pool()).await.unwrap();
-        s.link_persona_identity("ignored", "real-login", gh_id, &[]).await.unwrap();
+        s.link_persona_identity("ignored", "real-login", gh_id, None, &[]).await.unwrap();
         let (after,): (String,) = query_as("SELECT label FROM sensei.personas WHERE id = $1")
             .bind(id).fetch_one(s.pool()).await.unwrap();
 
@@ -6612,8 +6612,8 @@
         let uniq = uuid::Uuid::new_v4();
         let gh_id: i64 = (uniq.as_u128() % 1_000_000) as i64 + 800_000;
 
-        let first = s.link_persona_identity(&format!("a-{uniq}"), "old-login", gh_id, &[]).await.unwrap();
-        let second = s.link_persona_identity(&format!("b-{uniq}"), "new-login", gh_id, &[]).await.unwrap();
+        let first = s.link_persona_identity(&format!("a-{uniq}"), "old-login", gh_id, None, &[]).await.unwrap();
+        let second = s.link_persona_identity(&format!("b-{uniq}"), "new-login", gh_id, None, &[]).await.unwrap();
 
         let (login,): (Option<String>,) =
             query_as("SELECT github_login FROM sensei.personas WHERE id = $1")

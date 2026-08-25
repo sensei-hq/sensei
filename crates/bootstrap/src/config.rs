@@ -273,6 +273,24 @@ pub struct SenseiLocalConfig {
     /// Installed marketplace version string (e.g. `"0.3.1"`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub marketplace_version: Option<String>,
+
+    /// The dōjō (Supabase) instance this machine signs in to and syncs with.
+    ///
+    /// Persisted rather than read from the environment because the daemon runs
+    /// under `brew services`, which does NOT inherit a login shell — settings
+    /// exported in a shell profile are invisible to it, so auth silently
+    /// reports "not configured" on the installed daemon while working in dev.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dojo_url: Option<String>,
+
+    /// The dōjō PUBLISHABLE (anon) key.
+    ///
+    /// Not a secret: it is designed to ship inside clients and grants nothing on
+    /// its own — every table it can reach is behind RLS, which authorises against
+    /// the signed-in user, not this key. It belongs in config rather than the
+    /// Keychain for that reason.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dojo_anon_key: Option<String>,
 }
 
 impl SenseiLocalConfig {
