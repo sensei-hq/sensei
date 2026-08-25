@@ -35,7 +35,19 @@ set search_path to sensei, extensions;
 -- identity.
 create table if not exists personas (
   id            uuid        primary key default gen_random_uuid()
-, label         text        not null      -- GitHub login, e.g. 'jerrythomas'
+  -- DISPLAY name. Provisional until the persona is connected: before OAuth it
+  -- can only be a guess derived from a git email or a repository owner, and
+  -- guesses are wrong — `sensei-hq` was inferred from an email domain when the
+  -- real GitHub login is `sensei-hq-org`.
+, label         text        not null
+  -- VERIFIED identity, set only by a completed OAuth sign-in. NULL means "we
+  -- have not proven who this is", which is a different and more useful state
+  -- than a plausible-looking label.
+, github_login   text
+  -- The stable GitHub id. A login can be RENAMED — the id cannot — so this, not
+  -- the login, is what an identity is matched on across time.
+, github_user_id bigint
+, verified_at    timestamptz
   -- FALSE for a contributor who is NOT the local user. `contributor@example.com`
   -- above may well be someone else; folding it into the user's own numbers would
   -- be a fabricated attribution, so an unrecognised email gets its own persona
@@ -50,6 +62,11 @@ create table if not exists personas (
 );
 
 create unique index if not exists personas_label_unique on personas (lower(label));
+
+-- One persona per GitHub account. Two personas resolving to the same account
+-- would split one identity's history in half with no way to tell which is real.
+create unique index if not exists personas_github_user_unique
+    on personas (github_user_id) where github_user_id is not null;
 
 -- At most ONE persona per dōjō login. This is the constraint that makes the
 -- separation enforceable: Supabase auto-links identities sharing a verified
@@ -68,7 +85,13 @@ Not a "people" table. One human may own several personas by choice, and a
 persona may belong to someone else entirely (is_self = false).';
 
 comment on column personas.label
-     is 'The GitHub login this identity commits as (jerrythomas, sensei-hq, joelthomas8847). Unique case-insensitively. NOT a category of repo — one persona spans many owners.';
+     is 'Display name, unique case-insensitively. PROVISIONAL until verified_at is set — before a sign-in it can only be inferred from a git email or repo owner, and such inferences are wrong (sensei-hq vs the real sensei-hq-org). NOT a category of repo — one persona spans many owners.';
+comment on column personas.github_login
+     is 'The GitHub login, proven by OAuth. NULL until the persona is connected — an unproven identity should look unproven rather than merely unlabelled.';
+comment on column personas.github_user_id
+     is 'GitHub''s stable numeric id. Matched on in preference to the login, which the user can rename.';
+comment on column personas.verified_at
+     is 'When OAuth last confirmed this identity. NULL = discovered from git only.';
 comment on column personas.is_self
      is 'FALSE when this persona is another contributor, not the local user — so their commits are never counted as "mine".';
 comment on column personas.principal_id

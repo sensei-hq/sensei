@@ -125,4 +125,72 @@ impl PgStore {
         .await
         .map_err(|e| format!("unassigned_identities: {e}"))
     }
+
+    /// Record a persona's VERIFIED GitHub identity, and adopt the account's
+    /// emails as claimed aliases.
+    ///
+    /// Matches on `github_user_id` first, because a login can be renamed and the
+    /// numeric id cannot — matching on the login would create a second persona
+    /// for the same human the day they rename themselves.
+    ///
+    /// The label is REPLACED by the verified login only while the persona is
+    /// still unverified. Once a user has chosen a display name, an OAuth refresh
+    /// must not silently overwrite it — `sensei-hq` reading better than
+    /// `sensei-hq-org` is a legitimate preference, not drift to correct.
+    ///
+    /// Emails arrive with `source='claimed'`: GitHub verified mailbox control,
+    /// which is a materially stronger assertion than a git commit trailer that
+    /// anyone can set to any address.
+    pub async fn link_persona_identity(
+        &self,
+        persona_hint: &str,
+        github_login: &str,
+        github_user_id: i64,
+        verified_emails: &[String],
+    ) -> Result<uuid::Uuid, String> {
+        // Existing persona for this GitHub account, or the hinted one, or new.
+        let existing: Option<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
+            "SELECT id FROM sensei.personas WHERE github_user_id = $1",
+        )
+        .bind(github_user_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| format!("link_persona_identity (by id): {e}"))?;
+
+        let id = match existing {
+            Some((id,)) => id,
+            None => {
+                let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
+                    "INSERT INTO sensei.personas(label, is_self) VALUES($1, true) \
+                     ON CONFLICT (lower(label)) DO UPDATE SET modified_at = now() \
+                     RETURNING id",
+                )
+                .bind(persona_hint)
+                .fetch_one(&self.pool)
+                .await
+                .map_err(|e| format!("link_persona_identity (upsert): {e}"))?;
+                row.0
+            }
+        };
+
+        sqlx_core::query::query(
+            "UPDATE sensei.personas \
+                SET github_login = $2, github_user_id = $3, verified_at = now(), \
+                    label = CASE WHEN verified_at IS NULL THEN $2 ELSE label END, \
+                    modified_at = now() \
+              WHERE id = $1",
+        )
+        .bind(id)
+        .bind(github_login)
+        .bind(github_user_id)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| format!("link_persona_identity (verify): {e}"))?;
+
+        for email in verified_emails {
+            self.link_persona_email(&id, email, "claimed").await?;
+        }
+        Ok(id)
+    }
 }
+

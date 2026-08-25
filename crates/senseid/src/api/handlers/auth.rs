@@ -188,11 +188,23 @@ pub(crate) async fn callback(
                     session::store_refresh_token(&who, &refresh)
                 })
                 .await;
+                // Derive the identity from AUTH rather than leaving it a guess.
+                // A persona discovered from git carries an inferred label — and
+                // inference is wrong: `sensei-hq` came from an email domain when
+                // the real login is `sensei-hq-org`. OAuth knows the answer, so
+                // record it, along with the account's verified emails as claimed
+                // aliases.
+                let linked = link_verified_identity(
+                    &state, &persona, &tokens.access_token, tokens.provider_token.as_deref(),
+                )
+                .await;
+
                 match stored {
                     Ok(Ok(())) => Json(serde_json::json!({
                         "ok": true,
                         "signedIn": true,
                         "persona": persona,
+                        "identity": linked,
                         // Whether org provisioning will be possible for this
                         // persona — surfaced so a missing token is visible now
                         // rather than as an empty org list later.
@@ -403,3 +415,90 @@ pub(crate) async fn orgs(Query(p): Query<PersonaQuery>) -> Json<serde_json::Valu
         Err(e) => Json(serde_json::json!({ "ok": false, "persona": p.persona, "error": e.to_string() })),
     }
 }
+
+/// Record the verified GitHub identity for a persona, and adopt the account's
+/// emails as claimed aliases.
+///
+/// Best-effort by design: sign-in has already succeeded by the time this runs, so
+/// a failure here degrades the persona to "connected but unverified" rather than
+/// discarding a working session. The outcome is reported so the caller can say
+/// so rather than showing a confident-looking label that was never proven.
+async fn link_verified_identity(
+    state: &AppState,
+    persona: &str,
+    access_token: &str,
+    provider_token: Option<&str>,
+) -> serde_json::Value {
+    let Some(key) = anon_key() else {
+        return serde_json::json!({ "verified": false, "reason": "SUPABASE_ANON_KEY not set" });
+    };
+
+    // The GitHub login and numeric id come from Supabase's own record of the
+    // identity — no extra GitHub call, and it is what the provider actually
+    // asserted at sign-in.
+    let user: serde_json::Value = match crate::federation::http_client()
+        .get(format!("{}/auth/v1/user", supabase_url().trim_end_matches('/')))
+        .header("apikey", &key)
+        .header("Authorization", format!("Bearer {access_token}"))
+        .send()
+        .await
+    {
+        Ok(r) if r.status().is_success() => r.json().await.unwrap_or_default(),
+        _ => return serde_json::json!({ "verified": false, "reason": "could not read the auth user" }),
+    };
+
+    let ident = user["identities"].as_array().and_then(|a| {
+        a.iter().find(|i| i["provider"].as_str() == Some("github"))
+    });
+    let (Some(login), Some(gh_id)) = (
+        ident.and_then(|i| i["identity_data"]["user_name"].as_str()),
+        ident
+            .and_then(|i| i["identity_data"]["provider_id"].as_str())
+            .and_then(|v| v.parse::<i64>().ok())
+            .or_else(|| ident.and_then(|i| i["identity_data"]["provider_id"].as_i64())),
+    ) else {
+        return serde_json::json!({ "verified": false, "reason": "no github identity on this account" });
+    };
+
+    // All verified addresses, not just the primary — the point of aliases is
+    // that one human commits under several, and only GitHub knows the full set.
+    let mut emails: Vec<String> = user["email"].as_str().map(|e| vec![e.to_string()]).unwrap_or_default();
+    if let Some(pt) = provider_token
+        && let Ok(r) = crate::federation::http_client()
+            .get("https://api.github.com/user/emails")
+            .header("Authorization", format!("Bearer {pt}"))
+            .header("Accept", "application/vnd.github+json")
+            .header("User-Agent", "sensei")
+            .send()
+            .await
+            && r.status().is_success()
+        {
+            let list: serde_json::Value = r.json().await.unwrap_or_default();
+            if let Some(a) = list.as_array() {
+                for e in a {
+                    // Only VERIFIED addresses become claimed aliases. An
+                    // unverified one proves nothing — anyone can add any address
+                    // to a GitHub account and leave it unconfirmed.
+                    if e["verified"].as_bool() == Some(true)
+                        && let Some(addr) = e["email"].as_str()
+                    {
+                        emails.push(addr.to_string());
+                    }
+                }
+            }
+        }
+    emails.sort();
+    emails.dedup();
+
+    match state.pg.link_persona_identity(persona, login, gh_id, &emails).await {
+        Ok(id) => serde_json::json!({
+            "verified": true,
+            "personaId": id,
+            "githubLogin": login,
+            "githubUserId": gh_id,
+            "claimedEmails": emails,
+        }),
+        Err(e) => serde_json::json!({ "verified": false, "reason": e }),
+    }
+}
+
