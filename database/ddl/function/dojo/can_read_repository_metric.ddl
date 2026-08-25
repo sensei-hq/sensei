@@ -55,7 +55,12 @@ $$;
 revoke all on function dojo.can_read_repository_metric(uuid, text, uuid, uuid) from public;
 grant execute on function dojo.can_read_repository_metric(uuid, text, uuid, uuid) to authenticated;
 
-comment on function dojo.can_read_repository_metric(uuid, text, uuid, uuid) is
+-- No argument list on the COMMENT: dbd's SQL parser handles
+-- `comment on function <name> is …` but not `…(uuid, text, …) is …`, and a file
+-- it cannot parse is dropped from the entity set SILENTLY — the function is then
+-- never created and the policy that calls it fails at deploy. Unambiguous here
+-- because the function is not overloaded.
+comment on function dojo.can_read_repository_metric is
 'Row authorization for dojo.repository_metrics: principal → team_members → team →
 team_projects → project → repositories_in_projects → repository.
 

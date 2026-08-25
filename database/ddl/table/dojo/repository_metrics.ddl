@@ -38,34 +38,3 @@ activity behind them being shared at all.';
 
 comment on column repository_metrics.principal_id
      is 'The person a scope=user row belongs to. A principal, NOT a git email: commit trailers are unverified and would let anyone attribute work to a colleague.';
-
-alter table repository_metrics enable row level security;
-
--- The authorization path, as a policy rather than as endpoint code:
---   principal → team_members → team → team_projects → project
---             → repositories_in_projects → repository
---
--- Being a member of the tenant is deliberately NOT enough. Access is granted at
--- the TEAM, so an org member outside the relevant team sees nothing — which is
--- the thing teams exist to enforce.
-drop policy if exists repository_metrics_team_read on repository_metrics;
-create policy repository_metrics_team_read on repository_metrics
-  for select to authenticated
-  using (
-    dojo.can_read_repository_metric(
-      repository_id, scope, principal_id, tenant_id)
-  );
-
--- Writes are service_role only: a push is governed (per-repo authorization,
--- attribution rules), and that governance cannot be expressed as a row policy.
-drop policy if exists repository_metrics_no_client_write on repository_metrics;
-create policy repository_metrics_no_client_write on repository_metrics
-    for all to anon using (false) with check (false);
-
--- Table-level SELECT grant for the `authenticated` read path. RLS filters WHICH
--- rows; the grant is what lets the role touch the table at all — without it the
--- policy above is dead code and every read fails with "permission denied"
--- rather than returning an authorised subset. Same pairing as dojo.projects and
--- dojo.relay_inbox.
-grant select on dojo.repository_metrics to authenticated;
-
