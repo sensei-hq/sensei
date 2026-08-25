@@ -772,6 +772,69 @@ auto-linked. Full reasoning in the ADR §3.
 
 ---
 
+## 3a. Who mints IDs — dōjō is the owner, sensei the receiver
+
+**Decision (2026-08-25, Jerry).** For every SHARED entity, dōjō creates the row
+and mints its id; sensei receives and mirrors it. sensei never invents an id for a
+shared entity.
+
+This is a structural fix, not a reconciliation strategy. An id conflict is only
+possible when two places can both CREATE the same entity — the case we hit when an
+org existed in sensei and the "same" org was created in dōjō with a different id.
+Removing the second minter removes the possibility; a merge/repair path would only
+paper over it, and would have to run forever.
+
+Auth is the natural moment. GoTrue already mints the user id, and the verified
+GitHub identity that arrives with it is what tenants and repositories derive from,
+so the whole shared graph can be established in one authenticated pass.
+
+### Ownership
+
+| dōjō owns — sensei mirrors                     | sensei owns — pushes up                    |
+|------------------------------------------------|--------------------------------------------|
+| principal / verified identity, claimed aliases  | git-discovered emails not yet verified     |
+| tenants, teams, memberships                     | folders and paths (machine-specific)       |
+| repositories, repositories_in_projects          | `repository_metrics` VALUES                |
+| `metrics` registry, `metric_activations`        | attribution / client identifiers           |
+
+Two entries are load-bearing and not negotiable by convenience:
+
+* **Folders and paths never go up.** They name a person's disk.
+* **Attribution and client identifiers never go up.** See `attribution.rs` — that
+  constraint predates this document and is not relaxed by dōjō owning the graph.
+
+### The offline case
+
+sensei discovers repositories locally, including with no session and no network,
+and must keep doing so. So "dōjō mints the id" cannot mean "block until dōjō
+answers".
+
+A locally-discovered repository is written with its `repo_key` and `dojo_id NULL`,
+and a task claims the id when connectivity returns. `repo_key` is already the
+machine-independent join key, so it carries the mapping in the meantime.
+
+`dojo_id IS NULL` reads as "not registered yet", which is TRUE — it is not a
+fabricated identity, and it is distinguishable from a registered row. That keeps
+it inside the never-fabricate rule; minting a local uuid and hoping to reconcile
+later would not.
+
+### Consequence for the provisioning pipeline
+
+The order inverts from the earlier sketch. Rather than sensei creating tenants and
+pushing them, sensei asks dōjō to provision and then pulls the result:
+
+    SyncGitHubIdentity   → dōjō upserts the principal + claimed aliases
+    ProvisionTenants     → dōjō creates tenants from the GitHub orgs
+    SyncOrgRepositories  → dōjō registers repositories
+    PullSharedGraph      → sensei mirrors ids into its local rows
+    PushMetricValues     → sensei sends values keyed by the dōjō ids
+
+Only the last step originates in sensei, which is the point: values are computed
+locally because that is where the code is, and nothing else is.
+
+**Blocked on:** the kavach double-`resolve` bug — every write leg is a POST and
+POST bodies currently arrive empty. See `docs/backlog.md`.
+
 ## 4. Surfaces
 
 | Surface | What lives there |
