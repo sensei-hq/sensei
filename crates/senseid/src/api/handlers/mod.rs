@@ -13,6 +13,7 @@ pub(crate) mod tools_health;
 pub(crate) mod gateway;
 pub(crate) mod scan_events;
 pub(crate) mod tasks;
+pub(crate) mod auth;
 pub(crate) mod project_detail;
 pub(crate) mod logs;
 pub(crate) mod instruments;
