@@ -89,7 +89,11 @@ mod tests {
         // This is the load-bearing fail-closed guard: a RANGE pin already accepts the
         // latest, so it must NOT surface as an update. We intentionally do not strip
         // range operators (no clean_version fallback).
-        assert_eq!(classify_bump("^1.2.3", "1.9.0"), Bump::Unknown, "caret range → Unknown, NOT a spurious Minor");
+        assert_eq!(
+            classify_bump("^1.2.3", "1.9.0"),
+            Bump::Unknown,
+            "caret range → Unknown, NOT a spurious Minor"
+        );
         assert_eq!(classify_bump(">=2.0", "3.1.0"), Bump::Unknown);
         assert_eq!(classify_bump("~=1.4", "1.9.0"), Bump::Unknown, "PEP440 → Unknown");
         assert_eq!(classify_bump("workspace:*", "1.0.0"), Bump::Unknown);
@@ -102,10 +106,18 @@ mod tests {
         // Non-bumps are never acted on, even with a security flag.
         assert_eq!(update_action(Bump::None, false), UpdateAction::Ignore);
         assert_eq!(update_action(Bump::Unknown, false), UpdateAction::Ignore);
-        assert_eq!(update_action(Bump::None, true), UpdateAction::Ignore, "security never invents a bump");
+        assert_eq!(
+            update_action(Bump::None, true),
+            UpdateAction::Ignore,
+            "security never invents a bump"
+        );
         assert_eq!(update_action(Bump::Unknown, true), UpdateAction::Ignore);
         // Real bumps.
-        assert_eq!(update_action(Bump::Patch, false), UpdateAction::AutoApply, "patch = v1 auto-apply target");
+        assert_eq!(
+            update_action(Bump::Patch, false),
+            UpdateAction::AutoApply,
+            "patch = v1 auto-apply target"
+        );
         assert_eq!(update_action(Bump::Minor, false), UpdateAction::Notify);
         assert_eq!(update_action(Bump::Major, false), UpdateAction::Notify);
         // Security escalates a real bump to auto-apply (v2).

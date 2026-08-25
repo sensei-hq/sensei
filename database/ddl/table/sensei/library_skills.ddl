@@ -19,6 +19,11 @@ create table if not exists library_skills (
 , generated_at  timestamptz
 , modified_at   timestamptz   not null default now()
 , unique(library_id, name)
+  -- Shared vocabulary (see sensei.entity_scope / sensei.entity_origin).
+  -- scope answers WHO MAY SEE IT and therefore whether it syncs; origin answers
+  -- WHERE IT CAME FROM and therefore what a re-import may safely replace.
+, scope         entity_scope  not null default 'local'
+, origin        entity_origin not null default 'imported'
 );
 
 create index if not exists library_skills_library_id_idx

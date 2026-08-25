@@ -97,4 +97,83 @@ test.describe('Project window — Metrics', () => {
     expect(values.length).toBeGreaterThan(0);
     expect(values.every((v) => typeof v === 'string' && v.length > 0)).toBe(true);
   });
+
+  test('the overview titles the signal count and keeps the narrative in its card', async ({
+    tauriPage,
+  }) => {
+    const project = await pickTestProject();
+    if (!project) {
+      test.skip(true, 'no projects registered');
+      return;
+    }
+
+    const data = await safeJson<{ metrics: unknown[] }>(
+      `${DAEMON_URL}/api/projects/${project.id}/metrics`,
+      { metrics: [] },
+    );
+    if (!data.metrics.length) {
+      test.skip(true, 'no metrics computed for the test project');
+      return;
+    }
+
+    await navigateToScreen(
+      tauriPage,
+      `/project/${project.id}/metrics`,
+      '[data-component="metrics-header"]',
+    );
+
+    // The h1 is the count, not the narrative sentence — the narrative used to be
+    // promoted to the title, leaving the screen unnamed.
+    const title = (await tauriPage.evaluate(
+      `(document.querySelector('[data-component="metrics-header"] h1')?.textContent ?? '').trim()`,
+    )) as string;
+    expect(title).toMatch(/^\d+ signals?$/);
+
+    // ...and the narrative still renders, inside its own card next to the health
+    // readout rather than as the heading.
+    const narrative = (await tauriPage.evaluate(
+      `(() => {
+        const card = document.querySelector('[data-component="metrics-narrative"]');
+        if (!card) return null;
+        return {
+          headline: card.querySelector('[data-component="metrics-headline"]')?.textContent?.trim() ?? '',
+          hasHealth: !!card.querySelector('[data-component="health-hero"]'),
+        };
+      })()`,
+    )) as { headline: string; hasHealth: boolean } | null;
+    expect(narrative).not.toBeNull();
+    expect(narrative!.headline.length).toBeGreaterThan(0);
+  });
+
+  test('a signal detail names where you are: metrics · family · signal', async ({ tauriPage }) => {
+    const project = await pickTestProject();
+    if (!project) {
+      test.skip(true, 'no projects registered');
+      return;
+    }
+
+    const data = await safeJson<{ metrics: Array<{ metric?: string }> }>(
+      `${DAEMON_URL}/api/projects/${project.id}/metrics`,
+      { metrics: [] },
+    );
+    const key = data.metrics.find((m) => m.metric)?.metric;
+    if (!key) {
+      test.skip(true, 'no metrics computed for the test project');
+      return;
+    }
+
+    await navigateToScreen(
+      tauriPage,
+      `/project/${project.id}/metrics/${key}`,
+      '[data-component="signal-detail"]',
+    );
+
+    // Three segments, and the last one is a real signal name — not an empty
+    // trail rendered because the lookup missed.
+    const crumb = (await tauriPage.evaluate(
+      `(document.querySelector('[data-component="signal-breadcrumb"]')?.textContent ?? '').trim()`,
+    )) as string;
+    expect(crumb.startsWith('metrics ·')).toBe(true);
+    expect(crumb.split('·').map((s) => s.trim()).filter(Boolean).length).toBe(3);
+  });
 });

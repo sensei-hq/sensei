@@ -27,7 +27,7 @@
       <ProductCard p={featured} />
     </div>
 
-    <div class="products-grid gap-6">
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
       {#each rest as p (p.id)}
         <ProductCard {p} />
       {/each}
@@ -62,14 +62,5 @@
 <style>
   .portfolio-inner {
     max-width: 1120px;
-  }
-  .products-grid {
-    display: grid;
-    grid-template-columns: repeat(2, 1fr);
-  }
-  @media (max-width: 900px) {
-    .products-grid {
-      grid-template-columns: 1fr;
-    }
   }
 </style>

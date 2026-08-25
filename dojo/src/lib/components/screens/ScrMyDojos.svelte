@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { SectionHead, Banner, Btn, ListSection, MyDojoRow, EmptyState } from '$lib/components/kit';
+	import { SectionHead, Btn, ListSection, MyDojoRow, EmptyState } from '$lib/components/kit';
 	import type { KitDojo } from '$lib/components/kit/types';
 	import { groupDojos } from '$lib/personal-view';
 
@@ -21,24 +21,28 @@
 	} = $props();
 
 	const groups = $derived(groupDojos(dojos));
+
+	// The count only reads if there IS one, so the sentence is built rather than
+	// branched inline — `description` is a plain string prop.
+	const description = $derived(
+		dojos.length
+			? `A dōjō is how a team shares what it learns. You belong to ${dojos.length} — your role in each is derived from git and only ever adds capability. Working solo needs none of them.`
+			: 'A dōjō is how a team shares what it learns. Your role in each is derived from git and only ever adds capability. Working solo needs none of them.'
+	);
 </script>
 
-<div class="flex flex-col p-8 gap-6">
-	<SectionHead eyebrow="You · membership" title="My dōjōs" count={dojos.length}>
+<div class="flex flex-col p-4 gap-4 md:p-8 md:gap-6">
+	<SectionHead
+		kanji="結"
+		eyebrow="You · membership"
+		title="My dōjōs"
+		count={dojos.length}
+		{description}
+	>
 		{#snippet right()}
 			<Btn size="sm" icon="add-circle" onclick={onCreateOrJoin}>Create or join</Btn>
 		{/snippet}
 	</SectionHead>
-
-	<Banner kanji="結" tone="neutral" title="A dōjō is how a team shares what it learns.">
-		{#if dojos.length}
-			You belong to {dojos.length} — your role in each is derived from git and only ever adds
-			capability. Working solo needs none of them.
-		{:else}
-			Your role in each is derived from git and only ever adds capability. Working solo needs none of
-			them.
-		{/if}
-	</Banner>
 
 	{#if groups.length}
 		{#each groups as group (group.kind)}

@@ -67,10 +67,7 @@ mod tests {
     fn from_unique_maps_zero_one_many() {
         assert_eq!(Resolution::<i32>::from_unique(Vec::new()), Resolution::Unresolved);
         assert_eq!(Resolution::from_unique(vec![7]), Resolution::Resolved(7));
-        assert_eq!(
-            Resolution::from_unique(vec![1, 2, 3, 4]),
-            Resolution::Ambiguous { count: 4 }
-        );
+        assert_eq!(Resolution::from_unique(vec![1, 2, 3, 4]), Resolution::Ambiguous { count: 4 });
     }
 
     #[test]

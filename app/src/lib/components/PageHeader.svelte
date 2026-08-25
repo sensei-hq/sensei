@@ -3,55 +3,98 @@
   import Eyebrow from './Eyebrow.svelte';
   import Kanji from './Kanji.svelte';
 
-  type Variant = 'h1' | 'h2' | 'h3';
+  /** One scale step, not three unrelated heading levels. */
+  type Size = 'sm' | 'md' | 'lg';
 
+  // The app's one screen/section header: glyph · eyebrow · title · description,
+  // with an optional count and a right slot. Replaces the `variant: h1|h2|h3`
+  // heading-level prop with a `size` scale that moves the title, the glyph AND the
+  // description together, and absorbs the old KanjiHeader — whose only real
+  // differences were a snippet title and no chrome, now covered by `title`
+  // accepting a snippet and by `bordered`/`padded`.
+  //
+  // Deliberately app-local rather than a rokkit component: it encodes this
+  // product's header composition, not a generic primitive.
   let {
     title,
     eyebrow,
     kanji,
+    icon,
     description,
-    variant = 'h2',
+    clampDescription = false,
+    size = 'md',
     bordered = true,
+    padded = true,
     right,
   }: {
-    title: string;
+    /** Plain string for the common case; a snippet when the title needs markup. */
+    title: string | Snippet;
     eyebrow?: string;
+    /** A kanji glyph. Mutually exclusive with `icon` — kanji wins if both are set. */
     kanji?: string;
+    /** A UnoCSS icon class (e.g. `i-solar-folder-linear`), for headers with no glyph. */
+    icon?: string;
     description?: string;
-    variant?: Variant;
+    /**
+     * Clamp the description to two lines with an ellipsis. Off by default — a
+     * screen header's own copy is short and should wrap in full. Turn it on where
+     * the text is caller-supplied and can run long, so one verbose row can't push
+     * the content below the fold.
+     */
+    clampDescription?: boolean;
+    size?: Size;
     bordered?: boolean;
+    /** Off for a header nested inside a container that already pads. */
+    padded?: boolean;
     right?: Snippet;
   } = $props();
 
-  const titleSize = $derived(
-    ({ h1: 'text-2xl', h2: 'text-xl', h3: 'text-lg' })[variant],
-  );
-  // Screen headers use the mockup's signature 40px kanji (`screen`) for h1/h2 (the
-  // common case); h3 stays a compact sub-header glyph. (mockup-drift-audit F5)
-  const kanjiSize = $derived(
-    ({ h1: 'screen', h2: 'screen', h3: 'xl' })[variant] as
-      | 'screen'
-      | 'xl',
-  );
+  // `lg` and `md` both keep the mockup's 40px signature glyph on purpose — that is
+  // the screen-header mark, not a function of heading level (mockup-drift-audit
+  // F5). `sm` is the nested/section step and drops to a compact glyph.
+  const SIZES = {
+    lg: { title: 'text-2xl', kanji: 'screen', icon: 'text-2xl', desc: 'text-sm', gap: 'gap-5', pad: 'pt-5 pb-4 px-6' },
+    md: { title: 'text-xl',  kanji: 'screen', icon: 'text-2xl', desc: 'text-sm', gap: 'gap-5', pad: 'pt-5 pb-4 px-6' },
+    sm: { title: 'text-lg',  kanji: 'xl',     icon: 'text-lg',  desc: 'text-xs', gap: 'gap-3', pad: 'pt-3 pb-2 px-4' },
+  } as const;
+  const s = $derived(SIZES[size]);
 </script>
 
 <header
   data-component="page-header"
-  class="flex items-center gap-5 pt-5 pb-4 px-6 {bordered ? 'border-b border-paper-edge' : ''}"
+  data-size={size}
+  class="flex items-center {s.gap} {padded ? s.pad : ''} {bordered
+    ? 'border-b border-paper-edge'
+    : ''}"
 >
   {#if kanji}
-    <Kanji char={kanji} size={kanjiSize} />
+    <Kanji char={kanji} size={s.kanji} />
+  {:else if icon}
+    <span
+      data-component="page-header-icon"
+      class="{icon} {s.icon} text-accent shrink-0"
+      aria-hidden="true"
+    ></span>
   {/if}
+
   <div class="flex-1 min-w-0">
     {#if eyebrow}
       <div class="mb-1"><Eyebrow>{eyebrow}</Eyebrow></div>
     {/if}
-    <h1 class="display {titleSize} font-normal m-0 tracking-tight text-ink">{title}</h1>
+    <h1 class="display {s.title} font-normal m-0 tracking-tight text-ink">
+      {#if typeof title === 'string'}{title}{:else}{@render title()}{/if}
+    </h1>
     {#if description}
-      <p class="text-sm text-ink-soft leading-normal m-0 mt-1 max-w-[720px]">{description}</p>
+      <p
+        data-component="page-header-description"
+        class="{s.desc} text-ink-soft leading-normal m-0 mt-1 max-w-[720px] {clampDescription
+          ? 'line-clamp-2'
+          : ''}"
+      >{description}</p>
     {/if}
   </div>
+
   {#if right}
-    <div class="ml-auto">{@render right()}</div>
+    <div class="ml-auto shrink-0">{@render right()}</div>
   {/if}
 </header>

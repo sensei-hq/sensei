@@ -76,10 +76,7 @@ async fn daily_process_aggregates(
         super::day_filter(DAY_ANCHOR, as_of),
     );
     let q = sqlx_core::query_as::query_as::<_, DayProc>(&sql).bind(project_id);
-    super::bind_day(q, window_days, as_of)
-        .fetch_all(pg.pool())
-        .await
-        .map_err(|e| e.to_string())
+    super::bind_day(q, window_days, as_of).fetch_all(pg.pool()).await.map_err(|e| e.to_string())
 }
 
 /// Compute the `session_process` group for one project. Mirrors
@@ -105,8 +102,17 @@ pub(super) async fn compute(
     let incomplete_id = ids.get(KEY_INCOMPLETE).copied();
 
     let mut written = 0u32;
-    for (day, repository_id, depth_sum, depth_n, dev_present, dev_applicable, refuted_present, incomplete_present, scored_n) in
-        daily_process_aggregates(pg, &project_id, window_days, as_of).await?
+    for (
+        day,
+        repository_id,
+        depth_sum,
+        depth_n,
+        dev_present,
+        dev_applicable,
+        refuted_present,
+        incomplete_present,
+        scored_n,
+    ) in daily_process_aggregates(pg, &project_id, window_days, as_of).await?
     {
         // spec_depth (score): mean over sessions with a real plan-depth score.
         if let Some(mid) = depth_id
@@ -115,8 +121,16 @@ pub(super) async fn compute(
             let value = depth_sum / depth_n as f64;
             let props = serde_json::json!({ "n": depth_n });
             pg.upsert_project_metric_repo(
-                &mid, &project_id, Some(&repository_id), SCOPE_USER, None, None,
-                None, None, day, GRAIN_DAILY, value, &props, SOURCE_MEASURED,
+                &mid,
+                &repository_id,
+                SCOPE_USER,
+                None,
+                None,
+                day,
+                GRAIN_DAILY,
+                value,
+                &props,
+                SOURCE_MEASURED,
             )
             .await?;
             written += 1;
@@ -126,10 +140,19 @@ pub(super) async fn compute(
             && dev_applicable > 0
         {
             let value = dev_present as f64 / dev_applicable as f64;
-            let props = serde_json::json!({ "numerator": dev_present, "denominator": dev_applicable });
+            let props =
+                serde_json::json!({ "numerator": dev_present, "denominator": dev_applicable });
             pg.upsert_project_metric_repo(
-                &mid, &project_id, Some(&repository_id), SCOPE_USER, None, None,
-                None, None, day, GRAIN_DAILY, value, &props, SOURCE_MEASURED,
+                &mid,
+                &repository_id,
+                SCOPE_USER,
+                None,
+                None,
+                day,
+                GRAIN_DAILY,
+                value,
+                &props,
+                SOURCE_MEASURED,
             )
             .await?;
             written += 1;
@@ -137,13 +160,24 @@ pub(super) async fn compute(
         // refuted_finding_rate + incomplete_analysis_llm_rate (pct): denominator =
         // process-scored measurable sessions that day.
         if scored_n > 0 {
-            for (mid_opt, present) in [(refuted_id, refuted_present), (incomplete_id, incomplete_present)] {
+            for (mid_opt, present) in
+                [(refuted_id, refuted_present), (incomplete_id, incomplete_present)]
+            {
                 if let Some(mid) = mid_opt {
                     let value = present as f64 / scored_n as f64;
-                    let props = serde_json::json!({ "numerator": present, "denominator": scored_n });
+                    let props =
+                        serde_json::json!({ "numerator": present, "denominator": scored_n });
                     pg.upsert_project_metric_repo(
-                        &mid, &project_id, Some(&repository_id), SCOPE_USER, None, None,
-                        None, None, day, GRAIN_DAILY, value, &props, SOURCE_MEASURED,
+                        &mid,
+                        &repository_id,
+                        SCOPE_USER,
+                        None,
+                        None,
+                        day,
+                        GRAIN_DAILY,
+                        value,
+                        &props,
+                        SOURCE_MEASURED,
                     )
                     .await?;
                     written += 1;
@@ -191,10 +225,15 @@ mod tests {
         })).await;
         // s2: plan depth 2, did NOT deviate, refuted a finding, incomplete analysis.
         let s2 = seed_metrics_session(pg, &fid, &pid, Some("completed"), Some(true), 0, ts).await;
-        set_process(pg, &s2, serde_json::json!({
-            "spec_depth": {"score": 2}, "spec_deviation": {"present": false},
-            "refuted_findings": {"present": true}, "incomplete_analysis_llm": {"present": true}
-        })).await;
+        set_process(
+            pg,
+            &s2,
+            serde_json::json!({
+                "spec_depth": {"score": 2}, "spec_deviation": {"present": false},
+                "refuted_findings": {"present": true}, "incomplete_analysis_llm": {"present": true}
+            }),
+        )
+        .await;
         // s3: NO plan (depth null, deviation null) — excluded from depth mean +
         // deviation denominator, but still counts for refuted/incomplete base.
         let s3 = seed_metrics_session(pg, &fid, &pid, Some("completed"), Some(true), 0, ts).await;
@@ -210,18 +249,36 @@ mod tests {
         let daily = daily_rows(pg, &pid).await;
 
         let depth = daily.iter().find(|r| r.0 == "spec_depth").expect("spec_depth row");
-        assert!((depth.1 - 3.0).abs() < 1e-9, "mean(4,2) = 3 over the two planned sessions (s3 null excluded)");
+        assert!(
+            (depth.1 - 3.0).abs() < 1e-9,
+            "mean(4,2) = 3 over the two planned sessions (s3 null excluded)"
+        );
         assert_eq!(depth.2["n"].as_i64(), Some(2), "depth n = sessions with a plan");
 
         let dev = daily.iter().find(|r| r.0 == "spec_deviation_rate").expect("deviation row");
-        assert!((dev.1 - 0.5).abs() < 1e-9, "1 deviated / 2 planned = 0.5 (s3 has no plan → excluded)");
-        assert_eq!(dev.2["denominator"].as_i64(), Some(2), "deviation denominator = planned sessions");
+        assert!(
+            (dev.1 - 0.5).abs() < 1e-9,
+            "1 deviated / 2 planned = 0.5 (s3 has no plan → excluded)"
+        );
+        assert_eq!(
+            dev.2["denominator"].as_i64(),
+            Some(2),
+            "deviation denominator = planned sessions"
+        );
 
         let refuted = daily.iter().find(|r| r.0 == "refuted_finding_rate").expect("refuted row");
-        assert!((refuted.1 - 1.0 / 3.0).abs() < 1e-9, "1 refuted / 3 process-scored = 1/3 (s4 unscored excluded)");
-        assert_eq!(refuted.2["denominator"].as_i64(), Some(3), "refuted denominator = process-scored sessions");
+        assert!(
+            (refuted.1 - 1.0 / 3.0).abs() < 1e-9,
+            "1 refuted / 3 process-scored = 1/3 (s4 unscored excluded)"
+        );
+        assert_eq!(
+            refuted.2["denominator"].as_i64(),
+            Some(3),
+            "refuted denominator = process-scored sessions"
+        );
 
-        let incomplete = daily.iter().find(|r| r.0 == "incomplete_analysis_llm_rate").expect("incomplete row");
+        let incomplete =
+            daily.iter().find(|r| r.0 == "incomplete_analysis_llm_rate").expect("incomplete row");
         assert!((incomplete.1 - 1.0 / 3.0).abs() < 1e-9, "1 incomplete / 3 = 1/3");
 
         cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
@@ -245,9 +302,18 @@ mod tests {
 
         compute(&ctx, &pid.to_string(), None).await.unwrap();
         let daily = daily_rows(pg, &pid).await;
-        assert!(daily.iter().all(|r| r.0 != "spec_depth"), "no spec_depth row when no session had a plan");
-        assert!(daily.iter().all(|r| r.0 != "spec_deviation_rate"), "no deviation row when nothing was applicable");
-        assert!(daily.iter().any(|r| r.0 == "refuted_finding_rate"), "refuted rate still computes over the scored base");
+        assert!(
+            daily.iter().all(|r| r.0 != "spec_depth"),
+            "no spec_depth row when no session had a plan"
+        );
+        assert!(
+            daily.iter().all(|r| r.0 != "spec_deviation_rate"),
+            "no deviation row when nothing was applicable"
+        );
+        assert!(
+            daily.iter().any(|r| r.0 == "refuted_finding_rate"),
+            "refuted rate still computes over the scored base"
+        );
 
         cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
     }

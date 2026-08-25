@@ -6,8 +6,16 @@
 /// enum labels exactly.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SpineSlot {
-    Vision, Personas, Journeys, Roadmap, Design, Mockups,
-    Decisions, Brief, Plan, Tests,
+    Vision,
+    Personas,
+    Journeys,
+    Roadmap,
+    Design,
+    Mockups,
+    Decisions,
+    Brief,
+    Plan,
+    Tests,
 }
 
 impl SpineSlot {
@@ -42,8 +50,14 @@ impl SpineSlot {
     }
     /// Project-only slots never carry a feature.
     fn is_project_only(self) -> bool {
-        matches!(self, SpineSlot::Vision | SpineSlot::Personas | SpineSlot::Journeys
-            | SpineSlot::Roadmap | SpineSlot::Mockups)
+        matches!(
+            self,
+            SpineSlot::Vision
+                | SpineSlot::Personas
+                | SpineSlot::Journeys
+                | SpineSlot::Roadmap
+                | SpineSlot::Mockups
+        )
     }
     /// Feature-only slots require a feature.
     fn is_feature_only(self) -> bool {
@@ -82,8 +96,15 @@ mod tests {
 
     #[test]
     fn as_str_roundtrips_through_parse() {
-        for s in [SpineSlot::Vision, SpineSlot::Design, SpineSlot::Decisions,
-                  SpineSlot::Brief, SpineSlot::Plan, SpineSlot::Tests, SpineSlot::Mockups] {
+        for s in [
+            SpineSlot::Vision,
+            SpineSlot::Design,
+            SpineSlot::Decisions,
+            SpineSlot::Brief,
+            SpineSlot::Plan,
+            SpineSlot::Tests,
+            SpineSlot::Mockups,
+        ] {
             assert_eq!(SpineSlot::parse(s.as_str()), Some(s));
         }
         assert_eq!(SpineSlot::parse("nope"), None);

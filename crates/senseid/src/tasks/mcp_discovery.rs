@@ -32,7 +32,13 @@ use std::path::{Path, PathBuf};
 /// the scanners exist without a breaking ecosystem rename.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(dead_code)] // Codex + OpenCode variants land with their scanners
-pub enum AcpFamily { Claude, Zed, Cursor, Codex, OpenCode }
+pub enum AcpFamily {
+    Claude,
+    Zed,
+    Cursor,
+    Codex,
+    OpenCode,
+}
 
 impl AcpFamily {
     pub fn as_str(&self) -> &'static str {
@@ -73,20 +79,22 @@ pub fn parse_mcp_section(
     let Some(map) = doc.get(wrapper_key).and_then(|v| v.as_object()) else {
         return Vec::new();
     };
-    map.iter().map(|(key, entry)| {
-        let command = entry.get("command").and_then(|v| v.as_str()).unwrap_or("").to_string();
-        let args = entry.get("args").cloned().unwrap_or(Value::Array(vec![]));
-        let env = entry.get("env").cloned().unwrap_or(Value::Object(serde_json::Map::new()));
-        DiscoveredMcp {
-            acp_family,
-            mcp_key: key.clone(),
-            project_id,
-            config_source: config_source.to_path_buf(),
-            command,
-            args,
-            env,
-        }
-    }).collect()
+    map.iter()
+        .map(|(key, entry)| {
+            let command = entry.get("command").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let args = entry.get("args").cloned().unwrap_or(Value::Array(vec![]));
+            let env = entry.get("env").cloned().unwrap_or(Value::Object(serde_json::Map::new()));
+            DiscoveredMcp {
+                acp_family,
+                mcp_key: key.clone(),
+                project_id,
+                config_source: config_source.to_path_buf(),
+                command,
+                args,
+                env,
+            }
+        })
+        .collect()
 }
 
 /// Read a JSON-or-JSONC file at `path`. Returns `None` if the file doesn't
@@ -94,7 +102,9 @@ pub fn parse_mcp_section(
 /// files with `//` comments still parse (same as the assistants config
 /// helpers post-#51).
 pub fn read_jsonc(path: &Path) -> Option<Value> {
-    if !path.exists() { return None; }
+    if !path.exists() {
+        return None;
+    }
     let s = std::fs::read_to_string(path).ok()?;
     json5::from_str::<Value>(&s).ok()
 }
@@ -135,19 +145,37 @@ pub fn discover_project_scope(project_root: &Path, project_id: uuid::Uuid) -> Ve
     // Claude Code project-scope: <project>/.mcp.json wrapping "mcpServers".
     let claude_project = project_root.join(".mcp.json");
     if let Some(doc) = read_jsonc(&claude_project) {
-        out.extend(parse_mcp_section(&doc, "mcpServers", AcpFamily::Claude, Some(project_id), &claude_project));
+        out.extend(parse_mcp_section(
+            &doc,
+            "mcpServers",
+            AcpFamily::Claude,
+            Some(project_id),
+            &claude_project,
+        ));
     }
 
     // Cursor project-scope: <project>/.cursor/mcp.json.
     let cursor_project = project_root.join(".cursor").join("mcp.json");
     if let Some(doc) = read_jsonc(&cursor_project) {
-        out.extend(parse_mcp_section(&doc, "mcpServers", AcpFamily::Cursor, Some(project_id), &cursor_project));
+        out.extend(parse_mcp_section(
+            &doc,
+            "mcpServers",
+            AcpFamily::Cursor,
+            Some(project_id),
+            &cursor_project,
+        ));
     }
 
     // Zed project-scope: <project>/.zed/settings.json.
     let zed_project = project_root.join(".zed").join("settings.json");
     if let Some(doc) = read_jsonc(&zed_project) {
-        out.extend(parse_mcp_section(&doc, "context_servers", AcpFamily::Zed, Some(project_id), &zed_project));
+        out.extend(parse_mcp_section(
+            &doc,
+            "context_servers",
+            AcpFamily::Zed,
+            Some(project_id),
+            &zed_project,
+        ));
     }
 
     out
@@ -181,7 +209,8 @@ pub async fn run_once(
             &e.command,
             &e.args,
             &e.env,
-        ).await?;
+        )
+        .await?;
     }
 
     let pruned = pg.prune_stale_mcp_servers(scan_start).await?;
@@ -225,13 +254,17 @@ mod tests {
     fn read_jsonc_tolerates_comments() {
         let dir = tempdir().unwrap();
         let p = dir.path().join("mcp.json");
-        std::fs::write(&p, r#"// Zed settings
+        std::fs::write(
+            &p,
+            r#"// Zed settings
 {
   "mcpServers": {
     // sensei registered by daemon
     "sensei": { "command": "sensei-mcp" }
   }
-}"#).unwrap();
+}"#,
+        )
+        .unwrap();
         let doc = read_jsonc(&p).expect("json5 must parse the JSONC");
         assert_eq!(doc["mcpServers"]["sensei"]["command"], "sensei-mcp");
     }
@@ -249,33 +282,49 @@ mod tests {
         // Claude
         let claude_dir = home.path().join(".claude");
         std::fs::create_dir_all(&claude_dir).unwrap();
-        std::fs::write(claude_dir.join("mcp.json"),
-            r#"{"mcpServers":{"sensei":{"command":"sensei-mcp"}}}"#).unwrap();
+        std::fs::write(
+            claude_dir.join("mcp.json"),
+            r#"{"mcpServers":{"sensei":{"command":"sensei-mcp"}}}"#,
+        )
+        .unwrap();
 
         // Cursor
         let cursor_dir = home.path().join(".cursor");
         std::fs::create_dir_all(&cursor_dir).unwrap();
-        std::fs::write(cursor_dir.join("mcp.json"),
-            r#"{"mcpServers":{"postgres":{"command":"pg-mcp"}}}"#).unwrap();
+        std::fs::write(
+            cursor_dir.join("mcp.json"),
+            r#"{"mcpServers":{"postgres":{"command":"pg-mcp"}}}"#,
+        )
+        .unwrap();
 
         // Zed (uses "context_servers", not "mcpServers")
         let zed_dir = home.path().join(".config").join("zed");
         std::fs::create_dir_all(&zed_dir).unwrap();
-        std::fs::write(zed_dir.join("settings.json"),
-            r#"{"context_servers":{"svelte":{"command":"svelte-mcp"}}}"#).unwrap();
+        std::fs::write(
+            zed_dir.join("settings.json"),
+            r#"{"context_servers":{"svelte":{"command":"svelte-mcp"}}}"#,
+        )
+        .unwrap();
 
         let discovered = discover_user_scope(home.path());
         assert_eq!(discovered.len(), 3);
-        assert!(discovered.iter().any(|d| d.acp_family == AcpFamily::Claude && d.mcp_key == "sensei"));
-        assert!(discovered.iter().any(|d| d.acp_family == AcpFamily::Cursor && d.mcp_key == "postgres"));
+        assert!(
+            discovered.iter().any(|d| d.acp_family == AcpFamily::Claude && d.mcp_key == "sensei")
+        );
+        assert!(
+            discovered.iter().any(|d| d.acp_family == AcpFamily::Cursor && d.mcp_key == "postgres")
+        );
         assert!(discovered.iter().any(|d| d.acp_family == AcpFamily::Zed && d.mcp_key == "svelte"));
     }
 
     #[test]
     fn discover_project_scope_finds_dot_mcp_json() {
         let project_root = tempdir().unwrap();
-        std::fs::write(project_root.path().join(".mcp.json"),
-            r#"{"mcpServers":{"local-tool":{"command":"./bin/tool"}}}"#).unwrap();
+        std::fs::write(
+            project_root.path().join(".mcp.json"),
+            r#"{"mcpServers":{"local-tool":{"command":"./bin/tool"}}}"#,
+        )
+        .unwrap();
 
         let pid = uuid::Uuid::new_v4();
         let discovered = discover_project_scope(project_root.path(), pid);
@@ -296,10 +345,10 @@ mod tests {
     fn acp_family_as_str_matches_ddl_check_values() {
         // The mcp_servers DDL doesn't CHECK acp_family, but callers key on
         // these strings — a rename here would silently break the UI join.
-        assert_eq!(AcpFamily::Claude.as_str(),   "claude");
-        assert_eq!(AcpFamily::Zed.as_str(),      "zed");
-        assert_eq!(AcpFamily::Cursor.as_str(),   "cursor");
-        assert_eq!(AcpFamily::Codex.as_str(),    "codex");
+        assert_eq!(AcpFamily::Claude.as_str(), "claude");
+        assert_eq!(AcpFamily::Zed.as_str(), "zed");
+        assert_eq!(AcpFamily::Cursor.as_str(), "cursor");
+        assert_eq!(AcpFamily::Codex.as_str(), "codex");
         assert_eq!(AcpFamily::OpenCode.as_str(), "opencode");
     }
 }

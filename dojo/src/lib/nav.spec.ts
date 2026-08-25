@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
 	NAV_YOU,
@@ -172,5 +174,31 @@ describe('labelForSection — placeholder header copy', () => {
 
 	it('title-cases an unknown section id', () => {
 		expect(labelForSection('mystery', 'you')).toBe('Mystery');
+	});
+});
+
+// The org section route dispatches on `data.section`. Every id in ORG_SECTIONS
+// needs its own named branch: the route used to end in an unlabelled `{:else}`
+// holding Plan & billing, which was only correct by coincidence — the branches
+// happened to cover ORG_SECTIONS exactly. Add a nav section without a screen and
+// that fallthrough would have shown a money screen instead. Read from source so
+// the two files can't drift apart silently.
+describe('org section dispatch covers every nav section', () => {
+	// Resolved from the vitest root (the dojo package), not import.meta.url —
+	// under this config that isn't a file: URL.
+	const route = readFileSync(
+		resolve(process.cwd(), 'src/routes/(app)/org/[slug]/[section]/+page.svelte'),
+		'utf8',
+	);
+
+	it.each([...ORG_SECTIONS])('%s has an explicit branch', (section) => {
+		expect(route).toContain(`data.section === '${section}'`);
+	});
+
+	it('does not leave billing as the unnamed fallthrough', () => {
+		// The last branch must be a placeholder, not a real console screen.
+		const tail = route.slice(route.lastIndexOf('{:else}'));
+		expect(tail).toContain('ScrPlaceholder');
+		expect(tail).not.toContain('ScrBilling');
 	});
 });

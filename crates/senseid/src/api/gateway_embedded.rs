@@ -27,8 +27,8 @@ pub use ort_init::register_ort;
 #[cfg(feature = "embedded-fastembed")]
 mod fastembed_init {
     use gateway::adapters::{AdapterRegistry, Model};
-    use local_providers::adapters::{FastembedAdapter, FastembedConfig};
     use local_engine::registry::{ModelEntry, ModelFormat, ModelSource};
+    use local_providers::adapters::{FastembedAdapter, FastembedConfig};
     use std::path::Path;
     use std::sync::Arc;
 
@@ -91,9 +91,8 @@ mod fastembed_init {
         #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
         #[ignore = "requires SENSEI_FASTEMBED_DIR env var pointing at a fastembed-compatible ONNX directory"]
         async fn fastembed_through_gateway_returns_embeddings_for_a_real_model() {
-            let dir = std::env::var("SENSEI_FASTEMBED_DIR").expect(
-                "SENSEI_FASTEMBED_DIR must point at an ONNX embedding model directory",
-            );
+            let dir = std::env::var("SENSEI_FASTEMBED_DIR")
+                .expect("SENSEI_FASTEMBED_DIR must point at an ONNX embedding model directory");
 
             let registry = AdapterRegistry::new();
             let adapter_id = register_fastembed(&registry, &dir, "test-fastembed-minilm")
@@ -172,9 +171,7 @@ mod fastembed_init {
             let response = gw.execute(&request).await.expect("gateway.execute");
 
             assert!(response.success, "expected successful response");
-            let embeddings = response
-                .embeddings
-                .expect("embed response should include embeddings");
+            let embeddings = response.embeddings.expect("embed response should include embeddings");
             assert_eq!(embeddings.len(), 2);
             for (i, v) in embeddings.iter().enumerate() {
                 assert!(!v.is_empty(), "embedding[{i}] should be non-empty");
@@ -191,8 +188,8 @@ mod fastembed_init {
 #[cfg(feature = "embedded-ort")]
 mod ort_init {
     use gateway::adapters::{AdapterRegistry, Model};
-    use local_providers::adapters::{OrtAdapter, OrtConfig};
     use local_engine::registry::{ModelEntry, ModelFormat, ModelSource};
+    use local_providers::adapters::{OrtAdapter, OrtConfig};
     use std::path::Path;
     use std::sync::Arc;
 
@@ -224,8 +221,8 @@ mod ort_init {
             size_bytes: None,
         };
         let cfg = OrtConfig::bert(&model_id);
-        let adapter = OrtAdapter::load(&entry, cfg)
-            .map_err(|e| format!("OrtAdapter::load: {e}"))?;
+        let adapter =
+            OrtAdapter::load(&entry, cfg).map_err(|e| format!("OrtAdapter::load: {e}"))?;
         let id = adapter.id().to_string();
         registry.register(Arc::new(adapter)).await;
         Ok(id)
@@ -258,18 +255,14 @@ mod ort_init {
         #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
         #[ignore = "requires SENSEI_ORT_DIR env var pointing at a fastembed-compatible ONNX directory"]
         async fn ort_through_gateway_returns_embeddings_for_a_real_model() {
-            let dir = std::env::var("SENSEI_ORT_DIR").expect(
-                "SENSEI_ORT_DIR must point at an ONNX embedding model directory",
-            );
+            let dir = std::env::var("SENSEI_ORT_DIR")
+                .expect("SENSEI_ORT_DIR must point at an ONNX embedding model directory");
 
             let registry = AdapterRegistry::new();
             let adapter_id = register_ort(&registry, &dir, "test-ort-minilm")
                 .await
                 .expect("register ort adapter");
-            assert_eq!(
-                adapter_id, "ort",
-                "OrtAdapter::id() should default to \"ort\""
-            );
+            assert_eq!(adapter_id, "ort", "OrtAdapter::id() should default to \"ort\"");
 
             // Same router/model wiring as the fastembed smoke test —
             // model.provider matches the adapter id so the engine's
@@ -332,9 +325,7 @@ mod ort_init {
             let response = gw.execute(&request).await.expect("gateway.execute");
 
             assert!(response.success, "expected successful response");
-            let embeddings = response
-                .embeddings
-                .expect("embed response should include embeddings");
+            let embeddings = response.embeddings.expect("embed response should include embeddings");
             assert_eq!(embeddings.len(), 2);
             for (i, v) in embeddings.iter().enumerate() {
                 assert!(!v.is_empty(), "embedding[{i}] should be non-empty");
@@ -347,4 +338,3 @@ mod ort_init {
         }
     }
 }
-

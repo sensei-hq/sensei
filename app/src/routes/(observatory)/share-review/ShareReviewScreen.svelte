@@ -139,7 +139,6 @@
 {/snippet}
 
 <PageHeader
-  variant="h2"
   eyebrow="Observatory · Share review"
   kanji="送"
   title="Ready to share."

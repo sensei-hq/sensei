@@ -1,13 +1,13 @@
 //! `/api/knowledge/*` — memory CRUD, proposals, outcomes, context assembly.
 
+use crate::api::state::AppState;
+use crate::db::pg_store::{InsertMemory, OutcomeRow};
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
     response::Json,
 };
 use serde::Deserialize;
-use crate::api::state::AppState;
-use crate::db::pg_store::{InsertMemory, OutcomeRow};
 
 fn err(status: StatusCode, msg: &str) -> (StatusCode, Json<serde_json::Value>) {
     (status, Json(serde_json::json!({ "error": msg })))
@@ -24,7 +24,10 @@ async fn resolve_target_namespace(
     project: Option<&str>,
 ) -> Result<Option<uuid::Uuid>, (StatusCode, Json<serde_json::Value>)> {
     if let Some(ns) = namespace_id.filter(|s| !s.is_empty()) {
-        return Ok(Some(uuid::Uuid::parse_str(ns).map_err(|_| err(StatusCode::BAD_REQUEST, "bad namespace_id"))?));
+        return Ok(Some(
+            uuid::Uuid::parse_str(ns)
+                .map_err(|_| err(StatusCode::BAD_REQUEST, "bad namespace_id"))?,
+        ));
     }
     let Some(scope) = gov_scope.filter(|s| !s.is_empty()) else {
         return Ok(None);
@@ -45,13 +48,19 @@ async fn resolve_target_namespace(
     // namespace can't be resolved errors rather than falling back to the always-on
     // `general` rung (which would govern every project at the caller's enforcement).
     let (_path, fid) = resolve_folder(state, folder, project).await?;
-    match state.pg.namespace_for_folder_scope(&fid, scope).await
+    match state
+        .pg
+        .namespace_for_folder_scope(&fid, scope)
+        .await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?
     {
         Some(ns) => Ok(Some(ns)),
-        None => Err(err(StatusCode::BAD_REQUEST, &format!(
-            "cannot resolve gov_scope '{scope}': the target repo is not a member of any '{scope}'-scoped namespace — bind it to one, or pass an explicit namespace_id"
-        ))),
+        None => Err(err(
+            StatusCode::BAD_REQUEST,
+            &format!(
+                "cannot resolve gov_scope '{scope}': the target repo is not a member of any '{scope}'-scoped namespace — bind it to one, or pass an explicit namespace_id"
+            ),
+        )),
     }
 }
 
@@ -61,10 +70,10 @@ async fn resolve_target_namespace(
 
 #[derive(Deserialize)]
 pub(crate) struct ListQuery {
-    pub status:     Option<String>,
-    pub scope:      Option<String>,
+    pub status: Option<String>,
+    pub scope: Option<String>,
     pub project_id: Option<String>,
-    pub limit:      Option<i64>,
+    pub limit: Option<i64>,
 }
 
 pub(crate) async fn list_memories(
@@ -72,11 +81,17 @@ pub(crate) async fn list_memories(
     Query(q): Query<ListQuery>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     let pid = match q.project_id {
-        Some(s) => Some(uuid::Uuid::parse_str(&s).map_err(|_| err(StatusCode::BAD_REQUEST, "bad project_id"))?),
+        Some(s) => Some(
+            uuid::Uuid::parse_str(&s)
+                .map_err(|_| err(StatusCode::BAD_REQUEST, "bad project_id"))?,
+        ),
         None => None,
     };
-    let rows = state.pg.list_memories(pid, q.status.as_deref(), q.scope.as_deref(), q.limit.unwrap_or(200))
-        .await.map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
+    let rows = state
+        .pg
+        .list_memories(pid, q.status.as_deref(), q.scope.as_deref(), q.limit.unwrap_or(200))
+        .await
+        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
     Ok(Json(serde_json::json!({ "memories": rows })))
 }
 
@@ -91,11 +106,13 @@ pub(crate) async fn get_memory(
     let mid = uuid::Uuid::parse_str(&id).map_err(|_| err(StatusCode::BAD_REQUEST, "bad id"))?;
     // get_memory_detail already surfaces `evidence` (session rows + save-time source
     // notes, nullable session_id) — no extra merge needed here.
-    let detail = state.pg.get_memory_detail(mid).await
-        .map_err(|e| {
-            if e.contains("not found") { err(StatusCode::NOT_FOUND, "memory not found") }
-            else { err(StatusCode::INTERNAL_SERVER_ERROR, &e) }
-        })?;
+    let detail = state.pg.get_memory_detail(mid).await.map_err(|e| {
+        if e.contains("not found") {
+            err(StatusCode::NOT_FOUND, "memory not found")
+        } else {
+            err(StatusCode::INTERNAL_SERVER_ERROR, &e)
+        }
+    })?;
     Ok(Json(detail))
 }
 
@@ -110,17 +127,17 @@ pub(crate) struct ContextQuery {
     /// Project name OR UUID — the shape the sensei MCP proxy sends, since
     /// `resolve_project` yields a name. Resolved daemon-side to the UUID via the
     /// shared `resolve_project_uuid`, mirroring `get_project_commands`.
-    pub project:    Option<String>,
-    pub limit:      Option<i64>,
-    pub tags:       Option<String>,
+    pub project: Option<String>,
+    pub limit: Option<i64>,
+    pub tags: Option<String>,
     /// Optional spine slot hint (`sensei.spine_slot`) — when present, memories
     /// anchored to this slot (+ optional `feature`) lead the assembled bundle
     /// (see `PgStore::assemble_context`'s `slot` param). Absent → unchanged
     /// general blend, exactly the prior behavior.
-    pub slot:       Option<String>,
+    pub slot: Option<String>,
     /// Feature name for a feature-scope slot (brief/plan/tests). Ignored when
     /// `slot` is absent.
-    pub feature:    Option<String>,
+    pub feature: Option<String>,
 }
 
 pub(crate) async fn get_context(
@@ -130,22 +147,34 @@ pub(crate) async fn get_context(
     // Accept EITHER `project_id` (uuid) OR `project` (name or uuid). Both go
     // through the shared resolver so a name resolves to the real UUID and a raw
     // UUID passes straight through — additive, the uuid contract is unchanged.
-    let ident = q.project_id.as_deref()
+    let ident = q
+        .project_id
+        .as_deref()
         .or(q.project.as_deref())
         .filter(|s| !s.is_empty())
         .ok_or_else(|| err(StatusCode::BAD_REQUEST, "project_id or project required"))?;
-    let pid = crate::api::util::resolve_project_uuid(&state, ident).await
+    let pid = crate::api::util::resolve_project_uuid(&state, ident)
+        .await
         .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "project lookup failed"))?
         .ok_or_else(|| err(StatusCode::BAD_REQUEST, "bad project_id"))?;
-    let tags: Option<Vec<String>> = q.tags.map(|s|
+    let tags: Option<Vec<String>> = q.tags.map(|s| {
         s.split(',').filter(|t| !t.trim().is_empty()).map(|t| t.trim().to_string()).collect()
-    );
-    let stack_ids = state.pg.get_project_stack_ids(&pid).await
+    });
+    let stack_ids = state
+        .pg
+        .get_project_stack_ids(&pid)
+        .await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
-    let slot = q.slot.as_deref().filter(|s| !s.is_empty())
+    let slot = q
+        .slot
+        .as_deref()
+        .filter(|s| !s.is_empty())
         .map(|s| (s, q.feature.as_deref().filter(|f| !f.is_empty())));
-    let blob = state.pg.assemble_context(pid, &stack_ids, tags.as_deref(), q.limit.unwrap_or(200), slot)
-        .await.map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
+    let blob = state
+        .pg
+        .assemble_context(pid, &stack_ids, tags.as_deref(), q.limit.unwrap_or(200), slot)
+        .await
+        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
     Ok(Json(blob))
 }
 
@@ -250,7 +279,8 @@ pub(crate) async fn materialize_rules(
     State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     let dir = crate::paths::sensei_dir();
-    let (path, count) = materialize_global_rules(&state.pg, &dir).await
+    let (path, count) = materialize_global_rules(&state.pg, &dir)
+        .await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
     Ok(Json(serde_json::json!({ "path": path.display().to_string(), "rules": count })))
 }
@@ -260,7 +290,7 @@ pub(crate) async fn materialize_rules(
 /// the daemon and safe to rewrite on every startup; content outside is
 /// user-authored and preserved verbatim.
 const CLAUDE_MD_BEGIN: &str = "<!-- sensei:global-rules-pointer BEGIN -->";
-const CLAUDE_MD_END:   &str = "<!-- sensei:global-rules-pointer END -->";
+const CLAUDE_MD_END: &str = "<!-- sensei:global-rules-pointer END -->";
 
 /// The one-line pointer body itself. Kept short so it costs almost nothing on
 /// every message. References the file the daemon just materialized so any ACP
@@ -274,8 +304,8 @@ fn render_pointer_block(rules_path: &std::path::Path) -> String {
          overridden by more-specific scopes.\n\
          {end}\n",
         begin = CLAUDE_MD_BEGIN,
-        end   = CLAUDE_MD_END,
-        path  = rules_path.display(),
+        end = CLAUDE_MD_END,
+        path = rules_path.display(),
     )
 }
 
@@ -330,8 +360,7 @@ pub(crate) fn upsert_pointer_in_claude_md(
     if out == existing {
         return Ok(Some((claude_md.to_path_buf(), false)));
     }
-    std::fs::write(claude_md, out)
-        .map_err(|e| format!("write {}: {e}", claude_md.display()))?;
+    std::fs::write(claude_md, out).map_err(|e| format!("write {}: {e}", claude_md.display()))?;
     Ok(Some((claude_md.to_path_buf(), true)))
 }
 
@@ -342,42 +371,42 @@ pub(crate) fn upsert_pointer_in_claude_md(
 
 #[derive(Deserialize)]
 pub(crate) struct MemoryBody {
-    pub project_id:    Option<String>,
-    pub scope:         String,
-    pub scope_filter:  Option<String>,
+    pub project_id: Option<String>,
+    pub scope: String,
+    pub scope_filter: Option<String>,
     #[serde(rename = "type")]
-    pub mtype:         String,
-    pub title:         String,
-    pub content:       String,
-    pub impact:        Option<String>,
+    pub mtype: String,
+    pub title: String,
+    pub content: String,
+    pub impact: Option<String>,
     /// Optional save-time source evidence (a file:line, test name, run id) — stored
     /// as a session-less `memory_evidence` row so the memory carries its provenance.
-    pub evidence:      Option<String>,
+    pub evidence: Option<String>,
     #[serde(default)]
-    pub tags:          Vec<String>,
+    pub tags: Vec<String>,
     pub triage_signal: Option<String>,
     // ── Governance plane (optional) ──────────────────────────────────────
     /// Explicit namespace this rule applies to (wins over gov_scope/folder).
-    pub namespace_id:  Option<String>,
+    pub namespace_id: Option<String>,
     /// Governance scope key (general/user/organization/client/technology/team/
     /// project/repository); resolved against `folder`'s namespace memberships.
-    pub gov_scope:     Option<String>,
+    pub gov_scope: Option<String>,
     /// Repo abs_path used to resolve `gov_scope` to a namespace.
-    pub folder:        Option<String>,
+    pub folder: Option<String>,
     /// Authority: advisory|recommended|required|mandatory (default recommended).
-    pub enforcement:   Option<String>,
+    pub enforcement: Option<String>,
     // ── Spine anchoring (optional) ────────────────────────────────────────
     /// Doc-slot this memory anchors to (`sensei.spine_slot`); scope-validated
     /// against `feature` via `memory_slot::validate_scope`.
-    pub spine_slot:    Option<String>,
+    pub spine_slot: Option<String>,
     /// Feature name for feature-scoped slots (brief/plan/tests); must be
     /// absent for project-only slots (vision/personas/journeys/roadmap/mockups).
-    pub feature:       Option<String>,
+    pub feature: Option<String>,
 }
 
 async fn insert_with_status(
     state: AppState,
-    body:  MemoryBody,
+    body: MemoryBody,
     status: &str,
     require_triage_signal: bool,
     origin: &str,
@@ -396,7 +425,10 @@ async fn insert_with_status(
         tracing::warn!(kinds = ?kinds, "rejected a memory write carrying a secret");
         return Err(err(
             StatusCode::BAD_REQUEST,
-            &format!("content appears to contain a secret ({}) — not saved; remove it and retry", kinds.join(", ")),
+            &format!(
+                "content appears to contain a secret ({}) — not saved; remove it and retry",
+                kinds.join(", ")
+            ),
         ));
     }
     if body.scope == "stack" && body.scope_filter.as_deref().unwrap_or("").is_empty() {
@@ -410,39 +442,50 @@ async fn insert_with_status(
     // rule (crate::memory_slot::validate_scope) before it reaches the DB.
     let spine_slot = body.spine_slot.as_deref().filter(|s| !s.is_empty());
     if let Some(slot_str) = spine_slot {
-        let slot = crate::memory_slot::SpineSlot::parse(slot_str)
-            .ok_or_else(|| err(StatusCode::BAD_REQUEST, &format!("unknown spine_slot: {slot_str}")))?;
+        let slot = crate::memory_slot::SpineSlot::parse(slot_str).ok_or_else(|| {
+            err(StatusCode::BAD_REQUEST, &format!("unknown spine_slot: {slot_str}"))
+        })?;
         crate::memory_slot::validate_scope(slot, body.feature.as_deref())
             .map_err(|e| err(StatusCode::BAD_REQUEST, &e))?;
     }
     let pid = match &body.project_id {
-        Some(s) => Some(uuid::Uuid::parse_str(s).map_err(|_| err(StatusCode::BAD_REQUEST, "bad project_id"))?),
+        Some(s) => Some(
+            uuid::Uuid::parse_str(s).map_err(|_| err(StatusCode::BAD_REQUEST, "bad project_id"))?,
+        ),
         None => None,
     };
     // Governance namespace: explicit namespace_id wins; else resolve gov_scope
     // against the repo's namespace memberships.
     let namespace_id = resolve_target_namespace(
-        &state, body.namespace_id.as_deref(), body.gov_scope.as_deref(), body.folder.as_deref(),
+        &state,
+        body.namespace_id.as_deref(),
+        body.gov_scope.as_deref(),
+        body.folder.as_deref(),
         body.project_id.as_deref(),
-    ).await?;
-    let id = state.pg.insert_memory(&InsertMemory {
-        project_id:    pid,
-        scope:         body.scope,
-        scope_filter:  body.scope_filter,
-        mtype:         body.mtype,
-        title:         body.title,
-        content:       body.content,
-        impact:        body.impact,
-        tags:          body.tags,
-        triage_signal: body.triage_signal,
-        status:        status.into(),
-        namespace_id,
-        enforcement:   body.enforcement.filter(|s| !s.is_empty()),
-        origin:        Some(origin.to_string()),
-        source_id:     None,
-        spine_slot:    body.spine_slot.filter(|s| !s.is_empty()),
-        feature:       body.feature.filter(|s| !s.is_empty()),
-    }).await.map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
+    )
+    .await?;
+    let id = state
+        .pg
+        .insert_memory(&InsertMemory {
+            project_id: pid,
+            scope: body.scope,
+            scope_filter: body.scope_filter,
+            mtype: body.mtype,
+            title: body.title,
+            content: body.content,
+            impact: body.impact,
+            tags: body.tags,
+            triage_signal: body.triage_signal,
+            status: status.into(),
+            namespace_id,
+            enforcement: body.enforcement.filter(|s| !s.is_empty()),
+            origin: Some(origin.to_string()),
+            source_id: None,
+            spine_slot: body.spine_slot.filter(|s| !s.is_empty()),
+            feature: body.feature.filter(|s| !s.is_empty()),
+        })
+        .await
+        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
     // Record save-time source evidence (session-less) so the memory carries its
     // provenance. Non-fatal: the memory is saved even if the evidence note fails.
     if let Some(note) = body.evidence.as_deref().map(str::trim).filter(|s| !s.is_empty())
@@ -455,14 +498,14 @@ async fn insert_with_status(
 
 pub(crate) async fn propose_memory(
     State(state): State<AppState>,
-    Json(body):   Json<MemoryBody>,
+    Json(body): Json<MemoryBody>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     insert_with_status(state, body, "proposed", true, "learned").await
 }
 
 pub(crate) async fn save_memory(
     State(state): State<AppState>,
-    Json(body):   Json<MemoryBody>,
+    Json(body): Json<MemoryBody>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     insert_with_status(state, body, "active", false, "authored").await
 }
@@ -475,12 +518,12 @@ pub(crate) async fn save_memory(
 #[derive(Deserialize)]
 pub(crate) struct PromoteBody {
     pub namespace_id: Option<String>,
-    pub gov_scope:    Option<String>,
-    pub folder:       Option<String>,
+    pub gov_scope: Option<String>,
+    pub folder: Option<String>,
     /// #109: resolve the gov_scope's repo from a project when the MCP can't send a
     /// valid folder (its cwd mis-resolves to the container).
-    pub project:      Option<String>,
-    pub enforcement:  Option<String>,
+    pub project: Option<String>,
+    pub enforcement: Option<String>,
 }
 
 /// Promote a proven memory to a broader scope. Creates a `proposed` copy on the
@@ -491,15 +534,27 @@ pub(crate) async fn promote_memory(
     Path(id): Path<String>,
     Json(body): Json<PromoteBody>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let sid = uuid::Uuid::parse_str(&id).map_err(|_| err(StatusCode::BAD_REQUEST, "bad memory id"))?;
+    let sid =
+        uuid::Uuid::parse_str(&id).map_err(|_| err(StatusCode::BAD_REQUEST, "bad memory id"))?;
     let target = resolve_target_namespace(
-        &state, body.namespace_id.as_deref(), body.gov_scope.as_deref(), body.folder.as_deref(),
+        &state,
+        body.namespace_id.as_deref(),
+        body.gov_scope.as_deref(),
+        body.folder.as_deref(),
         body.project.as_deref(),
-    ).await?;
-    let new_id = state.pg.promote_memory(sid, target, body.enforcement.as_deref().filter(|s| !s.is_empty())).await
+    )
+    .await?;
+    let new_id = state
+        .pg
+        .promote_memory(sid, target, body.enforcement.as_deref().filter(|s| !s.is_empty()))
+        .await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?
-        .ok_or_else(|| err(StatusCode::CONFLICT,
-            "memory not found or not promotable (must be active/reinforced/battle_tested)"))?;
+        .ok_or_else(|| {
+            err(
+                StatusCode::CONFLICT,
+                "memory not found or not promotable (must be active/reinforced/battle_tested)",
+            )
+        })?;
     Ok(Json(serde_json::json!({ "id": new_id, "status": "proposed", "origin": "promoted" })))
 }
 
@@ -518,7 +573,8 @@ pub(crate) async fn promote_memory(
 /// Live (non-terminal) memory states a curator can still challenge / dismiss
 /// from the triage + active surface. `archived` and `rejected` are terminal, so
 /// the status guard won't match them → CONFLICT (can't re-terminate a memory).
-const CURATABLE_STATES: &[&str] = &["proposed", "active", "reinforced", "challenged", "battle_tested"];
+const CURATABLE_STATES: &[&str] =
+    &["proposed", "active", "reinforced", "challenged", "battle_tested"];
 
 /// Strength increment applied by one reinforce action — the standard per-event
 /// bump (`reinforce_memory` caps the running total).
@@ -536,8 +592,7 @@ pub(crate) async fn archive_memory(
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     let mid = parse_memory_id(&id)?;
-    state.pg.archive_memory(&mid).await
-        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
+    state.pg.archive_memory(&mid).await.map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
     Ok(Json(serde_json::json!({ "id": mid, "status": "archived" })))
 }
 
@@ -549,7 +604,10 @@ pub(crate) async fn reinforce_memory(
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     let mid = parse_memory_id(&id)?;
-    state.pg.reinforce_memory(&mid, REINFORCE_AMOUNT).await
+    state
+        .pg
+        .reinforce_memory(&mid, REINFORCE_AMOUNT)
+        .await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
     Ok(Json(serde_json::json!({ "id": mid, "reinforced": true })))
 }
@@ -561,7 +619,10 @@ pub(crate) async fn challenge_memory(
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     let mid = parse_memory_id(&id)?;
-    match state.pg.set_memory_status(mid, "challenged", CURATABLE_STATES).await
+    match state
+        .pg
+        .set_memory_status(mid, "challenged", CURATABLE_STATES)
+        .await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?
     {
         Some(s) => Ok(Json(serde_json::json!({ "id": mid, "status": s }))),
@@ -576,7 +637,10 @@ pub(crate) async fn dismiss_memory(
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     let mid = parse_memory_id(&id)?;
-    match state.pg.set_memory_status(mid, "rejected", CURATABLE_STATES).await
+    match state
+        .pg
+        .set_memory_status(mid, "rejected", CURATABLE_STATES)
+        .await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?
     {
         Some(s) => Ok(Json(serde_json::json!({ "id": mid, "status": s }))),
@@ -602,21 +666,31 @@ pub(crate) async fn merge_memory(
     Json(body): Json<MergeBody>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     let mid = parse_memory_id(&id)?;
-    let into = body.into.as_deref().map(str::trim).filter(|s| !s.is_empty())
+    let into = body
+        .into
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
         .ok_or_else(|| err(StatusCode::BAD_REQUEST, "into (surviving memory id) required"))?;
-    let into = uuid::Uuid::parse_str(into).map_err(|_| err(StatusCode::BAD_REQUEST, "bad into id"))?;
+    let into =
+        uuid::Uuid::parse_str(into).map_err(|_| err(StatusCode::BAD_REQUEST, "bad into id"))?;
     if into == mid {
         return Err(err(StatusCode::BAD_REQUEST, "cannot merge a memory into itself"));
     }
     // The survivor must exist — otherwise the link FK would surface as a 500.
-    state.pg.get_memory(&into).await
+    state
+        .pg
+        .get_memory(&into)
+        .await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?
         .ok_or_else(|| err(StatusCode::NOT_FOUND, "merge target (into) not found"))?;
     // parent = surviving representative; child = merged-in member (DDL semantics).
-    state.pg.link_memories(&into, &mid).await
+    state
+        .pg
+        .link_memories(&into, &mid)
+        .await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
-    state.pg.archive_memory(&mid).await
-        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
+    state.pg.archive_memory(&mid).await.map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
     Ok(Json(serde_json::json!({ "id": mid, "into": into, "status": "archived" })))
 }
 
@@ -687,8 +761,12 @@ pub(crate) async fn generalise_memory(
     use gateway::types::capability::Capability;
     use gateway::types::request::*;
 
-    let mid = uuid::Uuid::parse_str(&id).map_err(|_| err(StatusCode::BAD_REQUEST, "bad memory id"))?;
-    let memory = state.pg.get_memory(&mid).await
+    let mid =
+        uuid::Uuid::parse_str(&id).map_err(|_| err(StatusCode::BAD_REQUEST, "bad memory id"))?;
+    let memory = state
+        .pg
+        .get_memory(&mid)
+        .await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?
         .ok_or_else(|| err(StatusCode::NOT_FOUND, "memory not found"))?;
     let title = memory["title"].as_str().unwrap_or_default();
@@ -705,7 +783,10 @@ pub(crate) async fn generalise_memory(
         // (embedded → ollama → cloud), same as the corrections summariser.
         chain: Some("reasoning".into()),
         payload: Payload::Chat {
-            messages: vec![Message::text(MessageRole::User, build_generalise_message(title, content))],
+            messages: vec![Message::text(
+                MessageRole::User,
+                build_generalise_message(title, content),
+            )],
             system: Some(GENERALISE_SYSTEM.to_string()),
             max_tokens: Some(GENERALISE_MAX_TOKENS),
             temperature: None,
@@ -721,25 +802,33 @@ pub(crate) async fn generalise_memory(
 
     // Timeout / gateway error / empty-or-unparseable output all degrade the SAME
     // way: surface it (503 + tracing), leave the flag unset, never fabricate.
-    let generalised = match tokio::time::timeout(GENERALISE_TIMEOUT, state.gateway.execute(&request)).await {
-        Ok(Ok(resp)) if resp.success => resp.content.as_deref().and_then(parse_generalise_response),
-        Ok(Ok(_)) => None,
-        Ok(Err(e)) => {
-            tracing::warn!(memory_id = %mid, error = %e, "generalise: gateway call failed");
-            None
-        }
-        Err(_) => {
-            tracing::warn!(memory_id = %mid, "generalise: gateway call timed out");
-            None
-        }
-    };
+    let generalised =
+        match tokio::time::timeout(GENERALISE_TIMEOUT, state.gateway.execute(&request)).await {
+            Ok(Ok(resp)) if resp.success => {
+                resp.content.as_deref().and_then(parse_generalise_response)
+            }
+            Ok(Ok(_)) => None,
+            Ok(Err(e)) => {
+                tracing::warn!(memory_id = %mid, error = %e, "generalise: gateway call failed");
+                None
+            }
+            Err(_) => {
+                tracing::warn!(memory_id = %mid, "generalise: gateway call timed out");
+                None
+            }
+        };
     let Some(text) = generalised else {
         tracing::warn!(memory_id = %mid, "generalise: no usable rewrite — flag left unset");
-        return Err(err(StatusCode::SERVICE_UNAVAILABLE,
-            "could not generalise this memory right now — the model was unavailable or returned nothing usable; try again"));
+        return Err(err(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "could not generalise this memory right now — the model was unavailable or returned nothing usable; try again",
+        ));
     };
 
-    state.pg.set_memory_generalisation(mid, &text).await
+    state
+        .pg
+        .set_memory_generalisation(mid, &text)
+        .await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?
         .ok_or_else(|| err(StatusCode::NOT_FOUND, "memory not found"))?;
 
@@ -755,7 +844,10 @@ pub(crate) async fn generalise_memory(
 pub(crate) async fn promotion_candidates(
     State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let rows = state.pg.list_promotion_candidates().await
+    let rows = state
+        .pg
+        .list_promotion_candidates()
+        .await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
     Ok(Json(serde_json::json!({ "candidates": rows })))
 }
@@ -774,18 +866,24 @@ pub(crate) async fn promotion_candidates(
 pub(crate) async fn consolidate_rules(
     State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    use crate::analysis::rule_consolidation::{consolidate_global_rules, ConsolidationOutcome};
+    use crate::analysis::rule_consolidation::{ConsolidationOutcome, consolidate_global_rules};
     // Shared with the scheduled `ConsolidateGovernance` task — identical pipeline.
     match consolidate_global_rules(&state.pg, &state.gateway).await {
-        Ok(ConsolidationOutcome::Skipped(reason)) =>
-            Ok(Json(serde_json::json!({ "skipped": true, "reason": reason }))),
-        Ok(ConsolidationOutcome::Created { id, version, model, content }) =>
+        Ok(ConsolidationOutcome::Skipped(reason)) => {
+            Ok(Json(serde_json::json!({ "skipped": true, "reason": reason })))
+        }
+        Ok(ConsolidationOutcome::Created { id, version, model, content }) => {
             Ok(Json(serde_json::json!({
                 "id": id, "version": version, "status": "proposed", "model": model, "content": content,
-            }))),
+            })))
+        }
         // A model/gateway failure is a 502; anything else (DB) a 500.
         Err(e) => {
-            let code = if e.contains("merge model") { StatusCode::BAD_GATEWAY } else { StatusCode::INTERNAL_SERVER_ERROR };
+            let code = if e.contains("merge model") {
+                StatusCode::BAD_GATEWAY
+            } else {
+                StatusCode::INTERNAL_SERVER_ERROR
+            };
             Err(err(code, &e))
         }
     }
@@ -796,11 +894,17 @@ pub(crate) async fn consolidate_rules(
 pub(crate) async fn get_consolidated(
     State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let approved = state.pg.get_consolidated_ruleset("global", Some("approved")).await
+    let approved = state
+        .pg
+        .get_consolidated_ruleset("global", Some("approved"))
+        .await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
     let row = match approved {
         Some(r) => Some(r),
-        None => state.pg.get_consolidated_ruleset("global", None).await
+        None => state
+            .pg
+            .get_consolidated_ruleset("global", None)
+            .await
             .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?,
     };
     Ok(Json(row.unwrap_or(serde_json::Value::Null)))
@@ -813,13 +917,18 @@ pub(crate) async fn approve_consolidated(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let rid = uuid::Uuid::parse_str(&id).map_err(|_| err(StatusCode::BAD_REQUEST, "bad ruleset id"))?;
-    let (scope, _content) = state.pg.approve_consolidated_ruleset(&rid).await
+    let rid =
+        uuid::Uuid::parse_str(&id).map_err(|_| err(StatusCode::BAD_REQUEST, "bad ruleset id"))?;
+    let (scope, _content) = state
+        .pg
+        .approve_consolidated_ruleset(&rid)
+        .await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?
         .ok_or_else(|| err(StatusCode::NOT_FOUND, "ruleset not found"))?;
     // The approved global merge now feeds ~/.sensei/rules.md.
     if scope == "global" {
-        materialize_global_rules(&state.pg, &crate::paths::sensei_dir()).await
+        materialize_global_rules(&state.pg, &crate::paths::sensei_dir())
+            .await
             .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
     }
     Ok(Json(serde_json::json!({ "id": rid, "status": "approved", "scope": scope })))
@@ -836,14 +945,19 @@ pub(crate) async fn accept_proposal(
     Json(_body): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     let mid = uuid::Uuid::parse_str(&id).map_err(|_| err(StatusCode::BAD_REQUEST, "bad id"))?;
-    let new_status = state.pg.set_memory_status(mid, "active", &["proposed"]).await
+    let new_status = state
+        .pg
+        .set_memory_status(mid, "active", &["proposed"])
+        .await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
     match new_status {
         Some(s) => {
             // Federation: if this was a promoted rule at a shareable scope, push it.
             // Fire-and-forget — federation must not block or fail the approval.
             let pg = state.pg.clone();
-            tokio::spawn(async move { crate::federation::push_promoted(&pg, mid).await; });
+            tokio::spawn(async move {
+                crate::federation::push_promoted(&pg, mid).await;
+            });
             Ok(Json(serde_json::json!({ "id": mid, "status": s })))
         }
         None => Err(err(StatusCode::CONFLICT, "proposal not in 'proposed' state")),
@@ -864,7 +978,10 @@ pub(crate) async fn reject_proposal(
     if let Some(reason) = body.reason.as_deref().filter(|s| !s.trim().is_empty()) {
         tracing::info!(memory_id = %mid, reason, "proposal rejected");
     }
-    let new_status = state.pg.set_memory_status(mid, "rejected", &["proposed"]).await
+    let new_status = state
+        .pg
+        .set_memory_status(mid, "rejected", &["proposed"])
+        .await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
     match new_status {
         Some(s) => Ok(Json(serde_json::json!({ "id": mid, "status": s }))),
@@ -878,10 +995,10 @@ pub(crate) async fn reject_proposal(
 
 #[derive(Deserialize)]
 pub(crate) struct OutcomeBody {
-    pub memory_id:  String,
-    pub outcome:    String,
+    pub memory_id: String,
+    pub outcome: String,
     pub session_id: Option<String>,
-    pub context:    Option<String>,
+    pub context: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -891,7 +1008,7 @@ pub(crate) struct OutcomesBatch {
 
 pub(crate) async fn record_outcomes(
     State(state): State<AppState>,
-    Json(body):   Json<OutcomesBatch>,
+    Json(body): Json<OutcomesBatch>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     let valid_outcomes = ["applied", "consulted", "violated", "ignored"];
     let mut rows: Vec<OutcomeRow> = Vec::with_capacity(body.outcomes.len());
@@ -902,15 +1019,24 @@ pub(crate) async fn record_outcomes(
         let mid = uuid::Uuid::parse_str(&o.memory_id)
             .map_err(|_| err(StatusCode::BAD_REQUEST, "bad memory_id"))?;
         let sess = match o.session_id {
-            Some(s) => Some(uuid::Uuid::parse_str(&s).map_err(|_| err(StatusCode::BAD_REQUEST, "bad session_id"))?),
+            Some(s) => Some(
+                uuid::Uuid::parse_str(&s)
+                    .map_err(|_| err(StatusCode::BAD_REQUEST, "bad session_id"))?,
+            ),
             None => None,
         };
         rows.push(OutcomeRow {
-            memory_id: mid, session_id: sess, outcome: o.outcome, context: o.context,
+            memory_id: mid,
+            session_id: sess,
+            outcome: o.outcome,
+            context: o.context,
         });
     }
     let total = rows.len();
-    let skipped = state.pg.record_outcomes_batch(&rows).await
+    let skipped = state
+        .pg
+        .record_outcomes_batch(&rows)
+        .await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
     Ok(Json(serde_json::json!({
         "recorded": total - skipped.len(),
@@ -951,34 +1077,51 @@ pub(crate) async fn create_source(
     crate::api::util::require_secure_url(&url, "source url")
         .map_err(|e| err(StatusCode::BAD_REQUEST, &e))?;
     let namespace_id = match b.namespace_id.as_deref() {
-        Some(s) => Some(uuid::Uuid::parse_str(s).map_err(|_| err(StatusCode::BAD_REQUEST, "bad namespace_id"))?),
+        Some(s) => Some(
+            uuid::Uuid::parse_str(s)
+                .map_err(|_| err(StatusCode::BAD_REQUEST, "bad namespace_id"))?,
+        ),
         None => None,
     };
     let credential_ref = format!("dojo-{}", uuid::Uuid::new_v4());
     let cref = credential_ref.clone();
     let api_key = b.api_key.clone();
     tokio::task::spawn_blocking(move || crate::gateway_keys::set_key(&cref, &api_key))
-        .await.map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()))?
+        .await
+        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()))?
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()))?;
-    let id = state.pg.create_knowledge_source(&crate::db::pg_store::NewKnowledgeSource {
-        kind: b.kind.unwrap_or_else(|| "hive_mind".into()),
-        name: b.name,
-        url,
-        namespace_id,
-        credential_ref,
-        direction: b.direction.unwrap_or_else(|| "both".into()),
-    }).await.map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
+    let id = state
+        .pg
+        .create_knowledge_source(&crate::db::pg_store::NewKnowledgeSource {
+            kind: b.kind.unwrap_or_else(|| "hive_mind".into()),
+            name: b.name,
+            url,
+            namespace_id,
+            credential_ref,
+            direction: b.direction.unwrap_or_else(|| "both".into()),
+        })
+        .await
+        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
     Ok(Json(serde_json::json!({ "id": id.to_string() })))
 }
 
 pub(crate) async fn list_sources(
     State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let rows = state.pg.list_knowledge_sources().await.map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
-    let out: Vec<_> = rows.into_iter().map(|s| serde_json::json!({
+    let rows = state
+        .pg
+        .list_knowledge_sources()
+        .await
+        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
+    let out: Vec<_> = rows
+        .into_iter()
+        .map(|s| {
+            serde_json::json!({
         "id": s.id, "kind": s.kind, "name": s.name, "url": s.url,
         "namespace_id": s.namespace_id, "direction": s.direction,
-        "last_seq": s.last_seq, "enabled": s.enabled })).collect();
+        "last_seq": s.last_seq, "enabled": s.enabled })
+        })
+        .collect();
     Ok(Json(serde_json::json!({ "sources": out })))
 }
 
@@ -991,12 +1134,24 @@ pub(crate) async fn delete_source(
         let cref = s.credential_ref.clone();
         match tokio::task::spawn_blocking(move || crate::gateway_keys::delete_key(&cref)).await {
             Ok(Ok(())) => {}
-            Ok(Err(e)) => tracing::warn!(source = %s.name, error = %e, "federation: keychain delete failed; entry may be orphaned"),
-            Err(e) => tracing::warn!(source = %s.name, error = %e, "federation: keychain delete task join failed"),
+            Ok(Err(e)) => {
+                tracing::warn!(source = %s.name, error = %e, "federation: keychain delete failed; entry may be orphaned")
+            }
+            Err(e) => {
+                tracing::warn!(source = %s.name, error = %e, "federation: keychain delete task join failed")
+            }
         }
     }
-    let removed = state.pg.delete_knowledge_source(&sid).await.map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
-    if removed { Ok(Json(serde_json::json!({ "deleted": true }))) } else { Err(err(StatusCode::NOT_FOUND, "no such source")) }
+    let removed = state
+        .pg
+        .delete_knowledge_source(&sid)
+        .await
+        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
+    if removed {
+        Ok(Json(serde_json::json!({ "deleted": true })))
+    } else {
+        Err(err(StatusCode::NOT_FOUND, "no such source"))
+    }
 }
 
 pub(crate) async fn sync_source(
@@ -1004,10 +1159,15 @@ pub(crate) async fn sync_source(
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     let sid = uuid::Uuid::parse_str(&id).map_err(|_| err(StatusCode::BAD_REQUEST, "bad id"))?;
-    let src = state.pg.get_knowledge_source(&sid).await.map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?
+    let src = state
+        .pg
+        .get_knowledge_source(&sid)
+        .await
+        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?
         .ok_or_else(|| err(StatusCode::NOT_FOUND, "no such source"))?;
     let client = crate::federation::http_client();
-    let stats = crate::federation::pull_source(&state.pg, &client, &src).await
+    let stats = crate::federation::pull_source(&state.pg, &client, &src)
+        .await
         .map_err(|e| err(StatusCode::BAD_GATEWAY, &e))?;
     Ok(Json(serde_json::to_value(stats).unwrap()))
 }
@@ -1017,7 +1177,11 @@ pub(crate) async fn source_status(
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     let sid = uuid::Uuid::parse_str(&id).map_err(|_| err(StatusCode::BAD_REQUEST, "bad id"))?;
-    let src = state.pg.get_knowledge_source(&sid).await.map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?
+    let src = state
+        .pg
+        .get_knowledge_source(&sid)
+        .await
+        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?
         .ok_or_else(|| err(StatusCode::NOT_FOUND, "no such source"))?;
     Ok(Json(serde_json::json!({ "id": src.id, "name": src.name, "url": src.url,
         "direction": src.direction, "last_seq": src.last_seq, "enabled": src.enabled })))
@@ -1037,11 +1201,7 @@ fn pack_rule_to_raw(w: crate::dojo::client::PackRuleWire) -> crate::governance::
         // memory would (parity with the LOCAL `resolve_local_pack_raws` fix). A
         // stale Worker sends no `scope_key` → fall back to the broad `general`
         // scope (mirrors that resolver's `COALESCE(n.scope_key, 'general')`).
-        scope: if w.scope_key.trim().is_empty() {
-            "general".to_string()
-        } else {
-            w.scope_key
-        },
+        scope: if w.scope_key.trim().is_empty() { "general".to_string() } else { w.scope_key },
         namespace: if w.source.is_empty() { None } else { Some(w.source) },
     }
 }
@@ -1180,11 +1340,8 @@ pub(crate) async fn get_constitution(
     let ruleset = resolve_repo_ruleset(&state, &folder_id)
         .await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
-    let scopes = state
-        .pg
-        .list_scopes()
-        .await
-        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
+    let scopes =
+        state.pg.list_scopes().await.map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
     Ok(Json(serde_json::json!({
         "folder": folder_path,
         "total": ruleset.total,
@@ -1303,7 +1460,8 @@ mod tests {
 
     #[test]
     fn parse_generalise_tolerates_fences_and_surrounding_prose() {
-        let c = "Here you go:\n```json\n{\"generalised\":\"Run pre-commit before opening a PR.\"}\n```";
+        let c =
+            "Here you go:\n```json\n{\"generalised\":\"Run pre-commit before opening a PR.\"}\n```";
         assert_eq!(
             parse_generalise_response(c).as_deref(),
             Some("Run pre-commit before opening a PR."),
@@ -1313,7 +1471,11 @@ mod tests {
     #[test]
     fn parse_generalise_none_on_empty_or_missing() {
         assert_eq!(parse_generalise_response(r#"{"generalised":""}"#), None, "empty string → None");
-        assert_eq!(parse_generalise_response(r#"{"generalised":"   "}"#), None, "whitespace → None");
+        assert_eq!(
+            parse_generalise_response(r#"{"generalised":"   "}"#),
+            None,
+            "whitespace → None"
+        );
         assert_eq!(parse_generalise_response(r#"{"other":"x"}"#), None, "missing key → None");
         assert_eq!(parse_generalise_response("not json"), None, "no object → None");
         assert_eq!(parse_generalise_response(""), None, "empty input → None");
@@ -1339,23 +1501,34 @@ mod tests {
         // races the constitution seed test on the shared sensei_test DB.
         let pg = crate::db::pg_store::PgStore::connect_test().await.unwrap();
         let pool = pg.pool();
-        sqlx_core::query::query("DELETE FROM sensei.rule_packs WHERE slug = 'global-materialize-test'")
-            .execute(pool).await.unwrap();
+        sqlx_core::query::query(
+            "DELETE FROM sensei.rule_packs WHERE slug = 'global-materialize-test'",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
         sqlx_core::query::query(
             "INSERT INTO sensei.scopes(key, name, level, shareable)
-             VALUES ('general', 'General', 0, false) ON CONFLICT (key) DO NOTHING")
-            .execute(pool).await.unwrap();
+             VALUES ('general', 'General', 0, false) ON CONFLICT (key) DO NOTHING",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
         let (pack,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "INSERT INTO sensei.rule_packs
-                (slug, name, area, source, summary, enforcement, owner_namespace_id, status, published_by)
+                (slug, name, area, attribution, summary, enforcement, owner_namespace_id, status, published_by)
              VALUES ('global-materialize-test', 'GM', 'principles', 'GMSource', 's',
                      'mandatory', NULL, 'active', 'test')
              RETURNING id")
             .fetch_one(pool).await.unwrap();
         sqlx_core::query::query(
             "INSERT INTO sensei.rule_pack_rules(pack_id, ordinal, statement, body, enforcement)
-             VALUES ($1, 1, 'Global materialize marker rule', 'B', 'mandatory')")
-            .bind(pack).execute(pool).await.unwrap();
+             VALUES ($1, 1, 'Global materialize marker rule', 'B', 'mandatory')",
+        )
+        .bind(pack)
+        .execute(pool)
+        .await
+        .unwrap();
         let (ns,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "INSERT INTO sensei.namespaces(scope_key, slug, name)
              VALUES ('general', 'global-mat-test', 'GM') ON CONFLICT (scope_key, slug) DO UPDATE SET name=excluded.name
@@ -1369,12 +1542,22 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let (path, _count) = materialize_global_rules(&pg, tmp.path()).await.unwrap();
         let body = std::fs::read_to_string(&path).unwrap();
-        assert!(body.contains("Global materialize marker rule"),
-            "a general-adopted pack rule is folded into the global rules file");
+        assert!(
+            body.contains("Global materialize marker rule"),
+            "a general-adopted pack rule is folded into the global rules file"
+        );
 
-        sqlx_core::query::query("DELETE FROM sensei.rule_packs WHERE slug = 'global-materialize-test'")
-            .execute(pool).await.unwrap();
-        sqlx_core::query::query("DELETE FROM sensei.namespaces WHERE id = $1").bind(ns).execute(pool).await.unwrap();
+        sqlx_core::query::query(
+            "DELETE FROM sensei.rule_packs WHERE slug = 'global-materialize-test'",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx_core::query::query("DELETE FROM sensei.namespaces WHERE id = $1")
+            .bind(ns)
+            .execute(pool)
+            .await
+            .unwrap();
     }
 
     // #13 — Global rules pointer in ~/.claude/CLAUDE.md
@@ -1385,7 +1568,10 @@ mod tests {
         let rules_path = std::path::PathBuf::from("/home/u/.sensei/rules.md");
         let existing = "# My CLAUDE.md\n\nUser content here.\n";
         let out = splice_pointer_block(existing, &render_pointer_block(&rules_path));
-        assert!(out.starts_with("# My CLAUDE.md\n\nUser content here.\n"), "prior user content preserved verbatim");
+        assert!(
+            out.starts_with("# My CLAUDE.md\n\nUser content here.\n"),
+            "prior user content preserved verbatim"
+        );
         assert!(out.contains(CLAUDE_MD_BEGIN));
         assert!(out.contains(CLAUDE_MD_END));
         assert!(out.contains("/home/u/.sensei/rules.md"));
@@ -1445,7 +1631,8 @@ mod tests {
         std::fs::write(&claude_md, "# CLAUDE.md\n\nUser content.\n").unwrap();
         let rules_path = tmp.path().join("rules.md");
 
-        let (path, changed) = upsert_pointer_in_claude_md(&claude_md, &rules_path).unwrap().unwrap();
+        let (path, changed) =
+            upsert_pointer_in_claude_md(&claude_md, &rules_path).unwrap().unwrap();
         assert_eq!(path, claude_md);
         assert!(changed, "first upsert reports change=true");
 

@@ -14,7 +14,6 @@
 		orgName,
 		incidents = [],
 		detail = null,
-		mobile = false,
 		onOpen,
 		onCloseDetail,
 		onReport,
@@ -25,7 +24,6 @@
 		incidents?: KitIncident[];
 		/** The loaded detail for the "Open" pane, or null when none is open. */
 		detail?: KitIncidentDetail | null;
-		mobile?: boolean;
 		onOpen?: (i: KitIncident) => void;
 		/** Dismiss the open detail pane. */
 		onCloseDetail?: () => void;
@@ -48,7 +46,7 @@
 	}
 </script>
 
-<div class="flex flex-col {mobile ? 'p-4 gap-4' : 'p-8 gap-6'}">
+<div class="flex flex-col p-4 gap-4 md:p-8 md:gap-6">
 	<SectionHead eyebrow={orgName + ' · clients'} title="Incidents" count={incidents.length}>
 		{#snippet right()}
 			<Btn size="sm" icon="add-circle" onclick={report}>Report</Btn>

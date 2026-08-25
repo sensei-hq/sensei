@@ -31,7 +31,7 @@
 
 {#snippet stat(label: string, value: string | number, tone: 'default' | 'mute' | 'warn')}
   <div class="flex flex-col h-full">
-    <div class="text-[10px] uppercase tracking-[0.08em] text-ink-mute leading-tight">{label}</div>
+    <div class="text-xs uppercase tracking-[0.08em] text-ink-mute leading-tight">{label}</div>
     <div
       class="display text-base font-normal mt-auto leading-tight tabular-nums"
       class:text-ink={tone === 'default'}
@@ -53,7 +53,7 @@
   <div class="flex items-center gap-2">
     <ProjectGlyph {icon} />
     <ProjectDot ftr={p.ftr14d} warn={p.warn} />
-    <span class="text-[13px] text-ink flex-1 min-w-0 truncate">{p.name}</span>
+    <span class="text-sm text-ink flex-1 min-w-0 truncate">{p.name}</span>
     {#if p.client}
       <ProjPill text={p.client} />
     {/if}
@@ -64,7 +64,7 @@
 
   <!-- Row 2 — vision (omitted entirely when absent) -->
   {#if p.vision}
-    <div data-vision class="text-[12px] text-ink-soft leading-snug text-pretty">{p.vision}</div>
+    <div data-vision class="text-xs text-ink-soft leading-snug text-pretty">{p.vision}</div>
   {/if}
 
   <!-- Stat grid -->

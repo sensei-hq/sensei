@@ -16,8 +16,8 @@
 //! facts change (so a re-derivation can correct a now-stale line) but is a no-op
 //! when unchanged — see [`crate::db::pg_store::PgStore::set_session_summary`].
 
-use super::analyze::{parent_dir, HookEvent, SessionMetrics};
-use crate::analysis::insight_copy::{generate_and_cache, CopyLimits, InsightCopy, InsightKind};
+use super::analyze::{HookEvent, SessionMetrics, parent_dir};
+use crate::analysis::insight_copy::{CopyLimits, InsightCopy, InsightKind, generate_and_cache};
 use crate::db::pg_store::PgStore;
 
 /// How many of a session's most-used tools to name in the facts. Ranked by
@@ -162,11 +162,7 @@ pub async fn generate_session_summary(
         Some(copy) => compose_narrative(&copy),
         None => String::new(),
     };
-    if narrative.trim().is_empty() {
-        facts.fallback_summary()
-    } else {
-        narrative
-    }
+    if narrative.trim().is_empty() { facts.fallback_summary() } else { narrative }
 }
 
 #[cfg(test)]
@@ -192,13 +188,19 @@ mod tests {
     #[test]
     fn fallback_reads_sensibly_without_corrections() {
         let s = facts(3, 2, 0, "completed");
-        assert_eq!(s.fallback_summary(), "touched 3 files across 2 modules in src/api; no corrections; outcome completed");
+        assert_eq!(
+            s.fallback_summary(),
+            "touched 3 files across 2 modules in src/api; no corrections; outcome completed"
+        );
     }
 
     #[test]
     fn fallback_singularises_and_names_corrections() {
         let s = facts(1, 1, 1, "corrected");
-        assert_eq!(s.fallback_summary(), "touched 1 file across 1 module in src/api; 1 correction; outcome corrected");
+        assert_eq!(
+            s.fallback_summary(),
+            "touched 1 file across 1 module in src/api; 1 correction; outcome corrected"
+        );
         let many = facts(9, 3, 4, "corrected");
         assert!(many.fallback_summary().contains("4 corrections"), "{}", many.fallback_summary());
     }
@@ -231,7 +233,11 @@ mod tests {
             "Bash": { "pre": 1, "post": 0, "failed": 0 },
         });
         let top = top_tools_from_usage(&usage, 3);
-        assert_eq!(top, vec![("Read".to_string(), 5), ("Edit".to_string(), 3)], "ranked desc, Bash (post=0) dropped");
+        assert_eq!(
+            top,
+            vec![("Read".to_string(), 5), ("Edit".to_string(), 3)],
+            "ranked desc, Bash (post=0) dropped"
+        );
     }
 
     #[test]
@@ -239,18 +245,28 @@ mod tests {
         let usage = json!({
             "A": { "post": 1 }, "B": { "post": 2 }, "C": { "post": 3 }, "D": { "post": 4 },
         });
-        assert_eq!(top_tools_from_usage(&usage, 2), vec![("D".to_string(), 4), ("C".to_string(), 3)]);
+        assert_eq!(
+            top_tools_from_usage(&usage, 2),
+            vec![("D".to_string(), 4), ("C".to_string(), 3)]
+        );
     }
 
     #[test]
     fn compose_joins_title_and_detail() {
-        let copy = InsightCopy { title: "wired the retro generator".to_string(), detail: "clean pass, one correction.".to_string() };
-        assert_eq!(compose_narrative(&copy), "wired the retro generator — clean pass, one correction.");
+        let copy = InsightCopy {
+            title: "wired the retro generator".to_string(),
+            detail: "clean pass, one correction.".to_string(),
+        };
+        assert_eq!(
+            compose_narrative(&copy),
+            "wired the retro generator — clean pass, one correction."
+        );
     }
 
     #[test]
     fn compose_tolerates_empty_field() {
-        let only_title = InsightCopy { title: "did the thing".to_string(), detail: "  ".to_string() };
+        let only_title =
+            InsightCopy { title: "did the thing".to_string(), detail: "  ".to_string() };
         assert_eq!(compose_narrative(&only_title), "did the thing");
         let neither = InsightCopy { title: String::new(), detail: String::new() };
         assert_eq!(compose_narrative(&neither), "");
@@ -279,7 +295,11 @@ mod tests {
         let f = gather_session_facts(&events, &m);
         assert_eq!(f.files_touched, 3, "a.rs, b.rs, c.rs distinct");
         assert_eq!(f.modules_touched, 2, "src/api and src/db");
-        assert_eq!(f.top_tools.first().map(|(t, _)| t.as_str()), Some("Edit"), "Edit is the workhorse (post=3)");
+        assert_eq!(
+            f.top_tools.first().map(|(t, _)| t.as_str()),
+            Some("Edit"),
+            "Edit is the workhorse (post=3)"
+        );
         assert_eq!(f.outcome, "completed");
         assert!(f.ftr);
     }

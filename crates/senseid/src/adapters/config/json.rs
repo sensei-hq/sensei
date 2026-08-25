@@ -45,10 +45,7 @@ impl ConfigAdapter for JsonConfigAdapter {
 
     fn extract_version(&self, content: &str) -> Option<String> {
         let val = serde_json::from_str::<serde_json::Value>(content).ok()?;
-        val.get("version")
-            .and_then(|v| v.as_str())
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string())
+        val.get("version").and_then(|v| v.as_str()).filter(|s| !s.is_empty()).map(|s| s.to_string())
     }
 }
 
@@ -110,10 +107,7 @@ mod tests {
 
     #[test]
     fn extract_description_ignores_empty_string() {
-        assert_eq!(
-            JsonConfigAdapter.extract_description(r#"{"description":""}"#),
-            None
-        );
+        assert_eq!(JsonConfigAdapter.extract_description(r#"{"description":""}"#), None);
     }
 
     #[test]

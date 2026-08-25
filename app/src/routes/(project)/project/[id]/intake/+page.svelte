@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { untrack } from 'svelte';
   import { Button } from '@rokkit/ui';
   import { PageHeader } from '$lib/components';
   import { senseiApi } from '$lib/api.js';
@@ -9,17 +8,26 @@
   let { data } = $props();
 
   const api = senseiApi(appState.port);
-  // Seed the state once from the loaded guide + project id; the state owns
-  // recommend/confirm thereafter. untrack makes the one-time read explicit — a
-  // playbook run is always project-scoped, and the id is stable per navigation.
-  const intake = untrack(() => new IntakeState(data.guide, data.projectId));
+  // Re-created when the loaded project changes; the state owns recommend/confirm
+  // within a project.
+  //
+  // This was seeded once via `untrack` on the premise that "the id is stable per
+  // navigation" — which is false for a `[id]` route. SvelteKit reuses this
+  // component when only the param changes, so the intake stayed bound to
+  // whichever project mounted first and a playbook run could be recommended
+  // against project A while the user was looking at project B. `projectId` is
+  // `readonly`, so re-creating is the only way to re-scope.
+  //
+  // Re-creating also clears `chunk`/`rec`/`phase`, which is what you want: a
+  // half-typed description belongs to the project it was typed for.
+  const intake = $derived.by(() => new IntakeState(data.guide, data.projectId));
 
   function recommend(): void { void intake.recommend(api); }
   function confirm(): void { void intake.confirm(api); }
 </script>
 
 <div class="flex flex-col gap-3 p-4 max-w-2xl" data-testid="intake">
-  <PageHeader kanji="門" eyebrow="This project" title="Intake" description="Start a chunk of work in this project" variant="h1" />
+  <PageHeader kanji="門" eyebrow="This project" title="Intake" description="Start a chunk of work in this project" size="lg" />
 
   {#if intake.phase !== 'recorded'}
     <section class="flex flex-col gap-2">

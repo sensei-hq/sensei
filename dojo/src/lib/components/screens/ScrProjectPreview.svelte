@@ -44,7 +44,7 @@
 	];
 </script>
 
-<div class="flex flex-col p-8 gap-6">
+<div class="flex flex-col p-4 gap-4 md:p-8 md:gap-6">
 	{#if onBack}
 		<button
 			type="button"

@@ -18,6 +18,11 @@ create table if not exists repositories (
 , dojo_id      uuid
 , created_at   timestamptz not null default now()
 , modified_at  timestamptz not null default now()
+  -- Whether this repository participates in sync. Private by default: sync is
+  -- gated on authentication, but signing in should not silently start sharing a
+  -- repo the user never chose to share.
+, visibility   repo_visibility not null default 'private'
+, synced_at    timestamptz
 );
 
 comment on table repositories is

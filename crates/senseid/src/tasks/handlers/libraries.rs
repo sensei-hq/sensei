@@ -1,7 +1,7 @@
 //! Library phase: classify imports as internal vs external, fetch lib docs.
 
-use super::super::executor::TaskContext;
 use super::super::Task;
+use super::super::executor::TaskContext;
 use crate::languages;
 
 // ── Resolve Libs ──────────────────────────────────────────────────────────
@@ -12,11 +12,10 @@ pub async fn resolve_libs(ctx: &TaskContext, task: &Task) -> Result<u32, String>
     // once and reuse for both repo_path and the later mark_folder_indexed
     // call. folder_name comes from the DB row so subtree composite names
     // like "sensei:homebrew" survive in log messages.
-    let folder = ctx.pg().get_repo_by_path(&task.folder_path).await
+    let folder = ctx.pg().get_repo_by_path(task.folder_abs_path()).await
         .map_err(|e| tracing::warn!(error = %e, path = %task.folder_path, "resolve_libs: get_repo_by_path failed")).ok().flatten();
-    let folder_name = folder.as_ref()
-        .and_then(|f| f["name"].as_str())
-        .unwrap_or_else(|| task.folder_name());
+    let folder_name =
+        folder.as_ref().and_then(|f| f["name"].as_str()).unwrap_or_else(|| task.folder_name());
     let repo_path_str = task.folder_path.clone();
 
     // Walk source files and extract external imports on a blocking thread:
@@ -31,8 +30,12 @@ pub async fn resolve_libs(ctx: &TaskContext, task: &Task) -> Result<u32, String>
             let walker = super::helpers::build_walker(repo_path).build();
 
             for entry in walker.flatten() {
-                if !entry.path().is_file() { continue; }
-                let ext = entry.path().extension()
+                if !entry.path().is_file() {
+                    continue;
+                }
+                let ext = entry
+                    .path()
+                    .extension()
                     .and_then(|e| e.to_str())
                     .map(|e| format!(".{}", e))
                     .unwrap_or_default();
@@ -45,25 +48,75 @@ pub async fn resolve_libs(ctx: &TaskContext, task: &Task) -> Result<u32, String>
                     Ok(c) => c,
                     Err(_) => continue,
                 };
-                let rel_path = entry.path().strip_prefix(repo_path)
+                let rel_path = entry
+                    .path()
+                    .strip_prefix(repo_path)
                     .unwrap_or(entry.path())
-                    .to_string_lossy().to_string();
+                    .to_string_lossy()
+                    .to_string();
                 let parsed = adapter.parse(&content, &rel_path);
 
                 for imp in &parsed.imports {
                     let path = &imp.target_path;
                     // Skip relative, absolute, node builtins, framework aliases
-                    if path.starts_with('.') || path.starts_with('/') || path.starts_with("node:") { continue; }
-                    if path.starts_with('$') { continue; }
-                    if ["fs","path","os","url","http","https","module","child_process","crypto","util",
-                        "events","stream","buffer","net","dns","tls","cluster","worker_threads",
-                        "perf_hooks","process","assert","readline","querystring","string_decoder","zlib"]
-                        .contains(&path.as_str()) { continue; }
-                    if path.starts_with("crate::") || path.starts_with("self::") || path.starts_with("super::") { continue; }
-                    if path.starts_with("std::") || path.starts_with("core::") || path.starts_with("alloc::") { continue; }
-                    if path.starts_with("java.") || path.starts_with("javax.") { continue; }
-                    if path.starts_with("import_") || path.starts_with("from_") { continue; }
-                    if path.starts_with("pub use") || path.starts_with("pub(crate)") { continue; }
+                    if path.starts_with('.') || path.starts_with('/') || path.starts_with("node:") {
+                        continue;
+                    }
+                    if path.starts_with('$') {
+                        continue;
+                    }
+                    if [
+                        "fs",
+                        "path",
+                        "os",
+                        "url",
+                        "http",
+                        "https",
+                        "module",
+                        "child_process",
+                        "crypto",
+                        "util",
+                        "events",
+                        "stream",
+                        "buffer",
+                        "net",
+                        "dns",
+                        "tls",
+                        "cluster",
+                        "worker_threads",
+                        "perf_hooks",
+                        "process",
+                        "assert",
+                        "readline",
+                        "querystring",
+                        "string_decoder",
+                        "zlib",
+                    ]
+                    .contains(&path.as_str())
+                    {
+                        continue;
+                    }
+                    if path.starts_with("crate::")
+                        || path.starts_with("self::")
+                        || path.starts_with("super::")
+                    {
+                        continue;
+                    }
+                    if path.starts_with("std::")
+                        || path.starts_with("core::")
+                        || path.starts_with("alloc::")
+                    {
+                        continue;
+                    }
+                    if path.starts_with("java.") || path.starts_with("javax.") {
+                        continue;
+                    }
+                    if path.starts_with("import_") || path.starts_with("from_") {
+                        continue;
+                    }
+                    if path.starts_with("pub use") || path.starts_with("pub(crate)") {
+                        continue;
+                    }
 
                     let lib_name = extract_lib_name(path);
                     if !lib_name.is_empty() && lib_name.len() > 1 {
@@ -75,14 +128,20 @@ pub async fn resolve_libs(ctx: &TaskContext, task: &Task) -> Result<u32, String>
         let mut v: Vec<String> = lib_set.into_iter().collect();
         v.sort();
         v
-    }).await.unwrap_or_else(|e| { tracing::warn!(error = %e, "resolve_libs: spawn_blocking walk task failed"); Vec::new() });
+    })
+    .await
+    .unwrap_or_else(|e| {
+        tracing::warn!(error = %e, "resolve_libs: spawn_blocking walk task failed");
+        Vec::new()
+    });
 
     // Check which libs are internal (match another repo in a project)
-    let all_repos = ctx.pg().list_repositories().await
-        .unwrap_or_else(|e| { tracing::warn!(error = %e, "resolve_libs: list_repositories failed"); Vec::new() });
-    let _internal_repos: std::collections::HashSet<String> = all_repos.iter()
-        .filter_map(|p| p["name"].as_str().map(|s| s.to_lowercase()))
-        .collect();
+    let all_repos = ctx.pg().list_repositories().await.unwrap_or_else(|e| {
+        tracing::warn!(error = %e, "resolve_libs: list_repositories failed");
+        Vec::new()
+    });
+    let _internal_repos: std::collections::HashSet<String> =
+        all_repos.iter().filter_map(|p| p["name"].as_str().map(|s| s.to_lowercase())).collect();
 
     // D4.1: resolve_libs stamps the walked libs (folder metadata) but does NOT
     // advance `folder_status` — the terminal barrier moved to DetectCommunities,
@@ -90,19 +149,26 @@ pub async fn resolve_libs(ctx: &TaskContext, task: &Task) -> Result<u32, String>
     // import-derived set afterwards (last write wins, as before).
     if let Some(folder) = folder.as_ref()
         && let Some(folder_id) = crate::api::util::json_uuid(&folder["id"])
-        && let Err(e) = ctx.pg().set_folder_props(&folder_id, &serde_json::json!({"libs": libs})).await {
-            tracing::warn!(error = %e, folder = %folder_name, "resolve_libs: set libs props failed");
-        }
+        && let Err(e) =
+            ctx.pg().set_folder_props(&folder_id, &serde_json::json!({"libs": libs})).await
+    {
+        tracing::warn!(error = %e, folder = %folder_name, "resolve_libs: set libs props failed");
+    }
 
     // Enqueue ExtractDeps to parse manifest files and populate referenced_libraries
     let extract_task = super::super::Task::new(
         super::super::TaskKind::ExtractDeps,
         &task.folder_path,
         &task.folder_path,
-    ).with_parent(task.id);
+    )
+    .with_parent(task.id);
     ctx.queue.enqueue(extract_task).await;
 
-    tracing::info!("resolve_libs: {} — {} external libs detected, enqueued ExtractDeps", folder_name, libs.len());
+    tracing::info!(
+        "resolve_libs: {} — {} external libs detected, enqueued ExtractDeps",
+        folder_name,
+        libs.len()
+    );
     Ok(libs.len() as u32)
 }
 
@@ -118,17 +184,23 @@ pub async fn import_lib(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
     }
 
     // Fetch content from URL
-    let content = reqwest::get(url).await
+    let content = reqwest::get(url)
+        .await
         .map_err(|e| format!("Failed to fetch {}: {}", url, e))?
-        .text().await
+        .text()
+        .await
         .map_err(|e| format!("Failed to read response: {}", e))?;
 
-    match ctx.pg().upsert_library(lib_name, "npm", None, Some(&content), Some("url"), Some(url)).await {
+    match ctx
+        .pg()
+        .upsert_library(lib_name, "npm", None, Some(&content), Some("url"), Some(url))
+        .await
+    {
         Ok(lib_id) => {
             tracing::info!("import_lib: {} — indexed as {} from {}", lib_name, lib_id, url);
             Ok(1)
         }
-        Err(e) => Err(format!("Failed to index lib {}: {}", lib_name, e))
+        Err(e) => Err(format!("Failed to index lib {}: {}", lib_name, e)),
     }
 }
 
@@ -199,7 +271,7 @@ pub(crate) async fn stamp_docs_applied_if_indexed(
 /// resolver fetches + derives pages (`component` set per page). Each page's
 /// `component` is what makes `get_lib_docs(name, component)` resolve.
 pub async fn index_library(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
-    use crate::indexer::lib_indexer::{detect_lib_source, resolve_library_pages, LibSource};
+    use crate::indexer::lib_indexer::{LibSource, detect_lib_source, resolve_library_pages};
 
     let lib_name = &task.path;
     let url = task.url.as_deref().unwrap_or("");
@@ -216,12 +288,13 @@ pub async fn index_library(ctx: &TaskContext, task: &Task) -> Result<u32, String
         LibSource::GitHubTree { .. } => ("http", Some(url)),
         LibSource::Website(u) => ("llms.txt", Some(u.as_str())),
     };
-    let lib_id = resolve_index_library_id(
-        ctx.pg(), &task.folder_path, lib_name, base_source_type, base_url,
-    ).await?;
+    let lib_id =
+        resolve_index_library_id(ctx.pg(), &task.folder_path, lib_name, base_source_type, base_url)
+            .await?;
 
     // Resolve the source into per-component pages (fetch + parse).
-    let pages = resolve_library_pages(&source, lib_name).await
+    let pages = resolve_library_pages(&source, lib_name)
+        .await
         .map_err(|e| format!("resolve_library_pages failed for {}: {}", url, e))?;
 
     // Store each page. The page location goes to the right column: a filesystem
@@ -234,18 +307,24 @@ pub async fn index_library(ctx: &TaskContext, task: &Task) -> Result<u32, String
         } else {
             (Some(page.location.as_str()), None)
         };
-        match ctx.pg().upsert_library_page(
-            &lib_id,
-            &page.doc.title,
-            url,
-            local_path,
-            Some(&page.doc.summary),
-            Some(&page.doc.content),
-            page.source_type,
-            page.doc.component.as_deref(),
-        ).await {
+        match ctx
+            .pg()
+            .upsert_library_page(
+                &lib_id,
+                &page.doc.title,
+                url,
+                local_path,
+                Some(&page.doc.summary),
+                Some(&page.doc.content),
+                page.source_type,
+                page.doc.component.as_deref(),
+            )
+            .await
+        {
             Ok(_) => pages_stored += 1,
-            Err(e) => tracing::warn!(error = %e, title = %page.doc.title, "index_library: store page failed"),
+            Err(e) => {
+                tracing::warn!(error = %e, title = %page.doc.title, "index_library: store page failed")
+            }
         }
     }
 
@@ -255,18 +334,28 @@ pub async fn index_library(ctx: &TaskContext, task: &Task) -> Result<u32, String
 
     // F v1a: stamp the applied marker after a CONFIRMED, non-empty re-index so the
     // update scheduler's should_reindex gate stops re-enqueuing this library.
-    stamp_docs_applied_if_indexed(ctx.pg(), &lib_id, pages_stored, chrono::Utc::now().timestamp()).await;
+    stamp_docs_applied_if_indexed(ctx.pg(), &lib_id, pages_stored, chrono::Utc::now().timestamp())
+        .await;
 
     // Workstream D: ingest the library's own sensei.library.json (local sources only
     // in v1 — a manifest read needs the files on disk) so its declared skills/agents
     // become associable capabilities. Non-fatal: a bad/absent manifest never fails
     // the doc index. Manifest-authoritative — removed entries disappear on re-index.
     if let LibSource::LocalDir(p) = &source
-        && let Some((version, skills, agents)) = crate::libraries::load_manifest_from_root(std::path::Path::new(p))
+        && let Some((version, skills, agents)) =
+            crate::libraries::load_manifest_from_root(std::path::Path::new(p))
     {
-        match ctx.pg().replace_library_capabilities(&lib_id, "manifest", Some(&version), &skills, &agents).await {
-            Ok((ns, na)) => tracing::info!("index_library: {lib_name} sensei.library.json → {ns} skill(s), {na} agent(s)"),
-            Err(e) => tracing::warn!(error = %e, lib = %lib_name, "index_library: replace_library_capabilities failed"),
+        match ctx
+            .pg()
+            .replace_library_capabilities(&lib_id, "manifest", Some(&version), &skills, &agents)
+            .await
+        {
+            Ok((ns, na)) => tracing::info!(
+                "index_library: {lib_name} sensei.library.json → {ns} skill(s), {na} agent(s)"
+            ),
+            Err(e) => {
+                tracing::warn!(error = %e, lib = %lib_name, "index_library: replace_library_capabilities failed")
+            }
         }
     }
 
@@ -286,7 +375,7 @@ pub async fn index_library(ctx: &TaskContext, task: &Task) -> Result<u32, String
 /// (embedding generation deferred to gateway integration).
 pub async fn index_library_page(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
     let lib_id_str = &task.folder_path; // library UUID stored in folder_path
-    let title = &task.path;             // page title stored in path
+    let title = &task.path; // page title stored in path
 
     let lib_id = uuid::Uuid::parse_str(lib_id_str)
         .map_err(|_| format!("Invalid library UUID: {}", lib_id_str))?;
@@ -294,7 +383,9 @@ pub async fn index_library_page(ctx: &TaskContext, task: &Task) -> Result<u32, S
     let url = task.url.as_deref();
 
     // Verify library exists
-    ctx.pg().get_library(&lib_id).await
+    ctx.pg()
+        .get_library(&lib_id)
+        .await
         .map_err(|e| format!("DB error: {}", e))?
         .ok_or_else(|| format!("Library {} not found", lib_id))?;
 
@@ -307,7 +398,9 @@ pub async fn index_library_page(ctx: &TaskContext, task: &Task) -> Result<u32, S
     let summary: String = content.lines().take(3).collect::<Vec<_>>().join(" ");
     let summary = &summary[..summary.len().min(200)];
 
-    ctx.pg().upsert_library_page(&lib_id, title, url, None, Some(summary), Some(content), "http", None).await
+    ctx.pg()
+        .upsert_library_page(&lib_id, title, url, None, Some(summary), Some(content), "http", None)
+        .await
         .map_err(|e| format!("upsert_library_page failed: {}", e))?;
 
     Ok(1)
@@ -318,22 +411,22 @@ pub async fn index_library_page(ctx: &TaskContext, task: &Task) -> Result<u32, S
 /// Parse manifest files (package.json, Cargo.toml, pyproject.toml) and upsert
 /// detected dependencies into libraries + referenced_libraries.
 pub async fn extract_deps(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
-    let folder = ctx.pg().get_repo_by_path(&task.folder_path).await
+    let folder = ctx
+        .pg()
+        .get_repo_by_path(task.folder_abs_path())
+        .await
         .map_err(|e| format!("DB error: {}", e))?
         .ok_or_else(|| format!("Folder '{}' not found", task.folder_path))?;
 
-    let folder_name = folder["name"].as_str()
-        .unwrap_or_else(|| task.folder_name());
-    let folder_id = crate::api::util::json_uuid(&folder["id"])
-        .ok_or("Invalid folder id")?;
+    let folder_name = folder["name"].as_str().unwrap_or_else(|| task.folder_name());
+    let folder_id = crate::api::util::json_uuid(&folder["id"]).ok_or("Invalid folder id")?;
     // The folder's project (NULL for standalone folders) — used to roll each
     // detected dependency up to project_libraries so it shows on the Projects
     // screen (#30). project_libraries is the project↔library M2M the indexer
     // owns; referenced_libraries below is only folder-grained.
     let project_id = crate::api::util::json_uuid(&folder["project_id"]);
 
-    let repo_path = folder["abs_path"].as_str()
-        .ok_or("Folder has no abs_path")?;
+    let repo_path = folder["abs_path"].as_str().ok_or("Folder has no abs_path")?;
 
     let deps = crate::indexer::lib_indexer::extract_dep_versions(folder_name, repo_path)?;
 
@@ -359,14 +452,23 @@ pub async fn extract_deps(ctx: &TaskContext, task: &Task) -> Result<u32, String>
                 && let Ok(Some(target_folder)) = ctx.pg().get_repo_by_path(abs_target).await
                 && let Some(to_pid) = crate::api::util::json_uuid(&target_folder["project_id"])
                 && to_pid != pid
-                && let Err(e) = ctx.pg().upsert_project_dependency(
-                    &pid, &to_pid, &folder_id, protocol, &dep.source, Some(target),
-                ).await {
-                    tracing::warn!(
-                        error = %e, lib = %dep.lib_name, folder = %folder_name,
-                        "extract_deps: upsert_project_dependency failed"
-                    );
-                }
+                && let Err(e) = ctx
+                    .pg()
+                    .upsert_project_dependency(
+                        &pid,
+                        &to_pid,
+                        &folder_id,
+                        protocol,
+                        &dep.source,
+                        Some(target),
+                    )
+                    .await
+            {
+                tracing::warn!(
+                    error = %e, lib = %dep.lib_name, folder = %folder_name,
+                    "extract_deps: upsert_project_dependency failed"
+                );
+            }
             if resolved.is_some() {
                 local_edge_count += 1;
             }
@@ -374,7 +476,11 @@ pub async fn extract_deps(ctx: &TaskContext, task: &Task) -> Result<u32, String>
         }
 
         // Upsert the library record (creates if not exists)
-        let lib_id = match ctx.pg().upsert_library(&dep.lib_name, ecosystem, Some(&dep.version), None, None, None).await {
+        let lib_id = match ctx
+            .pg()
+            .upsert_library(&dep.lib_name, ecosystem, Some(&dep.version), None, None, None)
+            .await
+        {
             Ok(id) => id,
             Err(e) => {
                 tracing::warn!("extract_deps: skip {} — {}", dep.lib_name, e);
@@ -383,7 +489,9 @@ pub async fn extract_deps(ctx: &TaskContext, task: &Task) -> Result<u32, String>
         };
 
         // Link folder → library via referenced_libraries
-        if let Err(e) = ctx.pg().upsert_referenced_library(&folder_id, &lib_id, Some(&dep.version), None).await {
+        if let Err(e) =
+            ctx.pg().upsert_referenced_library(&folder_id, &lib_id, Some(&dep.version), None).await
+        {
             tracing::warn!(error = %e, lib = %dep.lib_name, folder = %folder_name, "extract_deps: upsert_referenced_library failed");
             continue;
         }
@@ -393,9 +501,10 @@ pub async fn extract_deps(ctx: &TaskContext, task: &Task) -> Result<u32, String>
         // project_libraries_resolved (the Projects screen). Idempotent;
         // skips folders with no project (standalone).
         if let Some(pid) = project_id
-            && let Err(e) = ctx.pg().upsert_project_library(&lib_id, &pid).await {
-                tracing::warn!(error = %e, lib = %dep.lib_name, folder = %folder_name, "extract_deps: upsert_project_library failed");
-            }
+            && let Err(e) = ctx.pg().upsert_project_library(&lib_id, &pid).await
+        {
+            tracing::warn!(error = %e, lib = %dep.lib_name, folder = %folder_name, "extract_deps: upsert_project_library failed");
+        }
     }
 
     // First-party workspace packages are libraries this project PROVIDES — a
@@ -403,30 +512,41 @@ pub async fn extract_deps(ctx: &TaskContext, task: &Task) -> Result<u32, String>
     // packages/*). Register the PUBLIC ones so they appear in the Libraries
     // view attributed to this folder, independent of whether any indexed repo
     // depends on them. Private (non-publishable) members are skipped (#63).
-    let members = crate::config::detector::detect_workspace_members(std::path::Path::new(repo_path));
+    let members =
+        crate::config::detector::detect_workspace_members(std::path::Path::new(repo_path));
     let mut member_count = 0u32;
     for (name, ecosystem, version) in public_member_libs(&members) {
-        let lib_id = match ctx.pg().upsert_library(&name, ecosystem, version.as_deref(), None, None, None).await {
+        let lib_id = match ctx
+            .pg()
+            .upsert_library(&name, ecosystem, version.as_deref(), None, None, None)
+            .await
+        {
             Ok(id) => id,
             Err(e) => {
                 tracing::warn!(error = %e, lib = %name, "extract_deps: upsert_library (workspace member) failed");
                 continue;
             }
         };
-        if let Err(e) = ctx.pg().upsert_referenced_library(&folder_id, &lib_id, version.as_deref(), None).await {
+        if let Err(e) =
+            ctx.pg().upsert_referenced_library(&folder_id, &lib_id, version.as_deref(), None).await
+        {
             tracing::warn!(error = %e, lib = %name, folder = %folder_name, "extract_deps: upsert_referenced_library (workspace member) failed");
             continue;
         }
         member_count += 1;
         if let Some(pid) = project_id
-            && let Err(e) = ctx.pg().upsert_project_library(&lib_id, &pid).await {
-                tracing::warn!(error = %e, lib = %name, "extract_deps: upsert_project_library (workspace member) failed");
-            }
+            && let Err(e) = ctx.pg().upsert_project_library(&lib_id, &pid).await
+        {
+            tracing::warn!(error = %e, lib = %name, "extract_deps: upsert_project_library (workspace member) failed");
+        }
     }
 
     tracing::info!(
         "extract_deps: {} — {} deps from manifests, {} first-party workspace packages, {} local-protocol edges",
-        folder_name, count, member_count, local_edge_count,
+        folder_name,
+        count,
+        member_count,
+        local_edge_count,
     );
 
     // #83 T1 commands surface — one pass over the root's known manifests,
@@ -456,13 +576,18 @@ async fn extract_and_persist_commands(
             let path = repo.join(filename);
             let Ok(content) = std::fs::read_to_string(&path) else { continue };
             let cmds = adapter.parse_commands(&content);
-            if cmds.is_empty() { continue; }
-            let rows: Vec<(String, String, Option<&str>)> = cmds.iter()
+            if cmds.is_empty() {
+                continue;
+            }
+            let rows: Vec<(String, String, Option<&str>)> = cmds
+                .iter()
                 .map(|c| (c.raw_name.clone(), c.command_line.clone(), c.category))
                 .collect();
-            match ctx.pg().replace_folder_commands(
-                folder_id, adapter.ecosystem(), path.to_str(), &rows,
-            ).await {
+            match ctx
+                .pg()
+                .replace_folder_commands(folder_id, adapter.ecosystem(), path.to_str(), &rows)
+                .await
+            {
                 Ok(n) => written += n as u32,
                 Err(e) => tracing::warn!(
                     error = %e, folder = %folder_id, ecosystem = adapter.ecosystem(),
@@ -509,7 +634,11 @@ fn local_source_protocol(source: &str, raw_version: &str) -> &'static str {
 /// to exist and follows symlinks in a way that surprises the caller when the
 /// folder is symlinked. Lexical normalization is enough for looking up in
 /// `sensei.folders` by `abs_path`, which itself stores the pre-canonical path.
-fn resolve_local_target(from_abs_path: &str, protocol: &str, target: &str) -> Option<std::path::PathBuf> {
+fn resolve_local_target(
+    from_abs_path: &str,
+    protocol: &str,
+    target: &str,
+) -> Option<std::path::PathBuf> {
     if protocol == "workspace" {
         return None;
     }
@@ -526,7 +655,9 @@ fn lexical_normalize(p: &std::path::Path) -> std::path::PathBuf {
     let mut out = std::path::PathBuf::new();
     for comp in p.components() {
         match comp {
-            Component::ParentDir => { out.pop(); }
+            Component::ParentDir => {
+                out.pop();
+            }
             Component::CurDir => {}
             other => out.push(other.as_os_str()),
         }
@@ -568,17 +699,18 @@ fn extract_lib_name(path: &str) -> String {
 fn public_member_libs(
     members: &[crate::types::PackageInfo],
 ) -> Vec<(String, &'static str, Option<String>)> {
-    members.iter()
+    members
+        .iter()
         .filter(|m| !m.private)
         .map(|m| {
             let ecosystem = match m.pkg_type.as_str() {
-                "cargo_crate"    => "cargo",
-                "go_module"      => "go",
+                "cargo_crate" => "cargo",
+                "go_module" => "go",
                 // Gradle + Maven both resolve against the same Maven Central
                 // namespace, so their members roll up as `"maven"` libs.
                 "maven_module" | "gradle_module" => "maven",
                 "dotnet_project" => "nuget",
-                _                => "npm", // npm_workspace + any future JS variant
+                _ => "npm", // npm_workspace + any future JS variant
             };
             (m.name.clone(), ecosystem, m.version.clone())
         })
@@ -592,8 +724,11 @@ mod tests {
 
     fn member(name: &str, pkg_type: &str, private: bool) -> PackageInfo {
         PackageInfo {
-            name: name.into(), path: name.into(), version: Some("1.0.0".into()),
-            pkg_type: pkg_type.into(), private,
+            name: name.into(),
+            path: name.into(),
+            version: Some("1.0.0".into()),
+            pkg_type: pkg_type.into(),
+            private,
         }
     }
 
@@ -653,11 +788,8 @@ mod tests {
 
     #[test]
     fn resolve_local_target_joins_relative_and_normalizes() {
-        let resolved = resolve_local_target(
-            "/Users/j/Developer/rokkit/packages/ui",
-            "link",
-            "../actions",
-        );
+        let resolved =
+            resolve_local_target("/Users/j/Developer/rokkit/packages/ui", "link", "../actions");
         assert_eq!(
             resolved.as_deref(),
             Some(std::path::Path::new("/Users/j/Developer/rokkit/packages/actions"))
@@ -666,15 +798,8 @@ mod tests {
 
     #[test]
     fn resolve_local_target_handles_double_parent() {
-        let resolved = resolve_local_target(
-            "/root/proj/a/b",
-            "path",
-            "../../other/c",
-        );
-        assert_eq!(
-            resolved.as_deref(),
-            Some(std::path::Path::new("/root/proj/other/c"))
-        );
+        let resolved = resolve_local_target("/root/proj/a/b", "path", "../../other/c");
+        assert_eq!(resolved.as_deref(), Some(std::path::Path::new("/root/proj/other/c")));
     }
 
     #[test]
@@ -751,11 +876,7 @@ mod tests {
 
         assert_eq!(resolved, real_id, "resolves the EXISTING row by its lib_id");
         let lib = pg.get_library(&real_id).await.unwrap().expect("cargo row still exists");
-        assert_eq!(
-            lib["ecosystem"].as_str(),
-            Some("cargo"),
-            "ecosystem is NOT clobbered to npm"
-        );
+        assert_eq!(lib["ecosystem"].as_str(), Some("cargo"), "ecosystem is NOT clobbered to npm");
         assert!(
             !npm_row_exists(&pg, &name).await,
             "no phantom (npm, name) row is created for a cargo library"
@@ -767,10 +888,15 @@ mod tests {
         let Ok(pg) = PgStore::connect_test().await else { return };
         let name = format!("_fidxnew_{}", uuid::Uuid::new_v4());
         // Not a uuid → genuinely-new library first-index (upsert by name).
-        let id =
-            resolve_index_library_id(&pg, "/some/repo/path", &name, "llms.txt", Some("https://x/llms.txt"))
-                .await
-                .unwrap();
+        let id = resolve_index_library_id(
+            &pg,
+            "/some/repo/path",
+            &name,
+            "llms.txt",
+            Some("https://x/llms.txt"),
+        )
+        .await
+        .unwrap();
         let lib = pg.get_library(&id).await.unwrap().expect("first-index created the row");
         assert_eq!(lib["name"].as_str(), Some(name.as_str()));
     }
@@ -783,7 +909,11 @@ mod tests {
         pg.set_library_latest_cache(&lid, "1.2.4", 10).await.unwrap();
         // pages_stored == 0 → NO stamp (a failed/empty re-ingest must not claim applied).
         stamp_docs_applied_if_indexed(&pg, &lid, 0, 99).await;
-        assert_eq!(pg.get_library_docs_applied(&lid).await.unwrap(), None, "empty index does not stamp");
+        assert_eq!(
+            pg.get_library_docs_applied(&lid).await.unwrap(),
+            None,
+            "empty index does not stamp"
+        );
         // pages_stored > 0 → stamp the scheduler's cached latest.
         stamp_docs_applied_if_indexed(&pg, &lid, 3, 99).await;
         assert_eq!(
@@ -799,12 +929,8 @@ mod tests {
         let ghost = uuid::Uuid::new_v4();
         let name = format!("_fidxghost_{}", uuid::Uuid::new_v4());
         // A uuid that no longer resolves → error, never a fabricated fallback row.
-        let r =
-            resolve_index_library_id(&pg, &ghost.to_string(), &name, "local", Some("/x")).await;
+        let r = resolve_index_library_id(&pg, &ghost.to_string(), &name, "local", Some("/x")).await;
         assert!(r.is_err(), "an unresolvable lib_id fails closed");
-        assert!(
-            !npm_row_exists(&pg, &name).await,
-            "and creates no fallback (npm, name) row"
-        );
+        assert!(!npm_row_exists(&pg, &name).await, "and creates no fallback (npm, name) row");
     }
 }

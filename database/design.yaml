@@ -56,6 +56,12 @@ scopes:
       - sensei.namespace_visibility
       - sensei.rule_pack_area
       - sensei.rule_check
+      # Column-type enums on sensei.rule_packs. dbd's dependency closure follows
+      # FKs, and an enum used as a column type is not one — so like the enums
+      # above, these must be listed explicitly or the dojo deploy fails with
+      # `type "entity_origin" does not exist`.
+      - sensei.entity_scope
+      - sensei.entity_origin
       - sensei.rule_packs
       - sensei.rule_pack_rules
       - sensei.rule_pack_adoptions

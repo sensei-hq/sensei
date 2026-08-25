@@ -1,8 +1,10 @@
-use super::common::{make_symbol, ir_function, ir_method, ir_class, ir_module, ir_parsed_file, node_text};
-use tree_sitter::{Language, Parser, Node};
-use crate::types::{ParsedFile, ParsedSymbol, ParsedImport, SymbolKind};
-use crate::ir::{IRImport, IRParsedFile, ClassKind, Visibility};
 use super::LanguageAdapter;
+use super::common::{
+    ir_class, ir_function, ir_method, ir_module, ir_parsed_file, make_symbol, node_text,
+};
+use crate::ir::{ClassKind, IRImport, IRParsedFile, Visibility};
+use crate::types::{ParsedFile, ParsedImport, ParsedSymbol, SymbolKind};
+use tree_sitter::{Language, Node, Parser};
 
 unsafe extern "C" {
     fn tree_sitter_kotlin() -> Language;
@@ -11,7 +13,9 @@ unsafe extern "C" {
 pub struct KotlinAdapter;
 
 impl LanguageAdapter for KotlinAdapter {
-    fn language(&self) -> &str { "kotlin" }
+    fn language(&self) -> &str {
+        "kotlin"
+    }
 
     fn parse_to_ir(&self, source: &str, file_path: &str) -> crate::ir::IRParsedFile {
         parse_to_ir(source, file_path)
@@ -46,34 +50,65 @@ impl LanguageAdapter for KotlinAdapter {
 }
 
 fn empty(path: &str) -> ParsedFile {
-    ParsedFile { file_path: path.into(), language: "kotlin".into(), symbols: vec![], edges: vec![], imports: vec![] }
+    ParsedFile {
+        file_path: path.into(),
+        language: "kotlin".into(),
+        symbols: vec![],
+        edges: vec![],
+        imports: vec![],
+    }
 }
 
-fn walk(node: &Node, src: &[u8], lines: &[&str], symbols: &mut Vec<ParsedSymbol>, imports: &mut Vec<ParsedImport>) {
+fn walk(
+    node: &Node,
+    src: &[u8],
+    lines: &[&str],
+    symbols: &mut Vec<ParsedSymbol>,
+    imports: &mut Vec<ParsedImport>,
+) {
     walk_with_parent(node, src, lines, symbols, imports, None);
 }
 
-fn walk_with_parent(node: &Node, src: &[u8], lines: &[&str], symbols: &mut Vec<ParsedSymbol>, imports: &mut Vec<ParsedImport>, class_name: Option<&str>) {
+fn walk_with_parent(
+    node: &Node,
+    src: &[u8],
+    lines: &[&str],
+    symbols: &mut Vec<ParsedSymbol>,
+    imports: &mut Vec<ParsedImport>,
+    class_name: Option<&str>,
+) {
     for i in 0..node.child_count() {
         let child = node.child(i).unwrap();
         match child.kind() {
             "function_declaration" => {
                 let name = find_name(&child, src);
-                if name.is_empty() { continue; }
-                let is_pub = !has_modifier(&child, src, "private") && !has_modifier(&child, src, "internal");
-                let kind = if class_name.is_some() { SymbolKind::Method } else { SymbolKind::Function };
+                if name.is_empty() {
+                    continue;
+                }
+                let is_pub =
+                    !has_modifier(&child, src, "private") && !has_modifier(&child, src, "internal");
+                let kind =
+                    if class_name.is_some() { SymbolKind::Method } else { SymbolKind::Function };
                 let mut sym = make_sym(name, kind, &child, lines, src, is_pub);
                 sym.parent = class_name.map(|s| s.to_string());
                 symbols.push(sym);
             }
             "class_declaration" => {
                 let name = find_name(&child, src);
-                if name.is_empty() { continue; }
-                let kind = if has_keyword(&child, src, "interface") { SymbolKind::Interface }
-                    else if has_modifier(&child, src, "data") { SymbolKind::Struct }
-                    else if has_modifier(&child, src, "enum") { SymbolKind::Enum }
-                    else { SymbolKind::Class };
-                let is_pub = !has_modifier(&child, src, "private") && !has_modifier(&child, src, "internal");
+                if name.is_empty() {
+                    continue;
+                }
+                let kind = if has_keyword(&child, src, "interface") {
+                    SymbolKind::Interface
+                } else if has_modifier(&child, src, "data") {
+                    SymbolKind::Struct
+                } else if has_modifier(&child, src, "enum") {
+                    SymbolKind::Enum
+                } else {
+                    SymbolKind::Class
+                };
+                let is_pub =
+                    !has_modifier(&child, src, "private") && !has_modifier(&child, src, "internal");
                 symbols.push(make_sym(name.clone(), kind, &child, lines, src, is_pub));
                 for j in 0..child.child_count() {
                     let cc = child.child(j).unwrap();
@@ -85,7 +120,14 @@ fn walk_with_parent(node: &Node, src: &[u8], lines: &[&str], symbols: &mut Vec<P
             "object_declaration" => {
                 let name = find_name(&child, src);
                 if !name.is_empty() {
-                    symbols.push(make_sym(name.clone(), SymbolKind::Class, &child, lines, src, true));
+                    symbols.push(make_sym(
+                        name.clone(),
+                        SymbolKind::Class,
+                        &child,
+                        lines,
+                        src,
+                        true,
+                    ));
                     for j in 0..child.child_count() {
                         let cc = child.child(j).unwrap();
                         if cc.kind() == "class_body" {
@@ -97,24 +139,40 @@ fn walk_with_parent(node: &Node, src: &[u8], lines: &[&str], symbols: &mut Vec<P
             "interface_declaration" => {
                 let name = find_name(&child, src);
                 if !name.is_empty() {
-                    symbols.push(make_sym(name, SymbolKind::Interface, &child, lines, src, !has_modifier(&child, src, "private")));
+                    symbols.push(make_sym(
+                        name,
+                        SymbolKind::Interface,
+                        &child,
+                        lines,
+                        src,
+                        !has_modifier(&child, src, "private"),
+                    ));
                 }
             }
             "property_declaration" => {
                 let name = find_property_name(&child, src);
                 if !name.is_empty() && class_name.is_none() {
-                    symbols.push(make_sym(name, SymbolKind::Const, &child, lines, src, !has_modifier(&child, src, "private")));
+                    symbols.push(make_sym(
+                        name,
+                        SymbolKind::Const,
+                        &child,
+                        lines,
+                        src,
+                        !has_modifier(&child, src, "private"),
+                    ));
                 }
             }
             "import_header" => {
                 let text = child.utf8_text(src).unwrap_or_default();
-                let target = text.strip_prefix("import")
-                    .map(|s| s.trim().to_string())
-                    .unwrap_or_default();
+                let target =
+                    text.strip_prefix("import").map(|s| s.trim().to_string()).unwrap_or_default();
                 let clean = target.strip_suffix(".*").unwrap_or(&target).to_string();
                 if !clean.is_empty() {
                     let last = clean.rsplit('.').next().unwrap_or("").to_string();
-                    imports.push(ParsedImport { target_path: clean, names: if last.is_empty() { vec![] } else { vec![last] } });
+                    imports.push(ParsedImport {
+                        target_path: clean,
+                        names: if last.is_empty() { vec![] } else { vec![last] },
+                    });
                 }
             }
             "import_list" | "source_file" => {
@@ -143,7 +201,9 @@ fn has_keyword(node: &Node, src: &[u8], keyword: &str) -> bool {
         let child = node.child(i).unwrap();
         if !child.is_named() {
             let text = child.utf8_text(src).unwrap_or_default();
-            if text == keyword { return true; }
+            if text == keyword {
+                return true;
+            }
         }
     }
     false
@@ -153,29 +213,48 @@ fn has_modifier(node: &Node, src: &[u8], modifier: &str) -> bool {
     for i in 0..node.child_count() {
         let child = node.child(i).unwrap();
         let k = child.kind();
-        if k == "modifiers" || k == "visibility_modifier" || k == "class_modifier"
-            || k == "inheritance_modifier" || k == "member_modifier"
+        if k == "modifiers"
+            || k == "visibility_modifier"
+            || k == "class_modifier"
+            || k == "inheritance_modifier"
+            || k == "member_modifier"
         {
             let text = child.utf8_text(src).unwrap_or_default();
-            if text.contains(modifier) { return true; }
+            if text.contains(modifier) {
+                return true;
+            }
             // Recurse into modifiers container
-            if has_modifier(&child, src, modifier) { return true; }
+            if has_modifier(&child, src, modifier) {
+                return true;
+            }
         }
     }
     false
 }
 
-fn make_sym(name: String, kind: SymbolKind, node: &Node, lines: &[&str], src: &[u8], is_exported: bool) -> ParsedSymbol {
+fn make_sym(
+    name: String,
+    kind: SymbolKind,
+    node: &Node,
+    lines: &[&str],
+    src: &[u8],
+    is_exported: bool,
+) -> ParsedSymbol {
     make_symbol(name, kind, node, lines, is_exported, extract_kdoc(node, src))
 }
 
 fn extract_kdoc(node: &Node, src: &[u8]) -> Option<String> {
     let prev = node.prev_sibling()?;
-    if prev.kind() != "multiline_comment" { return None; }
+    if prev.kind() != "multiline_comment" {
+        return None;
+    }
     let text = prev.utf8_text(src).ok()?;
-    if !text.starts_with("/**") { return None; }
+    if !text.starts_with("/**") {
+        return None;
+    }
     let inner = text.trim_start_matches("/**").trim_end_matches("*/").trim();
-    let cleaned: Vec<&str> = inner.lines()
+    let cleaned: Vec<&str> = inner
+        .lines()
         .map(|l| l.trim().trim_start_matches('*').trim())
         .filter(|l| !l.is_empty())
         .collect();
@@ -200,7 +279,13 @@ pub fn parse_to_ir(source: &str, file_path: &str) -> IRParsedFile {
     parser.set_language(&lang).expect("kotlin");
     let tree = match parser.parse(source, None) {
         Some(t) => t,
-        None => return IRParsedFile { file_path: file_path.into(), language: "kotlin".into(), ..Default::default() },
+        None => {
+            return IRParsedFile {
+                file_path: file_path.into(),
+                language: "kotlin".into(),
+                ..Default::default()
+            };
+        }
     };
     let lines: Vec<&str> = source.lines().collect();
     let root = tree.root_node();
@@ -215,25 +300,54 @@ pub fn parse_to_ir(source: &str, file_path: &str) -> IRParsedFile {
         match child.kind() {
             "function_declaration" => {
                 let name = find_name(&child, src);
-                if name.is_empty() { continue; }
+                if name.is_empty() {
+                    continue;
+                }
                 let is_pub = !has_modifier(&child, src, "private");
-                functions.push(ir_function(name, &child, &lines, is_pub, node_text(&child, src).contains("suspend "), Vec::new(), None, extract_kdoc(&child, src), Vec::new(), &node_text(&child, src)));
+                functions.push(ir_function(
+                    name,
+                    &child,
+                    &lines,
+                    is_pub,
+                    node_text(&child, src).contains("suspend "),
+                    Vec::new(),
+                    None,
+                    extract_kdoc(&child, src),
+                    Vec::new(),
+                    &node_text(&child, src),
+                ));
             }
             "class_declaration" | "object_declaration" => {
                 let name = find_name(&child, src);
                 let kind = ClassKind::Class;
                 let is_pub = !has_modifier(&child, src, "private");
-                let mut class = ir_class(name, &child, kind, is_pub, extract_kdoc(&child, src), Vec::new());
+                let mut class =
+                    ir_class(name, &child, kind, is_pub, extract_kdoc(&child, src), Vec::new());
                 // Walk class body — Kotlin uses "class_body" child, not field name
                 for c in 0..child.child_count() {
                     let cc = child.child(c).unwrap();
-                    if cc.kind() != "class_body" { continue; }
+                    if cc.kind() != "class_body" {
+                        continue;
+                    }
                     for j in 0..cc.child_count() {
                         if let Some(m) = cc.child(j)
-                            && m.kind() == "function_declaration" {
-                                let mname = find_name(&m, src);
-                                class.methods.push(ir_method(mname, &m, !has_modifier(&m, src, "private"), node_text(&m, src).contains("suspend "), false, Vec::new(), None, extract_kdoc(&m, src), Vec::new(), Visibility::Public, &node_text(&m, src)));
-                            }
+                            && m.kind() == "function_declaration"
+                        {
+                            let mname = find_name(&m, src);
+                            class.methods.push(ir_method(
+                                mname,
+                                &m,
+                                !has_modifier(&m, src, "private"),
+                                node_text(&m, src).contains("suspend "),
+                                false,
+                                Vec::new(),
+                                None,
+                                extract_kdoc(&m, src),
+                                Vec::new(),
+                                Visibility::Public,
+                                &node_text(&m, src),
+                            ));
+                        }
                     }
                 }
                 classes.push(class);
@@ -242,23 +356,33 @@ pub fn parse_to_ir(source: &str, file_path: &str) -> IRParsedFile {
                 let text = node_text(&child, src);
                 let path = text.trim_start_matches("import ").trim();
                 let name = path.rsplit('.').next().unwrap_or(path).to_string();
-                imports.push(IRImport { source: path.into(), names: vec![name], is_reexport: false });
+                imports.push(IRImport {
+                    source: path.into(),
+                    names: vec![name],
+                    is_reexport: false,
+                });
             }
             _ => {
                 // Walk deeper for nested imports
                 for j in 0..child.child_count() {
                     if let Some(c) = child.child(j)
-                        && c.kind() == "import_header" {
-                            let text = node_text(&c, src);
-                            let path = text.trim_start_matches("import ").trim();
-                            let name = path.rsplit('.').next().unwrap_or(path).to_string();
-                            imports.push(IRImport { source: path.into(), names: vec![name], is_reexport: false });
-                        }
+                        && c.kind() == "import_header"
+                    {
+                        let text = node_text(&c, src);
+                        let path = text.trim_start_matches("import ").trim();
+                        let name = path.rsplit('.').next().unwrap_or(path).to_string();
+                        imports.push(IRImport {
+                            source: path.into(),
+                            names: vec![name],
+                            is_reexport: false,
+                        });
+                    }
                 }
             }
         }
     }
-    let module = ir_module(file_path, "kotlin", functions, constants, imports, file_path.contains("Test"));
+    let module =
+        ir_module(file_path, "kotlin", functions, constants, imports, file_path.contains("Test"));
     ir_parsed_file(file_path, "kotlin", module, classes)
 }
 
@@ -266,7 +390,9 @@ pub fn parse_to_ir(source: &str, file_path: &str) -> IRParsedFile {
 mod tests {
     use super::*;
 
-    fn parse(src: &str) -> ParsedFile { KotlinAdapter.parse(src, "test.kt") }
+    fn parse(src: &str) -> ParsedFile {
+        KotlinAdapter.parse(src, "test.kt")
+    }
 
     #[test]
     fn kotlin_function() {
@@ -358,7 +484,9 @@ mod tests {
         assert!(pf.symbols[0].parent.is_none());
     }
 
-    fn parse_ir(src: &str) -> IRParsedFile { parse_to_ir(src, "Test.kt") }
+    fn parse_ir(src: &str) -> IRParsedFile {
+        parse_to_ir(src, "Test.kt")
+    }
 
     #[test]
     fn ir_class() {

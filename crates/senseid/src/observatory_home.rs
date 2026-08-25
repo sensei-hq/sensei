@@ -9,7 +9,7 @@
 //!
 //! Voice: sentence case, lowercase "sensei", no filler, no marketing.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// Domain kanji for the hero. Early = 観 (observe), mature = 聴 (listen),
 /// steady = 静 (calm) when mature but nothing is pressing.
@@ -61,11 +61,7 @@ pub fn early_hero(watched: i64, target: i64, recent_ids: &[String]) -> Value {
 /// recommendation's own evidence) — an empty slice yields an empty source line
 /// rather than fabricated provenance.
 pub fn mature_hero(top: &RecLite, source_ids: &[String], noticed: &str) -> Value {
-    let impact = top
-        .impact
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty());
+    let impact = top.impact.as_deref().map(str::trim).filter(|s| !s.is_empty());
     let source = if source_ids.is_empty() {
         String::new()
     } else {

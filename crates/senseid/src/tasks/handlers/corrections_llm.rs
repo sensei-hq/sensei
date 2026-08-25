@@ -56,11 +56,7 @@ pub fn parse_response(content: &str, memory_ids: &[uuid::Uuid]) -> Option<Cluste
         return None;
     }
     let v: serde_json::Value = serde_json::from_str(&content[start..=end]).ok()?;
-    let text = v
-        .get("text")
-        .and_then(|t| t.as_str())
-        .map(str::trim)
-        .filter(|s| !s.is_empty())?;
+    let text = v.get("text").and_then(|t| t.as_str()).map(str::trim).filter(|s| !s.is_empty())?;
     let suggestion = v
         .get("suggestion")
         .and_then(|t| t.as_str())
@@ -108,7 +104,9 @@ pub async fn summarize_cluster(
         Ok(resp) if resp.success => {
             let parsed = resp.content.as_deref().and_then(|c| parse_response(c, &memory_ids));
             if parsed.is_none() {
-                tracing::warn!("corrections_llm: unparseable summary — cluster falls back to snippet");
+                tracing::warn!(
+                    "corrections_llm: unparseable summary — cluster falls back to snippet"
+                );
             }
             parsed
         }

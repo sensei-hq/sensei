@@ -14,10 +14,18 @@ use std::path::PathBuf;
 
 // ── Paths (delegated to crate::paths) ────────────────────────────────────────
 
-pub(super) fn home() -> PathBuf { crate::paths::home() }
-pub(super) fn sensei_dir() -> PathBuf { crate::paths::sensei_dir() }
-pub(super) fn plugin_dir() -> PathBuf { crate::paths::plugin_dir() }
-pub(super) fn cache_dir() -> PathBuf { crate::paths::cache_dir() }
+pub(super) fn home() -> PathBuf {
+    crate::paths::home()
+}
+pub(super) fn sensei_dir() -> PathBuf {
+    crate::paths::sensei_dir()
+}
+pub(super) fn plugin_dir() -> PathBuf {
+    crate::paths::plugin_dir()
+}
+pub(super) fn cache_dir() -> PathBuf {
+    crate::paths::cache_dir()
+}
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -106,5 +114,7 @@ pub struct InstalledItem {
 // ── Re-exports ───────────────────────────────────────────────────────────────
 
 pub use catalog::fetch_catalog;
-pub use install::{install, install_hooks_only, install_item, list_installed, remove_item, set_item_enabled};
+pub use install::{
+    install, install_hooks_only, install_item, list_installed, remove_item, set_item_enabled,
+};
 pub use removal::remove;

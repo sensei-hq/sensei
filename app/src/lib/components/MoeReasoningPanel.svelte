@@ -28,20 +28,20 @@
 >
   <!-- Header row: 議 + eyebrow -->
   <div class="flex items-center gap-2 mb-2">
-    <span class="kanji text-[13px] text-accent">議</span>
+    <span class="kanji text-sm text-accent">議</span>
     <span class="text-xs uppercase tracking-wider text-ink-soft">impact reasoning</span>
   </div>
 
   <!-- Headline — the sharpest single sentence -->
   {#if reasoning.headline}
-    <div class="text-[13px] text-ink font-medium leading-snug mb-2" data-testid="impact-moe-headline">
+    <div class="text-sm text-ink font-medium leading-snug mb-2" data-testid="impact-moe-headline">
       {reasoning.headline}
     </div>
   {/if}
 
   <!-- Body — a 2-3 sentence explanation -->
   {#if reasoning.body}
-    <p class="text-[13px] text-ink-mute leading-relaxed m-0 mb-3" data-testid="impact-moe-body">
+    <p class="text-sm text-ink-mute leading-relaxed m-0 mb-3" data-testid="impact-moe-body">
       {reasoning.body}
     </p>
   {/if}

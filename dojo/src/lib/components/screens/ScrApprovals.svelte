@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { SectionHead, Banner, Btn, Chip, KanjiToken, EmptyState } from '$lib/components/kit';
+	import { SectionHead, Btn, Chip, KanjiToken, EmptyState } from '$lib/components/kit';
 	import type { KitApproval } from '$lib/components/kit/types';
 	import { impactTone } from '$lib/triage/candidates-view';
 
@@ -12,29 +12,21 @@
 	let {
 		orgName,
 		approvals = [],
-		mobile = false,
 		onReview,
 		onApprove
 	}: {
 		orgName: string;
 		approvals?: KitApproval[];
-		mobile?: boolean;
 		onReview?: (a: KitApproval) => void;
 		onApprove?: (a: KitApproval) => void;
 	} = $props();
 </script>
 
-<div class="flex flex-col {mobile ? 'p-4 gap-4' : 'p-8 gap-6'}">
-	<SectionHead eyebrow={orgName + ' · govern'} title="Approvals" count={approvals.length} />
-
-	<Banner
-		kanji="承"
-		tone="neutral"
-		title="A second maintainer signs off high-impact and safety-relevant candidates."
-	>
-		One approval proposes; a second publishes. Nothing safety-relevant reaches a machine on a single
-		signature.
-	</Banner>
+<div class="flex flex-col p-4 gap-4 md:p-8 md:gap-6">
+	<SectionHead
+		kanji="承" eyebrow={orgName + ' · govern'} title="Approvals" count={approvals.length} 
+		description="A second maintainer signs off high-impact and safety-relevant candidates. One approval proposes; a second publishes. Nothing safety-relevant reaches a machine on a single signature."
+	/>
 
 	{#if approvals.length}
 		<div class="bg-paper-soft border-paper-edge overflow-hidden rounded-lg border">

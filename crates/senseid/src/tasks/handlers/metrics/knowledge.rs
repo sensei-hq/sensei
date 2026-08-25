@@ -207,11 +207,8 @@ pub(super) async fn compute(
     // snapshot, not commit cadence), folder_id/session_id=NULL (not in the identity).
     pg.upsert_project_metric_repo(
         &mid,
-        &project_id,
-        Some(&repository_id),
+        &repository_id,
         SCOPE_USER,
-        None,
-        None,
         None,
         None,
         day,
@@ -248,19 +245,36 @@ mod tests {
 
         // 3 eligible patterns (instance_count == 3), NO memories.
         for i in 0..3 {
-            seed_pattern_with_instances(pg, &pid, Some(&fid), &format!("p{i}-{uniq}"), true, 3).await;
+            seed_pattern_with_instances(pg, &pid, Some(&fid), &format!("p{i}-{uniq}"), true, 3)
+                .await;
         }
 
         let written = compute(&ctx, &pid.to_string(), None).await.unwrap();
         assert_eq!(written, 1, "a real-zero memory_promotion row IS written (not suppressed)");
 
         let daily = daily_rows(pg, &pid).await;
-        let mp = daily.iter().find(|r| r.0 == "memory_promotion").expect("memory_promotion row present");
-        assert!(mp.1.abs() < 1e-9, "value is a real 0.0 (0 memories over 3 eligible) — the distill-stalled signal");
+        let mp =
+            daily.iter().find(|r| r.0 == "memory_promotion").expect("memory_promotion row present");
+        assert!(
+            mp.1.abs() < 1e-9,
+            "value is a real 0.0 (0 memories over 3 eligible) — the distill-stalled signal"
+        );
         assert_eq!(mp.2["numerator"].as_i64(), Some(0), "numerator = 0 (no memories created)");
-        assert_eq!(mp.2["denominator"].as_i64(), Some(3), "denominator = 3 eligible (real denominator → row written)");
-        assert_eq!(mp.2["eligible_patterns"].as_i64(), Some(3), "denominator breakdown: 3 eligible patterns");
-        assert_eq!(mp.2["eligible_corrections"].as_i64(), Some(0), "denominator breakdown: 0 eligible corrections");
+        assert_eq!(
+            mp.2["denominator"].as_i64(),
+            Some(3),
+            "denominator = 3 eligible (real denominator → row written)"
+        );
+        assert_eq!(
+            mp.2["eligible_patterns"].as_i64(),
+            Some(3),
+            "denominator breakdown: 3 eligible patterns"
+        );
+        assert_eq!(
+            mp.2["eligible_corrections"].as_i64(),
+            Some(0),
+            "denominator breakdown: 0 eligible corrections"
+        );
 
         // Repo grain (I-A/I-C): the row is attributed to the project's PRIMARY
         // repository with scope=user, identity NULL, commit_sha NULL, and no
@@ -270,15 +284,13 @@ mod tests {
             .await
             .unwrap()
             .expect("fixture project has a repository-linked folder");
-        let (repo_id, scope, identity, commit_sha, folder_id, session_id): (
+        let (repo_id, scope, identity, commit_sha): (
             Option<uuid::Uuid>,
             String,
             Option<String>,
             Option<String>,
-            Option<uuid::Uuid>,
-            Option<uuid::Uuid>,
         ) = query_as(
-            "SELECT pm.repository_id, pm.scope::text, pm.identity, pm.commit_sha, pm.folder_id, pm.session_id \
+            "SELECT pm.repository_id, pm.scope::text, pm.identity, pm.commit_sha \
                FROM sensei.project_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
               WHERE pm.project_id = $1 AND m.key = 'memory_promotion'",
         )
@@ -286,12 +298,17 @@ mod tests {
         .fetch_one(pg.pool())
         .await
         .unwrap();
-        assert_eq!(repo_id, Some(expected_repo), "attributed to the project's primary repository (I-A)");
+        assert_eq!(
+            repo_id,
+            Some(expected_repo),
+            "attributed to the project's primary repository (I-A)"
+        );
         assert_eq!(scope, "user", "knowledge writes scope=user only (I-B)");
         assert_eq!(identity, None, "identity NULL — single local user (I-C)");
-        assert_eq!(commit_sha, None, "commit_sha NULL — day-bucketed snapshot, not commit cadence (I-D)");
-        assert_eq!(folder_id, None, "folder_id NULL — not in the repo-grain identity (I-A)");
-        assert_eq!(session_id, None, "session_id NULL — not in the repo-grain identity (I-A)");
+        assert_eq!(
+            commit_sha, None,
+            "commit_sha NULL — day-bucketed snapshot, not commit cadence (I-D)"
+        );
 
         cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
     }
@@ -331,21 +348,39 @@ mod tests {
         assert_eq!(written, 1, "one memory_promotion project row");
 
         let daily = daily_rows(pg, &pid).await;
-        let mp = daily.iter().find(|r| r.0 == "memory_promotion").expect("memory_promotion row present");
+        let mp =
+            daily.iter().find(|r| r.0 == "memory_promotion").expect("memory_promotion row present");
         assert!((mp.1 - 0.5).abs() < 1e-9, "value = 2 memories / 4 eligible = 0.5");
-        assert_eq!(mp.2["numerator"].as_i64(), Some(2), "numerator = 2 (in-window memories; the 30-day-old one excluded)");
-        assert_eq!(mp.2["denominator"].as_i64(), Some(4), "denominator = 4 (2 patterns + 2 corrections; the count-2 ones excluded)");
-        assert_eq!(mp.2["eligible_patterns"].as_i64(), Some(2), "eligible patterns = 2 (instance_count-2 pattern excluded)");
-        assert_eq!(mp.2["eligible_corrections"].as_i64(), Some(2), "eligible corrections = 2 (count-2 correction excluded)");
+        assert_eq!(
+            mp.2["numerator"].as_i64(),
+            Some(2),
+            "numerator = 2 (in-window memories; the 30-day-old one excluded)"
+        );
+        assert_eq!(
+            mp.2["denominator"].as_i64(),
+            Some(4),
+            "denominator = 4 (2 patterns + 2 corrections; the count-2 ones excluded)"
+        );
+        assert_eq!(
+            mp.2["eligible_patterns"].as_i64(),
+            Some(2),
+            "eligible patterns = 2 (instance_count-2 pattern excluded)"
+        );
+        assert_eq!(
+            mp.2["eligible_corrections"].as_i64(),
+            Some(2),
+            "eligible corrections = 2 (count-2 correction excluded)"
+        );
 
         // ── Idempotency: re-run backfills in place, never duplicates ──
         let again = compute(&ctx, &pid.to_string(), None).await.unwrap();
         assert_eq!(again, 1, "re-run recomputes the same row");
-        let (total,): (i64,) = query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
-            .bind(pid)
-            .fetch_one(pg.pool())
-            .await
-            .unwrap();
+        let (total,): (i64,) =
+            query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
+                .bind(pid)
+                .fetch_one(pg.pool())
+                .await
+                .unwrap();
         assert_eq!(total, 1, "idempotent upsert — still 1 row after a second run");
 
         purge_corrections(pg, &[&sig_a, &sig_b, &sig_lo]).await;
@@ -371,14 +406,21 @@ mod tests {
         seed_correction(pg, &sig, 2, &[pid]).await; // below >=3
 
         let written = compute(&ctx, &pid.to_string(), None).await.unwrap();
-        assert_eq!(written, 0, "0 eligible items → denominator 0 → NO row (never a fabricated 0/0)");
+        assert_eq!(
+            written, 0,
+            "0 eligible items → denominator 0 → NO row (never a fabricated 0/0)"
+        );
 
-        let (total,): (i64,) = query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
-            .bind(pid)
-            .fetch_one(pg.pool())
-            .await
-            .unwrap();
-        assert_eq!(total, 0, "no rows at all when nothing is eligible (memories present but no denominator)");
+        let (total,): (i64,) =
+            query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
+                .bind(pid)
+                .fetch_one(pg.pool())
+                .await
+                .unwrap();
+        assert_eq!(
+            total, 0,
+            "no rows at all when nothing is eligible (memories present but no denominator)"
+        );
 
         purge_corrections(pg, &[&sig]).await;
         cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
@@ -395,10 +437,8 @@ mod tests {
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
-        let pid = pg
-            .create_project(&format!("_test:knowledge-norepo:{uniq}"), None, None)
-            .await
-            .unwrap();
+        let pid =
+            pg.create_project(&format!("_test:knowledge-norepo:{uniq}"), None, None).await.unwrap();
 
         // 3 eligible patterns with NO folder (folder_id NULL) → project has no
         // repository-linked folder, so `primary_repository_for_project` is None.
@@ -411,14 +451,21 @@ mod tests {
         );
 
         let written = compute(&ctx, &pid.to_string(), None).await.unwrap();
-        assert_eq!(written, 0, "no primary repository → single row cannot be attributed → honest-empty skip");
+        assert_eq!(
+            written, 0,
+            "no primary repository → single row cannot be attributed → honest-empty skip"
+        );
 
-        let (total,): (i64,) = query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
-            .bind(pid)
-            .fetch_one(pg.pool())
-            .await
-            .unwrap();
-        assert_eq!(total, 0, "no rows when the project has no repository (never a fabricated repository)");
+        let (total,): (i64,) =
+            query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
+                .bind(pid)
+                .fetch_one(pg.pool())
+                .await
+                .unwrap();
+        assert_eq!(
+            total, 0,
+            "no rows when the project has no repository (never a fabricated repository)"
+        );
 
         cleanup_metrics_fixture(pg, &pid, None, &[]).await;
     }
@@ -430,19 +477,18 @@ mod tests {
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
-        let pid = pg
-            .create_project(&format!("_test:knowledge-empty:{uniq}"), None, None)
-            .await
-            .unwrap();
+        let pid =
+            pg.create_project(&format!("_test:knowledge-empty:{uniq}"), None, None).await.unwrap();
 
         let written = compute(&ctx, &pid.to_string(), None).await.unwrap();
         assert_eq!(written, 0, "no knowledge data in the window → zero rows written");
 
-        let (total,): (i64,) = query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
-            .bind(pid)
-            .fetch_one(pg.pool())
-            .await
-            .unwrap();
+        let (total,): (i64,) =
+            query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
+                .bind(pid)
+                .fetch_one(pg.pool())
+                .await
+                .unwrap();
         assert_eq!(total, 0, "no project_metrics rows for an empty project (never fabricated)");
 
         cleanup_metrics_fixture(pg, &pid, None, &[]).await;
@@ -466,8 +512,10 @@ mod tests {
 
         // Project A: 1 memory, 2 eligible patterns, 1 eligible correction naming A only.
         seed_memory(pg, &pid_a, chrono::Utc::now() - chrono::Duration::hours(2)).await;
-        seed_pattern_with_instances(pg, &pid_a, Some(&fid_a), &format!("pa1-{uniq_a}"), true, 3).await;
-        seed_pattern_with_instances(pg, &pid_a, Some(&fid_a), &format!("pa2-{uniq_a}"), true, 3).await;
+        seed_pattern_with_instances(pg, &pid_a, Some(&fid_a), &format!("pa1-{uniq_a}"), true, 3)
+            .await;
+        seed_pattern_with_instances(pg, &pid_a, Some(&fid_a), &format!("pa2-{uniq_a}"), true, 3)
+            .await;
         seed_correction(pg, &sig_a, 4, &[pid_a]).await;
         // Project B: 5 memories, 5 eligible patterns, 1 eligible correction naming B only
         // — none of which must touch A.
@@ -475,7 +523,15 @@ mod tests {
             seed_memory(pg, &pid_b, chrono::Utc::now() - chrono::Duration::hours(2)).await;
         }
         for i in 0..5 {
-            seed_pattern_with_instances(pg, &pid_b, Some(&fid_b), &format!("pb{i}-{uniq_b}"), true, 5).await;
+            seed_pattern_with_instances(
+                pg,
+                &pid_b,
+                Some(&fid_b),
+                &format!("pb{i}-{uniq_b}"),
+                true,
+                5,
+            )
+            .await;
         }
         seed_correction(pg, &sig_b, 9, &[pid_b]).await;
 
@@ -483,11 +539,28 @@ mod tests {
         assert_eq!(written, 1, "only A's own knowledge produces a row");
 
         let daily = daily_rows(pg, &pid_a).await;
-        let mp = daily.iter().find(|r| r.0 == "memory_promotion").expect("A's memory_promotion row");
-        assert_eq!(mp.2["numerator"].as_i64(), Some(1), "A's numerator = 1 (B's 5 memories excluded)");
-        assert_eq!(mp.2["denominator"].as_i64(), Some(3), "A's denominator = 2 patterns + 1 correction = 3 (B's excluded, not 8)");
-        assert_eq!(mp.2["eligible_patterns"].as_i64(), Some(2), "A's eligible patterns = 2 (B's 5 excluded)");
-        assert_eq!(mp.2["eligible_corrections"].as_i64(), Some(1), "A's eligible corrections = 1 (B-only correction excluded — project_ids membership)");
+        let mp =
+            daily.iter().find(|r| r.0 == "memory_promotion").expect("A's memory_promotion row");
+        assert_eq!(
+            mp.2["numerator"].as_i64(),
+            Some(1),
+            "A's numerator = 1 (B's 5 memories excluded)"
+        );
+        assert_eq!(
+            mp.2["denominator"].as_i64(),
+            Some(3),
+            "A's denominator = 2 patterns + 1 correction = 3 (B's excluded, not 8)"
+        );
+        assert_eq!(
+            mp.2["eligible_patterns"].as_i64(),
+            Some(2),
+            "A's eligible patterns = 2 (B's 5 excluded)"
+        );
+        assert_eq!(
+            mp.2["eligible_corrections"].as_i64(),
+            Some(1),
+            "A's eligible corrections = 1 (B-only correction excluded — project_ids membership)"
+        );
         assert!((mp.1 - 1.0 / 3.0).abs() < 1e-9, "A value = 1/3 (B's data excluded)");
 
         // A's row is attributed to A's OWN primary repository (not B's) — repo-grain
@@ -506,7 +579,11 @@ mod tests {
         .fetch_one(pg.pool())
         .await
         .unwrap();
-        assert_eq!(repo_id_a, Some(expected_repo_a), "A's row attributed to A's own primary repository");
+        assert_eq!(
+            repo_id_a,
+            Some(expected_repo_a),
+            "A's row attributed to A's own primary repository"
+        );
 
         purge_corrections(pg, &[&sig_a, &sig_b]).await;
         cleanup_metrics_fixture(pg, &pid_a, Some(&fid_a), &[]).await;
@@ -527,19 +604,24 @@ mod tests {
         let uniq = uuid::Uuid::new_v4();
         let (pid, fid) = seed_metrics_project_folder(pg, &uniq).await;
         for i in 0..3 {
-            seed_pattern_with_instances(pg, &pid, Some(&fid), &format!("p{i}-{uniq}"), true, 3).await;
+            seed_pattern_with_instances(pg, &pid, Some(&fid), &format!("p{i}-{uniq}"), true, 3)
+                .await;
         }
 
         let past = chrono::NaiveDate::from_ymd_opt(2020, 1, 1).unwrap();
         let written = compute(&ctx, &pid.to_string(), Some(past)).await.unwrap();
         assert_eq!(written, 0, "historical as_of → forward-only skip → zero rows");
 
-        let (total,): (i64,) = query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
-            .bind(pid)
-            .fetch_one(pg.pool())
-            .await
-            .unwrap();
-        assert_eq!(total, 0, "no project_metrics rows for a historical as_of (never a fabricated snapshot)");
+        let (total,): (i64,) =
+            query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
+                .bind(pid)
+                .fetch_one(pg.pool())
+                .await
+                .unwrap();
+        assert_eq!(
+            total, 0,
+            "no project_metrics rows for a historical as_of (never a fabricated snapshot)"
+        );
 
         cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
     }

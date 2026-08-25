@@ -12,12 +12,12 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::db::pg_store::PgStore;
-use crate::libraries::advisory::{security_verdict, Advisory, OsvVulnSource, VulnSource};
-use crate::libraries::registry::{HttpVersionSource, VersionSource};
-use crate::libraries::version::{classify_bump, update_action, Bump, UpdateAction};
 use super::queue::TaskQueue;
 use super::{Task, TaskKind};
+use crate::db::pg_store::PgStore;
+use crate::libraries::advisory::{Advisory, OsvVulnSource, VulnSource, security_verdict};
+use crate::libraries::registry::{HttpVersionSource, VersionSource};
+use crate::libraries::version::{Bump, UpdateAction, classify_bump, update_action};
 
 /// True iff the docs still need a re-index for `latest` — the applied marker is
 /// absent or stale. Equal marker ⇒ `index_library` already stamped a confirmed,
@@ -45,7 +45,13 @@ struct PendingUpdate<'a> {
 /// (project, library, to_version) at the `is_security` tier — so a prior
 /// non-security notify never suppresses a security flag. The single writer onto
 /// the Insights surface — no new channel.
-async fn write_update_rec(pg: &PgStore, pu: &PendingUpdate<'_>, mode: &str, urgency: &str, is_security: bool) {
+async fn write_update_rec(
+    pg: &PgStore,
+    pu: &PendingUpdate<'_>,
+    mode: &str,
+    urgency: &str,
+    is_security: bool,
+) {
     match pg.pending_library_update_exists(pu.project_id, pu.lib_id, pu.to, is_security).await {
         Ok(true) => return, // already flagged this exact update at this tier
         Ok(false) => {}
@@ -59,9 +65,17 @@ async fn write_update_rec(pg: &PgStore, pu: &PendingUpdate<'_>, mode: &str, urge
         _ => format!("Update {} {} → {} ({})", pu.name, pu.from, pu.to, pu.bump_str),
     };
     let why = match mode {
-        "security" => format!("A known {} vulnerability in {} {} is fixed by {} — docs/skills refreshed; update your dependency to apply the fix.", pu.ecosystem, pu.name, pu.from, pu.to),
-        "auto_applied" => format!("Auto-refreshed {} docs/skills for {} to {}.", pu.ecosystem, pu.name, pu.to),
-        "notify_no_source" => format!("A newer {} version of {} is available (no indexable source to auto-refresh).", pu.ecosystem, pu.name),
+        "security" => format!(
+            "A known {} vulnerability in {} {} is fixed by {} — docs/skills refreshed; update your dependency to apply the fix.",
+            pu.ecosystem, pu.name, pu.from, pu.to
+        ),
+        "auto_applied" => {
+            format!("Auto-refreshed {} docs/skills for {} to {}.", pu.ecosystem, pu.name, pu.to)
+        }
+        "notify_no_source" => format!(
+            "A newer {} version of {} is available (no indexable source to auto-refresh).",
+            pu.ecosystem, pu.name
+        ),
         _ => format!("A newer {} version of {} is available.", pu.ecosystem, pu.name),
     };
     let based_on = serde_json::json!({ "library_update": {
@@ -69,7 +83,20 @@ async fn write_update_rec(pg: &PgStore, pu: &PendingUpdate<'_>, mode: &str, urge
         "from_version": pu.from, "to_version": pu.to, "bump": pu.bump_str,
         "mode": mode, "is_security": is_security, "advisory": pu.advisory,
     }});
-    if let Err(e) = pg.create_recommendation_full(pu.project_id, &title, &why, None, "library_update", urgency, &based_on, None, None).await {
+    if let Err(e) = pg
+        .create_recommendation_full(
+            pu.project_id,
+            &title,
+            &why,
+            None,
+            "library_update",
+            urgency,
+            &based_on,
+            None,
+            None,
+        )
+        .await
+    {
         tracing::warn!(error = %e, lib = %pu.name, "library_update_scheduler: create recommendation failed");
     }
 }
@@ -79,8 +106,13 @@ async fn write_update_rec(pg: &PgStore, pu: &PendingUpdate<'_>, mode: &str, urge
 /// props marker), a within-tick set, and a lib-id-keyed in-flight guard. Shared by
 /// the patch (v1a) and security (v2) apply paths.
 async fn maybe_enqueue_reindex(
-    pg: &PgStore, queue: &TaskQueue, enqueued: &mut HashSet<uuid::Uuid>,
-    lib_id: &uuid::Uuid, name: &str, latest: &str, url: &str,
+    pg: &PgStore,
+    queue: &TaskQueue,
+    enqueued: &mut HashSet<uuid::Uuid>,
+    lib_id: &uuid::Uuid,
+    name: &str,
+    latest: &str,
+    url: &str,
 ) {
     let applied = pg.get_library_docs_applied(lib_id).await.ok().flatten();
     if !should_reindex(applied.as_deref(), latest) {
@@ -100,10 +132,14 @@ const DEFAULT_INTERVAL_SECS: u64 = 86_400; // daily
 const DEFAULT_CHECK_TTL_SECS: i64 = 82_800; // ~23h — reuse a lib's cached latest if newer
 
 fn parse_interval(cfg: Option<String>) -> u64 {
-    cfg.and_then(|s| s.trim().parse::<u64>().ok()).filter(|n| *n > 0).unwrap_or(DEFAULT_INTERVAL_SECS)
+    cfg.and_then(|s| s.trim().parse::<u64>().ok())
+        .filter(|n| *n > 0)
+        .unwrap_or(DEFAULT_INTERVAL_SECS)
 }
 fn parse_ttl(cfg: Option<String>) -> i64 {
-    cfg.and_then(|s| s.trim().parse::<i64>().ok()).filter(|n| *n > 0).unwrap_or(DEFAULT_CHECK_TTL_SECS)
+    cfg.and_then(|s| s.trim().parse::<i64>().ok())
+        .filter(|n| *n > 0)
+        .unwrap_or(DEFAULT_CHECK_TTL_SECS)
 }
 
 /// Spawn the scheduler for the daemon's lifetime. `queue` lets the apply arm
@@ -126,7 +162,12 @@ async fn run(queue: Arc<TaskQueue>, pg: Arc<PgStore>) {
 
 /// One pass. Testable with a stub [`VersionSource`]. Never panics; every failure is
 /// skip + log (fail-closed).
-pub(crate) async fn tick(pg: &PgStore, queue: &TaskQueue, src: &impl VersionSource, vuln: &impl VulnSource) {
+pub(crate) async fn tick(
+    pg: &PgStore,
+    queue: &TaskQueue,
+    src: &impl VersionSource,
+    vuln: &impl VulnSource,
+) {
     let ttl = parse_ttl(pg.get_config("library.check_ttl_secs").await.ok().flatten());
     let now = chrono::Utc::now().timestamp();
 
@@ -145,7 +186,8 @@ pub(crate) async fn tick(pg: &PgStore, queue: &TaskQueue, src: &impl VersionSour
             continue;
         }
         let cached = pg.get_library_latest_cache(lib_id).await.ok().flatten();
-        let fresh = cached.as_ref().filter(|(_, checked)| now - checked < ttl).map(|(v, _)| v.clone());
+        let fresh =
+            cached.as_ref().filter(|(_, checked)| now - checked < ttl).map(|(v, _)| v.clone());
         let latest = match fresh {
             Some(v) => Some(v), // within TTL — reuse cache, no network
             None => match src.latest(ecosystem, name, local_path.as_deref()).await {
@@ -194,7 +236,13 @@ pub(crate) async fn tick(pg: &PgStore, queue: &TaskQueue, src: &impl VersionSour
             _ => "update",
         };
         let pu = PendingUpdate {
-            project_id, lib_id, name, ecosystem, from: version_used, to: latest, bump_str,
+            project_id,
+            lib_id,
+            name,
+            ecosystem,
+            from: version_used,
+            to: latest,
+            bump_str,
             advisory: verdict.top.as_deref(),
         };
 
@@ -220,7 +268,10 @@ pub(crate) async fn tick(pg: &PgStore, queue: &TaskQueue, src: &impl VersionSour
             match base_url.clone().or_else(|| local_path.clone()) {
                 // Needs a refresh; the audit is written on a LATER tick once the
                 // marker flips — never at enqueue.
-                Some(url) => maybe_enqueue_reindex(pg, queue, &mut enqueued, lib_id, name, latest, &url).await,
+                Some(url) => {
+                    maybe_enqueue_reindex(pg, queue, &mut enqueued, lib_id, name, latest, &url)
+                        .await
+                }
                 // No indexable source → surface a notify (never fabricate a url).
                 None => write_update_rec(pg, &pu, "notify_no_source", "low", false).await,
             }
@@ -234,9 +285,23 @@ pub(crate) async fn tick(pg: &PgStore, queue: &TaskQueue, src: &impl VersionSour
 }
 
 #[cfg(test)]
+// Test gates are blocking `std::sync::Mutex` held across awaits ON PURPOSE —
+// see `crate::tasks::test_support::TestGate` for why an async mutex loses
+// wakeups across per-test runtimes. One allow per test module, not per site.
+#[allow(clippy::await_holding_lock)]
 mod tests {
     use super::*;
     use crate::db::pg_store::PgStore;
+    use crate::tasks::test_support::TestGate;
+
+    /// `tick` scans EVERY pinned library in the database, not just this test's,
+    /// so two of these running concurrently apply each other's vulnerability stub
+    /// to each other's rows: a `high: true` stub in one test writes a
+    /// security-tier flag onto another test's library, and that test's
+    /// "no security-tier flag" assertion fails. `seed_pin` already gives every
+    /// test unique project/library UUIDs — the sharing is in `tick`'s global
+    /// sweep, which is the behaviour under test and cannot be scoped away.
+    static TICK_LOCK: TestGate = TestGate::new();
 
     struct Stub(Option<String>);
     #[async_trait::async_trait]
@@ -295,12 +360,15 @@ mod tests {
 
     #[tokio::test]
     async fn tick_notifies_a_real_bump_and_dedupes() {
+        let _guard = TICK_LOCK.enter();
         let Ok(s) = PgStore::connect_test().await else { return };
         let q = TaskQueue::new();
         let (pid, lid) = seed_pin(&s, "1.0.0").await;
         tick(&s, &q, &Stub(Some("1.2.0".into())), &no_vulns()).await; // minor bump
-        assert!(s.pending_library_update_exists(&pid, &lid, "1.2.0", false).await.unwrap(),
-            "a real bump writes a library_update recommendation");
+        assert!(
+            s.pending_library_update_exists(&pid, &lid, "1.2.0", false).await.unwrap(),
+            "a real bump writes a library_update recommendation"
+        );
         // Second pass is idempotent — no duplicate rec for the same to_version.
         tick(&s, &q, &Stub(Some("1.2.0".into())), &no_vulns()).await;
         let n: (i64,) = sqlx_core::query_as::query_as(
@@ -311,13 +379,16 @@ mod tests {
 
     #[tokio::test]
     async fn tick_is_fail_closed_on_range_pin_and_no_latest() {
+        let _guard = TICK_LOCK.enter();
         let Ok(s) = PgStore::connect_test().await else { return };
         let q = TaskQueue::new();
         // A range pin already accepts the latest → Unknown → no notice.
         let (pid, lid) = seed_pin(&s, "^1.0.0").await;
         tick(&s, &q, &Stub(Some("1.9.0".into())), &no_vulns()).await;
-        assert!(!s.pending_library_update_exists(&pid, &lid, "1.9.0", false).await.unwrap(),
-            "a range pin must NOT produce a spurious update recommendation");
+        assert!(
+            !s.pending_library_update_exists(&pid, &lid, "1.9.0", false).await.unwrap(),
+            "a range pin must NOT produce a spurious update recommendation"
+        );
         // No latest resolved → no notice.
         let (pid2, lid2) = seed_pin(&s, "1.0.0").await;
         tick(&s, &q, &Stub(None), &no_vulns()).await;
@@ -347,13 +418,29 @@ mod tests {
         // A NON-security notify for to_version 2.0.0.
         let based_on = serde_json::json!({ "library_update": {
             "library_id": lid.to_string(), "to_version": "2.0.0", "is_security": false } });
-        s.create_recommendation_full(&pid, "t", "w", None, "library_update", "low", &based_on, None, None).await.unwrap();
+        s.create_recommendation_full(
+            &pid,
+            "t",
+            "w",
+            None,
+            "library_update",
+            "low",
+            &based_on,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
         // Same-tier query sees it; the security-tier query does NOT — so a prior
         // non-security notify can't suppress a later security flag.
-        assert!(s.pending_library_update_exists(&pid, &lid, "2.0.0", false).await.unwrap(),
-            "non-security query matches the non-security row");
-        assert!(!s.pending_library_update_exists(&pid, &lid, "2.0.0", true).await.unwrap(),
-            "security query must NOT be suppressed by a non-security row");
+        assert!(
+            s.pending_library_update_exists(&pid, &lid, "2.0.0", false).await.unwrap(),
+            "non-security query matches the non-security row"
+        );
+        assert!(
+            !s.pending_library_update_exists(&pid, &lid, "2.0.0", true).await.unwrap(),
+            "security query must NOT be suppressed by a non-security row"
+        );
     }
 
     #[tokio::test]
@@ -392,24 +479,34 @@ mod tests {
 
     #[tokio::test]
     async fn patch_bump_enqueues_reindex_not_a_rec() {
+        let _guard = TICK_LOCK.enter();
         let Ok(s) = PgStore::connect_test().await else { return };
         let q = TaskQueue::new();
         let (pid, lid) = seed_pin(&s, "1.0.0").await;
         set_pin_source(&s, &lid).await;
         tick(&s, &q, &Stub(Some("1.0.5".into())), &no_vulns()).await; // patch bump
-        assert!(q.has_pending_kind_folder(TaskKind::IndexLibrary, &lid.to_string()).await,
-            "a patch auto-applies: an IndexLibrary re-index is enqueued for the lib");
-        assert!(!s.pending_library_update_exists(&pid, &lid, "1.0.5", false).await.unwrap(),
-            "no recommendation is written at enqueue time (audit waits for confirmed success)");
+        assert!(
+            q.has_pending_kind_folder(TaskKind::IndexLibrary, &lid.to_string()).await,
+            "a patch auto-applies: an IndexLibrary re-index is enqueued for the lib"
+        );
+        assert!(
+            !s.pending_library_update_exists(&pid, &lid, "1.0.5", false).await.unwrap(),
+            "no recommendation is written at enqueue time (audit waits for confirmed success)"
+        );
         // Re-tick while the task is still in-flight → no duplicate enqueue.
         tick(&s, &q, &Stub(Some("1.0.5".into())), &no_vulns()).await;
-        let n = q.snapshot().await.into_iter()
-            .filter(|(k, f, _)| *k == TaskKind::IndexLibrary && f == &lid.to_string()).count();
+        let n = q
+            .snapshot()
+            .await
+            .into_iter()
+            .filter(|(k, f, _)| *k == TaskKind::IndexLibrary && f == &lid.to_string())
+            .count();
         assert_eq!(n, 1, "the in-flight guard prevents a duplicate re-index");
     }
 
     #[tokio::test]
     async fn patch_already_applied_writes_auto_applied_audit() {
+        let _guard = TICK_LOCK.enter();
         let Ok(s) = PgStore::connect_test().await else { return };
         let q = TaskQueue::new();
         let (pid, lid) = seed_pin(&s, "1.0.0").await;
@@ -417,28 +514,40 @@ mod tests {
         // Marker already at latest ⇒ index_library confirmed the re-index.
         s.set_library_docs_applied(&lid, "1.0.5", 1).await.unwrap();
         tick(&s, &q, &Stub(Some("1.0.5".into())), &no_vulns()).await;
-        assert!(!q.has_pending_kind_folder(TaskKind::IndexLibrary, &lid.to_string()).await,
-            "already applied → no re-index enqueued");
-        assert_eq!(rec_mode(&s, &pid, "1.0.5").await.as_deref(), Some("auto_applied"),
-            "an auto_applied audit is recorded once the marker has caught up");
+        assert!(
+            !q.has_pending_kind_folder(TaskKind::IndexLibrary, &lid.to_string()).await,
+            "already applied → no re-index enqueued"
+        );
+        assert_eq!(
+            rec_mode(&s, &pid, "1.0.5").await.as_deref(),
+            Some("auto_applied"),
+            "an auto_applied audit is recorded once the marker has caught up"
+        );
     }
 
     #[tokio::test]
     async fn patch_without_source_falls_back_to_notify() {
+        let _guard = TICK_LOCK.enter();
         let Ok(s) = PgStore::connect_test().await else { return };
         let q = TaskQueue::new();
         let (pid, lid) = seed_pin(&s, "1.0.0").await; // no source set
         tick(&s, &q, &Stub(Some("1.0.5".into())), &no_vulns()).await;
-        assert!(!q.has_pending_kind_folder(TaskKind::IndexLibrary, &lid.to_string()).await,
-            "no indexable source → nothing enqueued (never fabricate a url)");
-        assert_eq!(rec_mode(&s, &pid, "1.0.5").await.as_deref(), Some("notify_no_source"),
-            "a no-source patch surfaces a notify instead");
+        assert!(
+            !q.has_pending_kind_folder(TaskKind::IndexLibrary, &lid.to_string()).await,
+            "no indexable source → nothing enqueued (never fabricate a url)"
+        );
+        assert_eq!(
+            rec_mode(&s, &pid, "1.0.5").await.as_deref(),
+            Some("notify_no_source"),
+            "a no-source patch surfaces a notify instead"
+        );
     }
 
     // ── Step-5: F-v2 security scan ────────────────────────────────────
 
     #[tokio::test]
     async fn security_bump_flags_high_urgency_refreshes_and_never_touches_pin() {
+        let _guard = TICK_LOCK.enter();
         let Ok(s) = PgStore::connect_test().await else { return };
         let q = TaskQueue::new();
         let (pid, lid) = seed_pin(&s, "1.0.0").await; // pin at 1.0.0
@@ -446,24 +555,38 @@ mod tests {
         // HIGH advisory fixed at 1.1.0; latest 1.5.0 is a MINOR bump that would only
         // NOTIFY — the advisory escalates it to a security refresh + high-urgency flag.
         tick(&s, &q, &Stub(Some("1.5.0".into())), &high_fixed_at("1.1.0")).await;
-        assert_eq!(rec_mode(&s, &pid, "1.5.0").await.as_deref(), Some("security"),
-            "a high-severity advisory escalates a minor bump to a security flag");
+        assert_eq!(
+            rec_mode(&s, &pid, "1.5.0").await.as_deref(),
+            Some("security"),
+            "a high-severity advisory escalates a minor bump to a security flag"
+        );
         let urgency: (String,) = sqlx_core::query_as::query_as(
             "SELECT urgency::text FROM inference.recommendations \
-               WHERE project_id=$1 AND based_on->'library_update'->>'to_version'='1.5.0' LIMIT 1")
-            .bind(pid).fetch_one(s.pool()).await.unwrap();
+               WHERE project_id=$1 AND based_on->'library_update'->>'to_version'='1.5.0' LIMIT 1",
+        )
+        .bind(pid)
+        .fetch_one(s.pool())
+        .await
+        .unwrap();
         assert_eq!(urgency.0, "high", "security flags are high urgency");
-        assert!(q.has_pending_kind_folder(TaskKind::IndexLibrary, &lid.to_string()).await,
-            "security auto-apply refreshes docs/skills (same path as v1a)");
+        assert!(
+            q.has_pending_kind_folder(TaskKind::IndexLibrary, &lid.to_string()).await,
+            "security auto-apply refreshes docs/skills (same path as v1a)"
+        );
         // The consuming project's dependency pin is NEVER modified.
         let vu: (String,) = sqlx_core::query_as::query_as(
-            "SELECT version_used FROM sensei.referenced_libraries WHERE library_id=$1 LIMIT 1")
-            .bind(lid).fetch_one(s.pool()).await.unwrap();
+            "SELECT version_used FROM sensei.referenced_libraries WHERE library_id=$1 LIMIT 1",
+        )
+        .bind(lid)
+        .fetch_one(s.pool())
+        .await
+        .unwrap();
         assert_eq!(vu.0, "1.0.0", "the dependency pin is NEVER changed — docs/skills only");
     }
 
     #[tokio::test]
     async fn security_flag_not_suppressed_by_prior_notify() {
+        let _guard = TICK_LOCK.enter();
         let Ok(s) = PgStore::connect_test().await else { return };
         let q = TaskQueue::new();
         let (pid, lid) = seed_pin(&s, "1.0.0").await;
@@ -471,25 +594,46 @@ mod tests {
         // A prior NON-security notify for the same to_version.
         let based_on = serde_json::json!({ "library_update": {
             "library_id": lid.to_string(), "to_version": "1.5.0", "is_security": false } });
-        s.create_recommendation_full(&pid, "t", "w", None, "library_update", "low", &based_on, None, None).await.unwrap();
+        s.create_recommendation_full(
+            &pid,
+            "t",
+            "w",
+            None,
+            "library_update",
+            "low",
+            &based_on,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
         // The security tick still writes a security-tier flag (mode-aware dedup).
         tick(&s, &q, &Stub(Some("1.5.0".into())), &high_fixed_at("1.1.0")).await;
-        assert!(s.pending_library_update_exists(&pid, &lid, "1.5.0", true).await.unwrap(),
-            "a security-tier flag is written despite a prior non-security notify");
+        assert!(
+            s.pending_library_update_exists(&pid, &lid, "1.5.0", true).await.unwrap(),
+            "a security-tier flag is written despite a prior non-security notify"
+        );
     }
 
     #[tokio::test]
     async fn low_severity_advisory_does_not_escalate() {
+        let _guard = TICK_LOCK.enter();
         let Ok(s) = PgStore::connect_test().await else { return };
         let q = TaskQueue::new();
         let (pid, lid) = seed_pin(&s, "1.0.0").await;
         set_pin_source(&s, &lid).await;
         // A non-high advisory (high=false) must NOT flip is_security → stays a minor notify.
-        let low = StubVuln(vec![Advisory { high: false, ..high_fixed_at("1.1.0").0.pop().unwrap() }]);
+        let low =
+            StubVuln(vec![Advisory { high: false, ..high_fixed_at("1.1.0").0.pop().unwrap() }]);
         tick(&s, &q, &Stub(Some("1.5.0".into())), &low).await;
-        assert_eq!(rec_mode(&s, &pid, "1.5.0").await.as_deref(), Some("notify"),
-            "a low/indeterminate advisory does not escalate — normal minor notify");
-        assert!(!s.pending_library_update_exists(&pid, &lid, "1.5.0", true).await.unwrap(),
-            "no security-tier flag");
+        assert_eq!(
+            rec_mode(&s, &pid, "1.5.0").await.as_deref(),
+            Some("notify"),
+            "a low/indeterminate advisory does not escalate — normal minor notify"
+        );
+        assert!(
+            !s.pending_library_update_exists(&pid, &lid, "1.5.0", true).await.unwrap(),
+            "no security-tier flag"
+        );
     }
 }

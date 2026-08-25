@@ -15,6 +15,84 @@ Work is tracked as **GitHub issues** in [`sensei-hq/sensei`](https://github.com/
 
 ---
 
+## dbd drops a DDL file it cannot parse — silently, and the deploy still reports success
+
+**Found 2026-08-25** while fixing `dbd deploy --scope dojo`. dbd 0.10.12.
+
+Two files failed dbd's SQL parser and were removed from the entity set with no
+effect on the deploy's exit status:
+
+* `comment on function dojo.can_read_repository_metric(uuid, text, uuid, uuid) is …`
+  → *Expected: comment object_type, found: function*. dbd parses
+  `comment on function <name> is …` but not the form WITH an argument list.
+* `revoke all on function … from public, authenticated;`
+  → *Expected: end of statement, found: authenticated*. A comma-separated grantee
+  list is accepted on GRANT but not on REVOKE.
+
+The consequence is worse than a failed deploy: `dojo.can_read_repository_metric`
+and `dojo.set_pack_adoption` were never created on any database, and nothing said
+so. `set_pack_adoption` is called by the dōjō `/v1` rule-pack route, so that call
+has been failing against a function that does not exist. `dbd inspect` DOES
+report both, and `dbd deploy` prints the error count — but continues and finishes
+with "Fresh install at v0 — 91 entities applied", which reads as success.
+
+**Worked around in our DDL** (both changes are semantically identical): the
+COMMENT drops its argument list, and the REVOKE is split one grantee per
+statement. Both carry a comment saying why, so neither gets "tidied" back.
+
+**Upstream:** dbd should fail a deploy when a file in scope does not parse, or at
+minimum exit non-zero. A schema tool that silently omits an entity gives an
+answer indistinguishable from success.
+
+
+## kavach calls `resolve(event)` twice — every POST body under a public rule arrives empty
+
+**Status:** RESOLVED 2026-08-25 in kavach 1.1.0; dōjō bumped to it.
+
+The fix was already in kavach's source — 1.0.2 resolved once — but 1.0.2 was
+published with no `dist/`, so it had no type declarations and dōjō could not move
+to it (7 svelte-check errors). Cause: the publish workflow builds the tarball
+with `bun pm pack`, which does not run `prepublishOnly`, and then runs `npm
+publish <tarball>`, which does not either — npm runs lifecycle scripts when
+publishing a DIRECTORY, not a prebuilt tarball. So `dist/` was never built in CI.
+
+kavach now builds before packing and FAILS the publish if a tarball lacks the
+types its manifest promises, plus two regression tests pinning the single-resolve
+invariant. Released as 1.1.0.
+
+Original diagnosis, kept for the record:
+
+In `node_modules/kavach/src/kavach.js`, `handleUnauthorizedAccess` returns
+`resolve(event)` when access is ALLOWED — a `Promise`, not a `Response`. The
+caller, `handleRouteProtection`, then tests `protection instanceof Response`,
+which is false for a Promise, so it falls through to its own `return
+resolve(event)` at the end. `resolve` therefore runs twice for every permitted
+route. The first run drains the request body stream; the second sees an empty
+body.
+
+GET is unaffected (no body). Every POST through a permitted route loses its body.
+
+Reproduced 2026-08-25 against dōjō dev: `POST /v1/auth/cli/refresh` with
+`Content-Length: 25` reached the handler with `request.text() === ''`. Replacing
+`hooks.server.ts` with a bare `resolve(event)` made the same request arrive
+intact, and restoring kavach reproduced the empty body immediately.
+
+This is NOT specific to the new CLI-auth endpoints. It affects every existing
+`/v1` POST that reads `request.json()` once the caller is authenticated —
+`/v1/you/dojos`, `/v1/you/contributions/adopt`, `/v1/you/invites/accept`,
+`/v1/you/rule-packs/[slug]/adopt`, `/v1/you/github/sync`. Those all call
+`resolveCaller` first, which reads only headers, so an unauthenticated probe 401s
+before touching the body and hides the fault.
+
+**Fix (upstream):** `handleUnauthorizedAccess` should return the guard Response or
+`null`/`undefined`, and let `handleRouteProtection` own the single `resolve` call.
+
+**Not worked around here.** Buffering the body in `hooks.server.ts` and passing it
+via `locals` would mean every handler reads its body from a non-standard place —
+a workaround for a library bug spread across the whole API surface. Per the
+project rule on silent workarounds, this is recorded rather than hidden.
+
+
 ## Open GitHub issues (12)
 
 ### Epics
@@ -105,6 +183,15 @@ The 2026-07-14 mockup-gap pass is closed. Details in [`spec/MOCKUP-INDEX.md`](sp
 
 ## Cleanup / tech-debt
 
+| Item | Summary |
+|------|---------|
+| ✅ **RESOLVED 2026-08-22** | **Duplication / maintainability charts — resolved by fixing the axis, not by plotting the rating.** The plan was to plot the 0–5 rating instead of the raw value (module_quality's range is 0–0.00527, so every `toFixed(2)` tick read "0.00") and to retune `module_quality`'s `rating_scale`. Neither was needed. The complaint ("scale is too small, the chart is not helpful") was caused by the tick formatter, fixed in fbb6f0d0 — `metricTickFormatter` keys off the metric, not just its type, and renders these two per-1,000-lines. Live data: module_quality raw 0–0.00527 (avg 0.00154) → per-kloc 0.0–5.3 (avg 1.5); duplication_ratio raw 0–0.897 (avg 0.0439) → per-kloc 0–897 (avg 43.9). Both readable. **Plotting the rating would regress it**: across 115 periods module_quality's rating takes only 3 distinct values (3:10, 4:49, 5:56) and duplication_ratio 4 (2:8, 3:36, 4:4, 5:67), so a continuous series becomes a 3-step staircase — and it would need a `rating` column threaded from `metric_rating_facts` through `get_project_metric_series` to do it. The rating is already legible as the A–F grade chip: `PER_KLOC_GRADES` [3, 6, 12, 25] is the same ladder as `rating_scale` [0.025, 0.012, 0.006, 0.003, 0.0015] (= per-kloc 25, 12, 6, 3, 1.5) minus its top step, so the two systems agree by construction. The scale was kept as an absolute ladder by decision — it does discriminate (10 periods sit at rating 3), and rebasing it on the observed average would make the bar relative to current quality rather than to a standard. Guard added in `metric-view.spec.ts`: spot values across each metric's real observed range must produce distinct tick labels. |
+| **dojo transport — 2026-08-25** | **Do NOT mass-delete `crates/senseid/src/dojo/`.** An earlier analysis claimed ~7,600 LOC targets the non-existent dōjō service; measured per file, only `client.rs` (1,101) and `crates/dojo-protocol` (1,561) are transport-bound. The other **4,979 LOC is local logic every transport needs** — `attribution.rs` (the confidentiality dereference: client identifiers must never leave the machine), `gate.rs` (the hook-gate control leg, unrelated to dōjō and reached by `/hook/gate`), plus routing/membership/contribution assembly. The transport gets REPLACED in Phase 7, not removed; it costs nothing meanwhile (`dojo_outbox` has never held a row). Build nothing new on `client.rs` until the transport is decided. |
+| **RLS note — 2026-08-25** | **A Supabase row policy runs as the CALLING role, so every table it reads needs its own grant.** Written inline, the repository-metrics policy traverses principals → team_members → teams → team_projects → repositories_in_projects → memberships — which would have meant granting every signed-in user SELECT on the entire organisation graph just to filter their own metrics: the check leaking more than it protects. Correct shape is a `SECURITY DEFINER` function (`dojo.can_read_repository_metric`) with `set search_path = dojo, pg_temp` — the traversal runs as the owner, the caller needs no grant and learns only a boolean. Also: RLS alone is not enough, the role still needs `GRANT SELECT ON <table>` or every read fails "permission denied" rather than returning an authorised subset. |
+| **dbd note — 2026-08-25** | **Two more dbd gaps, found deploying the dōjō scope.** (1) It emits a PLACEHOLDER constraint name for a drop — `ALTER TABLE … DROP CONSTRAINT uq:tenant_id,provider,subject` — which is a syntax error; look the real name up in `pg_constraint` and do it by hand. (2) An enum used as a COLUMN TYPE is not FK-reachable, so a cross-scope table that gains one fails with `type "entity_origin" does not exist` until the enum is listed explicitly in that scope's `includes` (design.yaml documents this for other enums; it applies to every new one). Also re-confirmed: a renamed column needs `ALTER … RENAME` before reconcile, or dbd plans ADD+DROP and destroys the data — it would have dropped 14 rule-pack citations from the Supabase copy exactly as it nearly did locally. |
+| **dbd note — 2026-08-24** | **A view column ADD/REORDER needs a DROP+CREATE, not `dbd reconcile`.** dbd emits `CREATE OR REPLACE VIEW`, which Postgres rejects with `cannot change name of view column "x" to "y"` whenever the new definition inserts a column anywhere but the end — reconcile then fails mid-run having already applied the table changes. Hit twice adding `persona_id` to `sensei.project_metrics`. Workaround: `DROP VIEW … CASCADE`, then re-apply the view DDLs iteratively (a dependent view can only be created after its source, and the chain here is 5 levels deep — metric_facts / project_metric_daily → weekly/monthly/quarterly/trend → metric_ratings / project_health_*). Two related dbd gaps found the same day, both destructive if trusted: a `text → enum` column change is emitted WITHOUT the required `USING` clause (fails), and a table rename is planned as `create` + `drop` (would have destroyed 15,424 rows). **Dry-run any dbd plan touching an existing column or table in a rolled-back transaction before applying it.** |
+| _(file issue)_ | **`app/e2e/**` is outside every static gate** — `tsconfig.json` extends `.svelte-kit/tsconfig.json`, whose `include` covers `src/` only, so `bun run check` (1114 files, 0 errors) and `tsc --noEmit` never look at the Playwright suite: `tsc --listFiles` matches **0** files under `e2e/tests`. Typechecking it via a probe config (`{extends: "./tsconfig.json", include: ["e2e/**/*.ts"]}`) surfaces **9 pre-existing errors** — 3 in the playwright configs (`TS2769` no matching overload), and 6 in specs: `boot-flow.spec.ts:73` and `dojo-binding.spec.ts:136` pass a `RegExp` where a `string` is expected (`TS2345`), and `cold-start.spec.ts:49`, `instruments-observatory.spec.ts:63`, `instruments-t2-slices.spec.ts:146` (×2) pass 2 args to a 1-arg call (`TS2554`). Fix those, then add an `e2e` project to the check script so the gate covers them. Until then an e2e spec can only be validated with `bunx playwright test --list` (proves it transpiles and registers, not that it type-checks). |
+
 ### Quality pass (qlty.sh) — 2026-08-10 status + follow-ups
 
 A qlty pass ran on 2026-08-10 (commits `2bd4dc2b`..`992c7256`). Landed: excluded vendored tree-sitter grammars (qlty smells 427→394); deduped the metrics test read-back helpers into `test_support` (→386); fixed two pipeline blockers (the bootstrap `brew`-shelling hang, and the app suite failing 98/98 on a missing generated tsconfig — app coverage was silently 0, now runs at ~45%); excluded generated `paraglide` from dojo coverage; added rulepacks-data DB-wrapper tests; and brought **senseid's pure (DB-free) modules** into CI coverage (`scripts/senseid-pure-coverage.sh` + a `senseid` job) — lifting the Rust+dojo aggregate from 75.8% to a locally-projected ~80.7%. Open follow-ups:
@@ -133,6 +220,7 @@ A qlty pass ran on 2026-08-10 (commits `2bd4dc2b`..`992c7256`). Landed: excluded
 |------|---------|
 | _(file issue)_ | **On-page SEO** — canonical, OpenGraph, Twitter Card tags + a generated `sitemap.xml` (root `<svelte:head>`); submit to Search Console. |
 | _(file issue)_ | **Website redesign** — screenshots→flows + a "For teams · 結 Dōjō" section + a Teams nav; **reconcile the "0 external requests / local-first" promise with the opt-in networked Dōjō**; trim Dōjō copy to shipped reality. |
+| _(file issue)_ | **Componentize `routes/sensei/+page.svelte`, then finish its responsive pass** — the last desktop-first `@media` block in `website/` (11 of 12 converted to mobile-first prefixes in 95d2208d). This one is a 1194-line monolith whose single `@media (max-width: 900px)` block carries 36 rules over ~36 section classes. Converting it in place is mechanical but makes the file *less* readable (36 elements each gaining 2–4 responsive utilities) without addressing the real deviation: every sibling section on the hub page is already a component (`lib/components/hub/Hero.svelte`, `Footer.svelte`, `Approach.svelte`, …), so this page — and `routes/torii-seiki/+page.svelte`, 395 lines — are the house-style outliers. Extract the ~12 sections into components first (§1.1/§1.5), converting each one's responsive rules as it moves. The block also carries literal-px debt §1.3 forbids (`padding: 16px 24px`, `font-size: 180px` / `280px`), which the extraction should clear at the same time. |
 
 ---
 

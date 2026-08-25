@@ -10,16 +10,16 @@ import {
     toneColor,
     toSignal,
     buildSignals,
-    healthSignal,
-    heroSignal,
     pickMovers,
-    orderSignals,
+    groupSignals,
     deterministicHeadline,
     seriesDistribution,
     densifySeries,
     metricYDomain,
     metricGrade,
     formatPerKloc,
+    formatPerKlocTick,
+    metricTickFormatter,
     isPerKlocMetric,
     chartKindForType,
     defaultWindowForGrain,
@@ -45,7 +45,7 @@ function row(over: Partial<ProjectMetricRow>): ProjectMetricRow {
         date: '2026-08-10',
         value: 1,
         props: {},
-        name: 'First-turn resolution (FTR)',
+        name: 'First-turn resolution',
         metric_type: 'pct',
         unit: '%',
         direction: 'higher_better',
@@ -83,6 +83,55 @@ describe('formatMetricValue', () => {
         expect(formatMetricValue('pct', null)).toBe(METRIC_NONE);
         expect(formatMetricValue('duration', undefined)).toBe(METRIC_NONE);
         expect(formatMetricValue('count', NaN)).toBe(METRIC_NONE);
+    });
+});
+
+describe('metricTickFormatter', () => {
+    it('reads per-1,000-lines for the smells-per-line metrics, not 0.00', () => {
+        // These are typed `ratio` but live inside 0-0.005, so a type-only
+        // formatter rendered EVERY axis tick as "0.00" — the line shape was fine,
+        // the labels carried no information.
+        for (const key of ['module_quality', 'duplication_ratio']) {
+            const fmt = metricTickFormatter(key, 'ratio');
+            expect(fmt(0.0024)).toBe('2.4');
+            expect(fmt(0.00053)).toBe('0.5');
+            expect(fmt(0.0024)).not.toBe('0.00');
+        }
+    });
+
+    it('gives a real observed series distinct tick labels', () => {
+        // The defect was never one bad label — it was a whole axis reading "0.00"
+        // top to bottom, which is why the chart looked broken. These are the live
+        // ranges (sensei.metric_facts): module_quality 0–0.00527 avg 0.00154,
+        // duplication_ratio 0–0.897 avg 0.0439. Spot values across each range must
+        // land on different labels, or the axis carries no information again.
+        const cases: Array<[string, number[]]> = [
+            ['module_quality', [0, 0.00077, 0.00154, 0.0031, 0.00527]],
+            ['duplication_ratio', [0, 0.011, 0.0439, 0.44, 0.897]],
+        ];
+        for (const [key, values] of cases) {
+            const fmt = metricTickFormatter(key, 'ratio');
+            const labels = values.map(fmt);
+            expect(new Set(labels).size).toBe(labels.length);
+        }
+    });
+
+    it('leaves every other metric on its type formatter', () => {
+        // An ordinary ratio in [0,1] still reads as a ratio — this fix is keyed to
+        // the two per-KLOC metrics, not applied to ratios in general.
+        expect(metricTickFormatter('rework_ratio', 'ratio')(0.5)).toBe('0.50');
+        expect(metricTickFormatter('throughput', 'count')(4)).toBe('4');
+    });
+
+    it('tick format carries no unit suffix, unlike the headline rate', () => {
+        // The axis has no room for "/ 1,000 lines"; the headline copy keeps it.
+        expect(formatPerKlocTick(0.0024)).toBe('2.4');
+        expect(formatPerKloc(0.0024)).toBe('2.4 / 1,000 lines');
+    });
+
+    it('is honest about an absent value', () => {
+        expect(formatPerKlocTick(null)).toBe(formatPerKlocTick(undefined));
+        expect(formatPerKlocTick(Number.NaN)).toBe(formatPerKlocTick(null));
     });
 });
 
@@ -251,7 +300,7 @@ describe('toSignal', () => {
                 direction: 'lower_better',
                 value: 3, // unused = M - N
                 props: { total_tools: 106, relevant_tools: 12, used_tools: 9 },
-                name: 'Unused-tool count',
+                name: 'Tools used',
             }),
             famOf,
         );
@@ -375,21 +424,24 @@ describe('linkifyMetrics', () => {
         direction: 'higher_better',
     });
     const registry: RegistryMetric[] = [
-        reg('rework_ratio', 'Rework ratio'),
-        reg('ftr', 'First-turn resolution (FTR)'),
+        reg('rework_ratio', 'Rework share'),
+        reg('ftr', 'First-turn resolution'),
         reg('churn_rate', 'Churn rate'),
     ];
 
     it('links another metric named in the text (case-insensitive), keeping the prose', () => {
-        const segs = linkifyMetrics('Never read alone. Companion: rework ratio.', registry, 'ftr');
-        expect(segs.map((s) => s.text).join('')).toBe('Never read alone. Companion: rework ratio.');
+        // Lower-cased in the prose, title-cased in the registry — this is what the
+        // real seed says ("Companion: rework share"), so a rename that misses the
+        // prose silently drops the companion link.
+        const segs = linkifyMetrics('Never read alone. Companion: rework share.', registry, 'ftr');
+        expect(segs.map((s) => s.text).join('')).toBe('Never read alone. Companion: rework share.');
         const linked = segs.find((s) => s.key);
         expect(linked?.key).toBe('rework_ratio');
-        expect(linked?.text).toBe('rework ratio');
+        expect(linked?.text).toBe('rework share');
     });
 
     it('never links the current metric to itself', () => {
-        const segs = linkifyMetrics('Rework ratio rises when work is deferred.', registry, 'rework_ratio');
+        const segs = linkifyMetrics('Rework share rises when work is deferred.', registry, 'rework_ratio');
         expect(segs.every((s) => s.key == null)).toBe(true);
     });
 
@@ -405,34 +457,6 @@ describe('linkifyMetrics', () => {
     });
 });
 
-describe('heroSignal', () => {
-    it('leads with FTR (the north star) over the composite when both are present', () => {
-        const signals = buildSignals(
-            [row({ metric: 'ftr', value: 1 }), row({ metric: 'project_health', metric_type: 'score', value: 44 })],
-            famOf,
-        );
-        expect(heroSignal(signals)?.key).toBe('ftr');
-    });
-
-    it('is FTR when the composite is retired (no composite row)', () => {
-        const signals = buildSignals(
-            [row({ metric: 'ftr', value: 1 }), row({ metric: 'churn_concentration', metric_type: 'pct', value: 0.5 })],
-            famOf,
-        );
-        expect(heroSignal(signals)?.key).toBe('ftr');
-    });
-
-    it('falls back to the composite only when FTR is absent (legacy data)', () => {
-        const signals = buildSignals([row({ metric: 'project_health', metric_type: 'score', value: 44 })], famOf);
-        expect(heroSignal(signals)?.key).toBe('project_health');
-    });
-
-    it('is null when neither FTR nor a composite exists', () => {
-        const signals = buildSignals([row({ metric: 'churn_concentration', metric_type: 'pct', value: 0.5 })], famOf);
-        expect(heroSignal(signals)).toBeNull();
-    });
-});
-
 describe('movers + ordering', () => {
     const rows: ProjectMetricRow[] = [
         row({ metric: 'project_health', metric_type: 'score', value: 44, prior: 46, delta: -2 }),
@@ -442,8 +466,7 @@ describe('movers + ordering', () => {
     ];
     const signals = buildSignals(rows, famOf);
 
-    it('health is the hero, never a mover', () => {
-        expect(healthSignal(signals)?.key).toBe('project_health');
+    it('the composite is never a mover — it is the hero readout', () => {
         expect(pickMovers(signals).some((s) => s.key === 'project_health')).toBe(false);
     });
 
@@ -455,10 +478,80 @@ describe('movers + ordering', () => {
         expect(movers[1].key).toBe('churn_concentration');
     });
 
-    it('grid order is composite first, then movers, then the rest', () => {
-        const ordered = orderSignals(signals).map((s) => s.key);
-        expect(ordered[0]).toBe('project_health');
-        expect(ordered.indexOf('time_to_useful_result')).toBeLessThan(ordered.indexOf('unused_tools'));
+});
+
+describe('groupSignals', () => {
+    // Importance is a product judgement, not something the data carries: ordering
+    // by movement put whatever twitched this period first, which is why the grid
+    // read as an undifferentiated wall.
+    const famOfFull = (k: string): MetricFamily | undefined =>
+        (({
+            ftr: 'outcome',
+            module_quality: 'quality',
+            coverage: 'quality',
+            duplication_ratio: 'quality',
+            churn_rate: 'quality',
+            throughput: 'velocity',
+            project_health: 'composite',
+            tokens_per_day: 'usage',
+        }) as Record<string, MetricFamily>)[k];
+
+    const allRows: ProjectMetricRow[] = [
+        row({ metric: 'throughput', metric_type: 'count', value: 4 }),
+        row({ metric: 'churn_rate', metric_type: 'count', value: 2 }),
+        row({ metric: 'coverage', metric_type: 'pct', value: 0.7 }),
+        row({ metric: 'project_health', metric_type: 'score', value: 44 }),
+        row({ metric: 'duplication_ratio', value: 0.04 }),
+        row({ metric: 'tokens_per_day', metric_type: 'count', value: 1000 }),
+        row({ metric: 'module_quality', value: 0.0015 }),
+        row({ metric: 'ftr', metric_type: 'pct', value: 0.75 }),
+    ];
+    const all = buildSignals(allRows, famOfFull);
+
+    it('leads with the curated key signals, in the curated order', () => {
+        const groups = groupSignals(all);
+        expect(groups[0].id).toBe('key');
+        expect(groups[0].label).toBe('Key signals');
+        expect(groups[0].signals.map((s) => s.key)).toEqual([
+            'ftr',
+            'module_quality',
+            'coverage',
+            'duplication_ratio',
+        ]);
+    });
+
+    it('never loses a signal — every non-composite metric lands in exactly one group', () => {
+        // The guard that matters. `cost` was missing from both MetricFamily and
+        // FAMILY_ORDER while the daemon returns it for the token metrics, so a
+        // group-by-known-family would have dropped them off the screen silently.
+        const groups = groupSignals(all);
+        const grouped = groups.flatMap((g) => g.signals.map((s) => s.key));
+        const expected = all.filter((s) => s.family !== 'composite').map((s) => s.key);
+        expect(grouped.slice().sort()).toEqual(expected.slice().sort());
+        expect(new Set(grouped).size).toBe(grouped.length); // no duplicates
+    });
+
+    it('keeps the composite out — it is the hero readout, not a grid cell', () => {
+        const grouped = groupSignals(all).flatMap((g) => g.signals.map((s) => s.key));
+        expect(grouped).not.toContain('project_health');
+    });
+
+    it('places a usage metric rather than dropping it', () => {
+        const usage = groupSignals(all).find((g) => g.signals.some((s) => s.key === 'tokens_per_day'));
+        expect(usage).toBeDefined();
+        expect(usage!.label).toBe('Usage');
+    });
+
+    it('drops empty groups instead of rendering an empty shell', () => {
+        const only = buildSignals([row({ metric: 'ftr', metric_type: 'pct', value: 0.75 })], famOfFull);
+        const groups = groupSignals(only);
+        expect(groups).toHaveLength(1);
+        expect(groups[0].id).toBe('key');
+    });
+
+    it('omits the key group entirely when none of its metrics exist', () => {
+        const none = buildSignals([row({ metric: 'throughput', metric_type: 'count', value: 4 })], famOfFull);
+        expect(groupSignals(none).map((g) => g.id)).toEqual(['velocity']);
     });
 });
 

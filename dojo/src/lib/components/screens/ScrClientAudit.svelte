@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { SectionHead, Banner, Btn, Chip, Icon, KanjiToken, EmptyState } from '$lib/components/kit';
+	import { SectionHead, Btn, Chip, Icon, KanjiToken, EmptyState } from '$lib/components/kit';
 	import type { KitClientAuditRow } from '$lib/components/kit/types';
 
 	// The lead client-audit ledger (mockup ScrClientAudit) — an append-only,
@@ -11,17 +11,18 @@
 	// supplies the ledger (kit fixtures this chunk).
 	let {
 		orgName,
-		entries = [],
-		mobile = false
+		entries = []
 	}: {
 		orgName: string;
 		entries?: KitClientAuditRow[];
-		mobile?: boolean;
 	} = $props();
 </script>
 
-<div class="flex flex-col {mobile ? 'p-4 gap-4' : 'p-8 gap-6'}">
-	<SectionHead eyebrow={orgName + ' · clients'} title="Client audit trail">
+<div class="flex flex-col p-4 gap-4 md:p-8 md:gap-6">
+	<SectionHead
+		kanji="録" eyebrow={orgName + ' · clients'} title="Client audit trail"
+		description="An immutable ledger of exactly what left and what was stripped. Distinct from the admin action-audit — this proves confidentiality held for each client, entry by entry. Append-only, exportable as CSV or JSON."
+	>
 		{#snippet right()}
 			<div class="flex gap-2">
 				<Btn size="sm" variant="ghost" icon="tuning-2">Filter</Btn>
@@ -29,15 +30,6 @@
 			</div>
 		{/snippet}
 	</SectionHead>
-
-	<Banner
-		kanji="録"
-		tone="neutral"
-		title="An immutable ledger of exactly what left and what was stripped."
-	>
-		Distinct from the admin action-audit — this proves confidentiality held for each client, entry
-		by entry. Append-only, exportable as CSV or JSON.
-	</Banner>
 
 	{#if !entries.length}
 		<EmptyState kanji="録" title="The ledger is empty.">

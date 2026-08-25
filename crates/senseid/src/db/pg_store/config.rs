@@ -3,13 +3,12 @@ use super::*;
 #[allow(dead_code, clippy::too_many_arguments, clippy::type_complexity)]
 impl PgStore {
     pub async fn get_config(&self, key: &str) -> Result<Option<String>, String> {
-        let row: Option<(String,)> = sqlx_core::query_as::query_as(
-            "SELECT value FROM sensei.config WHERE key = $1"
-        )
-            .bind(key)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(|e| e.to_string())?;
+        let row: Option<(String,)> =
+            sqlx_core::query_as::query_as("SELECT value FROM sensei.config WHERE key = $1")
+                .bind(key)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(|e| e.to_string())?;
         Ok(row.map(|r| r.0))
     }
 
@@ -42,13 +41,14 @@ impl PgStore {
         Ok(())
     }
 
-    pub async fn get_all_config(&self) -> Result<std::collections::HashMap<String, String>, String> {
-        let rows: Vec<(String, String)> = sqlx_core::query_as::query_as(
-            "SELECT key, value FROM sensei.config"
-        )
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|e| e.to_string())?;
+    pub async fn get_all_config(
+        &self,
+    ) -> Result<std::collections::HashMap<String, String>, String> {
+        let rows: Vec<(String, String)> =
+            sqlx_core::query_as::query_as("SELECT key, value FROM sensei.config")
+                .fetch_all(&self.pool)
+                .await
+                .map_err(|e| e.to_string())?;
         Ok(rows.into_iter().collect())
     }
 
@@ -89,20 +89,25 @@ impl PgStore {
 
     pub async fn list_tags_by_category(&self, category: &str) -> Result<Vec<String>, String> {
         let rows: Vec<(String,)> = sqlx_core::query_as::query_as(
-            "SELECT tag FROM sensei.tags WHERE category = $1 ORDER BY tag"
+            "SELECT tag FROM sensei.tags WHERE category = $1 ORDER BY tag",
         )
-            .bind(category)
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|e| e.to_string())?;
+        .bind(category)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(rows.into_iter().map(|r| r.0).collect())
     }
 
     // ── Workflow State ────────────────────────────────────────────────
 
     pub async fn upsert_workflow_state(
-        &self, project: &str, phase: Option<&str>, plan: Option<&str>,
-        task: Option<&str>, issue: Option<i64>, checkpoint: Option<&str>,
+        &self,
+        project: &str,
+        phase: Option<&str>,
+        plan: Option<&str>,
+        task: Option<&str>,
+        issue: Option<i64>,
+        checkpoint: Option<&str>,
         rules_hash: Option<&str>,
     ) -> Result<(), String> {
         sqlx_core::query::query(
@@ -125,7 +130,10 @@ impl PgStore {
         Ok(())
     }
 
-    pub async fn get_workflow_state(&self, project: &str) -> Result<Option<serde_json::Value>, String> {
+    pub async fn get_workflow_state(
+        &self,
+        project: &str,
+    ) -> Result<Option<serde_json::Value>, String> {
         let row: Option<(
             Option<String>, Option<String>, Option<String>,
             Option<i32>, Option<String>, Option<String>, chrono::DateTime<chrono::Utc>,
@@ -170,5 +178,4 @@ impl PgStore {
     // `sensei.run_event_kind`, bound the same way. Timestamps come back as
     // RFC-3339 `::text` (like `DojoMembership.last_heartbeat_at`). See
     // `crate::runs` for the row types.
-
 }

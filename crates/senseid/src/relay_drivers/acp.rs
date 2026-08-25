@@ -177,9 +177,7 @@ mod tests {
         assert_eq!(segs[2].state, SegmentState::Pending);
 
         // Same invariants as todos_to_segments: no gate, no server ids, no nesting.
-        assert!(segs
-            .iter()
-            .all(|s| !s.is_gate && s.id.is_none() && s.parent_id.is_none()));
+        assert!(segs.iter().all(|s| !s.is_gate && s.id.is_none() && s.parent_id.is_none()));
     }
 
     #[test]
@@ -226,9 +224,9 @@ mod tests {
                 "command": "cat ~/.aws/credentials"
             }))
             .raw_output(serde_json::json!({"stdout": "AKIA_SECRET_KEY_LEAKED"}))
-            .content(vec![ToolCallContent::from(ContentBlock::Text(
-                TextContent::new("- old secret line\n+ new secret line"),
-            ))]);
+            .content(vec![ToolCallContent::from(ContentBlock::Text(TextContent::new(
+                "- old secret line\n+ new secret line",
+            )))]);
 
         let segs = acp_update_to_segments(&SessionUpdate::ToolCall(tc));
         assert!(segs.is_empty(), "tool calls are not outline nodes → nothing leaks");
@@ -256,8 +254,12 @@ mod tests {
         let chunk = ContentChunk::new(ContentBlock::Text(TextContent::new(
             "here is the private API key sk-verysecret",
         )));
-        assert!(acp_update_to_segments(&SessionUpdate::AgentMessageChunk(chunk.clone())).is_empty());
-        assert!(acp_update_to_segments(&SessionUpdate::AgentThoughtChunk(chunk.clone())).is_empty());
+        assert!(
+            acp_update_to_segments(&SessionUpdate::AgentMessageChunk(chunk.clone())).is_empty()
+        );
+        assert!(
+            acp_update_to_segments(&SessionUpdate::AgentThoughtChunk(chunk.clone())).is_empty()
+        );
         assert!(acp_update_to_segments(&SessionUpdate::UserMessageChunk(chunk)).is_empty());
     }
 
@@ -297,9 +299,7 @@ mod tests {
         // yields the outline; a ToolCall yields an empty (present) projection.
         let d = AcpObserveDriver;
         let plan = Plan::new(vec![entry("do a thing", PlanEntryStatus::InProgress)]);
-        let segs = d
-            .observe_update(&SessionUpdate::Plan(plan))
-            .expect("acp driver observes");
+        let segs = d.observe_update(&SessionUpdate::Plan(plan)).expect("acp driver observes");
         assert_eq!(segs.len(), 1);
         assert_eq!(segs[0].title, "do a thing");
         assert_eq!(segs[0].state, SegmentState::Active);

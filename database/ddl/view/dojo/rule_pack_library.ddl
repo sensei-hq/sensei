@@ -21,7 +21,7 @@ select
     p.slug
   , p.kanji
   , p.name
-  , p.source
+  , p.attribution
   , p.summary
   , coalesce(
         (select jsonb_agg(r.statement order by r.ordinal)

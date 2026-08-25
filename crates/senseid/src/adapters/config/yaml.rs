@@ -43,10 +43,7 @@ impl ConfigAdapter for YamlConfigAdapter {
 
     fn extract_version(&self, content: &str) -> Option<String> {
         let val = serde_yaml::from_str::<serde_json::Value>(content).ok()?;
-        val.get("version")
-            .and_then(|v| v.as_str())
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string())
+        val.get("version").and_then(|v| v.as_str()).filter(|s| !s.is_empty()).map(|s| s.to_string())
     }
 }
 
@@ -70,7 +67,8 @@ mod tests {
 
     #[test]
     fn extract_metadata_links_from_top_level_keys() {
-        let src = "homepage: https://sensei-hq.com\nrepository: https://github.com/sensei-hq/sensei\n";
+        let src =
+            "homepage: https://sensei-hq.com\nrepository: https://github.com/sensei-hq/sensei\n";
         let mut links = YamlConfigAdapter.extract_metadata_links(src);
         links.sort_by(|a, b| a.field.cmp(b.field));
         assert_eq!(links.len(), 2);

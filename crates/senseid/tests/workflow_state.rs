@@ -18,8 +18,7 @@ async fn get_state_empty_project() {
     let client = reqwest::Client::new();
     let proj = test_project("empty");
 
-    let resp = client.get(format!("{}/api/state/{}", daemon_url(), proj))
-        .send().await.unwrap();
+    let resp = client.get(format!("{}/api/state/{}", daemon_url(), proj)).send().await.unwrap();
     assert!(resp.status().is_success());
 
     let body: serde_json::Value = resp.json().await.unwrap();
@@ -36,20 +35,22 @@ async fn put_and_get_state() {
     let proj = test_project("putget");
 
     // PUT
-    let resp = client.put(format!("{}/api/state/{}", daemon_url(), proj))
+    let resp = client
+        .put(format!("{}/api/state/{}", daemon_url(), proj))
         .json(&json!({
             "active_phase": "build",
             "active_task": "implement feature X",
             "active_issue": 42
         }))
-        .send().await.unwrap();
+        .send()
+        .await
+        .unwrap();
     assert!(resp.status().is_success());
     let body: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(body["ok"], true);
 
     // GET
-    let resp = client.get(format!("{}/api/state/{}", daemon_url(), proj))
-        .send().await.unwrap();
+    let resp = client.get(format!("{}/api/state/{}", daemon_url(), proj)).send().await.unwrap();
     let body: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(body["active_phase"], "build");
     assert_eq!(body["active_task"], "implement feature X");
@@ -63,23 +64,28 @@ async fn put_partial_preserves_existing() {
     let proj = test_project("partial");
 
     // Set all fields
-    client.put(format!("{}/api/state/{}", daemon_url(), proj))
+    client
+        .put(format!("{}/api/state/{}", daemon_url(), proj))
         .json(&json!({
             "active_phase": "build",
             "active_task": "task 1",
             "active_issue": 99,
             "active_plan": "docs/plans/test.md"
         }))
-        .send().await.unwrap();
+        .send()
+        .await
+        .unwrap();
 
     // Update only phase
-    client.put(format!("{}/api/state/{}", daemon_url(), proj))
+    client
+        .put(format!("{}/api/state/{}", daemon_url(), proj))
         .json(&json!({"active_phase": "validate"}))
-        .send().await.unwrap();
+        .send()
+        .await
+        .unwrap();
 
     // Verify other fields preserved
-    let resp = client.get(format!("{}/api/state/{}", daemon_url(), proj))
-        .send().await.unwrap();
+    let resp = client.get(format!("{}/api/state/{}", daemon_url(), proj)).send().await.unwrap();
     let body: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(body["active_phase"], "validate");
     assert_eq!(body["active_task"], "task 1");
@@ -95,13 +101,16 @@ async fn put_with_project_path_syncs_state_yaml() {
     let tmp = tempfile::TempDir::new().unwrap();
     let sensei_dir = tmp.path().join(".sensei");
 
-    client.put(format!("{}/api/state/{}", daemon_url(), proj))
+    client
+        .put(format!("{}/api/state/{}", daemon_url(), proj))
         .json(&json!({
             "active_phase": "ideate",
             "active_task": "brainstorm feature",
             "project_path": tmp.path().to_string_lossy()
         }))
-        .send().await.unwrap();
+        .send()
+        .await
+        .unwrap();
 
     // Verify state.yaml was written
     let state_file = sensei_dir.join("state.yaml");

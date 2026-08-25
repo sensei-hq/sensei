@@ -36,8 +36,13 @@ describe('HealthView', () => {
     const state = new HealthState(needsAction());
     const m = mountComponent(HealthView, { state });
     cleanup.push(m.destroy);
-    expect(m.container.querySelector('header')).not.toBeNull();          // Header
-    expect(m.container.querySelector('section')).not.toBeNull();         // KanjiHeader renders <section>
+    // Both assertions used to key off bare tag names, which stopped meaning what
+    // their comments claimed: the `<section>` was KanjiHeader's root, and after it
+    // folded into PageHeader (a <header>) the check passed only because Remedy also
+    // renders a <section>. Three components in this tree render a <header>, so that
+    // one was ambiguous too. Keyed on the components themselves now.
+    expect(m.container.querySelector('[data-component="page-header"]')).not.toBeNull();
+    expect(m.container.querySelectorAll('header').length).toBeGreaterThanOrEqual(2); // Header + PageHeader
     // GateRow rows rendered for each gate
     expect(m.container.querySelectorAll('[data-component="gate-row"]').length).toBe(6);
   });

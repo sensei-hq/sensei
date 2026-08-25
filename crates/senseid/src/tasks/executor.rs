@@ -1,9 +1,9 @@
 //! Task executor — worker loop that pulls tasks from the queue and dispatches to handlers.
 
-use std::sync::Arc;
-use super::queue::TaskQueue;
-use super::{TaskKind, Task};
 use super::handlers;
+use super::queue::TaskQueue;
+use super::{Task, TaskKind};
+use std::sync::Arc;
 
 /// Shared state passed to task handlers.
 /// Wraps the same store/graph as the API routes via AppState.
@@ -29,7 +29,13 @@ pub fn spawn_workers(ctx: Arc<TaskContext>, n: usize) {
             tracing::info!("[task-worker-{}] started", worker_id);
             loop {
                 let task = ctx.queue.next_task().await;
-                tracing::debug!("[task-worker-{}] running {} for {} ({})", worker_id, task.kind, task.folder_path, task.path);
+                tracing::debug!(
+                    "[task-worker-{}] running {} for {} ({})",
+                    worker_id,
+                    task.kind,
+                    task.folder_path,
+                    task.path
+                );
                 // The retry handle is detached: the bounded retry (if any) runs
                 // on its own timer; the worker moves straight to the next task.
                 let _ = run_task(&ctx, worker_id, task).await;
@@ -68,22 +74,26 @@ async fn run_task(
 
 async fn execute_task(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
     let start = std::time::Instant::now();
-    let task_logger = ctx.logger.with_method(&task.kind.to_string())
-        .with_context(serde_json::json!({
+    let task_logger =
+        ctx.logger.with_method(&task.kind.to_string()).with_context(serde_json::json!({
             "task_id": task.id,
             "folder": &task.folder_path,
             "path": &task.path,
         }));
 
     // Record execution start in task_executions (fire-and-forget on failure)
-    let exec_id = match ctx.pg().start_task_execution(
-        task.id as i64,
-        task.parent_task_id.map(|id| id as i64),
-        &task.kind.to_string(),
-        &task.folder_path,
-        &task.path,
-        task.retry_number as i32,
-    ).await {
+    let exec_id = match ctx
+        .pg()
+        .start_task_execution(
+            task.id as i64,
+            task.parent_task_id.map(|id| id as i64),
+            &task.kind.to_string(),
+            &task.folder_path,
+            &task.path,
+            task.retry_number as i32,
+        )
+        .await
+    {
         Ok(id) => Some(id),
         Err(e) => {
             tracing::warn!(error = %e, task_id = task.id, kind = %task.kind, "failed to record task_execution start");
@@ -118,13 +128,15 @@ async fn execute_task(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
             TaskKind::DetectCommunities => handlers::detect_communities(ctx, task).await,
             TaskKind::ExtractDeps => handlers::extract_deps(ctx, task).await,
             TaskKind::MeasureVerdicts => handlers::measure_verdicts(ctx, task).await,
-            TaskKind::ReconcileIdentity => handlers::reconcile_identity(ctx, task).await,
+            TaskKind::ReconcileRepoMetadata => handlers::reconcile_repo_metadata(ctx, task).await,
             TaskKind::AnalyzeProject => handlers::analyze_project(ctx, task).await,
             TaskKind::AnalyzeSessionProcess => handlers::analyze_session_process(ctx, task).await,
             TaskKind::ScanDocDrift => handlers::scan_doc_drift(ctx, task).await,
             TaskKind::AggregateCorrections => handlers::aggregate_corrections(ctx, task).await,
             TaskKind::AggregateToolInsights => handlers::aggregate_tool_insights(ctx, task).await,
-            TaskKind::ClassifyPendingVerdicts => handlers::classify_pending_verdicts(ctx, task).await,
+            TaskKind::ClassifyPendingVerdicts => {
+                handlers::classify_pending_verdicts(ctx, task).await
+            }
             TaskKind::ConsolidateGovernance => handlers::consolidate_governance(ctx, task).await,
             TaskKind::WarmInsightCopy => handlers::warm_insight_copy(ctx, task).await,
             TaskKind::LearnPlaybooks => handlers::learn_playbooks(ctx, task).await,
@@ -134,8 +146,11 @@ async fn execute_task(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
             TaskKind::ComputeProjectMetrics => handlers::metrics::compute_project(ctx, task).await,
             TaskKind::ComputeGroupMetrics => handlers::metrics::compute_group(ctx, task).await,
             TaskKind::ComputeHealth => handlers::metrics::compute_health(ctx, task).await,
-            TaskKind::BackfillTranscripts => crate::transcript::run_backfill(ctx, task).await,
-            TaskKind::BackfillTranscriptFile => crate::transcript::run_backfill_file(ctx, task).await,
+            TaskKind::IngestCaptures => crate::transcript::run_backfill(ctx, task).await,
+            TaskKind::IngestCapture => crate::transcript::run_ingest_capture(ctx, task).await,
+            TaskKind::BackfillCoverage => {
+                handlers::metrics::coverage::run_backfill(ctx, task).await
+            }
         }
     };
     let cap = task.kind.watchdog_timeout();
@@ -143,7 +158,9 @@ async fn execute_task(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
         Ok(r) => r,
         Err(_) => Err(format!(
             "watchdog: {} task #{} exceeded {}s and was abandoned (worker freed; retry/backfill)",
-            task.kind, task.id, cap.as_secs()
+            task.kind,
+            task.id,
+            cap.as_secs()
         )),
     };
 
@@ -153,22 +170,36 @@ async fn execute_task(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
     match &result {
         Ok(items) => {
             if let Some(eid) = &exec_id
-                && let Err(e) = ctx.pg().complete_task_execution(eid, *items as i32, duration_ms).await {
-                    tracing::warn!(error = %e, task_id = task.id, kind = %task.kind, "failed to record task_execution completion");
-                }
-            task_logger.info("task_completed", Some(serde_json::json!({
-                "duration_ms": duration_ms,
-                "items_processed": items,
-            }))).await;
+                && let Err(e) =
+                    ctx.pg().complete_task_execution(eid, *items as i32, duration_ms).await
+            {
+                tracing::warn!(error = %e, task_id = task.id, kind = %task.kind, "failed to record task_execution completion");
+            }
+            task_logger
+                .info(
+                    "task_completed",
+                    Some(serde_json::json!({
+                        "duration_ms": duration_ms,
+                        "items_processed": items,
+                    })),
+                )
+                .await;
         }
         Err(e) => {
             if let Some(eid) = &exec_id
-                && let Err(db_err) = ctx.pg().fail_task_execution(eid, duration_ms, e).await {
-                    tracing::warn!(error = %db_err, task_id = task.id, kind = %task.kind, "failed to record task_execution failure");
-                }
-            task_logger.error("task_failed", Some(serde_json::json!({
-                "duration_ms": duration_ms,
-            })), Some(serde_json::json!({"message": e}))).await;
+                && let Err(db_err) = ctx.pg().fail_task_execution(eid, duration_ms, e).await
+            {
+                tracing::warn!(error = %db_err, task_id = task.id, kind = %task.kind, "failed to record task_execution failure");
+            }
+            task_logger
+                .error(
+                    "task_failed",
+                    Some(serde_json::json!({
+                        "duration_ms": duration_ms,
+                    })),
+                    Some(serde_json::json!({"message": e})),
+                )
+                .await;
         }
     }
 
@@ -178,7 +209,6 @@ async fn execute_task(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
 
     /// Build a TaskContext backed by PgStore and a fresh TaskQueue.
     use crate::tasks::test_support::make_ctx;
@@ -215,7 +245,8 @@ mod tests {
     async fn execute_task_dispatches_delete_folder() {
         let ctx = make_ctx().await;
         {
-            let root_id = ctx.pg().add_watch_root("/tmp/repo", "test", &serde_json::json!([])).await.unwrap();
+            let root_id =
+                ctx.pg().add_watch_root("/tmp/repo", "test", &serde_json::json!([])).await.unwrap();
             ctx.pg().upsert_repo(&root_id, "repo", "/tmp/repo").await.unwrap();
         }
         let task = Task::new(TaskKind::DeleteFolder, "repo", "/tmp/repo/src");
@@ -227,7 +258,8 @@ mod tests {
     async fn execute_task_dispatches_resolve_libs() {
         let ctx = make_ctx().await;
         {
-            let root_id = ctx.pg().add_watch_root("/tmp/repo", "test", &serde_json::json!([])).await.unwrap();
+            let root_id =
+                ctx.pg().add_watch_root("/tmp/repo", "test", &serde_json::json!([])).await.unwrap();
             ctx.pg().upsert_repo(&root_id, "repo", "/tmp/repo").await.unwrap();
         }
         let task = Task::new(TaskKind::ResolveLibs, "repo", "");
@@ -239,7 +271,8 @@ mod tests {
     async fn execute_task_dispatches_build_connections() {
         let ctx = make_ctx().await;
         {
-            let root_id = ctx.pg().add_watch_root("/tmp/repo", "test", &serde_json::json!([])).await.unwrap();
+            let root_id =
+                ctx.pg().add_watch_root("/tmp/repo", "test", &serde_json::json!([])).await.unwrap();
             ctx.pg().upsert_repo(&root_id, "repo", "/tmp/repo").await.unwrap();
         }
         let task = Task::new(TaskKind::BuildConnections, "repo", "");
@@ -275,7 +308,7 @@ mod tests {
         let task = Task::new(TaskKind::ScanDocDrift, "", "not-a-uuid");
         let result = execute_task(&ctx, &task).await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("invalid project id"));
+        assert!(result.unwrap_err().contains("expected a project id"));
     }
 
     #[tokio::test]
@@ -286,13 +319,22 @@ mod tests {
         // handler classifies the session and it drops out of the pending set.
         let sid = format!("_test-exec-classify-{}", uuid::Uuid::new_v4());
         let now = chrono::Utc::now().timestamp_millis();
-        ctx.pg().insert_hook_event(
-            &sid, "claude", "PostToolUse", Some("Read"), None, now, Some(true),
-            &serde_json::json!({
-                "tool_input": {"file_path": "crates/senseid/src/db/pg_store.rs"},
-                "tool_response": "see crates/senseid/src/db/pg_store.rs:3421",
-            }),
-        ).await.unwrap();
+        ctx.pg()
+            .insert_hook_event(
+                &sid,
+                "claude",
+                "PostToolUse",
+                Some("Read"),
+                None,
+                now,
+                Some(true),
+                &serde_json::json!({
+                    "tool_input": {"file_path": "crates/senseid/src/db/pg_store.rs"},
+                    "tool_response": "see crates/senseid/src/db/pg_store.rs:3421",
+                }),
+            )
+            .await
+            .unwrap();
         ctx.pg().insert_hook_event(
             &sid, "claude", "PreToolUse", Some("Edit"), None, now + 1, None,
             &serde_json::json!({"tool_input": {"file_path": "crates/senseid/src/db/pg_store.rs"}}),
@@ -327,36 +369,56 @@ mod tests {
         // ComputeGroupMetrics (known group) → compute_group (the per-group child).
         probe::reset();
         let group = Task::new(TaskKind::ComputeGroupMetrics, &pid, "session_outcomes");
-        assert!(execute_task(&ctx, &group).await.is_ok(),
-            "ComputeGroupMetrics routes to the metrics group-compute handler");
-        assert_eq!(probe::take(), Some("compute_group"),
-            "ComputeGroupMetrics must dispatch to compute_group, not compute_health");
+        assert!(
+            execute_task(&ctx, &group).await.is_ok(),
+            "ComputeGroupMetrics routes to the metrics group-compute handler"
+        );
+        assert_eq!(
+            probe::take(),
+            Some("compute_group"),
+            "ComputeGroupMetrics must dispatch to compute_group, not compute_health"
+        );
 
         // ComputeGroupMetrics (unknown group) → still compute_group (routed),
         // logged no-op — the dispatch never panics on an unrecognised task_name.
         probe::reset();
         let unknown = Task::new(TaskKind::ComputeGroupMetrics, &pid, "no_such_group");
-        assert!(execute_task(&ctx, &unknown).await.is_ok(),
-            "an unknown metrics task_name is a logged no-op, not a queue error");
-        assert_eq!(probe::take(), Some("compute_group"),
-            "an unknown group still routes through compute_group");
+        assert!(
+            execute_task(&ctx, &unknown).await.is_ok(),
+            "an unknown metrics task_name is a logged no-op, not a queue error"
+        );
+        assert_eq!(
+            probe::take(),
+            Some("compute_group"),
+            "an unknown group still routes through compute_group"
+        );
 
         // ComputeHealth → compute_health (the barrier).
         probe::reset();
         let health = Task::new(TaskKind::ComputeHealth, &pid, "");
-        assert!(execute_task(&ctx, &health).await.is_ok(),
-            "ComputeHealth routes to the metrics health handler");
-        assert_eq!(probe::take(), Some("compute_health"),
-            "ComputeHealth must dispatch to compute_health, not compute_group");
+        assert!(
+            execute_task(&ctx, &health).await.is_ok(),
+            "ComputeHealth routes to the metrics health handler"
+        );
+        assert_eq!(
+            probe::take(),
+            Some("compute_health"),
+            "ComputeHealth must dispatch to compute_health, not compute_group"
+        );
 
         // ComputeProjectMetrics → compute_project (the per-project parent), NOT a
         // child group-compute or the health barrier.
         probe::reset();
         let project = Task::new(TaskKind::ComputeProjectMetrics, &pid, "");
-        assert!(execute_task(&ctx, &project).await.is_ok(),
-            "ComputeProjectMetrics routes to the metrics project-parent handler");
-        assert_eq!(probe::take(), Some("compute_project"),
-            "ComputeProjectMetrics must dispatch to compute_project");
+        assert!(
+            execute_task(&ctx, &project).await.is_ok(),
+            "ComputeProjectMetrics routes to the metrics project-parent handler"
+        );
+        assert_eq!(
+            probe::take(),
+            Some("compute_project"),
+            "ComputeProjectMetrics must dispatch to compute_project"
+        );
     }
 
     #[tokio::test]
@@ -368,7 +430,8 @@ mod tests {
         let ctx = make_ctx().await;
         {
             let repo_path = tmp.path().to_string_lossy().to_string();
-            let root_id = ctx.pg().add_watch_root(&repo_path, "test", &serde_json::json!([])).await.unwrap();
+            let root_id =
+                ctx.pg().add_watch_root(&repo_path, "test", &serde_json::json!([])).await.unwrap();
             ctx.pg().upsert_repo(&root_id, "repo", &repo_path).await.unwrap();
         }
 
@@ -387,7 +450,8 @@ mod tests {
         // ProcessGitFolder is retryable → run_task returns a scheduled retry.
         let ctx = make_ctx().await;
         let task = Task::new(TaskKind::ProcessGitFolder, "/nonexistent/repo", "/nonexistent/repo");
-        let handle = run_task(&ctx, 0, task).await
+        let handle = run_task(&ctx, 0, task)
+            .await
             .expect("a failed retryable task schedules a bounded retry");
         handle.abort(); // don't wait out the real backoff
     }
@@ -398,8 +462,10 @@ mod tests {
         // kind (a deleted root is permanent) → terminal, no retry scheduled.
         let ctx = make_ctx().await;
         let task = Task::new(TaskKind::ScanRoot, "", "/nonexistent/path");
-        assert!(run_task(&ctx, 0, task).await.is_none(),
-            "a non-retryable kind's failure is terminal");
+        assert!(
+            run_task(&ctx, 0, task).await.is_none(),
+            "a non-retryable kind's failure is terminal"
+        );
     }
 
     #[tokio::test]
@@ -408,8 +474,7 @@ mod tests {
         // schedules a retry.
         let ctx = make_ctx().await;
         let task = Task::new(TaskKind::DeleteFile, "repo", "/some/file.rs");
-        assert!(run_task(&ctx, 0, task).await.is_none(),
-            "a successful task schedules no retry");
+        assert!(run_task(&ctx, 0, task).await.is_none(), "a successful task schedules no retry");
     }
 
     #[tokio::test]
@@ -417,10 +482,10 @@ mod tests {
         // A retryable kind that has already hit MAX_RETRIES is terminal — the
         // bounded cap holds at the worker boundary, not just in the policy.
         let ctx = make_ctx().await;
-        let mut task = Task::new(TaskKind::ProcessGitFolder, "/nonexistent/repo", "/nonexistent/repo");
+        let mut task =
+            Task::new(TaskKind::ProcessGitFolder, "/nonexistent/repo", "/nonexistent/repo");
         task.retry_number = super::super::retry::MAX_RETRIES;
-        assert!(run_task(&ctx, 0, task).await.is_none(),
-            "an exhausted retryable task is terminal");
+        assert!(run_task(&ctx, 0, task).await.is_none(), "an exhausted retryable task is terminal");
     }
 
     #[tokio::test]
@@ -429,7 +494,8 @@ mod tests {
         let unique = format!("test-ctx-{}", std::process::id());
         let path = format!("/tmp/{}", unique);
         {
-            let root_id = ctx.pg().add_watch_root(&path, &unique, &serde_json::json!([])).await.unwrap();
+            let root_id =
+                ctx.pg().add_watch_root(&path, &unique, &serde_json::json!([])).await.unwrap();
             ctx.pg().upsert_repo(&root_id, &unique, &path).await.unwrap();
             let p = ctx.pg().get_repo_by_name(&unique).await.unwrap();
             assert!(p.is_some());

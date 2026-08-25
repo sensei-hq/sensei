@@ -1,10 +1,10 @@
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::io::{BufRead, Write};
 
 use sensei_mcp::{
-    build_log_event_body, daemon_request_for, handle_initialize, handle_list_tools,
-    resolve_active_project_in, resolve_default_project, resolve_from_cwd_in, resolve_project_in,
-    ActiveProject, DaemonRequest, HttpMethod, ProjectResolution,
+    ActiveProject, DaemonRequest, HttpMethod, ProjectResolution, build_log_event_body,
+    daemon_request_for, handle_initialize, handle_list_tools, resolve_active_project_in,
+    resolve_default_project, resolve_from_cwd_in, resolve_project_in,
 };
 
 /// The active-project pin for THIS MCP session, held in memory — NOT a file.
@@ -31,10 +31,14 @@ fn daemon_url() -> String {
 fn daemon_result(result: reqwest::Result<reqwest::blocking::Response>) -> Value {
     match result {
         Ok(resp) if resp.status().is_success() => match resp.json::<Value>() {
-            Ok(data) => json!({"content": [{"type": "text", "text": serde_json::to_string_pretty(&data).unwrap_or_default()}]}),
+            Ok(data) => {
+                json!({"content": [{"type": "text", "text": serde_json::to_string_pretty(&data).unwrap_or_default()}]})
+            }
             // A 2xx with an unreadable body is a real failure — surface it, don't
             // hand the LLM a fabricated empty `{}` that reads as a genuine result.
-            Err(e) => json!({"content": [{"type": "text", "text": format!("Daemon returned an unreadable success response: {e}")}], "isError": true}),
+            Err(e) => {
+                json!({"content": [{"type": "text", "text": format!("Daemon returned an unreadable success response: {e}")}], "isError": true})
+            }
         },
         // Non-2xx: surface the daemon's error MESSAGE, not just the status. The daemon
         // returns `{"error": "..."}` on a 400 (e.g. a bad register_plan graph — "duplicate
@@ -53,7 +57,9 @@ fn daemon_result(result: reqwest::Result<reqwest::blocking::Response>) -> Value 
             };
             json!({"content": [{"type": "text", "text": text}], "isError": true})
         }
-        Err(e) => json!({"content": [{"type": "text", "text": format!("Cannot reach senseid daemon: {}", e)}], "isError": true}),
+        Err(e) => {
+            json!({"content": [{"type": "text", "text": format!("Cannot reach senseid daemon: {}", e)}], "isError": true})
+        }
     }
 }
 
@@ -106,16 +112,16 @@ fn main() {
         .expect("failed to create HTTP client");
 
     // Detect current project from CWD
-    let cwd = std::env::current_dir()
-        .map(|p| p.to_string_lossy().to_string())
-        .unwrap_or_default();
+    let cwd = std::env::current_dir().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
 
     for line in stdin.lock().lines() {
         let line = match line {
             Ok(l) => l,
             Err(_) => break,
         };
-        if line.trim().is_empty() { continue; }
+        if line.trim().is_empty() {
+            continue;
+        }
 
         let request: Value = match serde_json::from_str(&line) {
             Ok(v) => v,
@@ -171,21 +177,25 @@ fn handle_call_tool(params: &Value, client: &reqwest::blocking::Client, cwd: &st
     } else {
         match resolve_project(project_hint, client) {
             Ok(Some(name)) => Some(name),
-            Ok(None) => return json!({
-                "content": [{"type": "text", "text": format!(
-                    "Project '{}' not found. Use the list_projects tool to see available projects.",
-                    project_hint
-                )}],
-                "isError": true
-            }),
+            Ok(None) => {
+                return json!({
+                    "content": [{"type": "text", "text": format!(
+                        "Project '{}' not found. Use the list_projects tool to see available projects.",
+                        project_hint
+                    )}],
+                    "isError": true
+                });
+            }
             // Daemon unreachable/unreadable — do NOT report the project as missing.
-            Err(e) => return json!({
-                "content": [{"type": "text", "text": format!(
-                    "Could not resolve project '{}': {}. The daemon may be starting or unreachable — retry shortly (this does NOT mean the project is absent).",
-                    project_hint, e
-                )}],
-                "isError": true
-            }),
+            Err(e) => {
+                return json!({
+                    "content": [{"type": "text", "text": format!(
+                        "Could not resolve project '{}': {}. The daemon may be starting or unreachable — retry shortly (this does NOT mean the project is absent).",
+                        project_hint, e
+                    )}],
+                    "isError": true
+                });
+            }
         }
     };
     // Only read the pin + resolve cwd when there's no explicit arg (explicit wins).
@@ -234,14 +244,15 @@ fn handle_call_tool(params: &Value, client: &reqwest::blocking::Client, cwd: &st
                 "max_tokens": max_tokens,
             });
 
-            let result = client.post(format!("{}/api/gateway/infer", daemon_url()))
-                .json(&body)
-                .send();
+            let result =
+                client.post(format!("{}/api/gateway/infer", daemon_url())).json(&body).send();
 
             match result {
                 Ok(resp) if resp.status().is_success() => match resp.json::<Value>() {
                     // Unreadable 2xx → surface it, never pretty-print a fabricated `{}`.
-                    Err(e) => json!({"content": [{"type": "text", "text": format!("Daemon returned an unreadable inference response: {e}")}], "isError": true}),
+                    Err(e) => {
+                        json!({"content": [{"type": "text", "text": format!("Daemon returned an unreadable inference response: {e}")}], "isError": true})
+                    }
                     Ok(data) => {
                         if let Some(content) = data["content"].as_str() {
                             json!({"content": [{"type": "text", "text": content}]})
@@ -251,9 +262,13 @@ fn handle_call_tool(params: &Value, client: &reqwest::blocking::Client, cwd: &st
                             json!({"content": [{"type": "text", "text": serde_json::to_string_pretty(&data).unwrap_or_default()}]})
                         }
                     }
+                },
+                Ok(resp) => {
+                    json!({"content": [{"type": "text", "text": format!("Daemon error: HTTP {}", resp.status())}], "isError": true})
                 }
-                Ok(resp) => json!({"content": [{"type": "text", "text": format!("Daemon error: HTTP {}", resp.status())}], "isError": true}),
-                Err(e) => json!({"content": [{"type": "text", "text": format!("Cannot reach senseid daemon: {}", e)}], "isError": true}),
+                Err(e) => {
+                    json!({"content": [{"type": "text", "text": format!("Cannot reach senseid daemon: {}", e)}], "isError": true})
+                }
             }
         }
 
@@ -267,9 +282,8 @@ fn handle_call_tool(params: &Value, client: &reqwest::blocking::Client, cwd: &st
                 "model": model,
             });
 
-            let result = client.post(format!("{}/api/gateway/embed", daemon_url()))
-                .json(&body)
-                .send();
+            let result =
+                client.post(format!("{}/api/gateway/embed", daemon_url())).json(&body).send();
 
             daemon_result(result)
         }
@@ -308,7 +322,9 @@ fn handle_call_tool(params: &Value, client: &reqwest::blocking::Client, cwd: &st
             match result {
                 Ok(resp) if resp.status().is_success() => match resp.json::<Value>() {
                     // Unreadable 2xx → surface it, never a fabricated `{}`.
-                    Err(e) => json!({"content": [{"type": "text", "text": format!("Daemon returned an unreadable consensus response: {e}")}], "isError": true}),
+                    Err(e) => {
+                        json!({"content": [{"type": "text", "text": format!("Daemon returned an unreadable consensus response: {e}")}], "isError": true})
+                    }
                     Ok(data) => {
                         let text = if let Some(conclusion) = data["conclusion"].as_str() {
                             let confidence = data["confidence"].as_str().unwrap_or("unknown");
@@ -327,16 +343,22 @@ fn handle_call_tool(params: &Value, client: &reqwest::blocking::Client, cwd: &st
                         };
                         json!({"content": [{"type": "text", "text": text}]})
                     }
+                },
+                Ok(resp) => {
+                    json!({"content": [{"type": "text", "text": format!("Daemon error: HTTP {}", resp.status())}], "isError": true})
                 }
-                Ok(resp) => json!({"content": [{"type": "text", "text": format!("Daemon error: HTTP {}", resp.status())}], "isError": true}),
-                Err(e) => json!({"content": [{"type": "text", "text": format!("Cannot reach senseid daemon: {}", e)}], "isError": true}),
+                Err(e) => {
+                    json!({"content": [{"type": "text", "text": format!("Cannot reach senseid daemon: {}", e)}], "isError": true})
+                }
             }
         }
 
         "generate_image" => {
             let prompt = match args["prompt"].as_str() {
                 Some(p) if !p.is_empty() => p.to_string(),
-                _ => return json!({"content": [{"type": "text", "text": "prompt is required"}], "isError": true}),
+                _ => {
+                    return json!({"content": [{"type": "text", "text": "prompt is required"}], "isError": true});
+                }
             };
 
             // Resolve relative output_path against CWD so the daemon only sees absolute paths.
@@ -361,13 +383,15 @@ fn handle_call_tool(params: &Value, client: &reqwest::blocking::Client, cwd: &st
             };
 
             let mut body = json!({ "prompt": prompt });
-            if let Some(p) = output_path { body["output_path"] = json!(p); }
+            if let Some(p) = output_path {
+                body["output_path"] = json!(p);
+            }
             for (key, name) in [
-                (args.get("model"),   "model"),
-                (args.get("router"),  "router"),
-                (args.get("size"),    "size"),
+                (args.get("model"), "model"),
+                (args.get("router"), "router"),
+                (args.get("size"), "size"),
                 (args.get("quality"), "quality"),
-                (args.get("style"),   "style"),
+                (args.get("style"), "style"),
             ] {
                 if let Some(v) = key.and_then(|x| x.as_str()).filter(|s| !s.is_empty()) {
                     body[name] = json!(v);
@@ -385,7 +409,8 @@ fn handle_call_tool(params: &Value, client: &reqwest::blocking::Client, cwd: &st
                 .build()
                 .unwrap_or_else(|_| client.clone());
 
-            let result = image_client.post(format!("{}/api/gateway/image/generate", daemon_url()))
+            let result = image_client
+                .post(format!("{}/api/gateway/image/generate", daemon_url()))
                 .json(&body)
                 .send();
             daemon_result(result)
@@ -436,12 +461,14 @@ fn handle_use_project(args: &Value, client: &reqwest::blocking::Client) -> Value
     }
     let projects = match get_projects(client) {
         Ok(p) => p,
-        Err(e) => return json!({
-            "content": [{"type": "text", "text": format!(
-                "Could not reach the daemon to resolve '{hint}': {e}. Retry shortly (not a 'project missing')."
-            )}],
-            "isError": true
-        }),
+        Err(e) => {
+            return json!({
+                "content": [{"type": "text", "text": format!(
+                    "Could not reach the daemon to resolve '{hint}': {e}. Retry shortly (not a 'project missing')."
+                )}],
+                "isError": true
+            });
+        }
     };
     let Some(pin) = resolve_active_project_in(&projects, hint) else {
         return json!({
@@ -465,7 +492,10 @@ fn handle_use_project(args: &Value, client: &reqwest::blocking::Client) -> Value
 /// clear error to the LLM rather than silently forwarding an arbitrary string.
 /// `Ok(Some(name))` = resolved, `Ok(None)` = genuinely not found, `Err` = the
 /// daemon couldn't be reached/read (so the caller must NOT say "not found").
-fn resolve_project(hint: &str, client: &reqwest::blocking::Client) -> Result<Option<String>, String> {
+fn resolve_project(
+    hint: &str,
+    client: &reqwest::blocking::Client,
+) -> Result<Option<String>, String> {
     Ok(resolve_project_in(&get_projects(client)?, hint))
 }
 
@@ -499,6 +529,5 @@ fn get_projects(client: &reqwest::blocking::Client) -> Result<Vec<Value>, String
     if !resp.status().is_success() {
         return Err(format!("daemon returned HTTP {} for /api/projects", resp.status()));
     }
-    resp.json::<Vec<Value>>()
-        .map_err(|e| format!("unreadable /api/projects response: {e}"))
+    resp.json::<Vec<Value>>().map_err(|e| format!("unreadable /api/projects response: {e}"))
 }

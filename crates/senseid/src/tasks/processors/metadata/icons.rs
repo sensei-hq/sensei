@@ -1,7 +1,7 @@
 //! Icon/logo detection for repos.
 
-use std::path::Path;
 use serde::Serialize;
+use std::path::Path;
 
 /// Detected icon/logo for a project.
 #[derive(Debug, Clone, Serialize, Default)]
@@ -26,15 +26,19 @@ pub struct IconResult {
 ///
 /// For each match, also checks for dark variant (`-dark`, `_dark`, `.dark`).
 pub fn scan_icons(repo_path: &Path) -> IconResult {
-    let repo_name = repo_path.file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("")
-        .to_lowercase();
+    let repo_name = repo_path.file_name().and_then(|n| n.to_str()).unwrap_or("").to_lowercase();
 
     let icon_names = [
-        "logo.svg", "logo.png", "icon.svg", "icon.png",
-        "app-icon.svg", "app-icon.png", "Logo.svg", "Logo.png",
-        "Icon.svg", "Icon.png",
+        "logo.svg",
+        "logo.png",
+        "icon.svg",
+        "icon.png",
+        "app-icon.svg",
+        "app-icon.png",
+        "Logo.svg",
+        "Logo.png",
+        "Icon.svg",
+        "Icon.png",
     ];
 
     // 1. Root-level exact names
@@ -58,8 +62,16 @@ pub fn scan_icons(repo_path: &Path) -> IconResult {
 
     // 3. Convention directories (1 level) — generic names + repo-name prefix
     let dirs = [
-        "assets", "public", "static", ".github", "brand", "branding",
-        "img", "images", "resources", "res",
+        "assets",
+        "public",
+        "static",
+        ".github",
+        "brand",
+        "branding",
+        "img",
+        "images",
+        "resources",
+        "res",
     ];
     for dir in &dirs {
         if let Some(result) = scan_dir_for_icons(repo_path, dir, &icon_names) {
@@ -72,8 +84,14 @@ pub fn scan_icons(repo_path: &Path) -> IconResult {
 
     // 4. Nested convention dirs (2 levels) — generic names + repo-name prefix
     let nested_dirs = [
-        "src/assets", "src/images", "src/img", "src/resources",
-        "app/assets", "lib/assets", "site/static", "site/assets",
+        "src/assets",
+        "src/images",
+        "src/img",
+        "src/resources",
+        "app/assets",
+        "lib/assets",
+        "site/static",
+        "site/assets",
     ];
     for dir in &nested_dirs {
         if let Some(result) = scan_dir_for_icons(repo_path, dir, &icon_names) {
@@ -89,7 +107,9 @@ pub fn scan_icons(repo_path: &Path) -> IconResult {
     let tauri_icons = repo_path.join("src-tauri/icons");
     if tauri_icons.is_dir() {
         // Prefer SVG > PNG > ICO, prefer larger sizes
-        for name in &["icon.svg", "icon.png", "512x512.png", "256x256.png", "128x128.png", "icon.ico"] {
+        for name in
+            &["icon.svg", "icon.png", "512x512.png", "256x256.png", "128x128.png", "icon.ico"]
+        {
             if tauri_icons.join(name).is_file() {
                 let full = format!("src-tauri/icons/{}", name);
                 return IconResult {
@@ -140,7 +160,9 @@ pub fn scan_icons(repo_path: &Path) -> IconResult {
 /// Scan a specific directory for icon files. Returns the first match.
 fn scan_dir_for_icons(repo_path: &Path, dir: &str, icon_names: &[&str]) -> Option<IconResult> {
     let dir_path = repo_path.join(dir);
-    if !dir_path.is_dir() { return None; }
+    if !dir_path.is_dir() {
+        return None;
+    }
     for name in icon_names {
         let full = format!("{}/{}", dir, name);
         if repo_path.join(&full).is_file() {
@@ -159,23 +181,33 @@ fn scan_dir_for_icons(repo_path: &Path, dir: &str, icon_names: &[&str]) -> Optio
 /// `subdir` is "" for root, or "assets" etc.
 fn scan_repo_name_icons(repo_path: &Path, repo_name: &str, subdir: &str) -> Option<IconResult> {
     let scan_dir = if subdir.is_empty() { repo_path.to_path_buf() } else { repo_path.join(subdir) };
-    if !scan_dir.is_dir() { return None; }
+    if !scan_dir.is_dir() {
+        return None;
+    }
 
     let entries = std::fs::read_dir(&scan_dir).ok()?;
     let mut candidates: Vec<(String, String, u8)> = Vec::new(); // (rel_path, filename, priority)
 
     for entry in entries.flatten() {
-        if !entry.path().is_file() { continue; }
+        if !entry.path().is_file() {
+            continue;
+        }
         let fname = entry.file_name().to_string_lossy().to_lowercase();
 
         // Must be an image file starting with repo name
-        if !fname.starts_with(repo_name) { continue; }
+        if !fname.starts_with(repo_name) {
+            continue;
+        }
         let path = entry.path();
         let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-        if !matches!(ext, "svg" | "png" | "ico") { continue; }
+        if !matches!(ext, "svg" | "png" | "ico") {
+            continue;
+        }
 
         // Skip dark/light/black/white variants — these are alternates, not primary
-        if is_variant_name(&fname, repo_name) { continue; }
+        if is_variant_name(&fname, repo_name) {
+            continue;
+        }
 
         let rel = if subdir.is_empty() {
             entry.file_name().to_string_lossy().to_string()
@@ -210,7 +242,10 @@ fn scan_repo_name_icons(repo_path: &Path, repo_name: &str, subdir: &str) -> Opti
 /// Check if a filename is a dark/light/black/white variant (not a primary icon).
 pub(crate) fn is_variant_name(fname: &str, repo_name: &str) -> bool {
     let suffix = &fname[repo_name.len()..];
-    let variant_markers = ["-dark", "-light", "-black", "-white", "_dark", "_light", "_black", "_white", ".dark", ".light"];
+    let variant_markers = [
+        "-dark", "-light", "-black", "-white", "_dark", "_light", "_black", "_white", ".dark",
+        ".light",
+    ];
     variant_markers.iter().any(|m| suffix.starts_with(m))
 }
 
@@ -220,9 +255,12 @@ fn has_repo_name_dark_variant(dir: &Path, repo_name: &str) -> bool {
         for entry in entries.flatten() {
             let fname = entry.file_name().to_string_lossy().to_lowercase();
             if let Some(suffix) = fname.strip_prefix(repo_name)
-                && (suffix.starts_with("-dark") || suffix.starts_with("_dark") || suffix.starts_with(".dark")) {
-                    return true;
-                }
+                && (suffix.starts_with("-dark")
+                    || suffix.starts_with("_dark")
+                    || suffix.starts_with(".dark"))
+            {
+                return true;
+            }
         }
     }
     false
