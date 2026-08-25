@@ -99,9 +99,30 @@ pub fn store_refresh_token(persona: &str, token: &str) -> Result<(), crate::gate
     keychain_write(KEYCHAIN_SERVICE, &account_for(persona), token)
 }
 
-/// Read the stored refresh token, if the user has signed in.
+/// The single un-namespaced slot used before sessions became per-persona.
+const LEGACY_ACCOUNT: &str = "refresh_token";
+
+/// Read the stored refresh token, if this persona has signed in.
+///
+/// Falls back to the pre-persona slot ONCE and migrates it forward. Without this
+/// the rename would strand an existing session in the Keychain: unreachable by
+/// the daemon, invisible in the UI, and impossible to sign out of — a credential
+/// left behind with no way to revoke it.
 pub fn load_refresh_token(persona: &str) -> Result<String, crate::gateway_keys::KeychainError> {
-    keychain_read(KEYCHAIN_SERVICE, &account_for(persona))
+    match keychain_read(KEYCHAIN_SERVICE, &account_for(persona)) {
+        Ok(t) => Ok(t),
+        Err(_) => {
+            let legacy = keychain_read(KEYCHAIN_SERVICE, LEGACY_ACCOUNT)?;
+            // Move it under the persona, then drop the old slot so the migration
+            // happens once and no orphan credential lingers.
+            keychain_write(KEYCHAIN_SERVICE, &account_for(persona), &legacy)?;
+            let _ = std::process::Command::new("/usr/bin/security")
+                .args(["delete-generic-password", "-s", KEYCHAIN_SERVICE, "-a", LEGACY_ACCOUNT])
+                .output();
+            tracing::info!(persona, "migrated a pre-persona Supabase session into its own slot");
+            Ok(legacy)
+        }
+    }
 }
 
 /// Forget the session — sign-out, or a refresh token the server has rejected.

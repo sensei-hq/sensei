@@ -43,6 +43,11 @@ static PENDING_VERIFIER: Mutex<Option<(String, String)>> = Mutex::new(None);
 pub(crate) struct PersonaQuery {
     #[serde(default = "default_persona")]
     persona: String,
+    /// Which GitHub account to suggest. Without it the browser's existing
+    /// session is reused, so connecting a SECOND persona quietly links the
+    /// first account again — a success as the wrong person.
+    #[serde(default)]
+    github_login: Option<String>,
 }
 fn default_persona() -> String { "default".to_string() }
 
@@ -79,15 +84,27 @@ pub(crate) async fn signin(Query(p): Query<PersonaQuery>) -> Json<serde_json::Va
         }));
     }
     let challenge = pkce::challenge_for(&verifier);
-    let url = pkce::authorize_url(
+    let mut url = pkce::authorize_url(
         &supabase_url(),
         "github",
         &callback_url(),
         &challenge,
         EXTRA_SCOPES,
     );
+    if let Some(login) = p.github_login.as_deref().filter(|l| !l.is_empty()) {
+        url = pkce::with_login_hint(&url, login);
+    }
     *PENDING_VERIFIER.lock().unwrap_or_else(|e| e.into_inner()) = Some((p.persona.clone(), verifier));
-    Json(serde_json::json!({ "authorizeUrl": url, "callback": callback_url(), "persona": p.persona }))
+    Json(serde_json::json!({
+        "authorizeUrl": url,
+        "callback": callback_url(),
+        "persona": p.persona,
+        // The hint is not a guarantee — GitHub suggests the account rather than
+        // forcing a re-auth — so the caller should show which identity is
+        // expected and offer a private window as the certain path.
+        "expectedLogin": p.github_login,
+        "hint": "if the browser is already signed in to another GitHub account, use a private window",
+    }))
 }
 
 #[derive(Deserialize)]
