@@ -189,6 +189,12 @@ pub fn create_router(state: AppState) -> Router {
         // resolve. Both answer from the durable `activity.task_executions` log,
         // so they work after the run and across a daemon restart; the firehose
         // above is live-only and tells a late subscriber nothing.
+        // Dōjō sign-in (PKCE + loopback). The callback path must stay in
+        // Supabase's additional_redirect_urls — it compares exact strings.
+        .route("/api/auth/signin", post(crate::api::handlers::auth::signin))
+        .route("/api/auth/callback", get(crate::api::handlers::auth::callback))
+        .route("/api/auth/signout", post(crate::api::handlers::auth::signout))
+        .route("/api/auth/status", get(crate::api::handlers::auth::status))
         .route("/api/tasks/kinds", get(crate::api::handlers::tasks::list_kinds))
         .route("/api/tasks/{id}", get(crate::api::handlers::tasks::get_task))
         .route("/api/tasks/{id}/events", get(crate::api::handlers::tasks::task_events))

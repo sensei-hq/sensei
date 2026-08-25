@@ -10,6 +10,7 @@ mod watcher;
 mod api;
 mod tasks;
 mod transcript;
+mod supabase;
 mod governance;
 mod materialize;
 mod review;
