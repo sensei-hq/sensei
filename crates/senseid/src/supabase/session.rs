@@ -29,6 +29,34 @@ fn account_for(persona: &str) -> String {
     format!("refresh_token.{}", persona.to_lowercase())
 }
 
+/// Slot for the PROVIDER token (GitHub's), kept apart from Supabase's.
+///
+/// A separate secret with a different lifetime and blast radius: it can read the
+/// user's repositories and organisations, so it gets its own slot rather than
+/// being bundled — revoking one should not require discarding the other.
+fn provider_account_for(persona: &str) -> String {
+    format!("provider_token.{}", persona.to_lowercase())
+}
+
+/// Persist the GitHub token. Keychain, never Postgres — same rule as the refresh
+/// token, and more important here because this one reaches GitHub directly.
+pub fn store_provider_token(persona: &str, token: &str) -> Result<(), crate::gateway_keys::KeychainError> {
+    keychain_write(KEYCHAIN_SERVICE, &provider_account_for(persona), token)
+}
+
+/// The GitHub token for a persona, if the sign-in captured one.
+pub fn load_provider_token(persona: &str) -> Result<String, crate::gateway_keys::KeychainError> {
+    keychain_read(KEYCHAIN_SERVICE, &provider_account_for(persona))
+}
+
+/// Store GitHub's refresh token, when one was issued.
+pub fn store_provider_refresh_token(
+    persona: &str,
+    token: &str,
+) -> Result<(), crate::gateway_keys::KeychainError> {
+    keychain_write(KEYCHAIN_SERVICE, &format!("provider_refresh.{}", persona.to_lowercase()), token)
+}
+
 /// What Supabase returns from `/auth/v1/token`.
 #[derive(Debug, Clone, Deserialize)]
 pub struct TokenResponse {
@@ -37,6 +65,26 @@ pub struct TokenResponse {
     /// Seconds until `access_token` expires.
     #[serde(default)]
     pub expires_in: i64,
+    /// The PROVIDER's token — GitHub's, not Supabase's.
+    ///
+    /// Returned only at the exchange. GoTrue holds it in `auth.flow_state`
+    /// briefly and then prunes that row, so a token not captured here is gone: a
+    /// later query finds nothing and provisioning has no way to call GitHub.
+    ///
+    /// This is what `read:org` is FOR. Supabase records the user's profile but
+    /// never calls `/user/orgs` itself, so without this token the org list is
+    /// unreachable and provisioning would report "no organisations" when the
+    /// truth is "we never asked".
+    #[serde(default)]
+    pub provider_token: Option<String>,
+    /// GitHub's refresh token, when the OAuth App issues expiring tokens.
+    ///
+    /// Usually absent: a classic GitHub OAuth App's tokens do not expire, so
+    /// there is nothing to refresh. Captured anyway because an App configured for
+    /// expiring tokens WOULD send one, and silently dropping it would make
+    /// provisioning start failing weeks later with an unexplained 401.
+    #[serde(default)]
+    pub provider_refresh_token: Option<String>,
 }
 
 /// A live session held in memory for the process's lifetime.
@@ -189,6 +237,8 @@ mod tests {
             access_token: "a".into(),
             refresh_token: "r".into(),
             expires_in: 3600,
+            provider_token: None,
+            provider_refresh_token: None,
         };
         assert_eq!(Session::from_response(&r, 100).expires_at, 3700);
     }
@@ -201,6 +251,8 @@ mod tests {
             access_token: "a".into(),
             refresh_token: "r".into(),
             expires_in: -5,
+            provider_token: None,
+            provider_refresh_token: None,
         };
         assert_eq!(Session::from_response(&r, 100).expires_at, 100);
     }
@@ -213,6 +265,15 @@ mod tests {
         assert_eq!(b["auth_code"], "code-1");
         assert_eq!(b["code_verifier"], "verifier-1");
         assert_eq!(refresh_body("r-1")["refresh_token"], "r-1");
+    }
+
+    #[test]
+    fn the_provider_token_has_its_own_slot() {
+        // GitHub's token and Supabase's are different secrets with different
+        // reach — this one can read repositories and organisations — so revoking
+        // one must not force discarding the other.
+        assert_ne!(provider_account_for("p"), account_for("p"));
+        assert!(provider_account_for("p").starts_with("provider_token."));
     }
 
     #[test]
