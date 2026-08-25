@@ -1,7 +1,6 @@
 <script lang="ts">
 	import {
 		SectionHead,
-		Banner,
 		Btn,
 		Chip,
 		ListSection,
@@ -21,19 +20,17 @@
 	// (learning · cause · evidence · conflict · distribution scope + the
 	// approve/revise/decline affordance) in a sticky right pane on desktop.
 	// Presentational: the page supplies the groups + detail (kit fixtures this
-	// chunk); the selection lives in the `triage-state` rune store. On
-	// mobile the detail pane drops (one-column list). Degrades to an honest empty
-	// state when the queue is clear.
+	// chunk); the selection lives in the `triage-state` rune store. Below `md` the
+	// detail pane is hidden and the grid collapses to the one-column list.
+	// Degrades to an honest empty state when the queue is clear.
 	let {
 		orgName,
 		groups = [],
-		detail,
-		mobile = false
+		detail
 	}: {
 		orgName: string;
 		groups?: KitTriageGroup[];
 		detail: KitCandidateDetail;
-		mobile?: boolean;
 	} = $props();
 
 	// Seed the selection store ONCE from the props — a different org re-mounts this
@@ -52,21 +49,15 @@
 	</div>
 {/snippet}
 
-<div class="flex flex-col {mobile ? 'p-4 gap-4' : 'p-8 gap-6'}">
-	<SectionHead eyebrow={orgName + ' · govern'} title="Triage" count={triage.all.length}>
+<div class="flex flex-col p-4 gap-4 md:p-8 md:gap-6">
+	<SectionHead
+		kanji="門" eyebrow={orgName + ' · govern'} title="Triage" count={triage.all.length}
+		description="Candidate learnings waiting on a maintainer, grouped by scope and ranked by confidence. You decide what becomes shared knowledge. High-impact and safety candidates need a second approval before they publish."
+	>
 		{#snippet right()}
 			<Btn size="sm" variant="ghost" icon="tuning-2">My scopes</Btn>
 		{/snippet}
 	</SectionHead>
-
-	<Banner
-		kanji="門"
-		tone="neutral"
-		title="Candidate learnings waiting on a maintainer, grouped by scope and ranked by confidence."
-	>
-		You decide what becomes shared knowledge. High-impact and safety candidates need a second
-		approval before they publish.
-	</Banner>
 
 	{#if triage.all.length}
 		<div class="grid gap-4 items-start grid-cols-1 md:grid-cols-[1.1fr_1fr]">
@@ -120,10 +111,10 @@
 			</div>
 
 			<!-- Right pane — the focused candidate's detail + decision affordance. -->
-			{#if !mobile && triage.current}
+			{#if triage.current}
 				{@const cur = triage.current}
 				<div
-					class="bg-paper-soft border-paper-edge overflow-hidden rounded-lg border"
+					class="bg-paper-soft border-paper-edge hidden overflow-hidden rounded-lg border md:block"
 					style="position: sticky; top: 0"
 				>
 					<div class="border-paper-edge flex items-center gap-3 border-b" style="padding: 16px">

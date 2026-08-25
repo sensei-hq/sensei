@@ -1,12 +1,12 @@
 //! Check whether a binary exists on PATH and optionally probe its version.
 
+use crate::health::checker::{CheckOutcome, Checker};
+use crate::health::process_util::{DEFAULT_CHECKER_TIMEOUT, TimedOutcome};
+use crate::health::trace::{ActionType, TraceSpec, run_traced_current};
 use std::process::Command;
-use crate::health::checker::{Checker, CheckOutcome};
-use crate::health::process_util::{TimedOutcome, DEFAULT_CHECKER_TIMEOUT};
-use crate::health::trace::{run_traced_current, ActionType, TraceSpec};
 
 pub struct BinaryChecker {
-    pub bin:         &'static str,
+    pub bin: &'static str,
     pub version_arg: Option<&'static str>,
 }
 
@@ -31,7 +31,12 @@ impl Checker for BinaryChecker {
         // even when they exist on the user's machine.
         let resolved = match crate::util::which_binary(self.bin) {
             None => {
-                tracing::info!(check = "binary", binary = self.bin, result = "not_found", "binary not on PATH");
+                tracing::info!(
+                    check = "binary",
+                    binary = self.bin,
+                    result = "not_found",
+                    "binary not on PATH"
+                );
                 return CheckOutcome::failed(format!("{} not installed", self.bin));
             }
             Some(path) => {
@@ -41,7 +46,12 @@ impl Checker for BinaryChecker {
         };
         match self.version_arg {
             None => {
-                tracing::debug!(check = "binary", binary = self.bin, result = "ready", "ready (no version probe)");
+                tracing::debug!(
+                    check = "binary",
+                    binary = self.bin,
+                    result = "ready",
+                    "ready (no version probe)"
+                );
                 CheckOutcome::ready_no_version()
             }
             Some(arg) => {
@@ -74,8 +84,17 @@ impl Checker for BinaryChecker {
                         CheckOutcome::failed(format!("{} {} exited {}", self.bin, arg, out.status))
                     }
                     TimedOutcome::TimedOut => {
-                        tracing::warn!(check = "binary", binary = self.bin, "version probe timed out");
-                        CheckOutcome::failed(format!("{} {} timed out after {}s", self.bin, arg, DEFAULT_CHECKER_TIMEOUT.as_secs()))
+                        tracing::warn!(
+                            check = "binary",
+                            binary = self.bin,
+                            "version probe timed out"
+                        );
+                        CheckOutcome::failed(format!(
+                            "{} {} timed out after {}s",
+                            self.bin,
+                            arg,
+                            DEFAULT_CHECKER_TIMEOUT.as_secs()
+                        ))
                     }
                     TimedOutcome::Failed(e) => {
                         tracing::warn!(check = "binary", binary = self.bin, error = %e, path = %resolved, "spawn failed even after which_binary resolved an absolute path");
@@ -100,10 +119,16 @@ mod tests {
         // Message says "not installed" — readable by end users in the
         // health ledger, no raw "os error 2" leakage.
         let detail = o.detail.as_deref().unwrap();
-        assert!(detail.contains("not installed"),
-            "detail should say 'not installed', got: {}", detail);
-        assert!(!detail.contains("os error"),
-            "detail must not leak raw OS error codes, got: {}", detail);
+        assert!(
+            detail.contains("not installed"),
+            "detail should say 'not installed', got: {}",
+            detail
+        );
+        assert!(
+            !detail.contains("os error"),
+            "detail must not leak raw OS error codes, got: {}",
+            detail
+        );
     }
 
     /// Regression for the prod-desktop bug: BinaryChecker must spawn the
@@ -123,9 +148,10 @@ mod tests {
         if cfg!(unix) {
             assert!(
                 !matches!(o.status, ComponentStatus::Failed)
-                || !o.detail.as_deref().unwrap_or("").contains("os error"),
+                    || !o.detail.as_deref().unwrap_or("").contains("os error"),
                 "version probe must not surface raw OS errors when the binary is resolvable; got status={:?} detail={:?}",
-                o.status, o.detail,
+                o.status,
+                o.detail,
             );
         }
     }

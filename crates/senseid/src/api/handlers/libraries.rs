@@ -1,10 +1,10 @@
+use crate::api::state::AppState;
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
     response::Json,
 };
 use serde::Deserialize;
-use crate::api::state::AppState;
 
 #[derive(Deserialize)]
 pub(crate) struct LibsQuery {
@@ -27,15 +27,14 @@ pub(crate) async fn list_libs(
     State(state): State<AppState>,
     Query(q): Query<LibsQuery>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let scope_project = q.solution_id.as_deref()
-        .and_then(|s| uuid::Uuid::parse_str(s).ok());
+    let scope_project = q.solution_id.as_deref().and_then(|s| uuid::Uuid::parse_str(s).ok());
     let min_repos: i64 = if q.shared.unwrap_or(false) { 2 } else { 1 };
 
-    let libs = state.pg.list_libraries_with_usage(
-        q.repo_id.as_deref(),
-        scope_project.as_ref(),
-        min_repos,
-    ).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let libs = state
+        .pg
+        .list_libraries_with_usage(q.repo_id.as_deref(), scope_project.as_ref(), min_repos)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     Ok(Json(serde_json::json!({
         "total": libs.len(),
@@ -56,13 +55,23 @@ pub(crate) async fn index_lib(
     Json(body): Json<IndexLibBody>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     // Fetch content (async)
-    let content = crate::indexer::lib_indexer::fetch_lib_url(&body.url).await
+    let content = crate::indexer::lib_indexer::fetch_lib_url(&body.url)
+        .await
         .map_err(|_| StatusCode::BAD_GATEWAY)?;
 
     // Upsert library into PgStore
-    let lib_id = state.pg.upsert_library(
-        &body.lib_name, "npm", body.version.as_deref(), Some(&content), Some("url"), Some(&body.url),
-    ).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let lib_id = state
+        .pg
+        .upsert_library(
+            &body.lib_name,
+            "npm",
+            body.version.as_deref(),
+            Some(&content),
+            Some("url"),
+            Some(&body.url),
+        )
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     Ok(Json(serde_json::json!({
         "ok": true,
@@ -91,7 +100,10 @@ pub(crate) async fn search_lib_docs(
     if query.trim().is_empty() {
         return Ok(Json(Vec::new()));
     }
-    state.pg.search_library_pages(&query).await
+    state
+        .pg
+        .search_library_pages(&query)
+        .await
         .map(Json)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
@@ -103,7 +115,10 @@ pub(crate) async fn get_lib_docs(
 ) -> Result<Json<Vec<serde_json::Value>>, StatusCode> {
     // Return the library's DOC PAGES (optionally one component), mirroring the MCP
     // get_lib_docs — was returning bare library metadata and ignoring `component`.
-    state.pg.get_library_pages(&name, q.component.as_deref().filter(|s| !s.is_empty())).await
+    state
+        .pg
+        .get_library_pages(&name, q.component.as_deref().filter(|s| !s.is_empty()))
+        .await
         .map(Json)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
@@ -115,7 +130,10 @@ pub(crate) async fn list_library_skills(
     State(state): State<AppState>,
     Path(name): Path<String>,
 ) -> Result<Json<Vec<serde_json::Value>>, StatusCode> {
-    state.pg.list_library_skills(&name).await
+    state
+        .pg
+        .list_library_skills(&name)
+        .await
         .map(Json)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
@@ -125,7 +143,10 @@ pub(crate) async fn get_library_skill(
     State(state): State<AppState>,
     Path((name, focus)): Path<(String, String)>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    state.pg.get_library_skill(&name, &focus).await
+    state
+        .pg
+        .get_library_skill(&name, &focus)
+        .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .map(Json)
         .ok_or(StatusCode::NOT_FOUND)
@@ -136,7 +157,10 @@ pub(crate) async fn list_library_agents(
     State(state): State<AppState>,
     Path(name): Path<String>,
 ) -> Result<Json<Vec<serde_json::Value>>, StatusCode> {
-    state.pg.list_library_agents(&name).await
+    state
+        .pg
+        .list_library_agents(&name)
+        .await
         .map(Json)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
@@ -151,7 +175,10 @@ pub(crate) async fn get_dep_versions(
     State(state): State<AppState>,
     Query(q): Query<DepVersionsQuery>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let folder = state.pg.get_repo_by_name(&q.repo_id).await
+    let folder = state
+        .pg
+        .get_repo_by_name(&q.repo_id)
+        .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
 
@@ -167,14 +194,15 @@ pub(crate) async fn get_dep_versions(
     let pkg_json = repo_path.join("package.json");
     if pkg_json.exists()
         && let Ok(content) = std::fs::read_to_string(&pkg_json)
-            && let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&content) {
-                for section in &["dependencies", "devDependencies"] {
-                    if let Some(obj) = parsed.get(section).and_then(|v| v.as_object()) {
-                        for (name, ver) in obj {
-                            deps.push(serde_json::json!({"name": name, "version": ver, "source": section}));
-                        }
-                    }
+        && let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&content)
+    {
+        for section in &["dependencies", "devDependencies"] {
+            if let Some(obj) = parsed.get(section).and_then(|v| v.as_object()) {
+                for (name, ver) in obj {
+                    deps.push(serde_json::json!({"name": name, "version": ver, "source": section}));
                 }
             }
+        }
+    }
     Ok(Json(serde_json::json!(deps)))
 }

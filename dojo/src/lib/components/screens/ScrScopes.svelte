@@ -5,19 +5,17 @@
 	// The admin scope-ownership screen (mockup ScrScopes) — who owns and triages
 	// each scope's queue, grouped Company · Teams · Stacks. Each row is a scope
 	// with its queue depth + SLA and its named owner (Avatar + RoleTag), or an
-	// "unowned · fallback" chip when no one owns it. The banner turns to a warning
-	// when any scope is unowned (its queue routes to a fallback maintainer so
-	// nothing stalls). Presentational: the page supplies the rows (kit fixtures
-	// this chunk).
+	// "unowned · fallback" chip when no one owns it. The header carries the
+	// standing description; a warning Banner appears ONLY when a scope is unowned,
+	// so the band means "something needs you" rather than being ambient chrome.
+	// Presentational: the page supplies the rows (kit fixtures this chunk).
 	let {
 		orgName,
 		owners = [],
-		mobile = false,
 		onAssign
 	}: {
 		orgName: string;
 		owners?: KitScopeOwner[];
-		mobile?: boolean;
 		onAssign?: (o: KitScopeOwner) => void;
 	} = $props();
 
@@ -29,28 +27,32 @@
 	];
 
 	const unowned = $derived(owners.filter((r) => !r.owner).length);
+	// "3 scope has no owner" was the old copy — agree the verb with the count.
+	const unownedPhrase = $derived(
+		unowned === 1 ? '1 scope has no owner' : `${unowned} scopes have no owner`
+	);
 	const rowsFor = (group: string) => owners.filter((r) => r.group === group);
 </script>
 
-<div class="flex flex-col {mobile ? 'p-4 gap-4' : 'p-8 gap-6'}">
-	<SectionHead eyebrow={orgName + ' · admin'} title="Scopes & policies">
+<div class="flex flex-col p-4 gap-4 md:p-8 md:gap-6">
+	<SectionHead
+		kanji="規"
+		eyebrow={orgName + ' · admin'}
+		title="Scopes & policies"
+		description="Every scope has a named owner who triages its queue. Anything unowned routes to a fallback maintainer so nothing stalls."
+	>
 		{#snippet right()}
 			<Btn size="sm" icon="add-circle">New scope</Btn>
 		{/snippet}
 	</SectionHead>
 
-	<Banner
-		kanji="規"
-		tone={unowned ? 'warning' : 'neutral'}
-		title="Every scope has a named owner who triages its queue."
-	>
-		{#if unowned}
-			{unowned} scope has no owner — its queue routes to a fallback maintainer so nothing stalls. Assign
-			an owner to give it an SLA.
-		{:else}
-			Anything unowned routes to a fallback maintainer so nothing stalls.
-		{/if}
-	</Banner>
+	{#if unowned}
+		<!-- A real notice, not ambient chrome: only shown when a queue would route
+		     to the fallback maintainer. -->
+		<Banner tone="warning" title="{unownedPhrase} — its queue routes to a fallback maintainer.">
+			Assign an owner to give the scope an SLA. Nothing stalls in the meantime.
+		</Banner>
+	{/if}
 
 	{#each groups as g (g.name)}
 		{@const items = rowsFor(g.name)}

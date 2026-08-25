@@ -22,7 +22,9 @@
 //!   or every N files" pacing. Only consulted when `THROTTLE_ENABLED` is
 //!   `true`.
 
-use crate::api::events::{StateEvent, ScanFolder, FolderKind, FolderStatus, ActivityEvent, ActivityLevel};
+use crate::api::events::{
+    ActivityEvent, ActivityLevel, FolderKind, FolderStatus, ScanFolder, StateEvent,
+};
 use crate::tasks::progress::TaskEvent;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -38,21 +40,21 @@ const THROTTLE_FILE_DELTA: u32 = 25;
 
 #[derive(Clone)]
 struct FolderTracker {
-    folder_id:       String,
-    project_id:      String,
-    folder_name:     String,
-    path:            String,
-    kind:            FolderKind,
-    stack:           Vec<String>,
-    files_total:     u32,
+    folder_id: String,
+    project_id: String,
+    folder_name: String,
+    path: String,
+    kind: FolderKind,
+    stack: Vec<String>,
+    files_total: u32,
     /// Successfully processed + failed file tasks combined. A failed task
     /// has still consumed its slot in the work list, so progress (and the
     /// UI bar) needs to count it toward completion or the bar permanently
     /// undershoots. The breakdown is kept on `files_failed` for future
     /// reporting; the wire `files_completed` is the union.
     files_completed: u32,
-    files_failed:    u32,
-    last_emit_at:    Instant,
+    files_failed: u32,
+    last_emit_at: Instant,
     last_emit_count: u32,
     /// Set the first time a file result (completed or failed) arrives for this
     /// folder, so the queued→indexing transition emits exactly one Process
@@ -190,9 +192,10 @@ async fn run(
                     if t.should_emit(now) {
                         t.last_emit_at = now;
                         t.last_emit_count = t.files_completed;
-                        let _ = state_events.send(StateEvent::folder_update(
-                            scan_folder_from(t, FolderStatus::Indexing),
-                        ));
+                        let _ = state_events.send(StateEvent::folder_update(scan_folder_from(
+                            t,
+                            FolderStatus::Indexing,
+                        )));
                     }
                 }
             }
@@ -211,18 +214,20 @@ async fn run(
                     if t.should_emit(now) {
                         t.last_emit_at = now;
                         t.last_emit_count = t.files_completed;
-                        let _ = state_events.send(StateEvent::folder_update(
-                            scan_folder_from(t, FolderStatus::Indexing),
-                        ));
+                        let _ = state_events.send(StateEvent::folder_update(scan_folder_from(
+                            t,
+                            FolderStatus::Indexing,
+                        )));
                     }
                 }
             }
             TaskEvent::Completed { kind, folder_path, .. } if kind == "build_connections" => {
                 if let Some(t) = trackers.remove(&folder_path) {
                     let project_id_str = t.project_id.clone();
-                    let _ = state_events.send(StateEvent::folder_update(
-                        scan_folder_from(&t, FolderStatus::Indexed),
-                    ));
+                    let _ = state_events.send(StateEvent::folder_update(scan_folder_from(
+                        &t,
+                        FolderStatus::Indexed,
+                    )));
                     let _ = state_events.send(StateEvent::activity(ActivityEvent::new(
                         ActivityLevel::Process,
                         &indexed_message(&t.folder_name, t.files_completed),
@@ -244,7 +249,8 @@ async fn run(
                         }
                     };
                     if let Some(check) = all_indexed
-                        && check {
+                        && check
+                    {
                         let _ = state_events.send(StateEvent::project_update(
                             crate::api::events::ScanProject {
                                 id: project_id_str.clone(),
@@ -271,10 +277,10 @@ async fn run(
 fn kind_from_str(s: &str) -> FolderKind {
     match s {
         "workspace_member" => FolderKind::WorkspaceMember,
-        "subtree"          => FolderKind::Subtree,
-        "sibling"          => FolderKind::Sibling,
-        "standalone"       => FolderKind::Standalone,
-        _                  => FolderKind::Git,
+        "subtree" => FolderKind::Subtree,
+        "sibling" => FolderKind::Sibling,
+        "standalone" => FolderKind::Standalone,
+        _ => FolderKind::Git,
     }
 }
 
@@ -290,17 +296,12 @@ async fn build_tracker(
             return None;
         }
     }?;
-    let folder_id   = row.get("id")?.as_str()?.to_string();
+    let folder_id = row.get("id")?.as_str()?.to_string();
     // project_id may be null (folder not yet assigned to a project)
-    let project_id  = row.get("project_id")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
+    let project_id = row.get("project_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
     let folder_name = row.get("name")?.as_str()?.to_string();
-    let kind        = row.get("kind")
-        .and_then(|v| v.as_str())
-        .map(kind_from_str)
-        .unwrap_or(FolderKind::Git);
+    let kind =
+        row.get("kind").and_then(|v| v.as_str()).map(kind_from_str).unwrap_or(FolderKind::Git);
     Some(FolderTracker {
         folder_id,
         project_id,
@@ -363,21 +364,39 @@ mod tests {
     fn policy_disabled_emits_every_tick() {
         // enabled=false → always emit, regardless of elapsed or delta.
         assert!(should_emit_policy(false, Duration::ZERO, Duration::from_millis(300), 0, 25));
-        assert!(should_emit_policy(false, Duration::from_secs(1), Duration::from_millis(300), 24, 25));
+        assert!(should_emit_policy(
+            false,
+            Duration::from_secs(1),
+            Duration::from_millis(300),
+            24,
+            25
+        ));
     }
 
     #[test]
     fn policy_enabled_emits_after_file_delta_threshold() {
         // enabled=true, under duration but at threshold → emit.
         assert!(!should_emit_policy(true, Duration::ZERO, Duration::from_millis(300), 24, 25));
-        assert!( should_emit_policy(true, Duration::ZERO, Duration::from_millis(300), 25, 25));
+        assert!(should_emit_policy(true, Duration::ZERO, Duration::from_millis(300), 25, 25));
     }
 
     #[test]
     fn policy_enabled_emits_after_duration_even_with_few_files() {
         // enabled=true, under file delta but past duration → emit.
-        assert!(!should_emit_policy(true, Duration::from_millis(200), Duration::from_millis(300), 1, 25));
-        assert!( should_emit_policy(true, Duration::from_millis(300), Duration::from_millis(300), 1, 25));
+        assert!(!should_emit_policy(
+            true,
+            Duration::from_millis(200),
+            Duration::from_millis(300),
+            1,
+            25
+        ));
+        assert!(should_emit_policy(
+            true,
+            Duration::from_millis(300),
+            Duration::from_millis(300),
+            1,
+            25
+        ));
     }
 
     #[test]

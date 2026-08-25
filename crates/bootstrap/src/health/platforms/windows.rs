@@ -1,7 +1,7 @@
 //! Windows PlatformProvider — Phase 1b stub.
 //! Real winget-based checkers and resolvers come in Phase 2.
 
-use crate::health::checker::{Checker, CheckOutcome};
+use crate::health::checker::{CheckOutcome, Checker};
 use crate::health::provider::PlatformProvider;
 use crate::health::resolver::Resolver;
 use crate::health::types::{ComponentId, PackageManagerId, Platform, Remedy};
@@ -16,9 +16,13 @@ impl Checker for UnsupportedChecker {
 }
 
 impl PlatformProvider for WindowsProvider {
-    fn platform(&self) -> Platform { Platform::Windows }
+    fn platform(&self) -> Platform {
+        Platform::Windows
+    }
 
-    fn package_manager_id(&self) -> PackageManagerId { PackageManagerId::Winget }
+    fn package_manager_id(&self) -> PackageManagerId {
+        PackageManagerId::Winget
+    }
 
     fn package_manager_checker(&self) -> Box<dyn Checker> {
         Box::new(UnsupportedChecker("winget"))
@@ -27,20 +31,22 @@ impl PlatformProvider for WindowsProvider {
     fn checker_for(&self, id: ComponentId, _retry: bool) -> Box<dyn Checker> {
         Box::new(UnsupportedChecker(match id {
             ComponentId::Postgres => "postgres",
-            ComponentId::Ollama   => "ollama",
-            ComponentId::Sensei   => "sensei",
+            ComponentId::Ollama => "ollama",
+            ComponentId::Sensei => "sensei",
             ComponentId::Database => "database",
-            ComponentId::Daemon   => "daemon",
+            ComponentId::Daemon => "daemon",
         }))
     }
 
-    fn resolvers(&self) -> Vec<Box<dyn Resolver>> { vec![] }
+    fn resolvers(&self) -> Vec<Box<dyn Resolver>> {
+        vec![]
+    }
 
     fn default_remedy(&self) -> Remedy {
         Remedy {
             message: "Windows support is coming. For now, install components manually.".to_string(),
-            script:  "# windows install steps TBD".to_string(),
-            url:     None,
+            script: "# windows install steps TBD".to_string(),
+            url: None,
         }
     }
 }
@@ -71,8 +77,13 @@ mod tests {
     #[test]
     fn checker_for_every_component_reports_unsupported() {
         let p = WindowsProvider;
-        for id in [ComponentId::Postgres, ComponentId::Ollama, ComponentId::Sensei,
-                   ComponentId::Database, ComponentId::Daemon] {
+        for id in [
+            ComponentId::Postgres,
+            ComponentId::Ollama,
+            ComponentId::Sensei,
+            ComponentId::Database,
+            ComponentId::Daemon,
+        ] {
             let o = p.checker_for(id, false).check();
             assert!(matches!(o.status, ComponentStatus::Failed));
             assert!(o.detail.as_deref().unwrap().contains("Windows support not yet implemented"));

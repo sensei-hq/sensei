@@ -22,8 +22,7 @@ mod tests {
     use std::path::PathBuf;
 
     fn workspace_root() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .parent().unwrap().parent().unwrap().to_path_buf()
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).parent().unwrap().parent().unwrap().to_path_buf()
     }
 
     fn fixtures() -> PathBuf {

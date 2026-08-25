@@ -225,13 +225,21 @@ impl ActivityEvent {
         static COUNTER: AtomicU64 = AtomicU64::new(0);
         let seq = COUNTER.fetch_add(1, Ordering::Relaxed);
         Self {
-            id: format!("a{}_{}", std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH).unwrap().as_millis(), seq),
+            id: format!(
+                "a{}_{}",
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_millis(),
+                seq
+            ),
             level,
             message: message.to_string(),
             elapsed,
             timestamp: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64,
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis() as u64,
         }
     }
 }
@@ -251,9 +259,11 @@ mod tests {
 
     #[test]
     fn state_event_activity_format() {
-        let evt = StateEvent::activity(
-            ActivityEvent::new(ActivityLevel::Queue, "app · 842 files queued", 0.38),
-        );
+        let evt = StateEvent::activity(ActivityEvent::new(
+            ActivityLevel::Queue,
+            "app · 842 files queued",
+            0.38,
+        ));
         let json = serde_json::to_value(&evt).unwrap();
         assert_eq!(json["action"], "add");
         assert_eq!(json["entity"], "activity");
@@ -266,13 +276,15 @@ mod tests {
             id: "p1".into(),
             name: "Lumen".into(),
             status: ProjectStatus::Scanning,
-            folders: vec![
-                ScanProjectFolder {
-                    id: "f1".into(), name: "app".into(), path: "/code/app".into(),
-                    stack: vec!["typescript".into()], files_total: 842, files_completed: 0,
-                    status: FolderStatus::Discovered,
-                },
-            ],
+            folders: vec![ScanProjectFolder {
+                id: "f1".into(),
+                name: "app".into(),
+                path: "/code/app".into(),
+                stack: vec!["typescript".into()],
+                files_total: 842,
+                files_completed: 0,
+                status: FolderStatus::Discovered,
+            }],
             auto_detected: true,
             confidence: Confidence::High,
         };
@@ -310,24 +322,41 @@ mod tests {
     async fn broadcast_channel_delivers_events() {
         let (tx, mut rx) = tokio::sync::broadcast::channel::<StateEvent>(64);
 
-        tx.send(StateEvent::activity(
-            ActivityEvent::new(ActivityLevel::Discover, "~/code · found root", 0.12),
-        )).unwrap();
-        tx.send(StateEvent::activity(
-            ActivityEvent::new(ActivityLevel::Discover, "~/code/app · found git repo", 0.18),
-        )).unwrap();
+        tx.send(StateEvent::activity(ActivityEvent::new(
+            ActivityLevel::Discover,
+            "~/code · found root",
+            0.12,
+        )))
+        .unwrap();
+        tx.send(StateEvent::activity(ActivityEvent::new(
+            ActivityLevel::Discover,
+            "~/code/app · found git repo",
+            0.18,
+        )))
+        .unwrap();
         tx.send(StateEvent::project_add(ScanProject {
-            id: "p1".into(), name: "test".into(), status: ProjectStatus::Scanning,
+            id: "p1".into(),
+            name: "test".into(),
+            status: ProjectStatus::Scanning,
             folders: vec![ScanProjectFolder {
-                id: "f1".into(), name: "app".into(), path: "/code/app".into(),
-                stack: vec!["rust".into()], files_total: 5, files_completed: 0,
+                id: "f1".into(),
+                name: "app".into(),
+                path: "/code/app".into(),
+                stack: vec!["rust".into()],
+                files_total: 5,
+                files_completed: 0,
                 status: FolderStatus::Discovered,
             }],
-            auto_detected: true, confidence: Confidence::High,
-        })).unwrap();
-        tx.send(StateEvent::activity(
-            ActivityEvent::new(ActivityLevel::Success, "scan complete", 0.50),
-        )).unwrap();
+            auto_detected: true,
+            confidence: Confidence::High,
+        }))
+        .unwrap();
+        tx.send(StateEvent::activity(ActivityEvent::new(
+            ActivityLevel::Success,
+            "scan complete",
+            0.50,
+        )))
+        .unwrap();
 
         // Drain and validate
         let mut events = vec![];
@@ -356,8 +385,12 @@ mod tests {
             StateEvent::activity(ActivityEvent::new(ActivityLevel::Discover, "found root", 0.1)),
             StateEvent::activity(ActivityEvent::new(ActivityLevel::Queue, "app · 5 files", 0.2)),
             StateEvent::project_add(ScanProject {
-                id: "p1".into(), name: "proj".into(), status: ProjectStatus::Active,
-                folders: vec![], auto_detected: true, confidence: Confidence::High,
+                id: "p1".into(),
+                name: "proj".into(),
+                status: ProjectStatus::Active,
+                folders: vec![],
+                auto_detected: true,
+                confidence: Confidence::High,
             }),
             StateEvent::activity(ActivityEvent::new(ActivityLevel::Success, "done", 0.5)),
         ];

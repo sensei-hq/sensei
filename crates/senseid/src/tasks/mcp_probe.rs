@@ -13,7 +13,7 @@
 //! No global state; every probe is a self-contained subprocess with a hard
 //! wall-clock deadline. Cheap enough to run on-demand from an HTTP handler.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -33,11 +33,11 @@ pub const MCP_PROTOCOL_VERSION: &str = "2024-11-05";
 #[derive(Debug, Clone)]
 pub struct ProbedManifest {
     pub protocol_version: Option<String>,
-    pub server_name:      Option<String>,
-    pub server_version:   Option<String>,
+    pub server_name: Option<String>,
+    pub server_version: Option<String>,
     /// Raw tool array from `tools/list.result.tools`. Each entry is a JSON
     /// object with `name`, `description`, `inputSchema`.
-    pub tools:            Vec<Value>,
+    pub tools: Vec<Value>,
 }
 
 /// Result of one probe attempt.
@@ -61,8 +61,8 @@ pub async fn probe_tools(
     }
     match tokio::time::timeout(PROBE_TIMEOUT, probe_inner(command, args, env, cwd)).await {
         Ok(Ok(manifest)) => ProbeOutcome::Ok(manifest),
-        Ok(Err(e))       => ProbeOutcome::Error(e),
-        Err(_)           => ProbeOutcome::Error(format!("timed out after {}s", PROBE_TIMEOUT.as_secs())),
+        Ok(Err(e)) => ProbeOutcome::Error(e),
+        Err(_) => ProbeOutcome::Error(format!("timed out after {}s", PROBE_TIMEOUT.as_secs())),
     }
 }
 
@@ -99,7 +99,8 @@ async fn probe_inner(
     write_frame(&mut stdin, &initialize_request()).await?;
     let init_resp = read_response_matching(&mut reader, 1).await?;
     let init_result = init_resp.get("result").cloned().unwrap_or(Value::Null);
-    let protocol_version = init_result.get("protocolVersion").and_then(|v| v.as_str()).map(String::from);
+    let protocol_version =
+        init_result.get("protocolVersion").and_then(|v| v.as_str()).map(String::from);
     let server_info = init_result.get("serverInfo").cloned().unwrap_or(Value::Null);
     let server_name = server_info.get("name").and_then(|v| v.as_str()).map(String::from);
     let server_version = server_info.get("version").and_then(|v| v.as_str()).map(String::from);
@@ -114,7 +115,8 @@ async fn probe_inner(
         let msg = err.get("message").and_then(|v| v.as_str()).unwrap_or("tools/list error");
         return Err(format!("server error: {msg}"));
     }
-    let tools = list_resp.get("result")
+    let tools = list_resp
+        .get("result")
         .and_then(|r| r.get("tools"))
         .and_then(|t| t.as_array())
         .cloned()
@@ -125,12 +127,7 @@ async fn probe_inner(
     let _ = stdin.shutdown().await;
     let _ = child.kill().await;
 
-    Ok(ProbedManifest {
-        protocol_version,
-        server_name,
-        server_version,
-        tools,
-    })
+    Ok(ProbedManifest { protocol_version, server_name, server_version, tools })
 }
 
 async fn write_frame(stdin: &mut tokio::process::ChildStdin, msg: &Value) -> Result<(), String> {
@@ -156,9 +153,11 @@ async fn read_response_matching(
             return Err("server closed stdout before response".into());
         }
         let trimmed = line.trim();
-        if trimmed.is_empty() { continue; }
+        if trimmed.is_empty() {
+            continue;
+        }
         let msg: Value = match serde_json::from_str(trimmed) {
-            Ok(v)  => v,
+            Ok(v) => v,
             Err(e) => return Err(format!("bad json from server: {e}")),
         };
         // Match the response id.
@@ -211,14 +210,20 @@ mod tests {
         assert_eq!(req["method"], "initialize");
         assert_eq!(req["params"]["protocolVersion"], MCP_PROTOCOL_VERSION);
         assert_eq!(req["params"]["clientInfo"]["name"], "sensei");
-        assert!(req["params"]["clientInfo"]["version"].is_string(), "version populated from CARGO_PKG_VERSION");
+        assert!(
+            req["params"]["clientInfo"]["version"].is_string(),
+            "version populated from CARGO_PKG_VERSION"
+        );
     }
 
     #[test]
     fn tools_list_request_matches_mcp_protocol() {
         let req = tools_list_request();
         assert_eq!(req["jsonrpc"], "2.0");
-        assert_eq!(req["id"], 2, "response id must be 2 so we can match it in read_response_matching");
+        assert_eq!(
+            req["id"], 2,
+            "response id must be 2 so we can match it in read_response_matching"
+        );
         assert_eq!(req["method"], "tools/list");
     }
 
@@ -240,12 +245,8 @@ mod tests {
 
     #[tokio::test]
     async fn nonexistent_binary_returns_spawn_error() {
-        let outcome = probe_tools(
-            "definitely_not_a_real_binary_xyz_88",
-            &[],
-            &HashMap::new(),
-            None,
-        ).await;
+        let outcome =
+            probe_tools("definitely_not_a_real_binary_xyz_88", &[], &HashMap::new(), None).await;
         match outcome {
             ProbeOutcome::Error(msg) => assert!(msg.contains("spawn failed"), "got: {msg}"),
             _ => panic!("expected spawn Error"),
@@ -260,10 +261,19 @@ mod tests {
         // timeout branch.
         let outcome = tokio::time::timeout(
             Duration::from_secs(2),
-            probe_inner_test_wrapper("sleep", &["5".into()], &HashMap::new(), Duration::from_millis(200)),
-        ).await.expect("wrapper itself must not hang");
-        assert!(outcome.contains("timed out") || outcome.contains("read") || outcome.contains("closed"),
-            "expected timeout/read/closed error, got: {outcome}");
+            probe_inner_test_wrapper(
+                "sleep",
+                &["5".into()],
+                &HashMap::new(),
+                Duration::from_millis(200),
+            ),
+        )
+        .await
+        .expect("wrapper itself must not hang");
+        assert!(
+            outcome.contains("timed out") || outcome.contains("read") || outcome.contains("closed"),
+            "expected timeout/read/closed error, got: {outcome}"
+        );
     }
 
     /// Test-only shim that runs probe_inner with a short timeout so the
@@ -275,9 +285,9 @@ mod tests {
         timeout: Duration,
     ) -> String {
         match tokio::time::timeout(timeout, probe_inner(cmd, args, env, None)).await {
-            Ok(Ok(_))  => "ok".into(),
+            Ok(Ok(_)) => "ok".into(),
             Ok(Err(e)) => e,
-            Err(_)     => format!("timed out after {}ms", timeout.as_millis()),
+            Err(_) => format!("timed out after {}ms", timeout.as_millis()),
         }
     }
 }

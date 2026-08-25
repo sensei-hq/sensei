@@ -173,9 +173,7 @@ fn run_qlty(dir: &Path, args: &[&str]) -> Option<String> {
         }
     };
     let out = cmd.args(args).current_dir(dir).output().ok()?;
-    out.status
-        .success()
-        .then(|| String::from_utf8_lossy(&out.stdout).into_owned())
+    out.status.success().then(|| String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
 /// Strip ANSI/SGR escape sequences from `qlty metrics`' colored table so the TOTAL
@@ -260,9 +258,9 @@ fn is_duplication(result: &serde_json::Value) -> bool {
         .as_array()
         .is_some_and(|taxa| taxa.iter().any(|t| t["id"].as_str() == Some("duplication")));
     by_taxon
-        || result["ruleId"]
-            .as_str()
-            .is_some_and(|r| r.contains("identical") || r.contains("similar") || r.contains("duplicat"))
+        || result["ruleId"].as_str().is_some_and(|r| {
+            r.contains("identical") || r.contains("similar") || r.contains("duplicat")
+        })
 }
 
 /// Add every physical line covered by `result`'s primary + related locations to
@@ -325,10 +323,8 @@ fn parse_smells(json: &str) -> Result<SmellCounts, String> {
             *maint_per_file.entry(uri).or_insert(0) += 1;
         }
     }
-    let per_file_dup_lines = dup_per_file
-        .into_iter()
-        .map(|(uri, lines)| (uri, lines.len() as i64))
-        .collect();
+    let per_file_dup_lines =
+        dup_per_file.into_iter().map(|(uri, lines)| (uri, lines.len() as i64)).collect();
     Ok(SmellCounts { per_file_dup_lines, per_file_maintainability: maint_per_file })
 }
 
@@ -475,11 +471,7 @@ fn git_authored_files(root: &str, sha: &str, email: &str) -> HashSet<String> {
     ) else {
         return HashSet::new();
     };
-    out.lines()
-        .map(str::trim)
-        .filter(|p| !p.is_empty())
-        .map(str::to_string)
-        .collect()
+    out.lines().map(str::trim).filter(|p| !p.is_empty()).map(str::to_string).collect()
 }
 
 // ── sampling ────────────────────────────────────────────────────────────────
@@ -582,7 +574,8 @@ where
     for (repository_id, abs_path) in repos {
         // Baseline floor (spec D17): by default quality starts at this repository's
         // first AI-transcript day; a repo with no captured AI activity is skipped.
-        let floor = super::churn::repo_history_floor(pg, &repository_id, &abs_path, baseline).await?;
+        let floor =
+            super::churn::repo_history_floor(pg, &repository_id, &abs_path, baseline).await?;
         if matches!(floor, super::churn::RepoFloor::Skip) {
             continue;
         }
@@ -649,8 +642,17 @@ where
 
             // scope = repo: the whole-tree twin (identity = NULL, D7/D8).
             written += write_ratio_rows(
-                pg, &project_id, &repository_id, SCOPE_REPO, None, &sha, day, dup_id, mq_id,
-                qs.whole_tree_dup_lines(), qs.whole_tree_maintainability(), qs.total_lines,
+                pg,
+                &repository_id,
+                SCOPE_REPO,
+                None,
+                &sha,
+                day,
+                dup_id,
+                mq_id,
+                qs.whole_tree_dup_lines(),
+                qs.whole_tree_maintainability(),
+                qs.total_lines,
             )
             .await?;
 
@@ -661,8 +663,16 @@ where
                 let touched = git_authored_files(&abs_path, &sha, email);
                 let user_total = qs.touched_lines(&touched);
                 written += write_ratio_rows(
-                    pg, &project_id, &repository_id, SCOPE_USER, Some(email), &sha, day, dup_id,
-                    mq_id, qs.touched_dup_lines(&touched), qs.touched_maintainability(&touched),
+                    pg,
+                    &repository_id,
+                    SCOPE_USER,
+                    Some(email),
+                    &sha,
+                    day,
+                    dup_id,
+                    mq_id,
+                    qs.touched_dup_lines(&touched),
+                    qs.touched_maintainability(&touched),
                     user_total,
                 )
                 .await?;
@@ -683,7 +693,6 @@ where
 #[allow(clippy::too_many_arguments)]
 async fn write_ratio_rows(
     pg: &PgStore,
-    project_id: &uuid::Uuid,
     repository_id: &uuid::Uuid,
     scope: &str,
     identity: Option<&str>,
@@ -708,8 +717,16 @@ async fn write_ratio_rows(
             "commit": sha,
         });
         pg.upsert_project_metric_repo(
-            &mid, project_id, Some(repository_id), scope, identity, Some(sha), None, None, day,
-            GRAIN_DAILY, value, &props, SOURCE_MEASURED,
+            &mid,
+            repository_id,
+            scope,
+            identity,
+            Some(sha),
+            day,
+            GRAIN_DAILY,
+            value,
+            &props,
+            SOURCE_MEASURED,
         )
         .await?;
         written += 1;
@@ -723,8 +740,16 @@ async fn write_ratio_rows(
             "commit": sha,
         });
         pg.upsert_project_metric_repo(
-            &mid, project_id, Some(repository_id), scope, identity, Some(sha), None, None, day,
-            GRAIN_DAILY, value, &props, SOURCE_MEASURED,
+            &mid,
+            repository_id,
+            scope,
+            identity,
+            Some(sha),
+            day,
+            GRAIN_DAILY,
+            value,
+            &props,
+            SOURCE_MEASURED,
         )
         .await?;
         written += 1;
@@ -796,8 +821,16 @@ mod tests {
              {e} TOTAL {e}| 5 | 26 | 15 | 29 | 14 | 1 |{e} 374 {e}| 331 \n"
         );
         let (total, per_file) = parse_metrics(&sample);
-        assert_eq!(total, Some(374), "total physical `lines` (col 7) off TOTAL, ANSI stripped — not LOC");
-        assert_eq!(per_file.get("lib.rs"), Some(&81), "per-file `lines` for lib.rs (the scope=user parts)");
+        assert_eq!(
+            total,
+            Some(374),
+            "total physical `lines` (col 7) off TOTAL, ANSI stripped — not LOC"
+        );
+        assert_eq!(
+            per_file.get("lib.rs"),
+            Some(&81),
+            "per-file `lines` for lib.rs (the scope=user parts)"
+        );
         assert_eq!(per_file.len(), 1, "only the one file row (TOTAL is not a per-file entry)");
         // No TOTAL row → None (an empty scan writes no row, never a fabricated 0).
         let (none_total, empty) = parse_metrics("no table here");
@@ -832,12 +865,20 @@ mod tests {
           ]}]
         }"#;
         let counts = parse_smells(sarif).unwrap();
-        assert_eq!(counts.per_file_dup_lines.get("a.rs"), Some(&23), "23 distinct dup lines in a.rs");
+        assert_eq!(
+            counts.per_file_dup_lines.get("a.rs"),
+            Some(&23),
+            "23 distinct dup lines in a.rs"
+        );
         assert_eq!(counts.per_file_dup_lines.get("b.rs"), Some(&23), "23 in b.rs");
         assert_eq!(counts.per_file_dup_lines.get("c.rs"), Some(&23), "23 in c.rs");
         let dup_total: i64 = counts.per_file_dup_lines.values().sum();
         assert_eq!(dup_total, 69, "3 distinct 23-line blocks across 3 files = 69 whole-tree");
-        assert_eq!(counts.per_file_maintainability.get("a.rs"), Some(&2), "both maintainability findings in a.rs");
+        assert_eq!(
+            counts.per_file_maintainability.get("a.rs"),
+            Some(&2),
+            "both maintainability findings in a.rs"
+        );
         let maint_total: i64 = counts.per_file_maintainability.values().sum();
         assert_eq!(maint_total, 2, "the 2 non-duplication findings");
     }
@@ -854,7 +895,11 @@ mod tests {
            "locations": [{"physicalLocation": {"artifactLocation": {"uri": "x.rs"}, "region": {"startLine": 5, "endLine": 14}}}]}
         ]}]}"#;
         let counts = parse_smells(sarif).unwrap();
-        assert_eq!(counts.per_file_dup_lines.get("x.rs"), Some(&14), "union of 1..=10 and 5..=14 = 14 distinct lines (deduped)");
+        assert_eq!(
+            counts.per_file_dup_lines.get("x.rs"),
+            Some(&14),
+            "union of 1..=10 and 5..=14 = 14 distinct lines (deduped)"
+        );
         assert!(counts.per_file_maintainability.is_empty());
     }
 
@@ -903,7 +948,11 @@ mod tests {
         let rid = repository_for_folder(pg, &fid).await;
 
         let dday = (chrono::Utc::now() - chrono::Duration::days(60)).date_naive();
-        git_commit_on_day(repo.path(), &dday.format("%Y-%m-%d").to_string(), &[("a.rs", "1\n2\n3\n")]);
+        git_commit_on_day(
+            repo.path(),
+            &dday.format("%Y-%m-%d").to_string(),
+            &[("a.rs", "1\n2\n3\n")],
+        );
 
         let fake = |_root: &str, _sha: &str| {
             Ok(Some(QualityScan {
@@ -917,24 +966,40 @@ mod tests {
         // Incremental (as_of=None): D is 60 days ago, outside the rolling window → NO
         // rows (honest-empty for the recent window, never a fabricated backfill).
         let incr = compute_with_scanner(&ctx, &pid.to_string(), None, fake).await.unwrap();
-        assert_eq!(incr, 0, "the 60-day-old anchor is outside the rolling window → no incremental rows");
+        assert_eq!(
+            incr, 0,
+            "the 60-day-old anchor is outside the rolling window → no incremental rows"
+        );
 
         // Backfill (as_of=Some(D)): 2 metrics × 2 scopes (repo + user) = 4 rows.
         let written = compute_with_scanner(&ctx, &pid.to_string(), Some(dday), fake).await.unwrap();
-        assert_eq!(written, 4, "duplication_ratio + module_quality, each at scope=repo AND scope=user");
+        assert_eq!(
+            written, 4,
+            "duplication_ratio + module_quality, each at scope=repo AND scope=user"
+        );
 
         // scope=user rows (daily_rows now filters scope='user') — author-attributed.
         let daily = daily_rows(pg, &pid).await;
-        let dr = daily.iter().find(|r| r.0 == "duplication_ratio").expect("user duplication_ratio row");
+        let dr =
+            daily.iter().find(|r| r.0 == "duplication_ratio").expect("user duplication_ratio row");
         assert!((dr.1 - 0.2).abs() < 1e-9, "duplication_ratio = 40/200 = 0.2 (user touched a.rs)");
-        assert_eq!(dr.2["numerator"].as_i64(), Some(40), "numerator = distinct duplicated lines on the touched surface");
+        assert_eq!(
+            dr.2["numerator"].as_i64(),
+            Some(40),
+            "numerator = distinct duplicated lines on the touched surface"
+        );
         assert_eq!(dr.2["denominator"].as_i64(), Some(200), "denominator = touched source lines");
         let mq = daily.iter().find(|r| r.0 == "module_quality").expect("user module_quality row");
         assert!((mq.1 - 0.1).abs() < 1e-9, "module_quality = 20/200 = 0.1");
-        assert_eq!(mq.2["numerator"].as_i64(), Some(20), "numerator = maintainability smells on the touched surface");
+        assert_eq!(
+            mq.2["numerator"].as_i64(),
+            Some(20),
+            "numerator = maintainability smells on the touched surface"
+        );
 
         // scope=repo whole-tree twin: identity NULL, repository_id set, commit_sha set.
-        let sha = resolve_commit_as_of(&repo.path().to_string_lossy(), dday).expect("a commit on D");
+        let sha =
+            resolve_commit_as_of(&repo.path().to_string_lossy(), dday).expect("a commit on D");
         let repo_row: (f64, i64, i64, Option<String>, Option<String>) = query_as(
             "SELECT pm.value::float8, (pm.props->>'numerator')::int8, (pm.props->>'denominator')::int8, \
                     pm.identity, pm.commit_sha \
@@ -947,7 +1012,11 @@ mod tests {
         assert_eq!(repo_row.1, 40, "whole-tree numerator");
         assert_eq!(repo_row.2, 200, "whole-tree denominator");
         assert_eq!(repo_row.3, None, "scope=repo identity is NULL (I-C)");
-        assert_eq!(repo_row.4.as_deref(), Some(sha.as_str()), "commit_sha = the sampled commit (I-D)");
+        assert_eq!(
+            repo_row.4.as_deref(),
+            Some(sha.as_str()),
+            "commit_sha = the sampled commit (I-D)"
+        );
 
         // computed_on stamped to the true commit day D; the user row carries the author.
         let (on_d,): (i64,) = query_as(
@@ -956,15 +1025,22 @@ mod tests {
                 AND m.key = 'duplication_ratio' AND pm.computed_on = $2",
         )
         .bind(rid).bind(dday).fetch_one(pg.pool()).await.unwrap();
-        assert_eq!(on_d, 1, "the scope=user duplication_ratio row is stamped computed_on=D, identity=the local author");
+        assert_eq!(
+            on_d, 1,
+            "the scope=user duplication_ratio row is stamped computed_on=D, identity=the local author"
+        );
 
         // Re-running the now-covered PAST day is a bounded no-op: the covered-skip
         // fires (a historical commit is immutable), so nothing is re-scanned or
         // re-written and the rows are unchanged — never duplicated.
         let again = compute_with_scanner(&ctx, &pid.to_string(), Some(dday), fake).await.unwrap();
         assert_eq!(again, 0, "a covered past day is skipped on re-run (immutable history)");
-        let (total,): (i64,) = query_as("SELECT count(*) FROM sensei.project_metrics WHERE repository_id = $1")
-            .bind(rid).fetch_one(pg.pool()).await.unwrap();
+        let (total,): (i64,) =
+            query_as("SELECT count(*) FROM sensei.project_metrics WHERE repository_id = $1")
+                .bind(rid)
+                .fetch_one(pg.pool())
+                .await
+                .unwrap();
         assert_eq!(total, 4, "still exactly 4 rows — the re-run wrote nothing, never a duplicate");
 
         cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
@@ -990,10 +1066,12 @@ mod tests {
                 per_file_maintainability: HashMap::new(),
             }))
         };
-        let written = compute_with_scanner(&ctx, &pid.to_string(), Some(dday), clean).await.unwrap();
+        let written =
+            compute_with_scanner(&ctx, &pid.to_string(), Some(dday), clean).await.unwrap();
         assert_eq!(written, 4, "a real 0.0 over a real denominator is still written (repo + user)");
         let daily = daily_rows(pg, &pid).await;
-        let dr = daily.iter().find(|r| r.0 == "duplication_ratio").expect("user duplication_ratio row");
+        let dr =
+            daily.iter().find(|r| r.0 == "duplication_ratio").expect("user duplication_ratio row");
         assert!(dr.1.abs() < 1e-9, "value is a real 0.0, not a suppressed row");
         assert_eq!(dr.2["denominator"].as_i64(), Some(120), "real denominator → row written");
 
@@ -1020,10 +1098,15 @@ mod tests {
                 per_file_maintainability: HashMap::new(),
             }))
         };
-        let written = compute_with_scanner(&ctx, &pid.to_string(), Some(dday), empty).await.unwrap();
+        let written =
+            compute_with_scanner(&ctx, &pid.to_string(), Some(dday), empty).await.unwrap();
         assert_eq!(written, 0, "0 total lines → no denominator → no row");
-        let (total,): (i64,) = query_as("SELECT count(*) FROM sensei.project_metrics WHERE repository_id = $1")
-            .bind(rid).fetch_one(pg.pool()).await.unwrap();
+        let (total,): (i64,) =
+            query_as("SELECT count(*) FROM sensei.project_metrics WHERE repository_id = $1")
+                .bind(rid)
+                .fetch_one(pg.pool())
+                .await
+                .unwrap();
         assert_eq!(total, 0, "no rows for a zero-line scan (never fabricated)");
 
         cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
@@ -1041,16 +1124,29 @@ mod tests {
         let (pid, fid, repo) = seed_git_project_folder(pg, &uniq).await;
         let rid = repository_for_folder(pg, &fid).await;
         let dday = (chrono::Utc::now() - chrono::Duration::days(45)).date_naive();
-        git_commit_on_day(repo.path(), &dday.format("%Y-%m-%d").to_string(), &[("a.rs", "1\n2\n3\n")]);
-        let sha = resolve_commit_as_of(&repo.path().to_string_lossy(), dday).expect("a commit on D");
+        git_commit_on_day(
+            repo.path(),
+            &dday.format("%Y-%m-%d").to_string(),
+            &[("a.rs", "1\n2\n3\n")],
+        );
+        let sha =
+            resolve_commit_as_of(&repo.path().to_string_lossy(), dday).expect("a commit on D");
 
         // Pre-cover D with BOTH metrics at scope=repo, value 0.5.
         let ids = pg.active_metric_ids("quality").await.unwrap();
         for key in ["duplication_ratio", "module_quality"] {
             let mid = *ids.get(key).expect("active quality metric");
             pg.upsert_project_metric_repo(
-                &mid, &pid, Some(&rid), "repo", None, Some(&sha), None, None, dday, "daily", 0.5,
-                &serde_json::json!({"numerator": 1, "denominator": 2, "commit": sha}), "measured",
+                &mid,
+                &rid,
+                "repo",
+                None,
+                Some(&sha),
+                dday,
+                "daily",
+                0.5,
+                &serde_json::json!({"numerator": 1, "denominator": 2, "commit": sha}),
+                "measured",
             )
             .await
             .unwrap();
@@ -1064,15 +1160,22 @@ mod tests {
                 per_file_maintainability: HashMap::from([("a.rs".to_string(), 90)]),
             }))
         };
-        let written = compute_with_scanner(&ctx, &pid.to_string(), Some(dday), different).await.unwrap();
-        assert_eq!(written, 0, "the covered past day is skipped (immutable history) — scanner not applied");
+        let written =
+            compute_with_scanner(&ctx, &pid.to_string(), Some(dday), different).await.unwrap();
+        assert_eq!(
+            written, 0,
+            "the covered past day is skipped (immutable history) — scanner not applied"
+        );
 
         let (value,): (f64,) = query_as(
             "SELECT pm.value::float8 FROM sensei.project_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
               WHERE pm.repository_id = $1 AND pm.scope = 'repo' AND m.key = 'duplication_ratio' AND pm.computed_on = $2",
         )
         .bind(rid).bind(dday).fetch_one(pg.pool()).await.unwrap();
-        assert!((value - 0.5).abs() < 1e-9, "the pre-covered 0.5 remains — the skip fired (not the scanner's 0.9)");
+        assert!(
+            (value - 0.5).abs() < 1e-9,
+            "the pre-covered 0.5 remains — the skip fired (not the scanner's 0.9)"
+        );
 
         cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
     }
@@ -1112,11 +1215,19 @@ mod tests {
         let (pid, fid, repo) = seed_git_project_folder(pg, &uniq).await;
         let rid = repository_for_folder(pg, &fid).await;
         let dday = (chrono::Utc::now() - chrono::Duration::days(10)).date_naive();
-        git_commit_on_day(repo.path(), &dday.format("%Y-%m-%d").to_string(), &[("a.rs", "1\n2\n3\n")]);
+        git_commit_on_day(
+            repo.path(),
+            &dday.format("%Y-%m-%d").to_string(),
+            &[("a.rs", "1\n2\n3\n")],
+        );
 
         let written = compute(&ctx, &pid.to_string(), Some(dday)).await.unwrap();
-        let (total,): (i64,) = query_as("SELECT count(*) FROM sensei.project_metrics WHERE repository_id = $1")
-            .bind(rid).fetch_one(pg.pool()).await.unwrap();
+        let (total,): (i64,) =
+            query_as("SELECT count(*) FROM sensei.project_metrics WHERE repository_id = $1")
+                .bind(rid)
+                .fetch_one(pg.pool())
+                .await
+                .unwrap();
 
         // qlty is optional (SOFT prereq): gate the assertion on its presence so this
         // passes both locally (qlty installed → measured) and on a bare CI (absent →
@@ -1126,7 +1237,10 @@ mod tests {
         // whose PATH-only view is exactly what silently emptied quality in the daemon.
         let qlty_present = sensei_bootstrap::util::which_binary("qlty").is_some();
         if qlty_present {
-            assert!(written > 0, "config-pinning lets a repo with no committed .qlty be measured (qlty present)");
+            assert!(
+                written > 0,
+                "config-pinning lets a repo with no committed .qlty be measured (qlty present)"
+            );
             assert_eq!(total as u32, written, "every written quality row is repository-attributed");
         } else {
             assert_eq!(written, 0, "qlty CLI absent → honest-empty (never a fabricated score)");
@@ -1135,8 +1249,9 @@ mod tests {
 
         // Worktree hygiene: only the main worktree remains (the scan's temp worktree
         // was force-removed by the guard even though the scan missed).
-        let list = super::super::churn::run_git(&repo.path().to_string_lossy(), &["worktree", "list"])
-            .expect("git worktree list");
+        let list =
+            super::super::churn::run_git(&repo.path().to_string_lossy(), &["worktree", "list"])
+                .expect("git worktree list");
         assert_eq!(list.lines().count(), 1, "no dangling worktree left behind (guard removed it)");
 
         cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
@@ -1160,8 +1275,13 @@ mod tests {
         let res = scan_at_commit(&root, &sha, err_scan);
         assert!(res.is_err(), "the scan error propagates");
 
-        let list = super::super::churn::run_git(&root, &["worktree", "list"]).expect("git worktree list");
-        assert_eq!(list.lines().count(), 1, "the failing scan's worktree was still removed (no dangle)");
+        let list =
+            super::super::churn::run_git(&root, &["worktree", "list"]).expect("git worktree list");
+        assert_eq!(
+            list.lines().count(),
+            1,
+            "the failing scan's worktree was still removed (no dangle)"
+        );
 
         cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
     }

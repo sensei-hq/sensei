@@ -34,7 +34,9 @@ use uuid::Uuid;
 
 use crate::db::pg_store::{DojoMembership, InsertMemory, PgStore};
 use crate::dojo::client::{DojoClient, DojoClientError};
-use dojo_protocol::{ArtifactKind, ArtifactPullResponse, ArtifactScope, ArtifactStatus, Attribution, PulledArtifact};
+use dojo_protocol::{
+    ArtifactKind, ArtifactPullResponse, ArtifactScope, ArtifactStatus, Attribution, PulledArtifact,
+};
 
 // ── Row shapes shared with the store impl ────────────────────────────────────
 
@@ -118,26 +120,46 @@ pub trait Inbox {
     fn upsert_pending(&self, row: &InboxRow) -> impl Future<Output = Result<bool, String>> + Send;
 
     /// Advance a membership's downstream pull cursor (`dojo_memberships.last_seq`).
-    fn set_cursor(&self, membership_id: Uuid, cursor: i64) -> impl Future<Output = Result<(), String>> + Send;
+    fn set_cursor(
+        &self,
+        membership_id: Uuid,
+        cursor: i64,
+    ) -> impl Future<Output = Result<(), String>> + Send;
 
     /// Load one inbox item by id.
-    fn get(&self, inbox_id: Uuid) -> impl Future<Output = Result<Option<InboxItem>, String>> + Send;
+    fn get(&self, inbox_id: Uuid)
+    -> impl Future<Output = Result<Option<InboxItem>, String>> + Send;
 
     /// Resolve a local project by name → its id (scope-match for a
     /// project-scoped artifact). `None` = no such project on this install.
-    fn resolve_project(&self, name: &str) -> impl Future<Output = Result<Option<Uuid>, String>> + Send;
+    fn resolve_project(
+        &self,
+        name: &str,
+    ) -> impl Future<Output = Result<Option<Uuid>, String>> + Send;
 
     /// Land a memory and mark the inbox row `applied` + `applied_memory_id` in one
     /// step. Returns the new memory id.
-    fn land_and_apply(&self, inbox_id: Uuid, mem: &InsertMemory) -> impl Future<Output = Result<Uuid, String>> + Send;
+    fn land_and_apply(
+        &self,
+        inbox_id: Uuid,
+        mem: &InsertMemory,
+    ) -> impl Future<Output = Result<Uuid, String>> + Send;
 
     /// Record why an Apply did not land (deferred kind / scope mismatch); the item
     /// stays `pending`.
-    fn set_note(&self, inbox_id: Uuid, note: &str) -> impl Future<Output = Result<(), String>> + Send;
+    fn set_note(
+        &self,
+        inbox_id: Uuid,
+        note: &str,
+    ) -> impl Future<Output = Result<(), String>> + Send;
 
     /// Set an inbox item's `state` (mute → `muted`, pin → `pinned`). Returns
     /// `false` when the id is unknown (drives a 404). Never lands anything.
-    fn set_state(&self, inbox_id: Uuid, state: &str) -> impl Future<Output = Result<bool, String>> + Send;
+    fn set_state(
+        &self,
+        inbox_id: Uuid,
+        state: &str,
+    ) -> impl Future<Output = Result<bool, String>> + Send;
 }
 
 // ── Outcomes ─────────────────────────────────────────────────────────────────
@@ -192,12 +214,10 @@ where
     P: DojoPuller,
     I: Inbox,
 {
-    let page = puller
-        .pull(membership, membership.last_seq)
-        .await
-        .map_err(|e| e.to_string())?;
+    let page = puller.pull(membership, membership.last_seq).await.map_err(|e| e.to_string())?;
 
-    let mut out = PullOutcome { membership_id: membership.id, new_cursor: page.cursor, ..Default::default() };
+    let mut out =
+        PullOutcome { membership_id: membership.id, new_cursor: page.cursor, ..Default::default() };
     for pulled in &page.artifacts {
         out.pulled += 1;
         // Only PUBLISHED artifacts distribute downstream; submitted/archived are
@@ -285,7 +305,8 @@ fn build_memory(
         // The dojo artifact id is a remote string, not a local memory uuid; the
         // link back lives on dojo_inbox.applied_memory_id instead.
         source_id: None,
-        spine_slot: None, feature: None,
+        spine_slot: None,
+        feature: None,
     }
 }
 
@@ -299,7 +320,9 @@ fn deferred_note(kind: ArtifactKind) -> String {
 }
 
 fn scope_mismatch_reason(name: &str) -> String {
-    format!("scope mismatch: artifact is scoped to project '{name}', which is not present on this install — not landed")
+    format!(
+        "scope mismatch: artifact is scoped to project '{name}', which is not present on this install — not landed"
+    )
 }
 
 /// Apply one inbox item. Idempotent (an already-applied item is a no-op). For a
@@ -390,22 +413,44 @@ impl Inbox for PgInbox<'_> {
     fn upsert_pending(&self, row: &InboxRow) -> impl Future<Output = Result<bool, String>> + Send {
         self.0.upsert_dojo_inbox(row)
     }
-    fn set_cursor(&self, membership_id: Uuid, cursor: i64) -> impl Future<Output = Result<(), String>> + Send {
+    fn set_cursor(
+        &self,
+        membership_id: Uuid,
+        cursor: i64,
+    ) -> impl Future<Output = Result<(), String>> + Send {
         self.0.set_dojo_pull_cursor(membership_id, cursor)
     }
-    fn get(&self, inbox_id: Uuid) -> impl Future<Output = Result<Option<InboxItem>, String>> + Send {
+    fn get(
+        &self,
+        inbox_id: Uuid,
+    ) -> impl Future<Output = Result<Option<InboxItem>, String>> + Send {
         self.0.get_dojo_inbox(inbox_id)
     }
-    fn resolve_project(&self, name: &str) -> impl Future<Output = Result<Option<Uuid>, String>> + Send {
+    fn resolve_project(
+        &self,
+        name: &str,
+    ) -> impl Future<Output = Result<Option<Uuid>, String>> + Send {
         self.0.resolve_project_by_name(name.to_string())
     }
-    fn land_and_apply(&self, inbox_id: Uuid, mem: &InsertMemory) -> impl Future<Output = Result<Uuid, String>> + Send {
+    fn land_and_apply(
+        &self,
+        inbox_id: Uuid,
+        mem: &InsertMemory,
+    ) -> impl Future<Output = Result<Uuid, String>> + Send {
         self.0.land_dojo_inbox_memory(inbox_id, mem)
     }
-    fn set_note(&self, inbox_id: Uuid, note: &str) -> impl Future<Output = Result<(), String>> + Send {
+    fn set_note(
+        &self,
+        inbox_id: Uuid,
+        note: &str,
+    ) -> impl Future<Output = Result<(), String>> + Send {
         self.0.set_dojo_inbox_note(inbox_id, note.to_string())
     }
-    fn set_state(&self, inbox_id: Uuid, state: &str) -> impl Future<Output = Result<bool, String>> + Send {
+    fn set_state(
+        &self,
+        inbox_id: Uuid,
+        state: &str,
+    ) -> impl Future<Output = Result<bool, String>> + Send {
         let state = state.to_string();
         async move { self.0.set_dojo_inbox_state(inbox_id, &state).await }
     }
@@ -413,7 +458,10 @@ impl Inbox for PgInbox<'_> {
 
 /// Pull one membership's downstream inbox with the live seams. Used by the
 /// federation pull loop.
-pub async fn pull_membership(store: &PgStore, membership: &DojoMembership) -> Result<PullOutcome, String> {
+pub async fn pull_membership(
+    store: &PgStore,
+    membership: &DojoMembership,
+) -> Result<PullOutcome, String> {
     pull_membership_inbox(&LivePuller, &PgInbox(store), membership).await
 }
 
@@ -437,7 +485,10 @@ mod tests {
     use super::*;
     use std::sync::Mutex;
 
-    use dojo_protocol::{artifact_signature, ArtifactPayload, AttributionMode, PatternFamily, PatternPayload, PrinciplePayload, PublishedArtifact};
+    use dojo_protocol::{
+        ArtifactPayload, AttributionMode, PatternFamily, PatternPayload, PrinciplePayload,
+        PublishedArtifact, artifact_signature,
+    };
 
     // ── fixtures ──────────────────────────────────────────────────────────────
 
@@ -469,7 +520,12 @@ mod tests {
         }
     }
 
-    fn artifact(kind: ArtifactKind, title: &str, body: &str, scope: ArtifactScope) -> PublishedArtifact {
+    fn artifact(
+        kind: ArtifactKind,
+        title: &str,
+        body: &str,
+        scope: ArtifactScope,
+    ) -> PublishedArtifact {
         let payload = match kind {
             ArtifactKind::Pattern => ArtifactPayload::Pattern(PatternPayload {
                 family: PatternFamily::Design,
@@ -521,14 +577,22 @@ mod tests {
         page: ArtifactPullResponse,
     }
     impl DojoPuller for MockPuller {
-        async fn pull(&self, _m: &DojoMembership, _since: i64) -> Result<ArtifactPullResponse, DojoClientError> {
+        async fn pull(
+            &self,
+            _m: &DojoMembership,
+            _since: i64,
+        ) -> Result<ArtifactPullResponse, DojoClientError> {
             Ok(self.page.clone())
         }
     }
 
     struct ErrPuller;
     impl DojoPuller for ErrPuller {
-        async fn pull(&self, _m: &DojoMembership, _since: i64) -> Result<ArtifactPullResponse, DojoClientError> {
+        async fn pull(
+            &self,
+            _m: &DojoMembership,
+            _since: i64,
+        ) -> Result<ArtifactPullResponse, DojoClientError> {
             Err(DojoClientError::Status(503))
         }
     }
@@ -556,11 +620,14 @@ mod tests {
     }
 
     impl Inbox for MemInbox {
-        fn upsert_pending(&self, row: &InboxRow) -> impl Future<Output = Result<bool, String>> + Send {
+        fn upsert_pending(
+            &self,
+            row: &InboxRow,
+        ) -> impl Future<Output = Result<bool, String>> + Send {
             let mut rows = self.rows.lock().unwrap();
-            let dup = rows
-                .iter()
-                .any(|r| r.membership_id == row.membership_id && r.artifact_signature == row.signature);
+            let dup = rows.iter().any(|r| {
+                r.membership_id == row.membership_id && r.artifact_signature == row.signature
+            });
             let inserted = if dup {
                 false
             } else {
@@ -582,19 +649,33 @@ mod tests {
             };
             async move { Ok(inserted) }
         }
-        fn set_cursor(&self, membership_id: Uuid, cursor: i64) -> impl Future<Output = Result<(), String>> + Send {
+        fn set_cursor(
+            &self,
+            membership_id: Uuid,
+            cursor: i64,
+        ) -> impl Future<Output = Result<(), String>> + Send {
             self.cursors.lock().unwrap().insert(membership_id, cursor);
             async move { Ok(()) }
         }
-        fn get(&self, inbox_id: Uuid) -> impl Future<Output = Result<Option<InboxItem>, String>> + Send {
+        fn get(
+            &self,
+            inbox_id: Uuid,
+        ) -> impl Future<Output = Result<Option<InboxItem>, String>> + Send {
             let hit = self.rows.lock().unwrap().iter().find(|r| r.id == inbox_id).cloned();
             async move { Ok(hit) }
         }
-        fn resolve_project(&self, name: &str) -> impl Future<Output = Result<Option<Uuid>, String>> + Send {
+        fn resolve_project(
+            &self,
+            name: &str,
+        ) -> impl Future<Output = Result<Option<Uuid>, String>> + Send {
             let hit = self.projects.get(name).copied();
             async move { Ok(hit) }
         }
-        fn land_and_apply(&self, inbox_id: Uuid, mem: &InsertMemory) -> impl Future<Output = Result<Uuid, String>> + Send {
+        fn land_and_apply(
+            &self,
+            inbox_id: Uuid,
+            mem: &InsertMemory,
+        ) -> impl Future<Output = Result<Uuid, String>> + Send {
             self.landed.lock().unwrap().push(mem.clone());
             let memory_id = Uuid::new_v4();
             {
@@ -606,13 +687,21 @@ mod tests {
             }
             async move { Ok(memory_id) }
         }
-        fn set_note(&self, inbox_id: Uuid, note: &str) -> impl Future<Output = Result<(), String>> + Send {
+        fn set_note(
+            &self,
+            inbox_id: Uuid,
+            note: &str,
+        ) -> impl Future<Output = Result<(), String>> + Send {
             if let Some(r) = self.rows.lock().unwrap().iter_mut().find(|r| r.id == inbox_id) {
                 r.note = Some(note.to_string());
             }
             async move { Ok(()) }
         }
-        fn set_state(&self, inbox_id: Uuid, state: &str) -> impl Future<Output = Result<bool, String>> + Send {
+        fn set_state(
+            &self,
+            inbox_id: Uuid,
+            state: &str,
+        ) -> impl Future<Output = Result<bool, String>> + Send {
             let mut found = false;
             if let Some(r) = self.rows.lock().unwrap().iter_mut().find(|r| r.id == inbox_id) {
                 r.state = state.to_string();
@@ -633,8 +722,26 @@ mod tests {
         let m = membership();
         let page = ArtifactPullResponse {
             artifacts: vec![
-                pulled(1, ArtifactStatus::Published, artifact(ArtifactKind::Principle, "small fns", "keep them small", ArtifactScope::default())),
-                pulled(2, ArtifactStatus::Published, artifact(ArtifactKind::Pattern, "adapter", "one per lang", ArtifactScope { stack: Some("rust".into()), ..Default::default() })),
+                pulled(
+                    1,
+                    ArtifactStatus::Published,
+                    artifact(
+                        ArtifactKind::Principle,
+                        "small fns",
+                        "keep them small",
+                        ArtifactScope::default(),
+                    ),
+                ),
+                pulled(
+                    2,
+                    ArtifactStatus::Published,
+                    artifact(
+                        ArtifactKind::Pattern,
+                        "adapter",
+                        "one per lang",
+                        ArtifactScope { stack: Some("rust".into()), ..Default::default() },
+                    ),
+                ),
             ],
             cursor: 2,
         };
@@ -662,9 +769,21 @@ mod tests {
         let m = membership();
         let page = ArtifactPullResponse {
             artifacts: vec![
-                pulled(1, ArtifactStatus::Published, artifact(ArtifactKind::Principle, "a", "b", ArtifactScope::default())),
-                pulled(2, ArtifactStatus::Submitted, artifact(ArtifactKind::Principle, "c", "d", ArtifactScope::default())),
-                pulled(3, ArtifactStatus::Archived, artifact(ArtifactKind::Principle, "e", "f", ArtifactScope::default())),
+                pulled(
+                    1,
+                    ArtifactStatus::Published,
+                    artifact(ArtifactKind::Principle, "a", "b", ArtifactScope::default()),
+                ),
+                pulled(
+                    2,
+                    ArtifactStatus::Submitted,
+                    artifact(ArtifactKind::Principle, "c", "d", ArtifactScope::default()),
+                ),
+                pulled(
+                    3,
+                    ArtifactStatus::Archived,
+                    artifact(ArtifactKind::Principle, "e", "f", ArtifactScope::default()),
+                ),
             ],
             cursor: 3,
         };
@@ -690,7 +809,16 @@ mod tests {
     async fn apply_principle_lands_a_dojo_memory_and_is_idempotent() {
         let m = membership();
         let page = ArtifactPullResponse {
-            artifacts: vec![pulled(1, ArtifactStatus::Published, artifact(ArtifactKind::Principle, "prefer small fns", "keep units testable", ArtifactScope::default()))],
+            artifacts: vec![pulled(
+                1,
+                ArtifactStatus::Published,
+                artifact(
+                    ArtifactKind::Principle,
+                    "prefer small fns",
+                    "keep units testable",
+                    ArtifactScope::default(),
+                ),
+            )],
             cursor: 1,
         };
         let inbox = MemInbox::default();
@@ -726,7 +854,16 @@ mod tests {
         let m = membership();
         let scope = ArtifactScope { stack: Some("rust".into()), ..Default::default() };
         let page = ArtifactPullResponse {
-            artifacts: vec![pulled(1, ArtifactStatus::Published, artifact(ArtifactKind::Pattern, "adapter per lang", "one adapter per language", scope))],
+            artifacts: vec![pulled(
+                1,
+                ArtifactStatus::Published,
+                artifact(
+                    ArtifactKind::Pattern,
+                    "adapter per lang",
+                    "one adapter per language",
+                    scope,
+                ),
+            )],
             cursor: 1,
         };
         let inbox = MemInbox::default();
@@ -744,10 +881,16 @@ mod tests {
 
     #[tokio::test]
     async fn apply_deferred_kinds_write_nothing_and_stay_pending() {
-        for kind in [ArtifactKind::Skill, ArtifactKind::Agent, ArtifactKind::Prompt, ArtifactKind::Guard] {
+        for kind in
+            [ArtifactKind::Skill, ArtifactKind::Agent, ArtifactKind::Prompt, ArtifactKind::Guard]
+        {
             let m = membership();
             let page = ArtifactPullResponse {
-                artifacts: vec![pulled(1, ArtifactStatus::Published, artifact(kind, "x", "y", ArtifactScope::default()))],
+                artifacts: vec![pulled(
+                    1,
+                    ArtifactStatus::Published,
+                    artifact(kind, "x", "y", ArtifactScope::default()),
+                )],
                 cursor: 1,
             };
             let inbox = MemInbox::default();
@@ -770,7 +913,11 @@ mod tests {
         let m = membership();
         let scope = ArtifactScope { project: Some("Ghost Project".into()), ..Default::default() };
         let page = ArtifactPullResponse {
-            artifacts: vec![pulled(1, ArtifactStatus::Published, artifact(ArtifactKind::Principle, "p", "b", scope))],
+            artifacts: vec![pulled(
+                1,
+                ArtifactStatus::Published,
+                artifact(ArtifactKind::Principle, "p", "b", scope),
+            )],
             cursor: 1,
         };
         let inbox = MemInbox::default(); // no projects registered
@@ -793,7 +940,11 @@ mod tests {
         let m = membership();
         let scope = ArtifactScope { project: Some("Known".into()), ..Default::default() };
         let page = ArtifactPullResponse {
-            artifacts: vec![pulled(1, ArtifactStatus::Published, artifact(ArtifactKind::Principle, "p", "b", scope))],
+            artifacts: vec![pulled(
+                1,
+                ArtifactStatus::Published,
+                artifact(ArtifactKind::Principle, "p", "b", scope),
+            )],
             cursor: 1,
         };
         let pid = Uuid::new_v4();
@@ -845,8 +996,15 @@ mod tests {
         let default = order_and_filter(items.clone(), false);
         assert_eq!(default.len(), 3, "muted is hidden by default");
         assert!(default.iter().all(|i| i.state != "muted"));
-        assert_eq!(default[0].state, "pinned", "pinned floats to the top even though it is the oldest");
-        assert_eq!(default[1].received_at.as_deref(), Some("2026-07-03T00:00:00Z"), "then newest-first");
+        assert_eq!(
+            default[0].state, "pinned",
+            "pinned floats to the top even though it is the oldest"
+        );
+        assert_eq!(
+            default[1].received_at.as_deref(),
+            Some("2026-07-03T00:00:00Z"),
+            "then newest-first"
+        );
 
         // include_muted surfaces it again.
         let all = order_and_filter(items, true);
@@ -859,8 +1017,16 @@ mod tests {
         let m = membership();
         let page = ArtifactPullResponse {
             artifacts: vec![
-                pulled(1, ArtifactStatus::Published, artifact(ArtifactKind::Principle, "a", "b", ArtifactScope::default())),
-                pulled(2, ArtifactStatus::Published, artifact(ArtifactKind::Principle, "c", "d", ArtifactScope::default())),
+                pulled(
+                    1,
+                    ArtifactStatus::Published,
+                    artifact(ArtifactKind::Principle, "a", "b", ArtifactScope::default()),
+                ),
+                pulled(
+                    2,
+                    ArtifactStatus::Published,
+                    artifact(ArtifactKind::Principle, "c", "d", ArtifactScope::default()),
+                ),
             ],
             cursor: 2,
         };
@@ -873,7 +1039,10 @@ mod tests {
         assert!(inbox.landed().is_empty(), "mute/pin never land anything");
 
         let listed = order_and_filter(inbox.rows(), false);
-        assert!(listed.iter().all(|i| i.id != ids[0]), "muted item is hidden from the default list");
+        assert!(
+            listed.iter().all(|i| i.id != ids[0]),
+            "muted item is hidden from the default list"
+        );
         assert_eq!(listed[0].id, ids[1], "pinned item floats to the top");
     }
 
@@ -909,7 +1078,11 @@ mod tests {
         ));
         // company/team without project/stack → global (org-wide practice).
         assert!(matches!(
-            scope_target(&ArtifactScope { company: Some("acme".into()), team: Some("mobile".into()), ..Default::default() }),
+            scope_target(&ArtifactScope {
+                company: Some("acme".into()),
+                team: Some("mobile".into()),
+                ..Default::default()
+            }),
             ScopeTarget::Global
         ));
     }

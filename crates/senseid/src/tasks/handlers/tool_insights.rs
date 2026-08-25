@@ -9,11 +9,11 @@
 //! Scoped as a "global" task (folder/name blank) so a single tick writes
 //! the whole cache in one shot.
 
-use super::super::executor::TaskContext;
 use super::super::Task;
-use crate::analysis::insight_copy::{generate_and_cache, CopyLimits};
+use super::super::executor::TaskContext;
+use crate::analysis::insight_copy::{CopyLimits, generate_and_cache};
 use crate::api::handlers::tool_signals::{
-    derive_signals, signal_copy_inputs, Signal, SignalThresholds, SignalVariant, ToolUsageRow,
+    Signal, SignalThresholds, SignalVariant, ToolUsageRow, derive_signals, signal_copy_inputs,
 };
 
 /// Verdict-window for the Health tab metrics — 14 days matches the ticket
@@ -23,23 +23,16 @@ pub const HEALTH_VERDICT_WINDOW_DAYS: i32 = 14;
 
 pub async fn aggregate_tool_insights(ctx: &TaskContext, _task: &Task) -> Result<u32, String> {
     // 1. Pull the current per-tool aggregate.
-    let raw_rows = ctx
-        .pg()
-        .get_tool_usage_stats()
-        .await
-        .map_err(|e| format!("get_tool_usage_stats: {e}"))?;
+    let raw_rows =
+        ctx.pg().get_tool_usage_stats().await.map_err(|e| format!("get_tool_usage_stats: {e}"))?;
 
-    let typed: Vec<ToolUsageRow> = raw_rows
-        .iter()
-        .filter_map(|v| serde_json::from_value(v.clone()).ok())
-        .collect();
+    let typed: Vec<ToolUsageRow> =
+        raw_rows.iter().filter_map(|v| serde_json::from_value(v.clone()).ok()).collect();
 
     // 2. Run the derivation with default thresholds.
     let signals = derive_signals(&typed, chrono::Utc::now(), &SignalThresholds::default());
-    let signals_by_tool: std::collections::HashMap<&str, &Signal> = signals
-        .iter()
-        .map(|s| (s.tool_name.as_str(), s))
-        .collect();
+    let signals_by_tool: std::collections::HashMap<&str, &Signal> =
+        signals.iter().map(|s| (s.tool_name.as_str(), s)).collect();
 
     // 2b. Verdict split per tool over the last N days (#84 T2 Slice D / #90).
     // Zero-row tools land with `usedPct=0` in the metrics; explicit is
@@ -49,10 +42,8 @@ pub async fn aggregate_tool_insights(ctx: &TaskContext, _task: &Task) -> Result<
         .get_verdict_split_per_tool(HEALTH_VERDICT_WINDOW_DAYS)
         .await
         .map_err(|e| format!("get_verdict_split_per_tool: {e}"))?;
-    let split_by_tool: std::collections::HashMap<String, (i64, i64, i64)> = split_rows
-        .into_iter()
-        .map(|(t, u, p, i)| (t, (u, p, i)))
-        .collect();
+    let split_by_tool: std::collections::HashMap<String, (i64, i64, i64)> =
+        split_rows.into_iter().map(|(t, u, p, i)| (t, (u, p, i))).collect();
 
     // 3. Write one row per tool. Every tool from the raw aggregate gets a
     //    row so the reader can find "healthy tools" too — even those with
@@ -63,10 +54,8 @@ pub async fn aggregate_tool_insights(ctx: &TaskContext, _task: &Task) -> Result<
         // Merge in the verdict split. Reach for the sensible zero fallback
         // rather than absent-field so the UI variant selector always
         // finds `usedPct` / `partialPct` / `ignoredPct` keys.
-        let (used, partial, ignored) = split_by_tool
-            .get(row.tool_name.as_str())
-            .copied()
-            .unwrap_or((0, 0, 0));
+        let (used, partial, ignored) =
+            split_by_tool.get(row.tool_name.as_str()).copied().unwrap_or((0, 0, 0));
         let total = used + partial + ignored;
         let (used_pct, partial_pct, ignored_pct) = if total > 0 {
             (
@@ -78,13 +67,13 @@ pub async fn aggregate_tool_insights(ctx: &TaskContext, _task: &Task) -> Result<
             (0.0, 0.0, 0.0)
         };
         if let Some(obj) = metrics.as_object_mut() {
-            obj.insert("usedCount".into(),     used.into());
-            obj.insert("partialCount".into(),  partial.into());
-            obj.insert("ignoredCount".into(),  ignored.into());
-            obj.insert("verdictTotal".into(),  total.into());
-            obj.insert("usedPct".into(),       used_pct.into());
-            obj.insert("partialPct".into(),    partial_pct.into());
-            obj.insert("ignoredPct".into(),    ignored_pct.into());
+            obj.insert("usedCount".into(), used.into());
+            obj.insert("partialCount".into(), partial.into());
+            obj.insert("ignoredCount".into(), ignored.into());
+            obj.insert("verdictTotal".into(), total.into());
+            obj.insert("usedPct".into(), used_pct.into());
+            obj.insert("partialPct".into(), partial_pct.into());
+            obj.insert("ignoredPct".into(), ignored_pct.into());
             obj.insert("verdictWindowDays".into(), HEALTH_VERDICT_WINDOW_DAYS.into());
         }
 
@@ -105,7 +94,14 @@ pub async fn aggregate_tool_insights(ctx: &TaskContext, _task: &Task) -> Result<
     //    Summary cards are wire-only (produced by curation) and warm on first miss.
     for s in &signals {
         let (kind, facts, _fallback) = signal_copy_inputs(s);
-        let _ = generate_and_cache(ctx.pg(), &ctx.app_state.gateway, kind, &facts, CopyLimits::default()).await;
+        let _ = generate_and_cache(
+            ctx.pg(),
+            &ctx.app_state.gateway,
+            kind,
+            &facts,
+            CopyLimits::default(),
+        )
+        .await;
     }
 
     tracing::info!(
@@ -121,11 +117,8 @@ pub async fn aggregate_tool_insights(ctx: &TaskContext, _task: &Task) -> Result<
 /// Build the `metrics` JSON body persisted alongside the signal — the raw
 /// aggregate row plus a derived `error_rate` so readers don't recompute it.
 fn build_metrics(row: &ToolUsageRow, raw: &serde_json::Value) -> serde_json::Value {
-    let error_rate = if row.call_count > 0 {
-        row.error_count as f64 / row.call_count as f64
-    } else {
-        0.0
-    };
+    let error_rate =
+        if row.call_count > 0 { row.error_count as f64 / row.call_count as f64 } else { 0.0 };
     serde_json::json!({
         "callCount":      row.call_count,
         "errorCount":     row.error_count,

@@ -7,9 +7,9 @@
 //! unchanged rules is a cheap no-op (no model call). Returns 1 when a new
 //! `proposed` version was written, else 0.
 
-use super::super::executor::TaskContext;
 use super::super::Task;
-use crate::analysis::rule_consolidation::{consolidate_global_rules, ConsolidationOutcome};
+use super::super::executor::TaskContext;
+use crate::analysis::rule_consolidation::{ConsolidationOutcome, consolidate_global_rules};
 
 pub async fn consolidate_governance(ctx: &TaskContext, _task: &Task) -> Result<u32, String> {
     match consolidate_global_rules(ctx.pg(), &ctx.app_state.gateway).await? {

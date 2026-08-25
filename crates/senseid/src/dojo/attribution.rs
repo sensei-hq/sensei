@@ -88,16 +88,14 @@ static RE_UUID: LazyLock<Regex> = LazyLock::new(|| {
         .unwrap()
 });
 /// Session-id shapes: `s-1234`, `sess_abc`, `session-abc123`.
-static RE_SESSION: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"\b(?:s-[0-9]+|sess(?:ion)?[_-][A-Za-z0-9]+)\b").unwrap()
-});
+static RE_SESSION: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\b(?:s-[0-9]+|sess(?:ion)?[_-][A-Za-z0-9]+)\b").unwrap());
 /// SCREAMING_SNAKE token with ≥2 segments and length ≥7 — almost always an
 /// env-var / secret / constant, never generalised prose (residual-only).
 static RE_SCREAMING: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\b").unwrap());
 /// A long alnum blob carrying ≥2 digits — a plausible key/token (residual-only).
-static RE_KEYISH: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\b[A-Za-z0-9]{24,}\b").unwrap());
+static RE_KEYISH: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\b[A-Za-z0-9]{24,}\b").unwrap());
 
 /// Squash to a case-insensitive alnum-only form for order-insensitive presence
 /// checks (`Acme-API` → `acmeapi`).
@@ -438,11 +436,7 @@ impl Dereferenced {
     /// publish.
     pub fn new(text: &str, ctx: &ProjectIdentifiers) -> Result<Self, ResidualRisk> {
         let DereferenceResult { text, removed, residual_risk } = dereference(text, ctx);
-        if residual_risk {
-            Err(ResidualRisk { removed })
-        } else {
-            Ok(Self { text, removed })
-        }
+        if residual_risk { Err(ResidualRisk { removed }) } else { Ok(Self { text, removed }) }
     }
 
     /// The stripped, publish-safe text.
@@ -492,10 +486,7 @@ mod tests {
             client_name: Some("Acme Corp".into()),
             repo_names: vec!["acme-api".into(), "billing-svc".into()],
             folder_paths: vec!["/Users/jerry/work/acme-api".into()],
-            session_ids: vec![
-                "3f2504e0-4f89-41d3-9a0c-0305e82c3301".into(),
-                "s-9931".into(),
-            ],
+            session_ids: vec!["3f2504e0-4f89-41d3-9a0c-0305e82c3301".into(), "s-9931".into()],
             person_names: vec!["Jane Doe".into()],
         }
     }
@@ -521,13 +512,13 @@ mod tests {
         let c = ctx();
         // (input, the sensitive substring that must NOT survive)
         let cases = [
-            ("use the acme-api service", "acme-api"),          // bare kebab
-            ("import from acme_api now", "acme_api"),          // snake
-            ("call acmeApi.fetch()", "acmeApi"),               // camelCase
-            ("the AcmeApi module", "AcmeApi"),                 // PascalCase
-            ("see acmeapi readme", "acmeapi"),                 // lower concat
-            ("in acmeApiClient wrapper", "acmeApi"),           // substring of longer token
-            ("path acme-api/src/main.rs here", "acme-api"),    // repo inside a relative path
+            ("use the acme-api service", "acme-api"),       // bare kebab
+            ("import from acme_api now", "acme_api"),       // snake
+            ("call acmeApi.fetch()", "acmeApi"),            // camelCase
+            ("the AcmeApi module", "AcmeApi"),              // PascalCase
+            ("see acmeapi readme", "acmeapi"),              // lower concat
+            ("in acmeApiClient wrapper", "acmeApi"),        // substring of longer token
+            ("path acme-api/src/main.rs here", "acme-api"), // repo inside a relative path
         ];
         for (input, sensitive) in cases {
             let out = dereference(input, &c);
@@ -536,7 +527,11 @@ mod tests {
                 "form not stripped: {input:?} still had {sensitive:?} → {:?}",
                 out.text
             );
-            assert!(!out.residual_risk, "clean strip should not flag residual for {input:?}: {:?}", out.text);
+            assert!(
+                !out.residual_risk,
+                "clean strip should not flag residual for {input:?}: {:?}",
+                out.text
+            );
         }
     }
 
@@ -545,16 +540,24 @@ mod tests {
         let c = ctx();
         let cases = [
             "edit /Users/jerry/work/acme-api/src/main.rs please", // known + POSIX
-            "look under /etc/nginx/sites-enabled/default",         // unknown POSIX
-            "config at ~/.sensei/acme-api/config.toml",            // home
-            r"open C:\work\acme-api\mod.rs in the ide",            // windows
+            "look under /etc/nginx/sites-enabled/default",        // unknown POSIX
+            "config at ~/.sensei/acme-api/config.toml",           // home
+            r"open C:\work\acme-api\mod.rs in the ide",           // windows
         ];
         for input in cases {
             let out = dereference(input, &c);
-            assert!(contains_ci(&out.text, "<path>"), "no <path> placeholder for {input:?}: {:?}", out.text);
+            assert!(
+                contains_ci(&out.text, "<path>"),
+                "no <path> placeholder for {input:?}: {:?}",
+                out.text
+            );
             assert!(!out.text.contains("/Users/"), "posix path survived: {:?}", out.text);
             assert!(!out.text.contains(r"C:\"), "windows path survived: {:?}", out.text);
-            assert!(!out.residual_risk, "path strip flagged residual for {input:?}: {:?}", out.text);
+            assert!(
+                !out.residual_risk,
+                "path strip flagged residual for {input:?}: {:?}",
+                out.text
+            );
         }
     }
 
@@ -575,10 +578,8 @@ mod tests {
     #[test]
     fn client_and_person_and_project_are_stripped() {
         let c = ctx();
-        let out = dereference(
-            "During the Acme Corp engagement, Jane Doe led the Acme API rollout.",
-            &c,
-        );
+        let out =
+            dereference("During the Acme Corp engagement, Jane Doe led the Acme API rollout.", &c);
         assert!(!contains_ci(&out.text, "Acme Corp"), "client survived: {:?}", out.text);
         assert!(!contains_ci(&out.text, "Jane Doe"), "person survived: {:?}", out.text);
         assert!(!contains_ci(&out.text, "Acme API"), "project survived: {:?}", out.text);
@@ -592,7 +593,11 @@ mod tests {
             "we refactored the billing-svc handler in /Users/jerry/work/acme-api/billing-svc/mod.rs",
             &c,
         );
-        assert!(!contains_ci(&out.text, "billing-svc"), "mid-sentence/path token survived: {:?}", out.text);
+        assert!(
+            !contains_ci(&out.text, "billing-svc"),
+            "mid-sentence/path token survived: {:?}",
+            out.text
+        );
         assert!(!contains_ci(&out.text, "acme-api"), "path token survived: {:?}", out.text);
         assert!(!out.residual_risk, "clean strip flagged residual: {:?}", out.text);
     }
@@ -616,7 +621,10 @@ mod tests {
 
     #[test]
     fn residual_risk_flags_screaming_snake_secret() {
-        assert!(residual_risk("set ACME_PROD_DB_PASSWORD before boot", &ProjectIdentifiers::default()));
+        assert!(residual_risk(
+            "set ACME_PROD_DB_PASSWORD before boot",
+            &ProjectIdentifiers::default()
+        ));
     }
 
     #[test]
@@ -663,11 +671,16 @@ mod tests {
     #[test]
     fn dereference_is_idempotent() {
         let c = ctx();
-        let input = "Jane Doe on acme-api at /Users/jerry/work/acme-api, session s-9931, jane@acme.com";
+        let input =
+            "Jane Doe on acme-api at /Users/jerry/work/acme-api, session s-9931, jane@acme.com";
         let once = dereference(input, &c);
         let twice = dereference(&once.text, &c);
         assert_eq!(once.text, twice.text, "second pass changed the text");
-        assert!(twice.removed.is_empty(), "second pass should have nothing left to remove: {:?}", twice.removed);
+        assert!(
+            twice.removed.is_empty(),
+            "second pass should have nothing left to remove: {:?}",
+            twice.removed
+        );
         assert!(!twice.residual_risk);
     }
 
@@ -676,7 +689,9 @@ mod tests {
         // The placeholders themselves must survive a re-run untouched.
         let c = ctx();
         let masked = dereference("acme-api and Acme Corp and /Users/jerry/work/acme-api", &c).text;
-        assert!(masked.contains(PH_REPO) || masked.contains(PH_PROJECT) || masked.contains(PH_CLIENT));
+        assert!(
+            masked.contains(PH_REPO) || masked.contains(PH_PROJECT) || masked.contains(PH_CLIENT)
+        );
         let again = dereference(&masked, &c);
         assert_eq!(again.text, masked);
     }

@@ -3,10 +3,7 @@ use walkdir::WalkDir;
 
 /// Discover and index llms.txt files from a repo.
 #[allow(dead_code)]
-pub fn index_llms(
-    repo_path: &str,
-    _repo_id: &str,
-) -> Result<u32, String> {
+pub fn index_llms(repo_path: &str, _repo_id: &str) -> Result<u32, String> {
     let repo = Path::new(repo_path);
     let llms_files = discover_llms_files(repo);
     Ok(llms_files.len() as u32)
@@ -40,37 +37,50 @@ fn discover_llms_files(repo: &Path) -> Vec<(String, String)> {
 
     // Search known directories
     for dir in &search_dirs {
-        if !dir.exists() { continue; }
+        if !dir.exists() {
+            continue;
+        }
         for entry in WalkDir::new(dir).max_depth(3).into_iter().filter_map(|e| e.ok()) {
             let path = entry.path();
             let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-            if !entry.file_type().is_file() || (ext != "txt" && ext != "md") { continue; }
+            if !entry.file_type().is_file() || (ext != "txt" && ext != "md") {
+                continue;
+            }
 
             // Derive component name from path relative to the llms dir
             let rel = path.strip_prefix(dir).unwrap_or(path);
-            let name = rel.with_extension("")
+            let name = rel
+                .with_extension("")
                 .to_string_lossy()
                 .replace('\\', "/")
                 .replace('/', "-")
                 .to_string();
 
-            if name.is_empty() { continue; }
+            if name.is_empty() {
+                continue;
+            }
             found.push((name, path.to_string_lossy().to_string()));
         }
     }
 
     // Also find llms.txt in component/route directories
     for entry in WalkDir::new(repo).max_depth(6).into_iter().filter_map(|e| e.ok()) {
-        if entry.file_name() != "llms.txt" { continue; }
+        if entry.file_name() != "llms.txt" {
+            continue;
+        }
         let path = entry.path();
         // Skip if already found via known dirs
         let path_str = path.to_string_lossy().to_string();
-        if found.iter().any(|(_, p)| p == &path_str) { continue; }
+        if found.iter().any(|(_, p)| p == &path_str) {
+            continue;
+        }
         // Skip node_modules, .git, etc
-        if path_str.contains("node_modules") || path_str.contains(".git/") { continue; }
+        if path_str.contains("node_modules") || path_str.contains(".git/") {
+            continue;
+        }
 
-        let parent = path.parent().and_then(|p| p.file_name())
-            .and_then(|n| n.to_str()).unwrap_or("unknown");
+        let parent =
+            path.parent().and_then(|p| p.file_name()).and_then(|n| n.to_str()).unwrap_or("unknown");
         found.push((parent.to_string(), path_str));
     }
 
@@ -79,11 +89,7 @@ fn discover_llms_files(repo: &Path) -> Vec<(String, String)> {
 
 /// Generate llms-style documentation from the indexed call graph.
 #[allow(dead_code)]
-fn generate_llms_from_graph(
-    _repo_path: &str,
-    _repo_id: &str,
-    _now: &str,
-) -> Result<u32, String> {
+fn generate_llms_from_graph(_repo_path: &str, _repo_id: &str, _now: &str) -> Result<u32, String> {
     // TODO: implement
     Ok(0)
 }

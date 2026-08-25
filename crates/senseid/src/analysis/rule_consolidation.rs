@@ -21,12 +21,7 @@ pub enum ConsolidationOutcome {
     /// Nothing to do — the `&'static str` is a short, stable reason.
     Skipped(&'static str),
     /// A new `proposed` consolidated ruleset version was written.
-    Created {
-        id: uuid::Uuid,
-        version: i32,
-        model: Option<String>,
-        content: String,
-    },
+    Created { id: uuid::Uuid, version: i32, model: Option<String>, content: String },
 }
 
 /// Resolve + (conditionally) merge the global governance ruleset. Returns
@@ -62,7 +57,9 @@ pub async fn consolidate_global_rules(
                 MessageRole::User,
                 crate::governance::build_merge_prompt(&set),
             )],
-            system: Some("You merge governance rules into a single clean markdown ruleset.".to_string()),
+            system: Some(
+                "You merge governance rules into a single clean markdown ruleset.".to_string(),
+            ),
             max_tokens: Some(1500),
             temperature: None,
             tools: Vec::new(),
@@ -74,10 +71,8 @@ pub async fn consolidate_global_rules(
         allow_fallback: true,
         credentials: std::collections::HashMap::new(),
     };
-    let resp = gateway
-        .execute(&request)
-        .await
-        .map_err(|e| format!("merge model call failed: {e}"))?;
+    let resp =
+        gateway.execute(&request).await.map_err(|e| format!("merge model call failed: {e}"))?;
     let content = match (resp.success, resp.content) {
         (true, Some(c)) if !c.trim().is_empty() => c,
         _ => return Err("merge model returned no content".to_string()),

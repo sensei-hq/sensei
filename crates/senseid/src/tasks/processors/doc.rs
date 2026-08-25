@@ -4,13 +4,18 @@ use super::types::*;
 use crate::indexer::doc_indexer;
 
 /// Process a markdown/mdx document file.
-pub fn process(abs_path: &str, rel_path: &str, content: &str, _repo_id: &str, repo_path: &str) -> FileProcessResult {
+pub fn process(
+    abs_path: &str,
+    rel_path: &str,
+    content: &str,
+    _repo_id: &str,
+    repo_path: &str,
+) -> FileProcessResult {
     let frontmatter = doc_indexer::parse_frontmatter_pub(content);
     let classification = doc_indexer::classify_doc_pub(rel_path, &frontmatter);
 
-    let title = frontmatter.title
-        .or(frontmatter.name)
-        .or_else(|| doc_indexer::extract_title(content));
+    let title =
+        frontmatter.title.or(frontmatter.name).or_else(|| doc_indexer::extract_title(content));
 
     let file_refs = doc_indexer::extract_file_refs(content, repo_path);
     let fn_mentions = doc_indexer::extract_fn_mentions(content);
@@ -63,8 +68,7 @@ mod tests {
     use std::path::PathBuf;
 
     fn repo_root() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .parent().unwrap().parent().unwrap().to_path_buf()
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).parent().unwrap().parent().unwrap().to_path_buf()
     }
 
     fn fixtures() -> PathBuf {
@@ -74,14 +78,16 @@ mod tests {
     fn process_doc_file(rel: &str) -> FileProcessResult {
         let root = repo_root();
         let abs = root.join(rel);
-        let content = std::fs::read_to_string(&abs).unwrap_or_else(|_| panic!("not found: {}", abs.display()));
+        let content = std::fs::read_to_string(&abs)
+            .unwrap_or_else(|_| panic!("not found: {}", abs.display()));
         process(&abs.to_string_lossy(), rel, &content, "sensei", &root.to_string_lossy())
     }
 
     fn process_doc_fixture(rel: &str) -> FileProcessResult {
         let root = fixtures();
         let abs = root.join(rel);
-        let content = std::fs::read_to_string(&abs).unwrap_or_else(|_| panic!("Fixture not found: {}", abs.display()));
+        let content = std::fs::read_to_string(&abs)
+            .unwrap_or_else(|_| panic!("Fixture not found: {}", abs.display()));
         process(&abs.to_string_lossy(), rel, &content, "test", &root.to_string_lossy())
     }
 
@@ -90,8 +96,15 @@ mod tests {
         let subtree_root = root.join(subtree);
         let abs = root.join(rel);
         let sub_rel = abs.strip_prefix(&subtree_root).unwrap_or(&abs).to_string_lossy().to_string();
-        let content = std::fs::read_to_string(&abs).unwrap_or_else(|_| panic!("Fixture not found: {}", abs.display()));
-        process(&abs.to_string_lossy(), &sub_rel, &content, &format!("test:{}", subtree), &subtree_root.to_string_lossy())
+        let content = std::fs::read_to_string(&abs)
+            .unwrap_or_else(|_| panic!("Fixture not found: {}", abs.display()));
+        process(
+            &abs.to_string_lossy(),
+            &sub_rel,
+            &content,
+            &format!("test:{}", subtree),
+            &subtree_root.to_string_lossy(),
+        )
     }
 
     #[test]
@@ -153,7 +166,13 @@ mod tests {
         let abs = root.join("docs/llms/index.txt");
         if abs.exists() {
             let content = std::fs::read_to_string(&abs).unwrap();
-            let r = process(&abs.to_string_lossy(), "docs/llms/index.txt", &content, "sensei", &root.to_string_lossy());
+            let r = process(
+                &abs.to_string_lossy(),
+                "docs/llms/index.txt",
+                &content,
+                "sensei",
+                &root.to_string_lossy(),
+            );
             assert_eq!(r.kind, "doc");
             assert_eq!(r.doc_type.as_deref(), Some("usage"), "llms.txt should be usage doc");
         }
@@ -171,7 +190,8 @@ mod tests {
     fn process_ir_end_to_end() {
         let content = "---\nname: Test Idea\nstatus: idea\norigin: conversation\n---\n\n# Test Idea\n\n## Problem\n\nSomething needs fixing.\n\n## Solution\n\nFix it.\n";
 
-        let result = process_ir("docs/ideas/test-idea.md", content, "/tmp/repo", "test-proj").unwrap();
+        let result =
+            process_ir("docs/ideas/test-idea.md", content, "/tmp/repo", "test-proj").unwrap();
 
         assert_eq!(result.base.name, "Test Idea");
         assert_eq!(result.doc_type, Some("idea".into()));
@@ -182,7 +202,8 @@ mod tests {
 
     #[test]
     fn process_ir_creates_traceability_edge() {
-        let content = "---\nname: Blueprint\norigin: docs/ideas/01.md\n---\n\n# Blueprint\n\nArchitecture.\n";
+        let content =
+            "---\nname: Blueprint\norigin: docs/ideas/01.md\n---\n\n# Blueprint\n\nArchitecture.\n";
         let result = process_ir("docs/blueprints/01.md", content, "/tmp/repo", "test").unwrap();
         assert_eq!(result.base.name, "Blueprint");
         // Traceability edges now created via PgStore, not tested here
@@ -197,4 +218,3 @@ mod tests {
         assert_eq!(result.doc_type, Some("usage".into()));
     }
 }
-

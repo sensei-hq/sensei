@@ -156,9 +156,9 @@
         {@const options = optionsFor(role)}
         {@const status = saveStatus[role]}
         <div class="grid grid-cols-[28px_1fr_auto] gap-3 py-4 items-start" data-testid={`inference-role-${role}`}>
-          <span class="kanji text-[22px] text-accent leading-none mt-1">{meta.kanji}</span>
+          <span class="kanji text-xl text-accent leading-none mt-1">{meta.kanji}</span>
           <div class="min-w-0">
-            <div class="text-[13px] text-ink font-medium">{meta.label}</div>
+            <div class="text-sm text-ink font-medium">{meta.label}</div>
             <div class="text-xs text-ink-soft mt-0.5">{meta.hint}</div>
             {#if current && current.models.length > 0}
               <!-- Chain editor: model chips + ▲/▼/× per member. Adding a

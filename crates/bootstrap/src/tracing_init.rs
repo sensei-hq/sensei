@@ -18,8 +18,8 @@ use tracing_subscriber::EnvFilter;
 /// Use case: the `sensei doctor` CLI, where the structured `HealthEvent`
 /// timeline is the primary signal and library tracing is opt-in.
 pub fn install_console(default_filter: &str) {
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new(default_filter));
+    let filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(default_filter));
     let _ = tracing_subscriber::fmt()
         .with_env_filter(filter)
         .with_target(false)
@@ -40,8 +40,8 @@ pub fn install_file(path: impl AsRef<std::path::Path>, default_filter: &str) {
     let Ok(file) = OpenOptions::new().create(true).append(true).open(path) else {
         return;
     };
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new(default_filter));
+    let filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(default_filter));
     let _ = tracing_subscriber::fmt()
         .with_env_filter(filter)
         .with_writer(std::sync::Mutex::new(file))
@@ -64,10 +64,8 @@ mod tests {
 
     #[test]
     fn install_file_writes_to_temp_path() {
-        let tmp = std::env::temp_dir().join(format!(
-            "sensei-tracing-test-{}.log",
-            std::process::id(),
-        ));
+        let tmp =
+            std::env::temp_dir().join(format!("sensei-tracing-test-{}.log", std::process::id(),));
         let _ = std::fs::remove_file(&tmp);
         install_file(&tmp, "sensei_bootstrap=info");
         // try_init is idempotent; this should not panic even if a
@@ -81,9 +79,6 @@ mod tests {
         // A path under / on a writable FS still tends to be writable on
         // CI; pick a clearly-bogus parent that doesn't exist. The helper
         // must swallow the open error and return.
-        install_file(
-            "/this/path/should/not/exist/sensei-tracing.log",
-            "sensei_bootstrap=warn",
-        );
+        install_file("/this/path/should/not/exist/sensei-tracing.log", "sensei_bootstrap=warn");
     }
 }

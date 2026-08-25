@@ -9,7 +9,7 @@
 </script>
 
 <script lang="ts">
-	import { SectionHead, Banner, Btn, Chip, Icon, ListSection, KanjiToken } from '$lib/components/kit';
+	import { SectionHead, Btn, Chip, Icon, ListSection, KanjiToken } from '$lib/components/kit';
 	import type { KitKnowledge } from '$lib/components/kit/types';
 
 	// The maintainer knowledge library (mockup ScrKnowledge) — the published
@@ -19,17 +19,18 @@
 	// Presentational: the page supplies the library (kit fixtures this chunk).
 	let {
 		orgName,
-		knowledge,
-		mobile = false
+		knowledge
 	}: {
 		orgName: string;
 		knowledge: KitKnowledge;
-		mobile?: boolean;
 	} = $props();
 </script>
 
-<div class="flex flex-col {mobile ? 'p-4 gap-4' : 'p-8 gap-6'}">
-	<SectionHead eyebrow={orgName + ' · govern'} title="Knowledge">
+<div class="flex flex-col p-4 gap-4 md:p-8 md:gap-6">
+	<SectionHead
+		kanji="蔵" eyebrow={orgName + ' · govern'} title="Knowledge"
+		description="The published library the dōjō has adopted — and what's due to be pruned. Adopted knowledge distributes to every machine in scope. Unused teachings age out by the prune policy so the shared mind stays lean."
+	>
 		{#snippet right()}
 			<div
 				class="bg-paper border-paper-edge inline-flex items-center gap-1 rounded-lg border"
@@ -40,15 +41,6 @@
 			</div>
 		{/snippet}
 	</SectionHead>
-
-	<Banner
-		kanji="蔵"
-		tone="neutral"
-		title="The published library the dōjō has adopted — and what's due to be pruned."
-	>
-		Adopted knowledge distributes to every machine in scope. Unused teachings age out by the prune
-		policy so the shared mind stays lean.
-	</Banner>
 
 	<ListSection
 		icon="check-circle"

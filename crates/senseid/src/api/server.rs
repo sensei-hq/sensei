@@ -1,10 +1,10 @@
-use std::sync::Arc;
-use tower_http::cors::{CorsLayer, Any};
-use axum::http::Method;
-use crate::tasks::queue::TaskQueue;
-use crate::tasks::executor::{TaskContext, spawn_workers};
-use super::routes::{create_router, create_degraded_router};
+use super::routes::{create_degraded_router, create_router};
 use super::state::SharedState;
+use crate::tasks::executor::{TaskContext, spawn_workers};
+use crate::tasks::queue::TaskQueue;
+use axum::http::Method;
+use std::sync::Arc;
+use tower_http::cors::{Any, CorsLayer};
 
 /// Write a single-line startup error to `<sensei_dir>/startup-error.log` so
 /// users can find it without scraping launchd / brew-services log paths.
@@ -41,12 +41,10 @@ const WORKER_DB_RESERVE: usize = 8;
 /// `[WORKER_FLOOR, cap]`; a zero/invalid `env` falls back to the cores path,
 /// which is likewise clamped to `[WORKER_FLOOR, cap]`.
 fn resolve_worker_count(cores: usize, env: Option<String>) -> usize {
-    let cap = (sensei_bootstrap::DB_POOL_MAX_CONNECTIONS as usize)
-        .saturating_sub(WORKER_DB_RESERVE);
-    let requested = env
-        .and_then(|s| s.trim().parse::<usize>().ok())
-        .filter(|&n| n > 0)
-        .unwrap_or(cores);
+    let cap =
+        (sensei_bootstrap::DB_POOL_MAX_CONNECTIONS as usize).saturating_sub(WORKER_DB_RESERVE);
+    let requested =
+        env.and_then(|s| s.trim().parse::<usize>().ok()).filter(|&n| n > 0).unwrap_or(cores);
     requested.clamp(WORKER_FLOOR, cap)
 }
 
@@ -165,13 +163,17 @@ pub async fn start_server(port: u16) -> std::io::Result<()> {
                 eprintln!("{}", msg);
                 write_startup_error(&msg);
                 crate::api::resilience::mark_degraded();
-                tracing::warn!("senseid listening on :{} (degraded — DB unavailable; self-heal armed)", port);
+                tracing::warn!(
+                    "senseid listening on :{} (degraded — DB unavailable; self-heal armed)",
+                    port
+                );
 
                 // Serve the degraded router through a swappable handle so the
                 // background task below can replace it in place once the DB is up.
-                let handle = crate::api::resilience::RouterHandle::new(
-                    create_degraded_router(database_url.clone(), e.clone()),
-                );
+                let handle = crate::api::resilience::RouterHandle::new(create_degraded_router(
+                    database_url.clone(),
+                    e.clone(),
+                ));
 
                 let bg_handle = handle.clone();
                 let bg_url = database_url.clone();
@@ -232,7 +234,9 @@ async fn init_scan_rules_from_config(pg: &crate::db::pg_store::PgStore) {
         std::collections::HashMap::new();
     for key in SCAN_RULE_CONFIG_KEYS {
         match pg.get_config(key).await {
-            Ok(v) => { values.insert(key, v); }
+            Ok(v) => {
+                values.insert(key, v);
+            }
             Err(e) => {
                 tracing::warn!(config_key = %key, error = %e,
                     "scan rules: config read failed — using the built-in default for this list");
@@ -249,9 +253,12 @@ async fn init_scan_rules_from_config(pg: &crate::db::pg_store::PgStore) {
     }
     if customised {
         tracing::info!(
-            binary_add = overrides.binary_add.len(), binary_remove = overrides.binary_remove.len(),
-            source_add = overrides.source_add.len(), source_remove = overrides.source_remove.len(),
-            exclude_add = overrides.exclude_add.len(), exclude_remove = overrides.exclude_remove.len(),
+            binary_add = overrides.binary_add.len(),
+            binary_remove = overrides.binary_remove.len(),
+            source_add = overrides.source_add.len(),
+            source_remove = overrides.source_remove.len(),
+            exclude_add = overrides.exclude_add.len(),
+            exclude_remove = overrides.exclude_remove.len(),
             "scan rules: applied operator overrides from sensei.config",
         );
     } else {
@@ -264,9 +271,10 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
     let task_queue = Arc::new(TaskQueue::new());
 
     if let Ok(Some(max_str)) = pg.get_config("max_concurrent_repos").await
-        && let Ok(max) = max_str.parse::<usize>() {
-            task_queue.set_max_concurrent_repos(max);
-        }
+        && let Ok(max) = max_str.parse::<usize>()
+    {
+        task_queue.set_max_concurrent_repos(max);
+    }
 
     // Resolve the operator-tunable scan lists (binary extensions, fallback source
     // extensions, exclude globs) BEFORE anything scans. These were code-bound
@@ -283,7 +291,9 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
         Ok(Some(cfg)) => {
             tracing::info!(
                 "Gateway: loaded table-driven config ({} routers, {} models, {} chains)",
-                cfg.routers.len(), cfg.models.len(), cfg.chains.len()
+                cfg.routers.len(),
+                cfg.models.len(),
+                cfg.chains.len()
             );
             Some(cfg)
         }
@@ -330,7 +340,9 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
     let session_start = chrono::Utc::now();
     match state.pg.reconcile_orphaned_task_executions(session_start).await {
         Ok(0) => {}
-        Ok(n) => tracing::info!("startup: reconciled {n} orphaned task execution(s) from a prior session"),
+        Ok(n) => tracing::info!(
+            "startup: reconciled {n} orphaned task execution(s) from a prior session"
+        ),
         Err(e) => tracing::warn!(error = %e, "startup: reconcile_orphaned_task_executions failed"),
     }
 
@@ -364,7 +376,9 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
         &state.pg,
         &task_queue,
         env!("CARGO_PKG_VERSION"),
-    ).await {
+    )
+    .await
+    {
         crate::tasks::version_rescan::spawn_version_commit_watcher(
             Arc::new(state.pg.clone()),
             task_queue.clone(),
@@ -374,19 +388,13 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
 
     // Periodically enrich/analyze projects whose sessions changed (#67). First
     // tick fires immediately, so a freshly-started daemon backfills enrichment.
-    crate::tasks::analyzer_scheduler::spawn(
-        task_queue.clone(),
-        Arc::new(state.pg.clone()),
-    );
+    crate::tasks::analyzer_scheduler::spawn(task_queue.clone(), Arc::new(state.pg.clone()));
 
     // Metrics pipeline (Phase 4): once-daily (watermarked), enqueue the active
     // metric registry per project — one ComputeGroupMetrics per base group + a
     // ComputeHealth barrier. Mirrors the analyzer scheduler's spawn/watermark
     // pattern; the first tick backfills if a day has elapsed since the last run.
-    crate::tasks::metrics_scheduler::spawn(
-        task_queue.clone(),
-        Arc::new(state.pg.clone()),
-    );
+    crate::tasks::metrics_scheduler::spawn(task_queue.clone(), Arc::new(state.pg.clone()));
 
     // First-install / boot metric-history recovery. Two complementary triggers,
     // because they cover different boot shapes:
@@ -411,14 +419,24 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
         let pg = state.pg.clone();
         let queue = task_queue.clone();
         tokio::spawn(async move {
-            let (_seen, dispatched) = crate::transcript::dispatch(&queue).await;
-            if dispatched > 0 {
-                tracing::info!(dispatched, "startup: dispatched transcript backfill for metric history");
-            }
-            match pg.repair_orphaned_sessions().await {
-                Ok(n) if n > 0 => tracing::info!(repaired = n, "startup: re-attached orphaned sessions"),
-                Ok(_) => {}
-                Err(e) => tracing::warn!(error = %e, "startup: repair_orphaned_sessions failed"),
+            // Enqueue the task rather than calling the dispatcher directly.
+            //
+            // This was a THIRD copy of the backfill sequence and it had already
+            // drifted: it ran `dispatch` plus `repair_orphaned_sessions` (the
+            // events-based repair) only, so the transcript-based repair added
+            // later never ran on boot — the one path where it matters most,
+            // since boot is when newly-tracked folders make a previously
+            // unresolvable cwd resolvable. Enqueuing means startup gets whatever
+            // the task does, forever, with no third thing to keep in sync.
+            let kind = crate::tasks::TaskKind::IngestCaptures;
+            if queue.has_pending_kind(kind.clone()).await {
+                tracing::debug!("startup: transcript backfill already in flight");
+            } else {
+                let id = queue.enqueue(crate::tasks::Task::new(kind, "", "")).await;
+                tracing::info!(
+                    task_id = id,
+                    "startup: enqueued transcript backfill for metric history"
+                );
             }
             // Persist-boot trigger: plan the per-day metric backfill for every project
             // (guarded + idempotent). On a fresh install this runs before synthesis
@@ -426,8 +444,13 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
             // sessions become measurable; on a persist-boot the sessions are already
             // measurable, so THIS is what backfills their history.
             match crate::tasks::metrics_scheduler::enqueue_backfill_all(&queue, &pg).await {
-                Ok(0) => tracing::debug!("startup: metric backfill skipped (a plan wave is already in flight)"),
-                Ok(n) => tracing::info!(projects = n, "startup: enqueued metric backfill (ComputeProjectMetrics per project)"),
+                Ok(0) => tracing::debug!(
+                    "startup: metric backfill skipped (a plan wave is already in flight)"
+                ),
+                Ok(n) => tracing::info!(
+                    projects = n,
+                    "startup: enqueued metric backfill (ComputeProjectMetrics per project)"
+                ),
                 Err(e) => tracing::warn!(error = %e, "startup: metric backfill enqueue failed"),
             }
         });
@@ -437,10 +460,7 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
     // auto-resumes due pauses and enqueues an AdvanceRun per active run. P3.2
     // only heartbeats + logs housekeeping; the agent spawn/drive is P3.3. DB
     // errors (incl. a not-yet-deployed runs table) are logged, never fatal.
-    crate::tasks::advance_run_scheduler::spawn(
-        task_queue.clone(),
-        Arc::new(state.pg.clone()),
-    );
+    crate::tasks::advance_run_scheduler::spawn(task_queue.clone(), Arc::new(state.pg.clone()));
 
     // Relay-engine (P3.6): the run watchdog. Every 60s it sweeps running/stalled
     // runs — a stale-heartbeat running run is marked stalled, a stalled run is
@@ -448,10 +468,7 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
     // the recovery cap escalates to crashed. Degrade-never-stop: a hung/dead run
     // is recovered or surfaced, never left silently wedged. Tolerates a
     // not-yet-deployed runs table (warn, never fatal).
-    crate::tasks::watchdog_scheduler::spawn(
-        task_queue.clone(),
-        Arc::new(state.pg.clone()),
-    );
+    crate::tasks::watchdog_scheduler::spawn(task_queue.clone(), Arc::new(state.pg.clone()));
 
     // Watcher safety net: frequently (boot + every reconcile.interval_secs,
     // default 300s) re-scan every watch root so the index converges even when
@@ -460,10 +477,7 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
     // (Bug 3) + prunes orphan nodes (Bug 2). The two-tier mtime gate makes a
     // no-op re-scan stat-only, so this is cheap to run often. The boot reconcile
     // ALWAYS runs (drift-safety); overlap-guarded so reconciles never stack.
-    crate::tasks::reconcile_scheduler::spawn(
-        task_queue.clone(),
-        Arc::new(state.pg.clone()),
-    );
+    crate::tasks::reconcile_scheduler::spawn(task_queue.clone(), Arc::new(state.pg.clone()));
 
     // Index integrity self-audit (P2): a conservative (daily, watermark-gated)
     // sweep that GENERALIZES the point-fix self-heals into one continuous
@@ -513,14 +527,29 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
         let pg = state.pg.clone();
         tokio::spawn(async move {
             let sensei_dir = crate::paths::sensei_dir();
-            match crate::api::handlers::knowledge::materialize_global_rules(&pg, &sensei_dir).await {
+            match crate::api::handlers::knowledge::materialize_global_rules(&pg, &sensei_dir).await
+            {
                 Ok((rules_path, n)) => {
-                    tracing::info!("startup: materialized {n} global rule(s) → {}", rules_path.display());
+                    tracing::info!(
+                        "startup: materialized {n} global rule(s) → {}",
+                        rules_path.display()
+                    );
                     let claude_md = crate::paths::home().join(".claude/CLAUDE.md");
-                    match crate::api::handlers::knowledge::upsert_pointer_in_claude_md(&claude_md, &rules_path) {
-                        Ok(None) => tracing::debug!("startup: {} not present, skipping CLAUDE.md pointer", claude_md.display()),
-                        Ok(Some((path, true))) => tracing::info!("startup: updated CLAUDE.md pointer → {}", path.display()),
-                        Ok(Some((_, false))) => tracing::debug!("startup: CLAUDE.md pointer already current"),
+                    match crate::api::handlers::knowledge::upsert_pointer_in_claude_md(
+                        &claude_md,
+                        &rules_path,
+                    ) {
+                        Ok(None) => tracing::debug!(
+                            "startup: {} not present, skipping CLAUDE.md pointer",
+                            claude_md.display()
+                        ),
+                        Ok(Some((path, true))) => tracing::info!(
+                            "startup: updated CLAUDE.md pointer → {}",
+                            path.display()
+                        ),
+                        Ok(Some((_, false))) => {
+                            tracing::debug!("startup: CLAUDE.md pointer already current")
+                        }
                         Err(e) => tracing::warn!("startup: CLAUDE.md pointer upsert failed: {e}"),
                     }
                 }
@@ -544,7 +573,11 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
             match crate::tool_discovery::run_capture(&pg).await {
                 Ok(c) => tracing::info!(
                     "startup: tool capture — {} servers, {} builtins, probed_ok {}, probed_err {}",
-                    c.discovered, c.builtins, c.probed_ok, c.probed_err),
+                    c.discovered,
+                    c.builtins,
+                    c.probed_ok,
+                    c.probed_err
+                ),
                 Err(e) => tracing::warn!("startup: tool capture failed: {e}"),
             }
         });
@@ -559,7 +592,9 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
             const RETENTION_DAYS: i32 = 30;
             loop {
                 match pg.prune_logs(RETENTION_DAYS).await {
-                    Ok(n) if n > 0 => tracing::info!("log retention: pruned {n} log rows older than {RETENTION_DAYS}d"),
+                    Ok(n) if n > 0 => tracing::info!(
+                        "log retention: pruned {n} log rows older than {RETENTION_DAYS}d"
+                    ),
                     Err(e) => tracing::warn!("log retention prune failed: {e}"),
                     _ => {}
                 }
@@ -603,10 +638,7 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
     // the same strict anonymise + confidentiality gate as the manual publish.
     // STAGE-ONLY — it never publishes / egresses; the outbox→dojo send stays the
     // explicit manual C6 step. No-op until the user sets a daily/weekly cadence.
-    crate::tasks::contribute_scheduler::spawn(
-        Arc::new(state.pg.clone()),
-        state.gateway.clone(),
-    );
+    crate::tasks::contribute_scheduler::spawn(Arc::new(state.pg.clone()), state.gateway.clone());
 
     // Capture watchdog: hourly sweep over configured ACP adapters. Auto-resolves
     // config-side failures (reinstall), trips a per-adapter breaker on give-up,
@@ -628,7 +660,8 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
             tokio::time::sleep(std::time::Duration::from_secs(60)).await;
             loop {
                 let now_ms = chrono::Utc::now().timestamp_millis();
-                crate::assistants::run_sweep(&pg, &notifier, &breaker, &watchdog_logger, now_ms).await;
+                crate::assistants::run_sweep(&pg, &notifier, &breaker, &watchdog_logger, now_ms)
+                    .await;
                 tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
             }
         });
@@ -645,7 +678,8 @@ async fn spawn_root_watchers(state: &Arc<SharedState>, queue: Arc<TaskQueue>) {
         tracing::warn!(error = %e, "spawn_root_watchers: list_watch_roots failed; no roots will be watched");
         Vec::new()
     });
-    let live: Vec<(uuid::Uuid, String)> = roots.iter()
+    let live: Vec<(uuid::Uuid, String)> = roots
+        .iter()
         .filter_map(|r| {
             let path = r["path"].as_str()?.to_string();
             let id = crate::api::util::json_uuid(&r["id"])?;
@@ -654,7 +688,9 @@ async fn spawn_root_watchers(state: &Arc<SharedState>, queue: Arc<TaskQueue>) {
         .filter(|(_, p)| std::path::Path::new(p).exists())
         .collect();
 
-    if live.is_empty() { return; }
+    if live.is_empty() {
+        return;
+    }
 
     // Register + start inside the lock; capture whether the watcher is live.
     // (Don't hold the std Mutex across an await.)
@@ -716,7 +752,7 @@ mod bind_host_tests {
 
 #[cfg(test)]
 mod worker_count_tests {
-    use super::{resolve_worker_count, WORKER_DB_RESERVE, WORKER_FLOOR};
+    use super::{WORKER_DB_RESERVE, WORKER_FLOOR, resolve_worker_count};
 
     /// The cap is derived from the DB pool size, not hardcoded — assert it so a
     /// future change to `DB_POOL_MAX_CONNECTIONS` (or the reserve) is caught here

@@ -13,7 +13,7 @@
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::Json;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::api::state::AppState;
 
@@ -130,14 +130,8 @@ mod tests {
     /// `"phase"` tag, snake_case, with the `Downloading` payload flattened.
     #[test]
     fn phase_json_matches_kernel_serde_shape() {
-        assert_eq!(
-            phase_json(&gateway::ProvisionPhase::Ready),
-            json!({"phase": "ready"})
-        );
-        assert_eq!(
-            phase_json(&gateway::ProvisionPhase::Absent),
-            json!({"phase": "absent"})
-        );
+        assert_eq!(phase_json(&gateway::ProvisionPhase::Ready), json!({"phase": "ready"}));
+        assert_eq!(phase_json(&gateway::ProvisionPhase::Absent), json!({"phase": "absent"}));
         assert_eq!(
             phase_json(&gateway::ProvisionPhase::Downloading { done: 5, total: Some(100) }),
             json!({"phase": "downloading", "done": 5, "total": 100})
@@ -170,10 +164,7 @@ mod tests {
         // Tracked model overlays its live phase, carries id + display name.
         assert_eq!(rows[0]["id"], "gemma2:2b");
         assert_eq!(rows[0]["name"], "Gemma 2 2B Instruct");
-        assert_eq!(
-            rows[0]["phase"],
-            json!({"phase": "downloading", "done": 5, "total": 100}),
-        );
+        assert_eq!(rows[0]["phase"], json!({"phase": "downloading", "done": 5, "total": 100}),);
 
         // Untracked catalog model defaults to `absent` — still pullable.
         assert_eq!(rows[1]["id"], "phantom:1b");

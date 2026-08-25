@@ -4,7 +4,7 @@
     import {
         buildSignals,
         familyLookup,
-        orderSignals,
+        groupSignals,
         seriesValues,
         seriesDistribution,
         densifySeries,
@@ -15,6 +15,7 @@
         metricAbout,
         linkifyMetrics,
         formatMetricValue,
+        metricTickFormatter,
         TREND_TEXT,
         GRADE_CLASS,
     } from '$lib/metrics/metric-view.js';
@@ -30,7 +31,7 @@
 
     const projectId = $derived(page.params.id ?? '');
     const signals = $derived(buildSignals(data.rows, familyLookup(data.registry), data.narrative));
-    const ordered = $derived(orderSignals(signals));
+    const groups = $derived(groupSignals(signals));
     const selected = $derived(signals.find((s) => s.key === data.selectedKey) ?? null);
     // The static "about this metric" reference (purpose / how-to-read / formula),
     // from the selected metric's registry row + the series' formula facet.
@@ -44,7 +45,11 @@
 
     const values = $derived(seriesValues(data.series));
     const distribution = $derived(seriesDistribution(values));
-    const format = $derived((v: number) => formatMetricValue(selected?.type ?? 'count', v));
+    // Key-aware, not type-only: maintainability/duplication are typed `ratio` but
+    // live inside 0-0.005, so a type-only formatter renders every axis tick as
+    // "0.00". They read per-1,000-lines here, matching their grade bands and
+    // headline rate.
+    const format = $derived(metricTickFormatter(selected?.key ?? '', selected?.type ?? 'count'));
 
     // Densified {date,value|null}[] for the chart (absent periods → gaps) and a
     // fixed y-domain per metric type (a flat series stays flat, not a mountain).
@@ -69,10 +74,6 @@
     const yDomain = $derived(metricYDomain(selected?.type ?? 'count', values));
     const note = $derived(historyNote(fullChartSeries));
     const caption = $derived(note ? `${note} · ${data.grain}` : '');
-
-    // "About this metric" is a popover (info button), not interleaved with the
-    // real content — it's reference material, opened on demand.
-    let aboutOpen = $state(false);
 
     // The selected datapoint index — defaults to the latest defined point, and a
     // chart click moves it. Drives the highlight + the evidence panel's day.
@@ -122,10 +123,20 @@
      scroll INDEPENDENTLY (min-h-0 + overflow-auto), so a long evidence panel never
      drags the rail off-screen. -->
 <div class="h-full flex flex-col overflow-hidden pt-8 px-6 md:px-10 pb-6 max-w-[1040px]">
-    <a
-        href={`/project/${projectId}/metrics`}
-        class="inline-flex items-center gap-1 text-xs text-ink-mute hover:text-accent no-underline mb-4 shrink-0"
-    >← All signals</a>
+    <!-- Back link + the trail that tells you where in the signal set you are
+         (mockup: "metrics · quality · churn concentration"). Lowercased in CSS,
+         not in the data, so the family/metric names stay as the registry has them. -->
+    <div class="flex items-baseline gap-4 mb-4 shrink-0">
+        <a
+            href={`/project/${projectId}/metrics`}
+            class="inline-flex items-center gap-1 text-xs text-ink-mute hover:text-accent no-underline"
+        >← All signals</a>
+        {#if selected}
+            <div data-component="signal-breadcrumb" class="mono text-xs text-ink-faint lowercase truncate">
+                metrics · {selected.familyLabel} · {selected.name}
+            </div>
+        {/if}
+    </div>
 
     {#if data.error}
         <div data-component="metrics-error" class="bg-paper-soft border border-paper-edge rounded-lg px-4 py-6 text-sm text-ink-mute">
@@ -138,37 +149,27 @@
             class="flex-1 min-h-0 grid grid-cols-1 md:grid-cols-[260px_1fr] bg-paper-soft border border-paper-edge rounded-lg overflow-hidden"
         >
             <div class="overflow-auto min-h-0">
-                <SignalRail signals={ordered} selectedKey={data.selectedKey} {projectId} {distribution} {format} />
+                <SignalRail {groups} selectedKey={data.selectedKey} {projectId} {distribution} {format} />
             </div>
 
             <div class="overflow-auto min-h-0 p-6 md:p-8 flex flex-col gap-6">
                 {#if selected}
-                    <div class="relative flex items-start justify-between gap-6 flex-wrap">
+                    <div class="flex items-start justify-between gap-6 flex-wrap">
                         <div class="flex flex-col gap-1">
                             <Eyebrow>{selected.familyLabel}</Eyebrow>
-                            <div class="flex items-center gap-2">
-                                <div class="display text-2xl font-light leading-tight text-ink">{selected.name}</div>
-                                {#if about}
-                                    <button
-                                        type="button"
-                                        data-component="about-toggle"
-                                        aria-expanded={aboutOpen}
-                                        aria-label="About this metric"
-                                        title="About this metric"
-                                        onclick={() => (aboutOpen = !aboutOpen)}
-                                        class="w-5 h-5 shrink-0 rounded-full border text-xs leading-none transition-colors duration-fast {aboutOpen
-                                            ? 'border-accent text-accent'
-                                            : 'border-paper-edge text-ink-mute hover:text-accent hover:border-accent'}"
-                                    >i</button>
-                                {/if}
-                            </div>
+                            <div class="display text-2xl font-light leading-tight text-ink">{selected.name}</div>
+                            <!-- The value is the point of this screen, so it is the
+                                 largest thing on it (mockup's hero "57%"). It read at
+                                 body size against a text-2xl title, which inverted the
+                                 hierarchy. Trend and comparison sit on its baseline. -->
                             <div class="flex items-baseline gap-3 pt-1">
                                 {#if selected.grade}
                                     <span
                                         class="self-center rounded px-1.5 py-0.5 text-sm font-medium leading-none {GRADE_CLASS[selected.grade]}"
                                         title="grade for the per-1,000-lines rate">{selected.grade}</span>
                                 {/if}
-                                <span class="text-ink tabular-nums">{selected.value}</span>
+                                <span class="display text-3xl font-light leading-none text-ink tabular-nums"
+                                    >{selected.value}</span>
                                 {#if selected.trend}
                                     <span class="mono text-sm {TREND_TEXT[selected.color]}">{selected.trend.label}</span>
                                 {/if}
@@ -187,16 +188,11 @@
                                 >{g.label}</a>
                             {/each}
                         </div>
-
-                        {#if aboutOpen && about}
-                            <div
-                                data-component="about-popover"
-                                class="absolute right-0 top-full mt-2 z-20 w-[22rem] max-w-[90vw] bg-paper border border-paper-edge rounded-lg shadow-md p-4"
-                            >
-                                <AboutMetric {about} {howToReadSegments} {projectId} />
-                            </div>
-                        {/if}
                     </div>
+
+                    {#if about}
+                        <AboutMetric {about} {howToReadSegments} {projectId} />
+                    {/if}
 
                     {#if data.seriesError}
                         <p data-component="chart-error" class="bg-paper border border-paper-edge rounded-md px-4 py-6 text-sm text-ink-mute">

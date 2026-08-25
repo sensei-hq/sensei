@@ -14,6 +14,57 @@ use std::sync::Arc;
 
 use crate::db::pg_store::PgStore;
 
+/// A cross-test serialisation gate.
+///
+/// **Blocking on purpose.** Every `#[tokio::test]` builds its own current-thread
+/// runtime and drops it when the test ends, so a `static` async mutex is shared
+/// across runtimes that come and go. Releasing it wakes a waker owned by some
+/// *other* runtime; if that runtime is already gone the wakeup is lost and every
+/// remaining waiter parks forever on a mutex nobody holds. That was observed as
+/// 9 tests stuck past 60s with ZERO rows in `pg_stat_activity` — nothing was
+/// waiting on the database.
+///
+/// A blocking mutex has no waker to lose. Each test owns its thread, so blocking
+/// it costs nothing, and the guard is only held across `.await` inside a
+/// current-thread runtime (where futures need not be `Send`). Call sites need
+/// `#[allow(clippy::await_holding_lock)]`, which is why the reasoning lives here
+/// rather than being restated at each one.
+///
+/// Poisoning is ignored deliberately: a panicking test must not turn one failure
+/// into a cascade of unrelated ones. A gate orders tests; it guards no invariant
+/// a panic could corrupt.
+pub(crate) struct TestGate(std::sync::Mutex<()>);
+
+impl TestGate {
+    pub(crate) const fn new() -> Self {
+        Self(std::sync::Mutex::new(()))
+    }
+
+    /// Acquire the gate, ignoring poisoning. Hold the guard for the whole span
+    /// that must not overlap another test.
+    pub(crate) fn enter(&self) -> std::sync::MutexGuard<'_, ()> {
+        self.0.lock().unwrap_or_else(|e| e.into_inner())
+    }
+}
+
+/// Serialises tests that mutate `inference.corrections` GLOBALLY.
+///
+/// Two operations on that table are table-wide by design, not per-project:
+/// - `delete_corrections_not_in(keep)` deletes every signature outside `keep`,
+///   so a test passing only its OWN signature wipes every other test's rows.
+/// - `aggregate_corrections` prunes to the signatures it just recomputed, and
+///   with no corrective prompts present that clears the table outright.
+///
+/// Neither can be scoped per-test — being table-wide is the behaviour under
+/// test. Concurrently, they silently delete a sibling's fixture: this is what
+/// made `metrics_pipeline_end_to_end` flake, its `memory_promotion` denominator
+/// dropping from 4 eligible items to 2 mid-run (2/2 = 1.0 instead of 2/4 = 0.5)
+/// because another test's sweep removed its two seeded corrections.
+///
+/// Hold this for the whole span between seeding corrections and asserting on
+/// anything derived from them.
+pub(crate) static CORRECTIONS_TABLE_LOCK: TestGate = TestGate::new();
+
 /// A [`TaskContext`](crate::tasks::executor::TaskContext) backed by a fresh
 /// `TaskQueue`, the test `PgStore`, and a noop gateway — the standard fixture for
 /// task-handler unit tests.
@@ -24,7 +75,10 @@ pub(crate) async fn make_ctx() -> Arc<crate::tasks::executor::TaskContext> {
         task_queue: queue.clone(),
         pg: crate::db::pg_store::PgStore::connect_test().await.unwrap(),
         gateway,
-        event_tx: { let (tx, _) = tokio::sync::broadcast::channel(16); tx },
+        event_tx: {
+            let (tx, _) = tokio::sync::broadcast::channel(16);
+            tx
+        },
         breaker: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
         provisioning: None,
     });
@@ -64,10 +118,7 @@ pub(crate) async fn seed_project_folder_at(
     uniq: &uuid::Uuid,
     abs_path: &str,
 ) -> (uuid::Uuid, uuid::Uuid) {
-    let pid = pg
-        .create_project(&format!("_test:metrics:{uniq}"), None, None)
-        .await
-        .unwrap();
+    let pid = pg.create_project(&format!("_test:metrics:{uniq}"), None, None).await.unwrap();
     ensure_test_watch_root(pg).await;
     let name = format!("metrics-{uniq}");
     let (fid,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
@@ -190,6 +241,81 @@ pub(crate) async fn repository_for_folder(pg: &PgStore, folder_id: &uuid::Uuid) 
 /// pools their repo-grain rows (Σnum/Σden). Returns `(folder_id2, repository_id2)`.
 /// [`cleanup_metrics_fixture`] deletes the repo row (it walks every folder in the
 /// project); pass `folder_id2` as a fixture `fid` to also clear the folder.
+/// Attach an already-created test repository to a project via a folder.
+///
+/// `sensei.project_metrics` derives `project_id` by looking up the repository's
+/// folder, so a repository with none yields NULL and every project-filtered read
+/// silently returns nothing — the rows exist but are invisible. Tests that create
+/// a repository inline (rather than through [`seed_bare_repository`]) need this
+/// to be readable by project.
+pub(crate) async fn link_repository_to_project(
+    pg: &PgStore,
+    repository_id: &uuid::Uuid,
+    project_id: &uuid::Uuid,
+    name: &str,
+) {
+    ensure_test_watch_root(pg).await;
+    let abs = format!("/_test/link-{name}-{repository_id}");
+    sqlx_core::query::query(
+        "INSERT INTO sensei.folders(root_id, kind, name, path, abs_path, project_id, repository_id) \
+         VALUES('00000000-0000-0000-0000-000000000001', 'git'::sensei.folder_kind, $1, $1, $2, $3, $4) \
+         ON CONFLICT(abs_path) DO UPDATE SET project_id = EXCLUDED.project_id, \
+                                             repository_id = EXCLUDED.repository_id",
+    )
+    .bind(name)
+    .bind(&abs)
+    .bind(project_id)
+    .bind(repository_id)
+    .execute(pg.pool())
+    .await
+    .unwrap();
+}
+
+/// A repository for tests that need a valid `repository_id` to hang metric rows
+/// on, LINKED to `project_id` through a folder.
+///
+/// Two constraints make the link mandatory rather than optional:
+///   * `repository_metrics.repository_id` is NOT NULL with an FK, so a test can
+///     no longer pass a project id (or `None`) where a repository belongs.
+///     Several did before the rename; the FK now rejects it.
+///   * `sensei.project_metrics` derives `project_id` by looking up the
+///     repository's folder. A repository with NO folder yields a NULL project_id,
+///     so any read filtered by project finds nothing — the row exists but is
+///     invisible, which is the most confusing possible test failure.
+///
+/// Keyed on `uniq` so parallel tests cannot collide on `repo_key`/`abs_path`, and
+/// upserting so a re-run is idempotent.
+pub(crate) async fn seed_bare_repository(
+    pg: &PgStore,
+    project_id: &uuid::Uuid,
+    uniq: &uuid::Uuid,
+) -> uuid::Uuid {
+    ensure_test_watch_root(pg).await;
+    let (rid,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
+        "INSERT INTO sensei.repositories(repo_key, name) VALUES($1, $2) \
+         ON CONFLICT(repo_key) DO UPDATE SET name = EXCLUDED.name RETURNING id",
+    )
+    .bind(format!("test/bare-{uniq}"))
+    .bind(format!("bare-{uniq}"))
+    .fetch_one(pg.pool())
+    .await
+    .unwrap();
+    sqlx_core::query::query(
+        "INSERT INTO sensei.folders(root_id, kind, name, path, abs_path, project_id, repository_id) \
+         VALUES('00000000-0000-0000-0000-000000000001', 'git'::sensei.folder_kind, $1, $1, $2, $3, $4) \
+         ON CONFLICT(abs_path) DO UPDATE SET project_id = EXCLUDED.project_id, \
+                                             repository_id = EXCLUDED.repository_id",
+    )
+    .bind(format!("bare-{uniq}"))
+    .bind(format!("/_test/bare-{uniq}"))
+    .bind(project_id)
+    .bind(rid)
+    .execute(pg.pool())
+    .await
+    .unwrap();
+    rid
+}
+
 pub(crate) async fn seed_second_repository(
     pg: &PgStore,
     project_id: &uuid::Uuid,
@@ -257,11 +383,8 @@ pub(crate) fn git_commit_on_day(dir: &std::path::Path, day: &str, files: &[(&str
     for (name, content) in files {
         std::fs::write(dir.join(name), content).unwrap();
     }
-    let add = std::process::Command::new("git")
-        .args(["add", "-A"])
-        .current_dir(dir)
-        .status()
-        .unwrap();
+    let add =
+        std::process::Command::new("git").args(["add", "-A"]).current_dir(dir).status().unwrap();
     assert!(add.success(), "git add -A failed in the churn fixture repo");
     let stamp = format!("{day}T12:00:00");
     let ok = std::process::Command::new("git")

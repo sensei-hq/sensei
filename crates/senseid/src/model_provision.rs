@@ -59,10 +59,7 @@ pub(crate) fn model_layer_from_manifest(manifest: &serde_json::Value) -> Option<
 /// Derive a stable managed filename for a model id (`:` and `/` are not
 /// path-safe across the id space). `gemma2:2b` → `gemma2_2b.gguf`.
 pub(crate) fn managed_filename(id: &str) -> String {
-    let safe: String = id
-        .chars()
-        .map(|c| if c == ':' || c == '/' { '_' } else { c })
-        .collect();
+    let safe: String = id.chars().map(|c| if c == ':' || c == '/' { '_' } else { c }).collect();
     format!("{safe}.gguf")
 }
 
@@ -74,10 +71,7 @@ pub struct Provisioner {
 
 impl Provisioner {
     pub fn new(managed_root: impl Into<PathBuf>) -> Self {
-        Self {
-            client: reqwest::Client::new(),
-            managed_root: managed_root.into(),
-        }
+        Self { client: reqwest::Client::new(), managed_root: managed_root.into() }
     }
 
     /// Ensure model `id` is present in the managed dir and registered in the
@@ -157,10 +151,8 @@ impl Provisioner {
             .map_err(|e| format!("create managed dir: {e}"))?;
         let dest = self.managed_root.join(managed_filename(id));
         let blob_url = format!("{REGISTRY_LIBRARY}/{name}/blobs/{digest}");
-        self.download_verify(&blob_url, &dest, &expected_hex, |done| {
-            on_progress(done, total)
-        })
-        .await?;
+        self.download_verify(&blob_url, &dest, &expected_hex, |done| on_progress(done, total))
+            .await?;
 
         let managed = ManagedResolver::new(&self.managed_root);
         managed
@@ -203,20 +195,13 @@ impl Provisioner {
             .error_for_status()
             .map_err(|e| format!("blob {url}: {e}"))?;
 
-        let mut file = tokio::fs::File::create(&tmp)
-            .await
-            .map_err(|e| format!("create {tmp:?}: {e}"))?;
+        let mut file =
+            tokio::fs::File::create(&tmp).await.map_err(|e| format!("create {tmp:?}: {e}"))?;
         let mut hasher = Sha256::new();
         let mut written: u64 = 0;
-        while let Some(chunk) = resp
-            .chunk()
-            .await
-            .map_err(|e| format!("download {url}: {e}"))?
-        {
+        while let Some(chunk) = resp.chunk().await.map_err(|e| format!("download {url}: {e}"))? {
             hasher.update(&chunk);
-            file.write_all(&chunk)
-                .await
-                .map_err(|e| format!("write {tmp:?}: {e}"))?;
+            file.write_all(&chunk).await.map_err(|e| format!("write {tmp:?}: {e}"))?;
             written += chunk.len() as u64;
             on_progress(written);
         }
@@ -233,9 +218,7 @@ impl Provisioner {
             if let Err(e) = tokio::fs::remove_file(&tmp).await {
                 tracing::debug!(tmp = ?tmp, error = %e, "model_provision: failed to remove checksum-mismatched temp file");
             }
-            return Err(format!(
-                "sha256 mismatch for {url}: expected {expected_hex}, got {got}"
-            ));
+            return Err(format!("sha256 mismatch for {url}: expected {expected_hex}, got {got}"));
         }
         tokio::fs::rename(&tmp, dest)
             .await

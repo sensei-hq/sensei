@@ -126,7 +126,8 @@ pub fn render_rules_tiers(set: &ResolvedRuleset, tiers: &[&str]) -> String {
         if !tiers.contains(&level) {
             continue;
         }
-        let group: Vec<&ResolvedRule> = set.rules.iter().filter(|r| r.enforcement == level).collect();
+        let group: Vec<&ResolvedRule> =
+            set.rules.iter().filter(|r| r.enforcement == level).collect();
         if group.is_empty() {
             continue;
         }
@@ -135,7 +136,12 @@ pub fn render_rules_tiers(set: &ResolvedRuleset, tiers: &[&str]) -> String {
         out.push('\n');
         for r in group {
             let scope = if r.scope.is_empty() { "general".to_string() } else { r.scope.clone() };
-            out.push_str(&format!("- **{}** — {} _({})_\n", r.title.trim(), r.content.trim(), scope));
+            out.push_str(&format!(
+                "- **{}** — {} _({})_\n",
+                r.title.trim(),
+                r.content.trim(),
+                scope
+            ));
             if let Some(impact) = r.impact.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
                 out.push_str(&format!("  > {impact}\n"));
             }
@@ -169,8 +175,15 @@ pub fn build_merge_prompt(set: &ResolvedRuleset) -> String {
          Rules:\n",
     );
     for r in &set.rules {
-        let impact = r.impact.as_deref().map(|i| format!(" (impact: {})", i.trim())).unwrap_or_default();
-        p.push_str(&format!("- [{}] {} — {}{}\n", r.enforcement, r.title.trim(), r.content.trim(), impact));
+        let impact =
+            r.impact.as_deref().map(|i| format!(" (impact: {})", i.trim())).unwrap_or_default();
+        p.push_str(&format!(
+            "- [{}] {} — {}{}\n",
+            r.enforcement,
+            r.title.trim(),
+            r.content.trim(),
+            impact
+        ));
     }
     p
 }
@@ -238,7 +251,10 @@ mod tests {
         assert_eq!(set.total, 2, "the duplicate is dropped");
         assert_eq!(set.mandatory_count, 1);
         let secrets = set.rules.iter().find(|r| r.content == "never log secrets").unwrap();
-        assert_eq!(secrets.enforcement, "mandatory", "kept the mandatory instance, not the advisory dup");
+        assert_eq!(
+            secrets.enforcement, "mandatory",
+            "kept the mandatory instance, not the advisory dup"
+        );
         assert!(secrets.mandatory);
         assert_eq!(set.rules[0].content, "never log secrets", "ordering preserved");
     }
@@ -306,7 +322,11 @@ mod tests {
         let b = structure_ruleset(vec![raw("x", "required", "user")]);
         let c = structure_ruleset(vec![raw("y", "required", "user")]);
         assert_eq!(ruleset_source_hash(&a), ruleset_source_hash(&b), "same content → same hash");
-        assert_ne!(ruleset_source_hash(&a), ruleset_source_hash(&c), "different content → different hash");
+        assert_ne!(
+            ruleset_source_hash(&a),
+            ruleset_source_hash(&c),
+            "different content → different hash"
+        );
     }
 
     #[test]

@@ -12,13 +12,11 @@
 	let {
 		plan,
 		selectedId,
-		onSelect,
-		mobile = false
+		onSelect
 	}: {
 		plan: KitPlan;
 		selectedId?: string;
 		onSelect?: (task: KitTask) => void;
-		mobile?: boolean;
 	} = $props();
 
 	const ps = $derived(phases(plan));
@@ -37,7 +35,7 @@
 	{#each ps as p, pi (p.id)}
 		{@const st = nodeTone(stageState(p))}
 		<div class={pi ? 'border-paper-edge border-t' : ''}>
-			<div class="bg-paper-mute flex items-center gap-3" style="padding: var(--space-3) var(--space-4)">
+			<div class="bg-paper-mute flex items-center gap-3 px-4 py-3">
 				<span class="text-ink min-w-0 flex-1 text-sm font-medium">{p.title}</span>
 				<span class="mono text-xs {st.text}">{st.label}</span>
 				<span class="mono text-ink-faint text-xs">{doneCount(p.tasks)}/{p.tasks.length}</span>
@@ -47,12 +45,10 @@
 				<button
 					type="button"
 					onclick={() => onSelect?.(t)}
-					class="border-paper-edge flex w-full border-t text-left {mobile
-						? 'flex-col gap-2'
-						: 'items-center gap-3'} {selectedId === t.id ? 'bg-paper-mute' : ''}"
-					style="padding: var(--space-3) var(--space-4); padding-left: {mobile
-						? 'var(--space-4)'
-						: 'var(--space-6)'}"
+					class="border-paper-edge flex w-full flex-col gap-2 border-t px-4 py-3 text-left md:flex-row md:items-center md:gap-3 md:pl-8 {selectedId ===
+					t.id
+						? 'bg-paper-mute'
+						: ''}"
 				>
 					<span class="flex min-w-0 flex-1 items-center gap-3">
 						<Icon name={n.icon} size={16} toneClass={n.text} />
@@ -72,10 +68,8 @@
 									>{/if}
 							</span>
 							{#if meta(t)}<span
-									class="mono text-ink-faint block text-xs"
-									style="margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: {mobile
-										? 'normal'
-										: 'nowrap'}">{meta(t)}</span
+									class="mono text-ink-faint block overflow-hidden text-ellipsis whitespace-normal text-xs md:whitespace-nowrap"
+									style="margin-top: 3px">{meta(t)}</span
 								>{/if}
 						</span>
 					</span>
@@ -83,9 +77,7 @@
 						{#if t.deps?.length}<span class="mono text-ink-faint text-xs"
 								>waits on {t.deps.join(', ')}</span
 							>{/if}
-						<span class="mono text-xs {n.text}" style={mobile ? '' : 'width: 88px; text-align: right'}
-							>{n.label}</span
-						>
+						<span class="mono text-xs md:w-[88px] md:text-right {n.text}">{n.label}</span>
 					</span>
 				</button>
 			{/each}

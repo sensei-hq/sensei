@@ -18,7 +18,7 @@
 //! Rides the planner's per-day `Some(D)` tasks (backfill + trailing-window refresh
 //! + today); the decision record is `docs/analysis/metric-explainability-generation.md`.
 
-use crate::analysis::metric_day_explainer::{explain, MetricDayFacts};
+use crate::analysis::metric_day_explainer::{MetricDayFacts, explain};
 use crate::tasks::executor::TaskContext;
 
 /// Enrich every project-scope DAILY datapoint a `task_name` group holds for `day`
@@ -44,14 +44,16 @@ pub(super) async fn enrich_day(
     }
     // The day's session-outcome context is identical for every metric in the group
     // on this day — read it ONCE, not per row.
-    let (sessions_total, sessions_completed, first_try) =
-        match pg.get_day_session_outcome_counts(project_id, day).await {
-            Ok(counts) => counts,
-            Err(e) => {
-                tracing::warn!(error = %e, %day, "metric explainer: day-context read failed — skipped");
-                return 0;
-            }
-        };
+    let (sessions_total, sessions_completed, first_try) = match pg
+        .get_day_session_outcome_counts(project_id, day)
+        .await
+    {
+        Ok(counts) => counts,
+        Err(e) => {
+            tracing::warn!(error = %e, %day, "metric explainer: day-context read failed — skipped");
+            return 0;
+        }
+    };
     // Deref-coerce Arc<Gateway> → &Gateway for the producer.
     let gateway: &gateway::Gateway = &ctx.app_state.gateway;
 
@@ -100,7 +102,7 @@ pub(super) async fn enrich_day(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::analysis::insight_copy::{facts_hash, InsightKind};
+    use crate::analysis::insight_copy::{InsightKind, facts_hash};
     use crate::analysis::metric_day_explainer::MetricDayFacts;
     use crate::tasks::test_support::{make_ctx, seed_metrics_project_folder};
     use crate::tasks::{Task, TaskKind};
@@ -135,12 +137,8 @@ mod tests {
         day: chrono::NaiveDate,
         detail: &str,
     ) {
-        let meaning = pg
-            .get_metric_meaning(key)
-            .await
-            .unwrap()
-            .map(|m| m.how_to_read)
-            .unwrap_or_default();
+        let meaning =
+            pg.get_metric_meaning(key).await.unwrap().map(|m| m.how_to_read).unwrap_or_default();
         let (total, completed, first_try) =
             pg.get_day_session_outcome_counts(pid, day).await.unwrap();
         let prev = pg.get_prev_daily_metric_value(pid, key, day).await.unwrap();
@@ -169,18 +167,38 @@ mod tests {
         let day = (chrono::Utc::now() - chrono::Duration::days(4)).date_naive();
 
         // A session_outcomes daily ftr datapoint at 0.75 with real parts in props.
-        let mid = *pg.active_metric_ids("session_outcomes").await.unwrap().get("ftr").expect("ftr metric");
-        let rid = crate::tasks::test_support::repository_for_folder(pg, &fid).await;
-        pg.upsert_project_metric_repo(&mid, &pid, Some(&rid), "user", None, None, None, None, day, "daily", 0.75, &json!({"numerator": 3, "denominator": 4}), "measured")
+        let mid = *pg
+            .active_metric_ids("session_outcomes")
             .await
-            .unwrap();
+            .unwrap()
+            .get("ftr")
+            .expect("ftr metric");
+        let rid = crate::tasks::test_support::repository_for_folder(pg, &fid).await;
+        pg.upsert_project_metric_repo(
+            &mid,
+            &rid,
+            "user",
+            None,
+            None,
+            day,
+            "daily",
+            0.75,
+            &json!({"numerator": 3, "denominator": 4}),
+            "measured",
+        )
+        .await
+        .unwrap();
         seed_cached_explainer(pg, &pid, "ftr", 0.75, day, "three of four landed first-try").await;
 
         let n = enrich_day(&ctx, &pid, "session_outcomes", day).await;
         assert_eq!(n, 1, "the single daily datapoint was enriched");
 
         let (explainer, numerator) = read_props(pg, &pid).await;
-        assert_eq!(explainer.as_deref(), Some("three of four landed first-try"), "the cached copy is merged in (cache HIT, no model call)");
+        assert_eq!(
+            explainer.as_deref(),
+            Some("three of four landed first-try"),
+            "the cached copy is merged in (cache HIT, no model call)"
+        );
         assert_eq!(numerator.as_deref(), Some("3"), "the value's other props survive the merge");
 
         crate::tasks::test_support::cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
@@ -198,18 +216,39 @@ mod tests {
         let (pid, fid) = seed_metrics_project_folder(pg, &uniq).await;
         let day = (chrono::Utc::now() - chrono::Duration::days(6)).date_naive();
 
-        let mid = *pg.active_metric_ids("session_outcomes").await.unwrap().get("ftr").expect("ftr metric");
-        let rid = crate::tasks::test_support::repository_for_folder(pg, &fid).await;
-        pg.upsert_project_metric_repo(&mid, &pid, Some(&rid), "user", None, None, None, None, day, "daily", 0.6, &json!({"numerator": 3, "denominator": 5}), "measured")
+        let mid = *pg
+            .active_metric_ids("session_outcomes")
             .await
-            .unwrap();
+            .unwrap()
+            .get("ftr")
+            .expect("ftr metric");
+        let rid = crate::tasks::test_support::repository_for_folder(pg, &fid).await;
+        pg.upsert_project_metric_repo(
+            &mid,
+            &rid,
+            "user",
+            None,
+            None,
+            day,
+            "daily",
+            0.6,
+            &json!({"numerator": 3, "denominator": 5}),
+            "measured",
+        )
+        .await
+        .unwrap();
         seed_cached_explainer(pg, &pid, "ftr", 0.6, day, "three of five first-try").await;
 
-        let task = Task::new(TaskKind::ComputeGroupMetrics, &pid.to_string(), "session_outcomes").with_as_of(day);
+        let task = Task::new(TaskKind::ComputeGroupMetrics, &pid.to_string(), "session_outcomes")
+            .with_as_of(day);
         super::super::compute_group(&ctx, &task).await.unwrap();
 
         let (explainer, _) = read_props(pg, &pid).await;
-        assert_eq!(explainer.as_deref(), Some("three of five first-try"), "compute_group() ran the explainer enrichment on the group's daily datapoint");
+        assert_eq!(
+            explainer.as_deref(),
+            Some("three of five first-try"),
+            "compute_group() ran the explainer enrichment on the group's daily datapoint"
+        );
 
         crate::tasks::test_support::cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
     }

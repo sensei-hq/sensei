@@ -102,11 +102,11 @@ pub struct SignalThresholds {
 impl Default for SignalThresholds {
     fn default() -> Self {
         Self {
-            high_traffic_calls:     50,
+            high_traffic_calls: 50,
             moderate_traffic_calls: 10,
-            clean_error_rate:       0.02,
-            high_error_rate:        0.05,
-            unused_days:            30,
+            clean_error_rate: 0.02,
+            high_error_rate: 0.05,
+            unused_days: 30,
         }
     }
 }
@@ -131,24 +131,30 @@ pub fn derive_signals(
         let last_used = chrono::DateTime::parse_from_rfc3339(&row.last_used_at)
             .ok()
             .map(|dt| dt.with_timezone(&chrono::Utc));
-        let days_since_last_use = last_used
-            .map(|last| (now - last).num_days())
-            .unwrap_or(i64::MAX);
+        let days_since_last_use = last_used.map(|last| (now - last).num_days()).unwrap_or(i64::MAX);
 
         if calls == 0 || days_since_last_use >= t.unused_days {
             let detail = if calls == 0 {
-                format!("Registered but never called. Either wire {short} into a skill or persona, or archive it.")
+                format!(
+                    "Registered but never called. Either wire {short} into a skill or persona, or archive it."
+                )
             } else {
-                format!("No calls in the last {days_since_last_use} days ({calls} total). Either wire it into a skill or persona, or archive it.")
+                format!(
+                    "No calls in the last {days_since_last_use} days ({calls} total). Either wire it into a skill or persona, or archive it."
+                )
             };
             out.push(Signal {
                 tool_name: tool.into(),
-                variant:   SignalVariant::Unused,
-                title:     format!("{short}: dormant"),
+                variant: SignalVariant::Unused,
+                title: format!("{short}: dormant"),
                 detail,
-                action:    Some(format!("Trace: why is {short} unused?")),
-                calls, errors, error_rate, days_since_last_use,
-                summary_count: 0, summary_sample: Vec::new(),
+                action: Some(format!("Trace: why is {short} unused?")),
+                calls,
+                errors,
+                error_rate,
+                days_since_last_use,
+                summary_count: 0,
+                summary_sample: Vec::new(),
             });
             continue;
         }
@@ -171,15 +177,19 @@ pub fn derive_signals(
         if calls >= t.moderate_traffic_calls && error_rate >= t.high_error_rate {
             out.push(Signal {
                 tool_name: tool.into(),
-                variant:   SignalVariant::Opportunity,
-                title:     format!("{short}: room to improve"),
+                variant: SignalVariant::Opportunity,
+                title: format!("{short}: room to improve"),
                 detail: format!(
                     "{calls} calls, {rate}% failure. Modest volume — small polish would pay off.",
                     rate = pct(error_rate),
                 ),
                 action: Some(format!("Edit tool: {tool}")),
-                calls, errors, error_rate, days_since_last_use,
-                summary_count: 0, summary_sample: Vec::new(),
+                calls,
+                errors,
+                error_rate,
+                days_since_last_use,
+                summary_count: 0,
+                summary_sample: Vec::new(),
             });
             continue;
         }
@@ -187,15 +197,19 @@ pub fn derive_signals(
         if calls >= t.high_traffic_calls && error_rate <= t.clean_error_rate {
             out.push(Signal {
                 tool_name: tool.into(),
-                variant:   SignalVariant::Win,
-                title:     format!("{short}: workhorse"),
+                variant: SignalVariant::Win,
+                title: format!("{short}: workhorse"),
                 detail: format!(
                     "{calls} calls, {rate}% failure rate — well-oiled.",
                     rate = pct(error_rate),
                 ),
                 action: None,
-                calls, errors, error_rate, days_since_last_use,
-                summary_count: 0, summary_sample: Vec::new(),
+                calls,
+                errors,
+                error_rate,
+                days_since_last_use,
+                summary_count: 0,
+                summary_sample: Vec::new(),
             });
             continue;
         }
@@ -212,17 +226,17 @@ pub fn derive_signals(
 ///
 /// Pure: no DB, no clock. Takes an owned Vec because it re-orders.
 pub fn curate_insights(signals: Vec<Signal>) -> Vec<Signal> {
-    let mut warns: Vec<Signal>        = Vec::new();
-    let mut opportunities: Vec<Signal>= Vec::new();
-    let mut unused: Vec<Signal>       = Vec::new();
-    let mut wins: Vec<Signal>         = Vec::new();
+    let mut warns: Vec<Signal> = Vec::new();
+    let mut opportunities: Vec<Signal> = Vec::new();
+    let mut unused: Vec<Signal> = Vec::new();
+    let mut wins: Vec<Signal> = Vec::new();
 
     for s in signals {
         match s.variant {
-            SignalVariant::Warn        => warns.push(s),
+            SignalVariant::Warn => warns.push(s),
             SignalVariant::Opportunity => opportunities.push(s),
-            SignalVariant::Unused      => unused.push(s),
-            SignalVariant::Win         => wins.push(s),
+            SignalVariant::Unused => unused.push(s),
+            SignalVariant::Win => wins.push(s),
         }
     }
 
@@ -250,26 +264,22 @@ pub fn curate_insights(signals: Vec<Signal>) -> Vec<Signal> {
 /// without expanding the table.
 fn summarise_unused(dormants: &[Signal]) -> Signal {
     let n = dormants.len();
-    let names: Vec<&str> = dormants.iter()
-        .take(3)
-        .map(|s| short_name(&s.tool_name))
-        .collect();
+    let names: Vec<&str> = dormants.iter().take(3).map(|s| short_name(&s.tool_name)).collect();
     let sample = names.join(", ");
     let remainder = n.saturating_sub(3);
-    let list = if remainder > 0 {
-        format!("{sample} and {remainder} more")
-    } else {
-        sample
-    };
+    let list = if remainder > 0 { format!("{sample} and {remainder} more") } else { sample };
     Signal {
         tool_name: String::new(),
-        variant:   SignalVariant::Unused,
-        title:     format!("{n} tools dormant"),
+        variant: SignalVariant::Unused,
+        title: format!("{n} tools dormant"),
         detail: format!(
             "{list} haven't been called in the last two weeks. Either wire them into a skill or persona, or archive them.",
         ),
         action: Some("Review tool registry".into()),
-        calls: 0, errors: 0, error_rate: 0.0, days_since_last_use: 0,
+        calls: 0,
+        errors: 0,
+        error_rate: 0.0,
+        days_since_last_use: 0,
         summary_count: n as i64,
         summary_sample: names.iter().map(|s| s.to_string()).collect(),
     }
@@ -279,24 +289,20 @@ fn summarise_unused(dormants: &[Signal]) -> Signal {
 /// confirmation that the toolchain has healthy backbone tools.
 fn summarise_wins(wins: &[Signal]) -> Signal {
     let n = wins.len();
-    let names: Vec<&str> = wins.iter()
-        .take(3)
-        .map(|s| short_name(&s.tool_name))
-        .collect();
+    let names: Vec<&str> = wins.iter().take(3).map(|s| short_name(&s.tool_name)).collect();
     let sample = names.join(", ");
     let remainder = n.saturating_sub(3);
-    let list = if remainder > 0 {
-        format!("{sample} and {remainder} more")
-    } else {
-        sample
-    };
+    let list = if remainder > 0 { format!("{sample} and {remainder} more") } else { sample };
     Signal {
         tool_name: String::new(),
-        variant:   SignalVariant::Win,
-        title:     format!("{n} workhorse tools"),
+        variant: SignalVariant::Win,
+        title: format!("{n} workhorse tools"),
         detail: format!("{list} are running high-volume with clean error rates."),
-        action:  None,
-        calls: 0, errors: 0, error_rate: 0.0, days_since_last_use: 0,
+        action: None,
+        calls: 0,
+        errors: 0,
+        error_rate: 0.0,
+        days_since_last_use: 0,
         summary_count: n as i64,
         summary_sample: names.iter().map(|s| s.to_string()).collect(),
     }
@@ -346,12 +352,22 @@ fn round2(f: f64) -> f64 {
 pub fn signal_copy_inputs(s: &Signal) -> (InsightKind, serde_json::Value, FallbackCopy) {
     let is_summary = s.tool_name.is_empty();
     let kind = match s.variant {
-        SignalVariant::Warn        => InsightKind::ToolWarn,
+        SignalVariant::Warn => InsightKind::ToolWarn,
         SignalVariant::Opportunity => InsightKind::ToolOpportunity,
-        SignalVariant::Unused =>
-            if is_summary { InsightKind::ToolsDormantSummary } else { InsightKind::ToolDormant },
-        SignalVariant::Win =>
-            if is_summary { InsightKind::ToolsWorkhorseSummary } else { InsightKind::ToolWorkhorse },
+        SignalVariant::Unused => {
+            if is_summary {
+                InsightKind::ToolsDormantSummary
+            } else {
+                InsightKind::ToolDormant
+            }
+        }
+        SignalVariant::Win => {
+            if is_summary {
+                InsightKind::ToolsWorkhorseSummary
+            } else {
+                InsightKind::ToolWorkhorse
+            }
+        }
     };
 
     let facts = if is_summary {
@@ -379,7 +395,9 @@ mod tests {
     use super::*;
 
     fn now() -> chrono::DateTime<chrono::Utc> {
-        chrono::DateTime::parse_from_rfc3339("2026-07-02T12:00:00Z").unwrap().with_timezone(&chrono::Utc)
+        chrono::DateTime::parse_from_rfc3339("2026-07-02T12:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc)
     }
 
     fn row(name: &str, calls: i64, errors: i64, days_ago: i64) -> ToolUsageRow {
@@ -452,8 +470,12 @@ mod tests {
             title: "t".into(),
             detail: "d".into(),
             action: Some("do it".into()),
-            calls: 100, errors: 5, error_rate: 0.05, days_since_last_use: 1,
-            summary_count: 0, summary_sample: Vec::new(),
+            calls: 100,
+            errors: 5,
+            error_rate: 0.05,
+            days_since_last_use: 1,
+            summary_count: 0,
+            summary_sample: Vec::new(),
         };
         let v = serde_json::to_value(&s).unwrap();
         assert_eq!(v["variant"], "warn");
@@ -489,7 +511,10 @@ mod tests {
         assert_eq!(facts["calls"], 100);
         assert_eq!(facts["errors"], 10);
         assert_eq!(facts["days_since_last_use"], 1);
-        assert!((facts["error_rate"].as_f64().unwrap() - 0.10).abs() < 1e-9, "error_rate rounded to 2dp");
+        assert!(
+            (facts["error_rate"].as_f64().unwrap() - 0.10).abs() < 1e-9,
+            "error_rate rounded to 2dp"
+        );
         // action / variant are code-owned — never in the facts (would poison the key).
         assert!(facts.get("action").is_none(), "action must not appear in facts");
         assert!(facts.get("variant").is_none(), "variant must not appear in facts");
@@ -501,26 +526,38 @@ mod tests {
     #[test]
     fn signal_copy_inputs_variant_to_kind_per_tool() {
         // opportunity → ToolOpportunity
-        let opp = derive_signals(&[row("sensei.teetering", 20, 2, 1)], now(), &SignalThresholds::default());
+        let opp = derive_signals(
+            &[row("sensei.teetering", 20, 2, 1)],
+            now(),
+            &SignalThresholds::default(),
+        );
         assert_eq!(signal_copy_inputs(&opp[0]).0, InsightKind::ToolOpportunity);
         // single win → ToolWorkhorse (per-tool, kept as-is by curate)
-        let win = derive_signals(&[row("sensei.workhorse", 200, 0, 1)], now(), &SignalThresholds::default());
+        let win = derive_signals(
+            &[row("sensei.workhorse", 200, 0, 1)],
+            now(),
+            &SignalThresholds::default(),
+        );
         assert_eq!(signal_copy_inputs(&win[0]).0, InsightKind::ToolWorkhorse);
         // single dormant → ToolDormant
-        let cold = derive_signals(&[row("sensei.cold", 30, 0, 30)], now(), &SignalThresholds::default());
+        let cold =
+            derive_signals(&[row("sensei.cold", 30, 0, 30)], now(), &SignalThresholds::default());
         assert_eq!(signal_copy_inputs(&cold[0]).0, InsightKind::ToolDormant);
     }
 
     #[test]
     fn signal_copy_inputs_days_change_alters_facts_hash() {
         use crate::analysis::insight_copy::facts_hash;
-        let a = derive_signals(&[row("sensei.cold", 30, 0, 30)], now(), &SignalThresholds::default());
-        let b = derive_signals(&[row("sensei.cold", 30, 0, 40)], now(), &SignalThresholds::default());
+        let a =
+            derive_signals(&[row("sensei.cold", 30, 0, 30)], now(), &SignalThresholds::default());
+        let b =
+            derive_signals(&[row("sensei.cold", 30, 0, 40)], now(), &SignalThresholds::default());
         let (ka, fa, _) = signal_copy_inputs(&a[0]);
         let (kb, fb, _) = signal_copy_inputs(&b[0]);
         assert_eq!(ka, kb, "same kind");
         assert_ne!(
-            facts_hash(ka, &fa), facts_hash(kb, &fb),
+            facts_hash(ka, &fa),
+            facts_hash(kb, &fb),
             "a changed days_since_last_use must change the cache key (guards stale copy)"
         );
     }
@@ -528,11 +565,14 @@ mod tests {
     #[test]
     fn signal_copy_inputs_summary_dormant_uses_summary_kind_and_count() {
         let stats = vec![
-            row("sensei.a", 0, 0, 0), row("sensei.b", 0, 0, 0),
-            row("sensei.c", 0, 0, 0), row("sensei.d", 0, 0, 0),
+            row("sensei.a", 0, 0, 0),
+            row("sensei.b", 0, 0, 0),
+            row("sensei.c", 0, 0, 0),
+            row("sensei.d", 0, 0, 0),
         ];
         let curated = curate_insights(derive_signals(&stats, now(), &SignalThresholds::default()));
-        let summary = curated.iter()
+        let summary = curated
+            .iter()
             .find(|s| s.variant == SignalVariant::Unused && s.tool_name.is_empty())
             .expect("collapsed dormant summary");
 
@@ -550,10 +590,13 @@ mod tests {
     #[test]
     fn signal_copy_inputs_summary_wins_uses_summary_kind() {
         let stats = vec![
-            row("sensei.a", 200, 0, 1), row("sensei.b", 200, 0, 1), row("sensei.c", 200, 0, 1),
+            row("sensei.a", 200, 0, 1),
+            row("sensei.b", 200, 0, 1),
+            row("sensei.c", 200, 0, 1),
         ];
         let curated = curate_insights(derive_signals(&stats, now(), &SignalThresholds::default()));
-        let summary = curated.iter()
+        let summary = curated
+            .iter()
             .find(|s| s.variant == SignalVariant::Win && s.tool_name.is_empty())
             .expect("collapsed win summary");
         let (kind, facts, _fb) = signal_copy_inputs(summary);
@@ -573,7 +616,8 @@ mod tests {
         assert_eq!(raw.len(), 4);
 
         let curated = curate_insights(raw);
-        let dormants: Vec<&Signal> = curated.iter().filter(|s| s.variant == SignalVariant::Unused).collect();
+        let dormants: Vec<&Signal> =
+            curated.iter().filter(|s| s.variant == SignalVariant::Unused).collect();
         assert_eq!(dormants.len(), 1);
         assert!(dormants[0].title.contains("4 tools dormant"));
         assert!(dormants[0].detail.contains("a"));
@@ -613,7 +657,8 @@ mod tests {
             row("sensei.c", 200, 0, 1),
         ];
         let curated = curate_insights(derive_signals(&stats, now(), &SignalThresholds::default()));
-        let wins: Vec<&Signal> = curated.iter().filter(|s| s.variant == SignalVariant::Win).collect();
+        let wins: Vec<&Signal> =
+            curated.iter().filter(|s| s.variant == SignalVariant::Win).collect();
         assert_eq!(wins.len(), 1);
         assert!(wins[0].title.contains("3 workhorse tools"));
         assert_eq!(wins[0].tool_name, "");
@@ -622,11 +667,11 @@ mod tests {
     #[test]
     fn curate_orders_warn_then_opportunity_then_unused_then_win() {
         let stats = vec![
-            row("sensei.win",         200, 0,   1),
-            row("sensei.cold1",         0, 0,   0),
-            row("sensei.cold2",         0, 0,   0),
-            row("sensei.warn",        100, 10,  1),
-            row("sensei.opp",          20, 2,   1),
+            row("sensei.win", 200, 0, 1),
+            row("sensei.cold1", 0, 0, 0),
+            row("sensei.cold2", 0, 0, 0),
+            row("sensei.warn", 100, 10, 1),
+            row("sensei.opp", 20, 2, 1),
         ];
         let curated = curate_insights(derive_signals(&stats, now(), &SignalThresholds::default()));
         let variants: Vec<SignalVariant> = curated.iter().map(|s| s.variant).collect();

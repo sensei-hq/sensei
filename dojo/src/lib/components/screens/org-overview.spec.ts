@@ -62,23 +62,18 @@ describe('ScrOrgHome — jurisdiction projects + needs + stats', () => {
 		expect(getByText('No projects in this jurisdiction yet.')).toBeTruthy();
 	});
 
-	it('uses the desktop 4px-grid rhythm (p-8 / gap-6) with no inline spacing px', () => {
+	it('bases the phone 4px-grid rhythm and steps up at md, with no inline spacing px', () => {
+		// Word-boundary matched: `toContain('p-8')` also matches inside `md:p-8`.
 		const { container } = render(ScrOrgHome, {
 			props: { orgName: 'Acme Corp', projects, needs, stats }
 		});
 		const el = container.firstElementChild as HTMLElement;
-		expect(el.className).toContain('p-8');
-		expect(el.className).toContain('gap-6');
+		expect(el.className).toMatch(/\bp-4\b/);
+		expect(el.className).toMatch(/\bgap-4\b/);
+		expect(el.className).toMatch(/\bmd:p-8\b/);
+		expect(el.className).toMatch(/\bmd:gap-6\b/);
+		expect(el.className).not.toMatch(/(?<!:)\bp-8\b/);
 		expect(el.getAttribute('style') ?? '').not.toMatch(/padding:|gap:/);
-	});
-
-	it('switches to the phone rhythm (p-4 / gap-4) with mobile', () => {
-		const { container } = render(ScrOrgHome, {
-			props: { orgName: 'Acme Corp', projects, needs, stats, mobile: true }
-		});
-		const el = container.firstElementChild as HTMLElement;
-		expect(el.className).toContain('p-4');
-		expect(el.className).toContain('gap-4');
 	});
 });
 

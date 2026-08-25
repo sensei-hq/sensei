@@ -80,7 +80,11 @@ mod tests {
         // A local-only repo (no remote) has no key — never an abs-path fallback.
         assert_eq!(normalize_repo_key(""), None);
         assert_eq!(normalize_repo_key("   "), None);
-        assert_eq!(normalize_repo_key("/Users/jerry/Developer/repo"), None, "an abs path is not a remote");
+        assert_eq!(
+            normalize_repo_key("/Users/jerry/Developer/repo"),
+            None,
+            "an abs path is not a remote"
+        );
         assert_eq!(normalize_repo_key("https://github.com"), None, "no repo path → None");
         assert_eq!(normalize_repo_key("git@github.com:"), None, "empty path → None");
     }

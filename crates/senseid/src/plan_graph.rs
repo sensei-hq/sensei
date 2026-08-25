@@ -144,10 +144,9 @@ fn phase_rollup(tasks: &[PlanTask]) -> SegmentState {
     if tasks.iter().all(|t| matches!(t.state, SegmentState::Done | SegmentState::Skipped)) {
         return SegmentState::Done;
     }
-    if tasks
-        .iter()
-        .any(|t| matches!(t.state, SegmentState::Active | SegmentState::Done | SegmentState::Skipped))
-    {
+    if tasks.iter().any(|t| {
+        matches!(t.state, SegmentState::Active | SegmentState::Done | SegmentState::Skipped)
+    }) {
         return SegmentState::Active;
     }
     SegmentState::Pending
@@ -321,19 +320,73 @@ mod tests {
     #[test]
     fn failure_and_block_dominate_the_rollup() {
         let failed = vec![
-            PlanTask { id: "a".into(), title: "a".into(), agent: None, model: None, spec_ref: None, summary: None, state: SegmentState::Done, deps: vec![] },
-            PlanTask { id: "b".into(), title: "b".into(), agent: None, model: None, spec_ref: None, summary: None, state: SegmentState::Failed, deps: vec![] },
+            PlanTask {
+                id: "a".into(),
+                title: "a".into(),
+                agent: None,
+                model: None,
+                spec_ref: None,
+                summary: None,
+                state: SegmentState::Done,
+                deps: vec![],
+            },
+            PlanTask {
+                id: "b".into(),
+                title: "b".into(),
+                agent: None,
+                model: None,
+                spec_ref: None,
+                summary: None,
+                state: SegmentState::Failed,
+                deps: vec![],
+            },
         ];
         assert_eq!(phase_rollup(&failed), SegmentState::Failed);
         let blocked = vec![
-            PlanTask { id: "a".into(), title: "a".into(), agent: None, model: None, spec_ref: None, summary: None, state: SegmentState::Done, deps: vec![] },
-            PlanTask { id: "b".into(), title: "b".into(), agent: None, model: None, spec_ref: None, summary: None, state: SegmentState::Blocked, deps: vec![] },
+            PlanTask {
+                id: "a".into(),
+                title: "a".into(),
+                agent: None,
+                model: None,
+                spec_ref: None,
+                summary: None,
+                state: SegmentState::Done,
+                deps: vec![],
+            },
+            PlanTask {
+                id: "b".into(),
+                title: "b".into(),
+                agent: None,
+                model: None,
+                spec_ref: None,
+                summary: None,
+                state: SegmentState::Blocked,
+                deps: vec![],
+            },
         ];
         assert_eq!(phase_rollup(&blocked), SegmentState::Blocked);
         // All terminal (done + skipped) → Done.
         let alldone = vec![
-            PlanTask { id: "a".into(), title: "a".into(), agent: None, model: None, spec_ref: None, summary: None, state: SegmentState::Done, deps: vec![] },
-            PlanTask { id: "b".into(), title: "b".into(), agent: None, model: None, spec_ref: None, summary: None, state: SegmentState::Skipped, deps: vec![] },
+            PlanTask {
+                id: "a".into(),
+                title: "a".into(),
+                agent: None,
+                model: None,
+                spec_ref: None,
+                summary: None,
+                state: SegmentState::Done,
+                deps: vec![],
+            },
+            PlanTask {
+                id: "b".into(),
+                title: "b".into(),
+                agent: None,
+                model: None,
+                spec_ref: None,
+                summary: None,
+                state: SegmentState::Skipped,
+                deps: vec![],
+            },
         ];
         assert_eq!(phase_rollup(&alldone), SegmentState::Done);
     }
@@ -375,7 +428,8 @@ mod tests {
             "phases": [{ "title": "P", "tasks": [
                 { "id": "t1", "title": "a" }, { "id": "t1", "title": "b" }
             ]}]
-        })).unwrap();
+        }))
+        .unwrap();
         assert!(validate(&g).unwrap_err().contains("duplicate"));
     }
 
@@ -385,13 +439,15 @@ mod tests {
             "phases": [{ "title": "P", "tasks": [
                 { "id": "t1", "title": "a", "deps": ["ghost"] }
             ]}]
-        })).unwrap();
+        }))
+        .unwrap();
         assert!(validate(&dangling).unwrap_err().contains("unknown task"));
         let selfdep: PlanGraph = serde_json::from_value(json!({
             "phases": [{ "title": "P", "tasks": [
                 { "id": "t1", "title": "a", "deps": ["t1"] }
             ]}]
-        })).unwrap();
+        }))
+        .unwrap();
         assert!(validate(&selfdep).unwrap_err().contains("itself"));
     }
 
@@ -402,7 +458,8 @@ mod tests {
                 { "id": "t1", "title": "a", "deps": ["t2"] },
                 { "id": "t2", "title": "b", "deps": ["t1"] }
             ]}]
-        })).unwrap();
+        }))
+        .unwrap();
         assert!(validate(&g).unwrap_err().contains("cycle"));
     }
 }

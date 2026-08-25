@@ -76,7 +76,7 @@
           <div class="flex items-baseline justify-between gap-3">
             <div class="flex items-baseline gap-2 min-w-0">
               <span class="text-sm text-ink font-semibold">{router.name}</span>
-              <span class="font-mono text-[11px] text-ink-soft uppercase">{router.id}</span>
+              <span class="font-mono text-xs text-ink-soft uppercase">{router.id}</span>
             </div>
             {#if router.saveState === 'saving'}
               <span class="text-xs text-accent font-mono">saving…</span>
@@ -96,10 +96,10 @@
           <!-- Providers + capabilities chips -->
           <div class="flex flex-wrap gap-1">
             {#each router.providers as p}
-              <span class="font-mono text-[11px] text-ink-mute bg-paper-soft border border-paper-edge rounded-sm px-1.5 py-0.5">{p}</span>
+              <span class="font-mono text-xs text-ink-mute bg-paper-soft border border-paper-edge rounded-sm px-1.5 py-0.5">{p}</span>
             {/each}
             {#each router.capabilities as c}
-              <span class="font-mono text-[11px] text-accent bg-paper-soft border border-accent rounded-sm px-1.5 py-0.5">{c}</span>
+              <span class="font-mono text-xs text-accent bg-paper-soft border border-accent rounded-sm px-1.5 py-0.5">{c}</span>
             {/each}
           </div>
 

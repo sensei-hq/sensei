@@ -52,11 +52,7 @@ pub(crate) fn map_capability(db_cap: &str) -> Option<Capability> {
 /// chain gets the same conservative set — the conditions under which moving
 /// to the next candidate is always safe.
 fn default_triggers() -> Vec<FallbackTrigger> {
-    vec![
-        FallbackTrigger::RateLimit,
-        FallbackTrigger::Timeout,
-        FallbackTrigger::ProviderError,
-    ]
+    vec![FallbackTrigger::RateLimit, FallbackTrigger::Timeout, FallbackTrigger::ProviderError]
 }
 
 /// Extract `timeout_ms` from a router's `config` jsonb (parsed). Returns
@@ -71,9 +67,7 @@ pub(crate) fn parse_headers(default_headers: &serde_json::Value) -> HashMap<Stri
     default_headers
         .as_object()
         .map(|obj| {
-            obj.iter()
-                .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
-                .collect()
+            obj.iter().filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string()))).collect()
         })
         .unwrap_or_default()
 }
@@ -258,29 +252,21 @@ pub(crate) fn assemble(
 // SQL row shapes. Named aliases keep the query result types readable (and
 // satisfy clippy::type_complexity) — the columns map 1:1 to the Row structs.
 type RouterTuple = (String, Option<String>, Option<String>, bool, String, String);
-type ModelTuple = (
-    String,
-    Option<String>,
-    Vec<String>,
-    Option<i32>,
-    Option<i32>,
-    Option<String>,
-    Option<String>,
-);
+type ModelTuple =
+    (String, Option<String>, Vec<String>, Option<i32>, Option<i32>, Option<String>, Option<String>);
 type ChainModelTuple = (String, String, String, Option<String>, i32);
 
 pub async fn load_gateway_config(pool: &PgPool) -> Result<Option<GatewayConfig>, String> {
     // Routers. jsonb columns are cast to text and parsed in Rust so this
     // doesn't depend on sqlx's optional `json` feature.
-    let router_rows: Vec<RouterTuple> =
-        sqlx_core::query_as::query_as(
-            "SELECT name, api_base_url, api_key_env_var, is_active, \
+    let router_rows: Vec<RouterTuple> = sqlx_core::query_as::query_as(
+        "SELECT name, api_base_url, api_key_env_var, is_active, \
                     default_headers::text, config::text \
              FROM gateway.routers",
-        )
-        .fetch_all(pool)
-        .await
-        .map_err(|e| format!("load_gateway_config routers: {e}"))?;
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|e| format!("load_gateway_config routers: {e}"))?;
 
     let routers: Vec<RouterRow> = router_rows
         .into_iter()
@@ -317,7 +303,15 @@ pub async fn load_gateway_config(pool: &PgPool) -> Result<Option<GatewayConfig>,
     let models: Vec<ModelRow> = model_rows
         .into_iter()
         .map(
-            |(full_name, family, capabilities, context_window, max_output_tokens, default_router, default_router_model_id)| {
+            |(
+                full_name,
+                family,
+                capabilities,
+                context_window,
+                max_output_tokens,
+                default_router,
+                default_router_model_id,
+            )| {
                 ModelRow {
                     full_name,
                     family,
@@ -339,15 +333,12 @@ pub async fn load_gateway_config(pool: &PgPool) -> Result<Option<GatewayConfig>,
     .await
     .map_err(|e| format!("load_gateway_config chains: {e}"))?;
 
-    let chain_rows: Vec<ChainRow> = chain_rows
-        .into_iter()
-        .map(|(name, capability)| ChainRow { name, capability })
-        .collect();
+    let chain_rows: Vec<ChainRow> =
+        chain_rows.into_iter().map(|(name, capability)| ChainRow { name, capability }).collect();
 
     // Chain members + the per-(model,router) router_model_id.
-    let chain_model_rows: Vec<ChainModelTuple> =
-        sqlx_core::query_as::query_as(
-            "SELECT fc.name, r.name, m.full_name, mir.router_model_id, fcm.sequence_order \
+    let chain_model_rows: Vec<ChainModelTuple> = sqlx_core::query_as::query_as(
+        "SELECT fc.name, r.name, m.full_name, mir.router_model_id, fcm.sequence_order \
              FROM gateway.fallback_chain_models fcm \
              JOIN gateway.fallback_chains fc ON fc.id = fcm.chain_id \
              JOIN gateway.routers r ON r.id = fcm.router_id \
@@ -355,24 +346,22 @@ pub async fn load_gateway_config(pool: &PgPool) -> Result<Option<GatewayConfig>,
              LEFT JOIN gateway.models_in_router mir \
                  ON mir.model_id = fcm.model_id AND mir.router_id = fcm.router_id \
              WHERE fcm.is_active AND fc.is_active",
-        )
-        .fetch_all(pool)
-        .await
-        .map_err(|e| format!("load_gateway_config chain_models: {e}"))?;
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|e| format!("load_gateway_config chain_models: {e}"))?;
 
     let chain_models: Vec<ChainModelRow> = chain_model_rows
         .into_iter()
-        .map(
-            |(chain_name, router_name, model_full_name, router_model_id, sequence_order)| {
-                ChainModelRow {
-                    chain_name,
-                    router_name,
-                    model_full_name,
-                    router_model_id,
-                    sequence_order,
-                }
-            },
-        )
+        .map(|(chain_name, router_name, model_full_name, router_model_id, sequence_order)| {
+            ChainModelRow {
+                chain_name,
+                router_name,
+                model_full_name,
+                router_model_id,
+                sequence_order,
+            }
+        })
         .collect();
 
     let chains = build_chains(&chain_rows, &chain_models);
@@ -381,11 +370,7 @@ pub async fn load_gateway_config(pool: &PgPool) -> Result<Option<GatewayConfig>,
         return Ok(None);
     }
 
-    let config = assemble(
-        build_routers(&routers),
-        build_models(&models),
-        chains,
-    );
+    let config = assemble(build_routers(&routers), build_models(&models), chains);
     Ok(Some(config))
 }
 
@@ -534,10 +519,8 @@ mod tests {
 
     #[test]
     fn build_chains_orders_by_sequence_and_carries_router_model_id() {
-        let chains = vec![ChainRow {
-            name: "classify".to_string(),
-            capability: "classify".to_string(),
-        }];
+        let chains =
+            vec![ChainRow { name: "classify".to_string(), capability: "classify".to_string() }];
         // Intentionally out of order to prove sorting.
         let members = vec![
             ChainModelRow {
@@ -597,15 +580,9 @@ mod tests {
     async fn load_gateway_config_reads_embedded_first_from_db() {
         let url = std::env::var("GATEWAY_LOADER_TEST_URL")
             .unwrap_or_else(|_| "postgresql://localhost:5432/sensei".to_string());
-        let pool = sqlx_postgres::PgPoolOptions::new()
-            .connect(&url)
-            .await
-            .expect("connect");
+        let pool = sqlx_postgres::PgPoolOptions::new().connect(&url).await.expect("connect");
 
-        let cfg = super::load_gateway_config(&pool)
-            .await
-            .expect("load ok")
-            .expect("DB has chains");
+        let cfg = super::load_gateway_config(&pool).await.expect("load ok").expect("DB has chains");
 
         // Embedded (single router) + cloud routers loaded.
         for r in ["embedded-llama", "nvidia", "ollama"] {
@@ -661,7 +638,12 @@ mod tests {
             router_row("anthropic", true),
         ]);
         let models = build_models(&[
-            model_row("gemma2:2b", &["chat", "classify"], "llama-cpp-chat", "llama-cpp-chat-default"),
+            model_row(
+                "gemma2:2b",
+                &["chat", "classify"],
+                "llama-cpp-chat",
+                "llama-cpp-chat-default",
+            ),
             model_row("gemma3:12b", &["chat", "classify"], "ollama", "gemma3:12b"),
             model_row("claude-haiku-4-5", &["chat"], "anthropic", "claude-haiku-4-5-20251001"),
         ]);

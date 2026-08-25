@@ -18,6 +18,7 @@ export type MetricFamily =
     | 'quality'
     | 'knowledge'
     | 'autonomy'
+    | 'usage'
     | 'tool';
 
 /** One row of `GET /api/projects/{id}/metrics` (ProjectMetricRow + injected trend). */
@@ -43,6 +44,7 @@ export const FAMILY_ORDER: MetricFamily[] = [
     'quality',
     'knowledge',
     'autonomy',
+    'usage',
     'tool',
 ];
 
@@ -53,6 +55,7 @@ export const FAMILY_LABEL: Record<MetricFamily, string> = {
     quality: 'Quality',
     knowledge: 'Knowledge',
     autonomy: 'Autonomy',
+    usage: 'Usage',
     tool: 'Tooling',
 };
 
@@ -155,6 +158,34 @@ export function metricGrade(key: string, value: number | null | undefined): Metr
 export function formatPerKloc(value: number | null | undefined): string {
     if (value == null || Number.isNaN(value)) return METRIC_NONE;
     return `${(value * 1000).toFixed(1)} / 1,000 lines`;
+}
+
+/**
+ * Compact per-KLOC value for an AXIS TICK — the number alone ("2.4"), without the
+ * "/ 1,000 lines" suffix `formatPerKloc` carries for headline copy.
+ */
+export function formatPerKlocTick(value: number | null | undefined): string {
+    if (value == null || Number.isNaN(value)) return METRIC_NONE;
+    return (value * 1000).toFixed(1);
+}
+
+/**
+ * The tick/value formatter for a metric, chosen by KEY first and type second.
+ *
+ * Type alone is not enough. `module_quality` and `duplication_ratio` are typed
+ * `ratio`, so a type-only formatter runs `toFixed(2)` over a series that lives
+ * inside 0–0.005 and every axis tick renders "0.00" — the chart's line shape is
+ * fine (`metricYDomain` already auto-scales tiny ratios) but its labels carry no
+ * information. Those two are presented per-1,000-lines everywhere else (grade
+ * bands, headline rate), so their axis reads in the same unit.
+ */
+export function metricTickFormatter(
+    key: string,
+    type: MetricType,
+): (value: number) => string {
+    return isPerKlocMetric(key)
+        ? (v: number) => formatPerKlocTick(v)
+        : (v: number) => formatMetricValue(type, v);
 }
 
 /** Format a metric's headline value by its wire type. Absent -> METRIC_NONE. */
@@ -857,14 +888,13 @@ function moverMagnitude(delta: number | null, prior: number | null): number {
  *  Returns null for every other metric (they use the generic formatting). */
 function toolsDisplay(
     props: Record<string, unknown> | null,
-): { name: string; value: string; sub: string; insight: string } | null {
+): { value: string; sub: string; insight: string } | null {
     const relevant = numProp(props, 'relevant_tools');
     const used = numProp(props, 'used_tools');
     if (relevant == null || used == null) return null;
     const total = numProp(props, 'total_tools');
     const totalNote = total != null ? ` · ${formatCount(total)} registered` : '';
     return {
-        name: 'Tools used',
         value: `${formatCount(used)} of ${formatCount(relevant)}`,
         sub: `relevant${totalNote}`,
         insight:
@@ -906,7 +936,7 @@ export function toSignal(
           ? formatPerKloc(row.value)
           : formatMetricValue(row.metric_type, row.value);
     const sub = tools ? tools.sub : metricSub(row);
-    const name = tools ? tools.name : row.name;
+    const name = row.name;
 
     const generated = narrative?.insights?.[row.metric];
     const insight = generated ?? tools?.insight ?? deterministicInsight(row, value, sub);
@@ -941,26 +971,8 @@ export function buildSignals(
     return rows.map((r) => toSignal(r, familyOf, narrative));
 }
 
-/** The health (composite) signal, promoted to the hero. Null when absent. */
-export function healthSignal(signals: SignalVM[]): SignalVM | null {
-    return signals.find((s) => s.family === 'composite') ?? null;
-}
-
 /** The registry key of the north-star outcome metric. */
 const KEY_FTR = 'ftr';
-
-/** The hero signal for the metrics landing. FTR is the north star, so it leads;
- *  the retired `project_health` composite is a fallback only for legacy data that
- *  still carries it. Null when neither is present. (The composite was retired —
- *  a rising-then-falling amalgam that obscured FTR — so the hero leads on the
- *  metric everything is judged by.) */
-export function heroSignal(signals: SignalVM[]): SignalVM | null {
-    return (
-        signals.find((s) => s.key === KEY_FTR) ??
-        signals.find((s) => s.family === 'composite') ??
-        null
-    );
-}
 
 /** The top-N movers (non-flat), most-moved first — excludes the composite/health
  *  signal (it is the hero, not a mover). */
@@ -971,21 +983,78 @@ export function pickMovers(signals: SignalVM[], n = 4): SignalVM[] {
         .slice(0, n);
 }
 
-/** Grid order for "all signals": composite/health first, then movers (by
- *  magnitude), then the rest by family order — so what moved reads first. */
-export function orderSignals(signals: SignalVM[]): SignalVM[] {
-    const rank = (s: SignalVM): number => {
-        if (s.family === 'composite') return 0;
-        if (s.moved) return 1;
-        return 2;
+/**
+ * The signals that lead the screen, in the order they lead it.
+ *
+ * A CURATED product judgement, not a derived one — owner-set (FTR ·
+ * maintainability · coverage · duplication). Importance is not something the
+ * data can tell us: ordering by movement puts whatever twitched this week first,
+ * which is why the grid read as unordered. Everything NOT named here keeps a
+ * derived order inside its family (movers first, then alphabetical) rather than
+ * being assigned an invented rank.
+ */
+export const KEY_SIGNAL_KEYS: readonly string[] = [
+    'ftr',
+    'module_quality',
+    'coverage',
+    'duplication_ratio',
+];
+
+/** A titled run of signals — the grid and the rail both render these. */
+export interface SignalGroup {
+    /** Stable id for keying; 'key' for the lead group, else the family. */
+    id: string;
+    label: string;
+    signals: SignalVM[];
+}
+
+/**
+ * Group signals for display: the curated key signals first, then one group per
+ * family in [`FAMILY_ORDER`].
+ *
+ * `composite` (the project health score) is excluded — it is the hero readout at
+ * the top of the screen, not a cell in the grid. Empty groups are dropped, so a
+ * project missing a metric shows no empty shell.
+ */
+export function groupSignals(signals: SignalVM[]): SignalGroup[] {
+    const rank = new Map(KEY_SIGNAL_KEYS.map((k, i) => [k, i]));
+    const eligible = signals.filter((s) => s.family !== 'composite');
+
+    const lead = eligible
+        .filter((s) => rank.has(s.key))
+        .sort((a, b) => rank.get(a.key)! - rank.get(b.key)!);
+
+    // Within a family: movers first (biggest first), then alphabetical so the
+    // order is stable across periods for everything that didn't move.
+    const byMovementThenName = (a: SignalVM, b: SignalVM): number => {
+        if (a.moved !== b.moved) return a.moved ? -1 : 1;
+        if (a.moved && b.moved) return b.magnitude - a.magnitude;
+        return a.name.localeCompare(b.name);
     };
-    return [...signals].sort((a, b) => {
-        const ra = rank(a);
-        const rb = rank(b);
-        if (ra !== rb) return ra - rb;
-        if (ra === 1) return b.magnitude - a.magnitude; // movers: biggest first
-        return FAMILY_ORDER.indexOf(a.family) - FAMILY_ORDER.indexOf(b.family);
-    });
+
+    const rest = eligible.filter((s) => !rank.has(s.key));
+    const groups: SignalGroup[] = [];
+    if (lead.length) groups.push({ id: 'key', label: 'Key signals', signals: lead });
+
+    const placed = new Set<string>();
+    for (const family of FAMILY_ORDER) {
+        if (family === 'composite') continue;
+        const inFamily = rest.filter((s) => s.family === family).sort(byMovementThenName);
+        if (inFamily.length) {
+            inFamily.forEach((s) => placed.add(s.key));
+            groups.push({ id: family, label: FAMILY_LABEL[family], signals: inFamily });
+        }
+    }
+
+    // A family the daemon returns but FAMILY_ORDER doesn't list must still render.
+    // `cost` was exactly that case — absent from the union AND the order, so
+    // `FAMILY_ORDER.indexOf()` returned -1 for the four token metrics and a
+    // filter-by-known-family would have dropped them off the screen silently.
+    // Grouping must not be able to lose a metric, so anything unplaced lands here.
+    const leftover = rest.filter((s) => !placed.has(s.key)).sort(byMovementThenName);
+    if (leftover.length) groups.push({ id: 'other', label: 'Other', signals: leftover });
+
+    return groups;
 }
 
 /** A one-line deterministic summary headline — the honest fallback when no

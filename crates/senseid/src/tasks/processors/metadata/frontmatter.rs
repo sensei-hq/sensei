@@ -49,10 +49,7 @@ pub fn parse_frontmatter(content: &str) -> Option<Frontmatter> {
     let v: serde_json::Value = serde_yaml::from_str(&yaml).ok()?;
 
     let str_field = |k: &str| {
-        v.get(k)
-            .and_then(|x| x.as_str())
-            .map(|x| x.trim().to_string())
-            .filter(|x| !x.is_empty())
+        v.get(k).and_then(|x| x.as_str()).map(|x| x.trim().to_string()).filter(|x| !x.is_empty())
     };
     let stack = match v.get("stack") {
         Some(serde_json::Value::Array(a)) => a
@@ -61,11 +58,9 @@ pub fn parse_frontmatter(content: &str) -> Option<Frontmatter> {
             .map(|s| s.trim().to_lowercase())
             .filter(|s| !s.is_empty())
             .collect(),
-        Some(serde_json::Value::String(s)) => s
-            .split(',')
-            .map(|t| t.trim().to_lowercase())
-            .filter(|t| !t.is_empty())
-            .collect(),
+        Some(serde_json::Value::String(s)) => {
+            s.split(',').map(|t| t.trim().to_lowercase()).filter(|t| !t.is_empty()).collect()
+        }
         _ => Vec::new(),
     };
 
@@ -87,7 +82,10 @@ pub fn parse_frontmatter(content: &str) -> Option<Frontmatter> {
 /// consumer knows whether to load it directly or resolve it against the repo.
 pub fn icon_is_url(path: &str) -> bool {
     let p = path.trim();
-    p.starts_with("http://") || p.starts_with("https://") || p.starts_with("//") || p.starts_with("data:")
+    p.starts_with("http://")
+        || p.starts_with("https://")
+        || p.starts_with("//")
+        || p.starts_with("data:")
 }
 
 /// Map a free-text frontmatter `role` to a canonical `folder_role` enum value,
@@ -269,8 +267,12 @@ mod tests {
 
     #[test]
     fn merge_into_readme_without_frontmatter_prepends_block() {
-        let fm = Frontmatter { project: Some("sensei".into()), role: Some("monorepo".into()),
-            stack: vec!["rust".into(), "svelte".into()], ..Default::default() };
+        let fm = Frontmatter {
+            project: Some("sensei".into()),
+            role: Some("monorepo".into()),
+            stack: vec!["rust".into(), "svelte".into()],
+            ..Default::default()
+        };
         let out = merge_frontmatter("# Title\n\nBody text.\n", &fm);
         assert!(out.starts_with("---\n# sensei:frontmatter\n"), "marker comment first");
         assert!(out.contains("project: sensei"));

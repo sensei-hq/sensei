@@ -1,15 +1,19 @@
+use super::LanguageAdapter;
+use super::common::{ir_module, ir_parsed_file};
+use crate::ir::{ClassKind, IRBase, IRClass, IRFunction, IRParsedFile};
+use crate::types::{ParsedFile, ParsedSymbol, SymbolKind};
 use sqlparser::dialect::GenericDialect;
 use sqlparser::parser::Parser as SqlParser;
-use crate::types::{ParsedFile, ParsedSymbol, SymbolKind};
-use crate::ir::{IRBase, IRFunction, IRClass, IRParsedFile, ClassKind};
-use super::common::{ir_module, ir_parsed_file};
-use super::LanguageAdapter;
 
 pub struct SqlAdapter;
 
 impl LanguageAdapter for SqlAdapter {
-    fn language(&self) -> &str { "sql" }
-    fn display_name(&self) -> &str { "SQL" }
+    fn language(&self) -> &str {
+        "sql"
+    }
+    fn display_name(&self) -> &str {
+        "SQL"
+    }
 
     fn fqn_output(&self, abs_path: &str, content: &str) -> Option<super::fqn::FqnFileOutput> {
         Some(sql_fqn::produce_fqns(content, &sql_fqn::schema_from_path(abs_path)))
@@ -48,11 +52,13 @@ impl LanguageAdapter for SqlAdapter {
                     let line = find_line(&lines, "INDEX", &name);
                     symbols.push(make_sym(name, SymbolKind::Const, &lines, line));
                 }
-            } else if upper.contains("FUNCTION") && upper.contains("CREATE")
-                && let Some(name) = extract_name_after(&text, "FUNCTION") {
-                    let line = find_line(&lines, "FUNCTION", &name);
-                    symbols.push(make_sym(name, SymbolKind::Function, &lines, line));
-                }
+            } else if upper.contains("FUNCTION")
+                && upper.contains("CREATE")
+                && let Some(name) = extract_name_after(&text, "FUNCTION")
+            {
+                let line = find_line(&lines, "FUNCTION", &name);
+                symbols.push(make_sym(name, SymbolKind::Function, &lines, line));
+            }
         }
 
         ParsedFile {
@@ -66,7 +72,13 @@ impl LanguageAdapter for SqlAdapter {
 }
 
 fn empty(path: &str) -> ParsedFile {
-    ParsedFile { file_path: path.into(), language: "sql".into(), symbols: vec![], edges: vec![], imports: vec![] }
+    ParsedFile {
+        file_path: path.into(),
+        language: "sql".into(),
+        symbols: vec![],
+        edges: vec![],
+        imports: vec![],
+    }
 }
 
 fn make_sym(name: String, kind: SymbolKind, lines: &[&str], line: u32) -> ParsedSymbol {
@@ -86,14 +98,16 @@ fn extract_name_after(stmt: &str, keyword: &str) -> Option<String> {
     let upper = stmt.to_uppercase();
     let pos = upper.find(keyword)?;
     let after = &stmt[pos + keyword.len()..];
-    let trimmed = after.trim()
-        .trim_start_matches("IF NOT EXISTS").trim()
-        .trim_start_matches("OR REPLACE").trim()
-        .trim_start_matches("UNIQUE").trim();
-    let name = trimmed.split(|c: char| c.is_whitespace() || c == '(')
-        .next()
-        .unwrap_or("")
-        .to_string();
+    let trimmed = after
+        .trim()
+        .trim_start_matches("IF NOT EXISTS")
+        .trim()
+        .trim_start_matches("OR REPLACE")
+        .trim()
+        .trim_start_matches("UNIQUE")
+        .trim();
+    let name =
+        trimmed.split(|c: char| c.is_whitespace() || c == '(').next().unwrap_or("").to_string();
     if name.is_empty() { None } else { Some(name) }
 }
 
@@ -110,7 +124,9 @@ fn find_line(lines: &[&str], keyword: &str, name: &str) -> u32 {
 }
 
 fn find_preceding_comment(lines: &[&str], line: u32) -> Option<String> {
-    if line <= 1 { return None; }
+    if line <= 1 {
+        return None;
+    }
     let mut comments = Vec::new();
     let mut idx = line as usize - 2;
     while let Some(l) = lines.get(idx) {
@@ -120,10 +136,14 @@ fn find_preceding_comment(lines: &[&str], line: u32) -> Option<String> {
         } else {
             break;
         }
-        if idx == 0 { break; }
+        if idx == 0 {
+            break;
+        }
         idx -= 1;
     }
-    if comments.is_empty() { return None; }
+    if comments.is_empty() {
+        return None;
+    }
     comments.reverse();
     Some(comments.join("\n"))
 }
@@ -137,11 +157,13 @@ pub fn parse_to_ir(source: &str, file_path: &str) -> IRParsedFile {
 
     for sym in &pf.symbols {
         match sym.kind {
-            SymbolKind::Class => { // tables, views
+            SymbolKind::Class => {
+                // tables, views
                 classes.push(IRClass {
                     base: IRBase {
                         name: sym.name.clone(),
-                        line_start: sym.line_start, line_end: sym.line_end,
+                        line_start: sym.line_start,
+                        line_end: sym.line_end,
                         is_exported: true,
                         node_type: Some("class".into()),
                         ..Default::default()
@@ -154,7 +176,8 @@ pub fn parse_to_ir(source: &str, file_path: &str) -> IRParsedFile {
                 functions.push(IRFunction {
                     base: IRBase {
                         name: sym.name.clone(),
-                        line_start: sym.line_start, line_end: sym.line_end,
+                        line_start: sym.line_start,
+                        line_end: sym.line_end,
                         is_exported: true,
                         node_type: Some("function".into()),
                         ..Default::default()
@@ -199,8 +222,15 @@ pub(crate) mod sql_fqn {
             let lower = line.to_lowercase();
             if let Some(pos) = lower.find("search_path to ") {
                 let after = &line[pos + "search_path to ".len()..];
-                let sch = after.trim().split(|c: char| c == ',' || c == ';' || c.is_whitespace()).next().unwrap_or("").trim();
-                if !sch.is_empty() { return sch.to_string(); }
+                let sch = after
+                    .trim()
+                    .split(|c: char| c == ',' || c == ';' || c.is_whitespace())
+                    .next()
+                    .unwrap_or("")
+                    .trim();
+                if !sch.is_empty() {
+                    return sch.to_string();
+                }
             }
         }
         default_schema.to_string()
@@ -222,12 +252,16 @@ pub(crate) mod sql_fqn {
             return None;
         }
         let mut i = 1;
-        while i < words.len() && ["or", "replace", "unique", "materialized"].contains(&words[i].to_lowercase().as_str()) {
+        while i < words.len()
+            && ["or", "replace", "unique", "materialized"]
+                .contains(&words[i].to_lowercase().as_str())
+        {
             i += 1;
         }
         let kind = kind_of(&words.get(i)?.to_lowercase())?;
         i += 1;
-        while i < words.len() && ["if", "not", "exists"].contains(&words[i].to_lowercase().as_str()) {
+        while i < words.len() && ["if", "not", "exists"].contains(&words[i].to_lowercase().as_str())
+        {
             i += 1;
         }
         let name = words.get(i)?.split('(').next().unwrap_or("").trim_matches('"').to_string();
@@ -241,8 +275,15 @@ pub(crate) mod sql_fqn {
         let mut from = 0;
         while let Some(pos) = lower[from..].find("references ") {
             let start = from + pos + "references ".len();
-            let name = line[start..].trim().split(|c: char| c.is_whitespace() || c == '(').next().unwrap_or("").trim_matches('"');
-            if !name.is_empty() && name.chars().next().is_some_and(|c| c.is_alphabetic() || c == '_' || c == '"') {
+            let name = line[start..]
+                .trim()
+                .split(|c: char| c.is_whitespace() || c == '(')
+                .next()
+                .unwrap_or("")
+                .trim_matches('"');
+            if !name.is_empty()
+                && name.chars().next().is_some_and(|c| c.is_alphabetic() || c == '_' || c == '"')
+            {
                 out.push(name.to_string());
             }
             from = start;
@@ -254,11 +295,14 @@ pub(crate) mod sql_fqn {
     /// has no `set search_path` (the dbd directory schema).
     pub fn produce_fqns(source: &str, default_schema: &str) -> FqnFileOutput {
         let schema = schema_of(source, default_schema);
-        let mut out = FqnFileOutput { package: schema.clone(), module: String::new(), ..Default::default() };
+        let mut out =
+            FqnFileOutput { package: schema.clone(), module: String::new(), ..Default::default() };
         let mut current: Option<String> = None; // fqn of the enclosing CREATE object
         for (i, line) in source.lines().enumerate() {
             // Skip `--` comments so a prose mention of "references"/"create" isn't parsed.
-            if line.trim_start().starts_with("--") { continue; }
+            if line.trim_start().starts_with("--") {
+                continue;
+            }
             if let Some((kind, raw)) = parse_create(line) {
                 let (sch, name) = split_qualified(&raw, &schema);
                 let fqn_str = fqn::item(SQL_LANG, &sch, "", &name);
@@ -296,8 +340,11 @@ pub(crate) mod sql_fqn {
     /// layout is `…/ddl/<type>/<schema>/<name>.ddl`, so the parent directory names it.
     pub(crate) fn schema_from_path(abs_path: &str) -> String {
         std::path::Path::new(abs_path)
-            .parent().and_then(|p| p.file_name()).and_then(|n| n.to_str())
-            .unwrap_or("public").to_string()
+            .parent()
+            .and_then(|p| p.file_name())
+            .and_then(|n| n.to_str())
+            .unwrap_or("public")
+            .to_string()
     }
 }
 
@@ -305,7 +352,9 @@ pub(crate) mod sql_fqn {
 mod tests {
     use super::*;
 
-    fn parse(src: &str) -> ParsedFile { SqlAdapter.parse(src, "schema.sql") }
+    fn parse(src: &str) -> ParsedFile {
+        SqlAdapter.parse(src, "schema.sql")
+    }
 
     // ── FQN producer (Phase 6.7) ────────────────────────────────────────────
     use crate::languages::fqn::{FqnFileOutput, FqnReference};
@@ -313,7 +362,9 @@ mod tests {
         out.defs.iter().find(|d| d.name == name).map(|d| d.fqn.as_str()).unwrap_or("<no-def>")
     }
     fn ref_to<'a>(out: &'a FqnFileOutput, target_name: &str) -> &'a FqnReference {
-        out.refs.iter().find(|r| r.target_name == target_name)
+        out.refs
+            .iter()
+            .find(|r| r.target_name == target_name)
             .unwrap_or_else(|| panic!("no ref to `{target_name}` in {:?}", out.refs))
     }
 
@@ -323,7 +374,11 @@ mod tests {
             "set search_path to sensei, extensions;\ncreate table if not exists nodes (id uuid);\ncreate view active_nodes as select * from nodes;",
             "public",
         );
-        assert_eq!(def_fqn(&out, "nodes"), "sql·sensei·nodes", "table → schema.name (schema from search_path)");
+        assert_eq!(
+            def_fqn(&out, "nodes"),
+            "sql·sensei·nodes",
+            "table → schema.name (schema from search_path)"
+        );
         assert_eq!(def_fqn(&out, "active_nodes"), "sql·sensei·active_nodes", "view");
     }
 
@@ -334,7 +389,11 @@ mod tests {
             "public",
         );
         let r = ref_to(&out, "nodes");
-        assert_eq!(r.target_fqn.as_deref(), Some("sql·sensei·nodes"), "foreign key resolves to the referenced table's fqn");
+        assert_eq!(
+            r.target_fqn.as_deref(),
+            Some("sql·sensei·nodes"),
+            "foreign key resolves to the referenced table's fqn"
+        );
         assert_eq!(r.caller_fqn, "sql·sensei·edges", "attributed to the enclosing table");
     }
 
@@ -348,15 +407,26 @@ mod tests {
         // Exercise the producer against a real, PG-specific DDL file (the corpus the
         // text scan exists for) — a generic SQL grammar would reject it wholesale.
         let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .parent().unwrap().parent().unwrap().join("database/ddl/table/sensei/nodes.ddl");
-        if !root.exists() { return; }
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join("database/ddl/table/sensei/nodes.ddl");
+        if !root.exists() {
+            return;
+        }
         let content = std::fs::read_to_string(&root).unwrap();
         let out = sql_fqn::produce_fqns(&content, "sensei");
-        assert!(out.defs.iter().any(|d| d.fqn == "sql·sensei·nodes"),
-            "the nodes table def, got: {:?}", out.defs.iter().map(|d| &d.fqn).collect::<Vec<_>>());
-        assert!(out.refs.iter().any(|r| r.target_fqn.as_deref() == Some("sql·sensei·folders")),
+        assert!(
+            out.defs.iter().any(|d| d.fqn == "sql·sensei·nodes"),
+            "the nodes table def, got: {:?}",
+            out.defs.iter().map(|d| &d.fqn).collect::<Vec<_>>()
+        );
+        assert!(
+            out.refs.iter().any(|r| r.target_fqn.as_deref() == Some("sql·sensei·folders")),
             "the folder_id → sensei.folders foreign-key edge, got: {:?}",
-            out.refs.iter().map(|r| &r.target_fqn).collect::<Vec<_>>());
+            out.refs.iter().map(|r| &r.target_fqn).collect::<Vec<_>>()
+        );
     }
 
     #[test]
@@ -396,7 +466,9 @@ mod tests {
 
     #[test]
     fn multiple_statements() {
-        let pf = parse("CREATE TABLE a (id INT);\nCREATE TABLE b (id INT);\nCREATE VIEW v AS SELECT * FROM a;");
+        let pf = parse(
+            "CREATE TABLE a (id INT);\nCREATE TABLE b (id INT);\nCREATE VIEW v AS SELECT * FROM a;",
+        );
         assert_eq!(pf.symbols.len(), 3);
     }
 }

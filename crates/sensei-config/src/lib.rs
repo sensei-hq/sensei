@@ -43,17 +43,29 @@ mod tests {
         // this crate reads SENSEI_DOJO_URL and the var is cleared before return.
 
         // 1. Default — no env var set.
-        unsafe { std::env::remove_var(DOJO_REGISTRY_URL_ENV); }
+        unsafe {
+            std::env::remove_var(DOJO_REGISTRY_URL_ENV);
+        }
         assert_eq!(dojo_registry_url(), "http://localhost:7755", "default → localhost registry");
 
         // 2. Override — SENSEI_DOJO_URL set (trailing slash trimmed).
-        unsafe { std::env::set_var(DOJO_REGISTRY_URL_ENV, "https://dojo.sensei-hq.org/"); }
-        assert_eq!(dojo_registry_url(), "https://dojo.sensei-hq.org", "override + trailing slash trimmed");
+        unsafe {
+            std::env::set_var(DOJO_REGISTRY_URL_ENV, "https://dojo.sensei-hq.org/");
+        }
+        assert_eq!(
+            dojo_registry_url(),
+            "https://dojo.sensei-hq.org",
+            "override + trailing slash trimmed"
+        );
 
         // 3. Empty value — falls back to default.
-        unsafe { std::env::set_var(DOJO_REGISTRY_URL_ENV, "   "); }
+        unsafe {
+            std::env::set_var(DOJO_REGISTRY_URL_ENV, "   ");
+        }
         assert_eq!(dojo_registry_url(), "http://localhost:7755", "blank falls back to default");
 
-        unsafe { std::env::remove_var(DOJO_REGISTRY_URL_ENV); }
+        unsafe {
+            std::env::remove_var(DOJO_REGISTRY_URL_ENV);
+        }
     }
 }

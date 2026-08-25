@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { SectionHead, Banner, Chip, KanjiToken, StatBadge, ListSection } from '$lib/components/kit';
+	import { SectionHead, Chip, KanjiToken, StatBadge, ListSection } from '$lib/components/kit';
 	import type { KitBilling } from '$lib/components/kit/types';
 	import { monthlyTotal, relayTone, tierCtaLabel } from '$lib/billing-view';
 
@@ -12,35 +12,26 @@
 	// come from the pure `billing-view` helpers.
 	let {
 		orgName,
-		billing,
-		mobile = false
+		billing
 	}: {
 		orgName: string;
 		billing: KitBilling;
-		mobile?: boolean;
 	} = $props();
 
 	const monthly = $derived(monthlyTotal(billing));
 </script>
 
-<div class="flex flex-col {mobile ? 'p-4 gap-4' : 'p-8 gap-6'}">
-	<SectionHead eyebrow={orgName + ' · plan & billing'} title="Plan & billing">
+<div class="flex flex-col p-4 gap-4 md:p-8 md:gap-6">
+	<SectionHead
+		kanji="円" eyebrow={orgName + ' · plan & billing'} title="Plan & billing"
+		description="Free where public or personal; paid where private and shared. Seats bill per active contributor. The desktop app, the global collective, bring-your-own-key inference, and read-only membership are always free — you pay to coordinate a group, never for tokens."
+	>
 		{#snippet right()}
 			<Chip toneClass="text-accent" softClass="bg-accent-soft" edgeClass="border-accent-soft"
 				>{billing.plan}</Chip
 			>
 		{/snippet}
 	</SectionHead>
-
-	<Banner
-		kanji="円"
-		tone="neutral"
-		title="Free where public or personal; paid where private and shared."
-	>
-		Seats bill per active contributor. The desktop app, the global collective, bring-your-own-key
-		inference, and read-only membership are always free — you pay to coordinate a group, never for
-		tokens.
-	</Banner>
 
 	<!-- Plan summary — current plan · billable seats · live monthly total. -->
 	<div class="grid grid-cols-1 gap-4 md:grid-cols-3">

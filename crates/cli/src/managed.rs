@@ -72,10 +72,10 @@ pub fn write_directive(path: &Path) -> std::io::Result<Change> {
     // or HTTP input — the Actix web path-traversal rule is a false positive in this CLI crate.
     let existing = fs::read_to_string(path).ok(); // nosemgrep
     let block = directive_block();
-    if let Some(text) = existing.as_deref() {
-        if text.contains(&block) {
-            return Ok(Change::Unchanged);
-        }
+    if let Some(text) = existing.as_deref()
+        && text.contains(&block)
+    {
+        return Ok(Change::Unchanged);
     }
     let new = upsert(existing.as_deref(), &block);
     fs::write(path, new)?; // nosemgrep: same program-derived path — see note above
@@ -108,8 +108,10 @@ mod tests {
             "# Head\n\nbefore text\n\n{MANAGED_START}\nOLD BODY\n{MANAGED_END}\n\nafter text\n"
         );
         let out = upsert(Some(&existing), &directive_block());
-        assert!(out.contains("# Head") && out.contains("before text") && out.contains("after text"),
-            "surrounding text on both sides is preserved");
+        assert!(
+            out.contains("# Head") && out.contains("before text") && out.contains("after text"),
+            "surrounding text on both sides is preserved"
+        );
         assert!(!out.contains("OLD BODY"), "the old managed body is replaced");
         assert!(out.contains("get_rules()"), "the new directive is present");
         assert_eq!(out.matches(MANAGED_START).count(), 1, "exactly one block — no duplication");
@@ -125,7 +127,8 @@ mod tests {
 
     #[test]
     fn write_directive_creates_then_noops_then_preserves_surrounding() {
-        let path = std::env::temp_dir().join(format!("sensei_managed_test_{}.md", std::process::id()));
+        let path =
+            std::env::temp_dir().join(format!("sensei_managed_test_{}.md", std::process::id()));
         let _ = std::fs::remove_file(&path);
         assert_eq!(write_directive(&path).unwrap(), Change::Created);
         assert_eq!(write_directive(&path).unwrap(), Change::Unchanged, "a re-run is a no-op");
@@ -134,7 +137,10 @@ mod tests {
         std::fs::write(&path, format!("# Preamble\n\n{body}\n## Tail\n")).unwrap();
         assert_eq!(write_directive(&path).unwrap(), Change::Unchanged);
         let after = std::fs::read_to_string(&path).unwrap();
-        assert!(after.contains("# Preamble") && after.contains("## Tail"), "surrounding content kept");
+        assert!(
+            after.contains("# Preamble") && after.contains("## Tail"),
+            "surrounding content kept"
+        );
         assert_eq!(after.matches(MANAGED_START).count(), 1, "no duplicate block");
         std::fs::remove_file(&path).ok();
     }

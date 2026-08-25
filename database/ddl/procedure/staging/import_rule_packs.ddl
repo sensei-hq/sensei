@@ -16,7 +16,7 @@ set search_path = staging, sensei, extensions
 as $$
 begin
   insert into sensei.rule_packs (
-      slug, name, kanji, area, source, summary,
+      slug, name, kanji, area, attribution, summary,
       enforcement, owner_namespace_id, status, published_by, updated_at
   )
   select
@@ -38,7 +38,7 @@ begin
       name         = excluded.name
     , kanji        = excluded.kanji
     , area         = excluded.area
-    , source       = excluded.source
+    , attribution  = excluded.attribution
     , summary      = excluded.summary
     , enforcement  = excluded.enforcement
     , status       = excluded.status

@@ -236,10 +236,7 @@ impl ModelProvisioning {
             // `acquire_owned` errs only if the semaphore is closed, which we
             // never do; the permit releases on return (and on panic).
             let _permit = sem.acquire_owned().await;
-            this.set_phase(
-                &model_owned,
-                ProvisionPhase::Downloading { done: 0, total: None },
-            );
+            this.set_phase(&model_owned, ProvisionPhase::Downloading { done: 0, total: None });
 
             // Progress reporter handed to `download`: pushes each transition into
             // the shared phase map so the readiness probe + status see live bytes.
@@ -432,9 +429,8 @@ mod tests {
     async fn ensure_with_drives_downloading_to_failed_then_retries() {
         let svc = Arc::new(ModelProvisioning::new(std::env::temp_dir(), test_catalog()));
 
-        let phase = svc.ensure_with("gemma2:2b", |_report| async {
-            Err("registry unreachable".to_string())
-        });
+        let phase = svc
+            .ensure_with("gemma2:2b", |_report| async { Err("registry unreachable".to_string()) });
         assert_eq!(phase, ProvisionPhase::Queued);
 
         wait_until(&svc, "gemma2:2b", |p| matches!(p, ProvisionPhase::Failed { .. })).await;
@@ -475,10 +471,7 @@ mod tests {
             release_job.notified().await;
             Ok(())
         });
-        wait_until(&svc, "gemma2:2b", |p| {
-            matches!(p, ProvisionPhase::Downloading { .. })
-        })
-        .await;
+        wait_until(&svc, "gemma2:2b", |p| matches!(p, ProvisionPhase::Downloading { .. })).await;
 
         assert_eq!(
             probe.phase("gemma2:2b").await,

@@ -15,7 +15,7 @@
 
 use dbd_core::adapter::postgres::PostgresAdapter;
 use dbd_core::design::Progress;
-use dbd_core::{deploy::resolve_source, Design};
+use dbd_core::{Design, deploy::resolve_source};
 use std::sync::{Arc, Mutex};
 
 use crate::config::SenseiConfig;
@@ -47,20 +47,13 @@ pub fn database_exists(db_name: &str) -> Result<bool, String> {
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!(
-            "psql -lqt failed (exit {}): {}",
-            output.status,
-            stderr.trim()
-        ));
+        return Err(format!("psql -lqt failed (exit {}): {}", output.status, stderr.trim()));
     }
 
     let text = String::from_utf8_lossy(&output.stdout);
-    Ok(text.lines().any(|line| {
-        line.split('|')
-            .next()
-            .map(|name| name.trim() == db_name)
-            .unwrap_or(false)
-    }))
+    Ok(text
+        .lines()
+        .any(|line| line.split('|').next().map(|name| name.trim() == db_name).unwrap_or(false)))
 }
 
 /// Run `createdb <db_name>`. Treats "already exists" as success — the
@@ -160,7 +153,9 @@ pub fn deploy(db_name: &str, app_version: &str) -> Result<(), String> {
                         move |desc: &str, err: Option<&str>| match err {
                             Some(e) => {
                                 tracing::warn!(dbd_step = "apply", desc, error = e, "failed");
-                                f.lock().expect("apply-failure mutex poisoned").push(format!("{desc}: {e}"));
+                                f.lock()
+                                    .expect("apply-failure mutex poisoned")
+                                    .push(format!("{desc}: {e}"));
                             }
                             None => tracing::debug!(dbd_step = "apply", desc, "done"),
                         }
@@ -186,7 +181,9 @@ pub fn deploy(db_name: &str, app_version: &str) -> Result<(), String> {
                         move |desc: &str, err: Option<&str>| match err {
                             Some(e) => {
                                 tracing::warn!(dbd_step = "import", desc, error = e, "failed");
-                                f.lock().expect("import-failure mutex poisoned").push(format!("{desc}: {e}"));
+                                f.lock()
+                                    .expect("import-failure mutex poisoned")
+                                    .push(format!("{desc}: {e}"));
                             }
                             None => tracing::debug!(dbd_step = "import", desc, "done"),
                         }
@@ -215,19 +212,12 @@ pub fn deploy(db_name: &str, app_version: &str) -> Result<(), String> {
 /// Fold per-item failures captured from dbd's `apply`/`import_data` Progress
 /// callbacks into one hard error naming the offending item(s) — so a partial
 /// deploy surfaces its cause instead of passing silently.
-fn surface_step_failures(
-    phase: &str,
-    failures: &Arc<Mutex<Vec<String>>>,
-) -> Result<(), String> {
+fn surface_step_failures(phase: &str, failures: &Arc<Mutex<Vec<String>>>) -> Result<(), String> {
     let failures = failures.lock().expect("dbd-failure mutex poisoned");
     if failures.is_empty() {
         return Ok(());
     }
-    Err(format!(
-        "dbd {phase} reported {} failed item(s): {}",
-        failures.len(),
-        failures.join("; ")
-    ))
+    Err(format!("dbd {phase} reported {} failed item(s): {}", failures.len(), failures.join("; ")))
 }
 
 /// CALL the bundled-pack seed procedures (D-SEED / D-LOCAL-PACKS): the default
@@ -238,7 +228,11 @@ fn surface_step_failures(
 pub fn seed_bundled_packs(db_name: &str) -> Result<(), String> {
     let output = crate::util::command_for("psql")?
         .args([
-            "-d", db_name, "-v", "ON_ERROR_STOP=1", "-c",
+            "-d",
+            db_name,
+            "-v",
+            "ON_ERROR_STOP=1",
+            "-c",
             "CALL sensei.seed_default_constitution(); CALL sensei.seed_ponytail_pack();",
         ])
         .output()
@@ -274,10 +268,7 @@ mod tests {
     fn database_exists_parses_psql_output() {
         let stdout = " sensei    | jerry | UTF8     | \n template0 | jerry | UTF8     | \n";
         let found = stdout.lines().any(|line| {
-            line.split('|')
-                .next()
-                .map(|name| name.trim() == "sensei")
-                .unwrap_or(false)
+            line.split('|').next().map(|name| name.trim() == "sensei").unwrap_or(false)
         });
         assert!(found);
     }
@@ -286,10 +277,7 @@ mod tests {
     fn database_exists_does_not_partial_match() {
         let stdout = " sensei-prod | jerry | UTF8 | \n";
         let found = stdout.lines().any(|line| {
-            line.split('|')
-                .next()
-                .map(|name| name.trim() == "sensei")
-                .unwrap_or(false)
+            line.split('|').next().map(|name| name.trim() == "sensei").unwrap_or(false)
         });
         assert!(!found, "must match the full db name only");
     }

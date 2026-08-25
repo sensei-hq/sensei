@@ -11,8 +11,9 @@ patterns, voice, testing. Shared across app/ · dojo/ · website/. Every new scr
 every refactor follows it.
 
 Companion references:
-- Mockups (visual source of truth): `sensei/docs/mockups/Sensei/lib/*.jsx`
-- Mockup conventions: `sensei/docs/mockups/Sensei/CLAUDE.md`
+- Mockups (visual source of truth): `sensei/docs/mockups/Sensei/screenshots/` — 61
+  PNGs, the current reference. Only one prototype `.jsx` survives
+  (`lib/project/project-metrics.jsx`); read the screenshots, not the JSX.
 - Design system: `sensei/docs/mockups/Zen-Sumi Design System/`
 - Rokkit preset: `node_modules/@rokkit/unocss/README.md`
 

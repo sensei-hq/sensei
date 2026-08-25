@@ -50,9 +50,7 @@ fn tail(s: &str) -> String {
         return s.to_string();
     }
     let cut = s.len() - OUTPUT_TAIL_BYTES;
-    let start = (cut..s.len())
-        .find(|&i| s.is_char_boundary(i))
-        .unwrap_or(s.len());
+    let start = (cut..s.len()).find(|&i| s.is_char_boundary(i)).unwrap_or(s.len());
     format!("…{}", &s[start..])
 }
 
@@ -75,18 +73,10 @@ async fn run_command(command: &str, cwd: &Path) -> (&'static str, Option<i32>, S
         Ok(Ok(out)) => {
             let mut combined = String::from_utf8_lossy(&out.stdout).into_owned();
             combined.push_str(&String::from_utf8_lossy(&out.stderr));
-            (
-                verdict_from_exit(out.status.code()),
-                out.status.code(),
-                tail(&combined),
-            )
+            (verdict_from_exit(out.status.code()), out.status.code(), tail(&combined))
         }
         Ok(Err(e)) => ("error", None, format!("spawn failed: {e}")),
-        Err(_) => (
-            "error",
-            None,
-            format!("timed out after {}s", CHECKER_TIMEOUT.as_secs()),
-        ),
+        Err(_) => ("error", None, format!("timed out after {}s", CHECKER_TIMEOUT.as_secs())),
     }
 }
 
@@ -106,7 +96,13 @@ pub async fn run_checkers(
             Some(command) => {
                 let (verdict, exit_code, out) = run_command(&command, cwd).await;
                 pg.insert_check_run(
-                    folder_id, &rule_statement, &checker_ref, &command, verdict, exit_code, &out,
+                    folder_id,
+                    &rule_statement,
+                    &checker_ref,
+                    &command,
+                    verdict,
+                    exit_code,
+                    &out,
                 )
                 .await?;
                 CheckRun {

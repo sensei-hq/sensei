@@ -4,7 +4,6 @@ export { default as Eyebrow } from './Eyebrow.svelte';
 export { default as FtrStrip } from './FtrStrip.svelte';
 export { default as GateRow } from './GateRow.svelte';
 export { default as Kanji } from './Kanji.svelte';
-export { default as KanjiHeader } from './KanjiHeader.svelte';
 export { default as MemoryList } from './MemoryList.svelte';
 export { default as MetricCard } from './MetricCard.svelte';
 export { default as MetricSparkline } from './MetricSparkline.svelte';

@@ -3,12 +3,12 @@
 //! Tasks are enqueued with optional depends_on IDs. Blocked tasks
 //! automatically become Pending when all dependencies complete.
 
+use super::progress::TaskEvent;
+use super::{Task, TaskStatus};
+use serde::Serialize;
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
-use serde::Serialize;
 use tokio::sync::{Mutex, Notify, broadcast};
-use super::{Task, TaskStatus};
-use super::progress::TaskEvent;
 
 const DEFAULT_MAX_CONCURRENT_REPOS: usize = 3;
 
@@ -18,13 +18,22 @@ pub struct TaskQueue {
     next_id: AtomicU64,
     tx: broadcast::Sender<TaskEvent>,
     max_concurrent_repos: std::sync::atomic::AtomicUsize,
+    /// When this queue — and therefore this id space — came into existence.
+    ///
+    /// `next_id` starts at 1 on every construction, so a task id is unique only
+    /// WITHIN one daemon session; `activity.task_executions` accumulates across
+    /// sessions and will happily hold dozens of unrelated rows for id 1. Any
+    /// lookup by task id must therefore be scoped to the session that issued it,
+    /// and the queue is the right owner of that boundary because it defines the
+    /// id space.
+    session_start: chrono::DateTime<chrono::Utc>,
 }
 
 struct QueueState {
     pending: VecDeque<Task>,
     blocked: Vec<Task>,
     running: HashMap<u64, Task>,
-    completed: Vec<Task>,   // last N for history
+    completed: Vec<Task>, // last N for history
     /// Track which repos have running tasks (for concurrency limit)
     folder_running_count: HashMap<String, usize>,
     /// Map of task_id → list of task_ids that depend on it
@@ -49,6 +58,7 @@ impl TaskQueue {
             }),
             notify: Notify::new(),
             next_id: AtomicU64::new(1),
+            session_start: chrono::Utc::now(),
             tx,
             max_concurrent_repos: std::sync::atomic::AtomicUsize::new(max_repos),
         }
@@ -116,7 +126,9 @@ impl TaskQueue {
 
         if task.status == TaskStatus::Blocked {
             // Check if deps are already completed
-            let unmet: Vec<u64> = task.depends_on.iter()
+            let unmet: Vec<u64> = task
+                .depends_on
+                .iter()
                 .filter(|dep| !state.completed.iter().any(|c| c.id == **dep))
                 .copied()
                 .collect();
@@ -194,9 +206,13 @@ impl TaskQueue {
                 // never bypasses the cap. Tie-break by index so FIFO order is
                 // preserved *within* a priority band (deterministic).
                 let max_repos = self.max_concurrent_repos.load(Ordering::SeqCst);
-                let pos = state.pending.iter().enumerate()
+                let pos = state
+                    .pending
+                    .iter()
+                    .enumerate()
                     .filter(|(_, t)| {
-                        let count = state.folder_running_count.get(&t.folder_path).copied().unwrap_or(0);
+                        let count =
+                            state.folder_running_count.get(&t.folder_path).copied().unwrap_or(0);
                         count < max_repos
                     })
                     .min_by_key(|(idx, t)| (kind_priority(&t.kind), *idx))
@@ -235,7 +251,9 @@ impl TaskQueue {
             // Decrement repo running count
             if let Some(count) = state.folder_running_count.get_mut(&task.folder_path) {
                 *count = count.saturating_sub(1);
-                if *count == 0 { state.folder_running_count.remove(&task.folder_path); }
+                if *count == 0 {
+                    state.folder_running_count.remove(&task.folder_path);
+                }
             }
 
             let folder_path = task.folder_path.clone();
@@ -273,11 +291,7 @@ impl TaskQueue {
                 state.pending.push_back(t);
             }
 
-            let _ = self.tx.send(TaskEvent::Completed {
-                task_id,
-                folder_path,
-                kind,
-            });
+            let _ = self.tx.send(TaskEvent::Completed { task_id, folder_path, kind });
         }
 
         drop(state);
@@ -295,7 +309,9 @@ impl TaskQueue {
 
             if let Some(count) = state.folder_running_count.get_mut(&task.folder_path) {
                 *count = count.saturating_sub(1);
-                if *count == 0 { state.folder_running_count.remove(&task.folder_path); }
+                if *count == 0 {
+                    state.folder_running_count.remove(&task.folder_path);
+                }
             }
 
             let folder_path = task.folder_path.clone();
@@ -326,12 +342,7 @@ impl TaskQueue {
                 }
             }
 
-            let _ = self.tx.send(TaskEvent::Failed {
-                task_id,
-                folder_path,
-                kind,
-                error,
-            });
+            let _ = self.tx.send(TaskEvent::Failed { task_id, folder_path, kind, error });
         }
 
         drop(state);
@@ -407,12 +418,40 @@ impl TaskQueue {
     #[cfg(test)]
     pub async fn snapshot(&self) -> Vec<(super::TaskKind, String, String)> {
         let s = self.inner.lock().await;
-        s.pending.iter()
+        s.pending
+            .iter()
             .chain(s.blocked.iter())
             .chain(s.running.values())
             .chain(s.completed.iter())
             .map(|t| (t.kind.clone(), t.folder_path.clone(), t.path.clone()))
             .collect()
+    }
+
+    /// When this id space began — the lower bound for any `task_executions`
+    /// lookup by task id. See the field docs on `session_start`.
+    pub fn session_start(&self) -> chrono::DateTime<chrono::Utc> {
+        self.session_start
+    }
+
+    /// One task by id, wherever it currently sits in the queue.
+    ///
+    /// Exists for the follow endpoints: a task that has been enqueued but has not
+    /// started yet has NO `activity.task_executions` row (the executor writes
+    /// that on start), so the durable log alone would 404 a task that genuinely
+    /// exists and is about to run — the one answer a follower must never get.
+    ///
+    /// `completed` is searched too: it is a bounded ring the queue keeps for
+    /// status, and finding a task there is strictly better than reporting it
+    /// unknown.
+    pub async fn find_task(&self, task_id: u64) -> Option<Task> {
+        let s = self.inner.lock().await;
+        s.pending
+            .iter()
+            .chain(s.blocked.iter())
+            .chain(s.running.values())
+            .chain(s.completed.iter())
+            .find(|t| t.id == task_id)
+            .cloned()
     }
 
     /// Get queue status summary.
@@ -447,14 +486,10 @@ pub struct QueueStatus {
 /// reorders *selection among already-startable tasks*; it never bypasses the
 /// per-repo concurrency cap (that gate is applied first in `next_task`).
 fn kind_priority(kind: &super::TaskKind) -> u8 {
-    use super::TaskKind;
-    match kind {
-        TaskKind::AnalyzeProject
-        | TaskKind::ComputeProjectMetrics
-        | TaskKind::ComputeGroupMetrics
-        | TaskKind::ComputeHealth => 0,
-        _ => 1,
-    }
+    // Reads the kind descriptor rather than re-listing the HIGH set here.
+    // The list lived in two places (this match and the watchdog tiering) and
+    // nothing kept them agreeing.
+    if kind.is_high_priority() { 0 } else { 1 }
 }
 
 /// Best-effort resolver: for each unmet-dependency id, produce a
@@ -468,10 +503,20 @@ fn kind_priority(kind: &super::TaskKind) -> u8 {
 fn blocker_summary(state: &QueueState, deps: &[u64]) -> Vec<String> {
     deps.iter()
         .map(|dep_id| {
-            let kind = state.running.values().find(|t| t.id == *dep_id).map(|t| t.kind.to_string())
-                .or_else(|| state.pending.iter().find(|t| t.id == *dep_id).map(|t| t.kind.to_string()))
-                .or_else(|| state.blocked.iter().find(|t| t.id == *dep_id).map(|t| t.kind.to_string()))
-                .or_else(|| state.completed.iter().find(|t| t.id == *dep_id).map(|t| t.kind.to_string()))
+            let kind = state
+                .running
+                .values()
+                .find(|t| t.id == *dep_id)
+                .map(|t| t.kind.to_string())
+                .or_else(|| {
+                    state.pending.iter().find(|t| t.id == *dep_id).map(|t| t.kind.to_string())
+                })
+                .or_else(|| {
+                    state.blocked.iter().find(|t| t.id == *dep_id).map(|t| t.kind.to_string())
+                })
+                .or_else(|| {
+                    state.completed.iter().find(|t| t.id == *dep_id).map(|t| t.kind.to_string())
+                })
                 .unwrap_or_else(|| "?".to_string());
             format!("{dep_id}:{kind}")
         })
@@ -553,10 +598,9 @@ mod tests {
         let f2 = q.enqueue(Task::new(TaskKind::ProcessFile, "repo", "b.ts")).await;
 
         // Enqueue barrier that depends on both
-        let barrier = q.enqueue(
-            Task::new(TaskKind::BuildConnections, "repo", "")
-                .blocked_by(vec![f1, f2])
-        ).await;
+        let barrier = q
+            .enqueue(Task::new(TaskKind::BuildConnections, "repo", "").blocked_by(vec![f1, f2]))
+            .await;
 
         // Barrier should be blocked
         let status = q.status().await;
@@ -591,9 +635,8 @@ mod tests {
         let q = TaskQueue::new();
 
         // Create barrier first with no deps
-        let barrier = q.enqueue(
-            Task::new(TaskKind::BuildConnections, "repo", "").blocked_by(vec![])
-        ).await;
+        let barrier =
+            q.enqueue(Task::new(TaskKind::BuildConnections, "repo", "").blocked_by(vec![])).await;
 
         // Barrier starts as Pending (no deps)
         // Now add file tasks and wire them as deps
@@ -609,9 +652,8 @@ mod tests {
     async fn failed_task_unblocks_dependents() {
         let q = TaskQueue::new();
         let f1 = q.enqueue(Task::new(TaskKind::ProcessFile, "repo", "a.ts")).await;
-        let _barrier = q.enqueue(
-            Task::new(TaskKind::BuildConnections, "repo", "").blocked_by(vec![f1])
-        ).await;
+        let _barrier =
+            q.enqueue(Task::new(TaskKind::BuildConnections, "repo", "").blocked_by(vec![f1])).await;
 
         let t = q.next_task().await;
         q.fail(t.id, "parse error".into()).await;
@@ -661,8 +703,10 @@ mod tests {
         // A running (dequeued) AdvanceRun still counts as pending for its run.
         let t = q.next_task().await;
         assert_eq!(t.path, run_a);
-        assert!(q.has_pending_kind_path(TaskKind::AdvanceRun, run_a).await,
-            "a running tick still blocks a duplicate enqueue");
+        assert!(
+            q.has_pending_kind_path(TaskKind::AdvanceRun, run_a).await,
+            "a running tick still blocks a duplicate enqueue"
+        );
 
         // Once completed, it's gone from the active set.
         q.complete(t.id).await;
@@ -676,10 +720,19 @@ mod tests {
         let lib_b = "bbbbbbbb-1111-1111-1111-111111111111";
         // IndexLibrary carries the lib id in folder_path, the name in path.
         q.enqueue(Task::new(TaskKind::IndexLibrary, lib_a, "some-lib")).await;
-        assert!(q.has_pending_kind_folder(TaskKind::IndexLibrary, lib_a).await, "same kind + folder → pending");
-        assert!(!q.has_pending_kind_folder(TaskKind::IndexLibrary, lib_b).await, "different lib id → not pending");
+        assert!(
+            q.has_pending_kind_folder(TaskKind::IndexLibrary, lib_a).await,
+            "same kind + folder → pending"
+        );
+        assert!(
+            !q.has_pending_kind_folder(TaskKind::IndexLibrary, lib_b).await,
+            "different lib id → not pending"
+        );
         // Keyed on folder_path (the lib id), NOT the name in path.
-        assert!(!q.has_pending_kind_folder(TaskKind::IndexLibrary, "some-lib").await, "the name is not the key");
+        assert!(
+            !q.has_pending_kind_folder(TaskKind::IndexLibrary, "some-lib").await,
+            "the name is not the key"
+        );
     }
 
     #[tokio::test]
@@ -708,9 +761,9 @@ mod tests {
         // A running (dequeued) task still blocks a re-enqueue — the writer is
         // still active, so the guard must include running tasks.
         let running = q.next_task().await;
-        let dup_running = q.enqueue_unique(
-            Task::new(running.kind.clone(), &running.folder_path, &running.path)
-        ).await;
+        let dup_running = q
+            .enqueue_unique(Task::new(running.kind.clone(), &running.folder_path, &running.path))
+            .await;
         assert!(dup_running.is_none(), "a running task still dedupes a re-enqueue");
     }
 
@@ -721,16 +774,20 @@ mod tests {
         // first task is blocked on a barrier.
         let q = TaskQueue::new();
         // blocked_by a dep id that never completes → the task stays in `blocked`.
-        let id1 = q.enqueue_unique(
-            Task::new(TaskKind::ProcessGitFolder, "repo", "repo").blocked_by(vec![9999])
-        ).await;
+        let id1 = q
+            .enqueue_unique(
+                Task::new(TaskKind::ProcessGitFolder, "repo", "repo").blocked_by(vec![9999]),
+            )
+            .await;
         assert!(id1.is_some(), "first (blocked) task is admitted");
         assert_eq!(q.status().await.blocked, 1);
         assert_eq!(q.status().await.pending, 0);
 
-        let dup = q.enqueue_unique(
-            Task::new(TaskKind::ProcessGitFolder, "repo", "repo").blocked_by(vec![9999])
-        ).await;
+        let dup = q
+            .enqueue_unique(
+                Task::new(TaskKind::ProcessGitFolder, "repo", "repo").blocked_by(vec![9999]),
+            )
+            .await;
         assert!(dup.is_none(), "a duplicate is deduped even while the first is blocked");
         assert_eq!(q.status().await.blocked, 1, "still exactly one blocked task");
     }
@@ -751,7 +808,9 @@ mod tests {
         }
         let mut admitted = 0usize;
         for h in handles {
-            if h.await.unwrap().is_some() { admitted += 1; }
+            if h.await.unwrap().is_some() {
+                admitted += 1;
+            }
         }
         assert_eq!(admitted, 1, "exactly one concurrent caller is admitted");
         assert_eq!(q.status().await.pending, 1, "queue holds exactly one task");

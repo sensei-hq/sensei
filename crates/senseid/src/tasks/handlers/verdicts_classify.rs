@@ -18,9 +18,9 @@
 //! Scoped as a "global" task (folder/name blank) so a single tick gap-fills
 //! the whole window in one shot; ignores `task.path`.
 
+use super::super::Task;
 use super::super::executor::TaskContext;
 use super::super::verdict_classifier::classify_session;
-use super::super::Task;
 use super::tool_insights::HEALTH_VERDICT_WINDOW_DAYS;
 use crate::db::pg_store::PgStore;
 
@@ -80,26 +80,44 @@ mod tests {
     /// (unclassified-only filter + upsert idempotency).
     #[tokio::test]
     async fn classify_pending_fills_unopened_then_excludes_on_rerun() {
-        let Ok(pg) = PgStore::connect_test().await else { return; };
+        let Ok(pg) = PgStore::connect_test().await else {
+            return;
+        };
         let sid = format!("_test-classify-pending-{}", uuid::Uuid::new_v4());
         let now = chrono::Utc::now().timestamp_millis();
 
         // Answer: a PostToolUse whose response text cites a distinctive path.
         pg.insert_hook_event(
-            &sid, "claude", "PostToolUse", Some("Read"), None, now, Some(true),
+            &sid,
+            "claude",
+            "PostToolUse",
+            Some("Read"),
+            None,
+            now,
+            Some(true),
             &serde_json::json!({
                 "tool_input": {"file_path": "crates/senseid/src/db/pg_store.rs"},
                 "tool_response": "the fix is in crates/senseid/src/db/pg_store.rs:3421",
             }),
-        ).await.unwrap();
+        )
+        .await
+        .unwrap();
         // Reaction: a PreToolUse whose tool_input cites the same path fragment
         // → the classifier scores this pair `used`.
         pg.insert_hook_event(
-            &sid, "claude", "PreToolUse", Some("Edit"), None, now + 1, None,
+            &sid,
+            "claude",
+            "PreToolUse",
+            Some("Edit"),
+            None,
+            now + 1,
+            None,
             &serde_json::json!({
                 "tool_input": {"file_path": "crates/senseid/src/db/pg_store.rs", "new_string": "x"},
             }),
-        ).await.unwrap();
+        )
+        .await
+        .unwrap();
 
         // Before: the fixture session is pending.
         let before = pg.unclassified_verdict_sessions(HEALTH_VERDICT_WINDOW_DAYS).await.unwrap();

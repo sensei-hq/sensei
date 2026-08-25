@@ -206,11 +206,8 @@ pub(super) async fn compute(
         let props = serde_json::json!({ "numerator": hit, "denominator": found });
         pg.upsert_project_metric_repo(
             &mid,
-            &project_id,
-            Some(&repository_id),
+            &repository_id,
             SCOPE_USER,
-            None,
-            None,
             None,
             None,
             day,
@@ -261,6 +258,20 @@ fn run_coverage_command(wt: &Path, command: &str) -> Result<(), String> {
 /// the most-recent sampled ISO-week anchors to walk (`None` = all). Returns the number
 /// of rows written. Never fabricates: a commit that predates the repo, a failed
 /// command, or an unproduced/empty lcov writes NO row for that commit.
+/// Handler for `TaskKind::BackfillCoverage` — a thin wrapper over [`backfill`].
+///
+/// The task kind exists to SCHEDULE the work, not to define it: the definition
+/// stays in `backfill` so the queue and any call surface run the same code.
+/// `task.path` = project id, `task.folder_path` = the week bound ("" = all
+/// history), which is how the queue carries the request's `weeks` parameter.
+pub(crate) async fn run_backfill(
+    ctx: &crate::tasks::executor::TaskContext,
+    task: &crate::tasks::Task,
+) -> Result<u32, String> {
+    let weeks = task.coverage_weeks()?;
+    backfill(ctx.pg(), &task.path, weeks).await
+}
+
 pub(crate) async fn backfill(
     pg: &PgStore,
     project_raw: &str,
@@ -316,13 +327,10 @@ pub(crate) async fn backfill(
             let props = serde_json::json!({ "numerator": hit, "denominator": found });
             pg.upsert_project_metric_repo(
                 &mid,
-                &project_id,
-                Some(&repository_id),
+                &repository_id,
                 SCOPE_USER,
                 None,
                 Some(&sha), // commit_sha set → a historical, commit-cadence coverage point
-                None,
-                None,
                 day,
                 GRAIN_DAILY,
                 value,
@@ -339,12 +347,28 @@ pub(crate) async fn backfill(
 }
 
 #[cfg(test)]
+// Test gates are blocking `std::sync::Mutex` held across awaits ON PURPOSE —
+// see `crate::tasks::test_support::TestGate` for why an async mutex loses
+// wakeups across per-test runtimes. One allow per test module, not per site.
+#[allow(clippy::await_holding_lock)]
 mod tests {
     use super::*;
     use crate::tasks::test_support::{
-        cleanup_metrics_fixture, daily_project_metric_rows as daily_rows, git_commit_on_day,
-        make_ctx, repository_for_folder, seed_git_project_folder,
+        TestGate, cleanup_metrics_fixture, daily_project_metric_rows as daily_rows,
+        git_commit_on_day, make_ctx, repository_for_folder, seed_git_project_folder,
     };
+
+    /// Coverage resolves its lcov path through the GLOBAL `metrics.coverage_lcov`
+    /// config, and `coverage_reads_config_override_path` sets that key for the
+    /// duration of its body. Its own comment says the reset protects "the next
+    /// SERIAL test" — but these run in parallel, so while the override is live any
+    /// concurrent coverage test looks for `build/cov/report.lcov` instead of
+    /// `lcov.info`, finds nothing, and writes 0 rows. That is what failed
+    /// `coverage_real_zero_hits_writes_a_real_zero` (expected 1 row, got 0) and
+    /// `backfill_runs_command_at_sampled_commits_and_ingests_history`. The
+    /// fixtures are already per-test unique — the shared state is the config row,
+    /// which is global by design.
+    static COVERAGE_CONFIG_LOCK: TestGate = TestGate::new();
     use sqlx_core::query_as::query_as;
 
     // ── Pure: lcov parser ────────────────────────────────────────────────────
@@ -377,7 +401,11 @@ DA:2,0
 DA:3,1
 end_of_record
 ";
-        assert_eq!(parse_lcov(report), (2, 3), "DA fallback: hit = DA with count>0, found = all DA");
+        assert_eq!(
+            parse_lcov(report),
+            (2, 3),
+            "DA fallback: hit = DA with count>0, found = all DA"
+        );
     }
 
     #[test]
@@ -398,6 +426,7 @@ end_of_record
 
     #[tokio::test]
     async fn coverage_ingests_current_lcov_and_pools_into_the_default_read() {
+        let _guard = COVERAGE_CONFIG_LOCK.enter();
         // A repo with an lcov report (LH 15 / LF 20) → ONE scope=user coverage row
         // (identity NULL), value 0.75, props numerator/denominator = 15/20, keyed on the
         // repository, and surfaced in the DEFAULT scope=user project read (like knowledge).
@@ -429,22 +458,27 @@ end_of_record
         assert!((value - 0.75).abs() < 1e-9, "coverage = 15 hit / 20 found = 0.75");
         assert_eq!(props["numerator"].as_i64(), Some(15), "numerator = lines hit");
         assert_eq!(props["denominator"].as_i64(), Some(20), "denominator = lines found");
-        assert_eq!(scope, "user", "coverage is scope=user (pools into the default read; no author dimension)");
+        assert_eq!(
+            scope, "user",
+            "coverage is scope=user (pools into the default read; no author dimension)"
+        );
         assert_eq!(repo_id, Some(rid), "keyed on the resolved repository_id");
         assert_eq!(identity, None, "identity NULL — coverage is not author-attributed");
         // It surfaces in the default scope=user project read (the pooled view path).
         let daily = daily_rows(pg, &pid).await;
-        let cov = daily.iter().find(|r| r.0 == "coverage").expect("coverage in the scope=user read");
+        let cov =
+            daily.iter().find(|r| r.0 == "coverage").expect("coverage in the scope=user read");
         assert!((cov.1 - 0.75).abs() < 1e-9, "the default read carries the coverage value");
 
         // Idempotent: re-run upserts in place.
         let again = compute(&ctx, &pid.to_string(), None).await.unwrap();
         assert_eq!(again, 1, "re-run recomputes the same row");
-        let (total,): (i64,) = query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
-            .bind(pid)
-            .fetch_one(pg.pool())
-            .await
-            .unwrap();
+        let (total,): (i64,) =
+            query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
+                .bind(pid)
+                .fetch_one(pg.pool())
+                .await
+                .unwrap();
         assert_eq!(total, 1, "idempotent upsert — still one row");
 
         cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
@@ -452,6 +486,7 @@ end_of_record
 
     #[tokio::test]
     async fn coverage_real_zero_hits_writes_a_real_zero() {
+        let _guard = COVERAGE_CONFIG_LOCK.enter();
         // A report with real instrumented lines but 0 hit → a REAL 0.0 row (the suite is
         // instrumented but nothing is covered), never suppressed.
         let ctx = make_ctx().await;
@@ -479,6 +514,7 @@ end_of_record
 
     #[tokio::test]
     async fn coverage_no_report_or_empty_writes_no_row() {
+        let _guard = COVERAGE_CONFIG_LOCK.enter();
         // No lcov file at all → honest-empty (no row).
         let ctx = make_ctx().await;
         let pg = ctx.pg();
@@ -487,11 +523,12 @@ end_of_record
 
         let written = compute(&ctx, &pid.to_string(), None).await.unwrap();
         assert_eq!(written, 0, "no report → no coverage row (never a fabricated 0)");
-        let (total,): (i64,) = query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
-            .bind(pid)
-            .fetch_one(pg.pool())
-            .await
-            .unwrap();
+        let (total,): (i64,) =
+            query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
+                .bind(pid)
+                .fetch_one(pg.pool())
+                .await
+                .unwrap();
         assert_eq!(total, 0, "no rows without a report");
 
         // An lcov with 0 instrumented lines (LF:0) → also no row (no denominator).
@@ -504,6 +541,7 @@ end_of_record
 
     #[tokio::test]
     async fn coverage_historical_as_of_skips() {
+        let _guard = COVERAGE_CONFIG_LOCK.enter();
         // Forward-only: a historical as_of writes NO row (historical coverage is the
         // opt-in backfill, not this snapshot path), even with a report present.
         let ctx = make_ctx().await;
@@ -515,11 +553,12 @@ end_of_record
         let past = chrono::NaiveDate::from_ymd_opt(2020, 1, 1).unwrap();
         let written = compute(&ctx, &pid.to_string(), Some(past)).await.unwrap();
         assert_eq!(written, 0, "historical as_of → forward-only skip → no row");
-        let (total,): (i64,) = query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
-            .bind(pid)
-            .fetch_one(pg.pool())
-            .await
-            .unwrap();
+        let (total,): (i64,) =
+            query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
+                .bind(pid)
+                .fetch_one(pg.pool())
+                .await
+                .unwrap();
         assert_eq!(total, 0, "no rows for a historical as_of");
 
         cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
@@ -527,12 +566,17 @@ end_of_record
 
     #[tokio::test]
     async fn coverage_reads_config_override_path() {
+        let _guard = COVERAGE_CONFIG_LOCK.enter();
         // The metrics.coverage_lcov override points at a non-default location.
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
         let (pid, fid, repo) = seed_git_project_folder(pg, &uniq).await;
-        write_lcov(repo.path(), "build/cov/report.lcov", "SF:src/a.rs\nLH:9\nLF:10\nend_of_record\n");
+        write_lcov(
+            repo.path(),
+            "build/cov/report.lcov",
+            "SF:src/a.rs\nLH:9\nLF:10\nend_of_record\n",
+        );
         pg.set_config(LCOV_PATH_KEY, "build/cov/report.lcov").await.unwrap();
 
         let written = compute(&ctx, &pid.to_string(), None).await.unwrap();
@@ -561,6 +605,7 @@ end_of_record
 
     #[tokio::test]
     async fn backfill_runs_command_at_sampled_commits_and_ingests_history() {
+        let _guard = COVERAGE_CONFIG_LOCK.enter();
         // With metrics.coverage_command configured, backfill checks out sampled past
         // commits (one per ISO week), runs the command (here: write a fixed lcov), and
         // ingests it → one historical coverage row per sampled commit, commit_sha set.
@@ -573,7 +618,12 @@ end_of_record
             git_commit_on_day(repo.path(), d, &[(f, "x\n")]);
         }
         // The "coverage command" just writes a fixed lcov into the worktree (LH 5/LF 10).
-        pg.set_config(COVERAGE_COMMAND_KEY, "printf 'SF:x\\nLH:5\\nLF:10\\nend_of_record\\n' > lcov.info").await.unwrap();
+        pg.set_config(
+            COVERAGE_COMMAND_KEY,
+            "printf 'SF:x\\nLH:5\\nLF:10\\nend_of_record\\n' > lcov.info",
+        )
+        .await
+        .unwrap();
 
         let written = backfill(pg, &pid.to_string(), None).await.unwrap();
 
@@ -594,14 +644,69 @@ end_of_record
 
         assert_eq!(written, 3, "one coverage row per sampled ISO-week commit");
         assert_eq!(rows.len(), 3, "three historical coverage rows");
-        assert!(rows.iter().all(|r| r.1.is_some()), "every backfill row carries a commit_sha (commit-cadence historical point)");
+        assert!(
+            rows.iter().all(|r| r.1.is_some()),
+            "every backfill row carries a commit_sha (commit-cadence historical point)"
+        );
         assert!(rows.iter().all(|r| (r.2 - 0.5).abs() < 1e-9), "value = 5 hit / 10 found = 0.5");
         let days: Vec<_> = rows.iter().map(|r| r.0.to_string()).collect();
         assert!(days.contains(&"2025-05-05".to_string()), "stamped on the commit-day, not today");
     }
 
+    // ── The task wrapper (`TaskKind::BackfillCoverage`) ─────────────────────
+
+    #[tokio::test]
+    async fn the_task_wrapper_honours_the_week_bound_it_was_queued_with() {
+        let _guard = COVERAGE_CONFIG_LOCK.enter();
+        // The `weeks` bound survives the trip through the queue. It rides in
+        // `folder_path` as a string, so a wrapper that dropped or misparsed it
+        // would silently run the project's test suite over the WHOLE history
+        // instead of the one week that was asked for.
+        let ctx = make_ctx().await;
+        let pg = ctx.pg();
+        let uniq = uuid::Uuid::new_v4();
+        let (pid, fid, repo) = seed_git_project_folder(pg, &uniq).await;
+        for (d, f) in [("2025-05-05", "a.rs"), ("2025-05-12", "b.rs"), ("2025-05-19", "c.rs")] {
+            git_commit_on_day(repo.path(), d, &[(f, "x\n")]);
+        }
+        pg.set_config(
+            COVERAGE_COMMAND_KEY,
+            "printf 'SF:x\\nLH:5\\nLF:10\\nend_of_record\\n' > lcov.info",
+        )
+        .await
+        .unwrap();
+
+        let task = crate::tasks::Task::new(
+            crate::tasks::TaskKind::BackfillCoverage,
+            "1", // weeks = 1 → only the most recent sampled anchor
+            &pid.to_string(),
+        );
+        let written = run_backfill(&ctx, &task).await.unwrap();
+
+        pg.set_config(COVERAGE_COMMAND_KEY, "").await.unwrap();
+        cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
+
+        assert_eq!(written, 1, "weeks=1 walks ONE anchor, not all three");
+    }
+
+    #[tokio::test]
+    async fn the_task_wrapper_refuses_an_unparseable_week_bound() {
+        // Falling back to `None` here would be the worst possible default: it
+        // would run the test suite across the entire history because the bound
+        // was malformed. Refuse instead.
+        let ctx = make_ctx().await;
+        let task = crate::tasks::Task::new(
+            crate::tasks::TaskKind::BackfillCoverage,
+            "not-a-number",
+            &uuid::Uuid::new_v4().to_string(),
+        );
+        let err = run_backfill(&ctx, &task).await.unwrap_err();
+        assert!(err.contains("expected a week count"), "got {err}");
+    }
+
     #[tokio::test]
     async fn backfill_disabled_without_a_configured_command() {
+        let _guard = COVERAGE_CONFIG_LOCK.enter();
         // No metrics.coverage_command → backfill is a no-op (the daemon never runs the
         // project's tests unless explicitly configured).
         let ctx = make_ctx().await;

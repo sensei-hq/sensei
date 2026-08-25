@@ -122,7 +122,10 @@ pub fn extract_advisories(body: &str) -> Option<Vec<Advisory>> {
                             introduced = if i == "0" { None } else { parse_semver(i) };
                         }
                         if let Some(f) = ev.get("fixed").and_then(|x| x.as_str()) {
-                            ranges.push(AffectedRange { introduced: introduced.clone(), fixed: parse_semver(f) });
+                            ranges.push(AffectedRange {
+                                introduced: introduced.clone(),
+                                fixed: parse_semver(f),
+                            });
                         }
                     }
                 }
@@ -149,7 +152,11 @@ fn range_affects<'a>(range: &'a AffectedRange, current: &Version) -> Option<&'a 
 /// it). Non-exact `current`/`available` → no verdict (fail-closed). The security
 /// flag escalates a REAL bump only; a `None`/`Unknown` bump stays `Ignore` in
 /// [`super::version::update_action`] regardless.
-pub fn security_verdict(advisories: &[Advisory], current: &str, available: &str) -> SecurityVerdict {
+pub fn security_verdict(
+    advisories: &[Advisory],
+    current: &str,
+    available: &str,
+) -> SecurityVerdict {
     let (Some(cur), Some(avail)) = (parse_semver(current), parse_semver(available)) else {
         return SecurityVerdict { is_security: false, top: None };
     };
@@ -218,7 +225,8 @@ mod tests {
         assert!(is_high_severity(&vuln_lvl));
         let critical = serde_json::json!({ "database_specific": { "severity": "critical" } });
         assert!(is_high_severity(&critical), "case-insensitive; CRITICAL is high");
-        let aff_lvl = serde_json::json!({ "affected": [{ "database_specific": { "severity": "HIGH" } }] });
+        let aff_lvl =
+            serde_json::json!({ "affected": [{ "database_specific": { "severity": "HIGH" } }] });
         assert!(is_high_severity(&aff_lvl), "an affected-entry label also counts");
         let moderate = serde_json::json!({ "database_specific": { "severity": "MODERATE" } });
         assert!(!is_high_severity(&moderate));
@@ -265,7 +273,10 @@ mod tests {
         assert!(v.is_security);
         assert_eq!(v.top.as_deref(), Some("GHSA-x"));
         // current already at/after the fix → not affected.
-        assert!(!security_verdict(&advs, "4.17.21", "4.17.22").is_security, "already patched → not flagged");
+        assert!(
+            !security_verdict(&advs, "4.17.21", "4.17.22").is_security,
+            "already patched → not flagged"
+        );
         // available doesn't reach the fix → the upgrade wouldn't resolve it.
         assert!(!security_verdict(&advs, "4.17.20", "4.17.20").is_security);
     }
@@ -274,7 +285,10 @@ mod tests {
     fn security_verdict_is_fail_closed() {
         let advs = vec![high_adv(None, Some("4.17.21"))];
         // Non-exact current/available → no verdict.
-        assert!(!security_verdict(&advs, "^4.0.0", "4.17.21").is_security, "range pin → no verdict");
+        assert!(
+            !security_verdict(&advs, "^4.0.0", "4.17.21").is_security,
+            "range pin → no verdict"
+        );
         assert!(!security_verdict(&advs, "4.17.20", "not-a-version").is_security);
         // A LOW/indeterminate advisory (high=false) never flags.
         let low = vec![Advisory { high: false, ..high_adv(None, Some("4.17.21")) }];

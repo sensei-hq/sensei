@@ -86,11 +86,7 @@ where
 /// path, e.g. `("http://localhost:7755", "github/sensei-hq")` →
 /// `"http://localhost:7755/github/sensei-hq"`. Pure.
 pub fn derive_dojo_url(registry_url: &str, tenant_key: &str) -> String {
-    format!(
-        "{}/{}",
-        registry_url.trim_end_matches('/'),
-        tenant_key.trim_start_matches('/'),
-    )
+    format!("{}/{}", registry_url.trim_end_matches('/'), tenant_key.trim_start_matches('/'),)
 }
 
 /// The auth-gated Dōjō run-detail URL for a run — `<registry_url>/you/runs/<id>`.
@@ -142,8 +138,9 @@ impl NewConnection {
         if tenant_key.trim().is_empty() {
             return Err("tenant_key must not be empty".to_string());
         }
-        let kind = MembershipKind::from_db_str(kind)
-            .ok_or_else(|| format!("invalid kind: {kind:?} (allowed: employer, client, community, personal)"))?;
+        let kind = MembershipKind::from_db_str(kind).ok_or_else(|| {
+            format!("invalid kind: {kind:?} (allowed: employer, client, community, personal)")
+        })?;
         require_member_of(role, &MEMBER_ROLES, "role")?;
         require_member_of(authenticated_via, &AUTH_METHODS, "authenticated_via")?;
         require_member_of(sync_status, &SYNC_STATUSES, "sync_status")?;
@@ -168,7 +165,11 @@ impl NewConnection {
 /// `token` in the OS Keychain (never in Postgres), then insert the local mirror
 /// row. If the row insert fails the Keychain entry is rolled back so no orphan
 /// secret is left behind. Returns the membership id (the local PK).
-pub async fn register(pg: &PgStore, conn: NewConnection, token: &str) -> Result<uuid::Uuid, String> {
+pub async fn register(
+    pg: &PgStore,
+    conn: NewConnection,
+    token: &str,
+) -> Result<uuid::Uuid, String> {
     if token.trim().is_empty() {
         return Err("credential (device token) must not be empty".to_string());
     }
@@ -198,7 +199,9 @@ pub async fn register(pg: &PgStore, conn: NewConnection, token: &str) -> Result<
     if let Err(e) = pg.create_dojo_membership(&row).await {
         // Roll back the Keychain entry so a failed insert leaves no orphan token.
         let cref = credential_ref.clone();
-        if let Err(del) = tokio::task::spawn_blocking(move || crate::gateway_keys::delete_key(&cref)).await {
+        if let Err(del) =
+            tokio::task::spawn_blocking(move || crate::gateway_keys::delete_key(&cref)).await
+        {
             tracing::warn!(error = %del, "dojo: keychain rollback task join failed after insert error");
         }
         return Err(e);
@@ -221,7 +224,11 @@ pub async fn bind_project(
 /// Replace the git-remote owner slugs a membership covers (the org-tagging
 /// edit). Slugs are normalised via [`normalize_org_slugs`] before storage so
 /// they match `infer_binding`'s lowercased owners. Returns `false` if unknown.
-pub async fn set_orgs(pg: &PgStore, membership_id: &uuid::Uuid, org_slugs: &[String]) -> Result<bool, String> {
+pub async fn set_orgs(
+    pg: &PgStore,
+    membership_id: &uuid::Uuid,
+    org_slugs: &[String],
+) -> Result<bool, String> {
     pg.set_dojo_membership_orgs(membership_id, &normalize_org_slugs(org_slugs)).await
 }
 
@@ -231,7 +238,11 @@ pub async fn set_orgs(pg: &PgStore, membership_id: &uuid::Uuid, org_slugs: &[Str
 /// derivation — allowed until then (the underlying `set_dojo_sync_status` is
 /// exercised by the pg_store CRUD roundtrip test).
 #[allow(dead_code)]
-pub async fn set_sync_status(pg: &PgStore, membership_id: &uuid::Uuid, status: &str) -> Result<bool, String> {
+pub async fn set_sync_status(
+    pg: &PgStore,
+    membership_id: &uuid::Uuid,
+    status: &str,
+) -> Result<bool, String> {
     require_member_of(status, &SYNC_STATUSES, "sync_status")?;
     pg.set_dojo_sync_status(membership_id, status).await
 }
@@ -257,8 +268,11 @@ pub struct BindingSuggestion {
 /// its owner. Pure inference lives in [`crate::dojo::routing::infer_binding`];
 /// this only gathers the inputs and enriches the result for display — it never
 /// writes the binding (that is the user-confirmed [`bind_project`]).
-pub async fn suggest_binding(pg: &PgStore, project_id: &uuid::Uuid) -> Result<Option<BindingSuggestion>, String> {
-    use crate::dojo::routing::{infer_binding, BindCandidate};
+pub async fn suggest_binding(
+    pg: &PgStore,
+    project_id: &uuid::Uuid,
+) -> Result<Option<BindingSuggestion>, String> {
+    use crate::dojo::routing::{BindCandidate, infer_binding};
 
     // Already bound → the chip doesn't apply.
     if pg.project_bound_membership(project_id).await?.is_some() {
@@ -379,16 +393,28 @@ mod tests {
 
     #[test]
     fn derive_dojo_url_joins_registry_and_tenant_without_double_slash() {
-        assert_eq!(derive_dojo_url("http://localhost:7755", "github/sensei-hq"), "http://localhost:7755/github/sensei-hq");
-        assert_eq!(derive_dojo_url("http://localhost:7755/", "/github/sensei-hq"), "http://localhost:7755/github/sensei-hq");
+        assert_eq!(
+            derive_dojo_url("http://localhost:7755", "github/sensei-hq"),
+            "http://localhost:7755/github/sensei-hq"
+        );
+        assert_eq!(
+            derive_dojo_url("http://localhost:7755/", "/github/sensei-hq"),
+            "http://localhost:7755/github/sensei-hq"
+        );
     }
 
     #[test]
     fn dojo_run_url_builds_the_auth_gated_run_detail_link() {
         let id = uuid::Uuid::nil();
-        assert_eq!(dojo_run_url("http://localhost:5173", &id), format!("http://localhost:5173/you/runs/{id}"));
+        assert_eq!(
+            dojo_run_url("http://localhost:5173", &id),
+            format!("http://localhost:5173/you/runs/{id}")
+        );
         // trailing slash trimmed (no double slash before /you).
-        assert_eq!(dojo_run_url("https://dojo.sensei-hq.com/", &id), format!("https://dojo.sensei-hq.com/you/runs/{id}"));
+        assert_eq!(
+            dojo_run_url("https://dojo.sensei-hq.com/", &id),
+            format!("https://dojo.sensei-hq.com/you/runs/{id}")
+        );
     }
 
     #[test]
@@ -404,28 +430,105 @@ mod tests {
     fn new_connection_validates_every_enum_field() {
         let id = uuid::Uuid::new_v4();
         let ok = NewConnection::validated(
-            id, "http://localhost:7755".into(), "github/acme".into(),
+            id,
+            "http://localhost:7755".into(),
+            "github/acme".into(),
             "http://localhost:7755/github/acme".into(),
-            "client", &["Acme".into(), "acme".into()], "contributor", "device_code", "anonymous", "authenticating",
+            "client",
+            &["Acme".into(), "acme".into()],
+            "contributor",
+            "device_code",
+            "anonymous",
+            "authenticating",
         );
         assert!(ok.is_ok());
         let c = ok.unwrap();
         assert_eq!(c.kind, MembershipKind::Client);
         assert_eq!(c.attribution_default, AttributionMode::Anonymous);
-        assert_eq!(c.org_slugs, vec!["acme".to_string()], "org_slugs normalised (lowercased + deduped)");
+        assert_eq!(
+            c.org_slugs,
+            vec!["acme".to_string()],
+            "org_slugs normalised (lowercased + deduped)"
+        );
 
         // Each bad enum field is rejected with a field-named error.
-        let bad_kind = NewConnection::validated(id, "u".into(), "t".into(), "d".into(), "boss", &[], "contributor", "device_code", "named", "healthy");
+        let bad_kind = NewConnection::validated(
+            id,
+            "u".into(),
+            "t".into(),
+            "d".into(),
+            "boss",
+            &[],
+            "contributor",
+            "device_code",
+            "named",
+            "healthy",
+        );
         assert!(bad_kind.unwrap_err().contains("kind"));
-        let bad_role = NewConnection::validated(id, "u".into(), "t".into(), "d".into(), "client", &[], "overlord", "device_code", "named", "healthy");
+        let bad_role = NewConnection::validated(
+            id,
+            "u".into(),
+            "t".into(),
+            "d".into(),
+            "client",
+            &[],
+            "overlord",
+            "device_code",
+            "named",
+            "healthy",
+        );
         assert!(bad_role.unwrap_err().contains("role"));
-        let bad_auth = NewConnection::validated(id, "u".into(), "t".into(), "d".into(), "client", &[], "contributor", "carrier_pigeon", "named", "healthy");
+        let bad_auth = NewConnection::validated(
+            id,
+            "u".into(),
+            "t".into(),
+            "d".into(),
+            "client",
+            &[],
+            "contributor",
+            "carrier_pigeon",
+            "named",
+            "healthy",
+        );
         assert!(bad_auth.unwrap_err().contains("authenticated_via"));
-        let bad_attr = NewConnection::validated(id, "u".into(), "t".into(), "d".into(), "client", &[], "contributor", "device_code", "public", "healthy");
+        let bad_attr = NewConnection::validated(
+            id,
+            "u".into(),
+            "t".into(),
+            "d".into(),
+            "client",
+            &[],
+            "contributor",
+            "device_code",
+            "public",
+            "healthy",
+        );
         assert!(bad_attr.unwrap_err().contains("attribution_default"));
-        let bad_sync = NewConnection::validated(id, "u".into(), "t".into(), "d".into(), "client", &[], "contributor", "device_code", "named", "vibing");
+        let bad_sync = NewConnection::validated(
+            id,
+            "u".into(),
+            "t".into(),
+            "d".into(),
+            "client",
+            &[],
+            "contributor",
+            "device_code",
+            "named",
+            "vibing",
+        );
         assert!(bad_sync.unwrap_err().contains("sync_status"));
-        let empty_tenant = NewConnection::validated(id, "u".into(), "  ".into(), "d".into(), "client", &[], "contributor", "device_code", "named", "healthy");
+        let empty_tenant = NewConnection::validated(
+            id,
+            "u".into(),
+            "  ".into(),
+            "d".into(),
+            "client",
+            &[],
+            "contributor",
+            "device_code",
+            "named",
+            "healthy",
+        );
         assert!(empty_tenant.unwrap_err().contains("tenant_key"));
     }
 }

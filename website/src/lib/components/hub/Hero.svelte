@@ -14,14 +14,14 @@
 </script>
 
 <header id="top" class="hero-wrap mx-auto px-7 pt-7 pb-9">
-  <div class="hero-grid gap-8">
+  <div class="grid grid-cols-1 md:grid-cols-[1.55fr_1fr] items-start gap-8">
     <!-- Statement -->
     <div>
       <div class="flex items-baseline gap-3 mb-5">
         <span class="kanji text-accent text-3xl" style="line-height:1">道</span>
         <span class="mono text-ink-mute text-xs" style="letter-spacing:0.12em;text-transform:uppercase">Dō · the way — an independent studio</span>
       </div>
-      <h1 class="display text-ink m-0 hero-h1">
+      <h1 class="display text-ink m-0 text-3xl md:text-4xl hero-h1">
         We build quiet, sharp tools for the people who build software.
       </h1>
       <p class="text-ink-soft mt-5 text-lg" style="line-height:1.6;max-width:540px">
@@ -72,13 +72,7 @@
   .hero-wrap {
     max-width: 1120px;
   }
-  .hero-grid {
-    display: grid;
-    grid-template-columns: 1.55fr 1fr;
-    align-items: start;
-  }
   .hero-h1 {
-    font-size: 60px;
     font-weight: 300;
     line-height: 1.08;
     letter-spacing: -0.025em;
@@ -99,13 +93,5 @@
     height: 6px;
     border-radius: 50%;
     flex-shrink: 0;
-  }
-  @media (max-width: 768px) {
-    .hero-grid {
-      grid-template-columns: 1fr;
-    }
-    .hero-h1 {
-      font-size: var(--text-3xl);
-    }
   }
 </style>

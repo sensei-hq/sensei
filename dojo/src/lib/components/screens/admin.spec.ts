@@ -80,7 +80,8 @@ describe('ScrRoleSurfaces — Members & Roles / Policies / Audit tabs', () => {
 		});
 		// Policies tab — the additive-role banner + a role policy card.
 		await fireEvent.click(getByText('Policies'));
-		expect(getByText('Roles are additive and derived from git.')).toBeTruthy();
+		// Now part of the section header's description run, not a Banner title.
+		expect(getByText(/Roles are additive and derived from git\./)).toBeTruthy();
 		expect(getByText('authors governance · triages')).toBeTruthy();
 		expect(getByText('Role policies')).toBeTruthy();
 		// the members table is gone.
@@ -131,13 +132,20 @@ describe('ScrScopes — scope ownership, SLA and fallback', () => {
 		expect(getByText('unowned · fallback')).toBeTruthy();
 	});
 
-	it('shows a neutral banner and no fallback chip when every scope is owned', () => {
+	it('states the fallback rule in the header and shows no warning when all owned', () => {
 		const allOwned = owners.filter((o) => o.owner);
 		const { getByText, queryByText } = render(ScrScopes, {
 			props: { orgName: 'Acme Corp', owners: allOwned }
 		});
-		expect(getByText('Anything unowned routes to a fallback maintainer so nothing stalls.')).toBeTruthy();
+		// The standing explanation lives in the section header now, so it is one
+		// run of text with the lead sentence — matched by pattern, not equality.
+		expect(
+			getByText(/Anything unowned routes to a fallback maintainer so nothing stalls\./)
+		).toBeTruthy();
 		expect(queryByText('unowned · fallback')).toBeNull();
+		// ...and with nothing unowned there is no warning band at all: the band
+		// means "something needs you" rather than being permanent chrome.
+		expect(queryByText(/no owner/)).toBeNull();
 	});
 
 	it('fires onAssign with the scope row (Assign for unowned, Reassign for owned)', async () => {

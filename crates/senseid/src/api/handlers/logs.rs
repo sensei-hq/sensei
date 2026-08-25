@@ -1,10 +1,10 @@
+use crate::api::state::AppState;
 use axum::{
     extract::{Query, State},
     http::StatusCode,
     response::Json,
 };
 use serde::Deserialize;
-use crate::api::state::AppState;
 
 #[derive(Deserialize)]
 pub(crate) struct LogBody {
@@ -23,16 +23,20 @@ pub(crate) async fn ingest_log(
     State(state): State<AppState>,
     Json(body): Json<LogBody>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    state.pg.insert_log(
-        &body.level,
-        &body.running_on,
-        body.module.as_deref(),
-        &body.logged_at,
-        body.message.as_deref().unwrap_or(""),
-        &body.context.unwrap_or(serde_json::json!({})),
-        &body.data,
-        &body.error,
-    ).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    state
+        .pg
+        .insert_log(
+            &body.level,
+            &body.running_on,
+            body.module.as_deref(),
+            &body.logged_at,
+            body.message.as_deref().unwrap_or(""),
+            &body.context.unwrap_or(serde_json::json!({})),
+            &body.data,
+            &body.error,
+        )
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     Ok(Json(serde_json::json!({"ok": true})))
 }
@@ -84,16 +88,14 @@ pub(crate) async fn get_logs(
 
     let limit = q.limit.unwrap_or(DEFAULT_LOG_LIMIT).clamp(1, MAX_LOG_LIMIT);
 
-    let rows = state.pg.query_logs(
-        q.level.as_deref(),
-        q.source.as_deref(),
-        q.module.as_deref(),
-        since,
-        limit,
-    ).await.map_err(|e| {
-        tracing::error!(error = %e, "get_logs: query_logs failed");
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
+    let rows = state
+        .pg
+        .query_logs(q.level.as_deref(), q.source.as_deref(), q.module.as_deref(), since, limit)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, "get_logs: query_logs failed");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
 
     Ok(Json(serde_json::json!(rows)))
 }
@@ -169,9 +171,9 @@ mod tests {
     #[test]
     fn parse_since_rejects_garbage() {
         assert_eq!(parse_since("soon"), Err(()));
-        assert_eq!(parse_since("10"), Err(()));      // bare number, no unit
-        assert_eq!(parse_since("5y"), Err(()));      // unknown unit
-        assert_eq!(parse_since("h1"), Err(()));      // unit before number
+        assert_eq!(parse_since("10"), Err(())); // bare number, no unit
+        assert_eq!(parse_since("5y"), Err(())); // unknown unit
+        assert_eq!(parse_since("h1"), Err(())); // unit before number
     }
 
     #[test]

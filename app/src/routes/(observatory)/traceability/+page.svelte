@@ -47,7 +47,6 @@
 {/snippet}
 
 <PageHeader
-  variant="h2"
   eyebrow="Observatory · Document traceability"
   kanji="巻"
   title="Where the docs and the code disagree."

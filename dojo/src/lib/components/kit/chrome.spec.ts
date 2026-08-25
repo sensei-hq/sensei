@@ -1,12 +1,10 @@
 import { render, cleanup, fireEvent } from '@testing-library/svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import TopBar from './TopBar.svelte';
-import ContextHeader from './ContextHeader.svelte';
 import NavPane from './NavPane.svelte';
 import TabBar from './TabBar.svelte';
 import OrgSwitcher from './OrgSwitcher.svelte';
 import AppShellHarness from './AppShell.harness.svelte';
-import MobileShellHarness from './MobileShell.harness.svelte';
 import { me, dojos, org, nav, tabs } from './fixtures';
 
 // The chrome mounts in both contexts ("you" personal + "org"), stays mobile-first
@@ -41,22 +39,6 @@ describe('kit chrome — TopBar', () => {
 		expect(burger.className).toContain('md:hidden');
 		await fireEvent.click(burger);
 		expect(onmenu).toHaveBeenCalled();
-	});
-});
-
-describe('kit chrome — ContextHeader', () => {
-	afterEach(cleanup);
-
-	it('personal context shows "Your work" + the viewer name', () => {
-		const { getByText } = render(ContextHeader, { props: { context: 'you', me } });
-		expect(getByText('Your work')).toBeTruthy();
-		expect(getByText('Rin Saito')).toBeTruthy();
-	});
-
-	it('org context shows the org name + route', () => {
-		const { getByText } = render(ContextHeader, { props: { context: 'org', org } });
-		expect(getByText('Acme Corp')).toBeTruthy();
-		expect(getByText('sensei-hq.com/acme')).toBeTruthy();
 	});
 });
 
@@ -130,7 +112,7 @@ describe('kit chrome — OrgSwitcher', () => {
 	});
 });
 
-describe('kit chrome — shells compose', () => {
+describe('kit chrome — the one shell composes', () => {
 	afterEach(cleanup);
 
 	it('AppShell wraps TopBar + NavPane around the main content', () => {
@@ -142,12 +124,37 @@ describe('kit chrome — shells compose', () => {
 		expect(container.querySelector('aside#kit-nav')).toBeTruthy();
 	});
 
-	it('MobileShell renders the condensed header, main and bottom tabs', () => {
-		const { getByText } = render(MobileShellHarness, {
-			props: { context: 'org', org, me, tabs, active: 'today' }
+	it('AppShell carries the phone tab bar, hidden from md up', () => {
+		// The phone chrome lives in this same shell rather than a second one, so
+		// `md:hidden` — not a separate mount — is what keeps the tabs off desktop.
+		// Asserted structurally: TopBar's hamburger is also `md:hidden`, and "Today"
+		// appears in the NavPane groups too, so neither is a unique handle.
+		const { container } = render(AppShellHarness, {
+			props: { context: 'org', org, me, nav, tabs, active: 'today' }
 		});
-		expect(getByText('Acme Corp')).toBeTruthy();
-		expect(getByText('the scrolling main')).toBeTruthy();
-		expect(getByText('Today')).toBeTruthy();
+		const shell = container.firstElementChild!;
+		expect(shell.children.length).toBe(3); // TopBar · nav+main row · tab bar
+		const tabWrap = shell.lastElementChild as HTMLElement;
+		expect(tabWrap.className).toContain('md:hidden');
+		expect(tabWrap.querySelectorAll('button').length).toBe(tabs.length);
+		expect(container.querySelector('aside#kit-nav')).toBeTruthy();
+	});
+
+	it('AppShell renders its main content exactly once', () => {
+		// The regression guard for the duplicate-render this shell replaced: the
+		// (app) layout used to mount a desktop shell AND a phone shell, each
+		// rendering `children()`, so every screen existed twice in the DOM.
+		const { container } = render(AppShellHarness, {
+			props: { context: 'org', org, me, nav, tabs, active: 'today' }
+		});
+		expect(container.querySelectorAll('main').length).toBe(1);
+	});
+
+	it('AppShell omits the tab bar entirely when no tabs are supplied', () => {
+		const { container } = render(AppShellHarness, {
+			props: { context: 'you', dojos, me, nav, active: 'today' }
+		});
+		const shell = container.firstElementChild!;
+		expect(shell.children.length).toBe(2); // TopBar · nav+main row — no tab bar
 	});
 });

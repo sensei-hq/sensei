@@ -14,7 +14,7 @@
 //! - Facts are built strictly from the real values/props/deltas — the same
 //!   never-fabricate rule the metric computers follow.
 
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 use super::insight_copy::{self, CopyLimits, InsightKind};
 use crate::db::pg_store::PgStore;
@@ -120,12 +120,19 @@ fn series_trend(values: &[f64], direction: &str) -> Option<SeriesTrend> {
     // direction. Relative to the level so it holds across metric magnitudes.
     let drift = slope.abs() * (n as f64 - 1.0);
     let level = values.iter().map(|v| v.abs()).sum::<f64>() / n as f64;
-    let negligible = slope.abs() <= SLOPE_EPS || (level > SLOPE_EPS && drift / level < REL_DRIFT_EPS);
+    let negligible =
+        slope.abs() <= SLOPE_EPS || (level > SLOPE_EPS && drift / level < REL_DRIFT_EPS);
     if negligible {
         return Some(SeriesTrend { direction: "flat", assessment: "steady", window, first, last });
     }
     let numeric = if slope > 0.0 { "increasing" } else { "decreasing" };
-    Some(SeriesTrend { direction: numeric, assessment: change_word(direction, slope), window, first, last })
+    Some(SeriesTrend {
+        direction: numeric,
+        assessment: change_word(direction, slope),
+        window,
+        first,
+        last,
+    })
 }
 
 /// Whole-project facts for the headline: how many signals moved, the split, the
@@ -252,14 +259,21 @@ pub async fn build_narrative(
 
     // Headline (+ subhead) for the whole snapshot.
     let hfacts = headline_facts(metrics);
-    match insight_copy::read_cached_copy(store, InsightKind::MetricNarrativeHeadline, &hfacts).await {
+    match insight_copy::read_cached_copy(store, InsightKind::MetricNarrativeHeadline, &hfacts).await
+    {
         Some(c) => {
             out.insert("headline".into(), json!(c.title));
             if !c.detail.is_empty() {
                 out.insert("subhead".into(), json!(c.detail));
             }
         }
-        None => insight_copy::warm(store, gateway, InsightKind::MetricNarrativeHeadline, &hfacts, limits),
+        None => insight_copy::warm(
+            store,
+            gateway,
+            InsightKind::MetricNarrativeHeadline,
+            &hfacts,
+            limits,
+        ),
     }
 
     // One "what sensei noticed" sentence per signal.
@@ -267,11 +281,18 @@ pub async fn build_narrative(
         let Some(key) = m.get("metric").and_then(Value::as_str) else { continue };
         let series = series_by_metric.get(key).map(Vec::as_slice);
         let sfacts = signal_facts(m, series);
-        match insight_copy::read_cached_copy(store, InsightKind::MetricSignalInsight, &sfacts).await {
+        match insight_copy::read_cached_copy(store, InsightKind::MetricSignalInsight, &sfacts).await
+        {
             Some(c) => {
                 insights.insert(key.to_string(), json!(c.detail));
             }
-            None => insight_copy::warm(store, gateway, InsightKind::MetricSignalInsight, &sfacts, limits),
+            None => insight_copy::warm(
+                store,
+                gateway,
+                InsightKind::MetricSignalInsight,
+                &sfacts,
+                limits,
+            ),
         }
     }
 
@@ -320,14 +341,15 @@ mod tests {
         assert_eq!(f["worsening"].as_u64(), Some(1));
         assert_eq!(f["improving"].as_u64(), Some(1));
         assert!(f["health"]["value"].is_number(), "health carried for the hero");
-        let names: Vec<&str> = f["movers"].as_array().unwrap().iter().map(|m| m["name"].as_str().unwrap()).collect();
+        let names: Vec<&str> =
+            f["movers"].as_array().unwrap().iter().map(|m| m["name"].as_str().unwrap()).collect();
         assert!(!names.contains(&"Health"), "health is never a mover");
     }
 
     #[test]
     fn signal_facts_carries_tool_relevance_and_recent_step() {
         let m = json!({
-            "metric": "unused_tools", "name": "Unused-tool count", "metric_type": "count",
+            "metric": "unused_tools", "name": "Tools used", "metric_type": "count",
             "direction": "lower_better", "value": 3.0,
             "props": { "total_tools": 106, "relevant_tools": 12, "used_tools": 9 },
             "prior": 3.0, "delta": 0.0,
@@ -410,7 +432,7 @@ mod tests {
         // "worsening" and stay separate from the recent step — so the narrative
         // can no longer call the metric improving.
         let m = json!({
-            "metric": "interruption_rate", "name": "Interruption rate", "metric_type": "ratio",
+            "metric": "interruption_rate", "name": "Interruptions", "metric_type": "ratio",
             "direction": "lower_better", "value": 1.0,
             "props": {}, "prior": 2.5, "delta": -1.5,
         });

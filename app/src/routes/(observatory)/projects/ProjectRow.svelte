@@ -47,7 +47,7 @@
   <div class="min-w-0">
     <div class="flex items-center gap-2">
       <ProjectDot ftr={p.ftr14d} warn={p.warn} />
-      <span class="text-[13px] text-ink truncate">{p.name}</span>
+      <span class="text-sm text-ink truncate">{p.name}</span>
       {#if p.client}
         <ProjPill text={p.client} />
       {/if}
@@ -56,12 +56,12 @@
       {/if}
     </div>
     {#if p.vision}
-      <div data-vision class="text-[12px] text-ink-mute leading-snug mt-0.5 truncate">{p.vision}</div>
+      <div data-vision class="text-xs text-ink-mute leading-snug mt-0.5 truncate">{p.vision}</div>
     {/if}
   </div>
 
   <!-- col 3 — signal -->
-  <div class="font-mono text-[11px] text-right tabular-nums whitespace-nowrap">
+  <div class="font-mono text-xs text-right tabular-nums whitespace-nowrap">
     {#if status === 'active'}
       <span class:text-warning={p.warn} class:text-ink-soft={!p.warn}>{ftrLabel} ftr</span>
     {:else}
@@ -70,7 +70,7 @@
   </div>
 
   <!-- col 4 — repos · libs -->
-  <div class="font-mono text-[11px] text-ink-faint text-right tabular-nums whitespace-nowrap min-w-[78px]">
+  <div class="font-mono text-xs text-ink-faint text-right tabular-nums whitespace-nowrap min-w-[78px]">
     {p.repos_count} repos · {p.libs_count} libs
   </div>
 </button>

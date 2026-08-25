@@ -1,10 +1,10 @@
+use crate::api::state::AppState;
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
     response::Json,
 };
 use serde::Deserialize;
-use crate::api::state::AppState;
 
 /// Resolve a repo/project name to its folder UUID, failing closed on a store error.
 ///
@@ -38,16 +38,20 @@ pub(crate) async fn graph_nodes(
     if repo_id.is_empty() {
         return Ok(Json(serde_json::json!({"nodes": [], "edges": []})));
     }
-    let ids = state.pg.scope_folder_ids(&repo_id).await
-        .map_err(|e| { tracing::warn!(error = %e, repo_id = %repo_id, "graph_nodes: scope_folder_ids failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+    let ids = state.pg.scope_folder_ids(&repo_id).await.map_err(|e| {
+        tracing::warn!(error = %e, repo_id = %repo_id, "graph_nodes: scope_folder_ids failed");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
     if ids.is_empty() {
         return Ok(Json(serde_json::json!({"nodes": [], "edges": []})));
     }
     // 7.1: nodes now carry `community_id` (via get_nodes_scoped), and the edge
     // set is the full graph-layout set `calls,imports,extends` — not just `calls`,
     // which was too sparse to lay out a nested map (the "scattered circles").
-    let nodes = state.pg.get_nodes_scoped(&ids).await
-        .map_err(|e| { tracing::warn!(error = %e, repo_id = %repo_id, "graph_nodes: get_nodes_scoped failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+    let nodes = state.pg.get_nodes_scoped(&ids).await.map_err(|e| {
+        tracing::warn!(error = %e, repo_id = %repo_id, "graph_nodes: get_nodes_scoped failed");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
     let edges = state.pg.get_edges_scoped_kinds(&ids, &["calls", "imports", "extends"]).await
         .map_err(|e| { tracing::warn!(error = %e, repo_id = %repo_id, "graph_nodes: get_edges_scoped_kinds failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
     Ok(Json(serde_json::json!({"nodes": nodes, "edges": edges})))
@@ -79,8 +83,10 @@ pub(crate) async fn search_types(
     State(state): State<AppState>,
     Query(q): Query<SymbolQuery>,
 ) -> Result<Json<Vec<serde_json::Value>>, StatusCode> {
-    let ids = state.pg.scope_folder_ids(&q.repo_id).await
-        .map_err(|e| { tracing::warn!(error = %e, repo_id = %q.repo_id, "search_types: scope_folder_ids failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+    let ids = state.pg.scope_folder_ids(&q.repo_id).await.map_err(|e| {
+        tracing::warn!(error = %e, repo_id = %q.repo_id, "search_types: scope_folder_ids failed");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
     if ids.is_empty() {
         return Ok(Json(vec![]));
     }
@@ -135,8 +141,10 @@ pub(crate) async fn doc_drift(
     Query(q): Query<GraphQuery>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let repo_id = q.repo_id.unwrap_or_default();
-    let results = state.pg.get_doc_drift(&repo_id).await
-        .map_err(|e| { tracing::warn!(error = %e, repo_id = %repo_id, "doc_drift: get_doc_drift failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+    let results = state.pg.get_doc_drift(&repo_id).await.map_err(|e| {
+        tracing::warn!(error = %e, repo_id = %repo_id, "doc_drift: get_doc_drift failed");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
     Ok(Json(serde_json::json!(results)))
 }
 
@@ -145,15 +153,23 @@ pub(crate) async fn call_flow(
     Query(q): Query<GraphQuery>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let repo_id = q.repo_id.unwrap_or_default();
-    let ids = state.pg.scope_folder_ids(&repo_id).await
-        .map_err(|e| { tracing::warn!(error = %e, repo_id = %repo_id, "call_flow: scope_folder_ids failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+    let ids = state.pg.scope_folder_ids(&repo_id).await.map_err(|e| {
+        tracing::warn!(error = %e, repo_id = %repo_id, "call_flow: scope_folder_ids failed");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
     if ids.is_empty() {
-        return Ok(Json(serde_json::json!({"modules": [], "calls": [], "moduleCount": 0, "exportCount": 0, "callCount": 0})));
+        return Ok(Json(
+            serde_json::json!({"modules": [], "calls": [], "moduleCount": 0, "exportCount": 0, "callCount": 0}),
+        ));
     }
-    let edges = state.pg.get_edges_scoped(&ids, "calls").await
-        .map_err(|e| { tracing::warn!(error = %e, repo_id = %repo_id, "call_flow: get_edges_scoped failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
-    let nodes = state.pg.get_nodes_scoped(&ids).await
-        .map_err(|e| { tracing::warn!(error = %e, repo_id = %repo_id, "call_flow: get_nodes_scoped failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+    let edges = state.pg.get_edges_scoped(&ids, "calls").await.map_err(|e| {
+        tracing::warn!(error = %e, repo_id = %repo_id, "call_flow: get_edges_scoped failed");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+    let nodes = state.pg.get_nodes_scoped(&ids).await.map_err(|e| {
+        tracing::warn!(error = %e, repo_id = %repo_id, "call_flow: get_nodes_scoped failed");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
     let modules: Vec<serde_json::Value> = nodes.iter()
         .filter(|n| n["kind"].as_str() == Some("file"))
         .map(|n| serde_json::json!({
@@ -173,7 +189,18 @@ pub(crate) async fn call_flow(
     })))
 }
 
-pub(crate) async fn detect_communities(
+/// `POST /api/graph/communities` — how many communities a repo currently has.
+///
+/// Named `detect_communities` until now, which was a lie in both directions: it
+/// shares a name with `TaskKind::DetectCommunities` and its handler but detects
+/// nothing — it READS `list_communities` and counts. Anyone reading the route
+/// table would reasonably conclude this endpoint triggers detection, and anyone
+/// grepping for the task handler finds this instead.
+///
+/// The verb stays POST because the app already calls it that way; the name now
+/// says what it does. Detection is queued as `TaskKind::DetectCommunities` by
+/// the indexing pipeline, never from here.
+pub(crate) async fn community_counts(
     State(state): State<AppState>,
     Json(body): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
@@ -204,8 +231,10 @@ pub(crate) async fn community_info(
     // a single-folder lookup (repo_folder_id) missed them (#G5a); scope_folder_ids
     // captures every folder in the project.
     let repo_id = q.repo_id.unwrap_or_default();
-    let ids = state.pg.scope_folder_ids(&repo_id).await
-        .map_err(|e| { tracing::warn!(error = %e, repo_id = %repo_id, "community_info: scope_folder_ids failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+    let ids = state.pg.scope_folder_ids(&repo_id).await.map_err(|e| {
+        tracing::warn!(error = %e, repo_id = %repo_id, "community_info: scope_folder_ids failed");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
     if ids.is_empty() {
         return Ok(Json(serde_json::json!([])));
     }
@@ -222,15 +251,21 @@ pub(crate) async fn graph_tree(
     State(state): State<AppState>,
     Path(repo_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let ids = state.pg.scope_folder_ids(&repo_id).await
-        .map_err(|e| { tracing::warn!(error = %e, repo_id = %repo_id, "graph_tree: scope_folder_ids failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+    let ids = state.pg.scope_folder_ids(&repo_id).await.map_err(|e| {
+        tracing::warn!(error = %e, repo_id = %repo_id, "graph_tree: scope_folder_ids failed");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
     if ids.is_empty() {
         return Ok(Json(serde_json::json!({"tree": []})));
     }
-    let folders = state.pg.get_folders_scoped(&ids).await
-        .map_err(|e| { tracing::warn!(error = %e, repo_id = %repo_id, "graph_tree: get_folders_scoped failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
-    let nodes = state.pg.get_nodes_scoped(&ids).await
-        .map_err(|e| { tracing::warn!(error = %e, repo_id = %repo_id, "graph_tree: get_nodes_scoped failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+    let folders = state.pg.get_folders_scoped(&ids).await.map_err(|e| {
+        tracing::warn!(error = %e, repo_id = %repo_id, "graph_tree: get_folders_scoped failed");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+    let nodes = state.pg.get_nodes_scoped(&ids).await.map_err(|e| {
+        tracing::warn!(error = %e, repo_id = %repo_id, "graph_tree: get_nodes_scoped failed");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
     Ok(Json(build_tree(&folders, &nodes)))
 }
 
@@ -242,9 +277,11 @@ fn build_node_subtree(
     node_children: &std::collections::HashMap<String, Vec<usize>>,
 ) -> serde_json::Value {
     let n = &nodes[idx];
-    let children: Vec<serde_json::Value> = n["id"].as_str()
+    let children: Vec<serde_json::Value> = n["id"]
+        .as_str()
         .and_then(|id| node_children.get(id))
-        .into_iter().flatten()
+        .into_iter()
+        .flatten()
         .map(|&c| build_node_subtree(c, nodes, node_children))
         .collect();
     serde_json::json!({
@@ -266,12 +303,25 @@ fn build_folder_subtree(
 ) -> serde_json::Value {
     let f = &folders[idx];
     let id = f["id"].as_str().unwrap_or("");
-    let child_folders: Vec<serde_json::Value> = folder_children.get(id)
-        .into_iter().flatten()
-        .map(|&c| build_folder_subtree(c, folders, nodes, folder_children, root_nodes_by_folder, node_children))
+    let child_folders: Vec<serde_json::Value> = folder_children
+        .get(id)
+        .into_iter()
+        .flatten()
+        .map(|&c| {
+            build_folder_subtree(
+                c,
+                folders,
+                nodes,
+                folder_children,
+                root_nodes_by_folder,
+                node_children,
+            )
+        })
         .collect();
-    let folder_nodes: Vec<serde_json::Value> = root_nodes_by_folder.get(id)
-        .into_iter().flatten()
+    let folder_nodes: Vec<serde_json::Value> = root_nodes_by_folder
+        .get(id)
+        .into_iter()
+        .flatten()
         .map(|&ni| build_node_subtree(ni, nodes, node_children))
         .collect();
     serde_json::json!({
@@ -293,7 +343,9 @@ fn build_tree(folders: &[serde_json::Value], nodes: &[serde_json::Value]) -> ser
     let mut root_nodes_by_folder: HashMap<String, Vec<usize>> = HashMap::new();
     for (i, n) in nodes.iter().enumerate() {
         match n["parent_id"].as_str() {
-            Some(pid) if node_ids.contains(pid) => node_children.entry(pid.to_string()).or_default().push(i),
+            Some(pid) if node_ids.contains(pid) => {
+                node_children.entry(pid.to_string()).or_default().push(i)
+            }
             _ => {
                 let fid = n["folder_id"].as_str().unwrap_or("").to_string();
                 root_nodes_by_folder.entry(fid).or_default().push(i);
@@ -306,13 +358,25 @@ fn build_tree(folders: &[serde_json::Value], nodes: &[serde_json::Value]) -> ser
     let mut root_folders: Vec<usize> = Vec::new();
     for (i, f) in folders.iter().enumerate() {
         match f["parent_id"].as_str() {
-            Some(pid) if folder_ids.contains(pid) => folder_children.entry(pid.to_string()).or_default().push(i),
+            Some(pid) if folder_ids.contains(pid) => {
+                folder_children.entry(pid.to_string()).or_default().push(i)
+            }
             _ => root_folders.push(i),
         }
     }
 
-    let tree: Vec<serde_json::Value> = root_folders.iter()
-        .map(|&i| build_folder_subtree(i, folders, nodes, &folder_children, &root_nodes_by_folder, &node_children))
+    let tree: Vec<serde_json::Value> = root_folders
+        .iter()
+        .map(|&i| {
+            build_folder_subtree(
+                i,
+                folders,
+                nodes,
+                &folder_children,
+                &root_nodes_by_folder,
+                &node_children,
+            )
+        })
         .collect();
     serde_json::json!({ "tree": tree })
 }
@@ -320,7 +384,10 @@ fn build_tree(folders: &[serde_json::Value], nodes: &[serde_json::Value]) -> ser
 /// Crate-visible wrapper over [`build_tree`] for the whole-graph integration
 /// test (7.5), which asserts the retrieval hierarchy from real scanned data.
 #[cfg(test)]
-pub(crate) fn build_tree_pub(folders: &[serde_json::Value], nodes: &[serde_json::Value]) -> serde_json::Value {
+pub(crate) fn build_tree_pub(
+    folders: &[serde_json::Value],
+    nodes: &[serde_json::Value],
+) -> serde_json::Value {
     build_tree(folders, nodes)
 }
 
@@ -334,7 +401,9 @@ pub(crate) async fn detect_patterns(
     if let Some(folder_id) = repo_folder_id(&state, &project).await? {
         let patterns = state.pg.list_patterns_by_folder(&folder_id).await
             .map_err(|e| { tracing::warn!(error = %e, project = %project, "detect_patterns: list_patterns_by_folder failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
-        return Ok(Json(serde_json::json!({"ok": true, "patterns": patterns, "count": patterns.len()})));
+        return Ok(Json(
+            serde_json::json!({"ok": true, "patterns": patterns, "count": patterns.len()}),
+        ));
     }
     Ok(Json(serde_json::json!({"ok": false, "error": "project not found"})))
 }
@@ -366,7 +435,8 @@ pub(crate) async fn match_pattern_handler(
     if let Some(folder_id) = repo_folder_id(&state, &project).await? {
         let ranked = state.pg.rank_bm25(&folder_id, &desc).await
             .map_err(|e| { tracing::warn!(error = %e, project = %project, "match_pattern_handler: rank_bm25 failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
-        let matches: Vec<serde_json::Value> = ranked.into_iter()
+        let matches: Vec<serde_json::Value> = ranked
+            .into_iter()
             .map(|(name, score)| serde_json::json!({"name": name, "score": score}))
             .collect();
         return Ok(Json(serde_json::json!({"matches": matches, "count": matches.len()})));
@@ -384,7 +454,8 @@ pub(crate) async fn pattern_for_symbol(
     // symbol's file is in no detected pattern — NOT the old always-null mask.
     let scope = state.pg.scope_folder_ids(&project).await
         .map_err(|e| { tracing::warn!(error = %e, project = %project, "pattern_for_symbol: scope_folder_ids failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
-    let project_id = crate::api::util::resolve_project_uuid(&state, &project).await
+    let project_id = crate::api::util::resolve_project_uuid(&state, &project)
+        .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let patterns = match project_id {
         Some(pid) if !scope.is_empty() => state.pg.patterns_for_symbol(&pid, &scope, &symbol).await
@@ -436,7 +507,9 @@ pub(crate) async fn find_duplicates_handler(
     // Fall back to a single-folder lookup when the caller passed a repo
     // name (or the project resolution returned nothing).
     let Some(folder_id) = repo_folder_id(&state, &project).await? else {
-        return Ok(Json(serde_json::json!({ "duplicates": [], "count": 0, "message": "project not indexed" })));
+        return Ok(Json(
+            serde_json::json!({ "duplicates": [], "count": 0, "message": "project not indexed" }),
+        ));
     };
     let dups = state.pg.find_duplicates(&folder_id, min_similarity, limit).await
         .map_err(|e| { tracing::warn!(error = %e, project = %project, "find_duplicates_handler: find_duplicates failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
@@ -452,8 +525,16 @@ pub(crate) async fn find_duplicates_handler(
 
 /// Code-symbol node kinds whose names carry naming conventions worth reporting.
 const NAMING_KINDS: &[&str] = &[
-    "function", "method", "class", "interface",
-    "type", "const", "enum", "enum_variant", "field", "property",
+    "function",
+    "method",
+    "class",
+    "interface",
+    "type",
+    "const",
+    "enum",
+    "enum_variant",
+    "field",
+    "property",
 ];
 
 /// Cap on the number of `directories` / `patterns` rows returned by the
@@ -692,7 +773,8 @@ mod tests {
         // the file + doc are root-level nodes of fol_root.
         let fnodes = root["nodes"].as_array().unwrap();
         let file = fnodes.iter().find(|n| n["name"] == "lib.rs").unwrap();
-        let class = file["children"].as_array().unwrap().iter().find(|n| n["name"] == "Widget").unwrap();
+        let class =
+            file["children"].as_array().unwrap().iter().find(|n| n["name"] == "Widget").unwrap();
         assert_eq!(class["kind"], "class");
         let method = class["children"].as_array().unwrap()[0].clone();
         assert_eq!(method["name"], "render");
@@ -705,7 +787,8 @@ mod tests {
     fn build_tree_keeps_node_with_out_of_scope_parent_as_root() {
         // A node whose parent_id isn't in the scoped set is NOT dropped — it
         // becomes a root node of its folder (no silent loss).
-        let folders = vec![json!({"id":"f","name":"repo","kind":"git","role":null,"parent_id":null})];
+        let folders =
+            vec![json!({"id":"f","name":"repo","kind":"git","role":null,"parent_id":null})];
         let nodes = vec![
             json!({"id":"orphan","name":"stray","kind":"function","parent_id":"missing","line_start":1,"folder_id":"f"}),
         ];
@@ -857,10 +940,12 @@ mod tests {
     fn derive_conventions_caps_patterns_by_instance_count() {
         let n = MAX_CONVENTION_ROWS + 10;
         let patterns: Vec<serde_json::Value> = (0..n)
-            .map(|i| json!({
-                "name": format!("P{i}"), "family": "structural",
-                "lifecycle": "rule", "instance_count": i,
-            }))
+            .map(|i| {
+                json!({
+                    "name": format!("P{i}"), "family": "structural",
+                    "lifecycle": "rule", "instance_count": i,
+                })
+            })
             .collect();
         let conv = derive_conventions(&[], &patterns);
         let ps = conv["patterns"].as_array().unwrap();

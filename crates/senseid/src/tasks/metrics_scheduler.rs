@@ -75,9 +75,7 @@ fn parse_interval(cfg: Option<String>) -> u64 {
 /// Resolve the compute window (days) from config, falling back to the default for
 /// missing / unparseable / zero values.
 fn parse_window_days(cfg: Option<String>) -> u32 {
-    cfg.and_then(|v| v.trim().parse::<u32>().ok())
-        .filter(|n| *n > 0)
-        .unwrap_or(DEFAULT_WINDOW_DAYS)
+    cfg.and_then(|v| v.trim().parse::<u32>().ok()).filter(|n| *n > 0).unwrap_or(DEFAULT_WINDOW_DAYS)
 }
 
 /// The base metric groups whose presence gates a pass: the ACTIVE registry's
@@ -127,9 +125,7 @@ async fn enqueue_metrics_pass(
 async fn enqueue_project_wave(queue: &TaskQueue, project_ids: &[uuid::Uuid]) -> u32 {
     let mut enqueued = 0u32;
     for pid in project_ids {
-        queue
-            .enqueue(Task::new(TaskKind::ComputeProjectMetrics, &pid.to_string(), ""))
-            .await;
+        queue.enqueue(Task::new(TaskKind::ComputeProjectMetrics, &pid.to_string(), "")).await;
         enqueued += 1;
     }
     enqueued
@@ -288,6 +284,24 @@ async fn run(queue: Arc<TaskQueue>, pg: Arc<PgStore>) {
         if let Err(e) = metrics_tick(&queue, &pg).await {
             tracing::warn!(error = %e, "metrics_scheduler: tick failed — will retry next tick");
         }
+        // Resolve `identity` → persona for whatever the wave just wrote.
+        //
+        // A derivation, not part of the write: doing it here (rather than in the
+        // upsert) keeps the store write free of a per-row lookup, and makes a
+        // persona correction take effect on the next tick without recomputing a
+        // single metric. The UPDATE only touches rows whose resolution actually
+        // changed, so a steady state costs one indexed scan.
+        //
+        // Non-fatal: an unresolved persona means metrics read per-email instead
+        // of per-identity, which is the previous behaviour — never a reason to
+        // fail the wave.
+        match pg.resolve_persona_ids().await {
+            Ok(n) if n > 0 => {
+                tracing::info!(rows = n, "metrics_scheduler: resolved identities to personas")
+            }
+            Ok(_) => {}
+            Err(e) => tracing::warn!(error = %e, "metrics_scheduler: persona resolution failed"),
+        }
     }
 }
 
@@ -335,11 +349,8 @@ mod tests {
     fn base_task_names_drops_the_health_barrier_name() {
         // `health` is the ComputeHealth kind's name, not a base group — the
         // scheduler must not gate/enqueue a compute for it.
-        let active = vec![
-            "session_outcomes".to_string(),
-            "churn".to_string(),
-            HEALTH_TASK_NAME.to_string(),
-        ];
+        let active =
+            vec!["session_outcomes".to_string(), "churn".to_string(), HEALTH_TASK_NAME.to_string()];
         let base = base_task_names(active);
         assert_eq!(base, vec!["session_outcomes".to_string(), "churn".to_string()]);
         assert!(!base.iter().any(|t| t == HEALTH_TASK_NAME));
@@ -395,13 +406,24 @@ mod tests {
         let p1 = uuid::Uuid::new_v4();
         // A wave is already pending (e.g. the boot backfill).
         queue
-            .enqueue(Task::new(TaskKind::ComputeProjectMetrics, &uuid::Uuid::new_v4().to_string(), ""))
+            .enqueue(Task::new(
+                TaskKind::ComputeProjectMetrics,
+                &uuid::Uuid::new_v4().to_string(),
+                "",
+            ))
             .await;
         let task_names = vec!["session_outcomes".to_string()];
 
         let enqueued = enqueue_metrics_pass(&queue, &[p1], &task_names).await;
-        assert_eq!(enqueued, 0, "a pending ComputeProjectMetrics guards the pass against a second wave");
-        assert_eq!(queue.status().await.pending, 1, "still just the one pre-existing wave — none stacked");
+        assert_eq!(
+            enqueued, 0,
+            "a pending ComputeProjectMetrics guards the pass against a second wave"
+        );
+        assert_eq!(
+            queue.status().await.pending,
+            1,
+            "still just the one pre-existing wave — none stacked"
+        );
     }
 
     #[tokio::test]
@@ -424,11 +446,12 @@ mod tests {
         let ctx = crate::tasks::test_support::make_ctx().await;
         let enqueued = enqueue_backfill_all(&ctx.queue, ctx.pg()).await.unwrap();
         let snap = ctx.queue.snapshot().await;
-        let parents = snap
-            .iter()
-            .filter(|(k, _, _)| *k == TaskKind::ComputeProjectMetrics)
-            .count() as u32;
-        assert_eq!(parents, enqueued, "every enqueued task is a ComputeProjectMetrics (one per project)");
+        let parents =
+            snap.iter().filter(|(k, _, _)| *k == TaskKind::ComputeProjectMetrics).count() as u32;
+        assert_eq!(
+            parents, enqueued,
+            "every enqueued task is a ComputeProjectMetrics (one per project)"
+        );
         assert!(
             snap.iter().all(|(k, _, p)| *k == TaskKind::ComputeProjectMetrics && p.is_empty()),
             "backfill enqueues ONLY ComputeProjectMetrics with an empty path",
@@ -442,9 +465,16 @@ mod tests {
         // the shared test DB's project count.
         let ctx = crate::tasks::test_support::make_ctx().await;
         ctx.queue
-            .enqueue(Task::new(TaskKind::ComputeProjectMetrics, &uuid::Uuid::new_v4().to_string(), ""))
+            .enqueue(Task::new(
+                TaskKind::ComputeProjectMetrics,
+                &uuid::Uuid::new_v4().to_string(),
+                "",
+            ))
             .await;
         let enqueued = enqueue_backfill_all(&ctx.queue, ctx.pg()).await.unwrap();
-        assert_eq!(enqueued, 0, "a pending ComputeProjectMetrics guards against a second backfill wave");
+        assert_eq!(
+            enqueued, 0,
+            "a pending ComputeProjectMetrics guards against a second backfill wave"
+        );
     }
 }

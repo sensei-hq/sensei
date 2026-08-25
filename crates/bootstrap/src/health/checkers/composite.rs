@@ -1,7 +1,7 @@
 //! AndChecker — every sub-checker must succeed. Used to combine binary +
 //! port checks (e.g. postgres = pg_isready binary AND port 5432).
 
-use crate::health::checker::{Checker, CheckOutcome};
+use crate::health::checker::{CheckOutcome, Checker};
 use crate::health::types::ComponentStatus;
 
 pub struct AndChecker(pub Vec<Box<dyn Checker>>);
@@ -13,7 +13,9 @@ impl Checker for AndChecker {
             let out = c.check();
             match out.status {
                 ComponentStatus::Failed => return out,
-                ComponentStatus::Ready if version.is_none() => { version = out.version; }
+                ComponentStatus::Ready if version.is_none() => {
+                    version = out.version;
+                }
                 _ => {}
             }
         }
@@ -33,7 +35,9 @@ mod tests {
     }
     struct AlwaysFailed(&'static str);
     impl Checker for AlwaysFailed {
-        fn check(&self) -> CheckOutcome { CheckOutcome::failed(self.0.to_string()) }
+        fn check(&self) -> CheckOutcome {
+            CheckOutcome::failed(self.0.to_string())
+        }
     }
 
     #[test]
@@ -49,10 +53,8 @@ mod tests {
 
     #[test]
     fn first_failed_short_circuits() {
-        let c = AndChecker(vec![
-            Box::new(AlwaysFailed("binary missing")),
-            Box::new(AlwaysReady(None)),
-        ]);
+        let c =
+            AndChecker(vec![Box::new(AlwaysFailed("binary missing")), Box::new(AlwaysReady(None))]);
         let o = c.check();
         assert!(matches!(o.status, ComponentStatus::Failed));
         assert_eq!(o.detail.as_deref(), Some("binary missing"));

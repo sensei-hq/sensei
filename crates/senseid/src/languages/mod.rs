@@ -1,18 +1,18 @@
+pub mod c_lang;
 pub mod common;
 pub mod fqn;
+pub mod java;
+pub mod kotlin;
 pub mod python;
 pub mod rust_lang;
-pub mod typescript;
-pub mod java;
 pub mod sql;
-pub mod swift;
-pub mod kotlin;
 pub mod svelte;
+pub mod swift;
+pub mod typescript;
 pub mod vue;
-pub mod c_lang;
 
-use crate::types::ParsedFile;
 use crate::ir::IRParsedFile;
+use crate::types::ParsedFile;
 
 /// Trait for language-specific adapters.
 pub trait LanguageAdapter: Send + Sync {
@@ -101,7 +101,8 @@ pub fn adapter_for_filename(filename: &str) -> Option<Box<dyn LanguageAdapter>> 
     }
 
     // Fall back to regular extension
-    let ext = std::path::Path::new(filename).extension()
+    let ext = std::path::Path::new(filename)
+        .extension()
         .and_then(|e| e.to_str())
         .map(|e| format!(".{}", e))
         .unwrap_or_default();
@@ -163,9 +164,7 @@ pub fn language_for_path(file_path: &str) -> Option<&'static str> {
     if let Some(adapter) = adapter_for_filename(file_path) {
         return Some(language_slug_static(adapter.language()));
     }
-    let ext = std::path::Path::new(file_path)
-        .extension()
-        .and_then(|e| e.to_str())?;
+    let ext = std::path::Path::new(file_path).extension().and_then(|e| e.to_str())?;
     language_for_ext_slug(&ext.to_ascii_lowercase())
 }
 
@@ -187,9 +186,8 @@ pub fn is_test_path(rel_path: &str, language: Option<&str>) -> bool {
 
     // Directory-segment conventions (language-agnostic). Whole-segment match so
     // `latest/`, `contest/`, `attestation/` don't false-match on "test".
-    const TEST_DIRS: &[&str] = &[
-        "test", "tests", "__tests__", "__test__", "spec", "specs", "e2e", "testing",
-    ];
+    const TEST_DIRS: &[&str] =
+        &["test", "tests", "__tests__", "__test__", "spec", "specs", "e2e", "testing"];
     if lower.split('/').any(|seg| TEST_DIRS.contains(&seg)) {
         return true;
     }
@@ -197,10 +195,7 @@ pub fn is_test_path(rel_path: &str, language: Option<&str>) -> bool {
     // Filename conventions.
     let file = norm.rsplit('/').next().unwrap_or(&norm);
     let file_lower = file.to_ascii_lowercase();
-    let stem = std::path::Path::new(file)
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or(file);
+    let stem = std::path::Path::new(file).file_stem().and_then(|s| s.to_str()).unwrap_or(file);
     let stem_lower = stem.to_ascii_lowercase();
 
     // Cross-language: foo.test.* / foo.spec.* (JS/TS/Svelte/Vue), *_test.*
@@ -218,7 +213,10 @@ pub fn is_test_path(rel_path: &str, language: Option<&str>) -> bool {
     // Case-sensitive + gated by language so `Unit`/`Audit` (end in lowercase "it")
     // and a production `TestData` in another language don't false-match.
     if matches!(language, Some("java") | Some("kotlin"))
-        && (stem.ends_with("Test") || stem.ends_with("Tests") || stem.ends_with("IT") || stem.ends_with("ITCase"))
+        && (stem.ends_with("Test")
+            || stem.ends_with("Tests")
+            || stem.ends_with("IT")
+            || stem.ends_with("ITCase"))
     {
         return true;
     }
@@ -228,10 +226,14 @@ pub fn is_test_path(rel_path: &str, language: Option<&str>) -> bool {
 
 /// Cyclomatic complexity estimate from source text.
 pub fn compute_complexity(body: &str) -> u32 {
-    let patterns = ["if ", "else if ", "elif ", "else ", "for ", "while ", "catch ",
-        "case ", "&&", "||", "? ", "try ", "match ", "except "];
+    let patterns = [
+        "if ", "else if ", "elif ", "else ", "for ", "while ", "catch ", "case ", "&&", "||", "? ",
+        "try ", "match ", "except ",
+    ];
     let mut n: u32 = 1;
-    for pat in &patterns { n += body.matches(pat).count() as u32; }
+    for pat in &patterns {
+        n += body.matches(pat).count() as u32;
+    }
     n
 }
 
@@ -241,7 +243,10 @@ mod tests {
 
     #[test]
     fn adapter_for_known_extensions() {
-        for ext in &[".py", ".rs", ".java", ".sql", ".ddl", ".ts", ".tsx", ".cts", ".js", ".jsx", ".swift", ".kt", ".kts", ".svelte", ".vue", ".c", ".h", ".cpp"] {
+        for ext in &[
+            ".py", ".rs", ".java", ".sql", ".ddl", ".ts", ".tsx", ".cts", ".js", ".jsx", ".swift",
+            ".kt", ".kts", ".svelte", ".vue", ".c", ".h", ".cpp",
+        ] {
             assert!(adapter_for_ext(ext).is_some(), "Missing adapter for {}", ext);
         }
     }
@@ -255,8 +260,12 @@ mod tests {
     fn is_test_path_detects_test_files_by_convention() {
         // Directory-segment conventions (any language).
         for p in [
-            "tests/integration.rs", "crates/x/tests/foo.rs", "src/test/java/com/A.java",
-            "app/src/__tests__/util.ts", "e2e/login.spec.ts", "spec/models/user_spec.rb",
+            "tests/integration.rs",
+            "crates/x/tests/foo.rs",
+            "src/test/java/com/A.java",
+            "app/src/__tests__/util.ts",
+            "e2e/login.spec.ts",
+            "spec/models/user_spec.rb",
         ] {
             assert!(is_test_path(p, None), "should be a test path: {p}");
         }
@@ -277,14 +286,21 @@ mod tests {
     fn is_test_path_does_not_false_match_production() {
         // Substrings that merely CONTAIN "test" are not test dirs.
         for p in [
-            "src/latest/config.rs", "contest/rules.py", "src/attestation/verify.ts",
-            "src/lib/pg_store.rs", "app/src/routes/+page.svelte", "src/main.rs",
+            "src/latest/config.rs",
+            "contest/rules.py",
+            "src/attestation/verify.ts",
+            "src/lib/pg_store.rs",
+            "app/src/routes/+page.svelte",
+            "src/main.rs",
         ] {
             assert!(!is_test_path(p, language_for_path(p)), "should NOT be a test path: {p}");
         }
         // `*Test`/`*IT` suffix is Java/Kotlin-gated: a Rust `TestHarness` production
         // file and a stem ending in lowercase "it" don't match.
-        assert!(!is_test_path("src/Audit.java", Some("java")), "Audit ends in lowercase 'it', not IT");
+        assert!(
+            !is_test_path("src/Audit.java", Some("java")),
+            "Audit ends in lowercase 'it', not IT"
+        );
         assert!(!is_test_path("src/testkit.rs", Some("rust")), "no *Test suffix rule for rust");
     }
 

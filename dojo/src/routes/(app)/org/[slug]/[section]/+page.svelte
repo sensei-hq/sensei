@@ -13,7 +13,8 @@
 	import ScrIdentity from '$lib/components/screens/ScrIdentity.svelte';
 	import ScrHealth from '$lib/components/screens/ScrHealth.svelte';
 	import ScrBilling from '$lib/components/screens/ScrBilling.svelte';
-	import { orgHref } from '$lib/nav';
+	import ScrPlaceholder from '$lib/components/screens/ScrPlaceholder.svelte';
+	import { orgHref, labelForSection } from '$lib/nav';
 	import { requireTenant } from '$lib/org-guard';
 	import { setMemberRole } from '$lib/admin-data';
 	import {
@@ -41,7 +42,9 @@
 	// (triage · approvals · knowledge), the lead Clients consoles
 	// (engagements · incidents · clientaudit) and the admin consoles
 	// (members/scopes/identity/audit/health/billing) — the full dojo screen set,
-	// no placeholder destination left. The `members` and `audit` sections share
+	// so the trailing ScrPlaceholder branch is unreachable today and exists only
+	// to catch a section added to NAV_ORG before its screen. The `members` and
+	// `audit` sections share
 	// ONE screen (ScrRoleSurfaces): the loader-supplied `roleTab` picks its opening
 	// tab. Opening a project routes to the org project preview at
 	// /org/[slug]/projects/[id] (an in-shell route so the URL stays the source of
@@ -162,8 +165,17 @@
 	<ScrIdentity orgName={data.orgName} identity={data.identity} />
 {:else if data.section === 'health'}
 	<ScrHealth orgName={data.orgName} health={data.health} />
-{:else}
+{:else if data.section === 'billing'}
 	<ScrBilling orgName={data.orgName} billing={data.billing} />
+{:else}
+	<!-- Named branches only. This used to be an unlabelled `{:else}` holding
+	     billing, which happened to be correct because ORG_SECTIONS covered
+	     exactly the branches above — but it meant a newly-added section would
+	     silently render Plan & billing, and the house rule is explicit that
+	     money-facing screens don't get reached by a fallthrough. The loader
+	     already redirects sections outside ORG_SECTIONS, so this is the
+	     in-nav-but-not-yet-built case. -->
+	<ScrPlaceholder title={labelForSection(data.section, 'org')} eyebrow={data.orgName} />
 {/if}
 
 {#if actionError}

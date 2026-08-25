@@ -67,4 +67,25 @@ describe('AboutMetric', () => {
         expect(q(root, '[data-row="how"] a')).toBeNull();
         expect(q(root, '[data-row="how"]')?.textContent).toBe('rework ratio');
     });
+
+    // The mockups (03-ev.png, 04-ev.png) name these columns, and the labels are
+    // the whole point: they turn a bare number into something interpretable.
+    // Previously "What it tells you" / "How it's computed".
+    it.each([
+        ['What it measures'],
+        ['How to read it'],
+        ['How this number was calculated'],
+    ])('labels its columns "%s" as the mockup names them', (label) => {
+        const text = mount(about()).textContent ?? '';
+        expect(text).toContain(label);
+    });
+
+    it('renders unconditionally — the meaning is content, not a popover', () => {
+        // It used to sit behind an info toggle. There must be no control gating
+        // it and no collapsed state to open.
+        const root = mount(about());
+        expect(q(root, '[data-component="metric-about"]')).not.toBeNull();
+        expect(q(root, 'button')).toBeNull();
+        expect(q(root, '[aria-expanded]')).toBeNull();
+    });
 });

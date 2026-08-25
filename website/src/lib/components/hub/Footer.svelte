@@ -40,7 +40,7 @@
 
 <footer class="border-t border-paper-edge">
   <div class="footer-inner mx-auto px-7 py-8">
-    <div class="footer-grid gap-7">
+    <div class="grid grid-cols-2 md:grid-cols-[1.4fr_1fr_1fr_1fr_1fr] items-start gap-7">
       <!-- Brand -->
       <div>
         <div class="flex items-center gap-3 mb-3">
@@ -83,20 +83,10 @@
   .footer-inner {
     max-width: 1120px;
   }
-  .footer-grid {
-    display: grid;
-    grid-template-columns: 1.4fr 1fr 1fr 1fr 1fr;
-    align-items: start;
-  }
   .footer-link {
     transition: color 0.15s;
   }
   .footer-link:hover {
     color: var(--ink);
-  }
-  @media (max-width: 768px) {
-    .footer-grid {
-      grid-template-columns: 1fr 1fr;
-    }
   }
 </style>

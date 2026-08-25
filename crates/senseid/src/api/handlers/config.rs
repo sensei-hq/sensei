@@ -1,10 +1,10 @@
+use crate::api::state::AppState;
 use axum::{
     extract::{Path, State},
     http::StatusCode,
     response::Json,
 };
 use serde::Deserialize;
-use crate::api::state::AppState;
 
 // ── Config CRUD ─────────────────────────────────────────────────────────────
 
@@ -28,8 +28,29 @@ pub(crate) async fn set_config_handler(
     Json(body): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     if let Some(obj) = body.as_object() {
+        // Validate BEFORE writing anything, so a bad value in a multi-key PUT
+        // can't leave half of it applied.
         for (key, val) in obj {
-            let v = match val { serde_json::Value::String(s) => s.clone(), other => other.to_string() };
+            let v = match val {
+                serde_json::Value::String(s) => s.clone(),
+                other => other.to_string(),
+            };
+            if key == crate::cost::SUBSCRIPTION_CONFIG_KEY
+                && !v.trim().is_empty()
+                && crate::cost::Subscription::parse(Some(&v)).is_none()
+            {
+                // Storing an unparseable plan would silently disable cost — the
+                // screen would read "not configured" while the user believes they
+                // configured it. Reject instead. (Blank is allowed: that is how a
+                // user clears the setting.)
+                return Err(StatusCode::BAD_REQUEST);
+            }
+        }
+        for (key, val) in obj {
+            let v = match val {
+                serde_json::Value::String(s) => s.clone(),
+                other => other.to_string(),
+            };
             state.pg.set_config(key, &v).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
         }
     }
@@ -59,7 +80,8 @@ pub(crate) async fn marketplace_install(
     }
 
     // Use native Rust installer (replaces shelling out to marketplace/install.ts)
-    let acps: Vec<String> = body["acps"].as_array()
+    let acps: Vec<String> = body["acps"]
+        .as_array()
         .map(|a| a.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
         .unwrap_or_default();
     let result = crate::installer::install(&acps, scope);
@@ -133,18 +155,20 @@ pub(crate) async fn assistant_remove(
 }
 
 /// GET /api/assistants/health — current per-adapter health (config + freshness).
-pub(crate) async fn assistants_health(
-    State(state): State<AppState>,
-) -> Json<serde_json::Value> {
+pub(crate) async fn assistants_health(State(state): State<AppState>) -> Json<serde_json::Value> {
     let now_ms = chrono::Utc::now().timestamp_millis();
     let report = crate::assistants::health_report(&state.pg, now_ms).await;
-    let overall = report.iter().map(|h| h.status)
+    let overall = report
+        .iter()
+        .map(|h| h.status)
         .fold(crate::assistants::CheckStatus::Ok, |acc, s| acc.worse(s));
     Json(serde_json::json!({ "status": overall, "adapters": report }))
 }
 
 #[derive(serde::Deserialize)]
-pub(crate) struct ResolveBody { pub adapter_id: String }
+pub(crate) struct ResolveBody {
+    pub adapter_id: String,
+}
 
 /// POST /api/assistants/resolve — reinstall one adapter, clear its breaker.
 pub(crate) async fn assistants_resolve(
@@ -175,11 +199,13 @@ pub(crate) async fn install_all(
     // Run in blocking thread — marketplace download is synchronous. A panic in
     // that thread is a 500, NOT a default (empty) result that reads as a clean
     // "0 installed, no errors" no-op and hides the failure.
-    let result = tokio::task::spawn_blocking(move || {
-        crate::installer::install(&body.acps, &body.scope)
-    })
-    .await
-    .map_err(|e| { tracing::error!(error = %e, "install_all: installer thread panicked"); StatusCode::INTERNAL_SERVER_ERROR })?;
+    let result =
+        tokio::task::spawn_blocking(move || crate::installer::install(&body.acps, &body.scope))
+            .await
+            .map_err(|e| {
+                tracing::error!(error = %e, "install_all: installer thread panicked");
+                StatusCode::INTERNAL_SERVER_ERROR
+            })?;
     Ok(Json(result))
 }
 
@@ -227,15 +253,17 @@ pub(crate) async fn get_catalog() -> Json<serde_json::Value> {
             let items: Vec<serde_json::Value> = catalog
                 .items
                 .iter()
-                .map(|i| serde_json::json!({
-                    "name": i.name,
-                    "kind": i.kind,
-                    "description": i.description,
-                    "scope": i.scope,
-                    "path": i.path,
-                    "recommended_for": i.recommended_for,
-                    "stage": i.stage,
-                }))
+                .map(|i| {
+                    serde_json::json!({
+                        "name": i.name,
+                        "kind": i.kind,
+                        "description": i.description,
+                        "scope": i.scope,
+                        "path": i.path,
+                        "recommended_for": i.recommended_for,
+                        "stage": i.stage,
+                    })
+                })
                 .collect();
             serde_json::json!({
                 "version": catalog.version,
@@ -271,21 +299,23 @@ pub(crate) async fn set_installed_enabled(
     let name_owned = name.clone();
     let result = tokio::task::spawn_blocking(move || {
         crate::installer::set_item_enabled(&name_owned, &body.kind, body.enabled)
-    }).await.map_err(|e| (
-        axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-        Json(serde_json::json!({ "error": format!("spawn_blocking failed: {e}") }))
-    ))?;
+    })
+    .await
+    .map_err(|e| {
+        (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": format!("spawn_blocking failed: {e}") })),
+        )
+    })?;
 
     match result {
         Ok(changed) => Ok(Json(serde_json::json!({ "ok": true, "changed": changed }))),
-        Err(e) if e.contains("unknown kind") => Err((
-            axum::http::StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({ "error": e })),
-        )),
-        Err(e) if e.contains("not found") || e.contains("ambiguous") => Err((
-            axum::http::StatusCode::NOT_FOUND,
-            Json(serde_json::json!({ "error": e })),
-        )),
+        Err(e) if e.contains("unknown kind") => {
+            Err((axum::http::StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": e }))))
+        }
+        Err(e) if e.contains("not found") || e.contains("ambiguous") => {
+            Err((axum::http::StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": e }))))
+        }
         Err(e) => {
             tracing::error!(error = %e, item = %name, "set_installed_enabled failed");
             Err((
@@ -303,9 +333,10 @@ pub(crate) async fn remove_all(
     // PANIC in the uninstall thread, however, is a 500 — not a default (empty)
     // result that falsely reports "nothing removed, no errors".
     let req = body.map(|b| b.0).unwrap_or_default();
-    let result = tokio::task::spawn_blocking(move || crate::installer::remove(&req))
-        .await
-        .map_err(|e| { tracing::error!(error = %e, "remove_all: uninstall thread panicked"); StatusCode::INTERNAL_SERVER_ERROR })?;
+    let result =
+        tokio::task::spawn_blocking(move || crate::installer::remove(&req)).await.map_err(|e| {
+            tracing::error!(error = %e, "remove_all: uninstall thread panicked");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
     Ok(Json(result))
 }
-

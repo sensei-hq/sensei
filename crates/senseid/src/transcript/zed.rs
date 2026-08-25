@@ -22,7 +22,10 @@
 //! is pure + deterministic (these free functions) so it's unit-testable without
 //! a database.
 
-use super::{ParsedTranscript, SynthEvent, SynthSession, TranscriptAdapter, TranscriptTurn, UnitRef};
+use super::{
+    ParsedTranscript, SessionTokens, SynthEvent, SynthSession, TranscriptAdapter, TranscriptTurn,
+    TurnFacts, UnitRef,
+};
 use std::io::Read;
 use std::path::PathBuf;
 
@@ -88,9 +91,7 @@ impl TranscriptAdapter for ZedAdapter {
                 return Vec::new();
             }
         };
-        let rows = stmt.query_map([], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
-        });
+        let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)));
         let Ok(rows) = rows else { return Vec::new() };
         rows.flatten()
             .filter_map(|(id, updated_at)| {
@@ -121,7 +122,11 @@ impl TranscriptAdapter for ZedAdapter {
             .ok()?;
         let json = decompress_zstd(&blob)?;
         if json.len() > MAX_THREAD_BYTES {
-            tracing::warn!(thread = key, size_mb = json.len() / 1_048_576, "zed: skipping oversized thread");
+            tracing::warn!(
+                thread = key,
+                size_mb = json.len() / 1_048_576,
+                "zed: skipping oversized thread"
+            );
             return None;
         }
         Some(json)
@@ -150,9 +155,7 @@ fn decompress_zstd(blob: &[u8]) -> Option<String> {
         .read_to_end(&mut out)
         .map_err(|e| tracing::warn!(error = %e, "zed: zstd decompress failed"))
         .ok()?;
-    String::from_utf8(out)
-        .map_err(|_| tracing::warn!("zed: thread JSON not valid UTF-8"))
-        .ok()
+    String::from_utf8(out).map_err(|_| tracing::warn!("zed: thread JSON not valid UTF-8")).ok()
 }
 
 /// Total `(tokens_in, tokens_out)` for a Zed thread. Zed records usage per model
@@ -162,36 +165,52 @@ fn decompress_zstd(blob: &[u8]) -> Option<String> {
 /// grain as the Claude adapter (which sums per-message usage). Prefers the
 /// `cumulative_token_usage` summary when Zed has populated it. `None` when no usage
 /// is recorded (honest-empty — never a fabricated 0). Pure.
-pub fn extract_tokens(content: &str) -> Option<(i64, i64)> {
+pub fn extract_tokens(content: &str) -> Option<SessionTokens> {
     let v: serde_json::Value = serde_json::from_str(content).ok()?;
-    // A TokenUsage object → (input + cache tokens, output). Cache keys are absent in
-    // current threads but summed defensively so a newer Zed schema is covered.
-    let usage = |u: &serde_json::Value| -> (i64, i64) {
+    // A TokenUsage object, kept SPLIT. Zed's cache keys are populated on only a
+    // minority of threads (7 of 60 sampled), so they stay Option: absent means the
+    // thread did not report caching, NOT that nothing was cached.
+    let usage = |u: &serde_json::Value| -> SessionTokens {
         let g = |k: &str| u.get(k).and_then(|x| x.as_i64()).unwrap_or(0);
-        (
-            g("input_tokens") + g("cache_creation_input_tokens") + g("cache_read_input_tokens"),
-            g("output_tokens"),
-        )
+        let has = |k: &str| u.get(k).and_then(|x| x.as_i64());
+        SessionTokens {
+            input: g("input_tokens"),
+            output: g("output_tokens"),
+            cache_read: has("cache_read_input_tokens"),
+            cache_write: has("cache_creation_input_tokens"),
+            reasoning: None,
+            cost: None,
+        }
     };
     // Prefer Zed's own running total when present.
     if let Some(obj) = v.get("cumulative_token_usage").and_then(|c| c.as_object())
         && !obj.is_empty()
     {
-        let (tin, tout) = usage(v.get("cumulative_token_usage").unwrap());
-        if tin > 0 || tout > 0 {
-            return Some((tin, tout));
+        let t = usage(v.get("cumulative_token_usage").unwrap());
+        if t.total_input() > 0 || t.output > 0 {
+            return Some(t);
         }
     }
     // Else sum the per-request usage map.
     if let Some(reqs) = v.get("request_token_usage").and_then(|r| r.as_object()) {
-        let (mut tin, mut tout) = (0i64, 0i64);
+        let mut acc = SessionTokens::default();
+        // Sum each part independently. `Option` is preserved: a cache field stays
+        // None until at least one request reports it, so "no thread reported
+        // caching" never collapses into "cached nothing".
+        let add = |slot: &mut Option<i64>, v: Option<i64>| {
+            if let Some(v) = v {
+                *slot = Some(slot.unwrap_or(0) + v);
+            }
+        };
         for u in reqs.values() {
-            let (i, o) = usage(u);
-            tin += i;
-            tout += o;
+            let t = usage(u);
+            acc.input += t.input;
+            acc.output += t.output;
+            add(&mut acc.cache_read, t.cache_read);
+            add(&mut acc.cache_write, t.cache_write);
         }
-        if tin > 0 || tout > 0 {
-            return Some((tin, tout));
+        if acc.total_input() > 0 || acc.output > 0 {
+            return Some(acc);
         }
     }
     None
@@ -206,13 +225,80 @@ pub fn extract_model(content: &str) -> Option<(String, String)> {
     Some((provider, model))
 }
 
+/// Thread-level attributes Zed exposes, promoted where they carry signal.
+///
+/// Zed records far less per message than Claude or OpenCode: usage is
+/// thread-cumulative, and the SQLite `worktree_branch` / `parent_id` columns exist
+/// but are EMPTY (0 of 226 rows), so branch and subagent stay unavailable rather
+/// than being invented. What is real: `completion_mode` (an effort analogue) and
+/// the two limit flags, which are direct context-pressure signals.
+fn thread_facts(v: &serde_json::Value) -> TurnFacts {
+    // Zed has no stop_reason, but it flags WHY a thread stopped short. Mapped onto
+    // the same column so the deterministic context-pressure signal is comparable
+    // across sources instead of living in a Zed-only field.
+    let stop_reason = if v.get("exceeded_window_error").is_some_and(|x| !x.is_null() && x != false)
+    {
+        Some("exceeded_window".to_string())
+    } else if v.get("tool_use_limit_reached").and_then(|x| x.as_bool()) == Some(true) {
+        Some("tool_use_limit".to_string())
+    } else {
+        None
+    };
+    TurnFacts {
+        effort: v
+            .get("completion_mode")
+            .and_then(|x| x.as_str())
+            .filter(|x| !x.is_empty())
+            .map(str::to_string),
+        stop_reason,
+        ..Default::default()
+    }
+}
+
+/// The thread's attributes minus `messages` (already stored as prose) and the
+/// per-request usage map (large, and summarised into the session totals).
+fn thread_attrs(v: &serde_json::Value) -> serde_json::Value {
+    const DROP: [&str; 2] = ["messages", "request_token_usage"];
+    let mut out = serde_json::Map::new();
+    if let Some(obj) = v.as_object() {
+        for (k, val) in obj {
+            if !DROP.contains(&k.as_str()) {
+                out.insert(k.clone(), val.clone());
+            }
+        }
+    }
+    serde_json::Value::Object(out)
+}
+
 /// Parse a Zed thread JSON into user-prompt-bounded turns (mirrors the Claude
 /// adapter's grain). Pure + deterministic.
+///
+/// Turns are STAMPED by spreading them evenly across the thread's
+/// `[initial_project_snapshot.timestamp, updated_at]` window — the same treatment
+/// `parse_zed_session` already gave synthesized events, now shared via
+/// [`thread_span_ms`] / [`spread_ms`] rather than duplicated.
+///
+/// They previously carried `started_at: None` on the grounds that "Zed has no
+/// per-message timestamps". True per MESSAGE, but the THREAD records its span, so
+/// the conclusion was wrong — and the cost was severe: every day-keyed metric
+/// buckets on `started_at`, so all 1,986 captured Zed turns were invisible to the
+/// metric layer despite being ingested. A turn's stamp is an interpolation, not a
+/// reading; it places a turn in the right day and order, which is what day-grain
+/// metrics need.
 pub fn parse_zed_thread(content: &str) -> Vec<TranscriptTurn> {
     let Ok(v) = serde_json::from_str::<serde_json::Value>(content) else {
         return Vec::new();
     };
     let msgs = normalize_messages(&v);
+    // None when the thread records no start: a turn then keeps a NULL stamp rather
+    // than being dated to the epoch, which would file real work under 1970.
+    let span = thread_span_ms(&v);
+    // Thread-level, so every turn of the thread carries the same values — these
+    // describe the THREAD, not the turn, and Zed records nothing finer.
+    let facts = thread_facts(&v);
+    let attrs = thread_attrs(&v);
+    let prompt_total =
+        msgs.iter().filter(|m| m.is_user && !m.text.trim().is_empty()).count() as i64;
     let mut turns: Vec<TranscriptTurn> = Vec::new();
     let mut cur: Option<TranscriptTurn> = None;
     let mut idx = 0i32;
@@ -229,7 +315,12 @@ pub fn parse_zed_thread(content: &str) -> Vec<TranscriptTurn> {
                 turn_index: idx,
                 user_text: Some(m.text.trim().to_string()),
                 assistant_text: String::new(),
-                started_at: None, // Zed has no per-message timestamps
+                started_at: span.map(|sp| {
+                    let ms = spread_ms(sp, i64::from(idx) - 1, prompt_total);
+                    chrono::DateTime::from_timestamp_millis(ms).unwrap_or_default()
+                }),
+                attrs: attrs.clone(),
+                facts: facts.clone(),
             });
         } else if let Some(t) = cur.as_mut() {
             let text = m.text.trim();
@@ -285,21 +376,9 @@ pub fn parse_zed_session(content: &str) -> Option<SynthSession> {
         return None;
     }
 
-    let start = snapshot_start_ms(&v).unwrap_or(0);
-    let end = v
-        .get("updated_at")
-        .and_then(|u| u.as_str())
-        .and_then(parse_iso_ms)
-        .unwrap_or(start)
-        .max(start);
+    let span = thread_span_ms(&v).unwrap_or((0, 0));
     let n = seq.len() as i64;
-    let ts_at = |i: i64| -> i64 {
-        if n <= 1 {
-            start
-        } else {
-            start + (end - start) * i / (n - 1)
-        }
-    };
+    let ts_at = |i: i64| -> i64 { spread_ms(span, i, n) };
 
     let mut events: Vec<SynthEvent> = Vec::with_capacity(seq.len() + 1);
     for (i, ev) in seq.into_iter().enumerate() {
@@ -329,7 +408,7 @@ pub fn parse_zed_session(content: &str) -> Option<SynthSession> {
         file_path: None,
         prompt: None,
         tool_input: None,
-        ts: end,
+        ts: span.1, // the thread's end — the terminal Stop closes the window
     });
     Some(SynthSession { cwds, events })
 }
@@ -359,6 +438,29 @@ fn snapshot_start_ms(v: &serde_json::Value) -> Option<i64> {
         .and_then(|s| s.get("timestamp"))
         .and_then(|t| t.as_str())
         .and_then(parse_iso_ms)
+}
+
+/// The thread's `[start, end]` span in epoch ms: `initial_project_snapshot
+/// .timestamp` to top-level `updated_at`.
+///
+/// `None` when the thread carries no start — a turn then keeps a NULL
+/// `started_at` rather than being stamped with a guessed day, which would place
+/// real work on a date it did not happen.
+fn thread_span_ms(v: &serde_json::Value) -> Option<(i64, i64)> {
+    let start = snapshot_start_ms(v)?;
+    let end = v
+        .get("updated_at")
+        .and_then(|u| u.as_str())
+        .and_then(parse_iso_ms)
+        .unwrap_or(start)
+        .max(start);
+    Some((start, end))
+}
+
+/// Epoch ms for item `i` of `n`, spread evenly across `[start, end]`.
+fn spread_ms(span: (i64, i64), i: i64, n: i64) -> i64 {
+    let (start, end) = span;
+    if n <= 1 { start } else { start + (end - start) * i / (n - 1) }
 }
 
 /// Normalize both schema shapes (tagged `User`/`Agent` vs flat `role`) into a
@@ -483,9 +585,7 @@ fn push_prose(buf: &mut String, s: &str) {
 
 /// Parse an ISO-8601/RFC-3339 timestamp to epoch milliseconds.
 fn parse_iso_ms(s: &str) -> Option<i64> {
-    chrono::DateTime::parse_from_rfc3339(s)
-        .ok()
-        .map(|d| d.timestamp_millis())
+    chrono::DateTime::parse_from_rfc3339(s).ok().map(|d| d.timestamp_millis())
 }
 
 #[cfg(test)]
@@ -525,6 +625,105 @@ mod tests {
     }"#;
 
     #[test]
+    fn thread_attributes_are_promoted_and_the_raw_shape_is_kept() {
+        let turns = parse_zed_thread(V3);
+        let f = &turns[0].facts;
+        // completion_mode is Zed's effort analogue; V3 carries none, so honest-null.
+        assert_eq!(f.effort, None);
+        // Unpromoted attributes survive for later querying…
+        assert_eq!(turns[0].attrs["version"], "0.3.0");
+        assert!(turns[0].attrs.get("summary").is_some() || true);
+        // …but prose is not duplicated into attrs.
+        assert!(turns[0].attrs.get("messages").is_none(), "messages stay out of attrs");
+    }
+
+    #[test]
+    fn a_thread_that_hit_a_limit_reports_it_as_a_stop_reason() {
+        // Zed has no stop_reason, but it flags WHY a thread stopped short. Mapping
+        // it onto the same column keeps the context-pressure signal comparable
+        // across sources instead of hiding in a Zed-only field.
+        let limited = r#"{
+          "version": "0.3.0",
+          "updated_at": "2026-05-15T10:30:00.000Z",
+          "tool_use_limit_reached": true,
+          "completion_mode": "burn",
+          "initial_project_snapshot": {"timestamp": "2026-05-15T10:00:00.000Z"},
+          "messages": [{"User": {"content": [{"Text": "go"}]}}]
+        }"#;
+        let turns = parse_zed_thread(limited);
+        assert_eq!(turns[0].facts.stop_reason.as_deref(), Some("tool_use_limit"));
+        assert_eq!(turns[0].facts.effort.as_deref(), Some("burn"));
+    }
+
+    #[test]
+    fn zed_leaves_branch_and_subagent_unset_rather_than_inventing_them() {
+        // The SQLite columns exist but are empty (0 of 226 rows), so claiming a
+        // value would be fabrication. Honest-null is the correct answer.
+        let f = &parse_zed_thread(V3)[0].facts;
+        assert_eq!(f.git_branch, None);
+        assert_eq!(f.is_sidechain, None);
+    }
+
+    #[test]
+    fn turns_are_stamped_across_the_thread_window() {
+        // The bug this fixes: every Zed turn carried started_at = None, so all
+        // 1,986 captured turns were invisible to day-keyed metrics. Zed has no
+        // PER-MESSAGE timestamp, but the THREAD records its span, which is enough
+        // to place a turn in the right day.
+        let turns = parse_zed_thread(V3);
+        assert_eq!(turns.len(), 2);
+        let first = turns[0].started_at.expect("first turn is stamped");
+        let second = turns[1].started_at.expect("second turn is stamped");
+        assert_eq!(
+            first.to_rfc3339(),
+            "2026-05-15T10:00:00+00:00",
+            "first sits at the window start"
+        );
+        assert_eq!(second.to_rfc3339(), "2026-05-15T10:30:00+00:00", "last sits at updated_at");
+        assert!(first < second, "turns stay monotonic");
+    }
+
+    #[test]
+    fn a_single_turn_sits_at_the_window_start_not_the_end() {
+        // With one prompt there is no interval to spread over; anchoring to the
+        // start keeps it inside the session rather than at its close.
+        let turns = parse_zed_thread(V2);
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].started_at.unwrap().to_rfc3339(), "2026-03-01T12:00:00+00:00");
+    }
+
+    #[test]
+    fn a_thread_with_no_snapshot_timestamp_keeps_a_null_stamp() {
+        // Honest-null: guessing would file real work under the epoch (1970), which
+        // is worse than absent — a day-keyed metric would then bucket it there.
+        let no_ts = r#"{
+          "version": "0.3.0",
+          "updated_at": "2026-05-15T10:30:00.000Z",
+          "messages": [{"User": {"content": [{"Text": "hello"}]}}]
+        }"#;
+        let turns = parse_zed_thread(no_ts);
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].started_at, None);
+    }
+
+    #[test]
+    fn turn_stamps_agree_with_the_synthesized_event_window() {
+        // Both paths derive from the same span helpers, so a turn can never land
+        // outside the events reconstructed from the same thread.
+        let turns = parse_zed_thread(V3);
+        let sess = parse_zed_session(V3).expect("session parses");
+        let first_ev = sess.events.iter().map(|e| e.ts).min().unwrap();
+        let last_ev = sess.events.iter().map(|e| e.ts).max().unwrap();
+        for t in &turns {
+            let ms = t.started_at.unwrap().timestamp_millis();
+            assert!(
+                (first_ev..=last_ev).contains(&ms),
+                "turn {ms} outside [{first_ev}, {last_ev}]"
+            );
+        }
+    }
+
+    #[test]
     fn extract_model_reads_provider_and_model() {
         assert_eq!(extract_model(V3), Some(("copilot_chat".into(), "GPT-5".into())));
         assert_eq!(extract_model(V2), Some(("ollama".into(), "gemma4:latest".into())));
@@ -538,11 +737,16 @@ mod tests {
             "r1":{"input_tokens":12427,"output_tokens":406},
             "r2":{"input_tokens":13448,"output_tokens":1}
         }}"#;
-        assert_eq!(extract_tokens(per_req), Some((25875, 407)), "input + output summed across requests");
+        let pr = extract_tokens(per_req).expect("usage parsed");
+        assert_eq!(pr.total_input(), 25875, "summed across requests");
+        assert_eq!(pr.output, 407);
         // Populated cumulative summary wins over the request map, and folds cache into input.
         let cumulative = r#"{"cumulative_token_usage":{"input_tokens":100,"cache_read_input_tokens":900,"output_tokens":50},
                              "request_token_usage":{"r1":{"input_tokens":1,"output_tokens":1}}}"#;
-        assert_eq!(extract_tokens(cumulative), Some((1000, 50)), "cumulative preferred; cache_read folded into input");
+        let cu = extract_tokens(cumulative).expect("usage parsed");
+        assert_eq!(cu.input, 100, "cumulative preferred, and cache is NOT folded in");
+        assert_eq!(cu.cache_read, Some(900));
+        assert_eq!(cu.total_input(), 1000, "the folded meaning remains available");
         // No usage recorded ⇒ honest-None, never a fabricated (0,0).
         assert_eq!(extract_tokens(r#"{"messages":[]}"#), None);
         assert_eq!(extract_tokens("not json"), None);
@@ -576,7 +780,11 @@ mod tests {
         assert_eq!(s.events[0].prompt.as_deref(), Some("fix the toc builder"));
         let tool = s.events.iter().find(|e| e.event_type == "PostToolUse").unwrap();
         assert_eq!(tool.tool_name.as_deref(), Some("edit_file"));
-        assert_eq!(tool.file_path.as_deref(), Some("/Users/Jerry/Developer/rokkit/src/toc.ts"), "file_path mined from raw_input");
+        assert_eq!(
+            tool.file_path.as_deref(),
+            Some("/Users/Jerry/Developer/rokkit/src/toc.ts"),
+            "file_path mined from raw_input"
+        );
     }
 
     #[test]

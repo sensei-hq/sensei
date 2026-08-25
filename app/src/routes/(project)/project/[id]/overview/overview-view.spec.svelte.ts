@@ -8,6 +8,7 @@ import {
   sessionDuration,
   relativeTime,
   sessionRows,
+  projectVisibilityLabel,
 } from './overview-view.svelte.js';
 import type {
   ProjectOverviewFolder,
@@ -76,6 +77,26 @@ describe('projectEyebrow', () => {
   it('falls back to "internal" for a null or blank client', () => {
     expect(projectEyebrow({ client: null })).toBe('Project · internal');
     expect(projectEyebrow({ client: '   ' })).toBe('Project · internal');
+  });
+});
+
+describe('projectVisibilityLabel', () => {
+  // The sidebar chip and the overview eyebrow share this fallback. The sidebar
+  // used to render no chip at all for a client-less project, which read as
+  // missing data rather than "this one is internal".
+  it('returns the client name when there is one', () => {
+    expect(projectVisibilityLabel('Acme')).toBe('Acme');
+  });
+
+  it.each([[null], [undefined], [''], ['   ']] as const)(
+    'falls back to "internal" for %p',
+    (client) => {
+      expect(projectVisibilityLabel(client)).toBe('internal');
+    },
+  );
+
+  it('is the same fallback the eyebrow uses', () => {
+    expect(projectEyebrow({ client: null })).toContain(projectVisibilityLabel(null));
   });
 });
 

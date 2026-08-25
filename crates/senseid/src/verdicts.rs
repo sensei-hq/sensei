@@ -11,7 +11,7 @@
 //! straight through to the UI. All inputs come from data the daemon
 //! already has, so no additional LLM calls are required at measure time.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// The verdict the analyzer's `measure_pending_verdicts` writes.
 /// Kept as a small enum so the compiler catches typos at call-sites.
@@ -26,7 +26,7 @@ impl Verdict {
     pub fn as_wire(self) -> &'static str {
         match self {
             Verdict::Positive => "positive",
-            Verdict::Neutral  => "neutral",
+            Verdict::Neutral => "neutral",
             Verdict::Negative => "negative",
         }
     }
@@ -36,9 +36,13 @@ impl Verdict {
     /// against the shape of the JSON output don't drift out of sync
     /// with the DB rule.
     pub fn from_ftr_delta(delta: f64) -> Self {
-        if delta >  0.05 { Verdict::Positive }
-        else if delta < -0.05 { Verdict::Negative }
-        else { Verdict::Neutral }
+        if delta > 0.05 {
+            Verdict::Positive
+        } else if delta < -0.05 {
+            Verdict::Negative
+        } else {
+            Verdict::Neutral
+        }
     }
 }
 
@@ -79,12 +83,18 @@ pub fn synthesize_reasoning(
 fn compose_headline(verdict: Verdict, delta_pp: f64) -> String {
     match verdict {
         Verdict::Positive => {
-            if delta_pp >= 10.0 { format!("Strong positive impact — FTR +{}pp", delta_pp as i64) }
-            else                 { format!("Positive impact — FTR +{}pp",       delta_pp as i64) }
+            if delta_pp >= 10.0 {
+                format!("Strong positive impact — FTR +{}pp", delta_pp as i64)
+            } else {
+                format!("Positive impact — FTR +{}pp", delta_pp as i64)
+            }
         }
         Verdict::Negative => {
-            if delta_pp <= -10.0 { format!("Regression — FTR {}pp",             delta_pp as i64) }
-            else                  { format!("Negative impact — FTR {}pp",       delta_pp as i64) }
+            if delta_pp <= -10.0 {
+                format!("Regression — FTR {}pp", delta_pp as i64)
+            } else {
+                format!("Negative impact — FTR {}pp", delta_pp as i64)
+            }
         }
         Verdict::Neutral => "No measurable effect — safe to leave".to_string(),
     }
@@ -92,7 +102,7 @@ fn compose_headline(verdict: Verdict, delta_pp: f64) -> String {
 
 fn compose_body(verdict: Verdict, baseline_ftr: f64, current_ftr: f64) -> String {
     let baseline_pct = (baseline_ftr * 100.0).round() as i64;
-    let current_pct  = (current_ftr  * 100.0).round() as i64;
+    let current_pct = (current_ftr * 100.0).round() as i64;
     // Attribute to the FTR measurement itself — NOT a multi-model deliberation
     // that never happened (there is one FTR-delta calculation).
     match verdict {
@@ -133,16 +143,21 @@ mod tests {
 
     #[test]
     fn ftr_delta_buckets_verdicts_at_the_5pp_boundary() {
-        assert_eq!(Verdict::from_ftr_delta( 0.06), Verdict::Positive);
-        assert_eq!(Verdict::from_ftr_delta( 0.05), Verdict::Neutral, "5pp is the boundary itself");
-        assert_eq!(Verdict::from_ftr_delta( 0.00), Verdict::Neutral);
+        assert_eq!(Verdict::from_ftr_delta(0.06), Verdict::Positive);
+        assert_eq!(Verdict::from_ftr_delta(0.05), Verdict::Neutral, "5pp is the boundary itself");
+        assert_eq!(Verdict::from_ftr_delta(0.00), Verdict::Neutral);
         assert_eq!(Verdict::from_ftr_delta(-0.05), Verdict::Neutral);
         assert_eq!(Verdict::from_ftr_delta(-0.06), Verdict::Negative);
     }
 
     #[test]
     fn synthesize_positive_includes_lift_headline_body_and_real_models() {
-        let v = synthesize_reasoning(Verdict::Positive, 0.60, 0.78, &["gemma4:27b".into(), "qwen3:14b".into()]);
+        let v = synthesize_reasoning(
+            Verdict::Positive,
+            0.60,
+            0.78,
+            &["gemma4:27b".into(), "qwen3:14b".into()],
+        );
         assert_eq!(v["headline"].as_str().unwrap(), "Strong positive impact — FTR +18pp");
         assert!(v["body"].as_str().unwrap().contains("60% to 78%"));
         // modelsUsed carries the REAL models that ran — verbatim, no invented order/role.
@@ -152,7 +167,12 @@ mod tests {
 
     #[test]
     fn synthesize_negative_includes_regression_and_revision() {
-        let v = synthesize_reasoning(Verdict::Negative, 0.75, 0.60, &["haiku".into(), "qwen".into(), "gemma".into()]);
+        let v = synthesize_reasoning(
+            Verdict::Negative,
+            0.75,
+            0.60,
+            &["haiku".into(), "qwen".into(), "gemma".into()],
+        );
         assert!(v["headline"].as_str().unwrap().starts_with("Regression"));
         assert_eq!(v["modelsUsed"], json!(["haiku", "qwen", "gemma"]));
         assert!(!v["suggestedRevision"].is_null(), "negative always carries a suggested revision");

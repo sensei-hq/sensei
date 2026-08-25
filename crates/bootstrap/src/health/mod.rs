@@ -1,23 +1,26 @@
 //! Public health surface.
 
-pub mod types;
-pub mod ids;
-pub mod graph;
 pub mod checker;
-pub mod resolver;
-pub mod provider;
-pub mod platforms;
 pub mod checkers;
-pub mod resolvers;
+pub mod graph;
+pub mod ids;
+pub mod platforms;
 pub mod process_util;
+pub mod provider;
+pub mod resolver;
+pub mod resolvers;
 pub mod trace;
+pub mod types;
 
-pub use types::*;
-pub use trace::{ActionType, BootstrapTrace, TraceRecorder, TraceSpec, current_recorder, run_traced, run_traced_current, scoped};
-pub use graph::{DependencySpec, dependency_specs, spec_for, installing_verb_for};
-pub use checker::{Checker, CheckOutcome};
-pub use resolver::{Resolver, ResolveOutcome};
+pub use checker::{CheckOutcome, Checker};
+pub use graph::{DependencySpec, dependency_specs, installing_verb_for, spec_for};
 pub use provider::{PlatformProvider, detect_provider};
+pub use resolver::{ResolveOutcome, Resolver};
+pub use trace::{
+    ActionType, BootstrapTrace, TraceRecorder, TraceSpec, current_recorder, run_traced,
+    run_traced_current, scoped,
+};
+pub use types::*;
 
 /// Sync fast path — runs every checker once, returns a validated HealthPayload.
 /// Daemon `GET /health` uses this. No events emitted.
@@ -89,16 +92,28 @@ mod tests {
     // check→report→resolve runs deterministically with a valid terminal.
     struct StubChecker(CheckOutcome);
     impl Checker for StubChecker {
-        fn check(&self) -> CheckOutcome { self.0.clone() }
+        fn check(&self) -> CheckOutcome {
+            self.0.clone()
+        }
     }
 
     struct RecoveringDaemonResolver;
     impl Resolver for RecoveringDaemonResolver {
-        fn id(&self) -> &'static str { "mock-daemon" }
-        fn resolves(&self) -> &'static [ComponentId] { &[ComponentId::Daemon] }
-        fn resolve(&self, _targets: &[ComponentId]) -> ResolveOutcome { ResolveOutcome::Resolved }
+        fn id(&self) -> &'static str {
+            "mock-daemon"
+        }
+        fn resolves(&self) -> &'static [ComponentId] {
+            &[ComponentId::Daemon]
+        }
+        fn resolve(&self, _targets: &[ComponentId]) -> ResolveOutcome {
+            ResolveOutcome::Resolved
+        }
         fn fallback_remedy(&self) -> Remedy {
-            Remedy { message: "start the daemon".into(), script: "brew services start sensei".into(), url: None }
+            Remedy {
+                message: "start the daemon".into(),
+                script: "brew services start sensei".into(),
+                url: None,
+            }
         }
     }
 
@@ -106,8 +121,12 @@ mod tests {
     /// post-resolve recheck (`retry=true`); every other component is ready.
     struct HermeticProvider;
     impl PlatformProvider for HermeticProvider {
-        fn platform(&self) -> Platform { Platform::Macos }
-        fn package_manager_id(&self) -> PackageManagerId { PackageManagerId::Homebrew }
+        fn platform(&self) -> Platform {
+            Platform::Macos
+        }
+        fn package_manager_id(&self) -> PackageManagerId {
+            PackageManagerId::Homebrew
+        }
         fn package_manager_checker(&self) -> Box<dyn Checker> {
             Box::new(StubChecker(CheckOutcome::ready("brew 4.0")))
         }
@@ -119,7 +138,9 @@ mod tests {
             };
             Box::new(StubChecker(outcome))
         }
-        fn resolvers(&self) -> Vec<Box<dyn Resolver>> { vec![Box::new(RecoveringDaemonResolver)] }
+        fn resolvers(&self) -> Vec<Box<dyn Resolver>> {
+            vec![Box::new(RecoveringDaemonResolver)]
+        }
         fn default_remedy(&self) -> Remedy {
             Remedy { message: "m".into(), script: "s".into(), url: None }
         }
@@ -157,8 +178,9 @@ mod tests {
         // Hermetic mock (not the real machine) so the orchestration is
         // deterministic and the resolve path always runs.
         let events = Mutex::new(Vec::<HealthEvent>::new());
-        let _final = check_and_resolve_with(&HermeticProvider, "0.0.0-test",
-            &|e| events.lock().unwrap().push(e));
+        let _final = check_and_resolve_with(&HermeticProvider, "0.0.0-test", &|e| {
+            events.lock().unwrap().push(e)
+        });
         let evs = events.lock().unwrap();
 
         // Phase(Checking) is always first.
@@ -167,13 +189,15 @@ mod tests {
         // The initial Report broadcasts before any Phase(Resolving) — so the
         // UI never goes blank. With this mock the resolve path always fires.
         let first_report = evs.iter().position(|e| matches!(e, HealthEvent::Report { .. }));
-        let phase_resolving = evs.iter().position(|e| matches!(
-            e, HealthEvent::Phase { phase: HealthStatus::Resolving }
-        ));
+        let phase_resolving = evs
+            .iter()
+            .position(|e| matches!(e, HealthEvent::Phase { phase: HealthStatus::Resolving }));
         assert!(first_report.is_some(), "must emit at least one Report");
         assert!(phase_resolving.is_some(), "the mock's failed Daemon forces the resolve path");
-        assert!(first_report.unwrap() < phase_resolving.unwrap(),
-            "initial Report must precede Phase(Resolving)");
+        assert!(
+            first_report.unwrap() < phase_resolving.unwrap(),
+            "initial Report must precede Phase(Resolving)"
+        );
     }
 
     #[test]
@@ -182,17 +206,20 @@ mod tests {
         // recovers it → a valid terminal, no real-machine probing.
         let provider = HermeticProvider;
         let initial = provider.check("0.0.0-test");
-        assert_eq!(initial.status, HealthStatus::NeedsAction,
-            "the mock's initial check must be not-ok to exercise resolve");
+        assert_eq!(
+            initial.status,
+            HealthStatus::NeedsAction,
+            "the mock's initial check must be not-ok to exercise resolve"
+        );
 
         let events = Mutex::new(Vec::<HealthEvent>::new());
-        let terminal = provider.resolve(&initial, "0.0.0-test",
-            &|e| events.lock().unwrap().push(e));
+        let terminal =
+            provider.resolve(&initial, "0.0.0-test", &|e| events.lock().unwrap().push(e));
         terminal.validate().expect("terminal must validate");
 
         let evs = events.lock().unwrap();
         // Not ok: must emit Phase(Resolving) first and a final Report.
         assert!(matches!(evs.first(), Some(HealthEvent::Phase { phase: HealthStatus::Resolving })));
-        assert!(matches!(evs.last(),  Some(HealthEvent::Report { .. })));
+        assert!(matches!(evs.last(), Some(HealthEvent::Report { .. })));
     }
 }

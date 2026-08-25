@@ -23,8 +23,8 @@
 //! entry the daemon doesn't yet know about degrades to a warning, never a panic or a
 //! stuck queue.
 
-use super::super::executor::TaskContext;
 use super::super::Task;
+use super::super::executor::TaskContext;
 use crate::db::pg_store::PgStore;
 
 /// Per-group computers. `session_outcomes` is the first real one (Phase 5.1) and
@@ -34,6 +34,7 @@ use crate::db::pg_store::PgStore;
 /// superseded the former own-graph `duplication` snapshot.
 mod autonomy;
 mod churn;
+mod cost;
 pub(crate) mod coverage;
 mod explainer;
 mod health;
@@ -42,6 +43,7 @@ pub(crate) mod planner;
 mod quality;
 mod session_outcomes;
 mod session_process;
+mod usage;
 
 /// Today's date (DB `current_date`) — the `computed_on` for the SNAPSHOT metrics
 /// (`churn`'s `rework_density`) that store a point-in-time value rather than a
@@ -159,6 +161,12 @@ pub(crate) enum MetricGroup {
     /// LLM process-quality judgments (spec 2026-08-20): day-keyed metrics derived
     /// from `sessions.props.process` (spec_depth + the three occurrence rates).
     SessionProcess,
+    /// Real money: the configured subscription divided by what shipped in the
+    /// trailing window. SNAPSHOT cadence — anchored to now, forward-only.
+    Cost,
+    /// Context-reuse efficiency (`cache_reuse`) from the per-turn token split.
+    /// DAY-KEYED: each day's sessions are settled once the day is past.
+    Usage,
 }
 
 impl MetricGroup {
@@ -171,6 +179,8 @@ impl MetricGroup {
             "quality" => Some(Self::Quality),
             "autonomy" => Some(Self::Autonomy),
             "knowledge" => Some(Self::Knowledge),
+            "cost" => Some(Self::Cost),
+            "usage" => Some(Self::Usage),
             "coverage" => Some(Self::Coverage),
             "session_process" => Some(Self::SessionProcess),
             _ => None,
@@ -185,6 +195,8 @@ impl MetricGroup {
             Self::Quality => "quality",
             Self::Autonomy => "autonomy",
             Self::Knowledge => "knowledge",
+            Self::Cost => "cost",
+            Self::Usage => "usage",
             Self::Coverage => "coverage",
             Self::SessionProcess => "session_process",
         }
@@ -263,12 +275,18 @@ mod tests {
     fn metric_group_routes_known_task_names() {
         // Every v1 base group maps to its typed group — the routing seam the
         // dispatch relies on.
-        assert_eq!(MetricGroup::from_task_name("session_outcomes"), Some(MetricGroup::SessionOutcomes));
+        assert_eq!(
+            MetricGroup::from_task_name("session_outcomes"),
+            Some(MetricGroup::SessionOutcomes)
+        );
         assert_eq!(MetricGroup::from_task_name("churn"), Some(MetricGroup::Churn));
         assert_eq!(MetricGroup::from_task_name("quality"), Some(MetricGroup::Quality));
         assert_eq!(MetricGroup::from_task_name("autonomy"), Some(MetricGroup::Autonomy));
         assert_eq!(MetricGroup::from_task_name("knowledge"), Some(MetricGroup::Knowledge));
-        assert_eq!(MetricGroup::from_task_name("session_process"), Some(MetricGroup::SessionProcess));
+        assert_eq!(
+            MetricGroup::from_task_name("session_process"),
+            Some(MetricGroup::SessionProcess)
+        );
         assert_eq!(MetricGroup::from_task_name("coverage"), Some(MetricGroup::Coverage));
         // `tool` is retired (unused_tools → the tool_usage_by_repository view), no longer a group.
         assert_eq!(MetricGroup::from_task_name("tool"), None);

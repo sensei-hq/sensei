@@ -35,11 +35,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::collective::anonymize::{
-    current_rotation_bucket, ContributorIdentity, GatewayGeneralizer, Generalizer,
+    ContributorIdentity, GatewayGeneralizer, Generalizer, current_rotation_bucket,
 };
 use crate::collective::preferences;
 use crate::db::pg_store::PgStore;
-use crate::dojo::contribute::{load_batch, stage_contribution, PgOutbox, StageOutcome};
+use crate::dojo::contribute::{PgOutbox, StageOutcome, load_batch, stage_contribution};
 
 /// How often the scheduler WAKES to check whether a batch is due. The cadence
 /// (`daily` / `weekly`) is enforced by [`contribute_due`]; this is only the poll
@@ -153,7 +153,9 @@ pub async fn maybe_prepare_contribution_batch<G: Generalizer>(
         }
     };
     let outbox = PgOutbox(pg);
-    let outcome = stage_contribution(&loaded, &outbox, generalizer, &contributor, current_rotation_bucket()).await;
+    let outcome =
+        stage_contribution(&loaded, &outbox, generalizer, &contributor, current_rotation_bucket())
+            .await;
 
     // 5. Advance the watermark only when the prepare actually touched the outbox
     //    (staged or held), so an unroutable batch (NoDestination) re-checks next
@@ -190,6 +192,10 @@ pub fn spawn(pg: Arc<PgStore>, gateway: Arc<gateway::Gateway>) {
 }
 
 #[cfg(test)]
+// Test gates are blocking `std::sync::Mutex` held across awaits ON PURPOSE —
+// see `crate::tasks::test_support::TestGate` for why an async mutex loses
+// wakeups across per-test runtimes. One allow per test module, not per site.
+#[allow(clippy::await_holding_lock)]
 mod tests {
     use super::*;
 
@@ -227,32 +233,54 @@ mod tests {
         use crate::db::pg_store::{InsertMemory, NewDojoMembership};
         use crate::dojo::contribute::NoLlm;
 
-        let Ok(pg) = PgStore::connect_test().await else { return; };
-        let _guard = preferences::test_lock().lock().await;
+        let Ok(pg) = PgStore::connect_test().await else {
+            return;
+        };
+        let _guard = preferences::test_lock().enter();
 
         // A project + memory + APPROVED batch, a destination membership, and the
         // project bound to it so routing yields exactly one target.
         let proj = pg.create_project("_test:dojo:contribute_sched", None, None).await.unwrap();
-        let mem = pg.insert_memory(&InsertMemory {
-            project_id: Some(proj), scope: "project".into(), scope_filter: None,
-            mtype: "convention".into(), title: "gate on green ci".into(),
-            content: "Gate merges on a green pipeline before deploy.".into(),
-            impact: None, tags: vec![], triage_signal: None, status: "active".into(),
-            namespace_id: None, enforcement: None, origin: Some("learned".into()), source_id: None,
-            spine_slot: None, feature: None,
-        }).await.unwrap();
+        let mem = pg
+            .insert_memory(&InsertMemory {
+                project_id: Some(proj),
+                scope: "project".into(),
+                scope_filter: None,
+                mtype: "convention".into(),
+                title: "gate on green ci".into(),
+                content: "Gate merges on a green pipeline before deploy.".into(),
+                impact: None,
+                tags: vec![],
+                triage_signal: None,
+                status: "active".into(),
+                namespace_id: None,
+                enforcement: None,
+                origin: Some("learned".into()),
+                source_id: None,
+                spine_slot: None,
+                feature: None,
+            })
+            .await
+            .unwrap();
         let batch = pg.create_memory_share_batch(&proj, &[mem], None).await.unwrap();
         pg.set_memory_share_batch_status(&batch, "approved", None).await.unwrap();
 
         let mid = uuid::Uuid::new_v4();
         pg.create_dojo_membership(&NewDojoMembership {
-            id: mid, registry_url: "http://localhost:7755".into(), tenant_key: "github/acme-corp".into(),
-            dojo_url: "http://localhost:7755/github/acme-corp".into(), kind: "employer".into(),
+            id: mid,
+            registry_url: "http://localhost:7755".into(),
+            tenant_key: "github/acme-corp".into(),
+            dojo_url: "http://localhost:7755/github/acme-corp".into(),
+            kind: "employer".into(),
             org_slugs: vec![],
-            role: "contributor".into(), authenticated_via: "device_code".into(),
+            role: "contributor".into(),
+            authenticated_via: "device_code".into(),
             attribution_default: "named".into(),
-            credential_ref: format!("dojo-{}", uuid::Uuid::new_v4()), sync_status: "healthy".into(),
-        }).await.unwrap();
+            credential_ref: format!("dojo-{}", uuid::Uuid::new_v4()),
+            sync_status: "healthy".into(),
+        })
+        .await
+        .unwrap();
         pg.bind_project_to_dojo(&proj, Some(&mid)).await.unwrap();
 
         // Clean slate for the watermark this test drives.
@@ -293,7 +321,9 @@ mod tests {
         assert!(pg.delete_dojo_membership(&mid).await.unwrap());
         pg.delete_project(&proj).await.unwrap();
         sqlx_core::query::query("DELETE FROM sensei.collective_preferences")
-            .execute(pg.pool()).await.unwrap();
+            .execute(pg.pool())
+            .await
+            .unwrap();
         pg.delete_config(LAST_PREPARED_KEY).await.unwrap();
     }
 
@@ -308,7 +338,8 @@ mod tests {
     async fn set_prefs(pg: &PgStore, destination: &str, cadence: &str) {
         let prefs = preferences::CollectivePreferences::from_request(
             &serde_json::json!({ "destination": destination, "cadence": cadence }),
-        ).unwrap();
+        )
+        .unwrap();
         preferences::set(pg, prefs).await.unwrap();
     }
 }

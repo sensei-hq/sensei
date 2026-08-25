@@ -139,10 +139,17 @@ db-backup-rotate:
 # contents can't be reconstructed from the source tree:
 #   • assistant_events / sessions / transcript_turns / turns — captured user
 #     activity that has no other source of truth
-#   • memories / detected_patterns / recommendations / reasoning_trace /
-#     corrections — derived signals distilled by the analyzer that survive
-#     raw-event pruning
-#   • projects / folders / folders_to_watch — user identity + scope mapping
+#   • memories / detected_patterns / recommendations / reasoning_traces /
+#     corrections / drift_items — derived signals distilled by the analyzer that
+#     survive raw-event pruning
+#   • tool_insights / session_process_evidence / playbook_rules /
+#     consolidated_rulesets / memory_outcomes — LLM-derived and accumulated
+#     learning. Re-running the analyzer costs real inference spend AND returns
+#     different text, so these are not reproducible even in principle.
+#   • projects / folders / folders_to_watch / repositories / folder_path_aliases
+#     — user identity + scope mapping. The aliases are load-bearing: they are
+#     what re-attributes a renamed repo's history (dbd-rs → dbd), so losing them
+#     orphans sessions that currently resolve.
 #
 # NOT exported (rebuildable):
 #   • nodes / edges / scan_state — comes from a full scan
@@ -169,9 +176,13 @@ db-backup-essential:
 	  mkdir -p "$$outdir"; \
 	  echo "Essential backup → $$outdir"; \
 	  for t in activity.assistant_events activity.sessions activity.transcript_turns activity.turns \
-	           sensei.memories inference.detected_patterns inference.recommendations \
-	           inference.reasoning_trace inference.corrections \
-	           sensei.projects sensei.folders sensei.folders_to_watch; do \
+	           activity.session_process_evidence \
+	           sensei.memories sensei.memory_outcomes sensei.tool_insights \
+	           sensei.playbook_rules sensei.consolidated_rulesets \
+	           inference.detected_patterns inference.recommendations \
+	           inference.reasoning_traces inference.corrections inference.drift_items \
+	           sensei.projects sensei.folders sensei.folders_to_watch \
+	           sensei.repositories sensei.folder_path_aliases; do \
 	    DATABASE_URL="postgres://localhost/sensei" \
 	      dbd export -n "$$t" --format jsonl \
 	                 --output "$$outdir" \

@@ -11,7 +11,7 @@
 	}: { title: string; eyebrow?: string } = $props();
 </script>
 
-<div class="flex flex-col p-8 gap-6">
+<div class="flex flex-col p-4 gap-4 md:p-8 md:gap-6">
 	<SectionHead {eyebrow} {title} />
 	<EmptyState kanji="築" title="Coming in the rebuild">
 		This screen is being ported to the new dōjō. Its data and actions land in a later chunk — the

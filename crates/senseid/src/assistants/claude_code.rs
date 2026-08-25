@@ -1,8 +1,8 @@
+use super::AssistantPart;
+use super::helpers::{find_claude_binary, home};
+use super::trait_def::{Assistant, AssistantConfigureOk};
 use std::path::{Path, PathBuf};
 use tracing::{info, warn};
-use super::trait_def::{Assistant, AssistantConfigureOk};
-use super::helpers::{home, find_claude_binary};
-use super::AssistantPart;
 
 use crate::assistants::{AdapterCheck, CheckStatus};
 use crate::paths::MARKETPLACE_REPO as SENSEI_MARKETPLACE_REPO;
@@ -14,7 +14,9 @@ use crate::paths::MARKETPLACE_REPO as SENSEI_MARKETPLACE_REPO;
 /// exit code alone — confirm the manifest actually has the plugin).
 fn verify_plugin_installed(manifest_path: &Path, plugin_name: &str) -> bool {
     let Some(content) = std::fs::read_to_string(manifest_path).ok() else { return false };
-    let Some(value) = serde_json::from_str::<serde_json::Value>(&content).ok() else { return false };
+    let Some(value) = serde_json::from_str::<serde_json::Value>(&content).ok() else {
+        return false;
+    };
     let Some(plugins) = value.get("plugins").and_then(|p| p.as_object()) else { return false };
     let prefix = format!("{}@", plugin_name);
     plugins.keys().any(|k| k.starts_with(&prefix))
@@ -22,40 +24,72 @@ fn verify_plugin_installed(manifest_path: &Path, plugin_name: &str) -> bool {
 
 /// settings.json → enabledPlugins["sensei@sensei-marketplace"] == true.
 pub(super) fn check_enabled(settings_path: &Path) -> AdapterCheck {
-    let id = "enabled"; let label = "plugin enabled";
+    let id = "enabled";
+    let label = "plugin enabled";
     let Some(content) = std::fs::read_to_string(settings_path).ok() else {
-        return AdapterCheck::new(id, label, CheckStatus::Fail, Some("settings.json missing".into()));
+        return AdapterCheck::new(
+            id,
+            label,
+            CheckStatus::Fail,
+            Some("settings.json missing".into()),
+        );
     };
     let Some(v) = json5::from_str::<serde_json::Value>(&content).ok() else {
-        return AdapterCheck::new(id, label, CheckStatus::Unknown, Some("settings.json unparseable".into()));
+        return AdapterCheck::new(
+            id,
+            label,
+            CheckStatus::Unknown,
+            Some("settings.json unparseable".into()),
+        );
     };
-    let enabled = v.get("enabledPlugins")
+    let enabled = v
+        .get("enabledPlugins")
         .and_then(|m| m.get("sensei@sensei-marketplace"))
         .and_then(|b| b.as_bool())
         .unwrap_or(false);
     if enabled {
         AdapterCheck::new(id, label, CheckStatus::Ok, None)
     } else {
-        AdapterCheck::new(id, label, CheckStatus::Fail, Some("enabledPlugins[sensei@sensei-marketplace] != true".into()))
+        AdapterCheck::new(
+            id,
+            label,
+            CheckStatus::Fail,
+            Some("enabledPlugins[sensei@sensei-marketplace] != true".into()),
+        )
     }
 }
 
 /// settings.json → extraKnownMarketplaces["sensei-marketplace"] present.
 pub(super) fn check_marketplace(settings_path: &Path) -> AdapterCheck {
-    let id = "marketplace"; let label = "marketplace registered";
+    let id = "marketplace";
+    let label = "marketplace registered";
     let Some(content) = std::fs::read_to_string(settings_path).ok() else {
-        return AdapterCheck::new(id, label, CheckStatus::Fail, Some("settings.json missing".into()));
+        return AdapterCheck::new(
+            id,
+            label,
+            CheckStatus::Fail,
+            Some("settings.json missing".into()),
+        );
     };
     let Some(v) = json5::from_str::<serde_json::Value>(&content).ok() else {
-        return AdapterCheck::new(id, label, CheckStatus::Unknown, Some("settings.json unparseable".into()));
+        return AdapterCheck::new(
+            id,
+            label,
+            CheckStatus::Unknown,
+            Some("settings.json unparseable".into()),
+        );
     };
-    let present = v.get("extraKnownMarketplaces")
-        .and_then(|m| m.get("sensei-marketplace"))
-        .is_some();
+    let present =
+        v.get("extraKnownMarketplaces").and_then(|m| m.get("sensei-marketplace")).is_some();
     if present {
         AdapterCheck::new(id, label, CheckStatus::Ok, None)
     } else {
-        AdapterCheck::new(id, label, CheckStatus::Fail, Some("sensei-marketplace not registered".into()))
+        AdapterCheck::new(
+            id,
+            label,
+            CheckStatus::Fail,
+            Some("sensei-marketplace not registered".into()),
+        )
     }
 }
 
@@ -64,8 +98,12 @@ pub(super) fn check_plugin(manifest_path: &Path) -> AdapterCheck {
     if verify_plugin_installed(manifest_path, "sensei") {
         AdapterCheck::new("plugin", "plugin installed", CheckStatus::Ok, None)
     } else {
-        AdapterCheck::new("plugin", "plugin installed", CheckStatus::Fail,
-            Some("sensei not recorded in installed_plugins.json".into()))
+        AdapterCheck::new(
+            "plugin",
+            "plugin installed",
+            CheckStatus::Fail,
+            Some("sensei not recorded in installed_plugins.json".into()),
+        )
     }
 }
 
@@ -75,26 +113,52 @@ pub(super) fn check_plugin(manifest_path: &Path) -> AdapterCheck {
 /// this reads the same manifest Claude Code loads — otherwise a healthy install
 /// false-positive-fails. `install_path` is read from installed_plugins.json.
 pub(super) fn check_hooks(install_path: Option<&Path>) -> AdapterCheck {
-    let id = "hooks"; let label = "hooks registered";
+    let id = "hooks";
+    let label = "hooks registered";
     let Some(dir) = install_path else {
-        return AdapterCheck::new(id, label, CheckStatus::Fail, Some("no plugin installPath recorded".into()));
+        return AdapterCheck::new(
+            id,
+            label,
+            CheckStatus::Fail,
+            Some("no plugin installPath recorded".into()),
+        );
     };
     if !dir.exists() {
-        return AdapterCheck::new(id, label, CheckStatus::Fail, Some(format!("installPath missing: {}", dir.display())));
+        return AdapterCheck::new(
+            id,
+            label,
+            CheckStatus::Fail,
+            Some(format!("installPath missing: {}", dir.display())),
+        );
     }
     let manifest = dir.join(".claude-plugin/plugin.json");
     let Some(content) = std::fs::read_to_string(&manifest).ok() else {
-        return AdapterCheck::new(id, label, CheckStatus::Fail, Some(".claude-plugin/plugin.json missing".into()));
+        return AdapterCheck::new(
+            id,
+            label,
+            CheckStatus::Fail,
+            Some(".claude-plugin/plugin.json missing".into()),
+        );
     };
     let Some(v) = json5::from_str::<serde_json::Value>(&content).ok() else {
-        return AdapterCheck::new(id, label, CheckStatus::Unknown, Some("plugin.json unparseable".into()));
+        return AdapterCheck::new(
+            id,
+            label,
+            CheckStatus::Unknown,
+            Some("plugin.json unparseable".into()),
+        );
     };
     let hooks = v.get("hooks");
     let has = |evt: &str| hooks.and_then(|h| h.get(evt)).is_some();
     if has("PreToolUse") && has("PostToolUse") {
         AdapterCheck::new(id, label, CheckStatus::Ok, None)
     } else {
-        AdapterCheck::new(id, label, CheckStatus::Fail, Some("PreToolUse/PostToolUse not declared in plugin.json hooks".into()))
+        AdapterCheck::new(
+            id,
+            label,
+            CheckStatus::Fail,
+            Some("PreToolUse/PostToolUse not declared in plugin.json hooks".into()),
+        )
     }
 }
 
@@ -167,8 +231,11 @@ fn proc_start_utc(pid: u32) -> Option<String> {
     let out = std::process::Command::new("ps")
         .env("TZ", "UTC")
         .args(["-o", "lstart=", "-p", &pid.to_string()])
-        .output().ok()?;
-    if !out.status.success() { return None; }
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
     clean_lstart(&String::from_utf8_lossy(&out.stdout))
 }
 
@@ -204,10 +271,10 @@ fn clean_sensei_from_mcp_file(path: &Path) -> Result<Vec<String>, String> {
     if !path.exists() {
         return Ok(vec![]);
     }
-    let original = std::fs::read_to_string(path)
-        .map_err(|e| format!("read {}: {}", path.display(), e))?;
-    let mut value: serde_json::Value = json5::from_str(&original)
-        .map_err(|e| format!("parse {}: {}", path.display(), e))?;
+    let original =
+        std::fs::read_to_string(path).map_err(|e| format!("read {}: {}", path.display(), e))?;
+    let mut value: serde_json::Value =
+        json5::from_str(&original).map_err(|e| format!("parse {}: {}", path.display(), e))?;
 
     let Some(servers) = value.get_mut("mcpServers").and_then(|s| s.as_object_mut()) else {
         return Ok(vec![]);
@@ -226,7 +293,9 @@ fn clean_sensei_from_mcp_file(path: &Path) -> Result<Vec<String>, String> {
     // Backup BEFORE the destructive write. If anything below fails the user
     // still has the original on disk at `<path>.bak`.
     let backup = path.with_extension(
-        path.extension().and_then(|e| e.to_str()).map(|e| format!("{}.bak", e))
+        path.extension()
+            .and_then(|e| e.to_str())
+            .map(|e| format!("{}.bak", e))
             .unwrap_or_else(|| "bak".into()),
     );
     std::fs::write(&backup, &original)
@@ -234,8 +303,7 @@ fn clean_sensei_from_mcp_file(path: &Path) -> Result<Vec<String>, String> {
 
     let serialized = serde_json::to_string_pretty(&value)
         .map_err(|e| format!("serialise {}: {}", path.display(), e))?;
-    std::fs::write(path, serialized)
-        .map_err(|e| format!("write {}: {}", path.display(), e))?;
+    std::fs::write(path, serialized).map_err(|e| format!("write {}: {}", path.display(), e))?;
 
     info!(path = %path.display(), removed = ?removed, "cleaned stale sensei mcp entries");
     Ok(removed)
@@ -273,20 +341,23 @@ fn clean_legacy_sensei_hooks(settings_path: &Path) -> Result<Vec<String>, String
         };
         let mut modified = false;
         groups.retain_mut(|group| {
-            let Some(group_obj) = group.as_object_mut() else { return true; };
-            let Some(inner_hooks) = group_obj.get_mut("hooks").and_then(|h| h.as_array_mut()) else {
+            let Some(group_obj) = group.as_object_mut() else {
+                return true;
+            };
+            let Some(inner_hooks) = group_obj.get_mut("hooks").and_then(|h| h.as_array_mut())
+            else {
                 return true;
             };
             let before = inner_hooks.len();
             inner_hooks.retain(|hook| {
                 let cmd = hook.get("command").and_then(|c| c.as_str()).unwrap_or("");
-                let basename = std::path::Path::new(cmd)
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("");
+                let basename =
+                    std::path::Path::new(cmd).file_name().and_then(|n| n.to_str()).unwrap_or("");
                 !LEGACY_SENSEI_HOOK_BASENAMES.contains(&basename)
             });
-            if inner_hooks.len() != before { modified = true; }
+            if inner_hooks.len() != before {
+                modified = true;
+            }
             // Drop the matcher group when its only hooks were legacy entries.
             !inner_hooks.is_empty()
         });
@@ -303,7 +374,10 @@ fn clean_legacy_sensei_hooks(settings_path: &Path) -> Result<Vec<String>, String
     }
 
     let backup = settings_path.with_extension(
-        settings_path.extension().and_then(|e| e.to_str()).map(|e| format!("{}.bak", e))
+        settings_path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| format!("{}.bak", e))
             .unwrap_or_else(|| "bak".into()),
     );
     std::fs::write(&backup, &original)
@@ -337,12 +411,24 @@ fn delete_legacy_sensei_hook_files(home_dir: &Path) -> Vec<PathBuf> {
 pub(crate) struct ClaudeCodeAssistant;
 
 impl Assistant for ClaudeCodeAssistant {
-    fn id(&self) -> &str { "claude-code" }
-    fn name(&self) -> &str { "Claude Code" }
-    fn family(&self) -> &str { "claude" }
-    fn family_name(&self) -> &str { "Claude" }
-    fn mcp_key(&self) -> &str { "mcpServers" }
-    fn config_path(&self) -> PathBuf { home().join(".claude/settings.json") }
+    fn id(&self) -> &str {
+        "claude-code"
+    }
+    fn name(&self) -> &str {
+        "Claude Code"
+    }
+    fn family(&self) -> &str {
+        "claude"
+    }
+    fn family_name(&self) -> &str {
+        "Claude"
+    }
+    fn mcp_key(&self) -> &str {
+        "mcpServers"
+    }
+    fn config_path(&self) -> PathBuf {
+        home().join(".claude/settings.json")
+    }
 
     /// Claude Code's plugin install lands five capability areas at once:
     /// plugins (the manifest), skills, commands, agents, and the bundled
@@ -353,11 +439,11 @@ impl Assistant for ClaudeCodeAssistant {
     /// MCP; the wizard's Instruments stage handles third-party MCPs only.
     fn parts(&self) -> Vec<AssistantPart> {
         vec![
-            AssistantPart { id: "plugins".into(),  label: "plugins".into() },
-            AssistantPart { id: "skills".into(),   label: "skills".into() },
+            AssistantPart { id: "plugins".into(), label: "plugins".into() },
+            AssistantPart { id: "skills".into(), label: "skills".into() },
             AssistantPart { id: "commands".into(), label: "commands".into() },
-            AssistantPart { id: "agents".into(),   label: "agents".into() },
-            AssistantPart { id: "mcp".into(),      label: "mcp server".into() },
+            AssistantPart { id: "agents".into(), label: "agents".into() },
+            AssistantPart { id: "mcp".into(), label: "mcp server".into() },
         ]
     }
 
@@ -379,8 +465,8 @@ impl Assistant for ClaudeCodeAssistant {
     }
 
     fn config_health(&self) -> Vec<AdapterCheck> {
-        let settings = self.config_path();                 // ~/.claude/settings.json
-        let manifest = installed_plugins_manifest();       // ~/.claude/plugins/installed_plugins.json
+        let settings = self.config_path(); // ~/.claude/settings.json
+        let manifest = installed_plugins_manifest(); // ~/.claude/plugins/installed_plugins.json
         let install_path = plugin_install_path(&manifest);
         vec![
             check_marketplace(&settings),
@@ -398,7 +484,9 @@ impl Assistant for ClaudeCodeAssistant {
         let Some(install_path) = plugin_install_path(&installed_plugins_manifest()) else { return };
         let pid = std::process::id();
         let Some(proc_start) = proc_start_utc(pid) else {
-            warn!("keep_alive: could not read daemon process start time; in-use marker not refreshed");
+            warn!(
+                "keep_alive: could not read daemon process start time; in-use marker not refreshed"
+            );
             return;
         };
         if let Err(e) = write_in_use_marker(&install_path, pid, &proc_start) {
@@ -407,8 +495,8 @@ impl Assistant for ClaudeCodeAssistant {
     }
 
     fn configure(&self, _mcp_cmd: &str) -> Result<AssistantConfigureOk, String> {
-        let claude_bin = find_claude_binary()
-            .ok_or_else(|| "claude binary not found on PATH".to_string())?;
+        let claude_bin =
+            find_claude_binary().ok_or_else(|| "claude binary not found on PATH".to_string())?;
 
         let mut warnings = Vec::new();
 
@@ -423,7 +511,7 @@ impl Assistant for ClaudeCodeAssistant {
             Ok(removed) if !removed.is_empty() => {
                 info!(removed = ?removed, "configure: cleaned stale sensei entries from ~/.claude/mcp.json");
             }
-            Ok(_)  => {}
+            Ok(_) => {}
             Err(e) => warnings.push(format!("cleanup ~/.claude/mcp.json: {}", e)),
         }
 
@@ -481,8 +569,8 @@ impl Assistant for ClaudeCodeAssistant {
     /// `installed_plugins.json` and confirm sensei is still recorded before
     /// declaring success.
     fn upgrade(&self) -> Result<AssistantConfigureOk, String> {
-        let claude_bin = find_claude_binary()
-            .ok_or_else(|| "claude binary not found on PATH".to_string())?;
+        let claude_bin =
+            find_claude_binary().ok_or_else(|| "claude binary not found on PATH".to_string())?;
 
         let update_out = std::process::Command::new(&claude_bin)
             .args(plugin_update_args())
@@ -589,11 +677,14 @@ impl Assistant for ClaudeCodeAssistant {
 /// `marketplace_name`. Probes the registry before issuing `marketplace add`
 /// so a re-run of `configure()` is idempotent without sniffing stderr.
 fn marketplace_registered(claude_bin: &Path, marketplace_name: &str) -> bool {
-    let Ok(out) = std::process::Command::new(claude_bin)
-        .args(["plugin", "marketplace", "list"])
-        .output()
-    else { return false };
-    if !out.status.success() { return false }
+    let Ok(out) =
+        std::process::Command::new(claude_bin).args(["plugin", "marketplace", "list"]).output()
+    else {
+        return false;
+    };
+    if !out.status.success() {
+        return false;
+    }
     let stdout = String::from_utf8_lossy(&out.stdout);
     stdout.lines().any(|l| l.contains(marketplace_name))
 }
@@ -606,13 +697,11 @@ fn combined_output(out: &std::process::Output) -> String {
     let stderr = String::from_utf8_lossy(&out.stderr);
     let stdout = stdout.trim();
     let stderr = stderr.trim();
-    let code = out.status.code()
-        .map(|c| c.to_string())
-        .unwrap_or_else(|| "?".into());
+    let code = out.status.code().map(|c| c.to_string()).unwrap_or_else(|| "?".into());
     match (stdout.is_empty(), stderr.is_empty()) {
-        (true,  true)  => format!("exit={} (no output)", code),
-        (true,  false) => format!("exit={} stderr: {}", code, stderr),
-        (false, true)  => format!("exit={} stdout: {}", code, stdout),
+        (true, true) => format!("exit={} (no output)", code),
+        (true, false) => format!("exit={} stderr: {}", code, stderr),
+        (false, true) => format!("exit={} stdout: {}", code, stdout),
         (false, false) => format!("exit={} stdout: {} | stderr: {}", code, stdout, stderr),
     }
 }
@@ -654,8 +743,10 @@ mod tests {
     #[test]
     fn clean_lstart_trims_padding_and_rejects_empty() {
         // `ps -o lstart=` right-pads its output; the marker must store the bare string.
-        assert_eq!(clean_lstart("Thu Jun 18 14:15:10 2026    \n").as_deref(),
-            Some("Thu Jun 18 14:15:10 2026"));
+        assert_eq!(
+            clean_lstart("Thu Jun 18 14:15:10 2026    \n").as_deref(),
+            Some("Thu Jun 18 14:15:10 2026")
+        );
         assert_eq!(clean_lstart("   "), None);
         assert_eq!(clean_lstart(""), None);
     }
@@ -668,8 +759,10 @@ mod tests {
         write_in_use_marker(&install, 4242, "Thu Jun 18 14:15:10 2026").unwrap();
         let marker = install.join(".in_use/4242");
         assert!(marker.exists(), "marker file not written");
-        assert_eq!(std::fs::read_to_string(&marker).unwrap(),
-            r#"{"pid":4242,"procStart":"Thu Jun 18 14:15:10 2026"}"#);
+        assert_eq!(
+            std::fs::read_to_string(&marker).unwrap(),
+            r#"{"pid":4242,"procStart":"Thu Jun 18 14:15:10 2026"}"#
+        );
     }
 
     #[test]
@@ -698,7 +791,9 @@ mod tests {
     fn verify_plugin_installed_true_when_sensei_recorded() {
         let tmp = make_tmp_home();
         let manifest = tmp.path().join("installed_plugins.json");
-        std::fs::write(&manifest, r#"{
+        std::fs::write(
+            &manifest,
+            r#"{
             "version": 2,
             "plugins": {
                 "feature-dev@claude-plugins-official": [],
@@ -706,7 +801,9 @@ mod tests {
                     { "scope": "user", "installPath": "/foo", "version": "0.2.13" }
                 ]
             }
-        }"#).unwrap();
+        }"#,
+        )
+        .unwrap();
         assert!(verify_plugin_installed(&manifest, "sensei"));
     }
 
@@ -729,13 +826,17 @@ mod tests {
     fn verify_plugin_installed_false_when_sensei_absent() {
         let tmp = make_tmp_home();
         let manifest = tmp.path().join("installed_plugins.json");
-        std::fs::write(&manifest, r#"{
+        std::fs::write(
+            &manifest,
+            r#"{
             "version": 2,
             "plugins": {
                 "feature-dev@claude-plugins-official": [],
                 "playwright@claude-plugins-official": []
             }
-        }"#).unwrap();
+        }"#,
+        )
+        .unwrap();
         assert!(!verify_plugin_installed(&manifest, "sensei"));
     }
 
@@ -752,12 +853,16 @@ mod tests {
         // A plugin called "not-sensei@..." must not be confused with sensei.
         let tmp = make_tmp_home();
         let manifest = tmp.path().join("installed_plugins.json");
-        std::fs::write(&manifest, r#"{
+        std::fs::write(
+            &manifest,
+            r#"{
             "version": 2,
             "plugins": {
                 "not-sensei@some-marketplace": []
             }
-        }"#).unwrap();
+        }"#,
+        )
+        .unwrap();
         assert!(!verify_plugin_installed(&manifest, "sensei"));
     }
 
@@ -775,17 +880,22 @@ mod tests {
     fn clean_sensei_from_mcp_file_removes_sensei_entry() {
         let tmp = make_tmp_home();
         let mcp = tmp.path().join("mcp.json");
-        std::fs::write(&mcp, r#"{
+        std::fs::write(
+            &mcp,
+            r#"{
             "mcpServers": {
                 "sensei":    { "command": "sensei-mcp" },
                 "playwright": { "command": "npx", "args": ["@playwright/mcp@latest"] }
             }
-        }"#).unwrap();
+        }"#,
+        )
+        .unwrap();
 
         let removed = clean_sensei_from_mcp_file(&mcp).unwrap();
         assert_eq!(removed.iter().map(|s| s.as_str()).collect::<Vec<_>>(), vec!["sensei"]);
 
-        let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&mcp).unwrap()).unwrap();
+        let v: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&mcp).unwrap()).unwrap();
         assert!(v["mcpServers"]["sensei"].is_null(), "sensei key should be gone");
         assert!(v["mcpServers"]["playwright"].is_object(), "playwright key must survive");
     }
@@ -857,10 +967,14 @@ mod tests {
 
         let v: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&settings).unwrap()).unwrap();
-        assert!(v["hooks"]["SessionStart"].is_null(),
-            "SessionStart should be removed entirely (had only legacy hook)");
-        assert!(v["hooks"]["PreToolUse"].is_array(),
-            "PreToolUse should survive (no legacy entries)");
+        assert!(
+            v["hooks"]["SessionStart"].is_null(),
+            "SessionStart should be removed entirely (had only legacy hook)"
+        );
+        assert!(
+            v["hooks"]["PreToolUse"].is_array(),
+            "PreToolUse should survive (no legacy entries)"
+        );
     }
 
     #[test]
@@ -914,14 +1028,14 @@ mod tests {
     fn clean_legacy_sensei_hooks_no_op_when_no_legacy_entries() {
         let tmp = make_tmp_home();
         let settings = tmp.path().join("settings.json");
-        let original = r#"{"hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":"/x/y.sh"}]}]}}"#;
+        let original =
+            r#"{"hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":"/x/y.sh"}]}]}}"#;
         std::fs::write(&settings, original).unwrap();
 
         let stripped = clean_legacy_sensei_hooks(&settings).unwrap();
         assert!(stripped.is_empty());
         let backup = settings.with_extension("json.bak");
-        assert!(!backup.exists(),
-            "no .bak should be written when nothing was stripped");
+        assert!(!backup.exists(), "no .bak should be written when nothing was stripped");
     }
 
     #[test]
@@ -943,8 +1057,11 @@ mod tests {
 
         let backup = settings.with_extension("json.bak");
         assert!(backup.exists(), ".bak must exist after destructive edit");
-        assert_eq!(std::fs::read_to_string(&backup).unwrap(), original,
-            "backup must mirror original");
+        assert_eq!(
+            std::fs::read_to_string(&backup).unwrap(),
+            original,
+            "backup must mirror original"
+        );
     }
 
     #[test]
@@ -965,8 +1082,7 @@ mod tests {
         }"#).unwrap();
 
         let stripped = clean_legacy_sensei_hooks(&settings).unwrap();
-        assert!(stripped.is_empty(),
-            "user-named files containing 'sensei' must not be touched");
+        assert!(stripped.is_empty(), "user-named files containing 'sensei' must not be touched");
     }
 
     // ── delete_legacy_sensei_hook_files ────────────────────────────────────
@@ -984,8 +1100,7 @@ mod tests {
         assert_eq!(deleted.len(), 2);
         assert!(!hooks_dir.join("sensei-hook-dev.ts").exists());
         assert!(!hooks_dir.join("sensei-hook.ts").exists());
-        assert!(hooks_dir.join("user-keepme.ts").exists(),
-            "unrelated files must survive");
+        assert!(hooks_dir.join("user-keepme.ts").exists(), "unrelated files must survive");
     }
 
     #[test]
@@ -1025,7 +1140,8 @@ mod tests {
     fn check_marketplace_ok_when_registered() {
         let tmp = make_tmp_home();
         let s = tmp.path().join("settings.json");
-        std::fs::write(&s, r#"{"extraKnownMarketplaces":{"sensei-marketplace":{"source":{}}}}"#).unwrap();
+        std::fs::write(&s, r#"{"extraKnownMarketplaces":{"sensei-marketplace":{"source":{}}}}"#)
+            .unwrap();
         assert_eq!(check_marketplace(&s).status, CheckStatus::Ok);
     }
     #[test]
@@ -1044,7 +1160,8 @@ mod tests {
     fn check_plugin_reuses_verify() {
         let tmp = make_tmp_home();
         let m = tmp.path().join("installed_plugins.json");
-        std::fs::write(&m, r#"{"plugins":{"sensei@sensei-marketplace":[{"installPath":"/x"}]}}"#).unwrap();
+        std::fs::write(&m, r#"{"plugins":{"sensei@sensei-marketplace":[{"installPath":"/x"}]}}"#)
+            .unwrap();
         assert_eq!(check_plugin(&m).status, CheckStatus::Ok);
     }
     #[test]
@@ -1059,7 +1176,11 @@ mod tests {
     fn plugin_install_path_reads_first_entry() {
         let tmp = make_tmp_home();
         let m = tmp.path().join("installed_plugins.json");
-        std::fs::write(&m, r#"{"plugins":{"sensei@sensei-marketplace":[{"installPath":"/foo/bar"}]}}"#).unwrap();
+        std::fs::write(
+            &m,
+            r#"{"plugins":{"sensei@sensei-marketplace":[{"installPath":"/foo/bar"}]}}"#,
+        )
+        .unwrap();
         assert_eq!(plugin_install_path(&m), Some(PathBuf::from("/foo/bar")));
     }
     // ── upgrade: command construction + version readback ─────────────────────
@@ -1075,10 +1196,7 @@ mod tests {
         // bare `sensei` is rejected by Claude Code with "Plugin not found"
         // (verified live), so dropping the `@sensei-marketplace` suffix would
         // make every automatic upgrade silently fail.
-        assert_eq!(
-            plugin_update_args(),
-            ["plugin", "update", "sensei@sensei-marketplace"]
-        );
+        assert_eq!(plugin_update_args(), ["plugin", "update", "sensei@sensei-marketplace"]);
     }
 
     #[test]
@@ -1088,25 +1206,37 @@ mod tests {
         // records sensei (post-update happy path) vs one that doesn't.
         let tmp = make_tmp_home();
         let manifest = tmp.path().join("installed_plugins.json");
-        std::fs::write(&manifest, r#"{"plugins":{"sensei@sensei-marketplace":[
+        std::fs::write(
+            &manifest,
+            r#"{"plugins":{"sensei@sensei-marketplace":[
             {"scope":"user","installPath":"/foo","version":"0.2.14"}
-        ]}}"#).unwrap();
-        assert!(verify_plugin_installed(&manifest, "sensei"),
-            "gate must pass when the update left sensei recorded");
+        ]}}"#,
+        )
+        .unwrap();
+        assert!(
+            verify_plugin_installed(&manifest, "sensei"),
+            "gate must pass when the update left sensei recorded"
+        );
 
         let empty = tmp.path().join("empty.json");
         std::fs::write(&empty, r#"{"plugins":{}}"#).unwrap();
-        assert!(!verify_plugin_installed(&empty, "sensei"),
-            "gate must fail when the update left no sensei record");
+        assert!(
+            !verify_plugin_installed(&empty, "sensei"),
+            "gate must fail when the update left no sensei record"
+        );
     }
 
     #[test]
     fn plugin_recorded_version_reads_version() {
         let tmp = make_tmp_home();
         let m = tmp.path().join("installed_plugins.json");
-        std::fs::write(&m, r#"{"plugins":{"sensei@sensei-marketplace":[
+        std::fs::write(
+            &m,
+            r#"{"plugins":{"sensei@sensei-marketplace":[
             {"installPath":"/foo","version":"0.2.14"}
-        ]}}"#).unwrap();
+        ]}}"#,
+        )
+        .unwrap();
         assert_eq!(plugin_recorded_version(&m).as_deref(), Some("0.2.14"));
     }
 
@@ -1114,7 +1244,11 @@ mod tests {
     fn plugin_recorded_version_none_when_field_or_plugin_absent() {
         let tmp = make_tmp_home();
         let no_field = tmp.path().join("no_field.json");
-        std::fs::write(&no_field, r#"{"plugins":{"sensei@sensei-marketplace":[{"installPath":"/foo"}]}}"#).unwrap();
+        std::fs::write(
+            &no_field,
+            r#"{"plugins":{"sensei@sensei-marketplace":[{"installPath":"/foo"}]}}"#,
+        )
+        .unwrap();
         assert_eq!(plugin_recorded_version(&no_field), None);
 
         let no_plugin = tmp.path().join("no_plugin.json");
@@ -1142,8 +1276,11 @@ mod tests {
         let tmp = make_tmp_home();
         let dir = tmp.path().join("plugin");
         std::fs::create_dir_all(dir.join(".claude-plugin")).unwrap();
-        std::fs::write(dir.join(".claude-plugin/plugin.json"),
-            r#"{"hooks":{"PreToolUse":[{}],"PostToolUse":[{}],"SessionStart":[{}]}}"#).unwrap();
+        std::fs::write(
+            dir.join(".claude-plugin/plugin.json"),
+            r#"{"hooks":{"PreToolUse":[{}],"PostToolUse":[{}],"SessionStart":[{}]}}"#,
+        )
+        .unwrap();
         assert_eq!(check_hooks(Some(&dir)).status, CheckStatus::Ok);
     }
     #[test]
@@ -1157,7 +1294,11 @@ mod tests {
         let tmp = make_tmp_home();
         let dir = tmp.path().join("plugin");
         std::fs::create_dir_all(dir.join(".claude-plugin")).unwrap();
-        std::fs::write(dir.join(".claude-plugin/plugin.json"), r#"{"hooks":{"SessionStart":[{}]}}"#).unwrap();
+        std::fs::write(
+            dir.join(".claude-plugin/plugin.json"),
+            r#"{"hooks":{"SessionStart":[{}]}}"#,
+        )
+        .unwrap();
         assert_eq!(check_hooks(Some(&dir)).status, CheckStatus::Fail);
     }
 }

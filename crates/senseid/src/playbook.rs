@@ -2,27 +2,82 @@
 //! No IO — the rule set is passed in (DB-source-agnostic).
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Lifecycle { Greenfield, Stable }
+pub enum Lifecycle {
+    Greenfield,
+    Stable,
+}
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Intent { Explore, Ux, Feature, Enhancement, Bug }
+pub enum Intent {
+    Explore,
+    Ux,
+    Feature,
+    Enhancement,
+    Bug,
+}
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Risk { Low, High }
+pub enum Risk {
+    Low,
+    High,
+}
 
 impl Lifecycle {
-    pub fn as_str(self) -> &'static str { match self { Self::Greenfield => "greenfield", Self::Stable => "stable" } }
-    pub fn parse(s: &str) -> Option<Self> { match s { "greenfield" => Some(Self::Greenfield), "stable" => Some(Self::Stable), _ => None } }
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Greenfield => "greenfield",
+            Self::Stable => "stable",
+        }
+    }
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "greenfield" => Some(Self::Greenfield),
+            "stable" => Some(Self::Stable),
+            _ => None,
+        }
+    }
 }
 impl Intent {
-    pub fn as_str(self) -> &'static str { match self { Self::Explore=>"explore", Self::Ux=>"ux", Self::Feature=>"feature", Self::Enhancement=>"enhancement", Self::Bug=>"bug" } }
-    pub fn parse(s: &str) -> Option<Self> { match s { "explore"=>Some(Self::Explore),"ux"=>Some(Self::Ux),"feature"=>Some(Self::Feature),"enhancement"=>Some(Self::Enhancement),"bug"=>Some(Self::Bug),_=>None } }
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Explore => "explore",
+            Self::Ux => "ux",
+            Self::Feature => "feature",
+            Self::Enhancement => "enhancement",
+            Self::Bug => "bug",
+        }
+    }
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "explore" => Some(Self::Explore),
+            "ux" => Some(Self::Ux),
+            "feature" => Some(Self::Feature),
+            "enhancement" => Some(Self::Enhancement),
+            "bug" => Some(Self::Bug),
+            _ => None,
+        }
+    }
 }
 impl Risk {
-    pub fn as_str(self) -> &'static str { match self { Self::Low=>"low", Self::High=>"high" } }
-    pub fn parse(s: &str) -> Option<Self> { match s { "low"=>Some(Self::Low),"high"=>Some(Self::High),_=>None } }
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Low => "low",
+            Self::High => "high",
+        }
+    }
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "low" => Some(Self::Low),
+            "high" => Some(Self::High),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct Axes { pub lifecycle: Lifecycle, pub intent: Intent, pub risk: Risk }
+pub struct Axes {
+    pub lifecycle: Lifecycle,
+    pub intent: Intent,
+    pub risk: Risk,
+}
 
 #[derive(Clone, Debug)]
 pub struct Rule {
@@ -57,13 +112,18 @@ pub fn recommend(axes: &Axes, rules: &[Rule]) -> Recommendation {
     let best = rules.iter().filter(|r| matches(r, axes)).max_by_key(|r| r.priority);
     match best {
         Some(r) => Recommendation {
-            playbook: r.playbook.clone(), rationale: r.rationale.clone(),
-            rule_id: r.id, rule_name: Some(r.name.clone()), defaulted: false,
+            playbook: r.playbook.clone(),
+            rationale: r.rationale.clone(),
+            rule_id: r.id,
+            rule_name: Some(r.name.clone()),
+            defaulted: false,
         },
         None => Recommendation {
             playbook: "gsd".into(),
             rationale: "no rule matched — defaulted to gsd".into(),
-            rule_id: None, rule_name: None, defaulted: true,
+            rule_id: None,
+            rule_name: None,
+            defaulted: true,
         },
     }
 }
@@ -77,19 +137,27 @@ const REWEIGHT_TARGET_FTR: f64 = 0.5; // neutral FTR midpoint the reweight measu
 
 #[derive(Clone, Debug)]
 pub struct ComboPlaybookStat {
-    pub lifecycle: Lifecycle, pub intent: Intent, pub risk: Risk,
-    pub playbook: String, pub n: i64, pub ftr_rate: f64,
+    pub lifecycle: Lifecycle,
+    pub intent: Intent,
+    pub risk: Risk,
+    pub playbook: String,
+    pub n: i64,
+    pub ftr_rate: f64,
 }
 
 #[derive(Clone, Debug)]
 pub struct LearnedRule {
-    pub lifecycle: Lifecycle, pub intent: Intent, pub risk: Risk,
-    pub playbook: String, pub priority: i32, pub rationale: String,
+    pub lifecycle: Lifecycle,
+    pub intent: Intent,
+    pub risk: Risk,
+    pub playbook: String,
+    pub priority: i32,
+    pub rationale: String,
 }
 
 #[derive(Clone, Debug, Default)]
 pub struct LearnPlan {
-    pub reweights: Vec<(uuid::Uuid, i32)>,   // (rule_id, new_priority)
+    pub reweights: Vec<(uuid::Uuid, i32)>, // (rule_id, new_priority)
     pub proposals: Vec<LearnedRule>,
 }
 
@@ -133,21 +201,32 @@ pub fn learn(stats: &[ComboPlaybookStat], rules: &[Rule]) -> LearnPlan {
     combos.dedup();
     for (l, i, rk) in combos {
         let axes = Axes { lifecycle: l, intent: i, risk: rk };
-        let here: Vec<&ComboPlaybookStat> = stats.iter()
+        let here: Vec<&ComboPlaybookStat> = stats
+            .iter()
             .filter(|s| s.lifecycle == l && s.intent == i && s.risk == rk && s.n >= MIN_SAMPLE)
             .collect();
-        let Some(best) = here.iter().max_by(|a, b| a.ftr_rate.total_cmp(&b.ftr_rate)) else { continue };
+        let Some(best) = here.iter().max_by(|a, b| a.ftr_rate.total_cmp(&b.ftr_rate)) else {
+            continue;
+        };
         let rec = recommend(&axes, rules);
         let rec_ftr = here.iter().find(|s| s.playbook == rec.playbook).map_or(0.0, |s| s.ftr_rate);
         if best.playbook != rec.playbook && best.ftr_rate - rec_ftr >= FTR_DELTA {
-            let top = rules.iter().filter(|r| stat_matches_rule(here[0], r))
-                .map(|r| r.priority).max().unwrap_or(0);
+            let top = rules
+                .iter()
+                .filter(|r| stat_matches_rule(here[0], r))
+                .map(|r| r.priority)
+                .max()
+                .unwrap_or(0);
             plan.proposals.push(LearnedRule {
-                lifecycle: l, intent: i, risk: rk, playbook: best.playbook.clone(),
+                lifecycle: l,
+                intent: i,
+                risk: rk,
+                playbook: best.playbook.clone(),
                 priority: top + 1,
                 rationale: format!(
                     "learned: {} out-performed {} here (FTR {:.2} vs {:.2}, n={})",
-                    best.playbook, rec.playbook, best.ftr_rate, rec_ftr, best.n),
+                    best.playbook, rec.playbook, best.ftr_rate, rec_ftr, best.n
+                ),
             });
         }
     }
@@ -169,15 +248,46 @@ mod tests {
 
     fn seed() -> Vec<Rule> {
         vec![
-            Rule { id: None, name: "high-blast".into(), match_lifecycle: None, match_intent: None, match_risk: Some(Risk::High), playbook: "spec_driven".into(), rationale: "hi".into(), priority: 100, base_priority: 100 },
-            Rule { id: None, name: "gf-fuzzy".into(), match_lifecycle: Some(Lifecycle::Greenfield), match_intent: Some(Intent::Explore), match_risk: None, playbook: "vibe".into(), rationale: "gf".into(), priority: 60, base_priority: 60 },
-            Rule { id: None, name: "known-low".into(), match_lifecycle: None, match_intent: Some(Intent::Feature), match_risk: Some(Risk::Low), playbook: "gsd".into(), rationale: "gsd".into(), priority: 40, base_priority: 40 },
+            Rule {
+                id: None,
+                name: "high-blast".into(),
+                match_lifecycle: None,
+                match_intent: None,
+                match_risk: Some(Risk::High),
+                playbook: "spec_driven".into(),
+                rationale: "hi".into(),
+                priority: 100,
+                base_priority: 100,
+            },
+            Rule {
+                id: None,
+                name: "gf-fuzzy".into(),
+                match_lifecycle: Some(Lifecycle::Greenfield),
+                match_intent: Some(Intent::Explore),
+                match_risk: None,
+                playbook: "vibe".into(),
+                rationale: "gf".into(),
+                priority: 60,
+                base_priority: 60,
+            },
+            Rule {
+                id: None,
+                name: "known-low".into(),
+                match_lifecycle: None,
+                match_intent: Some(Intent::Feature),
+                match_risk: Some(Risk::Low),
+                playbook: "gsd".into(),
+                rationale: "gsd".into(),
+                priority: 40,
+                base_priority: 40,
+            },
         ]
     }
 
     #[test]
     fn high_risk_wins_by_priority() {
-        let axes = Axes { lifecycle: Lifecycle::Greenfield, intent: Intent::Feature, risk: Risk::High };
+        let axes =
+            Axes { lifecycle: Lifecycle::Greenfield, intent: Intent::Feature, risk: Risk::High };
         let r = recommend(&axes, &seed());
         assert_eq!(r.playbook, "spec_driven");
         assert_eq!(r.rule_name.as_deref(), Some("high-blast"));
@@ -199,38 +309,67 @@ mod tests {
     }
 
     fn stat(l: Lifecycle, i: Intent, r: Risk, pb: &str, n: i64, ftr: f64) -> ComboPlaybookStat {
-        ComboPlaybookStat { lifecycle: l, intent: i, risk: r, playbook: pb.into(), n, ftr_rate: ftr }
+        ComboPlaybookStat {
+            lifecycle: l,
+            intent: i,
+            risk: r,
+            playbook: pb.into(),
+            n,
+            ftr_rate: ftr,
+        }
     }
-    fn rule(id: u128, l: Option<Lifecycle>, i: Option<Intent>, r: Option<Risk>, pb: &str, prio: i32) -> Rule {
-        Rule { id: Some(uuid::Uuid::from_u128(id)), name: pb.into(), match_lifecycle: l, match_intent: i,
-               match_risk: r, playbook: pb.into(), rationale: "r".into(), priority: prio, base_priority: prio }
+    fn rule(
+        id: u128,
+        l: Option<Lifecycle>,
+        i: Option<Intent>,
+        r: Option<Risk>,
+        pb: &str,
+        prio: i32,
+    ) -> Rule {
+        Rule {
+            id: Some(uuid::Uuid::from_u128(id)),
+            name: pb.into(),
+            match_lifecycle: l,
+            match_intent: i,
+            match_risk: r,
+            playbook: pb.into(),
+            rationale: "r".into(),
+            priority: prio,
+            base_priority: prio,
+        }
     }
 
     #[test]
     fn reweight_bumps_priority_up_for_strong_ftr() {
-        let rules = vec![rule(1, Some(Lifecycle::Stable), Some(Intent::Bug), None, "debug_flow", 60)];
+        let rules =
+            vec![rule(1, Some(Lifecycle::Stable), Some(Intent::Bug), None, "debug_flow", 60)];
         let stats = vec![stat(Lifecycle::Stable, Intent::Bug, Risk::Low, "debug_flow", 10, 1.0)];
         let plan = learn(&stats, &rules);
-        let (_, np) = plan.reweights.iter().find(|(id,_)| *id == rules[0].id.unwrap()).unwrap();
+        let (_, np) = plan.reweights.iter().find(|(id, _)| *id == rules[0].id.unwrap()).unwrap();
         assert!(*np > 60, "high FTR should raise priority (got {np})");
         assert!(*np <= 60 + 20, "bounded by REWEIGHT_BOUND");
     }
 
     #[test]
     fn reweight_ignored_below_min_sample() {
-        let rules = vec![rule(1, Some(Lifecycle::Stable), Some(Intent::Bug), None, "debug_flow", 60)];
+        let rules =
+            vec![rule(1, Some(Lifecycle::Stable), Some(Intent::Bug), None, "debug_flow", 60)];
         let stats = vec![stat(Lifecycle::Stable, Intent::Bug, Risk::Low, "debug_flow", 3, 1.0)];
         assert!(learn(&stats, &rules).reweights.is_empty(), "n<5 → no reweight");
     }
 
     #[test]
     fn reweight_is_idempotent() {
-        let mut rules = vec![rule(1, Some(Lifecycle::Stable), Some(Intent::Bug), None, "debug_flow", 60)];
+        let mut rules =
+            vec![rule(1, Some(Lifecycle::Stable), Some(Intent::Bug), None, "debug_flow", 60)];
         let stats = vec![stat(Lifecycle::Stable, Intent::Bug, Risk::Low, "debug_flow", 10, 1.0)];
         let np = learn(&stats, &rules).reweights[0].1;
-        rules[0].priority = np;                 // apply once (base_priority stays 60)
-        assert_eq!(learn(&stats, &rules).reweights.iter().find(|(_,p)| *p != np), None,
-                   "same stats + same base → same target priority");
+        rules[0].priority = np; // apply once (base_priority stays 60)
+        assert_eq!(
+            learn(&stats, &rules).reweights.iter().find(|(_, p)| *p != np),
+            None,
+            "same stats + same base → same target priority"
+        );
     }
 
     #[test]
@@ -242,8 +381,15 @@ mod tests {
             stat(Lifecycle::Stable, Intent::Feature, Risk::Low, "mockup_first", 8, 0.9),
         ];
         let plan = learn(&stats, &rules);
-        let p = plan.proposals.iter().find(|p| p.playbook == "mockup_first").expect("propose the winner");
-        assert_eq!((p.lifecycle, p.intent, p.risk), (Lifecycle::Stable, Intent::Feature, Risk::Low));
+        let p = plan
+            .proposals
+            .iter()
+            .find(|p| p.playbook == "mockup_first")
+            .expect("propose the winner");
+        assert_eq!(
+            (p.lifecycle, p.intent, p.risk),
+            (Lifecycle::Stable, Intent::Feature, Risk::Low)
+        );
         assert!(p.priority > 40, "must out-prioritize the recommended rule");
     }
 
@@ -259,10 +405,10 @@ mod tests {
 
     #[test]
     fn trusted_only_for_proven_low_risk() {
-        assert!(is_trusted(Risk::Low, 10, 0.8));   // boundary: n==MIN, ftr==TARGET
+        assert!(is_trusted(Risk::Low, 10, 0.8)); // boundary: n==MIN, ftr==TARGET
         assert!(is_trusted(Risk::Low, 40, 0.95));
         assert!(!is_trusted(Risk::High, 40, 0.95)); // high-risk never auto-selects
-        assert!(!is_trusted(Risk::Low, 9, 0.95));   // too few samples
-        assert!(!is_trusted(Risk::Low, 40, 0.79));  // FTR below target
+        assert!(!is_trusted(Risk::Low, 9, 0.95)); // too few samples
+        assert!(!is_trusted(Risk::Low, 40, 0.79)); // FTR below target
     }
 }

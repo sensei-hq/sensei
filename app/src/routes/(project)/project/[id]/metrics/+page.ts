@@ -2,6 +2,8 @@ import type { PageLoad } from './$types.js';
 import { senseiApi } from '$lib/api.js';
 import { appState } from '$lib/appstate.svelte.js';
 import { densifySeries, type MetricsNarrative } from '$lib/metrics/metric-view.js';
+import type { ProjectHealth } from '$lib/metrics/health-radar.js';
+import type { MetricCorrelation } from '$lib/metrics/correlation-view.js';
 
 // The metrics pane joins three daemon surfaces: the per-project *values*
 // (/metrics) — which now also carry an optional daemon-generated `narrative`
@@ -10,9 +12,13 @@ import { densifySeries, type MetricsNarrative } from '$lib/metrics/metric-view.j
 // alone carries each metric's `family`, and a per-metric series for sparklines.
 export const load: PageLoad = async ({ params }) => {
     const api = senseiApi(appState.port);
-    const [metricsRes, registryRes] = await Promise.all([
+    const [metricsRes, registryRes, healthRes, corrRes] = await Promise.all([
         api.getProjectMetrics(params.id),
         api.getMetricsRegistry(),
+        api.getProjectHealth(params.id),
+        // Portfolio-wide: per project the paired-day count rarely clears the
+        // daemon's n>=20 gate. Additive — a failure just omits the section.
+        api.getMetricCorrelations(),
     ]);
 
     // A fetch FAILURE surfaces as an error state — never an empty grid that
@@ -24,6 +30,8 @@ export const load: PageLoad = async ({ params }) => {
             registry: [],
             series: {} as Record<string, (number | null)[]>,
             narrative: null as MetricsNarrative | null,
+            health: null as ProjectHealth | null,
+            correlations: [] as MetricCorrelation[],
             error: metricsRes.error.message,
         };
     }
@@ -46,5 +54,19 @@ export const load: PageLoad = async ({ params }) => {
     );
 
     const series: Record<string, (number | null)[]> = Object.fromEntries(seriesPairs);
-    return { rows, registry, series, narrative, error: null };
+
+    // Health is additive to this screen: a project the daemon has rated nothing
+    // for legitimately has no row (404 -> honest-empty, spec I4), and a daemon
+    // hiccup should not blank the metric grid that loaded fine. Either way the
+    // radar renders its own quiet state rather than a fabricated zero score.
+    const health = healthRes.ok ? healthRes.data : null;
+
+    // Only pairs whose BOTH metrics exist on this screen — a portfolio finding
+    // about metrics this project never computes would be noise here.
+    const present = new Set(rows.map((r) => r.metric));
+    const correlations: MetricCorrelation[] = (corrRes.ok ? corrRes.data.correlations : []).filter(
+        (c) => present.has(c.a) && present.has(c.b),
+    );
+
+    return { rows, registry, series, narrative, health, correlations, error: null };
 };

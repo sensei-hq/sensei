@@ -30,6 +30,7 @@ import type {
   ProjectMetricRow, RegistryMetric, MetricSeriesPoint, MetricsNarrative,
   DaySessions, DrilldownSession, ToolUsage,
 } from './metrics/metric-view.js';
+import type { ProjectHealth } from './metrics/health-radar.js';
 
 export type { DaySessions, DrilldownSession, ToolUsage };
 
@@ -278,6 +279,22 @@ export function senseiApi(port: number) {
     // client-side to group the per-project values into sections.
     getMetricsRegistry: () =>
       tryGet<{ metrics: RegistryMetric[]; count: number }>(`/api/metrics/registry`),
+
+    // Composite health + every included metric's 0-5 rating and weight — the
+    // radar's spokes and the score, from one row so they always agree (spec I5).
+    // 404 when the daemon rated nothing for this project: honest-empty, and the
+    // Result lets the caller tell that apart from a fetch failure.
+    getProjectHealth: (id: string) => tryGet<ProjectHealth>(`/api/projects/${enc(id)}/health`),
+    /** Which metrics move together, across every project. Portfolio-wide on
+     *  purpose: per project the paired-day count rarely clears the daemon's n>=20
+     *  gate, so a project-scoped call is usually empty. */
+    getMetricCorrelations: () =>
+        tryGet<{
+            cells: number;
+            min_pairs: number;
+            min_rho: number;
+            correlations: Array<{ a: string; b: string; rho: number; n: number }>;
+        }>(`/api/metrics/correlations`),
 
     // Per-metric time series for the card sparklines / trend view.
     getProjectMetricSeries: (

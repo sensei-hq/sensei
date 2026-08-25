@@ -46,7 +46,11 @@ impl Verdict {
     /// `&'static str` for the sqlx bind.
     #[allow(dead_code)] // kept for callers that need string form outside the classifier driver
     pub fn as_str(&self) -> &'static str {
-        match self { Self::Used => "used", Self::Partial => "partial", Self::Ignored => "ignored" }
+        match self {
+            Self::Used => "used",
+            Self::Partial => "partial",
+            Self::Ignored => "ignored",
+        }
     }
 }
 
@@ -111,7 +115,8 @@ pub fn extract_fragments(response: &str) -> Vec<String> {
                     && tok[colon_idx + 1..].bytes().all(|b| b.is_ascii_digit())
                 {
                     let path_only = &tok[..colon_idx];
-                    if path_only.len() >= 5 && (path_only.contains('/') || path_only.contains('.')) {
+                    if path_only.len() >= 5 && (path_only.contains('/') || path_only.contains('.'))
+                    {
                         out.push(path_only.to_string());
                     }
                 }
@@ -129,7 +134,9 @@ pub fn extract_fragments(response: &str) -> Vec<String> {
         if ch == '`' {
             if in_tick {
                 let s = &response[tick_start..idx];
-                if s.len() >= 3 { out.push(s.to_string()); }
+                if s.len() >= 3 {
+                    out.push(s.to_string());
+                }
                 in_tick = false;
             } else {
                 in_tick = true;
@@ -193,9 +200,8 @@ pub fn classify(pair: &Pair<'_>) -> Classification {
         return classify_by_target(pair, "no citable fragments in response");
     }
 
-    let mut hits: Vec<&String> = frags.iter()
-        .filter(|f| pair.reaction_tool_input.contains(f.as_str()))
-        .collect();
+    let mut hits: Vec<&String> =
+        frags.iter().filter(|f| pair.reaction_tool_input.contains(f.as_str())).collect();
     hits.sort();
     hits.dedup();
 
@@ -265,11 +271,13 @@ pub async fn classify_session(
 
         let response_text = extract_response_text(payload);
         let answer_target = primary_target(
-            &payload.get("tool_input")
+            &payload
+                .get("tool_input")
                 .and_then(|v| serde_json::to_string(v).ok())
                 .unwrap_or_default(),
         );
-        let next_input_json = next_payload.get("tool_input")
+        let next_input_json = next_payload
+            .get("tool_input")
             .and_then(|v| serde_json::to_string(v).ok())
             .unwrap_or_default();
         let reaction_target = primary_target(&next_input_json);
@@ -309,7 +317,9 @@ pub async fn classify_session(
 /// - Array `[ { text: "..." }, ... ]` (MCP results).
 pub fn extract_response_text(payload: &serde_json::Value) -> String {
     let Some(resp) = payload.get("tool_response") else { return String::new() };
-    if let Some(s) = resp.as_str() { return s.to_string(); }
+    if let Some(s) = resp.as_str() {
+        return s.to_string();
+    }
     if let Some(o) = resp.as_object() {
         for k in ["content", "text", "output", "stdout"] {
             if let Some(s) = o.get(k).and_then(|v| v.as_str()) {
@@ -343,8 +353,10 @@ mod tests {
     fn extract_fragments_pulls_path_like_tokens() {
         let resp = "See crates/senseid/src/api/routes.rs:42 for the wiring.";
         let frags = extract_fragments(resp);
-        assert!(frags.iter().any(|f| f == "crates/senseid/src/api/routes.rs:42"),
-            "path+line ref extracted, got: {frags:?}");
+        assert!(
+            frags.iter().any(|f| f == "crates/senseid/src/api/routes.rs:42"),
+            "path+line ref extracted, got: {frags:?}"
+        );
     }
 
     #[test]
@@ -371,10 +383,7 @@ mod tests {
             "src/lib.rs",
             "file_path preferred over pattern",
         );
-        assert_eq!(
-            primary_target(r#"{"url":"https://example.com/x"}"#),
-            "https://example.com/x",
-        );
+        assert_eq!(primary_target(r#"{"url":"https://example.com/x"}"#), "https://example.com/x",);
         assert_eq!(primary_target(r#"{"unrelated":"yes"}"#), "");
         assert_eq!(primary_target("not json"), "");
     }
@@ -495,7 +504,11 @@ mod tests {
         });
         assert_eq!(one_hit.verdict, Verdict::Used);
         assert_eq!(three_hits.verdict, Verdict::Used);
-        assert!(three_hits.confidence > one_hit.confidence,
-            "3 hits ({}) should beat 1 hit ({})", three_hits.confidence, one_hit.confidence);
+        assert!(
+            three_hits.confidence > one_hit.confidence,
+            "3 hits ({}) should beat 1 hit ({})",
+            three_hits.confidence,
+            one_hit.confidence
+        );
     }
 }

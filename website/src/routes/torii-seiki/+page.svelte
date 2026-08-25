@@ -37,7 +37,7 @@
 
 <!-- ── Hero ──────────────────────────────────────────────────────────── -->
 <header id="top" class="ts-inner mx-auto px-7 pt-12 pb-24">
-  <div class="ts-hero-grid gap-16">
+  <div class="grid grid-cols-1 lg:grid-cols-[1.55fr_1fr] items-start gap-16">
     <div>
       <div class="flex items-baseline gap-3 mb-6">
         <span class="kanji text-accent" style="font-size:44px;line-height:1">門</span>
@@ -106,7 +106,7 @@
         The split execution plane is not a setting buried in preferences — it is written on the response, every time.
       </p>
     </div>
-    <div class="ts-two-col gap-6">
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
       {#each PLANES as p (p.label)}
         <div class="border border-paper-edge rounded-lg bg-paper-soft p-7">
           <div class="flex items-center gap-3 mb-4">
@@ -137,9 +137,11 @@
     </div>
     <div class="flex flex-col gap-8">
       {#each CLIENTS as c, i (c.id)}
-        <div id={c.id} class="ts-client border border-paper-edge rounded-lg text-{c.id}"
-             class:flip={i % 2 === 1} style="overflow:hidden">
-          <div class="ts-client-body p-10">
+        {@const flip = i % 2 === 1}
+        <div id={c.id}
+             class="ts-client grid grid-cols-1 overflow-hidden border border-paper-edge rounded-lg text-{c.id}
+                    {flip ? 'lg:grid-cols-[1fr_1.3fr]' : 'lg:grid-cols-[1.3fr_1fr]'}">
+          <div class="ts-client-body p-10 {flip ? 'lg:order-2' : ''}">
             <div class="mb-6 flex items-center justify-between">
               <span class="mono text-ink-faint text-sm">{String(i + 1).padStart(2, '0')}</span>
               <span class="mono rounded-sm px-2 py-0.5 text-warning bg-warning-soft text-xs" style="white-space:nowrap">{c.status}</span>
@@ -161,7 +163,8 @@
               {/each}
             </div>
           </div>
-          <div class="ts-client-panel">
+          <div class="ts-client-panel border-t border-paper-edge lg:border-t-0 min-h-[220px] lg:min-h-[340px]
+               {flip ? 'lg:order-1 lg:border-r' : 'lg:border-l'}">
             <span class="kanji text-{c.id}" style="font-size:220px;line-height:1;opacity:0.92">{c.kanji}</span>
             <span class="mono text-ink-faint" style="position:absolute;bottom:18px;right:20px;font-size:11px;letter-spacing:0.14em">{c.gloss}</span>
           </div>
@@ -183,7 +186,7 @@
         What the pair is made of.
       </h2>
     </div>
-    <div class="ts-cap-grid gap-x-12 gap-y-12">
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-x-12 gap-y-12">
       {#each CAPABILITIES as c (c.title)}
         <div>
           <span class="kanji text-accent block mb-4" style="font-size:32px;line-height:1">{c.kanji}</span>
@@ -198,7 +201,7 @@
 <!-- ── Privacy ───────────────────────────────────────────────────────── -->
 <section id="privacy" class="border-t border-paper-edge py-24">
   <div class="ts-inner mx-auto px-7">
-    <div class="ts-split gap-16">
+    <div class="grid grid-cols-1 lg:grid-cols-2 items-start gap-16">
       <div>
         <div class="flex items-baseline gap-3 mb-4">
           <span class="kanji text-accent text-2xl" style="line-height:1">蔵</span>
@@ -232,7 +235,7 @@
 <!-- ── Gateway ───────────────────────────────────────────────────────── -->
 <section id="gateway" class="border-t border-paper-edge py-24">
   <div class="ts-inner mx-auto px-7">
-    <div class="ts-split gap-16" style="align-items:center">
+    <div class="grid grid-cols-1 lg:grid-cols-2 items-center gap-16">
       <div>
         <div class="flex items-baseline gap-3 mb-4">
           <span class="kanji text-gateway text-2xl" style="line-height:1">基</span>
@@ -303,11 +306,6 @@
   .ts-inner {
     max-width: 1120px;
   }
-  .ts-hero-grid {
-    display: grid;
-    grid-template-columns: 1.55fr 1fr;
-    align-items: start;
-  }
   .ts-pair-row {
     display: grid;
     grid-template-columns: auto 1fr auto;
@@ -328,34 +326,8 @@
     border-radius: 50%;
     flex-shrink: 0;
   }
-  .ts-two-col {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-  }
-  .ts-cap-grid {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-  }
-  .ts-split {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    align-items: start;
-  }
   .ts-client {
-    display: grid;
-    grid-template-columns: 1.3fr 1fr;
     transition: border-color 0.18s;
-  }
-  .ts-client.flip {
-    grid-template-columns: 1fr 1.3fr;
-  }
-  .ts-client.flip .ts-client-body {
-    order: 2;
-  }
-  .ts-client.flip .ts-client-panel {
-    order: 1;
-    border-left: none;
-    border-right: 1px solid var(--paper-edge);
   }
   .ts-client-panel {
     display: flex;
@@ -363,33 +335,12 @@
     justify-content: center;
     background: var(--paper-mute);
     position: relative;
-    min-height: 340px;
     overflow: hidden;
-    border-left: 1px solid var(--paper-edge);
   }
   .ts-detail-row {
     border-bottom: 1px solid var(--paper-edge);
   }
   .ts-detail-row.last {
     border-bottom: none;
-  }
-  @media (max-width: 900px) {
-    .ts-hero-grid,
-    .ts-two-col,
-    .ts-split,
-    .ts-cap-grid,
-    .ts-client,
-    .ts-client.flip {
-      grid-template-columns: 1fr;
-    }
-    .ts-client.flip .ts-client-panel {
-      order: 2;
-      border-right: none;
-    }
-    .ts-client-panel {
-      border-left: none;
-      border-top: 1px solid var(--paper-edge);
-      min-height: 220px;
-    }
   }
 </style>

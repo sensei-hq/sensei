@@ -57,7 +57,6 @@
 {/snippet}
 
 <PageHeader
-  variant="h2"
   eyebrow="Observatory · Collective"
   kanji="群"
   title="What your sensei shares, and toward whom."

@@ -143,10 +143,7 @@ mod tests {
             classify_origin("file:/Users/jerry/Developer/x/.git/config"),
             Some("local".to_string())
         );
-        assert_eq!(
-            classify_origin("file:/Users/jerry/.gitconfig"),
-            Some("global".to_string())
-        );
+        assert_eq!(classify_origin("file:/Users/jerry/.gitconfig"), Some("global".to_string()));
         assert_eq!(classify_origin("file:/etc/gitconfig"), Some("system".to_string()));
     }
 
@@ -166,10 +163,7 @@ mod tests {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR"));
         let user = read_git_user(dir);
         if let Some(src) = user.source.as_deref() {
-            assert!(
-                user.email.is_some(),
-                "a classified source implies a resolved email"
-            );
+            assert!(user.email.is_some(), "a classified source implies a resolved email");
             assert!(
                 ["local", "global", "system"].contains(&src),
                 "source must be one of the known scopes, got {src:?}"

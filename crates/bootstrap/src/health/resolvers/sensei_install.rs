@@ -1,8 +1,8 @@
 //! SenseiInstallResolver — resolves ComponentId::Sensei via
 //! `brew install sensei-hq/tap/sensei`.
 
-use crate::config::{SenseiConfig, BREW_TAP};
-use crate::health::resolver::{Resolver, ResolveOutcome};
+use crate::config::{BREW_TAP, SenseiConfig};
+use crate::health::resolver::{ResolveOutcome, Resolver};
 use crate::health::resolvers::brew_helpers::brew_install_to_outcome;
 use crate::health::types::{ComponentId, Remedy};
 
@@ -11,8 +11,12 @@ pub struct SenseiInstallResolver;
 const TARGETS: &[ComponentId] = &[ComponentId::Sensei];
 
 impl Resolver for SenseiInstallResolver {
-    fn id(&self) -> &'static str { "sensei_install" }
-    fn resolves(&self) -> &'static [ComponentId] { TARGETS }
+    fn id(&self) -> &'static str {
+        "sensei_install"
+    }
+    fn resolves(&self) -> &'static [ComponentId] {
+        TARGETS
+    }
 
     fn resolve(&self, _targets: &[ComponentId]) -> ResolveOutcome {
         brew_install_to_outcome(BREW_TAP, &[])

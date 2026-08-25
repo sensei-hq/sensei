@@ -5,8 +5,8 @@
 //! idempotent: brew skips installed formulas and treats "already started"
 //! as success.
 
-use crate::health::resolver::{Resolver, ResolveOutcome};
-use crate::health::resolvers::service_cascade::{resolve_service_cascade, ServiceCascadeSpec};
+use crate::health::resolver::{ResolveOutcome, Resolver};
+use crate::health::resolvers::service_cascade::{ServiceCascadeSpec, resolve_service_cascade};
 use crate::health::types::{ComponentId, Remedy};
 
 pub struct PostgresInstallResolver;
@@ -26,14 +26,20 @@ const SPEC: ServiceCascadeSpec = ServiceCascadeSpec {
 };
 
 impl Resolver for PostgresInstallResolver {
-    fn id(&self) -> &'static str { "postgres_install" }
-    fn resolves(&self) -> &'static [ComponentId] { TARGETS }
+    fn id(&self) -> &'static str {
+        "postgres_install"
+    }
+    fn resolves(&self) -> &'static [ComponentId] {
+        TARGETS
+    }
 
     fn resolve(&self, _targets: &[ComponentId]) -> ResolveOutcome {
         resolve_service_cascade(&SPEC)
     }
 
-    fn fallback_remedy(&self) -> Remedy { postgres_fallback_remedy() }
+    fn fallback_remedy(&self) -> Remedy {
+        postgres_fallback_remedy()
+    }
 }
 
 /// Most likely cause of a post-resolve check still failing: `postgresql@17`
@@ -44,7 +50,9 @@ fn postgres_fallback_remedy() -> Remedy {
         message: format!(
             "PostgreSQL didn't come up after install. The `{FORMULA}` formula is keg-only, so its CLI tools (psql, pg_isready) need to be force-linked. Run the script below."
         ),
-        script: format!("brew link --force --overwrite {FORMULA} && brew services restart {SERVICE}"),
+        script: format!(
+            "brew link --force --overwrite {FORMULA} && brew services restart {SERVICE}"
+        ),
         url: None,
     }
 }

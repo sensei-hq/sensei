@@ -135,9 +135,7 @@ impl ArtifactKind {
 
     /// Parse a `dojo.artifact_kind` enum string.
     pub fn from_db_str(s: &str) -> Option<Self> {
-        ArtifactKind::ALL
-            .into_iter()
-            .find(|k| k.as_db_str() == s)
+        ArtifactKind::ALL.into_iter().find(|k| k.as_db_str() == s)
     }
 }
 
@@ -155,11 +153,8 @@ pub enum ArtifactStatus {
 }
 
 impl ArtifactStatus {
-    pub const ALL: [ArtifactStatus; 3] = [
-        ArtifactStatus::Submitted,
-        ArtifactStatus::Published,
-        ArtifactStatus::Archived,
-    ];
+    pub const ALL: [ArtifactStatus; 3] =
+        [ArtifactStatus::Submitted, ArtifactStatus::Published, ArtifactStatus::Archived];
 
     /// The `dojo.artifact_status` enum string. MUST match `artifact_status.ddl`.
     pub fn as_db_str(&self) -> &'static str {
@@ -190,10 +185,7 @@ pub enum AttributionMode {
 }
 
 impl AttributionMode {
-    pub const ALL: [AttributionMode; 2] = [
-        AttributionMode::Named,
-        AttributionMode::Anonymous,
-    ];
+    pub const ALL: [AttributionMode; 2] = [AttributionMode::Named, AttributionMode::Anonymous];
 
     /// The `dojo.attribution_mode` enum string. MUST match `attribution_mode.ddl`.
     pub fn as_db_str(&self) -> &'static str {
@@ -367,10 +359,8 @@ fn canonical_json(value: &serde_json::Value) -> String {
         serde_json::Value::Object(map) => {
             let mut keys: Vec<&String> = map.keys().collect();
             keys.sort();
-            let inner: Vec<String> = keys
-                .into_iter()
-                .map(|k| format!("{}:{}", k, canonical_json(&map[k])))
-                .collect();
+            let inner: Vec<String> =
+                keys.into_iter().map(|k| format!("{}:{}", k, canonical_json(&map[k]))).collect();
             format!("{{{}}}", inner.join(","))
         }
         serde_json::Value::Array(items) => {
@@ -496,9 +486,9 @@ mod tests {
                 pattern_id: Some("codebase.adapter".into()),
                 ftr_delta_observed: Some(0.07),
             }),
-            ArtifactKind::Prompt => ArtifactPayload::Prompt(PromptPayload {
-                prompt_kind: PromptKind::Persona,
-            }),
+            ArtifactKind::Prompt => {
+                ArtifactPayload::Prompt(PromptPayload { prompt_kind: PromptKind::Persona })
+            }
             ArtifactKind::Guard => ArtifactPayload::Guard(GuardPayload {
                 check: "no unwrap in library code".into(),
                 tool: Some("clippy".into()),
@@ -529,10 +519,7 @@ mod tests {
             title,
             body,
             payload,
-            scope: ArtifactScope {
-                stack: Some("rust".into()),
-                ..Default::default()
-            },
+            scope: ArtifactScope { stack: Some("rust".into()), ..Default::default() },
             attribution: Attribution {
                 mode: AttributionMode::Named,
                 author: Some("jerry".into()),
@@ -642,10 +629,8 @@ mod tests {
 
     #[test]
     fn publish_response_round_trips() {
-        let resp = PublishArtifactResponse {
-            id: "22222222-2222-2222-2222-222222222222".into(),
-            seq: 7,
-        };
+        let resp =
+            PublishArtifactResponse { id: "22222222-2222-2222-2222-222222222222".into(), seq: 7 };
         let json = serde_json::to_string(&resp).unwrap();
         let back: PublishArtifactResponse = serde_json::from_str(&json).unwrap();
         assert_eq!(back, resp);

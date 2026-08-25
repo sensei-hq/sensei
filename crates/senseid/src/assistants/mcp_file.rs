@@ -1,6 +1,6 @@
-use std::path::PathBuf;
+use super::helpers::{home, remove_sensei_from_json, upsert_sensei_in_json};
 use super::trait_def::{Assistant, AssistantConfigureOk};
-use super::helpers::{home, upsert_sensei_in_json, remove_sensei_from_json};
+use std::path::PathBuf;
 
 /// Entry format written to the MCP config file.
 pub(crate) enum McpEntryFormat {
@@ -29,12 +29,24 @@ pub(crate) struct McpFileAssistant {
 }
 
 impl Assistant for McpFileAssistant {
-    fn id(&self) -> &str { self.id }
-    fn name(&self) -> &str { self.name }
-    fn family(&self) -> &str { self.family_id.unwrap_or(self.id) }
-    fn family_name(&self) -> &str { self.family_label.unwrap_or(self.name) }
-    fn mcp_key(&self) -> &str { self.mcp_key }
-    fn config_path(&self) -> PathBuf { home().join(self.config_rel) }
+    fn id(&self) -> &str {
+        self.id
+    }
+    fn name(&self) -> &str {
+        self.name
+    }
+    fn family(&self) -> &str {
+        self.family_id.unwrap_or(self.id)
+    }
+    fn family_name(&self) -> &str {
+        self.family_label.unwrap_or(self.name)
+    }
+    fn mcp_key(&self) -> &str {
+        self.mcp_key
+    }
+    fn config_path(&self) -> PathBuf {
+        home().join(self.config_rel)
+    }
 
     fn detect(&self) -> bool {
         let h = home();
@@ -46,10 +58,14 @@ impl Assistant for McpFileAssistant {
             }
         }
         for bin in self.bin_names {
-            if sensei_bootstrap::util::which_binary(bin).is_some() { return true; }
+            if sensei_bootstrap::util::which_binary(bin).is_some() {
+                return true;
+            }
         }
         for path in self.home_paths {
-            if h.join(path).exists() { return true; }
+            if h.join(path).exists() {
+                return true;
+            }
         }
         false
     }

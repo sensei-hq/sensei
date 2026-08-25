@@ -27,12 +27,17 @@ fn index_httpx_corpus() {
     // Instead, test via the binary's HTTP API by starting the server
 
     // For now, just verify the corpus files exist and are parseable
-    let py_files: Vec<_> = std::fs::read_dir(&corpus).unwrap()
+    let py_files: Vec<_> = std::fs::read_dir(&corpus)
+        .unwrap()
         .filter_map(|e| e.ok())
         .filter(|e| e.path().extension().is_some_and(|ext| ext == "py"))
         .collect();
 
-    assert!(py_files.len() >= 6, "httpx corpus should have 6 Python files, found {}", py_files.len());
+    assert!(
+        py_files.len() >= 6,
+        "httpx corpus should have 6 Python files, found {}",
+        py_files.len()
+    );
 
     // Parse each file and count symbols
     let mut total_symbols = 0u32;
@@ -51,12 +56,21 @@ fn index_httpx_corpus() {
 
         if let Some(tree) = parser.parse(&source, None) {
             let root = tree.root_node();
-            count_python_symbols(&root, &mut total_symbols, &mut total_classes, &mut total_functions, &mut total_methods, false);
+            count_python_symbols(
+                &root,
+                &mut total_symbols,
+                &mut total_classes,
+                &mut total_functions,
+                &mut total_methods,
+                false,
+            );
         }
     }
 
-    println!("httpx corpus: {} symbols ({} classes, {} functions, {} methods)",
-        total_symbols, total_classes, total_functions, total_methods);
+    println!(
+        "httpx corpus: {} symbols ({} classes, {} functions, {} methods)",
+        total_symbols, total_classes, total_functions, total_methods
+    );
 
     // Expected from our benchmark yaml: 136 total, 42 classes, 8 functions, 84 methods
     assert!(total_symbols >= 100, "expected 100+ symbols, got {}", total_symbols);
@@ -65,13 +79,24 @@ fn index_httpx_corpus() {
     assert!(total_methods >= 60, "expected 60+ methods, got {}", total_methods);
 }
 
-fn count_python_symbols(node: &tree_sitter::Node, total: &mut u32, classes: &mut u32, functions: &mut u32, methods: &mut u32, in_class: bool) {
+fn count_python_symbols(
+    node: &tree_sitter::Node,
+    total: &mut u32,
+    classes: &mut u32,
+    functions: &mut u32,
+    methods: &mut u32,
+    in_class: bool,
+) {
     for i in 0..node.child_count() {
         let child = node.child(i).unwrap();
         match child.kind() {
             "function_definition" => {
                 *total += 1;
-                if in_class { *methods += 1; } else { *functions += 1; }
+                if in_class {
+                    *methods += 1;
+                } else {
+                    *functions += 1;
+                }
             }
             "class_definition" => {
                 *total += 1;
@@ -102,20 +127,32 @@ fn scan_developer_folder_structure() {
 
     for entry in std::fs::read_dir(&dev).unwrap().filter_map(|e| e.ok()) {
         let path = entry.path();
-        if !path.is_dir() { continue; }
+        if !path.is_dir() {
+            continue;
+        }
         if path.join(".git").exists() {
             repo_count += 1;
 
             // Detect language
-            if path.join("package.json").exists() { has_typescript = true; }
-            if path.join("Cargo.toml").exists() { has_rust = true; }
-            if path.join("pyproject.toml").exists() || path.join("requirements.txt").exists() { has_python = true; }
-            if path.join("pom.xml").exists() || path.join("build.gradle").exists() { has_java = true; }
+            if path.join("package.json").exists() {
+                has_typescript = true;
+            }
+            if path.join("Cargo.toml").exists() {
+                has_rust = true;
+            }
+            if path.join("pyproject.toml").exists() || path.join("requirements.txt").exists() {
+                has_python = true;
+            }
+            if path.join("pom.xml").exists() || path.join("build.gradle").exists() {
+                has_java = true;
+            }
         }
     }
 
-    println!("~/Developer: {} repos (ts={}, py={}, rs={}, java={})",
-        repo_count, has_typescript, has_python, has_rust, has_java);
+    println!(
+        "~/Developer: {} repos (ts={}, py={}, rs={}, java={})",
+        repo_count, has_typescript, has_python, has_rust, has_java
+    );
 
     assert!(repo_count >= 1, "expected at least 1 repo in ~/Developer");
 }

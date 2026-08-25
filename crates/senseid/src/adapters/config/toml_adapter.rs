@@ -45,28 +45,24 @@ impl ConfigAdapter for TomlConfigAdapter {
 
     fn extract_description(&self, content: &str) -> Option<String> {
         let val = content.parse::<toml::Value>().ok()?;
-        project_sections(&val)
-            .into_iter()
-            .find_map(|section| {
-                section
-                    .get("description")
-                    .and_then(|v| v.as_str())
-                    .filter(|s| !s.is_empty())
-                    .map(|s| s.to_string())
-            })
+        project_sections(&val).into_iter().find_map(|section| {
+            section
+                .get("description")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string())
+        })
     }
 
     fn extract_version(&self, content: &str) -> Option<String> {
         let val = content.parse::<toml::Value>().ok()?;
-        project_sections(&val)
-            .into_iter()
-            .find_map(|section| {
-                section
-                    .get("version")
-                    .and_then(|v| v.as_str())
-                    .filter(|s| !s.is_empty())
-                    .map(|s| s.to_string())
-            })
+        project_sections(&val).into_iter().find_map(|section| {
+            section
+                .get("version")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string())
+        })
     }
 }
 
@@ -156,19 +152,13 @@ mod tests {
     #[test]
     fn extract_description_from_cargo_package() {
         let src = "[package]\nname = \"x\"\ndescription = \"A crate\"";
-        assert_eq!(
-            TomlConfigAdapter.extract_description(src),
-            Some("A crate".to_string())
-        );
+        assert_eq!(TomlConfigAdapter.extract_description(src), Some("A crate".to_string()));
     }
 
     #[test]
     fn extract_description_from_pyproject_project() {
         let src = "[project]\nname = \"y\"\ndescription = \"A python pkg\"";
-        assert_eq!(
-            TomlConfigAdapter.extract_description(src),
-            Some("A python pkg".to_string())
-        );
+        assert_eq!(TomlConfigAdapter.extract_description(src), Some("A python pkg".to_string()));
     }
 
     #[test]
@@ -180,17 +170,11 @@ mod tests {
     #[test]
     fn extract_version_from_cargo_package() {
         let src = "[package]\nversion = \"0.2.23\"";
-        assert_eq!(
-            TomlConfigAdapter.extract_version(src),
-            Some("0.2.23".to_string())
-        );
+        assert_eq!(TomlConfigAdapter.extract_version(src), Some("0.2.23".to_string()));
     }
 
     #[test]
     fn extract_version_none_when_absent() {
-        assert_eq!(
-            TomlConfigAdapter.extract_version("[package]\nname = \"x\""),
-            None
-        );
+        assert_eq!(TomlConfigAdapter.extract_version("[package]\nname = \"x\""), None);
     }
 }

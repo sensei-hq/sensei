@@ -95,16 +95,16 @@
             <div class="min-w-0">
               <div class="flex items-baseline gap-2">
                 <span class="text-sm text-ink font-medium">{mcp.name}</span>
-                <span class="font-mono text-[11px] text-ink-soft">{mcp.publisher}</span>
+                <span class="font-mono text-xs text-ink-soft">{mcp.publisher}</span>
                 {#if mcp.verified}
-                  <span class="text-[11px] text-success" title="Verified">✓</span>
+                  <span class="text-xs text-success" title="Verified">✓</span>
                 {/if}
               </div>
               <div class="text-xs text-ink-soft mt-0.5">{mcp.summary}</div>
             </div>
-            <span class="font-mono text-[11px] text-ink-soft whitespace-nowrap">{mcp.tools} tools</span>
+            <span class="font-mono text-xs text-ink-soft whitespace-nowrap">{mcp.tools} tools</span>
             {#if mcp.installed}
-              <span class="font-mono text-[11px] text-success border border-success rounded-sm px-1.5 py-0.5 uppercase tracking-wide whitespace-nowrap">installed</span>
+              <span class="font-mono text-xs text-success border border-success rounded-sm px-1.5 py-0.5 uppercase tracking-wide whitespace-nowrap">installed</span>
             {:else}
               <Switch bind:value={mcp.selected} label={`Install ${mcp.name}`} />
             {/if}
@@ -131,13 +131,13 @@
             <div class="min-w-0">
               <div class="flex items-baseline gap-2">
                 <span class="text-sm text-ink font-medium">{mcp.name}</span>
-                <span class="font-mono text-[11px] text-ink-soft">{mcp.publisher}</span>
+                <span class="font-mono text-xs text-ink-soft">{mcp.publisher}</span>
               </div>
               <div class="text-xs text-ink-soft mt-0.5">{mcp.summary}</div>
             </div>
-            <span class="font-mono text-[11px] text-ink-soft whitespace-nowrap">{mcp.tools} tools</span>
+            <span class="font-mono text-xs text-ink-soft whitespace-nowrap">{mcp.tools} tools</span>
             {#if mcp.installed}
-              <span class="font-mono text-[11px] text-success border border-success rounded-sm px-1.5 py-0.5 uppercase tracking-wide whitespace-nowrap">installed</span>
+              <span class="font-mono text-xs text-success border border-success rounded-sm px-1.5 py-0.5 uppercase tracking-wide whitespace-nowrap">installed</span>
             {:else}
               <Switch bind:value={mcp.selected} label={`Install ${mcp.name}`} />
             {/if}

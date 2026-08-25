@@ -5,8 +5,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use sensei_bootstrap::{
-    SenseiConfig, SenseiLocalConfig,
-    SENSEI_BIN, SENSEID_BIN, SENSEI_MCP_BIN, MCP_REGISTRY_KEY,
+    MCP_REGISTRY_KEY, SENSEI_BIN, SENSEI_MCP_BIN, SENSEID_BIN, SenseiConfig, SenseiLocalConfig,
 };
 
 mod doctor;
@@ -217,23 +216,19 @@ fn main() -> ExitCode {
             let _ = <Cli as clap::CommandFactory>::command().print_help();
             println!();
         }
-        Some(Commands::Init {
-            scope,
-            acp,
-            recommended,
-        }) => {
+        Some(Commands::Init { scope, acp, recommended }) => {
             init(scope.as_deref(), acp.as_deref(), recommended);
         }
-        Some(Commands::Remove {
-            target,
-            name,
-            purge,
-        }) => remove_cmd(&target, name.as_deref(), purge),
+        Some(Commands::Remove { target, name, purge }) => {
+            remove_cmd(&target, name.as_deref(), purge)
+        }
         Some(Commands::Start { port }) => {
             daemon_cmd("start", Some(port.unwrap_or_else(|| cfg().daemon_port)))
         }
         Some(Commands::Stop) => daemon_cmd("stop", None),
-        Some(Commands::Restart { port }) => restart_daemon(port.unwrap_or_else(|| cfg().daemon_port)),
+        Some(Commands::Restart { port }) => {
+            restart_daemon(port.unwrap_or_else(|| cfg().daemon_port))
+        }
         Some(Commands::Status) => daemon_cmd("status", None),
         Some(Commands::Scan { path }) => scan(&path),
         Some(Commands::Scaffold { what, path }) => scaffold_cmd(what, path.as_deref()),
@@ -315,9 +310,8 @@ fn start_daemon() {
     let cfg = cfg();
     let service = cfg.brew_service_name();
     let mut started_via_brew = false;
-    if let Ok(out) = std::process::Command::new("brew")
-        .args(["services", "start", service])
-        .output()
+    if let Ok(out) =
+        std::process::Command::new("brew").args(["services", "start", service]).output()
         && out.status.success()
     {
         started_via_brew = true;
@@ -326,9 +320,7 @@ fn start_daemon() {
     if !started_via_brew {
         let bin = daemon_bin();
         let port = cfg.daemon_port;
-        match std::process::Command::new(&bin)
-            .args(["start", "--port", &port.to_string()])
-            .spawn()
+        match std::process::Command::new(&bin).args(["start", "--port", &port.to_string()]).spawn()
         {
             Ok(_) => {}
             Err(e) => {
@@ -365,10 +357,7 @@ fn check_daemon_version(allow_restart: bool) {
         return;
     }
 
-    eprintln!(
-        "  Version mismatch — CLI: {}, daemon: {}",
-        CLI_VERSION, daemon_version
-    );
+    eprintln!("  Version mismatch — CLI: {}, daemon: {}", CLI_VERSION, daemon_version);
 
     if allow_restart {
         eprintln!("  Restarting daemon...");
@@ -422,7 +411,6 @@ fn mark_user_scope_configured() {
         eprintln!("Warning: failed to write sensei config: {e}");
     }
 }
-
 
 // ── Init ────────────────────────────────────────────────────────────────────
 
@@ -518,18 +506,18 @@ fn init_user_scope(acp: Option<&str>, _recommended: bool) {
                 let body: serde_json::Value = match r.json() {
                     Ok(v) => v,
                     Err(e) => {
-                        eprintln!("  ✗ {} — configure returned an unreadable response: {}", acp_id, e);
-                        all_errors.push(format!("{}: unreadable configure response: {}", acp_id, e));
+                        eprintln!(
+                            "  ✗ {} — configure returned an unreadable response: {}",
+                            acp_id, e
+                        );
+                        all_errors
+                            .push(format!("{}: unreadable configure response: {}", acp_id, e));
                         continue;
                     }
                 };
                 let errors: Vec<String> = body["errors"]
                     .as_array()
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(|e| e.as_str().map(String::from))
-                            .collect()
-                    })
+                    .map(|arr| arr.iter().filter_map(|e| e.as_str().map(String::from)).collect())
                     .unwrap_or_default();
 
                 let plugin_ok = body["plugin_installed"].as_bool() == Some(true);
@@ -561,10 +549,7 @@ fn init_user_scope(acp: Option<&str>, _recommended: bool) {
             Ok(r) => {
                 let status = r.status();
                 let body: String = r.text().unwrap_or_default();
-                eprintln!(
-                    "  ✗ {} — configure failed (HTTP {}): {}",
-                    acp_id, status, body
-                );
+                eprintln!("  ✗ {} — configure failed (HTTP {}): {}", acp_id, status, body);
                 all_errors.push(format!("{}: HTTP {}", acp_id, status));
             }
             Err(e) => {
@@ -607,10 +592,7 @@ fn init_project_scope(_recommended: bool) {
     // Rules
     let rules_file = sensei_dir.join("rules.md");
     if !rules_file.exists() {
-        let project_name = repo_root
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("project");
+        let project_name = repo_root.file_name().and_then(|n| n.to_str()).unwrap_or("project");
         let today = format_date();
         fs::write(&rules_file, format!(
             "---\nname: Project Rules — {}\nupdated: {}\nmindsets: .sensei/mindsets/\npersonas: .sensei/personas/\n---\n\n# Rules\n\n## Patterns\n\n<!-- Add project patterns here -->\n\n## Quality\n\n- **Zero errors** — test suite must pass before and after every change\n\n## Process\n\n- **Design before code** — analyst mindset first\n- **One issue at a time** — complete, verify, close, then next\n",
@@ -646,23 +628,12 @@ fn init_project_scope(_recommended: bool) {
 
     mcp_config
         .as_object_mut()
-        .and_then(|o| {
-            o.entry("mcpServers")
-                .or_insert(serde_json::json!({}))
-                .as_object_mut()
-        })
+        .and_then(|o| o.entry("mcpServers").or_insert(serde_json::json!({})).as_object_mut())
         .map(|servers| {
-            servers.insert(
-                MCP_REGISTRY_KEY.into(),
-                serde_json::json!({"command": SENSEI_MCP_BIN}),
-            )
+            servers.insert(MCP_REGISTRY_KEY.into(), serde_json::json!({"command": SENSEI_MCP_BIN}))
         });
 
-    fs::write(
-        &mcp_file,
-        serde_json::to_string_pretty(&mcp_config).unwrap(),
-    )
-    .ok();
+    fs::write(&mcp_file, serde_json::to_string_pretty(&mcp_config).unwrap()).ok();
     println!("\n  [ok] .mcp.json");
 
     // 3. Clean up stale per-project hooks from .claude/settings.local.json
@@ -688,9 +659,15 @@ fn init_project_scope(_recommended: bool) {
     println!();
     for name in ["CLAUDE.md", "AGENTS.md"] {
         match managed::write_directive(&repo_root.join(name)) {
-            Ok(managed::Change::Created) => println!("  [created] {name} — sensei governance directive"),
-            Ok(managed::Change::Updated) => println!("  [updated] {name} — sensei governance directive"),
-            Ok(managed::Change::Unchanged) => println!("  [ok]      {name} — governance directive current"),
+            Ok(managed::Change::Created) => {
+                println!("  [created] {name} — sensei governance directive")
+            }
+            Ok(managed::Change::Updated) => {
+                println!("  [updated] {name} — sensei governance directive")
+            }
+            Ok(managed::Change::Unchanged) => {
+                println!("  [ok]      {name} — governance directive current")
+            }
             Err(e) => eprintln!("  [failed]  {name} — {e}"),
         }
     }
@@ -716,9 +693,7 @@ fn count_md_files(dir: &std::path::Path) -> usize {
     fs::read_dir(dir)
         .map(|rd| {
             rd.filter(|e| {
-                e.as_ref()
-                    .map(|e| e.path().extension().is_some_and(|x| x == "md"))
-                    .unwrap_or(false)
+                e.as_ref().map(|e| e.path().extension().is_some_and(|x| x == "md")).unwrap_or(false)
             })
             .count()
         })
@@ -764,11 +739,7 @@ fn resolve_acp_id(name: &str) -> Option<String> {
         eprintln!(
             "Unknown ACP: '{}'. Available: {}",
             name,
-            if available.is_empty() {
-                "none detected".to_string()
-            } else {
-                available.join(", ")
-            }
+            if available.is_empty() { "none detected".to_string() } else { available.join(", ") }
         );
         std::process::exit(1);
     }
@@ -806,10 +777,7 @@ fn remove_acp(name: &str) {
     {
         Ok(r) if r.status().is_success() => {
             let result: serde_json::Value = r.json().unwrap_or_default();
-            let removed = result["acps_removed"]
-                .as_array()
-                .cloned()
-                .unwrap_or_default();
+            let removed = result["acps_removed"].as_array().cloned().unwrap_or_default();
 
             if removed.is_empty() {
                 println!("  No ACPs to remove.");
@@ -955,7 +923,11 @@ fn upgrade_cmd(acp: Option<&str>) {
                     println!("  ✓ {} — {}", id, if msg.is_empty() { "ok".into() } else { msg });
                 } else {
                     let msg = join_strs(&rep["errors"]);
-                    eprintln!("  ✗ {} — {}", id, if msg.is_empty() { "failed".into() } else { msg });
+                    eprintln!(
+                        "  ✗ {} — {}",
+                        id,
+                        if msg.is_empty() { "failed".into() } else { msg }
+                    );
                 }
             }
         }
@@ -968,12 +940,7 @@ fn upgrade_cmd(acp: Option<&str>) {
 /// value isn't an array of strings).
 fn join_strs(v: &serde_json::Value) -> String {
     v.as_array()
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|x| x.as_str())
-                .collect::<Vec<_>>()
-                .join("; ")
-        })
+        .map(|arr| arr.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>().join("; "))
         .unwrap_or_default()
 }
 
@@ -984,9 +951,8 @@ fn restart_daemon(port: u16) {
     // launchd ownership). Fall back to direct binary stop+start when brew
     // isn't on PATH or the service isn't registered.
     let service = cfg().brew_service_name();
-    if let Ok(out) = std::process::Command::new("brew")
-        .args(["services", "restart", service])
-        .status()
+    if let Ok(out) =
+        std::process::Command::new("brew").args(["services", "restart", service]).status()
         && out.success()
     {
         std::process::exit(0);
@@ -995,16 +961,10 @@ fn restart_daemon(port: u16) {
     let bin = daemon_bin();
     let _ = std::process::Command::new(&bin).arg("stop").status();
     std::thread::sleep(std::time::Duration::from_millis(500));
-    match std::process::Command::new(&bin)
-        .args(["start", "--port", &port.to_string()])
-        .status()
-    {
+    match std::process::Command::new(&bin).args(["start", "--port", &port.to_string()]).status() {
         Ok(s) => std::process::exit(s.code().unwrap_or(0)),
         Err(e) => {
-            eprintln!(
-                "Failed to run {SENSEID_BIN}: {e}. Install: {}",
-                cfg().brew_install_script()
-            );
+            eprintln!("Failed to run {SENSEID_BIN}: {e}. Install: {}", cfg().brew_install_script());
             std::process::exit(1);
         }
     }
@@ -1017,9 +977,8 @@ fn daemon_cmd(cmd: &str, port: Option<u16>) {
     // lifecycle change.
     if cmd == "stop" {
         let service = cfg().brew_service_name();
-        if let Ok(out) = std::process::Command::new("brew")
-            .args(["services", "stop", service])
-            .status()
+        if let Ok(out) =
+            std::process::Command::new("brew").args(["services", "stop", service]).status()
             && out.success()
         {
             std::process::exit(0);
@@ -1037,10 +996,7 @@ fn daemon_cmd(cmd: &str, port: Option<u16>) {
     match std::process::Command::new(&bin).args(&args).status() {
         Ok(s) => std::process::exit(s.code().unwrap_or(0)),
         Err(e) => {
-            eprintln!(
-                "Failed to run {SENSEID_BIN}: {e}. Install: {}",
-                cfg().brew_install_script()
-            );
+            eprintln!("Failed to run {SENSEID_BIN}: {e}. Install: {}", cfg().brew_install_script());
             std::process::exit(1);
         }
     }
@@ -1074,10 +1030,7 @@ fn scaffold_cmd(what: Option<ScaffoldTarget>, path: Option<&str>) {
     };
     let report = match what {
         Some(ScaffoldTarget::Feature { name }) => {
-            println!(
-                "=== sensei scaffold feature {name} ===\n{}\n",
-                target.display()
-            );
+            println!("=== sensei scaffold feature {name} ===\n{}\n", target.display());
             match scaffold::run_feature(&target, &name) {
                 Ok(r) => r,
                 Err(e) => {
@@ -1141,7 +1094,9 @@ fn print_index_doctor(r: &serde_json::Value) {
     println!("=== index doctor ===\n");
     println!(
         "roots: {} checked, {} present, {} absent (unmounted — skipped)\n",
-        n("roots_checked"), n("roots_present"), n("roots_absent")
+        n("roots_checked"),
+        n("roots_present"),
+        n("roots_absent")
     );
 
     let classes = [
@@ -1181,18 +1136,30 @@ fn folder_remap(old: &str, new: &str) {
     {
         Ok(r) if r.status().is_success() => {
             let d: serde_json::Value = r.json().unwrap_or_default();
-            let action = if d["remapped"].as_bool() == Some(true) { "re-pointed history and aliased" } else { "aliased" };
+            let action = if d["remapped"].as_bool() == Some(true) {
+                "re-pointed history and aliased"
+            } else {
+                "aliased"
+            };
             println!(
                 "Remapped {old} → {new}: {action}; {} session(s) re-attached.",
                 d["sessions_repaired"].as_u64().unwrap_or(0)
             );
         }
         Ok(r) if r.status().as_u16() == 404 => {
-            eprintln!("remap failed: '{new}' is not an indexed folder — run `sensei scan` on it first.");
+            eprintln!(
+                "remap failed: '{new}' is not an indexed folder — run `sensei scan` on it first."
+            );
             std::process::exit(1);
         }
-        Ok(r) => { eprintln!("remap failed: HTTP {}", r.status()); std::process::exit(1); }
-        Err(e) => { eprintln!("remap failed: {e}"); std::process::exit(1); }
+        Ok(r) => {
+            eprintln!("remap failed: HTTP {}", r.status());
+            std::process::exit(1);
+        }
+        Err(e) => {
+            eprintln!("remap failed: {e}");
+            std::process::exit(1);
+        }
     }
 }
 
@@ -1203,11 +1170,7 @@ fn add_lib(name: &str, url: Option<&str>) {
     if let Some(u) = url {
         body["params"]["url"] = serde_json::json!(u);
     }
-    match c
-        .post(format!("{}/api/mcp/call", daemon_url()))
-        .json(&body)
-        .send()
-    {
+    match c.post(format!("{}/api/mcp/call", daemon_url())).json(&body).send() {
         Ok(r) if r.status().is_success() => {
             let d: serde_json::Value = r.json().unwrap_or_default();
             if d["ok"].as_bool() == Some(true) {
@@ -1388,10 +1351,7 @@ mod tests {
     #[test]
     fn models_status_subcommand_parses() {
         let cli = Cli::parse_from(["sensei", "models", "status"]);
-        assert!(matches!(
-            cli.command,
-            Some(Commands::Models { cmd: ModelsCommands::Status })
-        ));
+        assert!(matches!(cli.command, Some(Commands::Models { cmd: ModelsCommands::Status })));
     }
 
     #[test]
@@ -1470,10 +1430,7 @@ mod tests {
             join_strs(&serde_json::json!(["upgraded claude-code plugin"])),
             "upgraded claude-code plugin"
         );
-        assert_eq!(
-            join_strs(&serde_json::json!(["a", "b"])),
-            "a; b"
-        );
+        assert_eq!(join_strs(&serde_json::json!(["a", "b"])), "a; b");
         assert_eq!(join_strs(&serde_json::json!([])), "");
         assert_eq!(join_strs(&serde_json::json!("not an array")), "");
     }
@@ -1499,10 +1456,9 @@ mod tests {
     fn scaffold_feature_subcommand_parses() {
         let cli = Cli::parse_from(["sensei", "scaffold", "feature", "auth"]);
         match cli.command {
-            Some(Commands::Scaffold {
-                what: Some(ScaffoldTarget::Feature { name }),
-                ..
-            }) => assert_eq!(name, "auth"),
+            Some(Commands::Scaffold { what: Some(ScaffoldTarget::Feature { name }), .. }) => {
+                assert_eq!(name, "auth")
+            }
             _ => panic!("expected Scaffold feature command"),
         }
     }
@@ -1511,19 +1467,17 @@ mod tests {
     fn scaffold_baseline_subcommand_parses_kind() {
         let cli = Cli::parse_from(["sensei", "scaffold", "baseline", "--kind", "content"]);
         match cli.command {
-            Some(Commands::Scaffold {
-                what: Some(ScaffoldTarget::Baseline { kind }),
-                ..
-            }) => assert_eq!(kind, scaffold::BaselineKind::Content),
+            Some(Commands::Scaffold { what: Some(ScaffoldTarget::Baseline { kind }), .. }) => {
+                assert_eq!(kind, scaffold::BaselineKind::Content)
+            }
             _ => panic!("expected Scaffold baseline command"),
         }
         // default kind = code
         let d = Cli::parse_from(["sensei", "scaffold", "baseline"]);
         match d.command {
-            Some(Commands::Scaffold {
-                what: Some(ScaffoldTarget::Baseline { kind }),
-                ..
-            }) => assert_eq!(kind, scaffold::BaselineKind::Code),
+            Some(Commands::Scaffold { what: Some(ScaffoldTarget::Baseline { kind }), .. }) => {
+                assert_eq!(kind, scaffold::BaselineKind::Code)
+            }
             _ => panic!("expected Scaffold baseline command"),
         }
     }

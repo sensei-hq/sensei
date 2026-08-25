@@ -50,7 +50,7 @@
                 class:text-warning={anti}
             >{anti ? '禁' : '紋'}</span>
             <div class="flex-1 min-w-0">
-                <p class="m-0 text-[13px] text-ink truncate">{p.name}</p>
+                <p class="m-0 text-sm text-ink truncate">{p.name}</p>
                 <p class="m-0 mt-0.5 text-xs text-ink-soft flex items-center gap-2">
                     {#if p.instanceCount != null && p.instanceCount > 0}
                         <span class="font-mono">{p.instanceCount}×</span>

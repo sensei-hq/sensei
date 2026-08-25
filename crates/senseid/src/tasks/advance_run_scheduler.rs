@@ -82,7 +82,13 @@ async fn resume_due(queue: &TaskQueue, pg: &PgStore) {
         // A per-run event failure is logged and skipped — it must not stop us
         // from ticking the run (the state is already flipped to running).
         if let Err(e) = pg
-            .append_run_event(&id, RunEventKind::Resumed, None, None, &serde_json::json!({ "auto": true }))
+            .append_run_event(
+                &id,
+                RunEventKind::Resumed,
+                None,
+                None,
+                &serde_json::json!({ "auto": true }),
+            )
             .await
         {
             tracing::warn!(run_id = %id, error = %e, "advance_run_scheduler: logging Resumed event failed");
@@ -129,6 +135,11 @@ async fn run(queue: Arc<TaskQueue>, pg: Arc<PgStore>) {
 }
 
 #[cfg(test)]
+// `resume_test_guard()` is a blocking `std::sync::Mutex` held across awaits on
+// purpose — see `crate::tasks::test_support::TestGate` for why an async mutex loses
+// wakeups here. These are current-thread test runtimes, one per test, so
+// blocking the thread costs nothing and cannot deadlock the runtime.
+#[allow(clippy::await_holding_lock)]
 mod tests {
     use super::*;
 
@@ -165,8 +176,10 @@ mod tests {
         // DB-guarded: with a test DB, a tick over N active runs enqueues N ticks.
         // `tick` calls the global `resume_due_runs`, so hold the shared resume
         // lock to serialize with the other resume-race tests.
-        let _guard = crate::runs::resume_test_lock().lock().await;
-        let Ok(pg) = PgStore::connect_test().await else { return; };
+        let _guard = crate::runs::resume_test_guard();
+        let Ok(pg) = PgStore::connect_test().await else {
+            return;
+        };
         let queue = TaskQueue::with_max_repos(16);
 
         use crate::runs::NewRun;
@@ -175,18 +188,25 @@ mod tests {
 
         tick(&queue, &pg).await;
 
-        // Drain the queue and confirm both runs got an AdvanceRun tick AND a
-        // PublishRun status-federation tick. (Other runs from a shared test DB may
-        // also appear — we only assert ours are present, and that every enqueued
-        // task is one of the two run kinds.)
-        let n = queue.status().await.pending;
+        // Inspect the queue with `snapshot()` rather than draining it with
+        // `next_task()`. Run tasks all carry folder_path "" (runs aren't folder
+        // scoped), so the per-repo cap applies to them COLLECTIVELY: popping
+        // max_repos of them without ever completing one leaves nothing
+        // dispatchable, and `next_task()` then parks on `notified()` forever. On a
+        // shared test DB `pending` routinely exceeds the cap, so the old
+        // drain-`pending`-times loop deadlocked rather than flaked.
+        // (Other runs from a shared test DB may also appear — we only assert ours
+        // are present, and that every enqueued task is one of the two run kinds.)
         let mut advance_paths = std::collections::HashSet::new();
         let mut publish_paths = std::collections::HashSet::new();
-        for _ in 0..n {
-            let t = queue.next_task().await;
-            match t.kind {
-                TaskKind::AdvanceRun => { advance_paths.insert(t.path); }
-                TaskKind::PublishRun => { publish_paths.insert(t.path); }
+        for (kind, _folder, path) in queue.snapshot().await {
+            match kind {
+                TaskKind::AdvanceRun => {
+                    advance_paths.insert(path);
+                }
+                TaskKind::PublishRun => {
+                    publish_paths.insert(path);
+                }
                 other => panic!("unexpected task kind enqueued by tick: {other}"),
             }
         }
@@ -197,7 +217,10 @@ mod tests {
 
         for id in [a, b] {
             sqlx_core::query::query("DELETE FROM activity.runs WHERE id = $1")
-                .bind(id).execute(pg.pool()).await.unwrap();
+                .bind(id)
+                .execute(pg.pool())
+                .await
+                .unwrap();
         }
     }
 
@@ -209,8 +232,10 @@ mod tests {
         //
         // `tick` calls the global `resume_due_runs`, so hold the shared resume
         // lock to serialize with the other resume-race tests.
-        let _guard = crate::runs::resume_test_lock().lock().await;
-        let Ok(pg) = PgStore::connect_test().await else { return; };
+        let _guard = crate::runs::resume_test_guard();
+        let Ok(pg) = PgStore::connect_test().await else {
+            return;
+        };
         let queue = TaskQueue::with_max_repos(16);
 
         use crate::runs::NewRun;
@@ -225,13 +250,11 @@ mod tests {
         // AdvanceRun and the PublishRun enqueue are de-duped, so two ticks with
         // nothing drained enqueue each kind for our run exactly once.
         let want = run.to_string();
-        let n = queue.status().await.pending;
         let mut ours_advance = 0;
         let mut ours_publish = 0;
-        for _ in 0..n {
-            let t = queue.next_task().await;
-            if t.path == want {
-                match t.kind {
+        for (kind, _folder, path) in queue.snapshot().await {
+            if path == want {
+                match kind {
                     TaskKind::AdvanceRun => ours_advance += 1,
                     TaskKind::PublishRun => ours_publish += 1,
                     other => panic!("unexpected task kind: {other}"),
@@ -242,7 +265,10 @@ mod tests {
         assert_eq!(ours_publish, 1, "two ticks enqueue the PublishRun for a run only once");
 
         sqlx_core::query::query("DELETE FROM activity.runs WHERE id = $1")
-            .bind(run).execute(pg.pool()).await.unwrap();
+            .bind(run)
+            .execute(pg.pool())
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
@@ -255,9 +281,11 @@ mod tests {
         // resume_due with an empty set and nothing to log. Serialize with the
         // pg_store resume test on the shared lock (production has a single
         // scheduler, so there is no such race there).
-        let _guard = crate::runs::resume_test_lock().lock().await;
+        let _guard = crate::runs::resume_test_guard();
 
-        let Ok(pg) = PgStore::connect_test().await else { return; };
+        let Ok(pg) = PgStore::connect_test().await else {
+            return;
+        };
         let queue = TaskQueue::with_max_repos(16);
 
         use crate::runs::NewRun;
@@ -267,8 +295,14 @@ mod tests {
         pg.resume_due_runs().await.unwrap();
 
         let due = pg.create_run(&NewRun::default()).await.unwrap();
-        pg.update_run_status(&due, RelayRunStatus::Paused, Some("2000-01-01T00:00:00Z"), Some("cap"))
-            .await.unwrap();
+        pg.update_run_status(
+            &due,
+            RelayRunStatus::Paused,
+            Some("2000-01-01T00:00:00Z"),
+            Some("cap"),
+        )
+        .await
+        .unwrap();
 
         resume_due(&queue, &pg).await;
 
@@ -281,13 +315,12 @@ mod tests {
         assert!(events.iter().any(|e| e.kind == RunEventKind::Resumed), "Resumed event logged");
         // …and both an AdvanceRun tick AND a PublishRun status-federation tick
         // were enqueued for it.
-        let n = queue.status().await.pending;
+        let want = due.to_string();
         let mut saw_advance = false;
         let mut saw_publish = false;
-        for _ in 0..n {
-            let t = queue.next_task().await;
-            if t.path == due.to_string() {
-                match t.kind {
+        for (kind, _folder, path) in queue.snapshot().await {
+            if path == want {
+                match kind {
                     TaskKind::AdvanceRun => saw_advance = true,
                     TaskKind::PublishRun => saw_publish = true,
                     other => panic!("unexpected task kind: {other}"),
@@ -298,6 +331,9 @@ mod tests {
         assert!(saw_publish, "resume_due enqueues a PublishRun tick for the resumed run");
 
         sqlx_core::query::query("DELETE FROM activity.runs WHERE id = $1")
-            .bind(due).execute(pg.pool()).await.unwrap();
+            .bind(due)
+            .execute(pg.pool())
+            .await
+            .unwrap();
     }
 }

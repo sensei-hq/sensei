@@ -54,9 +54,7 @@ fn nudge_text(payload: &serde_json::Value) -> String {
 pub fn pickup_nudges(items: &[RelayInboxItem], run_id: &str) -> Vec<Nudge> {
     items
         .iter()
-        .filter(|it| {
-            it.direction == RelayMessageDirection::HumanToAgent && it.run_id == run_id
-        })
+        .filter(|it| it.direction == RelayMessageDirection::HumanToAgent && it.run_id == run_id)
         .map(|it| Nudge {
             id: it.id.clone(),
             kind: it.kind.as_db_str().to_string(),

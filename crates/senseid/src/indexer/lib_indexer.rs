@@ -1,4 +1,3 @@
-
 /// Fetch library content from URL (async part).
 pub async fn fetch_lib_url(url: &str) -> Result<String, String> {
     fetch_url(url).await
@@ -37,10 +36,7 @@ pub fn index_lib_content(
 /// Dispatches through the `ManifestAdapter` registry: any registered ecosystem
 /// (`npm`, `cargo`, `pypi`, `go`) contributes its dep entries. New ecosystems
 /// only require a new adapter — this function never grows another branch.
-pub fn extract_dep_versions(
-    _repo_id: &str,
-    repo_path: &str,
-) -> Result<Vec<DepVersion>, String> {
+pub fn extract_dep_versions(_repo_id: &str, repo_path: &str) -> Result<Vec<DepVersion>, String> {
     let repo = std::path::Path::new(repo_path);
     let mut deps = Vec::new();
 
@@ -84,11 +80,7 @@ pub(crate) fn npm_local_source(version: &str) -> Option<String> {
 ///
 /// Returns `Some(path_string)` when a `path` key is present, `None` otherwise.
 pub(crate) fn cargo_local_source(dep_value: &toml::Value) -> Option<String> {
-    dep_value
-        .as_table()
-        .and_then(|t| t.get("path"))
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
+    dep_value.as_table().and_then(|t| t.get("path")).and_then(|v| v.as_str()).map(|s| s.to_string())
 }
 
 /// Parse npm dependency sections from a `package.json` value.
@@ -130,11 +122,9 @@ pub(crate) fn parse_cargo_deps(cargo: &toml::Value) -> Vec<DepVersion> {
         for (name, ver) in obj {
             let version = match ver {
                 toml::Value::String(s) => s.clone(),
-                toml::Value::Table(t) => t
-                    .get("version")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("*")
-                    .to_string(),
+                toml::Value::Table(t) => {
+                    t.get("version").and_then(|v| v.as_str()).unwrap_or("*").to_string()
+                }
                 _ => "*".into(),
             };
             let local_source = cargo_local_source(ver);
@@ -157,10 +147,8 @@ pub(crate) fn parse_cargo_deps(cargo: &toml::Value) -> Vec<DepVersion> {
 /// deps are on the 1b/1c roadmap.
 pub(crate) fn parse_pyproject_deps(pyp: &toml::Value) -> Vec<DepVersion> {
     let mut out = Vec::new();
-    let Some(deps_arr) = pyp
-        .get("project")
-        .and_then(|v| v.get("dependencies"))
-        .and_then(|v| v.as_array())
+    let Some(deps_arr) =
+        pyp.get("project").and_then(|v| v.get("dependencies")).and_then(|v| v.as_array())
     else {
         return out;
     };
@@ -417,9 +405,10 @@ pub fn component_from_heading(heading: &str, lib_name: &str) -> String {
     }
     // Strip a leading `<lib>-` prefix (the "dbd" in "### dbd deploy").
     if let Some(rest) = full.strip_prefix(&format!("{lib}-"))
-        && !rest.is_empty() {
-            return rest.to_string();
-        }
+        && !rest.is_empty()
+    {
+        return rest.to_string();
+    }
     full
 }
 
@@ -470,7 +459,8 @@ pub fn parse_single_file(content: &str, lib_name: &str) -> Vec<ParsedDoc> {
         let component = if component.is_empty() { None } else { Some(component) };
         // Fall back to the heading as content when the section body is empty so
         // the page is never stored with empty content.
-        let content = if body.trim().is_empty() { heading.trim().to_string() } else { body.to_string() };
+        let content =
+            if body.trim().is_empty() { heading.trim().to_string() } else { body.to_string() };
         docs.push(make_doc(heading.trim().to_string(), content, component));
     };
 
@@ -524,16 +514,15 @@ pub fn docs_from_source_files(files: &[SourceFile], lib_name: &str) -> Vec<Parse
 
     // Single-file layout: no component dir and a lone llms-full among the files.
     let full = files.iter().find(|f| f.stem == "llms-full");
-    if !has_component_dir
-        && let Some(full) = full {
-            let non_index: Vec<&SourceFile> = files
-                .iter()
-                .filter(|f| f.stem != "llms" && f.stem != "index" && f.stem != "llms-full")
-                .collect();
-            if non_index.is_empty() {
-                return parse_single_file(&full.content, lib_name);
-            }
+    if !has_component_dir && let Some(full) = full {
+        let non_index: Vec<&SourceFile> = files
+            .iter()
+            .filter(|f| f.stem != "llms" && f.stem != "index" && f.stem != "llms-full")
+            .collect();
+        if non_index.is_empty() {
+            return parse_single_file(&full.content, lib_name);
         }
+    }
 
     // Per-file layout (components/ or plain top-level stems).
     let mut docs = Vec::new();
@@ -542,11 +531,8 @@ pub fn docs_from_source_files(files: &[SourceFile], lib_name: &str) -> Vec<Parse
         if f.stem == "llms-full" {
             continue;
         }
-        let component = if f.is_component_file {
-            Some(slug(&f.stem))
-        } else {
-            component_from_stem(&f.stem)
-        };
+        let component =
+            if f.is_component_file { Some(slug(&f.stem)) } else { component_from_stem(&f.stem) };
         let title = match &component {
             Some(c) => c.clone(),
             None => lib_name.to_string(),
@@ -554,9 +540,10 @@ pub fn docs_from_source_files(files: &[SourceFile], lib_name: &str) -> Vec<Parse
         docs.push(make_doc(title, f.content.clone(), component));
     }
     if docs.is_empty()
-        && let Some(full) = full {
-            return parse_single_file(&full.content, lib_name);
-        }
+        && let Some(full) = full
+    {
+        return parse_single_file(&full.content, lib_name);
+    }
     docs
 }
 
@@ -731,7 +718,9 @@ fn collect_txt_files(dir: &std::path::Path, is_component: bool, out: &mut Vec<So
                 location: path.to_string_lossy().to_string(),
                 is_component_file: is_component,
             }),
-            Err(e) => tracing::warn!(error = %e, path = %path.display(), "read_local_source_files: read failed"),
+            Err(e) => {
+                tracing::warn!(error = %e, path = %path.display(), "read_local_source_files: read failed")
+            }
         }
     }
 }
@@ -769,7 +758,9 @@ pub async fn fetch_website_source_files(index_url: &str) -> Result<Vec<SourceFil
                 location: full,
                 is_component_file: is_component,
             }),
-            Err(e) => tracing::warn!(error = %e, url = %full, "fetch_website_source_files: page fetch failed"),
+            Err(e) => {
+                tracing::warn!(error = %e, url = %full, "fetch_website_source_files: page fetch failed")
+            }
         }
     }
     Ok(files)
@@ -778,12 +769,16 @@ pub async fn fetch_website_source_files(index_url: &str) -> Result<Vec<SourceFil
 /// Fetch GitHub-tree llms docs via the contents API. Lists the directory (and
 /// `components/` subdir) and downloads each `.txt` via its `download_url`.
 pub async fn fetch_github_source_files(
-    owner: &str, repo: &str, branch: &str, path: &str,
+    owner: &str,
+    repo: &str,
+    branch: &str,
+    path: &str,
 ) -> Result<Vec<SourceFile>, String> {
     let mut files = Vec::new();
     fetch_github_dir(owner, repo, branch, path, false, &mut files).await?;
     // Recurse into components/ if present.
-    let comp_path = if path.is_empty() { "components".to_string() } else { format!("{path}/components") };
+    let comp_path =
+        if path.is_empty() { "components".to_string() } else { format!("{path}/components") };
     if let Err(e) = fetch_github_dir(owner, repo, branch, &comp_path, true, &mut files).await {
         tracing::warn!(error = %e, path = %comp_path, "fetch_github_source_files: components/ dir skipped");
     }
@@ -794,8 +789,12 @@ pub async fn fetch_github_source_files(
 }
 
 async fn fetch_github_dir(
-    owner: &str, repo: &str, branch: &str, path: &str,
-    is_component: bool, out: &mut Vec<SourceFile>,
+    owner: &str,
+    repo: &str,
+    branch: &str,
+    path: &str,
+    is_component: bool,
+    out: &mut Vec<SourceFile>,
 ) -> Result<(), String> {
     let api = github_contents_url(owner, repo, path, branch);
     let client = reqwest::Client::builder()
@@ -833,10 +832,16 @@ async fn fetch_github_dir(
                     location: download_url.to_string(),
                     is_component_file: is_component,
                 }),
-                Err(e) => tracing::warn!(error = %e, url = %download_url, "fetch_github_dir: read body failed"),
+                Err(e) => {
+                    tracing::warn!(error = %e, url = %download_url, "fetch_github_dir: read body failed")
+                }
             },
-            Ok(r) => tracing::warn!(status = %r.status(), url = %download_url, "fetch_github_dir: raw fetch non-200"),
-            Err(e) => tracing::warn!(error = %e, url = %download_url, "fetch_github_dir: raw fetch failed"),
+            Ok(r) => {
+                tracing::warn!(status = %r.status(), url = %download_url, "fetch_github_dir: raw fetch non-200")
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, url = %download_url, "fetch_github_dir: raw fetch failed")
+            }
         }
     }
     Ok(())
@@ -857,7 +862,8 @@ pub struct ResolvedPage {
 /// Resolve a [`LibSource`] to a set of storable pages (fetch + parse). Async
 /// because website/GitHub sources hit the network; local is filesystem-only.
 pub async fn resolve_library_pages(
-    source: &LibSource, lib_name: &str,
+    source: &LibSource,
+    lib_name: &str,
 ) -> Result<Vec<ResolvedPage>, String> {
     match source {
         LibSource::LocalDir(path) => {
@@ -882,7 +888,9 @@ pub async fn resolve_library_pages(
 /// Attach a source location to each derived doc. A doc's location is the source
 /// file whose derived component matches; falls back to the first file (index).
 fn pages_from(
-    docs: Vec<ParsedDoc>, files: &[SourceFile], source_type: &'static str,
+    docs: Vec<ParsedDoc>,
+    files: &[SourceFile],
+    source_type: &'static str,
 ) -> Vec<ResolvedPage> {
     let default_loc = files.first().map(|f| f.location.clone()).unwrap_or_default();
     docs.into_iter()
@@ -923,11 +931,8 @@ fn parse_pep508(spec: &str) -> (String, String) {
     // "requests>=2.28" → ("requests", "2.28")
     let parts: Vec<&str> = spec.splitn(2, ['>', '<', '=', '!', '[']).collect();
     let name = parts[0].trim().to_string();
-    let version = if parts.len() > 1 {
-        clean_version(parts[1].trim_start_matches('='))
-    } else {
-        "*".into()
-    };
+    let version =
+        if parts.len() > 1 { clean_version(parts[1].trim_start_matches('=')) } else { "*".into() };
     (name, version)
 }
 
@@ -1097,7 +1102,10 @@ mod tests {
     #[test]
     fn component_from_heading_strips_lib_token() {
         assert_eq!(component_from_heading("dbd deploy", "dbd"), "deploy");
-        assert_eq!(component_from_heading("### dbd deploy".trim_start_matches('#').trim(), "dbd"), "deploy");
+        assert_eq!(
+            component_from_heading("### dbd deploy".trim_start_matches('#').trim(), "dbd"),
+            "deploy"
+        );
         assert_eq!(component_from_heading("Commands", "dbd"), "commands");
         assert_eq!(component_from_heading("Global options", "dbd"), "global-options");
         // A heading that is only the lib name keeps it (never empty).
@@ -1141,10 +1149,8 @@ Use --dry-run to preview.
         assert!(overview.content.contains("CLI for schemas as code"));
 
         // `### dbd deploy` → component "deploy" with the deploy body.
-        let deploy = docs
-            .iter()
-            .find(|d| d.component.as_deref() == Some("deploy"))
-            .expect("deploy page");
+        let deploy =
+            docs.iter().find(|d| d.component.as_deref() == Some("deploy")).expect("deploy page");
         assert!(deploy.content.contains("Applies pending changes"));
 
         // `## Commands` → "commands", `### Global options` → "global-options".
@@ -1157,15 +1163,32 @@ Use --dry-run to preview.
     #[test]
     fn per_file_layout_maps_components_and_overview() {
         let files = vec![
-            SourceFile { stem: "index".into(), content: "# Overview\nAll about the lib.".into(), location: "/x/index.txt".into(), is_component_file: false },
-            SourceFile { stem: "list".into(), content: "# List\nA vertical list.".into(), location: "/x/components/list.txt".into(), is_component_file: true },
-            SourceFile { stem: "cli".into(), content: "# CLI\nThe CLI.".into(), location: "/x/cli.txt".into(), is_component_file: false },
+            SourceFile {
+                stem: "index".into(),
+                content: "# Overview\nAll about the lib.".into(),
+                location: "/x/index.txt".into(),
+                is_component_file: false,
+            },
+            SourceFile {
+                stem: "list".into(),
+                content: "# List\nA vertical list.".into(),
+                location: "/x/components/list.txt".into(),
+                is_component_file: true,
+            },
+            SourceFile {
+                stem: "cli".into(),
+                content: "# CLI\nThe CLI.".into(),
+                location: "/x/cli.txt".into(),
+                is_component_file: false,
+            },
         ];
         let docs = docs_from_source_files(&files, "rokkit");
 
         assert!(docs.iter().any(|d| d.component.is_none()), "index → overview");
         assert_eq!(
-            docs.iter().find(|d| d.component.as_deref() == Some("list")).map(|d| d.content.contains("vertical list")),
+            docs.iter()
+                .find(|d| d.component.as_deref() == Some("list"))
+                .map(|d| d.content.contains("vertical list")),
             Some(true),
         );
         assert!(docs.iter().any(|d| d.component.as_deref() == Some("cli")), "cli.txt → cli");
@@ -1175,8 +1198,18 @@ Use --dry-run to preview.
     fn source_files_prefer_component_dir_over_llms_full() {
         // components/ present ⇒ per-file layout wins even if llms-full exists.
         let files = vec![
-            SourceFile { stem: "llms-full".into(), content: "# X\n## y\nbody".into(), location: "/x/llms-full.txt".into(), is_component_file: false },
-            SourceFile { stem: "button".into(), content: "# Button\nA button.".into(), location: "/x/components/button.txt".into(), is_component_file: true },
+            SourceFile {
+                stem: "llms-full".into(),
+                content: "# X\n## y\nbody".into(),
+                location: "/x/llms-full.txt".into(),
+                is_component_file: false,
+            },
+            SourceFile {
+                stem: "button".into(),
+                content: "# Button\nA button.".into(),
+                location: "/x/components/button.txt".into(),
+                is_component_file: true,
+            },
         ];
         let docs = docs_from_source_files(&files, "rokkit");
         assert!(docs.iter().any(|d| d.component.as_deref() == Some("button")));
@@ -1253,7 +1286,10 @@ Use --dry-run to preview.
         assert_eq!(
             s,
             Some(LibSource::GitHubTree {
-                owner: "o".into(), repo: "r".into(), branch: "dev".into(), path: "a/b".into(),
+                owner: "o".into(),
+                repo: "r".into(),
+                branch: "dev".into(),
+                path: "a/b".into(),
             })
         );
         // Non-github and malformed → None.
@@ -1284,10 +1320,7 @@ Use --dry-run to preview.
             LibSource::Website(_)
         ));
         let dir = tempfile::tempdir().unwrap();
-        assert!(matches!(
-            detect_lib_source(dir.path().to_str().unwrap()),
-            LibSource::LocalDir(_)
-        ));
+        assert!(matches!(detect_lib_source(dir.path().to_str().unwrap()), LibSource::LocalDir(_)));
     }
 
     #[test]
@@ -1333,7 +1366,8 @@ See [cli.txt](/llms/cli.txt) — CLI reference
         let root = resolve_local_llms_root("/Users/Jerry/Developer/dbd-rs");
         let files = read_local_source_files(&root).expect("dbd llms files");
         let docs = docs_from_source_files(&files, "dbd");
-        let deploy = docs.iter().find(|d| d.component.as_deref() == Some("deploy")).expect("deploy page");
+        let deploy =
+            docs.iter().find(|d| d.component.as_deref() == Some("deploy")).expect("deploy page");
         assert!(deploy.content.contains("deploy"), "deploy body present");
         assert!(docs.iter().any(|d| d.component.is_none()), "overview present");
     }
@@ -1345,7 +1379,10 @@ See [cli.txt](/llms/cli.txt) — CLI reference
         let files = read_local_source_files(&root).expect("rokkit llms files");
         let docs = docs_from_source_files(&files, "rokkit");
         assert!(docs.iter().any(|d| d.component.as_deref() == Some("list")), "list component");
-        assert!(docs.iter().any(|d| d.component.as_deref() == Some("cli")), "cli top-level component");
+        assert!(
+            docs.iter().any(|d| d.component.as_deref() == Some("cli")),
+            "cli top-level component"
+        );
         assert!(docs.iter().any(|d| d.component.is_none()), "index overview");
     }
 }
