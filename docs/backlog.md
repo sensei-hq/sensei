@@ -17,9 +17,20 @@ Work is tracked as **GitHub issues** in [`sensei-hq/sensei`](https://github.com/
 
 ## kavach calls `resolve(event)` twice — every POST body under a public rule arrives empty
 
-**Status:** BLOCKER for dōjō's `/v1` POST API. Upstream fix needed in
-[jerrythomas/kavach](https://github.com/jerrythomas/kavach) (`packages/auth`,
-pinned here at `1.0.0-next.37`).
+**Status:** RESOLVED 2026-08-25 in kavach 1.1.0; dōjō bumped to it.
+
+The fix was already in kavach's source — 1.0.2 resolved once — but 1.0.2 was
+published with no `dist/`, so it had no type declarations and dōjō could not move
+to it (7 svelte-check errors). Cause: the publish workflow builds the tarball
+with `bun pm pack`, which does not run `prepublishOnly`, and then runs `npm
+publish <tarball>`, which does not either — npm runs lifecycle scripts when
+publishing a DIRECTORY, not a prebuilt tarball. So `dist/` was never built in CI.
+
+kavach now builds before packing and FAILS the publish if a tarball lacks the
+types its manifest promises, plus two regression tests pinning the single-resolve
+invariant. Released as 1.1.0.
+
+Original diagnosis, kept for the record:
 
 In `node_modules/kavach/src/kavach.js`, `handleUnauthorizedAccess` returns
 `resolve(event)` when access is ALLOWED — a `Promise`, not a `Response`. The
