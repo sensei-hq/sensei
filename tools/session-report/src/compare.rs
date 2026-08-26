@@ -166,7 +166,7 @@ pub fn report(people: &[Person]) -> String {
     );
     let _ = writeln!(
         o,
-        "| `n/a` | The transcript does not record it — VS Code stamps a request and its response identically and reports no tool outcome | Zero, or nothing to report |"
+        "| `n/a` | The transcript does not record it. VS Code sessions backed only by the delta journal report no tool outcome and stamp a request and its response identically; sessions backed by its event stream report both | Zero, or nothing to report |"
     );
     let _ = writeln!(
         o,
