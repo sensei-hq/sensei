@@ -85,6 +85,15 @@ fn count<'a>(items: impl Iterator<Item = &'a String>) -> Vec<(String, usize)> {
     v
 }
 
+/// The first segment of a session id.
+///
+/// The rest of the report cites sessions this way; printing a full 36-character
+/// uuid four times in an "also in" list buries the sentence it belongs to.
+/// Still unambiguous — these are compared against ids in the same report.
+fn short(id: &str) -> &str {
+    id.split('-').next().unwrap_or(id)
+}
+
 fn humanise(tag: &str) -> String {
     let mut s = tag.replace('_', " ");
     if let Some(c) = s.get_mut(0..1) {
@@ -212,9 +221,14 @@ fn friction(o: &mut String, facets: &[Facet], label: &str, a: &Analysis) {
         if let Some(f) = pick {
             quoted.insert(f.session_id.as_str());
             let _ = writeln!(o, "{}\n", f.friction_detail.trim());
-            let _ = writeln!(o, "> Session `{}` — {}\n", f.session_id, f.underlying_goal.trim());
+            let _ = writeln!(
+                o,
+                "> Session `{}` — {}\n",
+                short(&f.session_id),
+                f.underlying_goal.trim()
+            );
         }
-        let others: Vec<&str> = cited.map(|f| f.session_id.as_str()).take(4).collect();
+        let others: Vec<&str> = cited.map(|f| short(&f.session_id)).take(4).collect();
         if !others.is_empty() {
             let _ = writeln!(o, "Also in: {}\n", others.join(", "));
         }
@@ -246,7 +260,7 @@ fn highlights(o: &mut String, facets: &[Facet]) {
     for f in wins.iter().take(5) {
         let _ = writeln!(o, "- **{}**", f.primary_success.trim());
         let _ = writeln!(o, "  {}", f.underlying_goal.trim());
-        let _ = writeln!(o, "  <br>Session `{}`\n", f.session_id);
+        let _ = writeln!(o, "  <br>Session `{}`\n", short(&f.session_id));
     }
 }
 
