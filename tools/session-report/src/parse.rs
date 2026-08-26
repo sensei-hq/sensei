@@ -5,7 +5,7 @@
 //! not cost us the other 12,000. Anything skipped is counted and reported, so a
 //! quietly-truncated file cannot pass as a complete one.
 
-use crate::model::{Prompt, Session, ToolCall, Totals, Turn};
+use crate::model::{ModelUse, Session, ToolCall, Totals, Turn};
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -41,7 +41,7 @@ pub fn parse_session(dir: &Path) -> Option<ParseOutcome> {
     let mut skipped = 0usize;
     let mut first_ms: Option<i64> = None;
     let mut last_ms: i64 = 0;
-    let mut prompts = Vec::new();
+    let mut prompts = 0usize;
     let mut turns: HashMap<String, Turn> = HashMap::new();
     let mut turn_order: Vec<String> = Vec::new();
     let mut open_tools: HashMap<String, ToolCall> = HashMap::new();
@@ -74,11 +74,8 @@ pub fn parse_session(dir: &Path) -> Option<ParseOutcome> {
         match v.get("type").and_then(|t| t.as_str()).unwrap_or_default() {
             "user.message" => {
                 if let Some(t) = at {
-                    prompts.push(Prompt {
-                        at_ms: t,
-                        text: d["content"].as_str().unwrap_or_default().to_string(),
-                        event_id,
-                    });
+                    let _ = t;
+                    prompts += 1;
                 }
             }
             "assistant.turn_start" => {
@@ -148,24 +145,39 @@ pub fn parse_session(dir: &Path) -> Option<ParseOutcome> {
                 totals.lines_removed = cc["linesRemoved"].as_i64();
                 totals.files_modified = cc["filesModified"].as_array().map(|a| a.len());
                 // Token usage is nested per model; sum across whichever were used.
+                totals.nano_aiu = d["totalNanoAiu"].as_i64();
                 if let Some(mm) = d["modelMetrics"].as_object() {
-                    let mut acc = (0i64, 0i64, 0i64, 0i64);
+                    let mut acc = [0i64; 5];
                     let mut any = false;
-                    for m in mm.values() {
+                    let mut by_model = HashMap::new();
+                    for (name, m) in mm {
                         let u = &m["usage"];
-                        if u.is_object() {
-                            any = true;
-                            acc.0 += u["inputTokens"].as_i64().unwrap_or(0);
-                            acc.1 += u["outputTokens"].as_i64().unwrap_or(0);
-                            acc.2 += u["cacheReadTokens"].as_i64().unwrap_or(0);
-                            acc.3 += u["cacheWriteTokens"].as_i64().unwrap_or(0);
+                        if !u.is_object() {
+                            continue;
                         }
+                        any = true;
+                        acc[0] += u["inputTokens"].as_i64().unwrap_or(0);
+                        acc[1] += u["outputTokens"].as_i64().unwrap_or(0);
+                        acc[2] += u["cacheReadTokens"].as_i64().unwrap_or(0);
+                        acc[3] += u["cacheWriteTokens"].as_i64().unwrap_or(0);
+                        acc[4] += u["reasoningTokens"].as_i64().unwrap_or(0);
+                        by_model.insert(
+                            name.clone(),
+                            ModelUse {
+                                requests: m["requests"]["count"].as_i64().unwrap_or(0),
+                                premium: m["requests"]["cost"].as_i64().unwrap_or(0),
+                                output_tokens: u["outputTokens"].as_i64().unwrap_or(0),
+                                nano_aiu: m["totalNanoAiu"].as_i64().unwrap_or(0),
+                            },
+                        );
                     }
                     if any {
-                        totals.input_tokens = Some(acc.0);
-                        totals.output_tokens = Some(acc.1);
-                        totals.cache_read_tokens = Some(acc.2);
-                        totals.cache_write_tokens = Some(acc.3);
+                        totals.input_tokens = Some(acc[0]);
+                        totals.output_tokens = Some(acc[1]);
+                        totals.cache_read_tokens = Some(acc[2]);
+                        totals.cache_write_tokens = Some(acc[3]);
+                        totals.reasoning_tokens = Some(acc[4]);
+                        totals.by_model = by_model;
                     }
                 }
             }
@@ -205,6 +217,7 @@ pub fn parse_session(dir: &Path) -> Option<ParseOutcome> {
                 activity_ms.sort_unstable();
                 activity_ms
             },
+            delegated: 0,
             unclosed,
         },
         skipped_lines: skipped,
