@@ -14,64 +14,33 @@ use crate::metrics::Analysis;
 use std::collections::HashMap;
 use std::fmt::Write;
 
-/// A suggestion for a friction kind — but ONLY when this person's own numbers
-/// support something specific.
+/// What to change, synthesised from this person's own sessions.
 ///
-/// The previous version was a static table keyed on the friction name, so five
-/// people with the same tag got five identical paragraphs. Advice that would
-/// read the same for anyone is not advice; it is filler that teaches people to
-/// skim past the parts that ARE specific.
-///
-/// So every branch here has to reach for a real measurement and returns `None`
-/// when the threshold is not met. A friction with no qualifying number is still
-/// reported — with its grounded detail and a cited session, which is the part
-/// worth reading — it just carries no suggestion.
-fn remedy(friction: &str, a: &Analysis) -> Option<String> {
-    match friction {
-        // Name the tool actually doing the damage, not "a tool".
-        "repeated_tool_failures" | "environment_or_setup" => {
-            let overall = a.tool_failure_pct()?;
-            let worst = a
-                .tools
-                .iter()
-                .filter(|t| t.calls >= 20)
-                .filter_map(|t| t.failure_pct().map(|p| (t, p)))
-                .filter(|(_, p)| *p >= (overall * 3.0).max(15.0))
-                .max_by(|x, y| x.1.partial_cmp(&y.1).unwrap())?;
-            Some(format!(
-                "`{}` fails {:.0}% of the time ({} of {} calls) against your overall {overall:.1}%. One tool is producing most of this friction, so it is one fix rather than a habit change.",
-                worst.0.name, worst.1, worst.0.failures, worst.0.calls
-            ))
-        }
-        // Only worth saying when the hand-offs really are large.
-        "rework_after_correction" | "wrong_direction_taken" => {
-            let tpp = a.tools_per_prompt()?;
-            (tpp >= 40.0).then(|| {
-                format!(
-                    "Your hand-offs average {tpp:.0} tool calls per prompt. That is a long way to travel before the first check, so a wrong direction costs the whole run rather than a turn."
-                )
-            })
-        }
-        // Only when the sessions are actually long enough to lose the thread.
-        "lost_context" => {
-            let per_project = a.sessions as f64 / a.projects.max(1) as f64;
-            (per_project >= 8.0).then(|| {
-                format!(
-                    "You average {per_project:.0} sessions per project. Context you re-explain that often has stopped being conversation and become configuration."
-                )
-            })
-        }
-        // Only when the tail is genuinely slow, with the number attached.
-        "slow_feedback_loop" => {
-            let p90 = crate::metrics::percentile(&a.turn_ms_sorted, 90.0)?;
-            (p90 >= 120_000).then(|| {
-                format!(
-                    "Your 90th-percentile turn is {}. At that length the loop is slow enough that batching gets tempting, which is what makes a wrong turn expensive.",
-                    crate::render::dur(p90)
-                )
-            })
-        }
-        _ => None,
+/// Deliberately NOT a table keyed on a friction name. That produced four
+/// identical paragraphs across five reports; gating it on a threshold made the
+/// numbers vary and left the sentences fixed, which is the same problem with
+/// extra steps. These come from a model that read their goals, their frictions
+/// and their tool mix, and every one had to cite a session it was shown and
+/// name something that appears in their material — see `advice::validate`.
+fn recommendations(o: &mut String, insights: Option<&crate::advice::Insights>) {
+    let Some(ins) = insights else { return };
+    if !ins.working_style.trim().is_empty() {
+        let _ = writeln!(o, "## How you work\n");
+        let _ = writeln!(o, "{}\n", ins.working_style.trim());
+    }
+    if ins.recommendations.is_empty() {
+        return;
+    }
+    let _ = writeln!(o, "## What to change\n");
+    for r in &ins.recommendations {
+        let _ = writeln!(o, "### {}\n", r.title.trim());
+        let _ = writeln!(o, "{}\n", r.detail.trim());
+        let _ = writeln!(
+            o,
+            "*From session `{}` — {}*\n",
+            short(&r.evidence_session),
+            r.grounded_in.trim()
+        );
     }
 }
 
@@ -103,7 +72,12 @@ fn humanise(tag: &str) -> String {
 }
 
 /// The qualitative sections, appended to the mechanical report.
-pub fn report(label: &str, facets: &[Facet], a: &Analysis) -> String {
+pub fn report(
+    label: &str,
+    facets: &[Facet],
+    a: &Analysis,
+    insights: Option<&crate::advice::Insights>,
+) -> String {
     let mut o = String::new();
     if facets.is_empty() {
         return o;
@@ -131,7 +105,8 @@ pub fn report(label: &str, facets: &[Facet], a: &Analysis) -> String {
 
     work(&mut o, facets);
     outcomes(&mut o, facets);
-    friction(&mut o, facets, label, a);
+    friction(&mut o, facets, label);
+    recommendations(&mut o, insights);
     highlights(&mut o, facets);
     o
 }
@@ -186,7 +161,7 @@ fn outcomes(o: &mut String, facets: &[Facet]) {
     );
 }
 
-fn friction(o: &mut String, facets: &[Facet], label: &str, a: &Analysis) {
+fn friction(o: &mut String, facets: &[Facet], label: &str) {
     let frictions: Vec<(String, usize)> =
         count(facets.iter().flat_map(|f| f.friction.iter()).filter(|f| f.as_str() != "none"))
             .into_iter()
@@ -231,9 +206,6 @@ fn friction(o: &mut String, facets: &[Facet], label: &str, a: &Analysis) {
         let others: Vec<&str> = cited.map(|f| short(&f.session_id)).take(4).collect();
         if !others.is_empty() {
             let _ = writeln!(o, "Also in: {}\n", others.join(", "));
-        }
-        if let Some(why) = remedy(kind, a) {
-            let _ = writeln!(o, "**Worth a look:** {why}\n");
         }
     }
     let _ = writeln!(
@@ -302,47 +274,9 @@ mod tests {
         assert!(out.contains("Session `s1`"), "must cite the session it came from");
     }
 
-    /// The inverse of the old contract. A friction with nothing measured behind
-    /// it must produce NO suggestion — generic advice that reads the same for
-    /// everyone is what made these reports skimmable in the bad sense.
-    #[test]
-    fn a_friction_with_no_supporting_data_gets_no_suggestion() {
-        let empty = crate::metrics::analyse(&[], 0);
-        for k in crate::facets::FRICTION_KINDS {
-            assert!(remedy(k, &empty).is_none(), "{k} invented advice from an empty analysis");
-        }
-    }
-
-    /// When the data DOES support it, the suggestion has to name the specific
-    /// thing — the tool and its rate — not describe the category.
-    #[test]
-    fn a_supported_friction_names_the_tool_and_its_rate() {
-        let mut a = crate::metrics::analyse(&[], 0);
-        a.tool_outcomes_known = 1000;
-        a.tool_failures = 20; // 2% overall
-        a.tools = vec![
-            crate::metrics::ToolStat { name: "flaky_tool".into(), calls: 100, failures: 60 },
-            crate::metrics::ToolStat { name: "fine_tool".into(), calls: 900, failures: 9 },
-        ];
-        let out = remedy("repeated_tool_failures", &a).expect("60% against 2% qualifies");
-        assert!(out.contains("flaky_tool"), "must name the offender: {out}");
-        assert!(out.contains("60%"), "must carry its rate: {out}");
-        assert!(!out.contains("fine_tool"), "must not indict the healthy tool");
-    }
-
-    /// A tool that fails a lot but is barely used is noise, not a finding.
-    #[test]
-    fn a_rarely_used_tool_does_not_qualify() {
-        let mut a = crate::metrics::analyse(&[], 0);
-        a.tool_outcomes_known = 1000;
-        a.tool_failures = 20;
-        a.tools = vec![crate::metrics::ToolStat { name: "rare".into(), calls: 3, failures: 3 }];
-        assert!(remedy("repeated_tool_failures", &a).is_none());
-    }
-
     fn friction_only(f: &[Facet]) -> String {
         let mut o = String::new();
-        friction(&mut o, f, "someone", &crate::metrics::analyse(&[], 0));
+        friction(&mut o, f, "someone");
         o
     }
 }
