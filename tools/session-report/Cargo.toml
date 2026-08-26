@@ -1,0 +1,18 @@
+# Detached from the main workspace on purpose. This is an offline analysis tool
+# over transcripts SHARED BY OTHER PEOPLE — it must never link the daemon, never
+# open the sensei database, and never be built into a release artifact. An empty
+# [workspace] table is what keeps `cargo build` at the repo root from adopting it.
+[workspace]
+
+[package]
+name = "session-report"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+serde_json = "1"
+chrono = "0.4"
+
+[[bin]]
+name = "session-report"
+path = "src/main.rs"
