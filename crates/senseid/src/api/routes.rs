@@ -2304,42 +2304,51 @@ mod tests {
         let (app, state) = test_app().await;
         let pid = state.pg.ensure_test_project("route-slot-context").await.unwrap();
 
-        let m_unanchored = state
-            .pg
-            .create_memory(
-                Some(&pid),
-                "project",
-                None,
-                "decision",
-                "_test:route_slot_unanchored",
-                "c",
-                None,
-                None,
-                None,
-                None,
-            )
-            .await
-            .unwrap();
+        // Both fixtures carry a run-unique tag and both queries below are scoped
+        // to it. `assemble_context` blends project + stack + global scopes and
+        // keeps the top N by strength, so the shared test DB's accumulated global
+        // memories eventually crowd freshly-seeded fixtures out of the window and
+        // this fails only in a full run. Scoping does not weaken what is asserted
+        // here — slot-led ORDERING is still compared within the returned bundle.
+        // Both fixtures carry a run-unique tag and both queries below are scoped
+        // to it. `assemble_context` blends project + stack + global scopes and
+        // keeps the top N by strength, so the shared test DB's accumulated global
+        // memories eventually crowd freshly-seeded fixtures out of the window and
+        // this fails only in a full run. Scoping does not weaken what is asserted
+        // here — slot-led ORDERING is still compared within the returned bundle.
+        let tag = format!("route-slot-{}", uuid::Uuid::new_v4());
+        let fixture = |title: &str, slot: Option<&str>| crate::db::pg_store::InsertMemory {
+            project_id: Some(pid),
+            scope: "project".into(),
+            scope_filter: None,
+            mtype: "decision".into(),
+            title: title.into(),
+            content: "c".into(),
+            impact: None,
+            tags: vec![tag.clone()],
+            triage_signal: None,
+            status: "active".into(),
+            namespace_id: None,
+            enforcement: None,
+            origin: None,
+            source_id: None,
+            spine_slot: slot.map(str::to_string),
+            feature: None,
+        };
+        let m_unanchored =
+            state.pg.insert_memory(&fixture("_test:route_slot_unanchored", None)).await.unwrap();
         let m_design = state
             .pg
-            .create_memory(
-                Some(&pid),
-                "project",
-                None,
-                "decision",
-                "_test:route_slot_design",
-                "c",
-                None,
-                None,
-                Some("design"),
-                None,
-            )
+            .insert_memory(&fixture("_test:route_slot_design", Some("design")))
             .await
             .unwrap();
 
         // With ?slot=design: the slot-anchored memory leads.
-        let (status, blob) =
-            get_json(&app, &format!("/api/knowledge/context?project_id={pid}&slot=design")).await;
+        let (status, blob) = get_json(
+            &app,
+            &format!("/api/knowledge/context?project_id={pid}&slot=design&tags={tag}"),
+        )
+        .await;
         assert_eq!(status, StatusCode::OK);
         let ids: Vec<String> = blob["memories"]
             .as_array()
@@ -2356,7 +2365,7 @@ mod tests {
 
         // Without ?slot=: unchanged general blend (order not slot-led).
         let (status_plain, blob_plain) =
-            get_json(&app, &format!("/api/knowledge/context?project_id={pid}")).await;
+            get_json(&app, &format!("/api/knowledge/context?project_id={pid}&tags={tag}")).await;
         assert_eq!(status_plain, StatusCode::OK);
         let plain_ids: Vec<String> = blob_plain["memories"]
             .as_array()
@@ -2422,21 +2431,36 @@ mod tests {
             .await
             .unwrap();
 
-        let mem_title = format!("_test:mcp-seam-memory-{}", std::process::id());
+        // Tagged, and both context queries below are scoped to that tag, for the
+        // same reason as `mcp_proxy_knowledge_and_project_tools_contract`:
+        // `assemble_context` blends project + stack + global scopes and keeps the
+        // top N by strength, so the shared test DB's accumulated global memories
+        // eventually crowd a freshly-seeded fixture out of the window. The
+        // name↔uuid equivalence this test proves is unaffected — both queries are
+        // scoped identically, so a resolver that landed on the wrong project
+        // still fails.
+        let mem_tag = format!("seam-fixture-{}", uuid::Uuid::new_v4());
+        let mem_title = format!("_test:mcp-seam-memory-{mem_tag}");
         state
             .pg
-            .create_memory(
-                Some(&pid),
-                "project",
-                None,
-                "convention",
-                &mem_title,
-                "seam memory",
-                None,
-                None,
-                None,
-                None,
-            )
+            .insert_memory(&crate::db::pg_store::InsertMemory {
+                project_id: Some(pid),
+                scope: "project".into(),
+                scope_filter: None,
+                mtype: "convention".into(),
+                title: mem_title.clone(),
+                content: "seam memory".into(),
+                impact: None,
+                tags: vec![mem_tag.clone()],
+                triage_signal: None,
+                status: "active".into(),
+                namespace_id: None,
+                enforcement: None,
+                origin: None,
+                source_id: None,
+                spine_slot: None,
+                feature: None,
+            })
             .await
             .unwrap();
         // A general-scoped rule (namespace_id NULL, active) so the resolved
@@ -2460,7 +2484,7 @@ mod tests {
 
         // ── get_layered_context: proxy sends ?project=<name> ──
         let (st_name, ctx_by_name) =
-            get_json(&app, &format!("/api/knowledge/context?project={name}")).await;
+            get_json(&app, &format!("/api/knowledge/context?project={name}&tags={mem_tag}")).await;
         assert_eq!(
             st_name,
             StatusCode::OK,
@@ -2480,7 +2504,8 @@ mod tests {
 
         // Old contract still works AND resolves to the SAME project's memories.
         let (st_uuid, ctx_by_uuid) =
-            get_json(&app, &format!("/api/knowledge/context?project_id={pid}")).await;
+            get_json(&app, &format!("/api/knowledge/context?project_id={pid}&tags={mem_tag}"))
+                .await;
         assert_eq!(st_uuid, StatusCode::OK, "explicit project_id=<uuid> must keep working");
         assert!(
             has_title(&ctx_by_uuid),
@@ -2611,20 +2636,39 @@ mod tests {
             .unwrap();
 
         let mem_title = format!("_test:contract-mem-{short}");
+        // Tagged, and every context query below is scoped to that tag.
+        //
+        // `assemble_context` matches `project_id = $2 OR scope='stack' OR
+        // scope='global'` and then takes the top N by strength. The shared test
+        // DB accumulates hundreds of global memories from other suites, so a
+        // freshly-seeded project memory at default strength eventually falls
+        // outside the window and this test fails — but only in a full run, and
+        // only once the DB has grown enough. That is the same crowding-out
+        // documented in `knowledge_tests::assemble_context_blends_three_scopes`,
+        // and the same fix: the tags filter is part of the real contract, so
+        // the project↔uuid equivalence this test exists to prove is still
+        // exercised.
+        let mem_tag = format!("contract-fixture-{short}");
         state
             .pg
-            .create_memory(
-                Some(&pid),
-                "project",
-                None,
-                "convention",
-                &mem_title,
-                "seam memory",
-                None,
-                None,
-                None,
-                None,
-            )
+            .insert_memory(&crate::db::pg_store::InsertMemory {
+                project_id: Some(pid),
+                scope: "project".into(),
+                scope_filter: None,
+                mtype: "convention".into(),
+                title: mem_title.clone(),
+                content: "seam memory".into(),
+                impact: None,
+                tags: vec![mem_tag.clone()],
+                triage_signal: None,
+                status: "active".into(),
+                namespace_id: None,
+                enforcement: None,
+                origin: None,
+                source_id: None,
+                spine_slot: None,
+                feature: None,
+            })
             .await
             .unwrap();
         let rule_title = format!("_test:contract-rule-{short}");
@@ -2742,7 +2786,7 @@ mod tests {
         let cases: Vec<(&str, serde_json::Value, Check)> = vec![
             (
                 "get_layered_context",
-                serde_json::json!({}),
+                serde_json::json!({ "tags": mem_tag.clone() }),
                 Box::new({
                     let t = mem_title.clone();
                     move |b| {
@@ -2901,7 +2945,7 @@ mod tests {
         // project → the same seeded memory. Proves name and uuid are interchangeable.
         let by_uuid = daemon_request_for(
             "get_layered_context",
-            &serde_json::json!({ "project_id": pid.to_string() }),
+            &serde_json::json!({ "project_id": pid.to_string(), "tags": mem_tag.clone() }),
             cwd,
             Some(&name),
         )
