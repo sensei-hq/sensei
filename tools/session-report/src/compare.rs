@@ -81,23 +81,32 @@ pub fn report(people: &[Person]) -> String {
     for p in people {
         let a = &p.analysis;
         let h = hours(a.active_ms);
-        let per_hour = if h > 0.0 { format!("{:.0}", a.tool_calls as f64 / h) } else { "—".into() };
+        // Only when the transcript times its turns. Deriving a rate from a
+        // format that stamps request and response identically produces a number
+        // that says more about the format than the person.
+        let per_hour = if h > 0.0 && a.timing_is_measurable() {
+            format!("{:.0}", a.tool_calls as f64 / h)
+        } else {
+            "n/a".into()
+        };
+        let active = if a.timing_is_measurable() { format!("{h:.0}h") } else { "n/a".into() };
         let _ = writeln!(
             o,
-            "| **{}** | {} | {} | {:.0}h | {} | {} | {} | {} | {} |",
+            "| **{}** | {} | {} | {} | {} | {} | {} | {} | {} |",
             p.name,
             match p.tool {
                 Some(crate::Tool::CopilotCli) => "Copilot CLI",
                 Some(crate::Tool::ClaudeCode) => "Claude Code",
+                Some(crate::Tool::VsCode) => "VS Code",
                 None => "—",
             },
             a.sessions,
-            h,
+            active,
             n(a.prompts as i64),
             n(a.tool_calls as i64),
             per_hour,
             a.tools_per_prompt().map(|v| format!("{v:.0}")).unwrap_or_else(|| "—".into()),
-            a.tool_failure_pct().map(|v| format!("{v:.1}%")).unwrap_or_else(|| "—".into()),
+            a.tool_failure_pct().map(|v| format!("{v:.1}%")).unwrap_or_else(|| "n/a".into()),
         );
     }
     let _ = writeln!(o);
@@ -116,7 +125,10 @@ pub fn report(people: &[Person]) -> String {
             "Not available for Claude Code, so shown separately rather than as an empty \
              column.\n"
         );
-        let _ = writeln!(o, "| Person | Lines added | Lines removed | Files touched | Premium requests |");
+        let _ = writeln!(
+            o,
+            "| Person | Lines added | Lines removed | Files touched | Premium requests |"
+        );
         let _ = writeln!(o, "|---|---:|---:|---:|---:|");
         for p in cop {
             let a = &p.analysis;
@@ -136,10 +148,26 @@ pub fn report(people: &[Person]) -> String {
     let _ = writeln!(o, "## How to read the columns\n");
     let _ = writeln!(o, "| Column | Means | Does not mean |");
     let _ = writeln!(o, "|---|---|---|");
-    let _ = writeln!(o, "| Active | Time with something happening; gaps over 10 minutes dropped | Hours at the desk |");
-    let _ = writeln!(o, "| Calls/hour | Throughput — how fast the loop turns | Productivity, or value delivered |");
-    let _ = writeln!(o, "| Tools/prompt | How much is handed over per instruction | Quality of the instruction |");
-    let _ = writeln!(o, "| Tool failures | Share of calls the tool itself reported as failed | Mistakes by the person |");
+    let _ = writeln!(
+        o,
+        "| Active | Time with something happening; gaps over 10 minutes dropped | Hours at the desk |"
+    );
+    let _ = writeln!(
+        o,
+        "| Calls/hour | Throughput — how fast the loop turns | Productivity, or value delivered |"
+    );
+    let _ = writeln!(
+        o,
+        "| Tools/prompt | How much is handed over per instruction | Quality of the instruction |"
+    );
+    let _ = writeln!(
+        o,
+        "| Tool failures | Share of calls the tool itself reported as failed | Mistakes by the person |"
+    );
+    let _ = writeln!(
+        o,
+        "| `n/a` | The transcript does not record it — VS Code stamps a request and its response identically and reports no tool outcome | Zero, or nothing to report |"
+    );
     let _ = writeln!(
         o,
         "\nA high calls/hour with a high failure rate is churn. A low calls/hour with \

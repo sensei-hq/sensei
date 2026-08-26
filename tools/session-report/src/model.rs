@@ -99,6 +99,10 @@ pub struct Session {
     /// transcript shows only the hand-off — all the work it did would otherwise
     /// be invisible.
     pub delegated: usize,
+    /// Models used by DELEGATED agents only, kept apart from `models` so the
+    /// question "what do sub-agents actually run on" can be answered. Folding
+    /// them together hides whether delegation is being sent to a cheaper model.
+    pub delegated_models: HashMap<String, usize>,
     /// True when the session directory still holds an `inuse.*.lock`, i.e. it
     /// was never cleanly closed. Those sessions have no shutdown totals.
     pub unclosed: bool,

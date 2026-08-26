@@ -117,11 +117,9 @@ pub fn parse_session(file: &Path) -> Option<(Session, usize)> {
                 }
                 let text = match content {
                     serde_json::Value::String(s) => s.clone(),
-                    serde_json::Value::Array(a) => a
-                        .iter()
-                        .filter_map(|b| b["text"].as_str())
-                        .collect::<Vec<_>>()
-                        .join("\n"),
+                    serde_json::Value::Array(a) => {
+                        a.iter().filter_map(|b| b["text"].as_str()).collect::<Vec<_>>().join("\n")
+                    }
                     _ => String::new(),
                 };
                 if text.trim().is_empty() || is_injected(&text) {
@@ -226,6 +224,7 @@ pub fn parse_session(file: &Path) -> Option<(Session, usize)> {
             event_count,
             activity_ms: activity,
             delegated: 0,
+            delegated_models: HashMap::new(),
             unclosed: false,
         },
         skipped,
@@ -261,6 +260,11 @@ fn fold_into(parent: &mut Session, child: Session) {
     parent.event_count += child.event_count;
     parent.activity_ms.extend(child.activity_ms);
     parent.delegated += 1;
+    // Record the child's models under `delegated_models` BEFORE merging them
+    // into the parent's overall mix, so both questions stay answerable.
+    for (m, c) in &child.models {
+        *parent.delegated_models.entry(m.clone()).or_default() += c;
+    }
     parent.first_ms = parent.first_ms.min(child.first_ms).max(1);
     parent.last_ms = parent.last_ms.max(child.last_ms);
     for (m, c) in child.models {
