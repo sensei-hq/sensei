@@ -141,6 +141,9 @@ pub fn parse_session(file: &Path) -> Option<(Session, usize)> {
     let mut tools = Vec::new();
     let mut models: HashMap<String, usize> = HashMap::new();
     let mut activity: Vec<i64> = Vec::new();
+    let mut languages: HashMap<String, usize> = HashMap::new();
+    let (mut git_commits, mut git_pushes) = (0usize, 0usize);
+    let mut prompt_ms: Vec<i64> = Vec::new();
     let (mut first, mut last) = (i64::MAX, 0i64);
 
     for req in requests {
@@ -155,6 +158,7 @@ pub fn parse_session(file: &Path) -> Option<(Session, usize)> {
         activity.push(ended);
 
         if !req["message"]["text"].as_str().unwrap_or("").trim().is_empty() {
+            prompt_ms.push(started);
             prompts += 1;
         }
         // Namespaced as "copilot/claude-opus-4.6".
@@ -168,6 +172,27 @@ pub fn parse_session(file: &Path) -> Option<(Session, usize)> {
             for part in parts {
                 if part["kind"].as_str() != Some("toolInvocationSerialized") {
                     continue;
+                }
+                // The journal records no arguments, but it renders each call
+                // into prose that embeds the file as a link. That message is
+                // the only place a journal-only session names the file.
+                let msg = part["invocationMessage"]["value"]
+                    .as_str()
+                    .or_else(|| part["invocationMessage"].as_str())
+                    .unwrap_or_default();
+                for uri in crate::signals::file_uris(msg) {
+                    if let Some(lang) = crate::signals::language_of(&uri) {
+                        *languages.entry(lang.to_string()).or_default() += 1;
+                    }
+                }
+                // `invocationMessage` truncates the command for display; the
+                // terminal payload keeps it whole, so read git actions there.
+                if let Some(cmd) =
+                    part["toolSpecificData"]["commandLine"]["original"].as_str()
+                {
+                    let (c, u) = crate::signals::git_actions(cmd);
+                    git_commits += c;
+                    git_pushes += u;
                 }
                 tools.push(ToolCall {
                     name: part["toolId"].as_str().unwrap_or("<unknown>").to_string(),
@@ -205,6 +230,10 @@ pub fn parse_session(file: &Path) -> Option<(Session, usize)> {
             delegated_models: HashMap::new(),
             unclosed: false,
             source: Some("journal"),
+            languages,
+            git_commits,
+            git_pushes,
+            prompt_ms,
         },
         0,
     ))
@@ -217,29 +246,14 @@ fn workspace_folder_of(dir: &Path) -> Option<String> {
 
 /// The project a chat belongs to, from the `workspace.json` beside it.
 ///
-/// Windows folders are stored percent-encoded (`file:///c%3A/...`); left as-is
-/// the path matches nothing.
+/// Windows folders are stored percent-encoded (`file:///c%3A/...`); decoding is
+/// shared with the journal's file links via [`crate::signals::percent_decode`].
 fn workspace_folder(chat_file: &Path) -> Option<String> {
     let ws = chat_file.parent()?.parent()?.join("workspace.json");
     let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(ws).ok()?).ok()?;
     let uri = v["folder"].as_str()?;
     let path = uri.strip_prefix("file://").unwrap_or(uri);
-    let mut out = String::with_capacity(path.len());
-    let raw = path.as_bytes();
-    let mut i = 0;
-    while i < raw.len() {
-        if raw[i] == b'%'
-            && i + 2 < raw.len()
-            && let (Some(h), Some(l)) =
-                ((raw[i + 1] as char).to_digit(16), (raw[i + 2] as char).to_digit(16))
-        {
-            out.push(((h * 16 + l) as u8) as char);
-            i += 3;
-            continue;
-        }
-        out.push(raw[i] as char);
-        i += 1;
-    }
+    let out = crate::signals::percent_decode(path);
     let trimmed = out.strip_prefix('/').unwrap_or(&out).to_string();
     Some(if trimmed.len() >= 2 && trimmed.as_bytes()[1] == b':' { trimmed } else { out })
 }
@@ -338,11 +352,8 @@ mod tests {
                 "response": [{"kind": "toolInvocationSerialized", "toolId": "read_file"}]
             }]}
         });
-        std::fs::write(
-            ws.join("chatSessions").join(format!("{id}.jsonl")),
-            format!("{journal}\n"),
-        )
-        .unwrap();
+        std::fs::write(ws.join("chatSessions").join(format!("{id}.jsonl")), format!("{journal}\n"))
+            .unwrap();
 
         // Event stream: real turn boundaries and a REPORTED tool failure.
         let events = [

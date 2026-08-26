@@ -64,6 +64,9 @@ pub fn parse_events(
     let mut prompts = 0usize;
     let mut turns: HashMap<String, Turn> = HashMap::new();
     let mut turn_order: Vec<String> = Vec::new();
+    let mut languages: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let (mut git_commits, mut git_pushes) = (0usize, 0usize);
+    let mut prompt_ms: Vec<i64> = Vec::new();
     let mut open_tools: HashMap<String, ToolCall> = HashMap::new();
     let mut tools: Vec<ToolCall> = Vec::new();
     let mut totals = Totals::default();
@@ -94,7 +97,7 @@ pub fn parse_events(
         match v.get("type").and_then(|t| t.as_str()).unwrap_or_default() {
             "user.message" => {
                 if let Some(t) = at {
-                    let _ = t;
+                    prompt_ms.push(t);
                     prompts += 1;
                 }
             }
@@ -136,6 +139,19 @@ pub fn parse_events(
                 }
             }
             "tool.execution_start" => {
+                // `path` addresses one file; `paths` is a search root list and is
+                // deliberately not read. `command` carries the shell line.
+                let args = &d["arguments"];
+                if let Some(path) = crate::signals::path_argument(args, &["path"])
+                    && let Some(lang) = crate::signals::language_of(path)
+                {
+                    *languages.entry(lang.to_string()).or_default() += 1;
+                }
+                if let Some(cmd) = args["command"].as_str() {
+                    let (c, u) = crate::signals::git_actions(cmd);
+                    git_commits += c;
+                    git_pushes += u;
+                }
                 if let (Some(t), Some(cid)) = (at, d["toolCallId"].as_str()) {
                     open_tools.insert(
                         cid.to_string(),
@@ -236,6 +252,10 @@ pub fn parse_events(
             delegated_models: HashMap::new(),
             unclosed,
             source: None,
+            languages,
+            git_commits,
+            git_pushes,
+            prompt_ms,
         },
         skipped_lines: skipped,
     })

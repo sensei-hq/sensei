@@ -21,6 +21,7 @@
 //! people at the same rate can be doing very different work.
 
 use crate::metrics::Analysis;
+use crate::render::dur;
 use std::fmt::Write;
 
 pub struct Person {
@@ -75,9 +76,9 @@ pub fn report(people: &[Person]) -> String {
     let _ = writeln!(o, "## Comparable across tools\n");
     let _ = writeln!(
         o,
-        "| Person | Tool | Sessions | Active | Prompts | Tool calls | Calls/hour | Tools/prompt | Tool failures |"
+        "| Person | Tool | Sessions | Active | Prompts | Tool calls | Calls/hour | Tools/prompt | Tool failures | Commits | Reply time |"
     );
-    let _ = writeln!(o, "|---|---|---:|---:|---:|---:|---:|---:|---:|");
+    let _ = writeln!(o, "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|");
     for p in people {
         let a = &p.analysis;
         let h = hours(a.active_ms);
@@ -92,7 +93,7 @@ pub fn report(people: &[Person]) -> String {
         let active = if a.timing_is_measurable() { format!("{h:.0}h") } else { "n/a".into() };
         let _ = writeln!(
             o,
-            "| **{}** | {} | {} | {} | {} | {} | {} | {} | {} |",
+            "| **{}** | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
             p.name,
             match p.tool {
                 Some(crate::Tool::CopilotCli) => "Copilot CLI",
@@ -107,6 +108,10 @@ pub fn report(people: &[Person]) -> String {
             per_hour,
             a.tools_per_prompt().map(|v| format!("{v:.0}")).unwrap_or_else(|| "—".into()),
             a.tool_failure_pct().map(|v| format!("{v:.1}%")).unwrap_or_else(|| "n/a".into()),
+            n(a.git_commits as i64),
+            crate::metrics::percentile(&a.response_ms_sorted, 50.0)
+                .map(dur)
+                .unwrap_or_else(|| "n/a".into()),
         );
     }
     let _ = writeln!(o);
@@ -145,6 +150,31 @@ pub fn report(people: &[Person]) -> String {
         let _ = writeln!(o);
     }
 
+    let _ = writeln!(o, "## What each person works in\n");
+    let _ = writeln!(
+        o,
+        "Counted per file-addressing tool call, so it reflects where the effort went \
+         rather than what the repo contains. Search tools are excluded.\n"
+    );
+    let _ = writeln!(o, "| Person | Top languages |");
+    let _ = writeln!(o, "|---|---|");
+    for p in people {
+        let mut rows: Vec<(&String, &usize)> = p.analysis.languages.iter().collect();
+        rows.sort_by(|x, y| y.1.cmp(x.1).then(x.0.cmp(y.0)));
+        let total: usize = p.analysis.languages.values().sum();
+        let top = if total == 0 {
+            "not recorded".to_string()
+        } else {
+            rows.iter()
+                .take(3)
+                .map(|(l, c)| format!("{l} {:.0}%", 100.0 * **c as f64 / total as f64))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        let _ = writeln!(o, "| **{}** | {top} |", p.name);
+    }
+    let _ = writeln!(o);
+
     let _ = writeln!(o, "## How to read the columns\n");
     let _ = writeln!(o, "| Column | Means | Does not mean |");
     let _ = writeln!(o, "|---|---|---|");
@@ -163,6 +193,14 @@ pub fn report(people: &[Person]) -> String {
     let _ = writeln!(
         o,
         "| Tool failures | Share of calls the tool itself reported as failed | Mistakes by the person |"
+    );
+    let _ = writeln!(
+        o,
+        "| Commits | `git commit` invocations the ASSISTANT ran | Total commits — ones typed in a separate terminal are not in the transcript |"
+    );
+    let _ = writeln!(
+        o,
+        "| Reply time | Median gap from the assistant finishing to the next prompt, breaks over 10 min excluded | Thinking time, or time at the keyboard |"
     );
     let _ = writeln!(
         o,
@@ -222,6 +260,32 @@ fn observations(o: &mut String, people: &[Person]) {
     // `inputTokens` appears to include cached tokens and lands near 50%. Putting
     // them in one column would rank people by which assistant they use. It stays
     // in the individual reports, where the comparison is within a tool.
+
+    // Commit cadence. This is the closest thing to a velocity signal that means
+    // the same thing in every transcript: how often work reaches a commit.
+    let mut cadence: Vec<(&str, f64, usize)> = people
+        .iter()
+        .filter(|p| p.analysis.git_commits > 0 && p.analysis.timing_is_measurable())
+        .filter_map(|p| {
+            let h = hours(p.analysis.active_ms);
+            (h > 1.0).then(|| {
+                (p.name.as_str(), p.analysis.git_commits as f64 / h, p.analysis.git_commits)
+            })
+        })
+        .collect();
+    cadence.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+    if let (Some(hi), Some(lo)) = (cadence.first(), cadence.last())
+        && hi.1 >= lo.1 * 4.0
+    {
+        items.push(format!(
+            "**Work reaches a commit at very different rates.** {} commits {:.1} times \
+             per active hour ({} total); {} commits {:.2} times ({} total). A low rate is \
+             not idleness — it can mean long-running branches, or committing by hand in a \
+             separate terminal, which no transcript can see. It is worth knowing which, \
+             because the two have opposite remedies.",
+            hi.0, hi.1, n(hi.2 as i64), lo.0, lo.1, n(lo.2 as i64)
+        ));
+    }
 
     // Delegation, as one line — three near-identical bullets read as padding.
     let mut delegators: Vec<(&str, usize, usize)> = people
