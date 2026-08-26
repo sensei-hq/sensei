@@ -89,9 +89,14 @@ Audited every remaining call site of the table-wide methods; the rest are alread
 scoped (by `folder_path`, `persona_id`, `identity`) or use `>=`.
 
 
-## dbd: `policies` ignores `--scope`
+## dbd: `policies` ignores `--scope` — FIXED in 0.12.0
 
-**Found 2026-08-25.** dbd 0.10.12. `dbd policies --scope default` applies every
+**Found 2026-08-25 on 0.10.12, fixed in 0.12.0.** `dbd policies --scope default`
+now reports `Skipped ./policies/dojo/… — dojo.repository_metrics is outside scope
+'default'` and exits clean. The `do $$ … execute … $$` guards we wrapped each
+policy file in were removed 2026-08-26 and the files are plain SQL again.
+
+Original report: `dbd policies --scope default` applies every
 file under `policies/`, including `policies/dojo/*.sql`, on a plane whose scope
 EXCLUDES `dojo`. Each one then fails with `schema "dojo" does not exist` and the
 run reports `Policies: 0 applied, 4 failed`.
@@ -155,7 +160,16 @@ staging table whose import inserts nothing reports success. Both are silent.
 
 ## dbd drops a DDL file it cannot parse — silently, and the deploy still reports success
 
-**Found 2026-08-25** while fixing `dbd deploy --scope dojo`. dbd 0.10.12.
+**Found 2026-08-25** on dbd 0.10.12. **Parse failures fixed in 0.12.0; the silent
+DROP is not.**
+
+0.12.0 parses all three forms we hit — `comment on function …(args)`, a
+comma-separated REVOKE grantee list, and `do $$ … $$` blocks — so the workarounds
+in our DDL were reverted 2026-08-26. But `dbd inspect` STILL exits 0 when a file
+fails to parse (re-verified on 0.12.0), so the underlying hazard stands: any
+future unparseable file is dropped from the entity set with a success exit code.
+The release workflow therefore still greps `dbd inspect` output rather than
+trusting its status.
 
 Two files failed dbd's SQL parser and were removed from the entity set with no
 effect on the deploy's exit status:
