@@ -16,6 +16,7 @@ embedded-llama-cpp = ["local-engine/llama-cpp", "local-providers/llama-cpp"]
 embedded-ort = ["local-engine/ort", "local-providers/ort"]
 
 [dependencies]
+sensei-transcript-formats = { path = "../transcript-formats" }
 # HTTP server
 axum = { version = "0.8", features = ["json"] }
 tower = { version = "0.5", features = ["util"] }

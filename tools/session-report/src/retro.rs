@@ -67,8 +67,7 @@ fn count<'a>(items: impl Iterator<Item = &'a String>) -> Vec<(String, usize)> {
     for i in items {
         *m.entry(i.as_str()).or_default() += 1;
     }
-    let mut v: Vec<(String, usize)> =
-        m.into_iter().map(|(k, c)| (k.to_string(), c)).collect();
+    let mut v: Vec<(String, usize)> = m.into_iter().map(|(k, c)| (k.to_string(), c)).collect();
     v.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
     v
 }

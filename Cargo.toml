@@ -7,6 +7,7 @@ members = [
     "crates/logger",
     "crates/dojo-protocol",
     "crates/sensei-config",
+    "crates/transcript-formats",
 ]
 resolver = "2"
 

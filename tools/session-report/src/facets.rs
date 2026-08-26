@@ -118,13 +118,8 @@ fn read_prompts(file: &Path) -> Option<String> {
     // before any text can be read out, so reuse the parser's replay rather than
     // scanning the raw operations and finding nothing.
     if is_journal(&raw) {
-        let root = crate::vscode::replay(&raw);
-        if let Some(requests) = root["requests"].as_array() {
-            for r in requests {
-                if let Some(t) = r["message"]["text"].as_str() {
-                    prompts.push(t.to_string());
-                }
-            }
+        for r in sensei_transcript_formats::journal::requests(&raw) {
+            prompts.push(r.user_text);
         }
     } else if raw.starts_with('{') || raw.starts_with('[') {
         for line in raw.lines() {
@@ -145,7 +140,6 @@ fn read_prompts(file: &Path) -> Option<String> {
                     }
                 }
             }
-
         }
     }
 

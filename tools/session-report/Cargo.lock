@@ -193,6 +193,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf54715a573b99ac80df0bc206da022bcd442c974952c7b9720069370852e21f"
 
 [[package]]
+name = "sensei-transcript-formats"
+version = "0.9.1"
+dependencies = [
+ "serde_json",
+]
+
+[[package]]
 name = "serde"
 version = "1.0.229"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -240,6 +247,7 @@ name = "session-report"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "sensei-transcript-formats",
  "serde",
  "serde_json",
 ]
