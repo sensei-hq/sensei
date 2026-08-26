@@ -3,6 +3,7 @@
 **Status:** PLANNED
 **Date:** 2026-08-25
 **Depends on:** #73 (transcript system — shipped)
+**Reviewed:** 2026-08-26 (issues A–H resolved)
 
 ## Goal
 
@@ -46,8 +47,24 @@ Plus two per-turn helpers:
 | `merge_facts(facts, record)` | Promote per-record signals into `TurnFacts` (tokens, stop_reason, skill, effort, sidechain, branch) | Sum across the turn's records; LAST stop_reason wins |
 | `turn_attrs(record)` | Strip bulky prose/content from the raw record, keep metadata verbatim | `const DROP` array; rebuild `serde_json::Map` minus dropped keys |
 
-Shared constants: `MAX_TURN_CHARS: usize = 50_000` (cap assistant prose per turn).
-SQLite adapters: open read-only with `SQLITE_OPEN_READ_ONLY | SQLITE_OPEN_NO_MUTEX`.
+---
+
+## Phase 0 — Hoist shared constants (pure move, green suite)
+
+**Do this first as its own commit.** Fixes issues E and F.
+
+Move these from `claude.rs` / `zed.rs` into `mod.rs` (pub):
+
+| Symbol | Current location | Notes |
+|---|---|---|
+| `MAX_TURN_CHARS: usize = 50_000` | `claude.rs:36`, `zed.rs:35` | Deduplicate into one |
+| `MAX_TRANSCRIPT_BYTES: u64 = 64 * 1024 * 1024` | `claude.rs:37` | Move to mod.rs |
+| `MAX_LINE_BYTES: usize = 4 * 1024 * 1024` | `claude.rs:38` | Move to mod.rs |
+| `INJECTED_MARKERS: &[&str]` | `claude.rs:39-46` | Move to mod.rs |
+| `human_prompt_text(record) -> Option<&str>` | `claude.rs:449` (private) | Make pub, move to mod.rs |
+
+After the move, `claude.rs` and `zed.rs` reference `super::MAX_TURN_CHARS` etc.
+Confirm the test suite is still green — pure move, no behavior change.
 
 ---
 
@@ -55,12 +72,18 @@ SQLite adapters: open read-only with `SQLITE_OPEN_READ_ONLY | SQLITE_OPEN_NO_MUT
 
 ### 1a. Extend `assistant_family` enum
 
+Edit `database/ddl/enum/sensei/assistant_family.ddl` — append `vscode` and `copilot`.
+Then run `dbd reconcile` to generate the migration. dbd emits:
+
 ```sql
-ALTER TYPE sensei.assistant_family ADD VALUE IF NOT EXISTS 'vscode';
-ALTER TYPE sensei.assistant_family ADD VALUE IF NOT EXISTS 'copilot';
+ALTER TYPE sensei.assistant_family ADD VALUE 'vscode';
+ALTER TYPE sensei.assistant_family ADD VALUE 'copilot';
 ```
 
-`cursor` is already present.
+No `IF NOT EXISTS` — dbd diffs first. These statements cannot run inside a
+transaction block.
+
+`cursor` is already present in the enum.
 
 ### 1b. Register adapters in `mod.rs`
 
@@ -71,14 +94,15 @@ fn cursor_transcript_root() -> PathBuf {
     crate::paths::home().join(".cursor/projects")
 }
 
-fn vscode_user_root(variant: &str) -> PathBuf {
+fn vscode_user_root(variant: &str) -> Option<PathBuf> {
     // variant = "Code" | "Code - Insiders" | "VSCodium" | "Code - OSS"
     #[cfg(target_os = "macos")]
-    { crate::paths::home().join(format!("Library/Application Support/{variant}/User")) }
+    { Some(crate::paths::home().join(format!("Library/Application Support/{variant}/User"))) }
     #[cfg(target_os = "linux")]
-    { crate::paths::home().join(format!(".config/{variant}/User")) }
+    { Some(crate::paths::home().join(format!(".config/{variant}/User"))) }
     #[cfg(target_os = "windows")]
-    { dirs::data_dir().unwrap().join(format!("{variant}/User")) }
+    { dirs::data_dir().map(|d| d.join(format!("{variant}/User"))) }
+    // Returns None when dirs::data_dir() fails — units() skips that variant.
 }
 
 fn copilot_home() -> PathBuf {
@@ -87,6 +111,10 @@ fn copilot_home() -> PathBuf {
         .unwrap_or_else(|_| crate::paths::home().join(".copilot"))
 }
 ```
+
+`vscode_user_root` returns `Option<PathBuf>` (fix G). `units()` skips any
+variant where this returns `None` — an absent editor is a normal state, not
+an error.
 
 ---
 
@@ -122,14 +150,10 @@ only). No `PostToolUse` events with output.
 ### Implementation
 
 ```rust
-const MAX_TURN_CHARS: usize = 50_000;
-const MAX_TRANSCRIPT_BYTES: u64 = 64 * 1024 * 1024;
-const MAX_LINE_BYTES: usize = 4 * 1024 * 1024;
-
-const INJECTED_MARKERS: &[&str] = &[
-    "<task-notification", "<system-reminder", "<command-name",
-    "<command-message", "<local-command", "Caveat:", "## Security Guidance",
-];
+use super::{
+    MAX_TURN_CHARS, MAX_TRANSCRIPT_BYTES, MAX_LINE_BYTES,
+    INJECTED_MARKERS, human_prompt_text,
+};
 ```
 
 **units()**: glob `~/.cursor/projects/*/agent-transcripts/*/*.jsonl` + flat `*.jsonl`.
@@ -137,10 +161,28 @@ Key = full file path, stamp = `mtime_ns()`.
 
 **stamp_for()**: `mtime_ns(Path::new(key))` — identical to Claude.
 
-**session_id_for()**: `cursor-<uuid>` where `<uuid>` is the directory name (NOT the
-file stem — the directory name is the session ID in Cursor's layout).
+**session_id_for()**: Detect layout — use parent directory name when it parses
+as a UUID, otherwise use the file stem. This handles both nested (`<uuid>/<uuid>.jsonl`
+→ `<uuid>`) and flat (`<id>.jsonl` → `<id>`) layouts without collision (fix H).
+
+```rust
+fn session_id_for(&self, key: &str) -> Option<String> {
+    let path = Path::new(key);
+    let stem = path.file_stem()?.to_str()?;
+    let parent = path.parent()?.file_name()?.to_str()?;
+    // If parent dir looks like a UUID, it's the session id (nested layout)
+    // Otherwise the file stem is the session id (flat layout)
+    let id = if looks_like_uuid(parent) { parent } else { stem };
+    Some(format!("cursor-{}", id))
+}
+```
 
 **load_content()**: `std::fs::read_to_string` with `MAX_TRANSCRIPT_BYTES` guard.
+
+**Model extraction:** Accept `None`. The JSONL content passed to `parse()` does not
+carry model info. The optional `store.db` lookup could be folded into `load_content()`
+but adds complexity for minimal value — model is already captured from the adapter's
+runtime context. Keep it `None` for now.
 
 **parse()** decomposes into:
 
@@ -148,8 +190,8 @@ file stem — the directory name is the session ID in Cursor's layout).
 |---|---|---|
 | `parse_cursor_transcript(content)` | JSONL text | `Vec<TranscriptTurn>` |
 | `parse_cursor_session(content)` | JSONL text | `Option<SynthSession>` |
-| `extract_model(content)` | JSONL text | `Option<(String, String)>` — from `store.db` if available, else `None` |
-| `extract_tokens(content)` | JSONL text | `Option<SessionTokens>` — always `None` |
+| `extract_model(_content)` | — | `None` (see above) |
+| `extract_tokens(_content)` | — | `None` |
 
 **Turn parsing** (`parse_cursor_transcript`):
 - Iterate JSONL lines (skip blank / > `MAX_LINE_BYTES` / malformed)
@@ -175,7 +217,7 @@ If absent, empty — project resolution falls back to folder hash.
 
 ### Session ID
 
-`cursor-<session-id>` where `<session-id>` is the UUID directory name.
+`cursor-<session-id>` where `<session-id>` is the UUID directory name or file stem.
 
 ---
 
@@ -219,57 +261,88 @@ Cover all VS Code variants under their own `User/` root:
 
 Also cover `~/.vscode-server/data/User` for remote/SSH.
 
-### Priority order
+### Priority and dedup
 
-For a given session, sources are read most-authoritative first:
-1. `agent-traces.db` (real token counts) → skip journal+transcript for that session
-2. `chatSessions/*.jsonl` (token estimates from `result.metadata`)
-3. `transcripts/*.jsonl` (chars/4 estimates, no token data)
+`units()` emits one unit per session. For sessions found in the OTel DB, the
+journal and transcript units are **dropped** — the OTel path is most authoritative.
+This decision is made in `units()` which sees all sources at once, not in `parse()`
+which only sees one unit's content.
+
+```rust
+fn units(&self) -> Vec<TranscriptUnit> {
+    let mut units = vec![];
+    let mut otel_sessions: HashSet<String> = HashSet::new();
+
+    // Pass 1: enumerate OTel sessions (per-session units)
+    for variant in &VARIANTS {
+        if let Some(db_path) = otel_db_path(variant) {
+            let sessions = query_otel_sessions(&db_path);
+            for session_id in sessions {
+                otel_sessions.insert(session_id.clone());
+                units.push(TranscriptUnit {
+                    key: format!("{}#{}", db_path.display(), session_id),
+                    stamp: mtime_ns(&db_path),
+                    source: "vscode",
+                });
+            }
+        }
+    }
+
+    // Pass 2: journal + transcript units, but skip sessions OTel covers
+    for variant in &VARIANTS {
+        if let Some(root) = vscode_user_root(variant) {
+            for path in glob_chat_sessions(&root) {
+                let sid = extract_session_id(&path);
+                if otel_sessions.contains(&sid) { continue; }
+                units.push(TranscriptUnit {
+                    key: path.to_str()?.to_string(),
+                    stamp: mtime_ns(&path),
+                    source: "vscode",
+                });
+            }
+        }
+    }
+
+    units
+}
+```
+
+**session_id_for()** splits the key on `#` — for OTel units, extracts the
+session id after `#`. For journal/transcript units, extracts from the filename stem.
 
 ### Implementation
 
-**units()**: For each variant + vscode-server, glob:
-- `workspaceStorage/*/chatSessions/*.jsonl`
-- `globalStorage/emptyWindowChatSessions/*.jsonl`
-- `workspaceStorage/*/GitHub.copilot-chat/transcripts/*.jsonl`
+**units()**: As shown above — enumerate per-session, OTel takes priority.
 
-Key = full file path, stamp = `mtime_ns()`.
+**load_content()**: Two paths.
 
-For `agent-traces.db`: single unit per variant, key = db path, stamp = mtime_ns().
-The adapter opens the DB in `load_content()` and returns a JSON blob with ALL
-sessions' turns (one call per variant).
+For journal/transcript units: read the file directly (raw JSONL).
 
-**load_content()**: For journal/transcript units, read the file directly.
-For the OTel DB unit, query spans and return a JSON string with structure:
+For OTel units: key is `<db path>#<session-id>`. `load_content()` opens the
+SQLite DB, queries spans for that session, returns JSON:
 
 ```json
 {
   "source": "otel_spans",
-  "sessions": {
-    "<session-id>": {
-      "spans": [...],
-      "attributes": {...}
-    }
-  }
+  "session_id": "<session-id>",
+  "spans": [...],
+  "attributes": {...}
 }
 ```
 
-**parse()** — the key insight: three source layers, same trait contract.
-
-For journal units, `load_content()` returns the raw JSONL (or a reconstructed JSON
-blob). For transcript units, returns the raw JSONL. For OTel units, returns the
-bundled JSON. The `parse()` method dispatches on the source:
+**parse()** dispatches on the source marker in the first line:
 
 ```rust
 fn parse(&self, content: &str) -> ParsedTranscript {
-    // detect source from first line or content shape
-    if content.starts_with('{') && content.contains("\"source\":\"otel_spans\"") {
-        parse_otel_content(content)
-    } else if is_journal(content) {
-        parse_journal_content(content)
-    } else {
-        parse_transcript_content(content)
+    if let Some(first_line) = content.lines().next() {
+        if first_line.contains("\"source\":\"otel_spans\"") {
+            return parse_otel_content(content);
+        }
+        if is_delta_journal(first_line) {
+            return parse_journal_content(content);
+        }
     }
+    parse_transcript_content(content)
 }
 ```
 
@@ -301,9 +374,19 @@ handle `vscode-remote://wsl+<distro>/` by extracting the Linux path.
 **cwds**: From `workspace.json` sibling or `session.start` event. Empty when
 neither is available.
 
+### Session identity across layers
+
+The OTel `traceId` corresponds to a VS Code window session. The `chatSessions/<uuid>`
+stem is a chat thread within that session. Multiple chat threads may share one OTel
+trace. The plan assumes `traceId == chatSession uuid` for priority matching. If this
+does not hold, the fallback is: ingest all three separately (no priority skip).
+Verification required during implementation — check a real `agent-traces.db` against
+the corresponding `workspaceStorage/*/chatSessions/` files.
+
 ### Session ID
 
-`vscode-<session-id>` where `<session-id>` is the UUID filename stem.
+`vscode-<session-id>` where `<session-id>` is the UUID filename stem or the
+OTel session id.
 
 ---
 
@@ -334,50 +417,92 @@ Tables: `sessions` (id, summary, repo, branch, timestamps), `turns`
 ```
 Workspace-level app sessions with real token totals.
 
-### Dedup strategy
+### Dedup and merge
 
-Both sources are ingested equally. Session ID is the dedup key.
-For a given session:
-- If only events.jsonl exists → parse from JSONL
-- If only session-store.db has the row → parse from SQLite
-- If both exist → merge: take richer turn data (events.jsonl has tool calls,
-  session-store.db has cleaner text). Token counts from `session.shutdown`
-  event override SQLite estimates.
+**One unit per session.** `units()` dedups by session ID — if both events.jsonl
+and session-store.db have the same session, emit ONE unit. The merge happens
+inside `load_content()`, which reads both sources and returns a single JSON blob
+(fix A).
+
+`stamp_for()` returns `max(jsonl_mtime_ns, sqlite_updated_at_as_ns)` — both
+must be in the same monotonic unit (nanoseconds). Convert sqlite epoch millis
+to nanos: `updated_at_millis * 1_000_000`.
 
 ### Implementation
 
-**units()**: Two sources, deduped by session ID.
+**units()**: Deduped by session ID.
 
-Source A: glob `~/.copilot/session-state/*/events.jsonl`, stamp = `mtime_ns()`.
-Key = directory path (e.g. `~/.copilot/session-state/<uuid>/`).
+```rust
+fn units(&self) -> Vec<TranscriptUnit> {
+    let mut by_session: HashMap<String, TranscriptUnit> = HashMap::new();
 
-Source B: query `session-store.db` for `SELECT id, updated_at FROM sessions`,
-stamp = `updated_at` as epoch millis.
-Key = `copilot-sqlite-<session_id>` (namespaced to avoid collision with JSONL keys).
+    // Source A: events.jsonl
+    for dir in glob_session_dirs(&copilot_home().join("session-state")) {
+        let sid = dir.file_name()?.to_str()?;
+        let events = dir.join("events.jsonl");
+        let stamp = mtime_ns(&events);
+        by_session.entry(sid.to_string()).or_insert_with(|| TranscriptUnit {
+            key: dir.to_str()?.to_string(),
+            stamp,
+            source: "copilot_cli",
+        });
+        // Update stamp to max
+        if let Some(u) = by_session.get_mut(sid) {
+            u.stamp = u.stamp.max(stamp);
+        }
+    }
 
-**session_id_for()**: Both return `copilot-<session_id>` where `<session_id>` is
-the UUID. The SQLite key has the `copilot-sqlite-` prefix stripped.
+    // Source B: session-store.db
+    let db_path = copilot_home().join("session-store.db");
+    if db_path.exists() {
+        if let Ok(sessions) = query_session_ids(&db_path) {
+            for (sid, updated_at_millis) in sessions {
+                let stamp_nanos = (updated_at_millis as u64) * 1_000_000;
+                by_session.entry(sid.clone()).or_insert_with(|| TranscriptUnit {
+                    key: format!("copilot-sqlite-{}", sid),
+                    stamp: stamp_nanos,
+                    source: "copilot_cli",
+                });
+                if let Some(u) = by_session.get_mut(&sid) {
+                    u.stamp = u.stamp.max(stamp_nanos);
+                }
+            }
+        }
+    }
 
-**load_content()**: Two paths.
+    by_session.into_values().collect()
+}
+```
 
-For JSONL units:
+**session_id_for()**: Both return `copilot-<session_id>`.
+
+**load_content()**: Merge both sources into one JSON blob.
+
+For sessions with events.jsonl:
 1. Read `events.jsonl` line-by-line into a JSON array
 2. Read `workspace.yaml` for `cwd:` line
-3. Return JSON: `{"source":"jsonl","cwd":"...","events":[...],...}`
+3. If session-store.db also has the session, query turns + tokens
+4. Merge: JSONL provides tool events + text, SQLite provides cleaner text
+   for turns JSONL may have truncated. **JSONL text wins** when both sources
+   have the same turn (JSONL is the primary record). SQLite fills turns
+   that JSONL lacks.
+5. Return JSON: `{"source":"merged","cwd":"...","events":[...],"sqlite_turns":[...],"tokens":{...}}`
 
-For SQLite units:
-1. Open `session-store.db` read-only
-2. Query `sessions` + `turns` for the given session
-3. Optionally query `data.db` for token aggregates
-4. Return JSON: `{"source":"sqlite","session":{...},"turns":[...],"tokens":{...}}`
+For sessions only in session-store.db:
+1. Query `sessions` + `turns` for the given session
+2. Optionally query `data.db` for token aggregates
+3. Return JSON: `{"source":"sqlite","session":{...},"turns":[...],"tokens":{...}}`
 
 **parse()** dispatches on source:
 
 ```rust
 fn parse(&self, content: &str) -> ParsedTranscript {
-    let root: serde_json::Value = serde_json::from_str(content).ok()?;
+    let root: serde_json::Value = match serde_json::from_str(content) {
+        Ok(v) => v,
+        Err(_) => return ParsedTranscript::default(),
+    };
     match root.get("source").and_then(|s| s.as_str()) {
-        Some("jsonl") => parse_copilot_jsonl(content),
+        Some("merged") | Some("jsonl") => parse_copilot_jsonl(content),
         Some("sqlite") => parse_copilot_sqlite(content),
         _ => ParsedTranscript::default(),
     }
@@ -386,7 +511,7 @@ fn parse(&self, content: &str) -> ParsedTranscript {
 
 Each path produces `ParsedTranscript` through the same sub-functions:
 
-| Function | JSONL path | SQLite path |
+| Function | JSONL/merged path | SQLite-only path |
 |---|---|---|
 | `parse_copilot_transcript(content)` | Parse events.jsonl → turns | Parse turns table → turns |
 | `parse_copilot_session(content)` | Parse events → events + cwd | Limited — no tool events |
@@ -427,6 +552,12 @@ SQLite path: from `sessions.repo` column if available.
 Each adapter follows the existing pattern (Claude adapter has 35+ tests).
 Every test is a pure function test — no DB required for parse tests.
 
+### Shared constant move (Phase 0)
+- `shared_constants_in_mod` — `MAX_TURN_CHARS` accessible from `super::`
+- `human_prompt_text_reused` — cursor.rs calls `human_prompt_text()` from mod.rs
+- `claude_adapter_still_passes` — no regression after move
+- `zed_adapter_still_passes` — no regression after move
+
 ### CursorAdapter tests
 - `parse_simple_turn` — user → assistant text
 - `parse_multiple_turns` — sequential turns
@@ -435,10 +566,10 @@ Every test is a pure function test — no DB required for parse tests.
 - `parse_turn_attrs_strips_message` — message.content not in attrs
 - `turn_facts_populated` — gitBranch, stop_reason from records
 - `turn_facts_null_when_absent` — honest-empty, never fabricated zeros
-- `units_flat_layout` — flat `agent-transcripts/<id>.jsonl`
-- `units_nested_layout` — nested `<id>/<id>.jsonl`
+- `units_flat_layout` — flat `agent-transcripts/<id>.jsonl` → session id from file stem
+- `units_nested_layout` — nested `<id>/<id>.jsonl` → session id from directory name
 - `stamp_matches_mtime` — cursor semantics
-- `session_id_from_key` — `cursor-<uuid>`
+- `session_id_from_key` — `cursor-<uuid>` (both layouts)
 - `parse_session_reconstructs_events` — UserPromptSubmit + PostToolUse + Stop
 - `parse_session_none_when_empty` — empty content → None
 
@@ -451,8 +582,9 @@ Every test is a pure function test — no DB required for parse tests.
 - `workspace_resolution_wsl_uri` — vscode-remote:// to Linux path
 - `units_cross_variant` — Code + Insiders + VSCodium
 - `units_empty_window_sessions` — globalStorage/emptyWindowChatSessions
-- `priority_otel_over_journal` — agent-traces.db wins
-- `session_id_from_key` — `vscode-<uuid>`
+- `units_otel_skips_journal_for_covered_sessions` — OTel priority applied in units()
+- `units_otel_per_session` — one unit per session from DB, not one blob
+- `session_id_from_key` — `vscode-<uuid>` (journal) and `vscode-<trace-id>` (otel)
 - `parse_session_reconstructs_events` — UserPromptSubmit + PostToolUse + Stop
 - `parse_session_none_when_empty` — empty content → None
 
@@ -463,10 +595,9 @@ Every test is a pure function test — no DB required for parse tests.
 - `parse_workspace_yaml_cwd` — cwd extraction
 - `parse_sqlite_turns` — session-store.db turns → turns
 - `parse_sqlite_limited_events` — no tool events from SQLite
-- `dedup_jsonl_and_sqlite` — merge: JSONL tool events + SQLite text
-- `units_from_jsonl_source` — glob session-state
-- `units_from_sqlite_source` — query session-store.db
-- `units_dedup_by_session_id` — JSONL + SQLite don't double-count
+- `merge_jsonl_and_sqlite_text_wins` — JSONL text preferred, SQLite fills gaps
+- `units_dedup_by_session_id` — one unit per session, not two
+- `stamp_is_monotonic` — both sources produce nanosecond stamps
 - `session_id_from_key` — `copilot-<uuid>`
 - `parse_session_reconstructs_events` — UserPromptSubmit + PostToolUse + Stop
 - `parse_session_none_when_empty` — empty content → None
@@ -491,8 +622,10 @@ New adapters are automatically picked up on daemon restart.
 | Cursor | No `tool_result` content | SynthEvents lack output; PostToolUse events have no output field |
 | Cursor | No token counts | `SessionTokens` always `None` |
 | Cursor | No reliable cwd on all records | `cwds` may be empty; project resolution falls back to folder hash |
+| Cursor | Model not in JSONL | `extract_model` returns `None`; model captured from runtime context |
 | VSCode journals | Token estimates only (chars/4 when no metadata) | Cost metrics approximate |
 | VSCode transcripts | No token data at all | `SessionTokens` `None` for transcript-only sessions |
+| VSCode OTel vs journal identity | OTel traceId ↔ chatSession uuid mapping unverified | Priority skip may not match; fallback: ingest all separately |
 | Copilot CLI SQLite | No tool events | SynthEvents empty; turns only |
 | Copilot CLI JSONL | Token counts only at `session.shutdown` | Per-turn tokens unavailable |
 
@@ -500,11 +633,12 @@ New adapters are automatically picked up on daemon restart.
 
 ## Implementation order
 
-1. DDL enum extension + migration
-2. CursorAdapter (simplest — mirrors Claude's file-per-session model)
-3. CopilotCliAdapter (dual-source, but familiar JSONL + SQLite)
-4. VscodeAdapter (most complex — 3 sources, variant support, workspace resolution)
-5. Tests for all three
+0. **Hoist shared constants + `human_prompt_text` into `mod.rs`** (pure move, green suite)
+1. Enum values via `dbd reconcile`
+2. `CursorAdapter` — with UUID detection for session_id (fix H)
+3. `CopilotCliAdapter` — with one-unit-per-session merge (fix A), monotonic stamps
+4. `VscodeAdapter` — with per-session OTel units and priority in `units()` (fix B)
+5. Tests
 6. Integration smoke test with real local data (if available)
 
 ---
@@ -513,7 +647,9 @@ New adapters are automatically picked up on daemon restart.
 
 | File | Change |
 |---|---|
-| `crates/senseid/src/transcript/mod.rs` | Add path helpers, register in `adapters()` + `adapter_for_source()` |
+| `crates/senseid/src/transcript/mod.rs` | Hoist shared constants; add path helpers; register in `adapters()` + `adapter_for_source()` |
+| `crates/senseid/src/transcript/claude.rs` | Remove moved constants, point to `super::` |
+| `crates/senseid/src/transcript/zed.rs` | Remove moved constants, point to `super::` |
 | `crates/senseid/src/transcript/cursor.rs` | **New** — CursorAdapter |
 | `crates/senseid/src/transcript/vscode.rs` | **New** — VscodeAdapter |
 | `crates/senseid/src/transcript/copilot_cli.rs` | **New** — CopilotCliAdapter |
@@ -522,169 +658,15 @@ New adapters are automatically picked up on daemon restart.
 
 ---
 
-## Open questions
+## Resolved decisions
 
-None — all decisions resolved by user input during planning.
-
----
-
-## Review notes (2026-08-26)
-
-Checked against the code at `79cce5c3`. The overall shape is right — the trait,
-`ParsedTranscript` and `SynthSession` all match, and `rusqlite` (0.32, bundled)
-plus `dirs` (6) are already dependencies, so no new crates are needed. The
-SQLite open flags quoted above are exactly what `zed.rs:62` uses.
-
-Six things are wrong or unbuildable as written, and two designs conflict with how
-ingestion actually works. Ordered by how much rework they cause if found late.
-
-### A. Two units for one session silently overwrite each other (Phase 4)
-
-**This is the big one.** `ingest_one` (`mod.rs:262`) processes ONE unit at a time
-and has no view of a sibling unit. Turns are written with
-`ON CONFLICT(source, session_id, turn_index) DO UPDATE` (`transcript.rs:25`).
-
-The plan emits two units per Copilot session — `<dir>` for events.jsonl and
-`copilot-sqlite-<id>` for the DB — and both resolve to the same `session_id` under
-the same `source`. So they do not merge; they **overwrite by turn index**, and
-which one wins depends on unit ordering. Worse, if JSONL yields 10 turns and
-SQLite 8, the SQLite pass rewrites 0–7 and leaves 9–10 from JSONL: a spliced
-session that matches neither source.
-
-"If both exist → merge: take richer turn data" describes a step the architecture
-has nowhere to put.
-
-**Fix:** emit ONE unit per session and merge inside `load_content()`, which is
-free to read both sources and return a single blob. `units()` dedups by session
-id (key = the session dir, or a `copilot:<id>` synthetic key), `stamp_for()`
-returns `max(jsonl mtime_ns, sqlite updated_at)`, and the merge happens where the
-plan already wants it — in the JSON it hands to `parse()`.
-
-Note the two stamps are also on different scales as written (`mtime_ns` vs epoch
-millis). Whatever `stamp_for` returns must be monotone in the same unit, or the
-watermark comparison `prev >= stamp` misfires.
-
-### B. The OTel unit cannot resolve a session id (Phase 3)
-
-`session_id_for(key) -> Option<String>` returns exactly one session per key, and
-`ingest_one` bails when it is `None`. The plan makes `agent-traces.db` a **single
-unit per variant** whose content bundles "ALL sessions' turns". There is no
-session id for that key, so the unit can never be ingested.
-
-**Fix:** enumerate sessions in `units()` (query distinct trace/session ids) and
-emit one unit each, keyed `<db path>#<session-id>`, so `session_id_for` can split
-the key. `load_content()` then queries just that session's spans.
-
-The same constraint kills the **priority order** as described: "skip
-journal+transcript for that session" cannot be decided inside `parse()`, which
-only sees one unit's content. It has to be done in `units()` — which is fine,
-because `units()` sees all sources at once and can drop journal/transcript units
-for sessions the OTel DB already covers.
-
-### C. The enum change is declarative here, not a migration (Phase 1a)
-
-The `ALTER TYPE … ADD VALUE IF NOT EXISTS` snippet and the "DDL enum extension +
-migration" step do not match this project. dbd is declarative and pre-release:
-edit `database/ddl/enum/sensei/assistant_family.ddl`, add the values, then
-`dbd reconcile`.
-
-Verified — with `vscode` and `copilot` appended to that file, `dbd diff` emits:
-
-    ~ alter  sensei.assistant_family
-        ALTER TYPE sensei.assistant_family ADD VALUE 'vscode';
-        ALTER TYPE sensei.assistant_family ADD VALUE 'copilot';
-
-Two things to know: dbd emits `ADD VALUE` WITHOUT `IF NOT EXISTS` (safe, because
-it diffs first), and `ALTER TYPE … ADD VALUE` cannot run inside a transaction
-block — so it is a standalone statement, not part of a batched apply.
-
-`cursor` is indeed already in the enum, as the Scope table says.
-
-### D. `parse()` as written does not compile (Phase 4)
-
-    fn parse(&self, content: &str) -> ParsedTranscript {
-        let root: serde_json::Value = serde_json::from_str(content).ok()?;
-
-`?` on an `Option` in a function returning `ParsedTranscript`. Use a `let … else`
-returning `ParsedTranscript::default()`, matching the `_ =>` arm already in the
-match below it.
-
-### E. `human_prompt_text()` is private to `claude.rs`
-
-`claude.rs:449` — not `pub`, not re-exported. The Cursor turn-parsing step calls
-it. Same for `INJECTED_MARKERS` (`claude.rs:38`).
-
-### F. The "shared constants" are not shared, and copying them again breaks a hard rule
-
-`MAX_TURN_CHARS` is already declared separately in `claude.rs` AND `zed.rs`.
-`MAX_TRANSCRIPT_BYTES` / `MAX_LINE_BYTES` exist only in `claude.rs`. The plan
-re-declares them in `cursor.rs` (and implies the same for the other two), which
-would leave five copies of `MAX_TURN_CHARS`.
-
-CLAUDE.md is explicit: *"Three near-identical lines are a sign to refactor — not
-a reason to add a fourth."*
-
-**Do this first, as its own commit:** hoist `MAX_TURN_CHARS`,
-`MAX_TRANSCRIPT_BYTES`, `MAX_LINE_BYTES`, `INJECTED_MARKERS` and
-`human_prompt_text()` into `mod.rs`, repoint `claude.rs`/`zed.rs` at them, and
-confirm the suite is still green. A pure move, easy to review, and it unblocks E
-as a side effect.
-
-### G. `dirs::data_dir().unwrap()` panics on a failure path (Phase 1b)
-
-The Windows arm of `vscode_user_root`. `data_dir()` returns `Option` precisely
-because it can fail. Panicking in the daemon over a missing known-folder is
-exactly what the never-fabricate/fail-closed rule forbids.
-
-Make it `fn vscode_user_root(variant: &str) -> Option<PathBuf>` and let `units()`
-skip a variant it cannot locate — an absent editor is a normal state, not an
-error.
-
-### H. Cursor's `session_id_for` contradicts its own `units()`
-
-`units()` globs both the nested `<id>/<id>.jsonl` and the flat
-`agent-transcripts/<id>.jsonl`. `session_id_for` says the session id is "the
-directory name (NOT the file stem)" — but for the flat layout the directory is
-literally `agent-transcripts`, which would make every flat session collide under
-one id.
-
-Needs both cases: use the parent directory name when it parses as a UUID,
-otherwise the file stem.
-
-### Smaller notes
-
-* **Test count.** `adapters()` currently returns 3 (`mod.rs:239`), so the
-  `backfill_all_includes_new_adapters` expectation of 6 is right.
-* **Source strings.** `adapter_for_source` matches on `"claude_code"` etc.; the
-  new arms are `"cursor"`, `"vscode"`, `"copilot_cli"` per the Scope table. The
-  `copilot_cli` source / `copilot` family split mirrors `claude_code` / `claude`.
-* **`crate::paths::home()`** exists (`paths.rs:15`) and is the right helper.
-* **Cursor `store.db`.** `extract_model` is specced to read it, but `parse()`
-  only receives `content` — the JSONL. Either fold the `store.db` lookup into
-  `load_content()` (return a blob carrying both, like the Copilot design) or drop
-  model extraction for Cursor and let it stay `None`.
-
-### Suggested order (revised)
-
-0. **Hoist the shared constants + `human_prompt_text` into `mod.rs`** (pure move,
-   green suite) — fixes E and F before they multiply.
-1. Enum values via `dbd reconcile` (C).
-2. `CursorAdapter` — after resolving H and the `store.db` question.
-3. `CopilotCliAdapter` — with the one-unit-per-session merge from A.
-4. `VscodeAdapter` — with per-session OTel units and priority applied in
-   `units()` (B).
-5. Tests.
-
-### Open questions — no longer none
-
-1. **Cursor model extraction** — fold `store.db` into `load_content()`, or accept
-   `None`? (smaller note above)
-2. **Copilot merge precedence** — when JSONL and SQLite disagree on the same
-   turn's text, which wins? A says merge in `load_content()`, but not what to
-   prefer. Suggest: JSONL text (it is the primary record), SQLite only to fill
-   turns JSONL lacks.
-3. **VSCode session identity across layers** — does the OTel `traceId` equal the
-   `chatSessions/<uuid>` stem? The priority order in B assumes it does. If not,
-   there is no way to tell that two layers describe one session, and the whole
-   priority scheme collapses to "ingest all three separately".
-
+1. **Cursor model extraction:** Accept `None`. JSONL does not carry model info.
+   Model is captured from runtime context. `store.db` lookup deferred — adds
+   complexity for minimal value.
+2. **Copilot merge precedence:** JSONL text wins when both sources have the same
+   turn (JSONL is the primary record). SQLite fills turns that JSONL lacks.
+   Token counts from `session.shutdown` override SQLite estimates.
+3. **VSCode session identity:** OTel `traceId` ↔ `chatSessions/<uuid>` mapping
+   is assumed but unverified. Priority skip is best-effort — if it does not hold,
+   fallback is to ingest all three layers separately. Verification during
+   implementation with real data.
