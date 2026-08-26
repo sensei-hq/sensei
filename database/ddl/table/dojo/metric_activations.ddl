@@ -11,7 +11,17 @@ set search_path to dojo, extensions;
 -- (tenant × metric) on tenant creation.
 create table if not exists metric_activations (
   tenant_id   uuid        not null references dojo.tenants(id) on delete cascade
-, metric_id   uuid        not null references dojo.metrics(id) on delete cascade
+-- References sensei.metrics — the ONE metric catalogue, not a dōjō-side copy.
+--
+-- Product-owned reference data follows the sensei.rule_packs pattern: a single
+-- table in the `sensei` schema, deployed to BOTH planes (the daemon through the
+-- default scope, Supabase through the `dojo` scope's includes). These are
+-- separate databases, so each gets its own rows from the same staging file.
+--
+-- A dojo.metrics mirror existed briefly. Two tables for one thing diverge, and
+-- these two already had: different columns, and text where the catalogue uses
+-- enums. Deleted rather than kept in sync by hand.
+, metric_id   uuid        not null references sensei.metrics(id) on delete cascade
 , enabled     boolean     not null default true
 , updated_at  timestamptz not null default now()
 , primary key (tenant_id, metric_id)

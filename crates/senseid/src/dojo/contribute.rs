@@ -49,7 +49,8 @@ use dojo_protocol::{
 };
 
 /// The global-collective tenant key — the special-case public Dōjō everyone may
-/// join (`database/ddl/procedure/dojo/seed_global_dojo.ddl`). A destination with
+/// join (seeded from `database/import/staging/tenants.jsonl` with a FIXED uuid, so the
+/// global tenant is the same row on every plane). A destination with
 /// this tenant takes the stricter [`anonymize_for_global`] path.
 pub const GLOBAL_DOJO_TENANT_KEY: &str = "org/global-dojo";
 
