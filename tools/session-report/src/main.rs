@@ -197,6 +197,8 @@ fn run_facets(sessions: &[model::Session], endpoint: &str, facet_model: &str, di
     }
     let (mut ok, mut failed) = (0usize, 0usize);
     let mut reasons: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let mut dropped: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
     for (i, s) in sessions.iter().enumerate() {
         let target = dir.join(format!("{}.json", s.id));
         if target.exists() {
@@ -217,9 +219,12 @@ fn run_facets(sessions: &[model::Session], endpoint: &str, facet_model: &str, di
             },
             Err(e) => {
                 failed += 1;
-                // Group by the kind of failure, not the instance.
+                // Group by the kind of failure, not the instance — but name the
+                // sessions, so a gap in coverage can be traced to real files
+                // rather than reported as an anonymous count.
                 let key = e.split(':').next().unwrap_or(&e).to_string();
-                *reasons.entry(key).or_default() += 1;
+                *reasons.entry(key.clone()).or_default() += 1;
+                dropped.entry(key).or_default().push(s.id.clone());
             }
         }
     }
@@ -228,6 +233,11 @@ fn run_facets(sessions: &[model::Session], endpoint: &str, facet_model: &str, di
     rs.sort_by_key(|r| std::cmp::Reverse(*r.1));
     for (why, n) in rs {
         eprintln!("    {n} × {why}");
+        if let Some(ids) = dropped.get(why) {
+            for id in ids.iter().take(3) {
+                eprintln!("        {id}");
+            }
+        }
     }
 }
 
