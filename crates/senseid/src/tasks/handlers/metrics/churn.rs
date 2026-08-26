@@ -1238,12 +1238,37 @@ mod tests {
         assert_eq!(read.4.as_deref(), Some("builtin"), "tool_kind = builtin");
         assert_eq!(read.1, None, "no cwd → no repository_id (honest-empty)");
 
-        // Idempotent: a second pass enriches nothing (all enriched_at set).
-        assert_eq!(
-            pg.enrich_assistant_events(100).await.unwrap(),
-            0,
-            "re-run enriches nothing (enriched_at set)"
+        // Idempotent: a second pass leaves already-enriched rows alone.
+        //
+        // Asserted over THIS session's rows, not over the sweep's return count.
+        // enrich_assistant_events is table-wide — it takes up to N un-enriched
+        // events from anywhere — so a sibling test inserting one between the two
+        // passes makes the second return 1 and the old `== 0` assertion fail on a
+        // run where nothing is actually wrong. Observed 2026-08-25.
+        let before: Vec<(String, Option<chrono::DateTime<chrono::Utc>>)> = query_as(
+            "SELECT tool_name, enriched_at FROM activity.assistant_events \
+              WHERE session_id = $1 ORDER BY tool_name",
+        )
+        .bind(&sid)
+        .fetch_all(pg.pool())
+        .await
+        .unwrap();
+        assert!(
+            before.iter().all(|(_, at)| at.is_some()),
+            "the first pass stamped every seeded event: {before:?}"
         );
+
+        pg.enrich_assistant_events(100).await.unwrap();
+
+        let after: Vec<(String, Option<chrono::DateTime<chrono::Utc>>)> = query_as(
+            "SELECT tool_name, enriched_at FROM activity.assistant_events \
+              WHERE session_id = $1 ORDER BY tool_name",
+        )
+        .bind(&sid)
+        .fetch_all(pg.pool())
+        .await
+        .unwrap();
+        assert_eq!(before, after, "a re-run must not touch already-enriched rows");
 
         sqlx_core::query::query("DELETE FROM activity.assistant_events WHERE session_id = $1")
             .bind(&sid)
