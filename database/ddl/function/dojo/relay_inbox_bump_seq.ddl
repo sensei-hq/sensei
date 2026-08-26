@@ -1,5 +1,13 @@
 set search_path to dojo, extensions;
 
+-- Filed under function/ and named for the FUNCTION it defines. It used to live in
+-- procedure/dojo/relay_inbox_seq_bump.ddl — a file under `procedure/` that
+-- defines neither a procedure nor a same-named object, with the two halves of the
+-- name transposed against the function inside. dbd names an entity after its
+-- FILE, so the deploy line read `procedure:dojo.relay_inbox_seq_bump` while the
+-- thing created was `function dojo.relay_inbox_bump_seq()`, and grepping for
+-- either one missed the other. The trigger keeps its own name.
+--
 -- Advance dojo.relay_inbox.seq on every UPDATE so a daemon polling
 -- `GET relay/inbox?since=<seq>` re-surfaces a row that changed *after* it was
 -- created — above all the pending→answered transition (the human's reply). The
