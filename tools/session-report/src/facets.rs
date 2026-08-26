@@ -96,7 +96,20 @@ pub fn session_text(file: &Path) -> Option<String> {
     let raw = std::fs::read_to_string(file).ok()?;
     let mut prompts: Vec<String> = Vec::new();
 
-    if raw.starts_with('{') || raw.starts_with('[') {
+    // A VS Code delta journal is not a stream of readable records: a prompt is
+    // assembled from `kind:1`/`2` operations at a path. It has to be replayed
+    // before any text can be read out, so reuse the parser's replay rather than
+    // scanning the raw operations and finding nothing.
+    if is_journal(&raw) {
+        let root = crate::vscode::replay(&raw);
+        if let Some(requests) = root["requests"].as_array() {
+            for r in requests {
+                if let Some(t) = r["message"]["text"].as_str() {
+                    prompts.push(t.to_string());
+                }
+            }
+        }
+    } else if raw.starts_with('{') || raw.starts_with('[') {
         for line in raw.lines() {
             let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else { continue };
             // Claude Code
@@ -115,10 +128,7 @@ pub fn session_text(file: &Path) -> Option<String> {
                     }
                 }
             }
-            // VS Code delta journal — prompts live inside the replayed state.
-            if v.get("kind").is_some() {
-                collect_journal_prompts(&v, &mut prompts);
-            }
+
         }
     }
 
@@ -145,26 +155,15 @@ fn user_text(content: &serde_json::Value) -> Option<String> {
     }
 }
 
-fn collect_journal_prompts(v: &serde_json::Value, out: &mut Vec<String>) {
-    fn walk(v: &serde_json::Value, out: &mut Vec<String>) {
-        match v {
-            serde_json::Value::Object(m) => {
-                if let Some(t) = m.get("message").and_then(|x| x["text"].as_str()) {
-                    out.push(t.to_string());
-                }
-                for x in m.values() {
-                    walk(x, out);
-                }
-            }
-            serde_json::Value::Array(a) => {
-                for x in a {
-                    walk(x, out);
-                }
-            }
-            _ => {}
-        }
-    }
-    walk(&v["v"], out);
+/// A delta journal, as opposed to a stream of self-contained records.
+///
+/// Both are JSONL starting with `{`; the journal is distinguished by its
+/// operations carrying a value under `v`.
+fn is_journal(raw: &str) -> bool {
+    raw.lines()
+        .find(|l| !l.trim().is_empty())
+        .and_then(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        .is_some_and(|v| v.get("v").is_some() && v.get("kind").is_some())
 }
 
 /// Text the ACP injects on the human's behalf — not someone typing.
@@ -301,7 +300,7 @@ pub fn derive(session: &Session, endpoint: &str, model: &str) -> Result<Facet, S
 
     // Grounding check — the quote must really be in the transcript.
     let quote = facet.evidence.trim();
-    if quote.len() < 12 || !text.contains(quote) {
+    if quote.len() < 12 || !collapse(&text).contains(&collapse(quote)) {
         return Err("evidence not found verbatim in transcript".into());
     }
     // Vocabulary check — a value outside the closed set would break the group-by.
@@ -348,6 +347,13 @@ fn json_object(reply: &str) -> Option<&str> {
     None
 }
 
+/// Collapse whitespace runs so a quote copied correctly but re-wrapped still
+/// matches. This forgives formatting, not content: every other character must
+/// still line up.
+fn collapse(s: &str) -> String {
+    s.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 fn snippet(s: &str) -> String {
     s.chars().take(180).collect::<String>().replace('\n', " ")
 }
@@ -379,6 +385,21 @@ mod tests {
     #[test]
     fn a_truncated_reply_is_not_an_object() {
         assert_eq!(json_object("{\"underlying_goal\": \"do the thi"), None);
+    }
+
+    /// Re-wrapping a correctly copied quote must not fail grounding, but
+    /// changing a word must.
+    #[test]
+    fn grounding_forgives_reflow_but_not_rewording() {
+        let text = "please fix\n  the failing   auth test";
+        assert!(collapse(text).contains(&collapse("fix the failing auth test")));
+        assert!(!collapse(text).contains(&collapse("fix the broken auth test")));
+    }
+
+    #[test]
+    fn a_delta_journal_is_recognised() {
+        assert!(is_journal(r#"{"kind":0,"v":{"requests":[]}}"#));
+        assert!(!is_journal(r#"{"type":"user.message","data":{"content":"hi"}}"#));
     }
 
     #[test]
