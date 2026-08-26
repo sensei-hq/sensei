@@ -106,6 +106,12 @@ pub struct Session {
     /// True when the session directory still holds an `inuse.*.lock`, i.e. it
     /// was never cleanly closed. Those sessions have no shutdown totals.
     pub unclosed: bool,
+    /// Which transcript this was read from, when a tool has more than one and
+    /// they differ in what they record. VS Code has two: the event stream
+    /// carries tool outcomes and turn timing, the delta journal carries
+    /// neither, so a report that mixes them has to say which is which rather
+    /// than claim one caveat for all of them.
+    pub source: Option<&'static str>,
 }
 
 /// Gaps longer than this are treated as "walked away", not work. Copilot turns

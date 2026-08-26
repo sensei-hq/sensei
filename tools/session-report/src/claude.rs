@@ -226,6 +226,7 @@ pub fn parse_session(file: &Path) -> Option<(Session, usize)> {
             delegated: 0,
             delegated_models: HashMap::new(),
             unclosed: false,
+            source: None,
         },
         skipped,
     ))

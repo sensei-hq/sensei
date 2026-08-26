@@ -34,10 +34,30 @@ fn read_cwd(dir: &Path) -> Option<String> {
 }
 
 pub fn parse_session(dir: &Path) -> Option<ParseOutcome> {
-    let events = dir.join("events.jsonl");
-    let text = std::fs::read_to_string(&events).ok()?;
+    let text = std::fs::read_to_string(dir.join("events.jsonl")).ok()?;
     let id = dir.file_name()?.to_string_lossy().to_string();
+    let cwd = read_cwd(dir);
+    let unclosed = std::fs::read_dir(dir)
+        .map(|rd| {
+            rd.filter_map(Result::ok).any(|e| e.file_name().to_string_lossy().starts_with("inuse."))
+        })
+        .unwrap_or(false);
+    parse_events(&text, id, cwd, unclosed)
+}
 
+/// Parse a Copilot-format event stream.
+///
+/// Shared with VS Code: its `GitHub.copilot-chat/transcripts/*.jsonl` files use
+/// exactly this format — `tool.execution_start`/`_complete`,
+/// `assistant.turn_start`/`_end`, `user.message` — which is why VS Code sessions
+/// that have one can report tool outcomes and turn timing at all. The delta
+/// journal carries neither.
+pub fn parse_events(
+    text: &str,
+    id: String,
+    cwd: Option<String>,
+    unclosed: bool,
+) -> Option<ParseOutcome> {
     let mut skipped = 0usize;
     let mut first_ms: Option<i64> = None;
     let mut last_ms: i64 = 0;
@@ -191,12 +211,6 @@ pub fn parse_session(dir: &Path) -> Option<ParseOutcome> {
     // than dropping them and understating the work.
     tools.extend(open_tools.into_values());
 
-    let unclosed = std::fs::read_dir(dir)
-        .map(|rd| {
-            rd.filter_map(Result::ok).any(|e| e.file_name().to_string_lossy().starts_with("inuse."))
-        })
-        .unwrap_or(false);
-
     let mut turn_list: Vec<Turn> = turn_order.iter().filter_map(|k| turns.remove(k)).collect();
     turn_list.sort_by_key(|t| t.started_ms);
     tools.sort_by_key(|t| t.started_ms);
@@ -204,7 +218,7 @@ pub fn parse_session(dir: &Path) -> Option<ParseOutcome> {
     Some(ParseOutcome {
         session: Session {
             id,
-            cwd: read_cwd(dir),
+            cwd,
             first_ms: first_ms.unwrap_or(0),
             last_ms,
             prompts,
@@ -221,6 +235,7 @@ pub fn parse_session(dir: &Path) -> Option<ParseOutcome> {
             delegated: 0,
             delegated_models: HashMap::new(),
             unclosed,
+            source: None,
         },
         skipped_lines: skipped,
     })
