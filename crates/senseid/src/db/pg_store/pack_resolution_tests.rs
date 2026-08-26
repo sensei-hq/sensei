@@ -114,19 +114,37 @@ async fn adopted_pack_rules_resolve_with_never_weaken() {
         .unwrap();
 }
 
+/// Load a jsonl datafile into its staging table, replacing whatever was there.
+///
+/// Mirrors what dbd's import phase does (`truncate: true`, then load), so the
+/// procedures under test see exactly the rows a real deploy would give them.
+async fn load_staging(pool: &sqlx_postgres::PgPool, table: &str, jsonl: &str) {
+    sqlx_core::query::query(&format!("DELETE FROM staging.{table}")).execute(pool).await.unwrap();
+    for line in jsonl.lines().filter(|l| !l.trim().is_empty()) {
+        sqlx_core::query::query(&format!(
+            "INSERT INTO staging.{table} SELECT * FROM \
+             json_populate_record(null::staging.{table}, $1::json)"
+        ))
+        .bind(line)
+        .execute(pool)
+        .await
+        .unwrap_or_else(|e| panic!("staging.{table} load failed: {e}\nrow: {line}"));
+    }
+}
+
 #[tokio::test]
-async fn default_constitution_seed_adopts_offline_but_not_stack_templates() {
-    // D-SEED: seed_default_constitution() bundles the constitution as packs
-    // and AUTO-ADOPTS the three constitution packs at the general namespace,
-    // so a fresh install resolves them offline. The stack-templates pack is
-    // seeded but NOT adopted (opt-in per stack).
+async fn default_constitution_import_adopts_offline_but_not_stack_templates() {
+    // D-SEED: the constitution ships as packs in the staging datafiles and is
+    // AUTO-ADOPTED at the general namespace, so a fresh install resolves it
+    // offline. The stack-templates pack is seeded but NOT adopted (opt-in per
+    // stack) — it is simply absent from rule_pack_adoptions.jsonl.
     let Ok(pg) = PgStore::connect_test().await else {
         return;
     };
     let pool = pg.pool();
 
-    // The proc guards on the always-on 'general' scope (seeded by import_scopes
-    // in prod); provide it here. Left in place on cleanup (shared).
+    // The always-on 'general' scope (seeded by import_scopes in prod); provide it
+    // here. Left in place on cleanup (shared).
     sqlx_core::query::query(
         "INSERT INTO sensei.scopes(key, name, level, shareable)
              VALUES ('general', 'General', 0, false) ON CONFLICT (key) DO NOTHING",
@@ -135,9 +153,35 @@ async fn default_constitution_seed_adopts_offline_but_not_stack_templates() {
     .await
     .unwrap();
 
-    // Fresh from this procedure's definition (idempotent — run twice).
-    sqlx_core::query::query("CALL sensei.seed_default_constitution()").execute(pool).await.unwrap();
-    sqlx_core::query::query("CALL sensei.seed_default_constitution()").execute(pool).await.unwrap();
+    // Load the REAL datafiles, not a fixture. The content used to live inside
+    // seed_default_constitution(), so this test read the procedure's own text
+    // back; now the shipped jsonl is the thing under test, and a rule dropped
+    // from it fails here rather than at a user's install.
+    load_staging(
+        pool,
+        "rule_packs",
+        include_str!("../../../../../database/import/staging/rule_packs.jsonl"),
+    )
+    .await;
+    load_staging(
+        pool,
+        "rule_pack_rules",
+        include_str!("../../../../../database/import/staging/rule_pack_rules.jsonl"),
+    )
+    .await;
+    load_staging(
+        pool,
+        "rule_pack_adoptions",
+        include_str!("../../../../../database/import/staging/rule_pack_adoptions.jsonl"),
+    )
+    .await;
+
+    // import_rule_packs drives rules and adoptions itself — dbd does not order
+    // imports, so the dependency is expressed in SQL. Run twice: it must be
+    // idempotent, which the old procedure's `on conflict do nothing` also gave.
+    for _ in 0..2 {
+        sqlx_core::query::query("CALL staging.import_rule_packs()").execute(pool).await.unwrap();
+    }
 
     // Four packs; the three constitution packs adopted, stack-templates not.
     let (adopted,): (i64,) = sqlx_core::query_as::query_as(

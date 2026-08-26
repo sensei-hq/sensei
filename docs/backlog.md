@@ -15,6 +15,50 @@ Work is tracked as **GitHub issues** in [`sensei-hq/sensei`](https://github.com/
 
 ---
 
+## Seeding: two mechanisms, one broken — migrated to staging + import_ (2026-08-25)
+
+Found by asking why some procedures were named `seed_*` when every other seed
+goes through `staging.<table>` + `import_<table>`. Three defects, each invisible.
+
+**1. `seed_ponytail_pack()` had been failing since a column rename.** It writes
+`rule_packs.source`; the column is `attribution`. `import_rule_packs` maps
+`stg.source → attribution` correctly — the staging path was updated for the
+rename and the hardcoded procedure was not. A plpgsql body is not validated until
+it is CALLED, so nothing flagged it.
+
+**2. That took the default constitution down with it.** The daemon ran
+`psql -c "CALL seed_default_constitution(); CALL seed_ponytail_pack();"` — one
+implicit transaction, `ON_ERROR_STOP=1` — so ponytail's error rolled BOTH back.
+The caller was fail-open (`tracing::warn!(… "non-fatal")`). Net effect: every
+fresh install since the rename shipped with ZERO bundled governance packs,
+including the constitution, and said nothing. Existing installs were fine, which
+is why it stayed hidden.
+
+**3. dbd never called the `seed_*` procedures at all.** It creates them; only
+`import_*` procedures run during a deploy. So the dōjō plane never had the 5
+seeded packs — 36 of the 76 shipped library rules.
+
+**4. Rule-pack RULES never landed on a fresh install either.** dbd does not order
+imports, and `import_rule_pack_rules` sorts before `import_rule_packs` (`_` <
+`s`). It joined an empty `rule_packs`, inserted nothing, and reported success.
+`import_rule_packs` now drives its dependents in SQL, so order does not matter.
+An explicit list under `import.staging:` in design.yaml does NOT affect order —
+verified.
+
+**Fixed by migrating all seeds to the staging model**, so there is one mechanism:
+5 packs / 36 rules / 3 adoptions / 1 tenant moved to jsonl datafiles, and
+`seed_default_constitution`, `seed_ponytail_pack` and `seed_global_dojo` deleted
+along with the `seed_bundled_packs` shell-out.
+
+Seeded ids are FIXED, not generated: `dojo.tenants.id` and the `general/global-dojo`
+namespace id default to `gen_random_uuid()`, so an imported row got a different
+uuid on every plane and every reset — divergence for a row that is global by
+definition. Both now carry a uuid5 derived from their natural key.
+
+**Still open — upstream in dbd:** imports are not dependency-ordered, and a
+staging table whose import inserts nothing reports success. Both are silent.
+
+
 ## dbd drops a DDL file it cannot parse — silently, and the deploy still reports success
 
 **Found 2026-08-25** while fixing `dbd deploy --scope dojo`. dbd 0.10.12.

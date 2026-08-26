@@ -199,13 +199,13 @@ pub fn deploy(db_name: &str, app_version: &str) -> Result<(), String> {
         Ok::<(), String>(())
     })?;
 
-    // Bundled-pack seeds (D-SEED): the default constitution + ponytail resolve
-    // offline via get_rules. Runs after every deploy (idempotent). Fail-open — a
-    // seed hiccup logs but never bricks install/upgrade; the daemon runs fine
-    // without them and the next deploy re-attempts.
-    if let Err(e) = seed_bundled_packs(db_name) {
-        tracing::warn!(error = %e, "bundled-pack seed skipped (non-fatal)");
-    }
+    // The bundled packs (D-SEED: the default constitution + ponytail) are seeded
+    // by dbd's import phase above, from import/staging/rule_pack*.jsonl — the
+    // same path every other seeded row takes. There is deliberately no second
+    // mechanism here: the previous one shelled out to psql, fail-open, and had
+    // been silently seeding NOTHING since rule_packs.source was renamed to
+    // attribution. A datafile cannot drift from its table that way, and an
+    // import failure surfaces through surface_step_failures instead of a warning.
     Ok(())
 }
 
@@ -218,31 +218,6 @@ fn surface_step_failures(phase: &str, failures: &Arc<Mutex<Vec<String>>>) -> Res
         return Ok(());
     }
     Err(format!("dbd {phase} reported {} failed item(s): {}", failures.len(), failures.join("; ")))
-}
-
-/// CALL the bundled-pack seed procedures (D-SEED / D-LOCAL-PACKS): the default
-/// governance constitution and the ponytail minimal-solution discipline — both
-/// idempotent global-library packs that resolve offline through get_rules once
-/// adopted at the general namespace. Wired into [`deploy`] so a fresh install
-/// inherits a curated constitution instead of an empty rules file.
-pub fn seed_bundled_packs(db_name: &str) -> Result<(), String> {
-    let output = crate::util::command_for("psql")?
-        .args([
-            "-d",
-            db_name,
-            "-v",
-            "ON_ERROR_STOP=1",
-            "-c",
-            "CALL sensei.seed_default_constitution(); CALL sensei.seed_ponytail_pack();",
-        ])
-        .output()
-        .map_err(|e| format!("psql failed: {e}"))?;
-
-    if output.status.success() {
-        return Ok(());
-    }
-    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-    Err(format!("bundled-pack seed failed: {stderr}"))
 }
 
 /// Full initial setup: confirm pg is up → create the DB if missing →
