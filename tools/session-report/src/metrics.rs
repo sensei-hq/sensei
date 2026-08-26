@@ -92,6 +92,16 @@ pub struct Analysis {
     /// Assistant messages by model, main thread and delegated separately.
     pub models: HashMap<String, usize>,
     pub delegated_models: HashMap<String, usize>,
+    /// Languages worked in, by file-addressing tool calls.
+    pub languages: HashMap<String, usize>,
+    pub git_commits: usize,
+    pub git_pushes: usize,
+    /// How long the HUMAN took to reply, ascending — the gap between the
+    /// assistant finishing and the next prompt. Gaps at or above the idle
+    /// cutoff are excluded and counted in `returned_later` instead: coming back
+    /// the next morning is not a response time.
+    pub response_ms_sorted: Vec<i64>,
+    pub returned_later: usize,
 }
 
 impl Analysis {
@@ -134,6 +144,36 @@ impl Analysis {
     }
 }
 
+/// How long the human took to reply, per prompt, plus how many prompts came
+/// after a break rather than a reply.
+///
+/// Measured from the assistant FINISHING to the next prompt, so it excludes the
+/// time the assistant spent working — the two are indistinguishable in a single
+/// elapsed figure, and only the first is the person's.
+fn response_times(s: &Session) -> (Vec<i64>, usize) {
+    let mut ends: Vec<i64> = s.turns.iter().filter_map(|t| t.ended_ms).collect();
+    ends.sort_unstable();
+    let (mut out, mut later) = (Vec::new(), 0usize);
+    for &p in &s.prompt_ms {
+        // The last turn that had finished when this prompt arrived. The first
+        // prompt of a session has none, and is not a reply to anything.
+        let idx = ends.partition_point(|&e| e <= p);
+        if idx == 0 {
+            continue;
+        }
+        let gap = p - ends[idx - 1];
+        if gap <= 0 {
+            continue;
+        }
+        if gap >= crate::model::IDLE_CUTOFF_MS {
+            later += 1;
+        } else {
+            out.push(gap);
+        }
+    }
+    (out, later)
+}
+
 pub fn analyse(sessions: &[Session], skipped_lines: usize) -> Analysis {
     let mut a = Analysis {
         sessions: sessions.len(),
@@ -171,6 +211,11 @@ pub fn analyse(sessions: &[Session], skipped_lines: usize) -> Analysis {
         projects: 0,
         models: HashMap::new(),
         delegated_models: HashMap::new(),
+        languages: HashMap::new(),
+        git_commits: 0,
+        git_pushes: 0,
+        response_ms_sorted: Vec::new(),
+        returned_later: 0,
     };
 
     let mut by_tool: HashMap<String, (usize, usize)> = HashMap::new();
@@ -183,6 +228,14 @@ pub fn analyse(sessions: &[Session], skipped_lines: usize) -> Analysis {
         a.turns += s.turns.len();
         a.permission_events += s.permission_events;
         a.delegated += s.delegated;
+        a.git_commits += s.git_commits;
+        a.git_pushes += s.git_pushes;
+        for (l, c) in &s.languages {
+            *a.languages.entry(l.clone()).or_default() += c;
+        }
+        let (times, later) = response_times(s);
+        a.response_ms_sorted.extend(times);
+        a.returned_later += later;
         for (m, c) in &s.models {
             *a.models.entry(m.clone()).or_default() += c;
         }
@@ -286,6 +339,7 @@ pub fn analyse(sessions: &[Session], skipped_lines: usize) -> Analysis {
     a.active_days = days.len();
     a.projects = cwds.len();
     a.turn_ms_sorted.sort_unstable();
+    a.response_ms_sorted.sort_unstable();
     a.tools = by_tool
         .into_iter()
         .map(|(name, (calls, failures))| ToolStat { name, calls, failures })

@@ -25,7 +25,7 @@ fn stamp(ms: i64) -> String {
         .map(|d| d.format("%Y-%m-%d %H:%M UTC").to_string())
         .unwrap_or_default()
 }
-fn dur(ms: i64) -> String {
+pub fn dur(ms: i64) -> String {
     let s = ms / 1000;
     if s >= 3600 {
         format!("{}h {}m", s / 3600, (s % 3600) / 60)
@@ -164,6 +164,48 @@ fn at_a_glance(o: &mut String, a: &Analysis) {
                 dur(p90)
             );
         }
+    }
+    // How long the PERSON took to reply, as distinct from how long the assistant
+    // took to work. A short reply time means the output was read and acted on;
+    // a long one means it was studied, or the person had left.
+    if let Some(p) = percentile(&a.response_ms_sorted, 50.0) {
+        let p90 = percentile(&a.response_ms_sorted, 90.0).unwrap_or(p);
+        let _ = writeln!(o, "| Your reply time | {} typical, {} at the 90th percentile |", dur(p), dur(p90));
+    }
+    if a.git_commits > 0 || a.git_pushes > 0 {
+        let _ = writeln!(
+            o,
+            "| Shipped | {} commit(s), {} push(es) |",
+            n(a.git_commits as i64),
+            n(a.git_pushes as i64)
+        );
+    }
+    let _ = writeln!(o);
+    languages(o, a);
+}
+
+/// What the work was actually written in.
+///
+/// Counted per file-addressing tool call, so it reflects where the effort went
+/// rather than what the repo happens to contain. Search tools are excluded —
+/// a grep at a repo root is not work in every language beneath it.
+fn languages(o: &mut String, a: &Analysis) {
+    if a.languages.is_empty() {
+        return;
+    }
+    let mut rows: Vec<(&String, &usize)> = a.languages.iter().collect();
+    rows.sort_by(|x, y| y.1.cmp(x.1).then(x.0.cmp(y.0)));
+    let total: usize = a.languages.values().sum();
+    let _ = writeln!(o, "## What you work in\n");
+    let _ = writeln!(o, "| Language | File touches | Share |");
+    let _ = writeln!(o, "|---|---:|---:|");
+    for (lang, count) in rows.iter().take(10) {
+        let _ = writeln!(
+            o,
+            "| {lang} | {} | {:.0}% |",
+            n(**count as i64),
+            100.0 * **count as f64 / total as f64
+        );
     }
     let _ = writeln!(o);
 }
@@ -612,6 +654,24 @@ fn method(o: &mut String, tool: Option<crate::Tool>, sessions: &[Session], a: &A
             let _ = writeln!(o, "| Permission prompts | `session.permissions_changed` events |");
         }
     }
+    // Derived the same way for every ACP, so stated once rather than per tool.
+    let _ = writeln!(
+        o,
+        "| Languages | the file path each tool call addresses (`file_path`, `path`, or the \
+         file link in a rendered message), by extension. Search tools are excluded — their \
+         path is a search root, not a file worked on |"
+    );
+    let _ = writeln!(
+        o,
+        "| Commits, pushes | `git commit` / `git push` in shell tool arguments, counted per \
+         chained segment. Only a segment STARTING with `git` counts, so a commit message \
+         that mentions committing does not |"
+    );
+    let _ = writeln!(
+        o,
+        "| Your reply time | the gap from the assistant finishing to the next prompt, \
+         excluding gaps over 10 minutes (a break, not a reply) |"
+    );
     let _ = writeln!(
         o,
         "\nPercentiles are nearest-rank over observed values, so every figure shown was \
