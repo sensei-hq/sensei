@@ -99,52 +99,12 @@ pub fn path_argument<'a>(args: &'a serde_json::Value, keys: &[&str]) -> Option<&
     keys.iter().find_map(|k| args.get(*k).and_then(|v| v.as_str()))
 }
 
-/// Decode `%XX` escapes. VS Code stores Windows paths percent-encoded
-/// (`file:///c%3A/Users/...`); left as-is the path matches nothing.
-pub fn percent_decode(path: &str) -> String {
-    let raw = path.as_bytes();
-    let mut out = String::with_capacity(path.len());
-    let mut i = 0;
-    while i < raw.len() {
-        if raw[i] == b'%'
-            && i + 2 < raw.len()
-            && let (Some(h), Some(l)) =
-                ((raw[i + 1] as char).to_digit(16), (raw[i + 2] as char).to_digit(16))
-        {
-            out.push(((h * 16 + l) as u8) as char);
-            i += 3;
-            continue;
-        }
-        out.push(raw[i] as char);
-        i += 1;
-    }
-    out
-}
-
-/// Every `file:///` path mentioned in a message.
-///
-/// VS Code's delta journal records no tool arguments, but it renders each call
-/// into prose that embeds the file as a link — `Reading [](file:///c%3A/...)`.
-/// That is the only place a journal-only session says which file it touched.
-pub fn file_uris(message: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut rest = message;
-    while let Some(start) = rest.find("file:///") {
-        let tail = &rest[start + "file:///".len()..];
-        // The URI runs to the first character that cannot appear in one.
-        let end = tail.find([')', ' ', '"', '\'', '>', '\n']).unwrap_or(tail.len());
-        let uri = percent_decode(&tail[..end]);
-        if !uri.is_empty() {
-            out.push(uri);
-        }
-        rest = &tail[end..];
-    }
-    out
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    // Owned and tested by the shared crate; imported here only to assert how
+    // THIS crate maps a lifted file link onto a language.
+    use sensei_transcript_formats::paths::file_uris;
 
     #[test]
     fn language_reads_the_extension() {
@@ -198,18 +158,11 @@ mod tests {
         assert_eq!(git_actions("git status --short"), (0, 0));
     }
 
+    /// A file lifted out of a rendered message must map to a language — the
+    /// extraction itself is the shared crate's; this is the mapping.
     #[test]
-    fn percent_decode_restores_a_windows_drive_letter() {
-        assert_eq!(percent_decode("c%3A/Users/x"), "c:/Users/x");
-        assert_eq!(percent_decode("plain/path"), "plain/path");
-    }
-
-    /// The journal renders a call as prose with the file as a markdown link;
-    /// the URI must stop at the closing paren, not swallow the rest of the line.
-    #[test]
-    fn file_uris_are_lifted_out_of_the_rendered_message() {
+    fn a_lifted_file_link_maps_to_its_language() {
         let msg = "Reading [](file:///c%3A/Users/r/app/src/main.ts) and done";
-        assert_eq!(file_uris(msg), vec!["c:/Users/r/app/src/main.ts"]);
         assert_eq!(language_of(&file_uris(msg)[0]), Some("TypeScript"));
     }
 

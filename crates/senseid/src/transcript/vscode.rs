@@ -36,14 +36,6 @@ fn mtime_ns(path: &Path) -> Option<i64> {
 /// VS Code variant names to scan.
 const VARIANTS: &[&str] = &["Code", "Code - Insiders", "VSCodium", "Code - OSS"];
 
-/// Ceiling on a journal array index.
-///
-/// The `k` path in a VS Code chat journal is untrusted input — the daemon reads
-/// whatever is on disk. Without a ceiling, one malformed record can request an
-/// allocation of arbitrary size. Real sessions have hundreds of requests, not
-/// millions, so anything past this is malformed and the record is skipped.
-const MAX_JOURNAL_INDEX: usize = 1_000_000;
-
 /// Check if a first line looks like a delta journal entry (has `"kind":` field).
 fn is_delta_journal(first_line: &str) -> bool {
     first_line.contains("\"kind\":")
@@ -160,263 +152,52 @@ fn session_id_from_path(path: &Path) -> Option<String> {
 }
 
 /// Read workspace.json sibling to get the folder URI for a chat session.
-fn workspace_folder(chat_session_path: &Path) -> Option<String> {
-    let ws = chat_session_path.parent()?.join("workspace.json");
-    let content = std::fs::read_to_string(&ws).ok()?;
-    let v: serde_json::Value = serde_json::from_str(&content).ok()?;
-    // Two shapes in the wild: a plain string, and the `$mid`-tagged object VS
-    // Code writes for some workspaces. Accept either.
-    let uri = v
-        .get("folder")
-        .and_then(|f| f.as_str().map(str::to_string))
-        .or_else(|| v["workspace"]["folder"]["path"].as_str().map(str::to_string))
-        .or_else(|| v["folder"]["path"].as_str().map(str::to_string))?;
-
-    // Resolve file:// URIs
-    if let Some(path) = uri.strip_prefix("file://") {
-        return Some(normalise_uri_path(path));
-    }
-    // Handle vscode-remote://wsl+<distro>/path
-    if let Some(rest) = uri.strip_prefix("vscode-remote://")
-        && let Some(slash) = rest.find('/')
-    {
-        return Some(rest[slash..].to_string());
-    }
-    Some(uri)
-}
-
-/// Percent-decode a URI path and unwrap a Windows drive.
+/// The project folder a chat session belongs to.
 ///
-/// VS Code stores Windows folders as `file:///c%3A/Users/...`. Stripping the
-/// scheme alone leaves `/c%3A/Users/...`, which matches no directory and no
-/// repo — every Windows session would lose its project attribution. Verified
-/// against real shared transcripts.
-fn normalise_uri_path(path: &str) -> String {
-    let mut out = String::with_capacity(path.len());
-    let mut bytes = path.bytes().enumerate();
-    let raw = path.as_bytes();
-    while let Some((i, b)) = bytes.next() {
-        if b == b'%'
-            && let (Some(h), Some(l)) = (raw.get(i + 1), raw.get(i + 2))
-            && let (Some(h), Some(l)) = ((*h as char).to_digit(16), (*l as char).to_digit(16))
-        {
-            out.push(((h * 16 + l) as u8) as char);
-            bytes.next();
-            bytes.next();
-            continue;
-        }
-        out.push(b as char);
-    }
-    // `/c:/Users/...` → `c:/Users/...`
-    let trimmed = out.strip_prefix('/').unwrap_or(&out);
-    if trimmed.len() >= 2 && trimmed.as_bytes()[1] == b':' {
-        return trimmed.to_string();
-    }
-    out
+/// Delegates to the shared reader: `workspace.json` sits beside the
+/// `chatSessions` DIRECTORY, and this resolved one level too shallow, so the
+/// folder came back `None`, `parse()` yielded no cwds, and `synthesize_session`
+/// skipped every VS Code session before creating it (#123 A2).
+fn workspace_folder(chat_session_path: &Path) -> Option<String> {
+    sensei_transcript_formats::paths::workspace_folder(chat_session_path)
 }
 
 /// Reconstruct turns from a delta journal (kind:0/1/2 format).
-/// The journal reconstructs a `requests[]` array; we extract user/assistant turns.
+///
+/// The replay itself lives in `sensei-transcript-formats` — the daemon and the
+/// offline report tool used to carry separate copies that disagreed, and three
+/// of the four critical defects in #123 were cases where one was right and the
+/// other was not.
 fn parse_journal_transcript(content: &str) -> Vec<TranscriptTurn> {
-    // Reconstruct the full JSON state from delta operations
-    let mut root: serde_json::Value = serde_json::json!(null);
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.len() > MAX_LINE_BYTES {
-            continue;
-        }
-        let op: serde_json::Value = match serde_json::from_str(trimmed) {
-            Ok(v) => v,
-            Err(_) => continue,
-        };
-        // The journal uses `k` (an ARRAY path, e.g. ["requests"]) and `v`, not
-        // `path`/`value`. Verified against real transcripts: reading
-        // `path`/`value` reconstructed nothing at all, so every VS Code session
-        // parsed to zero turns.
-        let kind = op.get("kind").and_then(|k| k.as_i64()).unwrap_or(0);
-        // Segments are strings OR integers (`["requests", 0, "response"]`) —
-        // 409 of 516 in a sampled journal are integers, so keeping only the
-        // strings corrupts nearly every path.
-        let path: Vec<String> = op
-            .get("k")
-            .and_then(|k| k.as_array())
-            .map(|a| {
-                a.iter()
-                    .filter_map(|p| {
-                        p.as_str().map(String::from).or_else(|| p.as_u64().map(|i| i.to_string()))
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-        match kind {
-            // Root snapshot.
-            0 => {
-                if let Some(value) = op.get("v") {
-                    root = value.clone();
-                }
-            }
-            // Set a value at a path.
-            1 => {
-                if let Some(value) = op.get("v") {
-                    set_json_path(&mut root, &path, value.clone(), false);
-                }
-            }
-            // APPEND to the array at the path. The journal streams a reply in
-            // pieces, so a request's `response` grows across many records —
-            // treating this as a replace keeps only the final fragment.
-            2 => {
-                if let Some(value) = op.get("v") {
-                    set_json_path(&mut root, &path, value.clone(), true);
-                }
-            }
-            _ => {}
-        }
-    }
-
-    // Extract turns from reconstructed requests[]
-    let requests = match root.get("requests") {
-        Some(serde_json::Value::Array(arr)) => arr.clone(),
-        _ => return Vec::new(),
-    };
-
-    // Each element of `requests[]` is ONE exchange: `message.text` is what the
-    // human typed and `response[]` is the reply. There is no `role` field and no
-    // `responseParts` — reading for either produced empty turns from every real
-    // transcript.
     let mut turns = Vec::new();
-
-    for (i, req) in requests.iter().enumerate() {
-        let user_text = req["message"]["text"].as_str().unwrap_or("").trim().to_string();
-
-        // Assistant prose lives in the untagged parts of `response[]`. Tool
-        // invocations and thinking blocks are tagged with a `kind` and are not
-        // prose, so they are excluded from the text but counted as facts.
-        let mut assistant_text = String::new();
-        let mut tools = 0i64;
-        let mut thinking_ms = 0i64;
-        if let Some(parts) = req["response"].as_array() {
-            for part in parts {
-                match part["kind"].as_str() {
-                    Some("toolInvocationSerialized") => tools += 1,
-                    Some("thinking") => {
-                        thinking_ms += part["reasoningDurationMs"].as_i64().unwrap_or(0);
-                    }
-                    // Untagged parts carry the reply text under `value`.
-                    None => {
-                        if let Some(t) = part["value"].as_str() {
-                            let t = t.trim();
-                            if !t.is_empty() {
-                                if !assistant_text.is_empty() {
-                                    assistant_text.push_str("\n\n");
-                                }
-                                assistant_text.push_str(t);
-                            }
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        }
-
-        if user_text.is_empty() && assistant_text.is_empty() {
+    for req in sensei_transcript_formats::journal::requests(content) {
+        if req.user_text.is_empty() && req.assistant_text.is_empty() {
             continue;
         }
+        let mut assistant_text = req.assistant_text;
         if assistant_text.chars().count() > MAX_TURN_CHARS {
             assistant_text = assistant_text.chars().take(MAX_TURN_CHARS).collect();
         }
-
         let mut facts = TurnFacts::default();
-        // `modelId` arrives namespaced, e.g. "copilot/claude-opus-4.6".
-        let model = req["modelId"].as_str().map(|m| m.rsplit('/').next().unwrap_or(m).to_string());
-        if thinking_ms > 0 {
-            facts.effort = Some(format!("{thinking_ms}ms reasoning"));
+        if req.thinking_ms > 0 {
+            facts.effort = Some(format!("{}ms reasoning", req.thinking_ms));
         }
-
         turns.push(TranscriptTurn {
-            turn_index: i as i32 + 1,
-            user_text: (!user_text.is_empty()).then_some(user_text),
+            turn_index: req.index as i32 + 1,
+            user_text: (!req.user_text.is_empty()).then_some(req.user_text),
             assistant_text,
-            // Epoch millis on the request itself.
-            started_at: req["timestamp"].as_i64().and_then(chrono::DateTime::from_timestamp_millis),
+            started_at: req.timestamp_ms.and_then(chrono::DateTime::from_timestamp_millis),
             attrs: serde_json::json!({
-                "modelId": model,
-                "toolInvocations": tools,
-                "responseTimestamp": req["responseTimestamp"].as_i64(),
+                "modelId": req.model,
+                "toolInvocations": req.tool_calls.len(),
+                "responseTimestamp": req.response_timestamp_ms,
             }),
             facts,
         });
     }
-
     turns
 }
 
-/// Set a value at a JSON path (dot-separated keys, numeric indices for arrays).
-/// Write a value into a slot, or extend it when the journal is appending.
-fn place_json(slot: &mut serde_json::Value, value: serde_json::Value, append: bool) {
-    if !append {
-        *slot = value;
-        return;
-    }
-    if !slot.is_array() {
-        *slot = serde_json::json!([]);
-    }
-    let Some(arr) = slot.as_array_mut() else { return };
-    match value {
-        serde_json::Value::Array(items) => arr.extend(items),
-        other => arr.push(other),
-    }
-}
-
-fn set_json_path(
-    root: &mut serde_json::Value,
-    path: &[String],
-    value: serde_json::Value,
-    append: bool,
-) {
-    if path.is_empty() {
-        *root = value;
-        return;
-    }
-    if !root.is_object() && !root.is_array() {
-        *root = serde_json::json!({});
-    }
-    let mut current = root;
-    for (i, part) in path.iter().enumerate() {
-        let last = i == path.len() - 1;
-        // A numeric segment indexes an array; anything else is an object key.
-        if let Ok(idx) = part.parse::<usize>() {
-            let Some(arr) = current.as_array_mut() else { return };
-            // `k` comes from the transcript, which is untrusted. Resizing to an
-            // index taken straight from it lets a 2-line file ask for an
-            // arbitrary allocation — index 4e9 asks for ~128 GB and the process
-            // is OOM-killed. No real chat session has a millionth request.
-            if idx > MAX_JOURNAL_INDEX {
-                return;
-            }
-            if idx >= arr.len() {
-                arr.resize(idx + 1, serde_json::Value::Null);
-            }
-            if last {
-                place_json(&mut arr[idx], value, append);
-                return;
-            }
-            current = &mut arr[idx];
-        } else {
-            if !current.is_object() {
-                *current = serde_json::json!({});
-            }
-            let Some(obj) = current.as_object_mut() else { return };
-            if last {
-                let slot = obj.entry(part.clone()).or_insert_with(|| serde_json::json!(null));
-                place_json(slot, value, append);
-                return;
-            }
-            current = obj.entry(part.clone()).or_insert_with(|| serde_json::json!({}));
-        }
-    }
-}
-
-/// Reconstruct turns from a transcript event stream.
 fn parse_transcript_content(content: &str) -> Vec<TranscriptTurn> {
     let mut turns = Vec::new();
     let mut cur: Option<TranscriptTurn> = None;
@@ -563,9 +344,20 @@ fn parse_journal_session(content: &str, cwd: Option<String>) -> Option<SynthSess
     if turns.is_empty() {
         return None;
     }
+    // The journal DOES carry per-message timestamps — `timestamp` on each
+    // request, read into TranscriptTurn::started_at. The previous code started
+    // at 0 and added a second per turn, so every VS Code session landed on
+    // 1970-01-01 and poisoned active-days, session duration and every
+    // time-keyed metric downstream (#123 A4).
+    //
+    // A turn whose timestamp the journal genuinely omits contributes no event
+    // rather than a made-up one: a fabricated instant is indistinguishable from
+    // a real one once it is in the database.
     let mut events = Vec::new();
-    let mut ts = 0i64;
+    let mut last_ts = None;
     for t in &turns {
+        let Some(at) = t.started_at.map(|d| d.timestamp_millis()) else { continue };
+        last_ts = Some(at);
         if let Some(ref prompt) = t.user_text {
             events.push(SynthEvent {
                 event_type: "UserPromptSubmit".to_string(),
@@ -573,21 +365,23 @@ fn parse_journal_session(content: &str, cwd: Option<String>) -> Option<SynthSess
                 file_path: None,
                 prompt: Some(prompt.clone()),
                 tool_input: None,
-                ts,
+                ts: at,
             });
         }
-        if !t.assistant_text.is_empty() {
-            // No tool_use in journal format — just text
-        }
-        ts += 1000; // Spread events evenly (no per-message timestamps in journals)
     }
+    if events.is_empty() {
+        return None;
+    }
+    // The session ends when the last reply came back, where the journal says so.
+    let stop_ts =
+        turns.iter().filter_map(|t| t.attrs["responseTimestamp"].as_i64()).max().or(last_ts)?;
     events.push(SynthEvent {
         event_type: "Stop".to_string(),
         tool_name: None,
         file_path: None,
         prompt: None,
         tool_input: None,
-        ts,
+        ts: stop_ts,
     });
     let cwds = cwd.into_iter().collect();
     Some(SynthSession { cwds, events })
@@ -1278,8 +1072,58 @@ mod tests {
         assert!(s.is_none());
     }
 
+    /// A4: the journal carries a real `timestamp` per request, so nothing may
+    /// synthesise one. Events used to start at epoch 0 and step by a second,
+    /// landing every VS Code session on 1970-01-01 and poisoning active-days,
+    /// duration and every time-keyed metric.
     #[test]
-    /// The `k` path is untrusted — the daemon reads whatever journal is on
+    fn journal_events_carry_the_real_timestamp_not_a_synthesised_one() {
+        let journal = concat!(
+            r#"{"kind":0,"v":{"requests":[{"timestamp":1786294114560,"#,
+            r#""responseTimestamp":1786294120000,"message":{"text":"go"},"#,
+            r#""response":[{"value":"done"}]}]}}"#
+        );
+        let session = parse_journal_session(journal, Some("/repo".into()))
+            .expect("a journal with one request is a session");
+
+        let prompt = session
+            .events
+            .iter()
+            .find(|e| e.event_type == "UserPromptSubmit")
+            .expect("the prompt is an event");
+        assert_eq!(prompt.ts, 1786294114560, "must be the journal's timestamp, not 0");
+
+        let stop = session.events.iter().find(|e| e.event_type == "Stop").expect("a Stop event");
+        assert_eq!(stop.ts, 1786294120000, "the session ends when the reply came back");
+    }
+
+    /// A turn the journal gave no timestamp for contributes nothing rather than
+    /// a fabricated instant — once in the database the two are indistinguishable.
+    #[test]
+    fn a_journal_without_timestamps_yields_no_session() {
+        let journal = r#"{"kind":0,"v":{"requests":[{"message":{"text":"go"}}]}}"#;
+        assert!(parse_journal_session(journal, Some("/repo".into())).is_none());
+    }
+
+    /// A2's consequence: the folder has to resolve, or `parse()` yields no cwds
+    /// and `synthesize_session` drops the session before creating it.
+    #[test]
+    fn a_chat_session_resolves_its_workspace_folder() {
+        let root = std::env::temp_dir().join("senseid-vscode-a2/hash1");
+        let _ = std::fs::remove_dir_all(root.parent().unwrap());
+        std::fs::create_dir_all(root.join("chatSessions")).unwrap();
+        std::fs::write(root.join("workspace.json"), r#"{"folder":"file:///repo/app"}"#).unwrap();
+        let journal = root.join("chatSessions").join("s.jsonl");
+        std::fs::write(&journal, "").unwrap();
+
+        assert_eq!(
+            workspace_folder(&journal),
+            Some("/repo/app".to_string()),
+            "workspace.json is beside the chatSessions directory, not inside it"
+        );
+    }
+
+    /// A1: the `k` path is untrusted — the daemon reads whatever journal is on
     /// disk. A huge index must be REFUSED, not allocated: without the ceiling
     /// this resizes the array to the requested length, and at 4e9 the daemon is
     /// OOM-killed by a two-line file.
@@ -1375,13 +1219,21 @@ mod tests {
         // file:///c%3A/... Leaving the escape in place produced "/c%3A/Users/..."
         // which matches no directory, so every Windows session lost its project.
         assert_eq!(
-            normalise_uri_path("/c%3A/Users/dev.user/Documents/workspace/sample-portal"),
+            sensei_transcript_formats::paths::normalise_uri_path(
+                "/c%3A/Users/dev.user/Documents/workspace/sample-portal"
+            ),
             "c:/Users/dev.user/Documents/workspace/sample-portal"
         );
         // POSIX paths pass through untouched.
-        assert_eq!(normalise_uri_path("/Users/jane/code/app"), "/Users/jane/code/app");
+        assert_eq!(
+            sensei_transcript_formats::paths::normalise_uri_path("/Users/jane/code/app"),
+            "/Users/jane/code/app"
+        );
         // A space, the other escape that shows up constantly.
-        assert_eq!(normalise_uri_path("/Users/jane/My%20Code"), "/Users/jane/My Code");
+        assert_eq!(
+            sensei_transcript_formats::paths::normalise_uri_path("/Users/jane/My%20Code"),
+            "/Users/jane/My Code"
+        );
     }
 
     /// Ingestion proof against REAL VS Code data, when a sample is provided.
