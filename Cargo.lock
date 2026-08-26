@@ -4818,6 +4818,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "sensei-transcript-formats"
+version = "0.9.1"
+dependencies = [
+ "serde_json",
+]
+
+[[package]]
 name = "senseid"
 version = "0.9.1"
 dependencies = [
@@ -4855,6 +4862,7 @@ dependencies = [
  "sensei-local-providers",
  "sensei-logger",
  "sensei-mcp",
+ "sensei-transcript-formats",
  "serde",
  "serde_json",
  "serde_yaml",
