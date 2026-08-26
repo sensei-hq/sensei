@@ -76,6 +76,15 @@ enum Seg {
     Index(usize),
 }
 
+/// Ceiling on a journal array index.
+///
+/// `k` comes from the transcript, which is UNTRUSTED — on this tool it is
+/// literally other people's files. Resizing an array to an index taken straight
+/// from it lets a 2-line file ask for an arbitrary allocation: index 4e9 asks
+/// for ~128 GB and is killed by the OS. No real chat session has a millionth
+/// request, so anything past this is malformed and the record is skipped.
+const MAX_JOURNAL_INDEX: usize = 1_000_000;
+
 /// Set (or append to) the value at `path`.
 fn apply(root: &mut serde_json::Value, path: &[Seg], value: serde_json::Value, append: bool) {
     let mut cur = root;
@@ -87,6 +96,9 @@ fn apply(root: &mut serde_json::Value, path: &[Seg], value: serde_json::Value, a
                     *cur = serde_json::json!([]);
                 }
                 let Some(arr) = cur.as_array_mut() else { return };
+                if *idx > MAX_JOURNAL_INDEX {
+                    return;
+                }
                 if *idx >= arr.len() {
                     arr.resize(idx + 1, serde_json::Value::Null);
                 }
@@ -389,6 +401,35 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).unwrap();
         d
+    }
+
+    /// `k` is untrusted input. A huge index must be REFUSED, not allocated:
+    /// without the ceiling this resizes an array to the requested length, and
+    /// at 4e9 the process is OOM-killed by the OS.
+    ///
+    /// The index here is deliberately only a little over the cap — large enough
+    /// that the guard is what rejects it, small enough that a regression fails
+    /// the test instead of taking the machine down with it.
+    #[test]
+    fn a_huge_array_index_is_refused_not_allocated() {
+        let journal = concat!(
+            "{\"kind\":0,\"v\":{\"requests\":[]}}\n",
+            "{\"kind\":1,\"k\":[\"requests\",2000000,\"message\"],\"v\":{\"text\":\"x\"}}"
+        );
+        let root = replay(journal);
+        let len = root["requests"].as_array().map(|a| a.len()).unwrap_or(0);
+        assert_eq!(len, 0, "an out-of-range index must be skipped, not backfilled with nulls");
+    }
+
+    /// A legitimate index still works — the ceiling must not break real journals.
+    #[test]
+    fn an_ordinary_index_still_applies() {
+        let journal = concat!(
+            "{\"kind\":0,\"v\":{\"requests\":[]}}\n",
+            "{\"kind\":1,\"k\":[\"requests\",2,\"message\"],\"v\":{\"text\":\"hi\"}}"
+        );
+        let root = replay(journal);
+        assert_eq!(root["requests"][2]["message"]["text"], "hi");
     }
 
     /// When a session has both transcripts, the event stream must win — it is the
