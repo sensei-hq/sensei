@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Leak guard first: it is instant, and a leak that reaches a public repo costs a
+# history rewrite across every repo that carries the commit. See the header of
+# check-no-leaks.sh for the incident that motivated it.
+"$(dirname "$0")/check-no-leaks.sh"
+
 # Fast unit tests — no external dependencies required.
 # Full test suite (needs PostgreSQL): make test
 echo "Pre-commit: running fast unit tests..."
