@@ -80,12 +80,19 @@ activity.session_facets
   + stage_source  stage_source   -- 'recorded' | 'inferred'
 ```
 
-A resolving view prefers the recorded phase and falls back to the inference:
+**Correction, found while building this.** The design above assumed
+`activity.runs.current_phase` was a recorded workflow phase and could be
+resolved against the inference. It is not: the column is free text and on the
+live daemon it holds feature descriptions — `"P4 · stall signal — revive +
+no-re-stall proof"` — not a stage. `activity.runs` also has no link to
+`activity.sessions` (it carries `dojo_session_id`, a different grain).
 
-```
-activity.session_stage  (view)
-  session_id, stage, stage_source
-```
+So today **every stage is inferred**, and the resolving view has one source,
+which is ceremony rather than design. `stage_source` still exists and still
+matters: it is what lets a recorded source be added later without making the
+existing rows ambiguous, and it keeps every rollup able to say the stages were
+read rather than declared. The view lands when there is a second source to
+resolve — see open question 3.
 
 `stage_source` is not decoration. A rollup that says "38% of rework happens in
 `build`" means something different if the stage was inferred by a model than if
