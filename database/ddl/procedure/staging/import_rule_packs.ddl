@@ -45,5 +45,15 @@ begin
     , published_by = excluded.published_by
     , updated_at   = excluded.updated_at
   where excluded.updated_at > sensei.rule_packs.updated_at;
+  -- Drive the dependents from here, because dbd does not order imports and a
+  -- rule can only be attached to a pack that already exists. Called
+  -- alphabetically, `import_rule_pack_rules` lands BEFORE `import_rule_packs`
+  -- ("_" sorts before "s"), joins against an empty rule_packs, inserts nothing,
+  -- and reports success — which is why a fresh install shipped packs with no
+  -- rules and nothing flagged it.
+  --
+  -- Both are idempotent, so dbd calling them again on its own turn is a no-op.
+  call staging.import_rule_pack_rules();
+  call staging.import_rule_pack_adoptions();
 end;
 $$;

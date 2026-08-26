@@ -12,6 +12,12 @@ create table if not exists playbook_rules (
 , enabled          boolean         not null default true
 , source           text            not null default 'builtin'
 , created_at       timestamptz     not null default now()
+-- Bumped whenever the row changes. The staging import guards on it: a re-import
+-- only overwrites a row when the DATAFILE's stamp is at least as new, so an edit
+-- made in place survives redeployment. Without this column the import had nothing
+-- to compare and fell back to clobbering (playbooks) or to never updating at all
+-- (intake_guide, playbook_rules) — see docs/backlog.md.
+, modified_at      timestamptz     not null default now()
 , constraint playbook_rules_source_chk check (source in ('builtin','org','learned'))
 );
 create index if not exists playbook_rules_match_idx on playbook_rules(enabled, priority desc);
@@ -21,3 +27,9 @@ create index if not exists playbook_rules_playbook_idx on playbook_rules(playboo
 create unique index if not exists playbook_rules_learned_uq
     on playbook_rules(match_lifecycle, match_intent, match_risk, playbook)
     where source = 'learned';
+
+-- The natural key, so the staging import can upsert on it. A rule is addressed
+-- by name everywhere else; without this the import could only ever insert, and
+-- an edited rule in the datafile silently never reached the table.
+create unique index if not exists playbook_rules_name_unique
+    on sensei.playbook_rules (name);
