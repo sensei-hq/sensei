@@ -21,9 +21,6 @@ pub struct ToolCall {
 }
 
 impl ToolCall {
-    pub fn duration_ms(&self) -> Option<i64> {
-        self.ended_ms.map(|e| e - self.started_ms)
-    }
     pub fn failed(&self) -> bool {
         self.success == Some(false)
     }
@@ -44,17 +41,21 @@ impl Turn {
     }
 }
 
-/// A human prompt.
-#[derive(Debug, Clone)]
-pub struct Prompt {
-    pub at_ms: i64,
-    pub text: String,
-    pub event_id: String,
-}
-
 /// Totals the CLI reports at shutdown. Every field is `Option` because a session
 /// killed with the lock file still in place never writes one — that is a real
 /// gap, and reporting 0 tokens for it would be a lie.
+/// One model's share of a session, from `session.shutdown.modelMetrics`.
+#[derive(Debug, Clone, Default)]
+pub struct ModelUse {
+    pub requests: i64,
+    /// Premium requests consumed. Only premium models charge any — most models
+    /// report 0, so this is what actually draws down the plan allowance.
+    pub premium: i64,
+    pub output_tokens: i64,
+    /// Billing "AI units", in nano. Reported alongside premium requests.
+    pub nano_aiu: i64,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct Totals {
     pub premium_requests: Option<i64>,
@@ -66,6 +67,9 @@ pub struct Totals {
     pub output_tokens: Option<i64>,
     pub cache_read_tokens: Option<i64>,
     pub cache_write_tokens: Option<i64>,
+    pub reasoning_tokens: Option<i64>,
+    pub nano_aiu: Option<i64>,
+    pub by_model: HashMap<String, ModelUse>,
 }
 
 #[derive(Debug, Clone)]
@@ -74,7 +78,10 @@ pub struct Session {
     pub cwd: Option<String>,
     pub first_ms: i64,
     pub last_ms: i64,
-    pub prompts: Vec<Prompt>,
+    /// How many prompts the human wrote. A COUNT, not the prompts themselves —
+    /// these are other people's transcripts and the report has no reason to hold
+    /// their text in memory.
+    pub prompts: usize,
     pub turns: Vec<Turn>,
     pub tools: Vec<ToolCall>,
     pub totals: Totals,
@@ -87,6 +94,11 @@ pub struct Session {
     /// the sum of gaps below an idle cutoff — a session left open overnight
     /// spans days of wall clock that nobody was working through.
     pub activity_ms: Vec<i64>,
+    /// Sub-agent transcripts folded into this session. A delegated agent runs
+    /// inside its parent's session but writes its own file, so the parent's
+    /// transcript shows only the hand-off — all the work it did would otherwise
+    /// be invisible.
+    pub delegated: usize,
     /// True when the session directory still holds an `inuse.*.lock`, i.e. it
     /// was never cleanly closed. Those sessions have no shutdown totals.
     pub unclosed: bool,

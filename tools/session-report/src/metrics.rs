@@ -6,7 +6,7 @@
 //! "0 failures" for a session with no completion events would be worse than
 //! saying nothing.
 
-use crate::model::Session;
+use crate::model::{ModelUse, Session};
 use std::collections::HashMap;
 
 pub fn pct(n: usize, d: usize) -> Option<f64> {
@@ -67,7 +67,12 @@ pub struct Analysis {
     pub files_modified: usize,
     pub premium_requests: i64,
     pub input_tokens: i64,
+    pub output_tokens: i64,
     pub cache_read_tokens: i64,
+    pub reasoning_tokens: i64,
+    pub nano_aiu: i64,
+    /// Per-model request / premium / token split, summed over sessions.
+    pub by_model: HashMap<String, ModelUse>,
     pub api_duration_ms: i64,
     /// Span from first to last event, summed. Includes idle.
     pub wall_ms: i64,
@@ -76,6 +81,10 @@ pub struct Analysis {
     /// Sessions that reported shutdown totals. The cost and code-change figures
     /// only cover these — stated so nobody reads a partial sum as a full one.
     pub sessions_with_totals: usize,
+    /// Sub-agent transcripts folded into their parent sessions.
+    pub delegated: usize,
+    /// Distinct working directories seen across the sessions.
+    pub projects: usize,
 }
 
 impl Analysis {
@@ -125,21 +134,32 @@ pub fn analyse(sessions: &[Session], skipped_lines: usize) -> Analysis {
         files_modified: 0,
         premium_requests: 0,
         input_tokens: 0,
+        output_tokens: 0,
         cache_read_tokens: 0,
+        reasoning_tokens: 0,
+        nano_aiu: 0,
+        by_model: HashMap::new(),
         api_duration_ms: 0,
         wall_ms: 0,
         active_ms: 0,
         sessions_with_totals: 0,
+        delegated: 0,
+        projects: 0,
     };
 
     let mut by_tool: HashMap<String, (usize, usize)> = HashMap::new();
     let mut days: std::collections::HashSet<i64> = std::collections::HashSet::new();
+    let mut cwds: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     for s in sessions {
         a.events += s.event_count;
-        a.prompts += s.prompts.len();
+        a.prompts += s.prompts;
         a.turns += s.turns.len();
         a.permission_events += s.permission_events;
+        a.delegated += s.delegated;
+        if let Some(c) = &s.cwd {
+            cwds.insert(c.to_lowercase());
+        }
         a.wall_ms += s.wall_ms();
         a.active_ms += s.active_ms();
         if s.unclosed {
@@ -218,7 +238,17 @@ pub fn analyse(sessions: &[Session], skipped_lines: usize) -> Analysis {
         a.files_modified += t.files_modified.unwrap_or(0);
         a.premium_requests += t.premium_requests.unwrap_or(0);
         a.input_tokens += t.input_tokens.unwrap_or(0);
+        a.output_tokens += t.output_tokens.unwrap_or(0);
         a.cache_read_tokens += t.cache_read_tokens.unwrap_or(0);
+        a.reasoning_tokens += t.reasoning_tokens.unwrap_or(0);
+        a.nano_aiu += t.nano_aiu.unwrap_or(0);
+        for (name, mu) in &t.by_model {
+            let e = a.by_model.entry(name.clone()).or_default();
+            e.requests += mu.requests;
+            e.premium += mu.premium;
+            e.output_tokens += mu.output_tokens;
+            e.nano_aiu += mu.nano_aiu;
+        }
         a.api_duration_ms += t.api_duration_ms.unwrap_or(0);
     }
 
@@ -226,12 +256,13 @@ pub fn analyse(sessions: &[Session], skipped_lines: usize) -> Analysis {
         a.first_ms = 0;
     }
     a.active_days = days.len();
+    a.projects = cwds.len();
     a.turn_ms_sorted.sort_unstable();
     a.tools = by_tool
         .into_iter()
         .map(|(name, (calls, failures))| ToolStat { name, calls, failures })
         .collect();
-    a.tools.sort_by(|x, y| y.calls.cmp(&x.calls));
-    a.failure_runs.sort_by(|x, y| y.length.cmp(&x.length));
+    a.tools.sort_by_key(|t| std::cmp::Reverse(t.calls));
+    a.failure_runs.sort_by_key(|f| std::cmp::Reverse(f.length));
     a
 }
