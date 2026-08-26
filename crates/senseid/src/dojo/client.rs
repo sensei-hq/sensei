@@ -428,8 +428,43 @@ impl DojoClient {
         resp.json::<RelayInboxPull>().await.map_err(|e| DojoClientError::Decode(e.to_string()))
     }
 
+    /// Fetch ONE inbox row by id (`GET relay/inbox?id={id}`).
+    ///
+    /// This is what a waiting gate needs. The daemon raised the gate and holds its
+    /// id, so "has it been answered" is a lookup, not a scan — and a lookup has no
+    /// watermark to skip past. A cursor scan does: `seq` comes from `nextval`,
+    /// which is assigned BEFORE commit, so two concurrent writers can commit out
+    /// of order and a poller that advanced past the higher one never sees the
+    /// lower. Same reason the artifacts path leans on signature dedup rather than
+    /// trusting `last_seq` alone.
+    ///
+    /// dōjō scopes the lookup to the caller's membership, so an id alone can never
+    /// read another tenant's gate.
+    pub async fn inbox_item(
+        &self,
+        inbox_id: &str,
+    ) -> Result<Option<RelayInboxItem>, DojoClientError> {
+        let token = self.bearer_async().await?;
+        let resp = self
+            .http
+            .get(self.relay_url("inbox"))
+            .query(&[("id", inbox_id)])
+            .bearer_auth(token)
+            .send()
+            .await
+            .map_err(|e| DojoClientError::Network(e.to_string()))?;
+        let status = resp.status();
+        if !status.is_success() {
+            return Err(DojoClientError::Status(status.as_u16()));
+        }
+        let pull: RelayInboxPull =
+            resp.json().await.map_err(|e| DojoClientError::Decode(e.to_string()))?;
+        // A miss is None, never a fabricated row: the gate genuinely is not there.
+        Ok(pull.items.into_iter().find(|it| it.id.as_deref() == Some(inbox_id)))
+    }
+
     /// Block (bounded) until a raised inbox row is answered, then return its
-    /// `reply`. Polls [`Self::poll_inbox`] every ~1.5s from `since`, scanning for
+    /// `reply`. Polls [`Self::inbox_item`] every ~1.5s, checking for
     /// the row whose `id == inbox_id` AND `status == Answered`. Returns
     /// `Ok(Some(reply))` on the answer, `Ok(None)` on timeout (the hook-gate leg
     /// treats a timeout as fail-open → allow). A transient poll error does NOT
@@ -443,23 +478,24 @@ impl DojoClient {
     pub async fn await_reply(
         &self,
         inbox_id: &str,
-        since: i64,
         timeout: Duration,
     ) -> Result<Option<serde_json::Value>, DojoClientError> {
         const POLL_EVERY: Duration = Duration::from_millis(1500);
         let deadline = tokio::time::Instant::now() + timeout;
 
         loop {
-            match self.poll_inbox(since).await {
-                Ok(pull) => {
-                    if let Some(reply) = pull.items.iter().find_map(|it| {
-                        let matches = it.id.as_deref() == Some(inbox_id)
-                            && it.status == RelayInboxStatus::Answered;
-                        matches.then(|| it.reply.clone()).flatten()
-                    }) {
+            match self.inbox_item(inbox_id).await {
+                Ok(Some(it)) => {
+                    if it.status == RelayInboxStatus::Answered
+                        && let Some(reply) = it.reply.clone()
+                    {
                         return Ok(Some(reply));
                     }
                 }
+                // The gate is not there. Not an error worth aborting on — the row
+                // may not have propagated yet — so keep waiting out the deadline
+                // rather than failing open early on a read that may still succeed.
+                Ok(None) => {}
                 // A bearer/keychain fault won't recover mid-loop → surface it so
                 // the caller fails open immediately rather than spinning to the
                 // deadline. Transient network/status blips are retried.
@@ -1052,13 +1088,73 @@ mod tests {
 
         // Generous timeout — the row answers on the 2nd poll (~1.5s later).
         let reply = c
-            .await_reply("gate-1", 0, std::time::Duration::from_secs(10))
+            .await_reply("gate-1", std::time::Duration::from_secs(10))
             .await
             .expect("await_reply ok");
         assert_eq!(reply, Some(serde_json::json!({"verdict": "deny"})));
         assert!(CALLS.load(Ordering::SeqCst) >= 2, "polled past the pending row");
 
         crate::gateway_keys::delete_key(&cref).unwrap();
+    }
+
+    #[tokio::test]
+    #[cfg_attr(not(target_os = "macos"), ignore)]
+    async fn await_reply_asks_for_its_own_gate_by_id_not_a_cursor() {
+        use axum::{Json, Router, routing::get};
+        use dojo_protocol::relay::{
+            RelayInboxItem, RelayInboxKind, RelayInboxPull, RelayInboxStatus, RelayMessageDirection,
+        };
+
+        // The shape of the request IS the fix. Asking `?since=<ack.seq>` only ever
+        // worked because an in-DB trigger bumped the row's seq on the answering
+        // UPDATE, lifting it back above a watermark the daemon had already passed.
+        // That also inherits the nextval-before-commit gap: a lower seq can commit
+        // after a higher one and be skipped forever. A lookup by id has no
+        // watermark. Without this test both shapes pass the mocks here, which
+        // ignore the query string.
+        static SEEN: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+        async fn inbox(uri: axum::http::Uri) -> Json<RelayInboxPull> {
+            SEEN.lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push(uri.query().unwrap_or_default().to_string());
+            Json(RelayInboxPull {
+                items: vec![RelayInboxItem {
+                    id: Some("gate-7".into()),
+                    run_id: "run-1".into(),
+                    segment_id: None,
+                    kind: RelayInboxKind::Approval,
+                    direction: RelayMessageDirection::AgentToHuman,
+                    status: RelayInboxStatus::Answered,
+                    payload: serde_json::json!({}),
+                    reply: Some(serde_json::json!({"verdict": "allow"})),
+                    created_at: None,
+                    answered_at: None,
+                }],
+                cursor: 0,
+            })
+        }
+
+        let app = Router::new().route("/v1/t/{origin}/{org}/relay/inbox", get(inbox));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        let cref = format!("dojo-byid-{}", uuid::Uuid::new_v4());
+        crate::gateway_keys::set_key(&cref, "device-token-byid").unwrap();
+        let mut m = membership("http://localhost:7755/github/acme", &cref);
+        m.registry_url = format!("http://{addr}");
+        let c = DojoClient::for_membership(&m);
+
+        let reply = c.await_reply("gate-7", std::time::Duration::from_secs(5)).await;
+        crate::gateway_keys::delete_key(&cref).unwrap();
+
+        assert_eq!(reply.expect("ok"), Some(serde_json::json!({"verdict": "allow"})));
+        let seen = SEEN.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        assert!(!seen.is_empty(), "the gate was never fetched");
+        assert!(seen.iter().all(|q| q.contains("id=gate-7")), "must ask by gate id: {seen:?}");
+        assert!(seen.iter().all(|q| !q.contains("since=")), "must not send a cursor: {seen:?}");
     }
 
     #[tokio::test]
@@ -1107,7 +1203,7 @@ mod tests {
 
         // 1s timeout < the 1.5s poll interval ⇒ one poll then deadline → None.
         let reply = c
-            .await_reply("gate-1", 0, std::time::Duration::from_secs(1))
+            .await_reply("gate-1", std::time::Duration::from_secs(1))
             .await
             .expect("await_reply ok");
         assert_eq!(reply, None, "unanswered gate times out to None (fail-open)");

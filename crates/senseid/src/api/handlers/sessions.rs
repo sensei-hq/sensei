@@ -565,7 +565,13 @@ pub(crate) async fn hook_gate(
     };
 
     // Block (bounded < Claude's 60s hook cap) for the human's answer.
-    match client.await_reply(&ack.id, ack.seq, std::time::Duration::from_secs(50)).await {
+    //
+    // By gate ID, not from `ack.seq`. The cursor form only worked because an
+    // in-DB trigger bumped the row's `seq` on the answering UPDATE, lifting it
+    // back above a watermark the daemon had already passed — a write-side
+    // mechanism compensating for asking the wrong question. The daemon RAISED
+    // this gate and holds its id; "has it been answered" is a lookup.
+    match client.await_reply(&ack.id, std::time::Duration::from_secs(50)).await {
         Ok(reply) => {
             let decision = decision_from_reply(reply.as_ref());
             let reason = match (decision, reply.is_some()) {
