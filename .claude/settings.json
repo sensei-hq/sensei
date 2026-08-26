@@ -1,0 +1,23 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "statusMessage": "cargo fmt + clippy",
+            "timeout": 300,
+            "command": "jq -r '.tool_input.file_path // empty' | { read -r f || exit 0; case \"$f\" in *.rs) ;; *) exit 0 ;; esac; d=$(dirname \"$f\"); while [ \"$d\" != \"/\" ] && [ ! -f \"$d/Cargo.toml\" ]; do d=$(dirname \"$d\"); done; [ -f \"$d/Cargo.toml\" ] || exit 0; cargo fmt --manifest-path \"$d/Cargo.toml\" 2>&1 | tail -5; cargo clippy --manifest-path \"$d/Cargo.toml\" --all-targets -- -D warnings 2>&1 | tail -30; }"
+          },
+          {
+            "type": "command",
+            "statusMessage": "svelte-check",
+            "timeout": 300,
+            "command": "jq -r '.tool_input.file_path // empty' | { read -r f || exit 0; case \"$f\" in *.svelte|*.ts) ;; *) exit 0 ;; esac; d=$(dirname \"$f\"); while [ \"$d\" != \"/\" ] && [ ! -f \"$d/svelte.config.js\" ]; do d=$(dirname \"$d\"); done; [ -f \"$d/svelte.config.js\" ] || exit 0; cd \"$d\" && npx svelte-check --threshold error 2>&1 | tail -20; }"
+          }
+        ]
+      }
+    ]
+  }
+}
