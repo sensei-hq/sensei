@@ -14,7 +14,10 @@ use chrono::{TimeZone, Utc};
 use std::fmt::Write;
 
 fn day(ms: i64) -> String {
-    Utc.timestamp_millis_opt(ms).single().map(|d| d.format("%Y-%m-%d").to_string()).unwrap_or_default()
+    Utc.timestamp_millis_opt(ms)
+        .single()
+        .map(|d| d.format("%Y-%m-%d").to_string())
+        .unwrap_or_default()
 }
 fn stamp(ms: i64) -> String {
     Utc.timestamp_millis_opt(ms)
@@ -44,7 +47,12 @@ fn n(v: i64) -> String {
     if v < 0 { format!("-{out}") } else { out }
 }
 
-pub fn report(label: &str, tool: Option<crate::Tool>, sessions: &[Session], a: &Analysis) -> String {
+pub fn report(
+    label: &str,
+    tool: Option<crate::Tool>,
+    sessions: &[Session],
+    a: &Analysis,
+) -> String {
     let mut o = String::new();
 
     let _ = writeln!(o, "# Working session retrospective — {label}\n");
@@ -68,6 +76,7 @@ pub fn report(label: &str, tool: Option<crate::Tool>, sessions: &[Session], a: &
     working_well(&mut o, a);
     friction(&mut o, a, sessions);
     try_next(&mut o, a);
+    delegation(&mut o, a);
     per_session(&mut o, sessions);
     method(&mut o, tool, a);
     o
@@ -121,6 +130,9 @@ fn at_a_glance(o: &mut String, a: &Analysis) {
     if a.projects > 0 {
         let _ = writeln!(o, "| Projects worked in | {} |", a.projects);
     }
+    if a.tool_calls > 0 && a.tool_outcomes_known == 0 {
+        let _ = writeln!(o, "| Tool outcomes | not recorded by this transcript format |");
+    }
     let _ = writeln!(o, "| Prompts written | {} |", a.prompts);
     if let Some(t) = a.turns_per_prompt() {
         let _ = writeln!(o, "| Assistant turns | {} ({t:.1} per prompt) |", a.turns);
@@ -138,9 +150,20 @@ fn at_a_glance(o: &mut String, a: &Analysis) {
         );
         let _ = writeln!(o, "| Premium requests | {} |", n(a.premium_requests));
     }
+    // Only when the transcript actually times turns. VS Code writes
+    // `responseTimestamp` equal to `timestamp` on these records, so every turn
+    // measures zero — printing "0s typical" would read as instant replies rather
+    // than as a field the format does not populate.
     if let Some(p) = percentile(&a.turn_ms_sorted, 50.0) {
         let p90 = percentile(&a.turn_ms_sorted, 90.0).unwrap_or(p);
-        let _ = writeln!(o, "| Turn length | {} typical, {} at the 90th percentile |", dur(p), dur(p90));
+        if p90 > 0 {
+            let _ = writeln!(
+                o,
+                "| Turn length | {} typical, {} at the 90th percentile |",
+                dur(p),
+                dur(p90)
+            );
+        }
     }
     let _ = writeln!(o);
 }
@@ -200,8 +223,7 @@ fn cost(o: &mut String, a: &Analysis) {
 
     // Name the premium concentration when one model dominates — that is the
     // lever, and it is usually invisible.
-    if let Some((name, m)) =
-        a.by_model.iter().max_by_key(|(_, m)| m.premium)
+    if let Some((name, m)) = a.by_model.iter().max_by_key(|(_, m)| m.premium)
         && m.premium > 0
         && a.premium_requests > 0
     {
@@ -237,6 +259,7 @@ fn working_well(o: &mut String, a: &Analysis) {
     if let Some(f) = a.tool_failure_pct()
         && f < 5.0
         && a.tool_calls > 100
+        && a.tool_outcomes_known > 100
     {
         items.push(format!(
             "**Tool use is landing.** {:.1}% of {} tool calls failed. Most of the loop is \
@@ -281,20 +304,32 @@ fn friction(o: &mut String, a: &Analysis, sessions: &[Session]) {
     let mut items: Vec<String> = Vec::new();
 
     // Repeated failure of one tool, back to back — the shape of a stuck loop.
-    for run in a.failure_runs.iter().take(3) {
-        let s = sessions.iter().find(|s| s.id == run.session);
-        let short = s.map(|s| s.short_id().to_string()).unwrap_or_default();
+    //
+    // Stated ONCE, with the runs listed under it. Repeating the explanation on
+    // every bullet was three paragraphs saying the same thing, which is how a
+    // reader learns to skip the section.
+    if !a.failure_runs.is_empty() {
+        let mut lines = String::new();
+        for run in a.failure_runs.iter().take(3) {
+            let short = sessions
+                .iter()
+                .find(|s| s.id == run.session)
+                .map(|s| s.short_id().to_string())
+                .unwrap_or_default();
+            let _ = write!(
+                lines,
+                "\n  - `{}` × {} — session `{}`, {} (event `{}`)",
+                run.tool,
+                run.length,
+                short,
+                stamp(run.at_ms),
+                run.event_id.get(..8).unwrap_or(&run.event_id)
+            );
+        }
         items.push(format!(
-            "**`{}` failed {} times in a row.** A single failure is noise; a run this long \
-             means the agent kept trying the same thing. Worth a look at what it was \
-             reaching for — a path that does not exist, or a command the environment \
-             does not have, will not fix itself on retry.\n\n  \
-             *Reference: session `{}`, {} (event `{}`)*",
-            run.tool,
-            run.length,
-            short,
-            stamp(run.at_ms),
-            run.event_id.get(..8).unwrap_or(&run.event_id)
+            "**The same tool failed several times in a row.** Retrying rarely resolves a \
+             wrong path or a missing binary, so these runs are usually the agent stuck \
+             rather than the work being hard:{lines}"
         ));
     }
 
@@ -410,15 +445,71 @@ fn try_next(o: &mut String, a: &Analysis) {
     }
 }
 
-fn per_session(o: &mut String, sessions: &[Session]) {
-    let delegated: usize = sessions.iter().map(|s| s.delegated).sum();
-    if delegated > 0 {
-        let _ = writeln!(
-            o,
-            "## Delegated work\n\n{delegated} sub-agent transcript(s) were folded into the              sessions that spawned them. A delegated agent runs inside its parent session but              writes its own file, so the parent records only the hand-off — counting sessions              alone would miss most of the activity here.\n"
-        );
+/// Sub-agent activity, and what it runs on.
+///
+/// Split from the main thread deliberately: the useful question is whether
+/// delegated work goes to a cheaper model than the thread doing the deciding.
+/// Merged into one mix, that is unanswerable.
+fn delegation(o: &mut String, a: &Analysis) {
+    if a.delegated == 0 {
+        return;
+    }
+    let _ = writeln!(o, "## Delegated work\n");
+    let _ = writeln!(
+        o,
+        "{} sub-agent transcript(s), folded into the sessions that spawned them. A delegated agent runs inside its parent session but writes its own file, so the parent records only the hand-off — counting sessions alone would miss most of the activity here.\n",
+        a.delegated
+    );
+
+    if a.delegated_models.is_empty() {
+        return;
+    }
+    let sub_total: usize = a.delegated_models.values().sum();
+    let mut main: Vec<(String, usize)> = a
+        .models
+        .iter()
+        .map(|(m, c)| (m.clone(), c.saturating_sub(*a.delegated_models.get(m).unwrap_or(&0))))
+        .filter(|(_, c)| *c > 0)
+        .collect();
+    main.sort_by_key(|(_, c)| std::cmp::Reverse(*c));
+    let main_total: usize = main.iter().map(|(_, c)| c).sum();
+
+    let _ = writeln!(o, "| Model | Main thread | Delegated | Share of delegated |");
+    let _ = writeln!(o, "|---|---:|---:|---:|");
+    let mut names: Vec<&String> = a.models.keys().collect();
+    names.sort_by_key(|m| std::cmp::Reverse(a.models.get(*m).copied().unwrap_or(0)));
+    for m in names {
+        let sub = *a.delegated_models.get(m).unwrap_or(&0);
+        let mt = main.iter().find(|(x, _)| x == m).map(|(_, c)| *c).unwrap_or(0);
+        let share = if sub_total > 0 {
+            format!("{:.0}%", 100.0 * sub as f64 / sub_total as f64)
+        } else {
+            "—".into()
+        };
+        let _ = writeln!(o, "| `{m}` | {} | {} | {} |", n(mt as i64), n(sub as i64), share);
     }
 
+    let top_sub = a.delegated_models.iter().max_by_key(|(_, c)| **c);
+    if let (Some((sm, sc)), Some((mm, _))) = (top_sub, main.first()) {
+        let share = 100.0 * *sc as f64 / sub_total.max(1) as f64;
+        if sm != mm && share >= 60.0 {
+            let _ = writeln!(
+                o,
+                "\nDelegated work runs mostly on `{sm}` ({share:.0}% of sub-agent messages) while the main thread is mostly `{mm}`. That is the shape you want — the expensive model decides, a cheaper one carries out."
+            );
+        } else if sm == mm {
+            let _ = writeln!(
+                o,
+                "\nSub-agents run on the same model as the main thread (`{sm}`, {} delegated messages against {} on the main thread). Delegation is buying parallelism here, not cost — worth knowing if the plan allowance is tight.",
+                n(sub_total as i64),
+                n(main_total as i64)
+            );
+        }
+    }
+    let _ = writeln!(o);
+}
+
+fn per_session(o: &mut String, sessions: &[Session]) {
     let _ = writeln!(o, "## Session by session\n");
     let _ = writeln!(o, "| Session | Date | Active | Prompts | Tools | Failed | +/− lines |");
     let _ = writeln!(o, "|---|---|---:|---:|---:|---:|---|");
@@ -449,18 +540,58 @@ fn method(o: &mut String, tool: Option<crate::Tool>, a: &Analysis) {
     let _ = writeln!(o, "| Reported as | Read from |");
     let _ = writeln!(o, "|---|---|");
     match tool {
+        Some(crate::Tool::VsCode) => {
+            let _ = writeln!(
+                o,
+                "| Prompts | `message.text` on each entry of the chat journal's `requests[]` |"
+            );
+            let _ = writeln!(
+                o,
+                "| Turns, turn length | `timestamp` → `responseTimestamp` on the same entry |"
+            );
+            let _ = writeln!(
+                o,
+                "| Tool calls | `toolInvocationSerialized` parts in `response[]`. VS Code records no OUTCOME, so failures are not reported rather than reported as zero |"
+            );
+            let _ = writeln!(o, "| Model | `modelId`, with its `copilot/` prefix stripped |");
+            let _ = writeln!(
+                o,
+                "| Project | the `workspace.json` beside the chat folder, percent-decoded |"
+            );
+        }
         Some(crate::Tool::ClaudeCode) => {
-            let _ = writeln!(o, "| Prompts | `user` records — excluding tool results, `isMeta`, and text Claude injects on your behalf (`<system-reminder>`, `<command-name>`, …) |");
-            let _ = writeln!(o, "| Turns, turn length | a prompt to the assistant's last message before the next prompt |");
-            let _ = writeln!(o, "| Tool calls, failures | `tool_use` blocks, closed by the matching `tool_result`; failure is `is_error: true` |");
+            let _ = writeln!(
+                o,
+                "| Prompts | `user` records — excluding tool results, `isMeta`, and text Claude injects on your behalf (`<system-reminder>`, `<command-name>`, …) |"
+            );
+            let _ = writeln!(
+                o,
+                "| Turns, turn length | a prompt to the assistant's last message before the next prompt |"
+            );
+            let _ = writeln!(
+                o,
+                "| Tool calls, failures | `tool_use` blocks, closed by the matching `tool_result`; failure is `is_error: true` |"
+            );
             let _ = writeln!(o, "| Tokens | `message.usage` on each assistant record, summed |");
-            let _ = writeln!(o, "| Delegated work | sub-agent transcripts under `<session-id>/`, folded into their parent session |");
+            let _ = writeln!(
+                o,
+                "| Delegated work | sub-agent transcripts under `<session-id>/`, folded into their parent session |"
+            );
         }
         _ => {
             let _ = writeln!(o, "| Prompts | `user.message` events |");
-            let _ = writeln!(o, "| Assistant turns, turn length | `assistant.turn_start` → `assistant.turn_end`, paired by turn id |");
-            let _ = writeln!(o, "| Tool calls, failures | `tool.execution_start` → `tool.execution_complete`, paired by tool-call id; failure is `success: false` |");
-            let _ = writeln!(o, "| Code changed, tokens, premium requests | the LAST `session.shutdown` — its totals are cumulative for the session's whole life |");
+            let _ = writeln!(
+                o,
+                "| Assistant turns, turn length | `assistant.turn_start` → `assistant.turn_end`, paired by turn id |"
+            );
+            let _ = writeln!(
+                o,
+                "| Tool calls, failures | `tool.execution_start` → `tool.execution_complete`, paired by tool-call id; failure is `success: false` |"
+            );
+            let _ = writeln!(
+                o,
+                "| Code changed, tokens, premium requests | the LAST `session.shutdown` — its totals are cumulative for the session's whole life |"
+            );
             let _ = writeln!(o, "| Permission prompts | `session.permissions_changed` events |");
         }
     }
