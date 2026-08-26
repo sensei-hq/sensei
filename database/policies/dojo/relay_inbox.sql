@@ -14,52 +14,25 @@
 -- membership_id via dojo.owns_membership() (no stale user_id copy — WS-0 Rule A).
 -- The Worker's service_role writes bypass RLS. SELECT-only; team-wide visibility is P6.
 -- Idempotent (drop-if-exists) because the deploy re-applies this file each time.
-alter table dojo.relay_inbox enable row level security;
 
--- Table-level SELECT grant for the `authenticated` read path (RLS filters rows;
--- the grant lets the role touch the table). See the note on dojo.relay_sessions.
-grant select on dojo.relay_inbox to authenticated;
-
-drop policy if exists relay_inbox_select_own on dojo.relay_inbox;
-create policy relay_inbox_select_own
-    on dojo.relay_inbox
-    for select
-    to authenticated
-    using (dojo.owns_membership(membership_id));
-
--- Realtime publication membership — declared HERE, with the table's other
--- exposure config, not in supabase/migrations/.
---
--- It used to live in a Supabase migration, on the reasoning that
--- `supabase_realtime` is a Supabase-owned object. The flaw is lifecycle:
--- DROPPING a table removes it from a publication, and RE-CREATING it does not
--- put it back. So a `dbd reset` + redeploy of the dojo scope left every relay
--- table out of the publication — Realtime silently delivering nothing, no error
--- anywhere — until somebody remembered to re-run the migration. Verified.
---
--- dbd already owns this table's grants and RLS; publication membership is the
--- same category of thing (who may see this table, through which transport) and
--- has to share the table's lifecycle to be correct.
---
--- Why a policy file and not the table DDL: dbd's SQL parser cannot read a
--- `do $$ … $$` block, and a file it cannot parse is dropped from the entity set
--- SILENTLY. Policy files are executed as raw SQL rather than parsed as entities,
--- and they run after every entity exists — which is also the only correct
--- ordering, since the table must be there before it can join a publication.
---
--- Guarded twice: skip when the publication does not exist (a plain Postgres, so
--- this file stays harmless off-Supabase), and skip when the table is already a
--- member (`alter publication … add table` ERRORS on a duplicate, which would
--- fail the deploy on the second run).
+-- Scope guard. `dbd policies` applies every file under policies/ regardless of
+-- --scope, so this file also runs against the daemon plane, where the `dojo`
+-- schema does not exist. Ungated it reported "FAILED … schema dojo does not
+-- exist" on every deploy there — an expected condition dressed as an error,
+-- which is how real failures stop being read. Logged as a dbd gap in
+-- docs/backlog.md; guarded here so both planes deploy clean.
 do $$
 begin
-  if exists (select 1 from pg_publication where pubname = 'supabase_realtime')
-     and not exists (
-       select 1 from pg_publication_tables
-        where pubname = 'supabase_realtime'
-          and schemaname = 'dojo'
-          and tablename = 'relay_inbox')
-  then
-    alter publication supabase_realtime add table dojo.relay_inbox;
+  if to_regclass('dojo.relay_inbox') is null then
+    return;
   end if;
+
+  -- Same pairing as relay_sessions: enable RLS, grant the row-read privilege
+  -- the own-rows policy then narrows.
+  execute $stmt$alter table dojo.relay_inbox enable row level security$stmt$;
+  execute $stmt$grant select on dojo.relay_inbox to authenticated$stmt$;
+  execute $stmt$drop policy if exists relay_inbox_select_own on dojo.relay_inbox$stmt$;
+  execute $stmt$create policy relay_inbox_select_own on dojo.relay_inbox
+     for select to authenticated
+     using (dojo.owns_membership(membership_id))$stmt$;
 end $$;
