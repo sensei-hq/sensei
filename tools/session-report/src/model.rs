@@ -124,6 +124,11 @@ pub struct Session {
     /// HUMAN took to reply can be separated from the time the assistant took to
     /// work — the two are indistinguishable in a single elapsed figure.
     pub prompt_ms: Vec<i64>,
+    /// The transcript this session was read from. Kept so the facet pass can
+    /// re-read the text for ONE session at a time: the parsers deliberately do
+    /// not retain prompt text, and holding every session's text in memory to
+    /// summarise them one by one would defeat that.
+    pub file: Option<std::path::PathBuf>,
 }
 
 /// Gaps longer than this are treated as "walked away", not work. Copilot turns

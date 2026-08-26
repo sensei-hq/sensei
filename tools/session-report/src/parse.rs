@@ -256,6 +256,7 @@ pub fn parse_events(
             git_commits,
             git_pushes,
             prompt_ms,
+            file: None,
         },
         skipped_lines: skipped,
     })

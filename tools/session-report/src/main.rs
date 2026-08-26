@@ -10,10 +10,12 @@
 
 mod claude;
 mod compare;
+mod facets;
 mod metrics;
 mod model;
 mod parse;
 mod render;
+mod retro;
 mod signals;
 mod vscode;
 
@@ -27,6 +29,10 @@ fn usage() -> ! {
          --compare treats <folder> as a folder OF people, one subfolder each, and\n\
          writes a single side-by-side instead.\n\
          \n\
+         --facets [endpoint] derives one LLM record per session (default: a LOCAL\n\
+         ollama at 127.0.0.1:11434) and writes them to facets/<name>/ beside the\n\
+         report. --facet-model picks the model (default gemma4:latest).\n\
+         \n\
          Writes markdown to --out, or stdout when omitted."
     );
     std::process::exit(2)
@@ -38,6 +44,11 @@ fn main() {
     let mut out: Option<PathBuf> = None;
     let mut name: Option<String> = None;
     let mut compare = false;
+    // Facets are OPT-IN and default to a LOCAL model: these are other people's
+    // transcripts, and the prompt text must not leave the machine unless the
+    // person running this says so explicitly.
+    let mut facets: Option<String> = None;
+    let mut facet_model = "gemma4:latest".to_string();
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -56,6 +67,24 @@ fn main() {
             "--compare" | "-c" => {
                 compare = true;
                 i += 1;
+            }
+            "--facets" => {
+                facets = Some(
+                    args.get(i + 1)
+                        .cloned()
+                        .unwrap_or_else(|| "http://127.0.0.1:11434/api/generate".to_string()),
+                );
+                // Allow a bare `--facets` before another flag.
+                if args.get(i + 1).is_some_and(|a| a.starts_with('-')) {
+                    facets = Some("http://127.0.0.1:11434/api/generate".to_string());
+                    i += 1;
+                } else {
+                    i += 2;
+                }
+            }
+            "--facet-model" => {
+                facet_model = args.get(i + 1).cloned().unwrap_or(facet_model);
+                i += 2;
             }
             _ => usage(),
         }
@@ -100,8 +129,30 @@ fn main() {
         std::process::exit(1);
     }
 
+    if let Some(endpoint) = &facets {
+        let dir = out
+            .as_deref()
+            .and_then(|p| p.parent())
+            .unwrap_or(Path::new("."))
+            .join("facets")
+            .join(&label);
+        run_facets(&sessions, endpoint, &facet_model, &dir);
+    }
+
     let analysis = metrics::analyse(&sessions, skipped);
-    let doc = render::report(&label, tool, &sessions, &analysis);
+    let mut doc = render::report(&label, tool, &sessions, &analysis);
+    // Facets are read from disk rather than from the run above, so a report can
+    // be regenerated without re-deriving them.
+    let facet_dir = out
+        .as_deref()
+        .and_then(|p| p.parent())
+        .unwrap_or(Path::new("."))
+        .join("facets")
+        .join(&label);
+    let found = load_facets(&facet_dir);
+    if !found.is_empty() {
+        doc.push_str(&retro::report(&label, &found, &analysis));
+    }
 
     match out {
         Some(p) => {
@@ -117,6 +168,66 @@ fn main() {
             );
         }
         None => print!("{doc}"),
+    }
+}
+
+/// Read the facet records already derived for this person.
+fn load_facets(dir: &Path) -> Vec<facets::Facet> {
+    let Ok(rd) = std::fs::read_dir(dir) else { return Vec::new() };
+    let mut out: Vec<facets::Facet> = rd
+        .filter_map(Result::ok)
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|x| x == "json"))
+        .filter_map(|p| std::fs::read_to_string(p).ok())
+        .filter_map(|t| serde_json::from_str(&t).ok())
+        .collect();
+    out.sort_by(|a: &facets::Facet, b| a.session_id.cmp(&b.session_id));
+    out
+}
+
+/// Derive one facet per session and write it beside the report.
+///
+/// Failures are REPORTED, not silently skipped: a facet dropped for want of
+/// grounding is a real gap in the retrospective, and pretending the run was
+/// clean would overstate how much of the person's work the report covers.
+fn run_facets(sessions: &[model::Session], endpoint: &str, facet_model: &str, dir: &Path) {
+    if let Err(e) = std::fs::create_dir_all(dir) {
+        eprintln!("error: cannot create {}: {e}", dir.display());
+        std::process::exit(1);
+    }
+    let (mut ok, mut failed) = (0usize, 0usize);
+    let mut reasons: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for (i, s) in sessions.iter().enumerate() {
+        let target = dir.join(format!("{}.json", s.id));
+        if target.exists() {
+            ok += 1;
+            continue;
+        }
+        eprint!("  facet {}/{} {}\r", i + 1, sessions.len(), &s.id[..8.min(s.id.len())]);
+        match facets::derive(s, endpoint, facet_model) {
+            Ok(f) => match serde_json::to_string_pretty(&f) {
+                Ok(j) => {
+                    let _ = std::fs::write(&target, j);
+                    ok += 1;
+                }
+                Err(e) => {
+                    failed += 1;
+                    *reasons.entry(e.to_string()).or_default() += 1;
+                }
+            },
+            Err(e) => {
+                failed += 1;
+                // Group by the kind of failure, not the instance.
+                let key = e.split(':').next().unwrap_or(&e).to_string();
+                *reasons.entry(key).or_default() += 1;
+            }
+        }
+    }
+    eprintln!("  facets: {ok} derived, {failed} dropped                    ");
+    let mut rs: Vec<(&String, &usize)> = reasons.iter().collect();
+    rs.sort_by_key(|r| std::cmp::Reverse(*r.1));
+    for (why, n) in rs {
+        eprintln!("    {n} × {why}");
     }
 }
 
@@ -251,8 +362,9 @@ fn collect(root: &Path) -> (Vec<model::Session>, usize, usize) {
     dirs.sort();
     for d in dirs {
         scanned += 1;
-        if let Some(o) = parse::parse_session(&d) {
+        if let Some(mut o) = parse::parse_session(&d) {
             skipped += o.skipped_lines;
+            o.session.file = Some(d.join("events.jsonl"));
             sessions.push(o.session);
         }
     }

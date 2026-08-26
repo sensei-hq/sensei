@@ -283,7 +283,12 @@ fn observations(o: &mut String, people: &[Person]) {
              not idleness — it can mean long-running branches, or committing by hand in a \
              separate terminal, which no transcript can see. It is worth knowing which, \
              because the two have opposite remedies.",
-            hi.0, hi.1, n(hi.2 as i64), lo.0, lo.1, n(lo.2 as i64)
+            hi.0,
+            hi.1,
+            n(hi.2 as i64),
+            lo.0,
+            lo.1,
+            n(lo.2 as i64)
         ));
     }
 
