@@ -112,6 +112,18 @@ pub struct Session {
     /// neither, so a report that mixes them has to say which is which rather
     /// than claim one caveat for all of them.
     pub source: Option<&'static str>,
+    /// Languages worked in, counted per file-addressing tool call. Search tools
+    /// are excluded: a grep's `path` is a search ROOT, and counting a repo-root
+    /// grep as work in every language beneath it would swamp the tally.
+    pub languages: HashMap<String, usize>,
+    /// Commits and pushes performed, read from shell tool arguments. This is
+    /// what turns "how much moved" into "how much shipped".
+    pub git_commits: usize,
+    pub git_pushes: usize,
+    /// When each human prompt was written, ascending. Kept so the time the
+    /// HUMAN took to reply can be separated from the time the assistant took to
+    /// work — the two are indistinguishable in a single elapsed figure.
+    pub prompt_ms: Vec<i64>,
 }
 
 /// Gaps longer than this are treated as "walked away", not work. Copilot turns

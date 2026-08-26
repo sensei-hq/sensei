@@ -14,6 +14,7 @@ mod metrics;
 mod model;
 mod parse;
 mod render;
+mod signals;
 mod vscode;
 
 use std::path::{Path, PathBuf};

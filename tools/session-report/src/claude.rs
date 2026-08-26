@@ -54,6 +54,9 @@ pub fn parse_session(file: &Path) -> Option<(Session, usize)> {
     let mut turns: Vec<Turn> = Vec::new();
     let mut tools: Vec<ToolCall> = Vec::new();
     let mut open_tools: HashMap<String, usize> = HashMap::new();
+    let mut languages: HashMap<String, usize> = HashMap::new();
+    let (mut git_commits, mut git_pushes) = (0usize, 0usize);
+    let mut prompt_ms: Vec<i64> = Vec::new();
     let mut models: HashMap<String, usize> = HashMap::new();
     let mut cwd: Option<String> = None;
     let mut totals = Totals::default();
@@ -140,7 +143,7 @@ pub fn parse_session(file: &Path) -> Option<(Session, usize)> {
                         ended_ms: None,
                         model: None,
                     });
-                    let _ = t;
+                    prompt_ms.push(t);
                     prompts += 1;
                 }
             }
@@ -176,6 +179,21 @@ pub fn parse_session(file: &Path) -> Option<(Session, usize)> {
                             continue;
                         }
                         let Some(t) = at else { continue };
+                        // Grep/Glob address a search ROOT via `path`, so only
+                        // `file_path` is read — it is the key the tools that
+                        // address ONE file use.
+                        let input = &b["input"];
+                        if let Some(p) =
+                            crate::signals::path_argument(input, &["file_path", "notebook_path"])
+                            && let Some(lang) = crate::signals::language_of(p)
+                        {
+                            *languages.entry(lang.to_string()).or_default() += 1;
+                        }
+                        if let Some(cmd) = input["command"].as_str() {
+                            let (c, u) = crate::signals::git_actions(cmd);
+                            git_commits += c;
+                            git_pushes += u;
+                        }
                         let id = b["id"].as_str().unwrap_or_default().to_string();
                         tools.push(ToolCall {
                             name: b["name"].as_str().unwrap_or("<unknown>").to_string(),
@@ -227,6 +245,10 @@ pub fn parse_session(file: &Path) -> Option<(Session, usize)> {
             delegated_models: HashMap::new(),
             unclosed: false,
             source: None,
+            languages,
+            git_commits,
+            git_pushes,
+            prompt_ms,
         },
         skipped,
     ))
@@ -261,6 +283,16 @@ fn fold_into(parent: &mut Session, child: Session) {
     parent.event_count += child.event_count;
     parent.activity_ms.extend(child.activity_ms);
     parent.delegated += 1;
+    // A sub-agent editing a .ts file is real work in TypeScript, and a sub-agent
+    // that commits has really committed — both belong to the parent session.
+    for (l, c) in &child.languages {
+        *parent.languages.entry(l.clone()).or_default() += c;
+    }
+    parent.git_commits += child.git_commits;
+    parent.git_pushes += child.git_pushes;
+    // `prompt_ms` is deliberately NOT merged, for the same reason `prompts` is
+    // not: a sub-agent's instructions come from the assistant, not the human, so
+    // folding them in would invent human reply times that nobody waited through.
     // Record the child's models under `delegated_models` BEFORE merging them
     // into the parent's overall mix, so both questions stay answerable.
     for (m, c) in &child.models {
