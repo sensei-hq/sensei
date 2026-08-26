@@ -65,15 +65,51 @@ represented today. That is the single most valuable addition — see the
 
 ---
 
-## VS Code — the configured root is ignored
+## VS Code — confirmed against rajkumar's data, two bugs fixed
 
-`VscodeAdapter` stores `root` and never reads it (clippy: `field 'root' is never
-read`). `units()` iterates the built-in `VARIANTS` and resolves OS paths itself,
-so the constructor argument is decorative.
+**rajkumar's folder IS VS Code sample data** — a `workspaceStorage` tree, 10
+workspace directories, each with `workspace.json`, `state.vscdb`, `chatSessions/`
+and `GitHub.copilot-chat/`. Layers present:
 
-Consequence for the work in hand: the adapter **cannot be pointed at a sample
-folder**, so rajkumar's shared transcripts cannot be ingested without editing the
-code. Every other adapter takes its root as a parameter and honours it.
+| Layer | Files |
+|---|---:|
+| 1 — `chatSessions/*.jsonl` (delta journals) | 84 |
+| 2 — `GitHub.copilot-chat/transcripts/*.jsonl` | 37 |
+| 3 — `agent-traces.db` (OTel) | 0, tracing not enabled |
+
+Also: `workspace.json` IS present here, on all 10. My earlier note in
+`docs/transcript-paths.md` said it was often absent — that was drawn from a
+machine with VS Code but no Copilot chat data. Where chat exists, so does the
+mapping. Corrected there.
+
+### The configured root was ignored
+
+`VscodeAdapter` stored `root` and never read it (clippy: `field 'root' is never
+read`). `units()` iterated the built-in `VARIANTS` and resolved OS paths itself,
+so the constructor argument was decorative and the adapter could only ever read
+the machine it ran on.
+
+**Fixed:** an explicit root now overrides the installed-editor scan, accepting
+either a `User/` directory or a bare `workspaceStorage/` one — the shape people
+actually send. Proven by a test that walks the sample, counts the `.jsonl` files
+on disk and requires the adapter to find **all** of them: 121 of 121 across both
+layers. Asserting merely "not empty" would have passed while missing a layer
+entirely, since the two live in different subdirectories.
+
+### Windows workspace paths did not decode
+
+`workspace_folder` stripped `file://` and returned the rest verbatim. VS Code
+stores Windows folders percent-encoded:
+
+    file:///c%3A/Users/dev.user/Documents/workspace/sample-portal
+
+which yielded `/c%3A/Users/...` — a path matching no directory and no repo, so
+**every Windows session lost its project attribution**. All ten of rajkumar's
+workspaces are Windows.
+
+**Fixed:** percent-decode and unwrap the drive letter, so it resolves to
+`c:/Users/…`. Also accepts the `$mid`-tagged object shape, which some workspaces
+use instead of a plain string.
 
 Otherwise the structure follows the plan review — per-session OTel units keyed
 `<db path>#<session-id>`, so `session_id_for` can resolve them. That was the

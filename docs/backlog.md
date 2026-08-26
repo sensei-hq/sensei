@@ -15,6 +15,35 @@ Work is tracked as **GitHub issues** in [`sensei-hq/sensei`](https://github.com/
 
 ---
 
+## dbd: `DROP CONSTRAINT` emits a placeholder, not the constraint's name
+
+**Found 2026-08-26 on dbd 0.12.0**, converting sensei.playbooks/playbook_rules
+`source` from text+CHECK to an enum. `dbd diff` produced:
+
+    ALTER TABLE sensei.playbooks DROP CONSTRAINT ck:source IN ('builtin', 'org', 'learned');
+
+`ck:source IN (…)` is a rendering of the constraint's DEFINITION, not its name.
+The real names are `playbooks_source_chk` and `playbook_rules_source_chk`.
+Executing it fails with `ERROR: syntax error at or near ":"` — verified directly.
+
+Same class as the `uq:tenant_id,provider,subject` placeholder seen earlier in
+0.10.x, so the CHECK path was missed when the unique path was fixed.
+
+**Worked around** by dropping the two constraints by their real names before
+reconciling. A fresh deploy is unaffected — the DDL no longer declares them.
+
+**Also worth knowing:** a type change cannot rewrite a partial index whose stored
+predicate carries an explicit cast. `playbook_rules_learned_uq` was stored as
+`WHERE (source = 'learned'::text)`, so the ALTER failed with `operator does not
+exist: source_kind = text`. Dropping the index first let the change through and
+reconcile recreated it, correctly bound to the enum. dbd does not order this
+itself.
+
+**On the good side**, 0.12.0 DOES emit the `USING` clause for a type change
+(`ALTER COLUMN source TYPE sensei.source_kind USING source::sensei.source_kind`).
+0.10.x omitted it, which would have destroyed the column's data.
+
+
 ## dbd: `deploy` does not apply schema changes, and `inspect` exits 0 on parse errors
 
 **Found 2026-08-26** while wiring the release→deploy job. dbd 0.10.12. Both

@@ -10,7 +10,9 @@ create table if not exists playbook_rules (
 , priority         integer         not null
 , base_priority   integer
 , enabled          boolean         not null default true
-, source           text            not null default 'builtin'
+-- `source_kind`, not text+CHECK: the same three values were duplicated as a
+-- separate constraint on sensei.playbooks. See ddl/enum/sensei/source_kind.ddl.
+, source           source_kind            not null default 'builtin'
 , created_at       timestamptz     not null default now()
 -- Bumped whenever the row changes. The staging import guards on it: a re-import
 -- only overwrites a row when the DATAFILE's stamp is at least as new, so an edit
@@ -18,7 +20,6 @@ create table if not exists playbook_rules (
 -- to compare and fell back to clobbering (playbooks) or to never updating at all
 -- (intake_guide, playbook_rules) — see docs/backlog.md.
 , modified_at      timestamptz     not null default now()
-, constraint playbook_rules_source_chk check (source in ('builtin','org','learned'))
 );
 create index if not exists playbook_rules_match_idx on playbook_rules(enabled, priority desc);
 -- Covering index for the playbook FK (→ playbooks.name) — the learned unique index
