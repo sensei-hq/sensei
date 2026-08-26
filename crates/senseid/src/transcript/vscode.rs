@@ -1215,7 +1215,8 @@ mod tests {
 
     #[test]
     fn windows_workspace_uris_decode_to_a_usable_path() {
-        // Real shape from a shared transcript: VS Code writes Windows folders as
+        // The SHAPE from a shared transcript, with a synthetic user and project:
+        // VS Code writes Windows folders as
         // file:///c%3A/... Leaving the escape in place produced "/c%3A/Users/..."
         // which matches no directory, so every Windows session lost its project.
         assert_eq!(
