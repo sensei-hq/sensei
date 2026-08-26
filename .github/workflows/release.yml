@@ -347,21 +347,39 @@ jobs:
         run: dbd diff --scope dojo || true
 
       - name: Apply schema changes
-        # `reconcile`, not `deploy`. Verified: `dbd deploy` against an EXISTING
-        # database reports "N entities applied" and does NOT apply column changes
-        # — a deploy-only job would report success on every release while silently
-        # applying nothing. `reconcile` performs the diff+ALTER.
+        # Which tool applies a change depends on whether the project is RELEASED,
+        # so this branches rather than needing a manual edit at the cutover.
         #
-        # No --allow-destructive and no --prune: automation gets the safe subset.
-        # A drop or a rename is a deliberate act and stays manual.
+        # Pre-release (today): `reconcile`. Verified that `dbd deploy` against an
+        # existing database reports "N entities applied" and does NOT apply column
+        # changes — a deploy-only job would report success on every release while
+        # applying nothing.
+        #
+        # Post-release (after `dbd release` is run once): `reconcile` is DISABLED
+        # and errors out. Changes travel as the snapshot `make bump` committed,
+        # and the deploy step below migrates v(n) → v(n+1) from it. Verified:
+        # snapshot then deploy reports "Migrated v1 → v2 — 1 migrated" and the
+        # change lands; deploy WITHOUT the snapshot applies nothing.
+        #
+        # Either way: no --allow-destructive and no --prune. Automation gets the
+        # safe subset; a drop or a rename stays a deliberate manual act.
         working-directory: database
-        run: dbd reconcile --scope dojo
+        run: |
+          if grep -qE '^[[:space:]]*released:[[:space:]]*true' design.yaml; then
+            echo "Project is released — the deploy step migrates from the committed snapshot."
+            dbd migrate --status
+          else
+            dbd reconcile --scope dojo
+          fi
 
       - name: Apply seed data, policies and after-scripts
-        # reconcile only touches schema. `deploy` runs the import phase (the seed
-        # datafiles), the RLS policy files, and the after-script that keeps the
-        # relay tables in the Realtime publication. Idempotent — every import is
-        # modified_at-guarded, so an in-place edit in prod is not clobbered.
+        # Pre-release, reconcile handled the schema and this runs the import phase
+        # (seed datafiles), the RLS policy files, and the after-script that keeps
+        # the relay tables in the Realtime publication.
+        #
+        # Post-release this ALSO performs the migration, from the snapshot in the
+        # tag. Idempotent either way — every import is modified_at-guarded, so an
+        # in-place edit in prod is not clobbered.
         working-directory: database
         run: dbd deploy --scope dojo
 
@@ -369,5 +387,9 @@ jobs:
         # The proof the job actually did something. `--exit-code` returns 2 when
         # differences remain, 0 when in sync. Without this the job is only
         # asserting that dbd ran, not that the schema landed.
+        #
+        # This is also what catches the post-release footgun: a release whose DDL
+        # changed but whose snapshot was never taken deploys NOTHING while
+        # reporting success. The diff then still shows the change and this fails.
         working-directory: database
         run: dbd diff --scope dojo --exit-code
