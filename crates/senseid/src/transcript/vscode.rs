@@ -18,7 +18,7 @@
 
 use super::{
     MAX_LINE_BYTES, MAX_TRANSCRIPT_BYTES, MAX_TURN_CHARS, ParsedTranscript, SessionTokens,
-    SynthEvent, SynthSession, TranscriptAdapter, TranscriptTurn, TurnFacts, UnitRef, merge_facts,
+    SynthEvent, SynthSession, TranscriptAdapter, TranscriptTurn, TurnFacts, UnitRef,
     parse_timestamp,
 };
 use std::collections::HashSet;
@@ -221,25 +221,44 @@ fn parse_journal_transcript(content: &str) -> Vec<TranscriptTurn> {
             Ok(v) => v,
             Err(_) => continue,
         };
+        // The journal uses `k` (an ARRAY path, e.g. ["requests"]) and `v`, not
+        // `path`/`value`. Verified against real transcripts: reading
+        // `path`/`value` reconstructed nothing at all, so every VS Code session
+        // parsed to zero turns.
         let kind = op.get("kind").and_then(|k| k.as_i64()).unwrap_or(0);
-        let path = op.get("path").and_then(|p| p.as_str()).unwrap_or("");
+        // Segments are strings OR integers (`["requests", 0, "response"]`) —
+        // 409 of 516 in a sampled journal are integers, so keeping only the
+        // strings corrupts nearly every path.
+        let path: Vec<String> = op
+            .get("k")
+            .and_then(|k| k.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|p| {
+                        p.as_str().map(String::from).or_else(|| p.as_u64().map(|i| i.to_string()))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
         match kind {
+            // Root snapshot.
             0 => {
-                // Root snapshot
-                if let Some(value) = op.get("value") {
+                if let Some(value) = op.get("v") {
                     root = value.clone();
                 }
             }
+            // Set a value at a path.
             1 => {
-                // Set value at JSON path
-                if let Some(value) = op.get("value") {
-                    set_json_path(&mut root, path, value.clone());
+                if let Some(value) = op.get("v") {
+                    set_json_path(&mut root, &path, value.clone(), false);
                 }
             }
+            // APPEND to the array at the path. The journal streams a reply in
+            // pieces, so a request's `response` grows across many records —
+            // treating this as a replace keeps only the final fragment.
             2 => {
-                // Replace array slice
-                if let Some(value) = op.get("value") {
-                    set_json_path(&mut root, path, value.clone());
+                if let Some(value) = op.get("v") {
+                    set_json_path(&mut root, &path, value.clone(), true);
                 }
             }
             _ => {}
@@ -252,115 +271,132 @@ fn parse_journal_transcript(content: &str) -> Vec<TranscriptTurn> {
         _ => return Vec::new(),
     };
 
+    // Each element of `requests[]` is ONE exchange: `message.text` is what the
+    // human typed and `response[]` is the reply. There is no `role` field and no
+    // `responseParts` — reading for either produced empty turns from every real
+    // transcript.
     let mut turns = Vec::new();
-    let mut cur: Option<TranscriptTurn> = None;
-    let mut cur_facts = TurnFacts::default();
 
-    for req in &requests {
-        let message = match req.get("message") {
-            Some(m) => m,
-            None => continue,
-        };
-        let text = message.get("text").and_then(|t| t.as_str()).unwrap_or("");
+    for (i, req) in requests.iter().enumerate() {
+        let user_text = req["message"]["text"].as_str().unwrap_or("").trim().to_string();
 
-        // Check if this is a user message
-        let role = req.get("role").and_then(|r| r.as_str()).unwrap_or("");
-        if role == "user" && !text.is_empty() {
-            if let Some(mut t) = cur.take() {
-                t.facts = std::mem::take(&mut cur_facts);
-                turns.push(t);
-            }
-            cur = Some(TranscriptTurn {
-                turn_index: turns.len() as i32 + 1,
-                user_text: Some(text.to_string()),
-                assistant_text: String::new(),
-                started_at: None,
-                attrs: serde_json::json!({}),
-                facts: TurnFacts::default(),
-            });
-        } else if role == "assistant" {
-            // Extract text from response parts
-            let mut assistant_text = String::new();
-            if let Some(parts) = req.get("responseParts").and_then(|p| p.as_array()) {
-                for part in parts {
-                    if let Some(t) = part.get("text").and_then(|t| t.as_str()) {
-                        let t = t.trim();
-                        if !t.is_empty() {
-                            if !assistant_text.is_empty() {
-                                assistant_text.push_str("\n\n");
+        // Assistant prose lives in the untagged parts of `response[]`. Tool
+        // invocations and thinking blocks are tagged with a `kind` and are not
+        // prose, so they are excluded from the text but counted as facts.
+        let mut assistant_text = String::new();
+        let mut tools = 0i64;
+        let mut thinking_ms = 0i64;
+        if let Some(parts) = req["response"].as_array() {
+            for part in parts {
+                match part["kind"].as_str() {
+                    Some("toolInvocationSerialized") => tools += 1,
+                    Some("thinking") => {
+                        thinking_ms += part["reasoningDurationMs"].as_i64().unwrap_or(0);
+                    }
+                    // Untagged parts carry the reply text under `value`.
+                    None => {
+                        if let Some(t) = part["value"].as_str() {
+                            let t = t.trim();
+                            if !t.is_empty() {
+                                if !assistant_text.is_empty() {
+                                    assistant_text.push_str("\n\n");
+                                }
+                                assistant_text.push_str(t);
                             }
-                            assistant_text.push_str(t);
                         }
                     }
+                    _ => {}
                 }
-            }
-            if !assistant_text.is_empty()
-                && let Some(ref mut t) = cur
-            {
-                if !t.assistant_text.is_empty() {
-                    t.assistant_text.push_str("\n\n");
-                }
-                t.assistant_text.push_str(&assistant_text);
-            }
-            // Promote metadata from response metadata
-            if let Some(meta) = req.get("resultMetadata") {
-                merge_facts(&mut cur_facts, meta);
             }
         }
-    }
-    if let Some(mut t) = cur.take() {
-        t.facts = std::mem::take(&mut cur_facts);
-        turns.push(t);
+
+        if user_text.is_empty() && assistant_text.is_empty() {
+            continue;
+        }
+        if assistant_text.chars().count() > MAX_TURN_CHARS {
+            assistant_text = assistant_text.chars().take(MAX_TURN_CHARS).collect();
+        }
+
+        let mut facts = TurnFacts::default();
+        // `modelId` arrives namespaced, e.g. "copilot/claude-opus-4.6".
+        let model = req["modelId"].as_str().map(|m| m.rsplit('/').next().unwrap_or(m).to_string());
+        if thinking_ms > 0 {
+            facts.effort = Some(format!("{thinking_ms}ms reasoning"));
+        }
+
+        turns.push(TranscriptTurn {
+            turn_index: i as i32 + 1,
+            user_text: (!user_text.is_empty()).then_some(user_text),
+            assistant_text,
+            // Epoch millis on the request itself.
+            started_at: req["timestamp"].as_i64().and_then(chrono::DateTime::from_timestamp_millis),
+            attrs: serde_json::json!({
+                "modelId": model,
+                "toolInvocations": tools,
+                "responseTimestamp": req["responseTimestamp"].as_i64(),
+            }),
+            facts,
+        });
     }
 
-    // Cap pathological turns
-    for t in turns.iter_mut() {
-        if t.assistant_text.chars().count() > MAX_TURN_CHARS {
-            let mut s: String = t.assistant_text.chars().take(MAX_TURN_CHARS).collect();
-            s.push('…');
-            t.assistant_text = s;
-        }
-    }
     turns
 }
 
 /// Set a value at a JSON path (dot-separated keys, numeric indices for arrays).
-fn set_json_path(root: &mut serde_json::Value, path: &str, value: serde_json::Value) {
+/// Write a value into a slot, or extend it when the journal is appending.
+fn place_json(slot: &mut serde_json::Value, value: serde_json::Value, append: bool) {
+    if !append {
+        *slot = value;
+        return;
+    }
+    if !slot.is_array() {
+        *slot = serde_json::json!([]);
+    }
+    let Some(arr) = slot.as_array_mut() else { return };
+    match value {
+        serde_json::Value::Array(items) => arr.extend(items),
+        other => arr.push(other),
+    }
+}
+
+fn set_json_path(
+    root: &mut serde_json::Value,
+    path: &[String],
+    value: serde_json::Value,
+    append: bool,
+) {
     if path.is_empty() {
         *root = value;
         return;
     }
-    let parts: Vec<&str> = path.trim_start_matches('.').split('.').collect();
+    if !root.is_object() && !root.is_array() {
+        *root = serde_json::json!({});
+    }
     let mut current = root;
-    for (i, part) in parts.iter().enumerate() {
-        if i == parts.len() - 1 {
-            // Set the value
-            if let Ok(idx) = part.parse::<usize>() {
-                if let serde_json::Value::Array(arr) = current
-                    && idx < arr.len()
-                {
-                    arr[idx] = value;
-                }
-            } else if let Some(obj) = current.as_object_mut() {
-                obj.insert(part.to_string(), value);
-            }
-            return;
-        }
-        // Navigate deeper
+    for (i, part) in path.iter().enumerate() {
+        let last = i == path.len() - 1;
+        // A numeric segment indexes an array; anything else is an object key.
         if let Ok(idx) = part.parse::<usize>() {
-            if let serde_json::Value::Array(arr) = current {
-                if idx < arr.len() {
-                    current = &mut arr[idx];
-                } else {
-                    return;
-                }
-            } else {
+            let Some(arr) = current.as_array_mut() else { return };
+            if idx >= arr.len() {
+                arr.resize(idx + 1, serde_json::Value::Null);
+            }
+            if last {
+                place_json(&mut arr[idx], value, append);
                 return;
             }
-        } else if let Some(obj) = current.as_object_mut() {
-            current = obj.entry(part.to_string()).or_insert(serde_json::json!({}));
+            current = &mut arr[idx];
         } else {
-            return;
+            if !current.is_object() {
+                *current = serde_json::json!({});
+            }
+            let Some(obj) = current.as_object_mut() else { return };
+            if last {
+                let slot = obj.entry(part.clone()).or_insert_with(|| serde_json::json!(null));
+                place_json(slot, value, append);
+                return;
+            }
+            current = obj.entry(part.clone()).or_insert_with(|| serde_json::json!({}));
         }
     }
 }
@@ -1136,11 +1172,13 @@ mod tests {
         // Delta journal with kind:0 root snapshot containing requests
         let journal = serde_json::json!({
             "kind": 0,
-            "value": {
-                "requests": [
-                    {"role": "user", "message": {"text": "hello"}, "timestamp": "2026-06-22T10:00:00.000Z"},
-                    {"role": "assistant", "message": {"text": "hi"}, "responseParts": [{"text": "hi there"}], "timestamp": "2026-06-22T10:00:02.000Z"}
-                ]
+            "v": {
+                "requests": [{
+                    "modelId": "copilot/claude-opus-4.6",
+                    "timestamp": 1785928643959i64,
+                    "message": {"text": "hello"},
+                    "response": [{"value": "hi there"}]
+                }]
             }
         });
         let journal_text = serde_json::to_string(&journal).unwrap();
@@ -1159,13 +1197,22 @@ mod tests {
 
     #[test]
     fn raw_delta_journal_dispatch() {
+        // The shape VS Code actually writes: `v` not `value`, one request per
+        // EXCHANGE (no `role`), reply text in untagged `response[]` parts.
         let journal = serde_json::json!({
             "kind": 0,
-            "value": {
-                "requests": [
-                    {"role": "user", "message": {"text": "go"}, "timestamp": "2026-06-22T10:00:00.000Z"},
-                    {"role": "assistant", "message": {"text": "ok"}, "responseParts": [{"text": "going"}], "timestamp": "2026-06-22T10:00:02.000Z"}
-                ]
+            "v": {
+                "requests": [{
+                    "modelId": "copilot/claude-opus-4.6",
+                    "timestamp": 1785928643959i64,
+                    "responseTimestamp": 1785928645000i64,
+                    "message": {"text": "go"},
+                    "response": [
+                        {"kind": "thinking", "value": "hmm", "reasoningDurationMs": 2187},
+                        {"kind": "toolInvocationSerialized", "toolId": "manage_todo_list"},
+                        {"value": "going"}
+                    ]
+                }]
             }
         });
         let adapter = VscodeAdapter::new(PathBuf::from("/tmp"));
@@ -1173,6 +1220,10 @@ mod tests {
         assert_eq!(p.turns.len(), 1);
         assert_eq!(p.turns[0].user_text.as_deref(), Some("go"));
         assert_eq!(p.turns[0].assistant_text, "going");
+        // Thinking and tool parts are facts, never prose.
+        assert!(!p.turns[0].assistant_text.contains("hmm"));
+        assert_eq!(p.turns[0].attrs["toolInvocations"], 1);
+        assert_eq!(p.turns[0].attrs["modelId"], "claude-opus-4.6");
     }
 
     #[test]
@@ -1216,11 +1267,18 @@ mod tests {
     fn parse_journal_transcript_simple() {
         let journal = serde_json::json!({
             "kind": 0,
-            "value": {
-                "requests": [
-                    {"role": "user", "message": {"text": "do it"}, "timestamp": "2026-06-22T10:00:00.000Z"},
-                    {"role": "assistant", "message": {"text": "done"}, "responseParts": [{"text": "done now"}], "timestamp": "2026-06-22T10:00:02.000Z"}
-                ]
+            "v": {
+                "requests": [{
+                    "modelId": "copilot/claude-opus-4.6",
+                    "timestamp": 1785928643959i64,
+                    "responseTimestamp": 1785928645000i64,
+                    "message": {"text": "do it"},
+                    "response": [
+                        {"kind": "thinking", "value": "hmm", "reasoningDurationMs": 2187},
+                        {"kind": "toolInvocationSerialized", "toolId": "manage_todo_list"},
+                        {"value": "done now"}
+                    ]
+                }]
             }
         });
         let turns = parse_journal_transcript(&serde_json::to_string(&journal).unwrap());
@@ -1332,5 +1390,47 @@ mod tests {
                 u.key
             );
         }
+    }
+
+    /// Ingestion proof over REAL journals, when a sample is provided.
+    ///
+    /// Skips when unset. Point SENSEI_VSCODE_SAMPLE at a `workspaceStorage`
+    /// folder — the shape people actually send.
+    #[test]
+    fn parses_turns_from_real_chat_journals() {
+        let Ok(dir) = std::env::var("SENSEI_VSCODE_SAMPLE") else {
+            return;
+        };
+        let adapter = VscodeAdapter::new(PathBuf::from(&dir));
+        let mut with_turns = 0usize;
+        let mut turns = 0usize;
+        let mut models = std::collections::HashSet::new();
+        let mut checked = 0usize;
+        for u in adapter.units() {
+            if !u.key.contains("chatSessions") {
+                continue;
+            }
+            checked += 1;
+            let Some(content) = adapter.load_content(&u.key) else { continue };
+            let p = adapter.parse(&content);
+            if !p.turns.is_empty() {
+                with_turns += 1;
+                turns += p.turns.len();
+                for t in &p.turns {
+                    if let Some(m) = t.attrs["modelId"].as_str() {
+                        models.insert(m.to_string());
+                    }
+                }
+            }
+        }
+        assert!(checked > 0, "no chat journals under {dir}");
+        // The bar the pre-fix parser failed: reading `path`/`value` and a `role`
+        // field that does not exist reconstructed NOTHING from any real journal.
+        assert!(
+            with_turns > 0,
+            "parsed 0 turns from {checked} real journals — the journal format drifted again"
+        );
+        assert!(turns >= with_turns, "every journal with turns yields at least one");
+        assert!(!models.is_empty(), "no modelId recovered from any turn");
     }
 }

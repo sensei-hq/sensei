@@ -14,6 +14,7 @@ mod metrics;
 mod model;
 mod parse;
 mod render;
+mod vscode;
 
 use std::path::{Path, PathBuf};
 
@@ -79,6 +80,11 @@ fn main() {
             let n = s.len();
             (s, sk, n)
         }
+        Some(Tool::VsCode) => {
+            let (s, sk) = vscode::collect(&input);
+            let n = s.len();
+            (s, sk, n)
+        }
         _ => collect(&input),
     };
     if sessions.is_empty() {
@@ -131,6 +137,11 @@ fn run_compare(root: &Path, out: Option<&Path>) {
                 let n = s.len();
                 (s, sk, n)
             }
+            Some(Tool::VsCode) => {
+                let (s, sk) = vscode::collect(&dir);
+                let n = s.len();
+                (s, sk, n)
+            }
             Some(Tool::CopilotCli) => collect(&dir),
             // Say which folder was skipped and why, rather than quietly
             // producing a comparison that is missing someone.
@@ -145,11 +156,7 @@ fn run_compare(root: &Path, out: Option<&Path>) {
         }
         let name = dir.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
         eprintln!("  {name}: {} session(s)", sessions.len());
-        people.push(compare::Person {
-            name,
-            tool,
-            analysis: metrics::analyse(&sessions, skipped),
-        });
+        people.push(compare::Person { name, tool, analysis: metrics::analyse(&sessions, skipped) });
     }
     if people.is_empty() {
         eprintln!("error: nobody to compare under {}", root.display());
@@ -176,6 +183,7 @@ fn run_compare(root: &Path, out: Option<&Path>) {
 pub enum Tool {
     CopilotCli,
     ClaudeCode,
+    VsCode,
 }
 
 impl Tool {
@@ -183,6 +191,7 @@ impl Tool {
         match self {
             Tool::CopilotCli => "GitHub Copilot CLI",
             Tool::ClaudeCode => "Claude Code",
+            Tool::VsCode => "VS Code (Copilot Chat)",
         }
     }
 }
@@ -202,6 +211,18 @@ pub fn detect(root: &Path) -> Option<Tool> {
     }
     if root.join("projects").is_dir() {
         return Some(Tool::ClaudeCode);
+    }
+    // A workspaceStorage tree: one directory per workspace, each with
+    // chatSessions/. Checked last because it is the least distinctive shape.
+    let ws = if root.join("workspaceStorage").is_dir() {
+        root.join("workspaceStorage")
+    } else {
+        root.to_path_buf()
+    };
+    if let Ok(rd) = std::fs::read_dir(&ws)
+        && rd.filter_map(Result::ok).any(|e| e.path().join("chatSessions").is_dir())
+    {
+        return Some(Tool::VsCode);
     }
     None
 }
