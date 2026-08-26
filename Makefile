@@ -514,6 +514,31 @@ bump:
 	@sed -i '' 's/"version": "[^"]*"/"version": "$(_v)"/' marketplace/plugins/sensei/.claude-plugin/plugin.json
 	@# Website footer version
 	@sed -i '' 's/v[0-9]*\.[0-9]*\.[0-9]*<\/div>/v$(_v)<\/div>/' website/src/routes/+page.svelte
+	@# Capture the schema as a versioned snapshot — but ONLY once the project is
+	@# released. Pre-release nothing is written, so `database/snapshots/` does not
+	@# exist and the folder stays clean until there is a baseline worth diffing
+	@# against.
+	@#
+	@# `dbd release` (run once, at the first public release) sets `released: true`
+	@# in database/design.yaml, disables `reconcile`, and writes the baseline. From
+	@# that point this step becomes load-bearing: `dbd deploy` migrates from the
+	@# committed snapshot, and a release whose DDL changed WITHOUT one deploys
+	@# nothing while reporting success. So post-release, a missing dbd is a hard
+	@# error rather than a skipped step.
+	@#
+	@# Self-skipping even then: dbd prints "No schema changes detected — snapshot
+	@# skipped" when the design is unchanged. Needs no database — a snapshot is a
+	@# diff against the PREVIOUS snapshot, not a live server.
+	@if grep -qE '^[[:space:]]*released:[[:space:]]*true' database/design.yaml 2>/dev/null; then \
+	  command -v dbd >/dev/null || { \
+	    echo "Error: dbd not found — a released project must carry its schema snapshot."; \
+	    echo "Install: cargo install --git https://github.com/sensei-hq/dbd dbd"; \
+	    exit 1; \
+	  }; \
+	  (cd database && dbd snapshot --name "v$(_v)"); \
+	else \
+	  echo "dbd: pre-release — no snapshot (run 'dbd release' once at first public release)"; \
+	fi
 	@# Commit everything
 	@git add VERSION Cargo.lock app/src-tauri/Cargo.lock \
 	  app/package.json app/src-tauri/tauri.conf.json app/src-tauri/Cargo.toml \
@@ -524,6 +549,8 @@ bump:
 	  marketplace/package.json marketplace/catalog.json \
 	  marketplace/.claude-plugin/marketplace.json \
 	  marketplace/plugins/sensei/.claude-plugin/plugin.json
+	@# Schema snapshot artefacts, when the project is released (see above).
+	@if [ -d database/snapshots ]; then git add database/design.yaml database/snapshots; fi
 	@git commit -m "chore: bump to v$(_v)"
 	@git tag v$(_v)
 	@git push origin HEAD
