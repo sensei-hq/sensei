@@ -82,18 +82,29 @@ export const POST: RequestHandler = async ({ params, request, platform }) => {
 	}
 };
 
-// Daemon → poll rows with seq > since (answered replies + new items), oldest first.
+// Daemon → either ONE row by id, or a cursor scan.
+//
+// `?id=` is the shape a waiting gate actually needs: the daemon raised that gate,
+// holds its id, and is asking "has it been answered yet". A cursor is the wrong
+// abstraction for request/response — and an unsafe one, because `seq` comes from
+// nextval, which is assigned BEFORE commit. Two concurrent writers can commit out
+// of order, so a poller that advances its cursor past the higher seq never sees
+// the lower one. By id there is no watermark to skip past.
+//
+// `?since=` is kept for the cursor scan (the nudge pickup, which reads from 0 and
+// filters by run) and for daemons older than this route.
 export const GET: RequestHandler = async ({ params, request, url }) => {
 	try {
 		const caller = await resolveApiKeyAccess(params.origin, params.org, request, ACCESS.contributor);
+		const id = url.searchParams.get('id');
 		const since = Number(url.searchParams.get('since') ?? '0') || 0;
 		const db = dojoDb();
-		const { data, error } = await db
-			.from('relay_inbox')
-			.select(COLS)
-			.eq('membership_id', caller.membershipId)
-			.gt('seq', since)
-			.order('seq', { ascending: true });
+		// membership_id is filtered in BOTH shapes: an id alone must never be
+		// enough to read another tenant's gate.
+		const base = db.from('relay_inbox').select(COLS).eq('membership_id', caller.membershipId);
+		const { data, error } = id
+			? await base.eq('id', id)
+			: await base.gt('seq', since).order('seq', { ascending: true });
 		if (error) return apiError(500, error.message);
 		const rows = data ?? [];
 		// The wire contract (dojo_protocol::relay::RelayInboxItem, decoded by the
