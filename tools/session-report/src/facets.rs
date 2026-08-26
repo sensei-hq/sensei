@@ -328,7 +328,7 @@ pub fn derive(session: &Session, endpoint: &str, model: &str) -> Result<Facet, S
 /// A thinking model narrates before it answers, and some wrap the object in a
 /// fenced block. Feeding the whole reply to the parser reports a schema failure
 /// for what is really a preamble.
-fn json_object(reply: &str) -> Option<&str> {
+pub fn json_object(reply: &str) -> Option<&str> {
     let start = reply.find('{')?;
     let bytes = reply.as_bytes();
     let (mut depth, mut in_str, mut escaped) = (0i32, false, false);

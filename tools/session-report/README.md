@@ -94,3 +94,29 @@ regenerating a report needs no model at all. Sessions that yield no record are
 gap that reads as "nothing to report" is worse than one you can go and look at.
 
 On the sample this covers 131 of 149 sessions.
+
+### Recommendations
+
+After the per-session facets, one more call runs at the **person** level, over
+everything derived about them — goals, frictions, tool mix, languages, commits —
+and writes `facets/<name>/_insights.json`.
+
+This replaced a lookup table keyed on the friction name. That produced four
+identical paragraphs across five reports; gating it on a threshold made the
+numbers vary and left the sentences fixed, which is the same problem with extra
+steps. A template with a variable in it is still a template.
+
+Three deterministic guards keep the synthesised version honest, because asking a
+model nicely is not enough:
+
+- **Cited** — `evidence_session` must be a session the model was shown.
+- **Grounded** — `grounded_in` must name something that appears in their
+  material. Matched on words, not as one substring, so a reworded reference to
+  their own work survives while advice about something absent from it does not.
+- **At most one "break it up"** — decomposition is the obvious answer to almost
+  any friction and a model reaches for it repeatedly. The prompt asks for one;
+  the code enforces it.
+
+A run where nothing survives is retried once — the generator is stochastic, and
+one unlucky sample should not be the difference between a section and a blank.
+Rejections are reported per item with the reason.
