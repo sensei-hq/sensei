@@ -170,7 +170,12 @@ fn at_a_glance(o: &mut String, a: &Analysis) {
     // a long one means it was studied, or the person had left.
     if let Some(p) = percentile(&a.response_ms_sorted, 50.0) {
         let p90 = percentile(&a.response_ms_sorted, 90.0).unwrap_or(p);
-        let _ = writeln!(o, "| Your reply time | {} typical, {} at the 90th percentile |", dur(p), dur(p90));
+        let _ = writeln!(
+            o,
+            "| Your reply time | {} typical, {} at the 90th percentile |",
+            dur(p),
+            dur(p90)
+        );
     }
     if a.git_commits > 0 || a.git_pushes > 0 {
         let _ = writeln!(
