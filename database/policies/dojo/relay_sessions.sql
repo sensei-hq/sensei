@@ -41,3 +41,40 @@ create policy relay_sessions_select_own
     for select
     to authenticated
     using (dojo.owns_membership(membership_id));
+
+-- Realtime publication membership — declared HERE, with the table's other
+-- exposure config, not in supabase/migrations/.
+--
+-- It used to live in a Supabase migration, on the reasoning that
+-- `supabase_realtime` is a Supabase-owned object. The flaw is lifecycle:
+-- DROPPING a table removes it from a publication, and RE-CREATING it does not
+-- put it back. So a `dbd reset` + redeploy of the dojo scope left every relay
+-- table out of the publication — Realtime silently delivering nothing, no error
+-- anywhere — until somebody remembered to re-run the migration. Verified.
+--
+-- dbd already owns this table's grants and RLS; publication membership is the
+-- same category of thing (who may see this table, through which transport) and
+-- has to share the table's lifecycle to be correct.
+--
+-- Why a policy file and not the table DDL: dbd's SQL parser cannot read a
+-- `do $$ … $$` block, and a file it cannot parse is dropped from the entity set
+-- SILENTLY. Policy files are executed as raw SQL rather than parsed as entities,
+-- and they run after every entity exists — which is also the only correct
+-- ordering, since the table must be there before it can join a publication.
+--
+-- Guarded twice: skip when the publication does not exist (a plain Postgres, so
+-- this file stays harmless off-Supabase), and skip when the table is already a
+-- member (`alter publication … add table` ERRORS on a duplicate, which would
+-- fail the deploy on the second run).
+do $$
+begin
+  if exists (select 1 from pg_publication where pubname = 'supabase_realtime')
+     and not exists (
+       select 1 from pg_publication_tables
+        where pubname = 'supabase_realtime'
+          and schemaname = 'dojo'
+          and tablename = 'relay_sessions')
+  then
+    alter publication supabase_realtime add table dojo.relay_sessions;
+  end if;
+end $$;
