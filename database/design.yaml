@@ -41,8 +41,7 @@ scopes:
     # dojo), so deps:include can't reach them → list them explicitly (the two enums are
     # column types too).
     #
-    # Governance scopes (sensei.scopes) seed the constitution ladder and gate
-    # seed_default_constitution (it skips unless the 'general' scope exists). The
+    # Governance scopes (sensei.scopes) seed the constitution ladder. The
     # dojo DB gets the sensei.scopes TABLE free via deps (dojo.shared_rules →
     # sensei.namespaces → sensei.scopes), but not its DATA: scopes load through the
     # staging import path, which the daemon's default scope owns. Pull just the
@@ -65,10 +64,29 @@ scopes:
       - sensei.rule_packs
       - sensei.rule_pack_rules
       - sensei.rule_pack_adoptions
-      - sensei.seed_ponytail_pack
-      - sensei.seed_default_constitution
       - staging.scopes
       - staging.import_scopes
+      # Metric CATALOGUE — ONE table, sensei.metrics, on both planes (same
+      # pattern as rule packs above). It arrives through the FK closure, since
+      # dojo.repository_metrics/metric_activations reference it, but its
+      # column-type ENUMs are not FKs and dbd cannot reach them, so each must be
+      # named — otherwise the deploy fails with `type "metric_family" does not
+      # exist`.
+      - sensei.metric_family
+      - sensei.metric_type
+      - sensei.metric_direction
+      - sensei.metric_cadence
+      - sensei.metric_capture
+      # …and the staging pair, or the catalogue deploys EMPTY: the table exists,
+      # every metric_id FK has nothing to point at, and the console shows a
+      # catalogue of nothing. dbd skips a staging table its scope excludes with a
+      # warning that reads as routine — which is how this was missed.
+      - staging.metrics
+      - staging.import_metrics
+      # Bootstrap tenants (the global-dōjō collective). Replaces
+      # dojo.seed_global_dojo, which held the row as literal VALUES in plpgsql.
+      - staging.tenants
+      - staging.import_tenants
       # Global rule-pack LIBRARY seed (staging-file model, like scopes): the staging
       # tables + import procs land the curated library packs (owner_namespace_id NULL,
       # library-only — never adopted) into sensei.rule_packs/rule_pack_rules on
@@ -77,6 +95,11 @@ scopes:
       - staging.rule_pack_rules
       - staging.import_rule_packs
       - staging.import_rule_pack_rules
+      # …and the adoptions that make those packs actually govern. Without these
+      # the constitution ships present-but-unadopted, and get_rules returns
+      # nothing — the packs are there and do nothing.
+      - staging.rule_pack_adoptions
+      - staging.import_rule_pack_adoptions
     deps: include
     extensions: []      # vector-free: the embedded Dōjō PG lacks pgvector
   default:
@@ -84,11 +107,16 @@ scopes:
     # `sensei-dojo` materializes, in its own Postgres). The daemon-local mirror tables
     # (sensei.dojo_memberships/outbox/inbox) live in the `sensei` schema, so they stay
     # in this scope.
-    excludes: [dojo]
+    # `dojo` is the service schema; the daemon never materializes it. The tenant
+    # staging pair goes with it — staging.* is otherwise in scope by default, and
+    # import_tenants writes to dojo.tenants, which does not exist here.
+    excludes: [dojo, staging.tenants, staging.import_tenants]
     deps: include
 import:
   staging:
     - staging
+  after:
+    - import/after/realtime_publication.sql
   options:
     truncate: true
     null_value: ""

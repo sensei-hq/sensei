@@ -25,19 +25,25 @@
 -- each deploy (dbd `Current`/`Fresh` strategy re-runs ApplyEntity → re-executes
 -- this file), and `create policy` is not idempotent — so drop-if-exists first.
 -- `enable row level security` is idempotent (no error if already enabled).
-alter table dojo.relay_sessions enable row level security;
 
--- The client-direct read path connects as role `authenticated`. RLS filters ROWS
--- but a table-level GRANT is still required for the role to touch the table at all
--- (without it: "permission denied for table", RLS never even evaluated). SELECT
--- only — writes stay on the service_role path. The dojo schema already grants
--- USAGE to authenticated (exposed schema); this adds the row-read privilege that
--- the own-rows policy then narrows. Idempotent (re-grant is a no-op).
-grant select on dojo.relay_sessions to authenticated;
+-- Scope guard. `dbd policies` applies every file under policies/ regardless of
+-- --scope, so this file also runs against the daemon plane, where the `dojo`
+-- schema does not exist. Ungated it reported "FAILED … schema dojo does not
+-- exist" on every deploy there — an expected condition dressed as an error,
+-- which is how real failures stop being read. Logged as a dbd gap in
+-- docs/backlog.md; guarded here so both planes deploy clean.
+do $$
+begin
+  if to_regclass('dojo.relay_sessions') is null then
+    return;
+  end if;
 
-drop policy if exists relay_sessions_select_own on dojo.relay_sessions;
-create policy relay_sessions_select_own
-    on dojo.relay_sessions
-    for select
-    to authenticated
-    using (dojo.owns_membership(membership_id));
+  -- RLS filters ROWS; a table-level GRANT is still what lets the role touch
+  -- the table at all (without it: "permission denied", RLS never evaluated).
+  execute $stmt$alter table dojo.relay_sessions enable row level security$stmt$;
+  execute $stmt$grant select on dojo.relay_sessions to authenticated$stmt$;
+  execute $stmt$drop policy if exists relay_sessions_select_own on dojo.relay_sessions$stmt$;
+  execute $stmt$create policy relay_sessions_select_own on dojo.relay_sessions
+     for select to authenticated
+     using (dojo.owns_membership(membership_id))$stmt$;
+end $$;
