@@ -187,6 +187,107 @@ fn at_a_glance(o: &mut String, a: &Analysis) {
     }
     let _ = writeln!(o);
     languages(o, a);
+    tool_mix(o, a);
+    unused_capabilities(o, a);
+}
+
+/// Whether any tool this person used matches one of these names.
+fn uses_any(a: &Analysis, needles: &[&str]) -> bool {
+    a.tools.iter().any(|t| needles.iter().any(|n| t.name.to_ascii_lowercase().contains(n)))
+}
+
+/// Capabilities the transcripts show were never used, where something in the
+/// same transcripts suggests they would have helped.
+///
+/// Absence alone is not a finding — most people never use most tools, and a
+/// list of everything untouched is noise. Each item here needs BOTH: the
+/// capability never appears, AND one of this person's own measurements crosses
+/// a threshold that the capability addresses. The measurement is quoted so the
+/// reader can disagree with it.
+fn unused_capabilities(o: &mut String, a: &Analysis) {
+    let mut items: Vec<String> = Vec::new();
+
+    // Sub-agents, when the hand-offs are large enough that a wrong turn is
+    // expensive. `delegated` counts folded sub-agent transcripts; the tool-name
+    // check covers ACPs that spawn agents through a named tool instead.
+    if a.delegated == 0
+        && !uses_any(a, &["agent", "subagent", "task"])
+        && let Some(tpp) = a.tools_per_prompt()
+        && tpp >= 40.0
+    {
+        items.push(format!(
+            "**No sub-agents, at {tpp:.0} tool calls per prompt.** A hand-off that long runs \
+             a long way before you see anything. Splitting the independent parts out means a \
+             wrong direction costs one branch instead of the whole run — and each branch \
+             keeps its own context, so the main thread stays readable."
+        ));
+    }
+
+    // An explicit plan/todo, when turns are long enough to lose the thread.
+    if !uses_any(a, &["todo", "plan", "workflow"])
+        && let Some(p90) = percentile(&a.turn_ms_sorted, 90.0)
+        && p90 >= 600_000
+    {
+        items.push(format!(
+            "**No plan or todo tool, with a 90th-percentile turn of {}.** At that length there \
+             is no visible checkpoint between your prompt and the result. A written plan turns \
+             one long opaque turn into something you can redirect part-way.",
+            dur(p90)
+        ));
+    }
+
+    if items.is_empty() {
+        return;
+    }
+    let _ = writeln!(o, "## Not in your toolkit yet\n");
+    let _ = writeln!(
+        o,
+        "Each of these is absent from every session AND paired with a number of yours that \
+         it addresses. Absence on its own is not a recommendation.\n"
+    );
+    for i in items {
+        let _ = writeln!(o, "- {i}\n");
+    }
+}
+
+/// What the person actually reaches for.
+///
+/// The shape of the tool mix says more about how someone works than any single
+/// rate does — a run dominated by reads is exploration, one dominated by edits
+/// is execution, and a long tail of one MCP server is an integration.
+fn tool_mix(o: &mut String, a: &Analysis) {
+    if a.tools.len() < 3 {
+        return;
+    }
+    let total: usize = a.tools.iter().map(|t| t.calls).sum();
+    if total == 0 {
+        return;
+    }
+    let _ = writeln!(o, "## What you reach for\n");
+    let _ = writeln!(o, "| Tool | Calls | Share | Failed |");
+    let _ = writeln!(o, "|---|---:|---:|---:|");
+    for t in a.tools.iter().take(10) {
+        let _ = writeln!(
+            o,
+            "| `{}` | {} | {:.0}% | {} |",
+            t.name,
+            n(t.calls as i64),
+            100.0 * t.calls as f64 / total as f64,
+            // Absent, not zero, when the transcript records no outcome at all.
+            t.failure_pct().map(|p| format!("{p:.1}%")).unwrap_or_else(|| "n/a".into())
+        );
+    }
+    let shown: usize = a.tools.iter().take(10).map(|t| t.calls).sum();
+    if a.tools.len() > 10 {
+        let _ = writeln!(
+            o,
+            "\n{} further tool(s) account for the remaining {:.0}%.\n",
+            a.tools.len() - 10,
+            100.0 * (total - shown) as f64 / total as f64
+        );
+    } else {
+        let _ = writeln!(o);
+    }
 }
 
 /// What the work was actually written in.
@@ -691,4 +792,76 @@ fn method(o: &mut String, tool: Option<crate::Tool>, sessions: &[Session], a: &A
          timings but not to totals — {} of {} here.\n",
         a.sessions_with_totals, a.sessions
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::metrics::ToolStat;
+
+    fn base() -> Analysis {
+        crate::metrics::analyse(&[], 0)
+    }
+
+    fn section(a: &Analysis) -> String {
+        let mut o = String::new();
+        unused_capabilities(&mut o, a);
+        o
+    }
+
+    /// Absence alone must never produce a recommendation — otherwise every
+    /// report lists every tool the person happens not to use.
+    #[test]
+    fn absence_without_a_supporting_number_says_nothing() {
+        let mut a = base();
+        a.tools = vec![ToolStat { name: "Bash".into(), calls: 100, failures: 1 }];
+        a.prompts = 100;
+        a.tool_calls = 100; // 1 call per prompt — nothing to split
+        assert_eq!(section(&a), "", "no sub-agents is not a finding on its own");
+    }
+
+    /// Absence PLUS a number it addresses is a finding, and the number is
+    /// quoted so the reader can disagree with it.
+    #[test]
+    fn absence_plus_a_large_hand_off_is_a_finding() {
+        let mut a = base();
+        a.tools = vec![ToolStat { name: "Bash".into(), calls: 5000, failures: 1 }];
+        a.prompts = 100;
+        a.tool_calls = 5000; // 50 per prompt
+        let out = section(&a);
+        assert!(out.contains("No sub-agents"), "got: {out}");
+        assert!(out.contains("50 tool calls per prompt"), "must quote the measurement: {out}");
+    }
+
+    /// Someone who already delegates must not be told to start.
+    #[test]
+    fn an_existing_capability_is_not_suggested() {
+        let mut a = base();
+        a.tools = vec![ToolStat { name: "Agent".into(), calls: 40, failures: 0 }];
+        a.prompts = 100;
+        a.tool_calls = 5000;
+        assert!(!section(&a).contains("No sub-agents"));
+
+        // And via the folded sub-agent count, for ACPs with no named tool.
+        let mut b = base();
+        b.tools = vec![ToolStat { name: "Bash".into(), calls: 5000, failures: 0 }];
+        b.prompts = 100;
+        b.tool_calls = 5000;
+        b.delegated = 3;
+        assert!(!section(&b).contains("No sub-agents"));
+    }
+
+    /// A long opaque turn justifies suggesting a plan; a short one does not.
+    #[test]
+    fn a_plan_is_suggested_only_when_turns_are_long() {
+        let mut a = base();
+        a.tools = vec![ToolStat { name: "Bash".into(), calls: 10, failures: 0 }];
+        a.turn_ms_sorted = vec![1_000, 2_000, 3_000];
+        assert!(!section(&a).contains("plan or todo"), "short turns need no checkpoint");
+
+        a.turn_ms_sorted = vec![900_000, 900_000, 900_000];
+        let out = section(&a);
+        assert!(out.contains("plan or todo"), "got: {out}");
+        assert!(out.contains("15m"), "must quote the p90: {out}");
+    }
 }
