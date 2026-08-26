@@ -89,15 +89,23 @@ pub fn report(label: &str, facets: &[Facet], a: &Analysis) -> String {
     }
 
     let _ = writeln!(o, "# What the sessions say\n");
+    let missing = a.sessions.saturating_sub(facets.len());
     let _ = writeln!(
         o,
         "Derived from {} of {} sessions. Each record was produced by reading that \
-         session's prompts and had to quote the transcript verbatim to be kept — \
-         ungrounded records were dropped rather than shown, so the {} missing here are \
-         sessions nothing could be said about with confidence.\n",
+         session's prompts and had to quote the transcript verbatim to be kept.{}\n",
         facets.len(),
         a.sessions,
-        a.sessions.saturating_sub(facets.len())
+        match missing {
+            0 => " Every session yielded one.".to_string(),
+            1 => " One session was dropped: nothing could be said about it that the \
+                  transcript would back up."
+                .to_string(),
+            n => format!(
+                " {n} sessions were dropped rather than shown — nothing could be said \
+                 about them that the transcript would back up."
+            ),
+        }
     );
 
     work(&mut o, facets);
