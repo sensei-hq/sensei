@@ -15,6 +15,32 @@ Work is tracked as **GitHub issues** in [`sensei-hq/sensei`](https://github.com/
 
 ---
 
+## Flaky: `memory_promotion_excludes_other_projects` under parallel test runs
+
+**Seen 2026-08-25**, once in a full `make test` (2677 tests). Passes 3/3 when run
+alone; the next full run was green.
+
+    assertion `left == right` failed:
+      A's denominator = 2 patterns + 1 correction = 3 (B's excluded, not 8)
+      left: Some(2)  right: Some(3)
+
+So one of project A's own fixture rows did not count — 2 patterns and no
+correction, or one pattern short. Ruled out: `purge_corrections` is
+signature-scoped, not a global sweep, and every fixture is uuid-namespaced, so it
+is not the shared-global-repair pattern that made
+`heal_duplicate_name_projects` flaky (fixed the same day by taking
+REPAIR_SWEEP_GATE).
+
+Remaining suspects, untested: an eligibility threshold read from shared config
+that a concurrent test mutates, or a time-window boundary in `compute`'s
+denominator query.
+
+Not investigated further — it surfaced during unrelated relay work and chasing it
+would have derailed that. Worth a dedicated pass: run the metrics tests in a loop
+with `--test-threads` varied to reproduce, then gate or isolate whatever shared
+state it turns out to touch.
+
+
 ## dbd: `policies` ignores `--scope`
 
 **Found 2026-08-25.** dbd 0.10.12. `dbd policies --scope default` applies every
