@@ -75,8 +75,19 @@ pub fn report(
     cost(&mut o, a);
     working_well(&mut o, a);
     friction(&mut o, a, sessions);
-    try_next(&mut o, a);
     delegation(&mut o, a);
+    o
+}
+
+/// The reference half: the session table and how every figure was derived.
+///
+/// Kept apart so it can be placed AFTER the synthesised sections. It was
+/// previously emitted before them, which put a 40-row table and a methodology
+/// appendix between the reader and the only part of the report that says
+/// anything — the report read as unchanged because the changed part was 200
+/// lines down.
+pub fn reference(tool: Option<crate::Tool>, sessions: &[Session], a: &Analysis) -> String {
+    let mut o = String::new();
     per_session(&mut o, sessions);
     method(&mut o, tool, sessions, a);
     o
@@ -175,6 +186,19 @@ fn at_a_glance(o: &mut String, a: &Analysis) {
             "| Your reply time | {} typical, {} at the 90th percentile |",
             dur(p),
             dur(p90)
+        );
+    }
+    // Where the time actually goes. Stated as a fact rather than as advice —
+    // it was previously only reachable through a suggestion, which meant the
+    // measurement disappeared along with the template.
+    if let Some(share) = a.api_share_pct()
+        && a.api_duration_ms > 0
+    {
+        let _ = writeln!(
+            o,
+            "| Waiting on the model | {} of {} active ({share:.0}%) |",
+            dur(a.api_duration_ms),
+            dur(a.active_ms)
         );
     }
     if a.git_commits > 0 || a.git_pushes > 0 {
@@ -489,56 +513,13 @@ fn friction(o: &mut String, a: &Analysis, sessions: &[Session]) {
     }
 }
 
-fn try_next(o: &mut String, a: &Analysis) {
-    let mut items: Vec<String> = Vec::new();
-
-    // Deliberately NOT restating the failure runs here. "Where it snagged"
-    // already lists them WITH the tool name, the session and the timestamp;
-    // repeating the point in general terms adds a line and no information, and
-    // it read as filler in every report it appeared in.
-
-    if let Some(share) = a.api_share_pct()
-        && share < 40.0
-        && a.api_duration_ms > 0
-    {
-        items.push(format!(
-            "**Most of the session is not model time.** {share:.0}% of active time was \
-             spent waiting on the model ({} of {}). The rest is reading, deciding and \
-             replying — which is where a sharper first prompt pays back more than a \
-             faster model.",
-            dur(a.api_duration_ms),
-            dur(a.active_ms)
-        ));
-    }
-
-    if let Some(t) = a.tools_per_prompt()
-        && t >= 25.0
-    {
-        items.push(format!(
-            "**Consider checkpointing inside long runs.** At {t:.0} tool calls per prompt, \
-             a lot happens between your inputs. A brief 'show me the plan before you \
-             edit' costs one turn and makes a wrong direction cheap to correct."
-        ));
-    }
-
-    if a.unclosed > 0 {
-        items.push(format!(
-            "**{} session{} never closed cleanly.** Those lose their token and \
-             code-change totals, so any cost review will under-count. Exiting the CLI \
-             rather than closing the terminal keeps the record complete.",
-            a.unclosed,
-            if a.unclosed == 1 { "" } else { "s" }
-        ));
-    }
-
-    if items.is_empty() {
-        return;
-    }
-    let _ = writeln!(o, "## Worth trying\n");
-    for i in items {
-        let _ = writeln!(o, "- {i}\n");
-    }
-}
+// `try_next` lived here: a fixed list of suggestions gated on thresholds, so
+// "Consider checkpointing inside long runs" appeared in three reports with only
+// the number changing. It is superseded by the synthesised recommendations in
+// `retro::recommendations`, which are derived from each person's own sessions.
+// The one fact it carried that was not advice — sessions that never closed
+// cleanly — is already stated in `method`, where the totals it affects are
+// explained.
 
 /// Sub-agent activity, and what it runs on.
 ///

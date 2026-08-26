@@ -159,6 +159,10 @@ fn main() {
     }
 
     let insights = load_insights(&facet_dir(out.as_deref(), &label));
+    // Order matters: analysis, then what the sessions say, then the synthesised
+    // recommendations, and only then the session table and methodology. The
+    // reference material is the longest part and the least read; putting it
+    // first buried everything worth reading.
     let mut doc = render::report(&label, tool, &sessions, &analysis);
     // Facets are read from disk rather than from the run above, so a report can
     // be regenerated without re-deriving them.
@@ -167,6 +171,7 @@ fn main() {
     if !found.is_empty() {
         doc.push_str(&retro::report(&label, &found, &analysis, insights.as_ref()));
     }
+    doc.push_str(&render::reference(tool, &sessions, &analysis));
 
     match out {
         Some(p) => {
