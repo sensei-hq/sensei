@@ -212,9 +212,47 @@ T1 and T2 consume its output. They do not compute their own coefficients.
 Likewise `insight_recurring_pattern` (56 rows) already narrates recurring
 churn. T3 extends that vocabulary rather than replacing it.
 
+## 6c. Measured on real data (86 sessions, release daemon)
+
+P1 deployed and drained through the on-demand `process/analyze` endpoint. Every
+stage below was inferred from a transcript by the shipped binary — this is what
+the vocabulary actually produces, not what it was hoped to produce.
+
+| stage | n | deviated | shallow | corrections | avg depth |
+|---|---:|---:|---:|---:|---:|
+| build | 26 | 38% | 31% | 5 | 3.2 |
+| analyze | 26 | 38% | 23% | 8 | 3.3 |
+| plan | 19 | 26% | 21% | 3 | 3.7 |
+| verify | 7 | 29% | 29% | 3 | 3.7 |
+| fix | 6 | 33% | 17% | 0 | 3.0 |
+| operate | 2 | 0% | 0% | 0 | 3.5 |
+| explore | 1 | 0% | 100% | 0 | 2.0 |
+
+Three findings that change the design:
+
+**Open question 1 is answered: collapse `explore`.** One session in 86. The
+analyzer cannot separate orienting-in-unfamiliar-code from diagnosing, and asked
+to choose it picks `analyze` — which is the right call under "do not guess", but
+it means the value earns nothing. `operate` at 2 is on the same edge. Fold
+`explore` into `analyze` and keep `operate` only while deployment work is rare
+enough to be worth naming.
+
+**Rework does concentrate, mildly.** Corrections sit in `analyze` (8) and
+`build` (5); deviation is highest in those same two at 38% against `plan`'s 26%.
+`plan` also carries the deepest specs (3.7). The shape is consistent with the
+day-grain correlation the engine already reports — and per §6a it is stated at
+the grain measured: *sessions doing planning deviate less*, NOT *planning more
+would make this session deviate less*.
+
+**Repo × stage is still too sparse.** 7 of 31 cells reach n≥5. A repo
+retrospective can say what stages a repo's sessions were, but cannot yet compare
+rework ACROSS stages within one repo without falling below the threshold §6
+already sets. T1 lands cross-repo first; the per-repo cut waits for volume.
+
 ## 7. Phasing
 
-- **P1 — stage attribution.** D1 plus inference in the existing facet pass. No
+- **P1 — stage attribution.** ✅ DONE — deployed, drained, measured (§6c).
+  Original note: D1 plus inference in the existing facet pass. No
   new LLM call: the analyzer already reads the transcript. Unblocks T1 and T2.
 - **P2 — repo retrospective.** T1–T3 at repo grain, one new `insight_copy` kind,
   surfaced where project insights already are.
