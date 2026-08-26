@@ -25,9 +25,13 @@ prod Worker deploy, which is a Jerry call (see step 1).
   + `notification_prefs` + `relay_inbox_seq_bump`, no-op'd the 25 existing tables, and
   did **not** execute `seed_global_dojo`, so no data changed.) Result:
   `Fresh install at v0 — 53 entities applied.`
-- **Step 4 — realtime publication** — `supabase db push --linked` applied
-  `supabase/migrations/20260718000000_relay_realtime_publication.sql` (idempotent,
-  guarded adds).
+- **Step 4 — realtime publication** — was a separate `supabase db push --linked`
+  of `supabase/migrations/20260718000000_relay_realtime_publication.sql`.
+  **No longer a step**: publication membership moved into `database/policies/dojo/
+  relay_{sessions,segments,inbox}.sql` on 2026-08-25 and now rides `dbd deploy`.
+  Dropping a table removes it from a publication and re-creating it does NOT put
+  it back, so a `dbd reset` + redeploy used to leave Realtime silently delivering
+  nothing until someone re-ran this migration by hand.
 - **Step 5 — read-only validation on prod** — all invariants hold:
   | check | expect | prod |
   |---|---|---|

@@ -18,7 +18,11 @@ begin
   from staging.benchmark_reports stg
   join sensei.folders f on f.id = stg.folder_id
   where stg.run_name is not null
-  on conflict (id) do nothing;
+  -- Was `do nothing`, which never clobbered but also never applied a correction
+  -- to an already-imported report. Guarded upsert, like every other import.
+  on conflict (id) do update
+     set modified_at = excluded.modified_at
+   where excluded.modified_at >= sensei.benchmark_reports.modified_at;
 end;
 $$;
 
