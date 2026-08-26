@@ -525,3 +525,166 @@ New adapters are automatically picked up on daemon restart.
 ## Open questions
 
 None — all decisions resolved by user input during planning.
+
+---
+
+## Review notes (2026-08-26)
+
+Checked against the code at `79cce5c3`. The overall shape is right — the trait,
+`ParsedTranscript` and `SynthSession` all match, and `rusqlite` (0.32, bundled)
+plus `dirs` (6) are already dependencies, so no new crates are needed. The
+SQLite open flags quoted above are exactly what `zed.rs:62` uses.
+
+Six things are wrong or unbuildable as written, and two designs conflict with how
+ingestion actually works. Ordered by how much rework they cause if found late.
+
+### A. Two units for one session silently overwrite each other (Phase 4)
+
+**This is the big one.** `ingest_one` (`mod.rs:262`) processes ONE unit at a time
+and has no view of a sibling unit. Turns are written with
+`ON CONFLICT(source, session_id, turn_index) DO UPDATE` (`transcript.rs:25`).
+
+The plan emits two units per Copilot session — `<dir>` for events.jsonl and
+`copilot-sqlite-<id>` for the DB — and both resolve to the same `session_id` under
+the same `source`. So they do not merge; they **overwrite by turn index**, and
+which one wins depends on unit ordering. Worse, if JSONL yields 10 turns and
+SQLite 8, the SQLite pass rewrites 0–7 and leaves 9–10 from JSONL: a spliced
+session that matches neither source.
+
+"If both exist → merge: take richer turn data" describes a step the architecture
+has nowhere to put.
+
+**Fix:** emit ONE unit per session and merge inside `load_content()`, which is
+free to read both sources and return a single blob. `units()` dedups by session
+id (key = the session dir, or a `copilot:<id>` synthetic key), `stamp_for()`
+returns `max(jsonl mtime_ns, sqlite updated_at)`, and the merge happens where the
+plan already wants it — in the JSON it hands to `parse()`.
+
+Note the two stamps are also on different scales as written (`mtime_ns` vs epoch
+millis). Whatever `stamp_for` returns must be monotone in the same unit, or the
+watermark comparison `prev >= stamp` misfires.
+
+### B. The OTel unit cannot resolve a session id (Phase 3)
+
+`session_id_for(key) -> Option<String>` returns exactly one session per key, and
+`ingest_one` bails when it is `None`. The plan makes `agent-traces.db` a **single
+unit per variant** whose content bundles "ALL sessions' turns". There is no
+session id for that key, so the unit can never be ingested.
+
+**Fix:** enumerate sessions in `units()` (query distinct trace/session ids) and
+emit one unit each, keyed `<db path>#<session-id>`, so `session_id_for` can split
+the key. `load_content()` then queries just that session's spans.
+
+The same constraint kills the **priority order** as described: "skip
+journal+transcript for that session" cannot be decided inside `parse()`, which
+only sees one unit's content. It has to be done in `units()` — which is fine,
+because `units()` sees all sources at once and can drop journal/transcript units
+for sessions the OTel DB already covers.
+
+### C. The enum change is declarative here, not a migration (Phase 1a)
+
+The `ALTER TYPE … ADD VALUE IF NOT EXISTS` snippet and the "DDL enum extension +
+migration" step do not match this project. dbd is declarative and pre-release:
+edit `database/ddl/enum/sensei/assistant_family.ddl`, add the values, then
+`dbd reconcile`.
+
+Verified — with `vscode` and `copilot` appended to that file, `dbd diff` emits:
+
+    ~ alter  sensei.assistant_family
+        ALTER TYPE sensei.assistant_family ADD VALUE 'vscode';
+        ALTER TYPE sensei.assistant_family ADD VALUE 'copilot';
+
+Two things to know: dbd emits `ADD VALUE` WITHOUT `IF NOT EXISTS` (safe, because
+it diffs first), and `ALTER TYPE … ADD VALUE` cannot run inside a transaction
+block — so it is a standalone statement, not part of a batched apply.
+
+`cursor` is indeed already in the enum, as the Scope table says.
+
+### D. `parse()` as written does not compile (Phase 4)
+
+    fn parse(&self, content: &str) -> ParsedTranscript {
+        let root: serde_json::Value = serde_json::from_str(content).ok()?;
+
+`?` on an `Option` in a function returning `ParsedTranscript`. Use a `let … else`
+returning `ParsedTranscript::default()`, matching the `_ =>` arm already in the
+match below it.
+
+### E. `human_prompt_text()` is private to `claude.rs`
+
+`claude.rs:449` — not `pub`, not re-exported. The Cursor turn-parsing step calls
+it. Same for `INJECTED_MARKERS` (`claude.rs:38`).
+
+### F. The "shared constants" are not shared, and copying them again breaks a hard rule
+
+`MAX_TURN_CHARS` is already declared separately in `claude.rs` AND `zed.rs`.
+`MAX_TRANSCRIPT_BYTES` / `MAX_LINE_BYTES` exist only in `claude.rs`. The plan
+re-declares them in `cursor.rs` (and implies the same for the other two), which
+would leave five copies of `MAX_TURN_CHARS`.
+
+CLAUDE.md is explicit: *"Three near-identical lines are a sign to refactor — not
+a reason to add a fourth."*
+
+**Do this first, as its own commit:** hoist `MAX_TURN_CHARS`,
+`MAX_TRANSCRIPT_BYTES`, `MAX_LINE_BYTES`, `INJECTED_MARKERS` and
+`human_prompt_text()` into `mod.rs`, repoint `claude.rs`/`zed.rs` at them, and
+confirm the suite is still green. A pure move, easy to review, and it unblocks E
+as a side effect.
+
+### G. `dirs::data_dir().unwrap()` panics on a failure path (Phase 1b)
+
+The Windows arm of `vscode_user_root`. `data_dir()` returns `Option` precisely
+because it can fail. Panicking in the daemon over a missing known-folder is
+exactly what the never-fabricate/fail-closed rule forbids.
+
+Make it `fn vscode_user_root(variant: &str) -> Option<PathBuf>` and let `units()`
+skip a variant it cannot locate — an absent editor is a normal state, not an
+error.
+
+### H. Cursor's `session_id_for` contradicts its own `units()`
+
+`units()` globs both the nested `<id>/<id>.jsonl` and the flat
+`agent-transcripts/<id>.jsonl`. `session_id_for` says the session id is "the
+directory name (NOT the file stem)" — but for the flat layout the directory is
+literally `agent-transcripts`, which would make every flat session collide under
+one id.
+
+Needs both cases: use the parent directory name when it parses as a UUID,
+otherwise the file stem.
+
+### Smaller notes
+
+* **Test count.** `adapters()` currently returns 3 (`mod.rs:239`), so the
+  `backfill_all_includes_new_adapters` expectation of 6 is right.
+* **Source strings.** `adapter_for_source` matches on `"claude_code"` etc.; the
+  new arms are `"cursor"`, `"vscode"`, `"copilot_cli"` per the Scope table. The
+  `copilot_cli` source / `copilot` family split mirrors `claude_code` / `claude`.
+* **`crate::paths::home()`** exists (`paths.rs:15`) and is the right helper.
+* **Cursor `store.db`.** `extract_model` is specced to read it, but `parse()`
+  only receives `content` — the JSONL. Either fold the `store.db` lookup into
+  `load_content()` (return a blob carrying both, like the Copilot design) or drop
+  model extraction for Cursor and let it stay `None`.
+
+### Suggested order (revised)
+
+0. **Hoist the shared constants + `human_prompt_text` into `mod.rs`** (pure move,
+   green suite) — fixes E and F before they multiply.
+1. Enum values via `dbd reconcile` (C).
+2. `CursorAdapter` — after resolving H and the `store.db` question.
+3. `CopilotCliAdapter` — with the one-unit-per-session merge from A.
+4. `VscodeAdapter` — with per-session OTel units and priority applied in
+   `units()` (B).
+5. Tests.
+
+### Open questions — no longer none
+
+1. **Cursor model extraction** — fold `store.db` into `load_content()`, or accept
+   `None`? (smaller note above)
+2. **Copilot merge precedence** — when JSONL and SQLite disagree on the same
+   turn's text, which wins? A says merge in `load_content()`, but not what to
+   prefer. Suggest: JSONL text (it is the primary record), SQLite only to fill
+   turns JSONL lacks.
+3. **VSCode session identity across layers** — does the OTel `traceId` equal the
+   `chatSessions/<uuid>` stem? The priority order in B assumes it does. If not,
+   there is no way to tell that two layers describe one session, and the whole
+   priority scheme collapses to "ingest all three separately".
+
