@@ -1528,6 +1528,36 @@ impl PgStore {
     /// evidence in place. `evidence` rows are `(signal, turn_index, quote, kind)`.
     /// Caller guarantees every evidence row cites a real turn (spec D5); this only
     /// persists what it's given.
+    /// Record the stage a session was mostly doing, as INFERRED from its
+    /// transcript (spec 2026-08-26-thematic-retrospectives).
+    ///
+    /// Upserts, because the facet row may not exist yet — the process analyzer
+    /// runs before the fuller facet pass and may be the first thing to know
+    /// anything about this session. Deliberately does NOT overwrite a stage
+    /// whose source is `recorded`: a developer's declaration outranks a reading,
+    /// and re-running the analyzer must not silently replace one with the other.
+    pub async fn save_session_stage(
+        &self,
+        client_session_id: &str,
+        stage: &str,
+    ) -> Result<(), String> {
+        sqlx_core::query::query(
+            "insert into activity.session_facets (session_id, stage, stage_source)
+                  values ($1, $2::sensei.work_stage, 'inferred')
+             on conflict (session_id) do update
+                    set stage = excluded.stage
+                      , stage_source = excluded.stage_source
+                      , analyzed_at = now()
+                  where activity.session_facets.stage_source is distinct from 'recorded'",
+        )
+        .bind(client_session_id)
+        .bind(stage)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
     pub async fn save_session_process(
         &self,
         session_id: &uuid::Uuid,
