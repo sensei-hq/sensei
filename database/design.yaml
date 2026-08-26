@@ -69,6 +69,23 @@ scopes:
       - sensei.seed_default_constitution
       - staging.scopes
       - staging.import_scopes
+      # Metric CATALOGUE — ONE table, sensei.metrics, on both planes (same
+      # pattern as rule packs above). It arrives through the FK closure, since
+      # dojo.repository_metrics/metric_activations reference it, but its
+      # column-type ENUMs are not FKs and dbd cannot reach them, so each must be
+      # named — otherwise the deploy fails with `type "metric_family" does not
+      # exist`.
+      - sensei.metric_family
+      - sensei.metric_type
+      - sensei.metric_direction
+      - sensei.metric_cadence
+      - sensei.metric_capture
+      # …and the staging pair, or the catalogue deploys EMPTY: the table exists,
+      # every metric_id FK has nothing to point at, and the console shows a
+      # catalogue of nothing. dbd skips a staging table its scope excludes with a
+      # warning that reads as routine — which is how this was missed.
+      - staging.metrics
+      - staging.import_metrics
       # Global rule-pack LIBRARY seed (staging-file model, like scopes): the staging
       # tables + import procs land the curated library packs (owner_namespace_id NULL,
       # library-only — never adopted) into sensei.rule_packs/rule_pack_rules on
