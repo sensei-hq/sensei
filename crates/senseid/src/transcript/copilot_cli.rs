@@ -243,6 +243,15 @@ fn extract_jsonl_model(content: &str) -> Option<(String, String)> {
 
 /// Extract tokens from session.shutdown event in JSONL.
 fn extract_jsonl_tokens(content: &str) -> Option<SessionTokens> {
+    // LAST shutdown wins, and every model is summed.
+    //
+    // Two things the previous version got wrong. `session.shutdown` fires on
+    // every CLI exit and its totals are CUMULATIVE for the session's whole life
+    // — one real session here emits 13 of them, climbing 15 → 156 premium
+    // requests — so returning the first understates a resumed session badly.
+    // And it took `metrics.values().next()`, one arbitrary model, while these
+    // sessions routinely span nine (opus, sonnet, gpt, gemini).
+    let mut latest: Option<SessionTokens> = None;
     for line in content.lines() {
         let trimmed = line.trim();
         if trimmed.len() > MAX_LINE_BYTES {
@@ -251,24 +260,51 @@ fn extract_jsonl_tokens(content: &str) -> Option<SessionTokens> {
         if let Ok(v) = serde_json::from_str::<serde_json::Value>(trimmed)
             && v.get("type").and_then(|t| t.as_str()) == Some("session.shutdown")
         {
-            let metrics = v.get("data").and_then(|d| d.get("modelMetrics"))?;
-            // Take the first model's usage
-            if let Some(usage) = metrics.as_object().and_then(|m| m.values().next()) {
-                let u = usage.get("usage")?;
-                let input = u.get("prompt_tokens").and_then(|v| v.as_i64()).unwrap_or(0);
-                let output = u.get("completion_tokens").and_then(|v| v.as_i64()).unwrap_or(0);
-                return Some(SessionTokens {
-                    input,
-                    output,
-                    cache_read: None,
-                    cache_write: None,
-                    reasoning: None,
-                    cost: None,
-                });
+            let Some(metrics) = v.get("data").and_then(|d| d.get("modelMetrics")) else {
+                continue;
+            };
+            let Some(models) = metrics.as_object() else { continue };
+            let mut acc = SessionTokens {
+                input: 0,
+                output: 0,
+                cache_read: Some(0),
+                cache_write: Some(0),
+                reasoning: Some(0),
+                cost: None,
+            };
+            // Premium requests, summed across models. Only premium models
+            // consume them — in the sample, 780 of 840 came from one model and
+            // every other consumed zero — so this is the field that answers
+            // "what did this session actually cost against the plan".
+            let mut premium = 0f64;
+            let mut any = false;
+            for m in models.values() {
+                // camelCase, as the CLI actually writes it. The previous
+                // `prompt_tokens` / `completion_tokens` do not occur once in
+                // 77,139 sampled events, so every session recorded 0 tokens.
+                let u = &m["usage"];
+                if !u.is_object() {
+                    continue;
+                }
+                any = true;
+                acc.input += u["inputTokens"].as_i64().unwrap_or(0);
+                acc.output += u["outputTokens"].as_i64().unwrap_or(0);
+                acc.cache_read =
+                    Some(acc.cache_read.unwrap_or(0) + u["cacheReadTokens"].as_i64().unwrap_or(0));
+                acc.cache_write = Some(
+                    acc.cache_write.unwrap_or(0) + u["cacheWriteTokens"].as_i64().unwrap_or(0),
+                );
+                acc.reasoning =
+                    Some(acc.reasoning.unwrap_or(0) + u["reasoningTokens"].as_i64().unwrap_or(0));
+                premium += m["requests"]["cost"].as_f64().unwrap_or(0.0);
+            }
+            if any {
+                acc.cost = Some(premium);
+                latest = Some(acc);
             }
         }
     }
-    None
+    latest
 }
 
 /// Parse turns from session-store.db (SQLite).
@@ -595,10 +631,31 @@ mod tests {
 
     #[test]
     fn parse_session_shutdown_tokens() {
-        let content = r#"{"type":"session.shutdown","timestamp":"2026-06-22T10:02:00.000Z","data":{"modelMetrics":{"gpt-4":{"usage":{"prompt_tokens":100,"completion_tokens":50}}}}}"#;
-        let tokens = extract_jsonl_tokens(content).unwrap();
-        assert_eq!(tokens.input, 100);
-        assert_eq!(tokens.output, 50);
+        // The real shape: camelCase usage keys, several models per session, and
+        // premium consumption under `requests.cost`.
+        let content = r#"{"type":"session.shutdown","timestamp":"2026-06-22T10:02:00.000Z","data":{"modelMetrics":{"claude-opus-4.6":{"requests":{"count":10,"cost":7},"usage":{"inputTokens":100,"outputTokens":50,"cacheReadTokens":900,"cacheWriteTokens":30,"reasoningTokens":5}},"gpt-5.4":{"requests":{"count":4,"cost":0},"usage":{"inputTokens":20,"outputTokens":10,"cacheReadTokens":100,"cacheWriteTokens":0,"reasoningTokens":1}}}}}"#;
+        let t = extract_jsonl_tokens(content).unwrap();
+        assert_eq!(t.input, 120, "summed across models, not just the first");
+        assert_eq!(t.output, 60);
+        assert_eq!(t.cache_read, Some(1000));
+        assert_eq!(t.cache_write, Some(30));
+        assert_eq!(t.reasoning, Some(6));
+        assert_eq!(t.cost, Some(7.0), "premium requests, from requests.cost");
+    }
+
+    #[test]
+    fn shutdown_totals_are_cumulative_so_the_last_one_wins() {
+        // session.shutdown fires on every CLI exit carrying life-to-date totals.
+        // One real session emits 13, climbing 15 → 156 premium requests. Taking
+        // the first would report a resumed session at a fraction of its cost.
+        let content = concat!(
+            r#"{"type":"session.shutdown","data":{"modelMetrics":{"m":{"requests":{"cost":15},"usage":{"inputTokens":10,"outputTokens":1}}}}}"#,
+            "\n",
+            r#"{"type":"session.shutdown","data":{"modelMetrics":{"m":{"requests":{"cost":156},"usage":{"inputTokens":900,"outputTokens":90}}}}}"#
+        );
+        let t = extract_jsonl_tokens(content).unwrap();
+        assert_eq!(t.cost, Some(156.0));
+        assert_eq!(t.input, 900);
     }
 
     #[test]
@@ -716,5 +773,13 @@ mod tests {
         assert!(tools > 0, "no tool events from a real session — event names drifted again");
         assert!(prompts > 0, "no prompts from a real session");
         assert!(extract_jsonl_model(&content).is_some(), "no model resolved");
+
+        // Tokens and premium consumption must land too — they were read from
+        // `prompt_tokens`/`completion_tokens`, which do not occur in real data,
+        // so every ingested session recorded zero.
+        let t = extract_jsonl_tokens(&content).expect("no token totals from a real session");
+        assert!(t.input > 0 && t.output > 0, "zero tokens: {t:?}");
+        assert!(t.cache_read.unwrap_or(0) > 0, "cache reuse is the headline signal here");
+        assert!(t.cost.unwrap_or(0.0) > 0.0, "no premium requests recorded");
     }
 }
