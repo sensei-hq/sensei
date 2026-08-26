@@ -167,6 +167,51 @@ from what the offline report tool learned the hard way:
 - **Honest-empty.** Fewer than N sessions in a stage produces no claim about
   that stage, not a claim with a wide error bar.
 
+## 6a. Grain discipline — measured, not assumed
+
+Found while checking whether the themes hold up on real data, and load-bearing
+enough to be a rule rather than a note.
+
+The per-repo process rollup tells a clean story:
+
+| repo | sessions | avg spec depth | deviated | refuted | shallow |
+|---|---:|---:|---:|---:|---:|
+| torii | 16 | 2.9 | 56% | 44% | 50% |
+| sensei | 37 | 3.2 | 41% | 19% | 19% |
+| rokkit | 17 | 4.3 | 18% | 12% | 24% |
+
+Thin plans, more drift. It is the obvious narration and a synthesiser would
+write it. But at SESSION grain the same relationship is weak — Pearson −0.23
+over 97 sessions, and depth 3 deviates *more* (70%) than depth 2 (43%). The
+repo-level pattern is real; the session-level mechanism it implies is not
+established.
+
+sensei's own correlation engine reports the same pair at **−0.54 Spearman** —
+but on DAY-grain rates, which is a third measurement again. All three numbers
+are correct and they are claims about different things.
+
+**Rule: a theme narrates at the grain it was measured at, and says which.**
+"Repos with deeper plans drift less" is supportable. "Writing a deeper plan
+makes *this session* drift less" is not, from the same number. A retrospective
+that blurs them tells someone to change a behaviour on evidence that never
+measured that behaviour.
+
+## 6b. Reuse the correlation engine; do not add a second one
+
+`crate::correlate` already exists, is wired through `pg_store::metrics`, and is
+better than anything this layer would write in passing:
+
+- **Spearman**, because a token count spans millions and a ratio sits in [0,1],
+  so one outlier day would dominate Pearson.
+- **`MIN_RHO` 0.40, `MIN_PAIRS` 20** — under those it stays quiet.
+- **Definitional suppression** via each metric's `derives_from`, because
+  `tokens_in_per_day / tokens_per_day` at ρ=1.00 is arithmetic, not an insight.
+
+T1 and T2 consume its output. They do not compute their own coefficients.
+
+Likewise `insight_recurring_pattern` (56 rows) already narrates recurring
+churn. T3 extends that vocabulary rather than replacing it.
+
 ## 7. Phasing
 
 - **P1 — stage attribution.** D1 plus inference in the existing facet pass. No
