@@ -5,17 +5,11 @@
 //! `text` content blocks (tool_use / thinking excluded).
 
 use super::{
-    ParsedTranscript, SessionTokens, SynthEvent, SynthSession, TranscriptAdapter, TranscriptTurn,
-    TurnFacts, UnitRef,
+    MAX_LINE_BYTES, MAX_TRANSCRIPT_BYTES, MAX_TURN_CHARS, ParsedTranscript, SessionTokens,
+    SynthEvent, SynthSession, TranscriptAdapter, TranscriptTurn, TurnFacts, UnitRef,
+    human_prompt_text, merge_facts, parse_timestamp, turn_attrs,
 };
 use std::path::{Path, PathBuf};
-
-/// Cap stored assistant prose per turn (safety net for pathological turns).
-const MAX_TURN_CHARS: usize = 50_000;
-
-/// Skip transcript files larger than this (logged). A multi-hundred-MB file
-/// would spike memory on read and block the executor on parse; rare outlier.
-const MAX_TRANSCRIPT_BYTES: u64 = 64 * 1024 * 1024;
 
 /// File mtime as epoch nanoseconds (the cursor change-stamp). `None` if the file
 /// is gone / unreadable.
@@ -27,23 +21,6 @@ fn mtime_ns(path: &Path) -> Option<i64> {
         .ok()
         .map(|d| d.as_nanos() as i64)
 }
-
-/// Skip any single transcript line larger than this — a line this big is a
-/// base64 attachment / blob, not prose, and parsing it stalls the executor.
-const MAX_LINE_BYTES: usize = 4 * 1024 * 1024;
-
-/// Leading markers that mark an injected (non-human) "user" message — harness
-/// notifications, hook context, slash-command echoes. These are not turn
-/// boundaries.
-const INJECTED_MARKERS: &[&str] = &[
-    "<task-notification",
-    "<system-reminder",
-    "<command-name",
-    "<command-message",
-    "<local-command",
-    "Caveat:",
-    "## Security Guidance",
-];
 
 pub struct ClaudeAdapter {
     root: PathBuf,
@@ -219,7 +196,7 @@ pub fn parse_claude_session(content: &str) -> Option<SynthSession> {
         {
             cwds.push(cwd.to_string());
         }
-        let Some(ts) = parse_ts(&v).map(|d| d.timestamp_millis()) else {
+        let Some(ts) = parse_timestamp(&v).map(|d| d.timestamp_millis()) else {
             continue;
         };
         match v.get("type").and_then(|t| t.as_str()).unwrap_or("") {
@@ -290,80 +267,6 @@ pub fn parse_claude_session(content: &str) -> Option<SynthSession> {
 /// record. Everything not named here still survives in `attrs` — see
 /// [`turn_attrs`] — so adding a signal later is a query, not a re-ingest.
 ///
-/// Token counts stay SPLIT. `claude_tokens` (session grain) deliberately sums
-/// fresh + cache-write + cache-read as "all input the model processed", but ~98%
-/// of that total is cache reads, which bill far cheaper — so cost read off the sum
-/// is roughly 10x high and IMPROVES when caching gets worse. At turn grain we keep
-/// the parts and let the consumer choose.
-fn merge_facts(facts: &mut TurnFacts, v: &serde_json::Value) {
-    let str_of = |x: Option<&serde_json::Value>| {
-        x.and_then(|t| t.as_str()).filter(|t| !t.is_empty()).map(str::to_string)
-    };
-    // Top-level record attributes.
-    if facts.git_branch.is_none() {
-        facts.git_branch = str_of(v.get("gitBranch"));
-    }
-    if facts.effort.is_none() {
-        facts.effort = str_of(v.get("effort"));
-    }
-    if facts.skill.is_none() {
-        facts.skill = str_of(v.get("attributionSkill"));
-    }
-    if facts.plugin.is_none() {
-        facts.plugin = str_of(v.get("attributionPlugin"));
-    }
-    if facts.is_sidechain.is_none() {
-        facts.is_sidechain = v.get("isSidechain").and_then(|b| b.as_bool());
-    }
-    let Some(m) = v.get("message") else { return };
-    if facts.stop_reason.is_none() {
-        facts.stop_reason = str_of(m.get("stop_reason"));
-    }
-    let Some(u) = m.get("usage") else { return };
-    if facts.service_tier.is_none() {
-        facts.service_tier = str_of(u.get("service_tier"));
-    }
-    // Summed across the turn's assistant records: one turn issues several.
-    let add = |slot: &mut Option<i64>, n: Option<i64>| {
-        if let Some(n) = n {
-            *slot = Some(slot.unwrap_or(0) + n);
-        }
-    };
-    add(&mut facts.tokens_in, u.get("input_tokens").and_then(|x| x.as_i64()));
-    add(&mut facts.tokens_out, u.get("output_tokens").and_then(|x| x.as_i64()));
-    add(&mut facts.cache_read, u.get("cache_read_input_tokens").and_then(|x| x.as_i64()));
-    add(&mut facts.cache_write, u.get("cache_creation_input_tokens").and_then(|x| x.as_i64()));
-}
-
-/// The record's attributes minus the bulky prose/content we already store in
-/// their own columns. Keeping `message.content` would duplicate `assistant_text`
-/// and can be megabytes; everything else is small and worth retaining verbatim.
-fn turn_attrs(v: &serde_json::Value) -> serde_json::Value {
-    const DROP: [&str; 3] = ["message", "attachment", "toolUseResult"];
-    let mut out = serde_json::Map::new();
-    if let Some(obj) = v.as_object() {
-        for (k, val) in obj {
-            if DROP.contains(&k.as_str()) {
-                continue;
-            }
-            out.insert(k.clone(), val.clone());
-        }
-    }
-    // …but keep the small, high-signal parts of `message` that are not prose.
-    if let Some(m) = v.get("message").and_then(|m| m.as_object()) {
-        let mut mm = serde_json::Map::new();
-        for k in ["id", "model", "stop_reason", "stop_sequence", "usage", "container"] {
-            if let Some(val) = m.get(k) {
-                mm.insert(k.to_string(), val.clone());
-            }
-        }
-        if !mm.is_empty() {
-            out.insert("message".into(), serde_json::Value::Object(mm));
-        }
-    }
-    serde_json::Value::Object(out)
-}
-
 /// Parse a Claude transcript (JSONL) into user-prompt-bounded turns. A new turn
 /// starts at each genuine human prompt; assistant `text` blocks until the next
 /// prompt form that turn's response. Pure + deterministic.
@@ -396,8 +299,8 @@ pub fn parse_claude_transcript(content: &str) -> Vec<TranscriptTurn> {
                         turn_index: idx,
                         user_text: Some(prompt),
                         assistant_text: String::new(),
-                        started_at: parse_ts(&v),
-                        attrs: turn_attrs(&v),
+                        started_at: parse_timestamp(&v),
+                        attrs: turn_attrs(&v, &["message", "attachment", "toolUseResult"]),
                         facts,
                     });
                 }
@@ -444,43 +347,6 @@ pub fn parse_claude_transcript(content: &str) -> Vec<TranscriptTurn> {
     turns
 }
 
-/// The human prompt text of a `user` record, or `None` if it's a tool result,
-/// a meta/injected message, or empty.
-fn human_prompt_text(v: &serde_json::Value) -> Option<String> {
-    if v.get("isMeta").and_then(|m| m.as_bool()) == Some(true) {
-        return None;
-    }
-    let content = v.get("message").and_then(|m| m.get("content"))?;
-    let text = match content {
-        serde_json::Value::String(s) => s.clone(),
-        serde_json::Value::Array(blocks) => {
-            // a tool_result message is not a human prompt
-            if blocks.iter().any(|b| b.get("type").and_then(|t| t.as_str()) == Some("tool_result"))
-            {
-                return None;
-            }
-            let mut s = String::new();
-            for b in blocks {
-                if b.get("type").and_then(|t| t.as_str()) == Some("text")
-                    && let Some(t) = b.get("text").and_then(|t| t.as_str())
-                {
-                    if !s.is_empty() {
-                        s.push('\n');
-                    }
-                    s.push_str(t);
-                }
-            }
-            s
-        }
-        _ => return None,
-    };
-    let trimmed = text.trim();
-    if trimmed.is_empty() || is_injected_noise(trimmed) {
-        return None;
-    }
-    Some(trimmed.to_string())
-}
-
 /// Concatenated `text` blocks of an `assistant` record (prose only — no
 /// thinking, no tool_use).
 fn assistant_text_blocks(v: &serde_json::Value) -> String {
@@ -503,15 +369,6 @@ fn assistant_text_blocks(v: &serde_json::Value) -> String {
         }
     }
     s
-}
-
-fn is_injected_noise(text: &str) -> bool {
-    INJECTED_MARKERS.iter().any(|m| text.starts_with(m))
-}
-
-fn parse_ts(v: &serde_json::Value) -> Option<chrono::DateTime<chrono::Utc>> {
-    let ts = v.get("timestamp").and_then(|t| t.as_str())?;
-    chrono::DateTime::parse_from_rfc3339(ts).ok().map(|d| d.with_timezone(&chrono::Utc))
 }
 
 #[cfg(test)]
@@ -628,15 +485,15 @@ mod tests {
     fn human_prompt_text_rejects_tool_results_meta_and_noise() {
         let tool_result =
             serde_json::json!({"message":{"content":[{"type":"tool_result","content":"x"}]}});
-        assert!(human_prompt_text(&tool_result).is_none());
+        assert!(super::super::human_prompt_text(&tool_result).is_none());
         let meta =
             serde_json::json!({"isMeta":true,"message":{"content":[{"type":"text","text":"hi"}]}});
-        assert!(human_prompt_text(&meta).is_none());
+        assert!(super::super::human_prompt_text(&meta).is_none());
         let noise =
             serde_json::json!({"message":{"content":"<system-reminder>stuff</system-reminder>"}});
-        assert!(human_prompt_text(&noise).is_none());
+        assert!(super::super::human_prompt_text(&noise).is_none());
         let real = serde_json::json!({"message":{"content":"fix the bug"}});
-        assert_eq!(human_prompt_text(&real).as_deref(), Some("fix the bug"));
+        assert_eq!(super::super::human_prompt_text(&real).as_deref(), Some("fix the bug"));
     }
 
     #[test]

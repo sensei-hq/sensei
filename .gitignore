@@ -34,3 +34,6 @@ docs/mockups/
 
 # Golden baseline reference data — contains local absolute paths + client project names (see spec 2026-08-18)
 docs/spec/baseline/
+
+# Build output for the detached analysis tool (its own workspace).
+tools/session-report/target/
