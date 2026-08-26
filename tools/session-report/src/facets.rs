@@ -93,6 +93,23 @@ pub const OUTCOMES: &[&str] =
 /// Each ACP stores them differently, so this switches on the format rather than
 /// asking the caller to know.
 pub fn session_text(file: &Path) -> Option<String> {
+    read_prompts(file).or_else(|| read_prompts(&sibling_journal(file)?))
+}
+
+/// The delta journal beside an event stream, for the same session.
+///
+/// VS Code writes both, and they do not always agree on what they hold: some
+/// event streams record the assistant's turns but no `user.message` at all,
+/// while the journal for the same id has every prompt. Without this fallback
+/// those sessions look promptless and are dropped — 8 of rajkumar's 45.
+fn sibling_journal(file: &Path) -> Option<std::path::PathBuf> {
+    let id = file.file_name()?;
+    let workspace = file.parent()?.parent()?.parent()?;
+    let candidate = workspace.join("chatSessions").join(id);
+    candidate.is_file().then_some(candidate)
+}
+
+fn read_prompts(file: &Path) -> Option<String> {
     let raw = std::fs::read_to_string(file).ok()?;
     let mut prompts: Vec<String> = Vec::new();
 
