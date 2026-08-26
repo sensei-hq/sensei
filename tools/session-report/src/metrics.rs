@@ -104,8 +104,9 @@ impl Analysis {
 
     /// Whether elapsed time is measurable from this transcript.
     ///
-    /// VS Code stamps a request and its response identically, so there is no
-    /// duration to sum and "active time" collapses to the gaps between requests.
+    /// VS Code's delta journal stamps a request and its response identically, so
+    /// there is no duration to sum and "active time" collapses to the gaps
+    /// between requests. (Its event stream does time turns, and passes this.)
     /// Any rate derived from it would be an artefact of the format.
     /// Uses the MEDIAN, not "any": a handful of timed turns among thousands of
     /// zero-length ones does not make elapsed time measurable, and `any` let a

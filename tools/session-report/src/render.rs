@@ -78,7 +78,7 @@ pub fn report(
     try_next(&mut o, a);
     delegation(&mut o, a);
     per_session(&mut o, sessions);
-    method(&mut o, tool, a);
+    method(&mut o, tool, sessions, a);
     o
 }
 
@@ -535,28 +535,45 @@ fn per_session(o: &mut String, sessions: &[Session]) {
     let _ = writeln!(o, "\n`⚠` = ended without a shutdown record, so its totals are missing.\n");
 }
 
-fn method(o: &mut String, tool: Option<crate::Tool>, a: &Analysis) {
+fn method(o: &mut String, tool: Option<crate::Tool>, sessions: &[Session], a: &Analysis) {
     let _ = writeln!(o, "## How to check this\n");
     let _ = writeln!(o, "| Reported as | Read from |");
     let _ = writeln!(o, "|---|---|");
     match tool {
         Some(crate::Tool::VsCode) => {
+            // VS Code writes two transcripts and they do not record the same
+            // things. Stating one caveat for both would either understate the
+            // sessions that have outcomes or overstate the ones that do not.
+            let ev = sessions.iter().filter(|s| s.source == Some("events")).count();
+            let jn = sessions.len() - ev;
             let _ = writeln!(
                 o,
-                "| Prompts | `message.text` on each entry of the chat journal's `requests[]` |"
+                "| Prompts | `user.message` events, or `message.text` in the journal's `requests[]` |"
             );
             let _ = writeln!(
                 o,
-                "| Turns, turn length | `timestamp` → `responseTimestamp` on the same entry |"
+                "| Turns, turn length | `assistant.turn_start` → `turn_end`, or `timestamp` → `responseTimestamp` |"
             );
             let _ = writeln!(
                 o,
-                "| Tool calls | `toolInvocationSerialized` parts in `response[]`. VS Code records no OUTCOME, so failures are not reported rather than reported as zero |"
+                "| Tool calls | `tool.execution_start`/`_complete`, or `toolInvocationSerialized` parts |"
             );
             let _ = writeln!(o, "| Model | `modelId`, with its `copilot/` prefix stripped |");
             let _ = writeln!(
                 o,
                 "| Project | the `workspace.json` beside the chat folder, percent-decoded |"
+            );
+            let _ = writeln!(
+                o,
+                "\nVS Code keeps **two** transcripts, and they do not record the same \
+                 things. `GitHub.copilot-chat/transcripts/` is a full event stream — the \
+                 same format Copilot CLI writes — with tool outcomes and real turn \
+                 timing. `chatSessions/` is a delta journal with neither. {ev} of these \
+                 {} session(s) came from the event stream and {jn} from the journal \
+                 alone; the journal-only ones contribute no failure counts and stamp a \
+                 request and its response identically. Neither transcript records \
+                 tokens, so cost is absent throughout.\n",
+                sessions.len()
             );
         }
         Some(crate::Tool::ClaudeCode) => {
