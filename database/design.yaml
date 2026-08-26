@@ -112,11 +112,16 @@ scopes:
     # import_tenants writes to dojo.tenants, which does not exist here.
     excludes: [dojo, staging.tenants, staging.import_tenants]
     deps: include
+# Runs after the schema is applied, before imports. The realtime publication is
+# schema-adjacent config — which tables are eligible for Realtime — so it belongs
+# with `apply`, not tacked onto the end of the data load.
+apply:
+  after:
+    - apply/after/realtime_publication.sql
+
 import:
   staging:
     - staging
-  after:
-    - import/after/realtime_publication.sql
   options:
     truncate: true
     null_value: ""

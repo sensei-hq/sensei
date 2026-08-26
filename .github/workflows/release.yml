@@ -323,14 +323,21 @@ jobs:
         # Pinned to a tag, like every other dependency. dbd's own schema handling
         # changes between versions, so a floating install would mean the release
         # that deploys prod is not the one anybody tested against.
-        run: cargo install --locked --git https://github.com/sensei-hq/dbd --tag v0.10.12 dbd
+        #
+        # The package is `dbd-cli` (the binary it installs is `dbd`). Keep this in
+        # step with the dbd-core tag in crates/bootstrap/Cargo.toml — the daemon
+        # embeds the same library to deploy its own schema, and a skew means the
+        # CLI accepts DDL the daemon cannot parse.
+        run: cargo install --locked --git https://github.com/sensei-hq/dbd --tag v0.12.0 dbd-cli
 
       - name: Fail on any unparseable DDL
-        # THE critical guard. dbd drops a file it cannot parse from the entity set
-        # SILENTLY and still reports success — that is how dojo.set_pack_adoption
-        # and dojo.can_read_repository_metric were never created on any database.
-        # `dbd inspect` reports the parse errors but EXITS 0, so the exit code
-        # cannot be trusted here; grep the output and fail explicitly.
+        # THE critical guard, and still required at 0.12.0. dbd drops a file it
+        # cannot parse from the entity set SILENTLY and still reports success —
+        # that is how dojo.set_pack_adoption and dojo.can_read_repository_metric
+        # were never created on any database. 0.12.0 fixed the specific parse
+        # failures we hit, but `dbd inspect` STILL EXITS 0 when a file fails to
+        # parse (re-verified), so the exit code cannot be trusted; grep the output
+        # and fail explicitly.
         working-directory: database
         run: |
           dbd inspect 2>&1 | tee inspect.log

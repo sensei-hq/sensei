@@ -14,11 +14,16 @@
 -- dojo.relay_inbox and the membership count falls 3 → 2; a redeploy alone left it
 -- at 2. Riding the deploy, it comes back.
 --
--- WHY AN AFTER-SCRIPT and not a table DDL file: dbd's SQL parser cannot read a
--- `do $$ … $$` block, and a file it cannot parse is dropped from the entity set
--- SILENTLY — the same failure that hid dojo.set_pack_adoption and
--- dojo.can_read_repository_metric. After-scripts are executed as raw SQL, run once
--- every entity exists, and say what they are: post-processing, not a policy.
+-- WHY AN AFTER-SCRIPT rather than a table DDL file: publication membership is not
+-- an entity dbd can diff — it is a one-line side effect that has to run once the
+-- table exists. `apply.after` is exactly that hook, and it runs after the schema
+-- is applied but before imports, so the tables are there and nothing has loaded
+-- yet.
+--
+-- (dbd < 0.12.0 also could not PARSE a `do $$ … $$` block, and silently dropped
+-- any file containing one — the same failure that hid dojo.set_pack_adoption and
+-- dojo.can_read_repository_metric. Fixed in 0.12.0; the hook is still the right
+-- home regardless.)
 --
 -- Guarded three ways, because this runs for EVERY scope: skip when the
 -- publication is absent (a plain Postgres — the daemon's own database), skip when

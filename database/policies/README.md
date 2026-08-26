@@ -34,6 +34,14 @@ path is unaffected. A local database brought up with a bare `dbd apply` will
 have the table but not its policy — RLS enabled with no policy denies all rows
 to non-superusers, which is a loud failure rather than a silent leak.
 
+## Scope
+
+Since dbd 0.12.0 `dbd policies` honours `--scope`: a file whose table is outside
+the scope is SKIPPED, not failed (`Skipped ./policies/dojo/… — outside scope
+'default'`). So these files are plain SQL. Before 0.12.0 every file ran against
+every plane, which meant wrapping each statement in a `do $$ … execute … $$`
+block purely to no-op on the daemon, where the `dojo` schema does not exist.
+
 ## Current contents
 
 | file | calls |
