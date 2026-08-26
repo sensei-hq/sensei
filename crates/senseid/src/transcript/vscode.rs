@@ -103,6 +103,29 @@ fn glob_chat_sessions(user_root: &Path) -> Vec<PathBuf> {
     paths
 }
 
+/// Every chat file under a bare `workspaceStorage/` root — both the delta
+/// journals and the newer transcript event streams.
+fn scan_workspace_storage(ws: &Path) -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    let Ok(entries) = std::fs::read_dir(ws) else {
+        return paths;
+    };
+    for entry in entries.flatten() {
+        let dir = entry.path();
+        for sub in ["chatSessions", "GitHub.copilot-chat/transcripts"] {
+            if let Ok(files) = std::fs::read_dir(dir.join(sub)) {
+                for f in files.flatten() {
+                    let p = f.path();
+                    if p.is_file() && p.extension().is_some_and(|e| e == "jsonl") {
+                        paths.push(p);
+                    }
+                }
+            }
+        }
+    }
+    paths
+}
+
 /// Glob for transcript event stream files.
 fn glob_transcripts(user_root: &Path) -> Vec<PathBuf> {
     let mut paths = Vec::new();
@@ -133,10 +156,17 @@ fn workspace_folder(chat_session_path: &Path) -> Option<String> {
     let ws = chat_session_path.parent()?.join("workspace.json");
     let content = std::fs::read_to_string(&ws).ok()?;
     let v: serde_json::Value = serde_json::from_str(&content).ok()?;
-    let uri = v.get("folder").and_then(|f| f.as_str())?;
+    // Two shapes in the wild: a plain string, and the `$mid`-tagged object VS
+    // Code writes for some workspaces. Accept either.
+    let uri = v
+        .get("folder")
+        .and_then(|f| f.as_str().map(str::to_string))
+        .or_else(|| v["workspace"]["folder"]["path"].as_str().map(str::to_string))
+        .or_else(|| v["folder"]["path"].as_str().map(str::to_string))?;
+
     // Resolve file:// URIs
     if let Some(path) = uri.strip_prefix("file://") {
-        return Some(path.to_string());
+        return Some(normalise_uri_path(path));
     }
     // Handle vscode-remote://wsl+<distro>/path
     if let Some(rest) = uri.strip_prefix("vscode-remote://")
@@ -144,7 +174,37 @@ fn workspace_folder(chat_session_path: &Path) -> Option<String> {
     {
         return Some(rest[slash..].to_string());
     }
-    Some(uri.to_string())
+    Some(uri)
+}
+
+/// Percent-decode a URI path and unwrap a Windows drive.
+///
+/// VS Code stores Windows folders as `file:///c%3A/Users/...`. Stripping the
+/// scheme alone leaves `/c%3A/Users/...`, which matches no directory and no
+/// repo — every Windows session would lose its project attribution. Verified
+/// against real shared transcripts.
+fn normalise_uri_path(path: &str) -> String {
+    let mut out = String::with_capacity(path.len());
+    let mut bytes = path.bytes().enumerate();
+    let raw = path.as_bytes();
+    while let Some((i, b)) = bytes.next() {
+        if b == b'%'
+            && let (Some(h), Some(l)) = (raw.get(i + 1), raw.get(i + 2))
+            && let (Some(h), Some(l)) = ((*h as char).to_digit(16), (*l as char).to_digit(16))
+        {
+            out.push(((h * 16 + l) as u8) as char);
+            bytes.next();
+            bytes.next();
+            continue;
+        }
+        out.push(b as char);
+    }
+    // `/c:/Users/...` → `c:/Users/...`
+    let trimmed = out.strip_prefix('/').unwrap_or(&out);
+    if trimmed.len() >= 2 && trimmed.as_bytes()[1] == b':' {
+        return trimmed.to_string();
+    }
+    out
 }
 
 /// Reconstruct turns from a delta journal (kind:0/1/2 format).
@@ -743,6 +803,40 @@ impl TranscriptAdapter for VscodeAdapter {
         let mut units = Vec::new();
         let mut otel_sessions: HashSet<String> = HashSet::new();
 
+        // An explicit root OVERRIDES the installed-editor scan. Without this the
+        // field was inert and the adapter could only ever read this machine's
+        // own VS Code — so a shared transcript folder could not be ingested or
+        // tested against. Accepts either a `User/` directory or a bare
+        // `workspaceStorage/` one, which is the shape people actually send.
+        if self.root.components().next().is_some() && self.root.exists() {
+            let user_root = if self.root.join("workspaceStorage").is_dir() {
+                self.root.clone()
+            } else {
+                // Treat the folder itself as workspaceStorage by borrowing its
+                // parent as the notional User/ root.
+                self.root.parent().map(Path::to_path_buf).unwrap_or_else(|| self.root.clone())
+            };
+            let ws_root = if self.root.join("workspaceStorage").is_dir() {
+                user_root.clone()
+            } else {
+                self.root.clone()
+            };
+            for p in scan_workspace_storage(&ws_root) {
+                if let Some(stamp) = mtime_ns(&p) {
+                    units.push(UnitRef { key: p.display().to_string(), stamp });
+                }
+            }
+            for p in glob_chat_sessions(&user_root) {
+                if let Some(stamp) = mtime_ns(&p) {
+                    let key = p.display().to_string();
+                    if !units.iter().any(|u| u.key == key) {
+                        units.push(UnitRef { key, stamp });
+                    }
+                }
+            }
+            return units;
+        }
+
         // Pass 1: enumerate OTel sessions (per-session units)
         for variant in VARIANTS {
             if let Some(db_path) = otel_db_path(variant) {
@@ -1179,5 +1273,64 @@ mod tests {
         assert_eq!(p.turns.len(), 1);
         assert!(!p.events.is_empty());
         assert_eq!(p.model.as_ref().map(|(_, m)| m.as_str()), Some("gpt-4o"));
+    }
+
+    #[test]
+    fn windows_workspace_uris_decode_to_a_usable_path() {
+        // Real shape from a shared transcript: VS Code writes Windows folders as
+        // file:///c%3A/... Leaving the escape in place produced "/c%3A/Users/..."
+        // which matches no directory, so every Windows session lost its project.
+        assert_eq!(
+            normalise_uri_path("/c%3A/Users/dev.user/Documents/workspace/sample-portal"),
+            "c:/Users/dev.user/Documents/workspace/sample-portal"
+        );
+        // POSIX paths pass through untouched.
+        assert_eq!(normalise_uri_path("/Users/jane/code/app"), "/Users/jane/code/app");
+        // A space, the other escape that shows up constantly.
+        assert_eq!(normalise_uri_path("/Users/jane/My%20Code"), "/Users/jane/My Code");
+    }
+
+    /// Ingestion proof against REAL VS Code data, when a sample is provided.
+    ///
+    /// Skips when unset — the samples are other people's transcripts and are not
+    /// in the repo. Point SENSEI_VSCODE_SAMPLE at a `workspaceStorage`-shaped
+    /// folder (one directory per workspace hash).
+    #[test]
+    fn discovers_units_in_a_real_workspace_storage_folder() {
+        let Ok(dir) = std::env::var("SENSEI_VSCODE_SAMPLE") else {
+            return;
+        };
+        let adapter = VscodeAdapter::new(PathBuf::from(&dir));
+        let units = adapter.units();
+        // Count what is on disk and require the adapter to find ALL of it. The
+        // weaker "not empty" would pass while silently missing a whole layer —
+        // and the two layers live in different subdirectories.
+        let mut expected = 0usize;
+        if let Ok(entries) = std::fs::read_dir(&dir) {
+            for e in entries.flatten() {
+                for sub in ["chatSessions", "GitHub.copilot-chat/transcripts"] {
+                    if let Ok(files) = std::fs::read_dir(e.path().join(sub)) {
+                        expected += files
+                            .flatten()
+                            .filter(|f| f.path().extension().is_some_and(|x| x == "jsonl"))
+                            .count();
+                    }
+                }
+            }
+        }
+        assert!(expected > 0, "the sample at {dir} has no chat files to find");
+        assert_eq!(
+            units.len(),
+            expected,
+            "adapter found {} of {expected} chat files under {dir}",
+            units.len()
+        );
+        for u in units.iter().take(20) {
+            assert!(
+                adapter.session_id_for(&u.key).is_some(),
+                "every unit must resolve a session id: {}",
+                u.key
+            );
+        }
     }
 }

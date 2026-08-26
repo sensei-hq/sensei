@@ -8,7 +8,7 @@ begin
          nullif(match_lifecycle,'')::sensei.chunk_lifecycle,
          nullif(match_intent,'')::sensei.chunk_intent,
          nullif(match_risk,'')::sensei.chunk_risk,
-         playbook, rationale, priority, priority, coalesce(enabled,true), coalesce(source,'builtin'),
+         playbook, rationale, priority, priority, coalesce(enabled,true), coalesce(source,'builtin')::sensei.source_kind,
          coalesce(modified_at, now())
     from staging.playbook_rules stg
   on conflict (name) do update
