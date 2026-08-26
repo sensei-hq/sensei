@@ -287,3 +287,87 @@ jobs:
             git commit -m "chore: update to v${VERSION}"
             git push
           fi
+
+  # ── Deploy the dōjō schema ─────────────────────────────────────────────────
+  #
+  # dōjō is a Supabase project with no service of its own, so nothing else ever
+  # applies its schema. Before this job it was a manual `dbd deploy` someone had
+  # to remember after every release — which is how the relay tables silently fell
+  # out of the Realtime publication and how two functions went missing entirely.
+  #
+  # Independent of `release` on purpose: the daemon deploys its OWN schema locally
+  # at install time, so a dōjō outage must not block binaries from shipping. This
+  # job fails loudly on its own instead.
+  deploy-dojo:
+    needs: release
+    runs-on: ubuntu-latest
+    # Gate this behind a protected environment to require a manual approval before
+    # anything touches the production database. Configure reviewers under
+    # Settings → Environments → dojo-prod.
+    environment: dojo-prod
+    env:
+      DATABASE_URL: ${{ secrets.DOJO_DATABASE_URL }}
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+
+      - name: Refuse to run without a target
+        run: |
+          if [ -z "${DATABASE_URL}" ]; then
+            echo "::error::DOJO_DATABASE_URL is not set — refusing to 'succeed' without deploying anything"
+            exit 1
+          fi
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dbd
+        # Pinned to a tag, like every other dependency. dbd's own schema handling
+        # changes between versions, so a floating install would mean the release
+        # that deploys prod is not the one anybody tested against.
+        run: cargo install --locked --git https://github.com/sensei-hq/dbd --tag v0.10.12 dbd
+
+      - name: Fail on any unparseable DDL
+        # THE critical guard. dbd drops a file it cannot parse from the entity set
+        # SILENTLY and still reports success — that is how dojo.set_pack_adoption
+        # and dojo.can_read_repository_metric were never created on any database.
+        # `dbd inspect` reports the parse errors but EXITS 0, so the exit code
+        # cannot be trusted here; grep the output and fail explicitly.
+        working-directory: database
+        run: |
+          dbd inspect 2>&1 | tee inspect.log
+          if grep -q "Parse error" inspect.log; then
+            echo "::error::DDL failed to parse — those entities would be skipped silently"
+            exit 1
+          fi
+
+      - name: Plan (audit trail)
+        # Printed before anything is applied, so the job log records what this
+        # release changed in production. Never fails the build: a fresh or drifted
+        # database legitimately shows differences here.
+        working-directory: database
+        run: dbd diff --scope dojo || true
+
+      - name: Apply schema changes
+        # `reconcile`, not `deploy`. Verified: `dbd deploy` against an EXISTING
+        # database reports "N entities applied" and does NOT apply column changes
+        # — a deploy-only job would report success on every release while silently
+        # applying nothing. `reconcile` performs the diff+ALTER.
+        #
+        # No --allow-destructive and no --prune: automation gets the safe subset.
+        # A drop or a rename is a deliberate act and stays manual.
+        working-directory: database
+        run: dbd reconcile --scope dojo
+
+      - name: Apply seed data, policies and after-scripts
+        # reconcile only touches schema. `deploy` runs the import phase (the seed
+        # datafiles), the RLS policy files, and the after-script that keeps the
+        # relay tables in the Realtime publication. Idempotent — every import is
+        # modified_at-guarded, so an in-place edit in prod is not clobbered.
+        working-directory: database
+        run: dbd deploy --scope dojo
+
+      - name: Verify the database matches the design
+        # The proof the job actually did something. `--exit-code` returns 2 when
+        # differences remain, 0 when in sync. Without this the job is only
+        # asserting that dbd ran, not that the schema landed.
+        working-directory: database
+        run: dbd diff --scope dojo --exit-code

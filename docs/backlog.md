@@ -15,6 +15,40 @@ Work is tracked as **GitHub issues** in [`sensei-hq/sensei`](https://github.com/
 
 ---
 
+## dbd: `deploy` does not apply schema changes, and `inspect` exits 0 on parse errors
+
+**Found 2026-08-26** while wiring the release→deploy job. dbd 0.10.12. Both
+matter because both look like success.
+
+**1. `dbd deploy` against an EXISTING database does not ALTER anything.** Add a
+column to a table's DDL and run `deploy`: it reports
+`Fresh install at v0 — 101 entities applied` and the column is NOT there.
+`reconcile` applies it. A release job built on `deploy` alone would report success
+on every release while silently never applying a schema change.
+
+So the deploy sequence is `reconcile` (schema deltas) THEN `deploy` (imports,
+policies, after-scripts) — neither alone is sufficient.
+
+**2. `dbd inspect` exits 0 even when files fail to parse.** It prints
+`Parse error:` and returns success, so CI cannot gate on the exit code and has to
+grep the output. This is the same silent-drop behaviour that hid
+`dojo.set_pack_adoption` and `dojo.can_read_repository_metric`.
+
+**3. Sequence defaults never converge without `::regclass`.** Postgres normalises
+a column default to `nextval('x'::regclass)`. A design written as `nextval('x')`
+therefore never matches the catalog: `diff` reports the difference forever and
+`reconcile` re-applies the identical ALTER on every run. Three dojo tables were
+affected (relay_inbox, shared_rules, artifacts), which made
+`dbd diff --exit-code` useless as a CI gate — it could never return 0.
+
+Fixed on our side by writing the cast in the DDL, with a comment saying why.
+Upstream, dbd should normalise both sides before comparing.
+
+**Upstream asks:** make `inspect` exit non-zero on parse errors; either make
+`deploy` apply deltas or document that it does not; normalise sequence defaults
+in the differ.
+
+
 ## Parallel-test hazard: asserting on a GLOBAL sweep's result
 
 **Resolved 2026-08-25/26.** Recorded because it recurred three times in one day
