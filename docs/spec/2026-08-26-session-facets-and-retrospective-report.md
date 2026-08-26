@@ -1,6 +1,7 @@
 # Session facets and the developer retrospective
 
-Status: draft
+Status: design agreed; the offline half is BUILT and running against the sample.
+The sensei-side tables (D2/D3) are not built.
 Supersedes: nothing. Extends `2026-08-20-transcript-process-quality-analyzer.md`.
 
 ## What this is for
@@ -135,22 +136,43 @@ requirement that every observation carry a reference.
 Only the last needs judgment beyond a group-by, and it is a rules table mapping
 a friction tag to a recommendation, not free generation.
 
-## Gaps in the mechanical half
+## Gaps in the mechanical half — CLOSED
 
-`tools/session-report` does not yet derive, and sensei does not yet store:
+`languages`, `git_commits`/`git_pushes` and `user_response_times` are now derived
+in `tools/session-report` for all three ACPs, from tool ARGUMENTS that were
+already in the transcripts and unread. None needed a model. `user_interruptions`
+remains implied by `corrections` and is not separately derived.
 
-- **`languages`** — derivable from the file paths in tool-call arguments. This is
-  what makes "What You Work On" concrete rather than abstract.
-- **`git_commits` / `git_pushes`** — derivable from Bash tool-call arguments.
-- **`user_response_times`** — the gap between an assistant's last message and the
-  next human prompt. A direct read on whether the person is engaged or waiting.
-- **`user_interruptions`** — already implied by `corrections`, needs mapping.
+sensei does not yet store any of them: `activity.sessions` has no `languages`,
+`git_commits` or reply-time column. That is the remaining mechanical work, and it
+is a column addition rather than a new capture path — the daemon's adapter reads
+the same tool arguments.
 
-All four are parseable from transcripts we already read. None needs an LLM.
+## Producing this for the five sample users — DONE
 
-## Producing this for the five sample users
+The offline pipeline is built and has run: 131 of 149 sessions carry a facet
+record, and each of the five reports now ends with a "What the sessions say"
+section built from them. Coverage per person: chandra 33/33, rajkumar 43/45,
+dipti 30/40, Balaji 17/22, manoj 8/9.
 
-Yes, and the mechanical half is already done — `reports/*.md` covers 149
+It runs against a LOCAL ollama (`gemma4`), the same model family sensei's process
+analyzer uses, so none of the transcript text left the machine. Records are
+cached, so regenerating a report costs nothing.
+
+What the implementation added beyond this design:
+
+- **Grounding normalises whitespace.** Byte-exact comparison rejected 15 records
+  whose quote was copied correctly but re-wrapped. It still rejects a reworded
+  quote.
+- **Dropped sessions are named, not counted.** A coverage gap that reads as
+  "nothing to report" is worse than one you can go and look at.
+- **VS Code needs both transcripts.** Some event streams hold no `user.message`
+  at all while the journal for the same id has every prompt, so the facet pass
+  falls back to the sibling journal.
+
+The original note below still holds for the sensei-side work.
+
+The mechanical half is already done — `reports/*.md` covers 149
 sessions across the five (manoj 9, rajkumar 45, Balaji 22, chandra 33, dipti 40).
 
 The facet half needs one LLM call per session, so 149 calls. The constraint is
