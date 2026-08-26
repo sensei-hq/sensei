@@ -10,12 +10,163 @@
 //! with other work (scans, etc.) and one huge/bad file can't block the rest.
 
 pub mod claude;
+pub mod copilot_cli;
+pub mod cursor;
 pub mod opencode;
+pub mod vscode;
 pub mod zed;
 
 use crate::tasks::executor::TaskContext;
 use crate::tasks::{Task, TaskKind};
 use std::path::PathBuf;
+
+// ── Shared constants (used by multiple adapters) ────────────────────────
+
+/// Cap stored assistant prose per turn (safety net for pathological turns).
+pub(crate) const MAX_TURN_CHARS: usize = 50_000;
+
+/// Skip transcript files larger than this (logged). A multi-hundred-MB file
+/// would spike memory on read and block the executor on parse; rare outlier.
+pub(crate) const MAX_TRANSCRIPT_BYTES: u64 = 64 * 1024 * 1024;
+
+/// Skip any single transcript line larger than this — a line this big is a
+/// base64 attachment / blob, not prose, and parsing it stalls the executor.
+pub(crate) const MAX_LINE_BYTES: usize = 4 * 1024 * 1024;
+
+/// Leading markers that mark an injected (non-human) "user" message — harness
+/// notifications, hook context, slash-command echoes. These are not turn
+/// boundaries.
+pub(crate) const INJECTED_MARKERS: &[&str] = &[
+    "<task-notification",
+    "<system-reminder",
+    "<command-name",
+    "<command-message",
+    "<local-command",
+    "Caveat:",
+    "## Security Guidance",
+];
+
+/// The human prompt text of a `user` record, or `None` if it's a tool result,
+/// a meta/injected message, or empty.
+pub(crate) fn human_prompt_text(v: &serde_json::Value) -> Option<String> {
+    if v.get("isMeta").and_then(|m| m.as_bool()) == Some(true) {
+        return None;
+    }
+    let content = v.get("message").and_then(|m| m.get("content"))?;
+    let text = match content {
+        serde_json::Value::String(s) => s.clone(),
+        serde_json::Value::Array(blocks) => {
+            if blocks.iter().any(|b| b.get("type").and_then(|t| t.as_str()) == Some("tool_result"))
+            {
+                return None;
+            }
+            let mut s = String::new();
+            for b in blocks {
+                if b.get("type").and_then(|t| t.as_str()) == Some("text")
+                    && let Some(t) = b.get("text").and_then(|t| t.as_str())
+                {
+                    if !s.is_empty() {
+                        s.push('\n');
+                    }
+                    s.push_str(t);
+                }
+            }
+            s
+        }
+        _ => return None,
+    };
+    let trimmed = text.trim();
+    if trimmed.is_empty() || is_injected_noise(trimmed) {
+        return None;
+    }
+    Some(trimmed.to_string())
+}
+
+/// Check whether a prompt string is injected noise (not a genuine human turn).
+fn is_injected_noise(text: &str) -> bool {
+    INJECTED_MARKERS.iter().any(|m| text.starts_with(m))
+}
+
+/// Parse a timestamp from a JSON record's `timestamp` field (RFC 3339).
+pub(crate) fn parse_timestamp(v: &serde_json::Value) -> Option<chrono::DateTime<chrono::Utc>> {
+    let ts = v.get("timestamp").and_then(|t| t.as_str())?;
+    chrono::DateTime::parse_from_rfc3339(ts).ok().map(|d| d.with_timezone(&chrono::Utc))
+}
+
+/// Parse a timestamp from a JSON record's `timestamp` field as epoch milliseconds.
+pub(crate) fn parse_timestamp_ms(v: &serde_json::Value) -> Option<i64> {
+    let ts = v.get("timestamp").and_then(|t| t.as_str())?;
+    let dt = chrono::DateTime::parse_from_rfc3339(ts).ok()?;
+    Some(dt.timestamp_millis())
+}
+
+/// Promote per-record signals into `TurnFacts`. Shared across adapters that use
+/// the Claude-style JSON structure (`message.usage`, `gitBranch`, etc.).
+/// Sum across the turn's records; LAST `stop_reason` wins.
+pub(crate) fn merge_facts(facts: &mut TurnFacts, v: &serde_json::Value) {
+    let str_of = |x: Option<&serde_json::Value>| {
+        x.and_then(|t| t.as_str()).filter(|t| !t.is_empty()).map(str::to_string)
+    };
+    if facts.git_branch.is_none() {
+        facts.git_branch = str_of(v.get("gitBranch"));
+    }
+    if facts.effort.is_none() {
+        facts.effort = str_of(v.get("effort"));
+    }
+    if facts.skill.is_none() {
+        facts.skill = str_of(v.get("attributionSkill"));
+    }
+    if facts.plugin.is_none() {
+        facts.plugin = str_of(v.get("attributionPlugin"));
+    }
+    if facts.is_sidechain.is_none() {
+        facts.is_sidechain = v.get("isSidechain").and_then(|b| b.as_bool());
+    }
+    let Some(m) = v.get("message") else { return };
+    if facts.stop_reason.is_none() {
+        facts.stop_reason = str_of(m.get("stop_reason"));
+    }
+    let Some(u) = m.get("usage") else { return };
+    if facts.service_tier.is_none() {
+        facts.service_tier = str_of(u.get("service_tier"));
+    }
+    let add = |slot: &mut Option<i64>, n: Option<i64>| {
+        if let Some(n) = n {
+            *slot = Some(slot.unwrap_or(0) + n);
+        }
+    };
+    add(&mut facts.tokens_in, u.get("input_tokens").and_then(|x| x.as_i64()));
+    add(&mut facts.tokens_out, u.get("output_tokens").and_then(|x| x.as_i64()));
+    add(&mut facts.cache_read, u.get("cache_read_input_tokens").and_then(|x| x.as_i64()));
+    add(&mut facts.cache_write, u.get("cache_creation_input_tokens").and_then(|x| x.as_i64()));
+}
+
+/// Strip bulky prose/content from a record, keep metadata verbatim.
+/// `drop_keys` are top-level keys to exclude (e.g. `["message"]`).
+/// Small high-signal sub-keys of `message` (model, stop_reason, usage) are kept.
+pub(crate) fn turn_attrs(v: &serde_json::Value, drop_keys: &[&str]) -> serde_json::Value {
+    let mut out = serde_json::Map::new();
+    if let Some(obj) = v.as_object() {
+        for (k, val) in obj {
+            if drop_keys.contains(&k.as_str()) {
+                continue;
+            }
+            out.insert(k.clone(), val.clone());
+        }
+    }
+    if let Some(m) = v.get("message").and_then(|m| m.as_object()) {
+        let mut mm = serde_json::Map::new();
+        for k in ["id", "model", "stop_reason", "stop_sequence", "usage", "container"] {
+            if let Some(val) = m.get(k) {
+                mm.insert(k.to_string(), val.clone());
+            }
+        }
+        if !mm.is_empty() {
+            out.insert("message".into(), serde_json::Value::Object(mm));
+        }
+    }
+    serde_json::Value::Object(out)
+}
 
 /// One user-prompt -> assistant-response turn parsed from a transcript.
 #[derive(Debug, Clone, PartialEq)]
@@ -235,12 +386,41 @@ fn opencode_db_path() -> PathBuf {
     crate::paths::home().join(".local/share/opencode/opencode.db")
 }
 
+fn cursor_transcript_root() -> PathBuf {
+    crate::paths::home().join(".cursor/projects")
+}
+
+fn vscode_user_root(variant: &str) -> Option<PathBuf> {
+    // variant = "Code" | "Code - Insiders" | "VSCodium" | "Code - OSS"
+    #[cfg(target_os = "macos")]
+    {
+        Some(crate::paths::home().join(format!("Library/Application Support/{variant}/User")))
+    }
+    #[cfg(target_os = "linux")]
+    {
+        Some(crate::paths::home().join(format!(".config/{variant}/User")))
+    }
+    #[cfg(target_os = "windows")]
+    {
+        dirs::data_dir().map(|d| d.join(format!("{variant}/User")))
+    }
+}
+
+fn copilot_home() -> PathBuf {
+    std::env::var("COPILOT_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| crate::paths::home().join(".copilot"))
+}
+
 /// All configured transcript adapters.
 fn adapters() -> Vec<Box<dyn TranscriptAdapter>> {
     vec![
         Box::new(claude::ClaudeAdapter::new(claude_root())),
         Box::new(zed::ZedAdapter::new(zed_db_path())),
         Box::new(opencode::OpenCodeAdapter::new(opencode_db_path())),
+        Box::new(cursor::CursorAdapter::new(cursor_transcript_root())),
+        Box::new(vscode::VscodeAdapter::new(vscode_user_root("Code").unwrap_or_else(claude_root))),
+        Box::new(copilot_cli::CopilotCliAdapter::new(copilot_home())),
     ]
 }
 
@@ -251,6 +431,11 @@ fn adapter_for_source(source: &str) -> Option<Box<dyn TranscriptAdapter>> {
         "claude_code" => Some(Box::new(claude::ClaudeAdapter::new(claude_root()))),
         "zed" => Some(Box::new(zed::ZedAdapter::new(zed_db_path()))),
         "opencode" => Some(Box::new(opencode::OpenCodeAdapter::new(opencode_db_path()))),
+        "cursor" => Some(Box::new(cursor::CursorAdapter::new(cursor_transcript_root()))),
+        "vscode" => Some(Box::new(vscode::VscodeAdapter::new(
+            vscode_user_root("Code").unwrap_or_else(claude_root),
+        ))),
+        "copilot_cli" => Some(Box::new(copilot_cli::CopilotCliAdapter::new(copilot_home()))),
         _ => None,
     }
 }
@@ -879,5 +1064,26 @@ mod tests {
             .await
             .ok();
         std::fs::remove_dir_all(&root_dir).ok();
+    }
+
+    #[test]
+    fn adapter_for_source_dispatches_all_new_sources() {
+        assert!(adapter_for_source("cursor").is_some(), "cursor");
+        assert!(adapter_for_source("vscode").is_some(), "vscode");
+        assert!(adapter_for_source("copilot_cli").is_some(), "copilot_cli");
+        assert!(adapter_for_source("claude_code").is_some(), "claude_code");
+        assert!(adapter_for_source("zed").is_some(), "zed");
+        assert!(adapter_for_source("opencode").is_some(), "opencode");
+        assert!(adapter_for_source("unknown_source").is_none(), "unknown returns None");
+    }
+
+    #[test]
+    fn backfill_all_includes_new_adapters() {
+        let ads = adapters();
+        let sources: Vec<&str> = ads.iter().map(|a| a.source()).collect();
+        assert!(sources.contains(&"cursor"), "cursor in adapters(): {sources:?}");
+        assert!(sources.contains(&"vscode"), "vscode in adapters(): {sources:?}");
+        assert!(sources.contains(&"copilot_cli"), "copilot_cli in adapters(): {sources:?}");
+        assert_eq!(ads.len(), 6, "all 6 adapters registered");
     }
 }
