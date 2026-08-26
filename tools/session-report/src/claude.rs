@@ -249,6 +249,7 @@ pub fn parse_session(file: &Path) -> Option<(Session, usize)> {
             git_commits,
             git_pushes,
             prompt_ms,
+            file: None,
         },
         skipped,
     ))
@@ -333,6 +334,7 @@ pub fn collect(root: &Path) -> (Vec<Session>, usize) {
                 continue;
             }
             let Some((mut session, sk)) = parse_session(&p) else { continue };
+            session.file = Some(p.clone());
             skipped += sk;
             // Sub-agents live in `<session-id>/` beside the session file.
             let sub_root = slug.path().join(&session.id);

@@ -187,9 +187,7 @@ pub fn parse_session(file: &Path) -> Option<(Session, usize)> {
                 }
                 // `invocationMessage` truncates the command for display; the
                 // terminal payload keeps it whole, so read git actions there.
-                if let Some(cmd) =
-                    part["toolSpecificData"]["commandLine"]["original"].as_str()
-                {
+                if let Some(cmd) = part["toolSpecificData"]["commandLine"]["original"].as_str() {
                     let (c, u) = crate::signals::git_actions(cmd);
                     git_commits += c;
                     git_pushes += u;
@@ -234,6 +232,7 @@ pub fn parse_session(file: &Path) -> Option<(Session, usize)> {
             git_commits,
             git_pushes,
             prompt_ms,
+            file: None,
         },
         0,
     ))
@@ -302,6 +301,7 @@ pub fn collect(root: &Path) -> (Vec<Session>, usize) {
                 skipped += outcome.skipped_lines;
                 from_events.insert(id);
                 outcome.session.source = Some("events");
+                outcome.session.file = Some(p.clone());
                 sessions.push(outcome.session);
             }
         }
@@ -319,8 +319,9 @@ pub fn collect(root: &Path) -> (Vec<Session>, usize) {
             if from_events.contains(&id) {
                 continue;
             }
-            if let Some((s, sk)) = parse_session(&p) {
+            if let Some((mut s, sk)) = parse_session(&p) {
                 skipped += sk;
+                s.file = Some(p.clone());
                 sessions.push(s);
             }
         }
