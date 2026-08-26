@@ -5219,7 +5219,11 @@ async fn clear_test_session(s: &PgStore, sid: &str) {
 /// half-built fixture to the wrong folder before A finishes building it.
 ///
 /// Any new test that calls a global repair belongs here too. Gating only the
-/// transcript pair left the two `repair_orphaned_sessions` tests racing.
+/// transcript pair left the two `repair_orphaned_sessions` tests racing, and
+/// leaving `heal_duplicate_name_projects` ungated left its two tests racing
+/// against every other test's setup — a project is a folderless duplicate for
+/// the instant between being created and having its folder attached, which is
+/// exactly the state the sweep is entitled to prune.
 ///
 /// Blocking on purpose — see [`crate::tasks::test_support::TestGate`] for why
 /// an async mutex loses wakers across per-test runtimes.
@@ -7176,6 +7180,10 @@ async fn get_or_create_adopts_folder_bearing_project_no_duplicate() {
 /// (here a session) are reassigned, never orphaned; a re-run is a no-op.
 #[tokio::test]
 async fn heal_duplicate_name_projects_prunes_empty_dupe_idempotently() {
+    // heal_duplicate_name_projects is a GLOBAL sweep — it prunes every
+    // folderless duplicate in the table, not just this test's. Ungated, a
+    // concurrent test's sweep runs inside this one's setup window.
+    let _gate = REPAIR_SWEEP_GATE.enter();
     let Ok(s) = PgStore::connect_test().await else {
         return;
     };
@@ -7259,6 +7267,13 @@ async fn heal_duplicate_name_projects_prunes_empty_dupe_idempotently() {
 /// path, not name) — and must NOT be merged.
 #[tokio::test]
 async fn heal_leaves_two_folder_bearing_same_name_projects() {
+    // Gated for the same reason as the sweep tests above, and this one is the
+    // proof: it failed once in CI with "second folder-bearing project must
+    // survive". The window is between creating the second project and attaching
+    // its folder — at that instant the project IS a folderless duplicate, so
+    // another test's global sweep legitimately prunes it, and the assert then
+    // fails describing a bug that does not exist.
+    let _gate = REPAIR_SWEEP_GATE.enter();
     let Ok(s) = PgStore::connect_test().await else {
         return;
     };
