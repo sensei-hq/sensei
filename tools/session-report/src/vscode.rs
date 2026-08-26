@@ -34,7 +34,7 @@ use std::path::{Path, PathBuf};
 /// Path segments in `k` are strings OR integers (`["requests", 0, "response"]`);
 /// on this sample 409 of them are integers, so filtering to strings corrupts
 /// nearly every path.
-fn replay(text: &str) -> serde_json::Value {
+pub(crate) fn replay(text: &str) -> serde_json::Value {
     let mut root = serde_json::json!(null);
     for line in text.lines() {
         let line = line.trim();
