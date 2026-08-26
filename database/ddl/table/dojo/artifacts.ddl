@@ -4,7 +4,13 @@ create sequence if not exists dojo.artifacts_seq;
 
 create table if not exists dojo.artifacts (
   id             uuid                 primary key default gen_random_uuid()
-, seq            bigint               not null default nextval('dojo.artifacts_seq')
+-- `::regclass` is not decoration. Postgres NORMALISES a sequence default to
+-- nextval('...'::regclass) in the catalog, so a design written without the cast
+-- never matches what the database reports: `dbd diff` reports a difference
+-- forever and `reconcile` re-applies the same ALTER on every run without
+-- converging. That also makes `dbd diff --exit-code` unusable as a CI gate,
+-- which is what surfaced it.
+, seq            bigint               not null default nextval('dojo.artifacts_seq'::regclass)
 , tenant_id      uuid                 not null references dojo.tenants(id)
 , engagement_id  uuid                 references dojo.engagements(id)
 , kind           dojo.artifact_kind   not null
