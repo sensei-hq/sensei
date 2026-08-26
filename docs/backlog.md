@@ -15,30 +15,44 @@ Work is tracked as **GitHub issues** in [`sensei-hq/sensei`](https://github.com/
 
 ---
 
-## Flaky: `memory_promotion_excludes_other_projects` under parallel test runs
+## Parallel-test hazard: asserting on a GLOBAL sweep's result
 
-**Seen 2026-08-25**, once in a full `make test` (2677 tests). Passes 3/3 when run
-alone; the next full run was green.
+**Resolved 2026-08-25/26.** Recorded because it recurred three times in one day
+and the shape is easy to reintroduce.
 
-    assertion `left == right` failed:
-      A's denominator = 2 patterns + 1 correction = 3 (B's excluded, not 8)
-      left: Some(2)  right: Some(3)
+Several store methods are table-wide BY DESIGN — that is the behaviour under
+test, so they cannot be scoped per-test:
 
-So one of project A's own fixture rows did not count — 2 patterns and no
-correction, or one pattern short. Ruled out: `purge_corrections` is
-signature-scoped, not a global sweep, and every fixture is uuid-namespaced, so it
-is not the shared-global-repair pattern that made
-`heal_duplicate_name_projects` flaky (fixed the same day by taking
-REPAIR_SWEEP_GATE).
+* `delete_corrections_not_in(keep)` — deletes every signature outside `keep`
+* `enrich_assistant_events(n)` — takes up to n un-enriched rows from anywhere
+* `heal_duplicate_name_projects()` — prunes every folderless duplicate
 
-Remaining suspects, untested: an eligibility threshold read from shared config
-that a concurrent test mutates, or a time-window boundary in `compute`'s
-denominator query.
+A test that seeds a fixture and then asserts on one of these is asserting on
+state its siblings share. Three instances, all found by full-suite runs and all
+green in isolation:
 
-Not investigated further — it surfaced during unrelated relay work and chasing it
-would have derailed that. Worth a dedicated pass: run the metrics tests in a loop
-with `--test-threads` varied to reproduce, then gate or isolate whatever shared
-state it turns out to touch.
+1. `heal_leaves_two_folder_bearing_same_name_projects` — a sibling's sweep pruned
+   its second project during the window between creating it and attaching its
+   folder, when the project genuinely IS a folderless duplicate. Fixed by taking
+   `REPAIR_SWEEP_GATE`, which its own docs already required.
+2. `memory_promotion_*` (three tests in metrics/knowledge.rs) — a sibling's
+   `delete_corrections_not_in` deleted their seeded corrections, dropping the
+   denominator from 3 to 2. Fixed by taking `CORRECTIONS_TABLE_LOCK`, whose docs
+   describe this exact failure for `metrics_pipeline_end_to_end`. Mechanism
+   proven directly: insert a correction, run the prune with a different keep-list,
+   row gone.
+3. `enrich_assistant_events_derives_attrs_from_own_payload` — asserted the second
+   sweep returned 0, which only holds if no sibling inserts an un-enriched event.
+   Fixed by asserting over ITS OWN session's rows (enriched_at unchanged across a
+   re-run) instead of the sweep's count — no serialisation needed.
+
+**The rule:** either hold the relevant gate for the whole span between seeding
+and asserting, or scope the assertion to rows the test owns. Prefer scoping —
+it costs no serialisation and tests the real property. A `>=` bound also works
+where the exact count is not the point.
+
+Audited every remaining call site of the table-wide methods; the rest are already
+scoped (by `folder_path`, `persona_id`, `identity`) or use `>=`.
 
 
 ## dbd: `policies` ignores `--scope`
