@@ -36,7 +36,7 @@ fn n(v: i64) -> String {
     let s = v.abs().to_string();
     let mut out = String::new();
     for (i, c) in s.chars().enumerate() {
-        if i > 0 && (s.len() - i) % 3 == 0 {
+        if i > 0 && (s.len() - i).is_multiple_of(3) {
             out.push(',');
         }
         out.push(c);
@@ -44,16 +44,17 @@ fn n(v: i64) -> String {
     if v < 0 { format!("-{out}") } else { out }
 }
 
-pub fn report(label: &str, sessions: &[Session], a: &Analysis) -> String {
+pub fn report(label: &str, tool: Option<crate::Tool>, sessions: &[Session], a: &Analysis) -> String {
     let mut o = String::new();
 
     let _ = writeln!(o, "# Working session retrospective — {label}\n");
     let _ = writeln!(
         o,
-        "Drawn from {} GitHub Copilot CLI session{} between {} and {}, covering {} \
-         event{}. Everything below comes from the transcripts themselves; nothing is \
-         estimated or inferred from outside them.\n",
+        "Drawn from {} {} session{} between {} and {}, covering {} event{}. Everything \
+         below comes from the transcripts themselves; nothing is estimated or inferred \
+         from outside them.\n",
         a.sessions,
+        tool.map(crate::Tool::label).unwrap_or("coding assistant"),
         if a.sessions == 1 { "" } else { "s" },
         day(a.first_ms),
         day(a.last_ms),
@@ -63,11 +64,12 @@ pub fn report(label: &str, sessions: &[Session], a: &Analysis) -> String {
 
     coverage(&mut o, a);
     at_a_glance(&mut o, a);
+    cost(&mut o, a);
     working_well(&mut o, a);
     friction(&mut o, a, sessions);
     try_next(&mut o, a);
     per_session(&mut o, sessions);
-    method(&mut o, a);
+    method(&mut o, tool, a);
     o
 }
 
@@ -116,6 +118,9 @@ fn at_a_glance(o: &mut String, a: &Analysis) {
         "| Time actively working | {} (idle gaps over 10 min excluded) |",
         dur(a.active_ms)
     );
+    if a.projects > 0 {
+        let _ = writeln!(o, "| Projects worked in | {} |", a.projects);
+    }
     let _ = writeln!(o, "| Prompts written | {} |", a.prompts);
     if let Some(t) = a.turns_per_prompt() {
         let _ = writeln!(o, "| Assistant turns | {} ({t:.1} per prompt) |", a.turns);
@@ -136,6 +141,79 @@ fn at_a_glance(o: &mut String, a: &Analysis) {
     if let Some(p) = percentile(&a.turn_ms_sorted, 50.0) {
         let p90 = percentile(&a.turn_ms_sorted, 90.0).unwrap_or(p);
         let _ = writeln!(o, "| Turn length | {} typical, {} at the 90th percentile |", dur(p), dur(p90));
+    }
+    let _ = writeln!(o);
+}
+
+/// What the sessions drew against the Copilot plan, and which models did it.
+///
+/// A "premium request" is GitHub Copilot's billing unit: plans carry a monthly
+/// allowance, and only premium models draw from it — most models report zero.
+/// So the interesting number is not how many requests were made but how few of
+/// them were chargeable.
+fn cost(o: &mut String, a: &Analysis) {
+    if a.by_model.is_empty() {
+        return;
+    }
+    let _ = writeln!(o, "## Cost and model mix\n");
+
+    let total_req: i64 = a.by_model.values().map(|m| m.requests).sum();
+    let _ = writeln!(
+        o,
+        "{} model request(s) across {} model(s), of which **{} were premium** — GitHub Copilot's billable unit, drawn from the monthly plan allowance. Everything else was included at no premium cost.\n",
+        n(total_req),
+        a.by_model.len(),
+        n(a.premium_requests)
+    );
+
+    let _ = writeln!(o, "| Model | Requests | Premium | Share of premium | Output tokens |");
+    let _ = writeln!(o, "|---|---:|---:|---:|---:|");
+    let mut rows: Vec<_> = a.by_model.iter().collect();
+    rows.sort_by_key(|(_, m)| std::cmp::Reverse(m.requests));
+    for (name, m) in rows {
+        let share = if a.premium_requests > 0 {
+            format!("{:.0}%", 100.0 * m.premium as f64 / a.premium_requests as f64)
+        } else {
+            "—".into()
+        };
+        let _ = writeln!(
+            o,
+            "| `{}` | {} | {} | {} | {} |",
+            name,
+            n(m.requests),
+            n(m.premium),
+            share,
+            n(m.output_tokens)
+        );
+    }
+
+    if let Some(c) = a.cache_reuse_pct() {
+        let _ = writeln!(
+            o,
+            "\nToken flow: {} input, {} output, {} read back from cache ({c:.0}% reuse), {} reasoning.",
+            n(a.input_tokens),
+            n(a.output_tokens),
+            n(a.cache_read_tokens),
+            n(a.reasoning_tokens)
+        );
+    }
+
+    // Name the premium concentration when one model dominates — that is the
+    // lever, and it is usually invisible.
+    if let Some((name, m)) =
+        a.by_model.iter().max_by_key(|(_, m)| m.premium)
+        && m.premium > 0
+        && a.premium_requests > 0
+    {
+        let share = 100.0 * m.premium as f64 / a.premium_requests as f64;
+        if share >= 60.0 {
+            let _ = writeln!(
+                o,
+                "\n**`{}` accounts for {share:.0}% of premium usage.** It is {:.0}% of requests overall, so the plan cost is concentrated in a minority of the work. Worth knowing which tasks genuinely need it — the other models here cost nothing against the allowance.",
+                name,
+                100.0 * m.requests as f64 / total_req.max(1) as f64
+            );
+        }
     }
     let _ = writeln!(o);
 }
@@ -333,6 +411,14 @@ fn try_next(o: &mut String, a: &Analysis) {
 }
 
 fn per_session(o: &mut String, sessions: &[Session]) {
+    let delegated: usize = sessions.iter().map(|s| s.delegated).sum();
+    if delegated > 0 {
+        let _ = writeln!(
+            o,
+            "## Delegated work\n\n{delegated} sub-agent transcript(s) were folded into the              sessions that spawned them. A delegated agent runs inside its parent session but              writes its own file, so the parent records only the hand-off — counting sessions              alone would miss most of the activity here.\n"
+        );
+    }
+
     let _ = writeln!(o, "## Session by session\n");
     let _ = writeln!(o, "| Session | Date | Active | Prompts | Tools | Failed | +/− lines |");
     let _ = writeln!(o, "|---|---|---:|---:|---:|---:|---|");
@@ -349,7 +435,7 @@ fn per_session(o: &mut String, sessions: &[Session]) {
             if s.unclosed { " ⚠" } else { "" },
             day(s.first_ms),
             dur(s.active_ms()),
-            s.prompts.len(),
+            s.prompts,
             s.tools.len(),
             failed,
             lines
@@ -358,19 +444,26 @@ fn per_session(o: &mut String, sessions: &[Session]) {
     let _ = writeln!(o, "\n`⚠` = ended without a shutdown record, so its totals are missing.\n");
 }
 
-fn method(o: &mut String, a: &Analysis) {
+fn method(o: &mut String, tool: Option<crate::Tool>, a: &Analysis) {
     let _ = writeln!(o, "## How to check this\n");
-    let _ = writeln!(
-        o,
-        "Every figure comes from `events.jsonl` in the session folders. The signals used:\n"
-    );
     let _ = writeln!(o, "| Reported as | Read from |");
     let _ = writeln!(o, "|---|---|");
-    let _ = writeln!(o, "| Prompts | `user.message` events |");
-    let _ = writeln!(o, "| Assistant turns, turn length | `assistant.turn_start` → `assistant.turn_end`, paired by turn id |");
-    let _ = writeln!(o, "| Tool calls, failures | `tool.execution_start` → `tool.execution_complete`, paired by tool-call id; failure is `success: false` |");
-    let _ = writeln!(o, "| Code changed, tokens, premium requests | `session.shutdown` totals |");
-    let _ = writeln!(o, "| Permission prompts | `session.permissions_changed` events |");
+    match tool {
+        Some(crate::Tool::ClaudeCode) => {
+            let _ = writeln!(o, "| Prompts | `user` records — excluding tool results, `isMeta`, and text Claude injects on your behalf (`<system-reminder>`, `<command-name>`, …) |");
+            let _ = writeln!(o, "| Turns, turn length | a prompt to the assistant's last message before the next prompt |");
+            let _ = writeln!(o, "| Tool calls, failures | `tool_use` blocks, closed by the matching `tool_result`; failure is `is_error: true` |");
+            let _ = writeln!(o, "| Tokens | `message.usage` on each assistant record, summed |");
+            let _ = writeln!(o, "| Delegated work | sub-agent transcripts under `<session-id>/`, folded into their parent session |");
+        }
+        _ => {
+            let _ = writeln!(o, "| Prompts | `user.message` events |");
+            let _ = writeln!(o, "| Assistant turns, turn length | `assistant.turn_start` → `assistant.turn_end`, paired by turn id |");
+            let _ = writeln!(o, "| Tool calls, failures | `tool.execution_start` → `tool.execution_complete`, paired by tool-call id; failure is `success: false` |");
+            let _ = writeln!(o, "| Code changed, tokens, premium requests | the LAST `session.shutdown` — its totals are cumulative for the session's whole life |");
+            let _ = writeln!(o, "| Permission prompts | `session.permissions_changed` events |");
+        }
+    }
     let _ = writeln!(
         o,
         "\nPercentiles are nearest-rank over observed values, so every figure shown was \
