@@ -373,10 +373,22 @@ fn friction(o: &mut String, a: &Analysis, sessions: &[Session]) {
                 run.event_id.get(..8).unwrap_or(&run.event_id)
             );
         }
+        // The lead-in carries THIS person's numbers. A fixed sentence read
+        // identically in four reports, which is the tell that a section is
+        // describing a category rather than reporting a measurement.
+        let longest = a.failure_runs.iter().map(|r| r.length).max().unwrap_or(0);
+        let shown = a.failure_runs.len().min(3);
         items.push(format!(
-            "**The same tool failed several times in a row.** Retrying rarely resolves a \
-             wrong path or a missing binary, so these runs are usually the agent stuck \
-             rather than the work being hard:{lines}"
+            "**{} run{} where the same call failed back-to-back**, the longest {longest} deep. \
+             Retrying rarely resolves a wrong path or a missing binary, so these are usually \
+             the agent stuck rather than the work being hard{}:{lines}",
+            a.failure_runs.len(),
+            if a.failure_runs.len() == 1 { "" } else { "s" },
+            if a.failure_runs.len() > shown {
+                format!(" — the {shown} longest")
+            } else {
+                String::new()
+            }
         ));
     }
 
@@ -439,15 +451,10 @@ fn friction(o: &mut String, a: &Analysis, sessions: &[Session]) {
 fn try_next(o: &mut String, a: &Analysis) {
     let mut items: Vec<String> = Vec::new();
 
-    if !a.failure_runs.is_empty() {
-        items.push(
-            "**When a tool fails twice on the same thing, step in.** The transcripts show \
-             runs of the same call failing repeatedly. Retrying rarely resolves a wrong \
-             path or a missing binary — a one-line correction from you is faster than \
-             several more attempts."
-                .to_string(),
-        );
-    }
+    // Deliberately NOT restating the failure runs here. "Where it snagged"
+    // already lists them WITH the tool name, the session and the timestamp;
+    // repeating the point in general terms adds a line and no information, and
+    // it read as filler in every report it appeared in.
 
     if let Some(share) = a.api_share_pct()
         && share < 40.0
