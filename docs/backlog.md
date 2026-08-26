@@ -15,6 +15,26 @@ Work is tracked as **GitHub issues** in [`sensei-hq/sensei`](https://github.com/
 
 ---
 
+## dbd: `policies` ignores `--scope`
+
+**Found 2026-08-25.** dbd 0.10.12. `dbd policies --scope default` applies every
+file under `policies/`, including `policies/dojo/*.sql`, on a plane whose scope
+EXCLUDES `dojo`. Each one then fails with `schema "dojo" does not exist` and the
+run reports `Policies: 0 applied, 4 failed`.
+
+Not fatal — the daemon's install path calls dbd's `apply` and `import_data`
+directly and never runs the policies phase — but a manual `dbd deploy --scope
+default` printed four FAILED lines that were an expected condition, which is how
+real failures stop being read.
+
+**Worked around** by wrapping each policy file's statements in a `do $$` block
+that returns early when `to_regclass('dojo.<table>')` is null. Verified both
+directions: the dōjō plane applies 4/4 with every policy, grant and RLS flag
+present; the daemon plane reports 4 applied, 0 failed and creates nothing.
+
+**Upstream:** `policies` should honour `--scope` the way `apply` and `import` do.
+
+
 ## Seeding: two mechanisms, one broken — migrated to staging + import_ (2026-08-25)
 
 Found by asking why some procedures were named `seed_*` when every other seed

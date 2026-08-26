@@ -115,6 +115,8 @@ scopes:
 import:
   staging:
     - staging
+  after:
+    - import/after/realtime_publication.sql
   options:
     truncate: true
     null_value: ""
