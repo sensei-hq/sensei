@@ -58,6 +58,10 @@ pub struct Analysis {
     pub tool_calls: usize,
     pub tool_failures: usize,
     pub tool_unreported: usize,
+    /// Calls whose outcome the transcript actually recorded. Zero means the
+    /// format does not report outcomes at all — VS Code does not — and a failure
+    /// RATE would then be 0/N, reading as flawless rather than as unknown.
+    pub tool_outcomes_known: usize,
     pub turn_ms_sorted: Vec<i64>,
     pub tools: Vec<ToolStat>,
     pub failure_runs: Vec<FailureRun>,
@@ -85,11 +89,29 @@ pub struct Analysis {
     pub delegated: usize,
     /// Distinct working directories seen across the sessions.
     pub projects: usize,
+    /// Assistant messages by model, main thread and delegated separately.
+    pub models: HashMap<String, usize>,
+    pub delegated_models: HashMap<String, usize>,
 }
 
 impl Analysis {
+    /// `None` when no call in the sample reported an outcome — see
+    /// `tool_outcomes_known`.
     pub fn tool_failure_pct(&self) -> Option<f64> {
-        pct(self.tool_failures, self.tool_calls)
+        (self.tool_outcomes_known > 0)
+            .then(|| 100.0 * self.tool_failures as f64 / self.tool_outcomes_known as f64)
+    }
+
+    /// Whether elapsed time is measurable from this transcript.
+    ///
+    /// VS Code stamps a request and its response identically, so there is no
+    /// duration to sum and "active time" collapses to the gaps between requests.
+    /// Any rate derived from it would be an artefact of the format.
+    /// Uses the MEDIAN, not "any": a handful of timed turns among thousands of
+    /// zero-length ones does not make elapsed time measurable, and `any` let a
+    /// rate through that was an artefact of the format.
+    pub fn timing_is_measurable(&self) -> bool {
+        percentile(&self.turn_ms_sorted, 50.0).unwrap_or(0) > 0
     }
     /// Share of input tokens served from cache. High is good: it means context
     /// is being reused rather than resent.
@@ -125,6 +147,7 @@ pub fn analyse(sessions: &[Session], skipped_lines: usize) -> Analysis {
         tool_calls: 0,
         tool_failures: 0,
         tool_unreported: 0,
+        tool_outcomes_known: 0,
         turn_ms_sorted: Vec::new(),
         tools: Vec::new(),
         failure_runs: Vec::new(),
@@ -145,6 +168,8 @@ pub fn analyse(sessions: &[Session], skipped_lines: usize) -> Analysis {
         sessions_with_totals: 0,
         delegated: 0,
         projects: 0,
+        models: HashMap::new(),
+        delegated_models: HashMap::new(),
     };
 
     let mut by_tool: HashMap<String, (usize, usize)> = HashMap::new();
@@ -157,6 +182,12 @@ pub fn analyse(sessions: &[Session], skipped_lines: usize) -> Analysis {
         a.turns += s.turns.len();
         a.permission_events += s.permission_events;
         a.delegated += s.delegated;
+        for (m, c) in &s.models {
+            *a.models.entry(m.clone()).or_default() += c;
+        }
+        for (m, c) in &s.delegated_models {
+            *a.delegated_models.entry(m.clone()).or_default() += c;
+        }
         if let Some(c) = &s.cwd {
             cwds.insert(c.to_lowercase());
         }
@@ -192,33 +223,29 @@ pub fn analyse(sessions: &[Session], skipped_lines: usize) -> Analysis {
             match c.success {
                 Some(false) => {
                     a.tool_failures += 1;
+                    a.tool_outcomes_known += 1;
                     e.1 += 1;
                     match &mut run {
                         Some((name, len, _, _)) if *name == c.name => *len += 1,
-                        _ => {
-                            run = Some((
-                                c.name.clone(),
-                                1,
-                                c.started_ms,
-                                c.event_id.clone(),
-                            ))
-                        }
+                        _ => run = Some((c.name.clone(), 1, c.started_ms, c.event_id.clone())),
                     }
                 }
                 None => {
                     a.tool_unreported += 1;
                     run = None;
                 }
-                Some(true) => run = None,
+                Some(true) => {
+                    a.tool_outcomes_known += 1;
+                    run = None;
+                }
             }
             // A run of 3+ is worth surfacing; shorter is ordinary retrying.
             if let Some((name, len, at, ev)) = &run
                 && *len >= 3
             {
                 // Replace the in-progress entry so only the longest run is kept.
-                a.failure_runs.retain(|f| {
-                    !(f.session == s.id && f.tool == *name && f.at_ms == *at)
-                });
+                a.failure_runs
+                    .retain(|f| !(f.session == s.id && f.tool == *name && f.at_ms == *at));
                 a.failure_runs.push(FailureRun {
                     session: s.id.clone(),
                     tool: name.clone(),

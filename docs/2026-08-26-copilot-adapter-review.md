@@ -82,6 +82,24 @@ Also: `workspace.json` IS present here, on all 10. My earlier note in
 machine with VS Code but no Copilot chat data. Where chat exists, so does the
 mapping. Corrected there.
 
+### The journal format was wrong in three ways
+
+Confirmed by parsing rajkumar's journals: the adapter reconstructed **nothing**
+from any of them. Three separate mismatches, all now fixed and covered by a test
+that runs against real journals when `SENSEI_VSCODE_SAMPLE` is set:
+
+| Adapter read | Actually written |
+|---|---|
+| `path` (a dotted string) + `value` | `k` (an ARRAY) + `v` |
+| string path segments only | segments are strings OR integers — 409 of 516 in one journal are integers, so filtering to strings corrupts nearly every path |
+| `kind:2` as a replace | `kind:2` APPENDS: a reply is streamed in pieces, so `requests[N].response` grows across records. Replacing keeps only the last fragment |
+
+The turn extraction was wrong too. It looked for a `role` field and
+`responseParts`, neither of which exists: each entry of `requests[]` is ONE
+exchange, with the prompt in `message.text` and the reply in untagged `response[]`
+parts. Tool calls come from `toolInvocationSerialized` parts, and `modelId`
+arrives namespaced (`copilot/claude-opus-4.6`).
+
 ### The configured root was ignored
 
 `VscodeAdapter` stored `root` and never read it (clippy: `field 'root' is never
@@ -136,3 +154,17 @@ No sample data to verify against — nobody in the sample uses Cursor.
    samples like every other adapter.
 3. **Get a Cursor sample** before trusting that adapter — it is the only one with
    no real data behind it.
+
+## What VS Code does not record
+
+Worth knowing before building metrics on it:
+
+* **No tool outcome.** `toolInvocationSerialized` says a tool ran, never whether
+  it worked. A failure RATE computed from it is 0/N — which reads as flawless
+  rather than as unknown, so the report shows `n/a`.
+* **No tokens** of any kind.
+* **`responseTimestamp` usually equals `timestamp`**, so turn latency is mostly
+  zero and elapsed time is not measurable. Any rate derived from it describes the
+  format, not the person — the report suppresses those too.
+
+So VS Code supports pace and model mix, and nothing about friction or cost.

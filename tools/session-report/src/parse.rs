@@ -101,7 +101,9 @@ pub fn parse_session(dir: &Path) -> Option<ParseOutcome> {
                     && let Some(key) = turn_order
                         .iter()
                         .rev()
-                        .find(|k| turns.get(*k).is_some_and(|x| x.id == tid && x.ended_ms.is_none()))
+                        .find(|k| {
+                            turns.get(*k).is_some_and(|x| x.id == tid && x.ended_ms.is_none())
+                        })
                         .cloned()
                     && let Some(turn) = turns.get_mut(&key)
                 {
@@ -191,8 +193,7 @@ pub fn parse_session(dir: &Path) -> Option<ParseOutcome> {
 
     let unclosed = std::fs::read_dir(dir)
         .map(|rd| {
-            rd.filter_map(Result::ok)
-                .any(|e| e.file_name().to_string_lossy().starts_with("inuse."))
+            rd.filter_map(Result::ok).any(|e| e.file_name().to_string_lossy().starts_with("inuse."))
         })
         .unwrap_or(false);
 
@@ -218,6 +219,7 @@ pub fn parse_session(dir: &Path) -> Option<ParseOutcome> {
                 activity_ms
             },
             delegated: 0,
+            delegated_models: HashMap::new(),
             unclosed,
         },
         skipped_lines: skipped,
