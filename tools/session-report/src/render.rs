@@ -188,66 +188,6 @@ fn at_a_glance(o: &mut String, a: &Analysis) {
     let _ = writeln!(o);
     languages(o, a);
     tool_mix(o, a);
-    unused_capabilities(o, a);
-}
-
-/// Whether any tool this person used matches one of these names.
-fn uses_any(a: &Analysis, needles: &[&str]) -> bool {
-    a.tools.iter().any(|t| needles.iter().any(|n| t.name.to_ascii_lowercase().contains(n)))
-}
-
-/// Capabilities the transcripts show were never used, where something in the
-/// same transcripts suggests they would have helped.
-///
-/// Absence alone is not a finding — most people never use most tools, and a
-/// list of everything untouched is noise. Each item here needs BOTH: the
-/// capability never appears, AND one of this person's own measurements crosses
-/// a threshold that the capability addresses. The measurement is quoted so the
-/// reader can disagree with it.
-fn unused_capabilities(o: &mut String, a: &Analysis) {
-    let mut items: Vec<String> = Vec::new();
-
-    // Sub-agents, when the hand-offs are large enough that a wrong turn is
-    // expensive. `delegated` counts folded sub-agent transcripts; the tool-name
-    // check covers ACPs that spawn agents through a named tool instead.
-    if a.delegated == 0
-        && !uses_any(a, &["agent", "subagent", "task"])
-        && let Some(tpp) = a.tools_per_prompt()
-        && tpp >= 40.0
-    {
-        items.push(format!(
-            "**No sub-agents, at {tpp:.0} tool calls per prompt.** A hand-off that long runs \
-             a long way before you see anything. Splitting the independent parts out means a \
-             wrong direction costs one branch instead of the whole run — and each branch \
-             keeps its own context, so the main thread stays readable."
-        ));
-    }
-
-    // An explicit plan/todo, when turns are long enough to lose the thread.
-    if !uses_any(a, &["todo", "plan", "workflow"])
-        && let Some(p90) = percentile(&a.turn_ms_sorted, 90.0)
-        && p90 >= 600_000
-    {
-        items.push(format!(
-            "**No plan or todo tool, with a 90th-percentile turn of {}.** At that length there \
-             is no visible checkpoint between your prompt and the result. A written plan turns \
-             one long opaque turn into something you can redirect part-way.",
-            dur(p90)
-        ));
-    }
-
-    if items.is_empty() {
-        return;
-    }
-    let _ = writeln!(o, "## Not in your toolkit yet\n");
-    let _ = writeln!(
-        o,
-        "Each of these is absent from every session AND paired with a number of yours that \
-         it addresses. Absence on its own is not a recommendation.\n"
-    );
-    for i in items {
-        let _ = writeln!(o, "- {i}\n");
-    }
 }
 
 /// What the person actually reaches for.
@@ -799,69 +739,32 @@ mod tests {
     use super::*;
     use crate::metrics::ToolStat;
 
-    fn base() -> Analysis {
-        crate::metrics::analyse(&[], 0)
-    }
-
-    fn section(a: &Analysis) -> String {
+    /// The tool mix is the one place the report says what someone actually
+    /// does all day, so it must not silently drop the long tail.
+    #[test]
+    fn the_tool_mix_accounts_for_everything_it_does_not_list() {
+        let mut a = crate::metrics::analyse(&[], 0);
+        a.tools = (0..14)
+            .map(|i| ToolStat { name: format!("t{i}"), calls: 100 - i, failures: 0 })
+            .collect();
         let mut o = String::new();
-        unused_capabilities(&mut o, a);
-        o
+        tool_mix(&mut o, &a);
+        assert!(o.contains("4 further tool(s)"), "the untabled tail is named: {o}");
     }
 
-    /// Absence alone must never produce a recommendation — otherwise every
-    /// report lists every tool the person happens not to use.
+    /// A transcript that records no outcome must show n/a, never 0.0%, which
+    /// would read as "this tool never fails".
     #[test]
-    fn absence_without_a_supporting_number_says_nothing() {
-        let mut a = base();
-        a.tools = vec![ToolStat { name: "Bash".into(), calls: 100, failures: 1 }];
-        a.prompts = 100;
-        a.tool_calls = 100; // 1 call per prompt — nothing to split
-        assert_eq!(section(&a), "", "no sub-agents is not a finding on its own");
-    }
-
-    /// Absence PLUS a number it addresses is a finding, and the number is
-    /// quoted so the reader can disagree with it.
-    #[test]
-    fn absence_plus_a_large_hand_off_is_a_finding() {
-        let mut a = base();
-        a.tools = vec![ToolStat { name: "Bash".into(), calls: 5000, failures: 1 }];
-        a.prompts = 100;
-        a.tool_calls = 5000; // 50 per prompt
-        let out = section(&a);
-        assert!(out.contains("No sub-agents"), "got: {out}");
-        assert!(out.contains("50 tool calls per prompt"), "must quote the measurement: {out}");
-    }
-
-    /// Someone who already delegates must not be told to start.
-    #[test]
-    fn an_existing_capability_is_not_suggested() {
-        let mut a = base();
-        a.tools = vec![ToolStat { name: "Agent".into(), calls: 40, failures: 0 }];
-        a.prompts = 100;
-        a.tool_calls = 5000;
-        assert!(!section(&a).contains("No sub-agents"));
-
-        // And via the folded sub-agent count, for ACPs with no named tool.
-        let mut b = base();
-        b.tools = vec![ToolStat { name: "Bash".into(), calls: 5000, failures: 0 }];
-        b.prompts = 100;
-        b.tool_calls = 5000;
-        b.delegated = 3;
-        assert!(!section(&b).contains("No sub-agents"));
-    }
-
-    /// A long opaque turn justifies suggesting a plan; a short one does not.
-    #[test]
-    fn a_plan_is_suggested_only_when_turns_are_long() {
-        let mut a = base();
-        a.tools = vec![ToolStat { name: "Bash".into(), calls: 10, failures: 0 }];
-        a.turn_ms_sorted = vec![1_000, 2_000, 3_000];
-        assert!(!section(&a).contains("plan or todo"), "short turns need no checkpoint");
-
-        a.turn_ms_sorted = vec![900_000, 900_000, 900_000];
-        let out = section(&a);
-        assert!(out.contains("plan or todo"), "got: {out}");
-        assert!(out.contains("15m"), "must quote the p90: {out}");
+    fn a_tool_with_no_recorded_outcome_shows_n_a() {
+        let mut a = crate::metrics::analyse(&[], 0);
+        a.tools = vec![
+            ToolStat { name: "known".into(), calls: 10, failures: 1 },
+            ToolStat { name: "silent".into(), calls: 0, failures: 0 },
+            ToolStat { name: "third".into(), calls: 5, failures: 0 },
+        ];
+        let mut o = String::new();
+        tool_mix(&mut o, &a);
+        assert!(o.contains("10.0%"), "a known rate is shown");
+        assert!(o.contains("n/a"), "an unrecorded one is absent, not zero");
     }
 }

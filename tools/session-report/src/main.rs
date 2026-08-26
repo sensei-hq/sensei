@@ -8,6 +8,7 @@
 //! Deliberately isolated from the daemon: no database, no network, no writes
 //! anywhere except the output file. These are other people's transcripts.
 
+mod advice;
 mod claude;
 mod compare;
 mod facets;
@@ -130,28 +131,41 @@ fn main() {
     }
 
     if let Some(endpoint) = &facets {
-        let dir = out
-            .as_deref()
-            .and_then(|p| p.parent())
-            .unwrap_or(Path::new("."))
-            .join("facets")
-            .join(&label);
-        run_facets(&sessions, endpoint, &facet_model, &dir);
+        run_facets(&sessions, endpoint, &facet_model, &facet_dir(out.as_deref(), &label));
     }
 
     let analysis = metrics::analyse(&sessions, skipped);
+
+    // Person-level synthesis, once, cached beside the facets. Derived here
+    // rather than in run_facets because it needs the finished Analysis.
+    if let Some(endpoint) = &facets {
+        let dir = facet_dir(out.as_deref(), &label);
+        let target = dir.join("_insights.json");
+        if !target.exists() {
+            let found = load_facets(&dir);
+            match advice::derive(&label, &found, &analysis, endpoint, &facet_model) {
+                Ok(ins) => {
+                    let _ = std::fs::write(
+                        &target,
+                        serde_json::to_string_pretty(&ins).unwrap_or_default(),
+                    );
+                    eprintln!("  insights: {} recommendation(s) kept", ins.recommendations.len());
+                }
+                // Reported, not swallowed: an empty recommendations section
+                // should be visibly empty, not silently absent.
+                Err(e) => eprintln!("  insights: none — {e}"),
+            }
+        }
+    }
+
+    let insights = load_insights(&facet_dir(out.as_deref(), &label));
     let mut doc = render::report(&label, tool, &sessions, &analysis);
     // Facets are read from disk rather than from the run above, so a report can
     // be regenerated without re-deriving them.
-    let facet_dir = out
-        .as_deref()
-        .and_then(|p| p.parent())
-        .unwrap_or(Path::new("."))
-        .join("facets")
-        .join(&label);
+    let facet_dir = facet_dir(out.as_deref(), &label);
     let found = load_facets(&facet_dir);
     if !found.is_empty() {
-        doc.push_str(&retro::report(&label, &found, &analysis));
+        doc.push_str(&retro::report(&label, &found, &analysis, insights.as_ref()));
     }
 
     match out {
@@ -169,6 +183,17 @@ fn main() {
         }
         None => print!("{doc}"),
     }
+}
+
+/// Where this person's derived records live, beside their report.
+fn facet_dir(out: Option<&Path>, label: &str) -> PathBuf {
+    out.and_then(|p| p.parent()).unwrap_or(Path::new(".")).join("facets").join(label)
+}
+
+/// The person-level synthesis, if it has been derived.
+fn load_insights(dir: &Path) -> Option<advice::Insights> {
+    let text = std::fs::read_to_string(dir.join("_insights.json")).ok()?;
+    serde_json::from_str(&text).ok()
 }
 
 /// Read the facet records already derived for this person.
