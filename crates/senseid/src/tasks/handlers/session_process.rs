@@ -47,6 +47,12 @@ const MAX_PROMPT_CHARS: usize = 16_000;
 
 /// The occurrence signals — stored as `{present: bool|null}`, aggregated as
 /// rates. `spec_depth` (a 0-5 magnitude) is handled separately.
+/// The stage vocabulary, matching `sensei.work_stage`. A value outside this set
+/// is discarded rather than coerced — a rollup that buckets an unrecognised
+/// stage into a default reports a guess as a measurement.
+pub(crate) const WORK_STAGES: [&str; 7] =
+    ["explore", "analyze", "plan", "build", "verify", "fix", "operate"];
+
 pub(crate) const OCCURRENCE_SIGNALS: [&str; 3] =
     ["spec_deviation", "refuted_findings", "incomplete_analysis_llm"];
 
@@ -67,6 +73,12 @@ assertion turn AND the retraction turn. present=false otherwise.\n\
 - incomplete_analysis_llm: {\"present\": <true|false>, \"evidence\": [{\"turn\": int, \"quote\": str}], \"note\": str}. \
 present=true if the assistant built/concluded before understanding — 'I misread', 'let me actually check', \
 're-read' retractions of its OWN understanding — quote the turn. present=false otherwise.\n\
+- stage: one of \"explore\"|\"analyze\"|\"plan\"|\"build\"|\"verify\"|\"fix\"|\"operate\", or null. \
+Which stage of the work this session was MOSTLY doing: explore=orienting in unfamiliar code, \
+analyze=diagnosing a specific problem, plan=designing before implementing, build=writing new \
+behaviour, verify=testing/reviewing existing behaviour, fix=repairing something known broken, \
+operate=deploying/releasing/infrastructure. Use null if the session genuinely spans several with \
+no dominant one — do NOT guess.\n\
 RULES: whenever you set a score OR present=true, you MUST cite at least one evidence item quoting a turn index \
 that EXISTS in the transcript. If you cannot quote a real turn, use score null / present=false. \
 No prose outside the JSON.";
@@ -76,6 +88,11 @@ No prose outside the JSON.";
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct SessionJudgment {
     pub judgments: serde_json::Value,
+    /// The stage the session was mostly doing, when the model committed to one
+    /// in the vocabulary. `None` covers both "declined to say" and "said
+    /// something not in the enum" — both mean the session is excluded from
+    /// stage rollups rather than defaulted into a bucket.
+    pub stage: Option<String>,
     pub evidence: Vec<(String, i32, String, Option<String>)>,
     /// True when at least one signal produced a real, grounded value (a depth
     /// score, or a present=true occurrence). A clean session (all present=false)
@@ -244,7 +261,20 @@ pub(crate) fn parse_and_ground(
         }
     }
 
-    Some(SessionJudgment { judgments: serde_json::Value::Object(judgments), evidence, scored_any })
+    // Only a value in the vocabulary survives. A model that answers "coding" or
+    // "Build " must not become a bucket nobody defined.
+    let stage = root
+        .get("stage")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().to_ascii_lowercase())
+        .filter(|s| WORK_STAGES.contains(&s.as_str()));
+
+    Some(SessionJudgment {
+        judgments: serde_json::Value::Object(judgments),
+        stage,
+        evidence,
+        scored_any,
+    })
 }
 
 /// The all-N/A result stored for a session with too little to judge (below
@@ -342,6 +372,12 @@ pub async fn analyze_session_process(ctx: &TaskContext, task: &Task) -> Result<u
             &result.evidence,
         )
         .await?;
+        // Only when the model committed to a stage in the vocabulary. A session
+        // it would not place stays absent from session_facets rather than
+        // carrying a default that a rollup would count.
+        if let Some(stage) = &result.stage {
+            pg.save_session_stage(&client_session_id, stage).await?;
+        }
         scored += 1;
         tracing::debug!(session = %client_session_id, scored_any = result.scored_any, evidence = result.evidence.len(), "session_process: scored");
     }
@@ -362,6 +398,60 @@ mod tests {
             assistant_text: asst.to_string(),
             started_at: None,
             ..Default::default()
+        }
+    }
+
+    fn judgment_of(json: &str) -> Option<SessionJudgment> {
+        let turns: std::collections::HashSet<i32> = [1, 2].into_iter().collect();
+        parse_and_ground(json, &turns)
+    }
+
+    /// A stage in the vocabulary is kept as-is.
+    #[test]
+    fn a_stage_in_the_vocabulary_is_kept() {
+        let j = judgment_of(r#"{"stage":"build","refuted_findings":{"present":false}}"#).unwrap();
+        assert_eq!(j.stage.as_deref(), Some("build"));
+    }
+
+    /// Case and surrounding space are the model's formatting, not a different
+    /// answer.
+    #[test]
+    fn a_stage_is_normalised_before_matching() {
+        let j =
+            judgment_of(r#"{"stage":"  Build ","refuted_findings":{"present":false}}"#).unwrap();
+        assert_eq!(j.stage.as_deref(), Some("build"));
+    }
+
+    /// A word outside the enum must be DROPPED, not coerced. Bucketing it would
+    /// put a value nobody defined into a rollup, and the DB would reject it
+    /// anyway — better to notice here than to fail on insert.
+    #[test]
+    fn a_stage_outside_the_vocabulary_is_dropped() {
+        let j = judgment_of(r#"{"stage":"coding","refuted_findings":{"present":false}}"#).unwrap();
+        assert_eq!(j.stage, None, "an unrecognised stage is not a stage");
+    }
+
+    /// The prompt tells the model to answer null when no stage dominates, and
+    /// that has to survive parsing as "no stage" rather than becoming one.
+    #[test]
+    fn a_declined_stage_stays_absent() {
+        let j = judgment_of(r#"{"stage":null,"refuted_findings":{"present":false}}"#).unwrap();
+        assert_eq!(j.stage, None);
+        let missing = judgment_of(r#"{"refuted_findings":{"present":false}}"#).unwrap();
+        assert_eq!(missing.stage, None);
+    }
+
+    /// Every value the prompt offers must be one the DB enum accepts, or the
+    /// analyzer will fail on insert for a stage the model was told to use.
+    #[test]
+    fn the_prompt_vocabulary_matches_the_enum_vocabulary() {
+        for stage in WORK_STAGES {
+            assert!(
+                SYSTEM.contains(stage),
+                "{stage} is in the enum but never offered to the model"
+            );
+            let json = format!(r#"{{"stage":"{stage}","refuted_findings":{{"present":false}}}}"#);
+            assert_eq!(judgment_of(&json).unwrap().stage.as_deref(), Some(stage));
         }
     }
 
