@@ -1083,72 +1083,91 @@ would let a squatter inherit another tenant's governance.
 + external_id  text                         -- stable forge repo id
 ```
 
-## V.3 sensei — how the daemon knows
+## V.3 Three gates, not two
 
-The daemon must never decide entitlement; it caches the dōjō's decision so it
-does not ship data that will be rejected. **`sensei.repositories`** gains:
+`sensei.repo_visibility` is an enum `('private','shared')` and its own comment
+says what it is: *"Whether a repository participates in sync at all … a repo the
+user never wanted shared should not start syncing merely because they signed
+in."* That is **user intent**, and it is a separate question from both forge
+visibility and entitlement.
+
+The full chain, in order:
+
+| # | gate | question | owned by | evaluated |
+|---|---|---|---|---|
+| 1 | **intent** | did the user opt this repo in? | `sensei.repositories.visibility = 'shared'` | daemon, locally |
+| 2 | **cost** | is it public, private or internal on the forge? | `dojo.forge_visibility` | dōjō |
+| 3 | **entitlement** | claimed, subscribed, seated? | claim + billing + `seat_allocations` | dōjō |
+
+Gate 1 is local and comes first: the daemon never even asks about a repo the
+user has not shared. Gates 2 and 3 are the dōjō's and are never mirrored.
+
+## V.4 The daemon asks; it does not remember
+
+An earlier draft cached the dōjō's per-repo ruling on `sensei.repositories`
+(`sync_allowed`, `sync_reason`, `sync_decided_at`). **Rejected.** A cached
+entitlement is a second source of truth for something the service must own, and
+it forced a TTL whose only job was to bound how wrong the cache could be.
+
+Instead the daemon asks for a **sync plan** before each cycle:
 
 ```
-+ dojo_membership_id uuid references sensei.dojo_memberships(id) on delete set null
-+ dojo_tenant_key    text          -- NULL = unmapped (no connection matched)
-+ sync_allowed       boolean       -- NULL = UNKNOWN, never assumed
-+ sync_reason        text          -- unmapped | unclaimed | not_subscribed
-                                   -- | subscription_expired | no_seat | allowed
-+ sync_decided_at    timestamptz   -- when the dōjō last ruled
-+ forge_visibility   sensei.forge_visibility   -- the forge's answer, per V.0
+GET /v1/t/{tenant}/sync/plan
+  → { "allowed": [ { "repo_key": "github.com/acme/api", "repo_id": "…" } ],
+      "denied":  [ { "repo_key": "github.com/acme/secret", "reason": "no_seat" } ] }
 ```
 
-The decision rule, fail-closed:
+The daemon then pushes metrics and pulls governance for `allowed` only.
 
-```rust
-fn should_sync(repo) -> bool {
-    repo.sync_allowed == Some(true)
-        && repo.sync_decided_at.is_some_and(|t| t > now() - DECISION_TTL)
-}
+Why this is better than the cache:
+
+- **No staleness, so no TTL.** A revoked seat bites on the next cycle rather
+  than after a timeout chosen to be a compromise.
+- **Allow-list, not per-repo permission check.** The daemon syncs the set it was
+  handed. It cannot accidentally include a repo it never asked about, which a
+  "may I sync X?" shape permits by omission.
+- **Nothing to keep in step.** No column can disagree with the dōjō, because no
+  column holds the answer.
+- **Offline degrades correctly.** No plan, no sync. Fail-closed falls out of the
+  design rather than needing a nullable boolean whose NULL means "no".
+- **`denied[]` carries the reason**, so the CLI and console can say *why* a repo
+  is dark — `no_seat`, `not_subscribed` and `unmapped` are three different
+  problems — without the daemon storing a decision it does not own.
+
+**Scope.** The plan governs **metrics and governance only**, not the repository
+list itself. Repo identity is registered separately on connect (the established
+local-first rule); the plan is the entitlement filter applied on top.
+
+**Still enforced at the write.** The plan is an optimisation that stops the
+daemon shipping data that will be refused; the dōjō re-evaluates on every write
+and the refusal carries its reason. A daemon that ignores the plan gains
+nothing.
+
+### sensei schema delta — almost none
+
+Because the decision is not stored, `sensei.repositories` needs only what it
+already has (`repo_key`, `remote_url`, `dojo_id`, `visibility`) plus:
+
+```
++ forge_visibility  sensei.forge_visibility   -- display only; the dōjō still decides
 ```
 
-Three properties this buys:
-
-- **NULL is not permission.** A repo the dōjō has never ruled on is not synced.
-  This is the difference between "we don't know yet" and "no" being treated the
-  same way, which is the only safe default for someone else's private code.
-- **A stale decision expires.** Without the TTL, a seat revoked upstream would
-  keep syncing until something happened to refresh the cache. The TTL bounds how
-  long a revocation takes to bite even if no sync round-trip occurs.
-- **The reason is carried, so the UI can say why.** `no_seat` and
-  `not_subscribed` are different problems with different fixes, and a repo that
-  is simply `unmapped` is not a billing problem at all.
-
-**The cache is not the enforcement.** The dōjō re-evaluates `can_sync` on every
-write. A daemon with a stale-permissive cache gets rejected — which is why the
-denial reason must ride on the rejection, so the daemon can update its cache
-from the refusal rather than retrying forever.
-
-## V.4 Where the decision comes from
-
-`ProvisionResult` (§II.7) gains a `repos[]` array, and it is the only place the
-daemon learns a decision:
-
-```json
-{ "repo_key": "github.com/acme/api",
-  "tenant_key": "acme",
-  "forge_visibility": "private",
-  "sync_allowed": false,
-  "reason": "no_seat" }
-```
-
-Returned on connect, on explicit re-sync, and on any write refusal. Both
-directions — push of metrics/sessions and pull of governance — consult the same
-decision, because the subscription gates "governance and data sync" as one
-thing.
+`forge_visibility` is for the console to grey out a private repo before a
+round-trip. It is **not** consulted by any sync decision — if it drifts, nothing
+is mis-synced, only mis-drawn.
 
 ## V.5 What each phase needs
 
 | phase | dōjō | sensei |
 |---|---|---|
-| **1 · personal** | `tenant_origin` += personal/organization; `@login` key convention; provisioning writes tenant + membership | `dojo_tenant_key`, `sync_allowed`, `sync_reason`, `sync_decided_at` on repositories. Personal always resolves `allowed`. |
-| **2 · public org** | `forge_provider`, `forge_visibility`, `tenant_connections`, repo `provider`/`external_id`; repo→tenant mapping | `forge_visibility`; mapping by remote URL (§II.6); public resolves `allowed`, private resolves `not_subscribed` |
-| **3 · private org** | `claimed_at`/`claimed_by`, `seat_allocations`, `seat_release_reason`, the full gate + de-provisioning | `dojo_membership_id`; decision TTL; surfacing `no_seat` in the CLI |
+| **1 · personal** | `tenant_origin` += personal/organization; `@login` key convention; provisioning writes tenant + membership; `GET /sync/plan` returning everything shared | consume the plan; sync only `allowed`. No schema change at all. |
+| **2 · public org** | `forge_provider`, `forge_visibility`, `tenant_connections`, repo `provider`/`external_id`; repo→tenant mapping; plan denies private with `not_subscribed` | `forge_visibility` (display only); mapping by remote URL (§II.6) |
+| **3 · private org** | `claimed_at`/`claimed_by`, `seat_allocations`, `seat_release_reason`, the full gate + de-provisioning; plan denies with `no_seat` / `subscription_expired` | surface `denied[].reason` in the CLI |
+
+The sensei side barely changes across all three phases, which is the strongest
+argument for the plan endpoint: the entitlement model can grow from "everything"
+to claim-plus-billing-plus-seats without the daemon learning anything new. It
+asks the same question every cycle and does as it is told.
 
 Phase 1 is shippable alone and closes the hole for every new user: no billing,
 no claim, no seats, no second forge. Phases 2 and 3 add tables rather than
