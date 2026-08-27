@@ -43,6 +43,24 @@ Phase 2 (entitlement): `claim_state`, `forge_visibility`, `seat_allocations`, bi
 
 `reconcile` is a **pre-release stopgap**. `dbd release` (once) sets `released: true`, disables reconcile, writes the baseline; then `make bump` snapshots and `dbd deploy` migrates v(n)→v(n+1). Two findings survive the cutover: dbd cannot express a column rename (plans DROP+ADD), and a data migration must move in lockstep with its seed (apply→import gives the seed the last word — observed as two `global-dojo` tenants).
 
+## Environment a new session inherits (verified)
+
+| | state |
+|---|---|
+| branch | `develop` @ `bf829e6c`, clean, nothing unpushed, 1 worktree |
+| daemon | 0.9.1, release build, running |
+| dōjō DB | `postgresql://postgres:postgres@127.0.0.1:54322/postgres` — reachable, **1 tenant** (`organization/global-dojo`; `personal/jerry` was dropped by the reset, by design) |
+| sensei DB | `localhost:5432/sensei` — reachable, 338 sessions |
+| issue | **#117** (F3a self-serve create a dōjō) under epic **#116** |
+
+To re-verify the schema after resuming:
+
+```
+cd database
+export DATABASE_URL="postgresql://postgres:postgres@127.0.0.1:54322/postgres"
+dbd diff --scope dojo --exit-code     # expect CLEAN
+```
+
 ## Also landed today (unrelated)
 
 - **#125** Zed ingest root-caused and fixed (`b63ac861`) — the retention pruner deleted turns and left watermarks behind, self-sealing. Repaired live; analyzable pool **109/287 → 274/338**.
