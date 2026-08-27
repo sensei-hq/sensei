@@ -19,6 +19,13 @@ create table if not exists repositories (
 , name        text        not null
 , visibility  text        not null default 'private'
       check (visibility in ('private', 'public'))
+  -- Which forge this repository lives on. Derived from `repo_key`'s host at
+  -- registration and STORED, rather than re-derived in SQL: the host→provider
+  -- mapping already exists once, in the registration path, and a second copy in
+  -- a view would be two things to keep in step. Pulled forward from phase 2
+  -- (spec §V.2) for exactly that reason; `external_id` stays in phase 2, since
+  -- nothing yet knows the forge's id for a repository.
+, provider    dojo.forge_provider not null
 , created_at  timestamptz not null default now()
 , updated_at  timestamptz not null default now()
 , unique (tenant_id, repo_key)

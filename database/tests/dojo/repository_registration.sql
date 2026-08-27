@@ -18,8 +18,8 @@ insert into dojo.principals (id, auth_user_id) values
   ('aaaaaaaa-1111-1111-1111-111111111111', '11111111-1111-1111-1111-111111111111');
 
 insert into dojo.tenants (id, key, origin, slug, name, dojo_url) values
-  ('cccccccc-3333-3333-3333-333333333333', 'organization/acme', 'organization', 'acme',
-   'acme', 'dojo.sensei-hq.org/organization/acme');
+  ('cccccccc-3333-3333-3333-333333333333', 'organization/ztest-acme', 'organization', 'acme',
+   'acme', 'dojo.sensei-hq.org/organization/ztest-acme');
 
 insert into dojo.tenant_connections
   (tenant_id, provider, external_id, external_slug, connected_by, verified_at)
@@ -27,9 +27,9 @@ values ('cccccccc-3333-3333-3333-333333333333', 'github', '11', 'acme',
         'aaaaaaaa-1111-1111-1111-111111111111', now());
 
 -- ── the insert registerRepositories issues ──────────────────────────────────
-insert into dojo.repositories (tenant_id, repo_key, remote_url, name)
+insert into dojo.repositories (tenant_id, repo_key, remote_url, name, provider)
 values ('cccccccc-3333-3333-3333-333333333333', 'github.com/acme/api',
-        'git@github.com:acme/api.git', 'api');
+        'git@github.com:acme/api.git', 'api', 'github');
 
 do $$
 declare
@@ -54,8 +54,8 @@ end $$;
 do $$
 begin
     begin
-        insert into dojo.repositories (tenant_id, repo_key, name)
-        values ('cccccccc-3333-3333-3333-333333333333', 'github.com/acme/api', 'api again');
+        insert into dojo.repositories (tenant_id, repo_key, name, provider)
+        values ('cccccccc-3333-3333-3333-333333333333', 'github.com/acme/api', 'api again', 'github');
         raise exception
             'dojo.repositories (tenant_id, repo_key) is not unique — re-registering would duplicate.';
     exception when unique_violation then
@@ -70,10 +70,25 @@ end $$;
 do $$
 begin
     begin
-        insert into dojo.repositories (tenant_id, repo_key, name)
-        values (null, 'git.internal.acme.com/acme/api', 'api');
+        insert into dojo.repositories (tenant_id, repo_key, name, provider)
+        values (null, 'git.internal.acme.com/acme/api', 'api', 'github');
         raise exception
             'dojo.repositories.tenant_id is nullable — an unmapped repo could be stored with no tenant.';
+    exception when not_null_violation then
+        null;  -- expected
+    end;
+end $$;
+
+-- ── provider is REQUIRED, so the registration path must derive and store it ──
+-- It is derived from repo_key's host once, at registration. Storing it means the
+-- host→provider mapping lives in exactly one place instead of being re-derived
+-- in every view and query that needs the forge.
+do $$
+begin
+    begin
+        insert into dojo.repositories (tenant_id, repo_key, name)
+        values ('cccccccc-3333-3333-3333-333333333333', 'github.com/acme/noprovider', 'x');
+        raise exception 'dojo.repositories.provider is nullable — the forge could go unrecorded.';
     exception when not_null_violation then
         null;  -- expected
     end;
@@ -84,11 +99,11 @@ end $$;
 -- a personal account alongside the org original. The unique is per TENANT, not
 -- global, precisely so that stays expressible.
 insert into dojo.tenants (id, key, origin, slug, name, dojo_url) values
-  ('dddddddd-4444-4444-4444-444444444444', 'personal/alice', 'personal', 'alice',
-   'Alice''s Dōjō', 'dojo.sensei-hq.org/personal/alice');
+  ('dddddddd-4444-4444-4444-444444444444', 'personal/ztest-alice', 'personal', 'ztest-alice',
+   'Alice''s Dōjō', 'dojo.sensei-hq.org/personal/ztest-alice');
 
-insert into dojo.repositories (tenant_id, repo_key, name)
-values ('dddddddd-4444-4444-4444-444444444444', 'github.com/acme/api', 'api');
+insert into dojo.repositories (tenant_id, repo_key, name, provider)
+values ('dddddddd-4444-4444-4444-444444444444', 'github.com/acme/api', 'api', 'github');
 
 do $$
 declare n int;

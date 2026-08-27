@@ -27,8 +27,8 @@ insert into dojo.principals (id, auth_user_id, display_name) values
   ('bbbbbbbb-2222-2222-2222-222222222222', '22222222-2222-2222-2222-222222222222', 'Bob');
 
 insert into dojo.tenants (id, key, origin, slug, name, dojo_url) values
-  ('cccccccc-3333-3333-3333-333333333333', 'organization/rls-fixture', 'organization',
-   'rls-fixture', 'RLS fixture', 'dojo.sensei-hq.org/organization/rls-fixture');
+  ('cccccccc-3333-3333-3333-333333333333', 'organization/ztest-rls-fixture', 'organization',
+   'ztest-rls-fixture', 'RLS fixture', 'dojo.sensei-hq.org/organization/ztest-rls-fixture');
 
 -- memberships.user_id holds the PRINCIPAL id (§VIII.2), not the login id.
 insert into dojo.memberships (id, tenant_id, user_id, kind, authenticated_via) values
