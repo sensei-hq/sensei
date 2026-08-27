@@ -13,8 +13,20 @@ set search_path to dojo, extensions;
 -- SECURITY DEFINER  → reads dojo.memberships regardless of the caller's grants;
 --                     search_path is pinned to dojo so the lookup can't be
 --                     hijacked by a caller-set search_path.
--- (select auth.uid()) → the Supabase-recommended form so auth.uid() is folded to
---                     an initplan constant.
+--
+-- `memberships.user_id` holds a PRINCIPAL id, not a login id, so the ownership
+-- test goes through dojo.current_principal_id() rather than comparing to
+-- auth.uid() directly — which matched nothing and emptied the relay_* policies
+-- without erroring (spec dojo-auth-provisioning §VIII.2). That resolver is
+-- itself STABLE, so it still folds to one evaluation per statement.
+--
+-- ORDERING, since this is a function calling another function: Postgres parses a
+-- `language sql` body at CREATE time, so this file cannot be applied before
+-- current_principal_id exists. dbd handles it — `dbd apply --scope dojo
+-- --dry-run` places current_principal_id well ahead of this file and reports no
+-- issues. Worth knowing before adding a third: a plpgsql body is NOT validated
+-- at create time (which is why set_pack_adoption has no such constraint), so the
+-- hazard is specific to `language sql`.
 create or replace function dojo.owns_membership(mid uuid)
     returns boolean
     language sql
@@ -26,7 +38,7 @@ as $$
         select 1
         from dojo.memberships m
         where m.id = mid
-          and m.user_id = (select auth.uid())
+          and m.user_id = dojo.current_principal_id()
     );
 $$;
 
