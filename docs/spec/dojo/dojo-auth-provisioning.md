@@ -1374,20 +1374,54 @@ deliberately:
 slugs — the set a membership covers, used for repo routing — so `org` is correct
 there. Renaming it would be the opposite error.
 
-## VII.4 Migration
+## VII.4 Migration — what the tooling actually does
 
-`dojo.tenants` is not yet carrying production tenants at scale, so this is a
-plain rename rather than an add-backfill-drop:
+Three findings from performing this against a live dōjō database. All were
+verified by doing them, not by reading the docs.
+
+**1. dbd cannot express a column rename.** It plans `DROP org` + `ADD slug`,
+which silently empties the column. An earlier draft of this section called it
+"a plain rename" — true of Postgres, false of the deploy path.
+
+The rename must run **out-of-band, before** the declarative apply:
 
 ```sql
-alter table dojo.tenants rename column org to slug;
+alter table dojo.tenants rename column org to slug;   -- FIRST, by hand
 ```
 
-Ordering matters: rename the column, update the staging table and import
-procedure in the same deploy, and reseed. A rename with a stale
-`import_tenants` would fail on the next seed with a column-not-found — noisily,
-which is the right failure, but avoidable by doing both together.
+Afterwards dbd sees only a comment change. dbd does refuse without
+`--allow-destructive`, so the trap announces itself — but "allow destructive"
+on a rename is exactly how the column would have been emptied.
 
-Rides with the phase-1 key migration (`github/{org}` → `organization/{org}`,
-§IV.7) since both touch `dojo.tenants` and both change discovery paths. One
-deploy, one set of URL changes, rather than two.
+**2. `dbd reconcile` does NOT run `apply.after` hooks. `dbd apply` and
+`dbd deploy` do.** Verified by reverting a tenant and reconciling — it stayed
+unmigrated — then deploying, which reported *"2 hook script(s) run"* and
+migrated it.
+
+This matters because the data migration lives in a hook. A reconcile-only path
+applies the schema and leaves the data behind. The release workflow already runs
+`dbd deploy --scope dojo` after the reconcile step, so **CI is unaffected** —
+but a hand-run `dbd reconcile` is not enough and will look like it worked.
+
+**3. A data migration and its seed must move in lockstep.** The first deploy
+after the migration produced **two** tenants: the hook rewrote
+`org/global-dojo` → `organization/global-dojo`, and the import phase then
+re-inserted `org/global-dojo` from the unmigrated seed file.
+
+Ordering is apply (hooks) → import, so the seed always wins the last word. Any
+`apply/after` migration that rewrites a key MUST be accompanied by the same
+rewrite in `database/import/**`, or every deploy resurrects the row the
+migration just retired. Verified idempotent afterwards: two deploys, two
+tenants, no duplicate.
+
+## VII.5 The order that works
+
+```
+1. alter table dojo.tenants rename column org to slug;   -- out-of-band
+2. dbd reconcile --scope dojo                            -- schema
+3. dbd deploy --scope dojo                               -- hooks + seed
+4. dbd diff --scope dojo --exit-code                     -- proof
+```
+
+Step 1 cannot be automated by dbd; steps 2–4 are what the release workflow
+already does.
