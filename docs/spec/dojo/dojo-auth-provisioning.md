@@ -975,9 +975,30 @@ org slug so the namespaces cannot collide, and it is not a forge prefix — so
 
 ## IV.8 Still open
 
-- **F8** — whether a forge `provider_token` is in hand at
-  `POST /v1/auth/cli/token`. Decides whether a CLI-initiated FIRST connection
-  can provision orgs at all, or must hand the user to the web. Being tested.
+- **F8 — RESOLVED, and it inverts the concern.** The daemon does receive
+  `provider_token` from the exchange and **persists it to the OS keychain**
+  (`dojo_client/session.rs::store_provider_token`, keyed
+  `provider_token.<persona>`), already reports `canReadOrgs` in
+  `/api/auth/status`, and already uses it (`github_verified_emails`). A
+  `provider_refresh_token` slot exists too.
+
+  So the CLI path has **better** token durability than the web path: the web's
+  `session.provider_token` evaporates after the exchange, while the daemon's is
+  durable. A CLI-initiated FIRST connection can provision orgs, and the daemon
+  is arguably the more reliable driver of the org sync.
+
+  **Design consequence.** The daemon holds the token; the dōjō makes the
+  decisions. The daemon must therefore send the `provider_token` to the dōjō on
+  connect (over TLS, alongside the access token it already sends) and let the
+  dōjō verify the org list itself. The daemon must NOT read the orgs and send a
+  list — that would make the service trust a client's claim about its own
+  entitlements, which is the one thing §II.5 says it must never do.
+
+  Remaining empirical check: that Supabase actually returns `provider_token` on
+  the PKCE exchange for this provider. The code handles it as `Option` and
+  reports `canReadOrgs: false` when absent, so a miss is visible rather than
+  silent — but it has not been observed on a live sign-in. The daemon is
+  currently signed out.
 - **Proration** — a seat allocated mid-cycle. A billing question, not a gate
   question; the gate only asks "is there a current allocation".
 - **Downgrade UX** — refusing a seat reduction is correct but needs a console
