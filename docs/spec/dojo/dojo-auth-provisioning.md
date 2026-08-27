@@ -1374,54 +1374,41 @@ deliberately:
 slugs — the set a membership covers, used for repo routing — so `org` is correct
 there. Renaming it would be the opposite error.
 
-## VII.4 Migration — what the tooling actually does
+## VII.4 Migration — there isn't one
 
-Three findings from performing this against a live dōjō database. All were
-verified by doing them, not by reading the docs.
+The dōjō is **pre-release**, so the schema is reset rather than migrated. That
+removes the whole problem class:
 
-**1. dbd cannot express a column rename.** It plans `DROP org` + `ADD slug`,
-which silently empties the column. An earlier draft of this section called it
-"a plain rename" — true of Postgres, false of the deploy path.
-
-The rename must run **out-of-band, before** the declarative apply:
-
-```sql
-alter table dojo.tenants rename column org to slug;   -- FIRST, by hand
-```
-
-Afterwards dbd sees only a comment change. dbd does refuse without
-`--allow-destructive`, so the trap announces itself — but "allow destructive"
-on a rename is exactly how the column would have been emptied.
-
-**2. `dbd reconcile` does NOT run `apply.after` hooks. `dbd apply` and
-`dbd deploy` do.** Verified by reverting a tenant and reconciling — it stayed
-unmigrated — then deploying, which reported *"2 hook script(s) run"* and
-migrated it.
-
-This matters because the data migration lives in a hook. A reconcile-only path
-applies the schema and leaves the data behind. The release workflow already runs
-`dbd deploy --scope dojo` after the reconcile step, so **CI is unaffected** —
-but a hand-run `dbd reconcile` is not enough and will look like it worked.
-
-**3. A data migration and its seed must move in lockstep.** The first deploy
-after the migration produced **two** tenants: the hook rewrote
-`org/global-dojo` → `organization/global-dojo`, and the import phase then
-re-inserted `org/global-dojo` from the unmigrated seed file.
-
-Ordering is apply (hooks) → import, so the seed always wins the last word. Any
-`apply/after` migration that rewrites a key MUST be accompanied by the same
-rewrite in `database/import/**`, or every deploy resurrects the row the
-migration just retired. Verified idempotent afterwards: two deploys, two
-tenants, no duplicate.
-
-## VII.5 The order that works
+- `tenant_origin` is declared as its target — `('personal', 'organization')` —
+  with no transitional labels to retire later.
+- No `apply/after` data migration for keys or origins. The seed carries the
+  final values.
+- No out-of-band `ALTER TABLE … RENAME COLUMN`. `slug` is simply the column
+  name.
 
 ```
-1. alter table dojo.tenants rename column org to slug;   -- out-of-band
-2. dbd reconcile --scope dojo                            -- schema
-3. dbd deploy --scope dojo                               -- hooks + seed
-4. dbd diff --scope dojo --exit-code                     -- proof
+dbd reset --scope dojo --force
+dbd deploy --scope dojo
+dbd diff --scope dojo --exit-code     # proof
 ```
 
-Step 1 cannot be automated by dbd; steps 2–4 are what the release workflow
-already does.
+Verified: reset, rebuild, `--exit-code` clean, `tenant_origin` holds exactly
+`personal | organization`.
+
+### What was learned anyway, for after launch
+
+Three behaviours that stop being avoidable once resetting is off the table.
+Recorded because the next schema change of this shape will be post-release.
+
+1. **dbd cannot express a column rename.** It plans `DROP` + `ADD`, which empties
+   the column. It refuses without `--allow-destructive` — so the trap announces
+   itself — but "allow destructive" on a rename is exactly how the data goes.
+   The rename has to run out-of-band first.
+2. **`dbd reconcile` does not run `apply.after` hooks; `apply` and `deploy` do.**
+   A reconcile-only path applies the schema and leaves a data migration behind,
+   looking like it worked. The release workflow runs `deploy` after `reconcile`,
+   so CI is unaffected — a hand-run `reconcile` is not.
+3. **A data migration and its seed must move together.** Ordering is apply
+   (hooks) → import, so the seed has the last word: a hook that rewrites a key
+   without the matching seed edit has the old row re-inserted on every deploy.
+   Observed as two `global-dojo` tenants before the seed was updated.
