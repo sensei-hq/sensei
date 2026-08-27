@@ -459,10 +459,23 @@ export function parseNewDojo(body: Record<string, unknown>): NewDojoInput {
 }
 
 /**
- * Create a dōjō the caller owns (F3a). The tenant is a custom-registered `org`
- * origin with key `org/{slug}`; the creator becomes its `admin`. A key collision
- * (someone already registered that name) is a 409. The creator's admin membership
- * reuses {@link addMember} (its own duplicate guard). Fails closed.
+ * Create a dōjō the caller owns (F3a, issue #117). The tenant is an
+ * `organization` with key `organization/{slug}`; the creator becomes its
+ * `admin`. A key collision (someone already registered that name) is a 409. The
+ * creator's admin membership reuses {@link addMember} (its own duplicate guard).
+ * Fails closed.
+ *
+ * The key's first segment is the ORIGIN, not a forge — `dojo-auth.ts` resolves a
+ * tenant by joining the two URL segments back into `{origin}/{slug}`, so the
+ * prefix and `origin` must agree or the tenant is unreachable at its own URL.
+ * That is also what keeps `personal/acme` and `organization/acme` apart under
+ * the single unique on `key` (spec §IV.7).
+ *
+ * This wrote `origin: 'org'`, `org: slug` and `key: org/{slug}` until 5cbe4d4d's
+ * sibling commit: all three were retired by the phase-1 schema change, and the
+ * insert failed outright with `column "org" of relation "tenants" does not
+ * exist`. A mocked test asserted the rejected payload and stayed green — hence
+ * the live-Postgres coverage in database/tests/dojo/create_dojo_insert.sql.
  */
 export async function createDojo(
 	db: DojoClient,
@@ -470,13 +483,13 @@ export async function createDojo(
 	input: NewDojoInput
 ): Promise<{ id: string; key: string; name: string }> {
 	const slug = slugify(input.name);
-	const key = `org/${slug}`;
+	const key = `organization/${slug}`;
 	const { data, error } = await db
 		.from('tenants')
 		.insert({
 			key,
-			origin: 'org',
-			org: slug,
+			origin: 'organization',
+			slug,
 			name: input.name,
 			dojo_url: `dojo.sensei-hq.org/${key}`,
 			scope: 'private'
