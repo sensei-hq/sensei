@@ -1647,16 +1647,43 @@ guess.
 
 ## VIII.7 Phase 1, corrected
 
-| # | deliverable |
-|---|---|
-| 1 | RLS fix on `dojo.projects` (principal-resolving policy, §VIII.2) |
-| 2 | `resolveCaller` maps `sub → principal id`; `ensureProvisioned(userId, forgeToken, provider)` writes `principals` → `identities` → personal tenant → org tenants + `tenant_connections` → memberships, idempotently |
-| 3 | Repair `createDojo` (`organization/{slug}`, `slug` column, `dojo_url`) — issue #117's AC |
-| 4 | Repair every `dojo.identities` path onto `principal_id` |
-| 5 | `POST /v1/you/provision`, and `POST /v1/auth/cli/token` provisioning without reshaping its response |
-| 6 | `POST /v1/you/repositories` — `repo_key → (provider, org)` → `tenant_connections` → tenant; upsert `dojo.repositories`; report `unmapped` |
-| 7 | `GET /v1/you/sync/plan` — everything registered `allowed` in phase 1 |
-| 8 | At least one live-Postgres test, so schema drift can go red |
+| # | deliverable | status |
+|---|---|---|
+| 1 | RLS fix on `dojo.projects` (principal-resolving policy, §VIII.2) | ✅ `bb994b6a` |
+| 2 | `resolveCaller` maps `sub → principal id`; `ensureProvisioned(userId, forgeToken, provider)` writes `principals` → `identities` → personal tenant → org tenants + `tenant_connections` → memberships, idempotently | ✅ `dd6917f7`, `2eda4236` |
+| 3 | Repair `createDojo` (`organization/{slug}`, `slug` column, `dojo_url`) — issue #117's AC | ✅ `11ebd83e` |
+| 4 | Repair every `dojo.identities` path onto `principal_id` | ✅ `5cbe4d4d` |
+| 5 | `POST /v1/you/provision`, and `POST /v1/auth/cli/token` provisioning without reshaping its response | ✅ `b344da86` |
+| 6 | `POST /v1/you/repositories` — `repo_key → (provider, org)` → `tenant_connections` → tenant; upsert `dojo.repositories`; report `unmapped` | ✅ `acda527a` |
+| 7 | `GET /v1/you/sync/plan` — everything registered `allowed` in phase 1 | ✅ `acda527a` |
+| 8 | At least one live-Postgres test, so schema drift can go red | ✅ `bb994b6a` (5 files by `acda527a`) |
 
-Items 1–4 are prerequisites: provisioning writes through exactly the paths that
-are currently broken.
+Items 1–4 were prerequisites: provisioning writes through exactly the paths that
+were broken.
+
+### What item 1 turned out to be
+
+The spec named one surface. There were **three**, all making the same mistake:
+`dojo.projects`'s policy, `dojo.owns_membership` (which backs the
+`relay_sessions` / `relay_inbox` / `relay_segments` policies, so all three were
+silently empty), and `can_read_repository_metric`'s admin branch, which compared
+`memberships.user_id` to `principals.auth_user_id` and therefore never matched —
+a tenant admin quietly lost per-user metrics. All three now call one
+`dojo.current_principal_id()`.
+
+### What item 4 turned out to be
+
+The dropped `tenant_id` filter was also, incidentally, the **tenant isolation**
+on those routes. Removing it without replacement would have let an admin of one
+tenant read, rewrite and delete the identities of people in another. It is now an
+explicit membership check, and update/delete answer `404 no such identity` for
+both the missing and the wrong-tenant case so tenant A cannot probe which ids
+exist in tenant B.
+
+### Still unverified
+
+Phase 1 is code-complete and every gate is green, but **nothing has run against a
+real sign-in**. Whether Supabase returns `provider_token` on the PKCE exchange
+remains the one unobserved assumption in the whole design (§IV.8). The code
+handles its absence as `no_forge_token` — visible, never silent — so a miss is
+loud rather than a lie, but it has not been seen either way.
