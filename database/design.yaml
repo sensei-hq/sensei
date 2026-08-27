@@ -118,7 +118,6 @@ scopes:
 apply:
   after:
     - apply/after/realtime_publication.sql
-    - apply/after/tenant_origin_migration.sql
 
 import:
   staging:

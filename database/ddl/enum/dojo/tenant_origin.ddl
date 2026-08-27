@@ -2,14 +2,12 @@ set search_path to dojo, extensions;
 
 -- What KIND of tenant this is — not which forge it came from.
 --
--- `github`/`org` are the retired GitHub-era labels. They named the forge, which
--- stopped being right once a tenant could connect to several
--- (dojo.tenant_connections). They remain in the type only until the data
--- migration in apply/after/tenant_origin_migration.sql has run everywhere; the
--- narrowing to two values is a separate, later change so no deploy is ever
--- caught with rows holding a value the type no longer has.
+-- The forge lives on dojo.tenant_connections, because an organization may be
+-- known to several (GitHub and Azure and GitLab are one dōjō, one subscription,
+-- one governance set). An origin naming the forge was the trap this replaces.
 --
--- The discovery path is `<origin>/<slug>`, so these values are user-visible:
+-- The discovery path is `<origin>/<slug>`, so these values are user-visible and
+-- keep the two namespaces apart without a sigil:
 --   personal/jerry        organization/sensei-hq
 create type dojo.tenant_origin
-    as enum ('github', 'org', 'personal', 'organization');
+    as enum ('personal', 'organization');
