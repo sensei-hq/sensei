@@ -4306,6 +4306,18 @@ async fn prune_activity_keeps_unanalyzed_sessions_even_when_old() {
     // (backstop=60 here), so this assertion is unaffected by that guard.
     s.prune_activity(30, 60).await.unwrap();
 
+    // The watermark must go with the turns. Leaving it behind is what made the
+    // prune unrecoverable: the session re-appears without its transcript and
+    // reports as fully ingested, forever (#125).
+    let wm_left: (i64,) = sqlx_core::query_as::query_as(
+        "SELECT COUNT(*) FROM activity.capture_watermarks WHERE session_id = $1",
+    )
+    .bind(&csid)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(wm_left.0, 0, "prune left a watermark claiming turns it deleted");
+
     let exists: (bool,) = sqlx_core::query_as::query_as(
         "SELECT EXISTS(SELECT 1 FROM activity.sessions WHERE id = $1)",
     )
@@ -4396,6 +4408,23 @@ async fn prune_activity_deletes_analyzed_sessions_past_cutoff_and_children() {
             "INSERT INTO activity.transcript_turns(session_id, source, family, turn_index, assistant_text)
              VALUES ($1, 'claude_code', 'claude', 0, 'hello')"
         ).bind(&csid).execute(s.pool()).await.unwrap();
+    // Seed the capture watermark the ingest would have written for those turns.
+    // Its survival is what made the prune self-sealing (#125): `ingest_one`
+    // gates the turn re-import on it, so a pruned session never re-imported
+    // while `synthesize_session` kept re-creating the session row.
+    s.set_capture_watermark("claude_code", &csid, Some(&csid), 1, 1).await.unwrap();
+
+    // Prove the fixture landed — an assertion that the row is GONE passes
+    // trivially if it was never there.
+    let wm_before: (i64,) = sqlx_core::query_as::query_as(
+        "SELECT COUNT(*) FROM activity.capture_watermarks WHERE session_id = $1",
+    )
+    .bind(&csid)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(wm_before.0, 1, "watermark fixture did not land");
+
     // Seed a hook event under the same client_session_id.
     s.insert_hook_event(
         &csid,

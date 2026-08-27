@@ -496,14 +496,13 @@ async fn ingest_one(
                 &parsed.turns,
             )
             .await?;
-        pg.set_capture_watermark(
-            adapter.source(),
-            key,
-            Some(&session_id),
-            stamp,
-            parsed.turns.len() as i32,
-        )
-        .await?;
+        // The count recorded is what was WRITTEN, not what was parsed. Recording
+        // `parsed.turns.len()` made the stored number incapable of disagreeing
+        // with reality, so a watermark claiming turns that no longer exist was
+        // undetectable — 1,986 Zed turns were claimed against an empty table for
+        // two days (#125). With the real count, that mismatch is queryable.
+        pg.set_capture_watermark(adapter.source(), key, Some(&session_id), stamp, turns as i32)
+            .await?;
     }
     // 2. historical-bootstrap: synthesize the session + events if not already
     // captured (#75), so the existing enricher can derive its metrics.
