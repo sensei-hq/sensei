@@ -11,19 +11,19 @@
 | 2a | `resolveCaller` returns the **principal** id as `userId` (+ `authUserId`). New `principal-resolve.ts`; creates the principal on first sight, survives the concurrent-sign-in 23505 by re-reading. | `dd6917f7` |
 | 4 | Every `dojo.identities` path onto `principal_id`. Tenant isolation is now an **explicit membership check** — the dropped `tenant_id` filter was providing it incidentally. | `5cbe4d4d` |
 | 3 | `createDojo` → `organization/{slug}` + `slug` column. **Issue #117's own AC.** | `11ebd83e` |
+| 2b | **`ensureProvisioned`** — the operation that creates a tenant. `forge-github.ts` (reads with the user's own token) + `provisioning.ts` (identity → personal tenant → org tenants + connections → memberships, idempotent) + `fake-dojo-db.ts` (stores rows and enforces the real uniques, so idempotence is observable). | `2eda4236` |
 
-## Next — the remaining four
+## Next — the remaining three (all wiring / endpoints; the logic is done)
 
-2b. `ensureProvisioned(userId, forgeToken, provider)` — identities → personal tenant → org tenants + `tenant_connections` → memberships, idempotent
-5. `POST /v1/you/provision`, and `/v1/auth/cli/token` provisioning **without reshaping its response**
-6. `POST /v1/you/repositories` — `repo_key → (provider, org)` → `tenant_connections` → tenant; reuse the Rust `normalize_repo_key`, do **not** re-implement it
+5. Wire the three callers: `POST /v1/you/provision` (new), `POST /v1/auth/cli/token` (parse a CLONE of the upstream body for `{user.id, provider_token}` — **must not reshape its response**), `POST /v1/you/github/sync` (replace `syncGithubMemberships`, which is superseded and should be deleted with `fetchGithubOrgLogins`)
+6. `POST /v1/you/repositories` — `repo_key → (provider, org)` → `tenant_connections` → tenant. **Reuse the Rust `normalize_repo_key`; do not re-implement it.** `dojo.repositories.tenant_id` is NOT NULL, so an unmapped repo gets no row — it is reported, not stored
 7. `GET /v1/you/sync/plan` — everything registered `allowed` in phase 1
 
-Next command: `cd dojo && bun run test` to confirm the gate, then 2b red-first.
+Next command: `cd dojo && bun run test` to confirm the gate, then item 5 red-first.
 
-## Gates (all green as of `11ebd83e`)
+## Gates (all green as of `2eda4236`)
 
-`make test-db` → 3 files · `cd dojo && bun run test` → 124 files / 1344 · `bun run check` → 0 errors, 0 warnings / 1752 files · `dbd diff --scope dojo --exit-code` → in sync
+`make test-db` → 4 files · `cd dojo && bun run test` → 126 files / 1372 · `bun run check` → 0 errors, 0 warnings / 1757 files · `dbd diff --scope dojo --exit-code` → in sync
 
 ## Facts worth not re-deriving
 
@@ -34,4 +34,5 @@ Next command: `cd dojo && bun run test` to confirm the gate, then 2b red-first.
 
 ## Open
 
-- Unobserved: whether Supabase returns `provider_token` on the PKCE exchange. A dōjō sign-in confirms it and is the first end-to-end test (the reset dropped `personal/jerry`). Blocks nothing before item 5.
+- Unobserved: whether Supabase returns `provider_token` on the PKCE exchange. A dōjō sign-in confirms it and is the first end-to-end test (the reset dropped `personal/jerry`). **Item 5 is where this bites** — the logic is written and tested, but nothing has run against a real token.
+- Phase 2 carries three deliberate omissions from `ensureProvisioned`, all documented in its header: it never removes (de-provisioning needs a positively-proved forge list, §IV.6), it never overwrites an admin-overridden role, and every org tenant it creates is implicitly unclaimed (`claim_state` does not exist yet).
