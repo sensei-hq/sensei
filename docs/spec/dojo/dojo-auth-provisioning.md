@@ -1434,3 +1434,229 @@ Neither is a live problem, but both cost time to discover.
 Post-release `reconcile` is disabled outright and the path is snapshot →
 `deploy`, which does run hooks. It is a hand-run hazard during pre-release only,
 and CI never had it — the workflow already runs `deploy` after `reconcile`.
+
+---
+
+# Part VIII — Review against the code, and the four decisions that unblock phase 1
+
+Parts I–VII were written against the DDL. This part was written against the
+**running code and the live database**, and it changes four things. Where Part
+VIII and any earlier part disagree, **Part VIII wins**.
+
+Everything below was verified on the local Supabase (`127.0.0.1:54322`) on
+2026-08-27, not inferred from the source.
+
+## VIII.1 F9 — BLOCKING. The sync plan is a user question asked at a tenant address
+
+§V.4 specifies `GET /v1/t/{tenant}/sync/plan`, and in the same breath lists
+`unmapped` as a `denied[].reason`: *"`no_seat`, `not_subscribed` and `unmapped`
+are three different problems."*
+
+**A repo that maps to no tenant cannot appear in a per-tenant response.** The
+endpoint contradicts its own payload, and the contradiction is load-bearing: the
+daemon cannot address the plan by tenant, because *which tenant a repo belongs
+to is the very thing the dōjō is being asked* (§II.6 puts the mapping dōjō-side,
+behind `tenant_connections`). Asking per tenant requires the answer first.
+
+**Resolved: both calls move to the user plane, and mapping is separated from
+entitlement.**
+
+```
+POST /v1/you/repositories        — register + map (identity)
+  → { repos: [ { repo_key, remote_url, name } ] }     the daemon's SHARED repos
+  ← { mapped:   [ { repo_key, tenant } ],
+      unmapped: [ "gitlab.com/acme/x" ] }             no connection → stays local
+
+GET  /v1/you/sync/plan           — entitlement filter over what is registered
+  ← { allowed: [ { repo_key, tenant, repo_id } ],
+      denied:  [ { repo_key, tenant, reason } ] }
+```
+
+Why this shape and not a single `POST /v1/you/sync/plan` carrying the repo list:
+
+- **§V.4's own division survives.** *"Repo identity is registered separately on
+  connect; the plan is the entitlement filter applied on top."* One call would
+  collapse identity and entitlement back together — the thing the plan design
+  was for.
+- **`dojo.repositories` stops being an orphan.** It is currently referenced
+  **nowhere** in `dojo/src` — zero reads, zero writes, zero rows. Registration is
+  what makes the table real, and it is the table the plan reads.
+- **The plan stays a GET**, so it is a read in the HTTP sense as well as the
+  semantic one, and the daemon does not re-ship its whole repo list every cycle.
+- **`tenant_id NOT NULL` is respected.** `dojo.repositories` is keyed
+  `(tenant_id, repo_key)` with a NOT NULL tenant. An unmapped repo therefore has
+  no row it *can* occupy — which is exactly §II.6's rule ("unmapped, not
+  personal — it stays local-only until its org is connected"). Registration
+  reports it and writes nothing; the plan never sees it. **`unmapped` is
+  consequently a registration outcome, not a `denied[]` reason** — correcting
+  §V.4's list to `not_subscribed | no_seat | subscription_expired | unclaimed`.
+
+Everything Part V claimed for the tenant-scoped plan still holds: no cache, no
+TTL, allow-list not permission-check, offline degrades to no-sync, and the sensei
+schema delta across all phases remains one display-only column.
+
+## VIII.2 F10 — BLOCKING. Two identity grains, and the spec picks neither
+
+§II.7 step 1 says *"upsert `dojo.identities` (provider, subject)"*; Part I
+Scenario 6 references `identities.user_id`. Neither exists. The live table is:
+
+```
+dojo.identities ( id, principal_id → dojo.principals(id), provider, subject, … )
+dojo.principals ( id, auth_user_id unique → the Supabase login, re-pointable )
+```
+
+Meanwhile `dojo.memberships.user_id` and `dojo.projects.user_id` are both
+documented as *the raw Supabase auth subject* — which `principals.ddl` expressly
+forbids: *"nothing else should reference auth.users directly."* The schema holds
+two grains and the spec never says which one `ensureProvisioned(userId, …)`
+takes.
+
+**Resolved: the principal is the grain, everywhere.**
+
+```
+auth.users.id ──▶ principals.auth_user_id
+                     ├─▶ identities.principal_id
+                     ├─▶ memberships.user_id      (= principal id)
+                     └─▶ projects.user_id         (= principal id)
+```
+
+This is what `principals` was built for — an accidentally-merged Supabase account
+stays recoverable, because nothing downstream referenced the login.
+
+**The change is contained, because `resolveCaller` is a chokepoint.** It maps
+`JWT sub → principals.auth_user_id → principal id` and returns it as `userId`;
+every call site consuming `caller.userId` is then correct unchanged. Measured:
+52 `user_id` references across 16 server files, of which only **three** are
+client-visible and need the console to send principal ids —
+`POST …/members` (`body.user_id`), `POST …/identities` (`body.user_id`), and
+`PATCH …/members/{userId}/role` (`params.userId`). All three already round-trip
+whatever `listMembers` returned, so they stay consistent by construction.
+
+**One schema consequence, and it fails silently if missed.** `dojo.projects`
+grants `select` to `authenticated` under
+
+```sql
+using (user_id = (select auth.uid()))
+```
+
+If `projects.user_id` becomes a principal id, that policy matches **nothing** and
+a client-direct read returns zero rows — honest-empty masking a break, which the
+no-fabrication rule forbids. The policy must resolve the principal:
+
+```sql
+using (user_id = (select p.id from dojo.principals p
+                   where p.auth_user_id = (select auth.uid())))
+```
+
+The Worker uses `service_role` and bypasses RLS, so **the app would not notice.**
+That is precisely why it is written down here.
+
+## VIII.3 F11 — BLOCKING. There is no web sign-in callback to wire into
+
+§II.7 lists "web sign-in callback" as a provisioning caller. The dōjō has no such
+route: kavach owns the callback (`kavach.config.js` → `routes.session:
+'/auth/session'`, served internally by `kavach.handle`), and
+`src/routes/+layout.server.ts` only reflects `locals.session` onto the page.
+
+**Resolved: `POST /v1/you/provision`**, called by the client once immediately
+after sign-in. An explicit endpoint on the plane that already exists, testable
+without a browser, and it keeps provisioning out of a layout load that runs on
+every navigation. The three callers of §II.7 become:
+
+| caller | when |
+|---|---|
+| `POST /v1/you/provision` | client-side, immediately after web sign-in |
+| `POST /v1/auth/cli/token` | when the daemon completes device auth |
+| `POST /v1/you/github/sync` | explicit re-sync from the console |
+
+`POST /v1/auth/cli/token` must **not** reshape its response — its own comment
+says re-modelling the payload is how `provider_token` gets quietly dropped. It
+parses a clone of the upstream body for `{ user.id, provider_token }`, provisions,
+and returns the original text verbatim.
+
+## VIII.4 F12 — BLOCKING. Two shipped paths are dead, and the suite is green
+
+`bun run test` → **exit 0, 123 files, 1328 tests**, with two production paths
+broken against the live schema. Both confirmed by running their exact statements:
+
+| path | error | since |
+|---|---|---|
+| `createDojo` → `POST /v1/you/dojos` | `column "org" of relation "tenants" does not exist` | `37ca9fab` (this slice) |
+| every `dojo.identities` read/write | `column "user_id" does not exist` | `75565304` (pre-existing) |
+
+`createDojo` also inserts `origin: 'org'`, which is no longer a `tenant_origin`
+label, and derives `dojo_url` from the retired `org/{slug}` key. **This is issue
+#117's own acceptance criterion** — the feature the slice is filed under is dead.
+
+The identities breakage reaches further than provisioning: the four
+`/v1/t/…/identities` routes, plus `resolveDisplayNames` → `listMembers` → the
+members console screen, plus `incidents-data.ts`.
+
+**Why the tests passed.** The specs stub the Supabase client and assert the
+payload the code *sends* — `admin-data.spec.ts:349` asserts
+`{ key: 'org/acme', origin: 'org', org: 'acme' }`, a shape the database rejects.
+No dōjō test touches a real Postgres, so **no dōjō test can fail on schema
+drift.** `ensureProvisioned` tested the same way would be green and
+non-functional in exactly this manner.
+
+**Resolved:** both are repaired inside this slice, failing-test-first, and phase 1
+adds **at least one test that executes against the live Postgres** so that the
+next schema change has something that can go red. That test is a phase-1
+deliverable, not a follow-up.
+
+## VIII.5 Reuse — the normaliser already exists, in Rust
+
+`crates/senseid/src/db/pg_store/repo_key.rs::normalize_repo_key` already collapses
+SSH / HTTPS / `ssh://` / `git://`, strips userinfo, port and `.git`, lowercases,
+and yields `host/org/repo`. It is what writes `sensei.repositories.repo_key`.
+
+**The dōjō must not re-implement it.** Registration (§VIII.1) receives the
+already-normalised `repo_key`, so the dōjō's job is the narrower, genuinely new
+`repo_key → (provider, org_slug)`, which is a host-and-path mapping rather than
+URL parsing:
+
+| forge | repo_key | provider | org |
+|---|---|---|---|
+| github | `github.com/acme/api` | `github` | `acme` (seg 1) |
+| gitlab | `gitlab.com/acme/sub/api` | `gitlab` | `acme` (seg 1, top-level group) |
+| bitbucket | `bitbucket.org/acme/api` | `bitbucket` | `acme` (seg 1) |
+| azure_devops | `dev.azure.com/acme/proj/_git/api` | `azure_devops` | `acme` (seg 1) |
+| azure_devops | `vs-ssh.visualstudio.com/v3/acme/proj/api` | `azure_devops` | `acme` (**seg 2**, after `v3`) |
+
+The second Azure form is why "the org is the first segment" is wrong as a general
+rule, and why this is a typed per-provider mapping rather than a `split('/')[1]`.
+An unrecognised host yields no provider — and therefore `unmapped`, never a
+guess.
+
+## VIII.6 Smaller corrections
+
+- **`dojo.tenants` comments are stale.** `key` still documents
+  `"<origin>/<org>[/<dojo>]"` with the examples `github/sensei-hq` /
+  `org/global-dojo`, and `origin` still reads *"github (backed by a GitHub org
+  identity) or org (custom-registered name)"*. Both describe the retired model —
+  and they are what an implementer reads first.
+- **`syncGithubMemberships` is superseded, not patched.** It builds
+  `github/{login}` keys, which no longer exist, and its contract ("never invents
+  a tenant") is the hole this slice closes. It is replaced by the
+  `tenant_connections` lookup inside `ensureProvisioned`.
+- **`dojo.auth_method` has no generic `oauth`**, and `identities.provider` is
+  typed on it. Phase 1 therefore accepts `provider = 'github'` only, despite
+  `ensureProvisioned`'s multi-forge signature. Phase 2 adds the label (§V.1).
+- **The kavach double-resolve bug is fixed** (1.1.0, pin verified installed), so
+  `/v1` POST bodies arrive intact. Both new POST callers depend on this.
+
+## VIII.7 Phase 1, corrected
+
+| # | deliverable |
+|---|---|
+| 1 | RLS fix on `dojo.projects` (principal-resolving policy, §VIII.2) |
+| 2 | `resolveCaller` maps `sub → principal id`; `ensureProvisioned(userId, forgeToken, provider)` writes `principals` → `identities` → personal tenant → org tenants + `tenant_connections` → memberships, idempotently |
+| 3 | Repair `createDojo` (`organization/{slug}`, `slug` column, `dojo_url`) — issue #117's AC |
+| 4 | Repair every `dojo.identities` path onto `principal_id` |
+| 5 | `POST /v1/you/provision`, and `POST /v1/auth/cli/token` provisioning without reshaping its response |
+| 6 | `POST /v1/you/repositories` — `repo_key → (provider, org)` → `tenant_connections` → tenant; upsert `dojo.repositories`; report `unmapped` |
+| 7 | `GET /v1/you/sync/plan` — everything registered `allowed` in phase 1 |
+| 8 | At least one live-Postgres test, so schema drift can go red |
+
+Items 1–4 are prerequisites: provisioning writes through exactly the paths that
+are currently broken.
