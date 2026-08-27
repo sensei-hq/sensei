@@ -29,6 +29,7 @@ pub mod resume;
 pub mod retry;
 #[cfg(test)]
 pub(crate) mod test_support;
+pub mod ticker;
 pub mod verdict_classifier;
 pub mod version_rescan;
 pub mod watchdog_scheduler;

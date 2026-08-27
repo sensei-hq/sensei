@@ -20,9 +20,9 @@
 //! The analyzer already distilled those; they survive the raw-event window.
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use crate::db::pg_store::PgStore;
+use crate::tasks::ticker::{self, FirstTick};
 
 /// Prune daily by default.
 const DEFAULT_INTERVAL_SECS: u64 = 86_400;
@@ -51,12 +51,6 @@ fn parse_positive(cfg: Option<String>, default: i32) -> i32 {
     cfg.and_then(|v| v.trim().parse::<i32>().ok()).filter(|n| *n > 0).unwrap_or(default)
 }
 
-fn parse_interval(cfg: Option<String>) -> u64 {
-    cfg.and_then(|v| v.trim().parse::<u64>().ok())
-        .filter(|n| *n > 0)
-        .unwrap_or(DEFAULT_INTERVAL_SECS)
-}
-
 fn parse_retention(cfg: Option<String>) -> i32 {
     cfg.and_then(|v| v.trim().parse::<i32>().ok())
         .filter(|n| *n > 0)
@@ -80,8 +74,16 @@ pub fn spawn(pg: Arc<PgStore>) {
 }
 
 async fn run(pg: Arc<PgStore>) {
-    let secs = parse_interval(pg.get_config("activity.prune_interval_secs").await.ok().flatten());
-    let mut ticker = tokio::time::interval(Duration::from_secs(secs));
+    let mut ticker = ticker::from_config(
+        &pg,
+        "activity.prune_interval_secs",
+        DEFAULT_INTERVAL_SECS,
+        // Do NOT prune the instant the daemon starts: capture is still
+        // re-materialising backfilled history, and pruning first would reclaim
+        // sessions before their session-anchored metrics are captured.
+        FirstTick::AfterOneInterval,
+    )
+    .await;
     // Skip the immediate boot tick — do NOT prune the instant the daemon starts.
     // On boot the history synthesizer → analyzer → metric planner are re-capturing
     // backfilled history into durable snapshots; pruning immediately would reclaim
@@ -90,7 +92,6 @@ async fn run(pg: Arc<PgStore>) {
     // session past the backstop. Waiting one interval lets capture win the race; the
     // backstop still bounds anything that is never captured (retention isn't urgent
     // at boot — one interval's delay retains at most one extra window of activity).
-    ticker.tick().await;
     loop {
         ticker.tick().await; // subsequent ticks wait a full interval before pruning
         // Re-read retention each tick so config changes take effect without a restart.
@@ -160,15 +161,6 @@ async fn run(pg: Arc<PgStore>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn parse_interval_falls_back_on_missing_invalid_or_zero() {
-        assert_eq!(parse_interval(None), DEFAULT_INTERVAL_SECS);
-        assert_eq!(parse_interval(Some("nope".into())), DEFAULT_INTERVAL_SECS);
-        assert_eq!(parse_interval(Some("0".into())), DEFAULT_INTERVAL_SECS);
-        assert_eq!(parse_interval(Some("3600".into())), 3600);
-        assert_eq!(parse_interval(Some(" 7200 ".into())), 7200);
-    }
 
     #[test]
     fn parse_retention_falls_back_on_missing_invalid_or_nonpositive() {

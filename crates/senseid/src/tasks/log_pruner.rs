@@ -11,22 +11,14 @@
 //! analyzer-GC concern tracked under #74's sibling work.
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use crate::db::pg_store::PgStore;
+use crate::tasks::ticker::{self, FirstTick};
 
 /// Prune daily by default.
 const DEFAULT_INTERVAL_SECS: u64 = 86_400;
 /// Keep logs for 30 days by default.
 const DEFAULT_RETENTION_DAYS: i32 = 30;
-
-/// Resolve the prune interval (seconds) from config, falling back to the
-/// default for missing / unparseable / zero values.
-fn parse_interval(cfg: Option<String>) -> u64 {
-    cfg.and_then(|v| v.trim().parse::<u64>().ok())
-        .filter(|n| *n > 0)
-        .unwrap_or(DEFAULT_INTERVAL_SECS)
-}
 
 /// Resolve the retention window (days) from config. Must be positive; missing /
 /// unparseable / non-positive values fall back to the default.
@@ -42,8 +34,13 @@ pub fn spawn(pg: Arc<PgStore>) {
 }
 
 async fn run(pg: Arc<PgStore>) {
-    let secs = parse_interval(pg.get_config("logs.prune_interval_secs").await.ok().flatten());
-    let mut ticker = tokio::time::interval(Duration::from_secs(secs));
+    let mut ticker = ticker::from_config(
+        &pg,
+        "logs.prune_interval_secs",
+        DEFAULT_INTERVAL_SECS,
+        FirstTick::Immediate,
+    )
+    .await;
     loop {
         ticker.tick().await; // first tick fires immediately → prune on startup
         // Re-read retention each tick so config changes take effect without a restart.
@@ -59,15 +56,6 @@ async fn run(pg: Arc<PgStore>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn parse_interval_falls_back_on_missing_invalid_or_zero() {
-        assert_eq!(parse_interval(None), DEFAULT_INTERVAL_SECS);
-        assert_eq!(parse_interval(Some("nope".into())), DEFAULT_INTERVAL_SECS);
-        assert_eq!(parse_interval(Some("0".into())), DEFAULT_INTERVAL_SECS);
-        assert_eq!(parse_interval(Some("3600".into())), 3600);
-        assert_eq!(parse_interval(Some(" 7200 ".into())), 7200);
-    }
 
     #[test]
     fn parse_retention_falls_back_on_missing_invalid_or_nonpositive() {
