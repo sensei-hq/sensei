@@ -151,3 +151,54 @@ impl PgStore {
         Ok(n)
     }
 }
+
+/// One repository this machine offers the dōjō, as gate 1 lets through.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SharedRepo {
+    /// The DURABLE cross-install identity — the normalized remote
+    /// (`host/org/repo`). This is what the dōjō maps to a tenant, so it is the
+    /// one field that cannot be missing.
+    pub repo_key: String,
+    /// A representative raw remote, for display and re-derivation.
+    pub remote_url: Option<String>,
+    /// Display name — typically the repository basename.
+    pub name: String,
+}
+
+impl PgStore {
+    /// The repositories the user has opted into sharing — GATE 1 (intent).
+    ///
+    /// The first of the three gates in spec §V.3, and the only one the daemon
+    /// owns. Cost (the repo's visibility on the forge) and entitlement (claim,
+    /// billing, seat) belong to the dōjō and are never mirrored here; the daemon
+    /// simply never mentions a repository the user did not opt in.
+    ///
+    /// Two filters, both load-bearing:
+    ///
+    /// * `visibility = 'shared'` — a private repository is a CHOICE, not a
+    ///   failure. Signing in must not start sharing a repo the user never
+    ///   offered, which is exactly what `sensei.repo_visibility`'s own comment
+    ///   says the column is for.
+    /// * `repo_key IS NOT NULL` — a NULL key is the registry's marker for a
+    ///   local-only repository with no remote. It has no cross-install identity,
+    ///   so the dōjō would have nothing to map it to; sending one could only
+    ///   produce an `unmapped` answer.
+    pub async fn shared_repositories(&self, limit: i64) -> Result<Vec<SharedRepo>, String> {
+        let rows: Vec<(String, Option<String>, String)> = sqlx_core::query_as::query_as(
+            "SELECT repo_key, remote_url, name \
+               FROM sensei.repositories \
+              WHERE visibility = 'shared' \
+                AND repo_key IS NOT NULL \
+              ORDER BY repo_key \
+              LIMIT $1",
+        )
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| format!("shared_repositories: {e}"))?;
+        Ok(rows
+            .into_iter()
+            .map(|(repo_key, remote_url, name)| SharedRepo { repo_key, remote_url, name })
+            .collect())
+    }
+}
