@@ -341,7 +341,7 @@ test-fast: test-crates-fast test-app-unit
 test-crates-fast:
 	cargo test -p sensei-bootstrap
 
-test: test-crates test-app-unit
+test: test-crates test-app-unit test-dojo
 
 test-crates:
 	cargo test --workspace
@@ -350,6 +350,20 @@ test-app: test-app-unit
 
 test-app-unit:
 	cd app && bun run test:unit
+
+# The dōjō's vitest suite. Was in no aggregate target at all, so it only ran when
+# someone remembered to — which is part of how two dead code paths sat behind a
+# green suite (spec dojo-auth-provisioning §VIII.4). Needs no database.
+test-dojo:
+	cd dojo && bun run test
+
+# SQL assertions against a REAL Postgres — RLS, constraints, policy grants: the
+# things a mocked supabase-js client cannot check and therefore cannot fail on.
+# Deliberately NOT part of `make test`: it needs the local Supabase up
+# (`supabase start`), and a missing service should not read as a test failure.
+#   DATABASE_URL overrides the target; defaults to the local Supabase.
+test-db:
+	./database/tests/run.sh
 
 # E2E runs against the throw-away `sensei_e2e` DB (set by SENSEI_INSTANCE=e2e
 # in the e2e globalSetup). Dropping it here guarantees each run starts clean.

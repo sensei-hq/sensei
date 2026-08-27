@@ -43,9 +43,12 @@ as $$
          -- …or a tenant admin. Deliberately NOT the whole team: "metrics by
          -- user" visible to every peer is surveillance, not transparency.
          or exists (
+              -- memberships.user_id is a PRINCIPAL id (§VIII.2). This compared it
+              -- to p.auth_user_id — the LOGIN id — so the admin branch never
+              -- matched and a tenant admin silently lost per-user metrics.
               select 1 from dojo.memberships m
                where m.tenant_id = p_tenant_id
-                 and m.user_id  = p.auth_user_id
+                 and m.user_id  = p.id
                  and m.role     = 'admin'
                  and m.disabled_at is null)
        )
