@@ -11,9 +11,14 @@ import { membershipKindToOrgKind, orgKindKanji, type DojoOrg } from '$lib/dojo-d
 export type SessionUser = { id?: string; email?: string; user_metadata?: Record<string, unknown> };
 export type OrgUser = { name: string; handle: string; initials: string };
 
-type TenantRow = { id: string; key: string; org: string; name: string | null; self_hosted: boolean };
+type TenantRow = { id: string; key: string; slug: string; name: string | null; self_hosted: boolean };
 
-const TENANT_COLS = 'id, key, org, name, self_hosted';
+// The tenant's own slug — renamed from `org` in 37ca9fab when forge identity
+// moved down to dojo.tenant_connections (spec §VII). This list is handed to
+// PostgREST verbatim, so a stale name here is a hard query error, not a missing
+// field: it made `listUserOrgs` fail closed with a 500 and put /you out of reach
+// for every signed-in user.
+export const TENANT_COLS = 'id, key, slug, name, self_hosted';
 const ROLE_LABEL: Record<string, string> = {
 	admin: 'Admin',
 	maintainer: 'Maintainer',
@@ -55,7 +60,7 @@ export function tenantToOrg(t: TenantRow, role: string, kind?: string | null): D
 	return {
 		id: t.id,
 		kanji: orgKindKanji(orgKind),
-		name: t.name ?? t.org,
+		name: t.name ?? t.slug,
 		kind: orgKind,
 		host: t.self_hosted ? 'self' : 'saas',
 		url: t.key,
