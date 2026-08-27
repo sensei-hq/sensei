@@ -2,49 +2,36 @@
 
 **Slice:** Dōjō auth & provisioning — phase 1 (`docs/spec/dojo/dojo-auth-provisioning.md`, Parts I–VIII)
 
-## Done
+## Done — the four prerequisites, each red-first
 
-- **Schema** — `dbd diff --scope dojo --exit-code` CLEAN on `127.0.0.1:54322`. `forge_provider`; `tenant_origin` → `personal|organization`; `tenants.org` → `slug`; `tenant_connections` (nullable `external_id`, two partial uniques). Commits `37ca9fab`, `78cd7808`, `47a726fb`, `25d2ba16`.
-- **Part VIII** — deep review against the running code + live DB. Four decisions taken (below); F9–F12 recorded.
-
-## Decisions (Part VIII — supersede earlier parts)
-
-1. **Principal is the grain everywhere.** `resolveCaller` maps `sub → principals.auth_user_id → principal id`; `memberships.user_id` / `projects.user_id` hold principal ids. Chokepoint, so only 3 client-visible surfaces change.
-2. **`POST /v1/you/provision`** — kavach owns the callback, so there is no web sign-in seam; the client calls this once after sign-in.
-3. **Plan is user-scoped, in two calls** — `POST /v1/you/repositories` (register + map, reports `unmapped`) then `GET /v1/you/sync/plan` (entitlement filter). The tenant-scoped plan contradicted itself: `unmapped` cannot be reported per tenant.
-4. **Fix the two dead paths inside this slice**, red-first, plus a live-Postgres test.
-
-## Known broken (verified by running the statements)
-
-| path | error | since |
+| # | what | commit |
 |---|---|---|
-| `createDojo` → `POST /v1/you/dojos` — **issue #117's own AC** | `column "org" of relation "tenants" does not exist` | `37ca9fab` (this slice) |
-| every `dojo.identities` path (4 routes + members screen + incidents) | `column "user_id" does not exist` | `75565304` (pre-existing) |
+| 1 | RLS resolves `auth.uid()` → principal. **Three** surfaces, not one: `dojo.projects`' policy, `dojo.owns_membership` (backs all three relay_* policies), `can_read_repository_metric:48`. One new `dojo.current_principal_id()`; the projects policy moved to `policies/dojo/projects.sql` (it calls a function now). | `bb994b6a` |
+| 8 | `database/tests/` + `make test-db` — SQL assertions against a real Postgres. `make test` also gained `test-dojo`, which was in no aggregate target at all. | `bb994b6a` |
+| 2a | `resolveCaller` returns the **principal** id as `userId` (+ `authUserId`). New `principal-resolve.ts`; creates the principal on first sight, survives the concurrent-sign-in 23505 by re-reading. | `dd6917f7` |
+| 4 | Every `dojo.identities` path onto `principal_id`. Tenant isolation is now an **explicit membership check** — the dropped `tenant_id` filter was providing it incidentally. | `5cbe4d4d` |
+| 3 | `createDojo` → `organization/{slug}` + `slug` column. **Issue #117's own AC.** | `11ebd83e` |
 
-`bun run test` is **exit 0, 1328 tests** over both. The specs stub the Supabase client and assert the payload the code *sends* — no dōjō test touches Postgres, so none can fail on schema drift.
+## Next — the remaining four
 
-## Phase 1 work list (Part VIII.7)
+2b. `ensureProvisioned(userId, forgeToken, provider)` — identities → personal tenant → org tenants + `tenant_connections` → memberships, idempotent
+5. `POST /v1/you/provision`, and `/v1/auth/cli/token` provisioning **without reshaping its response**
+6. `POST /v1/you/repositories` — `repo_key → (provider, org)` → `tenant_connections` → tenant; reuse the Rust `normalize_repo_key`, do **not** re-implement it
+7. `GET /v1/you/sync/plan` — everything registered `allowed` in phase 1
 
-1. ~~RLS principal resolution~~ **DONE** `bb994b6a` — was three surfaces, not one: `dojo.projects`'s policy, `dojo.owns_membership` (backs the three relay_* policies), and `can_read_repository_metric:48` (`m.user_id = p.auth_user_id` — the admin branch never matched). All now go through one new `dojo.current_principal_id()`. The projects policy moved to `policies/dojo/projects.sql` (it calls a function now). Also landed **item 8 early**: `database/tests/` + `make test-db`.
-2. `resolveCaller` sub→principal; `ensureProvisioned` ← **next**
-3. Repair `createDojo`; 4. Repair the `dojo.identities` paths
-5. `POST /v1/you/provision` + `/v1/auth/cli/token` (no response reshaping)
-6. `POST /v1/you/repositories` (`repo_key → provider/org`; reuse the Rust `normalize_repo_key`, do **not** re-implement it)
-7. `GET /v1/you/sync/plan`
-8. ~~live-Postgres test harness~~ **DONE** (with item 1) — more assertions land with each item
+Next command: `cd dojo && bun run test` to confirm the gate, then 2b red-first.
+
+## Gates (all green as of `11ebd83e`)
+
+`make test-db` → 3 files · `cd dojo && bun run test` → 124 files / 1344 · `bun run check` → 0 errors, 0 warnings / 1752 files · `dbd diff --scope dojo --exit-code` → in sync
 
 ## Facts worth not re-deriving
 
-- **Postgres validates a `language sql` body at CREATE time**, so a function calling a function is order-dependent. `dbd apply --scope dojo --dry-run` prints the real order and reports issues — use it. A `plpgsql` body is *not* validated (why `set_pack_adoption` is unconstrained).
+- **Postgres validates a `language sql` body at CREATE time** — a function calling a function is order-dependent. `dbd apply --scope dojo --dry-run` prints the real order and reports issues. A `plpgsql` body is *not* validated.
+- A policy that calls a function must live in `policies/`, not the table DDL (`dbd apply` creates every table before any function). Moving the GRANT there too is safe — a bare `dbd apply` then leaves `authenticated` with no grant at all, a loud failure rather than a silent leak.
 - `psql` is at `/opt/homebrew/bin` (keg-only libpq; not always on PATH).
-- A policy that calls a function must live in `policies/`, not the table DDL — `dbd apply` creates every table before any function.
-
-Next command: `cd dojo && bun run test` to confirm the gate, then item 2 red-first.
+- The Worker uses `service_role` and **bypasses RLS**, so a broken policy is invisible to every app-level test. Only a read as `authenticated` sees it.
 
 ## Open
 
-- Unobserved: whether Supabase returns `provider_token` on the PKCE exchange. A dōjō sign-in confirms it and is the first end-to-end test (the reset dropped `personal/jerry`).
-
-## Environment (verified 2026-08-27)
-
-`develop` clean · dōjō DB `127.0.0.1:54322` reachable, 1 tenant (`organization/global-dojo`), 0 principals/identities/memberships/connections/repositories, 10 `auth.users` · kavach 1.1.0 (double-resolve bug fixed, `/v1` POST bodies intact)
+- Unobserved: whether Supabase returns `provider_token` on the PKCE exchange. A dōjō sign-in confirms it and is the first end-to-end test (the reset dropped `personal/jerry`). Blocks nothing before item 5.
