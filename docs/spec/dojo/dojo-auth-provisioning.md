@@ -1680,10 +1680,46 @@ explicit membership check, and update/delete answer `404 no such identity` for
 both the missing and the wrong-tenant case so tenant A cannot probe which ids
 exist in tenant B.
 
-### Still unverified
+### VERIFIED against a real GitHub sign-in — 2026-08-27
 
-Phase 1 is code-complete and every gate is green, but **nothing has run against a
-real sign-in**. Whether Supabase returns `provider_token` on the PKCE exchange
-remains the one unobserved assumption in the whole design (§IV.8). The code
-handles its absence as `no_forge_token` — visible, never silent — so a miss is
-loud rather than a lie, but it has not been seen either way.
+The last unobserved assumption of the design (§IV.8) is now observed, and it
+holds: **Supabase does return `provider_token` on the exchange, and the dōjō can
+read the caller's orgs with it.** A real sign-in produced, from nothing:
+
+| table | row |
+|---|---|
+| `dojo.principals` | one, pointing at the Supabase login |
+| `dojo.identities` | `github_oauth` / subject `293381742` — GitHub's stable USER id, not the login |
+| `dojo.tenants` | `personal/sensei-hq-org` (slugged from the GitHub login) **and** `organization/sensei-hq` |
+| `dojo.memberships` | `admin` on both, `authenticated_via = github_oauth` |
+| `dojo.tenant_connections` | `github` / external_id `276295035` — the stable ORG id — `verified_at` set |
+
+Idempotence verified on that real data: two further session syncs left every
+count identical, with no duplicate tenant key, membership or connection.
+
+The honest-failure paths were exercised separately against the live endpoint,
+and the three outcomes stay distinguishable rather than collapsing into "nothing
+happened":
+
+```
+no token         → { synced: false, reason: "no_forge_token",    personal: {…} }
+invalid token    → { synced: false, reason: "forge_unreachable", personal: {…} }
+valid token      → { synced: true,  personal: {…}, tenants: [organization/sensei-hq] }
+```
+
+In both failure cases the personal dōjō is still returned — D1 does not depend
+on any forge — and no org tenant is invented from a read that did not succeed.
+
+**How the token reaches the server.** Not through the session cookie:
+`setCookieFromSession` keeps only `access_token`/`refresh_token`, so
+`locals.session.provider_token` is structurally always null and the web path
+could never have provisioned an org. kavach gained an `onSessionSync` server
+hook (jerrythomas/kavach `040d34c`) which hands the app the INCOMING provider
+session — the payload the browser already POSTs to `/auth/session`. Nothing
+extra is persisted and nothing new crosses the wire; the token was already
+arriving and being discarded. Persisting it in the cookie was considered and
+rejected: a `read:org` token replayed on every request for the session's
+lifetime, to serve a need that lasts one call.
+
+**Carry forward:** `node_modules/kavach` is patched locally with that commit.
+A published `1.1.1` and a repin are required before this deploys anywhere.

@@ -19,21 +19,32 @@
 
 `make test-db` → 5 files · `cd dojo && bun run test` → 129 files / 1407 · `bun run check` → 0 errors, 0 warnings / 1767 files · `dbd diff --scope dojo --exit-code` → in sync
 
-## NOT yet verified — the honest status
+## VERIFIED end-to-end against a real GitHub sign-in (2026-08-27)
 
-**Nothing has run against a real sign-in.** Every gate above is unit tests, type checks and SQL assertions. The end-to-end path — GitHub OAuth → `provider_token` → `ensureProvisioned` → a real `personal/jerry` row — has never executed. In particular:
+The assumption carried since the slice began — does Supabase return
+`provider_token`? — is **observed and true**. A real sign-in produced, from an
+empty schema: `dojo.principals` ×1 · `dojo.identities` `github_oauth/293381742`
+(GitHub's stable user id) · `dojo.tenants` `personal/sensei-hq-org` **and**
+`organization/sensei-hq` · memberships `admin` on both · `tenant_connections`
+`github/276295035` with `verified_at` set.
 
-- whether Supabase returns `provider_token` on the PKCE exchange is **still the one unobserved assumption in the design**. The code handles its absence (`no_forge_token`, visible, never silent), so a miss is loud rather than a lie — but it has not been seen either way.
-- the dōjō DB still holds **1 tenant** (`organization/global-dojo`) and 0 principals / identities / memberships / connections / repositories.
+Idempotence proven on that real data: two further syncs, identical counts, no
+duplicate key/membership/connection. The failure paths stay distinguishable —
+`no_forge_token` vs `forge_unreachable` vs success — and both failures still
+return the personal dōjō while inventing no org tenant.
 
-Next command: sign in to the dōjō, then
+**The token reaches the server via kavach's new `onSessionSync` hook**
+(jerrythomas/kavach `040d34c`), not the cookie: `setCookieFromSession` keeps only
+access/refresh, so `locals.session.provider_token` is structurally always null.
+The hook uses the session the browser already POSTs — nothing extra persisted.
 
-```
-psql -h 127.0.0.1 -p 54322 -U postgres -d postgres \
-  -c "select key, origin from dojo.tenants"
-```
+### Carry forward
 
-— expect `personal/{login}` plus one tenant per GitHub org.
+- **`node_modules/kavach` is patched locally.** Publish `1.1.1` and repin before
+  this deploys anywhere.
+- `dojo.principals.display_name` is null (the hook resolves the principal before
+  it has the forge profile). Harmless — names resolve from `dojo.identities` —
+  but tidy it when convenient.
 
 ## Phase 2 (deliberately not built)
 
