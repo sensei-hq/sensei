@@ -24,12 +24,12 @@ set search_path to staging, dojo, extensions;
 create or replace procedure import_tenants()
 language plpgsql as $$
 begin
-  insert into dojo.tenants (id, key, origin, org, dojo, scope, name, dojo_url, self_hosted, updated_at)
+  insert into dojo.tenants (id, key, origin, slug, dojo, scope, name, dojo_url, self_hosted, updated_at)
   select
       stg.id::uuid
     , stg.key
     , stg.origin::dojo.tenant_origin
-    , stg.org
+    , stg.slug
     , nullif(stg.dojo, '')
     , coalesce(stg.scope, 'private')::dojo.tenant_scope
     , stg.name
@@ -41,7 +41,7 @@ begin
   on conflict (key)
   do update set
       origin      = excluded.origin
-    , org         = excluded.org
+    , slug        = excluded.slug
     , dojo        = excluded.dojo
     , scope       = excluded.scope
     , name        = excluded.name

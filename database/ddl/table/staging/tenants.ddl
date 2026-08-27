@@ -13,7 +13,7 @@ create table tenants (
   id            text        -- explicit and FIXED; see import_tenants
 , key           text
 , origin        text        -- cast to dojo.tenant_origin on import
-, org           text
+, slug          text
 , dojo          text
 , scope         text        -- cast to dojo.tenant_scope on import
 , name          text
