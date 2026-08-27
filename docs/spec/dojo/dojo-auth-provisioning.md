@@ -1323,3 +1323,71 @@ nothing is gated yet.
 The daemon is unchanged between the phases — it asks for a plan and syncs what
 it is given. All the new logic lands behind that one endpoint, which is what the
 plan design bought.
+
+---
+
+# Part VII — `tenants.org` → `tenants.slug`
+
+Call it what it is. The column is the tenant's own name in a URL; it has not
+been "the org" since forge identity moved down to `tenant_connections` (§VI.2).
+
+```
+dojo.tenants
+  ~ org  text not null   →   slug  text not null
+```
+
+New comment: *"The tenant's own slug — the second segment of its discovery path
+`{origin}/{slug}`. Tenant-owned and forge-independent: the forge's name for an
+org lives on `dojo.tenant_connections.external_slug`, and one tenant may connect
+to forges that spell it differently."*
+
+## VII.1 What changes
+
+| surface | change | note |
+|---|---|---|
+| `database/ddl/table/dojo/tenants.ddl` | column + comment | the rename itself |
+| `database/ddl/table/staging/tenants.ddl` | `org` → `slug` | staging mirrors the target |
+| `database/ddl/procedure/staging/import_tenants.ddl` | 3 references | insert list, select list, `on conflict` update |
+| `database/import/**/tenants.jsonl` | `"org"` → `"slug"` | seed data; currently one row (`global-dojo`) |
+| `dojo/src/routes/v1/t/[origin]/[org]/` | dir → `[slug]` | **33 routes** |
+| `dojo/src/lib/server/dojo-auth.ts` | param name | see VII.2 |
+
+## VII.2 The route param is a different thing with the same name
+
+`dojo-auth.ts` resolves a tenant with `.eq('key', ${origin}/${org})` — it never
+SELECTs the column. The `org` there is the **route parameter**, which happens to
+share a name with the column.
+
+So the column rename does not require the route rename. They are separated here
+deliberately:
+
+- **The column rename is required** — the name is now wrong.
+- **The route rename is cosmetic** but should ride along, because leaving
+  `[org]` in the path while the column says `slug` reintroduces exactly the
+  confusion this is fixing. It is 33 directory renames and one param, with no
+  behaviour change and no URL change (the *value* in that position is
+  unchanged).
+
+## VII.3 What is NOT renamed
+
+`dojo.memberships.org_slugs` **keeps its name.** It genuinely holds forge org
+slugs — the set a membership covers, used for repo routing — so `org` is correct
+there. Renaming it would be the opposite error.
+
+## VII.4 Migration
+
+`dojo.tenants` is not yet carrying production tenants at scale, so this is a
+plain rename rather than an add-backfill-drop:
+
+```sql
+alter table dojo.tenants rename column org to slug;
+```
+
+Ordering matters: rename the column, update the staging table and import
+procedure in the same deploy, and reseed. A rename with a stale
+`import_tenants` would fail on the next seed with a column-not-found — noisily,
+which is the right failure, but avoidable by doing both together.
+
+Rides with the phase-1 key migration (`github/{org}` → `organization/{org}`,
+§IV.7) since both touch `dojo.tenants` and both change discovery paths. One
+deploy, one set of URL changes, rather than two.
