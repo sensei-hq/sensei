@@ -41,11 +41,11 @@
 //! - **Honest-empty** — no active base metrics, or no projects, enqueues nothing.
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use crate::db::pg_store::PgStore;
 use crate::tasks::handlers::metrics::HEALTH_TASK_NAME;
 use crate::tasks::queue::TaskQueue;
+use crate::tasks::ticker::{self, FirstTick};
 use crate::tasks::{Task, TaskKind};
 
 /// Wake hourly by default. There is no per-run watermark any more — the tick just
@@ -63,14 +63,6 @@ const DEFAULT_WINDOW_DAYS: u32 = 14;
 /// `sensei.config` keys for the scheduler knobs.
 const INTERVAL_KEY: &str = "metrics.interval_secs";
 const WINDOW_DAYS_KEY: &str = "metrics.window_days";
-
-/// Resolve the tick interval (seconds) from config, falling back to the default
-/// for missing / unparseable / zero values.
-fn parse_interval(cfg: Option<String>) -> u64 {
-    cfg.and_then(|v| v.trim().parse::<u64>().ok())
-        .filter(|n| *n > 0)
-        .unwrap_or(DEFAULT_INTERVAL_SECS)
-}
 
 /// Resolve the compute window (days) from config, falling back to the default for
 /// missing / unparseable / zero values.
@@ -268,9 +260,12 @@ pub fn spawn(queue: Arc<TaskQueue>, pg: Arc<PgStore>) {
 }
 
 async fn run(queue: Arc<TaskQueue>, pg: Arc<PgStore>) {
-    let secs = parse_interval(pg.get_config(INTERVAL_KEY).await.ok().flatten());
+    let secs = ticker::interval_secs(
+        pg.get_config(INTERVAL_KEY).await.ok().flatten(),
+        DEFAULT_INTERVAL_SECS,
+    );
     tracing::info!(interval_secs = secs, "metrics_scheduler: started");
-    let mut ticker = tokio::time::interval(Duration::from_secs(secs));
+    let mut ticker = ticker::ticker(secs, FirstTick::Immediate);
     loop {
         // First tick fires immediately → a freshly booted daemon enqueues a wave;
         // the per-(repo × group) watermarks then decide what actually recomputes
@@ -308,15 +303,6 @@ async fn run(queue: Arc<TaskQueue>, pg: Arc<PgStore>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn parse_interval_falls_back_on_missing_invalid_or_zero() {
-        assert_eq!(parse_interval(None), DEFAULT_INTERVAL_SECS);
-        assert_eq!(parse_interval(Some("nope".into())), DEFAULT_INTERVAL_SECS);
-        assert_eq!(parse_interval(Some("0".into())), DEFAULT_INTERVAL_SECS);
-        assert_eq!(parse_interval(Some("900".into())), 900);
-        assert_eq!(parse_interval(Some("  1800 ".into())), 1800);
-    }
 
     #[test]
     fn parse_window_days_falls_back_on_missing_invalid_or_zero() {

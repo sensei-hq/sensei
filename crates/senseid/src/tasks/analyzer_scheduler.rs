@@ -23,11 +23,11 @@
 
 use crate::db::pg_store::PgStore;
 use crate::tasks::queue::TaskQueue;
+use crate::tasks::ticker::{self, FirstTick};
 use crate::tasks::{Task, TaskKind};
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
 
 const DEFAULT_INTERVAL_SECS: u64 = 3600;
 /// Re-analyze every active project at least this often, regardless of new
@@ -109,14 +109,6 @@ async fn enqueue_global_passes(queue: &TaskQueue) {
     queue.enqueue(Task::new(TaskKind::LearnPlaybooks, "", "")).await;
 }
 
-/// Resolve the tick interval from a config value, falling back to the default
-/// for missing / unparseable / zero values.
-fn parse_interval(cfg: Option<String>) -> u64 {
-    cfg.and_then(|v| v.trim().parse::<u64>().ok())
-        .filter(|n| *n > 0)
-        .unwrap_or(DEFAULT_INTERVAL_SECS)
-}
-
 /// True when a daily full refresh is due: never refreshed, or the interval has
 /// elapsed. Pure (clock injected) so it's testable.
 fn due_for_full_refresh(now_ms: i64, last_refresh_ms: Option<i64>, interval_secs: i64) -> bool {
@@ -163,7 +155,7 @@ async fn interval_secs(pg: &PgStore) -> u64 {
             None
         }
     };
-    parse_interval(raw)
+    ticker::interval_secs(raw, DEFAULT_INTERVAL_SECS)
 }
 
 /// Spawn the scheduler for the daemon's lifetime.
@@ -186,7 +178,7 @@ async fn run(queue: Arc<TaskQueue>, pg: Arc<PgStore>) {
             DEFAULT_FULL_REFRESH_SECS
         }
     };
-    let mut ticker = tokio::time::interval(Duration::from_secs(secs));
+    let mut ticker = ticker::ticker(secs, FirstTick::Immediate);
     // Restore the watermark + last-refresh from config so a restart resumes
     // incrementally instead of re-analyzing everything.
     let mut watermark = match pg.get_config(WATERMARK_KEY).await {
@@ -362,15 +354,6 @@ mod tests {
             kinds.contains(&TaskKind::LearnPlaybooks),
             "§9 learning-loop pass must ride the global-passes tick, got {kinds:?}",
         );
-    }
-
-    #[test]
-    fn parse_interval_falls_back_on_missing_invalid_or_zero() {
-        assert_eq!(parse_interval(None), DEFAULT_INTERVAL_SECS);
-        assert_eq!(parse_interval(Some("abc".into())), DEFAULT_INTERVAL_SECS);
-        assert_eq!(parse_interval(Some("0".into())), DEFAULT_INTERVAL_SECS);
-        assert_eq!(parse_interval(Some("1800".into())), 1800);
-        assert_eq!(parse_interval(Some("  900 ".into())), 900);
     }
 
     #[test]

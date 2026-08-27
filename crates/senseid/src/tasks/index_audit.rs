@@ -34,7 +34,6 @@
 use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
-use std::time::Duration;
 
 use chrono::Utc;
 use serde::Serialize;
@@ -42,6 +41,7 @@ use serde::Serialize;
 use crate::api::util::json_uuid;
 use crate::db::pg_store::PgStore;
 use crate::tasks::handlers::scan;
+use crate::tasks::ticker::{self, FirstTick};
 
 /// Daily. A full stat sweep over every indexed file/folder is heavier than the
 /// 300s reconcile, and the drift it repairs is the rare/residual class the cheap
@@ -296,14 +296,6 @@ pub async fn run_doctor(pg: &PgStore) -> AuditReport {
     run_audit(pg, false).await
 }
 
-/// Resolve the audit cadence (seconds) from config, falling back to the default
-/// for missing / unparseable / zero values.
-fn parse_interval(cfg: Option<String>) -> u64 {
-    cfg.and_then(|v| v.trim().parse::<u64>().ok())
-        .filter(|n| *n > 0)
-        .unwrap_or(DEFAULT_INTERVAL_SECS)
-}
-
 /// True when an audit is "due": never run, or the interval has elapsed since the
 /// last run. Pure (clock injected) so it's testable. Unlike the reconcile boot
 /// pass, the audit IS watermark-gated — it's the heavier sweep, so a restart
@@ -321,12 +313,15 @@ pub fn spawn(pg: Arc<PgStore>) {
 }
 
 async fn run(pg: Arc<PgStore>) {
-    let secs = parse_interval(pg.get_config(INTERVAL_KEY).await.ok().flatten());
+    let secs = ticker::interval_secs(
+        pg.get_config(INTERVAL_KEY).await.ok().flatten(),
+        DEFAULT_INTERVAL_SECS,
+    );
     tracing::info!(
         interval_secs = secs,
         "index_audit: started (periodic invariant self-audit + repair)"
     );
-    let mut ticker = tokio::time::interval(Duration::from_secs(secs));
+    let mut ticker = ticker::ticker(secs, FirstTick::Immediate);
     loop {
         ticker.tick().await; // first tick fires immediately
         let now_ms = Utc::now().timestamp_millis();
@@ -372,17 +367,6 @@ async fn run(pg: Arc<PgStore>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // ── Pure helpers ─────────────────────────────────────────────────────────
-
-    #[test]
-    fn parse_interval_falls_back_on_missing_invalid_or_zero() {
-        assert_eq!(parse_interval(None), DEFAULT_INTERVAL_SECS);
-        assert_eq!(parse_interval(Some("nope".into())), DEFAULT_INTERVAL_SECS);
-        assert_eq!(parse_interval(Some("0".into())), DEFAULT_INTERVAL_SECS);
-        assert_eq!(parse_interval(Some("3600".into())), 3600);
-        assert_eq!(parse_interval(Some("  7200 ".into())), 7200);
-    }
 
     #[test]
     fn default_cadence_is_conservative_daily() {
