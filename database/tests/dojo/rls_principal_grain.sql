@@ -100,4 +100,42 @@ end $$;
 
 reset role;
 
+-- ── the shape principal-resolve.ts depends on ────────────────────────────────
+-- Its unit tests mock supabase-js, so they assert the payload the module SENDS
+-- and would stay green if these columns were renamed underneath it — the exact
+-- failure mode of §VIII.4. This is the round-trip those tests cannot make.
+do $$
+declare found uuid;
+begin
+    -- The lookup: select id where auth_user_id = <login>.
+    select id into found
+      from dojo.principals
+     where auth_user_id = '11111111-1111-1111-1111-111111111111';
+    if found is distinct from 'aaaaaaaa-1111-1111-1111-111111111111' then
+        raise exception
+            'dojo.principals lookup by auth_user_id returned %, expected Alice''s principal.',
+            coalesce(found::text, 'NULL');
+    end if;
+
+    -- The insert: (auth_user_id, display_name) returning id. A rename of either
+    -- column breaks resolvePrincipalId, and only this notices.
+    insert into dojo.principals (auth_user_id, display_name)
+    values ('33333333-3333-3333-3333-333333333333', 'Carol')
+    returning id into found;
+    if found is null then
+        raise exception 'dojo.principals insert did not return an id.';
+    end if;
+
+    -- auth_user_id is UNIQUE, which is what makes the concurrent-sign-in retry
+    -- in resolvePrincipalId correct rather than a guess. Prove the constraint
+    -- is really there: without it the retry path is dead code and two principals
+    -- could exist for one human.
+    begin
+        insert into dojo.principals (auth_user_id) values ('33333333-3333-3333-3333-333333333333');
+        raise exception 'dojo.principals.auth_user_id is NOT unique — the 23505 retry path cannot fire.';
+    exception when unique_violation then
+        null;  -- expected
+    end;
+end $$;
+
 rollback;
