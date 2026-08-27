@@ -1200,3 +1200,126 @@ asks the same question every cycle and does as it is told.
 Phase 1 is shippable alone and closes the hole for every new user: no billing,
 no claim, no seats, no second forge. Phases 2 and 3 add tables rather than
 reshaping phase 1's, which is the point of designing all three now.
+
+---
+
+# Part VI — F6 and F7 resolved; two phases
+
+## VI.1 F6 — claim is decoupled from admin
+
+The error was treating a *proof* as a *property*. Forge ownership is a fact that
+changes; a claim records that it was true once.
+
+**Claim and admin become separate things.**
+
+| | claim | admin |
+|---|---|---|
+| means | this tenant was legitimately provisioned, and someone proved org control | this person may administer the tenant |
+| holders | one, recorded on `dojo.tenants` | many, via `dojo.memberships.role` |
+| gates | whether the tenant may hold a billing account | seats, governance, members |
+
+```
+dojo.tenants
+  + claimed_at    timestamptz
+  + claimed_by    uuid
+  + claim_state   dojo.claim_state   -- unclaimed | claimed | stale
+```
+
+Rules:
+
+- **Claiming grants admin; losing the claim does not remove it.** The claimer
+  becomes a tenant admin. If their forge standing later lapses the claim goes
+  `stale`, but their admin role is untouched at that moment — revoking mid-cycle
+  is how an org gets locked out of its own dōjō.
+- **Re-verified on every provisioning pass.** If the claimer no longer proves
+  owner/admin on any connected forge, `claim_state = 'stale'` and the tenant's
+  admins are notified. Only a pass that positively proved the forge list may do
+  this (§IV.6) — an outage must not stale every claim.
+- **A stale claim is takeover-able.** Any user who currently proves owner/admin
+  on a connected forge may claim it, becoming `claimed_by` and an admin. This is
+  the path for acquisition, for a departed founder, and for "she left six months
+  ago".
+- **A stale claim keeps an existing subscription running** but blocks new
+  billing changes. Cutting off a paying org because one person changed jobs is
+  the wrong failure.
+- **The last admin cannot be removed.** Same principle as refusing a seat
+  reduction (§IV.5): the service must not let you create an unadministrable
+  tenant.
+
+```gherkin
+Scenario: The claimer leaves the company
+  Given tenant `organization/acme` is claimed by Alice, a github owner
+   And Bob is also a tenant admin
+  When a provisioning pass proves Alice is no longer an owner of the github org
+  Then claim_state becomes `stale`
+   And Alice's admin role is NOT automatically removed
+   And the tenant's admins are notified that the claim needs re-proving
+   And the existing subscription continues
+   And any current github owner may take over the claim
+
+Scenario: The claimer was the only admin
+  Given tenant `organization/acme` is claimed by Alice, the only admin
+  When Alice's forge standing lapses
+  Then claim_state becomes `stale`
+   And Alice retains admin, so the tenant is never unadministrable
+   And a current forge owner may take over the claim and become admin
+```
+
+## VI.2 F7 — org identity moves down to the connection
+
+`dojo.tenants.org` is documented as *"The GitHub org id (e.g. sensei-hq) or the
+custom org name"* — a GitHub-era column. With several forges per tenant, the
+forge's name for an org belongs on the **connection**, not the tenant.
+
+| column | new meaning |
+|---|---|
+| `dojo.tenants.org` | the **tenant's own slug** — the URL segment, tenant-owned, unrelated to any forge |
+| `dojo.tenant_connections.external_slug` | **the forge's name** for that org. NOT NULL — it is how the org was found |
+| `dojo.tenant_connections.external_id` | the forge's **stable id**. **NULLABLE** — an enrichment that arrives when the API confirms it |
+
+This is what lets one tenant `organization/sensei-hq` connect to GitHub
+`sensei-hq` and Azure `senseihq` — different upstream names, one tenant slug.
+
+```
+unique (provider, external_id) where external_id is not null
+unique (provider, lower(external_slug)) where external_id is null
+```
+
+The first keeps the "one proven forge org → one tenant, forever" guarantee. The
+second stops two *unproven* connections racing for the same slug.
+
+**The squatting risk is contained by the gate, not by NOT NULL.** An
+unverified connection (`verified_at IS NULL`) confers **no entitlement**: a
+tenant whose only connection is unverified cannot be claimed, therefore cannot
+hold billing, therefore cannot sync private data. A renamed-and-squatted org can
+at worst occupy a slug — it can never inherit governance or reach private code.
+
+That is strictly better than the earlier NOT NULL, which made the migration
+impossible to write (§F7) and would have forced a guessed id or a dropped row.
+
+## VI.3 Two phases
+
+Auto-provisioning is cheap; entitlement is load-bearing. So the three-phase split
+collapses:
+
+**Phase 1 — provisioning.** Everything is provisioned and everything syncs;
+nothing is gated yet.
+
+- `tenant_origin` → `personal | organization`; key migration `github/{org}` →
+  `organization/{org}`
+- `tenants.org` re-documented as the tenant slug
+- `forge_provider`, `tenant_connections` (with the nullable `external_id`)
+- `ensureProvisioned` wired into all three callers (§II.7)
+- repo→tenant mapping by remote URL (§II.6)
+- `GET /v1/t/{tenant}/sync/plan` returning every shared repo as `allowed`
+
+**Phase 2 — entitlement.** The gate arrives; the daemon does not change.
+
+- `claim_state`, `claimed_at`, `claimed_by`; claim/takeover flows
+- `forge_visibility`; `seat_allocations`, `seat_release_reason`
+- billing wiring, the full `can_sync` (§IV.3), the seat recommendation (§IV.4)
+- de-provisioning (§IV.6) and the F6 lifecycle
+
+The daemon is unchanged between the phases — it asks for a plan and syncs what
+it is given. All the new logic lands behind that one endpoint, which is what the
+plan design bought.
