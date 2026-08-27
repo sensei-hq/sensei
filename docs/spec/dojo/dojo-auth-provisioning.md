@@ -1003,3 +1003,153 @@ org slug so the namespaces cannot collide, and it is not a forge prefix — so
   question; the gate only asks "is there a current allocation".
 - **Downgrade UX** — refusing a seat reduction is correct but needs a console
   flow that shows which allocations to release.
+
+---
+
+# Part V — Database design and the per-repo sync decision
+
+Design covers all three phases; the phase column says when each piece is needed.
+
+## V.0 A vocabulary collision the gate depends on
+
+The gate keys on repository visibility, and the two sides do not agree:
+
+| | values | meaning |
+|---|---|---|
+| `sensei.repo_visibility` (enum) | `private` \| `shared` | `shared` = shared WITH the dōjō |
+| `dojo.repositories.visibility` (text+CHECK) | `private` \| `public` | `public` = publicly visible ON THE FORGE |
+
+These are different questions. A private GitHub repo that the user has chosen to
+share with their dōjō is `shared` locally and `private` upstream — and the gate
+must read the *forge* answer, or every shared private repo would sync free.
+
+**Resolution.** Introduce `sensei.forge_visibility` (`public` | `private` |
+`internal`) as the forge's answer, distinct from the local sharing intent.
+`dojo.repositories.visibility` becomes that enum too (house rule: enums, not
+text+CHECK). `sensei.repositories.visibility` keeps its current meaning and is
+renamed in comment, not in type, to avoid a breaking migration.
+
+`internal` matters for Phase 3: GitHub/GitLab "internal" repos are visible to an
+enterprise but are not public, so they gate as private.
+
+## V.1 dōjō — new types
+
+| object | definition | phase |
+|---|---|---|
+| `dojo.forge_provider` | enum `github \| gitlab \| bitbucket \| azure_devops` | 2 |
+| `dojo.forge_visibility` | enum `public \| private \| internal` | 2 |
+| `dojo.seat_release_reason` | enum `transferred \| revoked \| member_left \| subscription_ended \| seats_reduced` | 3 |
+| `dojo.tenant_origin` | **add** `personal`, `organization`; retire `github`, `org` after backfill | 1 |
+| `dojo.auth_method` | **add** `oauth` (generic); keep `github_oauth` for written rows | 2 |
+
+## V.2 dōjō — table changes
+
+**`dojo.tenants`** — phase 1 for the sigil, 3 for the claim:
+
+```
++ claimed_at   timestamptz          -- NULL = unclaimed; cannot hold billing
++ claimed_by   uuid                 -- who proved forge ownership
+```
+
+`key` convention: `@login` for personal, bare slug for organizations (§IV.7).
+The existing single unique on `key` is sufficient — `@` cannot appear in a forge
+org slug, so the namespaces cannot collide.
+
+**`dojo.tenant_connections`** — NEW, phase 2:
+
+```
+id            uuid pk
+tenant_id     uuid not null references dojo.tenants(id) on delete cascade
+provider      dojo.forge_provider not null
+external_id   text not null        -- the forge's STABLE id, never the slug
+external_slug text not null        -- display + matching only
+connected_by  uuid not null
+verified_at   timestamptz          -- when org control was last proven
+created_at    timestamptz not null default now()
+unique (provider, external_id)
+```
+
+One forge org maps to at most one tenant, forever. Keyed on the stable id
+because a slug can be renamed and re-registered upstream; keying on the slug
+would let a squatter inherit another tenant's governance.
+
+**`dojo.seat_allocations`** — NEW, phase 3. Shape in §IV.2.
+
+**`dojo.repositories`** — phase 2:
+
+```
+~ visibility   text+CHECK  →  dojo.forge_visibility
++ provider     dojo.forge_provider          -- which forge this repo lives on
++ external_id  text                         -- stable forge repo id
+```
+
+## V.3 sensei — how the daemon knows
+
+The daemon must never decide entitlement; it caches the dōjō's decision so it
+does not ship data that will be rejected. **`sensei.repositories`** gains:
+
+```
++ dojo_membership_id uuid references sensei.dojo_memberships(id) on delete set null
++ dojo_tenant_key    text          -- NULL = unmapped (no connection matched)
++ sync_allowed       boolean       -- NULL = UNKNOWN, never assumed
++ sync_reason        text          -- unmapped | unclaimed | not_subscribed
+                                   -- | subscription_expired | no_seat | allowed
++ sync_decided_at    timestamptz   -- when the dōjō last ruled
++ forge_visibility   sensei.forge_visibility   -- the forge's answer, per V.0
+```
+
+The decision rule, fail-closed:
+
+```rust
+fn should_sync(repo) -> bool {
+    repo.sync_allowed == Some(true)
+        && repo.sync_decided_at.is_some_and(|t| t > now() - DECISION_TTL)
+}
+```
+
+Three properties this buys:
+
+- **NULL is not permission.** A repo the dōjō has never ruled on is not synced.
+  This is the difference between "we don't know yet" and "no" being treated the
+  same way, which is the only safe default for someone else's private code.
+- **A stale decision expires.** Without the TTL, a seat revoked upstream would
+  keep syncing until something happened to refresh the cache. The TTL bounds how
+  long a revocation takes to bite even if no sync round-trip occurs.
+- **The reason is carried, so the UI can say why.** `no_seat` and
+  `not_subscribed` are different problems with different fixes, and a repo that
+  is simply `unmapped` is not a billing problem at all.
+
+**The cache is not the enforcement.** The dōjō re-evaluates `can_sync` on every
+write. A daemon with a stale-permissive cache gets rejected — which is why the
+denial reason must ride on the rejection, so the daemon can update its cache
+from the refusal rather than retrying forever.
+
+## V.4 Where the decision comes from
+
+`ProvisionResult` (§II.7) gains a `repos[]` array, and it is the only place the
+daemon learns a decision:
+
+```json
+{ "repo_key": "github.com/acme/api",
+  "tenant_key": "acme",
+  "forge_visibility": "private",
+  "sync_allowed": false,
+  "reason": "no_seat" }
+```
+
+Returned on connect, on explicit re-sync, and on any write refusal. Both
+directions — push of metrics/sessions and pull of governance — consult the same
+decision, because the subscription gates "governance and data sync" as one
+thing.
+
+## V.5 What each phase needs
+
+| phase | dōjō | sensei |
+|---|---|---|
+| **1 · personal** | `tenant_origin` += personal/organization; `@login` key convention; provisioning writes tenant + membership | `dojo_tenant_key`, `sync_allowed`, `sync_reason`, `sync_decided_at` on repositories. Personal always resolves `allowed`. |
+| **2 · public org** | `forge_provider`, `forge_visibility`, `tenant_connections`, repo `provider`/`external_id`; repo→tenant mapping | `forge_visibility`; mapping by remote URL (§II.6); public resolves `allowed`, private resolves `not_subscribed` |
+| **3 · private org** | `claimed_at`/`claimed_by`, `seat_allocations`, `seat_release_reason`, the full gate + de-provisioning | `dojo_membership_id`; decision TTL; surfacing `no_seat` in the CLI |
+
+Phase 1 is shippable alone and closes the hole for every new user: no billing,
+no claim, no seats, no second forge. Phases 2 and 3 add tables rather than
+reshaping phase 1's, which is the point of designing all three now.
