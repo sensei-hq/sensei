@@ -28,10 +28,10 @@ vi.mock('./dojo-supabase', async (importOriginal) => {
 	return { ...actual, dojoDb: () => stub };
 });
 
-const { listUserOrgs, getUserOrg } = await import('./dojo-orgs');
+const { listUserOrgs, getUserOrg, tenantToOrg, TENANT_COLS } = await import('./dojo-orgs');
 const { membershipKindToOrgKind, orgKindKanji } = await import('../dojo-data');
 
-const TENANT_ROW = { id: 't1', key: 'gh/acme', org: 'acme', name: 'Acme', self_hosted: false };
+const TENANT_ROW = { id: 't1', key: 'organization/acme', slug: 'acme', name: 'Acme', self_hosted: false };
 
 describe('listUserOrgs — fail closed on a memberships query error', () => {
 	it('throws 500 (never a fabricated empty list) on a DB error', async () => {
@@ -49,7 +49,7 @@ describe('listUserOrgs — fail closed on a memberships query error', () => {
 		stub = makeDb({ data: [{ role: 'admin', tenant: TENANT_ROW }], error: null });
 		const orgs = await listUserOrgs('u1');
 		expect(orgs).toHaveLength(1);
-		expect(orgs[0]).toMatchObject({ id: 't1', url: 'gh/acme', name: 'Acme', role: 'Admin' });
+		expect(orgs[0]).toMatchObject({ id: 't1', url: 'organization/acme', name: 'Acme', role: 'Admin' });
 	});
 
 	it('derives the REAL kind + kanji from membership.kind (not the old hardcoded Community)', async () => {
@@ -72,13 +72,13 @@ describe('listUserOrgs — fail closed on a memberships query error', () => {
 describe('getUserOrg — fail closed on either lookup error', () => {
 	it('throws 500 when the tenant lookup errors', async () => {
 		stub = makeDb({ data: null, error: { message: 'tenant boom' } });
-		const err = await getUserOrg('u1', 'gh/acme').catch((e) => e);
+		const err = await getUserOrg('u1', 'organization/acme').catch((e) => e);
 		expect(err?.status).toBe(500);
 	});
 
 	it('throws 500 when the membership lookup errors', async () => {
 		stub = makeDb({ data: TENANT_ROW, error: null }, { data: null, error: { message: 'mem boom' } });
-		const err = await getUserOrg('u1', 'gh/acme').catch((e) => e);
+		const err = await getUserOrg('u1', 'organization/acme').catch((e) => e);
 		expect(err?.status).toBe(500);
 	});
 
@@ -89,13 +89,13 @@ describe('getUserOrg — fail closed on either lookup error', () => {
 
 	it('returns undefined when the tenant exists but the user is not a member', async () => {
 		stub = makeDb({ data: TENANT_ROW, error: null }, { data: null, error: null });
-		expect(await getUserOrg('u1', 'gh/acme')).toBeUndefined();
+		expect(await getUserOrg('u1', 'organization/acme')).toBeUndefined();
 	});
 
 	it('maps to a DojoOrg on a real hit', async () => {
 		stub = makeDb({ data: TENANT_ROW, error: null }, { data: { role: 'lead' }, error: null });
-		const org = await getUserOrg('u1', 'gh/acme');
-		expect(org).toMatchObject({ id: 't1', url: 'gh/acme', role: 'Lead' });
+		const org = await getUserOrg('u1', 'organization/acme');
+		expect(org).toMatchObject({ id: 't1', url: 'organization/acme', role: 'Lead' });
 	});
 
 	it('derives the REAL kind from membership.kind on a hit', async () => {
@@ -103,7 +103,7 @@ describe('getUserOrg — fail closed on either lookup error', () => {
 			{ data: TENANT_ROW, error: null },
 			{ data: { role: 'lead', kind: 'community' }, error: null }
 		);
-		const org = await getUserOrg('u1', 'gh/acme');
+		const org = await getUserOrg('u1', 'organization/acme');
 		expect(org?.kind).toBe('Community');
 		expect(org?.kanji).toBe('群');
 	});
@@ -132,5 +132,26 @@ describe('orgKindKanji — identity glyph per kind', () => {
 		expect(orgKindKanji('Client')).toBe('客');
 		expect(orgKindKanji('Personal')).toBe('己');
 		expect(orgKindKanji('Community')).toBe('群');
+	});
+});
+
+// The tenants column rename (`org` → `slug`, commit 37ca9fab) reached the
+// writers but not this reader: TENANT_COLS still selected `org`, PostgREST
+// rejected the query, and `listUserOrgs` correctly failed closed with a 500 —
+// which made /you unreachable for every signed-in user. Nothing caught it
+// because the spec mocked the client and asserted the payload the code sends.
+describe('tenant column rename (org → slug)', () => {
+	it('falls back to the tenant SLUG when a tenant has no display name', () => {
+		// The only place the column is read rather than just selected. A row
+		// carrying `slug` and no `name` must render the slug, not `undefined`.
+		const row = { id: 't1', key: 'organization/acme', slug: 'acme', name: null, self_hosted: false };
+		expect(tenantToOrg(row as never, 'admin').name).toBe('acme');
+	});
+
+	it('does not select a column the database no longer has', () => {
+		// TENANT_COLS is the string handed to PostgREST. `org` in it is a hard
+		// query error, not a missing field.
+		expect(TENANT_COLS).not.toMatch(/\borg\b/);
+		expect(TENANT_COLS).toMatch(/\bslug\b/);
 	});
 });
