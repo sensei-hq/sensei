@@ -4,7 +4,7 @@ create table if not exists dojo.tenants (
   id            uuid              primary key default gen_random_uuid()
 , key           text              not null
 , origin        dojo.tenant_origin not null
-, org           text              not null
+, slug          text              not null
 , dojo          text
 , scope         dojo.tenant_scope  not null default 'private'
 , name          text              not null
@@ -27,8 +27,13 @@ comment on column dojo.tenants.key
      is 'Canonical discovery path, the unique key: "<origin>/<org>[/<dojo>]" (e.g. "github/sensei-hq", "org/global-dojo").';
 comment on column dojo.tenants.origin
      is 'github (backed by a GitHub org identity) or org (custom-registered name).';
-comment on column dojo.tenants.org
-     is 'The GitHub org id (e.g. sensei-hq) or the custom org name.';
+comment on column dojo.tenants.slug
+     is 'The tenant''s OWN slug — the second segment of its discovery path
+`<origin>/<slug>`. Tenant-owned and forge-independent: the forge''s name for an
+org lives on dojo.tenant_connections.external_slug, and one tenant may connect
+to forges that spell it differently (github "sensei-hq", azure "senseihq").
+Was `org`, which named a GitHub org and stopped being right once a tenant could
+hold several connections.';
 comment on column dojo.tenants.dojo
      is 'Optional sub-path when an org runs multiple Dōjōs (e.g. one per client engagement). Null for the org-level Dōjō.';
 comment on column dojo.tenants.scope
