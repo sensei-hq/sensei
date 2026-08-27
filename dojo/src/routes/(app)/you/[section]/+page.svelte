@@ -3,7 +3,7 @@
 	import {
 		adoptContribution,
 		createDojo,
-		syncGithubOrgs,
+		provisionFromForge,
 		setPackAdoption,
 		ClientApiError
 	} from '$lib/client-data';
@@ -88,13 +88,19 @@
 		ghBusy = true;
 		ghMsg = null;
 		try {
-			const r = await syncGithubOrgs();
+			const r = await provisionFromForge();
+			// A refusal names itself. 'no_forge_token' and 'forge_unreachable' are
+			// different problems and want different advice — collapsing them into
+			// one "nothing happened" is what hid the original defect.
+			const created = r.tenants.filter((t) => t.created).length;
 			ghMsg = !r.synced
-				? 'Sign in with GitHub to auto-join your org dōjōs.'
-				: r.joined.length
-					? `Joined ${r.joined.length} dōjō${r.joined.length > 1 ? 's' : ''} from GitHub.`
-					: 'No new GitHub org dōjōs to join.';
-			if (r.joined.length) await invalidateAll();
+				? r.reason === 'forge_unreachable'
+					? 'GitHub could not be reached — try again in a moment.'
+					: 'Sign in with GitHub to set up your org dōjōs.'
+				: created
+					? `Set up ${created} dōjō${created > 1 ? 's' : ''} from GitHub.`
+					: 'Everything from GitHub is already set up.';
+			if (created || r.personal?.created) await invalidateAll();
 		} catch {
 			ghMsg = 'Could not sync from GitHub — try again.';
 		} finally {

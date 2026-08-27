@@ -483,13 +483,32 @@ export async function createDojo(
 	return sendJson(youUrl('/dojos'), 'POST', { name, kind }, opts);
 }
 
-/** `POST /v1/you/github/sync` — auto-join the caller into the github/{org} dōjōs
- *  they belong to (F3c), using their GitHub OAuth session token server-side.
- *  Returns the tenant keys joined this pass + whether a GitHub sync ran. */
-export async function syncGithubOrgs(
-	opts: DojoCallOpts = {}
-): Promise<{ joined: string[]; synced: boolean }> {
-	return sendJson(youUrl('/github/sync'), 'POST', {}, opts);
+/** One tenant a provisioning pass established the caller's place in. */
+export interface ProvisionedTenant {
+	id: string;
+	key: string;
+	origin: 'personal' | 'organization';
+	role: string;
+	/** True when this pass CREATED the tenant, false when it already existed. */
+	created: boolean;
+}
+
+/** What `POST /v1/you/provision` returns — the daemon mirrors this too. */
+export interface ProvisionResult {
+	synced: boolean;
+	/** Present when `synced` is false. The three cases call for different advice,
+	 *  which is why they are not collapsed into one "nothing happened". */
+	reason?: 'no_forge_token' | 'forge_unreachable' | 'no_identity';
+	personal: ProvisionedTenant | null;
+	tenants: ProvisionedTenant[];
+}
+
+/** `POST /v1/you/provision` — establish the caller's personal dōjō and a tenant
+ *  for each org their forge token proves, idempotently. Supersedes the old
+ *  `/github/sync` join-only call, which could never create the tenant the first
+ *  user in an org needed to join. `/github/sync` still routes here. */
+export async function provisionFromForge(opts: DojoCallOpts = {}): Promise<ProvisionResult> {
+	return sendJson(youUrl('/provision'), 'POST', {}, opts);
 }
 
 /** `POST /v1/t/{tenant}/invites` — an admin issues a magic-link invite (F3b).
