@@ -23,16 +23,23 @@
 
 `bun run test` is **exit 0, 1328 tests** over both. The specs stub the Supabase client and assert the payload the code *sends* — no dōjō test touches Postgres, so none can fail on schema drift.
 
-## Next — phase 1 work list (Part VIII.7), in order
+## Phase 1 work list (Part VIII.7)
 
-1. RLS fix on `dojo.projects` (principal-resolving policy — currently `user_id = auth.uid()`, which would silently match nothing)
-2. `resolveCaller` sub→principal; `ensureProvisioned`
+1. ~~RLS principal resolution~~ **DONE** `bb994b6a` — was three surfaces, not one: `dojo.projects`'s policy, `dojo.owns_membership` (backs the three relay_* policies), and `can_read_repository_metric:48` (`m.user_id = p.auth_user_id` — the admin branch never matched). All now go through one new `dojo.current_principal_id()`. The projects policy moved to `policies/dojo/projects.sql` (it calls a function now). Also landed **item 8 early**: `database/tests/` + `make test-db`.
+2. `resolveCaller` sub→principal; `ensureProvisioned` ← **next**
 3. Repair `createDojo`; 4. Repair the `dojo.identities` paths
 5. `POST /v1/you/provision` + `/v1/auth/cli/token` (no response reshaping)
 6. `POST /v1/you/repositories` (`repo_key → provider/org`; reuse the Rust `normalize_repo_key`, do **not** re-implement it)
-7. `GET /v1/you/sync/plan`; 8. a live-Postgres test
+7. `GET /v1/you/sync/plan`
+8. ~~live-Postgres test harness~~ **DONE** (with item 1) — more assertions land with each item
 
-Next command: start item 1 red-first.
+## Facts worth not re-deriving
+
+- **Postgres validates a `language sql` body at CREATE time**, so a function calling a function is order-dependent. `dbd apply --scope dojo --dry-run` prints the real order and reports issues — use it. A `plpgsql` body is *not* validated (why `set_pack_adoption` is unconstrained).
+- `psql` is at `/opt/homebrew/bin` (keg-only libpq; not always on PATH).
+- A policy that calls a function must live in `policies/`, not the table DDL — `dbd apply` creates every table before any function.
+
+Next command: `cd dojo && bun run test` to confirm the gate, then item 2 red-first.
 
 ## Open
 
