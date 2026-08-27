@@ -9944,3 +9944,67 @@ async fn a_renamed_github_login_still_matches_the_same_persona() {
     assert_eq!(first, second, "the same GitHub id resolves to one persona");
     assert_eq!(login.as_deref(), Some("new-login"), "and the login is updated in place");
 }
+
+// ── Gate 1 · intent: what this machine offers the dōjō ──────────────────────
+//
+// `sensei.repositories.visibility` is the FIRST of the three gates
+// (docs/spec/dojo/dojo-auth-provisioning.md §V.3) and the only one the daemon
+// owns. It is user intent — "did you opt this repo in?" — and it is answered
+// locally, before the dōjō is asked anything. Cost (forge visibility) and
+// entitlement (claim/billing/seat) are the dōjō's and are never mirrored here.
+
+#[tokio::test]
+async fn shared_repositories_returns_only_opted_in_repos_with_a_remote() {
+    let s = pg_store().await;
+    let uniq = uuid::Uuid::new_v4();
+    let pid = s.create_project(&format!("_test:shared:{uniq}"), None, None).await.unwrap();
+
+    // opted in, has a remote → offered
+    let shared = crate::tasks::test_support::seed_bare_repository(&s, &pid, &uniq).await;
+    sqlx_core::query::query("UPDATE sensei.repositories SET visibility = 'shared' WHERE id = $1")
+        .bind(shared)
+        .execute(s.pool())
+        .await
+        .unwrap();
+
+    // NOT opted in → withheld. Private is a choice, not a failure: signing in
+    // must never start sharing a repo the user did not choose to share.
+    let private_uniq = uuid::Uuid::new_v4();
+    let private = crate::tasks::test_support::seed_bare_repository(&s, &pid, &private_uniq).await;
+
+    // opted in but LOCAL-ONLY (no remote → no repo_key) → withheld. A NULL
+    // repo_key is the DDL's marker for "never federated"; it has no
+    // cross-install identity, so the dōjō would have nothing to map it to.
+    let (localonly,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
+        "INSERT INTO sensei.repositories(repo_key, name, visibility) \
+         VALUES(NULL, $1, 'shared') RETURNING id",
+    )
+    .bind(format!("localonly-{uniq}"))
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+
+    let offered = s.shared_repositories(500).await.unwrap();
+    let keys: Vec<&str> = offered.iter().map(|r| r.repo_key.as_str()).collect();
+
+    assert!(
+        keys.contains(&format!("test/bare-{uniq}").as_str()),
+        "an opted-in repository with a remote must be offered; got {keys:?}"
+    );
+    assert!(
+        !keys.contains(&format!("test/bare-{private_uniq}").as_str()),
+        "a repository the user did not share must NEVER be offered — that is gate 1"
+    );
+    assert!(
+        offered.iter().all(|r| !r.name.starts_with(&format!("localonly-{uniq}"))),
+        "a local-only repository (NULL repo_key) has no cross-install identity and \
+         must not be offered"
+    );
+
+    // cleanup
+    sqlx_core::query::query("DELETE FROM sensei.repositories WHERE id = ANY($1)")
+        .bind(vec![shared, private, localonly])
+        .execute(s.pool())
+        .await
+        .ok();
+}
