@@ -9,6 +9,8 @@
 // SSO identity-mapping are follow-ups — the console runs on the JWT plane.
 
 import { dojoDb, roleToAccess, accessLabel, ACCESS, type AccessLevel } from './dojo-supabase';
+import { resolvePrincipalId } from './principal-resolve';
+import { AdminError } from './admin-data';
 
 /** A JSON error Response (thrown to short-circuit a handler). */
 export function apiError(status: number, message: string): Response {
@@ -80,19 +82,34 @@ function tokenFrom(request: Request, locals: App.Locals): string | null {
 }
 
 /**
- * Authenticate the caller on the Supabase-JWT plane and return their user id —
- * no tenant, no role floor. For USER-WIDE (user-primary) reads that aren't
+ * Authenticate the caller on the Supabase-JWT plane and return their PRINCIPAL
+ * id — no tenant, no role floor. For USER-WIDE (user-primary) reads that aren't
  * scoped to one dōjō (e.g. the personal `/you/projects` list, whose read is
  * authorized purely by a `user_id` filter). Throws a Response (401) on a missing
  * or invalid token, like `resolveTenantAccess`. Returns the service-role `db`
  * too so the caller reuses one client for the ownership-filtered read, and the
  * caller's verified `email` (the authorization gate for invite-accept — Supabase
  * has proven the caller owns it).
+ *
+ * `userId` is the caller's `dojo.principals.id`, NOT the Supabase login id, and
+ * that is deliberate: every `user_id` column in `dojo.*` holds a principal id
+ * (spec §VIII.2), so this resolver is the single seam where the translation
+ * happens. Because the name is unchanged, every caller that passes `caller.userId`
+ * into a query is correct without edit — which is the whole reason to do it here
+ * rather than at each of the 50-odd call sites.
+ *
+ * `authUserId` is the login id, exposed for the paths that genuinely need it —
+ * provisioning, and anything talking back to Supabase Auth.
  */
 export async function resolveCaller(
 	request: Request,
 	locals: App.Locals
-): Promise<{ userId: string; email: string | null; db: ReturnType<typeof dojoDb> }> {
+): Promise<{
+	userId: string;
+	authUserId: string;
+	email: string | null;
+	db: ReturnType<typeof dojoDb>;
+}> {
 	const token = tokenFrom(request, locals);
 	if (!token) throw apiError(401, 'unauthenticated');
 
@@ -100,7 +117,33 @@ export async function resolveCaller(
 	// Verify the JWT via Supabase Auth; user.id is the token `sub`.
 	const { data: userData, error: userErr } = await db.auth.getUser(token);
 	if (userErr || !userData?.user) throw apiError(401, 'invalid token');
-	return { userId: userData.user.id, email: userData.user.email ?? null, db };
+
+	const authUserId = userData.user.id;
+	// Translate the login into the principal every dojo.* row is keyed on. Fail
+	// CLOSED: degrading to the login id on error would produce a caller whose
+	// user_id matches no membership and no project — an empty console that reads
+	// as "you belong to nothing" rather than as the failure it is.
+	let userId: string;
+	try {
+		userId = await resolvePrincipalId(db, authUserId, displayNameOf(userData.user));
+	} catch (e) {
+		if (e instanceof AdminError) throw apiError(e.status, e.message);
+		throw e;
+	}
+
+	return { userId, authUserId, email: userData.user.email ?? null, db };
+}
+
+/** A best-effort human name off the Supabase user, for a principal created on
+ *  first sight. Null when the provider gave none — never a synthesised name; the
+ *  console falls back to a shortId, which is honest. */
+function displayNameOf(user: { user_metadata?: Record<string, unknown> | null }): string | null {
+	const meta = user.user_metadata ?? {};
+	for (const key of ['full_name', 'name', 'user_name', 'preferred_username']) {
+		const v = meta[key];
+		if (typeof v === 'string' && v.trim()) return v.trim();
+	}
+	return null;
 }
 
 /**
