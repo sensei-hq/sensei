@@ -133,7 +133,7 @@ describe('identities', () => {
 
 	it('POSTs a new identity body', async () => {
 		const { fn, calls } = fakeFetch(200, { id: 'i2' });
-		const body = { user_id: 'u1', provider: 'sso', subject: 'okta|abc', email: 'a@b.co' };
+		const body = { principal_id: 'p1', provider: 'sso', subject: 'okta|abc', email: 'a@b.co' };
 		await createIdentity('t/x', body, { fetch: fn });
 		expect(calls[0].init?.method).toBe('POST');
 		expect(JSON.parse(String(calls[0].init?.body))).toEqual(body);
