@@ -426,3 +426,390 @@ Then idempotent upserts ensure no duplicate tenants or memberships
 And the `(tenant_id, user_id)` unique constraint on `dojo.memberships` prevents duplicates
 And the `(provider, subject)` unique constraint on `dojo.identities` prevents duplicates
 ```
+
+---
+
+# Part II — Decisions, multi-forge identity, and the provisioning contract
+
+> Part I above was written GitHub-first and assumes an `activation` flag gates
+> everything. Both assumptions are revised here. Where Part I and Part II
+> disagree, **Part II wins** — the scenarios in Part I that reference
+> `disabled_at` as the gate (2, 3, 5, 17, 18, 19, 20) are superseded by §II.4
+> and §II.5.
+
+## II.0 Why this section exists
+
+The implementation gap is total, not partial:
+
+- **Nothing creates a tenant.** There are zero inserts into `dojo.tenants` in
+  the whole app. `syncGithubMemberships` is built and tested but its contract is
+  *"only tenants that already exist … never invents a tenant"* — it joins, it
+  does not provision. The first user in an org has nothing to join.
+- **Provisioning is not wired to sign-in.** The only caller is
+  `POST /v1/you/github/sync`, an explicit endpoint.
+- **That endpoint mostly no-ops.** It reads `session.provider_token`, which
+  Supabase populates only immediately after the OAuth exchange. On any later
+  call it returns `{ synced: false, reason: 'no_github_token' }` — silently.
+- **The code contradicts Part I.** `addMember` sets neither `disabled_at` nor
+  `sync_status`, so auto-provisioned memberships are created ACTIVE.
+
+## II.1 Decisions
+
+| # | Decision |
+|---|---|
+| D1 | The **personal dōjō is always active**. Every authenticated user has one, immediately, without any activation step. |
+| D2 | **`disabled_at` is not the gate.** What gates governance and data sync is subscription + seat (§II.5). An unclaimed or unsubscribed org tenant may exist and be visible; it simply cannot sync private data. |
+| D3 | An org tenant created by a **non-owner is UNCLAIMED**. It works at the free tier. Subscribing requires an owner to claim it (§II.4). |
+| D4 | Repo→tenant mapping uses **both** sources: the forge API (authoritative for access level) and sensei's local discovery (authoritative for what the developer actually works on). §II.6. |
+| D5 | **`origin = personal`** for personal tenants, not `org`. |
+| D6 | The model is **forge-agnostic** from the start: GitHub, GitLab, Bitbucket, Azure DevOps. An organization may have **several** forge connections. §II.2. |
+
+## II.2 The forge-agnostic model
+
+Today `tenant_origin` is the enum `('github','org')` and `auth_method` carries
+`github_oauth`. GitHub is baked into the type system, which is the trap D6 is
+about.
+
+**A tenant is an ORGANIZATION, not a forge org.** Forge identities attach to it:
+
+```
+dojo.tenant_connections
+  id             uuid pk
+  tenant_id      uuid not null references dojo.tenants(id) on delete cascade
+  provider       forge_provider not null    -- github | gitlab | bitbucket | azure_devops
+  external_id    text not null              -- the forge's STABLE org id, not the slug
+  external_slug  text not null              -- display/matching only; can be renamed upstream
+  connected_by   uuid not null              -- the user who linked it
+  verified_at    timestamptz                -- when org control was last proven
+  unique (provider, external_id)
+```
+
+`unique (provider, external_id)` is the anti-duplication rule: one forge org
+maps to at most one tenant, forever. **Keyed on the forge's numeric/GUID id, not
+the slug** — a slug is renameable and reusable upstream, so keying on it would
+let a renamed-then-squatted org inherit another tenant's governance.
+
+Enum changes:
+
+- `tenant_origin` → `('personal', 'organization')`. What KIND of tenant, not
+  which forge.
+- new `forge_provider` → `('github', 'gitlab', 'bitbucket', 'azure_devops')`.
+- `auth_method` gains `oauth` as the generic value; `github_oauth` is retained
+  for the rows already written.
+
+`tenants.key` stops being `github/{org}` and becomes a **user-visible slug,
+globally unique, chosen at creation** (defaulting to the first connection's
+slug). The forge no longer prefixes it, because a tenant can have several.
+
+## II.3 Slug collision across forges
+
+The problem: `sensei-hq` exists on GitHub AND on Azure DevOps. Same name. They
+may or may not be the same organization — **nothing can prove it automatically.**
+Same slug is not evidence: anyone can register `sensei-hq` on a forge nobody
+else is using.
+
+So linking is an **authorized human act**, and the proof is: *one person,
+authenticated on both sides, who already administers the tenant.*
+
+```gherkin
+Scenario: Signing in from a second forge where the slug is already taken
+  Given a tenant `sensei-hq` exists with a github connection
+  When the user signs in via Azure DevOps and is an admin of azure org `sensei-hq`
+  Then the system finds no tenant_connection for (azure_devops, <that org id>)
+   And it finds an existing tenant whose slug is `sensei-hq`
+   And the outcome depends on the caller's standing in that tenant:
+     | caller standing in tenant `sensei-hq` | outcome                                            |
+     | admin or owner                        | offered "link this Azure org to your sensei-hq dōjō" |
+     | member, not admin                     | offered "ask an admin to link it"                   |
+     | not a member                          | slug is TAKEN — offered a different slug            |
+   And no automatic link is ever made on slug equality alone
+```
+
+For the non-member case the system proposes a free slug (`sensei-hq-2`,
+`sensei-hq-azure`) and creates a **separate** tenant. Two orgs that genuinely
+share a name stay separate, which is correct: they are separate organizations.
+
+**Merging later.** Two tenants that turn out to be one org are merged by an
+admin of both, moving connections/repos/memberships onto the surviving tenant.
+Out of scope for the first implementation, but the model must not preclude it —
+which is why connections are a child table rather than columns on `tenants`.
+
+## II.4 Claim — replacing the activation flag
+
+An org tenant records who, if anyone, has proven org ownership:
+
+```
+dojo.tenants
+  + claimed_at    timestamptz
+  + claimed_by    uuid
+```
+
+- **Unclaimed**: created by a non-owner. Exists, is visible, works at the free
+  tier. **Cannot hold a subscription**, so it can never sync private data.
+- **Claimed**: an owner/admin on any connected forge claimed it. They become
+  tenant `admin` regardless of the role derived at auto-provision, and the
+  tenant may subscribe.
+
+```gherkin
+Scenario: Non-owner creates the tenant, owner claims it later
+  Given a plain member of github org `acme` signs in first
+  Then tenant `acme` is created UNCLAIMED
+   And that user's membership role is `contributor` (derived from the forge)
+   And the tenant is on the free tier and cannot subscribe
+  When a github OWNER of `acme` later signs in
+  Then they are offered to claim the tenant
+   And on claiming: claimed_by = that user, their membership role becomes `admin`
+   And the tenant may now hold a billing account
+```
+
+The forge role is re-read at each sign-in, so a claim is verified against
+current org standing, not a stale snapshot.
+
+## II.5 What actually gates sync
+
+Replaces `disabled_at` as the mechanism. One pure predicate, testable without a
+database:
+
+```
+can_sync(tenant, repo, user) =
+    tenant.origin = 'personal'                      → ALLOW   (always free)
+  | repo.visibility = 'public'                      → ALLOW   (open source is free)
+  | tenant unclaimed                                → DENY    (cannot subscribe)
+  | billing.status <> 'active'                      → DENY    (org not subscribed)
+  | no active seat for (tenant, user)               → DENY    (member not on a seat)
+  | otherwise                                       → ALLOW
+```
+
+Notes that make this airtight:
+
+- **Private repo in a public org still requires a subscription.** The gate is
+  the REPO's visibility, not the org's — a private repo under an open-source org
+  is private data.
+- **Deny is honest, not silent.** A denied sync returns a reason
+  (`unclaimed` | `not_subscribed` | `no_seat`) that the CLI and console surface.
+  Silently syncing nothing is how the current `no_github_token` no-op became
+  invisible for two days.
+- **The gate is evaluated dōjō-side**, on every write. A daemon that believes it
+  has a seat is not evidence; the service decides.
+- `dojo.seats` already carries `(tenant_id, user_id, namespace_id, ended_at)`
+  with a unique active-seat index, and `dojo.billing_accounts` already carries
+  `status`/`seats_included`/`seats_used`. No new billing modelling is required.
+
+## II.6 Repo → tenant mapping, from both sides
+
+**Forge API (authoritative for access level).** Listing `/user/repos` and the
+org's repos yields `visibility` and the caller's `permissions`. Used to decide
+which tenant a repo belongs to and what the user may do with it.
+
+**Local discovery (authoritative for what is actually worked on).** sensei
+discovers repositories on disk first and syncs their identity on connect — the
+established rule. Mapping a local repo to a tenant is by **remote URL**:
+
+```
+git remote → normalise → (provider, external_org_slug, repo_slug)
+          → tenant_connections lookup on (provider, external_org_id/slug)
+          → tenant
+```
+
+The normaliser must handle the forms each forge emits, including SSH/HTTPS and
+Azure's two shapes:
+
+| forge | remote | org |
+|---|---|---|
+| github | `git@github.com:acme/api.git` | `acme` |
+| gitlab | `https://gitlab.com/acme/sub/api.git` | `acme` (top-level group) |
+| bitbucket | `git@bitbucket.org:acme/api.git` | `acme` |
+| azure_devops | `https://dev.azure.com/acme/proj/_git/api` | `acme` |
+| azure_devops | `acme@vs-ssh.visualstudio.com:v3/acme/proj/api` | `acme` |
+
+A repo whose remote matches no connection is **unmapped, not personal** — it
+stays local-only until its org is connected. Defaulting it to the personal
+tenant would silently move an employer's private repo into a free personal dōjō.
+
+## II.7 The provisioning contract
+
+One idempotent operation, three callers — so "in sync regardless of where it was
+initiated" is a property of the design rather than two flows kept in step.
+
+```
+ensureProvisioned(userId, forgeToken?, provider) -> ProvisionResult
+  1. upsert dojo.identities  (provider, subject = forge user id)
+  2. ensure personal tenant  (origin=personal, key=<login>, ACTIVE, claimed_by=user)
+  3. for each forge org the token proves:
+       find tenant via tenant_connections (provider, external_id)
+       └ none → create tenant (unclaimed unless caller is owner) + connection
+       ensure membership, role derived from forge org role
+  4. map repositories (§II.6)
+  5. return { personal, tenants[], memberships[], repos[], denied[] }
+```
+
+Callers:
+
+| caller | when |
+|---|---|
+| web sign-in callback | every sign-in |
+| `POST /v1/auth/cli/token` | when the daemon completes device auth |
+| `POST /v1/you/github/sync` | explicit re-sync from the console |
+
+**Idempotency** is by `(provider, external_id)` on connections,
+`(tenant_id, user_id)` on memberships and `(provider, subject)` on identities —
+all already unique — so concurrent sign-ins converge (Part I Scenario 22).
+
+**Token availability.** `provider_token` exists only immediately after the OAuth
+exchange. Therefore provisioning **must** run in the sign-in callback, where the
+token is in hand. Later calls without a token degrade to "refresh what we can
+from the DB" and MUST report `synced: false` with a reason rather than appearing
+to succeed.
+
+## II.8 sensei ↔ dōjō sync
+
+`ProvisionResult` is what sensei mirrors on connect. The daemon holds no
+authority: it caches tenants/memberships/seat state for routing, and the dōjō
+re-decides on every write.
+
+```gherkin
+Scenario: Initiated from sensei
+  When the daemon completes device auth
+  Then the dōjō runs ensureProvisioned and returns ProvisionResult
+   And the daemon mirrors it into sensei.dojo_memberships
+   And the daemon pushes its locally-discovered repositories
+   And the dōjō maps each to a tenant (§II.6) and returns the mapping + any denials
+
+Scenario: Initiated on the web
+  Given the user signed in on the web and tenants were provisioned there
+  When the daemon later connects
+  Then ensureProvisioned is a no-op for what already exists
+   And the daemon receives the same ProvisionResult shape
+   And local state converges to it without a separate reconciliation path
+```
+
+## II.9 Migration of what already exists
+
+- `tenant_origin`: add `personal`/`organization`; backfill `github`→
+  `organization`, `org`→`organization`; then retire the old labels.
+- Existing `github/{org}` tenants: keep `key` as-is (it is unique and in use),
+  create the matching `tenant_connections` row from the `org` column, and
+  populate `external_id` by a one-time lookup. A tenant whose external id cannot
+  be resolved stays connected by slug and is flagged, not guessed.
+- Existing memberships are unaffected; `claimed_at` starts NULL, so every
+  pre-existing org tenant is unclaimed until an owner claims it. That is the
+  correct default — none of them ever proved ownership.
+
+---
+
+# Part III — Adversarial review of Part II
+
+Attacked against the live DDL rather than read for agreement. Three findings are
+**blocking**: the spec as written cannot be implemented correctly.
+
+## F1 — BLOCKING. The personal slug collides with the org slug
+
+§II.2 dropped the `personal/` and `github/` prefixes and made `tenants.key` "a
+user-visible slug, globally unique". `dojo.tenants` has exactly one unique
+constraint on `key`. So a user whose login is `acme` gets personal tenant
+`acme`, and the org `acme` can then never be provisioned — or worse, the order
+decides who wins.
+
+Part I avoided this with prefixes; Part II reintroduced it while removing them
+for a different reason (a tenant has many forges, so a forge prefix is wrong).
+
+**Both goals are satisfiable**: personal tenants take a reserved sigil the org
+namespace cannot use — `@jerrythomas` — and organizations take the bare slug.
+The sigil is not a forge prefix, so §II.2's objection does not apply.
+
+## F2 — BLOCKING. The seat gate is keyed on the wrong grain
+
+§II.5 denies when there is "no active seat for `(tenant, user)`". `dojo.seats`
+is keyed `(user_id, namespace_id)` — **per project, not per tenant** — with
+`namespace_id NOT NULL REFERENCES sensei.namespaces`.
+
+Two consequences the predicate cannot express as written:
+
+1. The gate must be evaluated per project, not per tenant.
+2. **A seat cannot exist before the project does**, and the project is created
+   by the very sync the seat is gating. The ordering is circular.
+
+Resolve by deciding what the first sync of a new private project does: create
+the namespace and an unbilled seat pending confirmation, or deny until the
+project is created through the console. It cannot be left implicit.
+
+## F3 — BLOCKING. Nothing creates a seat
+
+The gate denies until an active seat exists. Neither Part II nor the code
+defines how one comes into existence — `billing-data.ts` reads, counts and ends
+seats. Without a creation path the private-sync gate is **closed permanently**,
+which will present exactly like today's bug: a silent no-op that looks like
+"nothing to sync".
+
+Needs an explicit answer: auto-seat on first activity up to `seats_included`
+(and what happens at the cap), or admin-assigns-seats, or self-serve claim.
+
+## F4 — HIGH. Two visibility sources, no precedence
+
+§II.5 keys the gate on `repo.visibility`. `dojo.seats.namespace_id` documents
+that "its visibility (private/public) decides whether this participation is
+billable". A private repo inside a public project — or the reverse — has two
+answers.
+
+State which is authoritative. Suggest: **the repo**, because it is the thing
+whose contents are being synced, with the namespace deciding only *billability*.
+But it must be written down; today it is two rules that happen not to have
+disagreed yet.
+
+## F5 — HIGH. No de-provisioning when someone leaves an org
+
+Part I covers *email* removal (Scenarios 10–13). Nothing covers the forge case:
+the user is removed from the GitHub org. `syncGithubMemberships` is explicit
+that it "never removes", and §II.7 does not either.
+
+So an ex-employee retains their membership, their tenant visibility and
+potentially their seat indefinitely. That is a security defect, not untidiness.
+Needs: on each provisioning pass, memberships whose forge org is no longer
+proven get disabled and their seat ended — with the tenant untouched (Part I
+Scenario 13 already has the right instinct).
+
+## F6 — MEDIUM. A claim can outlive the claimer's standing
+
+§II.4 says the forge role is re-read each sign-in, but nothing revokes a claim
+when the claimer loses ownership or leaves the org. A tenant can end up claimed
+— and therefore subscribable — by someone with no current standing.
+
+## F7 — MEDIUM. The migration contradicts its own constraint
+
+§II.9 says a tenant whose `external_id` cannot be resolved "stays connected by
+slug and is flagged". §II.2 declares `external_id text not null` inside
+`unique (provider, external_id)`. An unresolvable row cannot be written at all.
+
+Either `external_id` is nullable with a partial unique index, or unresolved
+tenants get no connection row and are listed for manual repair. The second is
+safer: a connection is a claim of identity, and a guessed one is worse than
+none.
+
+## F8 — MEDIUM. The CLI path may have no forge token
+
+§II.7 lists `POST /v1/auth/cli/token` as a provisioning caller, and separately
+states provisioning "must run in the sign-in callback, where the token is in
+hand". The daemon's device flow authenticates against the **dōjō**, so whether a
+GitHub `provider_token` is present at that point is unverified.
+
+If it is not, a CLI-initiated first connection can only mirror what the web
+already provisioned — which directly contradicts the goal that initiation from
+sensei creates the org. **This needs to be tested before implementation
+proceeds**; it determines whether the daemon must drive the user through a web
+sign-in on first connect.
+
+## Depth assessment
+
+Part II is deep enough on the **model** (forge-agnostic tenants, connections
+keyed on stable external ids, claim replacing activation, both-sides repo
+mapping) and on the **collision** question, which was the hard one.
+
+It is **not yet deep enough to implement**, because F1–F3 mean the central
+promise — private org data syncs when subscribed and seated — has no working
+mechanism. F5 additionally means the first implementation would ship a
+known-open access hole.
+
+Recommended order once F1–F3 are settled: the personal-dōjō path first (it has
+no billing, no claim and no seat, so it closes the hole for every new user and
+is fully testable end to end), then claim, then the seat/billing gate, then
+de-provisioning, and only then the second forge.
