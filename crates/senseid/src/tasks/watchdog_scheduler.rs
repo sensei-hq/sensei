@@ -32,7 +32,6 @@
 //! + attempt count) — never stdout/stderr, diffs, or code.
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use dojo_protocol::relay::RelayRunStatus;
@@ -182,7 +181,8 @@ pub fn spawn(queue: Arc<TaskQueue>, pg: Arc<PgStore>) {
 
 async fn run(queue: Arc<TaskQueue>, pg: Arc<PgStore>) {
     let cfg = WatchdogConfig::default();
-    let mut ticker = tokio::time::interval(Duration::from_secs(INTERVAL_SECS));
+    let mut ticker =
+        crate::tasks::ticker::ticker(INTERVAL_SECS, crate::tasks::ticker::FirstTick::Immediate);
     loop {
         ticker.tick().await;
         tick(&queue, &pg, Utc::now(), &cfg).await;

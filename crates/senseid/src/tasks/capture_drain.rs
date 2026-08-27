@@ -28,9 +28,9 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
 
 use crate::db::pg_store::PgStore;
+use crate::tasks::ticker::{self, FirstTick};
 
 /// Drain on boot and every 5 minutes by default — dead-letters should reconcile
 /// promptly, but the file is usually empty so the tick is cheap.
@@ -118,12 +118,6 @@ fn parse_spool_lines(content: &str) -> (Vec<serde_json::Value>, usize) {
     (events, skipped)
 }
 
-fn parse_interval(cfg: Option<String>) -> u64 {
-    cfg.and_then(|v| v.trim().parse::<u64>().ok())
-        .filter(|n| *n > 0)
-        .unwrap_or(DEFAULT_INTERVAL_SECS)
-}
-
 #[derive(Default, Debug, PartialEq, Eq)]
 struct DrainStats {
     imported: usize,
@@ -154,8 +148,13 @@ pub fn spawn(pg: Arc<PgStore>, sensei_dir: PathBuf) {
 }
 
 async fn run(pg: Arc<PgStore>, sensei_dir: PathBuf) {
-    let secs = parse_interval(pg.get_config("capture.drain_interval_secs").await.ok().flatten());
-    let mut ticker = tokio::time::interval(Duration::from_secs(secs));
+    let mut ticker = ticker::from_config(
+        &pg,
+        "capture.drain_interval_secs",
+        DEFAULT_INTERVAL_SECS,
+        FirstTick::Immediate,
+    )
+    .await;
     loop {
         ticker.tick().await; // first tick fires immediately → drain on startup
         match drain_once(&pg, &sensei_dir).await {
@@ -364,15 +363,6 @@ not json
         assert_eq!(v["tool_input"]["content"], "line1line2");
         assert_eq!(v["tool_input"]["arr"][0], "x");
         assert_eq!(v["badkey"], 1); // key de-NUL'd, value preserved
-    }
-
-    #[test]
-    fn parse_interval_falls_back_on_missing_invalid_or_zero() {
-        assert_eq!(parse_interval(None), DEFAULT_INTERVAL_SECS);
-        assert_eq!(parse_interval(Some("nope".into())), DEFAULT_INTERVAL_SECS);
-        assert_eq!(parse_interval(Some("0".into())), DEFAULT_INTERVAL_SECS);
-        assert_eq!(parse_interval(Some("600".into())), 600);
-        assert_eq!(parse_interval(Some(" 120 ".into())), 120);
     }
 
     #[test]

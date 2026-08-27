@@ -301,7 +301,8 @@ async fn apply_pulled_rule(
 pub fn run_pull_loop(pg: PgStore, interval_secs: u64) {
     tokio::spawn(async move {
         let client = http_client();
-        let mut tick = tokio::time::interval(std::time::Duration::from_secs(interval_secs));
+        let mut tick =
+            crate::tasks::ticker::ticker(interval_secs, crate::tasks::ticker::FirstTick::Immediate);
         loop {
             tick.tick().await;
             let sources = match pg.list_knowledge_sources().await {

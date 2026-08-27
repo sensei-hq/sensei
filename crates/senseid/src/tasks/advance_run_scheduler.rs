@@ -23,11 +23,11 @@
 //! rather than crashing the daemon.
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use crate::db::pg_store::PgStore;
 use crate::runs::RunEventKind;
 use crate::tasks::queue::TaskQueue;
+use crate::tasks::ticker::{self, FirstTick};
 use crate::tasks::{Task, TaskKind};
 
 /// How often to sweep runs. Short — a tick is a DB read + a few enqueues, and a
@@ -127,7 +127,7 @@ pub fn spawn(queue: Arc<TaskQueue>, pg: Arc<PgStore>) {
 }
 
 async fn run(queue: Arc<TaskQueue>, pg: Arc<PgStore>) {
-    let mut ticker = tokio::time::interval(Duration::from_secs(INTERVAL_SECS));
+    let mut ticker = ticker::ticker(INTERVAL_SECS, FirstTick::Immediate);
     loop {
         ticker.tick().await;
         tick(&queue, &pg).await;

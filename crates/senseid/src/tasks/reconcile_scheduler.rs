@@ -30,10 +30,10 @@
 //!   future genuinely-expensive maintenance tier.
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use crate::db::pg_store::PgStore;
 use crate::tasks::queue::TaskQueue;
+use crate::tasks::ticker::{self, FirstTick};
 use crate::tasks::{Task, TaskKind};
 use chrono::Utc;
 
@@ -54,14 +54,6 @@ const WATCHER_STALL_KEY: &str = "watcher.stall_secs";
 /// one stall window + one reconcile tick (~35 min worst case) is the point.
 /// Floored at 60s so a pathological config can't force a restart storm.
 const DEFAULT_WATCHER_STALL_SECS: i64 = 1800;
-
-/// Resolve the tick interval (seconds) from config, falling back to the default
-/// for missing / unparseable / zero values.
-fn parse_interval(cfg: Option<String>) -> u64 {
-    cfg.and_then(|v| v.trim().parse::<u64>().ok())
-        .filter(|n| *n > 0)
-        .unwrap_or(DEFAULT_INTERVAL_SECS)
-}
 
 /// Resolve the watcher-stall threshold (seconds) from config, flooring at 60s
 /// and falling back to the default for missing / unparseable / too-small values.
@@ -238,14 +230,17 @@ async fn watcher_watchdog(queue: &Arc<TaskQueue>, pg: &PgStore, now_ms: i64, sta
 }
 
 async fn run(queue: Arc<TaskQueue>, pg: Arc<PgStore>) {
-    let secs = parse_interval(pg.get_config("reconcile.interval_secs").await.ok().flatten());
+    let secs = ticker::interval_secs(
+        pg.get_config("reconcile.interval_secs").await.ok().flatten(),
+        DEFAULT_INTERVAL_SECS,
+    );
     let stall_ms = parse_stall_secs(pg.get_config(WATCHER_STALL_KEY).await.ok().flatten()) * 1000;
     tracing::info!(
         interval_secs = secs,
         watcher_stall_ms = stall_ms,
         "reconcile_scheduler: started (boot + frequent watcher safety net + liveness watchdog)"
     );
-    let mut ticker = tokio::time::interval(Duration::from_secs(secs));
+    let mut ticker = ticker::ticker(secs, FirstTick::Immediate);
     let mut first = true;
     loop {
         ticker.tick().await; // first tick fires immediately → boot reconcile
@@ -280,15 +275,6 @@ async fn run(queue: Arc<TaskQueue>, pg: Arc<PgStore>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn parse_interval_falls_back_on_missing_invalid_or_zero() {
-        assert_eq!(parse_interval(None), DEFAULT_INTERVAL_SECS);
-        assert_eq!(parse_interval(Some("nope".into())), DEFAULT_INTERVAL_SECS);
-        assert_eq!(parse_interval(Some("0".into())), DEFAULT_INTERVAL_SECS);
-        assert_eq!(parse_interval(Some("900".into())), 900);
-        assert_eq!(parse_interval(Some("  1800 ".into())), 1800);
-    }
 
     /// The reconcile must be FREQUENT now (the mtime gate makes a no-op cheap),
     /// not the old hourly (3600s) cadence. 300s is 12x more frequent.
