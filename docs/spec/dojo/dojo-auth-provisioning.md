@@ -813,3 +813,172 @@ Recommended order once F1–F3 are settled: the personal-dōjō path first (it h
 no billing, no claim and no seat, so it closes the hole for every new user and
 is fully testable end to end), then claim, then the seat/billing gate, then
 de-provisioning, and only then the second forge.
+
+---
+
+# Part IV — Seats, subscription and the resolution of F1–F5
+
+## IV.0 The insight that unblocks F2/F3
+
+`dojo.seats` is doing **two jobs at once**, which is why the gate looked
+circular:
+
+| concept | question | grain | who creates it |
+|---|---|---|---|
+| **participation** | who is actually working where | `(user, namespace)` | observed, by activity |
+| **entitlement** | who is licensed to sync private data | `(tenant, user)` | granted, by an admin |
+
+The existing table is *participation* — its own comment says the namespace's
+visibility "decides whether this participation is billable", and it carries
+`last_active_at`. It is a measurement.
+
+Entitlement is a **new** table. Splitting them dissolves the circularity in F2:
+participation rows appear from ordinary work (public repos and projects sync
+without any subscription), and the private gate is a separate entitlement check
+that never has to exist before the project does.
+
+## IV.1 The flow, end to end
+
+```gherkin
+Scenario: Private org from creation to synced private repos
+  Given an owner creates a private org dōjō and claims it
+   And members join and repositories are connected
+  When there is no active subscription
+  Then public repositories sync — metrics and governance included
+   And private repositories are shown DISABLED and excluded from sync
+   And projects may still be created and repositories connected to them
+   And the console surfaces: "X users are working in your private repositories;
+       you have Y members. Syncing them needs at least X seats."
+  When an admin sets up billing and buys N seats
+  Then N seat allocations exist for the tenant, initially unassigned
+  When the admin allocates seats to specific users
+  Then those users' private repositories unlock and sync
+   And members without an allocation still sync only public repositories
+```
+
+Seat assignment is **explicit**. Nothing auto-grants, so the bill can never grow
+because someone opened a repo.
+
+## IV.2 `dojo.seat_allocations` — entitlement, with history
+
+```
+dojo.seat_allocations
+  id                  uuid pk
+  tenant_id           uuid not null references dojo.tenants(id) on delete cascade
+  billing_account_id  uuid not null references dojo.billing_accounts(id)
+  user_id             uuid                      -- NULL = purchased, not yet assigned
+  allocated_at        timestamptz not null default now()
+  allocated_by        uuid                      -- the admin who assigned it
+  released_at         timestamptz               -- NULL = current; set = historical
+  release_reason      seat_release_reason       -- transferred | revoked | member_left
+                                                -- | subscription_ended | seats_reduced
+  create unique index seat_alloc_current_user_idx
+      on dojo.seat_allocations (tenant_id, user_id)
+   where released_at is null and user_id is not null;
+```
+
+**Current + past by row, never by mutation.** A transfer releases the old row
+(`released_at`, `release_reason='transferred'`) and inserts a new one. The
+history answers "who held this seat in March", which a mutated column cannot.
+
+Invariant: `count(*) where released_at is null` ≤
+`billing_accounts.seats_included`. Enforced on allocate, and on any reduction of
+`seats_included` (§IV.5).
+
+## IV.3 The gate, corrected
+
+Supersedes §II.5. F4 is resolved as suggested: **the repo governs sync, the
+namespace governs billability.**
+
+```
+can_sync(repo, user, tenant) =
+    tenant.origin = 'personal'                        → ALLOW
+  | repo.visibility = 'public'                        → ALLOW   (open source is free)
+  | tenant.claimed_at IS NULL                         → DENY  unclaimed
+  | billing.status <> 'active'                        → DENY  not_subscribed
+  | now() NOT BETWEEN period_start AND period_end     → DENY  subscription_expired
+  | no CURRENT seat_allocation for (tenant, user)     → DENY  no_seat
+  | otherwise                                         → ALLOW
+```
+
+Every DENY carries its reason to the CLI and console. A denial that reads as
+"nothing to sync" is the failure mode that hid the `no_github_token` no-op for
+two days; this one names itself.
+
+Note the gate never consults `dojo.seats`. Participation informs the
+*recommendation*, never the decision.
+
+## IV.4 The seat recommendation
+
+```
+seats_needed(tenant) =
+  count(DISTINCT s.user_id)
+    FROM dojo.seats s
+    JOIN sensei.namespaces n ON n.id = s.namespace_id
+   WHERE s.tenant_id = $tenant
+     AND s.ended_at IS NULL
+     AND n.visibility = 'private'
+     AND s.last_active_at > now() - <activity window>
+```
+
+This is what produces "X users are working in your private repositories". It
+counts **observed private participation**, which is exactly the population that
+would need a seat — not total membership, which would over-quote every org with
+dormant members.
+
+## IV.5 Lifecycle — the cases that break naive designs
+
+| event | effect |
+|---|---|
+| **Subscription lapses** (`status` → `past_due`/`canceled`) | Allocations are **retained**, not released. The gate denies on status, so private sync stops immediately; re-subscribing restores the assignment work rather than making the admin redo it. |
+| **Period rolls over** | Allocations carry across. `billing_account_id` pins which subscription funded a seat, so a plan change is auditable. |
+| **Seats reduced below current allocations** | Cannot silently over-allocate. The reduction is **refused** unless the admin releases the excess first (`release_reason='seats_reduced'`). Auto-picking whom to cut is not the service's decision. |
+| **Member leaves the forge org** | Membership disabled (F5), allocation released with `member_left`, seat returns to the pool. |
+| **Member removed from the tenant** | Same, `revoked`. |
+| **User transferred** | Old row released `transferred`, new row inserted. Seat count unchanged. |
+| **Tenant unclaimed** | Cannot hold a billing account at all, so no allocations can exist. |
+
+## IV.6 F5 — de-provisioning, now concrete
+
+Each provisioning pass compares proven forge orgs against existing memberships:
+
+```gherkin
+Scenario: A member leaves the forge org
+  Given the user has an active membership in tenant `acme` via github
+   And a current seat allocation
+  When a provisioning pass runs and GitHub no longer proves that org
+  Then the membership is disabled (disabled_at set)
+   And the seat allocation is released with reason `member_left`
+   And the tenant and other members are untouched
+   And the freed seat is immediately re-allocatable
+```
+
+**Only a pass that positively proved the forge list may de-provision.** A failed
+or token-less call must never be read as "the user left everything" — that
+would disable an entire org on a GitHub outage. This is the fail-closed rule
+pointing the other way, and it is the single most dangerous part of the flow to
+get wrong.
+
+## IV.7 F1 — resolved
+
+Personal tenants are keyed with a reserved sigil the organization namespace
+cannot use:
+
+| tenant | key | origin |
+|---|---|---|
+| personal | `@jerrythomas` | `personal` |
+| organization | `sensei-hq` | `organization` |
+
+A single global unique on `tenants.key` still holds, `@` is not a valid forge
+org slug so the namespaces cannot collide, and it is not a forge prefix — so
+§II.2's objection to `github/` does not apply.
+
+## IV.8 Still open
+
+- **F8** — whether a forge `provider_token` is in hand at
+  `POST /v1/auth/cli/token`. Decides whether a CLI-initiated FIRST connection
+  can provision orgs at all, or must hand the user to the web. Being tested.
+- **Proration** — a seat allocated mid-cycle. A billing question, not a gate
+  question; the gate only asks "is there a current allocation".
+- **Downgrade UX** — refusing a seat reduction is correct but needs a console
+  flow that shows which allocations to release.
