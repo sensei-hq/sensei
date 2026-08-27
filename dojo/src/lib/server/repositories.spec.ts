@@ -54,7 +54,10 @@ describe('registerRepositories', () => {
 		expect(db.tables.repositories.rows[0]).toMatchObject({
 			tenant_id: 't-acme',
 			repo_key: 'github.com/acme/api',
-			name: 'api'
+			name: 'api',
+			// Stored, not re-derived later: dojo.repositories.provider is NOT NULL,
+			// and keeping the host→provider mapping in one place is why.
+			provider: 'github'
 		});
 	});
 
@@ -147,14 +150,36 @@ describe('registerRepositories', () => {
 });
 
 describe('syncPlan', () => {
+	// syncPlan reads `dojo.all_my_repositories`, which already joins repository →
+	// tenant → membership and carries the owning tenant on each row. The view's
+	// own semantics (membership scoping, disabled memberships) are covered by
+	// database/tests/dojo/all_my_repositories.sql, against a real Postgres —
+	// a fake cannot evaluate a view. What is under test here is the split.
+	function withView(rows: Record<string, unknown>[]): Record<string, FakeTable> {
+		return { ...tables(), all_my_repositories: { rows } };
+	}
+
+	const MINE = [
+		{
+			repository_id: 'r1',
+			repo_key: 'github.com/acme/api',
+			tenant: 'organization/acme',
+			principal_id: ALICE,
+			sync_enabled: true
+		},
+		{
+			repository_id: 'r2',
+			repo_key: 'github.com/acme/web',
+			tenant: 'organization/acme',
+			principal_id: ALICE,
+			sync_enabled: true
+		}
+	];
+
 	it('allows every registered repo in phase 1, with denied present but empty', async () => {
 		// `denied: []` rather than absent, so the daemon's handling of it is
 		// exercised from day one and phase 2 changes no shape (§V.5).
-		const db = fakeDojoDb(tables());
-		await registerRepositories(db as never, ALICE, [
-			{ repo_key: 'github.com/acme/api' },
-			{ repo_key: 'github.com/acme/web' }
-		]);
+		const db = fakeDojoDb(withView(MINE));
 		const plan = await syncPlan(db as never, ALICE);
 		expect(plan.allowed.map((a) => a.repo_key).sort()).toEqual([
 			'github.com/acme/api',
@@ -164,25 +189,46 @@ describe('syncPlan', () => {
 		expect(plan.denied).toEqual([]);
 	});
 
-	it('never lists a repository from a tenant the caller is not in', async () => {
-		// The plan is an ALLOW-LIST the daemon acts on directly, so a leak here
-		// is not a display bug — it is the daemon syncing someone else's code.
-		const t = tables();
-        t.repositories.rows.push({
-			id: 'r-other',
-			tenant_id: 't-other',
-			repo_key: 'github.com/secret-org/private-api',
-			name: 'private-api'
-		});
-		const db = fakeDojoDb(t);
+	it('scopes to the caller, so one user never sees another user rows', async () => {
+		// The plan is an ALLOW-LIST the daemon acts on directly, so a leak here is
+		// not a display bug — it is the daemon syncing someone else code.
+		const db = fakeDojoDb(
+			withView([
+				...MINE,
+				{
+					repository_id: 'r-other',
+					repo_key: 'github.com/secret-org/private-api',
+					tenant: 'organization/other',
+					principal_id: 'p-bob',
+					sync_enabled: true
+				}
+			])
+		);
 		const plan = await syncPlan(db as never, ALICE);
 		expect(plan.allowed.map((a) => a.repo_key)).not.toContain('github.com/secret-org/private-api');
 	});
 
-	it('returns an empty plan for a user with no memberships', async () => {
-		// Genuinely empty: no tenants, so nothing to sync. Offline degrades the
-		// same way by construction — no plan, no sync.
-		const db = fakeDojoDb(tables());
+	it('splits on sync_enabled, so the phase-2 gate needs no code change here', async () => {
+		// The view computes sync_enabled: TRUE throughout phase 1, the can_sync
+		// predicate in phase 2. Reading it rather than assuming it is what lets the
+		// gate arrive as a view change.
+		const db = fakeDojoDb(
+			withView([
+				MINE[0],
+				{ ...MINE[1], sync_enabled: false, denied_reason: 'no_seat' }
+			])
+		);
+		const plan = await syncPlan(db as never, ALICE);
+		expect(plan.allowed.map((a) => a.repo_key)).toEqual(['github.com/acme/api']);
+		expect(plan.denied).toEqual([
+			{ repo_key: 'github.com/acme/web', tenant: 'organization/acme', reason: 'no_seat' }
+		]);
+	});
+
+	it('returns an empty plan for a user with no repositories', async () => {
+		// Genuinely empty: nothing of theirs to sync. Offline degrades the same way
+		// by construction — no plan, no sync.
+		const db = fakeDojoDb(withView([]));
 		expect(await syncPlan(db as never, 'p-nobody')).toEqual({ allowed: [], denied: [] });
 	});
 });
