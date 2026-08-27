@@ -1,31 +1,34 @@
 # Checkpoint
 
-**Slice:** thematic retrospectives — repo and cross-repo (spec `docs/spec/2026-08-26-thematic-retrospectives.md`)
-
-## Why
-
-sensei measures a lot and explains none of it thematically. Of 16,753 cached insights, 11,985 are one metric on one day. Nothing answers *where is the rework*, *where is the bottleneck*, *what do we keep struggling with*.
+**Slice:** thematic retrospectives — repo and cross-repo (`docs/spec/2026-08-26-thematic-retrospectives.md`)
 
 ## Done
 
-- **Spec written**, grounded in the live DB. Key finding: this is new *copy over existing facts* feeding an *existing* acceptance path — the 29-metric catalogue, `metric_facts` (15,636), LLM-authored `insight_copy` cached by `facts_hash`, and insight→rule (P-A) / →skill/agent (P-B) all already exist.
-- **P1a — stage schema.** `sensei.work_stage`, `sensei.stage_source`, both columns on `activity.session_facets` under a check that they are set together. Applied; `dbd diff --exit-code` clean.
-- **P1b — stage inference.** A fifth key in the call the process analyzer already makes. Values outside the enum are dropped, not coerced; the prompt tells the model to answer null rather than guess. 2412 daemon tests, clippy 0.
-- **Upsert semantics verified against the live DB**: re-inference updates itself, a `recorded` stage is never overwritten by re-analysis, and a stage with no source is rejected by the constraint.
+- **Spec written and twice corrected by real data.** Grounded in the live DB: the 29-metric catalogue, `metric_facts` (15,636), LLM-authored `insight_copy` cached by `facts_hash`, and insight→rule/skill/agent materialization all already exist. This is new *copy over existing facts*, not a second stack.
+- **P1 stage attribution — DONE and deployed.** `sensei.work_stage` + `stage_source` on `activity.session_facets`; inference is a fifth key in the call the process analyzer already makes. Validated on the **release** daemon: **86 sessions staged from real transcripts**.
+- **Leak guard** (`.githooks/check-no-leaks.sh`) wired into pre-commit, 11 self-tests.
+- **History redacted** across all three public repos; single identity `Sensei HQ <hi@sensei-hq.com>`.
+
+## Measured (86 sessions, release binary)
+
+| stage | n | deviated | shallow | corrections | depth |
+|---|---:|---:|---:|---:|---:|
+| build | 26 | 38% | 31% | 5 | 3.2 |
+| analyze | 26 | 38% | 23% | 8 | 3.3 |
+| plan | 19 | 26% | 21% | 3 | 3.7 |
+| verify | 7 | 29% | 29% | 3 | 3.7 |
+| fix | 6 | 33% | 17% | 0 | 3.0 |
+| operate | 2 | — | — | 0 | 3.5 |
+| explore | 1 | — | — | 0 | 2.0 |
 
 ## Next
 
-1. **Deploy to see real stages.** The running daemon is the pre-change binary, so `activity.session_facets` is still empty. `make install-debug` + restart, clear `process_analyzed_at` on a batch, confirm stages land and check the distribution is plausible before trusting any rollup.
-2. **P2 — repo retrospective**: T1 (rework by stage) and T2 (bottleneck) as queries over `metric_facts` + stage, narrated into a new `insight_copy` kind.
-3. **P3** — T4 proposals wired to the existing accept → materialize path.
-4. **P4** — cross-repo at the ≥3-repo recurrence threshold, feeding P-C.
-
-## Corrections made to the spec while building
-
-`activity.runs.current_phase` is **not** a workflow phase — it is free text holding feature descriptions ("P4 · stall signal — revive…"), and `activity.runs` has no link to `activity.sessions`. The design assumed it could be resolved against the inference; it cannot, so every stage is inferred today and the resolving view was dropped rather than shipped with one source.
+1. **`#125` — Zed ingest is broken and self-sealing.** 176 Zed sessions, 2 analyzable. 174 watermarks claim turns that do not exist, so ingest never retries; 46 of 48 turn sets are orphaned from any session. **Largest single lever on every transcript-derived metric** — fixing it roughly triples the analyzable pool (109 of 287 today).
+2. **Collapse `explore` into `analyze`** — 1 session in 86; open question 1 is answered by data.
+3. **P2 — repo retrospective**: T1/T3 cross-repo first. Repo × stage is still too sparse (7 of 31 cells reach n≥5).
 
 ## Known-broken / caveats
 
-- No stage data exists yet — inference needs the daemon redeployed (item 1).
-- 7 stages may be more than a transcript can distinguish; collapse rather than record a coin flip if `explore`/`analyze` prove inseparable.
-- Cross-repo grain is per-persona. A dōjō team grain is the same query with a different `WHERE`, but not the same privacy question.
+- 23 sessions still queued for the analyzer; the daily pass will drain them.
+- The process pass is **daily-only** by design — use `POST /api/projects/{id}/process/analyze` to drain on demand.
+- Stage rollups must state `stage_source` (all `inferred` today) and the grain measured (§6a) — a repo-level pattern is not a session-level mechanism.
