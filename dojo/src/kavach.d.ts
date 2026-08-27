@@ -9,7 +9,14 @@ declare module '$kavach/auth' {
 		signUp: (credentials: any) => Promise<any>
 		signOut: () => Promise<any>
 		onAuthChange: () => any
-		configure: (options?: { invalidateAll?: () => void; logger?: unknown }) => void
+		configure: (options?: {
+			invalidateAll?: () => void
+			logger?: unknown
+			/** Called on the server with the INCOMING provider session at sign-in —
+			 *  the only moment fields such as provider_token exist. Nothing extra
+			 *  is persisted; a throw here never fails the sign-in. */
+			onSessionSync?: (session: any, event: string) => unknown
+		}) => void
 		actions: (schema?: string) => any
 		getCachedLogins: () => any[]
 		removeCachedLogin: (email: string) => void
