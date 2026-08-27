@@ -28,7 +28,7 @@
 // exist yet, so every org tenant created here is implicitly unclaimed, which is
 // the correct default: none of them has proved ownership.
 import { AdminError, slugify, type DojoClient } from './admin-data';
-import type { ForgeFacts, ForgeOrg, ForgeProvider } from './forge-github';
+import { fetchGithubFacts, type ForgeFacts, type ForgeOrg, type ForgeProvider } from './forge-github';
 
 /** One tenant this pass established the caller's place in. */
 export interface ProvisionedTenant {
@@ -47,7 +47,7 @@ export interface ProvisionResult {
 	 *  omitted on a partial pass: a silent no-op reading as success is exactly
 	 *  how the original bug stayed invisible. */
 	synced: boolean;
-	reason?: 'no_forge_token' | 'no_identity';
+	reason?: 'no_forge_token' | 'forge_unreachable' | 'no_identity';
 	personal: ProvisionedTenant | null;
 	tenants: ProvisionedTenant[];
 }
@@ -397,4 +397,48 @@ export async function ensureProvisioned(
 	}
 
 	return { synced: true, personal, tenants };
+}
+
+/**
+ * Read the forge (when there is a token) and provision — the composition all
+ * three callers of §II.7 share, so "in sync regardless of where it was
+ * initiated" stays a property of one function rather than three that drift.
+ *
+ * The three outcomes are kept DISTINCT on purpose:
+ *
+ *   synced: true                     the forge was read and everything provisioned
+ *   reason: 'no_forge_token'         not a forge sign-in, or the token has expired
+ *                                    out of the session (the ordinary later case)
+ *   reason: 'forge_unreachable'      we had a token and the forge would not answer
+ *
+ * Collapsing the last two into one "nothing to sync" is precisely the shape that
+ * kept the original defect invisible for two days, and they call for different
+ * advice: one says "sign in with GitHub", the other says "try again".
+ *
+ * A failed forge read provisions NO org tenant — an org invented from an
+ * unsuccessful read is a governance boundary conjured out of an outage. The
+ * personal dōjō is still ensured either way, because D1 does not depend on any
+ * forge.
+ */
+export async function provisionWithToken(
+	db: DojoClient,
+	principalId: string,
+	providerToken: string | null | undefined,
+	fallback: FallbackIdentity = {},
+	fetchImpl: typeof fetch = fetch
+): Promise<ProvisionResult> {
+	if (!providerToken) return ensureProvisioned(db, principalId, null, fallback);
+
+	let facts: ForgeFacts;
+	try {
+		facts = await fetchGithubFacts(providerToken, fetchImpl);
+	} catch {
+		const degraded = await ensureProvisioned(db, principalId, null, fallback);
+		// Keep `no_identity` if that is what actually stopped us — it is a more
+		// specific answer than "the forge was down".
+		return degraded.reason === 'no_identity'
+			? degraded
+			: { ...degraded, reason: 'forge_unreachable' };
+	}
+	return ensureProvisioned(db, principalId, facts, fallback);
 }

@@ -20,7 +20,7 @@ import {
 	createDojo,
 	createInvite,
 	acceptInvite,
-	syncGithubOrgs,
+	provisionFromForge,
 	updateEngagement,
 	updateIncident
 } from '$lib/client-data';
@@ -131,11 +131,23 @@ describe('listProjects / listUserProjects — tenant vs user-wide reads', () => 
 		expect(JSON.parse(String(calls[0].init?.body))).toEqual({ token: 'tok' });
 	});
 
-	it('syncGithubOrgs POSTs to /v1/you/github/sync (F3c) and returns joined', async () => {
-		const { fn, calls } = fakeFetch(200, { joined: ['github/acme'], synced: true });
-		const out = await syncGithubOrgs({ fetch: fn });
-		expect(out).toEqual({ joined: ['github/acme'], synced: true });
-		expect(calls[0].url).toBe(`${dojoApiUrl}/v1/you/github/sync`);
+	it('provisionFromForge POSTs to /v1/you/provision and returns the pass result', async () => {
+		const result = {
+			synced: true,
+			personal: {
+				id: 't1',
+				key: 'personal/jerrythomas',
+				origin: 'personal',
+				role: 'admin',
+				created: true
+			},
+			tenants: [
+				{ id: 't2', key: 'organization/acme', origin: 'organization', role: 'contributor', created: true }
+			]
+		};
+		const { fn, calls } = fakeFetch(200, result);
+		expect(await provisionFromForge({ fetch: fn })).toEqual(result);
+		expect(calls[0].url).toBe(`${dojoApiUrl}/v1/you/provision`);
 		expect(calls[0].init?.method).toBe('POST');
 	});
 });

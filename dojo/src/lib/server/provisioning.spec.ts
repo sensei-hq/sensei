@@ -7,7 +7,7 @@
 // implementation that inserted a duplicate tenant on every sign-in.
 import { describe, it, expect, beforeEach } from 'vitest';
 import { fakeDojoDb, resetFakeIds, type FakeTable } from './fake-dojo-db';
-import { ensureProvisioned } from './provisioning';
+import { ensureProvisioned, provisionWithToken } from './provisioning';
 import type { ForgeFacts } from './forge-github';
 
 const PRINCIPAL = 'p-alice';
@@ -283,5 +283,62 @@ describe('ensureProvisioned — without forge facts', () => {
 		expect(out.personal).toBeNull();
 		expect(out.reason).toBe('no_identity');
 		expect(db.tables.tenants.rows).toHaveLength(0);
+	});
+});
+
+describe('provisionWithToken — the composition all three callers share', () => {
+	/** A fetch stub standing in for the GitHub API. */
+	function forgeFetch(status: number, user: unknown, orgs: unknown) {
+		return (async (url: string | URL | Request) => {
+			const u = String(url);
+			const body = u.includes('/memberships/orgs') ? orgs : user;
+			return { ok: status >= 200 && status < 300, status, json: async () => body } as Response;
+		}) as unknown as typeof fetch;
+	}
+
+	const GH_USER = { id: 4242, login: 'jerrythomas', name: 'Jerry Thomas', email: 'j@example.com' };
+	const GH_ORGS = [{ state: 'active', role: 'admin', organization: { id: 11, login: 'sensei-hq' } }];
+
+	it('reads the forge and provisions everything when a token is present', async () => {
+		const db = fakeDojoDb(tables());
+		const out = await provisionWithToken(
+			db as never,
+			PRINCIPAL,
+			'gh-token',
+			{},
+			forgeFetch(200, GH_USER, GH_ORGS)
+		);
+		expect(out.synced).toBe(true);
+		expect(out.personal?.key).toBe('personal/jerrythomas');
+		expect(out.tenants.map((t) => t.key)).toEqual(['organization/sensei-hq']);
+	});
+
+	it('reports forge_unreachable — distinctly from no_forge_token — when the API fails', async () => {
+		// These are different problems and the console says different things about
+		// them. Collapsing both into "nothing to sync" is the shape that hid the
+		// original bug for two days.
+		const db = fakeDojoDb(tables());
+		const out = await provisionWithToken(
+			db as never,
+			PRINCIPAL,
+			'gh-token',
+			{ email: 'j@example.com' },
+			forgeFetch(503, GH_USER, GH_ORGS)
+		);
+		expect(out.synced).toBe(false);
+		expect(out.reason).toBe('forge_unreachable');
+		// No org tenant is invented from a failed read…
+		expect(db.tables.tenant_connections.rows).toHaveLength(0);
+		// …but D1 still holds: the personal dōjō does not depend on the forge.
+		expect(out.personal?.key).toBe('personal/j');
+	});
+
+	it('reports no_forge_token when there is no token at all', async () => {
+		const db = fakeDojoDb(tables());
+		const out = await provisionWithToken(db as never, PRINCIPAL, null, {
+			email: 'magic@example.com'
+		});
+		expect(out.synced).toBe(false);
+		expect(out.reason).toBe('no_forge_token');
 	});
 });
