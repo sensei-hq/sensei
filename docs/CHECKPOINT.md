@@ -1,34 +1,50 @@
 # Checkpoint
 
-**Slice:** thematic retrospectives — repo and cross-repo (`docs/spec/2026-08-26-thematic-retrospectives.md`)
+**Slice:** Dōjō auth & provisioning — phase 1 (`docs/spec/dojo/dojo-auth-provisioning.md`, ~1400 lines, Parts I–VII)
 
-## Done
+## The hole being closed
 
-- **Spec written and twice corrected by real data.** Grounded in the live DB: the 29-metric catalogue, `metric_facts` (15,636), LLM-authored `insight_copy` cached by `facts_hash`, and insight→rule/skill/agent materialization all already exist. This is new *copy over existing facts*, not a second stack.
-- **P1 stage attribution — DONE and deployed.** `sensei.work_stage` + `stage_source` on `activity.session_facets`; inference is a fifth key in the call the process analyzer already makes. Validated on the **release** daemon: **86 sessions staged from real transcripts**.
-- **Leak guard** (`.githooks/check-no-leaks.sh`) wired into pre-commit, 11 self-tests.
-- **History redacted** across all three public repos; single identity `Sensei HQ <hi@sensei-hq.com>`.
+Nothing creates a tenant — **zero inserts into `dojo.tenants` anywhere**. `syncGithubMemberships` joins only pre-existing tenants ("never invents a tenant"), is wired only to `POST /v1/you/github/sync` rather than sign-in, and that endpoint silently no-ops because `session.provider_token` exists only immediately after the OAuth exchange.
 
-## Measured (86 sessions, release binary)
+## Done — schema, verified live
 
-| stage | n | deviated | shallow | corrections | depth |
-|---|---:|---:|---:|---:|---:|
-| build | 26 | 38% | 31% | 5 | 3.2 |
-| analyze | 26 | 38% | 23% | 8 | 3.3 |
-| plan | 19 | 26% | 21% | 3 | 3.7 |
-| verify | 7 | 29% | 29% | 3 | 3.7 |
-| fix | 6 | 33% | 17% | 0 | 3.0 |
-| operate | 2 | — | — | 0 | 3.5 |
-| explore | 1 | — | — | 0 | 2.0 |
+`dbd diff --scope dojo --exit-code` **CLEAN** on local Supabase (`127.0.0.1:54322`).
 
-## Next
+- `dojo.forge_provider` — `github | gitlab | bitbucket | azure_devops`
+- `dojo.tenant_origin` → `(personal | organization)`, declared as target (pre-release, we reset — no transitional labels)
+- `dojo.tenants.org` → **`slug`** (+ staging, `import_tenants`, seed)
+- `dojo.tenant_connections` — `external_id` **nullable**, two partial uniques: `(provider, external_id)` where known keeps one proven forge org to one tenant forever; `(provider, lower(external_slug))` where NULL stops unproven slug races
+- seed → `organization/global-dojo`; orphaned `dojo.metrics` pruned
 
-1. **`#125` — Zed ingest is broken and self-sealing.** 176 Zed sessions, 2 analyzable. 174 watermarks claim turns that do not exist, so ingest never retries; 46 of 48 turn sets are orphaned from any session. **Largest single lever on every transcript-derived metric** — fixing it roughly triples the analyzable pool (109 of 287 today).
-2. **Collapse `explore` into `analyze`** — 1 session in 86; open question 1 is answered by data.
-3. **P2 — repo retrospective**: T1/T3 cross-repo first. Repo × stage is still too sparse (7 of 31 cells reach n≥5).
+Commits `37ca9fab`, `78cd7808`, `47a726fb`, `25d2ba16`.
 
-## Known-broken / caveats
+## Design decisions worth not re-deriving
 
-- 23 sessions still queued for the analyzer; the daily pass will drain them.
-- The process pass is **daily-only** by design — use `POST /api/projects/{id}/process/analyze` to drain on demand.
-- Stage rollups must state `stage_source` (all `inferred` today) and the grain measured (§6a) — a repo-level pattern is not a session-level mechanism.
+- **A tenant is an ORGANIZATION**, not a forge org. Same slug across forges is never evidence of same org — linking is an authorized act by one human authenticated on both sides who already administers the tenant.
+- **Key is `<origin>/<slug>`** (`personal/jerry`, `organization/sensei-hq`). No `@` sigil — the origin prefix already separates the namespaces and all 33 `/v1/t/[origin]/[org]/` routes keep their shape.
+- **Three gates:** intent (`sensei.repo_visibility='shared'`, daemon-local) → cost (forge visibility, dōjō) → entitlement (claim + billing + seat, dōjō).
+- **The daemon asks, never caches.** `GET /v1/t/{tenant}/sync/plan` → `{allowed[], denied[{repo_key, reason}]}`. No TTL, offline degrades to no-sync by construction. sensei's schema delta across *all* phases is one display-only column.
+- **Seats split**: participation (existing `dojo.seats`, `(user, namespace)`, observed) vs entitlement (new `seat_allocations`, `(tenant, user)`, admin-granted, current+past by row). Dissolves the circularity.
+- **Claim decoupled from admin** — losing a claim does not remove admin, or an org gets locked out of its own dōjō.
+
+## Next — phase 1 remainder (TypeScript, not started)
+
+1. `ensureProvisioned(userId, forgeToken, provider)` — idempotent, wired to all three callers (web sign-in callback, `POST /v1/auth/cli/token`, `POST /v1/you/github/sync`)
+2. repo→tenant mapping by remote URL — normaliser must handle github/gitlab/bitbucket **and both Azure forms**
+3. `GET /v1/t/{tenant}/sync/plan` returning everything shared as `allowed`
+
+Phase 2 (entitlement): `claim_state`, `forge_visibility`, `seat_allocations`, billing, full `can_sync`, de-provisioning.
+
+## Blocked on Jerry
+
+**A dōjō sign-in.** The reset dropped `personal/jerry`, so signing in is both the first end-to-end test and the confirmation that Supabase returns `provider_token` on the PKCE exchange — the last unobserved assumption. The daemon side is verified wired (`store_provider_token` → keychain, `canReadOrgs` in `/api/auth/status`) and has better durability than the web session.
+
+## Lifecycle note
+
+`reconcile` is a **pre-release stopgap**. `dbd release` (once) sets `released: true`, disables reconcile, writes the baseline; then `make bump` snapshots and `dbd deploy` migrates v(n)→v(n+1). Two findings survive the cutover: dbd cannot express a column rename (plans DROP+ADD), and a data migration must move in lockstep with its seed (apply→import gives the seed the last word — observed as two `global-dojo` tenants).
+
+## Also landed today (unrelated)
+
+- **#125** Zed ingest root-caused and fixed (`b63ac861`) — the retention pruner deleted turns and left watermarks behind, self-sealing. Repaired live; analyzable pool **109/287 → 274/338**.
+- **Thematic retrospectives** spec + stage inference shipped, measured on 86 real sessions.
+- **History redacted** across all three public repos; single identity; leak guard in pre-commit.
