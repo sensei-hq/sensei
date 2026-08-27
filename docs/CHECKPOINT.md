@@ -11,19 +11,19 @@
 | 2a | `resolveCaller` returns the **principal** id as `userId` (+ `authUserId`). New `principal-resolve.ts`; creates the principal on first sight, survives the concurrent-sign-in 23505 by re-reading. | `dd6917f7` |
 | 4 | Every `dojo.identities` path onto `principal_id`. Tenant isolation is now an **explicit membership check** — the dropped `tenant_id` filter was providing it incidentally. | `5cbe4d4d` |
 | 3 | `createDojo` → `organization/{slug}` + `slug` column. **Issue #117's own AC.** | `11ebd83e` |
+| 5 | The three callers wired: `POST /v1/you/provision` (new), `/v1/you/github/sync` (re-exports it), `/v1/auth/cli/token` (provisions on the way through, response byte-for-byte unchanged). `github-sync-data.ts` **deleted**. | `b344da86` |
 | 2b | **`ensureProvisioned`** — the operation that creates a tenant. `forge-github.ts` (reads with the user's own token) + `provisioning.ts` (identity → personal tenant → org tenants + connections → memberships, idempotent) + `fake-dojo-db.ts` (stores rows and enforces the real uniques, so idempotence is observable). | `2eda4236` |
 
-## Next — the remaining three (all wiring / endpoints; the logic is done)
+## Next — the last two
 
-5. Wire the three callers: `POST /v1/you/provision` (new), `POST /v1/auth/cli/token` (parse a CLONE of the upstream body for `{user.id, provider_token}` — **must not reshape its response**), `POST /v1/you/github/sync` (replace `syncGithubMemberships`, which is superseded and should be deleted with `fetchGithubOrgLogins`)
 6. `POST /v1/you/repositories` — `repo_key → (provider, org)` → `tenant_connections` → tenant. **Reuse the Rust `normalize_repo_key`; do not re-implement it.** `dojo.repositories.tenant_id` is NOT NULL, so an unmapped repo gets no row — it is reported, not stored
 7. `GET /v1/you/sync/plan` — everything registered `allowed` in phase 1
 
-Next command: `cd dojo && bun run test` to confirm the gate, then item 5 red-first.
+Next command: `cd dojo && bun run test` to confirm the gate, then item 6 red-first.
 
-## Gates (all green as of `2eda4236`)
+## Gates (all green as of `b344da86`)
 
-`make test-db` → 4 files · `cd dojo && bun run test` → 126 files / 1372 · `bun run check` → 0 errors, 0 warnings / 1757 files · `dbd diff --scope dojo --exit-code` → in sync
+`make test-db` → 4 files · `cd dojo && bun run test` → 126 files / 1380 · `bun run check` → 0 errors, 0 warnings / 1758 files · `dbd diff --scope dojo --exit-code` → in sync
 
 ## Facts worth not re-deriving
 
