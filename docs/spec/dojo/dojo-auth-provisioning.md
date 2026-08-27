@@ -713,9 +713,11 @@ decides who wins.
 Part I avoided this with prefixes; Part II reintroduced it while removing them
 for a different reason (a tenant has many forges, so a forge prefix is wrong).
 
-**Both goals are satisfiable**: personal tenants take a reserved sigil the org
-namespace cannot use — `@jerrythomas` — and organizations take the bare slug.
-The sigil is not a forge prefix, so §II.2's objection does not apply.
+**Both goals are satisfiable.** The first fix proposed a reserved sigil
+(`@jerrythomas`); §IV.7 supersedes it with a better one — keep the prefix but
+make it the origin KIND rather than the forge, so the key is
+`personal/jerrythomas` vs `organization/sensei-hq`. See §IV.7 for why that is
+strictly better.
 
 ## F2 — BLOCKING. The seat gate is keyed on the wrong grain
 
@@ -959,19 +961,44 @@ would disable an entire org on a GitHub outage. This is the fail-closed rule
 pointing the other way, and it is the single most dangerous part of the flow to
 get wrong.
 
-## IV.7 F1 — resolved
+## IV.7 F1 — resolved, and without a sigil
 
-Personal tenants are keyed with a reserved sigil the organization namespace
-cannot use:
+An earlier draft proposed `@jerrythomas` for personal tenants. **Not needed**,
+and it would have been the wrong shape.
 
-| tenant | key | origin |
-|---|---|---|
-| personal | `@jerrythomas` | `personal` |
-| organization | `sensei-hq` | `organization` |
+`dojo.tenants.key` already carries the origin as a prefix — its own comment says
+the canonical form is `"<origin>/<org>[/<dojo>]"` — and `dojo-auth.ts` resolves a
+tenant by joining the two URL segments: `.eq('key', ${origin}/${org})`. There are
+**33 routes** under `/v1/t/[origin]/[org]/`.
 
-A single global unique on `tenants.key` still holds, `@` is not a valid forge
-org slug so the namespaces cannot collide, and it is not a forge prefix — so
-§II.2's objection to `github/` does not apply.
+So the collision in F1 was caused by Part II removing the prefix, not by the
+prefix existing. Part II removed it for a good reason — a *forge* prefix is
+wrong once a tenant has several forges — but the fix is to change what the
+prefix means, not to delete it:
+
+| tenant | key | URL | origin |
+|---|---|---|---|
+| personal | `personal/jerrythomas` | `/t/personal/jerrythomas` | `personal` |
+| organization | `organization/sensei-hq` | `/t/organization/sensei-hq` | `organization` |
+
+This satisfies every constraint at once:
+
+- **No collision.** `personal/x` and `organization/x` differ under the existing
+  `unique (key)`. No constraint change.
+- **No forge in the key**, so Part II's objection is met — the key is stable
+  across however many forges connect, which is *better* than today where the
+  forge is baked into the URL.
+- **No `@`**, so the URL question does not arise. (`@` is legal in a path
+  segment per RFC 3986 §3.3, but it is the userinfo delimiter in an authority
+  and gets linkified as a mention by some clients — avoidable weirdness for no
+  gain.)
+- **All 33 routes keep their shape.** Only the values `origin` takes change.
+
+**Migration cost, stated plainly.** Existing keys `github/{org}` must be
+rewritten to `organization/{org}`, because resolution joins the segments and
+`origin` no longer says `github`. That changes those tenants' URLs. Given how
+few exist today this is the moment to do it; after launch it would need a
+redirect table.
 
 ## IV.8 Still open
 
@@ -1051,9 +1078,10 @@ enterprise but are not public, so they gate as private.
 + claimed_by   uuid                 -- who proved forge ownership
 ```
 
-`key` convention: `@login` for personal, bare slug for organizations (§IV.7).
-The existing single unique on `key` is sufficient — `@` cannot appear in a forge
-org slug, so the namespaces cannot collide.
+`key` convention: `personal/{login}` and `organization/{slug}` (§IV.7). The
+existing single unique on `key` is sufficient and unchanged — the origin prefix
+keeps the two namespaces apart, and all 33 `/v1/t/[origin]/[org]/` routes keep
+their shape.
 
 **`dojo.tenant_connections`** — NEW, phase 2:
 
@@ -1160,7 +1188,7 @@ is mis-synced, only mis-drawn.
 
 | phase | dōjō | sensei |
 |---|---|---|
-| **1 · personal** | `tenant_origin` += personal/organization; `@login` key convention; provisioning writes tenant + membership; `GET /sync/plan` returning everything shared | consume the plan; sync only `allowed`. No schema change at all. |
+| **1 · personal** | `tenant_origin` += personal/organization; `personal/{login}` key convention; provisioning writes tenant + membership; `GET /sync/plan` returning everything shared | consume the plan; sync only `allowed`. No schema change at all. |
 | **2 · public org** | `forge_provider`, `forge_visibility`, `tenant_connections`, repo `provider`/`external_id`; repo→tenant mapping; plan denies private with `not_subscribed` | `forge_visibility` (display only); mapping by remote URL (§II.6) |
 | **3 · private org** | `claimed_at`/`claimed_by`, `seat_allocations`, `seat_release_reason`, the full gate + de-provisioning; plan denies with `no_seat` / `subscription_expired` | surface `denied[].reason` in the CLI |
 
