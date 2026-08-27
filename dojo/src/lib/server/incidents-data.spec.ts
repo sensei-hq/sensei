@@ -58,7 +58,7 @@ describe('getIncidentDetail', () => {
 		const db = makeDetailDb({
 			incidents: { data: inc({ id: 'i1', engagement_id: 'e1', owner_id: 'u1', artifact_id: 'a1' }), error: null },
 			engagements: { data: [{ id: 'e1', client_name: 'Globex' }], error: null },
-			identities: { data: [{ user_id: 'u1', display_name: 'Ada', email: 'ada@x.co', last_login_at: null }], error: null },
+			identities: { data: [{ principal_id: 'u1', display_name: 'Ada', email: 'ada@x.co', last_login_at: null }], error: null },
 			artifacts: { data: { id: 'a1', title: 'the pattern', kind: 'pattern', status: 'archived' }, error: null }
 		});
 		const d = await getIncidentDetail(db, 't1', 'i1');
