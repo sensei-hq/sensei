@@ -1395,20 +1395,42 @@ dbd diff --scope dojo --exit-code     # proof
 Verified: reset, rebuild, `--exit-code` clean, `tenant_origin` holds exactly
 `personal | organization`.
 
-### What was learned anyway, for after launch
+### The lifecycle, and when each command applies
 
-Three behaviours that stop being avoidable once resetting is off the table.
-Recorded because the next schema change of this shape will be post-release.
+`reconcile` is a **pre-release stopgap**, not a permanent fixture. The cutover is
+already encoded in the Makefile and the release workflow:
+
+| | pre-release (today) | post-release |
+|---|---|---|
+| schema travels as | the DDL tree, applied in place | a versioned snapshot committed by `make bump` |
+| command | `dbd reconcile --scope dojo` | `dbd deploy --scope dojo`, migrating v(n) → v(n+1) |
+| `reconcile` | the mechanism | **disabled — it errors out** |
+| destructive change | just reset | a deliberate, written migration |
+
+`dbd release` is run **once**, at the first public release: it sets
+`released: true`, disables `reconcile`, and writes the baseline snapshot. From
+that point `make bump`'s snapshot step is load-bearing — a release whose DDL
+changed without one deploys nothing while reporting success, which is why the
+Makefile makes a missing dbd a hard error post-release rather than a skipped
+step.
+
+### Two behaviours worth carrying forward
+
+Neither is a live problem, but both cost time to discover.
 
 1. **dbd cannot express a column rename.** It plans `DROP` + `ADD`, which empties
-   the column. It refuses without `--allow-destructive` — so the trap announces
-   itself — but "allow destructive" on a rename is exactly how the data goes.
-   The rename has to run out-of-band first.
-2. **`dbd reconcile` does not run `apply.after` hooks; `apply` and `deploy` do.**
-   A reconcile-only path applies the schema and leaves a data migration behind,
-   looking like it worked. The release workflow runs `deploy` after `reconcile`,
-   so CI is unaffected — a hand-run `reconcile` is not.
-3. **A data migration and its seed must move together.** Ordering is apply
+   the column. It refuses without `--allow-destructive` — the trap announces
+   itself — but that flag on a rename is exactly how the data goes. Pre-release
+   this is moot (reset); post-release a rename is a written migration anyway.
+2. **A data migration and its seed must move together.** Ordering is apply
    (hooks) → import, so the seed has the last word: a hook that rewrites a key
    without the matching seed edit has the old row re-inserted on every deploy.
-   Observed as two `global-dojo` tenants before the seed was updated.
+   Observed here as two `global-dojo` tenants before the seed was updated. This
+   one survives the cutover — it is a property of the import phase, not of
+   `reconcile`.
+
+**Corrected from an earlier draft:** the finding that `reconcile` skips
+`apply.after` hooks was framed as a lurking risk. It is narrower than that.
+Post-release `reconcile` is disabled outright and the path is snapshot →
+`deploy`, which does run hooks. It is a hand-run hazard during pre-release only,
+and CI never had it — the workflow already runs `deploy` after `reconcile`.
