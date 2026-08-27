@@ -32,7 +32,6 @@
 //!   even a watermark miss can't double-stage or clobber a manual publish.
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use crate::collective::anonymize::{
     ContributorIdentity, GatewayGeneralizer, Generalizer, current_rotation_bucket,
@@ -40,6 +39,7 @@ use crate::collective::anonymize::{
 use crate::collective::preferences;
 use crate::db::pg_store::PgStore;
 use crate::dojo::contribute::{PgOutbox, StageOutcome, load_batch, stage_contribution};
+use crate::tasks::ticker::{self, FirstTick};
 
 /// How often the scheduler WAKES to check whether a batch is due. The cadence
 /// (`daily` / `weekly`) is enforced by [`contribute_due`]; this is only the poll
@@ -180,7 +180,7 @@ pub async fn maybe_prepare_contribution_batch<G: Generalizer>(
 pub fn spawn(pg: Arc<PgStore>, gateway: Arc<gateway::Gateway>) {
     tokio::spawn(async move {
         let generalizer = GatewayGeneralizer::new(gateway);
-        let mut ticker = tokio::time::interval(Duration::from_secs(CHECK_INTERVAL_SECS));
+        let mut ticker = ticker::ticker(CHECK_INTERVAL_SECS, FirstTick::Immediate);
         loop {
             ticker.tick().await;
             let now_ms = chrono::Utc::now().timestamp_millis();
