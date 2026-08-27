@@ -170,7 +170,12 @@ export async function registerRepositories(
 				tenant_id: tenantId,
 				repo_key: repoKey,
 				remote_url: repo.remote_url ?? null,
-				name: (repo.name ?? '').trim() || nameFromKey(repoKey)
+				name: (repo.name ?? '').trim() || nameFromKey(repoKey),
+				// Stored, not re-derived. `dojo.repositories.provider` is NOT NULL, and
+				// keeping the host→provider mapping in this one place is the reason:
+				// a second copy in a view or query would be another thing to keep in
+				// step with `repo-mapping.ts`.
+				provider: ref.provider
 			})
 			.select('id')
 			.single();
@@ -205,6 +210,14 @@ export async function registerRepositories(
 /**
  * What the caller may sync this cycle.
  *
+ * Reads `dojo.all_my_repositories`, which already joins repository → tenant →
+ * membership and carries the owning tenant on every row. That view is the
+ * user-plane grain this whole endpoint exists for: a person belongs to several
+ * tenants, so asking per tenant would make the caller ask N times AND require it
+ * to already know which tenant a repository belongs to — the very thing it is
+ * asking. It also means the phase-2 gate arrives as a change to `sync_enabled`
+ * in the view, not as a change here.
+ *
  * PHASE 1 ALLOWS EVERYTHING REGISTERED. There is no claim, no billing and no
  * seat yet, so there is nothing to deny on — and inventing a denial would be as
  * dishonest as inventing an allowance. `denied` is empty rather than absent, so
@@ -218,21 +231,33 @@ export async function registerRepositories(
  * nullable boolean whose NULL means no.
  */
 export async function syncPlan(db: DojoClient, principalId: string): Promise<SyncPlan> {
-	const tenants = await callerTenants(db, principalId);
-	if (tenants.size === 0) return { allowed: [], denied: [] };
+	const { data, error } = await db
+		.from('all_my_repositories')
+		.select('repository_id, repo_key, tenant, sync_enabled, denied_reason')
+		.eq('principal_id', principalId);
+	if (error) throw new AdminError(500, error.message);
 
-	const repos = await db
-		.from('repositories')
-		.select('id, tenant_id, repo_key')
-		.in('tenant_id', [...tenants.keys()]);
-	if (repos.error) throw new AdminError(500, repos.error.message);
-
-	const allowed = ((repos.data ?? []) as { id: string; tenant_id: string; repo_key: string }[]).map(
-		(r) => ({
-			repo_key: r.repo_key,
-			tenant: tenants.get(r.tenant_id) as string,
-			repo_id: r.id
-		})
-	);
-	return { allowed, denied: [] };
+	const allowed: MappedRepo[] = [];
+	const denied: { repo_key: string; tenant: string; reason: string }[] = [];
+	for (const row of (data ?? []) as {
+		repository_id: string;
+		repo_key: string;
+		tenant: string;
+		sync_enabled: boolean;
+		denied_reason?: string | null;
+	}[]) {
+		if (row.sync_enabled) {
+			allowed.push({ repo_key: row.repo_key, tenant: row.tenant, repo_id: row.repository_id });
+		} else {
+			// A denial always names itself. "Nothing to sync" is the shape that hid
+			// the original defect for two days; `no_seat` and `not_subscribed` are
+			// different problems needing different advice.
+			denied.push({
+				repo_key: row.repo_key,
+				tenant: row.tenant,
+				reason: row.denied_reason ?? 'not_permitted'
+			});
+		}
+	}
+	return { allowed, denied };
 }

@@ -47,6 +47,18 @@ One file per concern, under `tests/<schema>/<concern>.sql`. Each file:
 - states in a comment what would have to break for it to go red. A test whose
   answer is the same whether the feature works or not is worse than no test.
 
+### Fixture keys must not collide with real data
+
+Prefix every tenant key and slug a fixture inserts with `ztest-`
+(`organization/ztest-acme`). The tests run against a **live** database, and
+`dojo.tenants.key` is globally unique — a fixture using a plausible name breaks
+the moment someone provisions an org with that name.
+
+This is not hypothetical. A fixture using `organization/sensei-hq` passed for
+days and then began failing the instant a real GitHub sign-in provisioned that
+exact tenant. Rolling back in a transaction protects the database from the test;
+it does nothing to protect the test from the database.
+
 To exercise the client-direct path (RLS as a signed-in user):
 
 ```sql

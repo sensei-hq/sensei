@@ -52,10 +52,10 @@ insert into dojo.principals (id, auth_user_id, display_name) values
   ('bbbbbbbb-2222-2222-2222-222222222222', '22222222-2222-2222-2222-222222222222', 'Bob');
 
 insert into dojo.tenants (id, key, origin, slug, name, dojo_url) values
-  ('cccccccc-3333-3333-3333-333333333333', 'organization/ident-a', 'organization',
-   'ident-a', 'Tenant A', 'dojo.sensei-hq.org/organization/ident-a'),
-  ('dddddddd-4444-4444-4444-444444444444', 'organization/ident-b', 'organization',
-   'ident-b', 'Tenant B', 'dojo.sensei-hq.org/organization/ident-b');
+  ('cccccccc-3333-3333-3333-333333333333', 'organization/ztest-ident-a', 'organization',
+   'ztest-ident-a', 'Tenant A', 'dojo.sensei-hq.org/organization/ztest-ident-a'),
+  ('dddddddd-4444-4444-4444-444444444444', 'organization/ztest-ident-b', 'organization',
+   'ztest-ident-b', 'Tenant B', 'dojo.sensei-hq.org/organization/ztest-ident-b');
 
 -- Alice is in tenant A, Bob in tenant B. memberships.user_id holds a PRINCIPAL id.
 insert into dojo.memberships (tenant_id, user_id, kind, authenticated_via) values

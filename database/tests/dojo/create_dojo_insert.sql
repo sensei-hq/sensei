@@ -13,15 +13,15 @@ begin;
 
 -- ── what createDojo inserts today, verbatim ─────────────────────────────────
 insert into dojo.tenants (key, origin, slug, name, dojo_url, scope)
-values ('organization/acme', 'organization', 'acme', 'Acme',
-        'dojo.sensei-hq.org/organization/acme', 'private');
+values ('organization/ztest-acme', 'organization', 'ztest-acme', 'Acme',
+        'dojo.sensei-hq.org/organization/ztest-acme', 'private');
 
 do $$
 declare
     got record;
 begin
     select key, origin::text as origin, slug, dojo_url into got
-      from dojo.tenants where key = 'organization/acme';
+      from dojo.tenants where key = 'organization/ztest-acme';
     if got is null then
         raise exception 'createDojo''s insert produced no tenant row.';
     end if;
@@ -53,7 +53,7 @@ values ('aaaaaaaa-1111-1111-1111-111111111111',
 
 insert into dojo.memberships (tenant_id, user_id, kind, authenticated_via, role)
 select id, 'aaaaaaaa-1111-1111-1111-111111111111', 'employer', 'sso', 'admin'
-  from dojo.tenants where key = 'organization/acme';
+  from dojo.tenants where key = 'organization/ztest-acme';
 
 do $$
 declare
@@ -63,7 +63,7 @@ begin
     select m.role::text, m.user_id into role_got, principal_got
       from dojo.memberships m
       join dojo.tenants t on t.id = m.tenant_id
-     where t.key = 'organization/acme';
+     where t.key = 'organization/ztest-acme';
 
     if role_got is distinct from 'admin' then
         raise exception
@@ -89,7 +89,7 @@ begin
     -- `origin` is an enum now: personal | organization. 'org' was a label once.
     begin
         insert into dojo.tenants (key, origin, slug, name, dojo_url)
-        values ('org/legacy', 'org', 'legacy', 'Legacy', 'u');
+        values ('org/ztest-legacy', 'org', 'ztest-legacy', 'Legacy', 'u');
         raise exception '''org'' is still an accepted tenant_origin — the enum was not narrowed.';
     exception when invalid_text_representation then
         null;  -- expected: not a valid enum label
@@ -101,7 +101,7 @@ begin
     -- The column is `slug`. `org` is what createDojo used to send.
     begin
         execute $q$insert into dojo.tenants (key, origin, org, name, dojo_url)
-                   values ('organization/legacy', 'organization', 'legacy', 'Legacy', 'u')$q$;
+                   values ('organization/ztest-legacy', 'organization', 'ztest-legacy', 'Legacy', 'u')$q$;
         raise exception 'dojo.tenants still accepts an "org" column — the rename did not happen.';
     exception when undefined_column then
         null;  -- expected
@@ -113,7 +113,7 @@ do $$
 begin
     begin
         insert into dojo.tenants (key, origin, slug, name, dojo_url)
-        values ('organization/acme', 'organization', 'acme', 'Acme Again', 'u');
+        values ('organization/ztest-acme', 'organization', 'ztest-acme', 'Acme Again', 'u');
         raise exception
             'dojo.tenants.key is not unique — createDojo''s 409 on a name collision cannot fire.';
     exception when unique_violation then
@@ -125,16 +125,16 @@ end $$;
 -- The whole reason the origin is the key prefix: one unique on `key` has to keep
 -- a user named `acme` from colliding with the org `acme`.
 insert into dojo.tenants (key, origin, slug, name, dojo_url)
-values ('personal/acme', 'personal', 'acme', 'Acme''s Dōjō',
-        'dojo.sensei-hq.org/personal/acme');
+values ('personal/ztest-acme', 'personal', 'ztest-acme', 'Acme''s Dōjō',
+        'dojo.sensei-hq.org/personal/ztest-acme');
 
 do $$
 declare n int;
 begin
-    select count(*) into n from dojo.tenants where slug = 'acme';
+    select count(*) into n from dojo.tenants where slug = 'ztest-acme';
     if n <> 2 then
         raise exception
-            'personal/acme and organization/acme should coexist as 2 rows, found %.', n;
+            'personal/ztest-acme and organization/ztest-acme should coexist as 2 rows, found %.', n;
     end if;
 end $$;
 

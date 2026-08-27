@@ -36,32 +36,32 @@ end $$;
 
 -- ── step 2: the personal tenant + its admin membership ──────────────────────
 insert into dojo.tenants (key, origin, slug, name, dojo_url, scope)
-values ('personal/jerrythomas', 'personal', 'jerrythomas', 'Jerry Thomas''s Dōjō',
-        'dojo.sensei-hq.org/personal/jerrythomas', 'private');
+values ('personal/ztest-jerrythomas', 'personal', 'ztest-jerrythomas', 'Jerry Thomas''s Dōjō',
+        'dojo.sensei-hq.org/personal/ztest-jerrythomas', 'private');
 
 insert into dojo.memberships (tenant_id, user_id, kind, authenticated_via, role)
 select id, 'aaaaaaaa-1111-1111-1111-111111111111', 'personal', 'github_oauth', 'admin'
-  from dojo.tenants where key = 'personal/jerrythomas';
+  from dojo.tenants where key = 'personal/ztest-jerrythomas';
 
 -- ── step 3: an org tenant, its connection, and the derived membership ───────
 insert into dojo.tenants (key, origin, slug, name, dojo_url, scope)
-values ('organization/sensei-hq', 'organization', 'sensei-hq', 'sensei-hq',
-        'dojo.sensei-hq.org/organization/sensei-hq', 'private');
+values ('organization/ztest-sensei-hq', 'organization', 'ztest-sensei-hq', 'ztest-sensei-hq',
+        'dojo.sensei-hq.org/organization/ztest-sensei-hq', 'private');
 
 insert into dojo.tenant_connections
   (tenant_id, provider, external_id, external_slug, connected_by, verified_at)
 select id, 'github', '11', 'sensei-hq', 'aaaaaaaa-1111-1111-1111-111111111111', now()
-  from dojo.tenants where key = 'organization/sensei-hq';
+  from dojo.tenants where key = 'organization/ztest-sensei-hq';
 
 insert into dojo.memberships (tenant_id, user_id, kind, authenticated_via, role)
 select id, 'aaaaaaaa-1111-1111-1111-111111111111', 'employer', 'github_oauth', 'admin'
-  from dojo.tenants where key = 'organization/sensei-hq';
+  from dojo.tenants where key = 'organization/ztest-sensei-hq';
 
 -- ── the constraints idempotence actually rests on ───────────────────────────
 do $$
 declare tid uuid;
 begin
-    select id into tid from dojo.tenants where key = 'organization/sensei-hq';
+    select id into tid from dojo.tenants where key = 'organization/ztest-sensei-hq';
 
     -- (provider, external_id) WHERE external_id IS NOT NULL — one PROVEN forge
     -- org maps to at most one tenant, forever. Without it, a second sign-in
@@ -123,7 +123,7 @@ begin
     select count(*) into org_members
       from dojo.memberships m
       join dojo.tenants t on t.id = m.tenant_id
-     where t.key = 'organization/sensei-hq';
+     where t.key = 'organization/ztest-sensei-hq';
     if org_members <> 2 then
         raise exception 'expected both members on the one org tenant, found %.', org_members;
     end if;
