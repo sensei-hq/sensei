@@ -492,22 +492,39 @@ describe('parseNewDojo', () => {
 });
 
 describe('createDojo', () => {
-	it('inserts an org tenant (key org/{slug}) and makes the creator admin', async () => {
+	it('inserts an organization tenant (key organization/{slug}) and makes the creator admin', async () => {
+		// Every field here is one the database rejects if it is wrong, and the
+		// old values were all three wrong at once: origin 'org' is not a
+		// tenant_origin label any more (personal | organization), the column is
+		// `slug` not `org`, and the key prefix is the ORIGIN — which is what
+		// `dojo-auth.ts` joins back together to resolve /t/{origin}/{slug}.
 		const { db, inserts } = makeCreateDb(
-			{ data: { id: 't-new', key: 'org/acme', name: 'Acme' }, error: null }, // tenant insert
+			{ data: { id: 't-new', key: 'organization/acme', name: 'Acme' }, error: null },
 			{ data: { id: 'm-new', role: 'admin' }, error: null } // addMember insert
 		);
-		const out = await createDojo(db, 'u1', { name: 'Acme', kind: 'employer' });
-		expect(out).toEqual({ id: 't-new', key: 'org/acme', name: 'Acme' });
+		const out = await createDojo(db, 'p1', { name: 'Acme', kind: 'employer' });
+		expect(out).toEqual({ id: 't-new', key: 'organization/acme', name: 'Acme' });
 		// tenant shape
 		expect(inserts[0]).toMatchObject({
 			table: 'tenants',
-			payload: { key: 'org/acme', origin: 'org', org: 'acme', name: 'Acme', scope: 'private' }
+			payload: {
+				key: 'organization/acme',
+				origin: 'organization',
+				slug: 'acme',
+				name: 'Acme',
+				scope: 'private'
+			}
 		});
-		// creator admin membership
+		// The retired column must not be sent — it would fail the insert outright.
+		expect(inserts[0].payload).not.toHaveProperty('org');
+		// The dōjō url carries the same key, so it moves with the prefix.
+		expect((inserts[0].payload as Record<string, string>).dojo_url).toContain(
+			'organization/acme'
+		);
+		// creator admin membership — user_id is the caller's PRINCIPAL id (§VIII.2)
 		expect(inserts[1]).toMatchObject({
 			table: 'memberships',
-			payload: { tenant_id: 't-new', user_id: 'u1', role: 'admin', kind: 'employer' }
+			payload: { tenant_id: 't-new', user_id: 'p1', role: 'admin', kind: 'employer' }
 		});
 	});
 	it('maps a key collision (23505) to 409', async () => {
