@@ -24,8 +24,12 @@
 - `PgStore::shared_repositories(limit)` → `SharedRepo { repo_key, remote_url, name }`,
   filtering `visibility = 'shared' AND repo_key IS NOT NULL`. **Gate 1 (intent)** —
   the only gate the daemon owns. Landed `d363f720`.
-- `PgStore::unpushed_metric_rows(limit)` — the one production push path, already
-  filtered on gate 1. It does **not** yet consult the dōjō's `allowed[]`.
+- ~~`PgStore::unpushed_metric_rows(limit)` — the one production push path~~
+  **Wrong.** It has no production caller at all — only tests — and there is no
+  dōjō endpoint receiving metrics. There is therefore no existing push to gate on
+  `plan.allowed`: building the push is a slice of its own, not a filter to add.
+  This is why `tasks/dojo_sync.rs` establishes identity and entitlement and says
+  so in its log, rather than appearing to sync and moving nothing.
 - `dojo_client/session.rs` — per-persona Keychain session slots, `needs_refresh`.
 - `dojo_client/dojo_auth.rs::refresh()` — `POST /v1/auth/cli/refresh`.
 - `dojo/client.rs` — the **tenant-plane** client (per-membership device token).

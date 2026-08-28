@@ -313,6 +313,14 @@ pub(crate) async fn live_session(persona: &str) -> Result<LiveSession, AuthError
     Ok(LiveSession { tokens, session: sess })
 }
 
+/// A bearer token for `persona`, for callers that need only that.
+///
+/// Thin wrapper over [`live_session`], so the refresh, the rotation and the
+/// clear-on-rejection rule cannot drift from what [`status`] reports.
+pub(crate) async fn live_access_token(persona: &str) -> Result<String, AuthError> {
+    live_session(persona).await.map(|s| s.tokens.access_token)
+}
+
 /// Reports whether the stored token still works, not merely that one exists. A
 /// revoked or expired refresh token sits in the Keychain looking healthy, so
 /// "signedIn: true" based on presence alone would be a lie the caller only

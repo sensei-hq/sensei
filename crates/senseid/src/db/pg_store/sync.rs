@@ -20,6 +20,32 @@ pub struct SyncMark<'a> {
 }
 
 impl PgStore {
+    /// Record which dōjō tenant a repository is enrolled with (D2).
+    ///
+    /// Matched on `repo_key`, the durable cross-install identity — never a local
+    /// uuid, which differs per machine and is meaningless to the dōjō.
+    ///
+    /// Returns the number of rows written, so a caller can tell "stored" from
+    /// "that repo_key is not in this database" instead of assuming success. A
+    /// mapping for a repository we do not have is not an error, but it is also
+    /// not a write, and reporting it as one would hide a real mismatch.
+    pub async fn set_repository_tenant(
+        &self,
+        repo_key: &str,
+        tenant_id: uuid::Uuid,
+    ) -> Result<u64, String> {
+        let r = sqlx_core::query::query(
+            "UPDATE sensei.repositories SET tenant_id = $2, modified_at = now() \
+              WHERE repo_key = $1 AND tenant_id IS DISTINCT FROM $2",
+        )
+        .bind(repo_key)
+        .bind(tenant_id)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| format!("set_repository_tenant({repo_key}): {e}"))?;
+        Ok(r.rows_affected())
+    }
+
     /// Record that a sync attempt succeeded.
     ///
     /// Clears `last_error` on success — a stale error beside a `synced` state
