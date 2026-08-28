@@ -646,7 +646,8 @@ denied: [{ repo_key, tenant,
            refused_by: 'entitlement' | 'election',
            reason:     'unclaimed' | 'not_subscribed' | 'subscription_expired'
                      | 'no_seat'                          -- entitlement
-                     | 'not_elected' | 'forge_visibility_unknown',   -- election
+                     | 'not_elected_user' | 'not_elected_org'  -- election
+           --        | 'forge_visibility_unknown' | 'forge_visibility_stale' -- entitlement
            authority:  'user' | 'organization' | null }]  -- who holds the election
 ```
 
@@ -689,16 +690,16 @@ cannot tell a user which one they are in.
 | # | owner | forge | subscribed | org policy | user elected | authority | `may_share` | `elected` | **sync** | reason shown |
 |---|---|---|---|---|---|---|---|---|---|---|
 | A | personal | private | — | — | ✅ | USER | ✅ | ✅ | **yes** | — |
-| B | personal | private | — | — | ❌ | USER | ✅ | ❌ | no | election · `not_elected` · you |
-| C | personal | public | — | — | ❌ | USER | ✅ | ❌ | no | election · `not_elected` · you |
+| B | personal | private | — | — | ❌ | USER | ✅ | ❌ | no | election · `not_elected_user` |
+| C | personal | public | — | — | ❌ | USER | ✅ | ❌ | no | election · `not_elected_user` |
 | D | org | public | — | — | ✅ | USER | ✅ | ✅ | **yes** | — |
-| E | org | public | — | on | ❌ | USER | ✅ | ❌ | no | election · `not_elected` · **you** |
+| E | org | public | — | on | ❌ | USER | ✅ | ❌ | no | election · `not_elected_user` |
 | F | org | private | ✅ | on | ❌ | ORG | ✅ | ✅ | **yes** | — (mandated) |
 | G | org | private | ✅ | off | ✅ | ORG | ✅ | ❌ | no | election · `not_elected` · **org** |
 | H | org | private | ❌ *(row exists, `past_due`)* | on | — | ORG | ❌ | ✅ | no | entitlement · `not_subscribed` |
 | **H2** | org | private | ❌ **no billing row at all** | on | — | ORG | ❌ | ✅ | no | entitlement · `not_subscribed` |
 | **K** | org | private | ✅ *(but this member has NO SEAT)* | on | — | ORG | ❌ | ✅ | no | entitlement · `no_seat` **(phase 2)** |
-| I | org | private | ✅ | on | — | *none* | ❌ | ❌ | no | election · `forge_visibility_unknown` |
+| I | org | **NULL (uncaptured)** | ✅ | on | — | *none* | ❌ | ❌ | no | entitlement · `forge_visibility_unknown` |
 | J | org | private | ✅ | off + per-repo ON | — | ORG | ✅ | ✅ | **yes** | — (mandated, exception) |
 
 ### What each row is teaching
@@ -775,14 +776,28 @@ cannot tell a user which one they are in.
     when r.visibility_captured_at < now() - :ttl  then 'forge_visibility_stale'
     when t.origin = 'personal'                    then null   -- entitled
     when r.visibility = 'public'                  then null   -- entitled, free
+    -- PHASE 2, and it must stay ABOVE the billing terms: an unclaimed tenant
+    -- CANNOT hold a billing account (§IV.5), so testing billing first would always
+    -- answer `not_subscribed` — telling the reader to buy something the service
+    -- refuses to sell until someone claims the org. `unclaimed` would be
+    -- unreachable, i.e. dead registry copy by this design's own rule.
     -- PHASE 2: when t.claimed_at is null         then 'unclaimed'
     when b.tenant_id is null                      then 'not_subscribed'
     when b.period_start is null
       or b.period_end   is null                   then 'not_subscribed'
-    when b.status <> 'active'                     then 'not_subscribed'
-    when now() not between b.period_start
-                       and b.period_end           then 'subscription_expired'
-    -- PHASE 2: when sa.id is null                then 'no_seat'
+    -- `trialing` is a subscription. Excluding it demos the product with its core
+    -- proposition switched off and tells the admin to buy what they are trialling.
+    when b.status not in ('active', 'trialing')   then 'not_subscribed'
+    -- HALF-OPEN. `period_end` is a DATE, so `between` casts it to midnight and
+    -- denies the whole final day — an org's sync stops a day before it should,
+    -- announcing a lapse that has not happened.
+    when now() <  b.period_start
+      or now() >= (b.period_end + 1)              then 'subscription_expired'
+    -- PHASE 2, and `released_at is null` is load-bearing: allocations are kept as
+    -- history, never deleted (§IV.2), so `sa.id is not null` matches a RELEASED
+    -- seat and a departed employee keeps pushing after de-provisioning reported
+    -- success. §IV.3 says "no CURRENT seat_allocation" — current is the word.
+    -- PHASE 2: when sa.id is null                then 'no_seat'   -- join on released_at is null
     else null                                     -- entitled
   end                                             as entitlement_refusal
 , (entitlement_refusal is null)                   as may_share
@@ -942,12 +957,18 @@ left join lateral (
     select max(pushed_at) as last_synced_at, count(*) as metric_rows
       from dojo.repository_metrics rm
      where rm.repository_id = r.id
+       -- NOT every row. `repository_metrics` carries `principal_id` for
+       -- scope='user' rows, and the Worker reads this view as service_role, which
+       -- BYPASSES the RLS on that table. Without this predicate member A's row
+       -- shows member B's push timestamp and contribution volume on a repository A
+       -- never elected. `can_read_repository_metric` states the rule verbatim:
+       -- "metrics by user visible to every peer is surveillance, not transparency."
+       and (rm.scope = 'repo' or rm.principal_id = m.user_id)
 ) mx on true
 ```
 
-Repository-scoped counts are deliberate — they describe the REPOSITORY, which
-every member of the tenant may see. A per-member breakdown would need
-`principal_id` filtering and is not what this column means.
+Repo-scoped rows describe the REPOSITORY and every member may see them; a
+user-scoped row is visible only to the person it is about.
 
 ### `configurable_by_me` is viewer-relative, and that is deliberate
 
