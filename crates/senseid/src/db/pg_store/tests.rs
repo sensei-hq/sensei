@@ -1,4 +1,5 @@
 use super::*;
+use crate::tasks::test_support::{SCHEDULE_EDIT_GATE, TEST_SCHEDULE_PREFIX, test_schedule_name};
 use sqlx_core::query_as::query_as;
 
 // Every test here connects via `PgStore::connect_test()` — the tiny floorless
@@ -10039,9 +10040,21 @@ async fn every_schedulable_worker_has_a_schedule_row() {
 async fn every_schedule_row_names_a_real_worker() {
     // A row naming no worker is a typo that silently does nothing.
     let s = pg_store().await;
+    // The scan is table-wide, so it also sees the throwaway rows of any test
+    // running beside it. Those are skipped by prefix — and a worker may not take
+    // the prefix, or the skip would hide the very drift this test exists for.
+    for name in crate::tasks::schedule::SCHEDULABLE {
+        assert!(
+            !name.starts_with(crate::tasks::test_support::TEST_SCHEDULE_PREFIX),
+            "{name} may not start with the test-row prefix — the scan below would skip it"
+        );
+    }
     let rows: Vec<(String,)> =
         query_as("SELECT name FROM sensei.schedules").fetch_all(s.pool()).await.unwrap();
     for (name,) in rows {
+        if name.starts_with(crate::tasks::test_support::TEST_SCHEDULE_PREFIX) {
+            continue;
+        }
         assert!(
             crate::tasks::schedule::SCHEDULABLE.contains(&name.as_str()),
             "sensei.schedules has a row for {name:?}, but no such worker exists in \
@@ -10104,7 +10117,7 @@ async fn load_schedule_is_none_for_an_unknown_worker() {
 #[tokio::test]
 async fn marking_a_run_records_the_outcome_and_clears_a_stale_error() {
     let s = pg_store().await;
-    let name = format!("_test:sched:{}", uuid::Uuid::new_v4());
+    let name = test_schedule_name();
     sqlx_core::query::query("INSERT INTO sensei.schedules(name, interval_secs) VALUES($1, 60)")
         .bind(&name)
         .execute(s.pool())
@@ -10130,4 +10143,213 @@ async fn marking_a_run_records_the_outcome_and_clears_a_stale_error() {
         .execute(s.pool())
         .await
         .ok();
+}
+
+// ── Schedules · reading them all, and editing one ───────────────────────────
+
+/// `(interval_secs, modified_at)` for a schedule, straight from SQL — the two
+/// values the seed guard compares. `table` selects the live row or the staged
+/// datafile row, so a test can assert against what the deploy will actually
+/// bring rather than against a hard-coded copy of the datafile.
+async fn schedule_state(
+    s: &PgStore,
+    table: &str,
+    name: &str,
+) -> (i32, chrono::DateTime<chrono::Utc>) {
+    query_as(&format!("SELECT interval_secs, modified_at FROM {table} WHERE name = $1"))
+        .bind(name)
+        .fetch_one(s.pool())
+        .await
+        .unwrap()
+}
+
+/// Force a schedule's `(interval_secs, modified_at)` — the two halves of the
+/// seed guard — without going through the patch path that bumps the timestamp.
+async fn set_schedule_row(s: &PgStore, name: &str, state: (i32, chrono::DateTime<chrono::Utc>)) {
+    sqlx_core::query::query(
+        "UPDATE sensei.schedules SET interval_secs = $2, modified_at = $3 WHERE name = $1",
+    )
+    .bind(name)
+    .bind(state.0)
+    .bind(state.1)
+    .execute(s.pool())
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn list_schedules_returns_every_worker_with_its_state() {
+    // The read behind GET /api/tasks/scheduled. It must return the TABLE, not a
+    // code-side list — that static registry is what this slice retires.
+    let s = pg_store().await;
+    // Two probes, inserted in REVERSE name order. Without them the ordering
+    // claim below only bites while this heap happens to be out of order: a
+    // freshly deployed table is written in the datafile's own alphabetical
+    // order, so an unsorted seq scan would return exactly the sorted list and
+    // the assertion would pass against a query that had lost its ORDER BY. They
+    // share a stem, so their relative order is the same under every collation.
+    let stem = test_schedule_name();
+    let (early, late) = (format!("{stem}:a"), format!("{stem}:b"));
+    for name in [&late, &early] {
+        sqlx_core::query::query("INSERT INTO sensei.schedules(name, interval_secs) VALUES($1, 60)")
+            .bind(name)
+            .execute(s.pool())
+            .await
+            .unwrap();
+    }
+
+    let all = s.list_schedules().await.unwrap();
+    for name in crate::tasks::schedule::SCHEDULABLE {
+        let row = all
+            .iter()
+            .find(|r| r.name == *name)
+            .unwrap_or_else(|| panic!("{name} is schedulable but missing from list_schedules"));
+        assert!(row.interval_secs > 0, "{name} must carry the cadence the CHECK guarantees");
+    }
+    let names: Vec<&str> = all.iter().map(|r| r.name.as_str()).collect();
+    let pos = |n: &str| names.iter().position(|x| *x == n).unwrap_or_else(|| panic!("{n} missing"));
+    assert!(
+        pos(&early) < pos(&late),
+        "the row written LAST but sorting first must come back first"
+    );
+    // Workers only for the whole-list claim: a throwaway row belongs to whatever
+    // test is running beside this one, and the database's collation need not
+    // agree with Rust's byte order on a punctuated name.
+    let workers: Vec<&str> =
+        names.iter().copied().filter(|n| !n.starts_with(TEST_SCHEDULE_PREFIX)).collect();
+    let sorted = {
+        let mut n = workers.clone();
+        n.sort_unstable();
+        n
+    };
+    assert_eq!(workers, sorted, "rows come back in name order so the UI needs no sort");
+
+    for name in [&early, &late] {
+        sqlx_core::query::query("DELETE FROM sensei.schedules WHERE name = $1")
+            .bind(name)
+            .execute(s.pool())
+            .await
+            .ok();
+    }
+}
+
+#[tokio::test]
+async fn update_schedule_writes_only_the_fields_it_was_given() {
+    // PATCH semantics: an absent field is "leave alone", not "clear".
+    let s = pg_store().await;
+    let name = test_schedule_name();
+    sqlx_core::query::query(
+        "INSERT INTO sensei.schedules(name, interval_secs, days) \
+         VALUES($1, 60, ARRAY[1,2]::smallint[])",
+    )
+    .bind(&name)
+    .execute(s.pool())
+    .await
+    .unwrap();
+
+    let patch = SchedulePatch { interval_secs: Some(900), ..Default::default() };
+    let after = s.update_schedule(&name, &patch).await.unwrap().expect("the row exists");
+    assert_eq!(after.interval_secs, 900);
+    assert!(after.enabled, "enabled was not in the patch, so it must be untouched");
+    assert_eq!(after.days, vec![1, 2], "days were not in the patch either");
+
+    // A window set as a PAIR, then cleared back to "any time".
+    let hm = |h, m| chrono::NaiveTime::from_hms_opt(h, m, 0).unwrap();
+    let window = (hm(22, 0), hm(5, 0));
+    let patch = SchedulePatch { window: Some(Some(window)), ..Default::default() };
+    let after = s.update_schedule(&name, &patch).await.unwrap().unwrap();
+    assert_eq!((after.window_start.unwrap(), after.window_end.unwrap()), window);
+    assert_eq!(after.interval_secs, 900, "the earlier edit survives the next patch");
+
+    let patch = SchedulePatch { window: Some(None), days: Some(None), ..Default::default() };
+    let after = s.update_schedule(&name, &patch).await.unwrap().unwrap();
+    assert_eq!(after.window_start, None, "an explicit clear means any time");
+    assert_eq!(after.window_end, None);
+    assert!(after.days.is_empty(), "and every day");
+
+    sqlx_core::query::query("DELETE FROM sensei.schedules WHERE name = $1")
+        .bind(&name)
+        .execute(s.pool())
+        .await
+        .ok();
+}
+
+#[tokio::test]
+async fn update_schedule_is_none_for_a_worker_with_no_row() {
+    // None, not a fabricated insert: the legal names are code-side, and a row
+    // conjured by a PATCH would name a worker nobody validated.
+    let s = pg_store().await;
+    let patch = SchedulePatch { enabled: Some(false), ..Default::default() };
+    assert!(s.update_schedule("_test:no-such-worker", &patch).await.unwrap().is_none());
+}
+
+#[tokio::test]
+async fn update_schedule_does_not_disturb_the_runtime_state() {
+    // last_run_at / last_ok / last_error belong to the daemon. Editing a cadence
+    // must not read as "it just ran", nor erase a recorded failure.
+    let s = pg_store().await;
+    let name = test_schedule_name();
+    sqlx_core::query::query("INSERT INTO sensei.schedules(name, interval_secs) VALUES($1, 60)")
+        .bind(&name)
+        .execute(s.pool())
+        .await
+        .unwrap();
+    s.mark_schedule_run(&name, Err("boom".into())).await.unwrap();
+    let before = s.load_schedule(&name).await.unwrap().unwrap();
+
+    let patch = SchedulePatch { enabled: Some(false), ..Default::default() };
+    let after = s.update_schedule(&name, &patch).await.unwrap().unwrap();
+    assert!(!after.enabled);
+    assert_eq!(after.last_run_at, before.last_run_at);
+    assert_eq!(after.last_ok, Some(false));
+    assert_eq!(after.last_error.as_deref(), Some("boom"));
+
+    sqlx_core::query::query("DELETE FROM sensei.schedules WHERE name = $1")
+        .bind(&name)
+        .execute(s.pool())
+        .await
+        .ok();
+}
+
+#[tokio::test]
+async fn a_user_edit_survives_the_seed_import() {
+    // THE behaviour of this endpoint. Deploy order is apply → import, so the seed
+    // otherwise has the last word: an edit that does not bump `modified_at` is
+    // silently reverted by the next `dbd deploy` and the user never learns why.
+    // Asserted through the REAL procedure, because the guard lives in SQL.
+    let _gate = SCHEDULE_EDIT_GATE.enter();
+    let s = pg_store().await;
+    // The datafile's own claim, read from staging rather than hard-coded, so this
+    // still tests the guard after someone edits schedules.jsonl.
+    let seed = schedule_state(&s, "staging.schedules", "contribute").await;
+    // Start from the state a fresh deploy leaves: an earlier run's leftover edit
+    // would otherwise make the control below pass for the wrong reason.
+    crate::tasks::test_support::restore_seeded_schedule(&s, "contribute").await;
+
+    let patch = SchedulePatch { interval_secs: Some(4242), ..Default::default() };
+    s.update_schedule("contribute", &patch).await.unwrap().expect("contribute is seeded");
+    let (_, edited_modified) = schedule_state(&s, "sensei.schedules", "contribute").await;
+    assert!(
+        edited_modified > seed.1,
+        "the edit must bump modified_at past the datafile's — that is the whole guard"
+    );
+
+    s.execute_raw("CALL staging.import_schedules()").await.unwrap();
+    assert_eq!(
+        schedule_state(&s, "sensei.schedules", "contribute").await.0,
+        4242,
+        "the seed must not revert a user's cadence"
+    );
+
+    // The control: a row OLDER than the datafile is overwritten, which is what
+    // an un-bumped edit would have been. Without it the assertion above would
+    // also pass against an import that quietly does nothing. It restores the row
+    // too — the import writes the seed's own values back.
+    set_schedule_row(&s, "contribute", (4242, seed.1 - chrono::Duration::days(1))).await;
+    s.execute_raw("CALL staging.import_schedules()").await.unwrap();
+    assert_eq!(
+        schedule_state(&s, "sensei.schedules", "contribute").await,
+        seed,
+        "a stale row is exactly what the datafile is allowed to overwrite"
+    );
 }

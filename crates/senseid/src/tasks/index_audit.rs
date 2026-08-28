@@ -302,10 +302,10 @@ async fn run(pg: Arc<PgStore>) {
     // question from `schedules.last_run_at`, so the hand-rolled gate is gone
     // rather than kept as a second source of truth.
     //
-    // The watermark is still WRITTEN, because `GET /api/tasks/scheduled` reads
-    // it to show when the audit last ran. Dropping the write would blank that
-    // field. It retires when the handler reads schedules.last_run_at instead
-    // (step 4 of the schedules spec).
+    // The watermark is still WRITTEN, but nothing reads it any more:
+    // `GET /api/tasks/scheduled` now shows `schedules.last_run_at` (step 4 of
+    // the schedules spec). The write is a no-op cost kept out of this slice —
+    // retiring it is a separate change, along with the key itself.
     let store = pg.clone();
     ticker::run_scheduled(pg, "index_audit", move || {
         let pg = store.clone();
