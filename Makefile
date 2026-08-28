@@ -16,7 +16,8 @@
 ##
 ## Versioning:
 ##   VERSION file is the single source of truth.
-##   `make bump v=patch|minor|major|0.3.0` updates VERSION + all manifests, commits, tags, and pushes.
+##   `make bump v=patch|minor|major|0.3.0` updates VERSION + all manifests, commits, tags, pushes,
+##   installs locally, then cleans target/ (so the next dev build is cold).
 ##   The tag push triggers GitHub Actions which build release artifacts and
 ##   update the Homebrew tap SHA256s automatically.
 ##
@@ -455,16 +456,24 @@ update:
 # and tag (which triggers the GitHub Actions release workflows), then syncs
 # the updated Homebrew formula version to the tap and marketplace.
 # GitHub Actions will fill in the real SHA256s once artifacts are built.
+#
+# Then, locally: `make install` (so the machine that cut the release is running
+# it — the daemon once sat on v0.2.29 for ten releases) and `make clean` (so
+# target/, which reaches tens of GB, does not survive the release).
+# NOTE: the next dev build after a bump is therefore COLD.
 
-# One-shot local release: bump the version then install the RELEASE build, so
-# the running daemon + brew binaries are never left stale behind a bump (the
-# stale-daemon class of bug where the daemon ran v0.2.29 for 10 releases).
+# ALIAS for `bump`, kept for muscle memory and any script that calls it.
+#
+# `ship` existed because `bump` did not install, which left the running daemon
+# stale behind a release (it once ran v0.2.29 for ten releases). `bump` now
+# installs as its final step, so the two are the same thing — and this must
+# DELEGATE rather than call `bump` and then `install` again, which would build
+# and install the same version twice.
 # Usage: make ship v=patch
 .PHONY: ship
 ship:
 	@if [ -z "$(v)" ]; then echo "Usage: make ship v=patch|minor|major|<version>"; exit 1; fi
-	$(MAKE) bump v=$(v)
-	$(MAKE) install
+	@$(MAKE) bump v=$(v)
 
 bump:
 	@if [ -z "$(v)" ]; then echo "Usage: make bump v=patch|minor|major|<version>"; exit 1; fi
@@ -574,11 +583,28 @@ bump:
 	@# so the next daemon deploy fetches v$(_v)'s DDL instead of serving the
 	@# previous version's cached bundle (which would re-apply the old schema).
 	@$(MAKE) dbd-cache-clear
-	@# Prune stale rustc incremental caches so target/ doesn't drift over
-	@# release cadence (cargo doesn't GC target/debug/incremental).
-	@$(MAKE) clean-cache
 	@echo "Syncing homebrew-tap and marketplace..."
 	@$(MAKE) tap-push marketplace-push
+	@# Install the version we just tagged, so the machine that cut the release is
+	@# running it. Deliberately AFTER the push: the tag is what CI builds from, so
+	@# a local toolchain problem must not strand a release that is already valid
+	@# everywhere else. It re-runs db-backup, release-builds the crates, and
+	@# replaces /Applications/Sensei.app (quitting a running instance first).
+	@echo "Installing v$(_v) locally..."
+	@$(MAKE) install
+	@# ...then reclaim the tree that build needed. MUST come after install —
+	@# reversed, clean would delete target/ and install would rebuild it all from
+	@# cold for nothing.
+	@#
+	@# This supersedes the `clean-cache` prune that used to run here: that kept the
+	@# 5 newest incremental caches, and `clean` removes target/ outright, so doing
+	@# both would just be pruning something a moment before deleting its parent.
+	@#
+	@# The trade is deliberate: the next dev build after a bump is COLD (a full
+	@# rebuild, several minutes). A release is infrequent and target/ reaches tens
+	@# of GB, so paying the rebuild once per release beats carrying the disk.
+	@echo "Reclaiming the build tree..."
+	@$(MAKE) clean
 
 # Clear the dbd schema-source cache. The daemon resolves its DDL from
 # `sensei-hq/sensei/database@v<VERSION>` and dbd caches resolved sources per
