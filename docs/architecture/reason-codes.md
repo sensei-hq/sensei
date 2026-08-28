@@ -97,6 +97,69 @@ And because `sensei` is deliberately unexposed to PostgREST, the dōjō reads it
 through a view — `dojo.reason_codes`, the same sanctioned pattern as
 `dojo.metric_catalogue`.
 
+## The boundary: the registry REPORTS, the domain DECIDES
+
+This is the rule that keeps the registry useful, and it is the one that will be
+under pressure the first time someone wants to add a column.
+
+| question | answered by | where it lives |
+|---|---|---|
+| *which reason applies right now?* | **the domain** | the view, or the enforcing procedure |
+| *given that code, what do I show a human?* | **the registry** | `sensei.reason_codes` |
+
+The registry is **reporting data**. It holds no predicate, no condition, no
+threshold, and no branch. `dojo.all_my_repositories` decides that a repository is
+`not_subscribed`; the registry only knows what those words mean to a reader and
+who can act on them.
+
+### The test
+
+**Delete the entire registry and the system must behave identically** — same
+repositories syncing, same schedules running, same rows pushed. The only loss is
+that a UI renders `not_subscribed` instead of "No active subscription for this
+organization".
+
+If deleting it would change behaviour, logic has leaked in.
+
+### The columns that must never exist
+
+`condition` · `predicate` · `when` · `sql` · `expression` · `threshold` ·
+`applies_if`
+
+A request for any of these is the signal that someone is trying to move a
+decision out of the domain and into a lookup table. The result is a rule split
+across SQL and data, where neither half is readable alone and nobody can say
+where the decision was made. That is worse than the four duplicated derivations
+this registry exists to remove, because at least those were each readable.
+
+### The subtle case: `precedence` orders DISPLAY, never gates BEHAVIOUR
+
+`precedence` is the one column that could be mistaken for logic, so the line is
+worth stating: the domain decides which codes APPLY; precedence decides which of
+them to SHOW first. A repository failing three ways is failing three ways
+regardless of what the registry says.
+
+So `sync_enabled` — and every other behavioural verdict — is computed **entirely
+from domain data**, never from a join against the registry. The registry is
+joined only to decorate a verdict already reached. Concretely, in
+`all_my_repositories`:
+
+```sql
+-- CORRECT: the verdict, from domain data only
+, (may_share and elected)                as sync_enabled
+-- CORRECT: the registry decorates it
+, rc.summary                             as reason
+, rc.remedy
+
+-- WRONG: behaviour now depends on a lookup row
+, (select ... from sensei.reason_codes where ...) as sync_enabled
+```
+
+An enum in the registry that no domain emits is dead copy, and a code a domain
+emits that the registry lacks should surface as the raw code rather than an empty
+string — a missing translation must degrade to something readable, never to
+silence.
+
 ## What a consumer gets
 
 A view or endpoint joins on `(domain, code)` and returns `summary`, `detail`,
