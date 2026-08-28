@@ -15,6 +15,32 @@ Work is tracked as **GitHub issues** in [`sensei-hq/sensei`](https://github.com/
 
 ---
 
+## dbd: a `time` column and an unnamed CHECK can never diff clean
+
+**Found 2026-08-28 on dbd 0.12.3**, adding `sensei.schedules`. `dbd diff --scope
+default` reports the same four lines on every run, against a database that
+matches the DDL exactly:
+
+    ALTER TABLE sensei.schedules ALTER COLUMN window_start TYPE time USING window_start::time;
+    ALTER TABLE sensei.schedules ALTER COLUMN window_end   TYPE time USING window_end::time;
+    ALTER TABLE sensei.schedules ADD CHECK (days IS NULL OR (array_length(days, 1) BETWEEN 1 AND 7 …));
+    ALTER TABLE sensei.schedules DROP CONSTRAINT ck:days IS NULL OR (array_length(days, 1) >= 1 …);
+
+**`time` cannot round-trip.** Postgres introspects the column as `time without
+time zone`; dbd normalises the DDL's declaration to `time` and compares the two
+spellings as strings. Declaring it `time without time zone` in the DDL does NOT
+help — dbd normalises that back to `time` too, so **both spellings diff
+identically**. Tried and reverted; there is no DDL-side fix.
+
+**The CHECK is the placeholder bug below**, in its unnamed form: dbd expands
+`BETWEEN` itself, then compares the expanded expression against a `ck:`-prefixed
+rendering of the definition rather than a name.
+
+**Cost:** `dbd diff --scope default --exit-code` is never clean, so the "in sync"
+gate that `--scope dojo` still passes is unavailable for the daemon's scope. Real
+drift is readable only by ignoring those four lines by eye — which is exactly how
+a real change gets missed. Not worked around; both halves are dbd-side.
+
 ## dbd: `DROP CONSTRAINT` emits a placeholder, not the constraint's name
 
 **Found 2026-08-26 on dbd 0.12.0**, converting sensei.playbooks/playbook_rules
