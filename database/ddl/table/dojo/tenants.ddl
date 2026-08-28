@@ -24,9 +24,9 @@ the discovery path <origin>/<org>/<dojo?>. The special global-dojo collective is
 just a row here at scope=global (there is no separate "Collective" concept).';
 
 comment on column dojo.tenants.key
-     is 'Canonical discovery path, the unique key: "<origin>/<org>[/<dojo>]" (e.g. "github/sensei-hq", "org/global-dojo").';
+     is 'Canonical discovery path, the unique key: "<origin>/<org>[/<dojo>]" (e.g. "organization/sensei-hq", "personal/jerry") — the live shape; "github/…" and "org/…" are the retired pre-47a726fb origins.';
 comment on column dojo.tenants.origin
-     is 'personal (an individual''s own dōjō) or organization (a shared/org dōjō). The FORGE lives on dojo.tenant_connections, not here — an earlier version of this comment said "github or org", which are values the enum has never had.';
+     is 'personal (an individual''s own dōjō) or organization (a shared/org dōjō). The FORGE lives on dojo.tenant_connections, not here — an earlier version of this comment said "github or org" — the enum''s ORIGINAL values, retired in 47a726fb when forge identity moved to dojo.tenant_connections.';
 comment on column dojo.tenants.slug
      is 'The tenant''s OWN slug — the second segment of its discovery path
 `<origin>/<slug>`. Tenant-owned and forge-independent: the forge''s name for an

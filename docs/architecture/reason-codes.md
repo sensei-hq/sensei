@@ -45,12 +45,13 @@ sensei.reason_codes
   domain      text        -- 'repository_sharing' | 'schedule' | 'metric_push'
                           -- | 'governance_pull' | 'rule_pack_adoption'
   code        text        -- 'not_subscribed', 'not_due', 'session_rejected'
-  kind        sensei.reason_kind   -- 'normal' | 'refusal' | 'fault'
+  kind        sensei.reason_kind not null   -- 'normal' | 'refusal' | 'fault'
   precedence  smallint not null    -- ordered WITHIN a domain; lower = fix first
   summary     text not null        -- one line, for the row
   detail      text not null        -- the paragraph behind a tooltip
   remedy      text                 -- what to DO; NULL when nothing can be done
-  actor       text                 -- who can act; NULL when nobody
+  actor       sensei.reason_actor  -- who can act; NULL when nobody. An ENUM, per
+                          -- the house rule (parent V.1: "enums, not text+CHECK")
   primary key (domain, code)
   unique (domain, precedence)
 ```
@@ -59,20 +60,37 @@ sensei.reason_codes
 
 | kind | meaning | UI treatment |
 |---|---|---|
-| `normal` | nothing is wrong | plain text, no alarm |
+| `normal` | nothing is wrong, and it clears itself | plain text, no alarm |
 | `refusal` | a deliberate decision by someone | show WHO and the remedy |
-| `fault` | something broke | surface it; it needs attention |
+| `fault` | something did not happen that should have | surface it; it needs attention |
+
+**The axis is "does this clear itself without a human?"** — not "did anyone
+decide?". So a `normal` code carries NO remedy and NO actor, and that is an
+invariant worth enforcing:
+
+```sql
+check (kind <> 'normal' or (remedy is null and actor is null))
+```
+
+This settles `forge_visibility_unknown`, which an earlier draft called `normal`
+on the grounds that "nobody decided anything". True, and not the axis: it carries
+remedy "sign in again" and actor `user`, it does not clear itself, and nothing
+populates the column today — so all 67 rows sit there indefinitely, not
+transiently. **It is a `fault`.** Rendering it as unalarmed plain text makes a
+repository that will never sync indistinguishable from one with nothing to sync,
+which is the failure this project keeps hitting.
 
 This maps onto a distinction the project already made:
 `sync_state.state ∈ (synced, error, skipped)` — where `skipped` exists precisely
 because *"a private repository is not a sync failure, it is a choice"*. `kind`
 generalises that to every domain instead of re-deciding it per feature.
 
-Concretely, three reasons a scheduled worker did not run:
+Concretely, four reasons a scheduled worker is not running — three from
+`should_run`, one from the run itself:
 
 | code | kind | why the distinction matters |
 |---|---|---|
-| `not_due` | normal | it ran 20 minutes ago; nothing to see |
+| `not_due` | normal | it ran 20 minutes ago; nothing to see — clears itself, no remedy |
 | `disabled` | refusal | someone turned it off — say who, offer to turn it on |
 | `outside_window` | normal | it is 3pm and the window is 22:00–05:00 |
 | `worker_failed` | fault | it tried and threw; this needs a human |
@@ -88,10 +106,21 @@ questions, the dōjō answers sharing and entitlement ones.
 `sensei` is **not** wholly included in the `dojo` scope — that scope lists
 `sensei.*` objects explicitly (see `database/design.yaml`). So the registry needs:
 
-- an `includes:` entry for `sensei.reason_codes` and `sensei.reason_kind`
-- its DATA seeded through the staging import path, exactly as `sensei.scopes`
-  already is — the design.yaml comment on that spells out why: *"never a
-  hand-rolled INSERT that would drift on the next reset+deploy"*
+- `includes:` entries for **four** objects, not two: `sensei.reason_codes`,
+  `sensei.reason_kind`, **`staging.reason_codes`** and
+  **`staging.import_reason_codes`**.
+
+  The last two are the whole point and are easy to omit. `sensei.scopes` works
+  only because BOTH its staging objects are listed; design.yaml records what
+  happens otherwise, having already shipped it once: *"dbd skips a staging table
+  its scope excludes with a warning that reads as routine — which is how this was
+  missed."* Follow a two-entry list and `dbd deploy --scope dojo` creates the
+  table and seeds NOTHING, so every join returns no row and every repository
+  degrades to a raw code — with a routine-looking warning as the only signal.
+- `grant select on sensei.reason_codes to authenticated, service_role` — the base
+  table, not just the view. `security_invoker = on` means the view grant alone is
+  not enough; the Worker holds a service_role key, and `dojo.metric_catalogue`
+  answered "permission denied" until both were granted.
 
 And because `sensei` is deliberately unexposed to PostgREST, the dōjō reads it
 through a view — `dojo.reason_codes`, the same sanctioned pattern as
