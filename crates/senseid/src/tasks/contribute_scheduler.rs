@@ -240,9 +240,28 @@ mod tests {
         };
         let _guard = preferences::test_lock().enter();
 
+        // Clean slate for the FIXTURE, not just for the watermark below. Step 3
+        // of the prepare picks the OLDEST approved batch IN THE DATABASE, so
+        // this run's own leftovers from a previous run are what a later run
+        // stages: `staged` is 1, the row lands on the earlier run's membership,
+        // and the count against THIS one reads 0. Deleting first makes the test
+        // independent of how many times it has run before.
+        let (project, tenant) = ("_test:dojo:contribute_sched", "github/acme-corp");
+        sqlx_core::query::query("DELETE FROM sensei.projects WHERE name = $1")
+            .bind(project)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+        // Cascades to the outbox rows those memberships own.
+        sqlx_core::query::query("DELETE FROM sensei.dojo_memberships WHERE tenant_key = $1")
+            .bind(tenant)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+
         // A project + memory + APPROVED batch, a destination membership, and the
         // project bound to it so routing yields exactly one target.
-        let proj = pg.create_project("_test:dojo:contribute_sched", None, None).await.unwrap();
+        let proj = pg.create_project(project, None, None).await.unwrap();
         let mem = pg
             .insert_memory(&InsertMemory {
                 project_id: Some(proj),
@@ -271,8 +290,8 @@ mod tests {
         pg.create_dojo_membership(&NewDojoMembership {
             id: mid,
             registry_url: "http://localhost:7755".into(),
-            tenant_key: "github/acme-corp".into(),
-            dojo_url: "http://localhost:7755/github/acme-corp".into(),
+            tenant_key: tenant.into(),
+            dojo_url: format!("http://localhost:7755/{tenant}"),
             kind: "employer".into(),
             org_slugs: vec![],
             role: "contributor".into(),
