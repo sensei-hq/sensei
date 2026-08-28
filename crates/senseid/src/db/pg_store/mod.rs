@@ -431,6 +431,7 @@ mod sessions;
 pub(crate) mod sync;
 mod transcript;
 pub(crate) use repo_key::normalize_repo_key;
+pub(crate) use schedules::{SchedulePatch, StoredSchedule};
 
 #[cfg(test)]
 mod knowledge_tests;

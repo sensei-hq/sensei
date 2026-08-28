@@ -19,6 +19,7 @@
 use std::time::Duration;
 
 use crate::db::pg_store::PgStore;
+use crate::tasks::schedule::poll_secs;
 
 /// Build a ticker for an already-resolved interval.
 /// Every ticker fires immediately and then every `secs`.
@@ -38,6 +39,43 @@ pub fn ticker(secs: u64) -> tokio::time::Interval {
     t
 }
 
+/// The wake-up clock of one scheduled worker, which FOLLOWS its stored cadence.
+///
+/// The poll is derived from `interval_secs` ([`poll_secs`]), and deriving it once
+/// at boot is not enough: a worker seeded hourly polls every 60s, so a user
+/// shortening it to 15s would keep waking once a minute — running on a cadence
+/// neither the endpoint nor the listing admits to — until the daemon restarted.
+/// Following the row is what makes the re-read each poll worth anything.
+///
+/// Rebuilt only on CHANGE. A fresh ticker fires immediately, so rebuilding every
+/// poll would turn the loop into a spin that re-reads the schedule as fast as the
+/// database can answer.
+struct Poll {
+    secs: u64,
+    ticker: tokio::time::Interval,
+}
+
+impl Poll {
+    fn new(secs: u64) -> Self {
+        Self { secs, ticker: ticker(secs) }
+    }
+
+    async fn tick(&mut self) {
+        self.ticker.tick().await;
+    }
+
+    /// Adopt the cadence of the row just read. `true` when the clock was rebuilt,
+    /// which also means the next tick fires at once.
+    fn follow(&mut self, interval_secs: u32) -> bool {
+        let secs = poll_secs(interval_secs);
+        if secs == self.secs {
+            return false;
+        }
+        *self = Self::new(secs);
+        true
+    }
+}
+
 /// Run `tick` on the schedule stored for `name`, forever.
 ///
 /// The whole loop for a scheduled worker: wake on the poll cadence, re-read the
@@ -45,9 +83,11 @@ pub fn ticker(secs: u64) -> tokio::time::Interval {
 /// the outcome or skip with a reason. Each worker keeps its own `tick` — what to
 /// do is code; when to do it is data.
 ///
-/// The schedule is re-read EVERY poll, not cached at startup, so a user changing
-/// a cadence or disabling a worker takes effect without restarting the daemon.
-/// That is the whole point of making it editable.
+/// The schedule is re-read EVERY poll, not cached at startup, and the poll
+/// itself follows the cadence it reads ([`Poll::follow`]), so a user changing a
+/// cadence or disabling a worker takes effect without restarting the daemon —
+/// within one poll of the OLD cadence, at most a minute. That is the whole point
+/// of making it editable.
 ///
 /// A skip is logged at debug with its reason rather than silently: "why has this
 /// not run?" has four different answers and only some are settings a user can
@@ -85,7 +125,7 @@ async fn run_scheduled_inner<F, Fut>(
     F: Fn() -> Fut,
     Fut: std::future::Future<Output = Result<(), String>>,
 {
-    use crate::tasks::schedule::{Skip, poll_secs, should_run};
+    use crate::tasks::schedule::{Skip, should_run};
 
     // Poll cadence comes from the schedule, but a missing row must not stop the
     // loop from ever looking again — the row may be seeded by a later deploy.
@@ -93,16 +133,25 @@ async fn run_scheduled_inner<F, Fut>(
         tracing::warn!(worker = name, error = %e, "scheduled: could not defer the first run");
     }
     let initial = pg.load_schedule(name).await.ok().flatten();
-    let poll = initial.as_ref().map_or(60, |s| poll_secs(s.interval_secs));
-    let mut t = ticker(poll);
+    let mut poll = Poll::new(initial.as_ref().map_or(60, |s| poll_secs(s.interval_secs)));
 
     loop {
-        t.tick().await;
+        poll.tick().await;
 
         let Some(stored) = pg.load_schedule(name).await.ok().flatten() else {
             tracing::debug!(worker = name, reason = ?Skip::Unscheduled, "scheduled: skipped");
             continue;
         };
+        // Before the due-check, so a shortened cadence starts applying on the
+        // very poll that notices it — and a worker that had no row at boot
+        // stops polling on the fallback minute once one appears.
+        if poll.follow(stored.interval_secs) {
+            tracing::debug!(
+                worker = name,
+                poll_secs = poll.secs,
+                "scheduled: poll cadence changed"
+            );
+        }
         let now_utc = chrono::Utc::now();
         let now_local = chrono::Local::now().naive_local();
 
@@ -155,5 +204,85 @@ mod tests {
         tokio::time::advance(Duration::from_secs(600)).await; // ten intervals missed
         assert!(ready_now!(t), "one catch-up tick is expected");
         assert!(!ready_now!(t), "but only one — MissedTickBehavior::Delay suppresses the burst");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_poll_clock_is_rebuilt_only_when_the_cadence_changes() {
+        // Hourly and daily clamp to the same 60s poll, so a clock rebuilt on
+        // every read would fire immediately every time — a spin that re-reads
+        // the schedule as fast as the database can answer it.
+        let mut p = Poll::new(poll_secs(3600));
+        assert!(ready_now!(p), "boot tick");
+        assert!(!p.follow(86_400), "a cadence with the same poll must not rebuild the clock");
+        assert!(!ready_now!(p), "so it keeps counting down instead of firing again");
+
+        // The edit that used to need a restart: hourly → 15s.
+        assert!(p.follow(15), "a shorter cadence rebuilds it");
+        assert!(ready_now!(p), "a rebuilt clock fires at once");
+        tokio::time::advance(Duration::from_secs(15)).await;
+        assert!(ready_now!(p), "and then on the NEW cadence, not the boot-time minute");
+    }
+
+    /// A cadence the user SHORTENS must speed the loop up, with no restart.
+    ///
+    /// The endpoint answers 200 and `GET /api/tasks/scheduled` then reports the
+    /// new interval, so a loop still waking on its boot-time poll would be
+    /// running on a cadence nothing in the system admits to.
+    ///
+    /// Real seconds, not the paused clock: `should_run` reads the wall clock
+    /// through `chrono`, which tokio's time control does not move, so a paused
+    /// runtime would leave the poll and the due-check disagreeing. Seconds are
+    /// the finest cadence the table stores, hence a test that takes a few.
+    #[tokio::test]
+    async fn a_shortened_cadence_takes_effect_without_a_restart() {
+        use crate::db::pg_store::SchedulePatch;
+
+        let pg = std::sync::Arc::new(PgStore::connect_test().await.unwrap());
+        // `run_scheduled` names its worker with a `&'static str` because every
+        // real one is a literal. A throwaway row needs a unique name, so this
+        // one is leaked on purpose — a few bytes, once, in a test binary.
+        let name: &'static str =
+            Box::leak(crate::tasks::test_support::test_schedule_name().into_boxed_str());
+        sqlx_core::query::query("INSERT INTO sensei.schedules(name, interval_secs) VALUES($1, 3)")
+            .bind(name)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let worker = tokio::spawn(run_scheduled(pg.clone(), name, move || {
+            let tx = tx.clone();
+            async move {
+                let _ = tx.send(());
+                Ok(())
+            }
+        }));
+        tokio::time::timeout(Duration::from_secs(5), rx.recv())
+            .await
+            .expect("the boot pass runs at once")
+            .expect("the loop is alive");
+
+        pg.update_schedule(name, &SchedulePatch { interval_secs: Some(1), ..Default::default() })
+            .await
+            .unwrap()
+            .expect("the row exists");
+
+        // Three more passes fit in seven seconds only if the loop adopted the
+        // 1s cadence. Pinned to the boot poll they land at t=3/6/9 and the third
+        // never arrives.
+        let three_more = async {
+            for _ in 0..3 {
+                rx.recv().await.expect("the loop is alive");
+            }
+        };
+        let sped_up = tokio::time::timeout(Duration::from_secs(7), three_more).await.is_ok();
+
+        worker.abort();
+        sqlx_core::query::query("DELETE FROM sensei.schedules WHERE name = $1")
+            .bind(name)
+            .execute(pg.pool())
+            .await
+            .ok();
+        assert!(sped_up, "a cadence patched to 1s must not keep waking on the boot-time 3s poll");
     }
 }

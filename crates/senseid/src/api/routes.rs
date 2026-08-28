@@ -249,8 +249,13 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/tasks/kinds", get(crate::api::handlers::tasks::list_kinds))
         .route("/api/tasks/{id}", get(crate::api::handlers::tasks::get_task))
         .route("/api/tasks/{id}/events", get(crate::api::handlers::tasks::task_events))
-        // Background-task visibility (#96): scheduler registry + last-run times
+        // Background-task visibility (#96): the sensei.schedules table — what each
+        // worker is, when it runs, and how its last pass went — plus editing it.
         .route("/api/tasks/scheduled", get(crate::api::handlers::scheduled_tasks::scheduled))
+        .route(
+            "/api/tasks/scheduled/{name}",
+            axum::routing::patch(crate::api::handlers::scheduled_tasks::patch_scheduled),
+        )
         // Graph
         .route("/api/graph/nodes", get(codebase::graph_nodes))
         .route("/api/graph/functions", get(codebase::search_functions))
