@@ -1,44 +1,53 @@
 # Checkpoint
 
-**Slice:** Schedules — background work as configuration (`docs/spec/daemon/schedules.md`)
+**Slice:** Schedules (`docs/spec/daemon/schedules.md`) — **all 5 steps done**.
+Now into `docs/spec/dojo/daemon-sync.md`.
 
-## Done — steps 1–4 of 5
+## Done
 
 | # | what | commit |
 |---|---|---|
-| 1 | `sensei.schedules` + `staging.import_schedules` (timestamp guard) + `schedules.jsonl` (11 rows at today's constants) + the code↔table agreement test | `78cd7808` |
-| 2 | The pure `should_run` predicate — enabled, due, window (wraps midnight), ISO day mask | `1dc4dd6c` |
-| 3 | One generic `ticker`; the twelve workers keep their own `tick()`. Nothing named after a task | `209349d6` |
-| 4 | `GET /api/tasks/scheduled` reads the table, not a static registry; `PATCH /api/tasks/scheduled/{name}` edits | `2ed0d4fd` |
+| 1–3 | table + seed + agreement test; `should_run` predicate; one generic ticker | `78cd7808` `1dc4dd6c` `209349d6` |
+| 4 | `GET`/`PATCH /api/tasks/scheduled` read and edit the table | `2ed0d4fd` |
+| — | persona registry, D2 rename, D7 enum value | `eab5671d` |
+| — | `live_session` — one implementation of "get me a working credential" | `083aacc7` |
+| — | dōjō sends `tenant_id` on both `/v1/you` endpoints | `1641069a` |
+| 5 | `dojo_sync` — a scheduled task with no bespoke worker | `8bea1832` |
 
-Step 4 also fixed a **shipped bug**: `run_scheduled` re-read the schedule every
-poll but derived the poll itself once at boot, so a cadence shortened below 60s
-never took effect until restart (`Poll::follow`).
+## Two spec claims were false and are corrected in place
 
-## Next — step 5
+- **§3's `sensei.dojo_personas`** was never built. `sensei.personas` already is
+  the registry (`label` = the Keychain slot; `verified_at` = signed in), the
+  dōjō URL is global, and `sync_state` carries the watermark. *(User approved.)*
+- **§1's "`unpushed_metric_rows` is the one production push path"** — it has no
+  production caller at all, and no dōjō endpoint receives metrics.
 
-`dojo_sync` as a schedule row + a `tick()` — the first task with no bespoke
-worker. Supersedes **D4** in `docs/spec/dojo/daemon-sync.md`.
+## Next
+
+**The metric push is a slice of its own** — that is the honest state.
+`dojo_sync` today establishes identity (which tenant) and entitlement (what may
+sync) and logs that it pushed nothing. It does not pretend otherwise.
 
 ```
-# start here
-rg -n 'dojo_sync' crates/senseid/src/tasks/schedule.rs database/import/staging/schedules.jsonl
+rg -n 'unpushed_metric_rows' crates/senseid/src/db/pg_store/sync.rs
 ```
 
-Then the rest of `daemon-sync.md`: persona registry (`sensei.dojo_personas`),
-`live_access_token(persona)`, the user-plane client, `tenant_id` in the API
-responses, `repositories.dojo_id` → `tenant_id`, `sync_entity` += `dojo_sync_plan`.
+Then D3 (per-repo governance pull), then phase 2 of `dojo-auth-provisioning.md`.
 
-## Gates (green at `2ed0d4fd`)
+## Gates (green at `8bea1832`)
 
-`cargo test -p senseid` 2441 passed · clippy 0 · fmt 0 · `--test-threads 16` 0/8 flaky.
-Four mutation probes confirmed the new tests fail when the behaviour is removed.
+`cargo test -p senseid` 2454 · clippy 0 · fmt 0 · dōjō 1421 tests, `check` 0/0.
+Every new invariant mutation-probed.
 
-## Carry forward
+## Known not done
 
-- **`node_modules/kavach` is patched locally** (jerrythomas/kavach `040d34c`).
-  Publish `1.1.1` and repin before the dōjō deploys anywhere. *User owns this.*
-- `app/src/lib/types.ts` `ScheduledTask` is **not** updated for the new wire
-  shape (`enabled`, `interval_secs`, `window`, `days`). The desktop app still
-  compiles; it just cannot show or edit the new fields yet.
-- Phase 2 of `dojo-auth-provisioning.md` (entitlement) remains unbuilt.
+- `app/src/lib/types.ts` `ScheduledTask` has no `enabled`/`interval_secs`/
+  `window`/`days`. App compiles; it cannot show or edit them.
+- **kavach 1.1.1 publish + repin** — `node_modules/kavach` is patched locally
+  with `040d34c`. *User owns this.*
+- `dbd diff --scope default` is never clean: dbd normalises `time` and unnamed
+  CHECKs so `sensei.schedules` always shows a phantom type change. Not fixable
+  from the DDL — both spellings diff. Real drift is still readable, but only by
+  ignoring those four lines.
+- Schema changes are applied to `sensei_test` only. The live `sensei` DB has
+  **not** been touched.
