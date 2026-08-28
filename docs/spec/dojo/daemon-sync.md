@@ -35,7 +35,7 @@
 
 | # | decision | why |
 |---|---|---|
-| D1 | **Sync runs for EVERY signed-in persona**, not just `default` | `session.rs` was deliberately built for concurrent personas; syncing one silently strands the others. Requires a registry (§3) — nothing enumerates Keychain entries today. |
+| D1 | **Sync runs for EVERY signed-in persona**, not just `default` | `session.rs` was deliberately built for concurrent personas; syncing one silently strands the others. The registry already exists — see §3. |
 | D2 | **`sensei.repositories.dojo_id` → renamed `tenant_id`, holds `dojo.tenants.id`** | A uuid fits the column and its documented meaning. `projects.dojo_id` holds a MEMBERSHIP id, so keeping the name would give one name two meanings. Requires `tenant_id` in the API responses (§5). |
 | D3 | **Per-repo governance pull is IN scope** | §V.4 claims the daemon "pulls governance for allowed only". No per-repo pull exists — `resolved_pack_rules` is tenant/namespace-scoped. Building it makes the claim true rather than leaving it silently unimplemented. |
 | D4 | **New `dojo_sync_scheduler`, config-driven interval, default hourly** | Matches `metrics_scheduler` (3600s, `metrics.interval_secs`). Daily would leave hourly-computed metrics unshared for up to a day. Key: `dojo.sync_interval_secs`. |
@@ -43,22 +43,41 @@
 | D6 | **Gate on `repo_key ∈ allowed`; no denial-reason handling yet** | Phase-1 `denied` is provably always empty: `all_my_repositories` hardcodes `sync_enabled = true`, `denied_reason = null`. Decoding a non-empty array must not crash, but building reason UX now would be speculative. |
 | D7 | **A failed plan fetch is log-and-skip, recorded in `sensei.sync_state`** | Needs a new `sensei.sync_entity` value (§6) — none of the five existing values names a whole-cycle fetch. Without it there is no schema-legal `(entity, key)` to record against, and the failure would be invisible. |
 
-## 3. Persona registry (D1)
+## 3. Persona registry (D1) — WITHDRAWN, it already exists
 
-Sign-in state lives only in the Keychain and nothing can list it. Add a
-**`sensei.dojo_personas`** table: one row per persona the daemon has signed in,
-written on a successful `/v1/auth/cli/token` exchange and cleared on sign-out.
+> This section originally proposed a new `sensei.dojo_personas` table on the
+> premise that *"sign-in state lives only in the Keychain and nothing can list
+> it."* **That premise was false.** Checked against the code before building it;
+> every field the table wanted already exists, so it was never created.
 
-It stores no secret — the tokens stay in the Keychain. It exists purely so an
-unattended task can answer "who is signed in?", which is currently unanswerable.
+| §3 wanted | already is | evidence |
+|---|---|---|
+| `persona` (Keychain slot) | `sensei.personas.label` | `session.rs::account_for` formats `refresh_token.{persona}`; `auth.rs` passes that same string to `link_persona_identity`, which resolves it to a `personas` row |
+| `dojo_url` | a **global** setting | `settings::dojo_url()` — env `DOJO_URL`, then local settings, then a default. Not per-persona |
+| `signed_in_at` | `personas.verified_at` | `link_persona_identity` sets `verified_at = now()` on every completed OAuth callback |
+| `last_sync_at` | `sync_state.synced_at` | keyed `(entity='dojo_sync_plan', entity_key=label)` — the entity value **D7 already adds** |
 
+So the registry is a query, not a table:
+
+```sql
+select label from sensei.personas where verified_at is not null;
 ```
-sensei.dojo_personas
-  persona       text primary key   -- the Keychain slot name
-  dojo_url      text not null
-  signed_in_at  timestamptz not null default now()
-  last_sync_at  timestamptz
-```
+
+then a Keychain probe for a live token, because a row proves a sign-in
+*happened*, not that its token is still good.
+
+**Why not `principal_id is not null`**, which reads more precisely as "has a dōjō
+login": nothing sets it yet — the column is documented "NULL until the user links
+this persona (Phase 6)". Using it today would enumerate zero personas and sync
+nothing, silently. `verified_at` is the predicate that is actually written.
+
+`personas` also holds `is_self = false` rows for contributors who are not the
+user. They are excluded in practice — only a completed OAuth callback sets
+`verified_at` — but not filtered on explicitly, and deliberately so: if identity
+resolution ever does match a sign-in to such a row, then someone *did* sign in as
+it and there *is* a token in the Keychain. Syncing it is right; the wrong field
+is `is_self`, and that is a correction to make there rather than a persona to
+silently skip here.
 
 ## 4. A live access token
 
@@ -95,7 +114,7 @@ GET  /v1/you/sync/plan
 
 ## 6. Schema changes
 
-Two, both in `sensei`:
+Two, both in `sensei` — the third (§3's persona table) was withdrawn:
 
 ```
 sensei.repositories  ~ dojo_id uuid  →  tenant_id uuid   -- D2
@@ -105,6 +124,12 @@ sensei.repositories  ~ dojo_id uuid  →  tenant_id uuid   -- D2
 sensei.sync_entity   + 'dojo_sync_plan'                  -- D7
 ```
 
+The rename is safe to do wholesale: `repositories.dojo_id` has **three**
+references in the tree — the column, its own comment, and a cross-reference in
+`personas.ddl` — and no Rust or TypeScript reads or writes it. (The 1400-odd
+other `dojo_id` hits are `projects.dojo_id`, which holds a MEMBERSHIP id and
+deliberately keeps its name — that collision is the whole reason for D2.)
+
 `sync_entity` gains one value rather than a table: a failed plan fetch is a sync
 event like any other, and `sync_state` already carries `last_error`,
 `attempted_at` and `synced_at` per `(entity, key, direction)`.
@@ -112,7 +137,8 @@ event like any other, and `sync_state` already carries `last_error`,
 ## 7. The cycle
 
 ```
-for each persona in sensei.dojo_personas:
+for each persona in (select label from sensei.personas
+                      where verified_at is not null):     § 3
     token = live_access_token(persona)          § 4 — skip persona on failure
     shared = shared_repositories()               gate 1, local
     if shared changed since last register:       D5
