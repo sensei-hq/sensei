@@ -19,6 +19,22 @@ pub struct SyncMark<'a> {
     pub direction: &'a str,
 }
 
+/// The push query's column tuple. Named for the same reason `ScheduleRow` and
+/// `TaskExecutionRow` are: ten positional columns inline is a type nobody can
+/// read, and clippy is right to say so.
+type PushableRow = (
+    uuid::Uuid,
+    String,
+    String,
+    String,
+    String,
+    chrono::NaiveDate,
+    f64,
+    Option<String>,
+    serde_json::Value,
+    String,
+);
+
 impl PgStore {
     /// Record which dōjō tenant a repository is enrolled with (D2).
     ///
@@ -133,35 +149,55 @@ impl PgStore {
     /// `shared_at IS NULL OR modified_at > shared_at` catches both the never-sent
     /// and the changed-since-sent, so a recomputed day is re-pushed rather than
     /// left stale behind an already-synced marker.
-    pub async fn unpushed_metric_rows(&self, limit: i64) -> Result<Vec<serde_json::Value>, String> {
-        let rows: Vec<(uuid::Uuid, String, String, chrono::NaiveDate, f64)> =
-            sqlx_core::query_as::query_as(
-                "SELECT rm.id, r.repo_key, m.key, rm.computed_on, rm.value::float8 \
-                   FROM sensei.repository_metrics rm \
-                   JOIN sensei.repositories r ON r.id = rm.repository_id \
-                   JOIN sensei.metrics m      ON m.id = rm.metric_id \
-                  WHERE r.visibility = 'shared' \
-                    AND rm.computed_by = 'local' \
-                    AND (rm.shared_at IS NULL OR rm.modified_at > rm.shared_at) \
-                  ORDER BY rm.computed_on DESC \
-                  LIMIT $1",
-            )
-            .bind(limit)
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|e| format!("unpushed_metric_rows: {e}"))?;
+    pub async fn unpushed_metric_rows(&self, limit: i64) -> Result<Vec<PushableMetric>, String> {
+        let rows: Vec<PushableRow> = sqlx_core::query_as::query_as(
+            "SELECT rm.id, r.repo_key, m.key, rm.scope::text, rm.grain::text, rm.computed_on \
+                  , rm.value::float8, rm.commit_sha, rm.props, rm.source::text \
+               FROM sensei.repository_metrics rm \
+               JOIN sensei.repositories r ON r.id = rm.repository_id \
+               JOIN sensei.metrics m      ON m.id = rm.metric_id \
+              WHERE r.visibility = 'shared' \
+                AND rm.computed_by = 'local' \
+                AND (rm.shared_at IS NULL OR rm.modified_at > rm.shared_at) \
+              ORDER BY rm.computed_on DESC \
+              LIMIT $1",
+        )
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| format!("unpushed_metric_rows: {e}"))?;
         Ok(rows
             .into_iter()
-            .map(|(id, repo_key, metric, day, value)| {
-                serde_json::json!({
-                    "id": id, "repoKey": repo_key, "metric": metric,
-                    "computedOn": day, "value": value,
-                })
-            })
+            .map(
+                |(
+                    id,
+                    repo_key,
+                    metric,
+                    scope,
+                    grain,
+                    computed_on,
+                    value,
+                    commit_sha,
+                    props,
+                    source,
+                )| {
+                    PushableMetric {
+                        id,
+                        repo_key,
+                        metric,
+                        scope,
+                        grain,
+                        computed_on,
+                        value,
+                        commit_sha,
+                        props,
+                        source,
+                    }
+                },
+            )
             .collect())
     }
 
-    /// Stamp rows as pushed.
     pub async fn mark_metric_rows_shared(&self, ids: &[uuid::Uuid]) -> Result<u64, String> {
         if ids.is_empty() {
             return Ok(0);
@@ -178,6 +214,39 @@ impl PgStore {
     }
 }
 
+/// One metric row queued for the dōjō.
+///
+/// A struct rather than the `serde_json::Value` this used to return. The receiving
+/// endpoint keys on `(metric, repository, scope, principal, commit_sha,
+/// computed_on, grain)` and stores `props` + `source`, so every one of those has
+/// to survive the trip — and an untyped bag let five of them go missing silently
+/// (`docs/spec/dojo/daemon-sync.md` claim C4).
+#[derive(Debug, Clone, PartialEq)]
+pub struct PushableMetric {
+    /// The LOCAL row id. Never sent — it is meaningless to the dōjō — but needed
+    /// to mark `shared_at` on exactly the rows that were accepted.
+    pub id: uuid::Uuid,
+    /// The durable cross-install repository identity.
+    pub repo_key: String,
+    /// `sensei.metrics.key`, not a uuid: metric ids are not guaranteed identical
+    /// across installs, and a mismatch would file real numbers under the wrong
+    /// metric silently.
+    pub metric: String,
+    /// `repo` or `user`. Part of the dōjō's unique key, so a missing scope would
+    /// file a per-person row as a repository-wide one.
+    pub scope: String,
+    /// `daily`, … — also part of that key.
+    pub grain: String,
+    pub computed_on: chrono::NaiveDate,
+    pub value: f64,
+    /// Absent stays absent. Defaulting it would forge a commit association.
+    pub commit_sha: Option<String>,
+    pub props: serde_json::Value,
+    /// `measured` vs `imputed`. Defaulting to `measured` would present an
+    /// estimate as an observation.
+    pub source: String,
+}
+
 /// One repository this machine offers the dōjō, as gate 1 lets through.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SharedRepo {
@@ -192,6 +261,40 @@ pub struct SharedRepo {
 }
 
 impl PgStore {
+    /// Opt a repository into — or out of — sharing. The write side of GATE 1.
+    ///
+    /// Until this existed nothing could set `visibility` at all, so gate 1 was
+    /// unreachable: every repository sat at the private default and the whole
+    /// push would have moved zero rows while reporting success
+    /// (`docs/spec/dojo/daemon-sync.md` claim C3).
+    ///
+    /// `visibility` is a text parameter cast to the enum rather than a Rust enum
+    /// because the DATABASE owns the legal set (`sensei.repo_visibility`). A
+    /// value outside it fails the cast and returns `Err` — never a silent no-op,
+    /// which would leave the user believing they had shared something.
+    ///
+    /// Returns rows affected, so a caller can distinguish "set" from "this
+    /// database has no such repo_key" instead of assuming success. Revoking is
+    /// the same call with `'private'`: sharing has to be reversible, or D8's
+    /// "the user may still turn it off" is not true.
+    pub async fn set_repository_visibility(
+        &self,
+        repo_key: &str,
+        visibility: &str,
+    ) -> Result<u64, String> {
+        let r = sqlx_core::query::query(
+            "UPDATE sensei.repositories \
+                SET visibility = $2::sensei.repo_visibility, modified_at = now() \
+              WHERE repo_key = $1",
+        )
+        .bind(repo_key)
+        .bind(visibility)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| format!("set_repository_visibility({repo_key}, {visibility}): {e}"))?;
+        Ok(r.rows_affected())
+    }
+
     /// The repositories the user has opted into sharing — GATE 1 (intent).
     ///
     /// The first of the three gates in spec §V.3, and the only one the daemon
