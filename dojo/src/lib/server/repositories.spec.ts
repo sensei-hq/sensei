@@ -49,7 +49,10 @@ describe('registerRepositories', () => {
 		expect(out.unmapped).toEqual([]);
 		expect(out.mapped[0]).toMatchObject({
 			repo_key: 'github.com/acme/api',
-			tenant: 'organization/acme'
+			tenant: 'organization/acme',
+			// The uuid the daemon stores in sensei.repositories.tenant_id (D2).
+			// `tenant` above is a display key and a rename changes it.
+			tenant_id: 't-acme'
 		});
 		expect(db.tables.repositories.rows[0]).toMatchObject({
 			tenant_id: 't-acme',
@@ -164,6 +167,7 @@ describe('syncPlan', () => {
 			repository_id: 'r1',
 			repo_key: 'github.com/acme/api',
 			tenant: 'organization/acme',
+			tenant_id: 't-acme',
 			principal_id: ALICE,
 			sync_enabled: true
 		},
@@ -171,6 +175,7 @@ describe('syncPlan', () => {
 			repository_id: 'r2',
 			repo_key: 'github.com/acme/web',
 			tenant: 'organization/acme',
+			tenant_id: 't-acme',
 			principal_id: ALICE,
 			sync_enabled: true
 		}
@@ -189,6 +194,16 @@ describe('syncPlan', () => {
 		expect(plan.denied).toEqual([]);
 	});
 
+	it('carries tenant_id, not just the display key, so the daemon can store it', async () => {
+		// `sensei.repositories.tenant_id` holds a uuid (daemon-sync.md D2). Without
+		// this the daemon has only `organization/acme` — a DISPLAY key that a
+		// rename changes — and would have to either store the wrong thing or
+		// re-resolve the tenant on every cycle.
+		const db = fakeDojoDb(withView(MINE));
+		const plan = await syncPlan(db as never, ALICE);
+		expect(plan.allowed[0].tenant_id).toBe('t-acme');
+	});
+
 	it('scopes to the caller, so one user never sees another user rows', async () => {
 		// The plan is an ALLOW-LIST the daemon acts on directly, so a leak here is
 		// not a display bug — it is the daemon syncing someone else code.
@@ -199,6 +214,7 @@ describe('syncPlan', () => {
 					repository_id: 'r-other',
 					repo_key: 'github.com/secret-org/private-api',
 					tenant: 'organization/other',
+					tenant_id: 't-other',
 					principal_id: 'p-bob',
 					sync_enabled: true
 				}
