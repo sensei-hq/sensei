@@ -24,12 +24,12 @@
 - `PgStore::shared_repositories(limit)` → `SharedRepo { repo_key, remote_url, name }`,
   filtering `visibility = 'shared' AND repo_key IS NOT NULL`. **Gate 1 (intent)** —
   the only gate the daemon owns. Landed `d363f720`.
-- ~~`PgStore::unpushed_metric_rows(limit)` — the one production push path~~
-  **Wrong.** It has no production caller at all — only tests — and there is no
-  dōjō endpoint receiving metrics. There is therefore no existing push to gate on
-  `plan.allowed`: building the push is a slice of its own, not a filter to add.
-  This is why `tasks/dojo_sync.rs` establishes identity and entitlement and says
-  so in its log, rather than appearing to sync and moving nothing.
+- `PgStore::unpushed_metric_rows(scopes, limit)` — the push queue. **When this
+  spec was written it had NO production caller** (only tests) and no dōjō endpoint
+  received metrics, which is why the first version of this bullet called it "the
+  one production push path" and was wrong. Both halves now exist:
+  `tasks/dojo_sync.rs::push_allowed` is the caller and
+  `POST /v1/you/metrics` is the endpoint (§5).
 - `dojo_client/session.rs` — per-persona Keychain session slots, `needs_refresh`.
 - `dojo_client/dojo_auth.rs::refresh()` — `POST /v1/auth/cli/refresh`.
 - `dojo/client.rs` — the **tenant-plane** client (per-membership device token).
@@ -41,9 +41,9 @@
 |---|---|---|
 | D1 | **Sync runs for EVERY signed-in persona**, not just `default` | `session.rs` was deliberately built for concurrent personas; syncing one silently strands the others. The registry already exists — see §3. |
 | D2 | **`sensei.repositories.dojo_id` → renamed `tenant_id`, holds `dojo.tenants.id`** | A uuid fits the column and its documented meaning. `projects.dojo_id` holds a MEMBERSHIP id, so keeping the name would give one name two meanings. Requires `tenant_id` in the API responses (§5). |
-| D3 | **Per-repo governance pull is IN scope** | §V.4 claims the daemon "pulls governance for allowed only". No per-repo pull exists — `resolved_pack_rules` is tenant/namespace-scoped. Building it makes the claim true rather than leaving it silently unimplemented. |
-| D4 | **New `dojo_sync_scheduler`, config-driven interval, default hourly** | Matches `metrics_scheduler` (3600s, `metrics.interval_secs`). Daily would leave hourly-computed metrics unshared for up to a day. Key: `dojo.sync_interval_secs`. |
-| D5 | **Plan every tick; register only when the shared set changed** | The plan must never be cached (§V.4) — that is the whole design. Repository identity rarely moves, so re-registering every tick is wasted work. |
+| D3 | ~~Per-repo governance pull is IN scope~~ **DEFERRED — see §9.** Not built; the cycle is token → gate 1 → register → plan → push. | §V.4 claims the daemon "pulls governance for allowed only". No per-repo pull exists — `resolved_pack_rules` is tenant/namespace-scoped. Building it makes the claim true rather than leaving it silently unimplemented. |
+| D4 | ~~New `dojo_sync_scheduler`, config-driven interval~~ **SUPERSEDED by `docs/spec/daemon/schedules.md` step 5.** No such module and no `dojo.sync_interval_secs` key exist: the cadence is a `sensei.schedules` row. | Matches `metrics_scheduler` (3600s, `metrics.interval_secs`). Daily would leave hourly-computed metrics unshared for up to a day. Key: `dojo.sync_interval_secs`. |
+| D5 | ~~register only when the shared set changed~~ **NOT IMPLEMENTED.** The cycle POSTs the full shared set every tick. The write is idempotent so it is correct, but at a 60s cadence it re-registers up to 500 repositories a minute — the wasted work D5 existed to prevent. | The plan must never be cached (§V.4) — that is the whole design. Repository identity rarely moves, so re-registering every tick is wasted work. |
 | D6 | **Gate on `repo_key ∈ allowed`; no denial-reason handling yet** | Phase-1 `denied` is provably always empty: `all_my_repositories` hardcodes `sync_enabled = true`, `denied_reason = null`. Decoding a non-empty array must not crash, but building reason UX now would be speculative. |
 | D7 | **A failed plan fetch is log-and-skip, recorded in `sensei.sync_state`** | Needs a new `sensei.sync_entity` value (§6) — none of the five existing values names a whole-cycle fetch. Without it there is no schema-legal `(entity, key)` to record against, and the failure would be invisible. |
 | D8 | **Sharing is configured explicitly; within that step, public repos default ON and private repos default OFF (subscription-gated)** | See §2a. Resolves "why is nothing shared" (claim C3) without making sign-in start sharing. |
@@ -94,15 +94,16 @@ one thing at a time, so each step's effect is observable:
 
 | §3 wanted | already is | evidence |
 |---|---|---|
-| `persona` (Keychain slot) | `sensei.personas.label` | `session.rs::account_for` formats `refresh_token.{persona}`; `auth.rs` passes that same string to `link_persona_identity`, which resolves it to a `personas` row |
+| `persona` (Keychain slot) | `sensei.personas.session_slot` | **NOT `label`.** `session.rs::account_for` formats `refresh_token.{slot}` from the string the sign-in was started with; `link_persona_identity` REWRITES `label` to the verified GitHub login, so signing in as `default` yields a row labelled `sensei-hq-org` whose session is still at `refresh_token.default`. The first version of this table claimed they were the same string — they are not, and looking the session up by label silently skipped the persona while the cycle reported success. `session_slot` records what the sign-in actually used. |
 | `dojo_url` | a **global** setting | `settings::dojo_url()` — env `DOJO_URL`, then local settings, then a default. Not per-persona |
 | `signed_in_at` | `personas.verified_at` | `link_persona_identity` sets `verified_at = now()` on every completed OAuth callback |
-| `last_sync_at` | `sync_state.synced_at` | keyed `(entity='dojo_sync_plan', entity_key=label)` — the entity value **D7 already adds** |
+| `last_sync_at` | `sync_state.synced_at` | keyed `(entity='dojo_sync_plan', entity_key=session_slot)` — the entity value **D7 already adds** |
 
 So the registry is a query, not a table:
 
 ```sql
-select label from sensei.personas where verified_at is not null;
+select session_slot from sensei.personas
+ where session_slot is not null and verified_at is not null;
 ```
 
 then a Keychain probe for a live token, because a row proves a sign-in
@@ -156,7 +157,9 @@ GET  /v1/you/sync/plan
 
 ## 6. Schema changes
 
-Two, both in `sensei` — the third (§3's persona table) was withdrawn:
+**Five, across two schemas.** This section said "two, both in `sensei`" — false,
+and the omitted one was the column that fixed §3's own error, so an auditor
+looking for the label/slot fix found no trace of it here.
 
 ```
 sensei.repositories  ~ dojo_id uuid  →  tenant_id uuid   -- D2
@@ -164,6 +167,25 @@ sensei.repositories  ~ dojo_id uuid  →  tenant_id uuid   -- D2
                        enrolled with. NULL = not federated.
 
 sensei.sync_entity   + 'dojo_sync_plan'                  -- D7
+
+sensei.personas      + session_slot text                 -- §3, the label/slot fix
+                     + personas_session_slot_unique (partial)
+                       The Keychain slot the sign-in used. NOT the label, which a
+                       sign-in rewrites to the verified login. Looking the session
+                       up by label skipped the persona while reporting success.
+
+sensei.metrics       + grant select to authenticated, service_role
+                       So the dojo view below can be read. service_role is the one
+                       that matters — the Worker holds that key.
+
+dojo.metric_catalogue  NEW VIEW over sensei.metrics (id, key)
+                       The sanctioned cross-schema read: `sensei` is deliberately
+                       unexposed to PostgREST, so a dojo view qualifies it
+                       internally, as dojo.rule_pack_library already does.
+
+dojo.repository_metrics ~ unique (…) → unique NULLS NOT DISTINCT (…)
+                       Without it the constraint fired for NOTHING we push (every
+                       row has principal_id NULL). See C5.
 ```
 
 The rename is safe to do wholesale: `repositories.dojo_id` has **three**
@@ -179,8 +201,9 @@ event like any other, and `sync_state` already carries `last_error`,
 ## 7. The cycle
 
 ```
-for each persona in (select label from sensei.personas
-                      where verified_at is not null):     § 3
+for each slot in (select session_slot from sensei.personas
+                   where session_slot is not null
+                     and verified_at is not null):        § 3
     token = live_access_token(persona)          § 4 — skip persona on failure
     shared = shared_repositories()               gate 1, local
     if shared changed since last register:       D5
@@ -190,7 +213,7 @@ for each persona in (select label from sensei.personas
     plan = GET /v1/you/sync/plan                 every tick, never cached
         on failure → mark_sync_error(dojo_sync_plan, persona) and SKIP    D7
     push unpushed_metric_rows WHERE repo_key ∈ plan.allowed
-    pull governance for plan.allowed             D3
+    (D3: pull governance for plan.allowed — DEFERRED, see §9)
 ```
 
 ## 8. Done gate
@@ -199,23 +222,54 @@ for each persona in (select label from sensei.personas
 - [ ] a shared, mapped repo's metrics reach the dōjō; an `unmapped` one's do not
 - [ ] a repo whose `visibility` is flipped to `private` stops syncing on the next tick
 - [ ] a failed plan fetch leaves `sync_state` with `state = 'error'` and pushes nothing
-- [ ] two signed-in personas both sync (D1) — the case a single-persona design silently drops
+- [ ] two signed-in personas each fetch a plan and each push only what their plan allows, and
+      neither stalls the other (D1). NOT "both push the same rows": `shared_at` is machine-global,
+      so a repository pushed by one persona is not re-pushed by the other
 - [ ] an expired persona is reported signed-out and does not stall the others
 
-## 9a. Claims (verified 2026-08-28, against the live `sensei` DB and the tree)
+## 9a. Claims (re-verified 2026-08-28, AFTER the slice shipped)
 
 Every assertion this spec makes about what already exists, with the check that would disprove it.
-Re-run before build — a claim verified three weeks ago is a claim about three weeks ago.
+
+> **The ledger drifted inside a single day, which is the lesson.** Its first version was written at
+> `f94dfdb0` (11:16) and three of its five verdicts were falsified by `9468acd0` (11:47) and
+> `cb48d354` (11:59) — the commits that FIXED the claims it recorded as false. A reader hours later
+> saw "C3: 0 of 67, FALSE / marking a repository shared is a prerequisite" and would have rebuilt a
+> route that already shipped. **Re-run the checks; do not trust the date in the heading.**
 
 | # | claim | check | expect | actual | verdict |
 |---|---|---|---|---|---|
-| C1 | `unpushed_metric_rows` is the production push path | `rg -l 'unpushed_metric_rows' crates/ -g '*.rs'` minus tests/definition | ≥1 | **0** | **FALSE** (§1, already corrected) |
+| C1 | `unpushed_metric_rows` has a production caller | `rg -l 'unpushed_metric_rows' crates/ -g '*.rs'` minus the definition and tests | ≥1 | **1** — `tasks/dojo_sync.rs` | CONFIRMED *(was FALSE: 0)* |
 | C2 | `personas.principal_id` is unset, so user-scoped rows cannot be attributed | `select count(principal_id) from sensei.personas` | 0 | **0 of 3** | CONFIRMED |
-| C3 | some repository has opted into sharing | `select count(*) from sensei.repositories where visibility='shared'` | ≥1 | **0 of 67** | **FALSE** |
-| C4 | the daemon's push query already carries `scope`/`grain`/`props` | read the SELECT in `sync.rs` | present | absent — only `id, repo_key, key, computed_on, value` | **FALSE** |
-| C5 | `dojo.repository_metrics` can absorb a re-push idempotently | read the unique index in its DDL | present | `unique (metric_id, repository_id, scope, principal_id, commit_sha, computed_on, grain)` | CONFIRMED |
+| C3 | some repository has opted into sharing | `select count(*) from sensei.repositories where visibility='shared'` | ≥1 | **1 of 67** (`github.com/sensei-hq/dbd`) | CONFIRMED *(was FALSE: 0 of 67 — the prerequisite shipped as `PATCH /api/repositories/{*repo_key}`)* |
+| C4 | the push query carries `scope`/`grain`/`props`/`commit_sha`/`source` | read the SELECT in `sync.rs` | present | **present** | CONFIRMED *(was FALSE: 5 fields absent)* |
+| C5 | `dojo.repository_metrics` can absorb a re-push idempotently | **insert the same repo-scoped row twice and expect a unique violation** | rejected | **rejected** | CONFIRMED *(was recorded CONFIRMED on a check that could not establish it — see below)* |
 
-### C3 is the one that would have cost a slice
+### C5 was recorded CONFIRMED and was FALSE
+
+The original check was *"read the unique index in its DDL"*. An index existed, so it was marked
+CONFIRMED. **Reading that a constraint exists does not establish that it fires.**
+
+`unique (metric_id, repository_id, scope, principal_id, commit_sha, computed_on, grain)` defaults to
+NULLS DISTINCT, and every repo-scoped row the daemon pushes carries `principal_id = NULL` (day-grain
+rows also carry `commit_sha = NULL`). So the constraint applied to **nothing we send**. Proven
+against Postgres 17: two byte-identical inserts → 2 rows.
+
+Idempotence therefore rested entirely on a non-atomic select-then-insert in TypeScript, and the test
+that "proved" it passed because `fakeDojoDb` compares with `===`, treating `null === null` as equal —
+**the fake was STRICTER than Postgres**, which is the dangerous direction for a test double to err.
+
+Fixed by declaring the constraint `unique nulls not distinct (…)`, matching
+`sensei.repository_metrics`, which had the clause and the comment explaining why all along. The
+check in the table above is now the assertion that would have caught it: insert twice, expect
+rejection.
+
+**The lesson for the ledger format:** a check that reads a declaration is weaker than one that
+exercises behaviour. Prefer "do X and expect Y" over "read Z".
+
+### C3's original finding, kept for the record
+
+
 
 **No repository is `shared`** — all 67 are `private`. `visibility='shared'` is gate 1, the local
 intent gate, and nothing has ever set it. So:
@@ -246,3 +300,22 @@ is a missing *prerequisite*: there is no way for a user to mark a repository sha
 De-provisioning, claim, seats, billing, `forge_visibility` — all phase 2 of the
 parent spec. `denied[]` reason UX (D6). Mirroring into `sensei.dojo_memberships`
 (§II.8's older combined-round-trip scenario).
+
+**Deferred, not dropped — each was a decision above that the code does not honour,
+and saying so here is the point:**
+
+- **D3, the per-repo governance pull.** The cycle does not pull governance. §7's
+  last line is struck until it does. D3 existed to stop the parent's §V.4 claim
+  being "silently unimplemented" — leaving D3 asserted made it unimplemented in
+  two documents instead of one.
+- **D5's register-only-when-changed guard.** Needs a `sync_state` row over a hash
+  of the shared set.
+- **D8's public/private default.** Currently *unimplementable*, not merely
+  unimplemented: `sensei.repositories` has no forge-visibility column, so nothing
+  can decide "is this public". §2a describes the intended rule; the only setter
+  that exists requires an explicit value and rejects an absent one. No
+  configuration step exists to apply a default in.
+- **Two personas pushing the same repository.** `shared_at` is machine-global with
+  no persona dimension, and the push `sync_state` mark is keyed on `repo_key`
+  alone while the plan mark is keyed per persona. Done-gate item 5 is restated
+  below to say what is actually observable.

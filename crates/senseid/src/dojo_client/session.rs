@@ -186,21 +186,15 @@ pub fn clear_refresh_token(persona: &str) -> Result<(), crate::gateway_keys::Key
     }
 }
 
+/// Store a session secret. Delegates to [`crate::gateway_keys::keychain_set`],
+/// which keeps the secret out of `argv` — this used to pass it as an argument,
+/// where an unprivileged `ps` captured a live refresh token once per cadence.
 fn keychain_write(
     service: &str,
     account: &str,
     secret: &str,
 ) -> Result<(), crate::gateway_keys::KeychainError> {
-    let out = std::process::Command::new("/usr/bin/security")
-        .args(["add-generic-password", "-U", "-s", service, "-a", account, "-w", secret])
-        .output()?;
-    if out.status.success() {
-        Ok(())
-    } else {
-        Err(crate::gateway_keys::KeychainError::CommandFailed(
-            String::from_utf8_lossy(&out.stderr).trim().to_string(),
-        ))
-    }
+    crate::gateway_keys::keychain_set(service, account, secret)
 }
 
 fn keychain_read(
