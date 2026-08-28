@@ -14,6 +14,36 @@
 use super::PgStore;
 
 impl PgStore {
+    /// The personas that have completed a dōjō sign-in, by label — the string a
+    /// Keychain session slot is named for (`session::account_for`).
+    ///
+    /// This is the persona registry. `docs/spec/dojo/daemon-sync.md` §3 originally
+    /// proposed a `sensei.dojo_personas` table for it, on the premise that sign-in
+    /// state lived only in the Keychain and nothing could list it. That premise
+    /// was wrong: `link_persona_identity` already writes `verified_at` on every
+    /// completed OAuth callback, so the registry is this query and the table was
+    /// never created.
+    ///
+    /// `verified_at`, not `principal_id`, even though the latter reads more
+    /// precisely as "has a dōjō login": nothing sets `principal_id` yet (the
+    /// column is documented "NULL until the user links this persona"), so it would
+    /// enumerate nobody and sync nothing without ever looking broken.
+    ///
+    /// A row proves a sign-in HAPPENED, not that its token is still valid — the
+    /// caller resolves a live access token per persona and skips the ones whose
+    /// session has expired.
+    pub async fn signed_in_personas(&self) -> Result<Vec<String>, String> {
+        let rows: Vec<(String,)> = sqlx_core::query_as::query_as(
+            "SELECT label FROM sensei.personas \
+              WHERE verified_at IS NOT NULL \
+              ORDER BY label",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| format!("signed_in_personas: {e}"))?;
+        Ok(rows.into_iter().map(|r| r.0).collect())
+    }
+
     /// Create a persona, or return the existing one with that label.
     ///
     /// Idempotent on `lower(label)` so a re-run of a seed/backfill converges
