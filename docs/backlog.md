@@ -19,26 +19,35 @@ Work is tracked as **GitHub issues** in [`sensei-hq/sensei`](https://github.com/
 
 **Found 2026-08-28**, publishing four new commands and an agent.
 
+> **Corrected 2026-08-28.** The first draft of this entry claimed *"the pull side does not exist"*.
+> **False** — `sensei upgrade` exists (CLI → `assistants::upgrade()`), pulls the plugin, and
+> already gets the marketplace qualifier right: `claude_code.rs::plugin_update_args()` returns
+> `["plugin","update","sensei@sensei-marketplace"]`, and its comment documents the exact failure I
+> hit independently — *"a bare `sensei` is rejected by Claude Code with 'Plugin not found'
+> (verified live)"*. Found by reading the code rather than reasoning about it, which is the whole
+> point of the claims discipline this project just adopted. The real gap is narrower and is below.
+
 `sensei_bootstrap::health` resolves five components — `postgres`, `ollama`, `sensei`, `database`,
-`daemon` — and each has an install/upgrade resolver. `sensei_install` runs `brew install sensei`,
-so **the binary self-upgrades**. Nothing covers the half the user actually types at: the Claude
-Code plugin, its commands, agents and skills.
+`daemon` — each with an install/upgrade resolver, so **the binary self-upgrades**. `sensei upgrade`
+covers the plugin, but it is a **manual command, not a health component**: nothing detects that the
+plugin is stale, so nothing prompts you to run it.
 
-`make bump` tags, publishes, and syncs the marketplace subtree. So the *publish* side is complete
-and the *pull* side does not exist — the assets reach GitHub and stop there.
-
-**It is worse than "no automatic update", because the manual path reports success:**
+**The real defect: `claude plugin update` is gated on VERSION, not content.** Publishing four new
+commands and an agent without bumping the version produced:
 
 ```
-$ claude plugin update sensei@sensei-marketplace
-✔ sensei is already at the latest version (0.9.1)      ← serving the OLD review.md
+$ claude plugin update sensei@sensei-marketplace     # the correct, qualified form
+✔ sensei is already at the latest version (0.9.1)    ← still serving the OLD review.md
 ```
 
-Updates are gated on the plugin **version**, not on content. Any command/agent/skill change
-between releases is invisible: the marketplace clone updates, the cache does not, and the CLI
-says you are current. There is no `--force`. The only way through was
-`claude plugin uninstall` + `install`, and that only worked because the plugin carries no
-`userConfig` to lose.
+So every asset change *between* releases is invisible, whichever path you use — `sensei upgrade`
+shells out to the same version-gated command. There is no `--force`; `uninstall` + `install` was
+the only way through, and that was only safe because the plugin carries no `userConfig` to lose.
+
+**The symptom, restated:**
+
+the marketplace clone updates, the cache does not, and the CLI says you are current — so the
+staleness is discovered when a command behaves like last month's.
 
 `make bump`'s own comment already warns about the sibling of this bug — the `.claude-plugin`
 manifests being what Claude Code reads to decide "is there an update". Same trap, one level up:
@@ -46,16 +55,17 @@ bumping fixes it for a release, and nothing fixes it between releases.
 
 **Wanted**
 
-1. A sixth health component (`plugin`?) that compares the installed plugin's `gitCommitSha`
-   against the marketplace `HEAD`, not just its version. The install record already stores the
-   sha — `installed_plugins.json` had `56373b4` while the marketplace was at `8b3f179`.
-2. A resolver that applies the update. Given no `--force`, that is uninstall+reinstall today, so
-   it must first check for `userConfig` and restore it — a resolver that silently drops a user's
-   plugin config is worse than the drift.
-3. Decide whether `bump` should bump the plugin version on *any* asset change, which would make
-   the supported path work. Cheap, but it means a version bump for a typo fix in a command.
-4. Surface it in the desktop app's health screen like the other five, so "your sensei is stale"
-   is visible rather than something you discover when a command behaves like last month's.
+1. A sixth health component (`plugin`?) comparing the installed plugin's `gitCommitSha` against the
+   marketplace `HEAD`, not its version. The install record already stores the sha —
+   `installed_plugins.json` held `56373b4` while the marketplace was at `8b3f179`, so the drift is
+   detectable today and nothing looks.
+2. A resolver that applies it. With no `--force` that means uninstall+reinstall, so it must first
+   read any `userConfig` and restore it afterwards — a resolver that silently drops a user's plugin
+   config is worse than the drift it fixes.
+3. Decide whether `bump` should bump the plugin version on *any* asset change, which would make the
+   supported path work. Cheap, but it means a version bump for a typo fix in a command.
+4. Surface it in the desktop app's health screen beside the other five, and have `sensei doctor`
+   report it — the command that already exists to answer "is my install healthy?".
 
 ## Repository sharing: `visibility` is INTENT, and forge-public is a different gate
 
