@@ -86,6 +86,60 @@ pub async fn from_config(
     ticker(secs, first)
 }
 
+/// Run `tick` on the schedule stored for `name`, forever.
+///
+/// The whole loop for a scheduled worker: wake on the poll cadence, re-read the
+/// schedule, ask [`schedule::should_run`], and either run the tick and record
+/// the outcome or skip with a reason. Each worker keeps its own `tick` — what to
+/// do is code; when to do it is data.
+///
+/// The schedule is re-read EVERY poll, not cached at startup, so a user changing
+/// a cadence or disabling a worker takes effect without restarting the daemon.
+/// That is the whole point of making it editable.
+///
+/// A skip is logged at debug with its reason rather than silently: "why has this
+/// not run?" has four different answers and only some are settings a user can
+/// act on.
+pub async fn run_scheduled<F, Fut>(pg: std::sync::Arc<PgStore>, name: &'static str, tick: F)
+where
+    F: Fn() -> Fut,
+    Fut: std::future::Future<Output = Result<(), String>>,
+{
+    use crate::tasks::schedule::{Skip, poll_secs, should_run};
+
+    // Poll cadence comes from the schedule, but a missing row must not stop the
+    // loop from ever looking again — the row may be seeded by a later deploy.
+    let initial = pg.load_schedule(name).await.ok().flatten();
+    let poll = initial.as_ref().map_or(60, |s| poll_secs(s.interval_secs));
+    let mut t = ticker(poll, FirstTick::Immediate);
+
+    loop {
+        t.tick().await;
+
+        let Some(stored) = pg.load_schedule(name).await.ok().flatten() else {
+            tracing::debug!(worker = name, reason = ?Skip::Unscheduled, "scheduled: skipped");
+            continue;
+        };
+        let now_utc = chrono::Utc::now();
+        let now_local = chrono::Local::now().naive_local();
+
+        if let Err(skip) = should_run(&stored.rules(), now_local, now_utc, stored.last_run_at) {
+            tracing::debug!(worker = name, reason = ?skip, "scheduled: skipped");
+            continue;
+        }
+
+        let outcome = tick().await;
+        if let Err(e) = &outcome {
+            tracing::warn!(worker = name, error = %e, "scheduled: tick failed");
+        }
+        if let Err(e) = pg.mark_schedule_run(name, outcome).await {
+            // Non-fatal: the work happened; only the bookkeeping failed. Dying
+            // here would stop a healthy worker over a write to a status column.
+            tracing::warn!(worker = name, error = %e, "scheduled: could not record the run");
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
