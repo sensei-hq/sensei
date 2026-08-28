@@ -9661,6 +9661,159 @@ async fn two_personas_cannot_share_one_dojo_login() {
 }
 
 #[tokio::test]
+async fn a_held_back_scope_cannot_crowd_the_push_window() {
+    // Live bug #4, and the fix had NO test: every call site passed both values of
+    // `metric_scope`, so the filter was a tautology. Held-back user-scoped rows
+    // once filled the window and a pass pushed 66 of 132; had they filled it
+    // entirely it would have pushed NOTHING while reporting success.
+    let s = pg_store().await;
+    let uniq = uuid::Uuid::new_v4();
+    let (pid, rid) = seed_sync_fixture(&s, &uniq).await;
+    let key = format!("test/bare-{uniq}");
+    let mid = seed_metric(&s, &format!("_test:crowd:{uniq}"), "ComputeFtr", 0, None).await;
+
+    // The pushable row is OLDER, so a limit applied before the scope filter would
+    // hand every slot to the newer user-scoped rows and miss it entirely.
+    s.upsert_project_metric_repo(
+        &mid,
+        &rid,
+        "repo",
+        None,
+        None,
+        chrono::NaiveDate::from_ymd_opt(2020, 1, 1).unwrap(),
+        "daily",
+        1.0,
+        &serde_json::json!({}),
+        "measured",
+    )
+    .await
+    .unwrap();
+    for d in 10..14 {
+        s.upsert_project_metric_repo(
+            &mid,
+            &rid,
+            "user",
+            Some("crowd@example.com"),
+            None,
+            chrono::NaiveDate::from_ymd_opt(2026, 8, d).unwrap(),
+            "daily",
+            9.0,
+            &serde_json::json!({}),
+            "measured",
+        )
+        .await
+        .unwrap();
+    }
+
+    let got = s.unpushed_metric_rows(&["repo"], &[&key], 2).await.unwrap();
+    let repo_rows = got.iter().filter(|r| r.repo_key == key && r.scope == "repo").count();
+
+    crate::tasks::test_support::cleanup_metrics_fixture(&s, &pid, None, &[]).await;
+    assert!(repo_rows >= 1, "the pushable row must survive a window full of held-back rows");
+    assert!(got.iter().all(|r| r.scope == "repo"), "no held-back scope may enter the batch");
+}
+
+#[tokio::test]
+async fn the_allow_list_cannot_be_crowded_out_either() {
+    // Same defect one axis over: the plan's allow-list was filtered in Rust AFTER
+    // the LIMIT, so 218 of 500 slots went to repositories that can never be in any
+    // plan — rows that never drain and so hold the window forever.
+    let s = pg_store().await;
+    let uniq = uuid::Uuid::new_v4();
+    let (pid, rid) = seed_sync_fixture(&s, &uniq).await;
+    let allowed_key = format!("test/bare-{uniq}");
+    let mid = seed_metric(&s, &format!("_test:allow:{uniq}"), "ComputeFtr", 0, None).await;
+    s.upsert_project_metric_repo(
+        &mid,
+        &rid,
+        "repo",
+        None,
+        None,
+        chrono::NaiveDate::from_ymd_opt(2019, 1, 1).unwrap(),
+        "daily",
+        1.0,
+        &serde_json::json!({}),
+        "measured",
+    )
+    .await
+    .unwrap();
+
+    // A second shared repository with NEWER rows that the plan does not allow.
+    let other_pid =
+        s.create_project(&format!("_test:allow:other:{uniq}"), None, None).await.unwrap();
+    let other_uniq = uuid::Uuid::new_v4();
+    let other_rid =
+        crate::tasks::test_support::seed_bare_repository(&s, &other_pid, &other_uniq).await;
+    sqlx_core::query::query("UPDATE sensei.repositories SET visibility = 'shared' WHERE id = $1")
+        .bind(other_rid)
+        .execute(s.pool())
+        .await
+        .unwrap();
+    for d in 20..24 {
+        s.upsert_project_metric_repo(
+            &mid,
+            &other_rid,
+            "repo",
+            None,
+            None,
+            chrono::NaiveDate::from_ymd_opt(2026, 8, d).unwrap(),
+            "daily",
+            5.0,
+            &serde_json::json!({}),
+            "measured",
+        )
+        .await
+        .unwrap();
+    }
+
+    let got = s.unpushed_metric_rows(&["repo"], &[&allowed_key], 2).await.unwrap();
+    let mine = got.iter().filter(|r| r.repo_key == allowed_key).count();
+
+    crate::tasks::test_support::cleanup_metrics_fixture(&s, &pid, None, &[]).await;
+    crate::tasks::test_support::cleanup_metrics_fixture(&s, &other_pid, None, &[]).await;
+    assert!(mine >= 1, "an allowed repo's row must survive a window full of unallowed ones");
+    assert!(got.iter().all(|r| r.repo_key == allowed_key), "only allowed keys may be batched");
+}
+
+#[tokio::test]
+async fn two_rows_that_differ_in_every_key_field_arrive_different() {
+    // The C4-remediation test asserted each field against a fixture whose value
+    // WAS the constant a broken projection emits — `assert_eq!(commit_sha, None)`
+    // under a fixture seeding NULL proves nothing. A second, contrasting row makes
+    // the projection track the ROW instead of a literal.
+    let s = pg_store().await;
+    let uniq = uuid::Uuid::new_v4();
+    let (pid, rid) = seed_sync_fixture(&s, &uniq).await;
+    let key = format!("test/bare-{uniq}");
+    let mid = seed_metric(&s, &format!("_test:contrast:{uniq}"), "ComputeFtr", 0, None).await;
+    s.upsert_project_metric_repo(
+        &mid,
+        &rid,
+        "repo",
+        None,
+        Some("deadbeef"),
+        chrono::NaiveDate::from_ymd_opt(2021, 3, 4).unwrap(),
+        "session",
+        7.5,
+        &serde_json::json!({ "n": 7 }),
+        "estimated",
+    )
+    .await
+    .unwrap();
+
+    let rows = s.unpushed_metric_rows(&["repo", "user"], &[&key], 500).await.unwrap();
+    let got = rows.iter().find(|r| r.commit_sha.as_deref() == Some("deadbeef")).cloned();
+    crate::tasks::test_support::cleanup_metrics_fixture(&s, &pid, None, &[]).await;
+
+    let m = got.expect("the contrasting row is queued");
+    assert_eq!(m.scope, "repo", "scope tracks the row, not a literal 'user'");
+    assert_eq!(m.grain, "session", "grain tracks the row, not a literal 'daily'");
+    assert_eq!(m.source, "estimated", "an estimate must not arrive as 'measured'");
+    assert_eq!(m.commit_sha.as_deref(), Some("deadbeef"), "a sha must not be nulled out");
+    assert_eq!(m.props["n"], 7, "props travels, not an empty object");
+}
+
+#[tokio::test]
 async fn a_pushable_row_carries_every_field_the_dojo_needs() {
     // Claim C4 was FALSE: the push query selected only
     // (id, repo_key, metric, computed_on, value), but the ingest endpoint keys on
@@ -9672,7 +9825,10 @@ async fn a_pushable_row_carries_every_field_the_dojo_needs() {
     let uniq = uuid::Uuid::new_v4();
     let (pid, _rid) = seed_sync_fixture(&s, &uniq).await;
 
-    let rows = s.unpushed_metric_rows(&["repo", "user"], 500).await.unwrap();
+    let rows = s
+        .unpushed_metric_rows(&["repo", "user"], &[&format!("test/bare-{uniq}")], 500)
+        .await
+        .unwrap();
     let mine = rows.iter().find(|r| r.repo_key == format!("test/bare-{uniq}"));
 
     let got = mine.cloned();
@@ -9964,7 +10120,10 @@ async fn a_pulled_row_is_never_pushed_back() {
     let uniq = uuid::Uuid::new_v4();
     let (pid, rid) = seed_sync_fixture(&s, &uniq).await;
 
-    let mine = s.unpushed_metric_rows(&["repo", "user"], 100).await.unwrap();
+    let mine = s
+        .unpushed_metric_rows(&["repo", "user"], &[&format!("test/bare-{uniq}")], 100)
+        .await
+        .unwrap();
     let before = mine.iter().filter(|r| r.repo_key == format!("test/bare-{uniq}")).count();
 
     // Same row, but marked as dojo's.
@@ -9975,7 +10134,10 @@ async fn a_pulled_row_is_never_pushed_back() {
     .execute(s.pool())
     .await
     .unwrap();
-    let after = s.unpushed_metric_rows(&["repo", "user"], 100).await.unwrap();
+    let after = s
+        .unpushed_metric_rows(&["repo", "user"], &[&format!("test/bare-{uniq}")], 100)
+        .await
+        .unwrap();
     let after_n = after.iter().filter(|r| r.repo_key == format!("test/bare-{uniq}")).count();
 
     crate::tasks::test_support::cleanup_metrics_fixture(&s, &pid, None, &[]).await;
@@ -9997,7 +10159,10 @@ async fn a_private_repository_is_skipped_not_queued() {
         .await
         .unwrap();
 
-    let rows = s.unpushed_metric_rows(&["repo", "user"], 100).await.unwrap();
+    let rows = s
+        .unpushed_metric_rows(&["repo", "user"], &[&format!("test/bare-{uniq}")], 100)
+        .await
+        .unwrap();
     let n = rows.iter().filter(|r| r.repo_key == format!("test/bare-{uniq}")).count();
 
     crate::tasks::test_support::cleanup_metrics_fixture(&s, &pid, None, &[]).await;
@@ -10015,7 +10180,7 @@ async fn a_recomputed_row_is_pushed_again() {
     let key = format!("test/bare-{uniq}");
 
     let ids: Vec<uuid::Uuid> = s
-        .unpushed_metric_rows(&["repo", "user"], 100)
+        .unpushed_metric_rows(&["repo", "user"], &[&format!("test/bare-{uniq}")], 100)
         .await
         .unwrap()
         .iter()
@@ -10024,7 +10189,7 @@ async fn a_recomputed_row_is_pushed_again() {
         .collect();
     s.mark_metric_rows_shared(&ids).await.unwrap();
     let after_push = s
-        .unpushed_metric_rows(&["repo", "user"], 100)
+        .unpushed_metric_rows(&["repo", "user"], &[&format!("test/bare-{uniq}")], 100)
         .await
         .unwrap()
         .iter()
@@ -10036,7 +10201,7 @@ async fn a_recomputed_row_is_pushed_again() {
             "UPDATE sensei.repository_metrics SET modified_at = now() + interval '1 second'               WHERE repository_id = $1")
             .bind(rid).execute(s.pool()).await.unwrap();
     let after_recompute = s
-        .unpushed_metric_rows(&["repo", "user"], 100)
+        .unpushed_metric_rows(&["repo", "user"], &[&format!("test/bare-{uniq}")], 100)
         .await
         .unwrap()
         .iter()
