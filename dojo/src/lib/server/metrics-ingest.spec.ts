@@ -131,6 +131,49 @@ describe('ingestMetrics', () => {
 		expect(db.tables.repository_metrics.rows[0].value).toBe(19);
 	});
 
+	it('keeps rows that differ only by commit_sha as separate rows', async () => {
+		// The destination unique key is 7 columns including commit_sha; the lookup
+		// used 4. Two same-day rows for different commits therefore overwrote each
+		// other while BOTH were counted accepted — and the daemon then marked both
+		// shared_at, so the lost value was never re-sent. `quality.rs` writes
+		// exactly this shape: one repo-scoped row per commit, re-scanned each pass.
+		// 6 groups / 34 rows in the live database would be destroyed.
+		const db = fakeDojoDb(tables());
+		const out = await ingestMetrics(db as never, ALICE, [
+			row({ commit_sha: 'aaa', value: 0.1 }),
+			row({ commit_sha: 'bbb', value: 0.2 })
+		]);
+		expect(out.rejected).toEqual([]);
+		expect(out.accepted).toBe(2);
+		expect(db.tables.repository_metrics.rows).toHaveLength(2);
+		expect(db.tables.repository_metrics.rows.map((r) => r.value).sort()).toEqual([0.1, 0.2]);
+	});
+
+	it('a repo_key registered under two tenants is rejected per row, not thrown', async () => {
+		// `dojo.repositories` is unique (tenant_id, repo_key) and its DDL says so
+		// deliberately: "ONE ROW PER (repo_key, tenant), not one globally. A
+		// consultant legitimately has the same repository under two clients."
+		// An unscoped `.maybeSingle()` then returns PGRST116 for two rows, which
+		// threw a 500 and killed the WHOLE batch — permanently, since nothing gets
+		// marked shared and the identical batch retries every cadence.
+		const t = tables();
+		t.memberships.rows.push({ id: 'm3', tenant_id: 't-consult', user_id: ALICE });
+		t.repositories.rows.push({
+			id: 'r-api-consult',
+			tenant_id: 't-consult',
+			repo_key: 'github.com/acme/api',
+			name: 'api'
+		});
+		const db = fakeDojoDb(t);
+		const out = await ingestMetrics(db as never, ALICE, [
+			row(),
+			row({ metric: 'churn', repo_key: 'github.com/acme/api', value: 3 })
+		]);
+		// Ambiguous is a per-row refusal naming itself; the batch survives.
+		expect(out.rejected.every((r) => r.reason === 'ambiguous')).toBe(true);
+		expect(out.rejected).toHaveLength(2);
+	});
+
 	it('accepts the good rows in a mixed batch and reports only the bad ones', async () => {
 		const db = fakeDojoDb(tables());
 		const out = await ingestMetrics(db as never, ALICE, [
