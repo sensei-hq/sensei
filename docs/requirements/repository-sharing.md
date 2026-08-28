@@ -90,17 +90,28 @@ Item 5 is the one that has burned this project repeatedly: a denial that reads a
 "nothing to sync" is indistinguishable from having nothing to sync. Every refusal
 names itself.
 
-**Reason codes are registered data, not string literals** (`dojo.share_reasons`),
-carrying a precedence so that a repository failing several ways at once reports
-the one to fix FIRST — rather than whichever SQL branch happened to run first.
+**Reason codes are registered data, not string literals** — and the registry is
+SHARED, not per-segment: `sensei.reason_codes` scoped by `domain`, so the same
+table answers "why didn't this schedule run" and "why wasn't governance pulled".
+See `docs/architecture/reason-codes.md`.
+
+Each code carries a `precedence` (so a repository failing several ways at once
+reports the one to fix FIRST, rather than whichever SQL branch ran first) and a
+`kind` — `normal | refusal | fault`. The `kind` matters: "we have not learned
+whether this repo is public yet" is NORMAL, nobody decided anything. Treating it
+as a refusal alarms a user about a state that will resolve itself.
 
 ### The general rule this establishes
 
-For anything configurable, three things belong together: **the setting as a row**
-(never a literal), **a listing that shows configured and default side by side**,
-and **a registered human-readable reason** for the current state. Without the
-third, "why is this off?" is answered by reading source code — which is how one
-question ends up with four different answers in four consumers.
+For anything configurable **or scheduled**, three things belong together: **the
+setting as a row** (never a literal), **a listing that shows configured and
+default side by side**, and **a registered human-readable reason** for the current
+state — with a remedy and an actor. Without the third, "why is this off?" is
+answered by reading source code, which is how one question ends up with four
+different answers in four consumers.
+
+`sensei.schedules` did the first two. `sensei.reason_codes` adds the third and
+makes it reusable, rather than a fourth bespoke vocabulary.
 
 ## Acceptance criteria
 
