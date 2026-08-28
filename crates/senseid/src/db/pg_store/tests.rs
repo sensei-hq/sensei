@@ -9661,6 +9661,48 @@ async fn two_personas_cannot_share_one_dojo_login() {
 }
 
 #[tokio::test]
+async fn a_repository_records_the_tenant_it_was_mapped_to() {
+    // D2's payoff. The daemon learns the tenant from the dōjō's registration
+    // response and has to keep it; without this the mapping is recomputed every
+    // cycle and `sensei.repositories.tenant_id` stays permanently NULL.
+    let s = pg_store().await;
+    let key = format!("ztest-host/acme/{}", uuid::Uuid::new_v4());
+    let tenant = uuid::Uuid::new_v4();
+    sqlx_core::query::query(
+        "INSERT INTO sensei.repositories(repo_key, name) VALUES($1, 'ztest-repo')",
+    )
+    .bind(&key)
+    .execute(s.pool())
+    .await
+    .unwrap();
+
+    let wrote = s.set_repository_tenant(&key, tenant).await.unwrap();
+    let stored: (Option<uuid::Uuid>,) = sqlx_core::query_as::query_as(
+        "SELECT tenant_id FROM sensei.repositories WHERE repo_key = $1",
+    )
+    .bind(&key)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    // Re-running a cycle must not churn `modified_at` on an unchanged mapping.
+    let again = s.set_repository_tenant(&key, tenant).await.unwrap();
+    // A repo_key this database has never seen is 0 rows, not an error and not a
+    // fabricated insert — the dōjō may map repositories another machine shared.
+    let unknown = s.set_repository_tenant("ztest-host/never/seen", tenant).await.unwrap();
+
+    sqlx_core::query::query("DELETE FROM sensei.repositories WHERE repo_key = $1")
+        .bind(&key)
+        .execute(s.pool())
+        .await
+        .unwrap();
+
+    assert_eq!(wrote, 1, "the mapping is stored");
+    assert_eq!(stored.0, Some(tenant), "and it is the tenant the dōjō named");
+    assert_eq!(again, 0, "re-storing the same tenant writes nothing");
+    assert_eq!(unknown, 0, "an unknown repo_key writes nothing and does not error");
+}
+
+#[tokio::test]
 async fn signed_in_personas_lists_only_the_ones_that_completed_a_sign_in() {
     // The registry that replaced the withdrawn `sensei.dojo_personas` table
     // (docs/spec/dojo/daemon-sync.md §3). `verified_at` is the predicate because

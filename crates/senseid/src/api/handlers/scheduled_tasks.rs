@@ -37,6 +37,7 @@ const DESCRIPTIONS: &[(&str, &str)] = &[
     ("analyzer", "Session/log analyzer — findings, recommendations, learned memories"),
     ("capture_drain", "Capture-spool drain — re-imports hook events dead-lettered to disk"),
     ("contribute", "Dōjō upstream contribute cadence"),
+    ("dojo_sync", "Dōjō sync — maps shared repositories to tenants and fetches the sync plan"),
     ("index_audit", "Index integrity audit (read-only drift check)"),
     ("library_update", "Library-update detection — a new upstream version → a recommendation"),
     ("log_prune", "Structured-log TTL pruning"),

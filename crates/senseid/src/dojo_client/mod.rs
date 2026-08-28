@@ -13,3 +13,4 @@ pub mod dojo_auth;
 pub mod pkce;
 pub mod session;
 pub mod settings;
+pub mod user_plane;
