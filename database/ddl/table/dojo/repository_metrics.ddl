@@ -35,7 +35,18 @@ create table if not exists repository_metrics (
 , props         jsonb       not null default '{}'
 , source        text        not null default 'measured'
 , pushed_at     timestamptz not null default now()
-, unique (metric_id, repository_id, scope, principal_id, commit_sha, computed_on, grain)
+  -- NULLS NOT DISTINCT, matching sensei.repository_metrics. Without it the
+  -- constraint fires for NOTHING the daemon pushes: every repo-scoped row carries
+  -- principal_id = NULL, and day-grain rows carry commit_sha = NULL, so under the
+  -- default NULLS DISTINCT two byte-identical rows are both accepted. Verified
+  -- against Postgres 17 before adding this — two identical inserts gave 2 rows.
+  --
+  -- That made idempotence rest entirely on a non-atomic select-then-insert in
+  -- TypeScript: two machines pushing the same (metric, repo, day) both miss the
+  -- SELECT, both INSERT, and every later push for that repository then fails on
+  -- PGRST116 forever. This clause is what makes the re-push genuinely idempotent,
+  -- and it is what spec claim C5 was credited with and did not have.
+, unique nulls not distinct (metric_id, repository_id, scope, principal_id, commit_sha, computed_on, grain)
 );
 
 create index if not exists repository_metrics_lookup

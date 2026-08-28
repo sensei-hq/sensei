@@ -1,7 +1,8 @@
 //! Sync bookkeeping — what has been shared with dōjō, and what still needs to be.
 //!
-//! The transport itself is Phase 7's remaining work; this is the state it reads
-//! and writes. Keeping them separate means the decision logic — *should this row
+//! The transport is `dojo_client/user_plane.rs` (`push_metrics`) driven by
+//! `tasks/dojo_sync.rs::push_allowed`; this module is the state it reads and
+//! writes. Keeping them separate means the decision logic — *should this row
 //! be pushed, may this one be skipped* — is testable now, without a Supabase
 //! session or a network.
 
