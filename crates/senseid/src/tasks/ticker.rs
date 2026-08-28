@@ -1,11 +1,9 @@
 //! Periodic-task timing, in one place.
 //!
 //! Twelve long-lived tasks in this daemon wake on an interval, and every one of
-//! them used to build its own: read a config key, parse it, fall back on a bad
-//! value, construct a `tokio::time::interval`, and decide whether the first tick
-//! fires at boot. Eight carried a byte-identical `parse_interval` — same
-//! `trim().parse().filter(>0).unwrap_or(default)` — each with its own
-//! near-duplicate test.
+//! them used to build its own ticker, with eight carrying a byte-identical
+//! `parse_interval`. That duplication is gone: the cadence now lives in
+//! `sensei.schedules`, and `run_scheduled` is the one loop they all share.
 //!
 //! That is the *timing* concern, and it is genuinely the same everywhere. What
 //! is NOT the same is what each task decides to do when it wakes: the analyzer
@@ -22,68 +20,22 @@ use std::time::Duration;
 
 use crate::db::pg_store::PgStore;
 
-/// Whether the first tick fires at boot or after one full interval.
-///
-/// `tokio::time::interval` fires immediately by default, and most callers WANT
-/// that — a boot reconcile, a drain on startup, a metrics wave from a freshly
-/// booted daemon. But not all: the activity pruner must not reclaim sessions the
-/// instant the daemon starts, because capture is still re-materialising them and
-/// pruning first would win a race it should lose.
-///
-/// Making that a named choice rather than a hand-written `ticker.tick().await`
-/// before the loop means the decision is visible at the call site instead of
-/// hidden in a comment four lines up.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FirstTick {
-    /// Fire at boot, then every interval. The common case.
-    Immediate,
-    /// Wait one full interval before the first run.
-    AfterOneInterval,
-}
-
-/// Resolve a tick interval (seconds) from a raw config value.
-///
-/// Missing, unparseable, and zero all fall back to `default_secs`. Zero matters:
-/// a `tokio::time::interval` of zero busy-loops, so a typo'd config value would
-/// spin a core rather than fail loudly. Pure, so it is testable without a clock
-/// or a database.
-pub fn interval_secs(cfg: Option<String>, default_secs: u64) -> u64 {
-    cfg.and_then(|v| v.trim().parse::<u64>().ok()).filter(|n| *n > 0).unwrap_or(default_secs)
-}
-
 /// Build a ticker for an already-resolved interval.
-pub fn ticker(secs: u64, first: FirstTick) -> tokio::time::Interval {
-    let period = Duration::from_secs(secs);
-    // `interval_at` is what makes FirstTick real: starting one period out is the
-    // supported way to skip the boot tick, rather than an un-awaited
-    // `ticker.tick()` before the loop that a reader has to spot.
-    let start = match first {
-        FirstTick::Immediate => tokio::time::Instant::now(),
-        FirstTick::AfterOneInterval => tokio::time::Instant::now() + period,
-    };
-    let mut t = tokio::time::interval_at(start, period);
+/// Every ticker fires immediately and then every `secs`.
+///
+/// There used to be a `FirstTick` choice, for the activity pruner's deliberate
+/// refusal to run at boot. Deferring a worker's FIRST RUN turned out to be a
+/// SCHEDULE concern rather than a poll one — the poll is capped at 60s, so
+/// skipping one poll would delay by a minute, not by the interval the pruner
+/// needs. `PgStore::defer_schedule_start` does it properly, and this parameter
+/// had no callers left.
+pub fn ticker(secs: u64) -> tokio::time::Interval {
+    let mut t = tokio::time::interval(Duration::from_secs(secs));
     // A missed tick must not cause a burst of catch-up ticks. Every caller here
     // is idempotent-per-tick (a pruner, a re-scan, a metrics wave), so catching
     // up buys nothing and a stalled machine would wake to a thundering herd.
     t.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     t
-}
-
-/// Read the interval from config and build the ticker — the whole timing setup
-/// for a periodic task, in one call.
-///
-/// A config-read failure is treated as "unset": the task keeps its default rather
-/// than refusing to start. A periodic task that dies because the config table was
-/// briefly unavailable is worse than one running at its default cadence.
-pub async fn from_config(
-    pg: &PgStore,
-    key: &str,
-    default_secs: u64,
-    first: FirstTick,
-) -> tokio::time::Interval {
-    let secs = interval_secs(pg.get_config(key).await.ok().flatten(), default_secs);
-    tracing::debug!(key, interval_secs = secs, "ticker: resolved interval");
-    ticker(secs, first)
 }
 
 /// Run `tick` on the schedule stored for `name`, forever.
@@ -105,13 +57,44 @@ where
     F: Fn() -> Fut,
     Fut: std::future::Future<Output = Result<(), String>>,
 {
+    run_scheduled_inner(pg, name, false, tick).await
+}
+
+/// As [`run_scheduled`], but a never-run worker waits a full interval before its
+/// first pass instead of firing at boot.
+///
+/// For workers whose whole point is not to run at startup — the activity pruner
+/// must not reclaim sessions while capture is still re-materialising them.
+pub async fn run_scheduled_deferred<F, Fut>(
+    pg: std::sync::Arc<PgStore>,
+    name: &'static str,
+    tick: F,
+) where
+    F: Fn() -> Fut,
+    Fut: std::future::Future<Output = Result<(), String>>,
+{
+    run_scheduled_inner(pg, name, true, tick).await
+}
+
+async fn run_scheduled_inner<F, Fut>(
+    pg: std::sync::Arc<PgStore>,
+    name: &'static str,
+    defer_first: bool,
+    tick: F,
+) where
+    F: Fn() -> Fut,
+    Fut: std::future::Future<Output = Result<(), String>>,
+{
     use crate::tasks::schedule::{Skip, poll_secs, should_run};
 
     // Poll cadence comes from the schedule, but a missing row must not stop the
     // loop from ever looking again — the row may be seeded by a later deploy.
+    if defer_first && let Err(e) = pg.defer_schedule_start(name).await {
+        tracing::warn!(worker = name, error = %e, "scheduled: could not defer the first run");
+    }
     let initial = pg.load_schedule(name).await.ok().flatten();
     let poll = initial.as_ref().map_or(60, |s| poll_secs(s.interval_secs));
-    let mut t = ticker(poll, FirstTick::Immediate);
+    let mut t = ticker(poll);
 
     loop {
         t.tick().await;
@@ -156,47 +139,18 @@ mod tests {
             }
         };
     }
-
-    #[test]
-    fn interval_falls_back_on_missing_unparseable_and_zero() {
-        // The three ways a config value fails to name an interval. Zero is the
-        // dangerous one — it busy-loops rather than erroring.
-        assert_eq!(interval_secs(None, 3600), 3600, "missing");
-        assert_eq!(interval_secs(Some("nope".into()), 3600), 3600, "unparseable");
-        assert_eq!(interval_secs(Some("0".into()), 3600), 3600, "zero would busy-loop");
-        assert_eq!(interval_secs(Some("".into()), 3600), 3600, "empty");
-        assert_eq!(interval_secs(Some("-5".into()), 3600), 3600, "negative");
-    }
-
-    #[test]
-    fn interval_honours_a_valid_value_including_whitespace() {
-        assert_eq!(interval_secs(Some("60".into()), 3600), 60);
-        assert_eq!(interval_secs(Some("  60\n".into()), 3600), 60, "trimmed");
-    }
-
     #[tokio::test(start_paused = true)]
-    async fn immediate_fires_at_boot_and_after_one_interval_does_not() {
-        // The distinction the activity pruner depends on: it must NOT prune the
-        // instant the daemon starts, or it wins a race against capture that it
-        // should lose.
-        let mut immediate = ticker(60, FirstTick::Immediate);
-        assert!(ready_now!(immediate), "Immediate must fire at boot");
-
-        let mut delayed = ticker(60, FirstTick::AfterOneInterval);
-        assert!(!ready_now!(delayed), "AfterOneInterval must NOT fire at boot");
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn after_one_interval_fires_once_the_interval_elapses() {
-        let mut t = ticker(60, FirstTick::AfterOneInterval);
-        tokio::time::advance(Duration::from_secs(61)).await;
-        assert!(ready_now!(t), "it must fire after the interval elapses");
+    async fn a_ticker_fires_at_boot() {
+        // Every caller wants this now; deferring a first RUN is a schedule
+        // concern (PgStore::defer_schedule_start), not a poll one.
+        let mut t = ticker(60);
+        assert!(ready_now!(t), "the first tick must fire immediately");
     }
 
     #[tokio::test(start_paused = true)]
     async fn a_missed_tick_does_not_burst() {
         // A laptop asleep for an hour must not wake to sixty queued ticks.
-        let mut t = ticker(60, FirstTick::Immediate);
+        let mut t = ticker(60);
         assert!(ready_now!(t), "boot tick");
         tokio::time::advance(Duration::from_secs(600)).await; // ten intervals missed
         assert!(ready_now!(t), "one catch-up tick is expected");

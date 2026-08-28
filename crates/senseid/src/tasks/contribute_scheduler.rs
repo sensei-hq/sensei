@@ -39,12 +39,7 @@ use crate::collective::anonymize::{
 use crate::collective::preferences;
 use crate::db::pg_store::PgStore;
 use crate::dojo::contribute::{PgOutbox, StageOutcome, load_batch, stage_contribution};
-use crate::tasks::ticker::{self, FirstTick};
-
-/// How often the scheduler WAKES to check whether a batch is due. The cadence
-/// (`daily` / `weekly`) is enforced by [`contribute_due`]; this is only the poll
-/// granularity, so an hourly check still fires a due batch promptly.
-const CHECK_INTERVAL_SECS: u64 = 3600;
+use crate::tasks::ticker;
 
 /// `sensei.config` key holding the ms-epoch of the last cadence batch we PREPARED
 /// into the outbox. Gates re-preparing within a cadence window (mirrors the
@@ -179,15 +174,22 @@ pub async fn maybe_prepare_contribution_batch<G: Generalizer>(
 /// it never publishes / egresses.
 pub fn spawn(pg: Arc<PgStore>, gateway: Arc<gateway::Gateway>) {
     tokio::spawn(async move {
-        let generalizer = GatewayGeneralizer::new(gateway);
-        let mut ticker = ticker::ticker(CHECK_INTERVAL_SECS, FirstTick::Immediate);
-        loop {
-            ticker.tick().await;
-            let now_ms = chrono::Utc::now().timestamp_millis();
-            // Non-fatal: maybe_prepare logs its own failures and returns an
-            // outcome; the loop keeps ticking regardless.
-            let _ = maybe_prepare_contribution_batch(&pg, &generalizer, now_ms).await;
-        }
+        // Cadence lives in `sensei.schedules` (name `contribute`). The
+        // generalizer is built once and shared across ticks — it is stateless
+        // per pass, so it does not need rebuilding each time.
+        let generalizer = Arc::new(GatewayGeneralizer::new(gateway));
+        let store = pg.clone();
+        ticker::run_scheduled(pg, "contribute", move || {
+            let (pg, generalizer) = (store.clone(), generalizer.clone());
+            async move {
+                let now_ms = chrono::Utc::now().timestamp_millis();
+                // Non-fatal: maybe_prepare logs its own failures and returns an
+                // outcome; a staged-nothing pass is a success, not an error.
+                let _ = maybe_prepare_contribution_batch(&pg, generalizer.as_ref(), now_ms).await;
+                Ok(())
+            }
+        })
+        .await;
     });
 }
 

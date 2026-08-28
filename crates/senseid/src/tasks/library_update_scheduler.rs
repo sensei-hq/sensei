@@ -17,7 +17,7 @@ use crate::db::pg_store::PgStore;
 use crate::libraries::advisory::{Advisory, OsvVulnSource, VulnSource, security_verdict};
 use crate::libraries::registry::{HttpVersionSource, VersionSource};
 use crate::libraries::version::{Bump, UpdateAction, classify_bump, update_action};
-use crate::tasks::ticker::{self, FirstTick};
+use crate::tasks::ticker;
 
 /// True iff the docs still need a re-index for `latest` — the applied marker is
 /// absent or stale. Equal marker ⇒ `index_library` already stamped a confirmed,
@@ -128,7 +128,6 @@ async fn maybe_enqueue_reindex(
     tracing::info!(lib = %name, %latest, "library_update_scheduler: enqueued docs re-index");
 }
 
-const DEFAULT_INTERVAL_SECS: u64 = 86_400; // daily
 const DEFAULT_CHECK_TTL_SECS: i64 = 82_800; // ~23h — reuse a lib's cached latest if newer
 
 fn parse_ttl(cfg: Option<String>) -> i64 {
@@ -145,19 +144,16 @@ pub fn spawn(queue: Arc<TaskQueue>, pg: Arc<PgStore>) {
 }
 
 async fn run(queue: Arc<TaskQueue>, pg: Arc<PgStore>) {
-    let mut ticker = ticker::from_config(
-        &pg,
-        "library.update_interval_secs",
-        DEFAULT_INTERVAL_SECS,
-        FirstTick::Immediate,
-    )
+    // Cadence lives in `sensei.schedules` (name `library_update`).
+    let store = pg.clone();
+    ticker::run_scheduled(pg, "library_update", move || {
+        let (queue, pg) = (queue.clone(), store.clone());
+        async move {
+            tick(&pg, &queue, &HttpVersionSource, &OsvVulnSource).await;
+            Ok(())
+        }
+    })
     .await;
-    let src = HttpVersionSource;
-    let vuln = OsvVulnSource;
-    loop {
-        ticker.tick().await; // first tick fires immediately → a boot pass
-        tick(&pg, &queue, &src, &vuln).await;
-    }
 }
 
 /// One pass. Testable with a stub [`VersionSource`]. Never panics; every failure is

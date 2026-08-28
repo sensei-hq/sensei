@@ -303,6 +303,67 @@ mod tests {
         assert_eq!(poll_secs(0), 1, "never zero — that would busy-loop");
     }
 
+    /// The seed datafile that ships the default schedule for every worker.
+    /// Parsed rather than mocked: it is what actually reaches the database, and
+    /// a cadence claim tested against a Rust constant would no longer be testing
+    /// the thing that runs.
+    fn seed_intervals() -> std::collections::HashMap<String, u64> {
+        let path =
+            concat!(env!("CARGO_MANIFEST_DIR"), "/../../database/import/staging/schedules.jsonl");
+        std::fs::read_to_string(path)
+            .expect("the schedules seed datafile must exist")
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .map(|l| {
+                let v: serde_json::Value = serde_json::from_str(l).expect("each seed line is JSON");
+                (
+                    v["name"].as_str().expect("name").to_string(),
+                    v["interval_secs"].as_u64().expect("interval_secs"),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_seed_covers_every_schedulable_worker_with_a_usable_cadence() {
+        // The datafile is the source of truth for defaults now. A worker missing
+        // from it has no row, so it never runs — and the DB CHECK rejects a zero
+        // interval, so a typo here fails the deploy rather than busy-looping.
+        let seed = seed_intervals();
+        for name in SCHEDULABLE {
+            let secs = seed.get(*name).unwrap_or_else(|| {
+                panic!(
+                    "{name} is schedulable but missing from schedules.jsonl — it would never run"
+                )
+            });
+            assert!(*secs > 0, "{name} has a zero interval in the seed");
+        }
+        assert_eq!(
+            seed.len(),
+            SCHEDULABLE.len(),
+            "the seed has an entry for a worker that does not exist"
+        );
+    }
+
+    #[test]
+    fn the_seeded_cadences_match_what_each_worker_needs() {
+        // These were three scattered assertions against Rust constants before the
+        // cadence became data. The intent is unchanged; only the source of truth
+        // moved, so they are asserted where the value now actually lives.
+        let seed = seed_intervals();
+        assert_eq!(
+            seed["reconcile"], 300,
+            "reconcile must be FREQUENT — the mtime gate makes a no-op cheap, and the \
+             old hourly cadence let drift sit"
+        );
+        assert_eq!(
+            seed["index_audit"], 86_400,
+            "the audit stats every indexed file/folder — heavier than reconcile, so daily"
+        );
+        assert_eq!(seed["advance_run"], 15, "run advancement is user-facing latency");
+        assert_eq!(seed["watchdog"], 60, "a stalled watcher must be caught within a minute");
+    }
+
     #[test]
     fn schedulable_names_are_unique_and_sorted() {
         // A duplicate would make one entry unreachable; sorted keeps the diff

@@ -27,12 +27,8 @@ use std::sync::Arc;
 use crate::db::pg_store::PgStore;
 use crate::runs::RunEventKind;
 use crate::tasks::queue::TaskQueue;
-use crate::tasks::ticker::{self, FirstTick};
+use crate::tasks::ticker;
 use crate::tasks::{Task, TaskKind};
-
-/// How often to sweep runs. Short — a tick is a DB read + a few enqueues, and a
-/// stalled/heartbeat-driven run wants a tight liveness cadence.
-const INTERVAL_SECS: u64 = 15;
 
 /// Enqueue an `AdvanceRun` tick for one run id — de-duped. Skips the enqueue if
 /// an `AdvanceRun` for this run (id in `task.path`) is already pending, blocked,
@@ -127,11 +123,17 @@ pub fn spawn(queue: Arc<TaskQueue>, pg: Arc<PgStore>) {
 }
 
 async fn run(queue: Arc<TaskQueue>, pg: Arc<PgStore>) {
-    let mut ticker = ticker::ticker(INTERVAL_SECS, FirstTick::Immediate);
-    loop {
-        ticker.tick().await;
-        tick(&queue, &pg).await;
-    }
+    // Cadence lives in `sensei.schedules` (name `advance_run`); the tick is
+    // unchanged.
+    let store = pg.clone();
+    ticker::run_scheduled(pg, "advance_run", move || {
+        let (queue, pg) = (queue.clone(), store.clone());
+        async move {
+            tick(&queue, &pg).await;
+            Ok(())
+        }
+    })
+    .await;
 }
 
 #[cfg(test)]
