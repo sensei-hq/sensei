@@ -93,23 +93,80 @@ keeping in the table with its history — it tells the next reader that this gro
 
 ## Step 4 — Faceted review
 
-Now review the design itself, which is a different question from whether its facts hold. Launch in
-parallel, one message:
+Whether the facts hold (step 3) and whether the design is good are different questions. This is the
+second one, run with the same rigor `/sensei:review` applies to code.
+
+### 4a. Build the evidence bundle once
+
+Every reviewer must see the same thing, or their findings cannot be compared:
+
+```
+the spec path + full text
+git log --format='%h %s' -- <spec path>        # how it got here
+the parent spec, when this one overrides another
+the DDL / types / API surface the spec talks about
+```
+
+Include the source the spec describes, not just the spec. A reviewer given only prose can only
+review prose — which is precisely the gap step 3 exists to close.
+
+### 4b. Launch in parallel, blind to each other
+
+One message, multiple Agent calls:
 
 - `sensei-plan-depth-reviewer` — is every piece deep enough to build unattended? No TBDs, observable
   criteria, pre-answered ambiguities.
 - `spec-doc-reviewer` — are the required sections real rather than ceremonial? Do the done gates
   agree with the mockup and the DDL?
-- `sensei-data-correctness-reviewer` — re-derive any computed value, key, or grouping the spec
+- `sensei-data-correctness-reviewer` — re-derive every computed value, key, or grouping the spec
   defines. A wrong key in a spec becomes a wrong key in three files.
-- `sensei-security-reviewer` — only when the slice touches auth, identity, secrets, or a
-  trust boundary. Say so if you skip it.
+- `sensei-spec-conformance-auditor` — does the spec agree with every OTHER surface that documents
+  the same behaviour, and does it contradict the parent spec it claims to override?
+- `sensei-security-reviewer` — only when the slice touches auth, identity, secrets, or a trust
+  boundary. **Say so if you skip it.**
 
-Same independence rule as `/sensei:review`: they must not see each other's findings, and a reviewer
-that errored is `NOT RUN`, never a pass.
+Give each the same bundle and this instruction verbatim:
 
-**Verify each finding yourself before acting on it.** Adversarial reviewers produce
-plausible-but-wrong findings, and a spec is cheap to change in the wrong direction.
+> You are one of several independent reviewers. Stay strictly inside your own mandate — another
+> reviewer owns everything else. Report only findings you can prove, with the evidence field filled
+> from something you actually read or ran. If you find nothing, output exactly `NO FINDINGS` and
+> nothing else.
+
+### 4c. Dedupe and triage
+
+- Same section, same underlying defect → one finding at the **highest** severity claimed, evidence
+  merged. Note the corroboration count: two independent reviewers landing on one paragraph is a
+  strong signal, not a duplicate.
+- Two reviewers contradicting each other → do not average. Go read the code and decide, then record
+  the verdict and the reasoning.
+- **Verify every finding yourself before acting on it.** Adversarial reviewers produce
+  plausible-but-wrong findings, and a spec is cheap to change in the wrong direction — a bogus
+  finding acted on becomes a design decision nobody can trace.
+- **Check provenance.** A defect inherited from the parent spec is real but is not this spec's
+  work. Confirm against the parent before claiming either way, and report those separately — this
+  is how a correction lands in the document that actually owns the mistake.
+- `NO FINDINGS` contributes nothing; do not paraphrase it. A reviewer that errored is **NOT RUN**,
+  never a pass — name it.
+
+Present the triage table before rewriting: severity, one-line claim, section, must-fix vs report-only.
+
+**CRITICAL + HIGH + MEDIUM → fix now.** A MEDIUM in a spec is worse than a MEDIUM in code: code has
+a test suite around it, and a spec is copied into a task list unexamined.
+
+### 4d. The honest difference from code review
+
+`/sensei:review` fixes red-first — a failing test, then the fix. **Prose has no red state**, and
+pretending otherwise would be ceremony. The nearest real equivalent, and what to do instead:
+
+- A finding about a **claim** → it belongs in the ledger. Add it, run the check, let the verdict
+  decide. That IS the red test.
+- A finding about **depth or ambiguity** → the check is that the question now has an answer written
+  down. Re-read the section and confirm a builder could act on it without asking.
+- A finding about **contradiction** → re-run `sensei-spec-conformance-auditor` on the rewritten
+  section only. It is cheap and it is the one class that reliably regresses during a rewrite.
+
+Rewriting a spec introduces new claims. **Any rewrite that asserts something new about existing
+code sends you back to step 2** to ledger it, and step 3 to verify it. That loop is the point.
 
 ## Step 5 — Fix, then plan
 
@@ -134,12 +191,23 @@ Then report:
 
 ## The gate
 
-`/sensei:build` should not start while any of these is true. Say which one blocks you.
+`/sensei:build` should not start while any of these is true. Check each, show the evidence, and
+name the one that blocks you.
 
-- A claim is `FALSE` and the spec still depends on it.
-- A claim is `UNCHECKABLE` and it is load-bearing.
-- The done gate contains a statement nobody can check.
-- A reviewer is `NOT RUN` and its mandate is plainly in scope.
+1. A claim is `FALSE` and the spec still depends on it.
+2. A claim is `UNCHECKABLE` and it is load-bearing.
+3. A CRITICAL, HIGH or MEDIUM review finding is unaddressed.
+4. The done gate contains a statement nobody can check.
+5. A reviewer is `NOT RUN` and its mandate is plainly in scope.
+6. The rewrite introduced a new claim that has not been through steps 2–3.
+
+Then:
+
+- **GATE: PASS** — the spec is ready to plan against and build from. Say so, and give the first task.
+- **GATE: BLOCKED** — name exactly what is unresolved and the next command.
+
+Report faithfully. If a reviewer errored, say so. Never report the gate as passing on a check you
+did not run — a spec gate that lies costs a whole slice, not a commit.
 
 ## Wrong gate
 
