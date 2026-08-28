@@ -1,122 +1,56 @@
 # Checkpoint
 
-**Slice:** Dōjō metric push (`docs/spec/dojo/daemon-sync.md`) — **shipped and
-live-verified**, then adversarially reviewed and partly hardened.
+**Slice:** Repository sharing — **DESIGN ONLY. Nothing is implemented.**
+(`docs/requirements/repository-sharing.md`, `daemon-sync.md` §8a/§8b/§8c,
+`docs/architecture/reason-codes.md`)
 
-## The cycle works end to end
+## The model
 
-`register → plan → push → watermark`, verified against the live databases:
-132 rows in `dojo.repository_metrics`, 132 marked `shared_at`, queue drained to 0,
-re-pushes updating in place. `sync_state` holds `dojo_sync_plan/default synced`
-and `repository_metric/github.com/sensei-hq/dbd/push synced`.
+Sharing is TWO questions: **entitlement** (*may it?* — the dōjō) and **election**
+(*did whoever holds authority choose it?*). `sync_enabled = may_share AND elected`.
 
-Four bugs were found by RUNNING it, not by any test (`41fefe73`). The worst: the
-registry returned `personas.label` where the Keychain slot was the sign-in hint
-string, so the persona was skipped while the tick reported success. Fixed with
-`personas.session_slot`, which records what the sign-in actually used —
-**`label` is NOT the slot, a sign-in rewrites it to the verified login.**
+Authority: personal → user · org PUBLIC → user · org PRIVATE → **the
+organization, mandatory**, overriding the daemon's local gate 1 (user-confirmed).
 
-## Adversarial review — all 5 reviewers reported, all findings fixed
+## Status: FOUR adversarial reviews, all NOT-READY
 
-Five independent reviewers over `eab5671d^..HEAD`. Every CRITICAL/HIGH/MEDIUM is
-fixed and mutation-probed; commits `7341101f`, `83fcabc8`, `12e325d0`,
-`2917ee21`, `fd4b719f`.
+Depth · claims · data-correctness · security. Roughly 40 findings; most are fixed
+in `2d659e02`…`HEAD`. **Two decisions are outstanding and are the user's:**
 
-**Security (2)** — a live Supabase refresh token was captured from an
-unprivileged `ps`: `security -w <secret>` puts it in `argv`, and this slice made
-the write recur per cadence. Now fed over stdin through one shared helper. And
-`PATCH /api/repositories` was unauthenticated under `allow_origin(Any)`, so any
-web page could flip the sharing gate and read the repo inventory; now guarded by
-`Origin` (a missing one is allowed — the CLI/MCP send none).
+1. **Disclosure scope for B1.** To find out whether a repo is org-mandated the
+   daemon must register repos the user has NOT elected — the daemon-side mirror
+   of the sign-in inventory upload this design explicitly REJECTS. Unresolved.
+2. **Personal + private + no subscription.** §IV.3 says `origin='personal' →
+   ALLOW` unconditionally; §2a says private repos are subscription-gated. The two
+   disagree, and every personal tenant is the common case.
 
-**Correctness (4)** — a repo_key under two tenants 500'd every push forever; the
-upsert key matched 4 of 7 columns so rows merged silently; one refused row
-livelocked the whole 500-row window; the dōjō unique key lacked
-`NULLS NOT DISTINCT` so it fired for nothing we push (claim C5 was recorded
-CONFIRMED on a check that could not establish it).
+## Still open (verified, not yet fixed)
 
-**Reliability (5)** — the plan allow-list joined the scope filter in SQL, before
-the LIMIT; four discarded errors restored (rotated-token write, clear-on-rejection,
-`mark_sync_error` overwriting the real error, `unwrap_or(0)` printing "0 held
-back"); `tick` no longer reports success when every persona failed.
+- `configurable_by_me` grants `lead`; `member_role.ddl` gives policy to `admin`
+  alone, and every remedy string says "ask an admin".
+- §8c's "re-derived in four places" names two that do not exist (console, UI
+  toggle) and omits two that do (`unpushed_metric_rows`, `unpushed_metric_count`).
+- The blast-radius count is wrong a THIRD time: the list enumerates 3+12=15.
+- `seats_included = 0` means both "unbounded" and "cap of zero".
+- Section order runs 8 → 9a → 8a → 8b → 8c → 9.
+- B1 and B2 are documented, not fixed — `dojo_sync.rs:124` and `sync.rs:182`.
 
-**Ingest hardening (3)** — the reject reason was a cross-tenant existence oracle,
-now one reason; the body is bounded before parsing, not after; the resolve reads
-are batched O(rows) → O(1) (≈2001 sequential Worker subrequests at 500 rows).
+## Build order (load-bearing)
 
-**Tests** — the cycle had none that could fail: `tick`'s body could be `Ok(())`
-with both tests green. `user_plane::UserPlane` is now injectable and there are
-nine tests asserting database state. Also fixed: a vacuous field-projection test
-(fixture value == the constant a broken projection emits), a tautological
-`scopes` filter, a `PLAN_ENTITY` test comparing a const to its own literal, and
-two missing test files. `fakeDojoDb` learned `.schema()` and read-counting,
-because without them the assertions were vacuous.
-
-## Re-verified live on the hardened build
-
-20 re-queued rows pushed, queue drained to 0, `dojo.repository_metrics` unchanged
-at 132 — they updated in place, and that now rests on a DB constraint rather than
-an app-level check. `Origin: https://evil.example` → 403, `tauri://localhost` →
-200, no Origin → 200. Zero processes with a secret in `argv`.
-
-## Sharing is now TWO questions (2026-08-28)
-
-`docs/requirements/repository-sharing.md` + `daemon-sync.md` §8a/§8b. Entitlement
-(*may it?*) and election (*did whoever holds authority choose it?*) are
-independent; `sync_enabled = may_share AND elected`. Authority: personal → user,
-org PUBLIC → user, org PRIVATE → **the organization, mandatory**, which overrides
-the daemon's local gate 1 (user-confirmed).
-
-**Nothing is implemented.** Two reviews ran and both found blocking defects:
-
-- `can_sync` **failed open in every reachable state** — `claimed_at` and
-  `seat_allocations` do not exist, and `NULL <> 'active'` is NULL not TRUE, so with
-  0 billing rows (all 3 live tenants) every path fell through to ALLOW. An
-  org-mandated private repo would have pushed with no election and no
-  subscription. Fixed by testing for the MISSING ROW before its value.
-- **B1** `sync_persona` returns before asking the dōjō when nothing is locally
-  shared — defeats the mandate for exactly the population it serves.
-- **B2** `unpushed_metric_rows` hardcodes `visibility = 'shared'` in SQL,
-  independent of the plan.
-- The old rule is stated in **12** places (I said 3, then 8), 3 enforcing.
-
-Build order is load-bearing: schema (incl. `ALTER … drop not null` on
-`dojo.repositories.visibility`) → sign-in capture + verified backfill → view →
-daemon. Rewriting the view first makes every org repo silently mandated, because
-the unpopulated default reads as `private`.
+schema + ALTER → sign-in capture → **backfill, verified to return 0** → view →
+daemon (B1/B2). Rewriting the view first makes every org repo silently mandated:
+the unpopulated default reads as `private`, and `sensei-hq/dbd` — public on
+GitHub — resolves to ORG-MANDATED today.
 
 ## Next command
 
-Nothing from the review is outstanding. The slice's own remaining work:
-
 ```
-rg -n 'D3|governance' docs/spec/dojo/daemon-sync.md    # the deferred pull
+rg -n 'Disclosure scope|personal.*private' docs/spec/dojo/daemon-sync.md
 ```
 
-D3 (per-repo governance pull) and D5's change-guard are deferred and recorded in
-§9. D8's default is deferred too, but NOT for the reason an earlier version of
-this file gave: the forge-visibility column exists
-(`dojo.repositories.visibility`, `private | public`, shipped in phase 1). Nothing
-POPULATES it, so every row reads `private` — including public repos.
+## Carry-forward
 
-## Gates (green)
-
-daemon 2463 tests exit 0 · clippy 0 · fmt 0 · dōjō 1429 tests · check 0/0.
-
-## Known-broken / carry-forward
-
-- **`~/.sensei/config.json` `dojo_url` points at `http://127.0.0.1:5173`** for the
-  live test. Production value backed up at `/tmp/sensei-config-backup.json`.
-- `dbd` is `shared`; `dojo_sync` cadence is 60s. Both are test settings.
-- Debug binaries are installed in the brew prefix (`make install-debug`).
-- ~~kavach publish + repin~~ **DONE.** Published `1.1.3` carries the
-  `onSessionSync` hook (7 refs in src + dist + typings, verified from the npm
-  tarball); all six `@kavach/*` deps and `kavach` repinned 1.1.0 → 1.1.3 and
-  reinstalled clean. No local patch remains.
-- D3 (governance pull), D5's change-guard and D8's public/private default are
-  deferred, recorded in §9. **Correction:** I twice called D8 "unimplementable —
-  no forge-visibility column exists". FALSE: `dojo.repositories.visibility`
-  (`private | public`) shipped in phase 1. Nothing POPULATES it, which is a much
-  smaller and different gap.
-- `dbd diff --scope default` is never clean (dbd normalises `time` and unnamed
-  CHECKs). Filed in `docs/backlog.md`.
+- kavach repinned to the published **1.1.3**; no local patch remains.
+- `~/.sensei/config.json` `dojo_url` → `http://127.0.0.1:5173` (backup at
+  `/tmp/sensei-config-backup.json`). `dbd` shared, `dojo_sync` at 60s, debug
+  binaries installed.

@@ -62,6 +62,10 @@ equivalent would force the caller to already know the answer it is asking for.
 A DISABLED membership yields nothing: losing access to a tenant must remove its
 repositories from your list, not merely stop new ones appearing.
 
-sync_enabled is TRUE throughout phase 1 (nothing gates yet) and becomes the
-can_sync predicate in phase 2; denied_reason is NULL until then. Both are present
-now so the plan endpoint reads the same columns before and after the gate.';
+sync_enabled is TRUE throughout phase 1 (nothing gates yet). In phase 2 it becomes
+`may_share AND elected` — NOT can_sync alone, which is only the entitlement half:
+see daemon-sync.md 8b/8c. denied_reason becomes a reason_code carrying both
+entitlement reasons (unclaimed, not_subscribed, subscription_expired, no_seat) and
+election ones (not_elected_user, not_elected_org, forge_visibility_unknown), plus
+a refused_by naming which axis said no. Both columns are present now so the plan
+endpoint reads the same shape before and after the gate.';
