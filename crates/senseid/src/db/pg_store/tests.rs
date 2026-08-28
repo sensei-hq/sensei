@@ -9661,6 +9661,44 @@ async fn two_personas_cannot_share_one_dojo_login() {
 }
 
 #[tokio::test]
+async fn signed_in_personas_lists_only_the_ones_that_completed_a_sign_in() {
+    // The registry that replaced the withdrawn `sensei.dojo_personas` table
+    // (docs/spec/dojo/daemon-sync.md §3). `verified_at` is the predicate because
+    // it is the one that is actually WRITTEN — `link_persona_identity` sets it on
+    // every completed OAuth callback. `principal_id` reads more precisely as "has
+    // a dōjō login" but nothing sets it yet, so using it would enumerate nobody
+    // and sync nothing, silently.
+    //
+    // A row proves a sign-in HAPPENED, not that its token is still good; the
+    // caller still probes the Keychain.
+    let s = pg_store().await;
+    let uniq = uuid::Uuid::new_v4();
+    let signed = format!("ztest-signed-{uniq}");
+    let never = format!("ztest-never-{uniq}");
+    let a = s.upsert_persona(&signed, true).await.unwrap();
+    let b = s.upsert_persona(&never, true).await.unwrap();
+    sqlx_core::query::query("UPDATE sensei.personas SET verified_at = now() WHERE id = $1")
+        .bind(a)
+        .execute(s.pool())
+        .await
+        .unwrap();
+
+    let listed = s.signed_in_personas().await.unwrap();
+
+    sqlx_core::query::query("DELETE FROM sensei.personas WHERE id = ANY($1)")
+        .bind(vec![a, b])
+        .execute(s.pool())
+        .await
+        .unwrap();
+
+    // Containment, not equality: this database holds the developer's real
+    // personas too, and a test that pins the whole set fails for reasons that
+    // have nothing to do with the code.
+    assert!(listed.contains(&signed), "a persona that completed a sign-in is listed");
+    assert!(!listed.contains(&never), "one that never signed in is not — it has no Keychain slot");
+}
+
+#[tokio::test]
 async fn all_task_kinds_match_the_database_enum() {
     // Ties the three places a kind must exist into one assertion: the Rust
     // enum, `TaskKind::ALL`, and `sensei.task_execution_kind`.

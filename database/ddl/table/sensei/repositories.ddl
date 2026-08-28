@@ -15,7 +15,11 @@ create table if not exists repositories (
 , repo_key     text        unique
 , remote_url   text
 , name         text        not null
-, dojo_id      uuid
+  -- The dōjō TENANT this repository is enrolled with. Named `dojo_id` until the
+  -- sync slice needed to store one: `projects.dojo_id` holds a MEMBERSHIP id, so
+  -- one name meant two things and the plan consumer could not say which it had.
+  -- Plain uuid, no FK — the referent lives in another database.
+, tenant_id    uuid
 , created_at   timestamptz not null default now()
 , modified_at  timestamptz not null default now()
   -- Whether this repository participates in sync. Private by default: sync is
@@ -41,8 +45,8 @@ comment on column repositories.remote_url
      is 'A representative raw remote URL for display / re-derivation; repo_key is the identity.';
 comment on column repositories.name
      is 'Display name — typically the repository basename.';
-comment on column repositories.dojo_id
-     is 'The Dōjō tenant this repository is enrolled with when federated. NULL = local-only.';
+comment on column repositories.tenant_id
+     is 'The dojo.tenants.id this repository is enrolled with when federated. NULL = not federated. Distinct from projects.dojo_id, which holds a MEMBERSHIP id — the ambiguity that forced this rename.';
 comment on column repositories.created_at
      is 'When the repository was first registered.';
 comment on column repositories.modified_at
