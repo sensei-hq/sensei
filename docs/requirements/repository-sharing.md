@@ -42,6 +42,10 @@ Authority follows **who owns the code and who pays**, on two axes already in the
 schema: `dojo.tenants.origin` (`personal | organization`) and
 `dojo.repositories.visibility` (the forge's answer).
 
+**Entitlement does not consult the owner.** `public` is free for anyone;
+`private` is subscription-gated for everyone, including a solo developer's own
+repository. Origin answers only the second question — who elects:
+
 | owner | forge visibility | authority | why |
 |---|---|---|---|
 | personal | private | **user** | their code, their call |
@@ -51,6 +55,16 @@ schema: `dojo.tenants.origin` (`personal | organization`) and
 
 **Only the last row is mandated.** Everywhere else the user elects, and an
 unelected repository does not sync no matter what the org would prefer.
+
+## What is even offered: only what is CLONED
+
+The daemon measures repositories on the machine. So the set it discloses to the
+dōjō is **every locally-scanned repository with a `repo_key`** — never a listing
+of what the user can reach on the forge.
+
+That bound is what makes the mandate acceptable. Cloning a repository onto the
+machine sensei watches is a deliberate act; being added to a GitHub org is not.
+**Membership alone shares nothing** — no clone, no metrics, no disclosure.
 
 ## What a mandate means
 

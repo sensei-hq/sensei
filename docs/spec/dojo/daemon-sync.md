@@ -207,10 +207,11 @@ for each slot in (select session_slot from sensei.personas
                    where session_slot is not null
                      and verified_at is not null):        § 3
     token = live_access_token(persona)          § 4 — skip persona on failure
-    shared = shared_repositories()               gate 1, local
-        ⚠ §8a B1: the cycle must ASK before filtering. Offering only the
-          locally-shared set is what makes an org mandate unreachable, and
-          an empty set currently returns before the dōjō is asked at all.
+    offer  = locally-scanned repositories with a repo_key      §8a, decided
+        NOT `shared_repositories()`. The offer is bounded by what is CLONED,
+        not by gate 1 — otherwise an org mandate is unreachable, and an empty
+        shared set returns before the dōjō is asked at all (B1).
+        Gate 1 still governs the PUSH for user-authority repos.
     if shared changed since last register:       D5
         POST /v1/you/repositories
         store tenant_id per repo                 D2
@@ -383,6 +384,30 @@ Entitlement and election are independent (parent spec §IV.3, corrected), and
 
    **This is enforced in TWO independent code paths, and an earlier version of
    this section named neither.** Both are verified:
+
+   **THE OFFER SET, decided.** The tension a depth review raised — that offering
+   un-elected repos is the daemon-side mirror of the sign-in inventory upload this
+   document rejects — **dissolves once the bound is named**, because the two lists
+   come from different places:
+
+   | rejected | decided |
+   |---|---|
+   | every repo the user can see on the **FORGE** | every repo the user has **CLONED**, under the scan root |
+   | an inventory of what they have access to | what they actually work on, already indexed locally |
+
+   The daemon only ever knew about cloned repositories — `sensei.repositories` is
+   populated by the scanner, not by a forge listing. So the offer set becomes
+   **every locally-scanned repository with a `repo_key`**, and gate 1 stops being a
+   filter on the OFFER and becomes a filter on the PUSH for user-authority repos.
+
+   Two consequences worth stating rather than discovering:
+
+   - **Membership alone shares nothing.** Belonging to an org whose repos you have
+     not cloned produces no metrics and no disclosure — there is nothing on the
+     machine to measure.
+   - **The disclosure is bounded by an act the user already took.** Cloning a
+     repository to the machine sensei watches is a deliberate step; being added to
+     a GitHub org is not. That is why one list is acceptable and the other is not.
 
    - **B1 — the cycle short-circuits before the dōjō is ever asked.**
      `dojo_sync.rs`: `let shared = pg.shared_repositories(…); if shared.is_empty()
@@ -689,7 +714,8 @@ cannot tell a user which one they are in.
 
 | # | owner | forge | subscribed | org policy | user elected | authority | `may_share` | `elected` | **sync** | reason shown |
 |---|---|---|---|---|---|---|---|---|---|---|
-| A | personal | private | — | — | ✅ | USER | ✅ | ✅ | **yes** | — |
+| A | personal | private | **✅ required** | — | ✅ | USER | ✅ | ✅ | **yes** | — |
+| **A2** | personal | private | **❌** | — | ✅ | USER | ❌ | ✅ | no | entitlement · `not_subscribed` |
 | B | personal | private | — | — | ❌ | USER | ✅ | ❌ | no | election · `not_elected_user` |
 | C | personal | public | — | — | ❌ | USER | ✅ | ❌ | no | election · `not_elected_user` |
 | D | org | public | — | — | ✅ | USER | ✅ | ✅ | **yes** | — |
@@ -704,10 +730,15 @@ cannot tell a user which one they are in.
 
 ### What each row is teaching
 
-- **A/B/C — personal is simple.** Always entitled (`origin = 'personal' → ALLOW`),
-  so the only question is whether the user chose. C matters: a *public* personal
-  repo still does not sync unelected. Public means *free to host*, never
-  *automatically shared*.
+- **A/A2 — personal is NOT automatically entitled.** A private repository is
+  subscription-gated whoever owns it, including a solo developer's own. An earlier
+  draft had `origin = 'personal' → ALLOW` unconditionally, which contradicted §2a
+  and would have hosted every personal private repo free — the common case, since
+  no personal tenant carries a billing row. **Entitlement keys on visibility, not
+  on owner.**
+- **B/C — election still governs.** C matters: a *public* personal repo is
+  entitled for free and still does not sync unelected. Public means *free to
+  host*, never *automatically shared*.
 - **D/E — an org cannot elect its members' open source.** E is the row that would
   be wrong under a one-question model: the org policy is ON, the repo belongs to
   the org's tenant, and it still does not sync, because a public repo's authority
