@@ -640,6 +640,11 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
     // explicit manual C6 step. No-op until the user sets a daily/weekly cadence.
     crate::tasks::contribute_scheduler::spawn(Arc::new(state.pg.clone()), state.gateway.clone());
 
+    // Dōjō sync: establishes repository IDENTITY (which tenant) and ENTITLEMENT
+    // (what may sync) for every signed-in persona. Pushes no metrics yet — see
+    // the module docs for why that is a separate slice.
+    crate::tasks::dojo_sync::spawn(Arc::new(state.pg.clone()));
+
     // Capture watchdog: hourly sweep over configured ACP adapters. Auto-resolves
     // config-side failures (reinstall), trips a per-adapter breaker on give-up,
     // and notifies the user (the only signal once an adapter is suspended).
