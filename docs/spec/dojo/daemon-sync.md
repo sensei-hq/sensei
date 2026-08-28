@@ -208,6 +208,9 @@ for each slot in (select session_slot from sensei.personas
                      and verified_at is not null):        § 3
     token = live_access_token(persona)          § 4 — skip persona on failure
     shared = shared_repositories()               gate 1, local
+        ⚠ §8a B1: the cycle must ASK before filtering. Offering only the
+          locally-shared set is what makes an org mandate unreachable, and
+          an empty set currently returns before the dōjō is asked at all.
     if shared changed since last register:       D5
         POST /v1/you/repositories
         store tenant_id per repo                 D2
@@ -338,12 +341,16 @@ Entitlement and election are independent (parent spec §IV.3, corrected), and
    user has not elected locally. `forge-github.ts` also has no repo-listing call
    at all today (`fetchGithubUser`, `fetchGithubOrgs`, `fetchGithubFacts`).
 
-   **REJECTED: have sign-in insert a row per visible forge repo.** It would give
-   somewhere to write, and it violates the project's hard rule against minting
-   identity on a miss — it would create repository rows the daemon never
-   registered and the user never chose to disclose, turning a sign-in into an
-   inventory upload of every repo they can see. That is a worse privacy defect
-   than the one this revision fixes.
+   **REJECTED: have sign-in insert a row per visible forge repo.** It would create
+   repository rows the daemon never registered and the user never chose to
+   disclose — turning a sign-in into an inventory upload of every repo they can
+   see. That is a worse privacy defect than the one this revision fixes, and it is
+   sufficient on its own.
+
+   *(An earlier version also cited the project's "never mint identity on a miss"
+   rule. That citation was wrong — inserting rows from a successful authenticated
+   listing is real data on a SUCCESS path, not fabrication on a failure path. The
+   privacy argument does not need it.)*
 
    **RESOLVED: uncaptured is a state, and capture refreshes what exists.**
    - `registerRepositories` creates rows with visibility **NULL / uncaptured**.
@@ -392,14 +399,27 @@ Entitlement and election are independent (parent spec §IV.3, corrected), and
      still excluded at PUSH time. Fixing the offer side does nothing here.
      `unpushed_metric_count` carries the same predicate (reporting only).
 
-   **The count was wrong.** This section said the old rule is stated in "three
-   places". It is at least EIGHT, of which two (B1, B2) are functional and the rest
-   prose or tests:
-   `shared_repositories`' doc · `dojo_sync`'s module doc · §V.3 ·
-   `push_allowed`'s inline comment · the `tests.rs` section banner · §1 of THIS
-   document (now marked) · and a **live passing assertion**:
+   **The count was wrong twice.** First "three", then "at least eight". It is at
+   least **TWELVE**, and the useful split is not by kind but by whether the site
+   ENFORCES the rule or merely STATES it:
+
+   **ENFORCING (must change or the feature does not work):** B1
+   (`dojo_sync.rs` early return) · B2 (`unpushed_metric_rows` SQL) ·
+   `unpushed_metric_count`'s identical predicate (reporting only).
+
+   **STATING (must be corrected or they assert a falsehood):**
+   `shared_repositories`' doc · `dojo_sync`'s module doc · §V.3 (now marked) ·
+   §1 and §7 of THIS document (now marked) · `push_allowed`'s inline comment ·
+   the `tests.rs` section banner · `repo_visibility.ddl`'s own comment ·
+   `sensei/repositories.ddl`'s comment · `api/handlers/repositories.rs`' module
+   doc (in the handler that WRITES gate 1) · `v1/you/repositories/+server.ts` ·
+   and a **live passing assertion**:
    `"a repository the user did not share must NEVER be offered — that is gate 1"`,
    which must be rescoped or it will keep asserting a now-partly-false invariant.
+
+   The two DDL comments matter more than their length suggests: they are the
+   schema's published contract and survive into `\d+` and every generated schema
+   doc.
 
 ### Status: NOT-READY as first written — and what closed the gap
 
@@ -481,6 +501,15 @@ dojo.tenant_share_policy             -- the org's DEFAULT, so a new repo is cove
   set_at               timestamptz not null default now()
 
 dojo.share_authority  enum ('user', 'organization')
+
+-- REQUIRED by item 2's "uncaptured is a state": the column is `not null default
+-- 'private'` today, so NULL is not writable. Without this the implementer hits a
+-- not-null violation and falls back to 'private' — restoring the exact mis-default
+-- the BLOCKING section proves leaks a public repo as org-mandated.
+alter table dojo.repositories alter column visibility drop not null;
+alter table dojo.repositories alter column visibility drop default;
+-- and confirm the CHECK admits NULL (`visibility in (…)` is NULL-tolerant, but
+-- assert it rather than assume).
 ```
 
 `repository_elections` + `tenant_share_policy` together answer `elected()`: an org
@@ -570,7 +599,8 @@ cannot tell a user which one they are in.
 | E | org | public | — | on | ❌ | USER | ✅ | ❌ | no | election · `not_elected` · **you** |
 | F | org | private | ✅ | on | ❌ | ORG | ✅ | ✅ | **yes** | — (mandated) |
 | G | org | private | ✅ | off | ✅ | ORG | ✅ | ❌ | no | election · `not_elected` · **org** |
-| H | org | private | ❌ | on | — | ORG | ❌ | ✅ | no | entitlement · `not_subscribed` |
+| H | org | private | ❌ *(row exists, `past_due`)* | on | — | ORG | ❌ | ✅ | no | entitlement · `not_subscribed` |
+| **H2** | org | private | ❌ **no billing row at all** | on | — | ORG | ❌ | ✅ | no | entitlement · `not_subscribed` |
 | I | org | private | ✅ | on | — | *none* | ❌ | ❌ | no | election · `forge_visibility_unknown` |
 | J | org | private | ✅ | off + per-repo ON | — | ORG | ✅ | ✅ | **yes** | — (mandated, exception) |
 
@@ -597,6 +627,16 @@ cannot tell a user which one they are in.
   the subscription lapsed. `elected` is ✅, `may_share` is ❌, and the reason is
   `not_subscribed` — pointing at billing, not at the user. Collapsing the two
   axes would report this as "not shared" and send them hunting a toggle.
+- **H2 — the row that was WRONG, and the reason `can_sync` now fails closed.**
+  With **no** `billing_accounts` row — the state of all 3 live tenants — the
+  original predicate DENIED nothing: `claimed_at` and `seat_allocations` do not
+  exist, so those terms cannot fire, and `NULL <> 'active'` evaluates to NULL, not
+  TRUE, so the status term does not fire either. Every path fell through to
+  `otherwise → ALLOW`. Combined with the mandate supplying `elected = true`, an
+  org's private repository would have pushed per-identity metrics **with no user
+  election and no subscription whatsoever** — precisely the composite the mandate
+  was meant to be gated by. §IV.3 now tests for the MISSING ROW before testing its
+  value.
 - **I — uncaptured fails closed on BOTH axes.** No authority can be derived, so
   there is no election to consult. This is the row that makes the ordering
   constraint safe: without it, `NULL`/default visibility in an org tenant would

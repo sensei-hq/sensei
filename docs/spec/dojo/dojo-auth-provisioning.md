@@ -565,7 +565,7 @@ Scenario: Non-owner creates the tenant, owner claims it later
 The forge role is re-read at each sign-in, so a claim is verified against
 current org standing, not a stale snapshot.
 
-## II.5 What actually gates sync
+## II.5 — SUPERSEDED by §IV.3 and `daemon-sync.md` §8a (three denial vocabularies coexisted; §8a's is authoritative) What actually gates sync
 
 Replaces `disabled_at` as the mechanism. One pure predicate, testable without a
 database:
@@ -902,8 +902,16 @@ election both say yes.
 ```
                  ENTITLEMENT — may it?  (the dōjō decides)
 can_sync(repo, user, tenant) =
-    tenant.origin = 'personal'                        → ALLOW
+    repo.visibility IS NULL                           → DENY  forge_visibility_unknown
+  | tenant.origin = 'personal'                        → ALLOW
   | repo.visibility = 'public'                        → ALLOW   (open source is free)
+  -- FAIL CLOSED ON ABSENCE. Each of the next three is a MISSING-ROW test that
+  -- must precede its value test, because `NULL <> 'active'` is NULL, not TRUE —
+  -- so a value test alone falls through to ALLOW. Verified: 3 live tenants, 0
+  -- billing_accounts rows, and the composite ALLOWED an org-mandated private
+  -- repo on no subscription at all.
+  | no billing_accounts row for tenant                → DENY  not_subscribed
+  | period_start IS NULL OR period_end IS NULL        → DENY  not_subscribed
   | tenant.claimed_at IS NULL                         → DENY  unclaimed
   | billing.status <> 'active'                        → DENY  not_subscribed
   | now() NOT BETWEEN period_start AND period_end     → DENY  subscription_expired
@@ -1163,8 +1171,12 @@ The full chain, in order:
 | # | gate | question | owned by | evaluated |
 |---|---|---|---|---|
 | 1 | **intent** | did the user opt this repo in? | `sensei.repositories.visibility = 'shared'` | daemon, locally |
-| 2 | **cost** | is it public, private or internal on the forge? | `dojo.forge_visibility` | dōjō |
+| 2 | **cost** | is it public, private or internal on the forge? | `dojo.repositories.visibility` (text+CHECK; promoted to a `dojo.forge_visibility` enum in phase 2) | dōjō |
 | 3 | **entitlement** | claimed, subscribed, seated? | claim + billing + `seat_allocations` | dōjō |
+
+> **NARROWED — see `docs/spec/dojo/daemon-sync.md` §8a.** Gate 1 is sovereign for
+> repositories where the USER holds authority, and NOT for org-mandated ones.
+> `seat_allocations` in the table above is also unbuilt (phase 3).
 
 Gate 1 is local and comes first: the daemon never even asks about a repo the
 user has not shared. Gates 2 and 3 are the dōjō's and are never mirrored.
