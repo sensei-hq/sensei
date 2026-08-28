@@ -16,12 +16,9 @@ use axum::{
 };
 use serde::Deserialize;
 
+use crate::api::handlers::err;
 use crate::api::state::AppState;
 use crate::dojo::memberships::{self, NewConnection};
-
-fn err(status: StatusCode, msg: &str) -> (StatusCode, Json<serde_json::Value>) {
-    (status, Json(serde_json::json!({ "error": msg })))
-}
 
 /// GET /api/dojo/memberships — list the daemon's Dōjō connections with each
 /// one's bound projects and sync-status. Returns a top-level array (the shape

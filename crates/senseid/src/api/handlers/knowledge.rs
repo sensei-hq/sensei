@@ -1,5 +1,6 @@
 //! `/api/knowledge/*` — memory CRUD, proposals, outcomes, context assembly.
 
+use crate::api::handlers::err;
 use crate::api::state::AppState;
 use crate::db::pg_store::{InsertMemory, OutcomeRow};
 use axum::{
@@ -8,10 +9,6 @@ use axum::{
     response::Json,
 };
 use serde::Deserialize;
-
-fn err(status: StatusCode, msg: &str) -> (StatusCode, Json<serde_json::Value>) {
-    (status, Json(serde_json::json!({ "error": msg })))
-}
 
 /// Resolve a governance namespace from either an explicit `namespace_id` or a
 /// `(gov_scope, folder)` pair against the repo's namespace memberships. Shared
@@ -57,7 +54,7 @@ async fn resolve_target_namespace(
         Some(ns) => Ok(Some(ns)),
         None => Err(err(
             StatusCode::BAD_REQUEST,
-            &format!(
+            format!(
                 "cannot resolve gov_scope '{scope}': the target repo is not a member of any '{scope}'-scoped namespace — bind it to one, or pass an explicit namespace_id"
             ),
         )),
@@ -425,7 +422,7 @@ async fn insert_with_status(
         tracing::warn!(kinds = ?kinds, "rejected a memory write carrying a secret");
         return Err(err(
             StatusCode::BAD_REQUEST,
-            &format!(
+            format!(
                 "content appears to contain a secret ({}) — not saved; remove it and retry",
                 kinds.join(", ")
             ),
@@ -443,7 +440,7 @@ async fn insert_with_status(
     let spine_slot = body.spine_slot.as_deref().filter(|s| !s.is_empty());
     if let Some(slot_str) = spine_slot {
         let slot = crate::memory_slot::SpineSlot::parse(slot_str).ok_or_else(|| {
-            err(StatusCode::BAD_REQUEST, &format!("unknown spine_slot: {slot_str}"))
+            err(StatusCode::BAD_REQUEST, format!("unknown spine_slot: {slot_str}"))
         })?;
         crate::memory_slot::validate_scope(slot, body.feature.as_deref())
             .map_err(|e| err(StatusCode::BAD_REQUEST, &e))?;
@@ -1014,7 +1011,7 @@ pub(crate) async fn record_outcomes(
     let mut rows: Vec<OutcomeRow> = Vec::with_capacity(body.outcomes.len());
     for o in body.outcomes {
         if !valid_outcomes.contains(&o.outcome.as_str()) {
-            return Err(err(StatusCode::BAD_REQUEST, &format!("invalid outcome: {}", o.outcome)));
+            return Err(err(StatusCode::BAD_REQUEST, format!("invalid outcome: {}", o.outcome)));
         }
         let mid = uuid::Uuid::parse_str(&o.memory_id)
             .map_err(|_| err(StatusCode::BAD_REQUEST, "bad memory_id"))?;
@@ -1088,8 +1085,8 @@ pub(crate) async fn create_source(
     let api_key = b.api_key.clone();
     tokio::task::spawn_blocking(move || crate::gateway_keys::set_key(&cref, &api_key))
         .await
-        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()))?
-        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()))?;
+        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     let id = state
         .pg
         .create_knowledge_source(&crate::db::pg_store::NewKnowledgeSource {
