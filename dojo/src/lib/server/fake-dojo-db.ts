@@ -30,6 +30,11 @@ export interface FakeUnique {
 export interface FakeTable {
 	rows: FakeRow[];
 	uniques?: FakeUnique[];
+	/** How many times this table was addressed. Counted so a test can assert a
+	 *  BOUNDED number of round trips — the ingest once issued ~4 subrequests per
+	 *  row, which at 500 rows exceeded a Cloudflare Worker's per-invocation
+	 *  subrequest cap. Without a counter that invariant is untestable. */
+	reads?: number;
 }
 
 type Filter = { op: 'eq' | 'in' | 'is'; column: string; value: unknown };
@@ -77,13 +82,14 @@ function sameKey(a: FakeRow, b: FakeRow, u: FakeUnique): boolean {
 export function fakeDojoDb(tables: Record<string, FakeTable>) {
 	const state: Record<string, FakeTable> = {};
 	for (const [name, t] of Object.entries(tables)) {
-		state[name] = { rows: t.rows.map((r) => ({ ...r })), uniques: t.uniques };
+		state[name] = { rows: t.rows.map((r) => ({ ...r })), uniques: t.uniques, reads: 0 };
 	}
 
 	function builder(table: string) {
 		if (!state[table]) {
 			throw new Error(`fakeDojoDb: no table "${table}" was declared for this test`);
 		}
+		state[table].reads = (state[table].reads ?? 0) + 1;
 		const filters: Filter[] = [];
 		let pending: { op: 'insert' | 'update' | 'delete'; payload?: FakeRow } | null = null;
 
