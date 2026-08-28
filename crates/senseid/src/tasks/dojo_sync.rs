@@ -189,26 +189,23 @@ async fn push_allowed(
         return Ok(0);
     }
 
-    let queued = pg.unpushed_metric_rows(PUSH_LIMIT).await?;
-    // Two reasons a queued row is held back, and they are NOT the same thing:
+    // `["repo"]`, filtered in SQL so the LIMIT applies to rows we can actually
+    // push. Scope is a CAPABILITY question, not an entitlement one:
+    // `dojo.repository_metrics.principal_id` is a principal, never a git email,
+    // and `personas.principal_id` is unset until a persona is linked, so a
+    // per-person row has nothing honest to attribute to. The ingest refuses them.
     //
-    // * not in `allowed` — entitlement. The dōjō decided; nothing to say.
-    // * `scope = 'user'` — CAPABILITY. `dojo.repository_metrics.principal_id` is
-    //   a principal, never a git email, and `personas.principal_id` is unset
-    //   until a persona is linked, so there is nothing honest to attribute a
-    //   per-person row to yet. The ingest endpoint refuses these, so sending them
-    //   would earn a rejection every cycle forever.
-    //
-    // Counted and logged rather than silently dropped: "pushed 40 of 60" with a
-    // reason is a fact; "pushed 40" is a number that hides one.
-    let (pushable, deferred): (Vec<_>, Vec<_>) = queued
-        .iter()
-        .filter(|m| allowed.contains(m.repo_key.as_str()))
-        .partition(|m| m.scope == "repo");
-    if !deferred.is_empty() {
+    // Filtering here rather than after the fetch is load-bearing — see
+    // `unpushed_metric_rows`. Held-back rows once crowded the window and a pass
+    // pushed 66 of 132.
+    let queued = pg.unpushed_metric_rows(&["repo"], PUSH_LIMIT).await?;
+    let pushable: Vec<_> =
+        queued.iter().filter(|m| allowed.contains(m.repo_key.as_str())).collect();
+    let held = pg.unpushed_metric_count(&["user"]).await.unwrap_or(0);
+    if held > 0 {
         tracing::info!(
             persona,
-            held = deferred.len(),
+            held,
             "dojo_sync: user-scoped rows held back — no principal to attribute them to yet"
         );
     }
@@ -231,7 +228,27 @@ async fn push_allowed(
         })
         .collect();
 
-    let result = user_plane::push_metrics(dojo, token, &batch).await?;
+    // Which repositories this batch covers — the keys the outcome is recorded
+    // against, so a failure is durable rather than a log line nobody tailed.
+    let repos: std::collections::BTreeSet<&str> =
+        pushable.iter().map(|m| m.repo_key.as_str()).collect();
+    fn push_mark<'k>(key: &'k str) -> SyncMark<'k> {
+        SyncMark { entity: "repository_metric", key, direction: "push" }
+    }
+
+    let result = match user_plane::push_metrics(dojo, token, &batch).await {
+        Ok(r) => r,
+        Err(e) => {
+            // RECORDED, not just logged. Without this a push that fails every
+            // cycle is invisible: the plan row still reads `synced`, the schedule
+            // still reads ok, and the only symptom is that nothing ever arrives.
+            // Observed exactly that way before this existed.
+            for key in &repos {
+                pg.mark_sync_error(&push_mark(key), &e).await?;
+            }
+            return Err(e);
+        }
+    };
     for r in &result.rejected {
         tracing::warn!(
             persona,
@@ -250,7 +267,23 @@ async fn push_allowed(
     if result.rejected.is_empty() {
         let ids: Vec<uuid::Uuid> = pushable.iter().map(|m| m.id).collect();
         pg.mark_metric_rows_shared(&ids).await?;
+        for key in &repos {
+            pg.mark_synced(&push_mark(key), None).await?;
+        }
     } else {
+        // `skipped`, not `error`: the dōjō answered, and a refusal is a decision
+        // rather than a fault. Both mean "not synced", but only one is a problem,
+        // and a dashboard that cannot tell them apart cries wolf or stays silent.
+        let why = result
+            .rejected
+            .iter()
+            .map(|r| format!("{}: {}", r.metric, r.reason))
+            .take(5)
+            .collect::<Vec<_>>()
+            .join("; ");
+        for key in &repos {
+            pg.mark_sync_skipped(&push_mark(key), &why).await?;
+        }
         tracing::warn!(
             persona,
             accepted = result.accepted,

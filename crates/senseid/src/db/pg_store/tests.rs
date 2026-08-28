@@ -9672,7 +9672,7 @@ async fn a_pushable_row_carries_every_field_the_dojo_needs() {
     let uniq = uuid::Uuid::new_v4();
     let (pid, _rid) = seed_sync_fixture(&s, &uniq).await;
 
-    let rows = s.unpushed_metric_rows(500).await.unwrap();
+    let rows = s.unpushed_metric_rows(&["repo", "user"], 500).await.unwrap();
     let mine = rows.iter().find(|r| r.repo_key == format!("test/bare-{uniq}"));
 
     let got = mine.cloned();
@@ -9780,11 +9780,13 @@ async fn a_repository_records_the_tenant_it_was_mapped_to() {
 #[tokio::test]
 async fn signed_in_personas_lists_only_the_ones_that_completed_a_sign_in() {
     // The registry that replaced the withdrawn `sensei.dojo_personas` table
-    // (docs/spec/dojo/daemon-sync.md §3). `verified_at` is the predicate because
-    // it is the one that is actually WRITTEN — `link_persona_identity` sets it on
-    // every completed OAuth callback. `principal_id` reads more precisely as "has
-    // a dōjō login" but nothing sets it yet, so using it would enumerate nobody
-    // and sync nothing, silently.
+    // (docs/spec/dojo/daemon-sync.md §3).
+    //
+    // This test USED to seed only `verified_at`, because the spec claimed the
+    // label was the Keychain slot. It is not, and the sign-in that proved it also
+    // broke this test — correctly. Both fields are now seeded because both are
+    // required: `session_slot` names a real Keychain entry, `verified_at` says the
+    // OAuth callback completed.
     //
     // A row proves a sign-in HAPPENED, not that its token is still good; the
     // caller still probes the Keychain.
@@ -9794,11 +9796,14 @@ async fn signed_in_personas_lists_only_the_ones_that_completed_a_sign_in() {
     let never = format!("ztest-never-{uniq}");
     let a = s.upsert_persona(&signed, true).await.unwrap();
     let b = s.upsert_persona(&never, true).await.unwrap();
-    sqlx_core::query::query("UPDATE sensei.personas SET verified_at = now() WHERE id = $1")
-        .bind(a)
-        .execute(s.pool())
-        .await
-        .unwrap();
+    sqlx_core::query::query(
+        "UPDATE sensei.personas SET verified_at = now(), session_slot = $2 WHERE id = $1",
+    )
+    .bind(a)
+    .bind(&signed)
+    .execute(s.pool())
+    .await
+    .unwrap();
 
     let listed = s.signed_in_personas().await.unwrap();
 
@@ -9813,6 +9818,57 @@ async fn signed_in_personas_lists_only_the_ones_that_completed_a_sign_in() {
     // have nothing to do with the code.
     assert!(listed.contains(&signed), "a persona that completed a sign-in is listed");
     assert!(!listed.contains(&never), "one that never signed in is not — it has no Keychain slot");
+}
+
+#[tokio::test]
+async fn the_registry_returns_the_keychain_slot_not_the_relabelled_persona() {
+    // THE bug this column exists for, and it was live: a sign-in as `default`
+    // leaves the session at `refresh_token.default` but RELABELS the row to the
+    // verified GitHub login. Returning the label sent `live_access_token` looking
+    // for `refresh_token.sensei-hq-org`, which does not exist — so it reported
+    // SignedOut, skipped the persona, and the cycle claimed success having pushed
+    // nothing. 0 plan rows, 0 rows shared, `last_ok = true`.
+    let s = pg_store().await;
+    let uniq = uuid::Uuid::new_v4();
+    let slot = format!("ztest-slot-{uniq}");
+    // The relabelling is the point: label and slot must differ, exactly as they
+    // do after a real sign-in.
+    let label = format!("ztest-relabelled-{uniq}");
+    let id = s.upsert_persona(&label, true).await.unwrap();
+    sqlx_core::query::query(
+        "UPDATE sensei.personas SET verified_at = now(), session_slot = $2 WHERE id = $1",
+    )
+    .bind(id)
+    .bind(&slot)
+    .execute(s.pool())
+    .await
+    .unwrap();
+
+    let listed = s.signed_in_personas().await.unwrap();
+
+    // A second persona may not claim the same slot — one stored session serving
+    // two identities would push one person's metrics under the other's token.
+    let other = s.upsert_persona(&format!("ztest-other-{uniq}"), true).await.unwrap();
+    let clash = sqlx_core::query::query(
+        "UPDATE sensei.personas SET verified_at = now(), session_slot = $2 WHERE id = $1",
+    )
+    .bind(other)
+    .bind(&slot)
+    .execute(s.pool())
+    .await;
+
+    sqlx_core::query::query("DELETE FROM sensei.personas WHERE id = ANY($1)")
+        .bind(vec![id, other])
+        .execute(s.pool())
+        .await
+        .unwrap();
+
+    assert!(listed.contains(&slot), "the registry yields the KEYCHAIN SLOT");
+    assert!(
+        !listed.contains(&label),
+        "and never the label — that is the lookup that found no session and silently skipped"
+    );
+    assert!(clash.is_err(), "two personas cannot share one Keychain slot");
 }
 
 #[tokio::test]
@@ -9908,7 +9964,7 @@ async fn a_pulled_row_is_never_pushed_back() {
     let uniq = uuid::Uuid::new_v4();
     let (pid, rid) = seed_sync_fixture(&s, &uniq).await;
 
-    let mine = s.unpushed_metric_rows(100).await.unwrap();
+    let mine = s.unpushed_metric_rows(&["repo", "user"], 100).await.unwrap();
     let before = mine.iter().filter(|r| r.repo_key == format!("test/bare-{uniq}")).count();
 
     // Same row, but marked as dojo's.
@@ -9919,7 +9975,7 @@ async fn a_pulled_row_is_never_pushed_back() {
     .execute(s.pool())
     .await
     .unwrap();
-    let after = s.unpushed_metric_rows(100).await.unwrap();
+    let after = s.unpushed_metric_rows(&["repo", "user"], 100).await.unwrap();
     let after_n = after.iter().filter(|r| r.repo_key == format!("test/bare-{uniq}")).count();
 
     crate::tasks::test_support::cleanup_metrics_fixture(&s, &pid, None, &[]).await;
@@ -9941,7 +9997,7 @@ async fn a_private_repository_is_skipped_not_queued() {
         .await
         .unwrap();
 
-    let rows = s.unpushed_metric_rows(100).await.unwrap();
+    let rows = s.unpushed_metric_rows(&["repo", "user"], 100).await.unwrap();
     let n = rows.iter().filter(|r| r.repo_key == format!("test/bare-{uniq}")).count();
 
     crate::tasks::test_support::cleanup_metrics_fixture(&s, &pid, None, &[]).await;
@@ -9959,7 +10015,7 @@ async fn a_recomputed_row_is_pushed_again() {
     let key = format!("test/bare-{uniq}");
 
     let ids: Vec<uuid::Uuid> = s
-        .unpushed_metric_rows(100)
+        .unpushed_metric_rows(&["repo", "user"], 100)
         .await
         .unwrap()
         .iter()
@@ -9967,15 +10023,25 @@ async fn a_recomputed_row_is_pushed_again() {
         .map(|r| r.id)
         .collect();
     s.mark_metric_rows_shared(&ids).await.unwrap();
-    let after_push =
-        s.unpushed_metric_rows(100).await.unwrap().iter().filter(|r| r.repo_key == key).count();
+    let after_push = s
+        .unpushed_metric_rows(&["repo", "user"], 100)
+        .await
+        .unwrap()
+        .iter()
+        .filter(|r| r.repo_key == key)
+        .count();
 
     // The day recomputes — modified_at moves past shared_at.
     sqlx_core::query::query(
             "UPDATE sensei.repository_metrics SET modified_at = now() + interval '1 second'               WHERE repository_id = $1")
             .bind(rid).execute(s.pool()).await.unwrap();
-    let after_recompute =
-        s.unpushed_metric_rows(100).await.unwrap().iter().filter(|r| r.repo_key == key).count();
+    let after_recompute = s
+        .unpushed_metric_rows(&["repo", "user"], 100)
+        .await
+        .unwrap()
+        .iter()
+        .filter(|r| r.repo_key == key)
+        .count();
 
     crate::tasks::test_support::cleanup_metrics_fixture(&s, &pid, None, &[]).await;
     assert_eq!(after_push, 0, "a pushed row leaves the queue");
