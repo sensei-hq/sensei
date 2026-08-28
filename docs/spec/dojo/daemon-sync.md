@@ -683,6 +683,123 @@ the invoice, versus ask an admin. Row E needs a third (elect it yourself). A
 consumer that has to infer which from a reason string will get it wrong the first
 time a reason is added, so the view states it.
 
+## 8c. `all_my_repositories` as the single source of truth
+
+The view stops being a filter and becomes **the answer**: one row per
+(repository, member) carrying what is true, what is configurable, and — when
+something is off — why, in words, with what to do about it.
+
+The reason this matters more than convenience: the sync decision is currently
+re-derived in at least four places (the daemon's gate, the plan endpoint, the
+console, and any UI that wants to grey out a toggle). Four derivations drift, and
+when they disagree nobody can tell which is right. One view means the daemon, the
+API and the UI all read the SAME verdict, and a disagreement becomes impossible
+rather than merely unlikely.
+
+### Reason codes are DATA, not string literals
+
+```
+dojo.share_reasons
+  code         text primary key      -- 'not_subscribed', 'not_elected', …
+  refused_by   dojo.refusal_axis     -- 'entitlement' | 'election'
+  precedence   smallint not null     -- lower = fix this first
+  summary      text not null         -- one line, shown on the row
+  detail       text not null         -- the paragraph behind a tooltip
+  remedy       text                  -- what the READER can do; NULL when they cannot
+  actor        dojo.share_authority  -- who can act: 'user' | 'organization'
+  unique (precedence)
+```
+
+Seeded, so the vocabulary lives in one place and the UI never invents copy:
+
+| code | axis | prec | summary | remedy | actor |
+|---|---|---|---|---|---|
+| `forge_visibility_unknown` | election | 10 | Waiting to learn whether this repo is public or private | Sign in again to refresh | user |
+| `unclaimed` | entitlement | 20 | This organization has not been claimed | Ask an owner to claim it | organization |
+| `not_subscribed` | entitlement | 30 | No active subscription for this organization | Ask an admin to subscribe | organization |
+| `subscription_expired` | entitlement | 31 | The subscription lapsed | Ask an admin to renew | organization |
+| `no_seat` | entitlement | 40 | You do not have a seat in this organization | Ask an admin for a seat | organization |
+| `not_elected_user` | election | 50 | You have not turned sharing on for this repository | Turn it on | user |
+| `not_elected_org` | election | 51 | Your organization has not enabled sharing for its private repositories | Ask an admin to enable it | organization |
+
+**`precedence` is the point of the table.** A repository can fail several ways at
+once — uncaptured AND unsubscribed AND unelected. The view reports the LOWEST
+precedence, which is "the thing to fix first". Without an explicit order the
+answer depends on the order of SQL branches, which is exactly the accidental
+behaviour this whole exercise is trying to remove.
+
+### The view
+
+```
+repository_id · repo_key · name · provider · remote_url
+tenant_id · tenant · owning_org · origin · principal_id · role
+
+forge_visibility      public | private | NULL (not yet captured)
+authority             user | organization | NULL   -- derived, never stored
+may_share             bool    -- ENTITLEMENT: is it allowed?
+elected               bool    -- ELECTION: did the authority choose it?
+sync_enabled          bool    -- may_share AND elected
+
+refused_by            entitlement | election | NULL
+reason_code           text    → dojo.share_reasons.code
+reason                text    -- summary, joined
+reason_detail         text
+remedy                text    -- NULL when the reader cannot act
+reason_actor          user | organization | NULL
+
+configurable_by_me    bool    -- may THIS member change it, right now?
+configured_by         user | organization | NULL   -- who elected it, if anyone
+configured_at         timestamptz
+last_synced_at        timestamptz  -- max(dojo.repository_metrics.pushed_at)
+metric_rows           bigint
+```
+
+### `configurable_by_me` is viewer-relative, and that is deliberate
+
+```sql
+, case
+    -- Nothing to configure against until we know what the repo IS.
+    when r.visibility is null                                   then false
+    -- The user's own call: personal repos, and any public repo.
+    when t.origin = 'personal' or r.visibility = 'public'        then true
+    -- Org-private: only an admin or lead can move the org's policy.
+    when m.role in ('admin', 'lead')                             then true
+    else false
+  end as configurable_by_me
+```
+
+The view is already per-principal, so this answers *"should the UI show this
+member a toggle?"* directly. A contributor looking at an org-private repository
+gets `configurable_by_me = false` **and** `reason_actor = 'organization'` — so the
+UI can render "your organization controls this" instead of a dead switch, which is
+the difference between an explanation and a bug report.
+
+### Why `sync_enabled = false` is never enough on its own
+
+Every one of these renders as "off" today, and they need four different actions:
+
+| situation | `refused_by` | `remedy` |
+|---|---|---|
+| you never turned it on | election | turn it on |
+| your org has not enabled it | election | ask an admin |
+| the subscription lapsed | entitlement | ask an admin to renew |
+| we do not know if it is public yet | election | sign in again |
+
+A boolean cannot carry that, and the alternative — each consumer inferring it —
+is how the same question ends up with four different answers.
+
+### The general pattern
+
+This is the second time this shape has been needed. `sensei.schedules` was the
+first: configuration became rows, one listing returns every worker with its
+current setting AND its last outcome, and nothing re-derives "is this enabled".
+Same rule here.
+
+**For anything configurable, three things belong together:** the setting as a row
+(not a literal), a listing that shows configured *and* default alongside each
+other, and a registered human-readable reason for the current state. Absent the
+third, "why is this off?" is answered by reading source.
+
 ## 9. Not in this slice
 
 De-provisioning, claim, seats, billing, `forge_visibility` — all phase 2 of the

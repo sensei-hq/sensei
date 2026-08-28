@@ -73,17 +73,34 @@ the machine.
 
 ## What must be observable
 
-A user must be able to see, per repository, **all four** of:
+**One query answers everything.** `dojo.all_my_repositories` is the single source
+of truth — the daemon, the API and the UI read the same verdict, so they cannot
+disagree. Per repository a user must be able to see:
 
-1. the forge's answer (public / private / internal)
+1. the forge's answer (public / private / not yet captured)
 2. who holds authority (them, or the organization)
-3. what was elected, and by whom
-4. if it is not syncing, **which of the two questions said no** — entitlement or
-   election
+3. what was elected, by whom, and when
+4. whether **they personally** can change it right now (`configurable_by_me`)
+5. if it is not syncing: **which question refused** (entitlement or election), a
+   human-readable reason, and **what to do about it** — plus who can act, when
+   that is not them
+6. when it last actually synced
 
-Item 4 is the one that has burned this project repeatedly: a denial that reads as
+Item 5 is the one that has burned this project repeatedly: a denial that reads as
 "nothing to sync" is indistinguishable from having nothing to sync. Every refusal
 names itself.
+
+**Reason codes are registered data, not string literals** (`dojo.share_reasons`),
+carrying a precedence so that a repository failing several ways at once reports
+the one to fix FIRST — rather than whichever SQL branch happened to run first.
+
+### The general rule this establishes
+
+For anything configurable, three things belong together: **the setting as a row**
+(never a literal), **a listing that shows configured and default side by side**,
+and **a registered human-readable reason** for the current state. Without the
+third, "why is this off?" is answered by reading source code — which is how one
+question ends up with four different answers in four consumers.
 
 ## Acceptance criteria
 
