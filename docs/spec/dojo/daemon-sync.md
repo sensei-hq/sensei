@@ -295,6 +295,112 @@ is a missing *prerequisite*: there is no way for a user to mark a repository sha
    `principal_id`, so there is genuinely nothing to attribute a user-scoped row to. The ingest
    endpoint rejects `scope='user'` for exactly this reason.
 
+## 8a. REVISION — sharing is two questions, and the code answers one
+
+> **Added 2026-08-28**, after `docs/requirements/repository-sharing.md`. This
+> revises what was already SHIPPED, so it is written as a diff against reality
+> rather than as a plan.
+
+### What the shipped code assumes
+
+Gate 1 is `sensei.repositories.visibility = 'shared'`, set by the user, and the
+daemon treats it as sovereign. `dojo.all_my_repositories` hardcodes
+`sync_enabled = true, denied_reason = null`. So the shipped model is: **the user
+elects, and the dōjō permits everything.**
+
+### What is actually required
+
+Entitlement and election are independent (parent spec §IV.3, corrected), and
+**election authority depends on the repository**:
+
+| owner | forge visibility | authority |
+|---|---|---|
+| personal | private / public | user |
+| organization | public | user |
+| organization | private | **organization — mandatory** |
+
+### What that changes, concretely
+
+1. **`dojo.repositories` needs an election, separate from forge visibility.**
+   Today it has `visibility` (`private | public`, the forge's answer, phase 1) and
+   nothing recording whether sharing was elected or by whom. Two different things
+   currently share one word in two schemas: `sensei.repositories.visibility` is
+   `private | shared` (INTENT) and `dojo.repositories.visibility` is
+   `private | public` (FORGE). Neither is an election record.
+
+2. **Forge visibility must be captured at sign-in.** It is not populated today —
+   every row sits at the `private` default, including `github.com/sensei-hq/dbd`,
+   which is public. Registration cannot fetch it: the caller holds a SUPABASE
+   token, not a forge token (`setCookieFromSession` strips `provider_token`, which
+   is why provisioning reaches GitHub through the kavach `onSessionSync` hook). So
+   capture happens where a provider token exists — the sign-in/provisioning path
+   that already lists the user's orgs.
+
+3. **`all_my_repositories` must compute, not hardcode.** `sync_enabled` becomes
+   `can_sync AND elected`, and `denied_reason` must distinguish which of the two
+   refused — plus, when election refused, WHICH AUTHORITY holds it. "off" that
+   does not say whether the user or the org turned it off is the same
+   indistinguishable-failure shape as "nothing to sync".
+
+4. **Gate 1 stops being sovereign for org-mandated repos.** The daemon currently
+   filters `plan.allowed` against its own `shared` set implicitly — it only ever
+   OFFERS shared repos, so an org-mandated repo the user has not elected locally
+   is never even registered. That is now wrong: the daemon must offer, and push,
+   org-mandated repos regardless of the local flag.
+
+   This is the one item that changes daemon behaviour rather than adding to it,
+   and it inverts a rule the shipped code states in three places
+   (`shared_repositories`' doc, `dojo_sync`'s module doc, §V.3).
+
+### BLOCKING ordering constraint — the default is unsafe for the new rule
+
+Verified against the live dōjō before writing this, and it is not hypothetical:
+
+```
+github.com/sensei-hq/dbd  origin=organization  forge_visibility=private
+                          → authority = ORG (MANDATED)
+```
+
+`sensei-hq/dbd` is **public on GitHub**. It reads `private` because that is the
+column DEFAULT and nothing populates it. Under the new rule it therefore resolves
+to org-mandated and would be shared **with no election by anyone** — the exact
+inverse of the correct answer, which is "public, so the user decides".
+
+The cause is one column serving two consumers whose safe directions are
+**opposite**:
+
+| consumer | safe default | why |
+|---|---|---|
+| entitlement | `private` | do not treat unknown code as free to host |
+| **authority** | **`public`** | do not treat unknown code as org-mandated |
+
+No single default is safe. So:
+
+1. **"Not captured" must be a distinct state**, not a value that happens to mean
+   something to both consumers — `NULL`, or an explicit `unknown` in the phase-2
+   `dojo.forge_visibility` enum.
+2. **Authority resolution must fail closed on an uncaptured repo**: no authority,
+   therefore no election, therefore no sync — and a `denied_reason` that says
+   `forge_visibility_unknown` rather than implying anyone chose anything.
+3. **Capture must land before the authority rule does.** If the view is rewritten
+   first, every existing org repository becomes silently mandated. That is a data
+   leak on a deploy ordering, not on a code path, so it will not show up in any
+   unit test.
+
+Order, therefore: capture at sign-in → backfill existing rows → then the view.
+
+### Not yet decided
+
+- **Where the org's policy lives.** A per-repo row, a tenant-wide default, or
+  both. A tenant-wide "share all private repos" with per-repo exceptions is the
+  likelier shape, but nothing in the schema anticipates it.
+- **What happens to an election when authority changes.** A repo goes public →
+  authority moves org → user. The requirement says an election made under the old
+  authority must not silently survive; the mechanism is unspecified.
+- **Whether `internal` (phase 2's third forge value) elects as private.** The
+  parent spec says it gates as private; whether it also elects as org-mandated
+  follows but is not stated.
+
 ## 9. Not in this slice
 
 De-provisioning, claim, seats, billing, `forge_visibility` — all phase 2 of the
