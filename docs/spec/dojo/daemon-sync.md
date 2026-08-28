@@ -23,7 +23,9 @@
 
 - `PgStore::shared_repositories(limit)` → `SharedRepo { repo_key, remote_url, name }`,
   filtering `visibility = 'shared' AND repo_key IS NOT NULL`. **Gate 1 (intent)** —
-  the only gate the daemon owns. Landed `d363f720`.
+  the only gate the daemon owns — **superseded, see §8a**: it is the only gate the
+  daemon owns for repositories where the USER holds authority, and not for
+  org-mandated ones. Landed `d363f720`.
 - `PgStore::unpushed_metric_rows(scopes, limit)` — the push queue. **When this
   spec was written it had NO production caller** (only tests) and no dōjō endpoint
   received metrics, which is why the first version of this bullet called it "the
@@ -328,7 +330,34 @@ Entitlement and election are independent (parent spec §IV.3, corrected), and
    `private | shared` (INTENT) and `dojo.repositories.visibility` is
    `private | public` (FORGE). Neither is an election record.
 
-2. **Forge visibility must be captured at sign-in.** It is not populated today —
+2. **Forge visibility must be captured at sign-in — and there is a chicken/egg.**
+   `dojo.repositories` rows are created by `registerRepositories` and NOTHING ELSE
+   (verified: `metrics-ingest.ts` only reads them). The daemon calls that only for
+   locally-shared repos. So at sign-in there is **no row to write visibility onto**
+   for precisely the repos this revision needs to reach — org-mandated ones the
+   user has not elected locally. `forge-github.ts` also has no repo-listing call
+   at all today (`fetchGithubUser`, `fetchGithubOrgs`, `fetchGithubFacts`).
+
+   **REJECTED: have sign-in insert a row per visible forge repo.** It would give
+   somewhere to write, and it violates the project's hard rule against minting
+   identity on a miss — it would create repository rows the daemon never
+   registered and the user never chose to disclose, turning a sign-in into an
+   inventory upload of every repo they can see. That is a worse privacy defect
+   than the one this revision fixes.
+
+   **RESOLVED: uncaptured is a state, and capture refreshes what exists.**
+   - `registerRepositories` creates rows with visibility **NULL / uncaptured**.
+     Authority fails closed on it: no authority → no election → no sync, with
+     `refused_by = 'election'`, `reason = 'forge_visibility_unknown'`.
+   - The sign-in path refreshes visibility for the rows that already exist, keyed
+     on `repo_key` — a read of facts about repositories the user has already
+     registered, not a listing of everything they can see.
+   - **Cost, stated:** a newly registered repository is unshareable until the next
+     sign-in captures its visibility. That lag is the price of not storing a forge
+     token and not uploading an inventory. If it proves unacceptable, the fix is a
+     narrowly-scoped refresh endpoint the console can call — not a stored token.
+
+3. **Forge visibility is not populated today —
    every row sits at the `private` default, including `github.com/sensei-hq/dbd`,
    which is public. Registration cannot fetch it: the caller holds a SUPABASE
    token, not a forge token (`setCookieFromSession` strips `provider_token`, which
@@ -336,21 +365,57 @@ Entitlement and election are independent (parent spec §IV.3, corrected), and
    capture happens where a provider token exists — the sign-in/provisioning path
    that already lists the user's orgs.
 
-3. **`all_my_repositories` must compute, not hardcode.** `sync_enabled` becomes
+4. **`all_my_repositories` must compute, not hardcode.** `sync_enabled` becomes
    `can_sync AND elected`, and `denied_reason` must distinguish which of the two
    refused — plus, when election refused, WHICH AUTHORITY holds it. "off" that
    does not say whether the user or the org turned it off is the same
    indistinguishable-failure shape as "nothing to sync".
 
-4. **Gate 1 stops being sovereign for org-mandated repos.** The daemon currently
-   filters `plan.allowed` against its own `shared` set implicitly — it only ever
-   OFFERS shared repos, so an org-mandated repo the user has not elected locally
-   is never even registered. That is now wrong: the daemon must offer, and push,
-   org-mandated repos regardless of the local flag.
+5. **Gate 1 stops being sovereign for org-mandated repos.** The daemon must offer,
+   and push, org-mandated repos regardless of the local flag.
 
-   This is the one item that changes daemon behaviour rather than adding to it,
-   and it inverts a rule the shipped code states in three places
-   (`shared_repositories`' doc, `dojo_sync`'s module doc, §V.3).
+   **This is enforced in TWO independent code paths, and an earlier version of
+   this section named neither.** Both are verified:
+
+   - **B1 — the cycle short-circuits before the dōjō is ever asked.**
+     `dojo_sync.rs`: `let shared = pg.shared_repositories(…); if shared.is_empty()
+     { return Ok(()) }`. A new employee whose only repository is the org-mandated
+     private one has nothing locally shared, so the pass returns before
+     `register_repositories`, before `sync_plan`, before any push. **The feature is
+     structurally defeated for exactly the population it exists to serve**, and no
+     amount of dōjō-side correctness reaches it. The daemon cannot pre-filter on
+     "is this mandated" either — it has no local data that answers that; only the
+     plan does. So the cycle has to ask FIRST and filter after.
+   - **B2 — the push query hardcodes gate 1 in SQL.** `unpushed_metric_rows`:
+     `WHERE r.visibility = 'shared' … AND r.repo_key = ANY($2)`. Both. So even
+     with registration and the plan corrected, a mandated repo's metric rows are
+     still excluded at PUSH time. Fixing the offer side does nothing here.
+     `unpushed_metric_count` carries the same predicate (reporting only).
+
+   **The count was wrong.** This section said the old rule is stated in "three
+   places". It is at least EIGHT, of which two (B1, B2) are functional and the rest
+   prose or tests:
+   `shared_repositories`' doc · `dojo_sync`'s module doc · §V.3 ·
+   `push_allowed`'s inline comment · the `tests.rs` section banner · §1 of THIS
+   document (now marked) · and a **live passing assertion**:
+   `"a repository the user did not share must NEVER be offered — that is gate 1"`,
+   which must be rescoped or it will keep asserting a now-partly-false invariant.
+
+### Status: NOT-READY as first written — and what closed the gap
+
+A plan-depth review returned NOT-READY on the first version of this section. Its
+two blocking findings were both real and both absent from my change list: **B1**
+(the cycle returns before asking the dōjō when nothing is locally shared) and
+**B2** (the push query hardcodes gate 1 in SQL, independently of the plan). I had
+also undercounted the blast radius as three places when it is at least eight, and
+given no schema for the election record while the sibling sections of this spec
+family give full DDL sketches.
+
+Closed above: B1 and B2 named, the count corrected, the election and org-policy
+schemas sketched, the capture chicken/egg resolved with the speculative-row
+approach explicitly rejected, and the denial vocabulary specified. Of the three
+"not yet decided" items, two were load-bearing and are now decided; the third is
+genuinely unreachable.
 
 ### BLOCKING ordering constraint — the default is unsafe for the new rule
 
@@ -389,17 +454,84 @@ No single default is safe. So:
 
 Order, therefore: capture at sign-in → backfill existing rows → then the view.
 
-### Not yet decided
+### The schema, which was missing
 
-- **Where the org's policy lives.** A per-repo row, a tenant-wide default, or
-  both. A tenant-wide "share all private repos" with per-repo exceptions is the
-  likelier shape, but nothing in the schema anticipates it.
+An earlier version of item 1 said "`dojo.repositories` needs an election" and gave
+no column names — while the sibling sections of this spec family (e.g.
+`dojo.seat_allocations`) give full DDL sketches. Unbuildable as written. Proposed:
+
+```
+dojo.repository_elections            -- WHO chose, for WHOM, when
+  tenant_id     uuid not null references dojo.tenants(id)     on delete cascade
+  repository_id uuid not null references dojo.repositories(id) on delete cascade
+  authority     dojo.share_authority not null   -- 'user' | 'organization'
+  principal_id  uuid references dojo.principals(id) on delete cascade
+        -- the electing user; NULL when authority = 'organization'
+  elected       boolean not null
+  elected_at    timestamptz not null default now()
+  -- one election per (repo, authority, principal). A user's election and an org's
+  -- mandate are DIFFERENT rows, so an authority change does not overwrite history.
+  unique nulls not distinct (repository_id, authority, principal_id)
+
+dojo.tenant_share_policy             -- the org's DEFAULT, so a new repo is covered
+  tenant_id            uuid primary key references dojo.tenants(id) on delete cascade
+  private_repos_shared boolean not null default false
+        -- false, deliberately: an org that has not decided has not mandated.
+  set_by               uuid references dojo.principals(id)
+  set_at               timestamptz not null default now()
+
+dojo.share_authority  enum ('user', 'organization')
+```
+
+`repository_elections` + `tenant_share_policy` together answer `elected()`: an org
+mandate is the tenant policy unless a per-repo `authority='organization'` row
+overrides it, and a user election is the row for that principal.
+
+### Why the per-repo row and the tenant default are BOTH needed
+
+A tenant-wide flag alone cannot express "share all private repos except this one",
+which is the first thing any org asks for. A per-repo row alone means a newly
+created repository is un-elected until someone touches it — so an org's mandate
+silently fails to cover new work, which is the failure mode the mandate exists to
+prevent.
+
+### Still not decided — but no longer blocking the build
+
 - **What happens to an election when authority changes.** A repo goes public →
-  authority moves org → user. The requirement says an election made under the old
-  authority must not silently survive; the mechanism is unspecified.
-- **Whether `internal` (phase 2's third forge value) elects as private.** The
-  parent spec says it gates as private; whether it also elects as org-mandated
-  follows but is not stated.
+  authority moves org → user. The unique key above keeps the two elections as
+  separate rows, so the org's mandate does not silently become the user's choice
+  and vice versa — which satisfies acceptance criterion 7's *"does not silently
+  survive"* structurally. What remains undecided is whether the stale row is
+  deleted, or kept and ignored. **Keeping it is the better default** (an audit
+  trail of who mandated what, when) and nothing depends on the choice, so it is
+  genuinely deferrable now.
+- **Whether `internal` elects as private.** Not reachable: the column's CHECK
+  allows only `private | public`, and the `dojo.forge_visibility` enum with
+  `internal` is phase 2/3 (parent §V.1). Nothing in this slice can encounter it.
+
+### The denial vocabulary, which criterion 5 needs
+
+`denied[]` carries one opaque `reason` string today
+(`user_plane.rs::DeniedRepo`, `repositories.ts`), and the view's comment
+enumerates only entitlement reasons. Criterion 5 asks for entitlement-vs-election
+AND which authority holds it, so the wire needs:
+
+```
+denied: [{ repo_key, tenant,
+           refused_by: 'entitlement' | 'election',
+           reason:     'unclaimed' | 'not_subscribed' | 'subscription_expired'
+                     | 'no_seat'                          -- entitlement
+                     | 'not_elected' | 'forge_visibility_unknown',   -- election
+           authority:  'user' | 'organization' | null }]  -- who holds the election
+```
+
+`refused_by` is a separate field rather than an inference from `reason`, so a
+reason added later cannot land on the wrong side of the split.
+
+**D6 must be revisited as a prerequisite, not a phase-2 footnote.** It deferred
+`denied[]` reason UX on the grounds that phase-1 `denied` is provably always
+empty. That was true of a hardcoded view; it is false the moment the view
+computes, and this revision is what makes it compute.
 
 ## 9. Not in this slice
 
