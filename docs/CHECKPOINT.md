@@ -16,41 +16,60 @@ string, so the persona was skipped while the tick reported success. Fixed with
 `personas.session_slot`, which records what the sign-in actually used —
 **`label` is NOT the slot, a sign-in rewrites it to the verified login.**
 
-## Adversarial review — 4 of 5 reviewers reported
+## Adversarial review — all 5 reviewers reported, all findings fixed
 
-Fixed (`7341101f`, `2dc0d089`, and this commit): two ingest CRITICALs — a
-repo_key under two tenants 500'd every push forever, and the upsert key matched
-4 of 7 columns so rows merged silently (6 groups / 34 rows on the live DB).
-Plus `nulls not distinct` on `dojo.repository_metrics`, which makes claim C5
-true rather than merely recorded; the label/slot correction in all four
-surviving places; the claims ledger re-verified; §6's "two schema changes"
-corrected to five; D3/D4/D5/D8 marked deferred or superseded.
+Five independent reviewers over `eab5671d^..HEAD`. Every CRITICAL/HIGH/MEDIUM is
+fixed and mutation-probed; commits `7341101f`, `83fcabc8`, `12e325d0`,
+`2917ee21`, `fd4b719f`.
 
-**Still open, severity order:**
+**Security (2)** — a live Supabase refresh token was captured from an
+unprivileged `ps`: `security -w <secret>` puts it in `argv`, and this slice made
+the write recur per cadence. Now fed over stdin through one shared helper. And
+`PATCH /api/repositories` was unauthenticated under `allow_origin(Any)`, so any
+web page could flip the sharing gate and read the repo inventory; now guarded by
+`Origin` (a missing one is allowed — the CLI/MCP send none).
 
-1. **CRITICAL** — `tick`'s whole body can be replaced with `Ok(())` and both its
-   tests pass. No real coverage of: push error, partial acceptance, unparseable
-   `tenant_id`, empty allow-list, per-persona isolation. Needs an injectable
-   transport; `crates/senseid` has no HTTP-mock dev-dep today.
-2. **HIGH** — plan allow-list still filtered AFTER the SQL LIMIT. Same class as
-   the scope bug already fixed: 218 of 500 slots go to never-mappable repos.
-3. **HIGH** — `a_pushable_row_carries_every_field_the_dojo_needs` is vacuous for
-   5 of 7 fields: the fixture value IS the constant a broken projection emits.
-4. **HIGH** — the `scopes` parameter is untested; every call site passes both
-   enum values, so the filter is a tautology.
-5. **HIGH** — `POST /v1/you/metrics` has no test; all six siblings do.
-6. **HIGH** — `unknown_repository` untested; delete the reject and rows are
-   silently dropped AND watermarked.
-7. **MEDIUM** — a 500-row batch is ≈2001 sequential PostgREST subrequests in one
-   Worker invocation. The live run moved 132 (≈529) — a quarter of the load.
+**Correctness (4)** — a repo_key under two tenants 500'd every push forever; the
+upsert key matched 4 of 7 columns so rows merged silently; one refused row
+livelocked the whole 500-row window; the dōjō unique key lacked
+`NULLS NOT DISTINCT` so it fired for nothing we push (claim C5 was recorded
+CONFIRMED on a check that could not establish it).
 
-The security reviewer had not reported when this was written.
+**Reliability (5)** — the plan allow-list joined the scope filter in SQL, before
+the LIMIT; four discarded errors restored (rotated-token write, clear-on-rejection,
+`mark_sync_error` overwriting the real error, `unwrap_or(0)` printing "0 held
+back"); `tick` no longer reports success when every persona failed.
+
+**Ingest hardening (3)** — the reject reason was a cross-tenant existence oracle,
+now one reason; the body is bounded before parsing, not after; the resolve reads
+are batched O(rows) → O(1) (≈2001 sequential Worker subrequests at 500 rows).
+
+**Tests** — the cycle had none that could fail: `tick`'s body could be `Ok(())`
+with both tests green. `user_plane::UserPlane` is now injectable and there are
+nine tests asserting database state. Also fixed: a vacuous field-projection test
+(fixture value == the constant a broken projection emits), a tautological
+`scopes` filter, a `PLAN_ENTITY` test comparing a const to its own literal, and
+two missing test files. `fakeDojoDb` learned `.schema()` and read-counting,
+because without them the assertions were vacuous.
+
+## Re-verified live on the hardened build
+
+20 re-queued rows pushed, queue drained to 0, `dojo.repository_metrics` unchanged
+at 132 — they updated in place, and that now rests on a DB constraint rather than
+an app-level check. `Origin: https://evil.example` → 403, `tauri://localhost` →
+200, no Origin → 200. Zero processes with a secret in `argv`.
 
 ## Next command
 
+Nothing from the review is outstanding. The slice's own remaining work:
+
 ```
-rg -n 'fn tick' crates/senseid/src/tasks/dojo_sync.rs      # finding 1
+rg -n 'D3|governance' docs/spec/dojo/daemon-sync.md    # the deferred pull
 ```
+
+D3 (per-repo governance pull), D5's change-guard and D8's public/private default
+are deferred and recorded in §9. D8 is *unimplementable* today — no
+forge-visibility column exists.
 
 ## Gates (green)
 
