@@ -6,7 +6,7 @@
 //! Cadence lives in `sensei.schedules` (name `log_prune`), not here. Retention is
 //! still config-driven (`logs.retention_days`) and re-read each run.
 //!
-//! (was: `logs.prune_interval_secs`,
+//! (the retired `logs.prune_interval_secs` key is superseded by that row;
 //! `logs.retention_days`) with sensible defaults.
 //!
 //! Scope: this prunes the flat structured logs ingested via `POST /api/logs`.

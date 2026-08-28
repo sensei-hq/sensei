@@ -23,13 +23,12 @@
 
 use crate::db::pg_store::PgStore;
 use crate::tasks::queue::TaskQueue;
-use crate::tasks::ticker::{self, FirstTick};
+use crate::tasks::ticker;
 use crate::tasks::{Task, TaskKind};
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-const DEFAULT_INTERVAL_SECS: u64 = 3600;
 /// Re-analyze every active project at least this often, regardless of new
 /// activity — keeps decay/staleness/effectiveness insights current.
 const DEFAULT_FULL_REFRESH_SECS: i64 = 86_400;
@@ -144,30 +143,25 @@ fn deserialize_watermark(raw: &str) -> HashMap<uuid::Uuid, DateTime<Utc>> {
     out
 }
 
-async fn interval_secs(pg: &PgStore) -> u64 {
-    // Config-read failure isn't fatal — we fall back to the default
-    // interval and log so an operator can see the DB is unhappy rather
-    // than silently drifting off the configured cadence.
-    let raw = match pg.get_config("analyzer.interval_secs").await {
-        Ok(v) => v,
-        Err(e) => {
-            tracing::debug!(error = %e, "analyzer_scheduler: interval_secs config read failed — using default");
-            None
-        }
-    };
-    ticker::interval_secs(raw, DEFAULT_INTERVAL_SECS)
-}
-
 /// Spawn the scheduler for the daemon's lifetime.
 pub fn spawn(queue: Arc<TaskQueue>, pg: Arc<PgStore>) {
     tokio::spawn(run(queue, pg));
 }
 
+/// The analyzer's cross-pass state: how far each project has been analyzed, and
+/// when the last daily full refresh ran.
+///
+/// Held in memory between passes AND persisted to config, so a restart resumes
+/// incrementally instead of re-analyzing everything. The in-memory copy is the
+/// working set; config is the durable one.
+struct AnalyzerState {
+    watermark: HashMap<uuid::Uuid, chrono::DateTime<Utc>>,
+    last_refresh_ms: Option<i64>,
+}
+
 async fn run(queue: Arc<TaskQueue>, pg: Arc<PgStore>) {
-    let secs = interval_secs(&pg).await;
-    // Same default-fall-back pattern as interval_secs — a bad config
-    // read shouldn't crash the scheduler, but it also shouldn't be
-    // invisible.
+    // Same default-fall-back pattern as the interval — a bad config read should
+    // not crash the scheduler, but it should not be invisible either.
     let refresh_secs = match pg.get_config("analyzer.full_refresh_secs").await {
         Ok(raw) => raw
             .and_then(|v| v.trim().parse::<i64>().ok())
@@ -178,97 +172,119 @@ async fn run(queue: Arc<TaskQueue>, pg: Arc<PgStore>) {
             DEFAULT_FULL_REFRESH_SECS
         }
     };
-    let mut ticker = ticker::ticker(secs, FirstTick::Immediate);
-    // Restore the watermark + last-refresh from config so a restart resumes
-    // incrementally instead of re-analyzing everything.
-    let mut watermark = match pg.get_config(WATERMARK_KEY).await {
-        Ok(Some(raw)) => deserialize_watermark(&raw),
-        _ => HashMap::new(),
-    };
-    let mut last_refresh_ms: Option<i64> = match pg.get_config(LAST_REFRESH_KEY).await {
-        Ok(raw) => raw.and_then(|v| v.trim().parse::<i64>().ok()),
-        Err(e) => {
-            tracing::warn!(error = %e, "analyzer_scheduler: last_refresh watermark read failed — treating as never-refreshed");
-            None
-        }
-    };
-    loop {
-        ticker.tick().await;
-        let activity = match pg.get_projects_with_session_activity().await {
-            Ok(a) => a,
+
+    // Restore once, at start — not per pass. Re-reading every pass would be a
+    // needless round trip for state we already hold correctly.
+    let state = Arc::new(tokio::sync::Mutex::new(AnalyzerState {
+        watermark: match pg.get_config(WATERMARK_KEY).await {
+            Ok(Some(raw)) => deserialize_watermark(&raw),
+            _ => HashMap::new(),
+        },
+        last_refresh_ms: match pg.get_config(LAST_REFRESH_KEY).await {
+            Ok(raw) => raw.and_then(|v| v.trim().parse::<i64>().ok()),
             Err(e) => {
-                tracing::warn!(error = %e, "analyzer_scheduler: session-activity query failed");
-                continue;
+                tracing::warn!(error = %e, "analyzer_scheduler: last_refresh watermark read failed — treating as never-refreshed");
+                None
             }
-        };
-        // Incremental: projects whose activity advanced past the watermark.
-        let mut due = projects_due(&activity, &mut watermark);
+        },
+    }));
 
-        // Daily full refresh: re-analyze ALL active projects so decay/effectiveness
-        // insights stay fresh even when no new sessions arrived. Community
-        // detection also runs here — see the module-level comment for why the
-        // daily cadence is the right home for it.
-        let now_ms = Utc::now().timestamp_millis();
-        let is_full_refresh = due_for_full_refresh(now_ms, last_refresh_ms, refresh_secs);
-        if is_full_refresh {
-            for (pid, _) in &activity {
-                if !due.contains(pid) {
-                    due.push(*pid);
-                }
-            }
-            last_refresh_ms = Some(now_ms);
-            // Watermark persist matters at restart — without it we'd
-            // redo the full refresh on every reboot. Log if the write
-            // fails so an operator can act; in-memory watermark stays
-            // advanced so the current process still behaves.
-            if let Err(e) = pg.set_config(LAST_REFRESH_KEY, &now_ms.to_string()).await {
-                tracing::warn!(error = %e, "analyzer_scheduler: persisting last_refresh watermark failed — restart may redo full refresh");
-            }
-            tracing::info!(projects = activity.len(), "analyzer_scheduler: daily full refresh");
-            // Enqueue community detection per indexed folder for every active
-            // project. Log-and-skip on lookup errors — a bad row shouldn't
-            // block the rest of the daily pass.
-            for (pid, _) in &activity {
-                match pg.get_indexed_folder_paths_for_project(pid).await {
-                    Ok(paths) => {
-                        for abs_path in paths {
-                            queue
-                                .enqueue(Task::new(TaskKind::DetectCommunities, &abs_path, ""))
-                                .await;
-                        }
-                    }
-                    Err(e) => {
-                        tracing::warn!(project_id = %pid, error = %e, "analyzer_scheduler: could not list folders for community detection");
-                    }
-                }
-            }
-            // LLM process-quality pass, daily only (spec 2026-08-20): score each
-            // active project's un-scored transcripts. Watermark-gated + batch-capped
-            // in the handler, so this daily enqueue drains the backlog incrementally.
-            for (pid, _) in &activity {
-                enqueue_daily_process(&queue, pid).await;
+    // Cadence lives in `sensei.schedules` (name `analyzer`). The DAILY FULL
+    // REFRESH keeps its own separate cadence (`analyzer.full_refresh_secs`): it
+    // is a different question from "how often to look for new activity", and
+    // folding the two would make a user shortening the poll also re-analyze
+    // everything daily-many times.
+    let store = pg.clone();
+    ticker::run_scheduled(pg, "analyzer", move || {
+        let (queue, pg, state) = (queue.clone(), store.clone(), state.clone());
+        async move {
+            let mut st = state.lock().await;
+            analyzer_pass(&queue, &pg, &mut st, refresh_secs).await
+        }
+    })
+    .await;
+}
+
+/// One analyzer pass.
+async fn analyzer_pass(
+    queue: &TaskQueue,
+    pg: &PgStore,
+    st: &mut AnalyzerState,
+    refresh_secs: i64,
+) -> Result<(), String> {
+    let activity = match pg.get_projects_with_session_activity().await {
+        Ok(a) => a,
+        // Fail-closed: reported, not swallowed into an empty pass that would
+        // read as "no projects need analyzing".
+        Err(e) => return Err(e.to_string()),
+    };
+    // Incremental: projects whose activity advanced past the watermark.
+    let mut due = projects_due(&activity, &mut st.watermark);
+
+    // Daily full refresh: re-analyze ALL active projects so decay/effectiveness
+    // insights stay fresh even when no new sessions arrived. Community
+    // detection also runs here — see the module-level comment for why the
+    // daily cadence is the right home for it.
+    let now_ms = Utc::now().timestamp_millis();
+    let is_full_refresh = due_for_full_refresh(now_ms, st.last_refresh_ms, refresh_secs);
+    if is_full_refresh {
+        for (pid, _) in &activity {
+            if !due.contains(pid) {
+                due.push(*pid);
             }
         }
-
-        let any_due = !due.is_empty();
-        for pid in &due {
-            enqueue_due_project(&queue, pid).await;
+        st.last_refresh_ms = Some(now_ms);
+        // Watermark persist matters at restart — without it we'd
+        // redo the full refresh on every reboot. Log if the write
+        // fails so an operator can act; in-memory watermark stays
+        // advanced so the current process still behaves.
+        if let Err(e) = pg.set_config(LAST_REFRESH_KEY, &now_ms.to_string()).await {
+            tracing::warn!(error = %e, "analyzer_scheduler: persisting last_refresh watermark failed — restart may redo full refresh");
         }
-        // Global passes once per tick when work happened: corrections cluster
-        // across projects; verdicts re-measure accepted recs' before/after FTR;
-        // pending verdicts get classified so the Health-tab aggregate sees every
-        // session (not just opened ones); tool insights snapshot the per-tool
-        // signal cards so the observatory Insights tab reads from cache (T2 Slice D).
-        if any_due {
-            enqueue_global_passes(&queue).await;
-            // Persist the advanced watermark so a restart doesn't redo this work.
-            // Same restart-risk category as LAST_REFRESH_KEY — log on failure
-            // so an operator can see we're at risk of re-analyzing after boot.
-            if let Err(e) = pg.set_config(WATERMARK_KEY, &serialize_watermark(&watermark)).await {
-                tracing::warn!(error = %e, "analyzer_scheduler: persisting activity watermark failed — restart may re-enqueue analyzed projects");
+        tracing::info!(projects = activity.len(), "analyzer_scheduler: daily full refresh");
+        // Enqueue community detection per indexed folder for every active
+        // project. Log-and-skip on lookup errors — a bad row shouldn't
+        // block the rest of the daily pass.
+        for (pid, _) in &activity {
+            match pg.get_indexed_folder_paths_for_project(pid).await {
+                Ok(paths) => {
+                    for abs_path in paths {
+                        queue.enqueue(Task::new(TaskKind::DetectCommunities, &abs_path, "")).await;
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(project_id = %pid, error = %e, "analyzer_scheduler: could not list folders for community detection");
+                }
             }
+        }
+        // LLM process-quality pass, daily only (spec 2026-08-20): score each
+        // active project's un-scored transcripts. Watermark-gated + batch-capped
+        // in the handler, so this daily enqueue drains the backlog incrementally.
+        for (pid, _) in &activity {
+            enqueue_daily_process(queue, pid).await;
         }
     }
+
+    let any_due = !due.is_empty();
+    for pid in &due {
+        enqueue_due_project(queue, pid).await;
+    }
+    // Global passes once per tick when work happened: corrections cluster
+    // across projects; verdicts re-measure accepted recs' before/after FTR;
+    // pending verdicts get classified so the Health-tab aggregate sees every
+    // session (not just opened ones); tool insights snapshot the per-tool
+    // signal cards so the observatory Insights tab reads from cache (T2 Slice D).
+    if any_due {
+        enqueue_global_passes(queue).await;
+        // Persist the advanced watermark so a restart doesn't redo this work.
+        // Same restart-risk category as LAST_REFRESH_KEY — log on failure
+        // so an operator can see we're at risk of re-analyzing after boot.
+        if let Err(e) = pg.set_config(WATERMARK_KEY, &serialize_watermark(&st.watermark)).await {
+            tracing::warn!(error = %e, "analyzer_scheduler: persisting activity watermark failed — restart may re-enqueue analyzed projects");
+        }
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]

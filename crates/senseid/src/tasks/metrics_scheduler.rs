@@ -45,23 +45,15 @@ use std::sync::Arc;
 use crate::db::pg_store::PgStore;
 use crate::tasks::handlers::metrics::HEALTH_TASK_NAME;
 use crate::tasks::queue::TaskQueue;
-use crate::tasks::ticker::{self, FirstTick};
+use crate::tasks::ticker;
 use crate::tasks::{Task, TaskKind};
 
-/// Wake hourly by default. There is no per-run watermark any more — the tick just
-/// enqueues the `ComputeProjectMetrics` wave (overlap-guarded), and each group
-/// child's `metric_watermarks` cursor decides which days to (re)compute. A more
-/// frequent tick just tightens how soon after a day boundary today is picked up.
-/// Configurable via `metrics.interval_secs`.
-const DEFAULT_INTERVAL_SECS: u64 = 3600;
 /// The rolling window (days) the per-group computers measure over, and the
 /// trailing window the day-keyed groups reopen for late data. Read here for
 /// observability (and reused by the per-group computers / planner via the same key
 /// + parser). Configurable via `metrics.window_days`.
 const DEFAULT_WINDOW_DAYS: u32 = 14;
 
-/// `sensei.config` keys for the scheduler knobs.
-const INTERVAL_KEY: &str = "metrics.interval_secs";
 const WINDOW_DAYS_KEY: &str = "metrics.window_days";
 
 /// Resolve the compute window (days) from config, falling back to the default for
@@ -260,44 +252,46 @@ pub fn spawn(queue: Arc<TaskQueue>, pg: Arc<PgStore>) {
 }
 
 async fn run(queue: Arc<TaskQueue>, pg: Arc<PgStore>) {
-    let secs = ticker::interval_secs(
-        pg.get_config(INTERVAL_KEY).await.ok().flatten(),
-        DEFAULT_INTERVAL_SECS,
-    );
-    tracing::info!(interval_secs = secs, "metrics_scheduler: started");
-    let mut ticker = ticker::ticker(secs, FirstTick::Immediate);
-    loop {
-        // First tick fires immediately → a freshly booted daemon enqueues a wave;
-        // the per-(repo × group) watermarks then decide what actually recomputes
-        // (full history on an unset cursor, today + gap on a sealed one). Every tick
-        // is overlap-guarded, so a still-in-flight wave never stacks a second.
-        ticker.tick().await;
-        // Fail-closed: a DB read failure propagates as Err — log it and retry on the
-        // next tick. It is NEVER turned into an empty "success" that would read as
-        // "no metrics to compute". There is no watermark to advance/hold here; the
-        // per-group children own their own fail-closed watermark.
-        if let Err(e) = metrics_tick(&queue, &pg).await {
-            tracing::warn!(error = %e, "metrics_scheduler: tick failed — will retry next tick");
+    // Cadence lives in `sensei.schedules` (name `metrics`).
+    let store = pg.clone();
+    ticker::run_scheduled(pg, "metrics", move || {
+        let (queue, pg) = (queue.clone(), store.clone());
+        async move { metrics_pass(&queue, &pg).await }
+    })
+    .await;
+}
+
+/// One metrics pass: enqueue the wave, then resolve identities to personas.
+///
+/// A freshly booted daemon enqueues immediately; the per-(repo x group)
+/// watermarks then decide what actually recomputes (full history on an unset
+/// cursor, today + gap on a sealed one). Every pass is overlap-guarded, so a
+/// still-in-flight wave never stacks a second.
+async fn metrics_pass(queue: &TaskQueue, pg: &PgStore) -> Result<(), String> {
+    // Fail-closed: a DB read failure is reported, never turned into an empty
+    // "success" that would read as "no metrics to compute". The schedule row
+    // records it and the next pass retries.
+    let enqueued = metrics_tick(queue, pg).await.map_err(|e| e.to_string());
+
+    // Resolve `identity` -> persona for whatever the wave just wrote.
+    //
+    // A derivation, not part of the write: doing it here (rather than in the
+    // upsert) keeps the store write free of a per-row lookup, and makes a persona
+    // correction take effect on the next pass without recomputing a single
+    // metric. The UPDATE only touches rows whose resolution actually changed.
+    //
+    // Non-fatal: an unresolved persona means metrics read per-email instead of
+    // per-identity, which is the previous behaviour — never a reason to fail the
+    // wave. So it runs even when the wave failed, and does not mask that failure.
+    match pg.resolve_persona_ids().await {
+        Ok(n) if n > 0 => {
+            tracing::info!(rows = n, "metrics_scheduler: resolved identities to personas")
         }
-        // Resolve `identity` → persona for whatever the wave just wrote.
-        //
-        // A derivation, not part of the write: doing it here (rather than in the
-        // upsert) keeps the store write free of a per-row lookup, and makes a
-        // persona correction take effect on the next tick without recomputing a
-        // single metric. The UPDATE only touches rows whose resolution actually
-        // changed, so a steady state costs one indexed scan.
-        //
-        // Non-fatal: an unresolved persona means metrics read per-email instead
-        // of per-identity, which is the previous behaviour — never a reason to
-        // fail the wave.
-        match pg.resolve_persona_ids().await {
-            Ok(n) if n > 0 => {
-                tracing::info!(rows = n, "metrics_scheduler: resolved identities to personas")
-            }
-            Ok(_) => {}
-            Err(e) => tracing::warn!(error = %e, "metrics_scheduler: persona resolution failed"),
-        }
+        Ok(_) => {}
+        Err(e) => tracing::warn!(error = %e, "metrics_scheduler: persona resolution failed"),
     }
+
+    enqueued.map(|_| ())
 }
 
 #[cfg(test)]

@@ -42,11 +42,6 @@ use crate::runs::RunEventKind;
 use crate::tasks::advance_run_scheduler::enqueue_advance;
 use crate::tasks::queue::TaskQueue;
 
-/// How often to sweep for stalled/crashed runs. Slow relative to the 15s
-/// `AdvanceRun` cadence — staleness is a 20-minute signal, so a 60s watchdog
-/// tick is a tight-enough net without churn.
-const INTERVAL_SECS: u64 = 60;
-
 /// Parse an RFC-3339 timestamp (as produced by `to_json(col)#>>'{}'`) into a
 /// UTC instant. `None` on a malformed value so the caller can warn+skip rather
 /// than panic.
@@ -180,13 +175,16 @@ pub fn spawn(queue: Arc<TaskQueue>, pg: Arc<PgStore>) {
 }
 
 async fn run(queue: Arc<TaskQueue>, pg: Arc<PgStore>) {
-    let cfg = WatchdogConfig::default();
-    let mut ticker =
-        crate::tasks::ticker::ticker(INTERVAL_SECS, crate::tasks::ticker::FirstTick::Immediate);
-    loop {
-        ticker.tick().await;
-        tick(&queue, &pg, Utc::now(), &cfg).await;
-    }
+    // Cadence lives in `sensei.schedules` (name `watchdog`); the tick is unchanged.
+    let store = pg.clone();
+    crate::tasks::ticker::run_scheduled(pg, "watchdog", move || {
+        let (queue, pg) = (queue.clone(), store.clone());
+        async move {
+            tick(&queue, &pg, Utc::now(), &WatchdogConfig::default()).await;
+            Ok(())
+        }
+    })
+    .await;
 }
 
 #[cfg(test)]

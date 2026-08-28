@@ -19,7 +19,7 @@
 //! near-free, so it can run *frequently* rather than hourly. It is:
 //! - **Boot + frequent** — the first tick fires immediately (a boot reconcile
 //!   that ALWAYS runs, so a restart can never leave drift), then on
-//!   `reconcile.interval_secs` (default 300s).
+//!   the `reconcile` row in `sensei.schedules` (seeded 300s).
 //! - **Idempotent / non-fatal** — a re-scan of an unchanged tree is a cheap
 //!   stat-only no-op; every DB/enqueue failure is logged and swallowed.
 //! - **Overlap-guarded** — a tick is skipped when a `ScanRoot` is already in
@@ -33,14 +33,10 @@ use std::sync::Arc;
 
 use crate::db::pg_store::PgStore;
 use crate::tasks::queue::TaskQueue;
-use crate::tasks::ticker::{self, FirstTick};
+use crate::tasks::ticker;
 use crate::tasks::{Task, TaskKind};
 use chrono::Utc;
 
-/// Reconcile every 5 minutes by default. The mtime-gated re-scan makes a no-op
-/// pass stat-only, so a frequent cadence closes fs-watcher gaps quickly without
-/// meaningful cost. Configurable via `reconcile.interval_secs`.
-const DEFAULT_INTERVAL_SECS: u64 = 300;
 /// `sensei.config` key holding the last reconcile-scan run (epoch millis).
 const LAST_RUN_KEY: &str = "reconcile.last_run";
 
@@ -61,18 +57,6 @@ fn parse_stall_secs(cfg: Option<String>) -> i64 {
     cfg.and_then(|v| v.trim().parse::<i64>().ok())
         .filter(|n| *n >= 60)
         .unwrap_or(DEFAULT_WATCHER_STALL_SECS)
-}
-
-/// True when a reconcile is "due": never run, or the interval has elapsed since
-/// the last run. Pure (clock injected) so it's testable. The cheap pass no
-/// longer depends on this (the boot pass always runs for drift-safety); it is
-/// retained for observability — to log when a boot reconcile runs despite a
-/// recent watermark — and to gate any future expensive maintenance tier.
-fn due_for_reconcile(now_ms: i64, last_run_ms: Option<i64>, interval_secs: u64) -> bool {
-    match last_run_ms {
-        None => true,
-        Some(prev) => now_ms - prev >= interval_secs as i64 * 1000,
-    }
 }
 
 /// Enqueue one `ScanRoot` per registered watch root — the same task the
@@ -230,58 +214,36 @@ async fn watcher_watchdog(queue: &Arc<TaskQueue>, pg: &PgStore, now_ms: i64, sta
 }
 
 async fn run(queue: Arc<TaskQueue>, pg: Arc<PgStore>) {
-    let secs = ticker::interval_secs(
-        pg.get_config("reconcile.interval_secs").await.ok().flatten(),
-        DEFAULT_INTERVAL_SECS,
-    );
     let stall_ms = parse_stall_secs(pg.get_config(WATCHER_STALL_KEY).await.ok().flatten()) * 1000;
-    tracing::info!(
-        interval_secs = secs,
-        watcher_stall_ms = stall_ms,
-        "reconcile_scheduler: started (boot + frequent watcher safety net + liveness watchdog)"
-    );
-    let mut ticker = ticker::ticker(secs, FirstTick::Immediate);
-    let mut first = true;
-    loop {
-        ticker.tick().await; // first tick fires immediately → boot reconcile
-        let now_ms = Utc::now().timestamp_millis();
 
-        // The boot reconcile ALWAYS runs (drift-safety): a restart must never
-        // leave the index stale. The old rapid-restart storm-guard is gone
-        // because the cheap mtime pass is near-free. We still read the watermark
-        // to log when the boot pass runs shortly after a prior run.
-        if first {
-            first = false;
-            let last = pg
-                .get_config(LAST_RUN_KEY)
-                .await
-                .ok()
-                .flatten()
-                .and_then(|v| v.trim().parse::<i64>().ok());
-            if !due_for_reconcile(now_ms, last, secs) {
-                tracing::debug!(
-                    "reconcile_scheduler: boot reconcile running despite a recent watermark (drift-safety over storm-guard)"
-                );
-            }
+    // THE BOOT RECONCILE ALWAYS RUNS — drift-safety over storm-guard: a restart
+    // must never leave the index stale. That is a guarantee, not a cadence, so it
+    // happens HERE rather than inside the schedule, which would skip it as
+    // not-due after a quick restart. The cheap mtime-gated pass is near-free, so
+    // running it unconditionally costs nothing.
+    let boot_ms = Utc::now().timestamp_millis();
+    reconcile_tick(&queue, &pg, boot_ms).await;
+    watcher_watchdog(&queue, &pg, boot_ms, stall_ms).await;
+
+    // From here the schedule owns the cadence (name `reconcile`).
+    let store = pg.clone();
+    ticker::run_scheduled(pg, "reconcile", move || {
+        let (queue, pg) = (queue.clone(), store.clone());
+        async move {
+            let now_ms = Utc::now().timestamp_millis();
+            reconcile_tick(&queue, &pg, now_ms).await;
+            // The watchdog rides the same cadence, so a watcher stall is caught
+            // within ~one pass of the stall window.
+            watcher_watchdog(&queue, &pg, now_ms, stall_ms).await;
+            Ok(())
         }
-
-        reconcile_tick(&queue, &pg, now_ms).await;
-        // Watchdog rides the same cadence: check watcher liveness right after the
-        // reconcile so a stall is caught within ~one tick of the stall window.
-        watcher_watchdog(&queue, &pg, now_ms, stall_ms).await;
-    }
+    })
+    .await;
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// The reconcile must be FREQUENT now (the mtime gate makes a no-op cheap),
-    /// not the old hourly (3600s) cadence. 300s is 12x more frequent.
-    #[test]
-    fn default_interval_is_frequent_not_hourly() {
-        assert_eq!(DEFAULT_INTERVAL_SECS, 300);
-    }
 
     #[test]
     fn parse_stall_secs_falls_back_and_floors() {
@@ -291,16 +253,6 @@ mod tests {
         assert_eq!(parse_stall_secs(Some("5".into())), DEFAULT_WATCHER_STALL_SECS);
         assert_eq!(parse_stall_secs(Some("60".into())), 60);
         assert_eq!(parse_stall_secs(Some("  900 ".into())), 900);
-    }
-
-    #[test]
-    fn due_for_reconcile_never_run_or_interval_elapsed() {
-        let hour = 3600u64;
-        assert!(due_for_reconcile(1_000_000, None, hour), "never run → due");
-        // exactly one interval later → due
-        assert!(due_for_reconcile(hour as i64 * 1000, Some(0), hour));
-        // half an interval later → not due (guards rapid restart)
-        assert!(!due_for_reconcile(hour as i64 * 500, Some(0), hour));
     }
 
     #[tokio::test]
@@ -348,15 +300,17 @@ mod tests {
             .await
             .unwrap();
 
-        // Watermark = now → "not due" under the old storm-guard.
+        // A run THIS INSTANT is not "due" by the schedule predicate that now
+        // owns that question — so if the boot pass went through the schedule it
+        // would be skipped, which is exactly what left the index stale.
         let now = Utc::now().timestamp_millis();
         pg.set_config(LAST_RUN_KEY, &now.to_string()).await.unwrap();
         assert!(
-            !due_for_reconcile(now, Some(now), DEFAULT_INTERVAL_SECS),
+            !crate::tasks::schedule::is_due(Utc::now(), Some(Utc::now()), 300),
             "guard sanity: a run this instant is not 'due'"
         );
 
-        // The cheap pass runs regardless of the watermark.
+        // The boot pass runs regardless — it is called before run_scheduled.
         let enqueued = reconcile_tick(&queue, &pg, now).await;
         assert!(enqueued >= 1, "boot reconcile must enqueue despite a recent watermark");
 
