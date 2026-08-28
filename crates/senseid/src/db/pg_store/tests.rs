@@ -10080,3 +10080,54 @@ async fn a_day_outside_monday_to_sunday_is_rejected() {
     .unwrap_err();
     assert!(err.to_string().contains("days"), "day 8 must violate the CHECK, got: {err}");
 }
+
+// ── Schedules · load + record a run ─────────────────────────────────────────
+
+#[tokio::test]
+async fn load_schedule_reads_the_row_a_worker_runs_on() {
+    let s = pg_store().await;
+    // `metrics` is seeded, so this is the real path a worker takes on boot.
+    let sched = s.load_schedule("metrics").await.unwrap().expect("metrics is seeded");
+    assert_eq!(sched.name, "metrics");
+    assert!(sched.enabled);
+    assert!(sched.interval_secs > 0, "the CHECK guarantees this; the loader must not zero it");
+}
+
+#[tokio::test]
+async fn load_schedule_is_none_for_an_unknown_worker() {
+    // None, not a fabricated default: a worker with no row must be visibly
+    // unscheduled rather than silently running on an invented cadence.
+    let s = pg_store().await;
+    assert!(s.load_schedule("_test:no-such-worker").await.unwrap().is_none());
+}
+
+#[tokio::test]
+async fn marking_a_run_records_the_outcome_and_clears_a_stale_error() {
+    let s = pg_store().await;
+    let name = format!("_test:sched:{}", uuid::Uuid::new_v4());
+    sqlx_core::query::query("INSERT INTO sensei.schedules(name, interval_secs) VALUES($1, 60)")
+        .bind(&name)
+        .execute(s.pool())
+        .await
+        .unwrap();
+
+    // A failure is recorded with its reason.
+    s.mark_schedule_run(&name, Err("boom".into())).await.unwrap();
+    let after_fail = s.load_schedule(&name).await.unwrap().unwrap();
+    assert_eq!(after_fail.last_ok, Some(false));
+    assert_eq!(after_fail.last_error.as_deref(), Some("boom"));
+    assert!(after_fail.last_run_at.is_some(), "an attempt is a run, even a failed one");
+
+    // A later success CLEARS it — a stale error sitting beside a healthy run
+    // reads as "still broken" to anyone scanning the table.
+    s.mark_schedule_run(&name, Ok(())).await.unwrap();
+    let after_ok = s.load_schedule(&name).await.unwrap().unwrap();
+    assert_eq!(after_ok.last_ok, Some(true));
+    assert_eq!(after_ok.last_error, None, "success must clear the previous error");
+
+    sqlx_core::query::query("DELETE FROM sensei.schedules WHERE name = $1")
+        .bind(&name)
+        .execute(s.pool())
+        .await
+        .ok();
+}
