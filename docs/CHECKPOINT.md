@@ -53,5 +53,6 @@ Every new invariant mutation-probed.
   rows loaded through the real `staging.import_schedules()`; table and
   `SCHEDULABLE` agree both directions. The RUNNING daemon is still the old
   binary and ignores `sensei.schedules` until `make install-service`.
-- **Disk is at 99% — 12Gi free**, and backup rotation keeps 5 × 1.6G ≈ 8G of it.
-  Worth clearing before the next large Rust build.
+- `make clean` run 2026-08-28: reclaimed 40Gi (target/ was 40G), 59Gi now free.
+  **`target/` is empty — the next build is a full rebuild.** Backups are pruned
+  only at >7 days, so all 6 dumps (~9G) survive, including the live-DB rollback.
