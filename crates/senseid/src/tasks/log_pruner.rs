@@ -3,7 +3,10 @@
 //! A long-lived tokio task (mirroring [`crate::tasks::analyzer_scheduler`]) that
 //! periodically deletes `public.logs` rows older than a retention window, so the
 //! structured-log table doesn't grow without bound. Both the interval and the
-//! retention are config-driven (`logs.prune_interval_secs`,
+//! Cadence lives in `sensei.schedules` (name `log_prune`), not here. Retention is
+//! still config-driven (`logs.retention_days`) and re-read each run.
+//!
+//! (was: `logs.prune_interval_secs`,
 //! `logs.retention_days`) with sensible defaults.
 //!
 //! Scope: this prunes the flat structured logs ingested via `POST /api/logs`.
@@ -13,10 +16,8 @@
 use std::sync::Arc;
 
 use crate::db::pg_store::PgStore;
-use crate::tasks::ticker::{self, FirstTick};
+use crate::tasks::ticker;
 
-/// Prune daily by default.
-const DEFAULT_INTERVAL_SECS: u64 = 86_400;
 /// Keep logs for 30 days by default.
 const DEFAULT_RETENTION_DAYS: i32 = 30;
 
@@ -34,23 +35,28 @@ pub fn spawn(pg: Arc<PgStore>) {
 }
 
 async fn run(pg: Arc<PgStore>) {
-    let mut ticker = ticker::from_config(
-        &pg,
-        "logs.prune_interval_secs",
-        DEFAULT_INTERVAL_SECS,
-        FirstTick::Immediate,
-    )
-    .await;
-    loop {
-        ticker.tick().await; // first tick fires immediately → prune on startup
-        // Re-read retention each tick so config changes take effect without a restart.
-        let days = parse_retention(pg.get_config("logs.retention_days").await.ok().flatten());
-        match pg.prune_logs(days).await {
-            Ok(n) if n > 0 => tracing::info!("log_pruner: deleted {n} log rows older than {days}d"),
-            Ok(_) => {}
-            Err(e) => tracing::warn!(error = %e, "log_pruner: prune failed"),
+    // Schedule-driven: when to prune is `sensei.schedules`, not a constant here.
+    // The tick itself is unchanged — what to do stays code.
+    let store = pg.clone();
+    ticker::run_scheduled(pg, "log_prune", move || {
+        let pg = store.clone();
+        async move {
+            // Re-read retention each run so config changes take effect without a restart.
+            let days = parse_retention(pg.get_config("logs.retention_days").await.ok().flatten());
+            match pg.prune_logs(days).await {
+                Ok(n) => {
+                    if n > 0 {
+                        tracing::info!("log_pruner: deleted {n} log rows older than {days}d");
+                    }
+                    Ok(())
+                }
+                // Returned rather than only logged: the schedule row records the
+                // failure, so "when did this last work?" has an answer.
+                Err(e) => Err(e.to_string()),
+            }
         }
-    }
+    })
+    .await;
 }
 
 #[cfg(test)]
