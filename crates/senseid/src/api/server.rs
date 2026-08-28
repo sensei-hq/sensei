@@ -470,7 +470,7 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
     // not-yet-deployed runs table (warn, never fatal).
     crate::tasks::watchdog_scheduler::spawn(task_queue.clone(), Arc::new(state.pg.clone()));
 
-    // Watcher safety net: frequently (boot + every reconcile.interval_secs,
+    // Watcher safety net: frequently (boot + the `reconcile` schedule,
     // default 300s) re-scan every watch root so the index converges even when
     // the fs-watcher misses events (daemon restarts / stale FSEvents gaps).
     // Reuses the self-healing scan pipeline — re-absorbs mis-scoped roots
@@ -504,7 +504,7 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
     // down, or a POST slower than the hook's 2s budget) are dead-lettered to
     // ~/.sensei/events.jsonl by the hook fallback. Import them into
     // activity.assistant_events so analysis isn't missing them; runs on boot +
-    // every `capture.drain_interval_secs` (default 300s).
+    // every tick of the `capture_drain` schedule (seeded 300s).
     crate::tasks::capture_drain::spawn(Arc::new(state.pg.clone()), crate::paths::sensei_dir());
 
     // Re-enqueue tasks for folders left in a non-terminal state by a

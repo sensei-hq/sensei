@@ -91,6 +91,31 @@ impl PgStore {
         }))
     }
 
+    /// Start a never-run worker's clock at now, so its first pass waits a full
+    /// interval instead of firing at boot.
+    ///
+    /// `last_run_at IS NULL` means "never run", which is always due — correct for
+    /// almost every worker, and wrong for the ones whose whole point is NOT to
+    /// run at startup. The activity pruner must not reclaim sessions while
+    /// capture is still re-materialising them; its old loop expressed that by
+    /// skipping the boot tick, and a poll-level skip cannot reproduce it because
+    /// the poll is capped at 60s while the delay must be a full interval.
+    ///
+    /// This says "the clock starts now", not "it ran" — `last_ok` and
+    /// `last_error` stay NULL, so nothing claims a pass happened. Idempotent:
+    /// only ever touches a row that has genuinely never run.
+    pub async fn defer_schedule_start(&self, name: &str) -> Result<(), String> {
+        sqlx_core::query::query(
+            "UPDATE sensei.schedules SET last_run_at = now() \
+              WHERE name = $1 AND last_run_at IS NULL",
+        )
+        .bind(name)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| format!("defer_schedule_start({name}): {e}"))?;
+        Ok(())
+    }
+
     /// Record that a scheduled pass ran, and how it went.
     ///
     /// A success CLEARS `last_error`: a stale error sitting beside a healthy run

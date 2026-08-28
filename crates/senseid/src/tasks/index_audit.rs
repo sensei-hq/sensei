@@ -41,19 +41,12 @@ use serde::Serialize;
 use crate::api::util::json_uuid;
 use crate::db::pg_store::PgStore;
 use crate::tasks::handlers::scan;
-use crate::tasks::ticker::{self, FirstTick};
+use crate::tasks::ticker;
 
-/// Daily. A full stat sweep over every indexed file/folder is heavier than the
-/// 300s reconcile, and the drift it repairs is the rare/residual class the cheap
-/// reconcile misses — so a conservative cadence is right. Configurable via
-/// `audit.interval_secs`.
-const DEFAULT_INTERVAL_SECS: u64 = 86_400;
 /// `sensei.config` key holding the last integrity-audit run (epoch millis). The
 /// watermark GATES the pass (unlike the boot-always reconcile) so frequent
 /// restarts can't re-run the heavier sweep more than once per interval.
 const LAST_RUN_KEY: &str = "audit.last_run";
-/// `sensei.config` key overriding the audit cadence (seconds).
-const INTERVAL_KEY: &str = "audit.interval_secs";
 
 /// At most this many sample paths/ids per drift class in the report — enough to
 /// make a doctor report actionable without dumping a whole tree.
@@ -296,92 +289,60 @@ pub async fn run_doctor(pg: &PgStore) -> AuditReport {
     run_audit(pg, false).await
 }
 
-/// True when an audit is "due": never run, or the interval has elapsed since the
-/// last run. Pure (clock injected) so it's testable. Unlike the reconcile boot
-/// pass, the audit IS watermark-gated — it's the heavier sweep, so a restart
-/// within the interval must not re-run it.
-fn due_for_audit(now_ms: i64, last_run_ms: Option<i64>, interval_secs: u64) -> bool {
-    match last_run_ms {
-        None => true,
-        Some(prev) => now_ms - prev >= interval_secs as i64 * 1000,
-    }
-}
-
 /// Spawn the periodic repair audit for the daemon's lifetime.
 pub fn spawn(pg: Arc<PgStore>) {
     tokio::spawn(run(pg));
 }
 
 async fn run(pg: Arc<PgStore>) {
-    let secs = ticker::interval_secs(
-        pg.get_config(INTERVAL_KEY).await.ok().flatten(),
-        DEFAULT_INTERVAL_SECS,
-    );
-    tracing::info!(
-        interval_secs = secs,
-        "index_audit: started (periodic invariant self-audit + repair)"
-    );
-    let mut ticker = ticker::ticker(secs, FirstTick::Immediate);
-    loop {
-        ticker.tick().await; // first tick fires immediately
-        let now_ms = Utc::now().timestamp_millis();
-
-        // Watermark-gated: skip if a prior audit ran within the interval (e.g. a
-        // recent restart). Non-fatal on a read failure — treat as due.
-        let last = pg
-            .get_config(LAST_RUN_KEY)
-            .await
-            .ok()
-            .flatten()
-            .and_then(|v| v.trim().parse::<i64>().ok());
-        if !due_for_audit(now_ms, last, secs) {
-            tracing::debug!("index_audit: not due yet (recent watermark) — skipping this tick");
-            continue;
+    // Cadence lives in `sensei.schedules` (name `index_audit`).
+    //
+    // The old loop GATED itself on a `LAST_RUN_KEY` watermark to avoid
+    // re-auditing after a quick restart. `should_run` now answers exactly that
+    // question from `schedules.last_run_at`, so the hand-rolled gate is gone
+    // rather than kept as a second source of truth.
+    //
+    // The watermark is still WRITTEN, because `GET /api/tasks/scheduled` reads
+    // it to show when the audit last ran. Dropping the write would blank that
+    // field. It retires when the handler reads schedules.last_run_at instead
+    // (step 4 of the schedules spec).
+    let store = pg.clone();
+    ticker::run_scheduled(pg, "index_audit", move || {
+        let pg = store.clone();
+        async move {
+            audit_pass(&pg).await;
+            Ok(())
         }
+    })
+    .await;
+}
 
-        let report = run_audit(&pg, true).await;
-        if report.has_drift() {
-            tracing::info!(
-                orphan_files = report.orphan_files,
-                ghost_folders = report.ghost_folders,
-                nested_standalone = report.nested_standalone,
-                duplicate_name_projects = report.duplicate_name_projects,
-                roots_present = report.roots_present,
-                roots_absent = report.roots_absent,
-                "index_audit: repaired index drift",
-            );
-        } else {
-            tracing::debug!(
-                roots_present = report.roots_present,
-                "index_audit: index invariant-clean"
-            );
-        }
-
-        // Record the run watermark (non-fatal — the in-memory cadence keeps going).
-        if let Err(e) = pg.set_config(LAST_RUN_KEY, &now_ms.to_string()).await {
-            tracing::warn!(error = %e, "index_audit: persisting last_run watermark failed");
-        }
+/// One audit + repair pass.
+async fn audit_pass(pg: &PgStore) {
+    let report = run_audit(pg, true).await;
+    // Non-fatal: the audit happened; only the visibility watermark failed.
+    let now_ms = Utc::now().timestamp_millis();
+    if let Err(e) = pg.set_config(LAST_RUN_KEY, &now_ms.to_string()).await {
+        tracing::warn!(error = %e, "index_audit: persisting last_run watermark failed");
+    }
+    if report.has_drift() {
+        tracing::info!(
+            orphan_files = report.orphan_files,
+            ghost_folders = report.ghost_folders,
+            nested_standalone = report.nested_standalone,
+            duplicate_name_projects = report.duplicate_name_projects,
+            roots_present = report.roots_present,
+            roots_absent = report.roots_absent,
+            "index_audit: repaired index drift",
+        );
+    } else {
+        tracing::debug!("index_audit: no drift");
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn default_cadence_is_conservative_daily() {
-        // The audit stats every indexed file/folder — heavier than the 300s
-        // reconcile — so its default must be a slow (daily) cadence.
-        assert_eq!(DEFAULT_INTERVAL_SECS, 86_400);
-    }
-
-    #[test]
-    fn due_for_audit_never_run_or_interval_elapsed() {
-        let day = 86_400u64;
-        assert!(due_for_audit(1_000_000, None, day), "never run → due");
-        assert!(due_for_audit(day as i64 * 1000, Some(0), day), "exactly one interval later → due");
-        assert!(!due_for_audit(day as i64 * 500, Some(0), day), "half an interval later → not due");
-    }
 
     #[test]
     fn samples_are_capped() {
