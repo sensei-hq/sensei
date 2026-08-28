@@ -12,6 +12,7 @@ pub mod advance_run_scheduler;
 pub mod analyzer_scheduler;
 pub mod capture_drain;
 pub mod contribute_scheduler;
+pub mod dojo_sync;
 pub mod executor;
 pub mod handlers;
 pub mod index_audit;
