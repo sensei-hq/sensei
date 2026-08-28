@@ -94,7 +94,7 @@ Two things worth keeping from the wrong turn:
 **Found 2026-08-28** by the `/sensei:design` claims ledger on the metric-push slice
 (`docs/spec/dojo/daemon-sync.md` §9a, claim C3).
 
-**0 of 67 repositories are `shared`.** All are `private`, so gate 1 has never been set by anything,
+**0 of 67 repositories were `shared`** when this was found (now 1 of 67). All were `private`, so gate 1 had never been set by anything,
 and the whole metric push would have moved zero rows while reporting success.
 
 The proposal on the table: sensei-hq's repos, plus rokkit, dbd and kavach, are public open source —
@@ -125,8 +125,11 @@ defaults to `shared` (changeable, as is the cadence) and a **private** one defau
 the default where it is cheap and useful — the value of the push appears at two or more people on
 one repository, which is where comparison and governance/insight sharing begin.
 
-Still open from this finding: **no surface exists to set `visibility` at all** — no API route, CLI
-flag, or app toggle. Prerequisite of the metric-push slice, being built now.
+**Partly shipped.** `PATCH /api/repositories/{*repo_key}` landed in `9468acd0`, and the live count
+is now **1 of 67** shared (`github.com/sensei-hq/dbd`), not 0. Still open: the **CLI flag and the app
+toggle** (`rg set_repository_visibility crates/cli/src app/src` → no hits), and D8's public/private
+default, which is *unimplementable* until `sensei.repositories` carries forge visibility — nothing
+can currently decide "is this repo public".
 
 ## dbd: a `time` column and an unnamed CHECK can never diff clean
 
