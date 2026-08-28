@@ -17,8 +17,25 @@ create table if not exists repositories (
 , repo_key    text        not null
 , remote_url  text
 , name        text        not null
-, visibility  text        not null default 'private'
-      check (visibility in ('private', 'public'))
+  -- The FORGE's answer, captured at sign-in. NULLABLE and with NO DEFAULT, and
+  -- both of those are load-bearing:
+  --
+  -- "not captured" must be its own state, because the two consumers of this
+  -- column have OPPOSITE safe defaults. Entitlement wants to assume `private`
+  -- (do not host unknown code free); authority wants to assume `public` (do not
+  -- treat unknown code as org-mandated). No single default is safe, so an
+  -- uncaptured repository has no authority, no election and no sync.
+  --
+  -- Verified before this was written: under the old `not null default 'private'`,
+  -- `github.com/sensei-hq/dbd` — PUBLIC on GitHub — resolved to ORG-MANDATED, and
+  -- would have been shared with no election by anyone.
+, visibility  text
+      check (visibility is null or visibility in ('private', 'public'))
+  -- When that answer was captured. A capture that is too old is treated exactly
+  -- as no capture: a repository turning private upstream would otherwise keep
+  -- syncing FREE under a stale user election, because the "public is free" term
+  -- fires before every billing check.
+, visibility_captured_at timestamptz
   -- Which forge this repository lives on. Derived from `repo_key`'s host at
   -- registration and STORED, rather than re-derived in SQL: the host→provider
   -- mapping already exists once, in the registration path, and a second copy in

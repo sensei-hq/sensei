@@ -51,6 +51,15 @@ scopes:
     # never a hand-rolled INSERT that would drift on the next reset+deploy.
     includes:
       - dojo
+      # Reason codes: the shared "why didn't this happen?" vocabulary. FOUR
+      # entries, not two — the staging pair is what actually seeds the DATA, and
+      # omitting it is how the metric catalogue shipped empty with a warning that
+      # "reads as routine". Same shape as sensei.scopes below.
+      - sensei.reason_kind
+      - sensei.reason_actor
+      - sensei.reason_codes
+      - staging.reason_codes
+      - staging.import_reason_codes
       - sensei.enforcement
       - sensei.namespace_visibility
       - sensei.rule_pack_area
