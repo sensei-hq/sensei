@@ -903,8 +903,13 @@ election both say yes.
                  ENTITLEMENT — may it?  (the dōjō decides)
 can_sync(repo, user, tenant) =
     repo.visibility IS NULL                           → DENY  forge_visibility_unknown
-  | tenant.origin = 'personal'                        → ALLOW
   | repo.visibility = 'public'                        → ALLOW   (open source is free)
+  -- NO `origin = 'personal' → ALLOW`. Entitlement keys on VISIBILITY, not on who
+  -- owns the tenant: a PRIVATE repository is subscription-gated whoever owns it,
+  -- including a solo developer's own. The earlier unconditional personal-ALLOW
+  -- contradicted §2a ("private stays local-only regardless of configuration") and
+  -- would have hosted every personal private repo free — the common case, since no
+  -- personal tenant carries a billing row.
   -- FAIL CLOSED ON ABSENCE. Each of the next three is a MISSING-ROW test that
   -- must precede its value test, because `NULL <> 'active'` is NULL, not TRUE —
   -- so a value test alone falls through to ALLOW. Verified: 3 live tenants, 0
@@ -931,6 +936,17 @@ elected(repo, user) =
                  THE GATE
 may_share = can_sync(...) AND elected(...)
 ```
+
+**Two functions, two different inputs — and origin appears in only one:**
+
+```
+entitlement = f(forge visibility, subscription)   -- may it? — origin is irrelevant
+authority   = f(origin, forge visibility)         -- who decides? — origin decides this
+```
+
+That separation is the simplification decision 2 bought: `public` is free for
+anyone, `private` is paid for by everyone, and *who owns the tenant* only ever
+answers the second question.
 
 **Authority follows who owns the code and who pays.** A personal repo of either
 visibility, and an org's PUBLIC repos, are the user's to elect — the org is not
