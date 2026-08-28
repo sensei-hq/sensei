@@ -7,7 +7,7 @@
 //! lost. Nothing used to drain that file back, so every dead-lettered event was
 //! stranded on disk and missing from analysis.
 //!
-//! This task closes that gap: on boot and every `capture.drain_interval_secs`
+//! This task closes that gap: on boot and on the `capture_drain` schedule
 //! it rotates the spool aside and imports each line into
 //! `activity.assistant_events` — the same table and the same field mapping the
 //! live `ingest_hook_event` handler uses (see [`hook_event_fields`], shared by
@@ -30,11 +30,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::db::pg_store::PgStore;
-use crate::tasks::ticker::{self, FirstTick};
-
-/// Drain on boot and every 5 minutes by default — dead-letters should reconcile
-/// promptly, but the file is usually empty so the tick is cheap.
-const DEFAULT_INTERVAL_SECS: u64 = 300;
+use crate::tasks::ticker;
 
 /// The fields `activity.assistant_events` needs, borrowed out of one hook
 /// payload. Everything except `ts` (the caller supplies that: the live handler
@@ -148,27 +144,27 @@ pub fn spawn(pg: Arc<PgStore>, sensei_dir: PathBuf) {
 }
 
 async fn run(pg: Arc<PgStore>, sensei_dir: PathBuf) {
-    let mut ticker = ticker::from_config(
-        &pg,
-        "capture.drain_interval_secs",
-        DEFAULT_INTERVAL_SECS,
-        FirstTick::Immediate,
-    )
-    .await;
-    loop {
-        ticker.tick().await; // first tick fires immediately → drain on startup
-        match drain_once(&pg, &sensei_dir).await {
-            Ok(stats) if stats.total() > 0 => tracing::info!(
-                imported = stats.imported,
-                duplicate = stats.duplicate,
-                skipped = stats.skipped,
-                "capture_drain: imported {} dead-lettered hook event(s) into activity.assistant_events",
-                stats.imported,
-            ),
-            Ok(_) => {}
-            Err(e) => tracing::warn!(error = %e, "capture_drain: drain failed"),
+    // Cadence lives in `sensei.schedules` (name `capture_drain`). drain_once
+    // already returns a Result, so the schedule row records a real outcome
+    // rather than an unconditional success.
+    let store = pg.clone();
+    ticker::run_scheduled(pg, "capture_drain", move || {
+        let (pg, dir) = (store.clone(), sensei_dir.clone());
+        async move {
+            let stats = drain_once(&pg, &dir).await.map_err(|e| e.to_string())?;
+            if stats.total() > 0 {
+                tracing::info!(
+                    imported = stats.imported,
+                    duplicate = stats.duplicate,
+                    skipped = stats.skipped,
+                    "capture_drain: imported {} dead-lettered hook event(s) into activity.assistant_events",
+                    stats.imported,
+                );
+            }
+            Ok(())
         }
-    }
+    })
+    .await;
 }
 
 /// One drain pass: sweep any leftover `.draining`, then rotate + import the
