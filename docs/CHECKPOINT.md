@@ -59,6 +59,32 @@ at 132 — they updated in place, and that now rests on a DB constraint rather t
 an app-level check. `Origin: https://evil.example` → 403, `tauri://localhost` →
 200, no Origin → 200. Zero processes with a secret in `argv`.
 
+## Sharing is now TWO questions (2026-08-28)
+
+`docs/requirements/repository-sharing.md` + `daemon-sync.md` §8a/§8b. Entitlement
+(*may it?*) and election (*did whoever holds authority choose it?*) are
+independent; `sync_enabled = may_share AND elected`. Authority: personal → user,
+org PUBLIC → user, org PRIVATE → **the organization, mandatory**, which overrides
+the daemon's local gate 1 (user-confirmed).
+
+**Nothing is implemented.** Two reviews ran and both found blocking defects:
+
+- `can_sync` **failed open in every reachable state** — `claimed_at` and
+  `seat_allocations` do not exist, and `NULL <> 'active'` is NULL not TRUE, so with
+  0 billing rows (all 3 live tenants) every path fell through to ALLOW. An
+  org-mandated private repo would have pushed with no election and no
+  subscription. Fixed by testing for the MISSING ROW before its value.
+- **B1** `sync_persona` returns before asking the dōjō when nothing is locally
+  shared — defeats the mandate for exactly the population it serves.
+- **B2** `unpushed_metric_rows` hardcodes `visibility = 'shared'` in SQL,
+  independent of the plan.
+- The old rule is stated in **12** places (I said 3, then 8), 3 enforcing.
+
+Build order is load-bearing: schema (incl. `ALTER … drop not null` on
+`dojo.repositories.visibility`) → sign-in capture + verified backfill → view →
+daemon. Rewriting the view first makes every org repo silently mandated, because
+the unpopulated default reads as `private`.
+
 ## Next command
 
 Nothing from the review is outstanding. The slice's own remaining work:
