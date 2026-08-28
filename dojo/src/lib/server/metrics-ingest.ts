@@ -31,8 +31,12 @@ export interface MetricInput {
 /** Why a row was not stored. Each is a different problem with different advice,
  *  so they are reported per row rather than collapsed into a count. */
 export type RejectReason =
-	| 'not_permitted' //     the caller is not a member of the repo's tenant
-	| 'unknown_repository' // no registered repository has that repo_key
+	// Covers BOTH "no such repo_key anywhere" and "registered only in a tenant you
+	// are not in". Deliberately one reason, not two: distinguishing them is an
+	// existence oracle over every tenant's repositories, probeable MAX_ROWS at a
+	// time by any signed-up stranger. There is no `not_permitted` here for that
+	// reason.
+	| 'unknown_repository'
 	| 'unknown_metric' //     no sensei.metrics row has that key
 	| 'ambiguous' //          that repo_key is registered under two of the caller's tenants
 	| 'unsupported_scope'; // scope=user, which has no principal to attribute to
@@ -65,8 +69,40 @@ export async function ingestMetrics(
 	// The caller's tenants — the authorization boundary, read once for the batch.
 	const mem = await db.from('memberships').select('tenant_id').eq('user_id', principalId);
 	if (mem.error) throw new AdminError(500, mem.error.message);
-	const mine = new Set(
-		((mem.data ?? []) as { tenant_id: string }[]).map((m) => m.tenant_id)
+	const mine = new Set(((mem.data ?? []) as { tenant_id: string }[]).map((m) => m.tenant_id));
+
+	// BATCHED, not per row. This loop used to issue ~4 PostgREST subrequests per
+	// row inside ONE Cloudflare Worker invocation: at the 500 rows the daemon sends
+	// that is ~2001 sequential round trips, past Cloudflare's per-invocation
+	// subrequest cap and past the daemon's 30s timeout. The live run that "worked"
+	// moved 132 rows — a quarter of the load — and a failure here is not a clean
+	// one: the Worker has already committed a prefix, the daemon marks nothing
+	// shared, and the identical window retries every cadence.
+	//
+	// Two `in`-list reads resolve the whole batch. The per-row work that remains is
+	// the existing-row check and the write, which are genuinely per row.
+	const wantedKeys = [...new Set(rows.map((r) => r.repo_key))];
+	const wantedMetrics = [...new Set(rows.map((r) => r.metric))];
+
+	const repoRows = await db
+		.from('repositories')
+		.select('id, tenant_id, repo_key')
+		.in('repo_key', wantedKeys);
+	if (repoRows.error) throw new AdminError(500, repoRows.error.message);
+	const byKey = new Map<string, { id: string; tenant_id: string }[]>();
+	for (const r of (repoRows.data ?? []) as { id: string; tenant_id: string; repo_key: string }[]) {
+		const list = byKey.get(r.repo_key) ?? [];
+		list.push({ id: r.id, tenant_id: r.tenant_id });
+		byKey.set(r.repo_key, list);
+	}
+
+	const metricRows = await db
+		.from('metric_catalogue')
+		.select('id, key')
+		.in('key', wantedMetrics);
+	if (metricRows.error) throw new AdminError(500, metricRows.error.message);
+	const metricIds = new Map(
+		((metricRows.data ?? []) as { id: string; key: string }[]).map((m) => [m.key, m.id])
 	);
 
 	for (const row of rows) {
@@ -78,31 +114,31 @@ export async function ingestMetrics(
 			continue;
 		}
 
-		// Scoped to the CALLER'S TENANTS, and a plain `.select()` — never
-		// `.maybeSingle()`. `dojo.repositories` is `unique (tenant_id, repo_key)`
+		// From the batch map. `dojo.repositories` is `unique (tenant_id, repo_key)`
 		// and its DDL says so deliberately: "ONE ROW PER (repo_key, tenant), not one
 		// globally. A consultant legitimately has the same repository under two
-		// clients." An unscoped `.maybeSingle()` therefore returned PGRST116 the
-		// moment that happened, which threw a 500 and killed the ENTIRE batch —
-		// permanently, because nothing gets marked shared and the identical batch
-		// retries every cadence. `registerRepositories` was already tenant-scoped;
-		// this half was not, and the two disagreeing is what made it reachable.
-		const repos = await db
-			.from('repositories')
-			.select('id, tenant_id')
-			.eq('repo_key', row.repo_key);
-		if (repos.error) throw new AdminError(500, repos.error.message);
-		const all = (repos.data ?? []) as { id: string; tenant_id: string }[];
+		// clients." So a key can legitimately return SEVERAL rows — an unscoped
+		// `.maybeSingle()` here returned PGRST116 the moment it did, throwing a 500
+		// that killed the entire batch, permanently.
+		const all = byKey.get(row.repo_key) ?? [];
 		if (all.length === 0) {
 			reject('unknown_repository');
 			continue;
 		}
 		const ours = all.filter((r) => mine.has(r.tenant_id));
 		if (ours.length === 0) {
-			// Not `unknown_repository`: it exists, the caller just has no business
-			// writing to it. Conflating the two would also leak whether a given
-			// repo_key is registered in somebody else's tenant.
-			reject('not_permitted');
+			// `unknown_repository`, NOT `not_permitted`, and deliberately identical to
+			// the never-registered case above.
+			//
+			// Distinguishing them is an EXISTENCE ORACLE: signup is open, so any
+			// stranger could post up to MAX_ROWS probe rows per request and learn
+			// which private repo_keys other organisations have enrolled. An earlier
+			// comment here claimed the opposite — that conflating them would leak —
+			// which had it exactly backwards.
+			//
+			// The cost is a legitimate caller cannot tell "not yours" from "not
+			// known". They can: it is in their own tenant list either way.
+			reject('unknown_repository');
 			continue;
 		}
 		if (ours.length > 1) {
@@ -115,24 +151,18 @@ export async function ingestMetrics(
 		}
 		const { id: repositoryId, tenant_id: tenantId } = ours[0];
 
-		// `dojo.metric_catalogue` — a view over `sensei.metrics`, because the
-		// `sensei` schema is deliberately NOT exposed to PostgREST (its daemon
-		// tables have RLS disabled). Both shortcuts were tried live and both
+		// From the batch map. `dojo.metric_catalogue` is a view over `sensei.metrics`,
+		// because the `sensei` schema is deliberately NOT exposed to PostgREST (its
+		// daemon tables have RLS disabled). Both shortcuts were tried live and both
 		// failed as designed: `.from('metrics')` → "Could not find the table
-		// 'dojo.metrics' in the schema cache", and `.schema('sensei')` →
-		// "Invalid schema: sensei". A dojo view qualifying sensei.* internally is
-		// the sanctioned route, same as dojo.rule_pack_library.
-		const metric = await db
-			.from('metric_catalogue')
-			.select('id')
-			.eq('key', row.metric)
-			.maybeSingle();
-		if (metric.error) throw new AdminError(500, metric.error.message);
-		if (!metric.data) {
+		// 'dojo.metrics' in the schema cache", and `.schema('sensei')` → "Invalid
+		// schema: sensei". A dojo view qualifying sensei.* internally is the
+		// sanctioned route, same as dojo.rule_pack_library.
+		const metricId = metricIds.get(row.metric);
+		if (!metricId) {
 			reject('unknown_metric');
 			continue;
 		}
-		const metricId = (metric.data as { id: string }).id;
 
 		const values = {
 			tenant_id: tenantId,
