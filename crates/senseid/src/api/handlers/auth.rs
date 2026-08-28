@@ -225,6 +225,94 @@ pub(crate) async fn signout(Query(p): Query<PersonaQuery>) -> Json<serde_json::V
 
 /// `GET /api/auth/status` — is there a USABLE session?
 ///
+/// Why a persona has no usable access token right now.
+///
+/// Three variants rather than one error string because they call for three
+/// different responses: re-authenticate, wait, or nothing at all. An unattended
+/// sync that cannot tell them apart either nags about a network blip or stays
+/// quiet about a session that will never work again.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum AuthError {
+    /// No stored session — never signed in, or signed out.
+    SignedOut,
+    /// The dōjō REJECTED the refresh token (401/403). Terminal, and the stored
+    /// session has already been cleared.
+    Rejected(String),
+    /// The dōjō could not be reached, or failed. Transient — the stored session
+    /// was deliberately left alone.
+    Unreachable(String),
+}
+
+impl AuthError {
+    /// Whether the user has to sign in again, as opposed to just waiting.
+    pub(crate) fn needs_sign_in(&self) -> bool {
+        matches!(self, Self::SignedOut | Self::Rejected(_))
+    }
+}
+
+/// Classify a failed refresh: does it destroy the stored session or not?
+///
+/// Split out from the I/O so the decision can be tested without a dōjō. Only a
+/// 401/403 is terminal; everything else — a 5xx, a DNS failure, a timeout —
+/// leaves the credential in place, because clearing on those signs the user out
+/// for an outage they did not cause.
+fn refresh_failure(e: &str) -> AuthError {
+    match dojo_auth::status_of(e).is_some_and(dojo_auth::is_rejection) {
+        true => AuthError::Rejected(e.to_string()),
+        false => AuthError::Unreachable(e.to_string()),
+    }
+}
+
+/// A persona's session, refreshed and re-stored.
+pub(crate) struct LiveSession {
+    pub tokens: session::TokenResponse,
+    pub session: session::Session,
+}
+
+/// Refresh one persona's stored session and hand back a usable one.
+///
+/// The single implementation of "get me a working credential for this persona".
+/// [`status`] renders it for a human and the dōjō sync cycle uses it unattended;
+/// before this existed only `status` had it, so the sync path would have grown a
+/// second copy that drifted — starting with the rotation below, which is easy to
+/// leave out and fails a whole session later.
+///
+/// Three obligations, all of which have bitten:
+/// - **Rotate.** The dōjō issues a new refresh token on every use. Keeping the
+///   old one invalidates the session on the NEXT call, which reads as a random
+///   sign-out.
+/// - **Clear only on rejection.** See [`refresh_failure`].
+/// - **Never fabricate.** A persona that cannot be refreshed returns `Err`; it
+///   never yields an empty or stale token that a caller would send as a bearer.
+pub(crate) async fn live_session(persona: &str) -> Result<LiveSession, AuthError> {
+    let who = persona.to_string();
+    let stored = tokio::task::spawn_blocking(move || session::load_refresh_token(&who)).await;
+    let Ok(Ok(refresh)) = stored else {
+        return Err(AuthError::SignedOut);
+    };
+
+    let tokens = match dojo_auth::refresh(&dojo_url(), &refresh).await {
+        Ok(t) => t,
+        Err(e) => {
+            let verdict = refresh_failure(&e);
+            if matches!(verdict, AuthError::Rejected(_)) {
+                let who = persona.to_string();
+                let _ =
+                    tokio::task::spawn_blocking(move || session::clear_refresh_token(&who)).await;
+            }
+            return Err(verdict);
+        }
+    };
+
+    let now = chrono::Utc::now().timestamp();
+    let sess = session::Session::from_response(&tokens, now);
+    let rotated = tokens.refresh_token.clone();
+    let who = persona.to_string();
+    let _ = tokio::task::spawn_blocking(move || session::store_refresh_token(&who, &rotated)).await;
+
+    Ok(LiveSession { tokens, session: sess })
+}
+
 /// Reports whether the stored token still works, not merely that one exists. A
 /// revoked or expired refresh token sits in the Keychain looking healthy, so
 /// "signedIn: true" based on presence alone would be a lie the caller only
@@ -235,51 +323,34 @@ pub(crate) async fn status(
     State(state): State<AppState>,
     Query(p): Query<PersonaQuery>,
 ) -> Json<serde_json::Value> {
-    let who = p.persona.clone();
-    let stored = tokio::task::spawn_blocking(move || session::load_refresh_token(&who)).await;
-    let Ok(Ok(refresh)) = stored else {
-        return Json(
-            serde_json::json!({ "signedIn": false, "persona": p.persona, "dojo": dojo_url() }),
-        );
-    };
-
-    let tokens = match dojo_auth::refresh(&dojo_url(), &refresh).await {
-        Ok(t) => t,
-        Err(e) => {
-            // A REJECTED refresh token is terminal, so clear it: otherwise the
-            // daemon retries a credential the server will never accept and the
-            // user is never told to sign in again. A transport failure is NOT
-            // terminal and must not clear anything — dōjō being briefly
-            // unreachable would otherwise sign the user out for nothing.
-            let rejected = dojo_auth::status_of(&e).is_some_and(dojo_auth::is_rejection);
-            if rejected {
-                let who3 = p.persona.clone();
-                let _ =
-                    tokio::task::spawn_blocking(move || session::clear_refresh_token(&who3)).await;
-            }
+    // The refresh, the rotation and the clear-on-rejection rule all live in
+    // `live_session` now, so the sync cycle runs exactly what this reports.
+    let (tokens, sess) = match live_session(&p.persona).await {
+        Ok(live) => (live.tokens, live.session),
+        Err(AuthError::SignedOut) => {
+            return Json(
+                serde_json::json!({ "signedIn": false, "persona": p.persona, "dojo": dojo_url() }),
+            );
+        }
+        Err(e @ (AuthError::Rejected(_) | AuthError::Unreachable(_))) => {
+            let detail = match &e {
+                AuthError::Rejected(d) | AuthError::Unreachable(d) => d.clone(),
+                AuthError::SignedOut => unreachable!("handled above"),
+            };
             return Json(serde_json::json!({
                 "signedIn": false,
                 "persona": p.persona,
-                "error": if rejected {
+                "error": if e.needs_sign_in() {
                     "stored session was rejected — sign in again"
                 } else {
                     "could not reach dōjō — the stored session was left alone"
                 },
-                "detail": e,
+                "detail": detail,
                 "dojo": dojo_url(),
             }));
         }
     };
-
     let now = chrono::Utc::now().timestamp();
-    let sess = session::Session::from_response(&tokens, now);
-    // dōjō rotates the refresh token on use; storing the new one is not optional
-    // — keeping the old would invalidate the session on the NEXT call, which
-    // looks like a random sign-out.
-    let rotated = tokens.refresh_token.clone();
-    let who2 = p.persona.clone();
-    let _ =
-        tokio::task::spawn_blocking(move || session::store_refresh_token(&who2, &rotated)).await;
 
     // Prove the ACCESS token authenticates, not merely that the refresh did.
     // "signedIn" on the strength of a refresh alone is the lie this endpoint
@@ -493,6 +564,47 @@ async fn github_verified_emails(provider_token: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_a_401_or_403_is_terminal_enough_to_destroy_the_stored_session() {
+        // This classification decides whether a refresh token is DELETED. Get it
+        // backwards and a dōjō that is briefly unreachable signs the user out of
+        // every persona — recoverable only by a fresh browser sign-in.
+        //
+        // A 5xx is the case that matters: it comes back from the same code path
+        // as a 401, looks equally like "the server said no", and is precisely the
+        // failure a retry fixes.
+        for terminal in ["dōjō returned 401: bad refresh", "dōjō returned 403"] {
+            assert!(
+                matches!(refresh_failure(terminal), AuthError::Rejected(_)),
+                "{terminal} must clear the session"
+            );
+        }
+        for transient in [
+            "dōjō returned 500: boom",
+            "dōjō returned 502",
+            "error sending request: connection refused",
+            "operation timed out",
+        ] {
+            assert!(
+                matches!(refresh_failure(transient), AuthError::Unreachable(_)),
+                "{transient} must LEAVE the session alone"
+            );
+        }
+    }
+
+    #[test]
+    fn every_auth_error_says_whether_signing_in_again_is_required() {
+        // The cycle skips a persona on any of these; only one of them is worth
+        // telling the user about, so the variants must stay distinguishable
+        // rather than collapsing into one "auth failed".
+        assert!(AuthError::SignedOut.needs_sign_in());
+        assert!(AuthError::Rejected("401".into()).needs_sign_in());
+        assert!(
+            !AuthError::Unreachable("timeout".into()).needs_sign_in(),
+            "a network blip is not a sign-out"
+        );
+    }
 
     /// The shape GoTrue actually returned for the two live sign-ins.
     fn user_with(identities: serde_json::Value) -> serde_json::Value {
