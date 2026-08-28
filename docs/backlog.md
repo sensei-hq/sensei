@@ -118,7 +118,12 @@ should not silently start sharing"*. A rule that flips it on forge-public would 
 precisely that for every public repo on the machine, including ones the user contributes to but
 does not own.
 
-**RESOLVED 2026-08-28 — see `docs/spec/dojo/daemon-sync.md` D8 / §2a.** The default lives inside an
+**RESOLVED 2026-08-28, then NARROWED the same day — see `daemon-sync.md` §8a + §8b and
+`docs/requirements/repository-sharing.md`.** An ORG's PRIVATE repo is **mandated by the
+organization**, not defaulted off: local consent does not govern it, and the user can neither
+enable nor disable it. What survives below applies to personal repos and to public repos of any
+owner. Read §8a before acting on this entry — it is the project's mandatory first read
+(CLAUDE.md), so a stale RESOLVED here is how a wrong model gets implemented. The default lives inside an
 explicit configuration step, not at sign-in: once the user opts into sharing, a **public** repo
 defaults to `shared` (changeable, as is the cadence) and a **private** one defaults off and is
 **subscription-gated**. That keeps "signing in must not silently start sharing" true while putting

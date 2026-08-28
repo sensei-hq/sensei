@@ -93,8 +93,13 @@ names itself.
       the org cannot elect it on their behalf.
 - [ ] An org **private** repository on an active subscription syncs because the
       org mandated it, with the user's local setting `private`.
-- [ ] The same repository does **not** sync when the subscription is inactive:
-      the mandate is an election, not an entitlement, and cannot conjure one.
+- [ ] The same repository does **not** sync when a billing row exists but is
+      inactive (e.g. `past_due`).
+- [ ] The same repository does **not** sync when there is **no billing row at
+      all**. Split from the criterion above deliberately: absence is the common
+      case (all live tenants), and a single "inactive" criterion is satisfiable by
+      a `past_due` test while the absent case fails open — so the criterion
+      written to catch the leak would have certified it.
 - [ ] A repository not syncing reports whether entitlement or election refused,
       and which authority holds the election.
 - [ ] Forge visibility is captured from the forge, never inferred from the
