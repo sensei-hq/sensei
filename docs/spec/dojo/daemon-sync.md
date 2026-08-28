@@ -46,6 +46,44 @@
 | D5 | **Plan every tick; register only when the shared set changed** | The plan must never be cached (§V.4) — that is the whole design. Repository identity rarely moves, so re-registering every tick is wasted work. |
 | D6 | **Gate on `repo_key ∈ allowed`; no denial-reason handling yet** | Phase-1 `denied` is provably always empty: `all_my_repositories` hardcodes `sync_enabled = true`, `denied_reason = null`. Decoding a non-empty array must not crash, but building reason UX now would be speculative. |
 | D7 | **A failed plan fetch is log-and-skip, recorded in `sensei.sync_state`** | Needs a new `sensei.sync_entity` value (§6) — none of the five existing values names a whole-cycle fetch. Without it there is no schema-legal `(entity, key)` to record against, and the failure would be invisible. |
+| D8 | **Sharing is configured explicitly; within that step, public repos default ON and private repos default OFF (subscription-gated)** | See §2a. Resolves "why is nothing shared" (claim C3) without making sign-in start sharing. |
+
+### 2a. What sharing is FOR, and what the default is (D8)
+
+The push exists so the dōjō has something to be useful about. Locally, sensei already sees a
+single person's own metrics — publishing them changes little. **The value appears at two or more
+people on one repository**, where "me vs the rest" becomes a comparison, and where governance and
+insight sharing — the core proposition — have anyone to share with.
+
+So the default should be ON where it is cheap and useful. But "signing in must not silently start
+sharing" still holds. Both are satisfied by putting the default **inside an explicit configuration
+step** rather than at sign-in:
+
+| repository | default once configured | gated by |
+|---|---|---|
+| public on the forge | **shared** | nothing — the code is already public; the user may still turn it off |
+| private | **off** | **subscription.** Unsubscribed, no metrics, governance or insights are shared at all |
+
+The distinction that matters: this is a **default within a decision the user makes**, not an
+inference drawn from forge visibility behind their back. Nothing flips at sign-in. The user opts
+into sharing, and at that moment the public/private split decides what the sensible starting
+position is — and remains changeable per repository, along with the push cadence (which is now a
+`sensei.schedules` row, so "how often" is the same mechanism as everything else).
+
+Private-repo sharing is where billing enters (phase 2 of the parent spec: claim, seat, billing).
+Until then a private repository stays local-only regardless of configuration.
+
+**Verification order, which is also the done gate.** Start from the real initial state and change
+one thing at a time, so each step's effect is observable:
+
+1. All repositories `private`, `dojo_sync` schedule disabled — confirm the cycle pushes nothing
+   and says so, rather than erroring.
+2. Set one repository to `shared`. Confirm gate 1 now yields it.
+3. Enable the `dojo_sync` schedule and set its cadence.
+4. Let it run. Confirm a full cycle: register → plan → push → the row observable in
+   `dojo.repository_metrics`.
+5. Re-run. Confirm idempotence — the same row updates rather than duplicating, and
+   `shared_at` advances so the next cycle does not re-push unchanged rows.
 
 ## 3. Persona registry (D1) — WITHDRAWN, it already exists
 
