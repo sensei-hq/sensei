@@ -34,6 +34,7 @@ export type RejectReason =
 	| 'not_permitted' //     the caller is not a member of the repo's tenant
 	| 'unknown_repository' // no registered repository has that repo_key
 	| 'unknown_metric' //     no sensei.metrics row has that key
+	| 'ambiguous' //          that repo_key is registered under two of the caller's tenants
 	| 'unsupported_scope'; // scope=user, which has no principal to attribute to
 
 export interface IngestResult {
@@ -77,27 +78,42 @@ export async function ingestMetrics(
 			continue;
 		}
 
-		const repo = await db
+		// Scoped to the CALLER'S TENANTS, and a plain `.select()` — never
+		// `.maybeSingle()`. `dojo.repositories` is `unique (tenant_id, repo_key)`
+		// and its DDL says so deliberately: "ONE ROW PER (repo_key, tenant), not one
+		// globally. A consultant legitimately has the same repository under two
+		// clients." An unscoped `.maybeSingle()` therefore returned PGRST116 the
+		// moment that happened, which threw a 500 and killed the ENTIRE batch —
+		// permanently, because nothing gets marked shared and the identical batch
+		// retries every cadence. `registerRepositories` was already tenant-scoped;
+		// this half was not, and the two disagreeing is what made it reachable.
+		const repos = await db
 			.from('repositories')
 			.select('id, tenant_id')
-			.eq('repo_key', row.repo_key)
-			.maybeSingle();
-		if (repo.error) throw new AdminError(500, repo.error.message);
-		if (!repo.data) {
+			.eq('repo_key', row.repo_key);
+		if (repos.error) throw new AdminError(500, repos.error.message);
+		const all = (repos.data ?? []) as { id: string; tenant_id: string }[];
+		if (all.length === 0) {
 			reject('unknown_repository');
 			continue;
 		}
-		const { id: repositoryId, tenant_id: tenantId } = repo.data as {
-			id: string;
-			tenant_id: string;
-		};
-		if (!mine.has(tenantId)) {
+		const ours = all.filter((r) => mine.has(r.tenant_id));
+		if (ours.length === 0) {
 			// Not `unknown_repository`: it exists, the caller just has no business
 			// writing to it. Conflating the two would also leak whether a given
 			// repo_key is registered in somebody else's tenant.
 			reject('not_permitted');
 			continue;
 		}
+		if (ours.length > 1) {
+			// The caller belongs to two tenants that both registered this repo_key.
+			// Picking one would file real metrics under an arbitrary governance
+			// boundary, so it is refused BY NAME — and as a per-row rejection, so one
+			// ambiguous repository cannot take the whole batch down with it.
+			reject('ambiguous');
+			continue;
+		}
+		const { id: repositoryId, tenant_id: tenantId } = ours[0];
 
 		// `dojo.metric_catalogue` — a view over `sensei.metrics`, because the
 		// `sensei` schema is deliberately NOT exposed to PostgREST (its daemon
@@ -134,16 +150,31 @@ export async function ingestMetrics(
 			source: row.source ?? 'measured'
 		};
 
-		// Recomputation re-pushes the same (metric, repo, day), so an update is
-		// the normal path rather than an edge case.
-		const existing = await db
+		// ALL SEVEN columns of the destination unique key — not the four this used to
+		// match. `dojo.repository_metrics` is unique on (metric_id, repository_id,
+		// scope, principal_id, commit_sha, computed_on, grain), and `quality.rs`
+		// writes one repo-scoped row PER COMMIT per day. On the loose key those rows
+		// all matched each other, so row 2 UPDATEd row 1 while both were counted
+		// `accepted` — and the daemon then marked both `shared_at`, so the
+		// overwritten value was gone and never re-sent. 6 groups / 34 rows in the
+		// live database would have been destroyed the moment a second repository was
+		// shared.
+		//
+		// `.is()` not `.eq()` for the nullable columns: PostgREST renders
+		// `.eq(col, null)` as `col=eq.null`, which matches NOTHING in SQL — so an
+		// `.eq` here would make every null-bearing row look new and insert a
+		// duplicate on every cycle.
+		let q = db
 			.from('repository_metrics')
 			.select('id')
 			.eq('metric_id', metricId)
 			.eq('repository_id', repositoryId)
+			.eq('scope', 'repo')
+			.is('principal_id', null)
 			.eq('computed_on', row.computed_on)
-			.eq('grain', row.grain)
-			.maybeSingle();
+			.eq('grain', row.grain);
+		q = row.commit_sha == null ? q.is('commit_sha', null) : q.eq('commit_sha', row.commit_sha);
+		const existing = await q.maybeSingle();
 		if (existing.error) throw new AdminError(500, existing.error.message);
 
 		const written = existing.data
