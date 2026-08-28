@@ -1,0 +1,11 @@
+{"name":"activity_prune","enabled":true,"interval_secs":86400,"modified_at":"2026-08-27"}
+{"name":"advance_run","enabled":true,"interval_secs":15,"modified_at":"2026-08-27"}
+{"name":"analyzer","enabled":true,"interval_secs":3600,"modified_at":"2026-08-27"}
+{"name":"capture_drain","enabled":true,"interval_secs":300,"modified_at":"2026-08-27"}
+{"name":"contribute","enabled":true,"interval_secs":3600,"modified_at":"2026-08-27"}
+{"name":"index_audit","enabled":true,"interval_secs":86400,"modified_at":"2026-08-27"}
+{"name":"library_update","enabled":true,"interval_secs":86400,"modified_at":"2026-08-27"}
+{"name":"log_prune","enabled":true,"interval_secs":86400,"modified_at":"2026-08-27"}
+{"name":"metrics","enabled":true,"interval_secs":3600,"modified_at":"2026-08-27"}
+{"name":"reconcile","enabled":true,"interval_secs":300,"modified_at":"2026-08-27"}
+{"name":"watchdog","enabled":true,"interval_secs":60,"modified_at":"2026-08-27"}
