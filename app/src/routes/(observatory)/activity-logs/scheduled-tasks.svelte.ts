@@ -62,6 +62,48 @@ export function taskInterval(task: ScheduledTask): string {
   return `every ${days}d`;
 }
 
+/** ISO weekday names, indexed 1..7 so the wire's numbers index directly. */
+const DAY_NAMES = ['', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+/** A day mask as "Mon-Fri" / "Sat, Sun" / "Wed".
+ *
+ *  Contiguous runs collapse to a range because that is how people say it — a
+ *  weekday schedule reading "Mon, Tue, Wed, Thu, Fri" is correct and unreadable.
+ */
+function dayLabel(days: number[]): string {
+  const sorted = [...new Set(days)].filter((d) => d >= 1 && d <= 7).sort((a, b) => a - b);
+  if (sorted.length === 0) return '';
+  const runs: number[][] = [];
+  for (const d of sorted) {
+    const last = runs[runs.length - 1];
+    if (last && d === last[last.length - 1] + 1) last.push(d);
+    else runs.push([d]);
+  }
+  return runs
+    .map((r) => (r.length >= 3 ? `${DAY_NAMES[r[0]]}-${DAY_NAMES[r[r.length - 1]]}` : r.map((d) => DAY_NAMES[d]).join(', ')))
+    .join(', ');
+}
+
+/** WHEN a worker is allowed to run — "off" / "any time" / "Mon-Fri 09:00-17:00".
+ *
+ *  Three states that must stay distinguishable, because the wrong one is a
+ *  support call:
+ *  - `off` — disabled. Says so plainly rather than showing a cadence that will
+ *    never fire.
+ *  - `any time` — no window and no day mask. An unset mask means EVERY day, so
+ *    rendering it as an empty cell would read as "nothing scheduled".
+ *  - a window and/or days, as configured.
+ *
+ *  The window string is the daemon's own label and is never re-derived here;
+ *  one that wraps midnight (`22:00-05:00`) is meaningful and passes through
+ *  untouched. */
+export function taskSchedule(task: ScheduledTask): string {
+  if (!task.enabled) return 'off';
+  const days = task.days?.length ? dayLabel(task.days) : '';
+  const parts = [days, task.window ?? ''].filter(Boolean);
+  return parts.length ? parts.join(' ') : 'any time';
+}
+
 /** Average run duration as "12ms" / "1.4s", or the em dash when unrecorded. */
 export function taskAvg(task: ScheduledTask): string {
   const ms = task.avg_ms;

@@ -59,24 +59,26 @@
     </div>
   </div>
 
-  <!-- Background tasks (#96) — what the daemon's schedulers are and when they
-       last ran. Run-health (last_ok / error / next-run / avg) is null until the
-       daemon records run outcomes, so those cells read a muted em dash. -->
+  <!-- Background tasks (#96) — what the daemon's workers are, WHEN each is
+       allowed to run, and when it last did. Schedule comes from
+       `sensei.schedules` and is editable via PATCH /api/tasks/scheduled/{name}.
+       Run-health (last_ok / error) stays null until the daemon records
+       outcomes, so that cell still reads a muted em dash. -->
   {#if data.tasks.length > 0}
     <section class="border-b border-paper-edge" data-testid="scheduled-tasks">
       <div class="flex items-baseline gap-2 px-6 pt-4 pb-2">
         <h2 class="text-xs uppercase tracking-wider text-ink-soft m-0">Background tasks</h2>
         <span class="text-xs text-ink-faint">
-          what the daemon is running — run-health tracking is a follow-up
+          what the daemon is running, and when — run-health tracking is a follow-up
         </span>
       </div>
       <div
-        class="grid grid-cols-[minmax(0,1fr)_96px_84px_72px_72px] items-center gap-3 px-6 py-1 bg-paper-soft border-y border-paper-edge text-xs uppercase tracking-wider text-ink-faint"
+        class="grid grid-cols-[minmax(0,1fr)_96px_84px_128px_72px] items-center gap-3 px-6 py-1 bg-paper-soft border-y border-paper-edge text-xs uppercase tracking-wider text-ink-faint"
       >
         <span>worker</span>
         <span>last run</span>
         <span>interval</span>
-        <span>avg</span>
+        <span>schedule</span>
         <span>health</span>
       </div>
       {#each data.tasks as task (task.name)}

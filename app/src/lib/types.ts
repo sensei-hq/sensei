@@ -1545,16 +1545,38 @@ export interface LogRow {
 /** One background worker from `GET /api/tasks/scheduled` (#96). Health fields
  *  (last_ok/last_error/next_run_at/interval_secs/avg_ms) are null until the
  *  daemon records run outcomes — render them as "—", not "healthy". */
+/** One row of `GET /api/tasks/scheduled`, which reads `sensei.schedules`.
+ *
+ *  `enabled`, `window` and `days` are the three fields
+ *  `PATCH /api/tasks/scheduled/{name}` can set. Before schedules became data the
+ *  wire carried only a cadence, so a row could say how OFTEN a worker ran but
+ *  not WHEN, or whether it was going to run at all. */
 export interface ScheduledTask {
   name: string;
   description: string;
+  /** False = never run on a schedule. On-demand paths are unaffected:
+   *  disabling a SCHEDULE does not disable a CAPABILITY. */
+  enabled: boolean;
+  interval_secs: number | null;
+  /** The allowed time-of-day window as the daemon labelled it (`22:00-05:00`),
+   *  or null for any time. A window whose start is after its end wraps
+   *  midnight — the daemon formats it, so this end never re-derives it. */
+  window: string | null;
+  /** ISO weekdays the worker may run on (1 = Mon … 7 = Sun). Null or empty
+   *  means EVERY day — never "never". */
+  days: number[] | null;
   /** RFC-3339, or null when the worker persists no last-run watermark. */
   last_run_at: string | null;
   last_ok: boolean | null;
   last_error: string | null;
-  next_run_at: string | null;
-  interval_secs: number | null;
-  avg_ms: number | null;
+  /** Optional because the daemon does not send them. Both were hardcoded null
+   *  by the old static handler and are absent from the schedules-backed one;
+   *  `next_run_at` is derivable from `last_run_at + interval_secs` and `avg_ms`
+   *  has no source at all yet. Kept typed rather than deleted so the columns
+   *  that render them stay compilable, and optional rather than `| null` so
+   *  nothing reads them as a value the wire promises. */
+  next_run_at?: string | null;
+  avg_ms?: number | null;
 }
 
 // ─── On-demand local-model provisioning ──────────────────────────────────────

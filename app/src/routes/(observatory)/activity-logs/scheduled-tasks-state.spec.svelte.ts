@@ -9,6 +9,7 @@ import {
   taskNextRun,
   taskInterval,
   taskAvg,
+  taskSchedule,
 } from './scheduled-tasks.svelte.js';
 
 const BASE = Date.parse('2026-07-13T02:19:29.612354+00:00');
@@ -23,8 +24,46 @@ function makeTask(over: Partial<ScheduledTask> = {}): ScheduledTask {
     next_run_at: over.next_run_at ?? null,
     interval_secs: over.interval_secs ?? null,
     avg_ms: over.avg_ms ?? null,
+    enabled: over.enabled ?? true,
+    window: 'window' in over ? (over.window ?? null) : null,
+    days: over.days ?? null,
   };
 }
+
+describe('taskSchedule', () => {
+  // The three fields PATCH can set. Before schedules became data these did not
+  // exist on the wire at all, so a row could not show what it was actually
+  // going to do — only how often.
+  it('says "off" when the schedule is disabled, whatever else is set', () => {
+    // Disabling a SCHEDULE does not disable the CAPABILITY, but the row must
+    // not imply the worker is still going to run.
+    const task = makeTask({ enabled: false, interval_secs: 3600, window: '22:00-05:00' });
+    expect(taskSchedule(task)).toBe('off');
+  });
+
+  it('is "any time" when no window and no day mask are set', () => {
+    // An unset mask means EVERY day, never "never" — the row has to say so,
+    // because an empty cell reads as "nothing scheduled".
+    expect(taskSchedule(makeTask({ enabled: true }))).toBe('any time');
+  });
+
+  it('shows the window as the daemon labelled it, including one that wraps midnight', () => {
+    expect(taskSchedule(makeTask({ window: '22:00-05:00' }))).toBe('22:00-05:00');
+  });
+
+  it('names the days rather than printing ISO numbers', () => {
+    // "1,2,3,4,5" is not something a user should have to decode.
+    expect(taskSchedule(makeTask({ days: [1, 2, 3, 4, 5] }))).toBe('Mon-Fri');
+    expect(taskSchedule(makeTask({ days: [6, 7] }))).toBe('Sat, Sun');
+    expect(taskSchedule(makeTask({ days: [3] }))).toBe('Wed');
+  });
+
+  it('combines a window and a day mask', () => {
+    expect(taskSchedule(makeTask({ days: [1, 2, 3, 4, 5], window: '09:00-17:00' }))).toBe(
+      'Mon-Fri 09:00-17:00'
+    );
+  });
+});
 
 describe('taskLastRun', () => {
   it('renders a relative time when last_run_at is set', () => {

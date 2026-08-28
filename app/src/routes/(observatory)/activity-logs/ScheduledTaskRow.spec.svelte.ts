@@ -22,6 +22,9 @@ function makeTask(over: Partial<ScheduledTask> = {}): ScheduledTask {
     next_run_at: over.next_run_at ?? null,
     interval_secs: over.interval_secs ?? null,
     avg_ms: over.avg_ms ?? null,
+    enabled: over.enabled ?? true,
+    window: 'window' in over ? (over.window ?? null) : null,
+    days: over.days ?? null,
   };
 }
 
@@ -57,6 +60,27 @@ describe('ScheduledTaskRow', () => {
     cleanup.push(m.destroy);
     expect(m.container.querySelector('[data-task-health]')?.textContent).toContain('—');
     expect(m.container.querySelector('[data-task-interval]')?.textContent).toContain('—');
-    expect(m.container.querySelector('[data-task-avg]')?.textContent).toContain('—');
+  });
+
+  it('renders the schedule where the dead avg column used to be', () => {
+    // `avg_ms` had no source on either handler — the cell was permanently an em
+    // dash. WHEN a worker runs is real data the wire now carries.
+    const m = mountComponent(ScheduledTaskRowHarness, {
+      task: makeTask({ enabled: true, days: [1, 2, 3, 4, 5], window: '09:00-17:00' }),
+      now: NOW,
+    });
+    cleanup.push(m.destroy);
+    expect(m.container.querySelector('[data-task-schedule]')?.textContent).toContain(
+      'Mon-Fri 09:00-17:00'
+    );
+  });
+
+  it('a disabled worker reads "off" rather than showing a cadence that will not fire', () => {
+    const m = mountComponent(ScheduledTaskRowHarness, {
+      task: makeTask({ enabled: false, interval_secs: 3600 }),
+      now: NOW,
+    });
+    cleanup.push(m.destroy);
+    expect(m.container.querySelector('[data-task-schedule]')?.textContent).toContain('off');
   });
 });
