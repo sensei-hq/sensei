@@ -128,8 +128,13 @@ one repository, which is where comparison and governance/insight sharing begin.
 **Partly shipped.** `PATCH /api/repositories/{*repo_key}` landed in `9468acd0`, and the live count
 is now **1 of 67** shared (`github.com/sensei-hq/dbd`), not 0. Still open: the **CLI flag and the app
 toggle** (`rg set_repository_visibility crates/cli/src app/src` → no hits), and D8's public/private
-default, which is *unimplementable* until `sensei.repositories` carries forge visibility — nothing
-can currently decide "is this repo public".
+default. **Correction (2026-08-28):** I claimed this was "unimplementable until a forge-visibility
+column exists". That was FALSE — `dojo.repositories.visibility` (`private | public`, text+CHECK) has
+been there since phase 1, and the parent spec §V.1 plans its promotion to a `dojo.forge_visibility`
+enum in phase 2. The real gap is that nothing POPULATES it: `registerRepositories` never sets it, so
+every row reads the `private` default — including `github.com/sensei-hq/dbd`, which is public. I
+took a reviewer's `rg forge_visibility` (the ENUM's name) as evidence about the COLUMN and repeated
+it without looking.
 
 ## dbd: a `time` column and an unnamed CHECK can never diff clean
 

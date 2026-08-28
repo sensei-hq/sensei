@@ -67,9 +67,11 @@ Nothing from the review is outstanding. The slice's own remaining work:
 rg -n 'D3|governance' docs/spec/dojo/daemon-sync.md    # the deferred pull
 ```
 
-D3 (per-repo governance pull), D5's change-guard and D8's public/private default
-are deferred and recorded in §9. D8 is *unimplementable* today — no
-forge-visibility column exists.
+D3 (per-repo governance pull) and D5's change-guard are deferred and recorded in
+§9. D8's default is deferred too, but NOT for the reason an earlier version of
+this file gave: the forge-visibility column exists
+(`dojo.repositories.visibility`, `private | public`, shipped in phase 1). Nothing
+POPULATES it, so every row reads `private` — including public repos.
 
 ## Gates (green)
 
@@ -81,10 +83,14 @@ daemon 2463 tests exit 0 · clippy 0 · fmt 0 · dōjō 1429 tests · check 0/0.
   live test. Production value backed up at `/tmp/sensei-config-backup.json`.
 - `dbd` is `shared`; `dojo_sync` cadence is 60s. Both are test settings.
 - Debug binaries are installed in the brew prefix (`make install-debug`).
-- **kavach 1.1.1 publish + repin** — `node_modules/kavach` is patched locally
-  with `040d34c`. *User owns this.*
+- ~~kavach publish + repin~~ **DONE.** Published `1.1.3` carries the
+  `onSessionSync` hook (7 refs in src + dist + typings, verified from the npm
+  tarball); all six `@kavach/*` deps and `kavach` repinned 1.1.0 → 1.1.3 and
+  reinstalled clean. No local patch remains.
 - D3 (governance pull), D5's change-guard and D8's public/private default are
-  deferred, now recorded in §9. D8 is *unimplementable* today — no
-  forge-visibility column exists.
+  deferred, recorded in §9. **Correction:** I twice called D8 "unimplementable —
+  no forge-visibility column exists". FALSE: `dojo.repositories.visibility`
+  (`private | public`) shipped in phase 1. Nothing POPULATES it, which is a much
+  smaller and different gap.
 - `dbd diff --scope default` is never clean (dbd normalises `time` and unnamed
   CHECKs). Filed in `docs/backlog.md`.
