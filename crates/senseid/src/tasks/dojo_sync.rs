@@ -19,7 +19,7 @@
 //!     GET  /v1/you/sync/plan                      entitlement: what may sync?
 //!         on failure: record and skip the persona D7
 //!     POST /v1/you/metrics                        push the rows the plan allows
-//!         mark shared_at on what was accepted     the re-push watermark
+//!         mark shared_at ONLY if the whole batch landed  the re-push watermark
 //! ```
 //!
 //! # What it deliberately does NOT do yet
@@ -50,7 +50,8 @@ const REGISTER_LIMIT: i64 = 500;
 const PUSH_LIMIT: i64 = 500;
 
 /// The `sensei.sync_entity` value a whole-cycle plan fetch is recorded against.
-/// Keyed on the persona label, so two personas' failures stay distinguishable.
+/// Keyed on the persona's KEYCHAIN SLOT (`personas.session_slot`), so two personas'
+/// failures stay distinguishable — never the label, which a sign-in rewrites.
 const PLAN_ENTITY: &str = "dojo_sync_plan";
 
 /// One pass of the dōjō sync cycle, for every signed-in persona.

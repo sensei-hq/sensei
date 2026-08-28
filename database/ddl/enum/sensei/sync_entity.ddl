@@ -11,7 +11,9 @@ create type sync_entity as enum (
   , 'project_repository'
   , 'repository_metric'
   , 'metric_catalogue'
-    -- One whole dōjō sync cycle for one persona, keyed on the persona label.
+    -- One whole dōjō sync cycle for one persona, keyed on the persona's KEYCHAIN SLOT
+    -- (sensei.personas.session_slot) — never the label, which a sign-in rewrites to
+    -- the verified GitHub login.
     -- The other five name a THING that syncs; this names the FETCH that decides
     -- what may sync at all. Without it a failed plan fetch has no schema-legal
     -- (entity, key) to record against and the failure is invisible — the daemon
