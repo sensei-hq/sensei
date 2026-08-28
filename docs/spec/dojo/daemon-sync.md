@@ -164,6 +164,45 @@ for each persona in (select label from sensei.personas
 - [ ] two signed-in personas both sync (D1) — the case a single-persona design silently drops
 - [ ] an expired persona is reported signed-out and does not stall the others
 
+## 9a. Claims (verified 2026-08-28, against the live `sensei` DB and the tree)
+
+Every assertion this spec makes about what already exists, with the check that would disprove it.
+Re-run before build — a claim verified three weeks ago is a claim about three weeks ago.
+
+| # | claim | check | expect | actual | verdict |
+|---|---|---|---|---|---|
+| C1 | `unpushed_metric_rows` is the production push path | `rg -l 'unpushed_metric_rows' crates/ -g '*.rs'` minus tests/definition | ≥1 | **0** | **FALSE** (§1, already corrected) |
+| C2 | `personas.principal_id` is unset, so user-scoped rows cannot be attributed | `select count(principal_id) from sensei.personas` | 0 | **0 of 3** | CONFIRMED |
+| C3 | some repository has opted into sharing | `select count(*) from sensei.repositories where visibility='shared'` | ≥1 | **0 of 67** | **FALSE** |
+| C4 | the daemon's push query already carries `scope`/`grain`/`props` | read the SELECT in `sync.rs` | present | absent — only `id, repo_key, key, computed_on, value` | **FALSE** |
+| C5 | `dojo.repository_metrics` can absorb a re-push idempotently | read the unique index in its DDL | present | `unique (metric_id, repository_id, scope, principal_id, commit_sha, computed_on, grain)` | CONFIRMED |
+
+### C3 is the one that would have cost a slice
+
+**No repository is `shared`** — all 67 are `private`. `visibility='shared'` is gate 1, the local
+intent gate, and nothing has ever set it. So:
+
+- `shared_repositories()` returns empty → `dojo_sync` logs "nothing shared" and returns.
+- `unpushed_metric_rows()` returns empty → the push moves nothing.
+- **Every test still passes**, because each one supplies its own fixture.
+
+Built without noticing, the push would have shipped, run green, pushed zero rows, and been
+indistinguishable from working. This is not a bug in the default — `repositories.visibility` is
+documented as private-by-default precisely so that signing in does not silently start sharing. It
+is a missing *prerequisite*: there is no way for a user to mark a repository shared.
+
+**Consequences for the slice:**
+
+1. **Marking a repository shared is a prerequisite, not a follow-up.** Whatever surface does it —
+   an API route, a CLI flag, the app — has to exist before the push can be verified at all.
+2. **The done gate must observe a row land in the dōjō**, not merely that the push code ran. With
+   gate 1 empty, "the cycle completed without error" is true of a cycle that did nothing.
+3. **C4 means `unpushed_metric_rows` needs widening** before it can feed the ingest endpoint, which
+   requires `scope`, `grain`, `props`, `commit_sha` and `source`.
+4. **C2 confirms the user-scope deferral is real**, not cautious: 0 of 3 personas have a
+   `principal_id`, so there is genuinely nothing to attribute a user-scoped row to. The ingest
+   endpoint rejects `scope='user'` for exactly this reason.
+
 ## 9. Not in this slice
 
 De-provisioning, claim, seats, billing, `forge_visibility` — all phase 2 of the
