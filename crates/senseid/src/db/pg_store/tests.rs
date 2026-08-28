@@ -10008,3 +10008,75 @@ async fn shared_repositories_returns_only_opted_in_repos_with_a_remote() {
         .await
         .ok();
 }
+
+// ── Schedules · the code↔table agreement ────────────────────────────────────
+//
+// `sensei.schedules` is user-editable, and `tasks::schedule::SCHEDULABLE` is the
+// code-side list of workers that actually exist. They must agree in BOTH
+// directions, and this is the test `api/handlers/scheduled_tasks.rs` asks for in
+// its own comment — "Registry, not reflection — keep in step when a worker is
+// added" — turned from a hope into a build failure.
+//
+// Mirrors the existing TaskKind::ALL ↔ sensei.task_execution_kind test.
+
+#[tokio::test]
+async fn every_schedulable_worker_has_a_schedule_row() {
+    // A worker with no row never runs, and nothing would say so.
+    let s = pg_store().await;
+    let rows: Vec<(String,)> =
+        query_as("SELECT name FROM sensei.schedules").fetch_all(s.pool()).await.unwrap();
+    let seeded: Vec<String> = rows.into_iter().map(|(n,)| n).collect();
+    for name in crate::tasks::schedule::SCHEDULABLE {
+        assert!(
+            seeded.iter().any(|n| n == name),
+            "{name} is schedulable in code but has no sensei.schedules row — it would \
+             never run. Add it to database/import/staging/schedules.jsonl."
+        );
+    }
+}
+
+#[tokio::test]
+async fn every_schedule_row_names_a_real_worker() {
+    // A row naming no worker is a typo that silently does nothing.
+    let s = pg_store().await;
+    let rows: Vec<(String,)> =
+        query_as("SELECT name FROM sensei.schedules").fetch_all(s.pool()).await.unwrap();
+    for (name,) in rows {
+        assert!(
+            crate::tasks::schedule::SCHEDULABLE.contains(&name.as_str()),
+            "sensei.schedules has a row for {name:?}, but no such worker exists in \
+             tasks::schedule::SCHEDULABLE — either add the worker or remove the row."
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_zero_interval_is_rejected_by_the_database() {
+    // Not by a runtime fallback: a zero interval busy-loops a core, so it must be
+    // unrepresentable rather than quietly corrected.
+    let s = pg_store().await;
+    let err = sqlx_core::query::query(
+        "INSERT INTO sensei.schedules(name, interval_secs) VALUES('_test:zero', 0)",
+    )
+    .execute(s.pool())
+    .await
+    .unwrap_err();
+    assert!(
+        err.to_string().contains("interval_secs"),
+        "a zero interval must violate the CHECK, got: {err}"
+    );
+}
+
+#[tokio::test]
+async fn a_day_outside_monday_to_sunday_is_rejected() {
+    // ISO 1..7. An 8 would match no weekday and the task would silently never run.
+    let s = pg_store().await;
+    let err = sqlx_core::query::query(
+        "INSERT INTO sensei.schedules(name, interval_secs, days) \
+         VALUES('_test:day8', 60, ARRAY[8]::smallint[])",
+    )
+    .execute(s.pool())
+    .await
+    .unwrap_err();
+    assert!(err.to_string().contains("days"), "day 8 must violate the CHECK, got: {err}");
+}
