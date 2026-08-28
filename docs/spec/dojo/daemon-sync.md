@@ -310,11 +310,24 @@ and saying so here is the point:**
   two documents instead of one.
 - **D5's register-only-when-changed guard.** Needs a `sync_state` row over a hash
   of the shared set.
-- **D8's public/private default.** Currently *unimplementable*, not merely
-  unimplemented: `sensei.repositories` has no forge-visibility column, so nothing
-  can decide "is this public". §2a describes the intended rule; the only setter
-  that exists requires an explicit value and rejects an absent one. No
-  configuration step exists to apply a default in.
+- **D8's public/private default.** The forge-visibility DATA EXISTS:
+  `dojo.repositories.visibility` (`private | public`, text+CHECK) has been there
+  since phase 1. What is missing is smaller and specific: **nothing populates it.**
+  `registerRepositories` never sets the column, so every row sits at the `private`
+  default — including `github.com/sensei-hq/dbd`, which is public on GitHub.
+  Applying D8's default therefore reads `private` for every repository and shares
+  nothing.
+
+  Populating it needs a GitHub call, and the timing is the real question: at
+  registration the caller holds a SUPABASE token, not a forge token
+  (`setCookieFromSession` strips `provider_token`, which is why provisioning uses
+  the kavach `onSessionSync` hook). So the value has to be captured where a
+  provider token exists — sign-in/provisioning — or a token has to be stored.
+  That is a decision, not an oversight.
+
+  Phase 2 additionally promotes the column to a `dojo.forge_visibility` enum
+  (`public | private | internal`) per the parent spec §V.1 — `internal` gates as
+  private. The enum is what does not exist yet; the column does.
 - **Two personas pushing the same repository.** `shared_at` is machine-global with
   no persona dimension, and the push `sync_state` mark is keyed on `repo_key`
   alone while the plan mark is keyed per persona. Done-gate item 5 is restated
