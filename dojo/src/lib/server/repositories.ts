@@ -32,8 +32,13 @@ export interface RepoInput {
 /** A repository that resolved to a tenant. */
 export interface MappedRepo {
 	repo_key: string;
-	/** The tenant's `{origin}/{slug}` discovery key. */
+	/** The tenant's `{origin}/{slug}` discovery key. For display and logs. */
 	tenant: string;
+	/** The tenant's uuid — what the daemon stores in `sensei.repositories.tenant_id`.
+	 *  Sent alongside `tenant` rather than instead of it: the key is what a human
+	 *  reads in a log line, and the uuid is the only half a slug rename cannot
+	 *  invalidate. */
+	tenant_id: string;
 	repo_id: string;
 }
 
@@ -159,6 +164,7 @@ export async function registerRepositories(
 			mapped.push({
 				repo_key: repoKey,
 				tenant: tenantKey,
+				tenant_id: tenantId,
 				repo_id: (existing.data as { id: string }).id
 			});
 			continue;
@@ -193,6 +199,7 @@ export async function registerRepositories(
 					mapped.push({
 						repo_key: repoKey,
 						tenant: tenantKey,
+						tenant_id: tenantId,
 						repo_id: (again.data as { id: string }).id
 					});
 					continue;
@@ -201,7 +208,12 @@ export async function registerRepositories(
 			throw new AdminError(500, ins.error.message);
 		}
 
-		mapped.push({ repo_key: repoKey, tenant: tenantKey, repo_id: (ins.data as { id: string }).id });
+		mapped.push({
+			repo_key: repoKey,
+			tenant: tenantKey,
+			tenant_id: tenantId,
+			repo_id: (ins.data as { id: string }).id
+		});
 	}
 
 	return { mapped, unmapped };
@@ -233,7 +245,7 @@ export async function registerRepositories(
 export async function syncPlan(db: DojoClient, principalId: string): Promise<SyncPlan> {
 	const { data, error } = await db
 		.from('all_my_repositories')
-		.select('repository_id, repo_key, tenant, sync_enabled, denied_reason')
+		.select('repository_id, repo_key, tenant, tenant_id, sync_enabled, denied_reason')
 		.eq('principal_id', principalId);
 	if (error) throw new AdminError(500, error.message);
 
@@ -243,11 +255,17 @@ export async function syncPlan(db: DojoClient, principalId: string): Promise<Syn
 		repository_id: string;
 		repo_key: string;
 		tenant: string;
+		tenant_id: string;
 		sync_enabled: boolean;
 		denied_reason?: string | null;
 	}[]) {
 		if (row.sync_enabled) {
-			allowed.push({ repo_key: row.repo_key, tenant: row.tenant, repo_id: row.repository_id });
+			allowed.push({
+				repo_key: row.repo_key,
+				tenant: row.tenant,
+				tenant_id: row.tenant_id,
+				repo_id: row.repository_id
+			});
 		} else {
 			// A denial always names itself. "Nothing to sync" is the shape that hid
 			// the original defect for two days; `no_seat` and `not_subscribed` are
