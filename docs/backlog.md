@@ -53,10 +53,32 @@ staleness is discovered when a command behaves like last month's.
 manifests being what Claude Code reads to decide "is there an update". Same trap, one level up:
 bumping fixes it for a release, and nothing fixes it between releases.
 
+**A SECOND observation, 2026-08-28, and my first diagnosis of it was WRONG — worth recording
+because the wrong answer was very plausible.** `/sensei:review` kept showing its old description
+("Quality check — pattern conformance…") long after the rewrite was published, installed, and
+verified byte-for-byte in the user-scope cache.
+
+I found the plugin installed at **two scopes**, with the project one pinned at **v0.7.6** — no
+`analysis`/`design`/`complete`, no claims-verifier, and the pre-rewrite `review.md` carrying exactly
+the string being displayed. Compelling, and wrong: that entry's `projectPath` points at a DIFFERENT
+repository, so it was never in play here.
+
+**The actual cause is that a running session reads command descriptions at launch.**
+`claude plugin update` says so in its own output — *"Restart to apply changes."* No amount of
+publishing, reinstalling or cache-verifying changes what the current session displays.
+
+Two things worth keeping from the wrong turn:
+- `claude plugin update` defaults to `--scope user`, so it silently updates half of a two-scope
+  install and reports success. `claude plugin list` shows duplicate entries without showing that
+  their versions differ, which is what made the stale 0.7.6 easy to believe in.
+- **sensei is now a USER-scope plugin only** (the redundant project install is removed). Its
+  commands, agents and skills are not project-specific, so a per-project copy buys nothing and can
+  only drift.
+
 **Wanted**
 
 1. A sixth health component (`plugin`?) comparing the installed plugin's `gitCommitSha` against the
-   marketplace `HEAD`, not its version. The install record already stores the sha —
+   marketplace `HEAD`, not its version — **per scope**, since they drift independently. The install record already stores the sha —
    `installed_plugins.json` held `56373b4` while the marketplace was at `8b3f179`, so the drift is
    detectable today and nothing looks.
 2. A resolver that applies it. With no `--force` that means uninstall+reinstall, so it must first
