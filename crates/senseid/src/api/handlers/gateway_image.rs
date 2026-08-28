@@ -5,6 +5,7 @@ use base64::{Engine, engine::general_purpose::STANDARD};
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 
+use crate::api::handlers::err;
 use crate::api::state::AppState;
 use crate::gateway_routers::find as find_router;
 use gateway::types::capability::Capability;
@@ -107,10 +108,6 @@ pub(crate) async fn image_generate(
     State(state): State<AppState>,
     Json(body): Json<ImageGenerateBody>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    fn err(status: StatusCode, msg: &str) -> (StatusCode, Json<serde_json::Value>) {
-        (status, Json(serde_json::json!({ "error": msg })))
-    }
-
     // Important 3: reject empty prompts before any further processing.
     if body.prompt.trim().is_empty() {
         return Err(err(StatusCode::BAD_REQUEST, "prompt must not be empty"));
@@ -132,7 +129,7 @@ pub(crate) async fn image_generate(
             if !key_present {
                 return Err(err(
                     StatusCode::BAD_REQUEST,
-                    &format!("{} router key not configured", rid),
+                    format!("{} router key not configured", rid),
                 ));
             }
         }
@@ -163,7 +160,7 @@ pub(crate) async fn image_generate(
         .gateway
         .execute(&request)
         .await
-        .map_err(|e| err(StatusCode::BAD_GATEWAY, &e.to_string()))?;
+        .map_err(|e| err(StatusCode::BAD_GATEWAY, e.to_string()))?;
 
     let images = response.images.unwrap_or_default();
     if images.is_empty() {
@@ -189,18 +186,18 @@ pub(crate) async fn image_generate(
     let mut written = Vec::with_capacity(images.len());
     for (i, image) in images.iter().enumerate() {
         let bytes = if let Some(b64) = &image.b64_json {
-            STANDARD.decode(b64).map_err(|e| err(StatusCode::BAD_GATEWAY, &e.to_string()))?
+            STANDARD.decode(b64).map_err(|e| err(StatusCode::BAD_GATEWAY, e.to_string()))?
         } else if let Some(url) = &image.url {
             // Some adapters return a URL instead of bytes. Fetch with a timeout.
             let resp = reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(60))
                 .build()
-                .map_err(|e| err(StatusCode::BAD_GATEWAY, &e.to_string()))?
+                .map_err(|e| err(StatusCode::BAD_GATEWAY, e.to_string()))?
                 .get(url)
                 .send()
                 .await
-                .map_err(|e| err(StatusCode::BAD_GATEWAY, &e.to_string()))?;
-            resp.bytes().await.map_err(|e| err(StatusCode::BAD_GATEWAY, &e.to_string()))?.to_vec()
+                .map_err(|e| err(StatusCode::BAD_GATEWAY, e.to_string()))?;
+            resp.bytes().await.map_err(|e| err(StatusCode::BAD_GATEWAY, e.to_string()))?.to_vec()
         } else {
             return Err(err(StatusCode::BAD_GATEWAY, "image had neither b64_json nor url"));
         };
@@ -226,11 +223,11 @@ pub(crate) async fn image_generate(
         if let Some(parent) = path.parent() {
             tokio::fs::create_dir_all(parent)
                 .await
-                .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()))?;
+                .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
         }
         tokio::fs::write(&path, &bytes)
             .await
-            .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()))?;
+            .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
         written.push(path.display().to_string());
     }
 

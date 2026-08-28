@@ -16,6 +16,7 @@ use axum::{
 };
 use serde::Deserialize;
 
+use crate::api::handlers::err;
 use crate::api::state::AppState;
 use crate::tasks::verdict_classifier;
 
@@ -30,10 +31,6 @@ pub(crate) struct ClassifyBody {
     /// `activity.sessions.id` UUID). Absent → classify every session (heavy;
     /// use sparingly).
     pub session_id: Option<String>,
-}
-
-fn err(status: StatusCode, msg: &str) -> (StatusCode, Json<serde_json::Value>) {
-    (status, Json(serde_json::json!({"error": msg})))
 }
 
 /// POST /api/instruments/verdicts/classify
