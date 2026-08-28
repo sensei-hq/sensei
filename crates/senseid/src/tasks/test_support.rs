@@ -65,6 +65,58 @@ impl TestGate {
 /// anything derived from them.
 pub(crate) static CORRECTIONS_TABLE_LOCK: TestGate = TestGate::new();
 
+/// Serialises the tests that edit a SEEDED `sensei.schedules` row, or run the
+/// seed import.
+///
+/// The eleven seeded rows are a fixture every one of those tests shares.
+/// `import_schedules` rewrites every row named in `staging.schedules`, so two
+/// such tests interleaved each see the other's edit reverted; worse, a test
+/// asserting that a REJECTED patch wrote nothing reads a sibling's legitimate
+/// write as a write of its own. Both the store tests and the handler tests edit
+/// the same rows, so the gate lives here rather than in either of them.
+///
+/// Hold it for the whole span between the first read and the restore.
+pub(crate) static SCHEDULE_EDIT_GATE: TestGate = TestGate::new();
+
+/// The prefix every throwaway `sensei.schedules` row carries — see
+/// [`test_schedule_name`].
+pub(crate) const TEST_SCHEDULE_PREFIX: &str = "_test:";
+
+/// A throwaway `sensei.schedules` name for a test that needs a row of its own
+/// rather than an edit to a seeded worker.
+///
+/// The prefix is load-bearing. `every_schedule_row_names_a_real_worker` scans
+/// the whole table and asserts every name is a worker in `SCHEDULABLE`, so a row
+/// belonging to a concurrently-running test fails it — permanently, if that test
+/// panicked before its cleanup. The prefix is how the scan tells "another test
+/// is mid-flight" from "a row that schedules nobody"; no worker may use it,
+/// which that test asserts.
+pub(crate) fn test_schedule_name() -> String {
+    format!("{TEST_SCHEDULE_PREFIX}sched:{}", uuid::Uuid::new_v4())
+}
+
+/// Put a seeded schedule row back exactly as `staging.schedules` holds it,
+/// `modified_at` included.
+///
+/// A test that edits a seeded worker must not leave it looking like a USER edit:
+/// `staging.import_schedules` refuses to overwrite a row whose `modified_at` is
+/// newer than the datafile's, so a leftover test cadence would survive every
+/// future `dbd deploy` with nobody able to explain why.
+pub(crate) async fn restore_seeded_schedule(pg: &PgStore, name: &str) {
+    sqlx_core::query::query(
+        "UPDATE sensei.schedules s \
+            SET enabled = g.enabled, interval_secs = g.interval_secs \
+              , window_start = g.window_start, window_end = g.window_end \
+              , days = g.days, modified_at = g.modified_at \
+           FROM staging.schedules g \
+          WHERE s.name = g.name AND s.name = $1",
+    )
+    .bind(name)
+    .execute(pg.pool())
+    .await
+    .expect("a seeded schedule row must be restorable from staging");
+}
+
 /// A [`TaskContext`](crate::tasks::executor::TaskContext) backed by a fresh
 /// `TaskQueue`, the test `PgStore`, and a noop gateway — the standard fixture for
 /// task-handler unit tests.
