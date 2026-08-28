@@ -123,6 +123,60 @@ pub async fn register_repositories(
     decode("registration", &send(req, token, "registration").await?)
 }
 
+/// The three calls the sync cycle makes, behind a trait.
+///
+/// Not indirection for its own sake. Before this existed the cycle called the free
+/// functions below directly, so no test could reach `sync_persona` or
+/// `push_allowed` at all: **the entire body of `tick` could be replaced with
+/// `Ok(())` and both of its tests still passed.** Push failure, partial
+/// acceptance, an unparseable tenant id, an empty allow-list and the per-persona
+/// isolation were all unguarded.
+///
+/// `#[async_trait]` because the cycle holds it as `&dyn UserPlane` — the alternative
+/// (generics) would infect every caller's signature for no gain here.
+#[async_trait::async_trait]
+pub trait UserPlane: Send + Sync {
+    async fn register_repositories(
+        &self,
+        token: &str,
+        repos: &[RepoInput<'_>],
+    ) -> Result<RegisterResult, String>;
+
+    async fn sync_plan(&self, token: &str) -> Result<SyncPlan, String>;
+
+    async fn push_metrics(
+        &self,
+        token: &str,
+        metrics: &[MetricPush<'_>],
+    ) -> Result<IngestResult, String>;
+}
+
+/// The real transport: HTTP to a dōjō.
+pub struct HttpUserPlane {
+    pub dojo_url: String,
+}
+
+#[async_trait::async_trait]
+impl UserPlane for HttpUserPlane {
+    async fn register_repositories(
+        &self,
+        token: &str,
+        repos: &[RepoInput<'_>],
+    ) -> Result<RegisterResult, String> {
+        register_repositories(&self.dojo_url, token, repos).await
+    }
+    async fn sync_plan(&self, token: &str) -> Result<SyncPlan, String> {
+        sync_plan(&self.dojo_url, token).await
+    }
+    async fn push_metrics(
+        &self,
+        token: &str,
+        metrics: &[MetricPush<'_>],
+    ) -> Result<IngestResult, String> {
+        push_metrics(&self.dojo_url, token, metrics).await
+    }
+}
+
 /// One metric row on the wire.
 ///
 /// Borrowed, not owned: a push batch is built from rows the store already holds,
