@@ -533,6 +533,116 @@ reason added later cannot land on the wrong side of the split.
 empty. That was true of a hardcoded view; it is false the moment the view
 computes, and this revision is what makes it compute.
 
+## 8b. Worked scenarios — how each case is configured and evaluated
+
+The view returns **two independent verdicts**, never one boolean:
+
+- `may_share` — ENTITLEMENT. *Is this repository allowed to be shared at all?*
+- `elected`   — ELECTION. *Did whoever holds authority actually choose it?*
+- `sync_enabled = may_share AND elected`
+
+Keeping them apart is the whole point: "allowed but nobody chose" and "chosen but
+not allowed" are different states with different fixes, and a single boolean
+cannot tell a user which one they are in.
+
+### The inputs
+
+| input | where it lives | values |
+|---|---|---|
+| owner | `dojo.tenants.origin` | `personal` \| `organization` |
+| forge visibility | `dojo.repositories.visibility` | `NULL` (uncaptured) \| `private` \| `public` |
+| org default | `dojo.tenant_share_policy.private_repos_shared` | bool |
+| per-repo election | `dojo.repository_elections` | `(authority, principal_id, elected)` |
+| subscription | `dojo.billing_accounts.status` + period | `active` \| … |
+| seat | `dojo.seat_allocations` | present \| absent |
+
+### The scenarios
+
+`authority` is derived, never stored on the repository:
+`organization AND visibility <> 'public'` → **ORG**, else **USER**.
+
+| # | owner | forge | subscribed | org policy | user elected | authority | `may_share` | `elected` | **sync** | reason shown |
+|---|---|---|---|---|---|---|---|---|---|---|
+| A | personal | private | — | — | ✅ | USER | ✅ | ✅ | **yes** | — |
+| B | personal | private | — | — | ❌ | USER | ✅ | ❌ | no | election · `not_elected` · you |
+| C | personal | public | — | — | ❌ | USER | ✅ | ❌ | no | election · `not_elected` · you |
+| D | org | public | — | — | ✅ | USER | ✅ | ✅ | **yes** | — |
+| E | org | public | — | on | ❌ | USER | ✅ | ❌ | no | election · `not_elected` · **you** |
+| F | org | private | ✅ | on | ❌ | ORG | ✅ | ✅ | **yes** | — (mandated) |
+| G | org | private | ✅ | off | ✅ | ORG | ✅ | ❌ | no | election · `not_elected` · **org** |
+| H | org | private | ❌ | on | — | ORG | ❌ | ✅ | no | entitlement · `not_subscribed` |
+| I | org | private | ✅ | on | — | *none* | ❌ | ❌ | no | election · `forge_visibility_unknown` |
+| J | org | private | ✅ | off + per-repo ON | — | ORG | ✅ | ✅ | **yes** | — (mandated, exception) |
+
+### What each row is teaching
+
+- **A/B/C — personal is simple.** Always entitled (`origin = 'personal' → ALLOW`),
+  so the only question is whether the user chose. C matters: a *public* personal
+  repo still does not sync unelected. Public means *free to host*, never
+  *automatically shared*.
+- **D/E — an org cannot elect its members' open source.** E is the row that would
+  be wrong under a one-question model: the org policy is ON, the repo belongs to
+  the org's tenant, and it still does not sync, because a public repo's authority
+  is the USER. The org is not paying for open source and a contributor's metrics
+  are their own.
+- **F — the mandate, working.** The user has NOT elected it and it syncs anyway.
+  Their local `sensei.repositories.visibility` is `private` and irrelevant. This is
+  the row that requires B1 and B2 to be fixed; today the daemon returns before
+  asking, and the push query excludes it.
+- **G — a mandate cuts both ways.** The org said no, so the user *cannot* say yes.
+  An individual may not publish the company's private code on their own
+  authority. The user elected it and it still does not sync — and the reason names
+  the ORG so they know who to ask.
+- **H — a mandate is an election, not an entitlement.** The org mandated it and
+  the subscription lapsed. `elected` is ✅, `may_share` is ❌, and the reason is
+  `not_subscribed` — pointing at billing, not at the user. Collapsing the two
+  axes would report this as "not shared" and send them hunting a toggle.
+- **I — uncaptured fails closed on BOTH axes.** No authority can be derived, so
+  there is no election to consult. This is the row that makes the ordering
+  constraint safe: without it, `NULL`/default visibility in an org tenant would
+  resolve to ORG-mandated and share everything.
+- **J — the exception the tenant flag alone cannot express.** Policy off, one repo
+  explicitly mandated. Also works in reverse: policy on with a per-repo
+  `elected = false` excludes a single repository.
+
+### The view
+
+```sql
+-- authority: derived, and NULL when we do not yet know the forge's answer
+, case when r.visibility is null                                  then null
+       when t.origin = 'organization' and r.visibility <> 'public' then 'organization'
+       else 'user'
+  end                                                           as authority
+
+-- ENTITLEMENT
+, case when r.visibility is null           then false   -- fail closed on unknown
+       when t.origin = 'personal'          then true
+       when r.visibility = 'public'        then true
+       when b.status = 'active' and now() between b.period_start and b.period_end
+             and sa.id is not null         then true
+       else false
+  end                                                           as may_share
+
+-- ELECTION: the org's policy for ORG-authority rows, the user's for USER
+, coalesce(
+      case when t.origin = 'organization' and r.visibility <> 'public'
+           then coalesce(oe.elected, p.private_repos_shared)   -- per-repo, else default
+           else ue.elected                                     -- this principal's
+      end, false)                                              as elected
+```
+
+`oe` is the per-repo `authority='organization'` election, `ue` the
+`authority='user' AND principal_id = m.user_id` one, `p` the tenant policy, `b`
+billing, `sa` the seat. `coalesce(…, false)` throughout: an absent row is *not
+elected*, never *elected by default*.
+
+### Why `refused_by` is a column and not an inference
+
+Rows H and G both read `sync_enabled = false`. They need different actions — pay
+the invoice, versus ask an admin. Row E needs a third (elect it yourself). A
+consumer that has to infer which from a reason string will get it wrong the first
+time a reason is added, so the view states it.
+
 ## 9. Not in this slice
 
 De-provisioning, claim, seats, billing, `forge_visibility` — all phase 2 of the
