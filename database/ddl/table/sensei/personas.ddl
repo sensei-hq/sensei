@@ -57,6 +57,16 @@ create table if not exists personas (
   -- lives in another database, exactly as `sensei.repositories.tenant_id` does.
   -- NULL until the user links this persona (Phase 6).
 , principal_id  uuid
+  -- The KEYCHAIN SLOT this persona's dōjō session is stored under, as chosen by
+  -- whoever started the sign-in (`/api/auth/signin?persona=X`).
+  --
+  -- Distinct from `label`, and that distinction is the whole reason the column
+  -- exists. `label` is a DISPLAY name that a successful sign-in REWRITES to the
+  -- verified GitHub login — a user who signs in as `default` ends up with a row
+  -- labelled `sensei-hq-org`. An unattended task that looked up the session by
+  -- `label` would read `refresh_token.sensei-hq-org`, find nothing, and skip the
+  -- persona while reporting the cycle successful. Observed, not theorised.
+, session_slot  text
 , created_at    timestamptz not null default now()
 , modified_at   timestamptz not null default now()
 );
@@ -75,6 +85,12 @@ create unique index if not exists personas_github_user_unique
 -- instead of silently filing sensei-hq work under the personal identity.
 create unique index if not exists personas_principal_unique
     on personas (principal_id) where principal_id is not null;
+
+-- One persona per Keychain slot. Two personas sharing a slot would mean one
+-- stored session serving two identities, so an unattended sync would push one
+-- person's metrics under the other's token.
+create unique index if not exists personas_session_slot_unique
+    on personas (session_slot) where session_slot is not null;
 
 comment on table personas is
 'A working identity kept separate from the user''s others — business vs personal
@@ -96,3 +112,5 @@ comment on column personas.is_self
      is 'FALSE when this persona is another contributor, not the local user — so their commits are never counted as "mine".';
 comment on column personas.principal_id
      is 'The dōjō login this persona pushes under (dojo.principals.id). Plain uuid — the referent is in another database. NULL until linked.';
+comment on column personas.session_slot
+     is 'The Keychain slot holding this persona''s dōjō session (session.rs::account_for formats refresh_token.<slot>). NOT the label: a successful sign-in rewrites label to the verified GitHub login, so signing in as "default" yields a row labelled "sensei-hq-org" whose session is still at refresh_token.default. Looking the session up by label finds nothing and silently skips the persona. NULL = never signed in from this machine.';

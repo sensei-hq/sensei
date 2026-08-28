@@ -14,29 +14,33 @@
 use super::PgStore;
 
 impl PgStore {
-    /// The personas that have completed a dōjō sign-in, by label — the string a
-    /// Keychain session slot is named for (`session::account_for`).
+    /// The KEYCHAIN SLOTS of personas that have completed a dōjō sign-in.
     ///
-    /// This is the persona registry. `docs/spec/dojo/daemon-sync.md` §3 originally
-    /// proposed a `sensei.dojo_personas` table for it, on the premise that sign-in
-    /// state lived only in the Keychain and nothing could list it. That premise
-    /// was wrong: `link_persona_identity` already writes `verified_at` on every
-    /// completed OAuth callback, so the registry is this query and the table was
-    /// never created.
+    /// The persona registry. `docs/spec/dojo/daemon-sync.md` §3 originally proposed
+    /// a `sensei.dojo_personas` table for it; the registry already existed in
+    /// `sensei.personas`, so the table was never created.
     ///
-    /// `verified_at`, not `principal_id`, even though the latter reads more
-    /// precisely as "has a dōjō login": nothing sets `principal_id` yet (the
-    /// column is documented "NULL until the user links this persona"), so it would
-    /// enumerate nobody and sync nothing without ever looking broken.
+    /// **Returns `session_slot`, NOT `label`, and that is the whole subtlety.**
+    /// The spec's first version claimed they were the same string. They are not:
+    /// `link_persona_identity` REWRITES `label` to the verified GitHub login, so a
+    /// user who signs in as `default` ends up with a row labelled `sensei-hq-org`
+    /// whose session is still at `refresh_token.default`. Returning the label sent
+    /// `live_access_token` looking for a slot that does not exist, which reported
+    /// `SignedOut`, skipped the persona, and left the cycle claiming success while
+    /// pushing nothing. Observed live before this column existed, not theorised.
+    ///
+    /// Both conditions are needed. `session_slot IS NOT NULL` is the one that
+    /// matters — it is written at sign-in and is the only field that names a real
+    /// Keychain entry. `verified_at IS NOT NULL` is kept beside it so a row whose
+    /// slot survives a sign-out is not re-enumerated.
     ///
     /// A row proves a sign-in HAPPENED, not that its token is still valid — the
-    /// caller resolves a live access token per persona and skips the ones whose
-    /// session has expired.
+    /// caller resolves a live access token per slot and skips the expired ones.
     pub async fn signed_in_personas(&self) -> Result<Vec<String>, String> {
         let rows: Vec<(String,)> = sqlx_core::query_as::query_as(
-            "SELECT label FROM sensei.personas \
-              WHERE verified_at IS NOT NULL \
-              ORDER BY label",
+            "SELECT session_slot FROM sensei.personas \
+              WHERE session_slot IS NOT NULL AND verified_at IS NOT NULL \
+              ORDER BY session_slot",
         )
         .fetch_all(&self.pool)
         .await
@@ -205,12 +209,19 @@ impl PgStore {
                                       SELECT 1 FROM sensei.personas o \
                                        WHERE lower(o.label) = lower($2) AND o.id <> p.id) \
                                  THEN $2 ELSE p.label END, \
+                    session_slot = $4, \
                     modified_at = now() \
               WHERE p.id = $1",
         )
         .bind(id)
         .bind(github_login)
         .bind(github_user_id)
+        // The slot the session was actually stored under — the hint string, NOT
+        // the label the line above may have just rewritten. Recording it here is
+        // what keeps the registry's lookup key and the Keychain key the same
+        // string; deriving one from the other is what silently skipped the
+        // persona.
+        .bind(persona_hint.to_lowercase())
         .execute(&self.pool)
         .await
         .map_err(|e| format!("link_persona_identity (verify): {e}"))?;
