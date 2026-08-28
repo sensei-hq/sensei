@@ -426,6 +426,7 @@ mod playbook;
 mod projects;
 mod repo_key;
 mod runs;
+mod schedules;
 mod sessions;
 pub(crate) mod sync;
 mod transcript;

@@ -55,6 +55,17 @@ pub struct Schedule {
     pub days: Vec<u8>,
 }
 
+/// How often to WAKE UP and re-ask whether to run — not the schedule's interval.
+///
+/// A daily task with an overnight window, polled daily, wakes at whatever time
+/// it first woke and skips forever: its window is only open for three hours and
+/// the poll never lands inside them. So a worker must wake often enough to
+/// notice its window open. 60s bounds window granularity; a sub-minute interval
+/// (advance_run is 15s) keeps its own cadence rather than being slowed down.
+pub fn poll_secs(interval_secs: u32) -> u64 {
+    u64::from(interval_secs).clamp(1, 60)
+}
+
 /// Why a task is not running right now. Returned rather than a bare bool so the
 /// UI and the logs can say WHICH reason — "disabled" and "outside its window"
 /// are different answers to "why has this not run?", and collapsing them into
@@ -69,6 +80,10 @@ pub enum Skip {
     OutsideWindow,
     /// Wrong day of week.
     WrongDay,
+    /// No `sensei.schedules` row. The code↔table agreement test makes this a
+    /// build failure, so reaching it at runtime means something is genuinely
+    /// wrong — and not running is the honest response.
+    Unscheduled,
 }
 
 /// Is `now` inside the schedule's allowed time-of-day window?
@@ -274,6 +289,18 @@ mod tests {
         assert_eq!(window_label(Some(t(22, 0)), Some(t(5, 30))).as_deref(), Some("22:00–05:30"));
         assert_eq!(window_label(None, None), None);
         assert_eq!(window_label(Some(t(9, 0)), None), None, "half a window is not a window");
+    }
+
+    #[test]
+    fn poll_is_capped_so_a_windowed_daily_task_can_notice_its_window() {
+        // The bug this exists to prevent: polled once a day, a task with a
+        // 02:00-05:00 window wakes at whatever hour it started and never lands
+        // inside its window again.
+        assert_eq!(poll_secs(86_400), 60, "daily must still poll every minute");
+        assert_eq!(poll_secs(3600), 60, "hourly too");
+        assert_eq!(poll_secs(15), 15, "a sub-minute cadence is NOT slowed to 60s");
+        assert_eq!(poll_secs(60), 60);
+        assert_eq!(poll_secs(0), 1, "never zero — that would busy-loop");
     }
 
     #[test]
