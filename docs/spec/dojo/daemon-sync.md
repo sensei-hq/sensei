@@ -557,6 +557,10 @@ no column names — while the sibling sections of this spec family (e.g.
 
 ```
 dojo.repository_elections            -- WHO chose, for WHOM, when
+  id            uuid primary key default gen_random_uuid()
+        -- Every other table in this schema carries a surrogate id; the unique
+        -- below cannot serve as a PK because `principal_id` is NULL by design for
+        -- org authority, and a PK admits no NULLs.
   tenant_id     uuid not null references dojo.tenants(id)     on delete cascade
   repository_id uuid not null references dojo.repositories(id) on delete cascade
   authority     dojo.share_authority not null   -- 'user' | 'organization'
@@ -577,6 +581,11 @@ dojo.tenant_share_policy             -- the org's DEFAULT, so a new repo is cove
 
 dojo.share_authority  enum ('user', 'organization')
 
+-- The cross-Postgres grant, WITHOUT which the dojo.reason_codes view is
+-- unreadable. This is the exact gap `dojo.metric_catalogue` hit: `authenticated`
+-- alone answered "permission denied" because the Worker holds a service_role key.
+grant select on sensei.reason_codes to authenticated, service_role;
+
 -- REQUIRED by item 2's "uncaptured is a state": the column is `not null default
 -- 'private'` today, so NULL is not writable. Without this the implementer hits a
 -- not-null violation and falls back to 'private' — restoring the exact mis-default
@@ -585,6 +594,18 @@ alter table dojo.repositories alter column visibility drop not null;
 alter table dojo.repositories alter column visibility drop default;
 -- and confirm the CHECK admits NULL (`visibility in (…)` is NULL-tolerant, but
 -- assert it rather than assume).
+
+-- THE BACKFILL, which the ALTER alone does not do. `dbd reconcile` PRESERVES row
+-- data, so every existing row keeps the wrong `'private'` — the precise leak the
+-- BLOCKING section proves for `sensei-hq/dbd`, surviving one layer down. Reset
+-- them to "never captured" so they fail closed until a sign-in captures the truth:
+update dojo.repositories set visibility = null, visibility_captured_at = null;
+
+-- THE GATE. The view may not deploy until this returns 0. Not a suggestion — a
+-- non-zero result means some row still carries an uncaptured default that the
+-- authority rule would read as org-mandated.
+select count(*) from dojo.repositories
+ where visibility is not null and visibility_captured_at is null;
 ```
 
 `repository_elections` + `tenant_share_policy` together answer `elected()`: an org
@@ -676,6 +697,7 @@ cannot tell a user which one they are in.
 | G | org | private | ✅ | off | ✅ | ORG | ✅ | ❌ | no | election · `not_elected` · **org** |
 | H | org | private | ❌ *(row exists, `past_due`)* | on | — | ORG | ❌ | ✅ | no | entitlement · `not_subscribed` |
 | **H2** | org | private | ❌ **no billing row at all** | on | — | ORG | ❌ | ✅ | no | entitlement · `not_subscribed` |
+| **K** | org | private | ✅ *(but this member has NO SEAT)* | on | — | ORG | ❌ | ✅ | no | entitlement · `no_seat` **(phase 2)** |
 | I | org | private | ✅ | on | — | *none* | ❌ | ❌ | no | election · `forge_visibility_unknown` |
 | J | org | private | ✅ | off + per-repo ON | — | ORG | ✅ | ✅ | **yes** | — (mandated, exception) |
 
@@ -712,6 +734,13 @@ cannot tell a user which one they are in.
   election and no subscription whatsoever** — precisely the composite the mandate
   was meant to be gated by. §IV.3 now tests for the MISSING ROW before testing its
   value.
+- **K — subscribed, mandated, and still refused.** An ordinary case the earlier
+  table omitted: the org subscribes and mandates, but this contributor has not been
+  allocated a seat. Entitlement refuses with `no_seat`, whose remedy is "ask an
+  admin for a seat" — NOT "ask an admin to subscribe", which is what a
+  collapsed-to-boolean entitlement would have implied when the org already is
+  subscribed. **Phase 2**: `seat_allocations` does not exist yet, so the term is
+  commented in the SQL at its precedence position rather than pretended.
 - **I — uncaptured fails closed on BOTH axes.** No authority can be derived, so
   there is no election to consult. This is the row that makes the ordering
   constraint safe: without it, `NULL`/default visibility in an org tenant would
@@ -729,14 +758,34 @@ cannot tell a user which one they are in.
        else 'user'
   end                                                           as authority
 
--- ENTITLEMENT
-, case when r.visibility is null           then false   -- fail closed on unknown
-       when t.origin = 'personal'          then true
-       when r.visibility = 'public'        then true
-       when b.status = 'active' and now() between b.period_start and b.period_end
-             and sa.id is not null         then true
-       else false
-  end                                                           as may_share
+-- ENTITLEMENT — as a CODE, not a boolean.
+--
+-- An earlier draft returned a bare boolean, which cannot say WHICH of four
+-- entitlement reasons refused — so `precedence` had nothing to order and
+-- `unclaimed` was unreachable (nothing tested it). By this doc's own rule, "an
+-- enum no domain emits is dead copy". The verdict is derived FROM the code.
+--
+-- PHASE 1 SCOPE: `dojo.tenants.claimed_at` and `dojo.seat_allocations` DO NOT
+-- EXIST — §9 defers both. The earlier draft's `sa.id is not null` made this view
+-- unbuildable, a forward dependency on explicitly out-of-scope schema. The two
+-- terms are written here COMMENTED, in their precedence position, so phase 2 adds
+-- them without re-deriving the order.
+, case
+    when r.visibility is null                     then 'forge_visibility_unknown'
+    when r.visibility_captured_at < now() - :ttl  then 'forge_visibility_stale'
+    when t.origin = 'personal'                    then null   -- entitled
+    when r.visibility = 'public'                  then null   -- entitled, free
+    -- PHASE 2: when t.claimed_at is null         then 'unclaimed'
+    when b.tenant_id is null                      then 'not_subscribed'
+    when b.period_start is null
+      or b.period_end   is null                   then 'not_subscribed'
+    when b.status <> 'active'                     then 'not_subscribed'
+    when now() not between b.period_start
+                       and b.period_end           then 'subscription_expired'
+    -- PHASE 2: when sa.id is null                then 'no_seat'
+    else null                                     -- entitled
+  end                                             as entitlement_refusal
+, (entitlement_refusal is null)                   as may_share
 
 -- ELECTION: the org's policy for ORG-authority rows, the user's for USER
 --
@@ -843,6 +892,63 @@ last_synced_at        timestamptz  -- max(dojo.repository_metrics.pushed_at)
 metric_rows           bigint
 ```
 
+### `reason_code` — the precedence-ordered pick
+
+The column acceptance criterion 5 depends on, which the earlier draft named and
+never derived. Entitlement already yields a code; election yields one too, and the
+lower precedence wins:
+
+```sql
+, coalesce(
+      entitlement_refusal,                       -- 10-40, whichever fired
+      case when elected then null
+           when authority = 'organization' then 'not_elected_org'   -- 51
+           else                                 'not_elected_user'  -- 50
+      end
+  )                                              as reason_code
+, case when entitlement_refusal is not null then 'entitlement'
+       when not elected                     then 'election'
+       else null
+  end                                            as refused_by
+```
+
+Entitlement outranks election by construction: its codes occupy 10–40 and
+election's 50–51, so "the lowest precedence" and "entitlement first" are the same
+rule. That is not a coincidence to rely on silently — the seed data must keep
+entitlement below election, and the `unique (domain, precedence)` constraint is
+what makes an accidental overlap fail loudly.
+
+**LEFT JOIN to the registry, never inner.** A code with no registry row must
+surface as the raw code, not remove the repository from the view:
+
+```sql
+left join dojo.reason_codes rc
+       on rc.domain = 'repository_sharing' and rc.code = v.reason_code
+...
+, coalesce(rc.summary, v.reason_code)            as reason
+```
+
+An inner join would silently drop a row from a sync-decision view, which is worse
+than an unreadable string.
+
+### `last_synced_at` must not fan out
+
+The view is one row per (repository, MEMBER), so aggregating
+`dojo.repository_metrics` inline would multiply rows and could surface another
+member's activity. A LATERAL keeps it per-repository and scalar:
+
+```sql
+left join lateral (
+    select max(pushed_at) as last_synced_at, count(*) as metric_rows
+      from dojo.repository_metrics rm
+     where rm.repository_id = r.id
+) mx on true
+```
+
+Repository-scoped counts are deliberate — they describe the REPOSITORY, which
+every member of the tenant may see. A per-member breakdown would need
+`principal_id` filtering and is not what this column means.
+
 ### `configurable_by_me` is viewer-relative, and that is deliberate
 
 ```sql
@@ -910,8 +1016,12 @@ third, "why is this off?" is answered by reading source.
 
 ## 9. Not in this slice
 
-De-provisioning, claim, seats, billing, `forge_visibility` — all phase 2 of the
-parent spec. `denied[]` reason UX (D6). Mirroring into `sensei.dojo_memberships`
+De-provisioning, claim, seats, `forge_visibility` — all phase 2 of the parent
+spec. **`billing_accounts` is NOT deferred**: it exists, and §8c's entitlement
+uses it. `claimed_at` and `seat_allocations` are, and their terms sit COMMENTED in
+the entitlement CASE at their precedence positions — so phase 2 uncomments them
+rather than re-deriving the order, and phase 1 does not depend on schema that
+§9 defers. `denied[]` reason UX (D6). Mirroring into `sensei.dojo_memberships`
 (§II.8's older combined-round-trip scenario).
 
 **Deferred, not dropped — each was a decision above that the code does not honour,
