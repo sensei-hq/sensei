@@ -38,3 +38,17 @@ pub(crate) mod tools_health;
 pub(crate) mod upgrades;
 pub(crate) mod verdicts;
 pub(crate) mod workspace;
+
+/// The daemon's error envelope: a status and `{"error": "…"}` beside it.
+///
+/// One definition because there were nine byte-identical ones — every handler
+/// module that returns a 4xx had grown its own, so the SHAPE of an API error
+/// (adding a code, a request id, structured validation detail) was nine edits
+/// with no compiler help if one were missed. `Display` rather than `&str`: the
+/// messages are as often a `format!` as a literal.
+pub(crate) fn err(
+    status: axum::http::StatusCode,
+    msg: impl std::fmt::Display,
+) -> (axum::http::StatusCode, axum::response::Json<serde_json::Value>) {
+    (status, axum::response::Json(serde_json::json!({ "error": msg.to_string() })))
+}
