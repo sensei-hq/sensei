@@ -892,7 +892,15 @@ Invariant: `count(*) where released_at is null` ≤
 Supersedes §II.5. F4 is resolved as suggested: **the repo governs sync, the
 namespace governs billability.**
 
+> **CORRECTED 2026-08-28 — this was only half the gate.** Everything below
+> answers *may this sync?* Nothing here answers *did anyone choose to?*, and the
+> two are independent. See `docs/requirements/repository-sharing.md`.
+
+**Two questions, both required.** A repository syncs only when entitlement AND
+election both say yes.
+
 ```
+                 ENTITLEMENT — may it?  (the dōjō decides)
 can_sync(repo, user, tenant) =
     tenant.origin = 'personal'                        → ALLOW
   | repo.visibility = 'public'                        → ALLOW   (open source is free)
@@ -901,11 +909,42 @@ can_sync(repo, user, tenant) =
   | now() NOT BETWEEN period_start AND period_end     → DENY  subscription_expired
   | no CURRENT seat_allocation for (tenant, user)     → DENY  no_seat
   | otherwise                                         → ALLOW
+
+                 ELECTION — did anyone choose it?  (authority decides)
+authority(repo, tenant) =
+    tenant.origin = 'organization' AND repo.visibility <> 'public'  → ORG
+  | otherwise                                                      → USER
+
+elected(repo, user) =
+    authority = ORG   → the org's policy for this repo   (MANDATORY: the user
+                        cannot switch it off, locally or in the console)
+  | authority = USER  → this user's election for this repo
+
+                 THE GATE
+may_share = can_sync(...) AND elected(...)
 ```
 
-Every DENY carries its reason to the CLI and console. A denial that reads as
-"nothing to sync" is the failure mode that hid the `no_github_token` no-op for
-two days; this one names itself.
+**Authority follows who owns the code and who pays.** A personal repo of either
+visibility, and an org's PUBLIC repos, are the user's to elect — the org is not
+paying for open source, and a contributor's own metrics are their own. An org's
+PRIVATE repos are the org's, on the org's subscription.
+
+**A mandate is an election, not an entitlement.** It cannot conjure one: an
+org-mandated repo on a lapsed subscription still DENIES `not_subscribed`. This is
+the trap in collapsing the two — "the org said share" is not "the org may".
+
+**A mandate overrides the daemon's local gate 1.** §V.3's "the daemon never even
+asks about a repo the user did not opt in" holds for every repository where the
+USER has authority, and not for org-mandated ones. That narrows a previously
+absolute promise, deliberately: *nothing leaves the machine without local consent*
+becomes *…without local consent, or an organization's mandate on that
+organization's own private code*. Recorded rather than discovered.
+
+Every DENY carries its reason to the CLI and console, **and says which of the two
+questions refused** — entitlement or election. A denial that reads as "nothing to
+sync" is the failure mode that hid the `no_github_token` no-op for two days; and
+an "off" that does not say whether the user or the org turned it off is the same
+failure one level up.
 
 Note the gate never consults `dojo.seats`. Participation informs the
 *recommendation*, never the decision.
