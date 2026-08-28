@@ -664,11 +664,22 @@ cannot tell a user which one they are in.
   end                                                           as may_share
 
 -- ELECTION: the org's policy for ORG-authority rows, the user's for USER
-, coalesce(
-      case when t.origin = 'organization' and r.visibility <> 'public'
-           then coalesce(oe.elected, p.private_repos_shared)   -- per-repo, else default
-           else ue.elected                                     -- this principal's
-      end, false)                                              as elected
+--
+-- The `visibility is null` guard is FIRST and is NOT redundant with the one in
+-- may_share. Without it: `'organization' = 'organization' AND NULL <> 'public'`
+-- evaluates to NULL, not false, so the ORG branch is not taken and the CASE falls
+-- through to the ELSE — reading the USER's election for a repository whose
+-- authority is NULL. The row would then report `authority = NULL` beside an
+-- election the user made, and `sync_enabled` would be false only because
+-- `may_share` happens to guard the same condition.
+--
+-- One column's correctness must never depend on a sibling's guard. Verified in
+-- Postgres rather than reasoned about: the three-valued result is NULL.
+, case when r.visibility is null then false
+       when t.origin = 'organization' and r.visibility <> 'public'
+            then coalesce(oe.elected, p.private_repos_shared)  -- per-repo, else default
+       else coalesce(ue.elected, false)                        -- this principal's
+  end                                                          as elected
 ```
 
 `oe` is the per-repo `authority='organization'` election, `ue` the
