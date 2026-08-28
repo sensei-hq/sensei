@@ -437,6 +437,81 @@ approach explicitly rejected, and the denial vocabulary specified. Of the three
 "not yet decided" items, two were load-bearing and are now decided; the third is
 genuinely unreachable.
 
+### A STALE capture is a bypass, not a lag — so captures expire
+
+Found in security review. Trace an org-PUBLIC repository the user elected, which
+then goes PRIVATE upstream. Until the next sign-in the cached `public` drives
+**both** axes:
+
+- `authority` — `organization AND visibility <> 'public'` is false, so authority
+  stays **USER**. The org's mandate never asserts over its own now-private code.
+- `may_share` — `visibility = 'public' → ALLOW` fires **before** every claim,
+  billing and seat term. So it syncs **free**.
+
+Net: a private repository keeps syncing under a stale user election, with no
+subscription, for an unbounded window. That is a confidentiality *and* billing
+bypass, and it is the one direction where staleness is not merely a UX lag.
+
+**Resolution: a capture carries its age, and an old capture is not a capture.**
+
+```
+dojo.repositories
+  visibility            text        -- NULL = never captured
+  visibility_captured_at timestamptz -- NULL = never captured
+```
+
+The view treats a capture older than `FORGE_VISIBILITY_TTL` exactly as it treats
+NULL: **no authority, no election, no sync**, reason `forge_visibility_stale`
+(kind `normal`, remedy "sign in again"). Fail closed on both axes, as uncaptured
+already does.
+
+This bounds the window to the TTL instead of to "whenever the user next signs in",
+without needing the refresh endpoint immediately — and the TTL is a number to
+argue about rather than a hole. The endpoint floated earlier becomes the way to
+shorten it, not the only way to close it.
+
+**A specific consequence worth stating:** the free-public path skips billing
+entirely, so it must never run on an unverified age. `may_share`'s public term
+therefore reads a FRESH capture or it does not fire.
+
+### The sign-in refresh must be scoped to the signer's own tenants
+
+`dojo.repositories` is `unique (tenant_id, repo_key)` deliberately — the same
+repository legitimately exists under two tenants. So a refresh "keyed on
+`repo_key`" without a tenant filter would use **User A's** forge token to write
+`visibility` on a row belonging to **Tenant B**, where A may hold no membership at
+all. Since visibility drives authority, an outsider with incidental forge access
+could change which authority governs Tenant B's repository *for every member of
+that tenant*.
+
+The refresh is scoped to rows whose `tenant_id` is one of the signing-in user's
+own memberships. Not an optimisation — an authorization boundary.
+
+### Writing an election or a policy: scope from the CALLER'S membership
+
+Neither `dojo.tenant_share_policy` nor `dojo.repository_elections` has a write
+path yet, and the requirement is stated now because **this codebase has already
+shipped this exact bug once**: §VIII.7 item 4 records a dropped `tenant_id` filter
+that let an admin of one tenant read, rewrite and delete another tenant's
+identities.
+
+So: the write path re-derives the caller's role from `dojo.memberships` **scoped
+to the tenant that owns the target row**, never from a client-supplied
+`tenant_id`, `role`, or an unscoped lookup. An admin of tenant A writing into
+tenant B is a 404, and there is a test that says so.
+
+### Mapping must require a VERIFIED connection
+
+`registerRepositories`' `tenant_connections` lookup filters on `provider` and
+`external_slug` but **not** on `verified_at`. Dormant today — `ensureOrgTenant` is
+the only writer and always sets `external_id` and `verified_at` together — but the
+schema permits an unverified row, and the deferred "link a second forge" flow
+would create exactly that.
+
+The project already states *"an unverified connection confers no entitlement"*
+(§VI.2). Mapping is the step the whole mandate rests on, so extend the principle:
+an unverified connection confers no **mapping** either.
+
 ### BLOCKING ordering constraint — the default is unsafe for the new rule
 
 Verified against the live dōjō before writing this, and it is not hypothetical:
@@ -787,6 +862,25 @@ member a toggle?"* directly. A contributor looking at an org-private repository
 gets `configurable_by_me = false` **and** `reason_actor = 'organization'` — so the
 UI can render "your organization controls this" instead of a dead switch, which is
 the difference between an explanation and a bug report.
+
+### The `principal_id` filter has no schema backstop — and that is the biggest risk
+
+The Worker reads this view as `service_role`, which **bypasses RLS regardless of
+`security_invoker`**. So for every read that exists or is proposed, the entire
+security boundary is the app's `.eq('principal_id', …)` filter. One consumer
+forgetting it exposes every tenant's members, elections and billing state at once
+— and §8c invites exactly such a consumer (a console listing route).
+
+`security_invoker = on` still earns its place: it matters the day the view is
+granted to `authenticated` for a direct client read. It simply does not help the
+Worker.
+
+**Mitigate structurally, not by review discipline.** Either a regression test
+asserting every consumer supplies a server-derived non-empty `principal_id`, or —
+better — wrap the view in a `SECURITY DEFINER` function taking the principal as a
+REQUIRED argument, which removes the forgot-the-filter failure mode rather than
+policing it. The second is preferred: this design adds columns that raise the cost
+of that mistake, so it should also remove the mistake's possibility.
 
 ### Why `sync_enabled = false` is never enough on its own
 

@@ -141,6 +141,40 @@ makes it reusable, rather than a fourth bespoke vocabulary.
       authority on the next sync, and an election made under the old authority
       does not silently survive it.
 
+## Revocation — what happens to what was already sent
+
+**This is an open decision, not a deferral, and the design is incomplete without
+it.** Every gate here — `can_sync`, `elected`, the mandate — governs FUTURE
+writes. Nothing says what becomes of rows already in `dojo.repository_metrics`
+when:
+
+- a user turns their election off
+- an org's subscription lapses, or a seat is revoked
+- a user signs out
+- a repository goes private upstream and the authority changes
+
+Today the answer is "they stay, and remain visible". That is defensible, but it
+is not what this document's own framing implies: *"nothing leaves the machine
+without local consent"* reads as though withdrawing consent means something, and
+right now it means only *"nothing further leaves"*.
+
+Three honest options, to be chosen before anything gates on subscription or seat:
+
+1. **Delete on revocation.** Cleanest promise, and the most work — plus it
+   destroys an org's historical governance record when one member leaves.
+2. **Anonymise in place.** Keep the aggregate, drop the attribution. Fits the
+   repo-scoped rows (which carry no `principal_id`) badly, since there is nothing
+   to anonymise; fits future user-scoped rows well.
+3. **Retain, and say so plainly.** Legitimate — the data was shared under a valid
+   election at the time — but then the UI must say "already-shared metrics remain"
+   at the moment someone turns sharing off, rather than letting them infer
+   otherwise.
+
+**Recommendation: (3) for now, stated at the point of revocation**, with (1)
+available per-repository on request. What is not acceptable is leaving it
+unstated, because the difference between "sharing is off" and "sharing is off and
+the history is gone" is exactly the kind of thing a user assumes in their favour.
+
 ## Out of scope here
 
 The entitlement half's remaining machinery — `claimed_at`, `seat_allocations`,
