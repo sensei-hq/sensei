@@ -25,6 +25,7 @@ pub(crate) mod playbook;
 pub(crate) mod preferences;
 pub(crate) mod project_detail;
 pub(crate) mod query;
+pub(crate) mod repositories;
 pub(crate) mod review;
 pub(crate) mod runs;
 pub(crate) mod scan_events;
