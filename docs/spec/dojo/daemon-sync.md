@@ -696,37 +696,40 @@ when they disagree nobody can tell which is right. One view means the daemon, th
 API and the UI all read the SAME verdict, and a disagreement becomes impossible
 rather than merely unlikely.
 
-### Reason codes are DATA, not string literals
+### Reason codes are DATA, and the registry is SHARED
 
-```
-dojo.share_reasons
-  code         text primary key      -- 'not_subscribed', 'not_elected', …
-  refused_by   dojo.refusal_axis     -- 'entitlement' | 'election'
-  precedence   smallint not null     -- lower = fix this first
-  summary      text not null         -- one line, shown on the row
-  detail       text not null         -- the paragraph behind a tooltip
-  remedy       text                  -- what the READER can do; NULL when they cannot
-  actor        dojo.share_authority  -- who can act: 'user' | 'organization'
-  unique (precedence)
-```
+Not a `dojo.share_reasons` table. **`sensei.reason_codes`, scoped by `domain`** —
+see `docs/architecture/reason-codes.md`. The same registry answers "why didn't
+this schedule run", "why weren't metrics pushed", "why wasn't governance pulled".
+A per-segment table would be the second of five copies.
 
-Seeded, so the vocabulary lives in one place and the UI never invents copy:
+Sharing uses `domain = 'repository_sharing'`:
 
-| code | axis | prec | summary | remedy | actor |
-|---|---|---|---|---|---|
-| `forge_visibility_unknown` | election | 10 | Waiting to learn whether this repo is public or private | Sign in again to refresh | user |
-| `unclaimed` | entitlement | 20 | This organization has not been claimed | Ask an owner to claim it | organization |
-| `not_subscribed` | entitlement | 30 | No active subscription for this organization | Ask an admin to subscribe | organization |
-| `subscription_expired` | entitlement | 31 | The subscription lapsed | Ask an admin to renew | organization |
-| `no_seat` | entitlement | 40 | You do not have a seat in this organization | Ask an admin for a seat | organization |
-| `not_elected_user` | election | 50 | You have not turned sharing on for this repository | Turn it on | user |
-| `not_elected_org` | election | 51 | Your organization has not enabled sharing for its private repositories | Ask an admin to enable it | organization |
+| code | kind | axis | prec | summary | remedy | actor |
+|---|---|---|---|---|---|---|
+| `forge_visibility_unknown` | normal | election | 10 | Waiting to learn whether this repo is public or private | Sign in again to refresh | user |
+| `unclaimed` | refusal | entitlement | 20 | This organization has not been claimed | Ask an owner to claim it | organization |
+| `not_subscribed` | refusal | entitlement | 30 | No active subscription for this organization | Ask an admin to subscribe | organization |
+| `subscription_expired` | refusal | entitlement | 31 | The subscription lapsed | Ask an admin to renew | organization |
+| `no_seat` | refusal | entitlement | 40 | You do not have a seat in this organization | Ask an admin for a seat | organization |
+| `not_elected_user` | refusal | election | 50 | You have not turned sharing on for this repository | Turn it on | user |
+| `not_elected_org` | refusal | election | 51 | Your organization has not enabled sharing for its private repositories | Ask an admin to enable it | organization |
 
-**`precedence` is the point of the table.** A repository can fail several ways at
-once — uncaptured AND unsubscribed AND unelected. The view reports the LOWEST
-precedence, which is "the thing to fix first". Without an explicit order the
-answer depends on the order of SQL branches, which is exactly the accidental
-behaviour this whole exercise is trying to remove.
+Two things carry their weight here:
+
+**`precedence`** — a repository can fail several ways at once (uncaptured AND
+unsubscribed AND unelected). The view reports the LOWEST, which is "the thing to
+fix first". Without an explicit order the answer depends on which SQL branch ran
+first, which is exactly the accidental behaviour this exercise exists to remove.
+Precedence is ordered WITHIN a domain; comparing it across domains is meaningless.
+
+**`kind`** — `forge_visibility_unknown` is `normal`, not a refusal: nobody decided
+anything, we simply have not looked yet. The rest are deliberate decisions. A UI
+that cannot tell those apart alarms on the wrong one. This generalises the
+`skipped` vs `error` distinction `sensei.sync_state` already makes.
+
+The `refused_by` axis (entitlement | election) stays specific to this domain — a
+schedule has no such split — so it lives on the VIEW, not in the registry.
 
 ### The view
 
@@ -741,7 +744,7 @@ elected               bool    -- ELECTION: did the authority choose it?
 sync_enabled          bool    -- may_share AND elected
 
 refused_by            entitlement | election | NULL
-reason_code           text    → dojo.share_reasons.code
+reason_code           text    → sensei.reason_codes (domain='repository_sharing')
 reason                text    -- summary, joined
 reason_detail         text
 remedy                text    -- NULL when the reader cannot act
