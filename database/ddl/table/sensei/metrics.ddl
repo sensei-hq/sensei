@@ -86,3 +86,20 @@ comment on column metrics.retire_reason
      is 'Why the metric was retired (set alongside a past effective_until).';
 comment on column metrics.modified_at
      is 'Timestamp of the last modification to this row.';
+
+-- ── Dōjō (Supabase) plane: security_invoker read path ───────────────────────────────────
+-- Read by the security_invoker view `dojo.metric_catalogue` as the CALLING role, so the
+-- ingest can resolve a pushed metric KEY to its id. Same pattern as rule_pack_rules above.
+--
+-- No RLS needed here, and that is a decision rather than an omission: the catalogue is
+-- global reference data — the NAMES and definitions of the metrics sensei computes — with no
+-- per-tenant or per-user rows to scope. There is nothing a policy could filter.
+--
+-- The `sensei` schema stays OFF PostgREST's exposed list (supabase/config.toml), so this
+-- grant does not make the table addressable through the API; only the two-column dojo view
+-- is. Inert on the local daemon, whose owner connection never queries as either role.
+--
+-- BOTH roles, and service_role is the one that matters: the Worker holds a service_role key,
+-- so with `authenticated` alone the ingest still answered "permission denied for table
+-- metrics" — observed live. `rule_packs` grants both for the same reason.
+grant select on metrics to authenticated, service_role;

@@ -169,6 +169,20 @@ export function fakeDojoDb(tables: Record<string, FakeTable>) {
 
 	return {
 		from: (table: string) => builder(table),
+		/** Re-scope the next `.from()` to another Postgres schema, as supabase-js
+		 *  does. Modelled because NOT modelling it hid a real defect: the metric
+		 *  catalogue lives in `sensei.metrics`, a bare `.from('metrics')` resolves
+		 *  to `dojo.metrics`, and PostgREST answers 500 "Could not find the table
+		 *  'dojo.metrics' in the schema cache". The test passed against a fake that
+		 *  could not tell the two apart, and the whole batch was lost in
+		 *  production.
+		 *
+		 *  A table is addressed as `<schema>.<table>` once re-scoped, so a fixture
+		 *  must register `'sensei.metrics'` to be found — which is what makes the
+		 *  missing prefix fail here instead of live. */
+		schema: (name: string) => ({
+			from: (table: string) => builder(`${name}.${table}`)
+		}),
 		/** The stored rows, for assertions. */
 		tables: state
 	};

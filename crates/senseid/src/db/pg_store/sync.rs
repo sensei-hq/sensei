@@ -149,7 +149,19 @@ impl PgStore {
     /// `shared_at IS NULL OR modified_at > shared_at` catches both the never-sent
     /// and the changed-since-sent, so a recomputed day is re-pushed rather than
     /// left stale behind an already-synced marker.
-    pub async fn unpushed_metric_rows(&self, limit: i64) -> Result<Vec<PushableMetric>, String> {
+    ///
+    /// **`scopes` filters in SQL, before the LIMIT, and that ordering is the
+    /// point.** Filtering after the fetch lets rows the caller cannot push crowd
+    /// out ones it can: with 596 user-scoped rows held back and a limit of 500,
+    /// a pass fetched 500, found only 66 pushable in that window, and pushed 66
+    /// of 132 — and had the held-back rows filled the window entirely, it would
+    /// have pushed NOTHING while reporting success. Observed live at exactly
+    /// those numbers.
+    pub async fn unpushed_metric_rows(
+        &self,
+        scopes: &[&str],
+        limit: i64,
+    ) -> Result<Vec<PushableMetric>, String> {
         let rows: Vec<PushableRow> = sqlx_core::query_as::query_as(
             "SELECT rm.id, r.repo_key, m.key, rm.scope::text, rm.grain::text, rm.computed_on \
                   , rm.value::float8, rm.commit_sha, rm.props, rm.source::text \
@@ -158,10 +170,12 @@ impl PgStore {
                JOIN sensei.metrics m      ON m.id = rm.metric_id \
               WHERE r.visibility = 'shared' \
                 AND rm.computed_by = 'local' \
+                AND rm.scope::text = ANY($1) \
                 AND (rm.shared_at IS NULL OR rm.modified_at > rm.shared_at) \
               ORDER BY rm.computed_on DESC \
-              LIMIT $1",
+              LIMIT $2",
         )
+        .bind(scopes.iter().map(|s| s.to_string()).collect::<Vec<_>>())
         .bind(limit)
         .fetch_all(&self.pool)
         .await
@@ -261,6 +275,25 @@ pub struct SharedRepo {
 }
 
 impl PgStore {
+    /// How many unpushed rows sit in these scopes — for reporting what is held
+    /// back, so "pushed 66" is never printed without the reason 596 were not.
+    pub async fn unpushed_metric_count(&self, scopes: &[&str]) -> Result<i64, String> {
+        let row: (i64,) = sqlx_core::query_as::query_as(
+            "SELECT count(*) \
+               FROM sensei.repository_metrics rm \
+               JOIN sensei.repositories r ON r.id = rm.repository_id \
+              WHERE r.visibility = 'shared' \
+                AND rm.computed_by = 'local' \
+                AND rm.scope::text = ANY($1) \
+                AND (rm.shared_at IS NULL OR rm.modified_at > rm.shared_at)",
+        )
+        .bind(scopes.iter().map(|s| s.to_string()).collect::<Vec<_>>())
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| format!("unpushed_metric_count: {e}"))?;
+        Ok(row.0)
+    }
+
     /// Opt a repository into — or out of — sharing. The write side of GATE 1.
     ///
     /// Until this existed nothing could set `visibility` at all, so gate 1 was

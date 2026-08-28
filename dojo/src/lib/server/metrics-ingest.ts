@@ -99,8 +99,15 @@ export async function ingestMetrics(
 			continue;
 		}
 
+		// `dojo.metric_catalogue` — a view over `sensei.metrics`, because the
+		// `sensei` schema is deliberately NOT exposed to PostgREST (its daemon
+		// tables have RLS disabled). Both shortcuts were tried live and both
+		// failed as designed: `.from('metrics')` → "Could not find the table
+		// 'dojo.metrics' in the schema cache", and `.schema('sensei')` →
+		// "Invalid schema: sensei". A dojo view qualifying sensei.* internally is
+		// the sanctioned route, same as dojo.rule_pack_library.
 		const metric = await db
-			.from('metrics')
+			.from('metric_catalogue')
 			.select('id')
 			.eq('key', row.metric)
 			.maybeSingle();

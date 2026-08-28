@@ -23,7 +23,11 @@ function tables(): Record<string, FakeTable> {
 				{ id: 'r-secret', tenant_id: 't-other', repo_key: 'github.com/other/secret', name: 'secret' }
 			]
 		},
-		metrics: {
+		// `dojo.metric_catalogue`, the sanctioned view over `sensei.metrics` —
+		// named exactly as the code addresses it. A fixture called `metrics` would
+		// let a bare `.from('metrics')` pass here and 500 in production, which is
+		// what happened twice.
+		metric_catalogue: {
 			rows: [
 				{ id: 'met-commits', key: 'commits_per_day' },
 				{ id: 'met-churn', key: 'churn' }
