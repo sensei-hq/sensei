@@ -15,6 +15,90 @@ Work is tracked as **GitHub issues** in [`sensei-hq/sensei`](https://github.com/
 
 ---
 
+## Self-upgrade: health checks the five prereqs, and nothing checks the plugin
+
+**Found 2026-08-28**, publishing four new commands and an agent.
+
+`sensei_bootstrap::health` resolves five components — `postgres`, `ollama`, `sensei`, `database`,
+`daemon` — and each has an install/upgrade resolver. `sensei_install` runs `brew install sensei`,
+so **the binary self-upgrades**. Nothing covers the half the user actually types at: the Claude
+Code plugin, its commands, agents and skills.
+
+`make bump` tags, publishes, and syncs the marketplace subtree. So the *publish* side is complete
+and the *pull* side does not exist — the assets reach GitHub and stop there.
+
+**It is worse than "no automatic update", because the manual path reports success:**
+
+```
+$ claude plugin update sensei@sensei-marketplace
+✔ sensei is already at the latest version (0.9.1)      ← serving the OLD review.md
+```
+
+Updates are gated on the plugin **version**, not on content. Any command/agent/skill change
+between releases is invisible: the marketplace clone updates, the cache does not, and the CLI
+says you are current. There is no `--force`. The only way through was
+`claude plugin uninstall` + `install`, and that only worked because the plugin carries no
+`userConfig` to lose.
+
+`make bump`'s own comment already warns about the sibling of this bug — the `.claude-plugin`
+manifests being what Claude Code reads to decide "is there an update". Same trap, one level up:
+bumping fixes it for a release, and nothing fixes it between releases.
+
+**Wanted**
+
+1. A sixth health component (`plugin`?) that compares the installed plugin's `gitCommitSha`
+   against the marketplace `HEAD`, not just its version. The install record already stores the
+   sha — `installed_plugins.json` had `56373b4` while the marketplace was at `8b3f179`.
+2. A resolver that applies the update. Given no `--force`, that is uninstall+reinstall today, so
+   it must first check for `userConfig` and restore it — a resolver that silently drops a user's
+   plugin config is worse than the drift.
+3. Decide whether `bump` should bump the plugin version on *any* asset change, which would make
+   the supported path work. Cheap, but it means a version bump for a typo fix in a command.
+4. Surface it in the desktop app's health screen like the other five, so "your sensei is stale"
+   is visible rather than something you discover when a command behaves like last month's.
+
+## Repository sharing: `visibility` is INTENT, and forge-public is a different gate
+
+**Found 2026-08-28** by the `/sensei:design` claims ledger on the metric-push slice
+(`docs/spec/dojo/daemon-sync.md` §9a, claim C3).
+
+**0 of 67 repositories are `shared`.** All are `private`, so gate 1 has never been set by anything,
+and the whole metric push would have moved zero rows while reporting success.
+
+The proposal on the table: sensei-hq's repos, plus rokkit, dbd and kavach, are public open source —
+so mark them shared automatically.
+
+**The reason to be careful, in our own words.** This project already defines three gates, and two
+of them are the two halves of this question:
+
+| gate | means | owner |
+|---|---|---|
+| 1 — intent | *the user wants these metrics shared* — `sensei.repositories.visibility` | daemon |
+| 2 — cost | *the code is public, so hosting it is cheap* — forge visibility | dōjō |
+
+Deriving gate 1 from gate 2 collapses them. "This repo is public on GitHub" and "the user consents
+to publishing who committed to it, how often, and their churn" are different claims: **public code
+is not public activity data.** The metrics carry per-identity attribution that the repository
+itself does not expose.
+
+`repositories.visibility` is documented private-by-default for exactly this reason — *"signing in
+should not silently start sharing"*. A rule that flips it on forge-public would make signing in do
+precisely that for every public repo on the machine, including ones the user contributes to but
+does not own.
+
+**Proposed split, which gets the intent without the policy:**
+
+- **A seeded decision for these specific repos** — mark the ones we own (`sensei-hq/*`, `rokkit`,
+  `dbd`, `kavach`) as shared, as *data*. That is the owner exercising intent, which is what gate 1
+  is for, and it unblocks the metric push having something real to move.
+- **NOT a daemon rule** that infers `shared` from forge visibility. If we ever want that, it should
+  be an explicit opt-in setting ("share metrics for my public repos") that the user turns on
+  knowingly — a default, never an inference.
+- **Either way, the missing surface is the real gap:** there is no way for a user to mark a
+  repository shared at all. API route, CLI flag, or app toggle — one of them has to exist before
+  the push can be verified end to end. That is now a prerequisite of the push slice, not a
+  follow-up.
+
 ## dbd: a `time` column and an unnamed CHECK can never diff clean
 
 **Found 2026-08-28 on dbd 0.12.3**, adding `sensei.schedules`. `dbd diff --scope
