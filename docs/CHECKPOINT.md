@@ -13,6 +13,7 @@ Now into `docs/spec/dojo/daemon-sync.md`.
 | — | `live_session` — one implementation of "get me a working credential" | `083aacc7` |
 | — | dōjō sends `tenant_id` on both `/v1/you` endpoints | `1641069a` |
 | 5 | `dojo_sync` — a scheduled task with no bespoke worker | `8bea1832` |
+| — | app shows WHEN each worker runs; `avg` column retired | `45b56a8f` |
 
 ## Two spec claims were false and are corrected in place
 
@@ -41,13 +42,16 @@ Every new invariant mutation-probed.
 
 ## Known not done
 
-- `app/src/lib/types.ts` `ScheduledTask` has no `enabled`/`interval_secs`/
-  `window`/`days`. App compiles; it cannot show or edit them.
 - **kavach 1.1.1 publish + repin** — `node_modules/kavach` is patched locally
   with `040d34c`. *User owns this.*
 - `dbd diff --scope default` is never clean: dbd normalises `time` and unnamed
   CHECKs so `sensei.schedules` always shows a phantom type change. Not fixable
   from the DDL — both spellings diff. Real drift is still readable, but only by
   ignoring those four lines.
-- Schema changes are applied to `sensei_test` only. The live `sensei` DB has
-  **not** been touched.
+- **Live `sensei` DB is UPDATED** (backup `database/backup/backup-20260828-084938.dump`,
+  1.6G). Rename was lossless — 67 repositories, 0 carried `dojo_id`. 12 schedule
+  rows loaded through the real `staging.import_schedules()`; table and
+  `SCHEDULABLE` agree both directions. The RUNNING daemon is still the old
+  binary and ignores `sensei.schedules` until `make install-service`.
+- **Disk is at 99% — 12Gi free**, and backup rotation keeps 5 × 1.6G ≈ 8G of it.
+  Worth clearing before the next large Rust build.
