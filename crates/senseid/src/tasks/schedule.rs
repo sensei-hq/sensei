@@ -11,6 +11,13 @@
 //!
 //! Spec: docs/spec/daemon/schedules.md.
 
+// Consumed by the remaining steps of that spec: the code↔table agreement test
+// (step 1) uses SCHEDULABLE, `ticker` consults `should_run` (step 3), and the
+// API renders `Skip` and `window_label` (step 4). `senseid` is a binary crate,
+// so `pub` alone does not mark these as used. Remove this attribute as those
+// steps land — it is scaffolding with an expiry, not a permanent exemption.
+#![allow(dead_code)]
+
 use chrono::{DateTime, Datelike, NaiveDateTime, NaiveTime, Timelike, Utc};
 
 /// The tasks a schedule may name.
