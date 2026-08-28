@@ -54,7 +54,7 @@ create table if not exists personas (
   -- with is_self = false rather than a guess.
 , is_self       boolean     not null default true
   -- The dōjō login this persona pushes under. Plain uuid, no FK: the referent
-  -- lives in another database, exactly as `sensei.repositories.dojo_id` does.
+  -- lives in another database, exactly as `sensei.repositories.tenant_id` does.
   -- NULL until the user links this persona (Phase 6).
 , principal_id  uuid
 , created_at    timestamptz not null default now()
