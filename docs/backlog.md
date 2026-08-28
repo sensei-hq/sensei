@@ -86,18 +86,15 @@ should not silently start sharing"*. A rule that flips it on forge-public would 
 precisely that for every public repo on the machine, including ones the user contributes to but
 does not own.
 
-**Proposed split, which gets the intent without the policy:**
+**RESOLVED 2026-08-28 — see `docs/spec/dojo/daemon-sync.md` D8 / §2a.** The default lives inside an
+explicit configuration step, not at sign-in: once the user opts into sharing, a **public** repo
+defaults to `shared` (changeable, as is the cadence) and a **private** one defaults off and is
+**subscription-gated**. That keeps "signing in must not silently start sharing" true while putting
+the default where it is cheap and useful — the value of the push appears at two or more people on
+one repository, which is where comparison and governance/insight sharing begin.
 
-- **A seeded decision for these specific repos** — mark the ones we own (`sensei-hq/*`, `rokkit`,
-  `dbd`, `kavach`) as shared, as *data*. That is the owner exercising intent, which is what gate 1
-  is for, and it unblocks the metric push having something real to move.
-- **NOT a daemon rule** that infers `shared` from forge visibility. If we ever want that, it should
-  be an explicit opt-in setting ("share metrics for my public repos") that the user turns on
-  knowingly — a default, never an inference.
-- **Either way, the missing surface is the real gap:** there is no way for a user to mark a
-  repository shared at all. API route, CLI flag, or app toggle — one of them has to exist before
-  the push can be verified end to end. That is now a prerequisite of the push slice, not a
-  follow-up.
+Still open from this finding: **no surface exists to set `visibility` at all** — no API route, CLI
+flag, or app toggle. Prerequisite of the metric-push slice, being built now.
 
 ## dbd: a `time` column and an unnamed CHECK can never diff clean
 

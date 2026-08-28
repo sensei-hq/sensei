@@ -9661,6 +9661,81 @@ async fn two_personas_cannot_share_one_dojo_login() {
 }
 
 #[tokio::test]
+async fn a_pushable_row_carries_every_field_the_dojo_needs() {
+    // Claim C4 was FALSE: the push query selected only
+    // (id, repo_key, metric, computed_on, value), but the ingest endpoint keys on
+    // (metric, repository, scope, principal, commit_sha, computed_on, grain) and
+    // stores props + source. Missing any of them and the receiving side either
+    // rejects the row or, worse, defaults it — filing a `user` row as a `repo`
+    // one, or `measured` over an `imputed` value.
+    let s = pg_store().await;
+    let uniq = uuid::Uuid::new_v4();
+    let (pid, _rid) = seed_sync_fixture(&s, &uniq).await;
+
+    let rows = s.unpushed_metric_rows(500).await.unwrap();
+    let mine = rows.iter().find(|r| r.repo_key == format!("test/bare-{uniq}"));
+
+    let got = mine.cloned();
+    crate::tasks::test_support::cleanup_metrics_fixture(&s, &pid, None, &[]).await;
+
+    let m = got.expect("the seeded shared repository's row is queued for push");
+    assert_eq!(m.scope, "user", "scope round-trips — the fixture seeds a user-scoped row");
+    assert_eq!(m.grain, "daily", "grain is part of the dōjō's unique key");
+    assert_eq!(m.value, 0.5);
+    assert_eq!(m.source, "measured", "source distinguishes measured from imputed");
+    assert!(m.props.is_object(), "props travels as an object, not a string");
+    assert_eq!(m.commit_sha, None, "absent stays absent — never defaulted to a placeholder");
+    assert!(!m.id.is_nil(), "the local row id comes back so shared_at can be marked");
+}
+
+#[tokio::test]
+async fn setting_a_repository_shared_is_what_opens_gate_1() {
+    // The surface that did not exist. `visibility` is private-by-default on
+    // purpose — signing in must not start sharing — so SOMETHING has to set it,
+    // and until this there was no API, CLI flag or toggle that could. Gate 1 was
+    // unreachable: 0 of 67 repositories were shared (daemon-sync.md C3), and the
+    // whole push would have moved nothing while reporting success.
+    let s = pg_store().await;
+    let key = format!("ztest-host/acme/{}", uuid::Uuid::new_v4());
+    sqlx_core::query::query(
+        "INSERT INTO sensei.repositories(repo_key, name) VALUES($1, 'ztest-repo')",
+    )
+    .bind(&key)
+    .execute(s.pool())
+    .await
+    .unwrap();
+
+    // Before: private by default, and gate 1 does not yield it.
+    let shared_before = s.shared_repositories(500).await.unwrap();
+    let updated = s.set_repository_visibility(&key, "shared").await.unwrap();
+    let shared_after = s.shared_repositories(500).await.unwrap();
+    // Turning it back off must also work — sharing is revocable, or the "you may
+    // change it" half of D8 is a lie.
+    let revoked = s.set_repository_visibility(&key, "private").await.unwrap();
+    let shared_revoked = s.shared_repositories(500).await.unwrap();
+    // A value the enum does not have is an error, not a silent no-op that leaves
+    // the user believing they shared something.
+    let bogus = s.set_repository_visibility(&key, "public").await;
+    // An unknown repo_key writes nothing and does not error — the caller can
+    // tell "set" from "no such repository" by the row count.
+    let unknown = s.set_repository_visibility("ztest-host/never/seen", "shared").await.unwrap();
+
+    sqlx_core::query::query("DELETE FROM sensei.repositories WHERE repo_key = $1")
+        .bind(&key)
+        .execute(s.pool())
+        .await
+        .unwrap();
+
+    assert_eq!(updated, 1, "the visibility is set");
+    assert!(!shared_before.iter().any(|r| r.repo_key == key), "private by default");
+    assert!(shared_after.iter().any(|r| r.repo_key == key), "gate 1 now yields it");
+    assert_eq!(revoked, 1, "and it can be turned back off");
+    assert!(!shared_revoked.iter().any(|r| r.repo_key == key), "gate 1 stops yielding it");
+    assert!(bogus.is_err(), "a value outside sensei.repo_visibility is refused");
+    assert_eq!(unknown, 0, "an unknown repo_key writes nothing and does not error");
+}
+
+#[tokio::test]
 async fn a_repository_records_the_tenant_it_was_mapped_to() {
     // D2's payoff. The daemon learns the tenant from the dōjō's registration
     // response and has to keep it; without this the mapping is recomputed every
@@ -9834,8 +9909,7 @@ async fn a_pulled_row_is_never_pushed_back() {
     let (pid, rid) = seed_sync_fixture(&s, &uniq).await;
 
     let mine = s.unpushed_metric_rows(100).await.unwrap();
-    let before =
-        mine.iter().filter(|r| r["repoKey"].as_str() == Some(&format!("test/bare-{uniq}"))).count();
+    let before = mine.iter().filter(|r| r.repo_key == format!("test/bare-{uniq}")).count();
 
     // Same row, but marked as dojo's.
     sqlx_core::query::query(
@@ -9846,10 +9920,7 @@ async fn a_pulled_row_is_never_pushed_back() {
     .await
     .unwrap();
     let after = s.unpushed_metric_rows(100).await.unwrap();
-    let after_n = after
-        .iter()
-        .filter(|r| r["repoKey"].as_str() == Some(&format!("test/bare-{uniq}")))
-        .count();
+    let after_n = after.iter().filter(|r| r.repo_key == format!("test/bare-{uniq}")).count();
 
     crate::tasks::test_support::cleanup_metrics_fixture(&s, &pid, None, &[]).await;
 
@@ -9871,8 +9942,7 @@ async fn a_private_repository_is_skipped_not_queued() {
         .unwrap();
 
     let rows = s.unpushed_metric_rows(100).await.unwrap();
-    let n =
-        rows.iter().filter(|r| r["repoKey"].as_str() == Some(&format!("test/bare-{uniq}"))).count();
+    let n = rows.iter().filter(|r| r.repo_key == format!("test/bare-{uniq}")).count();
 
     crate::tasks::test_support::cleanup_metrics_fixture(&s, &pid, None, &[]).await;
     assert_eq!(n, 0, "a private repository's rows are never queued for push");
@@ -9893,29 +9963,19 @@ async fn a_recomputed_row_is_pushed_again() {
         .await
         .unwrap()
         .iter()
-        .filter(|r| r["repoKey"].as_str() == Some(&key))
-        .filter_map(|r| r["id"].as_str().and_then(|v| uuid::Uuid::parse_str(v).ok()))
+        .filter(|r| r.repo_key == key)
+        .map(|r| r.id)
         .collect();
     s.mark_metric_rows_shared(&ids).await.unwrap();
-    let after_push = s
-        .unpushed_metric_rows(100)
-        .await
-        .unwrap()
-        .iter()
-        .filter(|r| r["repoKey"].as_str() == Some(&key))
-        .count();
+    let after_push =
+        s.unpushed_metric_rows(100).await.unwrap().iter().filter(|r| r.repo_key == key).count();
 
     // The day recomputes — modified_at moves past shared_at.
     sqlx_core::query::query(
             "UPDATE sensei.repository_metrics SET modified_at = now() + interval '1 second'               WHERE repository_id = $1")
             .bind(rid).execute(s.pool()).await.unwrap();
-    let after_recompute = s
-        .unpushed_metric_rows(100)
-        .await
-        .unwrap()
-        .iter()
-        .filter(|r| r["repoKey"].as_str() == Some(&key))
-        .count();
+    let after_recompute =
+        s.unpushed_metric_rows(100).await.unwrap().iter().filter(|r| r.repo_key == key).count();
 
     crate::tasks::test_support::cleanup_metrics_fixture(&s, &pid, None, &[]).await;
     assert_eq!(after_push, 0, "a pushed row leaves the queue");
