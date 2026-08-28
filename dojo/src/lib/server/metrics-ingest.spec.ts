@@ -93,8 +93,43 @@ describe('ingestMetrics', () => {
 			row({ repo_key: 'github.com/other/secret' })
 		]);
 		expect(out.accepted).toBe(0);
+		expect(out.rejected).toHaveLength(1);
+		expect(db.tables.repository_metrics.rows).toHaveLength(0);
+	});
+
+	it('cannot be used to discover which repo_keys other tenants have registered', async () => {
+		// An EXISTENCE ORACLE. Signup is open, so any stranger could post up to
+		// MAX_ROWS probe rows and learn which private repo_keys are enrolled by
+		// other organisations — 1000 probes per request, no membership needed.
+		//
+		// The reason must therefore be IDENTICAL for "registered in a tenant you are
+		// not in" and "registered nowhere". The old code's comment claimed the
+		// opposite ("conflating the two would leak…") — it is the DISTINCTION that
+		// leaks, and it was pinned by the test above.
+		const db = fakeDojoDb(tables());
+		const out = await ingestMetrics(db as never, ALICE, [
+			// registered, but only in t-other, which Alice is not in
+			row({ repo_key: 'github.com/other/secret' }),
+			// registered nowhere at all
+			row({ repo_key: 'github.com/other/does-not-exist' })
+		]);
+		expect(out.accepted).toBe(0);
+		expect(out.rejected).toHaveLength(2);
+		expect(out.rejected[0].reason).toBe(out.rejected[1].reason);
+	});
+
+	it('refuses a repo_key it has never registered rather than dropping it', async () => {
+		// If this reject were removed the row would be SILENTLY dropped, and then —
+		// because `rejected` would be empty — the daemon would mark it `shared_at`
+		// and never re-push it. The daemon's watermark logic depends on `rejected`
+		// being complete.
+		const db = fakeDojoDb(tables());
+		const out = await ingestMetrics(db as never, ALICE, [
+			row({ repo_key: 'github.com/acme/ghost' })
+		]);
+		expect(out.accepted).toBe(0);
 		expect(out.rejected).toEqual([
-			{ repo_key: 'github.com/other/secret', metric: 'commits_per_day', reason: 'not_permitted' }
+			{ repo_key: 'github.com/acme/ghost', metric: 'commits_per_day', reason: 'unknown_repository' }
 		]);
 		expect(db.tables.repository_metrics.rows).toHaveLength(0);
 	});
@@ -172,6 +207,36 @@ describe('ingestMetrics', () => {
 		// Ambiguous is a per-row refusal naming itself; the batch survives.
 		expect(out.rejected.every((r) => r.reason === 'ambiguous')).toBe(true);
 		expect(out.rejected).toHaveLength(2);
+	});
+
+	it('resolves the batch in a bounded number of reads, not one set per row', async () => {
+		// The loop issued ~4 PostgREST subrequests PER ROW inside one Cloudflare
+		// Worker invocation: at the daemon's 500 rows that is ~2001 sequential round
+		// trips, past Cloudflare's per-invocation subrequest cap and past the
+		// daemon's 30s timeout. A failure there is not clean — the Worker has
+		// already committed a prefix, the daemon marks nothing shared, and the
+		// identical window retries every cadence.
+		//
+		// The resolve reads (memberships, repositories, metric_catalogue) must stay
+		// CONSTANT as the batch grows; only the per-row existing-check and write may
+		// scale.
+		const count = (db: ReturnType<typeof fakeDojoDb>) =>
+			(t: string) => db.tables[t]?.reads ?? 0;
+
+		const small = fakeDojoDb(tables());
+		await ingestMetrics(small as never, ALICE, [row({ commit_sha: 'a' })]);
+		const big = fakeDojoDb(tables());
+		await ingestMetrics(
+			big as never,
+			ALICE,
+			Array.from({ length: 20 }, (_, i) => row({ commit_sha: `s${i}` }))
+		);
+
+		for (const t of ['memberships', 'repositories', 'metric_catalogue']) {
+			expect(count(big)(t), `${t} must be read a bounded number of times`).toBe(
+				count(small)(t)
+			);
+		}
 	});
 
 	it('accepts the good rows in a mixed batch and reports only the bad ones', async () => {

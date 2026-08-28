@@ -20,9 +20,22 @@ import { ingestMetrics, type MetricInput } from '$lib/server/metrics-ingest';
  *  set by the client, which is not a decision a client gets to make. */
 const MAX_ROWS = 1000;
 
+/** Byte cap, checked BEFORE parsing.
+ *
+ *  `MAX_ROWS` alone did not enforce the rule above: `await request.json()`
+ *  materialises the whole body first, so a 100 MB post was fully parsed into the
+ *  Worker's 128 MB isolate before the row count could reject it. Generous enough
+ *  for 1000 rows of real metrics (~200 bytes each) with room to spare. */
+const MAX_BYTES = 2 * 1024 * 1024;
+
 export const POST: RequestHandler = async ({ request, locals }) => {
 	try {
 		const { userId, db } = await resolveCaller(request, locals);
+		// Before the parse, so an oversized body is refused rather than absorbed.
+		const declared = Number(request.headers.get('content-length') ?? '0');
+		if (Number.isFinite(declared) && declared > MAX_BYTES) {
+			return apiError(413, `body over ${MAX_BYTES} bytes`);
+		}
 		const body = (await request.json().catch(() => null)) as { metrics?: unknown } | null;
 		const rows = body?.metrics;
 		if (!Array.isArray(rows)) {
