@@ -18,21 +18,20 @@
 //!         log unmapped[]                          D6
 //!     GET  /v1/you/sync/plan                      entitlement: what may sync?
 //!         on failure: record and skip the persona D7
+//!     POST /v1/you/metrics                        push the rows the plan allows
+//!         mark shared_at on what was accepted     the re-push watermark
 //! ```
 //!
 //! # What it deliberately does NOT do yet
 //!
-//! **It pushes no metrics.** `docs/spec/dojo/daemon-sync.md` §1 called
-//! `unpushed_metric_rows` "the one production push path"; that was wrong — it has
-//! no production caller at all, only tests, and there is no dōjō endpoint
-//! receiving metrics. So there is no existing push to gate on `plan.allowed`, and
-//! building one is its own slice rather than something to smuggle in here.
+//! **User-scoped rows are held back**, counted, and logged with the reason.
+//! `dojo.repository_metrics.principal_id` is a principal, never a git email —
+//! commit trailers are unverified — and `personas.principal_id` is unset until a
+//! persona is linked, so there is nothing honest to attribute a per-person row
+//! to. The ingest endpoint refuses them, so sending them would earn a rejection
+//! every cycle forever.
 //!
-//! This pass therefore establishes IDENTITY and ENTITLEMENT and records both. It
-//! is deliberately visible in the log rather than quietly no-op: a worker that
-//! looks like it syncs and does not is worse than one that says what it did.
-//!
-//! Per-repo governance pull (D3) is likewise not here.
+//! Per-repo governance pull (D3) is not here.
 
 use std::sync::Arc;
 
@@ -44,6 +43,11 @@ use crate::dojo_client::user_plane::{self, RepoInput};
 
 /// How many shared repositories one pass will register at a time.
 const REGISTER_LIMIT: i64 = 500;
+
+/// How many metric rows one pass will push. The dōjō caps a batch at 1000; the
+/// daemon pages rather than sending an unbounded body, because a memory profile
+/// set by the client is not a decision a client gets to make.
+const PUSH_LIMIT: i64 = 500;
 
 /// The `sensei.sync_entity` value a whole-cycle plan fetch is recorded against.
 /// Keyed on the persona label, so two personas' failures stay distinguishable.
@@ -133,26 +137,128 @@ async fn sync_persona(pg: &PgStore, persona: &str) -> Result<(), String> {
     }
 
     let mark = SyncMark { entity: PLAN_ENTITY, key: persona, direction: "pull" };
-    match user_plane::sync_plan(&dojo, &token).await {
-        Ok(plan) => {
-            tracing::info!(
-                persona,
-                allowed = plan.allowed.len(),
-                denied = plan.denied.len(),
-                mapped = registered.mapped.len(),
-                unmapped = registered.unmapped.len(),
-                "dojo_sync: plan fetched (no metrics are pushed yet — see the module docs)"
-            );
-            pg.mark_synced(&mark, None).await?;
-            Ok(())
-        }
+    let plan = match user_plane::sync_plan(&dojo, &token).await {
+        Ok(p) => p,
         Err(e) => {
             // Recorded, not just logged: without a row here a failed cycle is
             // indistinguishable from a cycle with nothing to do.
             pg.mark_sync_error(&mark, &e).await?;
-            Err(e)
+            return Err(e);
         }
+    };
+    for d in &plan.denied {
+        tracing::info!(
+            persona,
+            repo = d.repo_key,
+            tenant = d.tenant,
+            reason = d.reason,
+            "dojo_sync: repository not permitted to sync"
+        );
     }
+    pg.mark_synced(&mark, None).await?;
+
+    let pushed = push_allowed(pg, persona, &dojo, &token, &plan).await?;
+    tracing::info!(
+        persona,
+        allowed = plan.allowed.len(),
+        denied = plan.denied.len(),
+        mapped = registered.mapped.len(),
+        unmapped = registered.unmapped.len(),
+        pushed,
+        "dojo_sync: cycle complete"
+    );
+    Ok(())
+}
+
+/// Push the metric rows the plan allows, and mark exactly those as shared.
+///
+/// Returns how many rows the dōjō accepted.
+async fn push_allowed(
+    pg: &PgStore,
+    persona: &str,
+    dojo: &str,
+    token: &str,
+    plan: &user_plane::SyncPlan,
+) -> Result<u32, String> {
+    // The allow-list, as a set. The daemon syncs the set it was HANDED — it never
+    // asks "may I sync X?", so it cannot include a repository it never offered,
+    // and offline degrades to no-sync by construction.
+    let allowed: std::collections::HashSet<&str> =
+        plan.allowed.iter().map(|a| a.repo_key.as_str()).collect();
+    if allowed.is_empty() {
+        return Ok(0);
+    }
+
+    let queued = pg.unpushed_metric_rows(PUSH_LIMIT).await?;
+    // Two reasons a queued row is held back, and they are NOT the same thing:
+    //
+    // * not in `allowed` — entitlement. The dōjō decided; nothing to say.
+    // * `scope = 'user'` — CAPABILITY. `dojo.repository_metrics.principal_id` is
+    //   a principal, never a git email, and `personas.principal_id` is unset
+    //   until a persona is linked, so there is nothing honest to attribute a
+    //   per-person row to yet. The ingest endpoint refuses these, so sending them
+    //   would earn a rejection every cycle forever.
+    //
+    // Counted and logged rather than silently dropped: "pushed 40 of 60" with a
+    // reason is a fact; "pushed 40" is a number that hides one.
+    let (pushable, deferred): (Vec<_>, Vec<_>) = queued
+        .iter()
+        .filter(|m| allowed.contains(m.repo_key.as_str()))
+        .partition(|m| m.scope == "repo");
+    if !deferred.is_empty() {
+        tracing::info!(
+            persona,
+            held = deferred.len(),
+            "dojo_sync: user-scoped rows held back — no principal to attribute them to yet"
+        );
+    }
+    if pushable.is_empty() {
+        return Ok(0);
+    }
+
+    let batch: Vec<user_plane::MetricPush<'_>> = pushable
+        .iter()
+        .map(|m| user_plane::MetricPush {
+            repo_key: &m.repo_key,
+            metric: &m.metric,
+            scope: &m.scope,
+            grain: &m.grain,
+            computed_on: m.computed_on.to_string(),
+            value: m.value,
+            commit_sha: m.commit_sha.as_deref(),
+            props: &m.props,
+            source: &m.source,
+        })
+        .collect();
+
+    let result = user_plane::push_metrics(dojo, token, &batch).await?;
+    for r in &result.rejected {
+        tracing::warn!(
+            persona,
+            repo = r.repo_key,
+            metric = r.metric,
+            reason = r.reason,
+            "dojo_sync: metric row refused"
+        );
+    }
+
+    // Mark shared ONLY when the dōjō accepted everything it was sent. The
+    // response reports a COUNT, not which rows — so on a partial acceptance
+    // there is no way to know which ids to mark, and marking all of them would
+    // strand the refused ones as permanently "sent". They stay queued and are
+    // retried next cycle, which is the only honest option available.
+    if result.rejected.is_empty() {
+        let ids: Vec<uuid::Uuid> = pushable.iter().map(|m| m.id).collect();
+        pg.mark_metric_rows_shared(&ids).await?;
+    } else {
+        tracing::warn!(
+            persona,
+            accepted = result.accepted,
+            refused = result.rejected.len(),
+            "dojo_sync: partial acceptance — nothing marked shared, the batch retries next cycle"
+        );
+    }
+    Ok(result.accepted)
 }
 
 /// Run the cycle on its schedule, forever.
