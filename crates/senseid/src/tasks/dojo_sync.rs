@@ -67,10 +67,22 @@ pub async fn tick(pg: Arc<PgStore>) -> Result<(), String> {
         return Ok(());
     }
 
+    let total = personas.len();
+    let mut failures = Vec::new();
     for persona in personas {
         if let Err(e) = sync_persona(&pg, &persona).await {
             tracing::warn!(persona, error = %e, "dojo_sync: persona skipped");
+            failures.push(format!("{persona}: {e}"));
         }
+    }
+    // A pass where EVERY persona failed is not a success. `run_scheduled` records
+    // this return value as the schedule's `last_ok`, so swallowing it printed a
+    // green worker over a cycle that moved nothing — the exact false report
+    // observed live (plan rows 0, shared 0, last_ok = true). A PARTIAL failure
+    // still returns Ok: D1's whole point is that one expired session must not
+    // stall the others, and the survivors did work.
+    if failures.len() == total {
+        return Err(format!("all {total} personas failed: {}", failures.join("; ")));
     }
     Ok(())
 }
@@ -142,8 +154,11 @@ async fn sync_persona(pg: &PgStore, persona: &str) -> Result<(), String> {
         Ok(p) => p,
         Err(e) => {
             // Recorded, not just logged: without a row here a failed cycle is
-            // indistinguishable from a cycle with nothing to do.
-            pg.mark_sync_error(&mark, &e).await?;
+            // indistinguishable from a cycle with nothing to do. Not `?` — see the
+            // push path below; the plan error is what matters, not the write.
+            if let Err(be) = pg.mark_sync_error(&mark, &e).await {
+                tracing::warn!(persona, error = %be, "could not record the plan failure");
+            }
             return Err(e);
         }
     };
@@ -199,10 +214,17 @@ async fn push_allowed(
     // Filtering here rather than after the fetch is load-bearing — see
     // `unpushed_metric_rows`. Held-back rows once crowded the window and a pass
     // pushed 66 of 132.
-    let queued = pg.unpushed_metric_rows(&["repo"], PUSH_LIMIT).await?;
-    let pushable: Vec<_> =
-        queued.iter().filter(|m| allowed.contains(m.repo_key.as_str())).collect();
-    let held = pg.unpushed_metric_count(&["user"]).await.unwrap_or(0);
+    let keys: Vec<&str> = allowed.iter().copied().collect();
+    let pushable = pg.unpushed_metric_rows(&["repo"], &keys, PUSH_LIMIT).await?;
+    // A failure here must not print "0 held back" — that is the exact mislead the
+    // counter exists to prevent.
+    let held = match pg.unpushed_metric_count(&["user"]).await {
+        Ok(n) => n,
+        Err(e) => {
+            tracing::warn!(persona, error = %e, "could not count held-back rows");
+            0
+        }
+    };
     if held > 0 {
         tracing::info!(
             persona,
@@ -245,7 +267,12 @@ async fn push_allowed(
             // still reads ok, and the only symptom is that nothing ever arrives.
             // Observed exactly that way before this existed.
             for key in &repos {
-                pg.mark_sync_error(&push_mark(key), &e).await?;
+                // NOT `?`: a failed bookkeeping write must not replace the push
+                // error with itself. The operator needs to know why the dōjō
+                // refused, not that sync_state was briefly unwritable.
+                if let Err(be) = pg.mark_sync_error(&push_mark(key), &e).await {
+                    tracing::warn!(repo = key, error = %be, "could not record the push failure");
+                }
             }
             return Err(e);
         }
@@ -260,14 +287,25 @@ async fn push_allowed(
         );
     }
 
-    // Mark shared ONLY when the dōjō accepted everything it was sent. The
-    // response reports a COUNT, not which rows — so on a partial acceptance
-    // there is no way to know which ids to mark, and marking all of them would
-    // strand the refused ones as permanently "sent". They stay queued and are
-    // retried next cycle, which is the only honest option available.
+    // Mark every row the dōjō did NOT refuse — the COMPLEMENT of `rejected`.
+    //
+    // This used to require an all-or-nothing batch, on the reasoning that "the
+    // response reports a count, not which rows". That was wrong: `rejected[]`
+    // carries `(repo_key, metric)`, which identifies exactly what to exclude. The
+    // consequence was a livelock — one permanently-refused row (an `unknown_metric`
+    // from version skew, say) meant NO row in the 500-row window was ever marked,
+    // so the identical batch was re-sent every cadence forever and the queue never
+    // drained.
+    let refused: std::collections::HashSet<(&str, &str)> =
+        result.rejected.iter().map(|r| (r.repo_key.as_str(), r.metric.as_str())).collect();
+    let ids: Vec<uuid::Uuid> = pushable
+        .iter()
+        .filter(|m| !refused.contains(&(m.repo_key.as_str(), m.metric.as_str())))
+        .map(|m| m.id)
+        .collect();
+    pg.mark_metric_rows_shared(&ids).await?;
+
     if result.rejected.is_empty() {
-        let ids: Vec<uuid::Uuid> = pushable.iter().map(|m| m.id).collect();
-        pg.mark_metric_rows_shared(&ids).await?;
         for key in &repos {
             pg.mark_synced(&push_mark(key), None).await?;
         }

@@ -151,8 +151,17 @@ impl PgStore {
     /// and the changed-since-sent, so a recomputed day is re-pushed rather than
     /// left stale behind an already-synced marker.
     ///
-    /// **`scopes` filters in SQL, before the LIMIT, and that ordering is the
-    /// point.** Filtering after the fetch lets rows the caller cannot push crowd
+    /// **BOTH `scopes` and `allowed_keys` filter in SQL, before the LIMIT, and that
+    /// ordering is the point.** `allowed_keys` is the dōjō's allow-list; filtering
+    /// it in Rust after the fetch had the same defect the scope filter was fixed
+    /// for — 218 of 500 slots went to repositories that can NEVER be in the plan
+    /// (self-hosted hosts, unconnected orgs), whose rows therefore never drain and
+    /// permanently occupy the window. Measured: the 500th-newest such row was
+    /// months old, so every allowed row older than it was unreachable forever.
+    ///
+    /// `ORDER BY … , rm.id` gives a total order, so the window is deterministic
+    /// rather than varying per run on ties.
+    /// Filtering after the fetch lets rows the caller cannot push crowd
     /// out ones it can: with 596 user-scoped rows held back and a limit of 500,
     /// a pass fetched 500, found only 66 pushable in that window, and pushed 66
     /// of 132 — and had the held-back rows filled the window entirely, it would
@@ -161,6 +170,7 @@ impl PgStore {
     pub async fn unpushed_metric_rows(
         &self,
         scopes: &[&str],
+        allowed_keys: &[&str],
         limit: i64,
     ) -> Result<Vec<PushableMetric>, String> {
         let rows: Vec<PushableRow> = sqlx_core::query_as::query_as(
@@ -172,11 +182,13 @@ impl PgStore {
               WHERE r.visibility = 'shared' \
                 AND rm.computed_by = 'local' \
                 AND rm.scope::text = ANY($1) \
+                AND r.repo_key = ANY($2) \
                 AND (rm.shared_at IS NULL OR rm.modified_at > rm.shared_at) \
-              ORDER BY rm.computed_on DESC \
-              LIMIT $2",
+              ORDER BY rm.computed_on DESC, rm.id \
+              LIMIT $3",
         )
         .bind(scopes.iter().map(|s| s.to_string()).collect::<Vec<_>>())
+        .bind(allowed_keys.iter().map(|k| k.to_string()).collect::<Vec<_>>())
         .bind(limit)
         .fetch_all(&self.pool)
         .await

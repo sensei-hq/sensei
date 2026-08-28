@@ -297,8 +297,25 @@ pub(crate) async fn live_session(persona: &str) -> Result<LiveSession, AuthError
             let verdict = refresh_failure(&e);
             if matches!(verdict, AuthError::Rejected(_)) {
                 let who = persona.to_string();
-                let _ =
+                let cleared =
                     tokio::task::spawn_blocking(move || session::clear_refresh_token(&who)).await;
+                // `Rejected`'s own contract says "the stored session has already
+                // been cleared". If the clear FAILED that is untrue: the dead token
+                // stays in the Keychain, every cadence hits the same 401 forever, and
+                // `signout`'s stated purpose is silently defeated. Report what
+                // actually happened rather than asserting a cleanup that did not.
+                let clear_err = match cleared {
+                    Err(join) => Some(join.to_string()),
+                    Ok(Err(e)) => Some(e.to_string()),
+                    Ok(Ok(())) => None,
+                };
+                if let Some(why) = clear_err {
+                    tracing::error!(persona, error = %why,
+                                    "a REJECTED session could not be cleared — it will keep failing");
+                    return Err(AuthError::Unreachable(format!(
+                        "session was rejected but could not be cleared: {why}"
+                    )));
+                }
             }
             return Err(verdict);
         }
@@ -308,7 +325,24 @@ pub(crate) async fn live_session(persona: &str) -> Result<LiveSession, AuthError
     let sess = session::Session::from_response(&tokens, now);
     let rotated = tokens.refresh_token.clone();
     let who = persona.to_string();
-    let _ = tokio::task::spawn_blocking(move || session::store_refresh_token(&who, &rotated)).await;
+    let stored =
+        tokio::task::spawn_blocking(move || session::store_refresh_token(&who, &rotated)).await;
+    // NOT discarded. The dōjō has ALREADY rotated, so the token still sitting in the
+    // Keychain is dead: if this write failed, the next cadence gets a 401, clears the
+    // session, and the user is signed out — with nothing anywhere explaining that a
+    // healthy session was destroyed by a silent write failure. A session whose
+    // rotation was not persisted must not be handed out as live.
+    match stored {
+        Err(e) => {
+            tracing::error!(persona, error = %e, "rotated refresh token could not be stored — this session is now dead");
+            return Err(AuthError::Unreachable(format!("could not store the rotated token: {e}")));
+        }
+        Ok(Err(e)) => {
+            tracing::error!(persona, error = %e, "rotated refresh token could not be stored — this session is now dead");
+            return Err(AuthError::Unreachable(format!("could not store the rotated token: {e}")));
+        }
+        Ok(Ok(())) => {}
+    }
 
     Ok(LiveSession { tokens, session: sess })
 }
