@@ -17,6 +17,7 @@ use axum::{
 };
 use serde::Deserialize;
 
+use crate::api::handlers::err;
 use crate::api::state::AppState;
 use crate::tasks::mcp_discovery;
 
@@ -29,10 +30,6 @@ pub(crate) struct ListQuery {
 #[derive(Deserialize)]
 pub(crate) struct EnabledBody {
     pub enabled: bool,
-}
-
-fn err(status: StatusCode, msg: &str) -> (StatusCode, Json<serde_json::Value>) {
-    (status, Json(serde_json::json!({"error": msg})))
 }
 
 pub(crate) async fn list(

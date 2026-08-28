@@ -16,13 +16,10 @@ use axum::extract::{Query, State};
 use axum::http::StatusCode;
 use serde::Deserialize;
 
+use crate::api::handlers::err;
 use crate::api::state::AppState;
 use crate::git_identity::read_git_user;
 use crate::stance::StanceInput;
-
-fn err(status: StatusCode, msg: &str) -> (StatusCode, Json<serde_json::Value>) {
-    (status, Json(serde_json::json!({ "error": msg })))
-}
 
 /// Resolve `dir` (explicit `under`, else the daemon cwd) and `user_key`
 /// (explicit `user`, else the git author at `dir`) from a request field-getter —
@@ -133,7 +130,7 @@ pub(crate) async fn set_stance(
                     .ok_or_else(|| {
                         err(
                             StatusCode::BAD_REQUEST,
-                            &format!("this folder has no namespace at scope {scope_key:?}"),
+                            format!("this folder has no namespace at scope {scope_key:?}"),
                         )
                     })?,
             )

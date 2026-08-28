@@ -19,6 +19,7 @@ use axum::{
 };
 use serde::Deserialize;
 
+use crate::api::handlers::err;
 use crate::api::state::AppState;
 use crate::collective::inbox::{self, ApplyOutcome};
 
@@ -78,10 +79,6 @@ fn state_response(inbox_id: uuid::Uuid, new_state: &str, found: bool) -> ApiResu
 
 fn parse_id(id: &str) -> Result<uuid::Uuid, (StatusCode, Json<serde_json::Value>)> {
     uuid::Uuid::parse_str(id.trim()).map_err(|_| err(StatusCode::BAD_REQUEST, "bad upgrade id"))
-}
-
-fn err(status: StatusCode, msg: &str) -> (StatusCode, Json<serde_json::Value>) {
-    (status, Json(serde_json::json!({ "error": msg })))
 }
 
 fn internal(e: String) -> (StatusCode, Json<serde_json::Value>) {
