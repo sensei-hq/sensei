@@ -239,24 +239,29 @@ axes as (
              -- a day early, announcing a lapse that has not happened.
              when now() <  mr.period_start
                or now() >= (mr.period_end + 1)             then 'subscription_expired'
-             -- NOT A PHASE-2 STUB — a wrong one, corrected here. This read
-             -- `when sa.id is null then 'no_seat'` against `dojo.seat_allocations`,
-             -- A TABLE THAT HAS NEVER EXISTED. The real one is `dojo.seats`, keyed
-             -- `(user_id, namespace_id)` — per PROJECT, not per repository or
-             -- tenant (spec F2).
+             -- THERE IS NO SEAT TERM, AND THERE SHOULD NOT BE. This position
+             -- held `when sa.id is null then 'no_seat'` against
+             -- `dojo.seat_allocations` — a table that never existed. Chasing it
+             -- down established something larger, so the reason row is now
+             -- DELETED rather than left seeded and unemitted:
              --
-             -- It cannot simply be rewritten against `dojo.seats`. That join is
-             -- repository → repositories_in_projects → project → namespace → seat,
-             -- and `dojo.projects` carries no `namespace_id` at all
-             -- (`resolveProjectNamespaceId` matches by SLUG). Measured live:
-             -- 5 repositories, 0 rows in `repositories_in_projects`, 0 projects,
-             -- 0 seats — so enabling it would refuse EVERY repository with
-             -- `no_seat`, a denial nobody can act on. That is the precise
-             -- silent-refusal failure this view exists to prevent.
+             --   * A seat is a BILLING QUANTITY, not a permission.
+             --     `seats_included` is never compared to anything and
+             --     `openOrRefreshSeat` never refuses at a cap. Entitlement is
+             --     already answered above by the subscription terms.
+             --   * `dojo.seats.namespace_id` points at `sensei.namespaces`, which
+             --     is the GOVERNANCE LADDER (general·user·organization·client·
+             --     technology·team·project·repository) — the structure that
+             --     decides WHICH RULES APPLY to a repo. Three of its four
+             --     referents are rule packs, adoptions and shared rules; seats is
+             --     the odd one out, billing against a rule scope.
+             --   * A `(project, …)` namespace is NOT `dojo.projects`. Live: 311
+             --     project namespaces against 146 projects. They share a word.
              --
-             -- Blocked on spec F2/F4 (which visibility is authoritative, and what
-             -- the first sync of a new private project does). Logged in the
-             -- backlog; the reason row stays seeded and unemitted until then.
+             -- So this was never a grain to reconcile; the seat model keys on the
+             -- wrong concept. Re-keying it is its own slice — see docs/backlog.md.
+             -- Sync is repo-scoped and never touches a project or a namespace
+             -- (184 metric rows, 0 projects), so nothing here is waiting on it.
              else null                                                -- entitled
            end as entitlement_refusal
 
