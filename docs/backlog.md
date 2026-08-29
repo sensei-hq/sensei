@@ -647,3 +647,65 @@ we ask for, so it does not need the App migration to land first.
 **Do not close this by deleting the scope** — that silently reverts private
 capture to permanently-uncaptured, which reads in the UI as "not shared" rather
 than as "we could not ask".
+
+### What actually changes, OAuth App → GitHub App
+
+**The whole surface is five calls.** That is the blast radius, and it is small:
+
+| call | where | needs |
+|---|---|---|
+| `GET /user` | `forge-github.ts` | any user token |
+| `GET /user/memberships/orgs?state=active` | `forge-github.ts` | `read:org` → App: *Members: read* |
+| `GET /repos/{owner}/{repo}` | `forge-github.ts` | `repo` → App: **`metadata: read`** |
+| `GET /user/orgs` | `senseid auth.rs` | `read:org` → App: *Members: read* |
+| `GET /user/emails` | `senseid auth.rs` | `user:email` → App: *Email addresses: read* |
+
+**Sign-in does NOT change, which is the non-obvious part.** A GitHub App does
+user-to-server OAuth through the *same* `/login/oauth/authorize` +
+`/access_token` endpoints. So `supabase/config.toml`'s `auth.external.github`
+takes the App's client id/secret and kavach's flow is untouched. No new
+callback, no new provider, no change to `cli-auth.ts`'s URL arithmetic.
+
+**Four things do change:**
+
+1. **`scopes` goes inert.** GitHub Apps do not use OAuth scopes — permissions
+   are declared on the App. `kavach.config.js`'s `scopes: [...]` would be
+   *silently ignored*, and our drift test would keep passing while granting
+   nothing. That test becomes false comfort and must be rewritten to assert the
+   App's permissions, or deleted. **This is the migration's main trap.**
+2. **Installation becomes a precondition, and a new refusal.** A user-to-server
+   token only reaches repos where the App is INSTALLED. A member of an org that
+   has not installed sensei sees nothing, which under fail-closed is
+   `forge_visibility_unknown` forever. That wants a new reason code —
+   `app_not_installed`, `kind = refusal`, actor `admin`, remedy "ask an
+   organisation admin to install sensei". Strictly better copy than today's
+   `fault` + "sign in again", which would be a lie in that case.
+3. **Tokens expire (8h, 6-month refresh).** The daemon already stores
+   `provider_refresh.*`, but nothing currently REFRESHES on a 401 — today a dead
+   token just yields `forge_unreachable` (observed live 2026-08-28). That path
+   has to actually run, or capture silently stops after eight hours.
+4. **Org install ≠ user consent.** An org admin installing the App grants
+   metadata for org repos without each member consenting. That suits the
+   org-private MANDATE and does NOT suit personal repos — so personal repos
+   still need the user-to-server token.
+
+**The better shape for THIS need: installation tokens, not user tokens.**
+Visibility is a property of the repository, not of the user. App JWT (signed
+with the App private key) → installation access token → `GET /repos/{o}/{r}`
+with `metadata: read`. Then:
+
+- the daemon holds **no** forge credential for capture at all — the strongest
+  possible answer to the concern that motivated this entry;
+- capture works when the user is signed out, or their token expired;
+- `GET /user/emails` cannot use it (no user context) and keeps the user token,
+  or reads the email Supabase already resolved.
+
+Cost: the dōjō holds the App's private key (a Worker secret, a real one), and
+needs a `tenant → installation_id` mapping.
+
+**Verify before committing to this:** that Supabase GoTrue passes a GitHub App's
+user-to-server token through as `provider_token` unchanged, and the current
+default for token expiration on a new App. Both are assumed above, not tested.
+
+**Not blocked on any of it:** incremental consent (ask for `repo` only when a
+user elects a private repo) is a change to WHEN we ask and needs none of this.
