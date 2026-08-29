@@ -1,56 +1,61 @@
 # Checkpoint
 
-**Slice:** Repository sharing — **DESIGN ONLY. Nothing is implemented.**
-(`docs/requirements/repository-sharing.md`, `daemon-sync.md` §8a/§8b/§8c,
-`docs/architecture/reason-codes.md`)
+**Slice:** Repository sharing — **BUILT.** `d27ffa1f` (capture + view + daemon
+gates) and `75b00683` (the `repo` scope).
+(`docs/requirements/repository-sharing.md`, `docs/architecture/reason-codes.md`)
 
 ## The model
 
-Sharing is TWO questions: **entitlement** (*may it?* — the dōjō) and **election**
-(*did whoever holds authority choose it?*). `sync_enabled = may_share AND elected`.
+`sync_enabled = may_share` (entitlement, dōjō) **AND** `elected` (whoever holds
+authority). Authority: personal → user · org PUBLIC → user · org PRIVATE →
+**the organization, mandatory**.
 
-Authority: personal → user · org PUBLIC → user · org PRIVATE → **the
-organization, mandatory**, overriding the daemon's local gate 1 (user-confirmed).
+## Two holes found in the workflow's output and closed
 
-## Status: FOUR adversarial reviews, all NOT-READY
+1. **B2 was a regression as delivered.** It removed the daemon's local push gate
+   on the premise "the dōjō re-decides entitlement at the write". That was
+   **false** — `ingestMetrics` checked membership and nothing else, so the slice
+   removed the only gate. It now reads `dojo.all_my_repositories`.
+2. **`myMemberships` omitted `disabled_at is null`** — a REVOKED member still
+   wrote `visibility`, which decides which authority governs sharing for
+   everyone left.
 
-Depth · claims · data-correctness · security. Roughly 40 findings; most are fixed
-in `2d659e02`…`HEAD`. **Two decisions are outstanding and are the user's:**
+## The `repo` scope
 
-1. **Disclosure scope for B1.** To find out whether a repo is org-mandated the
-   daemon must register repos the user has NOT elected — the daemon-side mirror
-   of the sign-in inventory upload this design explicitly REJECTS. Unresolved.
-2. **Personal + private + no subscription.** §IV.3 says `origin='personal' →
-   ALLOW` unconditionally; §2a says private repos are subscription-gated. The two
-   disagree, and every personal tenant is the common case.
+Without it capture cannot work: GitHub answers **404, not 403**, so every
+private repo stayed permanently uncaptured and never synced. Added at both
+sign-in paths, pinned by a drift test — which caught that scopes are
+**space**-delimited (a comma grants nothing, silently). Backlog: a GitHub App's
+`metadata: read` is the real fix; **do not close it by deleting the scope**.
 
-## Still open (verified, not yet fixed)
+## Live state (verified, not inferred)
 
-- `configurable_by_me` grants `lead`; `member_role.ddl` gives policy to `admin`
-  alone, and every remedy string says "ask an admin".
-- §8c's "re-derived in four places" names two that do not exist (console, UI
-  toggle) and omits two that do (`unpushed_metric_rows`, `unpushed_metric_count`).
-- The blast-radius count is wrong a THIRD time: the list enumerates 3+12=15.
-- `seats_included = 0` means both "unbounded" and "cap of zero".
-- Section order runs 8 → 9a → 8a → 8b → 8c → 9.
-- B1 and B2 are documented, not fixed — `dojo_sync.rs:124` and `sync.rs:182`.
+`sensei-hq/dbd` · org tenant · visibility NULL → `sync=false`,
+`forge_visibility_unknown`, remedy "Sign in again to refresh". A live provision
+returned `forge_unreachable` and **wrote nothing** — GitHub confirmed "Bad
+credentials" directly, so fail-closed is verified, not assumed.
 
-## Build order (load-bearing)
-
-schema + ALTER → sign-in capture → **backfill, verified to return 0** → view →
-daemon (B1/B2). Rewriting the view first makes every org repo silently mandated:
-the unpopulated default reads as `private`, and `sensei-hq/dbd` — public on
-GitHub — resolves to ORG-MANDATED today.
+Persona/slot (flagged twice) is **fixed**: `label=sensei-hq-org`,
+`session_slot=default`; `signed_in_personas()` returns the slot, not the label.
 
 ## Next command
 
 ```
-rg -n 'Disclosure scope|personal.*private' docs/spec/dojo/daemon-sync.md
+# mints a repo-scoped token — the only way to verify the positive capture path
+open http://127.0.0.1:5173/signin
 ```
 
-## Carry-forward
+## Blocked on the user
 
-- kavach repinned to the published **1.1.3**; no local patch remains.
-- `~/.sensei/config.json` `dojo_url` → `http://127.0.0.1:5173` (backup at
-  `/tmp/sensei-config-backup.json`). `dbd` shared, `dojo_sync` at 60s, debug
-  binaries installed.
+- The GitHub sign-in above.
+- **Election write path** — 0 rows in `dojo.repository_elections`, no writer
+  anywhere, so scenarios A and D cannot happen. A gap in my planning.
+
+## Still open
+
+PostgREST 1000-row cap on the repositories read · 404 leaves a stale value
+standing · view ACL dropped by `drop view` · `configurable_by_me` grants `lead`
+vs `admin` · §8c's "four places" wrong · `seats_included = 0` ambiguous.
+
+**Env:** wrangler dev restarted on :5173 with a fresh build; a local magic-link
+session was minted. Gates: daemon 2483 · clippy 0 · fmt 0 · dōjō 1462 · check 0/0.
