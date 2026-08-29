@@ -342,7 +342,7 @@ test-fast: test-crates-fast test-app-unit
 test-crates-fast:
 	cargo test -p sensei-bootstrap
 
-test: test-crates test-app-unit test-dojo
+test: test-crates test-app-unit test-dojo test-db-if-reachable
 
 test-crates:
 	cargo test --workspace
@@ -360,11 +360,30 @@ test-dojo:
 
 # SQL assertions against a REAL Postgres — RLS, constraints, policy grants: the
 # things a mocked supabase-js client cannot check and therefore cannot fail on.
-# Deliberately NOT part of `make test`: it needs the local Supabase up
-# (`supabase start`), and a missing service should not read as a test failure.
 #   DATABASE_URL overrides the target; defaults to the local Supabase.
 test-db:
 	./database/tests/run.sh
+
+# The same suite, wired into `make test` — but SKIPPED, loudly, when the database
+# is simply not there.
+#
+# It used to sit outside `make test` on the grounds that "a missing service
+# should not read as a test failure". That reasoning is right and the conclusion
+# was too strong: the cost was that these files ran only when someone remembered,
+# and the two repository-sharing suites had never been executed at all until
+# 2026-08-29 — they passed, but nothing would have said so if they had not.
+#
+# `run.sh` already separates the two outcomes, which is what makes this safe:
+# exit 69 (EX_UNAVAILABLE) means "could not reach the database", 127 means "no
+# psql", and any OTHER non-zero is a real assertion failure. Only the first two
+# are skipped; a genuine failure still fails the build.
+test-db-if-reachable:
+	@./database/tests/run.sh; s=$$?; \
+	if [ $$s -eq 69 ] || [ $$s -eq 127 ]; then \
+		echo "  SKIPPED SQL tests — no reachable database (run 'supabase start', then 'make test-db')"; \
+	elif [ $$s -ne 0 ]; then \
+		exit $$s; \
+	fi
 
 # E2E runs against the throw-away `sensei_e2e` DB (set by SENSEI_INSTANCE=e2e
 # in the e2e globalSetup). Dropping it here guarantees each run starts clean.
