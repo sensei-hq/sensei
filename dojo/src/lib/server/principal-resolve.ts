@@ -21,7 +21,7 @@ import { AdminError, type DojoClient } from './admin-data';
 /** The caller's principal id, or null when this login has none yet. Throws
  *  AdminError(500) on a query error — a failed read is never "no principal",
  *  which would fork a second principal for a human who already has one. */
-async function lookupPrincipalId(db: DojoClient, authUserId: string): Promise<string | null> {
+export async function lookupPrincipalId(db: DojoClient, authUserId: string): Promise<string | null> {
 	const { data, error } = await db
 		.from('principals')
 		.select('id')
