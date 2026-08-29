@@ -845,3 +845,87 @@ describe('adoptOwnPersonalTenant — tell "I raced myself" from "another human, 
 		await expect(adoptOwnPersonalTenant(db as never, 'personal/jerrythomas', ALICE)).resolves.toBeNull();
 	});
 });
+
+// ── The CLAIM (§II.4) ───────────────────────────────────────────────────────
+//
+// An org tenant is created by whoever signs in FIRST, who may be a plain member
+// — so its existence proves nothing about who owns the org. An unclaimed tenant
+// may not hold a subscription, and therefore can never sync private data.
+//
+// The claim is not new information: `roleForOrg` already reads `org.role` at
+// every sign-in. So a forge owner/admin signing in IS the proof, and recording
+// it needs no new endpoint and no prompt.
+//
+// SHIPPED WITH THE GATE, DELIBERATELY. Adding `unclaimed` to the view without
+// this would repeat spec finding F3 verbatim — a gate nothing can satisfy, which
+// refuses every org repository forever and reads as "nothing to sync".
+describe('claimTenantIfOwner — a forge owner signing in IS the claim', () => {
+	const ALICE = 'p-alice';
+	function tbl(over: Record<string, unknown> = {}): Record<string, FakeTable> {
+		return {
+			tenants: {
+				rows: [
+					{
+						id: 't-acme',
+						key: 'organization/acme',
+						origin: 'organization',
+						slug: 'acme',
+						claimed_at: null,
+						claimed_by: null,
+						...over
+					}
+				],
+				uniques: [{ columns: ['key'] }]
+			}
+		};
+	}
+
+	it('claims an unclaimed tenant for a forge ADMIN', async () => {
+		const db = fakeDojoDb(tbl());
+		const { claimTenantIfOwner } = await import('./provisioning');
+		await claimTenantIfOwner(db as never, 't-acme', ALICE, 'admin');
+		const row = db.tables.tenants.rows[0];
+		expect(row.claimed_by).toBe(ALICE);
+		expect(row.claimed_at).toBeTruthy();
+	});
+
+	it('does NOT claim for a contributor — membership is not ownership', async () => {
+		// The whole point of the claim: being IN an org says nothing about owning
+		// it, and a tenant claimed by a plain member could subscribe on behalf of
+		// an organisation that never agreed.
+		const db = fakeDojoDb(tbl());
+		const { claimTenantIfOwner } = await import('./provisioning');
+		await claimTenantIfOwner(db as never, 't-acme', ALICE, 'contributor');
+		expect(db.tables.tenants.rows[0].claimed_at).toBeNull();
+	});
+
+	it('leaves an ALREADY-claimed tenant alone, including who claimed it', async () => {
+		// Re-stamping on every sign-in would rewrite `claimed_by` to whichever
+		// admin logged in most recently, destroying the record of who actually
+		// established the claim.
+		const db = fakeDojoDb(
+			tbl({ claimed_at: '2026-01-01T00:00:00.000Z', claimed_by: 'p-first-owner' })
+		);
+		const { claimTenantIfOwner } = await import('./provisioning');
+		await claimTenantIfOwner(db as never, 't-acme', ALICE, 'admin');
+		const row = db.tables.tenants.rows[0];
+		expect(row.claimed_by).toBe('p-first-owner');
+		expect(row.claimed_at).toBe('2026-01-01T00:00:00.000Z');
+	});
+
+	it('reports a write failure rather than swallowing it', async () => {
+		// A silently-failed claim leaves the tenant unclaimed, which now REFUSES
+		// every private repository — a denial caused by an error nobody saw.
+		const failing = {
+			from: () => failing,
+			select: () => failing,
+			eq: () => failing,
+			maybeSingle: async () => ({ data: { id: 't-acme', claimed_at: null }, error: null }),
+			update: () => ({
+				eq: () => ({ is: async () => ({ error: { message: 'write failed' } }) })
+			})
+		} as never;
+		const { claimTenantIfOwner } = await import('./provisioning');
+		await expect(claimTenantIfOwner(failing, 't-acme', ALICE, 'admin')).rejects.toThrow();
+	});
+});
