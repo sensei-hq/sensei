@@ -38,7 +38,7 @@ const wireOrg: DojoOrg = {
 	id: 'acme',
 	kanji: '社',
 	name: 'Acme Corp',
-	kind: 'Employer',
+	kind: 'Organization',
 	host: 'saas',
 	url: 'github/acme',
 	role: 'Admin',

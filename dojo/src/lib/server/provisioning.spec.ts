@@ -727,3 +727,121 @@ describe('provisionWithToken — the composition all three callers share', () =>
 		expect(db.tables.repositories.rows[0].visibility).toBeNull();
 	});
 });
+
+// ── Concurrent provisioning must converge, not fork ─────────────────────────
+//
+// OBSERVED LIVE, not hypothesised. Signing in produced NINE tenants where five
+// were expected: `senecaglobalinc` AND `senecaglobalinc-2`, `jovy-thomas-visuals`
+// AND `-2`, `jerrythomas` AND `-2`. The duplicates were created 2 MILLISECONDS
+// apart — two provisioning passes in flight at once (kavach's `onSessionSync`
+// and the console's `POST /v1/you/provision`), both missing the lookup, both
+// inserting.
+//
+// The duplicates were diagnosable by a property: every `-2` tenant had NO
+// `tenant_connections` row and exactly one membership. That is the signature of
+// the loser — it created a tenant, then its OWN connection insert hit 23505,
+// which the code swallowed, leaving an orphan tenant the user could see and a
+// membership pointing at it.
+//
+// `23505` on the connection is not noise. It is the DEFINITIVE signal that this
+// forge org already belongs to a tenant — i.e. "you lost, adopt the winner".
+import { adoptConnectedTenant } from './provisioning';
+
+describe('adoptConnectedTenant — losing the race must JOIN, never fork', () => {
+	function raceTables(): Record<string, FakeTable> {
+		return {
+			tenants: {
+				rows: [
+					{ id: 't-winner', key: 'organization/acme', origin: 'organization', slug: 'acme' },
+					// what THIS pass created a moment ago, before discovering it lost
+					{ id: 't-mine', key: 'organization/acme-2', origin: 'organization', slug: 'acme-2' }
+				],
+				uniques: [{ columns: ['key'] }]
+			},
+			tenant_connections: {
+				rows: [{ id: 'c1', tenant_id: 't-winner', provider: 'github', external_id: '44767229' }],
+				uniques: [{ columns: ['provider', 'external_id'] }]
+			}
+		};
+	}
+
+	it('returns the tenant the forge org is ALREADY connected to', async () => {
+		const db = fakeDojoDb(raceTables());
+		const won = await adoptConnectedTenant(db as never, 'github', '44767229', 't-mine');
+		expect(won).toMatchObject({ id: 't-winner', key: 'organization/acme' });
+	});
+
+	it('removes the redundant tenant it just created, so no `-2` survives', async () => {
+		// This is the whole user-visible bug: without the delete, the orphan shows
+		// up in "My dōjōs" as a second copy of an organisation you belong to once.
+		const db = fakeDojoDb(raceTables());
+		await adoptConnectedTenant(db as never, 'github', '44767229', 't-mine');
+		const keys = db.tables.tenants.rows.map((r) => r.key);
+		expect(keys).toEqual(['organization/acme']);
+	});
+
+	it('never deletes the winner, even when asked to discard it', async () => {
+		// Defensive: if the tenant we "created" IS the connected one, we did not
+		// actually lose — deleting it would destroy the real tenant and its
+		// memberships. Cheap guard against a caller passing the wrong id.
+		const db = fakeDojoDb(raceTables());
+		await adoptConnectedTenant(db as never, 'github', '44767229', 't-winner');
+		expect(db.tables.tenants.rows.map((r) => r.key)).toContain('organization/acme');
+	});
+
+	it('THROWS rather than inventing a tenant when no connection exists', async () => {
+		// Only reachable if 23505 fired without a conflicting row — i.e. our model
+		// of the constraint is wrong. Say so; returning the tenant we created would
+		// re-introduce the fork this function exists to prevent.
+		const db = fakeDojoDb(raceTables());
+		await expect(
+			adoptConnectedTenant(db as never, 'github', 'no-such-org', 't-mine')
+		).rejects.toThrow();
+	});
+});
+
+// The PERSONAL half of the same race: `personal/jerrythomas` AND
+// `personal/jerrythomas-2`, also 2ms apart.
+//
+// The `-2` escalation is CORRECT for two different humans who are both
+// `jerrythomas` on two forges — that is exactly why it exists (§II.3). It is
+// wrong when a pass collides with ITSELF. The distinguisher is membership: if
+// the colliding tenant already has a membership for this same principal, it is
+// mine and I raced myself; if it does not, it is someone else's and I must land
+// somewhere of my own.
+import { adoptOwnPersonalTenant } from './provisioning';
+
+describe('adoptOwnPersonalTenant — tell "I raced myself" from "another human, same name"', () => {
+	const ALICE = 'p-alice';
+	function tbl(memberUserId: string | null): Record<string, FakeTable> {
+		return {
+			tenants: {
+				rows: [{ id: 't-existing', key: 'personal/jerrythomas', origin: 'personal', slug: 'jerrythomas' }],
+				uniques: [{ columns: ['key'] }]
+			},
+			memberships: {
+				rows: memberUserId ? [{ id: 'm1', tenant_id: 't-existing', user_id: memberUserId }] : [],
+				uniques: [{ columns: ['tenant_id', 'user_id'] }]
+			}
+		};
+	}
+
+	it('adopts the colliding tenant when THIS principal is already a member', async () => {
+		const db = fakeDojoDb(tbl(ALICE));
+		await expect(
+			adoptOwnPersonalTenant(db as never, 'personal/jerrythomas', ALICE)
+		).resolves.toMatchObject({ id: 't-existing', key: 'personal/jerrythomas' });
+	});
+
+	it('returns null for a DIFFERENT human with the same login, so -2 still happens', async () => {
+		// Losing this distinction would silently join two unrelated people into one
+		// dōjō — far worse than a duplicate.
+		const db = fakeDojoDb(tbl('p-someone-else'));
+		await expect(adoptOwnPersonalTenant(db as never, 'personal/jerrythomas', ALICE)).resolves.toBeNull();
+	});
+
+	it('returns null when the colliding tenant has no members at all', async () => {
+		const db = fakeDojoDb(tbl(null));
+		await expect(adoptOwnPersonalTenant(db as never, 'personal/jerrythomas', ALICE)).resolves.toBeNull();
+	});
+});

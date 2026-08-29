@@ -122,8 +122,12 @@ async function insertTenantWithFreeSlug(
 	db: DojoClient,
 	origin: 'personal' | 'organization',
 	preferredSlug: string,
-	name: string
-): Promise<{ id: string; key: string; slug: string }> {
+	name: string,
+	/** Consulted on a key collision BEFORE escalating to `-2`. Returning a tenant
+	 *  means "that collision is me, racing myself" — adopt it instead of forking.
+	 *  Absent for orgs, which are arbitrated by their forge connection instead. */
+	adoptIfMine?: (key: string) => Promise<{ id: string; key: string } | null>
+): Promise<{ id: string; key: string; slug: string; adopted?: boolean }> {
 	for (let attempt = 1; attempt <= 20; attempt += 1) {
 		const slug = attempt === 1 ? preferredSlug : `${preferredSlug}-${attempt}`;
 		const key = `${origin}/${slug}`;
@@ -134,8 +138,100 @@ async function insertTenantWithFreeSlug(
 			.single();
 		if (!error) return { id: (data as { id: string }).id, key, slug };
 		if ((error as { code?: string }).code !== '23505') throw new AdminError(500, error.message);
+		const mine = adoptIfMine ? await adoptIfMine(key) : null;
+		if (mine) return { id: mine.id, key: mine.key, slug, adopted: true };
 	}
 	throw new AdminError(409, `could not find a free slug near "${preferredSlug}"`);
+}
+
+/**
+ * On a PERSONAL key collision: is the colliding tenant mine, or another human's?
+ *
+ * `-2` exists for a real reason — two different people can both be `jerrythomas`
+ * on two forges, and joining them into one dōjō would be far worse than a
+ * duplicate (§II.3). But it is wrong when a pass collides with ITSELF, which is
+ * what produced `personal/jerrythomas-2` two milliseconds after
+ * `personal/jerrythomas`.
+ *
+ * The distinguisher is membership. If this principal is ALREADY a member of the
+ * colliding tenant, it is mine and I lost a race against myself — adopt it.
+ * Otherwise it belongs to someone else and the caller must keep escalating.
+ *
+ * Returns null rather than throwing: "not mine" is an ordinary answer here, and
+ * the caller's next attempt is the correct response to it.
+ */
+export async function adoptOwnPersonalTenant(
+	db: DojoClient,
+	key: string,
+	principalId: string
+): Promise<{ id: string; key: string } | null> {
+	const t = await db.from('tenants').select('id, key').eq('key', key).maybeSingle();
+	if (t.error) throw new AdminError(500, t.error.message);
+	if (!t.data) return null;
+	const row = t.data as { id: string; key: string };
+
+	const m = await db
+		.from('memberships')
+		.select('id')
+		.eq('tenant_id', row.id)
+		.eq('user_id', principalId)
+		.maybeSingle();
+	if (m.error) throw new AdminError(500, m.error.message);
+	return m.data ? row : null;
+}
+
+/**
+ * Resolve a LOST race for a forge org.
+ *
+ * A `23505` from the `tenant_connections` insert is not noise to swallow — it is
+ * the definitive statement that this forge org is ALREADY connected to a tenant,
+ * i.e. a concurrent pass created it first. Two passes genuinely do run at once:
+ * kavach's `onSessionSync` and the console's `POST /v1/you/provision`.
+ *
+ * Observed live before this existed: nine tenants where five were expected —
+ * `senecaglobalinc` AND `senecaglobalinc-2`, two milliseconds apart. The loser
+ * had created a tenant, swallowed its own 23505, and left an orphan with no
+ * connection and one membership, which the user saw as a duplicate dōjō.
+ *
+ * So the loser adopts the winner and REMOVES the tenant it just made. That is
+ * safe precisely because it is brand new: it has no connection, no repositories
+ * and no metrics — a membership may exist and cascades. It is emphatically NOT
+ * safe for the winner, so discarding it is refused outright.
+ */
+export async function adoptConnectedTenant(
+	db: DojoClient,
+	provider: ForgeProvider,
+	externalId: string,
+	discardTenantId: string
+): Promise<{ id: string; key: string }> {
+	const conn = await db
+		.from('tenant_connections')
+		.select('tenant_id')
+		.eq('provider', provider)
+		.eq('external_id', externalId)
+		.maybeSingle();
+	if (conn.error) throw new AdminError(500, conn.error.message);
+	if (!conn.data) {
+		// The constraint fired with nothing to conflict against, so our model of it
+		// is wrong. Returning the tenant we created would silently re-introduce the
+		// fork this function exists to prevent.
+		throw new AdminError(500, `tenant_connections conflicted for ${provider}:${externalId} but no connection could be read back`);
+	}
+	const winnerId = (conn.data as { tenant_id: string }).tenant_id;
+
+	const t = await db.from('tenants').select('id, key').eq('id', winnerId).maybeSingle();
+	if (t.error) throw new AdminError(500, t.error.message);
+	if (!t.data) throw new AdminError(500, 'a tenant_connection points at a missing tenant');
+	const winner = t.data as { id: string; key: string };
+
+	// Never discard the winner. If the id we were handed IS the connected tenant
+	// we did not lose anything, and deleting it would take the real tenant and
+	// every membership on it.
+	if (discardTenantId !== winner.id) {
+		const del = await db.from('tenants').delete().eq('id', discardTenantId);
+		if (del.error) throw new AdminError(500, del.error.message);
+	}
+	return winner;
 }
 
 /** One row of `dojo.memberships`, narrowed to what this module reads. */
@@ -309,7 +405,13 @@ async function ensurePersonalTenant(
 
 	const slug = slugify(preferredSlug);
 	if (!slug) return null;
-	const tenant = await insertTenantWithFreeSlug(db, 'personal', slug, `${displayName}'s Dōjō`);
+	const tenant = await insertTenantWithFreeSlug(
+		db,
+		'personal',
+		slug,
+		`${displayName}'s Dōjō`,
+		(key) => adoptOwnPersonalTenant(db, key, principalId)
+	);
 	const role = await ensureMembership(
 		db,
 		tenant.id,
@@ -383,8 +485,25 @@ async function ensureOrgTenant(
 		})
 		.select('id')
 		.single();
-	if (error && (error as { code?: string }).code !== '23505') {
-		throw new AdminError(500, error.message);
+	if (error) {
+		if ((error as { code?: string }).code !== '23505') {
+			throw new AdminError(500, error.message);
+		}
+		// WE LOST A CONCURRENT PASS. This 23505 says the forge org is already
+		// connected to a tenant — so the one we just created above is redundant.
+		// Swallowing this is what produced `senecaglobalinc-2`: an orphan tenant
+		// with no connection, plus a membership pointing at it, which the user saw
+		// as a duplicate organisation they belong to once.
+		const winner = await adoptConnectedTenant(db, provider, org.id, tenant.id);
+		const joinedRole = await ensureMembership(
+			db,
+			winner.id,
+			principalId,
+			'employer',
+			authenticatedVia,
+			roleForOrg(org)
+		);
+		return { id: winner.id, key: winner.key, origin: 'organization', role: joinedRole, created: false };
 	}
 
 	const role = await ensureMembership(

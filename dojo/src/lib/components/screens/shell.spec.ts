@@ -17,7 +17,7 @@ const acme: DojoOrg = {
 	id: 'acme',
 	kanji: '社',
 	name: 'Acme Corp',
-	kind: 'Employer',
+	kind: 'Organization',
 	host: 'self',
 	url: 'dojo.acme.internal',
 	role: 'Admin',

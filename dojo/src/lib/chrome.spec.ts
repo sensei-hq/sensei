@@ -19,7 +19,7 @@ const acme: DojoOrg = {
 	id: 'acme',
 	kanji: '社',
 	name: 'Acme Corp',
-	kind: 'Employer',
+	kind: 'Organization',
 	host: 'self',
 	url: 'dojo.acme.internal',
 	role: 'Admin',
@@ -60,7 +60,7 @@ describe('roleKey — label → lowercase role rank key', () => {
 
 describe('kindKey — capitalized kind → lowercase kit kind', () => {
 	it('lowercases the known kinds', () => {
-		expect(kindKey('Employer')).toBe('employer');
+		expect(kindKey('Organization')).toBe('employer');
 		expect(kindKey('Client')).toBe('client');
 		expect(kindKey('Community')).toBe('community');
 	});

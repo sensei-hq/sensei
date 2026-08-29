@@ -55,7 +55,7 @@ describe('listUserOrgs — fail closed on a memberships query error', () => {
 	it('derives the REAL kind + kanji from membership.kind (not the old hardcoded Community)', async () => {
 		stub = makeDb({ data: [{ role: 'admin', kind: 'employer', tenant: TENANT_ROW }], error: null });
 		const orgs = await listUserOrgs('u1');
-		expect(orgs[0].kind).toBe('Employer');
+		expect(orgs[0].kind).toBe('Organization');
 		expect(orgs[0].kanji).toBe('社');
 	});
 
@@ -111,13 +111,13 @@ describe('getUserOrg — fail closed on either lookup error', () => {
 
 describe('membershipKindToOrgKind — enum → OrgKind (unknown/missing → Community, never fabricated)', () => {
 	it('maps each known kind', () => {
-		expect(membershipKindToOrgKind('employer')).toBe('Employer');
+		expect(membershipKindToOrgKind('employer')).toBe('Organization');
 		expect(membershipKindToOrgKind('client')).toBe('Client');
 		expect(membershipKindToOrgKind('personal')).toBe('Personal');
 		expect(membershipKindToOrgKind('community')).toBe('Community');
 	});
 	it('is case-insensitive', () => {
-		expect(membershipKindToOrgKind('EMPLOYER')).toBe('Employer');
+		expect(membershipKindToOrgKind('EMPLOYER')).toBe('Organization');
 	});
 	it('falls back to Community on unknown/null/undefined (safe generic bucket)', () => {
 		expect(membershipKindToOrgKind('wat')).toBe('Community');
@@ -128,7 +128,7 @@ describe('membershipKindToOrgKind — enum → OrgKind (unknown/missing → Comm
 
 describe('orgKindKanji — identity glyph per kind', () => {
 	it('maps each kind to its ladder kanji', () => {
-		expect(orgKindKanji('Employer')).toBe('社');
+		expect(orgKindKanji('Organization')).toBe('社');
 		expect(orgKindKanji('Client')).toBe('客');
 		expect(orgKindKanji('Personal')).toBe('己');
 		expect(orgKindKanji('Community')).toBe('群');

@@ -22,7 +22,7 @@ export const metrics: DojoMetrics = {
 	adoptionLift: 0.11
 };
 
-export type OrgKind = 'Employer' | 'Client' | 'Community' | 'Personal';
+export type OrgKind = 'Organization' | 'Client' | 'Community' | 'Personal';
 export type OrgHost = 'self' | 'saas';
 
 export interface DojoOrg {
@@ -48,7 +48,7 @@ export interface DojoOrg {
 export function membershipKindToOrgKind(kind: string | null | undefined): OrgKind {
 	switch ((kind ?? '').toLowerCase()) {
 		case 'employer':
-			return 'Employer';
+			return 'Organization';
 		case 'client':
 			return 'Client';
 		case 'personal':
@@ -64,7 +64,7 @@ export function membershipKindToOrgKind(kind: string | null | undefined): OrgKin
  *  matching the ladder kanji in `constitution-map`. Replaces the constant 群. */
 export function orgKindKanji(kind: OrgKind): string {
 	switch (kind) {
-		case 'Employer':
+		case 'Organization':
 			return '社';
 		case 'Client':
 			return '客';
@@ -80,7 +80,7 @@ export const orgs: DojoOrg[] = [
 		id: 'acme',
 		kanji: '社',
 		name: 'Acme Corp',
-		kind: 'Employer',
+		kind: 'Organization',
 		host: 'self',
 		url: 'dojo.acme.internal',
 		role: 'Org admin',
@@ -142,7 +142,7 @@ export const orgs: DojoOrg[] = [
 // kind → semantic token role for the chip tint (mockup used raw --ink-2/--accent
 // /--success/--ink-3; map onto named tokens).
 export const kindToneClass: Record<OrgKind, string> = {
-	Employer: 'text-ink-soft',
+	Organization: 'text-ink-soft',
 	Client: 'text-accent',
 	Community: 'text-success',
 	Personal: 'text-ink-mute'
