@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { authorizeUrl, daemonRedirect, isForwardablePort } from './cli-auth';
+import config from '../../../kavach.config.js';
 
 const base = {
 	supabaseUrl: 'https://proj.supabase.co',
@@ -28,7 +29,25 @@ describe('authorizeUrl', () => {
 		// `scopes` appends to the provider default, so repeating user:email would
 		// duplicate it on the consent screen the user actually reads.
 		const u = new URL(authorizeUrl(base));
-		expect(u.searchParams.get('scopes')).toBe('read:org');
+		// SPACE-delimited, which is what Supabase's `scopes` option and GitHub both
+		// expect. Pinned as a literal because a comma also "looks right" and would
+		// reach GitHub as one malformed scope named "read:org,repo" — granting
+		// nothing, with no error, and a token that then 404s on every private repo.
+		expect(u.searchParams.get('scopes')).toBe('read:org repo');
+	});
+
+	it('requests the SAME grant as the web sign-in, so the two cannot drift', () => {
+		// The literal assertions above pin each site; this one pins them TOGETHER.
+		// A daemon signed in via the CLI and one signed in via the browser must be
+		// able to see the same repositories — otherwise forge capture works on one
+		// path and silently fails closed on the other, which reads as "this repo is
+		// private" rather than as "we asked with the wrong token".
+		const web = (config.providers.find((p) => p.name === 'github')?.scopes ?? []).filter(
+			// omitted from the CLI request on purpose: it IS the provider default.
+			(s) => s !== 'user:email'
+		);
+		const cli = new URL(authorizeUrl(base)).searchParams.get('scopes')?.split(' ') ?? [];
+		expect([...cli].sort()).toEqual([...web].sort());
 	});
 
 	it('forwards the account hint only when one is given', () => {
