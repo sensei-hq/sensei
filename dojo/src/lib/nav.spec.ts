@@ -36,7 +36,15 @@ describe('NAV_YOU — the personal zone (inbox model)', () => {
 
 	it('has the six inbox-model destinations and none of the retired relay sections', () => {
 		const ids = NAV_YOU.flatMap((g) => g.items.map((it) => it.id));
-		expect(ids).toEqual(['inbox', 'projects', 'rules', 'packs', 'dojos', 'contributions']);
+		expect(ids).toEqual([
+			'inbox',
+			'projects',
+			'rules',
+			'packs',
+			'dojos',
+			'sharing',
+			'contributions'
+		]);
 		for (const gone of ['work', 'runs', 'approve', 'decide', 'chat']) {
 			expect(ids).not.toContain(gone);
 		}

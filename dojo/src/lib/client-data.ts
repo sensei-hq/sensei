@@ -436,6 +436,60 @@ export async function adoptContribution(artifactId: string, opts: DojoCallOpts =
 	await sendJson(youUrl('/contributions/adopt'), 'POST', { artifactId }, opts);
 }
 
+
+/** One repository as it crosses the /v1/you wire, with the sharing verdict.
+ *  Mirrors `MyRepository` in `$lib/server/repositories`; declared here so the
+ *  loader and the screen never import a `$lib/server/*` module. */
+export interface MyRepoWire {
+	repository_id: string;
+	repo_key: string;
+	name: string | null;
+	tenant: string;
+	owning_org: string | null;
+	forge_visibility: 'public' | 'private' | null;
+	authority: 'user' | 'organization' | null;
+	may_share: boolean;
+	elected: boolean;
+	sync_enabled: boolean;
+	configurable_by_me: boolean;
+	reason_code: string | null;
+	reason: string | null;
+	remedy: string | null;
+	reason_actor: string | null;
+	last_synced_at: string | null;
+	metric_rows: number | null;
+}
+
+/** `GET /v1/you/repositories` — every repository the caller can see, with the
+ *  sharing verdict and its remedy. A non-2xx throws `ClientApiError`; the caller
+ *  renders an ERROR state rather than an empty list, because "no repositories"
+ *  and "could not ask" are different answers. */
+export async function listMyRepos(opts: DojoCallOpts = {}): Promise<MyRepoWire[]> {
+	const data = await getJson<{ repositories?: MyRepoWire[] }>(youUrl('/repositories'), opts);
+	return data.repositories ?? [];
+}
+
+/** `PATCH /v1/you/repositories/election` — turn sharing on or off for ONE
+ *  repository. Returns the verdict re-read from the view, so a caller learns
+ *  that (say) entitlement still refuses rather than assuming success. */
+export async function setRepoElection(
+	repoKey: string,
+	elected: boolean,
+	opts: DojoCallOpts = {}
+): Promise<{ repo_key: string; elected: boolean; sync_enabled: boolean; reason_code: string | null }> {
+	return sendJson(
+		youUrl('/repositories/election'),
+		'PATCH',
+		{ repo_key: repoKey, elected },
+		opts
+	) as Promise<{
+		repo_key: string;
+		elected: boolean;
+		sync_enabled: boolean;
+		reason_code: string | null;
+	}>;
+}
+
 /** One global library pack as it crosses the /v1/you wire (browse). The wire
  *  boundary lives here (client-reachable) so the map + loader never import a
  *  `$lib/server/*` module. Produced by `rulepacks-data.shapeLibraryPacks`. */

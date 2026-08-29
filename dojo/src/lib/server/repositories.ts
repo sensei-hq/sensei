@@ -219,6 +219,60 @@ export async function registerRepositories(
 	return { mapped, unmapped };
 }
 
+
+/** One row of `dojo.all_my_repositories`, as a screen needs it. */
+export interface MyRepository {
+	repository_id: string;
+	repo_key: string;
+	name: string | null;
+	tenant: string;
+	owning_org: string | null;
+	forge_visibility: 'public' | 'private' | null;
+	authority: 'user' | 'organization' | null;
+	may_share: boolean;
+	elected: boolean;
+	sync_enabled: boolean;
+	configurable_by_me: boolean;
+	reason_code: string | null;
+	reason: string | null;
+	remedy: string | null;
+	reason_actor: string | null;
+	last_synced_at: string | null;
+	metric_rows: number | null;
+}
+
+/** The columns a screen needs. Named rather than `*` so a view rename fails here
+ *  instead of rendering `undefined` as a missing permission. */
+const MY_REPO_COLUMNS =
+	'repository_id, repo_key, name, tenant, owning_org, forge_visibility, authority, may_share, elected, sync_enabled, configurable_by_me, reason_code, reason, remedy, reason_actor, last_synced_at, metric_rows';
+
+/**
+ * Every repository the caller can see, with the verdict AND what to do about it.
+ *
+ * The same view the daemon reads through `syncPlan`, so what a user is SHOWN and
+ * what the daemon DOES cannot disagree — which is the property four separate
+ * derivations of this question used to lack.
+ *
+ * Carries `reason`/`remedy`/`reason_actor`, not just `sync_enabled`. A screen
+ * showing only the boolean reproduces exactly the ambiguity the two-axis model
+ * exists to remove: a repository refused for want of a subscription looks
+ * identical to one with nothing to sync.
+ *
+ * FAILS CLOSED. A read error throws rather than returning `[]`, because an empty
+ * list reads as "you have no repositories" — a different and load-bearing claim.
+ */
+export async function listMyRepositories(
+	db: DojoClient,
+	principalId: string
+): Promise<MyRepository[]> {
+	const { data, error } = await db
+		.from('all_my_repositories')
+		.select(MY_REPO_COLUMNS)
+		.eq('principal_id', principalId);
+	if (error) throw new AdminError(500, error.message);
+	return (data ?? []) as MyRepository[];
+}
+
 /**
  * What the caller may sync this cycle.
  *

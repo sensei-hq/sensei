@@ -2,7 +2,14 @@ import { redirect } from '@sveltejs/kit';
 import type { PageLoad } from './$types';
 import { YOU_SECTIONS, labelForSection } from '$lib/nav';
 import { toKitDojos } from '$lib/chrome';
-import { listUserProjects, listContributions, listLibraryPacks, ClientApiError } from '$lib/client-data';
+import {
+	listUserProjects,
+	listContributions,
+	listLibraryPacks,
+	listMyRepos,
+	ClientApiError,
+	type MyRepoWire
+} from '$lib/client-data';
 import { toKitProjects } from '$lib/projects-map';
 import { toKitContributions, toKitDownstreams } from '$lib/contributions-map';
 import { toKitRulePacks } from '$lib/rulepacks-map';
@@ -62,8 +69,24 @@ export const load: PageLoad = async ({ params, parent, fetch }) => {
 		}
 	}
 
+	// Sharing — the decision surface. `reposError` is carried SEPARATELY from an
+	// empty list on purpose: "you have no repositories" and "we could not ask"
+	// are different answers, and collapsing them is what makes a broken read look
+	// like a settled state (F1, and the #109 fabrication audit).
+	let repos: MyRepoWire[] = [];
+	let reposError: string | null = null;
+	if (section === 'sharing') {
+		try {
+			repos = await listMyRepos({ fetch, accessToken });
+		} catch (e) {
+			reposError = e instanceof Error ? e.message : 'the request failed';
+		}
+	}
+
 	return {
 		section,
+		repos,
+		reposError,
 		title: labelForSection(section, 'you'),
 		// Your own governance — stance/constitution still fixture-backed pending their routes.
 		stance,

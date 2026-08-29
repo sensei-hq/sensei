@@ -38,6 +38,10 @@ export const NAV_YOU: KitNavGroup[] = [
 		group: 'Dōjōs',
 		items: [
 			{ id: 'dojos', icon: 'users-group-two-rounded', label: 'My dōjōs' },
+			// Sharing is a DECISION surface, not a listing: three repositories sat
+			// at `not_elected_user` — refusing for want of a choice nobody could
+			// make, because the election had a write path and no toggle.
+			{ id: 'sharing', icon: 'share-circle', label: 'Sharing' },
 			{ id: 'contributions', icon: 'upload-square', label: 'Contributions' }
 		]
 	}
