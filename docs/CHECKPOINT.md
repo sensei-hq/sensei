@@ -1,71 +1,58 @@
 # Checkpoint
 
-**Slice:** Repository sharing — **BUILT.** `d27ffa1f` (capture + view + daemon
-gates) and `75b00683` (the `repo` scope).
-(`docs/requirements/repository-sharing.md`, `docs/architecture/reason-codes.md`)
+**Slice:** Repository sharing — **VERIFIED LIVE**, not just built.
+`d27ffa1f` · `75b00683` · `849fa070` · `1182ab4b` · `b0b68f62` · `76bc040b` · `7b0f53ce`
 
-## The model
-
-`sync_enabled = may_share` (entitlement, dōjō) **AND** `elected` (whoever holds
-authority). Authority: personal → user · org PUBLIC → user · org PRIVATE →
-**the organization, mandatory**.
-
-## Two holes found in the workflow's output and closed
-
-1. **B2 was a regression as delivered.** It removed the daemon's local push gate
-   on the premise "the dōjō re-decides entitlement at the write". That was
-   **false** — `ingestMetrics` checked membership and nothing else, so the slice
-   removed the only gate. It now reads `dojo.all_my_repositories`.
-2. **`myMemberships` omitted `disabled_at is null`** — a REVOKED member still
-   wrote `visibility`, which decides which authority governs sharing for
-   everyone left.
-
-## The `repo` scope
-
-Without it capture cannot work: GitHub answers **404, not 403**, so every
-private repo stayed permanently uncaptured and never synced. Added at both
-sign-in paths, pinned by a drift test — which caught that scopes are
-**space**-delimited (a comma grants nothing, silently). Backlog: a GitHub App's
-`metadata: read` is the real fix; **do not close it by deleting the scope**.
-
-## Live state (verified, not inferred)
-
-`sensei-hq/dbd` · org tenant · visibility NULL → `sync=false`,
-`forge_visibility_unknown`, remedy "Sign in again to refresh". A live provision
-returned `forge_unreachable` and **wrote nothing** — GitHub confirmed "Bad
-credentials" directly, so fail-closed is verified, not assumed.
-
-Persona/slot (flagged twice) is **fixed**: `label=sensei-hq-org`,
-`session_slot=default`; `signed_in_personas()` returns the slot, not the label.
-
-## Next command
+## The model, on real data
 
 ```
-# mints a repo-scoped token — the only way to verify the positive capture path
-open http://127.0.0.1:5173/signin
+corpus   private  authority=organization (MANDATED)  -> not_subscribed
+dbd      public   authority=user  elected            -> SYNCING · 132 metrics · 0 pending
+gateway
+sensei   public   authority=user                     -> not_elected_user
+torii
 ```
 
-## Election write path — BUILT (`849fa070`)
+Both axes independent; every refusal names itself. `not_subscribed` is the gate
+that used to fail **open**.
 
-`$lib/server/elections` + `PATCH /v1/you/repositories/election`. Reads authority
-and permission FROM the view; has no `authority` parameter by construction.
-Proved live in a rolled-back transaction: capture public → `not_elected_user`;
-**org elects → still false** (it cannot elect an org-PUBLIC repo on the
-contributor's behalf); user elects → `sync_enabled = true`.
+## `repo` scope proven at the source
 
-Two bugs the unit tests could not catch — `fakeDojoDb` is not a schema and
-accepted both: `elected_by` does not exist (invented), and `tenant_id` is NOT
-NULL and was never written. Now pinned against the real DDL.
+GitHub reports `read:org, repo, user:email` for the daemon's token, and it can
+see `sensei-hq/corpus` — a **private** repo that would have 404'd before.
+Capture recorded it `private`, which is what makes the org mandate reachable.
 
-## Blocked on the user
+## Self-heal (`7b0f53ce`)
 
-- The GitHub sign-in above — still the only way to verify positive capture.
+`refreshForgeVisibility` ran only at **sign-in** while repos keep registering via
+`dojo_sync` — so 4 of 5 sat at `forge_visibility_unknown` with remedy "sign in
+again", `corpus` included. The daemon holds the token, so it now asks when the
+plan's denials say the forge was never consulted. Narrow by design: only
+`forge_visibility_unknown|stale`. **Verified live: 4 uncaptured → 0 in one tick.**
 
-## Still open
+## Also fixed this session
 
-PostgREST 1000-row cap on the repositories read · 404 leaves a stale value
-standing · view ACL dropped by `drop view` · `configurable_by_me` grants `lead`
-vs `admin` · §8c's "four places" wrong · `seats_included = 0` ambiguous.
+- **Election write path** (`849fa070`) — nothing wrote `repository_elections`, so
+  every user-authority repo was permanently `elected = false`.
+- **Auth-id vs principal-id** (`1182ab4b`) — "My dōjōs" was empty for *everyone*
+  and `hasMembership` false, so real members were treated as solo.
+- **Concurrent provisioning forked tenants** (`b0b68f62`), 2ms apart.
+- **employer/client/community tag dropped** (`76bc040b`).
 
-**Env:** wrangler dev restarted on :5173 with a fresh build; a local magic-link
-session was minted. Gates: daemon 2483 · clippy 0 · fmt 0 · dōjō 1462 · check 0/0.
+## Disclosure, measured
+
+67 repo_keys are **transmitted**, only **5 stored** — 0 rows outside a connected
+tenant. An earlier warning of mine (that employer paths become rows) was wrong.
+
+## Next
+
+**The election UI.** `setElection` + `PATCH /v1/you/repositories/election` are
+proven over HTTP, but nothing renders a toggle — a user cannot elect
+gateway/sensei/torii without curl.
+
+Then: PostgREST 1000-row cap on the repositories read · a 404 leaves a stale
+value standing · view ACL dropped by `drop view` · `configurable_by_me` grants
+`lead` vs `admin` · `seats_included = 0` ambiguous · health `uptimeSeconds`
+reports 8.6h for a 28-minute-old process.
+
+**Gates:** daemon 2492 exit 0 · clippy 0 · fmt 0 · dōjō 1488 · check 0/0.
