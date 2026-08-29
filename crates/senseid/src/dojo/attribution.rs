@@ -717,3 +717,63 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod residual_risk_false_positives {
+    //! CHARACTERISATION TESTS — these assert the CURRENT, WRONG behaviour.
+    //!
+    //! They are green because the defect is present. When the token list is
+    //! fixed, EVERY assertion here must be INVERTED to `!residual_risk(...)`.
+    //! A green suite here is not a healthy one; it is a recorded defect.
+    use super::*;
+
+    /// Demonstrates a SYSTEMATIC false positive, observed live on 2026-08-29.
+    ///
+    /// `squash` strips every non-alphanumeric, so the haystack has NO word
+    /// boundaries, and the scan is a raw `contains` with
+    /// `MIN_DISTINCTIVE_SQUASH = 3`. `repo_names` is populated from EVERY folder
+    /// name in a project — for `sensei` that is ~300 entries including `api`,
+    /// `app`, `you`, `org`, `bin`, `src`, `lib`, `code`, `state`, `token`.
+    ///
+    /// A three-letter folder name therefore matches inside ordinary English, and
+    /// across word boundaries once the spaces are gone. These are not contrived:
+    /// each token below is a real folder in this repository.
+    #[test]
+    fn a_three_letter_folder_name_matches_inside_ordinary_english() {
+        let ctx = ProjectIdentifiers { repo_names: vec!["app".into()], ..Default::default() };
+        // "happens" contains "app". Nothing here identifies anything.
+        assert!(
+            residual_risk("this happens whenever the cache is cold", &ctx),
+            "a folder named `app` must not make the word `happens` a leak"
+        );
+    }
+
+    #[test]
+    fn tokens_match_across_word_boundaries_once_squashed() {
+        let ctx = ProjectIdentifiers { repo_names: vec!["api".into()], ..Default::default() };
+        // "a pipeline" squashes to "apipeline", which contains "api".
+        assert!(
+            residual_risk("prefer a pipeline over a barrier", &ctx),
+            "squashing removes the boundary, so `a pipeline` reads as `api`"
+        );
+    }
+
+    #[test]
+    fn the_live_case_a_clean_generalised_principle_is_held() {
+        // Verbatim from the memory held on 2026-08-29 by the real publish path.
+        // `stores` and `providers` are both folder names in this project.
+        let ctx = ProjectIdentifiers {
+            repo_names: vec!["stores".into(), "providers".into()],
+            ..Default::default()
+        };
+        assert!(
+            residual_risk(
+                "Integrating specific environment credential stores simplifies usability, \
+                 but requires adjustments to component properties and consideration of \
+                 supporting multiple provider types.",
+                &ctx
+            ),
+            "this is the text the gate actually held — no path, no email, no id, no name"
+        );
+    }
+}
