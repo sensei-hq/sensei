@@ -30,3 +30,26 @@ describe('kavach config — landing cutover', () => {
 		expect(publics.has('/v1')).toBe(true);
 	});
 });
+
+// The GitHub token minted at sign-in is the ONLY way the dōjō learns whether a
+// repository is private — `refreshForgeVisibility` asks the forge and records
+// the answer. GitHub answers 404, not 403, for a repository the token cannot
+// see, so a token without `repo` cannot distinguish "private" from "gone" and
+// every private repository stays permanently uncaptured — which fails closed,
+// and therefore never syncs. Private repos are precisely what the authority and
+// mandate model exists for, so without this scope capture works only for the
+// case that does not need it.
+describe('kavach config — the forge token must be able to SEE private repos', () => {
+	const github = () => config.providers.find((p) => p.name === 'github');
+
+	it('requests `repo`, without which private visibility can never be captured', () => {
+		expect(github()?.scopes).toContain('repo');
+	});
+
+	it('still requests read:org and user:email', () => {
+		// `read:org` covers PRIVATE org membership (the F3c auto-join); `user:email`
+		// is what Supabase resolves the profile from. Adding a scope must not
+		// silently drop either.
+		expect(github()?.scopes).toEqual(expect.arrayContaining(['read:org', 'user:email']));
+	});
+});
