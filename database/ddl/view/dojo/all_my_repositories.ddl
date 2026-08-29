@@ -107,6 +107,12 @@ with member_repo as (
                 else null
            end                 as capture_refusal
 
+         -- CLAIM (§II.4). An org tenant is created by whoever signs in first, who
+         -- may be a plain member, so its existence proves nothing about ownership.
+         -- Unclaimed, it may not hold a subscription — which is why this is tested
+         -- ABOVE the billing terms below.
+         , t.claimed_at
+
          -- Entitlement inputs. `billing_tenant_id` is how a MISSING row is told
          -- from a row whose status is unset — the distinction the whole gate turned
          -- on (see the CASE below).
@@ -201,18 +207,25 @@ axes as (
          -- billing row.
          --
          -- PHASE 2 terms sit COMMENTED at their precedence positions.
-         -- `dojo.tenants.claimed_at` and `dojo.seat_allocations` do not exist yet;
-         -- writing them live would make this view unbuildable, and writing them
-         -- elsewhere later would mean re-deriving the order.
+         -- `claimed_at` is now live and its term is enabled below. The seat term
+         -- is NOT, and the note at its precedence position says why — it named a
+         -- table that never existed, and the real one is at a grain this view
+         -- cannot reach today.
          , case
              when mr.forge_visibility is null              then mr.capture_refusal
              when mr.forge_visibility = 'public'           then null   -- entitled, free
-             -- PHASE 2, and it must stay ABOVE the billing terms: an unclaimed
-             -- tenant CANNOT hold a billing account, so testing billing first would
-             -- always answer `not_subscribed` — telling the reader to buy something
-             -- the service refuses to sell until someone claims the org, and leaving
-             -- `unclaimed` unreachable, i.e. dead registry copy.
-             -- PHASE 2: when mr.claimed_at is null        then 'unclaimed'
+             -- ABOVE the billing terms, and that ordering is the point: an
+             -- unclaimed tenant CANNOT hold a billing account, so testing billing
+             -- first would always answer `not_subscribed` — telling the reader to
+             -- buy something the service refuses to sell until someone claims the
+             -- org, and leaving `unclaimed` unreachable dead registry copy.
+             --
+             -- PERSONAL tenants are never unclaimed: they ARE the person, and
+             -- there is nobody else to prove ownership against. Without this guard
+             -- every personal private repository would refuse for want of a claim
+             -- that cannot be made.
+             when mr.origin = 'organization'
+              and mr.claimed_at is null                    then 'unclaimed'
              when mr.billing_tenant_id is null             then 'not_subscribed'
              when mr.period_start is null
                or mr.period_end   is null                  then 'not_subscribed'
@@ -226,11 +239,24 @@ axes as (
              -- a day early, announcing a lapse that has not happened.
              when now() <  mr.period_start
                or now() >= (mr.period_end + 1)             then 'subscription_expired'
-             -- PHASE 2, and `released_at is null` will be load-bearing: allocations
-             -- are kept as history rather than deleted, so a bare `is not null`
-             -- matches a RELEASED seat and a departed employee keeps pushing after
-             -- de-provisioning reported success.
-             -- PHASE 2: when sa.id is null                then 'no_seat'
+             -- NOT A PHASE-2 STUB — a wrong one, corrected here. This read
+             -- `when sa.id is null then 'no_seat'` against `dojo.seat_allocations`,
+             -- A TABLE THAT HAS NEVER EXISTED. The real one is `dojo.seats`, keyed
+             -- `(user_id, namespace_id)` — per PROJECT, not per repository or
+             -- tenant (spec F2).
+             --
+             -- It cannot simply be rewritten against `dojo.seats`. That join is
+             -- repository → repositories_in_projects → project → namespace → seat,
+             -- and `dojo.projects` carries no `namespace_id` at all
+             -- (`resolveProjectNamespaceId` matches by SLUG). Measured live:
+             -- 5 repositories, 0 rows in `repositories_in_projects`, 0 projects,
+             -- 0 seats — so enabling it would refuse EVERY repository with
+             -- `no_seat`, a denial nobody can act on. That is the precise
+             -- silent-refusal failure this view exists to prevent.
+             --
+             -- Blocked on spec F2/F4 (which visibility is authoritative, and what
+             -- the first sync of a new private project does). Logged in the
+             -- backlog; the reason row stays seeded and unemitted until then.
              else null                                                -- entitled
            end as entitlement_refusal
 

@@ -55,7 +55,28 @@ insert into dojo.tenants (id, key, origin, slug, name, dojo_url) values
    'Acme (never subscribed)', 'dojo.sensei-hq.org/organization/ztest-nobill'),
   -- org, subscribed, and NO tenant_share_policy row at all
   ('5ecc0000-0000-0000-0000-000000000007', 'organization/ztest-nopolicy', 'organization', 'ztest-nopolicy',
-   'Acme (undecided)', 'dojo.sensei-hq.org/organization/ztest-nopolicy');
+   'Acme (undecided)', 'dojo.sensei-hq.org/organization/ztest-nopolicy'),
+  -- L: org, subscribed, policy ON, forge answer captured — right in EVERY way
+  -- except that NOBODY HAS CLAIMED IT. Isolates the claim term: if the update
+  -- below ever claims this one too, L goes green-for-the-wrong-reason and the
+  -- gate is satisfied everywhere and therefore tested nowhere.
+  ('5ecc0000-0000-0000-0000-000000000008', 'organization/ztest-unowned', 'organization', 'ztest-unowned',
+   'Acme (nobody claimed it)', 'dojo.sensei-hq.org/organization/ztest-unowned');
+
+-- CLAIM every ORG fixture (§II.4). Each scenario below tests a gate BELOW the
+-- claim — billing, policy, election — and an unclaimed tenant refuses ABOVE all
+-- of them with `unclaimed`, which would mask every one of those assertions with
+-- the same reason. Personal tenants are never claimed: they ARE the person.
+--
+-- Scenario J covers the unclaimed case itself, so the term is not merely
+-- satisfied everywhere and thereby untested.
+update dojo.tenants
+   set claimed_at = timestamptz '2026-01-01 09:00:00+00',
+       claimed_by = '5ecc0000-0000-0000-0000-00000000a11c'
+ where origin = 'organization'
+   and key like 'organization/ztest-%'
+   -- EXCEPT the one scenario L exists to test.
+   and key <> 'organization/ztest-unowned';
 
 insert into dojo.memberships (tenant_id, user_id, kind, authenticated_via, role) values
   ('5ecc0000-0000-0000-0000-000000000001', '5ecc0000-0000-0000-0000-00000000a11c', 'personal', 'github_oauth', 'admin'),
@@ -64,7 +85,9 @@ insert into dojo.memberships (tenant_id, user_id, kind, authenticated_via, role)
   ('5ecc0000-0000-0000-0000-000000000004', '5ecc0000-0000-0000-0000-00000000a11c', 'employer', 'github_oauth', 'contributor'),
   ('5ecc0000-0000-0000-0000-000000000005', '5ecc0000-0000-0000-0000-00000000a11c', 'employer', 'github_oauth', 'contributor'),
   ('5ecc0000-0000-0000-0000-000000000006', '5ecc0000-0000-0000-0000-00000000a11c', 'employer', 'github_oauth', 'contributor'),
-  ('5ecc0000-0000-0000-0000-000000000007', '5ecc0000-0000-0000-0000-00000000a11c', 'employer', 'github_oauth', 'contributor');
+  ('5ecc0000-0000-0000-0000-000000000007', '5ecc0000-0000-0000-0000-00000000a11c', 'employer', 'github_oauth', 'contributor'),
+  -- L: Alice is an admin here, so `configurable_by_me` is not what refuses.
+  ('5ecc0000-0000-0000-0000-000000000008', '5ecc0000-0000-0000-0000-00000000a11c', 'employer', 'github_oauth', 'admin');
 
 -- Subscriptions. `period_end` is a DATE and the window is HALF-OPEN, so a
 -- current period ends in the future here; the boundary itself has its own
@@ -74,14 +97,19 @@ insert into dojo.billing_accounts (tenant_id, status, period_start, period_end) 
   ('5ecc0000-0000-0000-0000-000000000003', 'active',   current_date - 10, current_date + 20),
   ('5ecc0000-0000-0000-0000-000000000004', 'active',   current_date - 10, current_date + 20),
   ('5ecc0000-0000-0000-0000-000000000005', 'past_due', current_date - 10, current_date + 20),
-  ('5ecc0000-0000-0000-0000-000000000007', 'active',   current_date - 10, current_date + 20);
+  ('5ecc0000-0000-0000-0000-000000000007', 'active',   current_date - 10, current_date + 20),
+  -- L: a live subscription, so `unclaimed` is reached on its own merits and
+  -- not because billing happened to refuse first.
+  ('5ecc0000-0000-0000-0000-000000000008', 'active', current_date - 10, current_date + 20);
 -- tenants 2 and 6 deliberately have NO row: absence is the case H2/A2 exist for.
 
 insert into dojo.tenant_share_policy (tenant_id, private_repos_shared) values
   ('5ecc0000-0000-0000-0000-000000000003', true),
   ('5ecc0000-0000-0000-0000-000000000004', false),
   ('5ecc0000-0000-0000-0000-000000000005', true),
-  ('5ecc0000-0000-0000-0000-000000000006', true);
+  ('5ecc0000-0000-0000-0000-000000000006', true),
+  -- L: the org mandates sharing, so the election is not what refuses.
+  ('5ecc0000-0000-0000-0000-000000000008', true);
 
 insert into dojo.repositories (id, tenant_id, repo_key, name, provider, visibility, visibility_captured_at) values
   -- A  personal · private · subscribed · user elected
@@ -130,9 +158,14 @@ insert into dojo.repositories (id, tenant_id, repo_key, name, provider, visibili
   --    §8b's own sketch coalesces the per-repo election to the policy and stops,
   --    which leaves a three-valued verdict for a consumer that has to decide.
   ('5ecc0000-0000-0000-0000-00000000001d', '5ecc0000-0000-0000-0000-000000000007',
-   'github.com/ztest-nopolicy/n', 'n', 'github', 'private', now());
+   'github.com/ztest-nopolicy/n', 'n', 'github', 'private', now()),
+  -- L  org · private · subscribed · mandated · but the tenant is UNCLAIMED
+  ('5ecc0000-0000-0000-0000-00000000001e', '5ecc0000-0000-0000-0000-000000000008',
+   'github.com/ztest-unowned/l', 'l', 'github', 'private', now());
 
 insert into dojo.repository_elections (tenant_id, repository_id, authority, principal_id, elected) values
+  -- L: the ORG elected it (mandate). Everything allows except the claim.
+  ('5ecc0000-0000-0000-0000-000000000008', '5ecc0000-0000-0000-0000-00000000001e', 'organization', null, true),
   -- A, A2, D: the user elected, and the user holds authority.
   ('5ecc0000-0000-0000-0000-000000000001', '5ecc0000-0000-0000-0000-000000000010', 'user', '5ecc0000-0000-0000-0000-00000000a11c', true),
   ('5ecc0000-0000-0000-0000-000000000002', '5ecc0000-0000-0000-0000-000000000011', 'user', '5ecc0000-0000-0000-0000-00000000a11c', true),
@@ -170,6 +203,12 @@ begin
             ('H2', 'github.com/ztest-nobill/h2',     'organization', false, true,  false, 'entitlement', 'not_subscribed'),
             ('I',  'github.com/ztest-on/i',          null,           false, false, false, 'entitlement', 'forge_visibility_unknown'),
             ('J',  'github.com/ztest-off/j',         'organization', true,  true,  true,  null,          null),
+            -- L: subscribed, mandated, captured — refused ONLY because no forge
+            -- owner has ever claimed the tenant. An unclaimed org cannot hold a
+            -- subscription, so this is tested ABOVE the billing terms; were it
+            -- tested below, the answer would be `not_subscribed` and would tell
+            -- an admin to buy what the service will not sell them yet.
+            ('L',  'github.com/ztest-unowned/l',     'organization', false, true,  false, 'entitlement', 'unclaimed'),
             -- K is PHASE 1. §8b's stated verdict is
             --     may_share ❌ · entitlement · `no_seat`
             -- and it is NOT REACHABLE: `dojo.seat_allocations` does not exist, so
@@ -239,8 +278,8 @@ begin
       from dojo.all_my_repositories
      where principal_id = '5ecc0000-0000-0000-0000-00000000a11c'
        and repo_key like 'github.com/ztest-%';
-    if n <> 14 then
-        raise exception 'expected 14 fixture rows for Alice (one per repository), got %.', n;
+    if n <> 15 then
+        raise exception 'expected 15 fixture rows for Alice (one per repository), got %.', n;
     end if;
 end $$;
 
