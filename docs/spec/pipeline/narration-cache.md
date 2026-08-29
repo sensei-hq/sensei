@@ -1,6 +1,6 @@
 # 語 · Pipeline · Insight copy generation
 
-**Owner file:** (proposed) `crates/senseid/src/analysis/insight_copy.rs`
+**Owner file:** (proposed) `crates/senseid/src/analysis/narration_cache.rs`
 **Called by:** every producer of user-facing insight text — [[pipeline/signals]], [[pipeline/insights]], [[pipeline/memory]] (adoption blurbs), koan authoring on Today, drift note copy, etc.
 
 ## Purpose
@@ -32,7 +32,7 @@ Kanji is 語 — *word / to speak*.
 4. **Time-boxed.** The producer waits at most `timeout_ms` (default
    400ms) for the model. Miss it → fallback → warm-up in background.
 5. **Persisted, not just cached.** Generated copy lives in
-   `sensei.insight_copy` keyed on `(kind, facts_hash)`. Same facts →
+   `sensei.narration_cache` keyed on `(kind, facts_hash)`. Same facts →
    same copy indefinitely (until eviction). This turns a "call gemma4
    every request" into a "call gemma4 once when the facts change";
    the wire path never blocks on inference in steady state.
@@ -46,7 +46,7 @@ Kanji is 語 — *word / to speak*.
      boot, ad-hoc insights) call at request time, miss the cache,
      hit gemma4, and store on the way back.
 
-   Both modes write to the same `insight_copy` table. A lazy write
+   Both modes write to the same `narration_cache` table. A lazy write
    is indistinguishable from an eager one on read.
 
 ## Voice charter (fed to every prompt)
@@ -73,7 +73,7 @@ Kanji is 語 — *word / to speak*.
     ///
     /// Returns the model's output when available and valid,
     /// otherwise `fallback`.
-    pub async fn generate_insight_copy(
+    pub async fn generate_narration_cache(
         kind: InsightKind,
         facts: &InsightFacts,
         limits: CopyLimits,
@@ -98,7 +98,7 @@ Kanji is 語 — *word / to speak*.
 ## Data invariants
 
 - The sensei gateway (`gateway-embedded`, `sensei-hq/gateway`) has an
-  `insight-copy` chain configured with:
+  `narration-cache` chain configured with:
   - **primary:** ollama gemma4 (embedded, local)
   - **timeout:** 400ms
   - **temperature:** 0.3 (voice consistency > variety)
@@ -106,14 +106,14 @@ Kanji is 語 — *word / to speak*.
   - **no** fallback to remote providers — offline should still work
 - Model availability is detected once at daemon boot and re-probed
   on each cold-start after a 60s failure back-off. If unavailable,
-  `generate_insight_copy` short-circuits to fallback without an
+  `generate_narration_cache` short-circuits to fallback without an
   attempt (no per-call timeout tax).
 
-### DDL — `sensei.insight_copy`
+### DDL — `sensei.narration_cache`
 
 Proposed shape (new table; add under `database/ddl/table/sensei/`):
 
-    create table if not exists insight_copy (
+    create table if not exists narration_cache (
       kind          text        not null,
       facts_hash    text        not null,
       title         text        not null,
@@ -125,8 +125,8 @@ Proposed shape (new table; add under `database/ddl/table/sensei/`):
       primary key (kind, facts_hash)
     );
 
-    create index if not exists insight_copy_last_used_idx
-      on insight_copy(last_used_at);
+    create index if not exists narration_cache_last_used_idx
+      on narration_cache(last_used_at);
 
 **Semantics.**
 - `facts_hash = sha256(kind + canonical_json(facts))` — deterministic
@@ -142,19 +142,19 @@ Proposed shape (new table; add under `database/ddl/table/sensei/`):
 **Impact on existing tables.**
 - `sensei.tool_insights.signal_title` / `signal_detail` become the
   **fallback text**, not the wire truth. The observatory read path
-  first checks `insight_copy(kind, facts_hash)`; on miss it falls
+  first checks `narration_cache(kind, facts_hash)`; on miss it falls
   back to the tool_insights static columns.
 - No wire-shape change. `GET /api/observatory/tool-signals` still
   returns `{ signals: [{ tool_name, variant, title, detail, action? }] }`
-  — the `title` and `detail` come from `insight_copy` when present,
+  — the `title` and `detail` come from `narration_cache` when present,
   from the static fallback otherwise.
 
 ### API impact
 
 - **No new endpoint.** Consumers keep calling the same URLs; the
-  daemon internally routes through `generate_insight_copy`.
+  daemon internally routes through `generate_narration_cache`.
 - **Optional debug endpoint** (dev-only): `GET
-  /api/observatory/insight-copy/{kind}/{facts_hash}` returns the raw
+  /api/observatory/narration-cache/{kind}/{facts_hash}` returns the raw
   cached row for spot-inspection. Not part of the public API.
 
 ## Prompt shape (one template per `kind`)
@@ -189,7 +189,7 @@ or falls back.
 
 ## Done gate
 
-- `generate_insight_copy` returns in ≤ 400ms P95 on a warm daemon
+- `generate_narration_cache` returns in ≤ 400ms P95 on a warm daemon
   when ollama is available.
 - Fallback path (ollama absent) has zero measurable latency (short-
   circuit, no attempt).

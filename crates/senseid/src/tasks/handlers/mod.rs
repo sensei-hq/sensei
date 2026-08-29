@@ -30,7 +30,7 @@ mod session_retro;
 pub(crate) mod tool_insights;
 mod verdicts;
 mod verdicts_classify;
-mod warm_insight_copy;
+mod warm_narration_cache;
 
 pub use analyze::analyze_project;
 pub use community::detect_communities;
@@ -56,4 +56,4 @@ pub use advance_run::advance_run;
 pub use learn_playbooks::learn_playbooks;
 pub(crate) use publish_run::resolve_run_memberships;
 pub use session_process::analyze_session_process;
-pub use warm_insight_copy::warm_insight_copy;
+pub use warm_narration_cache::warm_narration_cache;

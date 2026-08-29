@@ -79,7 +79,7 @@ Kanji is 覚 — *awareness / to remember*.
   glyph and target file are stable across every UI that renders
   memories.
 - Every memory's `what` and `because` come through
-  [[pipeline/insight-copy]] — templated fallback otherwise.
+  [[pipeline/narration-cache]] — templated fallback otherwise.
 
 ## Signals shown
 
@@ -166,7 +166,7 @@ rules apply automatically.
 - Narrowing drops the wider-scope reinforcement history (per the
   memory-pipeline invariant).
 - Every memory's What/Because text comes from
-  [[pipeline/insight-copy]]; fallback templates are visibly
+  [[pipeline/narration-cache]]; fallback templates are visibly
   different from model output (labelled fallback in wire).
 - Dark mode: the muted-open row and the accent border are
   distinguishable.
@@ -218,7 +218,7 @@ mcp_call get_memories --project=other-project | jq '.memories | any(.id == $MEM_
 ## Related
 
 - [[pipeline/memory]] — the pipeline this screen curates
-- [[pipeline/insight-copy]] — What / Because text
+- [[pipeline/narration-cache]] — What / Because text
 - [[pipeline/governance]] — the promotion ladder rules
 - [[pipeline/dojo-lifecycle]] — org / collective widening path
 - [[screen/observatory-insights]] — the triage that feeds new

@@ -175,4 +175,4 @@ Interaction notes:
 - [[architecture/relay]] — the planner model (project → plan → phase → feature · checkpoint · gate)
 - [[journeys/relay]] — "author a plan — make the run modular"
 - [[screen/observatory-instruments-health]] — sibling Observatory format reference
-- [[pipeline/insight-copy]] — mentor-voice text for drafted gate reasons
+- [[pipeline/narration-cache]] — mentor-voice text for drafted gate reasons

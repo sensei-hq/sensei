@@ -7,7 +7,7 @@
 //! It is NOT lazily generated on the read path.
 //!
 //! The invariant that makes a compute-time explainer correct is the cache key:
-//! the [`MetricDayFacts`] fed to the insight-copy cache INCLUDE THE VALUE (and its
+//! the [`MetricDayFacts`] fed to the narration-cache cache INCLUDE THE VALUE (and its
 //! prior day + delta). So on a recompute of the same day —
 //! - value unchanged → identical `facts_hash` → cache HIT → reuse, NO model call,
 //!   the explainer stays byte-identical;
@@ -24,7 +24,7 @@
 
 use serde_json::json;
 
-use super::insight_copy::{self, CopyLimits, InsightKind};
+use super::narration_cache::{self, CopyLimits, InsightKind};
 use crate::db::pg_store::PgStore;
 
 /// The deterministic facts one day's explainer is built from — a single
@@ -60,11 +60,11 @@ pub struct MetricDayFacts {
 }
 
 impl MetricDayFacts {
-    /// Stable JSON fed to the insight-copy chain (and hashed for the copy cache).
+    /// Stable JSON fed to the narration-cache chain (and hashed for the copy cache).
     /// `value`/`prev_value`/`delta` ARE part of the facts — that is what makes the
     /// hash change iff the value changes (cache miss → regenerate) and stay stable
     /// when the value is unchanged (cache hit → reuse, no model call). Key order is
-    /// irrelevant — [`insight_copy::facts_hash`] canonicalises it.
+    /// irrelevant — [`narration_cache::facts_hash`] canonicalises it.
     pub fn to_facts_json(&self) -> serde_json::Value {
         json!({
             "metric": self.metric,
@@ -115,7 +115,7 @@ fn fmt_num(v: f64) -> String {
 /// Cache-guarded and safe to `await` INLINE from a background compute task: on a
 /// cache HIT it returns the persisted copy with no model call (so an unchanged
 /// value is never re-generated); on a MISS it calls
-/// [`insight_copy::generate_and_cache`] — which is time-boxed (8s) and breaker-
+/// [`narration_cache::generate_and_cache`] — which is time-boxed (8s) and breaker-
 /// guarded (60s), so a down/stubbed model degrades to `None` fast without blocking
 /// backfill. On any model `None` it returns the deterministic
 /// [`MetricDayFacts::fallback_detail`]. Never blocks, never errors, never fabricates.
@@ -126,13 +126,13 @@ pub async fn explain(
 ) -> String {
     let facts_json = facts.to_facts_json();
     if let Some(copy) =
-        insight_copy::read_cached_copy(store, InsightKind::MetricDayExplainer, &facts_json).await
+        narration_cache::read_cached_copy(store, InsightKind::MetricDayExplainer, &facts_json).await
     {
         return copy.detail;
     }
     // Miss → generate inline (off-wire, at compute time). A down/stub model
     // returns None fast; we then fall back to the deterministic line.
-    if let Some(copy) = insight_copy::generate_and_cache(
+    if let Some(copy) = narration_cache::generate_and_cache(
         store,
         gateway,
         InsightKind::MetricDayExplainer,
@@ -188,16 +188,16 @@ mod tests {
         let mut b = a.clone();
         b["value"] = json!(0.80);
         assert_ne!(
-            insight_copy::facts_hash(InsightKind::MetricDayExplainer, &a),
-            insight_copy::facts_hash(InsightKind::MetricDayExplainer, &b),
+            narration_cache::facts_hash(InsightKind::MetricDayExplainer, &a),
+            narration_cache::facts_hash(InsightKind::MetricDayExplainer, &b),
             "the value is part of the hash — a changed value must miss the cache",
         );
         // Two independently-built identical facts hash identically (cache hit →
         // reuse, NO model call for an unchanged value).
         let a2 = facts(0.75, Some(0.5)).to_facts_json();
         assert_eq!(
-            insight_copy::facts_hash(InsightKind::MetricDayExplainer, &a),
-            insight_copy::facts_hash(InsightKind::MetricDayExplainer, &a2),
+            narration_cache::facts_hash(InsightKind::MetricDayExplainer, &a),
+            narration_cache::facts_hash(InsightKind::MetricDayExplainer, &a2),
             "identical facts (unchanged value) hash identically — no regeneration",
         );
     }

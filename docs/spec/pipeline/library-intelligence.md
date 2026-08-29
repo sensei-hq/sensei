@@ -60,7 +60,7 @@ Kanji is 庫 — *repository*.
   ingestion knows which docs are current.
 - `sensei.library_skills` — one row per generated skill
   (name, library_id, focus, prompt_body, generated_at, tokens).
-- Every human-facing text comes through [[pipeline/insight-copy]]
+- Every human-facing text comes through [[pipeline/narration-cache]]
   where applicable.
 
 ## Ingestion sources

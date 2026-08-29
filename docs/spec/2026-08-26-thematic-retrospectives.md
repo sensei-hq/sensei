@@ -12,7 +12,7 @@ live daemon DB today:
 
 | | rows |
 |---|---:|
-| `sensei.insight_copy` | 16,753 |
+| `sensei.narration_cache` | 16,753 |
 | — of which `metric_day_explainer` | 11,985 |
 | — `community_description` | 2,423 |
 | — `tool_workhorse` / `tool_dormant` | 1,548 |
@@ -48,7 +48,7 @@ populated:
   `metric_ratings` (446).
 - **`props.process`** on 128 of 151 sessions — the four LLM process judgments —
   with **535 grounding quotes** in `activity.session_process_evidence`.
-- **`sensei.insight_copy`** — already LLM-authored and cached by `facts_hash`,
+- **`sensei.narration_cache`** — already LLM-authored and cached by `facts_hash`,
   carrying `model_provider`/`model_id`. The generation-and-cache mechanism we
   need is already here.
 - **Insight acceptance → materialization**: P-A (governance rule) and P-B
@@ -104,7 +104,7 @@ a default.
 ## 4. The four themes, and how each is computed
 
 Each theme is a **query over existing facts**, then one LLM call to narrate it.
-The narration is cached in `insight_copy` under a new `kind`, keyed on the
+The narration is cached in `narration_cache` under a new `kind`, keyed on the
 `facts_hash` of the query result — so identical facts never pay twice, and a
 changed fact regenerates.
 
@@ -254,7 +254,7 @@ already sets. T1 lands cross-repo first; the per-repo cut waits for volume.
 - **P1 — stage attribution.** ✅ DONE — deployed, drained, measured (§6c).
   Original note: D1 plus inference in the existing facet pass. No
   new LLM call: the analyzer already reads the transcript. Unblocks T1 and T2.
-- **P2 — repo retrospective.** T1–T3 at repo grain, one new `insight_copy` kind,
+- **P2 — repo retrospective.** T1–T3 at repo grain, one new `narration_cache` kind,
   surfaced where project insights already are.
 - **P3 — T4 proposals** wired to the existing accept → materialize path.
 - **P4 — cross-repo**, with the ≥3-repo threshold, feeding P-C.

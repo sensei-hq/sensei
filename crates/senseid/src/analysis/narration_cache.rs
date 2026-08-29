@@ -3,12 +3,12 @@
 //! Human-facing insight strings are the mentor voice of the product. Static
 //! templates hit their ceiling immediately ("40 tools dormant" reads as noise
 //! the second time). This module routes structured `facts` through a small
-//! local model (embedded gemma4 via the sensei gateway `insight-copy` chain)
+//! local model (embedded gemma4 via the sensei gateway `narration-cache` chain)
 //! and returns copy that reads like a mentor noticed something specific.
 //!
 //! Design: the model owns the *sentence*, the code owns the *action*. Every
 //! call site carries a deterministic `fallback`; the model is optional. Copy
-//! is persisted in `sensei.insight_copy` keyed on `(kind, facts_hash)` so the
+//! is persisted in `sensei.narration_cache` keyed on `(kind, facts_hash)` so the
 //! wire path never blocks on inference in steady state — same facts reuse the
 //! same copy until eviction.
 //!
@@ -25,7 +25,7 @@
 //! store + gateway and is graceful — it never errors, returning `Some(copy)`
 //! only when the model produced valid copy that was cached.
 //!
-//! Spec: `docs/spec/pipeline/insight-copy.md`.
+//! Spec: `docs/spec/pipeline/narration-cache.md`.
 
 use crate::db::pg_store::PgStore;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -86,7 +86,7 @@ const THIRD_PERSON_MARKERS: &[&str] = &["the developer", "the user"];
 static LAST_FAIL_MS: AtomicU64 = AtomicU64::new(0);
 
 /// Which insight card this copy is for. `as_str` is the stable snake_case key
-/// used in both the `facts_hash` and the `sensei.insight_copy.kind` column;
+/// used in both the `facts_hash` and the `sensei.narration_cache.kind` column;
 /// `task_line` is the per-kind `<task>` instruction for the prompt.
 // Variants are wired to producers incrementally. The tool-health six + Today
 // (HeroKoanMature + InsightRecurringPattern) + Learnings-triage memory kinds +
@@ -467,7 +467,7 @@ fn warm_logger(store: &PgStore) -> sensei_logger::Logger {
         sensei_logger::LogWriter::pg(store.pool().clone()),
         sensei_logger::LogLevel::Info,
         "daemon",
-        "insight_copy",
+        "narration_cache",
     )
 }
 
@@ -482,7 +482,7 @@ enum WarmAttempt {
     Failed(String),
 }
 
-/// One call to the `insight-copy` chain + parse/validate. `retry` selects the
+/// One call to the `narration-cache` chain + parse/validate. `retry` selects the
 /// tightened corrective prompt (see [`build_prompt`]). Time-boxed by
 /// [`WARM_TIMEOUT_MS`] purely as a runaway guard (this runs off the wire).
 async fn call_once(
@@ -500,7 +500,7 @@ async fn call_once(
         capability: Capability::TextChat,
         model: None,
         router: None,
-        chain: Some("insight-copy".into()),
+        chain: Some("narration-cache".into()),
         payload: Payload::Chat {
             messages: vec![Message::text(MessageRole::User, user)],
             system: Some(system),
@@ -563,7 +563,7 @@ pub async fn generate_and_cache(
                 LAST_FAIL_MS.store(0, Ordering::Relaxed);
                 // Provider not exposed on the response; model id is.
                 store
-                    .upsert_insight_copy(
+                    .upsert_narration_cache(
                         kind.as_str(),
                         &h,
                         &copy.title,
@@ -580,12 +580,12 @@ pub async fn generate_and_cache(
                 if retry {
                     // Second miss — give up (fallback already on screen).
                     warm_logger(store).warn(
-                        "insight_copy: model reply failed validation after retry — copy not cached",
+                        "narration_cache: model reply failed validation after retry — copy not cached",
                         Some(serde_json::json!({ "kind": kind.as_str() })),
                     ).await;
                     tracing::warn!(
                         kind = kind.as_str(),
-                        "insight_copy: model reply failed validation after retry — copy not cached"
+                        "narration_cache: model reply failed validation after retry — copy not cached"
                     );
                 }
                 // First miss — fall through to the corrective retry.
@@ -594,11 +594,11 @@ pub async fn generate_and_cache(
                 LAST_FAIL_MS.store(now_ms(), Ordering::Relaxed);
                 warm_logger(store)
                     .warn(
-                        "insight_copy: gateway error — 60s back-off, copy not cached",
+                        "narration_cache: gateway error — 60s back-off, copy not cached",
                         Some(serde_json::json!({ "kind": kind.as_str(), "error": err })),
                     )
                     .await;
-                tracing::debug!(error = %err, kind = kind.as_str(), "insight_copy: gateway error — 60s back-off, copy not cached");
+                tracing::debug!(error = %err, kind = kind.as_str(), "narration_cache: gateway error — 60s back-off, copy not cached");
                 return None;
             }
         }
@@ -607,7 +607,7 @@ pub async fn generate_and_cache(
 }
 
 /// Wire-path cache read ONLY — no inference, instant. Computes the `facts_hash`
-/// and reads `sensei.insight_copy` (which bumps `last_used_at`). `None` on miss.
+/// and reads `sensei.narration_cache` (which bumps `last_used_at`). `None` on miss.
 pub async fn read_cached_copy(
     store: &PgStore,
     kind: InsightKind,
@@ -615,7 +615,7 @@ pub async fn read_cached_copy(
 ) -> Option<InsightCopy> {
     let h = facts_hash(kind, facts);
     store
-        .get_insight_copy(kind.as_str(), &h)
+        .get_narration_cache(kind.as_str(), &h)
         .await
         .map(|(title, detail)| InsightCopy { title, detail })
 }

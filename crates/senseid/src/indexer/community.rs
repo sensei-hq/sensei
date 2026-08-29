@@ -281,7 +281,7 @@ const DESCRIPTION_ENRICH_CAP: i64 = 25;
 /// every error/timeout is swallowed. For the folder's largest
 /// [`DESCRIPTION_ENRICH_CAP`] communities it generates a one-line model summary
 /// (cache-first, so a re-detect of an unchanged community reuses it) and stamps
-/// `description` + `props.source='insight-copy'`; on any miss the honest-empty
+/// `description` + `props.source='narration-cache'`; on any miss the honest-empty
 /// NULL / `'null'` written by the authoritative step is left in place — never a
 /// static template (never-fabricate).
 pub async fn enrich_community_descriptions(
@@ -322,8 +322,8 @@ pub async fn enrich_community_descriptions(
     }
 }
 
-/// Generate one community's description via insight-copy, or honest-empty.
-/// Returns `Some((prose, "insight-copy"))` only when the model authored a valid
+/// Generate one community's description via narration-cache, or honest-empty.
+/// Returns `Some((prose, "narration-cache"))` only when the model authored a valid
 /// summary; `None` on cache-miss + model failure / breaker back-off / validation
 /// rejection — NEVER a static template. Cache-first so an unchanged community
 /// reuses its copy (stable text across re-detects).
@@ -332,23 +332,24 @@ async fn generate_description(
     gateway: &gateway::Gateway,
     facts: &serde_json::Value,
 ) -> Option<(String, &'static str)> {
-    use crate::analysis::insight_copy::{self, CopyLimits, InsightKind};
+    use crate::analysis::narration_cache::{self, CopyLimits, InsightKind};
 
-    let copy =
-        match insight_copy::read_cached_copy(pg, InsightKind::CommunityDescription, facts).await {
-            Some(c) => Some(c),
-            None => {
-                insight_copy::generate_and_cache(
-                    pg,
-                    gateway,
-                    InsightKind::CommunityDescription,
-                    facts,
-                    CopyLimits::default(),
-                )
-                .await
-            }
-        };
-    copy.map(|c| (c.detail, "insight-copy"))
+    let copy = match narration_cache::read_cached_copy(pg, InsightKind::CommunityDescription, facts)
+        .await
+    {
+        Some(c) => Some(c),
+        None => {
+            narration_cache::generate_and_cache(
+                pg,
+                gateway,
+                InsightKind::CommunityDescription,
+                facts,
+                CopyLimits::default(),
+            )
+            .await
+        }
+    };
+    copy.map(|c| (c.detail, "narration-cache"))
 }
 
 #[cfg(test)]
