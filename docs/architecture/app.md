@@ -44,7 +44,7 @@ libraries, impact, traceability, about, instruments), `(config)/setup/*`
 
 **25 screens shipped**, essentially completing Observatory + the project window.
 The gaps are *upstream* — thin/empty data (memory promotion, doc-drift noise,
-insight-copy not wired on some screens), not missing UI. Not-built surfaces:
+narration-cache not wired on some screens), not missing UI. Not-built surfaces:
 Solution segment, Bootstrap splash, consolidation, insights-reasoning drawer
 (Phase 3). See [`../requirements/open-issues.md`](../plan/README.md).
 

@@ -98,7 +98,7 @@ async fn enqueue_global_passes(queue: &TaskQueue) {
     // Governance Tier-2: merge the global ruleset when it changed (source-hash
     // guarded, so an unchanged tick is a cheap no-op — no model call).
     queue.enqueue(Task::new(TaskKind::ConsolidateGovernance, "", "")).await;
-    // Eager insight-copy: pre-generate mentor copy for pending recs so the
+    // Eager narration-cache: pre-generate mentor copy for pending recs so the
     // Insights/Today board reads cached copy on first view (idempotent — cached
     // recs skipped).
     queue.enqueue(Task::new(TaskKind::WarmInsightCopy, "", "")).await;
@@ -364,7 +364,7 @@ mod tests {
         );
         assert!(
             kinds.contains(&TaskKind::WarmInsightCopy),
-            "eager insight-copy warming must ride the global-passes tick, got {kinds:?}",
+            "eager narration-cache warming must ride the global-passes tick, got {kinds:?}",
         );
         assert!(
             kinds.contains(&TaskKind::LearnPlaybooks),

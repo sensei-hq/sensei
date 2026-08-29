@@ -1476,7 +1476,7 @@ async fn community_description_authoritative_write_is_honest_null() {
     // community's description NULL with props.source='null' — honest-empty,
     // NEVER a static template. (Model prose is stamped later, off-barrier, by
     // enrich_community_descriptions.) The Done-gate keys on
-    // props.source ∈ {'insight-copy','null'}.
+    // props.source ∈ {'narration-cache','null'}.
     let s = pg_store().await;
     let fid = create_test_folder(&s, &format!("commdesc_{}", uuid::Uuid::new_v4())).await;
     let a = s

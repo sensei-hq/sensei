@@ -2,14 +2,18 @@ use super::*;
 
 #[allow(dead_code, clippy::too_many_arguments, clippy::type_complexity)]
 impl PgStore {
-    /// Cache read for the insight-copy pipeline. Returns the persisted
+    /// Cache read for the narration-cache pipeline. Returns the persisted
     /// `(title, detail)` for `(kind, facts_hash)` and bumps `last_used_at`
     /// in the same statement so hot copy stays warm. `None` on cache miss or
     /// DB error (the caller then generates fresh or falls back to a static
     /// template). DB errors are logged, never swallowed silently.
-    pub async fn get_insight_copy(&self, kind: &str, facts_hash: &str) -> Option<(String, String)> {
+    pub async fn get_narration_cache(
+        &self,
+        kind: &str,
+        facts_hash: &str,
+    ) -> Option<(String, String)> {
         let row: Result<Option<(String, String)>, _> = sqlx_core::query_as::query_as(
-            "UPDATE sensei.insight_copy SET last_used_at = now() \
+            "UPDATE sensei.narration_cache SET last_used_at = now() \
              WHERE kind = $1 AND facts_hash = $2 RETURNING title, detail",
         )
         .bind(kind)
@@ -19,17 +23,17 @@ impl PgStore {
         match row {
             Ok(hit) => hit,
             Err(e) => {
-                tracing::warn!(error = %e, kind, "get_insight_copy: DB error — treating as cache miss");
+                tracing::warn!(error = %e, kind, "get_narration_cache: DB error — treating as cache miss");
                 None
             }
         }
     }
 
-    /// Cache write for the insight-copy pipeline. Upserts the generated copy
+    /// Cache write for the narration-cache pipeline. Upserts the generated copy
     /// for `(kind, facts_hash)`; a newer generation wins on conflict and both
     /// timestamps reset. DB errors are logged and swallowed (the caller has
     /// already returned copy to the user — a failed cache write is not fatal).
-    pub async fn upsert_insight_copy(
+    pub async fn upsert_narration_cache(
         &self,
         kind: &str,
         facts_hash: &str,
@@ -39,7 +43,7 @@ impl PgStore {
         model_id: Option<&str>,
     ) {
         let res = sqlx_core::query::query(
-            "INSERT INTO sensei.insight_copy \
+            "INSERT INTO sensei.narration_cache \
                (kind, facts_hash, title, detail, model_provider, model_id) \
              VALUES ($1, $2, $3, $4, $5, $6) \
              ON CONFLICT (kind, facts_hash) DO UPDATE SET \
@@ -56,7 +60,7 @@ impl PgStore {
         .execute(&self.pool)
         .await;
         if let Err(e) = res {
-            tracing::warn!(error = %e, kind, "upsert_insight_copy: DB error — copy not cached");
+            tracing::warn!(error = %e, kind, "upsert_narration_cache: DB error — copy not cached");
         }
     }
 

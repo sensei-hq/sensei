@@ -49,7 +49,7 @@ impl PgStore {
         Ok(updated_at)
     }
 
-    // ── Insight copy cache (insight-copy pipeline) ────────────────────
+    // ── Insight copy cache (narration-cache pipeline) ────────────────────
 
     /// List memory-share batches for a project, newest first. `only_status`
     /// filters to a single lifecycle stage (`proposed`, `approved`, …); pass

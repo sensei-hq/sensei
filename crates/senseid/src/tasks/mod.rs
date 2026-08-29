@@ -115,7 +115,7 @@ pub enum TaskKind {
     /// `POST /api/knowledge/rules/consolidate`.
     ConsolidateGovernance,
     /// Global: **eagerly** pre-generate the mentor-voice insight copy for pending
-    /// recommendations (via [`crate::analysis::insight_copy::generate_and_cache`])
+    /// recommendations (via [`crate::analysis::narration_cache::generate_and_cache`])
     /// so the Insights / Today board reads cached copy on the FIRST view — no
     /// fallback→warm text transition, no inference on the wire. Idempotent
     /// (cached recs skipped) and bounded per tick; enqueued each analyzer tick.
@@ -526,7 +526,7 @@ impl TaskKind {
                 retryable: false,
             },
             Self::WarmInsightCopy => KindInfo {
-                name: "warm_insight_copy",
+                name: "warm_narration_cache",
                 pipeline: Pipeline::Inference,
                 stage: Stage::Derive,
                 budget_secs: 600,

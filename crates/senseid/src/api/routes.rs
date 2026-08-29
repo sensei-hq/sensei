@@ -1146,11 +1146,11 @@ mod tests {
     /// this session moved this metric" line). On a CACHE HIT it serves the stored
     /// model copy; on a MISS it serves the deterministic, row-derived fallback
     /// (title = metric label, detail = a structural line) — never blank, never
-    /// fabricated. Seeds one `insight_copy` row for one session's exact
+    /// fabricated. Seeds one `narration_cache` row for one session's exact
     /// `facts_hash` and leaves a second session uncached to pin both paths.
     #[tokio::test]
     async fn get_project_metric_day_sessions_attaches_observation() {
-        use crate::analysis::insight_copy::{InsightKind, facts_hash};
+        use crate::analysis::narration_cache::{InsightKind, facts_hash};
         use crate::analysis::session_metric_note::SessionMetricFacts;
 
         let (app, state) = test_app().await;
@@ -1209,7 +1209,7 @@ mod tests {
             facts_hash(InsightKind::SessionMetricObservation, &hit_facts.to_facts_json());
         state
             .pg
-            .upsert_insight_copy(
+            .upsert_narration_cache(
                 "session_metric_observation",
                 &hit_hash,
                 "first-try win",
@@ -1259,7 +1259,7 @@ mod tests {
         );
 
         sqlx_core::query::query(
-            "DELETE FROM sensei.insight_copy WHERE kind = 'session_metric_observation' AND facts_hash = $1")
+            "DELETE FROM sensei.narration_cache WHERE kind = 'session_metric_observation' AND facts_hash = $1")
             .bind(&hit_hash).execute(state.pg.pool()).await.unwrap();
         sqlx_core::query::query("DELETE FROM activity.sessions WHERE folder_id = $1")
             .bind(fid)

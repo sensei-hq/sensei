@@ -592,7 +592,7 @@ pub(crate) async fn hook_gate(
 /// an un-confirmed session gets suggested `/sensei:intake` a single time
 /// instead of on every PreToolUse call (it would otherwise fire on every
 /// tool call for the rest of the session — spammy, not a nudge). Mirrors the
-/// `inflight()` idiom in `analysis::insight_copy` (`OnceLock` + `Mutex`,
+/// `inflight()` idiom in `analysis::narration_cache` (`OnceLock` + `Mutex`,
 /// poison recovered rather than panicking the daemon). In-process only —
 /// resets on daemon restart, which is acceptable for an advisory nudge.
 fn nudged_sessions() -> &'static std::sync::Mutex<std::collections::HashSet<uuid::Uuid>> {

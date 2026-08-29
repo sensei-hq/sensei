@@ -3,7 +3,7 @@
 > **What an "insight" is, how it's derived, and where it lives.** The generator
 > behind the [[screen/observatory-insights]] board (bucketing rules live here) and
 > the [[screen/observatory-today]] "one thing". The user-facing wording is the
-> separate [[pipeline/insight-copy]] layer.
+> separate [[pipeline/narration-cache]] layer.
 >
 > **Owner files:** aggregator `crates/senseid/src/api/handlers/observatory.rs::get_insights`
 > · pure bucketing `crates/senseid/src/insights.rs` · rec generation
@@ -44,7 +44,7 @@ flowchart LR
     AN --> C[(corrections)]
     R & M & P & C --> AGG["GET /api/insights<br/>aggregate + bucket + overlay copy"]
     AGG --> BOARD[Insights board<br/>Now · Soon · Settled]
-    AGG -.->|kind + facts_hash| IC[(sensei.insight_copy<br/>cached mentor prose)]
+    AGG -.->|kind + facts_hash| IC[(sensei.narration_cache<br/>cached mentor prose)]
 ```
 
 ## Derivation — bucketing rules (the generator)
@@ -62,20 +62,20 @@ Now = the day's decisions · Soon = read-once, revisit · Settled = the "how we 
 here" shelf. The tri-column layout *is* the sort — no tabs, no sort control; each
 card carries **one** highlighted default verb (Apply · Review · Dismiss).
 
-## The wording layer — [[pipeline/insight-copy]]
+## The wording layer — [[pipeline/narration-cache]]
 
 Each card's **title + detail** is mentor-voice prose owned by the model (*"the
 model owns the sentence, the code owns the action"*). Generated per
 `(kind, facts_hash)` — `facts_hash = sha256(kind + canonical_json(facts))`, where
 `facts` are only the *discriminating* prose columns (title/why/impact), never
 code-owned display state (urgency/status/score) — and persisted in
-**`sensei.insight_copy`**. The wire path (`copy_or_warm`) reads the cache and, on a
+**`sensei.narration_cache`**. The wire path (`copy_or_warm`) reads the cache and, on a
 miss, returns a deterministic **fallback template** immediately while a background
 task warms the model copy for next load; inference never runs on a request's
 critical path.
 
 > **Two senses of "insight" in the code** — (1) the **board** (this aggregator);
-> (2) **`InsightKind`** + `insight_copy` — the *copy* vocabulary (tool cards,
+> (2) **`InsightKind`** + `narration_cache` — the *copy* vocabulary (tool cards,
 > memory prompts, hero koan, drift…). Neither is a stored insight *entity*: the
 > substance is the source learning, the copy is its wording.
 
@@ -84,7 +84,7 @@ critical path.
 | Thing | Persisted? | Where |
 |---|---|---|
 | Learning entities (rec/memory/pattern/correction) | **yes** — source of truth | their own tables |
-| The mentor **copy** (title/detail) | **yes** (a cache) | `sensei.insight_copy` keyed `(kind, facts_hash)` |
+| The mentor **copy** (title/detail) | **yes** (a cache) | `sensei.narration_cache` keyed `(kind, facts_hash)` |
 | The Insights **board** (Now/Soon/Settled) | **no** — derived live | `/api/insights` (4 reads + pure bucketing) |
 | A standalone "insight" row | **no** — deliberately none | — |
 
@@ -122,14 +122,14 @@ vs FTR-when-absent per memory/pattern/tool — feeds rec ranking + landing-card 
    on the *next* load (the "text transitions" papercut). Now a global
    **`TaskKind::WarmInsightCopy`** task, enqueued each analyzer tick alongside the
    other global passes, **pre-generates** the copy for pending recommendations
-   (`insights::rec_copy_inputs` → `insight_copy::generate_and_cache`) so the board
+   (`insights::rec_copy_inputs` → `narration_cache::generate_and_cache`) so the board
    reads cached copy on the *first* view. Idempotent (a rec whose copy is cached is
    skipped, doesn't spend the cap), bounded (`WARM_CAP=20` model calls/tick, so it
    converges over ticks), breaker-guarded (a down/busy model returns fast). The
    cache stays; its *fill timing* moved from read-time to analyzer-time.
    *Coverage:* recommendations (the primary, most-visible source) today; memories /
    patterns / corrections still warm lazily via `copy_or_warm`.
-3. **Naming:** `sensei.insight_copy` holds generated *prose*, not a duplicate.
+3. **Naming:** `sensei.narration_cache` holds generated *prose*, not a duplicate.
    Rename → **`insight_text`**. Reserve `insights` / `derived_insights` for a
    *future* materialised, anonymised, shareable snapshot (see 5).
 4. **History (why the orphans exist).** `inference.insights` + `insight_batches`
@@ -169,7 +169,7 @@ The previous version of this doc described an unbuilt recommendation model. The
 | Top-1 hero | [[screen/observatory-today]] · [[screen/project-overview]] |
 | Applied → `MeasureVerdicts` | [[pipeline/impact]] |
 | Dismissed signature | suppression set read by `generate.rs` next tick |
-| Cached mentor copy | `insight_copy` per `(kind, facts_hash)` |
+| Cached mentor copy | `narration_cache` per `(kind, facts_hash)` |
 
 ## Done gate
 
@@ -183,7 +183,7 @@ The previous version of this doc described an unbuilt recommendation model. The
 
 - **A learning appears in two columns** — server bucketing rules aren't mutually exclusive.
 - **Counts read 0-0-0 while cards render** — count query and content query diverged.
-- **Every Now card reads the same wording** — insight-copy regression ([[pipeline/insight-copy]] wrong-gate).
+- **Every Now card reads the same wording** — narration-cache regression ([[pipeline/narration-cache]] wrong-gate).
 - **Applied rec never triggers `MeasureVerdicts`** — the impact chain regressed (recurring; see [[pipeline/analyzer]]).
 - **A dismissed signature re-fires next tick** — suppression set not consulted.
 - **A shared insight leaks client/repo/source** — the anonymised snapshot (decision 5) wasn't applied; raw facts crossed the boundary.
@@ -192,6 +192,6 @@ The previous version of this doc described an unbuilt recommendation model. The
 
 - [[screen/observatory-insights]] — the board surface (Now/Soon/Settled)
 - [[screen/observatory-today]] — the "one thing" over the Now column
-- [[pipeline/insight-copy]] — the mentor-voice wording layer (`insight_copy` → `insight_text`)
+- [[pipeline/narration-cache]] — the mentor-voice wording layer (`narration_cache` → `insight_text`)
 - [[pipeline/memory]] · [[pipeline/analyzer]] · [[pipeline/impact]] · [[pipeline/signals]] — the sources + measurement
 - [[pipeline/collective-intelligence]] — the future shared/anonymised insight snapshot (Dōjō)

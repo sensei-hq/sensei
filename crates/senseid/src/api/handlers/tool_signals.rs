@@ -20,7 +20,7 @@
 //! - `unused`      — no activity in the last month (`unused_days`).
 //! - `win`         — high traffic + clean. A workhorse.
 
-use crate::analysis::insight_copy::{FallbackCopy, InsightKind};
+use crate::analysis::narration_cache::{FallbackCopy, InsightKind};
 use serde::{Deserialize, Serialize};
 
 /// Raw tool-usage row as decoded from `sensei.tool_usage_stats`. Only the
@@ -56,7 +56,7 @@ pub struct Signal {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub action: Option<String>,
 
-    // ── Raw metrics for the insight-copy facts builder ──────────────────────
+    // ── Raw metrics for the narration-cache facts builder ──────────────────────
     // Carried so [`signal_copy_inputs`] can hand stable facts to the mentor-voice
     // pipeline without re-parsing the rendered title/detail. NOT serialized —
     // the wire shape stays `{ tool_name, variant, title, detail, action? }`.
@@ -329,7 +329,7 @@ fn pct(f: f64) -> i64 {
     (f * 100.0).round() as i64
 }
 
-/// Round an error-rate fraction to two decimals so the insight-copy facts stay
+/// Round an error-rate fraction to two decimals so the narration-cache facts stay
 /// stable and human-clean (`0.10`, not `0.10344…`). Two decimals is
 /// whole-percent granularity, matching the integer percentage the templates
 /// render — a facts_hash cannot drift on inference-noise-sized fraction diffs.
@@ -337,7 +337,7 @@ fn round2(f: f64) -> f64 {
     (f * 100.0).round() / 100.0
 }
 
-/// Map one curated [`Signal`] to the inputs the mentor-voice insight-copy
+/// Map one curated [`Signal`] to the inputs the mentor-voice narration-cache
 /// pipeline needs: the [`InsightKind`], the stable `facts` object, and the
 /// deterministic [`FallbackCopy`] (the current template text).
 ///
@@ -494,7 +494,7 @@ mod tests {
         assert!(v2.get("action").is_none(), "None action should be omitted");
     }
 
-    // ── insight-copy facts builder (pure) ───────────────────────────────────
+    // ── narration-cache facts builder (pure) ───────────────────────────────────
 
     #[test]
     fn signal_copy_inputs_per_tool_warn_maps_and_carries_facts() {
@@ -547,7 +547,7 @@ mod tests {
 
     #[test]
     fn signal_copy_inputs_days_change_alters_facts_hash() {
-        use crate::analysis::insight_copy::facts_hash;
+        use crate::analysis::narration_cache::facts_hash;
         let a =
             derive_signals(&[row("sensei.cold", 30, 0, 30)], now(), &SignalThresholds::default());
         let b =

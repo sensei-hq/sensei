@@ -39,7 +39,7 @@ comment on column communities.god_node_ids
      is 'UUIDs of top-5 highest-degree nodes in this community.';
 comment on column communities.props
      is 'Enrichment provenance/metadata. props.source records how `description` was
-produced: ''insight-copy'' (model-authored) or ''null'' (honest-empty on model
+produced: ''narration-cache'' (model-authored) or ''null'' (honest-empty on model
 failure) — never a static template (D4.5 never-fabricate).';
 comment on column communities.computed_at
      is 'Timestamp when Leiden algorithm last ran for this cluster.';

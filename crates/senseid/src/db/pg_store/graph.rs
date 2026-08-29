@@ -1441,7 +1441,7 @@ impl PgStore {
 
     /// Stamp a community's model-authored `description` + its provenance
     /// (`props.source`), replacing the honest-empty placeholder from the
-    /// authoritative write (D4.5). Only called on a successful insight-copy
+    /// authoritative write (D4.5). Only called on a successful narration-cache
     /// generation — a failure leaves the honest-empty NULL/`'null'` as written.
     pub async fn set_community_description(
         &self,

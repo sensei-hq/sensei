@@ -4,9 +4,9 @@
 //! *when* to run things) so the heuristics stay unit-testable.
 
 pub mod doc_drift;
-pub mod insight_copy;
 pub mod metric_day_explainer;
 pub mod metric_narrative;
+pub mod narration_cache;
 pub mod project_icon;
 pub mod rule_consolidation;
 pub mod session_metric_note;

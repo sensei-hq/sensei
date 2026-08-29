@@ -879,7 +879,7 @@ pub(crate) async fn tool_usage(
 pub(crate) async fn tool_signals(
     State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    use crate::analysis::insight_copy::{CopyLimits, copy_or_warm};
+    use crate::analysis::narration_cache::{CopyLimits, copy_or_warm};
     use crate::api::handlers::tool_signals as ts;
 
     let rows = state.pg.get_tool_usage_stats().await.map_err(|e| {
@@ -891,8 +891,8 @@ pub(crate) async fn tool_signals(
     let raw = ts::derive_signals(&stats, chrono::Utc::now(), &ts::SignalThresholds::default());
     let mut signals = ts::curate_insights(raw);
 
-    // ── Mentor-voice copy (insight-copy) ─────────────────────────────────────
-    // Route each curated card's title + detail through the insight-copy pipeline.
+    // ── Mentor-voice copy (narration-cache) ─────────────────────────────────────
+    // Route each curated card's title + detail through the narration-cache pipeline.
     // `copy_or_warm` is a wire-path cache read (+ a detached background warm on a
     // miss), never a blocking model call — variant / action / tool_name stay
     // code-owned; only the sentence changes. The eager warm in
@@ -992,7 +992,7 @@ fn relative_when(
 pub(crate) async fn observatory_today(
     State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    use crate::analysis::insight_copy::{CopyLimits, FallbackCopy, InsightKind, copy_or_warm};
+    use crate::analysis::narration_cache::{CopyLimits, FallbackCopy, InsightKind, copy_or_warm};
     use crate::observatory_home as home;
 
     let now_local = chrono::Local::now();
@@ -1047,7 +1047,7 @@ pub(crate) async fn observatory_today(
                 .first()
                 .map(|r| home::session_ids_from_evidence(&r["evidence"], 3))
                 .unwrap_or_default();
-            // Mature hero — route the koan title + body through insight-copy
+            // Mature hero — route the koan title + body through narration-cache
             // (mature-only by design; see the early-branch note below). The
             // model owns the sentence; the code owns the action/impact/source/
             // noticed fields, which stay exactly as mature_hero set them.
@@ -1078,7 +1078,7 @@ pub(crate) async fn observatory_today(
             hero["body"] = hero_copy.detail.into();
 
             // Supporting insight cards — route each card's one-liner through
-            // insight-copy. Each await is a cache read (+ a background warm on a
+            // narration-cache. Each await is a cache read (+ a background warm on a
             // miss), not a model call, so the ≤4 per-screen loop stays cheap.
             let mut insights: Vec<serde_json::Value> = Vec::new();
             for rec in rest.iter().take(3) {
@@ -1131,7 +1131,7 @@ pub(crate) async fn observatory_today(
         }
     } else {
         // Early (and the steady-hero branch above) stay static by design:
-        // insight-copy is mature-only. Early copy is purpose-built calibration
+        // narration-cache is mature-only. Early copy is purpose-built calibration
         // text; routing it through the model risks inventing a teaching where
         // there is no signal (spec wrong-gate: "Koan is generic → early state").
         (
@@ -1180,7 +1180,7 @@ pub(crate) async fn get_insights(
     State(state): State<AppState>,
     axum::extract::Query(q): axum::extract::Query<InsightsQuery>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    use crate::analysis::insight_copy::{CopyLimits, FallbackCopy, InsightKind, copy_or_warm};
+    use crate::analysis::narration_cache::{CopyLimits, FallbackCopy, InsightKind, copy_or_warm};
     use crate::insights as ins;
 
     let project: Option<uuid::Uuid> = match q.project.as_deref() {
@@ -1244,13 +1244,13 @@ pub(crate) async fn get_insights(
         c["column"] = serde_json::json!(ins::CORRECTION_COLUMN);
     }
 
-    // ── Mentor-voice copy (insight-copy) ─────────────────────────────────────
-    // Route each card's user-facing sentence through the insight-copy pipeline
+    // ── Mentor-voice copy (narration-cache) ─────────────────────────────────────
+    // Route each card's user-facing sentence through the narration-cache pipeline
     // in triage order (Now → Soon → Settled). `copy_or_warm` is a wire-path
     // cache read (+ a detached background warm on a miss), never a blocking model
     // call — column / tone / action stay code-owned; only the sentence changes.
     // Cap the model-routed items to the top 8 across the whole screen to avoid a
-    // warm storm on first load: the spec ([[pipeline/insight-copy]]) budgets
+    // warm storm on first load: the spec ([[pipeline/narration-cache]]) budgets
     // "5 calls max per screen"; 8 is a safe ceiling here because warms are
     // backgrounded and deduped by facts_hash. Cards beyond the cap render their
     // static text (which is what they are until a warm caches them anyway).
@@ -1325,7 +1325,7 @@ pub(crate) async fn get_insights(
         tracing::debug!(
             routable,
             cap = COPY_CAP,
-            "get_insights: capped insight-copy routing to the top cards; remainder render static text"
+            "get_insights: capped narration-cache routing to the top cards; remainder render static text"
         );
     }
 

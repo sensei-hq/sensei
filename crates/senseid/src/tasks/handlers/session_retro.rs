@@ -5,7 +5,7 @@
 //! tick (`analyze::enrich_session`): the session's already-computed L0 fields
 //! (outcome / ftr / corrections / duration / dominant module / tool mix) plus
 //! the distinct files/modules touched become a stable `facts` JSON, which is
-//! routed through the [`insight_copy`](crate::analysis::insight_copy) chain to
+//! routed through the [`narration_cache`](crate::analysis::narration_cache) chain to
 //! produce a short mentor-voice narrative. The DETERMINISTIC facts stay code-
 //! owned; only the prose sentence routes through the model.
 //!
@@ -17,7 +17,7 @@
 //! when unchanged — see [`crate::db::pg_store::PgStore::set_session_summary`].
 
 use super::analyze::{HookEvent, SessionMetrics, parent_dir};
-use crate::analysis::insight_copy::{CopyLimits, InsightCopy, InsightKind, generate_and_cache};
+use crate::analysis::narration_cache::{CopyLimits, InsightCopy, InsightKind, generate_and_cache};
 use crate::db::pg_store::PgStore;
 
 /// How many of a session's most-used tools to name in the facts. Ranked by
@@ -43,7 +43,7 @@ pub struct SessionFacts {
 }
 
 impl SessionFacts {
-    /// Stable JSON fed to the insight-copy chain (and hashed for the copy
+    /// Stable JSON fed to the narration-cache chain (and hashed for the copy
     /// cache). Key order is irrelevant — `facts_hash` canonicalises it.
     pub fn to_facts_json(&self) -> serde_json::Value {
         serde_json::json!({
@@ -141,7 +141,7 @@ pub fn compose_narrative(copy: &InsightCopy) -> String {
 }
 
 /// Produce the retrospective narrative for one session. EAGER path (mirrors
-/// `tool_insights`' warm off the analyzer tick): awaits the insight-copy chain,
+/// `tool_insights`' warm off the analyzer tick): awaits the narration-cache chain,
 /// and on any miss/failure returns the deterministic fallback. Never errors and
 /// always returns a non-empty string, so the caller can always persist it.
 pub async fn generate_session_summary(

@@ -18,7 +18,7 @@ export type MemoryAction = 'reinforce' | 'challenge' | 'archive' | 'dismiss';
  * Deterministic, non-fatal message for a failed lifecycle action. 409 means the
  * memory is already terminal (challenge/dismiss only); everything else is a
  * transient "try again". Voice: lowercase, no exclamation. These are
- * status-driven, so they never route through insight-copy.
+ * status-driven, so they never route through narration-cache.
  */
 export function actionErrorMessage(action: MemoryAction, status: number): string {
     if (status === 409) return 'this memory is already archived or rejected.';

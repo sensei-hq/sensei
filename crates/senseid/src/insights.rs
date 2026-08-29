@@ -5,7 +5,7 @@
 //!
 //! The UI trusts the column label the daemon assigns; it does not re-bucket.
 
-use crate::analysis::insight_copy::{FallbackCopy, InsightCopy, InsightKind};
+use crate::analysis::narration_cache::{FallbackCopy, InsightCopy, InsightKind};
 
 /// The three triage columns.
 pub const NOW: &str = "now";
@@ -52,7 +52,7 @@ pub fn pattern_column(lifecycle: &str) -> Option<&'static str> {
 pub const CORRECTION_COLUMN: &str = NOW;
 
 /// Map one pending recommendation row to the inputs the mentor-voice
-/// insight-copy pipeline needs: the [`InsightKind`], the stable `facts` object,
+/// narration-cache pipeline needs: the [`InsightKind`], the stable `facts` object,
 /// and the deterministic [`FallbackCopy`] (the raw DB prose).
 ///
 /// The row is the JSON either `pg_store::get_insights_recommendations` (the
@@ -90,7 +90,7 @@ pub fn apply_rec_copy(r: &mut serde_json::Value, copy: InsightCopy) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::analysis::insight_copy::facts_hash;
+    use crate::analysis::narration_cache::facts_hash;
     use serde_json::json;
 
     #[test]
@@ -126,7 +126,7 @@ mod tests {
         assert_eq!(pattern_column("gap"), None);
     }
 
-    // ── rec insight-copy inputs (pure) ──────────────────────────────────────
+    // ── rec narration-cache inputs (pure) ──────────────────────────────────────
 
     #[test]
     fn rec_copy_inputs_maps_kind_facts_and_fallback() {
@@ -190,7 +190,7 @@ mod tests {
         assert_eq!(
             facts_hash(k1, &f1),
             facts_hash(k2, &f2),
-            "get_insights and get_project_recommendations must share the insight-copy cache key"
+            "get_insights and get_project_recommendations must share the narration-cache cache key"
         );
     }
 
