@@ -19,7 +19,13 @@
 import type { Cookies } from '@sveltejs/kit';
 import { TENANT_COOKIE, TENANT_PARAM, type TenantKey } from '$lib/tenant';
 import { deriveConsoleContext } from '$lib/console-context';
-import { getUserOrg, listUserOrgs, sessionUser, userProfile } from '$lib/server/dojo-orgs';
+import {
+	getUserOrg,
+	listUserOrgs,
+	principalIdForSession,
+	sessionUser,
+	userProfile
+} from '$lib/server/dojo-orgs';
 import type { DojoOrg } from '$lib/dojo-data';
 import type { PersonalUser } from '$lib/personal-home-view';
 
@@ -44,7 +50,12 @@ export async function loadConsoleContext({
 	locals: App.Locals;
 }): Promise<ConsoleLoadData> {
 	const su = sessionUser(locals);
-	const memberships = su?.id ? await listUserOrgs(su.id) : [];
+	// `su.id` is the SUPABASE AUTH id; every dojo.* row is keyed on the PRINCIPAL
+	// id, and the two are never equal. Passing `su.id` here matched zero rows for
+	// every user — an empty "My dōjōs", and `hasMembership` false, which treats a
+	// real member as solo.
+	const principalId = await principalIdForSession(locals);
+	const memberships = principalId ? await listUserOrgs(principalId) : [];
 	const profile = userProfile(su);
 	const ctx = deriveConsoleContext({
 		memberships,
@@ -54,7 +65,7 @@ export async function loadConsoleContext({
 	});
 	// Resolve the chrome org only when there's a tenant to resolve (a member with
 	// a selection); a membership-less user has no tenant, so no lookup is made.
-	const org = su?.id && ctx.tenantKey ? await getUserOrg(su.id, ctx.tenantKey) : undefined;
+	const org = principalId && ctx.tenantKey ? await getUserOrg(principalId, ctx.tenantKey) : undefined;
 	return {
 		tenantKey: ctx.tenantKey,
 		hasMembership: ctx.hasMembership,

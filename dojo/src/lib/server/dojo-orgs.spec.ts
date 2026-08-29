@@ -155,3 +155,53 @@ describe('tenant column rename (org → slug)', () => {
 		expect(TENANT_COLS).toMatch(/\bslug\b/);
 	});
 });
+
+// ── The auth-id / principal-id confusion ────────────────────────────────────
+//
+// `dojo.memberships.user_id` holds a PRINCIPAL id. `locals.session.user.id` is
+// the SUPABASE AUTH id. `dojo.principals.id` defaults to `gen_random_uuid()`, so
+// the two are NEVER equal — not "usually equal with an exception", always
+// different. Passing the session id straight into `listUserOrgs` therefore
+// matches zero rows for EVERY user.
+//
+// Verified on live data before this test was written: the same query returns
+// 0 rows for the auth id and 2 for the principal id, on an account with two
+// active memberships. The symptom is an empty "My dōjōs" — and worse,
+// `hasMembership` comes out false, so a real member is treated as solo.
+//
+// The API plane never had this bug: `resolveCaller` translates via
+// `resolvePrincipalId`. This is the PAGE plane catching up.
+describe('principalIdForSession — the page plane must translate, like resolveCaller does', () => {
+	it('returns the PRINCIPAL id, not the session id it was given', async () => {
+		stub = makeDb({ data: { id: 'p-principal' }, error: null });
+		const { principalIdForSession } = await import('./dojo-orgs');
+		await expect(principalIdForSession({ session: { user: { id: 'auth-uuid' } } })).resolves.toBe(
+			'p-principal'
+		);
+	});
+
+	it('is null when there is no session at all', async () => {
+		stub = makeDb();
+		const { principalIdForSession } = await import('./dojo-orgs');
+		await expect(principalIdForSession({})).resolves.toBeNull();
+	});
+
+	it('is null for a signed-in user who has no principal row yet', async () => {
+		// A genuine miss, not a failure: a brand-new account has no principal and
+		// therefore no memberships. Empty is the truth here.
+		stub = makeDb({ data: null, error: null });
+		const { principalIdForSession } = await import('./dojo-orgs');
+		await expect(principalIdForSession({ session: { user: { id: 'auth-uuid' } } })).resolves.toBeNull();
+	});
+
+	it('THROWS on a lookup failure rather than reporting "no principal"', async () => {
+		// The same fail-closed rule `listUserOrgs` already follows. Returning null
+		// here would degrade to an empty membership list, which silently ejects a
+		// real member to the solo landing — indistinguishable from having no orgs.
+		stub = makeDb({ data: null, error: { message: 'connection reset' } });
+		const { principalIdForSession } = await import('./dojo-orgs');
+		await expect(
+			principalIdForSession({ session: { user: { id: 'auth-uuid' } } })
+		).rejects.toThrow();
+	});
+});
