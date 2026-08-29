@@ -61,7 +61,7 @@ Driven by the analyzer scheduler (per-project `AnalyzeProject` + global passes):
 | patterns | `detected_patterns` | [pipeline/patterns](../spec/pipeline/patterns.md) |
 | inferencing (L2) | `recommendations` + consolidation `reasoning_traces` | [pipeline/inferencing](../spec/pipeline/inferencing.md) |
 | memory | promoted `memories` | [pipeline/memory](../spec/pipeline/memory.md) |
-| insight-copy | mentor-voice strings (`insight_copy`) | [pipeline/insight-copy](../spec/pipeline/insight-copy.md) |
+| narration-cache | mentor-voice strings (`narration_cache`) | [pipeline/narration-cache](../spec/pipeline/narration-cache.md) |
 | traceability | doc-drift | [pipeline/traceability](../spec/pipeline/traceability.md) |
 
 **The loop's open link:** recommendations generate but are never acted on →
@@ -74,7 +74,7 @@ LLM routing is an **in-process** capability the daemon consumes as the
 `gateway-embedded` git dependency (sibling repo `sensei-hq/gateway`; formerly the
 in-tree `crates/gateway/`, moved out to release independently). Config is
 **table-driven** from the `gateway.*` schema, loaded at boot: routers → models →
-named chains (`classify`, `reasoning`, `embed`, `insight-copy`, `image`). Chains
+named chains (`classify`, `reasoning`, `embed`, `narration-cache`, `image`). Chains
 are local-first (embedded gemma / all-minilm) with cloud legs router-gated, so
 **offline works**. Callers pin named chains.
 

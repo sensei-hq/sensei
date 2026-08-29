@@ -17,7 +17,7 @@ queue empties, PULL the next work — never stop and declare done. Policies:
    Supabase auth in the Dōjō SaaS layer. Assume a **localhost Dōjō registry** URL for
    registration/setup. Dōjō is the LAST big segment (needs the auth infra) — after depth+breadth.
 3. **DEPTH FIRST priority:** (a) finish Slot 2 (MCP registry) → (b) burn down the deferred
-   follow-ups across the 5 shipped screens = make them fully real: wire insight-copy (copy via
+   follow-ups across the 5 shipped screens = make them fully real: wire narration-cache (copy via
    gemma4, not raw DB text), define the memory promotion/merge statuses + wire readyToShare/toMerge,
    build the missing recommendation/pattern generators, the per-screen followup items → (c) overflow
    7/8 (Memories, Project Sessions+Memories) → (d) new spec screens. Work the followup notes in
@@ -103,7 +103,7 @@ wrong-gate-hunter → sensei-persona-reviewer → commit). NOT merged to main (J
 3. Per-screen follow-ups (all non-blocking, documented): `park/observatory-today-followups.md`,
    `park/observatory-projects-followups.md`, `park/project-overview-followups.md`,
    `park/observatory-insights-followups.md`, `park/observatory-sessions-followups.md`.
-   Highlights: insight-copy not wired (raw text fallback, run-wide deferral); memory
+   Highlights: narration-cache not wired (raw text fallback, run-wide deferral); memory
    promotion/merge statuses undefined (readyToShare/toMerge=0); Replay-nav is fully wired
    from Sessions but pending from Project-overview until the Replay screen lands; `all` range
    chip; ViolationCard review-nav. NONE block the shipped screens.
@@ -189,7 +189,7 @@ wrong-gate-hunter → sensei-persona-reviewer → commit). NOT merged to main (J
   Task::new(TaskKind::MeasureVerdicts,"","") after accept (also improves Slot-4 Accept button).
   Holding rebuild until gate 3 returns, then batch-rebuild+verify. Awaiting wrong-gate-hunter.
 - Gate 3 wrong-gate-hunter: one-or-more-tripping — SAME issue (Item 2: Apply→no MeasureVerdicts),
-  already fixed. Other 7 clean. Additional (deferrals, non-block): insight-copy not wired (raw DB
+  already fixed. Other 7 clean. Additional (deferrals, non-block): narration-cache not wired (raw DB
   text = accepted fallback, varied so no symptom), unused server counts (client recomputes
   optimistically = correct), violation cards no action (memory write-actions deferred).
   → observatory-insights-followups.md. Rebuild+verify job `bast5o8ze` running (install-debug +
@@ -352,8 +352,8 @@ wrong-gate-hunter → sensei-persona-reviewer → commit). NOT merged to main (J
 - **Non-blocking follow-ups** (note, don't block Slot 1): (a) mature koan hero.source empty
   — the live top rec's evidence has no session UUIDs (session_ids_from_evidence returns []);
   provenance appears when a rec carries session evidence. (b) insight label/kanji all same
-  ("繰"/"Recommendation") — insight-copy pipeline #65. (c) adopted `what` is raw prose
-  (LLM distillation deferred, insight-copy). (d) adopted empty-state wording differs from
+  ("繰"/"Recommendation") — narration-cache pipeline #65. (c) adopted `what` is raw prose
+  (LLM distillation deferred, narration-cache). (d) adopted empty-state wording differs from
   spec string (not shown on live data). (e) recentSessions wire sends ISO ts+turns not
   human when/duration — RecentSessions computes correctly client-side (DRY reuse).
 - BOTH FIXES VERIFIED GREEN (2026-07-07): app-check 0/0; app test:unit 701 pass (fixed
@@ -398,7 +398,7 @@ wrong-gate-hunter → sensei-persona-reviewer → commit). NOT merged to main (J
 - Spec fixes applied to `screen/observatory-today.md`: named real source tables
   (dataMaturity→`activity.sessions.analyzed_at` + shared `maturity_signal`; adopted→
   `sensei.memories` in-force via `list_active_memories`; ftr→`sensei.ftr_daily`);
-  added "New backend work" prereq (both endpoints are NEW); insight-copy xref;
+  added "New backend work" prereq (both endpoints are NEW); narration-cache xref;
   inverse adopted wrong-gate; koan-CTA verb exemption.
 - Resolved: adopted lane = `sensei.memories` status IN (active,reinforced,battle_tested),
   NOT `inference.detected_patterns` (that's project-window teachings).
@@ -410,38 +410,38 @@ Released all 6 completed screens (Today/Projects/Overview/Insights/Sessions + In
 marketplace ed81a5f). GitHub Actions building artifacts. NEXT: merge develop→main (0 conflicts;
 main's extra commits are just merge-commit history), then PHASE 2 (make shipped screens real).
 - ✅ MERGED develop→main (`47edc0e5`, 0 conflicts) + pushed. develop @ a66439de. main released v0.2.24.
-  PHASE 1 COMPLETE. → PHASE 2 START: pipeline/insight-copy (raw text → gemma4 copy across Today/
+  PHASE 1 COMPLETE. → PHASE 2 START: pipeline/narration-cache (raw text → gemma4 copy across Today/
   Insights/Projects/Overview), then pipeline/memory statuses (readyToShare/toMerge), then generators
   (insights/patterns/signals writers). Assess each before building (don't rebuild what's live).
 
-## PHASE 2 — insight-copy (in progress, 2026-07-08)
-ASSESSMENT (done): insight-copy is GENUINELY unwired — no gateway copy call anywhere in senseid;
+## PHASE 2 — narration-cache (in progress, 2026-07-08)
+ASSESSMENT (done): narration-cache is GENUINELY unwired — no gateway copy call anywhere in senseid;
 screens emit raw DB text. memory_status enum has NO promotion/merge-readiness value (pg_store.rs:4352
 comment) ⇒ readyToShare/toMerge=0 until an enum+ladder is added. Recommendation generation EXISTS
-(337 recs). So Phase 2 real work = (1) insight-copy pipeline, (2) memory promotion/merge statuses,
-(3) audit generators. Doing insight-copy FIRST (linchpin — touches Today/Insights/Projects/Overview).
+(337 recs). So Phase 2 real work = (1) narration-cache pipeline, (2) memory promotion/merge statuses,
+(3) audit generators. Doing narration-cache FIRST (linchpin — touches Today/Insights/Projects/Overview).
 KEY FACTS resolved:
 - Gateway chains are DAEMON-SIDE in `crates/senseid/src/api/gateway_init.rs` (lines 470-523:
-  text_chat/reasoning/embed/image_generate). Adding an `insight-copy` chain there is IN-SCOPE (not
+  text_chat/reasoning/embed/image_generate). Adding an `narration-cache` chain there is IN-SCOPE (not
   the external gateway repo). Chain shape = FallbackChainConfig{id,capability:TextChat,models,triggers}.
-  insight-copy chain must be LOCAL-ONLY (gemma-embedded→gemma4, NO cloud legs) per "offline must work".
+  narration-cache chain must be LOCAL-ONLY (gemma-embedded→gemma4, NO cloud legs) per "offline must work".
 - Gateway call pattern = `crates/senseid/src/tasks/handlers/corrections_llm.rs` (InferenceRequest{
   capability:TextChat, chain:Some("..."), Payload::Chat{messages,system,max_tokens,temperature,tools}},
   gateway.execute().await, graceful degrade to None/fallback). 400ms time-box = tokio::time::timeout.
 - deps present: sha2 0.10, hex 0.4, serde_json. analysis/ is a dir-module (analysis/doc_drift.rs,
-  `mod analysis` in main.rs) ⇒ add analysis/insight_copy.rs + register in analysis mod.
-- facts_hash = sha256(kind_str + canonical_json(facts)) hex. Table sensei.insight_copy PK(kind,facts_hash).
+  `mod analysis` in main.rs) ⇒ add analysis/narration_cache.rs + register in analysis mod.
+- facts_hash = sha256(kind_str + canonical_json(facts)) hex. Table sensei.narration_cache PK(kind,facts_hash).
 BUILD SPLIT: A=core pipeline (DDL+module+chain+store methods+tests) [delegated general-purpose]; then
 B=wire consumers (Today koan/insights + project overview hero) with existing raw strings as fallback.
 
-BUILD A ✅ DONE+VERIFIED (2026-07-08): DDL sensei.insight_copy live (8 cols+2 idx), analysis/
-insight_copy.rs (17-variant InsightKind, facts_hash sha256+canonical_json, generate_insight_copy
+BUILD A ✅ DONE+VERIFIED (2026-07-08): DDL sensei.narration_cache live (8 cols+2 idx), analysis/
+narration_cache.rs (17-variant InsightKind, facts_hash sha256+canonical_json, generate_narration_cache
 cache-first/400ms-timebox/60s-breaker[transport-only, validation-miss doesn't trip], voice_ok guard,
-build_prompt), insight-copy chain in gateway_init (local-only gemma-embedded→gemma4), pg_store
-get/upsert_insight_copy. 16 unit tests green, clippy clean on touched files. NOT committed (staged).
-Entry: generate_insight_copy(&state.pg, &state.gateway, kind, &facts, CopyLimits::default(), FallbackCopy).
+build_prompt), narration-cache chain in gateway_init (local-only gemma-embedded→gemma4), pg_store
+get/upsert_narration_cache. 16 unit tests green, clippy clean on touched files. NOT committed (staged).
+Entry: generate_narration_cache(&state.pg, &state.gateway, kind, &facts, CopyLimits::default(), FallbackCopy).
 Deviations (all fine): #![allow(dead_code)] on module (Build B replaces w/ targeted enum allow);
-model_provider always None (InferenceResponse exposes only .model); get_insight_copy returns
+model_provider always None (InferenceResponse exposes only .model); get_narration_cache returns
 Option<(String,String)>. 30-day eviction sweep NOT built (needs daily maint task — later).
 Known tradeoff: 400ms is tight for cold gemma → lazy first-hit likely falls back then breaker 60s;
 real fix = EAGER warming at tick time (populate cache so wire reads hit). Out of scope now.
@@ -453,7 +453,7 @@ Replaces module dead_code allow w/ targeted enum allow. Fallback=existing mature
 DESIGN NOTE: project-overview.md's "project_top_rec_hero"/"project_all_quiet" kinds are DOC drift vs the
 canonical InsightKind enum — reuse HeroKoanMature/HeroKoanEarly with project-scoped facts (Build B2).
 GATED-LOOP PLAN after B: done-gate+wrong-gate verify (general-purpose/sonnet) on A+B combined →
-sensei-persona-reviewer → commit insight-copy milestone. THEN B2 (project-overview + insights-triage
+sensei-persona-reviewer → commit narration-cache milestone. THEN B2 (project-overview + insights-triage
 wiring, mechanical) → THEN Build C (memory ready_to_share/to_merge read-path, per design-fork note above).
 
 BUILD B ✅ DONE (2026-07-08): observatory.rs::observatory_today wired — mature hero koan+body →
@@ -464,30 +464,30 @@ LATENCY FINDING: gemma2:2b (chain primary, in-process) ~390ms warm via CLI for ~
 the 400ms box. So the 400ms wire timeout is a HARD spec constraint ("wire never blocks on inference");
 correct fix for cold-gemma is EAGER WARMING (generate at rec-write/tick time → cache warm → wire hits
 cache), NOT bumping the timeout. ⏳ DEPLOY+LIVE-VERIFY agent running: make install-debug + restart +
-warm + curl /api/observatory/today, KEY QUESTION = does sensei.insight_copy get populated by the live
+warm + curl /api/observatory/today, KEY QUESTION = does sensei.narration_cache get populated by the live
 wire path (model copy visible) or only fallback (→ eager warming needed = Build B-eager followup)?
 Awaiting verdict: SHIP / SHIP-WITH-FOLLOWUP(eager) / FIX.
 
-VERIFY ROUND 1 = FIX (real bug found, 2026-07-08): insight-copy chain was NEVER registered in the
+VERIFY ROUND 1 = FIX (real bug found, 2026-07-08): narration-cache chain was NEVER registered in the
 runtime gateway. Root cause: `merge_baseline_capability_gaps` (gateway_init.rs) grafts a baseline chain
 only when its whole Capability is absent from the DB config; TextChat is already covered by DB
 classify/reasoning/summarize, so the new named chain was SILENTLY DROPPED. `POST /api/gateway/infer
-{chain:insight-copy}` → instant `{"error":"no candidates available for capability 'TextChat'"}`. Wire
+{chain:narration-cache}` → instant `{"error":"no candidates available for capability 'TextChat'"}`. Wire
 path got instant Err → tripped 60s breaker → 100% fallback. Eager warming would NOT have fixed it.
 Done-gate structural checks all PASSED; wrong-gates none fired; fallback path honest (never 500s).
 FIX LANDED (staged, not committed): gateway_init.rs — extracted shared `graft_chain` helper (DRY),
-added `const REQUIRED_NAMED_CHAINS=["insight-copy"]` + `merge_required_named_chains` grafting by NAME
+added `const REQUIRED_NAMED_CHAINS=["narration-cache"]` + `merge_required_named_chains` grafting by NAME
 even when capability covered, called right after the capability-gap merge (build baseline once). New
-regression test `merge_required_named_chains_grafts_insight_copy_even_when_textchat_covered`. build
+regression test `merge_required_named_chains_grafts_narration_cache_even_when_textchat_covered`. build
 clean, 4 gateway_init tests pass, clippy clean. ⏳ VERIFY ROUND 2 in flight (resumed same agent):
-re-deploy + confirm chain resolves + MEASURE warm insight-copy latency vs 400ms + KEY QUESTION (does
-sensei.insight_copy populate on the wire now?). SECONDARY RISK still open: verifier measured ollama
-gemma2:2b ~455ms warm (>400ms) — if warm insight-copy chain >400ms, lazy wire can't fill cache inline
+re-deploy + confirm chain resolves + MEASURE warm narration-cache latency vs 400ms + KEY QUESTION (does
+sensei.narration_cache populate on the wire now?). SECONDARY RISK still open: verifier measured ollama
+gemma2:2b ~455ms warm (>400ms) — if warm narration-cache chain >400ms, lazy wire can't fill cache inline
 ⇒ need WARM-ON-MISS (tokio::spawn detached un-time-boxed generate+upsert on cache miss; wire still
 returns fallback instantly, NEXT request hits warm cache) = Build B-eager. Decide from measured latency.
 
 VERIFY ROUND 2 = SHIP-WITH-FOLLOWUP → converted to REWORK (2026-07-08): registration fix CONFIRMED
-CORRECT (chain resolves: POST /api/gateway/infer{chain:insight-copy}→gemma-embedded content, 0.239s).
+CORRECT (chain resolves: POST /api/gateway/infer{chain:narration-cache}→gemma-embedded content, 0.239s).
 BUT model copy STILL doesn't reach the wire — TWO evidenced blockers:
  (1) 400ms tokio::time::timeout does NOT bound the in-process embedded (blocking) inference — every
      uncached /today load costs ~1.77s (all 4 calls run to completion; not preemptible). "Time-box" is
@@ -499,25 +499,25 @@ on inference"): wire reads cache-ONLY (instant); on miss → return fallback + f
 warm (tokio::spawn) that generates+validates+caches for next load. + strengthen prompt (explicit
 banned-word list + hard char budget + casing) + ONE retry on validation-miss. Off-wire budget generous
 (~8s runaway guard; keep breaker so a down model doesn't pile warms). Facts: PgStore is Clone, AppState
-gateway=Arc<Gateway> → both clone into spawn. Handler swaps generate_insight_copy→copy_or_warm(&state.pg,
+gateway=Arc<Gateway> → both clone into spawn. Handler swaps generate_narration_cache→copy_or_warm(&state.pg,
 &state.gateway,...). Registration fix (gateway_init) is KEPT + mergeable. ⏳ REWORK delegated.
-NOTE (no-silent-errors): insight_copy tracing warn/debug DON'T reach public.logs (only sensei_logger
+NOTE (no-silent-errors): narration_cache tracing warn/debug DON'T reach public.logs (only sensei_logger
 events do) — warm-path outcomes currently invisible; route through structured logger if easy.
 
-REWORK ✅ DONE (2026-07-08, staged not committed): insight_copy.rs reworked off-wire —
+REWORK ✅ DONE (2026-07-08, staged not committed): narration_cache.rs reworked off-wire —
 copy_or_warm(store,&Arc<Gateway>,kind,facts,limits,fallback) = wire entry, CACHE-READ-ONLY (no
 inference await); miss → fallback instantly + spawn_warm detached tokio::spawn (dedup via inflight
 set, poisoned-mutex-safe). generate_and_cache = off-wire core (WARM_TIMEOUT_MS=8000 runaway guard,
 up to 2 attempts w/ corrective retry, breaker on transport-fail only). build_prompt gained retry
 param + strengthened limits (explicit char budget + banned-words line GENERATED from BANNED_WORDS =
-DRY single source). read_cached_copy = pure cache read. generate_insight_copy REMOVED (0 callers).
+DRY single source). read_cached_copy = pure cache read. generate_narration_cache REMOVED (0 callers).
 Warm-path failures → public.logs via sensei_logger::Logger + LogWriter::pg(store.pool().clone())
 (same pattern as api/server.rs task_logger) — no-silent-errors gap CLOSED. observatory.rs both call
 sites swapped to copy_or_warm. 1191 tests pass (+3 new pure: banned-words-from-source, retry-prompt,
 claim_inflight-dedup), clippy clean on touched files. ⏳ VERIFY ROUND 3 in flight (same agent):
 SHIP BAR = (a) uncached /today latency fast again <~0.2s [was 1.77s], (b) model copy reaches wire after
 bg warm (hero caches+renders mentor-voice), (c) warm failures visible in public.logs. Card pass-rate =
-tuning note NOT blocker. If SHIP → persona-review → COMMIT insight-copy milestone (Build A+B+chain-fix+
+tuning note NOT blocker. If SHIP → persona-review → COMMIT narration-cache milestone (Build A+B+chain-fix+
 rework as one unit) → then B2 (project-overview+insights wiring) → Build C (memory share/merge counts).
 Do NOT keep looping on gemma2:2b card copy quality — architecture correctness is the milestone.
 
@@ -531,10 +531,10 @@ Rec 3 (facts specificity: pass project name/pattern into card facts) = FOLLOW-UP
 
 ★★★ INSIGHT-COPY TODAY MILESTONE COMPLETE + COMMITTED (2026-07-08) ★★★ develop:
   chore `d62edf3c` (cleared 4 pre-existing clippy warnings → senseid 0 warnings)
-  feat  `96b1349a` (insight-copy pipeline: DDL + module + chain-fix + Today wiring + off-wire warm +
+  feat  `96b1349a` (narration-cache pipeline: DDL + module + chain-fix + Today wiring + off-wire warm +
         persona hardening). 1192 tests pass, clippy 0, gated loop fully executed.
 NOT merged to main yet (batching with B2). Running daemon (pid 5763) = round-3 build; does NOT yet have
-the persona third-person edits — redeploy at next milestone (also DELETE FROM sensei.insight_copy then
+the persona third-person edits — redeploy at next milestone (also DELETE FROM sensei.narration_cache then
 to flush old "the developer" cached rows so live copy reflects the guard).
 NOTED-DEFERRED (unrelated): pre-commit bootstrap test logs a dbd apply WARN `view:sensei.project_patterns
 — column project_id already exists` (test still passes). DDL idempotency issue on that view; not chased.
@@ -547,24 +547,24 @@ mono/truncated — routing prose there breaks it; route only when card gets a pr
 followup). project_detail impact always null (query doesn't select impact col — harmless facts field;
 followup if wanted). 1192 tests, clippy 0. ⏳ PRE-MERGE LIVE SMOKE in flight (verifier): deploy + FLUSH
 cache + smoke Today/Overview/Insights (fast <0.2s + cache fills mentor copy + NO "the developer"
-leakage + no 500s). If SHIP → MERGE develop→main + make bump (insight-copy rollout milestone).
+leakage + no 500s). If SHIP → MERGE develop→main + make bump (narration-cache rollout milestone).
 
 INSIGHT-COPY FOLLOWUP TICKETS (non-blocking, file when convenient):
  - Rec 3 (persona): pass project_name + specific pattern into card facts for specificity (needs facts
    shape + maybe query cols).
- - Pattern insight-copy: needs a prose body field on the pattern card (frontend) before routing.
+ - Pattern narration-cache: needs a prose body field on the pattern card (frontend) before routing.
  - project_detail overview: add impact column to get_top_recommendation query if non-null wanted.
  - /api/gateway/infer handler hardcodes temperature:None (irrelevant to wire now; cleanup if that
    endpoint is used for tuning).
  - DDL idempotency: view:sensei.project_patterns "column project_id already exists" on apply.
- - insight_copy 30-day eviction sweep (last_used_at < now()-30d) daily maint task NOT built.
+ - narration_cache 30-day eviction sweep (last_used_at < now()-30d) daily maint task NOT built.
 
 PRE-MERGE SMOKE = ✅ SHIP (2026-07-08). Live: Today 26ms / Overview 23ms / Insights 87ms uncached;
 cache 5 clean mentor rows (hero_koan_mature 1 + insight_recurring_pattern 4); Today renders mentor-voice;
 0 third-person leakage (guard working — 27 live rejections logged to public.logs); 9/9 curls 200 no 500s.
 CAVEAT (non-blocking, pre-classified): verbose recs (sensei's own ~400-char why) fail ≤180 guard every
 try → Overview shows RAW fallback (which itself contains "The developer…" — that's the REC GENERATOR
-writing 3rd-person, not an insight-copy bug; guard only gates MODEL copy). 2 more followup tickets:
+writing 3rd-person, not an narration-cache bug; guard only gates MODEL copy). 2 more followup tickets:
  - lift verbose-rec pass-rate: stronger "summarize aggressively, drop specifics to fit" prompt OR a
    larger hero detail budget (hero body = 2-3 sentences, 180 tight); OR fix rec generator to write
    tighter neutral-voice why. sensei's OWN overview is the visible sufferer (dogfooding project).
@@ -573,7 +573,7 @@ writing 3rd-person, not an insight-copy bug; guard only gates MODEL copy). 2 mor
 
 ★★★ INSIGHT-COPY ROLLOUT — MERGING NOW (2026-07-08) ★★★
 develop commits: d62edf3c (clippy chore) + 96b1349a (Today pipeline) + a43db8e2 (Overview+Insights B2).
-DOING: commit run-state → make bump v=patch (bundle now includes insight_copy.ddl so fresh installs get
+DOING: commit run-state → make bump v=patch (bundle now includes narration_cache.ddl so fresh installs get
 the table) → merge develop→main → push → back to develop.
 
 ★ INSIGHT-COPY ROLLOUT SHIPPED: v0.2.25 on main (`b2382855`), develop @ `47fcc41f`. subtrees synced.
@@ -586,7 +586,7 @@ memory_scope ladder = {global,project,stack,task_type,module} (widens→global).
     proxy, no signature). sum→::bigint (numeric won't map to i64). SQL validated live (sensei: 1/1/0).
   clippy 0, 1192 tests. NOT deployed yet (batch w/ next screen); running daemon pid 20630 lacks Build C.
 
-═══ PHASE 2 "make the 6 shipped screens real" = ✅ COMPLETE (insight-copy Today/Overview/Insights +
+═══ PHASE 2 "make the 6 shipped screens real" = ✅ COMPLETE (narration-cache Today/Overview/Insights +
 memory counts). Rec generation already exists (337 recs) — no generator gap. ═══
 NEXT = PHASE 3 overflow screens (NEW: backend endpoint + frontend svelte each, gated loop):
   observatory-memories, project-sessions, project-memories. project-sessions lowest-risk
@@ -639,7 +639,7 @@ DAEMON FOLLOWUPS accumulating (batch into a backend session later):
  - impact: populate verdict applied_at + baselineFtr/currentFtr on accept+MeasureVerdicts (unblocks trend chart)
  - sessions: add folder_role to list_all_sessions (LEFT JOIN sensei.folders) for multi-repo chip
  - capture gap: session task=""/model=null on live rows
- - (earlier) insight-copy verbose-rec pass-rate, warm WARN reason, 30d eviction; project_patterns DDL
+ - (earlier) narration-cache verbose-rec pass-rate, warm WARN reason, 30d eviction; project_patterns DDL
    idempotency; /api/gateway/infer temperature hardcoded.
 DEPLOY/MERGE cadence: frontend screen fixes (impact, sessions) are on develop uncommitted-to-main;
 batch a develop→main merge + app-dev visual e2e after a few screens land.
@@ -654,7 +654,7 @@ MILESTONE CHECKPOINT (2026-07-08): merging Build C `5d4f89c5` + impact `b19cb0e4
 → main + bump. Frontend verified at unit/check/autofixer level (incremental bar); FULL Tauri visual
 e2e (make test-app-e2e = expensive app-e2e-build) BATCHED for later once more screens land. e2e mode=
 'tauri' needs pre-built .app (no vite dev server). Then NEXT = memories (big: DDL generalised flag +
-generalised_content + POST generalise endpoint [LLM rewrite, reuse insight-copy/reasoning pattern] +
+generalised_content + POST generalise endpoint [LLM rewrite, reuse narration-cache/reasoning pattern] +
 ready-to-share hero + widen-scope submenu [existing /api/knowledge/memories/{id}/promote]) OR libraries
 wrap-action (audit #2; needs wrap endpoint+scaffold-gen, "wrap" semantics = design-fork, check spec).
 
@@ -709,7 +709,7 @@ RELEASING v0.2.27 NOW: memory generalise backend `977f2362` + frontend `0c40e2e7
 THEN observatory overflow screens + Phase 4 breadth + Phase 5 Dōjō (Supabase+kavach). ═══
 
 ★★★ v0.2.27 SHIPPED → MAIN `fb8bf4c6` (2026-07-08). develop @ `f8236774`. 3 milestones this session:
-v0.2.25 insight-copy / v0.2.26 impact+sessions+counts / v0.2.27 memory generalise.
+v0.2.25 narration-cache / v0.2.26 impact+sessions+counts / v0.2.27 memory generalise.
 
 ⛔ LIBRARIES-WRAP PARKED (design-fork, needs Jerry): POST .../libraries/{id}/wrap GENERATES a wrapper
 module scaffold and WRITES it into the user's OWN project repo (~/Developer/~/Work — EXTERNAL side-
@@ -783,11 +783,11 @@ RELEASING v0.2.29: project_patterns view fix → bundle+main. THEN re-run make t
 daemon now gets the FIXED view from the fresh bundle — if that was the boot blocker, e2e unblocks
 (enables Tauri visual verification). If still port-timeout → blocker is deadlock/debug-slow → defer+flag.
 
-OLD NOTES BELOW (pre-insight-copy, historical) ↓↓↓
+OLD NOTES BELOW (pre-narration-cache, historical) ↓↓↓
 THEN Build C (memory ready_to_share/to_merge read-path derivation per the design-fork note above).
 Build-B emission points located: observatory_home.rs pure fns early_hero/mature_hero/steady_hero/
 rec_to_insight_card (return serde_json::Value; keep as FALLBACK producers, route their koan+body/text
-through generate_insight_copy at the ASYNC handler boundary — don't make the pure fns async). Same
+through generate_narration_cache at the ASYNC handler boundary — don't make the pure fns async). Same
 pattern for project_overview.rs hero + insights.rs.
 
 ## PHASE 2 design-fork note — memory ready_to_share / to_merge (defer to Build C, after A+B)
@@ -1011,7 +1011,7 @@ Build/verify: `make crates-debug && make install-service`, then curl :7744.
 - GET /api/sessions/{id}: 200.
 - RESOLVED: "FizzBot" is REAL data (/Users/Jerry/Work/ai-labs/FizzBot) — a live ~/Work repo,
   NOT seed junk. Top recs all real repos (FizzBot, rokkit, dbd-rs, minilm-bench). Koan is
-  surfacing genuine signal. No wipe needed. (Rec COPY is templated — insight-copy deferred,
+  surfacing genuine signal. No wipe needed. (Rec COPY is templated — narration-cache deferred,
   spec allows fallback copy; not a Slot-1 defect.)
 - FLAG for gates: hero.source empty → UI must render "· noticed" without a dangling leading "·".
 - Files (uncommitted): +observatory_home.rs; ~observatory.rs, sessions.rs, routes.rs,
@@ -1026,7 +1026,7 @@ Build/verify: `make crates-debug && make install-service`, then curl :7744.
 ⭐ LATEST STATE (2026-07-08 PM) — READ THIS FIRST ⭐
 ═══════════════════════════════════════════════════════════════════════════════════════════════════
 5 MILESTONES SHIPPED TO MAIN this session (all gated: unit+check+autofixer+live-curl; Rust also clippy 0):
-  v0.2.25 insight-copy pipeline (Today/Overview/Insights mentor-voice; off-wire warm; chain-graft fix)
+  v0.2.25 narration-cache pipeline (Today/Overview/Insights mentor-voice; off-wire warm; chain-graft fix)
   v0.2.26 memory ready/merge counts + project-impact read-path fix + project-sessions chart port
   v0.2.27 memory generalise (LLM rewrite endpoint + ready-to-share frontend)
   v0.2.28 upgrades actionType read-path fix + observatory-traceability un-stub
@@ -1240,7 +1240,7 @@ next); consoles C12-C14 (Docker-blocked). Insight-copy/e2e/etc flags still open 
 
 ★★★ v0.2.30 DŌJŌ BACKEND SHIPPED → MAIN `5bcd1d37` (2026-07-08) ★★★ develop @ `38603a64`. dbd HANDLED the
 dojo scope+seed proc at bump (flagged risk RESOLVED — clean bump). 6 milestones this session: v0.2.25
-insight-copy / v0.2.26 impact+sessions+counts / v0.2.27 memory-generalise / v0.2.28 upgrades+traceability
+narration-cache / v0.2.26 impact+sessions+counts / v0.2.27 memory-generalise / v0.2.28 upgrades+traceability
 / v0.2.29 project_patterns-fix / v0.2.30 Dōjō backend (9 chunks).
 
 ⏳ CAPSTONE BUILDING: sensei-hive PROVISIONING CLI + live daemon↔service ROUND-TRIP. Provisioning is the
@@ -1252,7 +1252,7 @@ daemon pulls → GET /api/upgrades shows it. PROVES the shipped backend end-to-e
 verification (a configured Dōjō). If round-trip snags on friction, provisioning CLI still valuable + report.
 DEFERRED: screens C9-C11 (dormant until a Dōjō configured — the round-trip configures one); consoles
 C12-C14 (Docker). Open Jerry flags: no-Docker(console/Supabase), Tauri e2e systemic, libraries-wrap park,
-insight-copy verbose-rec pass-rate, flaky bump gate.
+narration-cache verbose-rec pass-rate, flaky bump gate.
 
 ── DŌJŌ OPERATIONAL COMPLETENESS (2026-07-08 late) ──
 provision CLI ✅ `cf9d1e9b` (sensei-hive provision → tenant+membership+token; live loop PROVEN:
@@ -1354,21 +1354,21 @@ REAL remaining gaps (verified live, grep — code-graph empty for this project =
      advances its source pattern (based_on.patterns[0]) to lifecycle='rule' (read path renders 'adopted');
      RETURNING action_type,based_on; verbatim pending-guard; defensive no-op on missing provenance; sequential
      (DRY: reuse promote_pattern, guard blocks re-promote, post-flip failure logged at error). 6 tests; clippy 0;
-     1299 pass. based_on_first_pattern pure extractor. NOT merged (batching with insight-copy before merge+bump).
+     1299 pass. based_on_first_pattern pure extractor. NOT merged (batching with narration-cache before merge+bump).
      ⭐ SURVEY FINDING: the rule-candidate convention memory is ALREADY a resolved rule at 'recommended' tier
      (resolve_rules_raw does NOT filter on enforcement — only status IN active/reinforced/battle_tested + ORDER
      BY enforcement). So the governance loop substantially WORKS already. PART 2 (deferred, needs POLICY call +
      2 small methods, NO gap): to BUMP a promoted pattern's memory to required/mandatory authority on accept →
      add fetch_memory_id_by_source(pattern_id) + set_memory_enforcement (neither exists; siblings set_memory_
      status/category/generalisation do). Low priority — enhancement not gap. ('gap' lifecycle still has no writer.)
-  2. ⏳ **insight-copy wiring** — SURVEY DONE (agent a8c25224). Mechanism = `copy_or_warm` (wire: cache-read,
-     miss→return fallback + detached bg warm) + `generate_and_cache` (eager), chain "insight-copy" (local gemma).
+  2. ⏳ **narration-cache wiring** — SURVEY DONE (agent a8c25224). Mechanism = `copy_or_warm` (wire: cache-read,
+     miss→return fallback + detached bg warm) + `generate_and_cache` (eager), chain "narration-cache" (local gemma).
      DONE-SET (already routed): observatory_today hero+cards, get_insights rec/memory, get_project_overview
      top-rec. TOP GAP (spec's NAMED primary consumer, routes NOTHING): tool-health signals — tool_signals.rs
      derive_signals/curate_insights emit hardcoded format! title/detail; AggregateToolInsights persists same raw
      templates. The 6 InsightKind variants (ToolWarn/Opportunity/Dormant/Workhorse/+2 summaries) EXIST as
      dead-code built for this. Feeds shipped Insights Health strip + (parked) Instruments·Health L2.
-     ✅ SHIPPED `afe11d2d` (2026-07-08): tool-health signals now route through insight-copy. signal_copy_inputs
+     ✅ SHIPPED `afe11d2d` (2026-07-08): tool-health signals now route through narration-cache. signal_copy_inputs
      pure facts-builder (raw metrics threaded onto Signal as #[serde(skip)] → stable facts_hash, wire shape
      unchanged); wire loop copy_or_warm cap 8 (observatory.rs::tool_signals); eager warm generate_and_cache
      (tool_insights.rs, gateway=ctx.app_state.gateway); dead-code #[allow] narrowed to 7 still-unwired variants.
@@ -1378,16 +1378,16 @@ REAL remaining gaps (verified live, grep — code-graph empty for this project =
      off-wire warm-on-miss, spec says 400ms sync (impl wins).
 
 ⭐✅ ANALYZER-COMPLETENESS MILESTONE SHIPPED & RELEASED (2026-07-08): pattern→rule promotion `5a89a165`
-  + tool-health insight-copy `afe11d2d` → **v0.2.34** (`7f6e8596`) MERGED→main (`a39c267c`, tag pushed,
+  + tool-health narration-cache `afe11d2d` → **v0.2.34** (`7f6e8596`) MERGED→main (`a39c267c`, tag pushed,
   tap+marketplace synced). `main..develop` EMPTY. THREE milestones this session (v0.2.32 Dōjō UI, v0.2.33
   analyzer wiring, v0.2.34 analyzer completeness).
-  ✅ SHIPPED `5f12a757` (2026-07-08): rank3 get_project_recommendations insight-copy — extracted shared
+  ✅ SHIPPED `5f12a757` (2026-07-08): rank3 get_project_recommendations narration-cache — extracted shared
   insights::rec_copy_inputs + apply_rec_copy, called from BOTH get_insights + get_project_recommendations →
   ONE (kind,facts_hash) cache entry shared across screens (proven by test). 5 pure tests; clippy 0; 1309 pass.
   ON DEVELOP (unmerged — rides the next milestone merge; 1 commit, low divergence).
   ⏸️ rank4 get_project_impact DEPRIORITIZED: marginal value + RISK — impact_verdicts may be USER-AUTHORED text
   (created via POST), which must NOT be rewritten by gemma4. Only route if verified daemon-generated. Skip for now.
-  insight-copy sweep = substantially DONE (tool-health + project-recs = the 2 biggest gaps shipped + done-set).
+  narration-cache sweep = substantially DONE (tool-health + project-recs = the 2 biggest gaps shipped + done-set).
   ⭐ NEXT TRACK: **memory-usage feedback loop** — SURVEY DONE (agent ad38315a). KEY FINDING: the use-report
   half ALREADY EXISTS = `sensei.memory_outcomes` (enum applied|consulted|violated|ignored + memory_outcome_apply
   trigger + record_outcome MCP tool + POST /api/knowledge/outcomes). So `memory_use_reports` DOES NOT need building
@@ -1466,7 +1466,7 @@ Ranked highest-value BUILDABLE-NOW (each cites the code anchor; verify before bu
 3. **project-about field-widening** — update_solution (pg_store.rs:4750) writes only name/desc/maturity; the
    edit form already POSTs goal/icon/stack/links/client/preferred_acp (projects.ddl:6-14). Widen the UPDATE. S–M.
 4. **session-retrospective narrative writer** — sessions.summary col has NO producer; get_sessions_stub
-   (sessions.rs:22) hardcodes toolUsage:[]/benchmarkPairs:[]. Reuse per-session analyze.rs + insight-copy. M. High product value.
+   (sessions.rs:22) hardcodes toolUsage:[]/benchmarkPairs:[]. Reuse per-session analyze.rs + narration-cache. M. High product value.
 5. **Atlas / code-graph viz screen** — backend 100% shipped+UNUSED (getSolutionGraph/getCommunities/getCallFlow,
    zero consumers, no graph-viz component). Needs-UI, L. High-visibility.
 6. **traceability fix/dismiss action + expected-vs-actual drawer** — drift_items rollup renders read-only; no
@@ -1480,18 +1480,18 @@ semantic-search hybrid ranking (query.rs:33 keyword-only).
 QUEUE RECONCILE: About EDIT UI exists (only daemon field-widen left); rules-consolidation SHIPPED (knowledge.rs:523);
 Instruments Playground/Replay FUNCTIONAL (only Health blocked); settings/prefs writable e2e. DROP these from "gaps".
 BLOCKED (Jerry/Docker): Instruments·Health registry-join; Dōjō consoles C12-14; clarification-prompting (spec-deferred v2);
-per-session memory-load correlation; impact insight-copy (user-authored verdicts).
+per-session memory-load correlation; impact narration-cache (user-authored verdicts).
 
 ── QUEUE PROGRESS (2026-07-12, post-v0.2.36) ──
 #3 project-about field-widening ✅ SHIPPED `b0f5f6e2` (ProjectPatch + COALESCE; client/goal/preferred_acp were
    dropped; maturity 400-validated; icon/stack/links jsonb wired though form doesn't expose inputs yet). On develop.
-#4 session-retrospective narrative writer ⏳ BUILDING (a7f4376a): facts-gatherer → insight-copy (SessionRetrospective
+#4 session-retrospective narrative writer ⏳ BUILDING (a7f4376a): facts-gatherer → narration-cache (SessionRetrospective
    kind) → activity.sessions.summary via analyzer enrichment; deterministic fallback; non-fatal. High product value.
 NEXT after #4: batch-merge #3+#4 → v0.2.37; then #7 project-icon inference (pure-daemon), #5 Atlas graph-viz (UI, L),
    #6 traceability action (daemon+UI), #8 impact-regression surface. #2-UI (logs screen) still DEFERRED (route collision).
 
 #4 session-retrospective narrative writer ✅ SHIPPED `93dff585` (2026-07-12): session_retro.rs facts-gatherer →
-   insight-copy (SessionRetrospective kind) → activity.sessions.summary via enrich_session (guarded only-if-empty,
+   narration-cache (SessionRetrospective kind) → activity.sessions.summary via enrich_session (guarded only-if-empty,
    non-fatal, deterministic fallback). Reader list_all_sessions already selects summary. 10 tests; clippy 0; 1344.
 ⭐⭐ MILESTONE #3+#4 → ⏳ MERGE+BUMP v0.2.36→0.2.37 → main IN PROGRESS.
 
@@ -1549,7 +1549,7 @@ remaining work is NOT cleanly buildable-now-verifiable; each needs HIM:
     a registry/runner + competitor set); testability/TDD-gate (no function_shapes/tdd_proposals DDL, propose_
     tests/approve_tests) ; collective CONTRIBUTE lane (privacy-sensitive; part of the Dōjō track).
   • DEFERRED FOLLOW-UPS (refine shipped v1s): per-session memory-load correlation (needs plugin republish);
-    P2c behavioral memory-use classifier; rank4 impact insight-copy (user-authored-verdict risk).
+    P2c behavioral memory-use classifier; rank4 impact narration-cache (user-authored-verdict risk).
 STILL BLOCKED (unchanged): Instruments·Health registry↔usage join; Dōjō consoles C12-14 (Docker/Supabase).
 IF JERRY WANTS MORE AUTONOMOUS WORK: he can say "build the UI screens to spec (accept deferred visual verify)"
 or pick a net-new subsystem or decide the /logs+asset-serve questions — then the cron resumes spawning builds.
@@ -2053,7 +2053,7 @@ port mismatch hive 7755 vs config 8787 (🟢), etc. Chunk order: {R1,R2}→R3→
      • #97 `8002a18e` — sensei search/get_symbol first-click default process_event (empty) → PgStore (40+ hits);
        live-validated via the MCP tools.
      • #98 `b9837825` — dormancy 14→30d (weekly tools no longer noise); grouping already collapses N→1 (live 2 clean
-       summaries); copy routes through insight-copy.
+       summaries); copy routes through narration-cache.
      • #100 part 1 `b78d11d1` — project-id handlers resolve name-or-uuid + a SOURCE-SCAN GUARD TEST
        (util.rs no_handler_parses_a_project_id_raw) that caught+fixed 8 raw-parse regressions (observatory ×6,
        corrections, + 2 I'd introduced in R3 dojo endpoints). Prevents the whole silent-empty-on-name class.

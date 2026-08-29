@@ -50,7 +50,7 @@ Kanji is 巻 — *scroll / record*.
   - `confidence` enum `high | medium | low`
   - `state` enum `open | dismissed | fixed | resolved_auto`
   - `suggestion` text (proposed fix — model-generated via
-    [[pipeline/insight-copy]] with `kind = drift_fix`)
+    [[pipeline/narration-cache]] with `kind = drift_fix`)
   - `detected_at`, `resolved_at` timestamptz
 - Signature comparison happens in
   `analysis/doc_drift.rs` (already unit-tested per the daemon
@@ -134,7 +134,7 @@ Per doc node:
   auto-fix is enabled in Preferences; otherwise it surfaces as a
   suggested-fix card the user accepts.
 - Drift-item copy (title, suggestion) comes through
-  insight-copy with `kind = drift_title` / `drift_fix` — fallback
+  narration-cache with `kind = drift_title` / `drift_fix` — fallback
   templates otherwise.
 - Branch switch flips the drift list to the target branch's
   state.
@@ -259,7 +259,7 @@ specific doc-lint rules to `block`.
 - [[pipeline/capture]] — doc + code node ingestion; branch versioning
 - [[pipeline/analyzer]] — schedules `scan_project_doc_drift`
 - [[pipeline/insights]] — repeated drift becomes recommendation source #5
-- [[pipeline/insight-copy]] — drift titles + fix suggestions
+- [[pipeline/narration-cache]] — drift titles + fix suggestions
 - [[screen/observatory-traceability]] — primary consumer
 - [[screen/project-traceability]] — project-scoped view + Expected-vs-Actual drawer
 - [[screen/project-overview]] — stat consumer

@@ -138,7 +138,7 @@ async fn execute_task(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
                 handlers::classify_pending_verdicts(ctx, task).await
             }
             TaskKind::ConsolidateGovernance => handlers::consolidate_governance(ctx, task).await,
-            TaskKind::WarmInsightCopy => handlers::warm_insight_copy(ctx, task).await,
+            TaskKind::WarmInsightCopy => handlers::warm_narration_cache(ctx, task).await,
             TaskKind::LearnPlaybooks => handlers::learn_playbooks(ctx, task).await,
             TaskKind::PublishRelaySegments => handlers::publish_relay_segments(ctx, task).await,
             TaskKind::AdvanceRun => handlers::advance_run(ctx, task).await,

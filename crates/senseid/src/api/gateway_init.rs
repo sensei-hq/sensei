@@ -295,7 +295,7 @@ pub async fn init_gateway(
             // seed, mid-migration daemon).
             let baseline = baseline_production_config();
             merge_baseline_capability_gaps(&mut db, &baseline);
-            // Specialized named chains (e.g. `insight-copy`) share an already-
+            // Specialized named chains (e.g. `narration-cache`) share an already-
             // covered capability, so the capability-gap merge skips them — the
             // DB seed predates them. Graft them explicitly by name.
             merge_required_named_chains(&mut db, &baseline);
@@ -781,15 +781,15 @@ fn baseline_production_config() -> GatewayConfig {
             fallback_triggers: chat_triggers(),
         },
     );
-    // Mentor-voice insight copy (crates/senseid/src/analysis/insight_copy.rs).
+    // Mentor-voice insight copy (crates/senseid/src/analysis/narration_cache.rs).
     // LOCAL-ONLY by design: the two local legs only — no claude/gpt fallback —
     // so insight copy still generates offline and never spends a cloud call on
     // card text. The producer time-boxes each call and degrades to a static
     // template when both local legs are unavailable.
     chains.insert(
-        "insight-copy".into(),
+        "narration-cache".into(),
         FallbackChainConfig {
-            id: "insight-copy".into(),
+            id: "narration-cache".into(),
             capability: Capability::TextChat,
             models: vec![
                 ChainEntry {
@@ -897,12 +897,12 @@ fn merge_baseline_capability_gaps(db: &mut GatewayConfig, baseline: &GatewayConf
 
 /// Specialized baseline chains addressed by name at specific call sites that
 /// must exist even when their capability is *already covered* by a differently-
-/// named DB chain. `insight-copy` is local-only (no cloud legs) and voice-tuned
+/// named DB chain. `narration-cache` is local-only (no cloud legs) and voice-tuned
 /// — a generic `TextChat` chain (`reasoning`/`classify`) is not a substitute —
 /// yet it shares `Capability::TextChat`, so [`merge_baseline_capability_gaps`]
 /// (which skips covered capabilities) silently drops it. This grafts such
 /// chains by name after that merge, so the wire path can resolve them.
-const REQUIRED_NAMED_CHAINS: &[&str] = &["insight-copy"];
+const REQUIRED_NAMED_CHAINS: &[&str] = &["narration-cache"];
 
 fn merge_required_named_chains(db: &mut GatewayConfig, baseline: &GatewayConfig) {
     for &name in REQUIRED_NAMED_CHAINS {
@@ -1380,22 +1380,22 @@ mod tests {
         assert_eq!(db.chains["classify"].models.len(), 1);
         assert!(!db.chains.contains_key("text_chat"), "text-capability chains NOT grafted");
         assert!(!db.chains.contains_key("reasoning"), "text-capability chains NOT grafted");
-        // The capability-gap merge alone does NOT add the named insight-copy
+        // The capability-gap merge alone does NOT add the named narration-cache
         // chain either (TextChat is covered) — that is the bug the required-
         // named graft fixes; see the test below.
         assert!(
-            !db.chains.contains_key("insight-copy"),
+            !db.chains.contains_key("narration-cache"),
             "named TextChat chain NOT grafted by capability-gap merge"
         );
     }
 
     /// A DB config whose `TextChat` capability is already covered (e.g. a
-    /// `classify` chain) must STILL receive the named `insight-copy` chain: the
+    /// `classify` chain) must STILL receive the named `narration-cache` chain: the
     /// capability-gap merge skips it, and `merge_required_named_chains` grafts
     /// it by name, pulling in its local-only model + router. Regression guard
-    /// for the "insight-copy silently dropped → 100% fallback" bug.
+    /// for the "narration-cache silently dropped → 100% fallback" bug.
     #[test]
-    fn merge_required_named_chains_grafts_insight_copy_even_when_textchat_covered() {
+    fn merge_required_named_chains_grafts_narration_cache_even_when_textchat_covered() {
         use gateway::types::capability::Capability;
         use gateway::types::config::*;
         use std::collections::HashMap;
@@ -1419,18 +1419,18 @@ mod tests {
 
         let baseline = baseline_production_config();
 
-        // Capability-gap merge alone leaves insight-copy out (TextChat covered).
+        // Capability-gap merge alone leaves narration-cache out (TextChat covered).
         merge_baseline_capability_gaps(&mut db, &baseline);
         assert!(
-            !db.chains.contains_key("insight-copy"),
+            !db.chains.contains_key("narration-cache"),
             "capability-gap merge must skip a covered-capability named chain"
         );
 
         // The required-named graft adds it by name, with its deps.
         merge_required_named_chains(&mut db, &baseline);
-        let ic = db.chains.get("insight-copy").expect("insight-copy grafted by name");
+        let ic = db.chains.get("narration-cache").expect("narration-cache grafted by name");
         assert_eq!(ic.capability, Capability::TextChat);
-        assert!(!ic.models.is_empty(), "insight-copy carries its local model legs");
+        assert!(!ic.models.is_empty(), "narration-cache carries its local model legs");
         for entry in &ic.models {
             assert!(db.models.contains_key(&entry.model), "grafted model {} present", entry.model);
             if let Some(r) = &entry.router {

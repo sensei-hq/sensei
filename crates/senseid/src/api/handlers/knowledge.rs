@@ -559,7 +559,7 @@ pub(crate) async fn promote_memory(
 // Memory lifecycle actions — the triage / active / archive curation surface
 // (see [[screen/observatory-memories]]). Thin bridges over existing PgStore
 // writers; results are deterministic action outcomes, NOT generated prose, so
-// they never route through insight-copy.
+// they never route through narration-cache.
 //   POST /api/knowledge/memories/{id}/archive    → status = archived
 //   POST /api/knowledge/memories/{id}/reinforce  → strength += REINFORCE_AMOUNT
 //   POST /api/knowledge/memories/{id}/challenge  → status = challenged

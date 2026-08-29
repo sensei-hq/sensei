@@ -81,7 +81,7 @@ Kanji is 紋 — *pattern / crest*.
 - `sensei.promoted_patterns` — patterns explicitly promoted to
   rule via the [[pipeline/governance]] ladder.
 - All human-facing titles / bodies / snippets go through
-  [[pipeline/insight-copy]].
+  [[pipeline/narration-cache]].
 
 ## The five sources
 

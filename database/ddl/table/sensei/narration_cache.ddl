@@ -1,7 +1,7 @@
 set search_path to sensei, extensions;
 
--- Persisted mentor-voice copy for insight cards. The insight-copy pipeline
--- (crates/senseid/src/analysis/insight_copy.rs) routes structured facts
+-- Persisted mentor-voice copy for insight cards. The narration-cache pipeline
+-- (crates/senseid/src/analysis/narration_cache.rs) routes structured facts
 -- through a small local model (embedded gemma4 via the sensei gateway) and
 -- caches the result here keyed on (kind, facts_hash). Same facts → same copy
 -- indefinitely, so the wire path never blocks on inference in steady state.
@@ -13,7 +13,7 @@ set search_path to sensei, extensions;
 -- unknown). Rows are never deleted synchronously — a daily maintenance task
 -- evicts rows with last_used_at older than 30 days. On read, last_used_at is
 -- bumped so hot copy stays warm.
-create table if not exists insight_copy (
+create table if not exists narration_cache (
   kind           text        not null
 , facts_hash     text        not null
 , title          text        not null
@@ -27,28 +27,28 @@ create table if not exists insight_copy (
 
 -- Eviction sweep: the daily maintenance task deletes cold rows ordered by
 -- last_used_at, so index it for cheap range scans.
-create index if not exists insight_copy_last_used_idx
-    on insight_copy(last_used_at);
+create index if not exists narration_cache_last_used_idx
+    on narration_cache(last_used_at);
 
-comment on table insight_copy is
-'Persisted mentor-voice insight copy produced by the insight-copy pipeline.
+comment on table narration_cache is
+'Persisted mentor-voice insight copy produced by the narration-cache pipeline.
 Keyed on (kind, facts_hash) so identical facts reuse the same generated copy;
 the static per-call-site fallback template is used only on cold start,
 timeout, or model failure. Rows evict after 30 days of no use.';
 
-comment on column insight_copy.kind
+comment on column narration_cache.kind
      is 'Stable snake_case insight key (e.g. tool_dormant) — InsightKind::as_str.';
-comment on column insight_copy.facts_hash
+comment on column narration_cache.facts_hash
      is 'sha256(kind + canonical_json(facts)); any facts change makes a new key.';
-comment on column insight_copy.title
+comment on column narration_cache.title
      is 'Model-generated card title (validated against the char + voice limits).';
-comment on column insight_copy.detail
+comment on column narration_cache.detail
      is 'Model-generated card detail (validated against the char + voice limits).';
-comment on column insight_copy.model_provider
+comment on column narration_cache.model_provider
      is 'Provider/router that produced the copy (e.g. ollama), NULL when unknown.';
-comment on column insight_copy.model_id
+comment on column narration_cache.model_id
      is 'Model id that produced the copy (e.g. gemma4), NULL when unknown.';
-comment on column insight_copy.generated_at
+comment on column narration_cache.generated_at
      is 'When this copy was generated (reset on regeneration).';
-comment on column insight_copy.last_used_at
+comment on column narration_cache.last_used_at
      is 'Bumped to now() on every cache read; drives the 30-day eviction sweep.';

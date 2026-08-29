@@ -85,7 +85,7 @@ A project can span multiple repos (see [[pipeline/capture]]
   }
   ```
 - The hero's `title` + `why` come through
-  [[pipeline/insight-copy]] with `kind = project_top_rec_hero`
+  [[pipeline/narration-cache]] with `kind = project_top_rec_hero`
   when a recommendation exists; kind `project_all_quiet` when
   none. Fallback static strings for both.
 - FTR chip reads from
@@ -125,7 +125,7 @@ A project can span multiple repos (see [[pipeline/capture]]
 | Action | `send to {defaultAcp}` when a top rec exists; hidden when quiet |
 | Meta | evidence session ids joined with `·` |
 
-Both the headline and body come from insight-copy; fallback text
+Both the headline and body come from narration-cache; fallback text
 above matches the mockup verbatim.
 
 ### Stat blocks (3-column grid)
@@ -154,7 +154,7 @@ above matches the mockup verbatim.
   numbers, not template placeholders.
 - FTR chip agrees exactly with the projects-index card FTR (same
   view, same number).
-- Hero renders `top_recommendation` copy from insight-copy when
+- Hero renders `top_recommendation` copy from narration-cache when
   gemma4 is available; fallback text otherwise.
 - Stats sub-lines carry the counts that back them (not just the
   headline number).
@@ -184,7 +184,7 @@ curl -s http://localhost:7744/api/projects/sensei/overview | jq '{
   the same number — pick the view.
 - **Hero shows "getting started" or "no data" instead of the
   all-quiet message.** Fallback template forgotten;
-  insight-copy fallback path needs it.
+  narration-cache fallback path needs it.
 - **Multi-repo project header hides the `{n} repos` chip.** The
   overview looks like a single-repo project; user can't tell why
   the memory count is high.
@@ -210,7 +210,7 @@ curl -s http://localhost:7744/api/projects/sensei/overview | jq '{
 - [[pipeline/ftr]] — 14d rolling FTR
 - [[pipeline/memory]] — memory counts (project-scoped)
 - [[pipeline/insights]] — top-recommendation source
-- [[pipeline/insight-copy]] — hero headline + body
+- [[pipeline/narration-cache]] — hero headline + body
 - [[pipeline/traceability]] — doc-drift counts
 - [[screen/observatory-projects]] — the peer index
 - [[screen/observatory-today]] — the multi-project version of the same primitives

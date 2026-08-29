@@ -897,7 +897,7 @@ removing an entry triggers a re-scan of that subtree.
 '''
 }
 
-Table "sensei"."insight_copy" {
+Table "sensei"."narration_cache" {
   "kind" TEXT [pk, not null, note: 'Stable snake_case insight key (e.g. tool_dormant) — InsightKind::as_str.']
   "facts_hash" TEXT [pk, not null, note: 'sha256(kind + canonical_json(facts)); any facts change makes a new key.']
   "title" TEXT [not null, note: 'Model-generated card title (validated against the char + voice limits).']
@@ -908,11 +908,11 @@ Table "sensei"."insight_copy" {
   "last_used_at" TIMESTAMPTZ [not null, default: `now()`, note: 'Bumped to now() on every cache read; drives the 30-day eviction sweep.']
 
   indexes {
-    last_used_at [name: 'insight_copy_last_used_idx']
+    last_used_at [name: 'narration_cache_last_used_idx']
   }
 
   Note: '''
-Persisted mentor-voice insight copy produced by the insight-copy pipeline.
+Persisted mentor-voice insight copy produced by the narration-cache pipeline.
 Keyed on (kind, facts_hash) so identical facts reuse the same generated copy;
 the static per-call-site fallback template is used only on cold start,
 timeout, or model failure. Rows evict after 30 days of no use.

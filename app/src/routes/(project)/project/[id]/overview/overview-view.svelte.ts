@@ -1,7 +1,7 @@
 // Project window · Overview (Slot 4) — pure view derivations.
 //
 // The daemon owns the numbers and every user-facing recommendation string
-// (headline/body arrive resolved through insight-copy, with a static
+// (headline/body arrive resolved through narration-cache, with a static
 // fallback). This module only projects the wire payload into the display
 // contracts the pane renders: the FTR chip, the hero (top-rec vs all-quiet),
 // the three stat blocks, the multi-repo chips, and the recent-session rows.
@@ -73,7 +73,7 @@ const QUIET_BODY = 'Sensei is observing. The next correction or pattern will sur
 
 /** Build the hero from the top recommendation. When none is pending, render
  *  the all-quiet state (静, listening copy, no action) — never a "getting
- *  started" empty screen. Headline/body are the insight-copy strings the
+ *  started" empty screen. Headline/body are the narration-cache strings the
  *  daemon already resolved; the fallbacks here match the mockup verbatim and
  *  cover the daemon-hiccup path. The send action appears only when a rec
  *  carries a non-null defaultAcp. */

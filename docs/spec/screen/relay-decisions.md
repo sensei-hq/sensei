@@ -123,4 +123,4 @@ Worked example (the two mockup decisions):
 - [[journeys/relay]] — the run & supervise round-trip · team on-call queue
 - [[screen/relay-projects]] — a `gate` verdict card leads here
 - [[screen/relay-plan]] — the plan item that raised the decision
-- [[pipeline/insight-copy]] — mentor-voice for questions + hints
+- [[pipeline/narration-cache]] — mentor-voice for questions + hints

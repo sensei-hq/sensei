@@ -70,7 +70,7 @@ create type task_execution_kind as enum (
 , 'aggregate_corrections'
 , 'aggregate_tool_insights'
 , 'consolidate_governance'
-, 'warm_insight_copy'
+, 'warm_narration_cache'
 , 'learn_playbooks'
 , 'scan_doc_drift'
 , 'publish_relay_segments'

@@ -37,7 +37,7 @@ Kanji is 贈 — *gift*.
 - Reads from `sensei.dojo_downstream_inbox` and the collective
   inbox (see [[pipeline/dojo-lifecycle]]).
 - Every artifact title / body comes through
-  [[pipeline/insight-copy]] with `kind = upgrade_{type}` when the
+  [[pipeline/narration-cache]] with `kind = upgrade_{type}` when the
   model is available.
 
 ## Signals shown

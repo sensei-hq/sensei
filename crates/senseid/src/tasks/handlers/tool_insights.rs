@@ -11,7 +11,7 @@
 
 use super::super::Task;
 use super::super::executor::TaskContext;
-use crate::analysis::insight_copy::{CopyLimits, generate_and_cache};
+use crate::analysis::narration_cache::{CopyLimits, generate_and_cache};
 use crate::api::handlers::tool_signals::{
     Signal, SignalThresholds, SignalVariant, ToolUsageRow, derive_signals, signal_copy_inputs,
 };
