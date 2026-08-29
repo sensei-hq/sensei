@@ -320,3 +320,65 @@ describe('listMyRepositories — what a human is shown', () => {
 		await expect(listMyRepositories(failing, ALICE)).rejects.toThrow();
 	});
 });
+
+// ── PostgREST silently caps every read at 1000 rows ─────────────────────────
+//
+// `PGRST_DB_MAX_ROWS=1000` — verified on the running instance, not assumed from
+// a default. A read with no `.range()` therefore returns AT MOST 1000 rows and
+// says nothing about it: there is no error, no flag, and the 1001st row simply
+// does not exist as far as the caller is concerned.
+//
+// That is silent truncation on the three reads of `all_my_repositories`, and the
+// ingest one is the worst of them: `maySync` would be built from a truncated
+// allow-list, so a repository the user IS permitted to sync gets refused as
+// `not_permitted` — a denial that names the wrong reason.
+//
+// The daemon already offers up to 500 repositories per pass and a developer
+// machine here carries 67, so this is a ceiling being approached, not a
+// hypothetical.
+describe('paged reads — the 1000-row cap must not truncate silently', () => {
+	function manyRows(n: number) {
+		return Array.from({ length: n }, (_, i) => ({
+			repository_id: `r${i}`,
+			repo_key: `github.com/acme/repo-${i}`,
+			name: `repo-${i}`,
+			tenant: 'organization/acme',
+			owning_org: 'acme',
+			principal_id: ALICE,
+			forge_visibility: 'public',
+			authority: 'user',
+			may_share: true,
+			elected: true,
+			sync_enabled: true,
+			configurable_by_me: true,
+			reason_code: null,
+			reason: null,
+			remedy: null,
+			reason_actor: null,
+			last_synced_at: null,
+			metric_rows: 0
+		}));
+	}
+
+	it('returns EVERY repository past the first page, not the first 1000', async () => {
+		const db = fakeDojoDb({ all_my_repositories: { rows: manyRows(2350) } });
+		const out = await listMyRepositories(db as never, ALICE);
+		expect(out).toHaveLength(2350);
+		// The last row is the one a single unpaged read loses.
+		expect(out.at(-1)?.repo_key).toBe('github.com/acme/repo-2349');
+	});
+
+	it('stops at exactly one page when the total IS the page size', async () => {
+		// The off-by-one that turns a page loop into an infinite one: a full final
+		// page looks identical to "there is more".
+		const db = fakeDojoDb({ all_my_repositories: { rows: manyRows(1000) } });
+		const out = await listMyRepositories(db as never, ALICE);
+		expect(out).toHaveLength(1000);
+	});
+
+	it('syncPlan pages too — a truncated plan silently under-syncs', async () => {
+		const db = fakeDojoDb({ all_my_repositories: { rows: manyRows(1200) } });
+		const plan = await syncPlan(db as never, ALICE);
+		expect(plan.allowed).toHaveLength(1200);
+	});
+});
