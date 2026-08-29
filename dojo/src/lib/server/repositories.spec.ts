@@ -248,3 +248,75 @@ describe('syncPlan', () => {
 		expect(await syncPlan(db as never, 'p-nobody')).toEqual({ allowed: [], denied: [] });
 	});
 });
+
+// ── The READ side of sharing ────────────────────────────────────────────────
+//
+// `all_my_repositories` had a daemon reader (`syncPlan`) and a writer
+// (`setElection`) and no way for a HUMAN to see it. Live, three repositories sat
+// at `not_elected_user` — refusing for want of a decision nobody could make,
+// because nothing rendered a toggle.
+//
+// This returns the row the screen needs, from the same view the daemon reads, so
+// what a user is shown and what the daemon does cannot disagree.
+import { listMyRepositories } from './repositories';
+
+describe('listMyRepositories — what a human is shown', () => {
+	function view(rows: Record<string, unknown>[]): Record<string, FakeTable> {
+		return { all_my_repositories: { rows } };
+	}
+	const ROW = {
+		repository_id: 'r1',
+		repo_key: 'github.com/acme/api',
+		name: 'api',
+		tenant: 'organization/acme',
+		owning_org: 'acme',
+		principal_id: ALICE,
+		forge_visibility: 'public',
+		authority: 'user',
+		may_share: true,
+		elected: false,
+		sync_enabled: false,
+		configurable_by_me: true,
+		reason_code: 'not_elected_user',
+		reason: 'You have not turned sharing on for this repository',
+		remedy: 'Turn sharing on for this repository',
+		reason_actor: 'user',
+		last_synced_at: null,
+		metric_rows: 0
+	};
+
+	it('returns only the caller rows — the view is per-principal', async () => {
+		const db = fakeDojoDb(view([ROW, { ...ROW, repo_key: 'github.com/acme/other', principal_id: 'p-bob' }]));
+		const out = await listMyRepositories(db as never, ALICE);
+		expect(out.map((r) => r.repo_key)).toEqual(['github.com/acme/api']);
+	});
+
+	it('carries the verdict AND the remedy, so a refusal names what to do', async () => {
+		// The whole point of the reason registry. A screen that shows only
+		// `sync_enabled: false` reproduces the "nothing to sync" ambiguity the
+		// two-axis model exists to remove.
+		const db = fakeDojoDb(view([ROW]));
+		const [r] = await listMyRepositories(db as never, ALICE);
+		expect(r).toMatchObject({
+			sync_enabled: false,
+			reason_code: 'not_elected_user',
+			remedy: 'Turn sharing on for this repository',
+			reason_actor: 'user',
+			configurable_by_me: true
+		});
+	});
+
+	it('THROWS on a read error rather than reporting an empty list', async () => {
+		// An empty list reads as "you have no repositories", which is a different
+		// and load-bearing claim. Same fail-closed rule as `listUserOrgs`.
+		//
+		// `fakeDojoDb` cannot fail a read, so this uses a minimal chainable stub —
+		// the failure path is worth a bespoke double rather than going untested.
+		const failing = {
+			from: () => failing,
+			select: () => failing,
+			eq: () => Promise.resolve({ data: null, error: { message: 'boom' } })
+		} as unknown as Parameters<typeof listMyRepositories>[0];
+		await expect(listMyRepositories(failing, ALICE)).rejects.toThrow();
+	});
+});

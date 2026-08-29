@@ -11,7 +11,11 @@
 import type { RequestHandler } from './$types';
 import { resolveCaller, apiError } from '$lib/server/dojo-auth';
 import { AdminError } from '$lib/server/admin-data';
-import { registerRepositories, type RepoInput } from '$lib/server/repositories';
+import {
+	listMyRepositories,
+	registerRepositories,
+	type RepoInput
+} from '$lib/server/repositories';
 
 /** Accept only well-formed entries. A repo with no key has no identity, and
  *  registering it under a derived one would invent the very thing `repo_key`
@@ -41,6 +45,26 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 		const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
 		const result = await registerRepositories(db, userId, parseRepos(body));
 		return Response.json(result);
+	} catch (e) {
+		if (e instanceof Response) return e;
+		if (e instanceof AdminError) return apiError(e.status, e.message);
+		throw e;
+	}
+};
+
+/** GET /v1/you/repositories — every repository the caller can see, with the
+ *  verdict and what to do about it.
+ *
+ *  The READ half. `POST` registers what the daemon found; this is what a human
+ *  is shown, from the SAME view (`dojo.all_my_repositories`) the daemon reads
+ *  through `/v1/you/sync/plan` — so the screen and the daemon cannot disagree.
+ *
+ *  User-scoped, like the POST: which tenant a repository belongs to is derived,
+ *  never supplied. */
+export const GET: RequestHandler = async ({ request, locals }) => {
+	try {
+		const { userId, db } = await resolveCaller(request, locals);
+		return Response.json({ repositories: await listMyRepositories(db, userId) });
 	} catch (e) {
 		if (e instanceof Response) return e;
 		if (e instanceof AdminError) return apiError(e.status, e.message);

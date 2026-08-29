@@ -12,6 +12,9 @@
 	import ScrConstitution from '$lib/components/screens/ScrConstitution.svelte';
 	import ScrRulePacks from '$lib/components/screens/ScrRulePacks.svelte';
 	import ScrMyDojos from '$lib/components/screens/ScrMyDojos.svelte';
+	import ScrSharing from '$lib/components/screens/ScrSharing.svelte';
+	import { setRepoElection, type MyRepoWire } from '$lib/client-data';
+	import { SvelteSet } from 'svelte/reactivity';
 	import ScrContributions from '$lib/components/screens/ScrContributions.svelte';
 	import { youHref, orgHref } from '$lib/nav';
 	import type { KitProject, KitDojo, KitDownstream, KitRulePack } from '$lib/components/kit/types';
@@ -107,6 +110,70 @@
 			ghBusy = false;
 		}
 	}
+
+	// ── Sharing: the election toggle ────────────────────────────────────────
+	//
+	// The screen is presentational, so the round trip lives here. Two rules the
+	// endpoint's own shape exists to support:
+	//
+	//  1. The RESPONSE is the truth, not the input. `setElection` re-reads
+	//     `all_my_repositories` and returns the verdict, so electing a repo whose
+	//     entitlement still refuses comes back `sync_enabled: false`. Assuming
+	//     success would put the UI and the daemon into exactly the disagreement
+	//     the single-source-of-truth view exists to prevent.
+	//  2. A FAILED toggle must revert the row. Leaving the checkbox where the
+	//     user put it shows a decision that was never recorded.
+	// `data` is the server truth and re-arrives on every navigation, so it is
+	// DERIVED, not copied into state — copying captures the first load and then
+	// silently stops updating. A toggle writes a per-repo OVERRIDE instead, which
+	// the derived merges on top, so an optimistic row and a fresh load compose
+	// rather than fight.
+	let overrides = $state<Record<string, Partial<MyRepoWire>>>({});
+	let toggleError = $state<string | null>(null);
+	let sharingPending = $state(new SvelteSet<string>());
+
+	const sharingRepos = $derived(
+		(data.repos ?? []).map((r) => ({ ...r, ...(overrides[r.repo_key] ?? {}) }))
+	);
+	// A failed WRITE and a failed READ are both worth showing, and the write is
+	// the more recent thing the user did.
+	const sharingError = $derived(toggleError ?? data.reposError ?? null);
+
+	async function elect(repoKey: string, elected: boolean) {
+		if (sharingPending.has(repoKey)) return;
+		sharingPending.add(repoKey);
+		toggleError = null;
+		try {
+			const out = await setRepoElection(repoKey, elected);
+			// The RESPONSE is the truth, not the input: `setElection` re-reads the
+			// view, so electing a repo whose entitlement still refuses comes back
+			// `sync_enabled: false`. Assuming success would put this screen and the
+			// daemon into the disagreement the shared view exists to prevent.
+			overrides = {
+				...overrides,
+				[repoKey]: {
+					elected: out.elected,
+					sync_enabled: out.sync_enabled,
+					reason_code: out.reason_code
+				}
+			};
+			// The verdict moved, so the prose explaining it is stale. Re-load rather
+			// than composing a message here — `reason`/`remedy` are registry data,
+			// and writing them client-side is how one question grows four answers.
+			// Clearing the overrides hands authority back to the server.
+			await invalidateAll();
+			overrides = {};
+		} catch (e) {
+			// The toggle did NOT land. Drop any override so the row falls back to
+			// what the server last confirmed, rather than showing a decision that
+			// was never recorded.
+			const { [repoKey]: _dropped, ...rest } = overrides;
+			overrides = rest;
+			toggleError = e instanceof Error ? e.message : 'could not change sharing';
+		} finally {
+			sharingPending.delete(repoKey);
+		}
+	}
 </script>
 
 <svelte:head><title>{data.title} · Dōjō</title></svelte:head>
@@ -122,6 +189,8 @@
 	<ScrConstitution stance={data.stance} ladder={data.ladder} onGoPacks={goPacks} />
 {:else if data.section === 'packs'}
 	<ScrRulePacks packs={data.rulePacks} onToggle={onPackToggle} />
+{:else if data.section === 'sharing'}
+	<ScrSharing repos={sharingRepos} error={sharingError} pending={sharingPending} onToggle={elect} />
 {:else if data.section === 'dojos'}
 	<div class="flex items-center justify-end gap-3" style="padding: 12px 32px 0">
 		{#if ghMsg}<span class="text-ink-mute text-xs">{ghMsg}</span>{/if}
