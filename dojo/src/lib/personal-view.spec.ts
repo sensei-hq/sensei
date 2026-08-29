@@ -66,35 +66,33 @@ describe('rulePacks fixtures — every pack carries its rules', () => {
 });
 
 describe('groupDojos — membership groups', () => {
-	it('groups fixtures into employer · clients · communities, in order', () => {
+	it('groups fixtures into organizations (the fixture has no personal dōjō)', () => {
 		const groups = groupDojos(dojos);
-		expect(groups.map((g) => g.kind)).toEqual(['employer', 'client', 'community']);
+		expect(groups.map((g) => g.kind)).toEqual(['organization']);
 	});
 
 	it('carries the right label + members into each group', () => {
 		const groups = groupDojos(dojos);
-		const employer = groups.find((g) => g.kind === 'employer');
-		expect(employer?.label).toBe('Organization');
-		expect(employer?.items.map((d) => d.slug)).toContain('acme');
+		const orgs = groups.find((g) => g.kind === 'organization');
+		expect(orgs?.label).toBe('Organizations');
+		expect(orgs?.items.map((d) => d.slug)).toContain('acme');
 	});
 
 	it('drops a group with no members', () => {
-		const onlyOrganization: KitDojo[] = dojos.filter((d) => d.kind === 'employer');
+		const onlyOrganization: KitDojo[] = dojos.filter((d) => d.kind === 'organization');
 		const groups = groupDojos(onlyOrganization);
-		expect(groups.map((g) => g.kind)).toEqual(['employer']);
+		expect(groups.map((g) => g.kind)).toEqual(['organization']);
 	});
 
 	it('returns no groups for an empty membership list', () => {
 		expect(groupDojos([])).toEqual([]);
 	});
 
-	it('exposes the four canonical groups incl. Personal', () => {
-		expect(DOJO_GROUPS.map((g) => g.kind)).toEqual([
-			'employer',
-			'client',
-			'community',
-			'personal'
-		]);
+	it('exposes exactly the two groups the forge can tell apart', () => {
+		// Employer / Clients / Communities are gone: nothing could derive them, and
+		// the one behaviour attached to Client (anonymised sends) described a
+		// difference that does not exist — every insight is anonymised.
+		expect(DOJO_GROUPS.map((g) => g.kind)).toEqual(['organization', 'personal']);
 	});
 
 	it('puts a personal-kind dōjō in its own Personal group (my-dojos resolved design Q5)', () => {

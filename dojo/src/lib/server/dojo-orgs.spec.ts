@@ -29,9 +29,17 @@ vi.mock('./dojo-supabase', async (importOriginal) => {
 });
 
 const { listUserOrgs, getUserOrg, tenantToOrg, TENANT_COLS } = await import('./dojo-orgs');
-const { membershipKindToOrgKind, orgKindKanji } = await import('../dojo-data');
+const { orgKindKanji } = await import('../dojo-data');
 
-const TENANT_ROW = { id: 't1', key: 'organization/acme', slug: 'acme', name: 'Acme', self_hosted: false };
+const TENANT_ROW = {
+	id: 't1',
+	key: 'organization/acme',
+	slug: 'acme',
+	name: 'Acme',
+	self_hosted: false,
+	// The DISPLAYED kind derives from this, not from `memberships.kind`.
+	origin: 'organization'
+};
 
 describe('listUserOrgs — fail closed on a memberships query error', () => {
 	it('throws 500 (never a fabricated empty list) on a DB error', async () => {
@@ -52,7 +60,7 @@ describe('listUserOrgs — fail closed on a memberships query error', () => {
 		expect(orgs[0]).toMatchObject({ id: 't1', url: 'organization/acme', name: 'Acme', role: 'Admin' });
 	});
 
-	it('derives the REAL kind + kanji from membership.kind (not the old hardcoded Community)', async () => {
+	it('derives the kind + kanji from the tenant ORIGIN, not the membership tag', async () => {
 		stub = makeDb({ data: [{ role: 'admin', kind: 'employer', tenant: TENANT_ROW }], error: null });
 		const orgs = await listUserOrgs('u1');
 		expect(orgs[0].kind).toBe('Organization');
@@ -62,7 +70,8 @@ describe('listUserOrgs — fail closed on a memberships query error', () => {
 	it('does NOT fabricate counts — members/projects/pending are undefined when not computed', async () => {
 		stub = makeDb({ data: [{ role: 'admin', kind: 'client', tenant: TENANT_ROW }], error: null });
 		const [org] = await listUserOrgs('u1');
-		expect(org.kind).toBe('Client');
+		// `kind: 'client'` in the row is ignored — origin decides.
+		expect(org.kind).toBe('Organization');
 		expect(org.members).toBeUndefined();
 		expect(org.projects).toBeUndefined();
 		expect(org.pending).toBeUndefined();
@@ -98,40 +107,33 @@ describe('getUserOrg — fail closed on either lookup error', () => {
 		expect(org).toMatchObject({ id: 't1', url: 'organization/acme', role: 'Lead' });
 	});
 
-	it('derives the REAL kind from membership.kind on a hit', async () => {
+	it('derives the kind from the tenant ORIGIN on a hit, ignoring membership.kind', async () => {
 		stub = makeDb(
 			{ data: TENANT_ROW, error: null },
 			{ data: { role: 'lead', kind: 'community' }, error: null }
 		);
 		const org = await getUserOrg('u1', 'organization/acme');
-		expect(org?.kind).toBe('Community');
-		expect(org?.kanji).toBe('群');
+		expect(org?.kind).toBe('Organization');
+		expect(org?.kanji).toBe('社');
 	});
-});
 
-describe('membershipKindToOrgKind — enum → OrgKind (unknown/missing → Community, never fabricated)', () => {
-	it('maps each known kind', () => {
-		expect(membershipKindToOrgKind('employer')).toBe('Organization');
-		expect(membershipKindToOrgKind('client')).toBe('Client');
-		expect(membershipKindToOrgKind('personal')).toBe('Personal');
-		expect(membershipKindToOrgKind('community')).toBe('Community');
-	});
-	it('is case-insensitive', () => {
-		expect(membershipKindToOrgKind('EMPLOYER')).toBe('Organization');
-	});
-	it('falls back to Community on unknown/null/undefined (safe generic bucket)', () => {
-		expect(membershipKindToOrgKind('wat')).toBe('Community');
-		expect(membershipKindToOrgKind(null)).toBe('Community');
-		expect(membershipKindToOrgKind(undefined)).toBe('Community');
+	it('shows a PERSONAL tenant as Personal — origin is what separates them', async () => {
+		// Guards the failure the origin column exists to prevent: without it in
+		// TENANT_COLS every dōjō, personal ones included, reads as Organization.
+		stub = makeDb(
+			{ data: { ...TENANT_ROW, key: 'personal/jerry', origin: 'personal' }, error: null },
+			{ data: { role: 'admin', kind: 'personal' }, error: null }
+		);
+		const org = await getUserOrg('u1', 'personal/jerry');
+		expect(org?.kind).toBe('Personal');
+		expect(org?.kanji).toBe('己');
 	});
 });
 
 describe('orgKindKanji — identity glyph per kind', () => {
 	it('maps each kind to its ladder kanji', () => {
 		expect(orgKindKanji('Organization')).toBe('社');
-		expect(orgKindKanji('Client')).toBe('客');
 		expect(orgKindKanji('Personal')).toBe('己');
-		expect(orgKindKanji('Community')).toBe('群');
 	});
 });
 
@@ -203,5 +205,50 @@ describe('principalIdForSession — the page plane must translate, like resolveC
 		await expect(
 			principalIdForSession({ session: { user: { id: 'auth-uuid' } } })
 		).rejects.toThrow();
+	});
+});
+
+// ── The employer tag is a claim we cannot substantiate ──────────────────────
+//
+// Provisioning wrote `kind = 'employer'` for EVERY org it discovered, because
+// GitHub cannot tell us which of your organisations employs you. Live data:
+// jovy-thomas-visuals, senecaglobalinc and sensei-hq were all "Employer" — one
+// is an employer, one is a personal venture, one is a product org.
+//
+// `origin` IS knowable: the forge says whether a tenant is an org or a personal
+// account. So the display derives from origin, and `memberships.kind` is no
+// longer read for it. The column stays (NOT NULL, enum-constrained) until there
+// is a real way for a human to designate employer vs client — at which point it
+// starts meaning something, instead of being asserted on their behalf.
+describe('tenantToOrg — the kind shown is the ORIGIN, never the unsubstantiated tag', () => {
+	const base = { id: 't1', key: 'organization/acme', slug: 'acme', name: 'Acme', self_hosted: false };
+
+	it('shows an organisation as Organization even though kind says employer', async () => {
+		const { tenantToOrg } = await import('./dojo-orgs');
+		const o = tenantToOrg({ ...base, origin: 'organization' } as never, 'admin', 'employer');
+		expect(o.kind).toBe('Organization');
+		expect(o.kanji).toBe('社');
+	});
+
+	it('shows a personal tenant as Personal', async () => {
+		const { tenantToOrg } = await import('./dojo-orgs');
+		const o = tenantToOrg(
+			{ ...base, key: 'personal/jerry', origin: 'personal' } as never,
+			'admin',
+			'personal'
+		);
+		expect(o.kind).toBe('Personal');
+		expect(o.kanji).toBe('己');
+	});
+
+	it('IGNORES the stored kind entirely — client/community do not resurface', async () => {
+		// The tag is not merely renamed; it is no longer consulted. Were it still
+		// read, a `client` row would render "Client" and reintroduce a relationship
+		// claim nobody asserted.
+		const { tenantToOrg } = await import('./dojo-orgs');
+		for (const k of ['client', 'community', 'employer', null, undefined]) {
+			const o = tenantToOrg({ ...base, origin: 'organization' } as never, 'admin', k as never);
+			expect(o.kind).toBe('Organization');
+		}
 	});
 });

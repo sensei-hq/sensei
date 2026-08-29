@@ -29,9 +29,9 @@ const acme: DojoOrg = {
 };
 const globex: DojoOrg = {
 	id: 'globex',
-	kanji: '客',
+	kanji: '社',
 	name: 'Globex',
-	kind: 'Client',
+	kind: 'Organization',
 	host: 'saas',
 	url: 'github/globex',
 	role: 'Maintainer',
@@ -59,14 +59,19 @@ describe('roleKey — label → lowercase role rank key', () => {
 });
 
 describe('kindKey — capitalized kind → lowercase kit kind', () => {
-	it('lowercases the known kinds', () => {
-		expect(kindKey('Organization')).toBe('employer');
-		expect(kindKey('Client')).toBe('client');
-		expect(kindKey('Community')).toBe('community');
+	it('maps to the two buckets that exist', () => {
+		expect(kindKey('Organization')).toBe('organization');
+		expect(kindKey('Personal')).toBe('personal');
 	});
 
-	it('defaults an unknown kind to community', () => {
-		expect(kindKey('Alliance')).toBe('community');
+	it('groups a row still carrying the old `employer` tag as an organisation', () => {
+		// `dojo.memberships.kind` is a NOT NULL enum that still contains employer /
+		// client / community, so rows with those values exist. None of them may
+		// fall into a bucket `DOJO_GROUPS` no longer has, or the dōjō vanishes from
+		// the screen entirely rather than merely being mislabelled.
+		for (const stale of ['employer', 'client', 'community', 'Alliance', '', null]) {
+			expect(kindKey(stale as never)).toBe('organization');
+		}
 	});
 });
 
@@ -75,9 +80,9 @@ describe('toKitDojo / toKitOrg — view-model mapping', () => {
 		const d = toKitDojo(globex);
 		expect(d).toMatchObject({
 			slug: 'globex',
-			kanji: '客',
+			kanji: '社',
 			name: 'Globex',
-			kind: 'client',
+			kind: 'organization',
 			role: 'maintainer',
 			route: 'github/globex',
 			members: 12
@@ -97,7 +102,7 @@ describe('toKitDojo / toKitOrg — view-model mapping', () => {
 			slug: 'acme',
 			kanji: '社',
 			name: 'Acme Corp',
-			kind: 'employer',
+			kind: 'organization',
 			role: 'admin',
 			route: 'dojo.acme.internal'
 		});

@@ -22,7 +22,24 @@ export const metrics: DojoMetrics = {
 	adoptionLift: 0.11
 };
 
-export type OrgKind = 'Organization' | 'Client' | 'Community' | 'Personal';
+/** What a dōjō IS, derived from `dojo.tenants.origin` — the forge's own answer.
+ *
+ *  There was a fourth-way taxonomy here (Employer · Client · Community) and it
+ *  There was a relationship taxonomy here — Employer · Client · Community — and
+ *  it is gone for two independent reasons.
+ *
+ *  It could not be DERIVED. Provisioning tagged
+ *  every discovered org `employer` because GitHub cannot say which of your
+ *  organisations employs you — live, that made an employer, a personal venture
+ *  and a product org all "Employer".
+ *
+ *  And it earned nothing. The one behaviour hanging off it was
+ *  `isAnonymizedMembership` — client dōjōs anonymised a contributor's sends.
+ *  ALL insights are anonymised, so there was never anything client-specific to
+ *  protect; the function had no callers and the distinction was decorative.
+ *
+ *  What remains is what the forge actually states: organisation, or person. */
+export type OrgKind = 'Organization' | 'Personal';
 export type OrgHost = 'self' | 'saas';
 
 export interface DojoOrg {
@@ -42,37 +59,24 @@ export interface DojoOrg {
 	last?: boolean;
 }
 
-/** Map the `dojo.membership_kind` enum (lowercase) to the app's `OrgKind`.
- *  Unknown/missing → `Community` (the safe generic bucket), never a fabricated
- *  employer/client claim. */
-export function membershipKindToOrgKind(kind: string | null | undefined): OrgKind {
-	switch ((kind ?? '').toLowerCase()) {
-		case 'employer':
-			return 'Organization';
-		case 'client':
-			return 'Client';
-		case 'personal':
-			return 'Personal';
-		case 'community':
-			return 'Community';
-		default:
-			return 'Community';
-	}
+/** `dojo.tenants.origin` → the app's `OrgKind`.
+ *
+ *  Replaces `membershipKindToOrgKind`, which read the unsubstantiated `kind`
+ *  tag. Origin is knowable — the forge states whether an account is an
+ *  organisation or a person — so this cannot be wrong the way the tag was.
+ *
+ *  Anything that is not explicitly `personal` is an Organization. There is no
+ *  third bucket to fall into and therefore no "safe generic" default that could
+ *  quietly absorb a bad value. */
+export function originToOrgKind(origin: string | null | undefined): OrgKind {
+	return (origin ?? '').toLowerCase() === 'personal' ? 'Personal' : 'Organization';
 }
 
-/** The identity glyph per kind (社 employer · 客 client · 群 community · 己 personal),
- *  matching the ladder kanji in `constitution-map`. Replaces the constant 群. */
+/** The identity glyph per kind (社 organisation · 己 personal), matching the
+ *  ladder kanji in `constitution-map`. 客 (client) and 群 (community) went with
+ *  the taxonomy that produced them. */
 export function orgKindKanji(kind: OrgKind): string {
-	switch (kind) {
-		case 'Organization':
-			return '社';
-		case 'Client':
-			return '客';
-		case 'Personal':
-			return '己';
-		case 'Community':
-			return '群';
-	}
+	return kind === 'Personal' ? '己' : '社';
 }
 
 export const orgs: DojoOrg[] = [
@@ -93,7 +97,7 @@ export const orgs: DojoOrg[] = [
 		id: 'globex',
 		kanji: '客',
 		name: 'Globex',
-		kind: 'Client',
+		kind: 'Organization',
 		host: 'saas',
 		url: 'github/globex',
 		role: 'Maintainer',
@@ -105,7 +109,7 @@ export const orgs: DojoOrg[] = [
 		id: 'initech',
 		kanji: '客',
 		name: 'Initech',
-		kind: 'Client',
+		kind: 'Organization',
 		host: 'saas',
 		url: 'other/initech',
 		role: 'Contributor',
@@ -117,7 +121,7 @@ export const orgs: DojoOrg[] = [
 		id: 'rustco',
 		kanji: '群',
 		name: 'Rust Guild',
-		kind: 'Community',
+		kind: 'Organization',
 		host: 'saas',
 		url: 'github/rust-guild',
 		role: 'Read-only',
@@ -143,7 +147,5 @@ export const orgs: DojoOrg[] = [
 // /--success/--ink-3; map onto named tokens).
 export const kindToneClass: Record<OrgKind, string> = {
 	Organization: 'text-ink-soft',
-	Client: 'text-accent',
-	Community: 'text-success',
 	Personal: 'text-ink-mute'
 };

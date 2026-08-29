@@ -31,18 +31,6 @@ export function followsForMembership(id: string): string {
 	return DEV_FOLLOWS[id] ?? 'your projects';
 }
 
-/** True when a membership anonymizes the contributor's sends — client Dōjōs
- *  (the "the lesson travels, the client never does" note). */
-export function isAnonymizedMembership(kind: OrgKind): boolean {
-	return kind === 'Client';
-}
-
-/** How many of the caller's memberships are client engagements (drives whether
- *  the anonymization note is worth surfacing). */
-export function clientMembershipCount(memberships: readonly DojoOrg[]): number {
-	return memberships.filter((m) => isAnonymizedMembership(m.kind)).length;
-}
-
 // ── My contributions: status tallies ─────────────────────────────────────────
 
 /** Every contribution the contributor has sent upstream (newest-intent first). */

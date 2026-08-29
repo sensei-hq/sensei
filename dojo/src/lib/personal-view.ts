@@ -42,9 +42,7 @@ export function splitPacks(packs: KitRulePack[]): {
  *  resolved design Q5). A group with no members is dropped so the screen never
  *  renders an empty section (mockup `ScrMyDojos` `groups.map`+`if`). */
 export const DOJO_GROUPS: readonly { kind: string; label: string; icon: string }[] = [
-	{ kind: 'employer', label: 'Organization', icon: 'buildings-2' },
-	{ kind: 'client', label: 'Clients', icon: 'case-round' },
-	{ kind: 'community', label: 'Communities', icon: 'users-group-two-rounded' },
+	{ kind: 'organization', label: 'Organizations', icon: 'buildings-2' },
 	{ kind: 'personal', label: 'Personal', icon: 'user' }
 ];
 
