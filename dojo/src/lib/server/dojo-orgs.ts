@@ -7,19 +7,30 @@
 import { error } from '@sveltejs/kit';
 import { dojoDb } from './dojo-supabase';
 import { lookupPrincipalId } from './principal-resolve';
-import { membershipKindToOrgKind, orgKindKanji, type DojoOrg } from '$lib/dojo-data';
+import { originToOrgKind, orgKindKanji, type DojoOrg } from '$lib/dojo-data';
 
 export type SessionUser = { id?: string; email?: string; user_metadata?: Record<string, unknown> };
 export type OrgUser = { name: string; handle: string; initials: string };
 
-type TenantRow = { id: string; key: string; slug: string; name: string | null; self_hosted: boolean };
+type TenantRow = {
+	id: string;
+	key: string;
+	slug: string;
+	name: string | null;
+	self_hosted: boolean;
+	/** `personal` | `organization`. Drives the DISPLAYED kind — see `originToOrgKind`. */
+	origin?: string | null;
+};
 
 // The tenant's own slug — renamed from `org` in 37ca9fab when forge identity
 // moved down to dojo.tenant_connections (spec §VII). This list is handed to
 // PostgREST verbatim, so a stale name here is a hard query error, not a missing
 // field: it made `listUserOrgs` fail closed with a 500 and put /you out of reach
 // for every signed-in user.
-export const TENANT_COLS = 'id, key, slug, name, self_hosted';
+// `origin` is here because the DISPLAY kind derives from it. Omitting it would
+// read `undefined` and silently label every dōjō an Organization — including
+// personal ones — with nothing to indicate the column was simply never fetched.
+export const TENANT_COLS = 'id, key, slug, name, self_hosted, origin';
 const ROLE_LABEL: Record<string, string> = {
 	admin: 'Admin',
 	maintainer: 'Maintainer',
@@ -78,13 +89,16 @@ export function userProfile(su: SessionUser | undefined): OrgUser {
 	return { name, handle: su?.email ?? '', initials: initials(name) };
 }
 
-/** Map a tenant row + the caller's membership (role + kind) to the app's DojoOrg
- *  view-model. `kind` is the REAL `dojo.membership_kind` (was hardcoded 'Community',
- *  which collapsed every dōjō into the Communities group). Counts are left
- *  undefined — not yet computed here — so the row omits the chip rather than
- *  showing a fabricated 0 (computing real members/projects/pending is a follow-on). */
-export function tenantToOrg(t: TenantRow, role: string, kind?: string | null): DojoOrg {
-	const orgKind = membershipKindToOrgKind(kind);
+/** Map a tenant row + the caller's membership role to the app's DojoOrg
+ *  view-model. The displayed kind comes from `tenants.origin`, NOT from
+ *  `dojo.membership_kind` — see `originToOrgKind`. Counts are left undefined —
+ *  not yet computed here — so the row omits the chip rather than showing a
+ *  fabricated 0 (computing real members/projects/pending is a follow-on). */
+export function tenantToOrg(t: TenantRow, role: string, _kind?: string | null): DojoOrg {
+	// `_kind` is accepted and IGNORED. Callers still pass `memberships.kind`, and
+	// keeping the parameter documents that it is deliberately unused rather than
+	// forgotten — see `originToOrgKind`.
+	const orgKind = originToOrgKind(t.origin);
 	return {
 		id: t.id,
 		kanji: orgKindKanji(orgKind),

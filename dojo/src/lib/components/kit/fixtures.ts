@@ -45,7 +45,7 @@ export const dojos: KitDojo[] = [
 		slug: 'acme',
 		kanji: '社',
 		name: 'Acme Corp',
-		kind: 'employer',
+		kind: 'organization',
 		role: 'admin',
 		route: 'sensei-hq.com/acme',
 		members: 48,
@@ -54,9 +54,9 @@ export const dojos: KitDojo[] = [
 	},
 	{
 		slug: 'globex',
-		kanji: '客',
+		kanji: '社',
 		name: 'Globex',
-		kind: 'client',
+		kind: 'organization',
 		role: 'lead',
 		route: 'sensei-hq.com/globex',
 		members: 12,
@@ -65,9 +65,9 @@ export const dojos: KitDojo[] = [
 	},
 	{
 		slug: 'rustco',
-		kanji: '群',
+		kanji: '社',
 		name: 'Rust Guild',
-		kind: 'community',
+		kind: 'organization',
 		role: 'developer',
 		route: 'sensei-hq.com/rust-guild',
 		members: 340,
@@ -80,7 +80,7 @@ export const org: KitOrg = {
 	slug: 'acme',
 	kanji: '社',
 	name: 'Acme Corp',
-	kind: 'employer',
+	kind: 'organization',
 	role: 'admin',
 	route: 'sensei-hq.com/acme'
 };

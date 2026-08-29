@@ -3,12 +3,10 @@ import {
 	adoptedDownstreamCount,
 	allContributions,
 	allDownstream,
-	clientMembershipCount,
 	contributionsByStatus,
 	contributionTally,
 	downstreamSourceCount,
 	followsForMembership,
-	isAnonymizedMembership,
 	pendingContributionCount,
 	roleForKind,
 	statusMeta,
@@ -41,8 +39,6 @@ function membership(id: string, kind: OrgKind): DojoOrg {
 describe('My teams overlay', () => {
 	it('roleForKind maps each kind to the mockup role', () => {
 		expect(roleForKind('Organization')).toBe('Contributor');
-		expect(roleForKind('Client')).toBe('Contributor · anonymized');
-		expect(roleForKind('Community')).toBe('Member');
 		expect(roleForKind('Personal')).toBe('Owner');
 	});
 
@@ -61,23 +57,10 @@ describe('My teams overlay', () => {
 		expect(followsForMembership('brand-new-org')).toBe('your projects');
 	});
 
-	it('isAnonymizedMembership is true only for client Dōjōs', () => {
-		expect(isAnonymizedMembership('Client')).toBe(true);
-		expect(isAnonymizedMembership('Organization')).toBe(false);
-		expect(isAnonymizedMembership('Community')).toBe(false);
-		expect(isAnonymizedMembership('Personal')).toBe(false);
-	});
-
-	it('clientMembershipCount counts only client memberships', () => {
-		const memberships = [
-			membership('acme', 'Organization'),
-			membership('globex', 'Client'),
-			membership('initech', 'Client'),
-			membership('self', 'Personal')
-		];
-		expect(clientMembershipCount(memberships)).toBe(2);
-		expect(clientMembershipCount([])).toBe(0);
-	});
+	// `isAnonymizedMembership` / `clientMembershipCount` were removed with the
+	// Client kind: every insight is anonymised, so "anonymised because it is a
+	// client" named a difference that does not exist — and neither had a caller
+	// outside these tests.
 });
 
 describe('My contributions tallies', () => {
