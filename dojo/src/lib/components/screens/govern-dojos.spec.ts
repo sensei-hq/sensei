@@ -126,7 +126,7 @@ describe('ScrMyDojos — memberships grouped + empty state', () => {
 	it('groups memberships into employer · clients · communities', () => {
 		const { getByText } = render(ScrMyDojos, { props: { dojos } });
 		expect(getByText('My dōjōs')).toBeTruthy();
-		expect(getByText('Employer')).toBeTruthy();
+		expect(getByText('Organization')).toBeTruthy();
 		expect(getByText('Clients')).toBeTruthy();
 		expect(getByText('Communities')).toBeTruthy();
 		// a membership renders by name.
@@ -146,7 +146,7 @@ describe('ScrMyDojos — memberships grouped + empty state', () => {
 			props: { dojos: [], onCreateOrJoin }
 		});
 		expect(getByText('No memberships yet — create or join a Dōjō.')).toBeTruthy();
-		expect(queryByText('Employer')).toBeNull();
+		expect(queryByText('Organization')).toBeNull();
 	});
 
 	it('fires onCreateOrJoin from the empty-state affordance', async () => {

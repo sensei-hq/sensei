@@ -25,7 +25,7 @@ import type { OrgKind } from './dojo-data';
 // `DEV_ROLE_BY_KIND`, keyed there on lowercase kind). Mapped onto the app's
 // PascalCase `OrgKind`. Client memberships anonymize a contributor's sends.
 export const DEV_ROLE_BY_KIND: Record<OrgKind, string> = {
-	Employer: 'Contributor',
+	Organization: 'Contributor',
 	Client: 'Contributor · anonymized',
 	Community: 'Member',
 	Personal: 'Owner'
