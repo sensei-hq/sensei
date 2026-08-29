@@ -74,13 +74,13 @@ describe('groupDojos — membership groups', () => {
 	it('carries the right label + members into each group', () => {
 		const groups = groupDojos(dojos);
 		const employer = groups.find((g) => g.kind === 'employer');
-		expect(employer?.label).toBe('Employer');
+		expect(employer?.label).toBe('Organization');
 		expect(employer?.items.map((d) => d.slug)).toContain('acme');
 	});
 
 	it('drops a group with no members', () => {
-		const onlyEmployer: KitDojo[] = dojos.filter((d) => d.kind === 'employer');
-		const groups = groupDojos(onlyEmployer);
+		const onlyOrganization: KitDojo[] = dojos.filter((d) => d.kind === 'employer');
+		const groups = groupDojos(onlyOrganization);
 		expect(groups.map((g) => g.kind)).toEqual(['employer']);
 	});
 
