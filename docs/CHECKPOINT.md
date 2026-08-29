@@ -45,11 +45,21 @@ Persona/slot (flagged twice) is **fixed**: `label=sensei-hq-org`,
 open http://127.0.0.1:5173/signin
 ```
 
+## Election write path — BUILT (`849fa070`)
+
+`$lib/server/elections` + `PATCH /v1/you/repositories/election`. Reads authority
+and permission FROM the view; has no `authority` parameter by construction.
+Proved live in a rolled-back transaction: capture public → `not_elected_user`;
+**org elects → still false** (it cannot elect an org-PUBLIC repo on the
+contributor's behalf); user elects → `sync_enabled = true`.
+
+Two bugs the unit tests could not catch — `fakeDojoDb` is not a schema and
+accepted both: `elected_by` does not exist (invented), and `tenant_id` is NOT
+NULL and was never written. Now pinned against the real DDL.
+
 ## Blocked on the user
 
-- The GitHub sign-in above.
-- **Election write path** — 0 rows in `dojo.repository_elections`, no writer
-  anywhere, so scenarios A and D cannot happen. A gap in my planning.
+- The GitHub sign-in above — still the only way to verify positive capture.
 
 ## Still open
 
