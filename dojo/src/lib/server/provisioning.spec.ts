@@ -7,7 +7,12 @@
 // implementation that inserted a duplicate tenant on every sign-in.
 import { describe, it, expect, beforeEach } from 'vitest';
 import { fakeDojoDb, resetFakeIds, type FakeTable } from './fake-dojo-db';
-import { ensureProvisioned, provisionWithToken } from './provisioning';
+import {
+	ensureProvisioned,
+	provisionWithToken,
+	refreshForgeVisibility,
+	MAX_VISIBILITY_REFRESH_PER_PASS
+} from './provisioning';
 import type { ForgeFacts } from './forge-github';
 
 const PRINCIPAL = 'p-alice';
@@ -42,6 +47,14 @@ function tables(seed: Partial<Record<string, FakeTable>> = {}): Record<string, F
 			rows: [],
 			uniques: [{ columns: ['tenant_id', 'user_id'] }],
 			...seed.memberships
+		},
+		repositories: {
+			rows: [],
+			// The constraint the whole scoping argument rests on: the SAME repository
+			// legitimately exists under two tenants, so `repo_key` alone does not
+			// identify a row (§8a "the sign-in refresh must be scoped").
+			uniques: [{ columns: ['tenant_id', 'repo_key'] }],
+			...seed.repositories
 		}
 	};
 }
@@ -286,6 +299,284 @@ describe('ensureProvisioned — without forge facts', () => {
 	});
 });
 
+/** A fetch stub for `GET /repos/{owner}/{repo}`, answering by `owner/repo`. An
+ *  unlisted repository answers 404, which is what a token that cannot see it
+ *  really gets. */
+function repoFetch(answers: Record<string, { status?: number; private?: boolean }>) {
+	const calls: string[] = [];
+	const fn = (async (url: string | URL | Request) => {
+		const u = String(url);
+		calls.push(u);
+		const key = Object.keys(answers).find((k) => u.endsWith(`/repos/${k}`));
+		const a = key ? answers[key] : undefined;
+		const status = a?.status ?? (a ? 200 : 404);
+		return {
+			ok: status >= 200 && status < 300,
+			status,
+			json: async () => ({ private: a?.private })
+		} as Response;
+	}) as unknown as typeof fetch;
+	return { fn, calls };
+}
+
+const MINE = { id: 'm-mine', tenant_id: 't-mine', user_id: PRINCIPAL, role: 'admin' };
+
+/** One `dojo.repositories` row, uncaptured unless said otherwise. */
+function repoRow(over: Record<string, unknown> = {}) {
+	return {
+		id: 'r1',
+		tenant_id: 't-mine',
+		repo_key: 'github.com/sensei-hq/dbd',
+		provider: 'github',
+		visibility: null,
+		visibility_captured_at: null,
+		...over
+	};
+}
+
+describe('refreshForgeVisibility — capturing the forge answer at sign-in', () => {
+	it('does not touch a tenant whose membership has been DISABLED', async () => {
+		// Two independent review lenses found this. `dojo.all_my_repositories` and
+		// `can_read_repository_metric` both carry `disabled_at is null`; this scope did
+		// not — so a member whose access was REVOKED still had their forge token write
+		// visibility on that tenant's repositories, and visibility drives WHICH
+		// AUTHORITY governs sharing for every remaining member of it.
+		const revoked = { ...MINE, disabled_at: '2026-01-01T00:00:00.000Z' };
+		const db = fakeDojoDb(
+			tables({ memberships: { rows: [revoked] }, repositories: { rows: [repoRow()] } })
+		);
+		const { fn, calls } = repoFetch({ 'sensei-hq/dbd': { private: false } });
+		const out = await refreshForgeVisibility(db as never, PRINCIPAL, 'tok', fn);
+
+		expect(calls).toHaveLength(0);
+		expect(out.captured).toBe(0);
+		expect(db.tables.repositories.rows[0].visibility).toBeNull();
+	});
+
+	it('writes visibility AND visibility_captured_at onto a row that already exists', async () => {
+		// `dojo.repositories.visibility` may come from exactly one place: the forge.
+		const db = fakeDojoDb(
+			tables({ memberships: { rows: [MINE] }, repositories: { rows: [repoRow()] } })
+		);
+		const { fn, calls } = repoFetch({ 'sensei-hq/dbd': { private: false } });
+		const out = await refreshForgeVisibility(db as never, PRINCIPAL, 'tok', fn);
+
+		expect(out).toEqual({
+			captured: 1,
+			unavailable: 0,
+			failed: 0,
+			deferred: 0,
+			unsupported: 0
+		});
+		expect(calls).toEqual(['https://api.github.com/repos/sensei-hq/dbd']);
+		const row = db.tables.repositories.rows[0];
+		expect(row.visibility).toBe('public');
+		// A value with no timestamp is indistinguishable from the old bad default,
+		// and the view's staleness rule has nothing to measure. Always both.
+		expect(Date.parse(String(row.visibility_captured_at))).not.toBeNaN();
+	});
+
+	it('re-stamps captured_at even when the value did not change', async () => {
+		// Freshness IS the guard: §8a shows a stale `public` keeps a now-private
+		// repository syncing free under an election nobody re-made. So a pass that
+		// confirms the same value must still move the clock.
+		const db = fakeDojoDb(
+			tables({
+				memberships: { rows: [MINE] },
+				repositories: {
+					rows: [
+						repoRow({ visibility: 'private', visibility_captured_at: '2020-01-01T00:00:00.000Z' })
+					]
+				}
+			})
+		);
+		const { fn } = repoFetch({ 'sensei-hq/dbd': { private: true } });
+		await refreshForgeVisibility(db as never, PRINCIPAL, 'tok', fn);
+
+		const row = db.tables.repositories.rows[0];
+		expect(row.visibility).toBe('private');
+		expect(Date.parse(String(row.visibility_captured_at))).toBeGreaterThan(
+			Date.parse('2020-01-01T00:00:00.000Z')
+		);
+	});
+
+	it('NEVER inserts a repository row — it refreshes, it does not inventory', async () => {
+		// The rejected design: a row per visible forge repo. That discloses repos
+		// the user never chose to disclose, turning a sign-in into an inventory
+		// upload (§8a item 2, REJECTED). So with nothing registered there is
+		// nothing to ask the forge about, and nothing to write.
+		const db = fakeDojoDb(tables({ memberships: { rows: [MINE] } }));
+		const { fn, calls } = repoFetch({ 'sensei-hq/dbd': { private: false } });
+		const out = await refreshForgeVisibility(db as never, PRINCIPAL, 'tok', fn);
+
+		expect(db.tables.repositories.rows).toHaveLength(0);
+		expect(calls).toEqual([]);
+		expect(out.captured).toBe(0);
+	});
+
+	it('leaves a row in a tenant the signer does not belong to untouched', async () => {
+		// THE AUTHORIZATION BOUNDARY. `unique (tenant_id, repo_key)` means the same
+		// repository exists under two tenants, so an unscoped update by repo_key
+		// would use user A's token to rewrite tenant B's row — and since visibility
+		// decides authority, that changes who governs it for every member of B.
+		const db = fakeDojoDb(
+			tables({
+				memberships: { rows: [MINE] },
+				repositories: {
+					rows: [
+						repoRow({ id: 'r-mine', repo_key: 'github.com/acme/app' }),
+						repoRow({
+							id: 'r-theirs',
+							tenant_id: 't-theirs',
+							repo_key: 'github.com/acme/app',
+							visibility: 'private',
+							visibility_captured_at: '2020-01-01T00:00:00.000Z'
+						})
+					]
+				}
+			})
+		);
+		const { fn } = repoFetch({ 'acme/app': { private: false } });
+		const out = await refreshForgeVisibility(db as never, PRINCIPAL, 'tok', fn);
+
+		expect(out.captured).toBe(1);
+		const mine = db.tables.repositories.rows.find((r) => r.id === 'r-mine');
+		const theirs = db.tables.repositories.rows.find((r) => r.id === 'r-theirs');
+		expect(mine?.visibility).toBe('public');
+		// Not merely "not public" — byte-for-byte what it was.
+		expect(theirs?.visibility).toBe('private');
+		expect(theirs?.visibility_captured_at).toBe('2020-01-01T00:00:00.000Z');
+	});
+
+	it('leaves the row uncaptured when the forge read fails', async () => {
+		// Never a guessed `private`. In an org tenant that guess resolves to
+		// ORG-MANDATED and shares the repository with no election by anyone.
+		const db = fakeDojoDb(
+			tables({ memberships: { rows: [MINE] }, repositories: { rows: [repoRow()] } })
+		);
+		const { fn } = repoFetch({ 'sensei-hq/dbd': { status: 503 } });
+		const out = await refreshForgeVisibility(db as never, PRINCIPAL, 'tok', fn);
+
+		expect(out).toMatchObject({ captured: 0, failed: 1 });
+		const row = db.tables.repositories.rows[0];
+		expect(row.visibility).toBeNull();
+		expect(row.visibility_captured_at).toBeNull();
+	});
+
+	it('leaves the row alone on 404 rather than writing a value', async () => {
+		// No access, or renamed upstream. Reported apart from a fault because they
+		// are different problems: one needs a scope, the other needs a retry.
+		const db = fakeDojoDb(
+			tables({
+				memberships: { rows: [MINE] },
+				repositories: { rows: [repoRow({ repo_key: 'github.com/acme/gone' })] }
+			})
+		);
+		const { fn } = repoFetch({});
+		const out = await refreshForgeVisibility(db as never, PRINCIPAL, 'tok', fn);
+
+		expect(out).toMatchObject({ captured: 0, unavailable: 1, failed: 0 });
+		expect(db.tables.repositories.rows[0].visibility).toBeNull();
+		expect(db.tables.repositories.rows[0].visibility_captured_at).toBeNull();
+	});
+
+	it('reads the forge once for a repository registered under two of the signer tenants', async () => {
+		const db = fakeDojoDb(
+			tables({
+				memberships: {
+					rows: [MINE, { id: 'm-org', tenant_id: 't-org', user_id: PRINCIPAL, role: 'contributor' }]
+				},
+				repositories: {
+					rows: [
+						repoRow({ id: 'r-a', repo_key: 'github.com/acme/app' }),
+						repoRow({ id: 'r-b', tenant_id: 't-org', repo_key: 'github.com/acme/app' })
+					]
+				}
+			})
+		);
+		const { fn, calls } = repoFetch({ 'acme/app': { private: true } });
+		const out = await refreshForgeVisibility(db as never, PRINCIPAL, 'tok', fn);
+
+		expect(calls).toHaveLength(1);
+		expect(out.captured).toBe(2);
+		expect(db.tables.repositories.rows.map((r) => r.visibility)).toEqual(['private', 'private']);
+	});
+
+	it('does not address a repository on a forge this token cannot speak for', async () => {
+		// A GitHub token proves nothing about a GitLab repository, and an
+		// unattributable key has no owner/repo to ask about. Both leave the row
+		// uncaptured, which fails closed.
+		const db = fakeDojoDb(
+			tables({
+				memberships: { rows: [MINE] },
+				repositories: {
+					rows: [
+						repoRow({ id: 'r-gl', repo_key: 'gitlab.com/acme/app', provider: 'gitlab' }),
+						repoRow({ id: 'r-odd', repo_key: 'not-a-forge-key' })
+					]
+				}
+			})
+		);
+		const { fn, calls } = repoFetch({ 'acme/app': { private: false } });
+		const out = await refreshForgeVisibility(db as never, PRINCIPAL, 'tok', fn);
+
+		expect(calls).toEqual([]);
+		expect(out).toMatchObject({ captured: 0, unsupported: 2 });
+		expect(db.tables.repositories.rows.every((r) => r.visibility === null)).toBe(true);
+	});
+
+	it('defers the overflow past the per-pass cap, oldest capture first', async () => {
+		// A Worker has a hard per-invocation subrequest budget — the metrics ingest
+		// already lost a whole batch to it. So the pass is BOUNDED, and what it
+		// leaves behind is reported rather than silently dropped. Uncaptured rows
+		// go first: they are the ones that cannot sync at all.
+		const cap = MAX_VISIBILITY_REFRESH_PER_PASS;
+		// Seeded in the WRONG order deliberately: the uncaptured rows come LAST, and
+		// the captured ones ascend in age, so an implementation that simply took the
+		// first `cap` rows would defer exactly the three that cannot sync at all.
+		const rows = Array.from({ length: cap + 3 }, (_, i) =>
+			repoRow({
+				id: `r-${i}`,
+				repo_key: `github.com/acme/repo-${i}`,
+				visibility: i < cap ? 'private' : null,
+				visibility_captured_at: i < cap ? new Date(2020, 0, 1 + i).toISOString() : null
+			})
+		);
+		const answers = Object.fromEntries(
+			rows.map((_, i) => [`acme/repo-${i}`, { private: false }])
+		);
+		const db = fakeDojoDb(
+			tables({ memberships: { rows: [MINE] }, repositories: { rows } })
+		);
+		const { fn, calls } = repoFetch(answers);
+		const out = await refreshForgeVisibility(db as never, PRINCIPAL, 'tok', fn);
+
+		expect(calls).toHaveLength(cap);
+		expect(out).toMatchObject({ captured: cap, deferred: 3 });
+		// The uncaptured ones were served first, despite being seeded last…
+		for (const i of [cap, cap + 1, cap + 2]) {
+			expect(db.tables.repositories.rows.find((r) => r.id === `r-${i}`)?.visibility).toBe('public');
+		}
+		// …and the three most recently captured were left for the next pass.
+		for (const i of [cap - 3, cap - 2, cap - 1]) {
+			const row = db.tables.repositories.rows.find((r) => r.id === `r-${i}`);
+			expect(row?.visibility).toBe('private');
+			expect(row?.visibility_captured_at).toBe(new Date(2020, 0, 1 + i).toISOString());
+		}
+	});
+
+	it('does nothing when the signer belongs to no tenant', async () => {
+		// No membership, no scope, no rows — and no forge traffic to prove it.
+		const db = fakeDojoDb(tables({ repositories: { rows: [repoRow()] } }));
+		const { fn, calls } = repoFetch({ 'sensei-hq/dbd': { private: false } });
+		const out = await refreshForgeVisibility(db as never, PRINCIPAL, 'tok', fn);
+
+		expect(calls).toEqual([]);
+		expect(out.captured).toBe(0);
+		expect(db.tables.repositories.rows[0].visibility).toBeNull();
+	});
+});
+
 describe('provisionWithToken — the composition all three callers share', () => {
 	/** A fetch stub standing in for the GitHub API. */
 	function forgeFetch(status: number, user: unknown, orgs: unknown) {
@@ -340,5 +631,99 @@ describe('provisionWithToken — the composition all three callers share', () =>
 		});
 		expect(out.synced).toBe(false);
 		expect(out.reason).toBe('no_forge_token');
+	});
+
+	/** The forge, answering all three reads one pass makes. */
+	function fullForgeFetch(repos: Record<string, boolean>) {
+		const calls: string[] = [];
+		return {
+			calls,
+			fn: (async (url: string | URL | Request) => {
+				const u = String(url);
+				calls.push(u);
+				if (u.includes('/repos/')) {
+					const key = Object.keys(repos).find((k) => u.endsWith(`/repos/${k}`));
+					if (!key) return { ok: false, status: 404, json: async () => ({}) } as Response;
+					return { ok: true, status: 200, json: async () => ({ private: repos[key] }) } as Response;
+				}
+				const body = u.includes('/memberships/orgs') ? GH_ORGS : GH_USER;
+				return { ok: true, status: 200, json: async () => body } as Response;
+			}) as unknown as typeof fetch
+		};
+	}
+
+	/** A caller who already has a personal tenant with one registered repository —
+	 *  the state `registerRepositories` leaves behind, with visibility uncaptured. */
+	function withRegisteredRepo() {
+		return tables({
+			tenants: {
+				rows: [
+					{
+						id: 't-mine',
+						key: 'personal/jerrythomas',
+						origin: 'personal',
+						slug: 'jerrythomas',
+						name: 'Jerry'
+					}
+				],
+				uniques: [{ columns: ['key'] }]
+			},
+			memberships: {
+				rows: [{ id: 'm1', tenant_id: 't-mine', user_id: PRINCIPAL, role: 'admin', kind: 'personal' }],
+				uniques: [{ columns: ['tenant_id', 'user_id'] }]
+			},
+			repositories: {
+				rows: [
+					{
+						id: 'r1',
+						tenant_id: 't-mine',
+						repo_key: 'github.com/jerrythomas/thing',
+						provider: 'github',
+						visibility: null,
+						visibility_captured_at: null
+					}
+				]
+			}
+		});
+	}
+
+	it('captures forge visibility at sign-in — the one moment a forge token exists', async () => {
+		// The chicken/egg §8a resolves: registration holds a SUPABASE token and
+		// cannot ask the forge, so capture rides the provisioning pass, which is the
+		// only server-side place `provider_token` is reachable.
+		const db = fakeDojoDb(withRegisteredRepo());
+		const forge = fullForgeFetch({ 'jerrythomas/thing': false });
+		const out = await provisionWithToken(db as never, PRINCIPAL, 'gh-token', {}, forge.fn);
+
+		expect(out.synced).toBe(true);
+		expect(out.visibility).toMatchObject({ captured: 1 });
+		const row = db.tables.repositories.rows[0];
+		expect(row.visibility).toBe('public');
+		expect(Date.parse(String(row.visibility_captured_at))).not.toBeNaN();
+	});
+
+	it('does not touch the forge for visibility when there is no token', async () => {
+		const db = fakeDojoDb(withRegisteredRepo());
+		const out = await provisionWithToken(db as never, PRINCIPAL, null, {
+			email: 'j@example.com'
+		});
+		expect(out.visibility).toBeUndefined();
+		expect(db.tables.repositories.rows[0].visibility).toBeNull();
+	});
+
+	it('does not capture visibility from a failed forge read', async () => {
+		// `forge_unreachable` provisions no org tenant; it must equally capture no
+		// visibility. A pass that could not read the forge learned nothing.
+		const db = fakeDojoDb(withRegisteredRepo());
+		const out = await provisionWithToken(
+			db as never,
+			PRINCIPAL,
+			'gh-token',
+			{ email: 'j@example.com' },
+			forgeFetch(503, GH_USER, GH_ORGS)
+		);
+		expect(out.reason).toBe('forge_unreachable');
+		expect(out.visibility).toBeUndefined();
+		expect(db.tables.repositories.rows[0].visibility).toBeNull();
 	});
 });

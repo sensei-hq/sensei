@@ -28,7 +28,15 @@
 // exist yet, so every org tenant created here is implicitly unclaimed, which is
 // the correct default: none of them has proved ownership.
 import { AdminError, slugify, type DojoClient } from './admin-data';
-import { fetchGithubFacts, type ForgeFacts, type ForgeOrg, type ForgeProvider } from './forge-github';
+import {
+	fetchGithubFacts,
+	fetchGithubRepoVisibility,
+	type ForgeFacts,
+	type ForgeOrg,
+	type ForgeProvider,
+	type ForgeVisibility
+} from './forge-github';
+import { forgeRefFromRepoKey } from './repo-mapping';
 
 /** One tenant this pass established the caller's place in. */
 export interface ProvisionedTenant {
@@ -41,6 +49,25 @@ export interface ProvisionedTenant {
 	created: boolean;
 }
 
+/** What one forge-visibility refresh did, in ROWS — so the five buckets add up
+ *  to the number of `dojo.repositories` rows the pass considered. Every row that
+ *  was NOT written says which of the four reasons applies, rather than being
+ *  absent from an "updated N" count that cannot be checked against anything. */
+export interface VisibilityRefreshResult {
+	/** Rows whose `visibility` + `visibility_captured_at` were written. */
+	captured: number;
+	/** Rows left alone because the forge answered 404 — this token cannot see the
+	 *  repository (no access, or renamed upstream). */
+	unavailable: number;
+	/** Rows left alone because the forge read failed outright. */
+	failed: number;
+	/** Rows the per-pass cap left for a later pass. */
+	deferred: number;
+	/** Rows on a forge this token cannot speak for, or with a key we cannot
+	 *  address as `owner/repo`. */
+	unsupported: number;
+}
+
 /** What a provisioning pass established — the payload the daemon mirrors. */
 export interface ProvisionResult {
 	/** False when the pass could not read the forge; `reason` says why. Never
@@ -50,6 +77,10 @@ export interface ProvisionResult {
 	reason?: 'no_forge_token' | 'forge_unreachable' | 'no_identity';
 	personal: ProvisionedTenant | null;
 	tenants: ProvisionedTenant[];
+	/** Present only when the forge was actually read — a pass with no token, or
+	 *  one that could not reach the forge, captured nothing and says so by
+	 *  omission rather than by reporting five honest-looking zeros. */
+	visibility?: VisibilityRefreshResult;
 }
 
 /** What we know about the caller when there is no forge to ask. */
@@ -105,6 +136,31 @@ async function insertTenantWithFreeSlug(
 		if ((error as { code?: string }).code !== '23505') throw new AdminError(500, error.message);
 	}
 	throw new AdminError(409, `could not find a free slug near "${preferredSlug}"`);
+}
+
+/** One row of `dojo.memberships`, narrowed to what this module reads. */
+interface Membership {
+	tenant_id: string;
+	role: string;
+}
+
+/** Every tenant the caller belongs to. This is the scope of everything a
+ *  provisioning pass may touch on their behalf — §VIII.7 item 4 records what a
+ *  dropped `tenant_id` filter already cost this codebase once. */
+async function myMemberships(db: DojoClient, principalId: string): Promise<Membership[]> {
+	const { data, error } = await db
+		.from('memberships')
+		.select('tenant_id, role')
+		.eq('user_id', principalId)
+		// ACTIVE memberships only. `dojo.all_my_repositories` and
+		// `can_read_repository_metric` both carry this guard; without it a member
+		// whose access was REVOKED still scopes writes into that tenant — and
+		// `refreshForgeVisibility` writes `visibility`, which decides WHICH AUTHORITY
+		// governs sharing for every remaining member. Losing access to a tenant must
+		// remove your reach into it, not merely stop new grants.
+		.is('disabled_at', null);
+	if (error) throw new AdminError(500, error.message);
+	return (data ?? []) as Membership[];
 }
 
 /** Create the membership if it is not already there, and report the role that
@@ -228,9 +284,8 @@ async function ensurePersonalTenant(
 	displayName: string,
 	authenticatedVia: string
 ): Promise<ProvisionedTenant | null> {
-	const mine = await db.from('memberships').select('tenant_id, role').eq('user_id', principalId);
-	if (mine.error) throw new AdminError(500, mine.error.message);
-	const tenantIds = (mine.data ?? []).map((m) => (m as { tenant_id: string }).tenant_id);
+	const mine = await myMemberships(db, principalId);
+	const tenantIds = mine.map((m) => m.tenant_id);
 
 	if (tenantIds.length > 0) {
 		const owned = await db
@@ -241,9 +296,7 @@ async function ensurePersonalTenant(
 		if (owned.error) throw new AdminError(500, owned.error.message);
 		const existing = (owned.data ?? [])[0] as { id: string; key: string } | undefined;
 		if (existing) {
-			const role = (mine.data ?? []).find(
-				(m) => (m as { tenant_id: string }).tenant_id === existing.id
-			) as { role: string } | undefined;
+			const role = mine.find((m) => m.tenant_id === existing.id);
 			return {
 				id: existing.id,
 				key: existing.key,
@@ -346,6 +399,163 @@ async function ensureOrgTenant(
 }
 
 /**
+ * How many repositories one pass will ask the forge about.
+ *
+ * A Cloudflare Worker has a hard per-invocation subrequest budget, and this
+ * codebase has already lost an entire metrics batch to it (see the note on
+ * `FakeTable.reads`). So the pass is BOUNDED and reports what it left behind,
+ * rather than growing with a user's repository count until sign-in starts
+ * failing for whoever has the most repositories.
+ */
+export const MAX_VISIBILITY_REFRESH_PER_PASS = 40;
+
+/** One `dojo.repositories` row this pass may refresh. */
+interface RepoVisibilityRow {
+	id: string;
+	repo_key: string;
+	visibility_captured_at: string | null;
+}
+
+/**
+ * `owner`/`repo` for a GitHub repository key, or null when the key is not one a
+ * GitHub token can be asked about.
+ *
+ * Which host is which forge stays in `repo-mapping.ts` — re-deciding it here
+ * would be a second copy of the rule that says `github.com.attacker.net` is not
+ * GitHub. Only the repository segment is read locally, and only for the exact
+ * `host/owner/repo` shape the normaliser produces; a longer path is a key we
+ * cannot address, and guessing which segment is the repository would ask the
+ * forge about a different one.
+ */
+function githubOwnerRepo(repoKey: string): { owner: string; repo: string } | null {
+	const ref = forgeRefFromRepoKey(repoKey);
+	if (!ref || ref.provider !== 'github') return null;
+	const parts = repoKey.trim().toLowerCase().split('/').filter((p) => p.length > 0);
+	if (parts.length !== 3) return null;
+	return { owner: ref.org, repo: parts[2] };
+}
+
+/** Uncaptured first, then oldest capture first — the rows that cannot sync at
+ *  all are served before the ones that merely have an ageing answer. An
+ *  unparseable timestamp sorts as uncaptured, because we cannot tell its age. */
+function captureAge(row: RepoVisibilityRow): number {
+	const at = row.visibility_captured_at ? Date.parse(row.visibility_captured_at) : NaN;
+	// A finite sentinel, not -Infinity: comparing two uncaptured rows would then
+	// subtract two infinities and hand `sort` a NaN.
+	return Number.isNaN(at) ? -1 : at;
+}
+
+/**
+ * Refresh the forge's visibility answer for repositories the dōjō ALREADY has.
+ *
+ * This is the capture step §8a resolves the chicken/egg with. `dojo.repositories`
+ * rows are created by `registerRepositories` and nothing else, and that caller
+ * holds a SUPABASE token — it cannot ask the forge anything. A provider token
+ * exists server-side only during the sign-in pass, so capture happens here.
+ *
+ * THREE PROPERTIES, each from a review finding, each with a test:
+ *
+ *   1. It REFRESHES, it never INSERTS. Creating a row per visible forge repo was
+ *      rejected outright: it would disclose repositories the user never chose to
+ *      disclose, turning a sign-in into an inventory upload. The set asked about
+ *      is exactly the set already registered.
+ *   2. It is SCOPED TO THE SIGNER'S OWN TENANTS. `dojo.repositories` is
+ *      `unique (tenant_id, repo_key)`, so the same repository legitimately exists
+ *      under two tenants; an update keyed on `repo_key` alone would let user A's
+ *      token rewrite tenant B's row. Since visibility decides which AUTHORITY
+ *      governs a repository, that would change who governs it for every member of
+ *      B. An authorization boundary, not an optimisation.
+ *   3. A read that does not succeed writes NOTHING. Never a guessed `private` —
+ *      in an org tenant that guess resolves to org-MANDATED and shares the
+ *      repository with no election by anyone (§8a, BLOCKING).
+ *
+ * `visibility` and `visibility_captured_at` are always written together: a value
+ * with no timestamp is indistinguishable from the old bad column default, and the
+ * view's staleness rule would have nothing to measure.
+ */
+export async function refreshForgeVisibility(
+	db: DojoClient,
+	principalId: string,
+	token: string,
+	fetchImpl: typeof fetch = fetch
+): Promise<VisibilityRefreshResult> {
+	const out: VisibilityRefreshResult = {
+		captured: 0,
+		unavailable: 0,
+		failed: 0,
+		deferred: 0,
+		unsupported: 0
+	};
+
+	const tenantIds = [...new Set((await myMemberships(db, principalId)).map((m) => m.tenant_id))];
+	if (tenantIds.length === 0) return out;
+
+	const found = await db
+		.from('repositories')
+		.select('id, repo_key, visibility_captured_at')
+		.in('tenant_id', tenantIds);
+	if (found.error) throw new AdminError(500, found.error.message);
+
+	// One forge read per repository, however many tenants registered it.
+	const byRepo = new Map<string, { owner: string; repo: string; rows: RepoVisibilityRow[] }>();
+	for (const row of (found.data ?? []) as RepoVisibilityRow[]) {
+		const ref = githubOwnerRepo(row.repo_key);
+		if (!ref) {
+			out.unsupported += 1;
+			continue;
+		}
+		const group = byRepo.get(row.repo_key);
+		if (group) group.rows.push(row);
+		else byRepo.set(row.repo_key, { ...ref, rows: [row] });
+	}
+
+	const groups = [...byRepo.values()].sort(
+		(a, b) => Math.min(...a.rows.map(captureAge)) - Math.min(...b.rows.map(captureAge))
+	);
+	for (const group of groups.slice(MAX_VISIBILITY_REFRESH_PER_PASS)) {
+		out.deferred += group.rows.length;
+	}
+
+	const capturedAt = new Date().toISOString();
+	for (const group of groups.slice(0, MAX_VISIBILITY_REFRESH_PER_PASS)) {
+		let visibility: ForgeVisibility | null;
+		try {
+			visibility = await fetchGithubRepoVisibility(group.owner, group.repo, token, fetchImpl);
+		} catch {
+			// The forge would not answer. The row keeps whatever it had — including
+			// nothing — and the view fails closed on it.
+			out.failed += group.rows.length;
+			continue;
+		}
+		if (!visibility) {
+			out.unavailable += group.rows.length;
+			continue;
+		}
+		for (const row of group.rows) {
+			// By primary key, drawn from the membership-scoped read above — which is
+			// what keeps property 2 true of the WRITE and not just of the read.
+			const upd = await db
+				.from('repositories')
+				.update({ visibility, visibility_captured_at: capturedAt })
+				.eq('id', row.id);
+			if (upd.error) throw new AdminError(500, upd.error.message);
+			out.captured += 1;
+		}
+	}
+
+	if (out.failed || out.unavailable) {
+		// Named, not swallowed. These rows will not sync and the reason is not
+		// visible anywhere else: the sign-in hook discards its result.
+		console.warn('forge-visibility: repositories left uncaptured', {
+			principalId,
+			failed: out.failed,
+			unavailable: out.unavailable
+		});
+	}
+	return out;
+}
+
+/**
  * Provision everything one pass can prove, idempotently.
  *
  * `facts` null means no forge token was available. `provider_token` exists only
@@ -440,5 +650,10 @@ export async function provisionWithToken(
 			? degraded
 			: { ...degraded, reason: 'forge_unreachable' };
 	}
-	return ensureProvisioned(db, principalId, facts, fallback);
+	const result = await ensureProvisioned(db, principalId, facts, fallback);
+	// AFTER provisioning, deliberately: an org tenant this pass just created is a
+	// membership the refresh's scope must include, or the first sign-in of the
+	// first employee captures nothing for their employer's repositories.
+	const visibility = await refreshForgeVisibility(db, principalId, providerToken, fetchImpl);
+	return { ...result, visibility };
 }
