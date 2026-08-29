@@ -3410,14 +3410,43 @@ mod tests {
 
         spawn_workers(ctx.clone(), 2);
 
-        // Poll until the whole graph drains through the real executor (bounded — a
-        // stuck barrier or a failing handler fails loud instead of hanging forever).
+        // Poll until the whole graph drains through the real executor.
+        //
+        // BOUNDED ON PROGRESS, NOT ON WALL CLOCK. The bound exists to make a stuck
+        // barrier or a failing handler fail loud rather than hang — and "stuck" is
+        // precisely "`completed` stopped moving", which is what is asserted here.
+        //
+        // A fixed 800×25ms = 20s cap answered a different question: "did this
+        // finish fast enough". It drains in well under a second idle, but this
+        // suite shares a machine with cargo, psql and a dev server, and under that
+        // contention it FAILED at `pending=7 blocked=1 running=2 completed=88` —
+        // still advancing, two tasks from done. That is a slow machine, not a bug,
+        // and a test that calls it one is a test that cries wolf in CI.
+        //
+        // Progress RESETS the budget, so a slow machine finishes and a stuck one
+        // still fails loudly. The threshold is deliberately the same magnitude as
+        // the old TOTAL cap — but 20s of NO MOVEMENT is a far weaker claim than
+        // 20s overall, and it is the claim the assertion actually wants to make.
+        //
+        // Measured, not guessed: at 16-way CPU saturation the workers are starved
+        // hard enough to go quiet for seconds at a time, so a 5s threshold called
+        // a healthy graph stuck. The original failure was nothing like that —
+        // `completed` had reached 88 of ~90 and was still climbing.
+        const STALL_POLLS: u32 = 800; // 20s with no forward movement at all
         let mut drained = false;
-        for _ in 0..800 {
+        let mut best_completed = 0usize;
+        let mut stalled_for = 0u32;
+        while stalled_for < STALL_POLLS {
             let s = ctx.queue.status().await;
             if s.pending == 0 && s.blocked == 0 && s.running == 0 && s.completed >= expected_tasks {
                 drained = true;
                 break;
+            }
+            if s.completed > best_completed {
+                best_completed = s.completed;
+                stalled_for = 0;
+            } else {
+                stalled_for += 1;
             }
             tokio::time::sleep(std::time::Duration::from_millis(25)).await;
         }
