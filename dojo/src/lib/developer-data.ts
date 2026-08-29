@@ -23,11 +23,12 @@ import type { OrgKind } from './dojo-data';
 // ── My teams: per-membership overlay ─────────────────────────────────────────
 // The role a contributor holds in a Dōjō of a given kind (mockup
 // `DEV_ROLE_BY_KIND`, keyed there on lowercase kind). Mapped onto the app's
-// PascalCase `OrgKind`. Client memberships anonymize a contributor's sends.
+// PascalCase `OrgKind`.
+//
+// "Contributor · anonymized" was the Client row's label. Every insight is
+// anonymised, so singling one membership out implied the others were not.
 export const DEV_ROLE_BY_KIND: Record<OrgKind, string> = {
 	Organization: 'Contributor',
-	Client: 'Contributor · anonymized',
-	Community: 'Member',
 	Personal: 'Owner'
 };
 
