@@ -220,6 +220,41 @@ export async function registerRepositories(
 }
 
 
+
+/** PostgREST's server-side row cap (`max_rows` in supabase/config.toml). A read
+ *  with no `.range()` returns at most this many rows and gives NO indication it
+ *  truncated — no error, no flag, the rest simply are not there. */
+const PAGE = 1000;
+
+/**
+ * Read every row of a filtered query, a page at a time.
+ *
+ * The cap is silent, which is what makes it dangerous: a truncated
+ * `all_my_repositories` read produces a shorter allow-list, and the ingest then
+ * refuses a repository the user IS permitted to sync — with `not_permitted`,
+ * a denial naming the wrong reason.
+ *
+ * `page` is a builder rather than a query, because a supabase-js chain is
+ * consumed once: reusing one across pages replays the first request's range.
+ *
+ * Stops when a page comes back SHORT. A full final page is indistinguishable
+ * from "there is more", so it costs one extra empty request rather than risking
+ * a lost tail — the off-by-one that would otherwise drop exactly the rows of a
+ * user whose count is a multiple of the page size.
+ */
+async function readAllPages<T>(
+	page: (from: number, to: number) => PromiseLike<{ data: unknown; error: { message: string } | null }>
+): Promise<T[]> {
+	const out: T[] = [];
+	for (let from = 0; ; from += PAGE) {
+		const { data, error } = await page(from, from + PAGE - 1);
+		if (error) throw new AdminError(500, error.message);
+		const rows = (data ?? []) as T[];
+		out.push(...rows);
+		if (rows.length < PAGE) return out;
+	}
+}
+
 /** One row of `dojo.all_my_repositories`, as a screen needs it. */
 export interface MyRepository {
 	repository_id: string;
@@ -265,12 +300,13 @@ export async function listMyRepositories(
 	db: DojoClient,
 	principalId: string
 ): Promise<MyRepository[]> {
-	const { data, error } = await db
-		.from('all_my_repositories')
-		.select(MY_REPO_COLUMNS)
-		.eq('principal_id', principalId);
-	if (error) throw new AdminError(500, error.message);
-	return (data ?? []) as MyRepository[];
+	return readAllPages<MyRepository>((from, to) =>
+		db
+			.from('all_my_repositories')
+			.select(MY_REPO_COLUMNS)
+			.eq('principal_id', principalId)
+			.range(from, to)
+	);
 }
 
 /**
@@ -297,11 +333,20 @@ export async function listMyRepositories(
  * nullable boolean whose NULL means no.
  */
 export async function syncPlan(db: DojoClient, principalId: string): Promise<SyncPlan> {
-	const { data, error } = await db
-		.from('all_my_repositories')
-		.select('repository_id, repo_key, tenant, tenant_id, sync_enabled, denied_reason')
-		.eq('principal_id', principalId);
-	if (error) throw new AdminError(500, error.message);
+	const data = await readAllPages<{
+		repository_id: string;
+		repo_key: string;
+		tenant: string;
+		tenant_id: string;
+		sync_enabled: boolean;
+		denied_reason?: string | null;
+	}>((from, to) =>
+		db
+			.from('all_my_repositories')
+			.select('repository_id, repo_key, tenant, tenant_id, sync_enabled, denied_reason')
+			.eq('principal_id', principalId)
+			.range(from, to)
+	);
 
 	const allowed: MappedRepo[] = [];
 	const denied: { repo_key: string; tenant: string; reason: string }[] = [];

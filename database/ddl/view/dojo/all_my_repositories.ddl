@@ -409,3 +409,15 @@ comment on column dojo.all_my_repositories.last_synced_at
      is 'Latest push for this repository that THIS member may see: repo-scoped rows, plus their own user-scoped rows. Not every row — service_role bypasses the RLS on repository_metrics, so this predicate is the boundary.';
 comment on column dojo.all_my_repositories.denied_reason
      is 'DEPRECATED alias of reason_code, kept until GET /v1/you/sync/plan reads reason_code directly.';
+
+-- ACLs DO NOT SURVIVE `drop view`. This file drops and recreates (see the note
+-- above on renaming columns), so every deploy discards whatever grants the view
+-- had and re-creates it owned by the deploying role. Without this line the live
+-- ACL was `postgres` + `service_role` and nothing else — verified, not assumed.
+--
+-- It worked anyway only because every current reader is the Worker holding a
+-- service_role key. `security_invoker = on` means the moment anything queries
+-- this as `authenticated` — a browser-side read, a Realtime subscription, an RLS
+-- test — it gets "permission denied" for a view whose own predicates would have
+-- allowed it. `dojo.metric_catalogue` shipped that exact failure once.
+grant select on dojo.all_my_repositories to authenticated, service_role;
