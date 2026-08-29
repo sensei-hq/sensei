@@ -72,6 +72,28 @@ const REGISTER_LIMIT: i64 = 500;
 /// set by the client is not a decision a client gets to make.
 const PUSH_LIMIT: i64 = 500;
 
+/// Reason codes that a fresh capture can actually resolve.
+///
+/// Kept as a list rather than a substring test: `forge_visibility_unknown` and
+/// `forge_visibility_stale` are the two the dōjō emits for "nobody has asked the
+/// forge lately", and a prefix match would silently adopt any future
+/// `forge_visibility_*` code whose remedy is NOT a re-capture.
+const CAPTURE_FIXES: [&str; 2] = ["forge_visibility_unknown", "forge_visibility_stale"];
+
+/// Should this pass ask the dōjō to re-read forge visibility?
+///
+/// The dōjō captures visibility at SIGN-IN, but repositories keep registering
+/// through this task — so a repo cloned afterwards is denied for want of an
+/// answer nobody is going to ask for, and the remedy shown to the user is "sign
+/// in again". The daemon holds the forge token, so it can ask instead.
+///
+/// Deliberately narrow. Every other denial — subscription, seat, election — is a
+/// decision the forge cannot change, and re-capturing on those would be a
+/// standing per-minute call to GitHub that could not move the verdict.
+fn needs_forge_capture(denied: &[crate::dojo_client::user_plane::DeniedRepo]) -> bool {
+    denied.iter().any(|d| CAPTURE_FIXES.contains(&d.reason.as_str()))
+}
+
 /// The `sensei.sync_entity` value a whole-cycle plan fetch is recorded against.
 /// Keyed on the persona's KEYCHAIN SLOT (`personas.session_slot`), so two personas'
 /// failures stay distinguishable — never the label, which a sign-in rewrites.
@@ -220,6 +242,43 @@ async fn sync_persona(
             "dojo_sync: repository not permitted to sync"
         );
     }
+
+    // SELF-HEAL the one denial the daemon can answer itself.
+    //
+    // The dōjō captures forge visibility at SIGN-IN, but repositories keep
+    // registering through this task — so anything cloned afterwards is refused
+    // for want of an answer nobody is going to ask for, and the remedy the user
+    // is shown is "sign in again". Observed live: four of five registered
+    // repositories sat at `forge_visibility_unknown`, the private one included.
+    //
+    // The daemon holds the forge token, so it asks and re-reads the verdict.
+    // Best-effort throughout: a capture failure leaves the denial standing and
+    // this pass proceeds with the plan it already has, because a repository that
+    // cannot be captured is exactly one that must not sync.
+    let plan = if needs_forge_capture(&plan.denied) {
+        match forge_token_for(persona).await {
+            Ok(provider) => {
+                match recapture_and_replan(persona, token, &provider, plane, plan).await {
+                    Ok(p) => p,
+                    Err((e, kept)) => {
+                        tracing::warn!(persona, error = %e,
+                                   "dojo_sync: could not refresh forge visibility; keeping the current plan");
+                        kept
+                    }
+                }
+            }
+            Err(e) => {
+                // Nothing to ask WITH. Not a pass failure: the denial simply
+                // stands, which is the safe direction.
+                tracing::info!(persona, error = %e,
+                               "dojo_sync: no forge token, so visibility stays uncaptured");
+                plan
+            }
+        }
+    } else {
+        plan
+    };
+
     pg.mark_synced(&mark, None).await?;
 
     let pushed = push_allowed(pg, persona, token, plane, &plan).await?;
@@ -407,9 +466,140 @@ pub fn spawn(pg: Arc<PgStore>) {
     });
 }
 
+/// The persona's stored forge token. Split out so `recapture_and_replan` stays
+/// free of the Keychain and is therefore testable against a scripted dōjō —
+/// without this the success path could only ever run on a real machine with a
+/// real sign-in, which is precisely the path most worth testing.
+async fn forge_token_for(persona: &str) -> Result<String, String> {
+    let who = persona.to_string();
+    match tokio::task::spawn_blocking(move || {
+        crate::dojo_client::session::load_provider_token(&who)
+    })
+    .await
+    {
+        Ok(Ok(t)) => Ok(t),
+        Ok(Err(e)) => Err(format!("no forge token for {persona}: {e}")),
+        Err(e) => Err(format!("forge token read panicked: {e}")),
+    }
+}
+
+/// Hand the dōjō the forge token, then re-read the plan.
+///
+/// Returns the REFRESHED plan on success. On failure it returns the error
+/// alongside the plan it was given, so the caller carries on with a verdict it
+/// already trusts rather than losing the pass — a repository whose visibility
+/// cannot be established is precisely one that must not sync, so degrading to
+/// the stale (more restrictive) plan is the safe direction.
+async fn recapture_and_replan(
+    persona: &str,
+    token: &str,
+    provider: &str,
+    plane: &dyn UserPlane,
+    current: user_plane::SyncPlan,
+) -> Result<user_plane::SyncPlan, (String, user_plane::SyncPlan)> {
+    if let Err(e) = plane.provision(token, provider).await {
+        return Err((e, current));
+    }
+    match plane.sync_plan(token).await {
+        Ok(p) => {
+            tracing::info!(
+                persona,
+                allowed = p.allowed.len(),
+                denied = p.denied.len(),
+                "dojo_sync: refreshed forge visibility and re-read the plan"
+            );
+            Ok(p)
+        }
+        Err(e) => Err((e, current)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `forge_visibility_unknown` is the ONE denial the daemon can act on itself.
+    ///
+    /// The dōjō captures forge visibility only at sign-in, but repositories keep
+    /// registering through this task — so a repo cloned after sign-in is denied
+    /// for want of an answer nobody is going to ask for. Observed live: four of
+    /// five registered repos sat at `forge_visibility_unknown`, including the one
+    /// PRIVATE repo the whole authority model exists for, and the remedy shown to
+    /// the user was "sign in again".
+    ///
+    /// The daemon holds the forge token. When the refusal names this reason, it
+    /// can ask — so the refusal becomes self-healing instead of a standing chore.
+    mod capture_trigger {
+        use super::*;
+        use crate::dojo_client::user_plane::DeniedRepo;
+
+        fn denied(reason: &str) -> DeniedRepo {
+            DeniedRepo {
+                repo_key: "github.com/acme/api".into(),
+                tenant: "organization/acme".into(),
+                reason: reason.into(),
+            }
+        }
+
+        #[test]
+        fn asks_when_a_repo_is_denied_for_want_of_a_forge_answer() {
+            assert!(needs_forge_capture(&[denied("forge_visibility_unknown")]));
+        }
+
+        #[test]
+        fn does_not_ask_when_nothing_was_denied() {
+            assert!(!needs_forge_capture(&[]));
+        }
+
+        #[test]
+        fn does_not_ask_for_denials_capture_cannot_fix() {
+            // Asking again changes nothing for these: the forge already answered,
+            // and the refusal is a subscription or an election. Re-capturing every
+            // 60s would be a standing call to GitHub that cannot move the verdict.
+            for reason in [
+                "not_subscribed",
+                "subscription_expired",
+                "no_seat",
+                "not_elected_user",
+                "not_elected_org",
+                "unclaimed",
+            ] {
+                assert!(
+                    !needs_forge_capture(&[denied(reason)]),
+                    "{reason} must not trigger capture"
+                );
+            }
+        }
+
+        #[test]
+        fn asks_when_at_least_one_of_several_denials_is_a_missing_answer() {
+            assert!(needs_forge_capture(&[
+                denied("not_subscribed"),
+                denied("forge_visibility_unknown"),
+            ]));
+        }
+
+        #[test]
+        fn matches_the_list_not_the_prefix() {
+            // The comment on CAPTURE_FIXES claims a prefix match would be wrong.
+            // Without this test that claim is unenforced — `starts_with(
+            // "forge_visibility")` passed every other test here.
+            //
+            // A future `forge_visibility_refused` (the forge answered: you may not
+            // see this) is NOT fixable by asking again. Under a prefix match the
+            // daemon would call GitHub every 60s forever for a verdict that will
+            // never change.
+            assert!(!needs_forge_capture(&[denied("forge_visibility_refused")]));
+        }
+
+        #[test]
+        fn a_stale_answer_also_warrants_asking() {
+            // `forge_visibility_stale` is the sibling code: an answer was captured
+            // once and has since aged out. Same remedy, same actor.
+            assert!(needs_forge_capture(&[denied("forge_visibility_stale")]));
+        }
+    }
+
     use crate::dojo_client::user_plane::{
         DeniedRepo, IngestResult, MappedRepo, MetricPush, RegisterResult, RejectedMetric, SyncPlan,
         UnmappedRepo,
@@ -433,6 +623,14 @@ mod tests {
         plan_calls: Mutex<usize>,
         pushed_rows: Mutex<Vec<(String, String)>>,
         push_calls: Mutex<usize>,
+        /// The plan served AFTER a successful `provision` — i.e. what the dōjō
+        /// says once it has actually asked the forge. `None` means capture
+        /// changed nothing, which is itself a case worth testing.
+        plan_after_provision: Option<SyncPlan>,
+        provision_calls: Mutex<usize>,
+        /// Set to make `provision` fail, so the caller's degrade-to-stale path is
+        /// exercised rather than assumed.
+        provision_err: Option<String>,
     }
 
     #[async_trait::async_trait]
@@ -447,7 +645,24 @@ mod tests {
         }
         async fn sync_plan(&self, _t: &str) -> Result<SyncPlan, String> {
             *self.plan_calls.lock().unwrap() += 1;
+            // Keyed on whether the forge was actually ASKED, not on the call
+            // count: the dōjō's answer changes because it captured, and a test
+            // that calls `recapture_and_replan` directly makes only one plan
+            // read. Counting reads made the stub model the call sequence rather
+            // than the cause, and the success path silently tested nothing.
+            if *self.provision_calls.lock().unwrap() > 0
+                && let Some(after) = self.plan_after_provision.clone()
+            {
+                return Ok(after);
+            }
             Ok(self.plan.clone().unwrap_or(SyncPlan { allowed: vec![], denied: vec![] }))
+        }
+        async fn provision(&self, _t: &str, _p: &str) -> Result<(), String> {
+            *self.provision_calls.lock().unwrap() += 1;
+            match &self.provision_err {
+                Some(e) => Err(e.clone()),
+                None => Ok(()),
+            }
         }
         async fn push_metrics(
             &self,
@@ -462,6 +677,109 @@ mod tests {
             self.push
                 .clone()
                 .unwrap_or(Ok(IngestResult { accepted: m.len() as u32, rejected: vec![] }))
+        }
+    }
+
+    /// The self-heal, end to end against a scripted dōjō.
+    ///
+    /// `recapture_and_replan` takes the forge token as an argument precisely so
+    /// these can run: with the Keychain read inline, the SUCCESS path was
+    /// reachable only on a machine with a real sign-in.
+    mod self_heal {
+        use super::*;
+
+        fn denied(reason: &str) -> DeniedRepo {
+            DeniedRepo {
+                repo_key: "github.com/acme/api".into(),
+                tenant: "organization/acme".into(),
+                reason: reason.into(),
+            }
+        }
+        fn allowed(repo_key: &str) -> MappedRepo {
+            MappedRepo {
+                repo_key: repo_key.into(),
+                tenant: "organization/acme".into(),
+                tenant_id: "11111111-1111-1111-1111-111111111111".into(),
+                repo_id: "22222222-2222-2222-2222-222222222222".into(),
+            }
+        }
+
+        #[tokio::test]
+        async fn capture_flips_a_denial_into_an_allowance() {
+            // The whole point: a repo registered after sign-in is denied for want
+            // of a forge answer; the daemon asks, and the SECOND plan permits it.
+            let plane = StubPlane {
+                plan: Some(SyncPlan {
+                    allowed: vec![],
+                    denied: vec![denied("forge_visibility_unknown")],
+                }),
+                plan_after_provision: Some(SyncPlan {
+                    allowed: vec![allowed("github.com/acme/api")],
+                    denied: vec![],
+                }),
+                ..Default::default()
+            };
+            let stale =
+                SyncPlan { allowed: vec![], denied: vec![denied("forge_visibility_unknown")] };
+            let out = recapture_and_replan("p", "tok", "gh-token", &plane, stale).await;
+            let plan = out.expect("capture succeeded");
+            assert_eq!(plan.allowed.len(), 1, "the refreshed plan must be the one returned");
+            assert_eq!(
+                *plane.provision_calls.lock().unwrap(),
+                1,
+                "the forge must actually be asked"
+            );
+        }
+
+        #[tokio::test]
+        async fn a_failed_capture_keeps_the_stale_plan_rather_than_losing_the_pass() {
+            // Degrading to the stale plan is the safe direction: it is strictly
+            // MORE restrictive, and a repository whose visibility cannot be
+            // established is exactly one that must not sync.
+            let plane = StubPlane {
+                plan: Some(SyncPlan {
+                    allowed: vec![],
+                    denied: vec![denied("forge_visibility_unknown")],
+                }),
+                provision_err: Some("github unreachable".into()),
+                ..Default::default()
+            };
+            let stale = SyncPlan {
+                allowed: vec![allowed("github.com/acme/already-ok")],
+                denied: vec![denied("forge_visibility_unknown")],
+            };
+            let (err, kept) = recapture_and_replan("p", "tok", "gh-token", &plane, stale)
+                .await
+                .expect_err("provision failed");
+            assert!(err.contains("github unreachable"));
+            assert_eq!(kept.allowed.len(), 1, "the pass keeps the verdict it already trusted");
+        }
+
+        #[tokio::test]
+        async fn a_capture_that_changes_nothing_is_not_an_error() {
+            // The forge answered and the repo is still refused — e.g. it really is
+            // private and the org has no subscription. That is a legitimate
+            // outcome, not a failure, and must not be logged as one.
+            let plane = StubPlane {
+                plan: Some(SyncPlan {
+                    allowed: vec![],
+                    denied: vec![denied("forge_visibility_unknown")],
+                }),
+                plan_after_provision: Some(SyncPlan {
+                    allowed: vec![],
+                    denied: vec![denied("not_subscribed")],
+                }),
+                ..Default::default()
+            };
+            let stale =
+                SyncPlan { allowed: vec![], denied: vec![denied("forge_visibility_unknown")] };
+            let plan = recapture_and_replan("p", "tok", "gh-token", &plane, stale)
+                .await
+                .expect("a still-denied repo is a valid answer");
+            assert_eq!(
+                plan.denied[0].reason, "not_subscribed",
+                "the NEW reason must replace the old"
+            );
         }
     }
 
