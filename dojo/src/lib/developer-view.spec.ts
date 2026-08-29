@@ -40,7 +40,7 @@ function membership(id: string, kind: OrgKind): DojoOrg {
 
 describe('My teams overlay', () => {
 	it('roleForKind maps each kind to the mockup role', () => {
-		expect(roleForKind('Employer')).toBe('Contributor');
+		expect(roleForKind('Organization')).toBe('Contributor');
 		expect(roleForKind('Client')).toBe('Contributor · anonymized');
 		expect(roleForKind('Community')).toBe('Member');
 		expect(roleForKind('Personal')).toBe('Owner');
@@ -63,14 +63,14 @@ describe('My teams overlay', () => {
 
 	it('isAnonymizedMembership is true only for client Dōjōs', () => {
 		expect(isAnonymizedMembership('Client')).toBe(true);
-		expect(isAnonymizedMembership('Employer')).toBe(false);
+		expect(isAnonymizedMembership('Organization')).toBe(false);
 		expect(isAnonymizedMembership('Community')).toBe(false);
 		expect(isAnonymizedMembership('Personal')).toBe(false);
 	});
 
 	it('clientMembershipCount counts only client memberships', () => {
 		const memberships = [
-			membership('acme', 'Employer'),
+			membership('acme', 'Organization'),
 			membership('globex', 'Client'),
 			membership('initech', 'Client'),
 			membership('self', 'Personal')
