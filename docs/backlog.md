@@ -709,3 +709,35 @@ default for token expiration on a new App. Both are assumed above, not tested.
 
 **Not blocked on any of it:** incremental consent (ask for `repo` only when a
 user elects a private repo) is a change to WHEN we ask and needs none of this.
+
+### Repository sharing — remaining after the live verification (2026-08-29)
+
+**A 404 leaves a stale forge visibility standing.** `refreshForgeVisibility`
+skips on a 404 (`continue`), so a repository that was captured `public` and has
+since been deleted, renamed, or moved out of reach keeps that verdict — and
+`public` is the free-to-host path, so it keeps syncing.
+
+BOUNDED, not unbounded: `all_my_repositories` expires a capture at 30 days
+(`forge_visibility_stale`), so the window is 30 days.
+
+**Deliberately not fixed by clearing the capture on 404.** That would make the
+row read `forge_visibility_unknown`, which now triggers the daemon's self-heal
+(`7b0f53ce`) — so a deleted repository would call GitHub every 60 seconds
+forever. That trades a bounded staleness for an unbounded poison pill, which is
+the worse of the two.
+
+The shape that would work: record the 404 as a distinct state
+(`forge_visibility_refused` — the code the `CAPTURE_FIXES` list already
+deliberately excludes), with its own reason row, so it refuses WITHOUT inviting a
+re-ask. Needs a seed row and a view branch; not urgent while the 30-day expiry
+holds.
+
+**`GET /health` takes 13 seconds.** `bootstrap::check` probes every binary
+synchronously on each call, so anything polling health pays 13s per poll.
+Measured, not estimated. Worth a cached-with-TTL layer or a `?quick=1`.
+
+**Settled — not defects:**
+- `configurable_by_me` grants `lead` — FALSE, the DDL grants `admin` alone.
+- `uptimeSeconds` is wrong — FALSE. It reports 1259s for a 1238s-old process.
+  The original claim compared the endpoint against a process found with `ps`
+  that did not hold port 7744.
