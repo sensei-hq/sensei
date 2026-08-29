@@ -741,3 +741,59 @@ Measured, not estimated. Worth a cached-with-TTL layer or a `?quick=1`.
 - `uptimeSeconds` is wrong — FALSE. It reports 1259s for a 1238s-old process.
   The original claim compared the endpoint against a process found with `ps`
   that did not hold port 7744.
+
+### `dojo.seats` is keyed on the governance ladder (2026-08-29)
+
+Found while closing phase 2. `dojo.seats.namespace_id` references
+`sensei.namespaces`, which is **not** a projects table — it is the RULES ladder:
+
+```
+general(0) · user(10) · organization(20) · client(30)
+technology(40) · team(50) · project(60) · repository(70)
+```
+
+A namespace is one instantiated rung — `(organization, "Sensei HQ")`,
+`(technology, "rust")`, `(project, "sensei")` — and a repo belongs to a SET of
+them via `folder_namespaces`. Its purpose is deciding **which rules apply to a
+repo and which wins** (more specific scope beats less specific). Three of its
+four referents are `rule_packs`, `rule_pack_adoptions` and `shared_rules`.
+`dojo.seats` is the fourth, and is the odd one out: it bills against a rule
+scope.
+
+`resolveProjectNamespaceId` reaches it by `scope_key = 'project'` plus a **slug
+string match**, i.e. it reads the governance ladder to decide who to charge.
+
+**A `(project, …)` namespace is NOT `dojo.projects`.** Live: 311 project
+namespaces against 146 `sensei.projects` rows. They share a word and nothing
+else. Projects organize repos (one repo, one project; dōjō wins on conflict) and
+have no bearing on sync — sync is repo-scoped and creates neither: 184 metric
+rows exist against **0** projects.
+
+**Why this matters beyond tidiness.** Seats should key on the billable unit,
+almost certainly `(tenant, principal)` — you bill PEOPLE per organisation. Keyed
+on a rules rung, the count moves when governance structure changes, which is
+unrelated to how many humans are using the product.
+
+**Not urgent.** Nothing is broken today: `seats_included` is never compared to
+anything and `openOrRefreshSeat` never refuses at a cap, so seats are counted
+and reported, never enforced. Nothing blocks on them.
+
+**Already done as part of this finding:** the `no_seat` reason code is DELETED
+from the `repository_sharing` domain (seed + live row). A seat is a billing
+quantity, not a permission — entitlement is answered by the subscription terms —
+so a sharing refusal named `no_seat` described a gate that should not exist. If
+a cap ever becomes enforceable it belongs in a `billing` domain, refusing at
+seat-open time rather than at sync time.
+
+**Closes spec F2 and F4 as NOT-APPLICABLE rather than resolved.** F2's "circular
+ordering" (a seat cannot exist before the project, and the project is created by
+the sync the seat gates) was written against a design where sync creates
+projects. Ours does not. F4's "two visibility sources" are not in conflict:
+`dojo.repositories.visibility` decides whether data may be SHARED,
+`sensei.namespaces.visibility` decides whether participation is BILLABLE
+(`billing-data.ts:73` — "public work never consumes a seat"). They are never
+asked the same question.
+
+NOTE FOR WHOEVER RE-KEYS IT: `staging.import_reason_codes` UPSERTS and never
+deletes, so removing a seed line does not remove the live row. The delete was
+issued explicitly.
