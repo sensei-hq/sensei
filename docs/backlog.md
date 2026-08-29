@@ -797,3 +797,59 @@ asked the same question.
 NOTE FOR WHOEVER RE-KEYS IT: `staging.import_reason_codes` UPSERTS and never
 deletes, so removing a seed line does not remove the live row. The delete was
 issued explicitly.
+
+### The contribution confidentiality gate holds everything (2026-08-29) — BLOCKING
+
+Found by RUNNING the contribution path end-to-end, not by reading it. One batch
+has sat `proposed` since 2026-07-02; approving and publishing it returned:
+
+```
+{"published":0,"held":1,"queued":0,"errored":0,
+ "items":[{"result":"held_residual_risk","tenant_key":"personal/jerry"}]}
+```
+
+The gate refused rather than leaked, which is the correct failure direction — but
+it refused text that identifies nothing:
+
+> "Integrating specific environment credential stores simplifies usability, but
+> requires adjustments to component properties and consideration of supporting
+> multiple provider types."
+
+**Why.** `residual_risk` squashes the text (`attribution.rs:102` — strips EVERY
+non-alphanumeric, so no word boundaries survive) and then does a raw
+`haystack.contains(needle)` against `ctx.name_tokens()` with
+`MIN_DISTINCTIVE_SQUASH = 3`.
+
+`name_tokens()` includes all of `repo_names`, and `repo_names` is populated from
+**every folder name in the project**. For `sensei` that is ~300 tokens including
+`api`, `app`, `you`, `org`, `bin`, `src`, `lib`, `mcp`, `code`, `docs`, `state`,
+`token`, `tools`, `rules`, `stores`, `providers`.
+
+So the gate is not a filter, it is a wall. Reproduced as characterisation tests
+in `attribution.rs::residual_risk_false_positives`:
+
+  * a folder named `app` makes the word **"happens"** a leak;
+  * a folder named `api` makes **"a pipeline"** a leak — squashing removed the
+    boundary, so `a pipeline` reads as `api`;
+  * the live text above, held by `stores`.
+
+Essentially any generalised engineering principle will contain one of ~300
+common tokens, so **the contribution pipeline can never publish**. It fails as a
+silent hold, which is the exact shape this codebase keeps fighting.
+
+**THE FIX IS A JUDGEMENT CALL AND HAS NOT BEEN MADE.** Loosening a
+confidentiality control is not something to do unilaterally. The options:
+
+1. **Filter the token list** (recommended). The defect is that `repo_names`
+   carries ~300 generic folder names, most identifying nothing. A folder called
+   `docs` or `api` is not an identifier. Use git-ROOT repo names only, and drop
+   tokens that are common English or generic dev vocabulary.
+2. **Word-boundary matching** for short tokens, keeping squash-matching for long
+   ones. Squashing exists to defeat `acme-billing` → `acmebilling` evasion, so it
+   must not be removed wholesale.
+3. **Raise `MIN_DISTINCTIVE_SQUASH`** from 3. Cheap but arbitrary, and would
+   still hold on `providers` (9 chars).
+
+The characterisation tests assert the WRONG behaviour deliberately, and every
+assertion must be INVERTED when the fix lands. A green suite there today is a
+recorded defect, not health.
