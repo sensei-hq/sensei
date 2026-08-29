@@ -7,7 +7,7 @@ import type { MetricCorrelation } from '$lib/metrics/correlation-view.js';
 
 // The metrics pane joins three daemon surfaces: the per-project *values*
 // (/metrics) — which now also carry an optional daemon-generated `narrative`
-// (headline + per-signal insights, from the local ollama insight-copy pipeline;
+// (headline + per-signal insights, from the local ollama narration-cache pipeline;
 // absent when the model is unavailable) — the *catalog* (/metrics/registry) that
 // alone carries each metric's `family`, and a per-metric series for sparklines.
 export const load: PageLoad = async ({ params }) => {

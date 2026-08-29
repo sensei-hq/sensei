@@ -24,7 +24,7 @@ Kanji is 巻 — *scroll*.
   `state`).
 - Each row: `doc_path`, `line_number`, `mentioned_identifier`,
   `expected` vs `actual`, `confidence`, `suggestion`, `state`.
-- Suggestions come from [[pipeline/insight-copy]] with kind
+- Suggestions come from [[pipeline/narration-cache]] with kind
   `drift_fix`.
 
 ## Signals shown

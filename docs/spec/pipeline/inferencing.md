@@ -12,7 +12,7 @@
 
 ## Purpose
 
-Every LLM call in sensei — insight-copy generation, memory
+Every LLM call in sensei — narration-cache generation, memory
 consolidation, drift-fix suggestions, MOE reasoning panels — goes
 through the inference gateway. The gateway does five things:
 
@@ -43,8 +43,8 @@ Kanji is 推 — *inference / reasoning*.
 
 A chain is a named ordered list of providers with fallback rules.
 
-    # ~/.sensei/gateway/chains/insight-copy.yaml
-    name: insight-copy
+    # ~/.sensei/gateway/chains/narration-cache.yaml
+    name: narration-cache
     primary:
       provider: ollama
       model: gemma4
@@ -62,7 +62,7 @@ Inference:
 
 | Chain | Primary | Purpose |
 |---|---|---|
-| `insight-copy` | ollama gemma4 | Mentor voice ([[pipeline/insight-copy]]) |
+| `narration-cache` | ollama gemma4 | Mentor voice ([[pipeline/narration-cache]]) |
 | `text-chat` | ollama gemma4 (offline-first) | Fallback assistant chat when no external ACP set |
 | `reasoning` | ollama gemma4 → optional remote | Memory consolidation, pattern promotion analysis |
 | `consensus` | 2–3 models in parallel | MOE panel |
@@ -120,7 +120,7 @@ debate ([[screen/observatory-insights]] optional reasoning drawer).
 | `sensei.inference_calls` rows | cost surface + gateway_status endpoint |
 | MOE consensus + confidence | insight generation, memory consolidation, pattern promotion |
 | Circuit-breaker trip events | logs + a warning banner if the primary chain is degraded |
-| Fallback usage | told to insight-copy so it knows to render fallback text |
+| Fallback usage | told to narration-cache so it knows to render fallback text |
 
 ## Done gate
 
@@ -168,7 +168,7 @@ psql -A -t -c "select chain, provider, count(*) from sensei.inference_calls
 
 ## Related
 
-- [[pipeline/insight-copy]] — biggest consumer today
+- [[pipeline/narration-cache]] — biggest consumer today
 - [[pipeline/memory]] — consolidation via MOE reasoning
 - [[pipeline/insights]] — MOE reasoning panel for high-stakes
   recommendations

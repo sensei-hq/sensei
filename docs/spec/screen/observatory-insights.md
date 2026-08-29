@@ -58,7 +58,7 @@ Kanji is 今 — *now*.
 - Every recommendation, memory, and pattern carries a stable `id`
   used for the accept/reject actions.
 - Every card's user-facing text (title, body, impact sentence)
-  reaches through [[pipeline/insight-copy]] — templated fallbacks
+  reaches through [[pipeline/narration-cache]] — templated fallbacks
   are labelled as such.
 - Actions map to daemon endpoints (each card carries its own `project_id`):
   - Apply → `POST /api/projects/{project_id}/recommendations/{rec_id}/accept`
@@ -101,7 +101,7 @@ Kanji is 今 — *now*.
   before/after FTR is measured and shown in `screen/observatory-impact`.
 - Empty state text is the mockup's voice ("nothing urgent." /
   "nothing brewing." / "nothing yet."), not "no data" or "loading…".
-- Every card's title + body comes through [[pipeline/insight-copy]]
+- Every card's title + body comes through [[pipeline/narration-cache]]
   when the model is available; fallback templates otherwise.
 - Dark mode: violation-red on paper-soft stays readable.
 
@@ -131,14 +131,14 @@ curl -s http://localhost:7744/api/insights | jq '{now: .counts.now, soon: .count
 - **The three verbs are separate buttons of equal weight (no
   recommended default).** Violates the one-decision-one-default
   theme.
-- **All Now-column card copy reads the same** — insight-copy
-  regression (see [[pipeline/insight-copy]] wrong-gate).
+- **All Now-column card copy reads the same** — narration-cache
+  regression (see [[pipeline/narration-cache]] wrong-gate).
 
 ## Related
 
 - [[pipeline/insights]] — the generator (bucketing rules live here)
 - [[pipeline/memory]] — memories and their state machine
 - [[pipeline/impact]] — before/after FTR for accepted recs
-- [[pipeline/insight-copy]] — user-facing copy for every card
+- [[pipeline/narration-cache]] — user-facing copy for every card
 - [[screen/observatory-memories]] — the anatomy view for one memory
 - [[screen/observatory-today]] — the "one thing" abstraction over this

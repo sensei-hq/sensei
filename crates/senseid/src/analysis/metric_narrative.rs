@@ -1,5 +1,5 @@
 //! Project-metrics narrative — the headline + per-signal "what sensei noticed"
-//! prose for the metrics screen. A thin producer over [`insight_copy`]: it turns
+//! prose for the metrics screen. A thin producer over [`narration_cache`]: it turns
 //! the already-assembled per-metric JSON (the exact rows the metrics endpoint
 //! serves, with `prior`/`delta` merged in) into grounded `facts`, reads the
 //! local-model copy from cache, and warms a miss in the background.
@@ -9,14 +9,14 @@
 //!   entry and warms the cache for next time; the app renders its own
 //!   deterministic, data-grounded sentence in the gap. So the fallback copy
 //!   lives in exactly one place (the app), and the model prose lives here.
-//! - Inference stays off the wire: [`insight_copy::warm`] spawns a detached
+//! - Inference stays off the wire: [`narration_cache::warm`] spawns a detached
 //!   task; this function only ever does cache reads on the request path.
 //! - Facts are built strictly from the real values/props/deltas — the same
 //!   never-fabricate rule the metric computers follow.
 
 use serde_json::{Map, Value, json};
 
-use super::insight_copy::{self, CopyLimits, InsightKind};
+use super::narration_cache::{self, CopyLimits, InsightKind};
 use crate::db::pg_store::PgStore;
 
 /// The registry key of the composite health metric — it is the hero, not a mover.
@@ -259,7 +259,8 @@ pub async fn build_narrative(
 
     // Headline (+ subhead) for the whole snapshot.
     let hfacts = headline_facts(metrics);
-    match insight_copy::read_cached_copy(store, InsightKind::MetricNarrativeHeadline, &hfacts).await
+    match narration_cache::read_cached_copy(store, InsightKind::MetricNarrativeHeadline, &hfacts)
+        .await
     {
         Some(c) => {
             out.insert("headline".into(), json!(c.title));
@@ -267,7 +268,7 @@ pub async fn build_narrative(
                 out.insert("subhead".into(), json!(c.detail));
             }
         }
-        None => insight_copy::warm(
+        None => narration_cache::warm(
             store,
             gateway,
             InsightKind::MetricNarrativeHeadline,
@@ -281,12 +282,13 @@ pub async fn build_narrative(
         let Some(key) = m.get("metric").and_then(Value::as_str) else { continue };
         let series = series_by_metric.get(key).map(Vec::as_slice);
         let sfacts = signal_facts(m, series);
-        match insight_copy::read_cached_copy(store, InsightKind::MetricSignalInsight, &sfacts).await
+        match narration_cache::read_cached_copy(store, InsightKind::MetricSignalInsight, &sfacts)
+            .await
         {
             Some(c) => {
                 insights.insert(key.to_string(), json!(c.detail));
             }
-            None => insight_copy::warm(
+            None => narration_cache::warm(
                 store,
                 gateway,
                 InsightKind::MetricSignalInsight,

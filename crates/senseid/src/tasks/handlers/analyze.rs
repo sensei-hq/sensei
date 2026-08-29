@@ -688,7 +688,7 @@ pub async fn enrich_session(
             }
 
             // Retrospective narrative → activity.sessions.summary. Deterministic
-            // facts stay code-owned; only the prose routes through insight-copy,
+            // facts stay code-owned; only the prose routes through narration-cache,
             // which degrades to a deterministic fallback on a gateway miss. Written
             // with a refresh-if-changed guard so a re-derivation (the backfill)
             // corrects a now-stale line (e.g. an outcome that flipped
@@ -1434,7 +1434,7 @@ mod tests {
         assert_eq!(row.4, Some(2000.0), "gap-aware active duration");
 
         // retrospective summary persisted by enrichment. The test gateway has no
-        // insight-copy chain, so `generate_and_cache` misses → the deterministic
+        // narration-cache chain, so `generate_and_cache` misses → the deterministic
         // fallback is written (non-empty, names the outcome).
         let summary: (Option<String>,) =
             sqlx_core::query_as::query_as("SELECT summary FROM activity.sessions WHERE id = $1")

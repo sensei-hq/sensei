@@ -185,7 +185,7 @@ pub(crate) async fn get_project_overview(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    use crate::analysis::insight_copy::{CopyLimits, FallbackCopy, InsightKind, copy_or_warm};
+    use crate::analysis::narration_cache::{CopyLimits, FallbackCopy, InsightKind, copy_or_warm};
     use crate::project_overview as po;
 
     let uuid =
@@ -238,7 +238,7 @@ pub(crate) async fn get_project_overview(
         first["primary"] = serde_json::json!(true);
     }
 
-    // Hero headline + body come through insight-copy when a top recommendation
+    // Hero headline + body come through narration-cache when a top recommendation
     // exists — the model owns the sentence; the code owns the evidence /
     // defaultAcp / action fields (left untouched). All-quiet (top == None) stays
     // static: the pane renders the "Sensei is observing…" copy client-side, and
@@ -412,7 +412,7 @@ pub(crate) async fn get_project_recommendations(
     Path(id): Path<String>,
     Query(q): Query<RecoQuery>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    use crate::analysis::insight_copy::{CopyLimits, copy_or_warm};
+    use crate::analysis::narration_cache::{CopyLimits, copy_or_warm};
     use crate::insights;
 
     let uuid = crate::api::util::resolve_existing_project(&state, &id).await?;
@@ -422,9 +422,9 @@ pub(crate) async fn get_project_recommendations(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    // Mentor-voice copy (insight-copy) — route each rec's user-facing title +
+    // Mentor-voice copy (narration-cache) — route each rec's user-facing title +
     // why through the shared pipeline, exactly as `observatory::get_insights`
-    // does. Wire path only: a `sensei.insight_copy` cache read plus a detached
+    // does. Wire path only: a `sensei.narration_cache` cache read plus a detached
     // background warm on a miss — never a blocking model call, so the endpoint
     // never stalls or errors on the gateway (a miss ships the raw DB prose).
     // `insights::rec_copy_inputs` builds the SAME facts the Learnings board

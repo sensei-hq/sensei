@@ -216,7 +216,7 @@ curl -s http://localhost:7744/api/projects | jq '.[0] | {name, icon, vision, rep
 - [[pipeline/analyzer]] — where `ftr14d` and `sessions7d` come from
 - [[pipeline/ftr]] — the FTR calculation
 - [[pipeline/project-icon]] — README/favicon/logo → project icon
-- [[pipeline/insight-copy]] — `vision` text (if daemon-proposed)
+- [[pipeline/narration-cache]] — `vision` text (if daemon-proposed)
 - [[screen/project-overview]] — where clicking a card lands
 - [[screen/project-about]] — where `vision` is edited
 - [[screen/observatory-today]] — peer that reads the same projects list

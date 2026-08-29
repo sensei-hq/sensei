@@ -37,13 +37,13 @@ flowchart TD
     end
     activity --> inference
     sensei --> inference
-    inference -.->|insight-copy| sensei
+    inference -.->|narration-cache| sensei
     gateway -.->|routes inference| inference
 ```
 
 | Schema | Owns | Notes |
 |---|---|---|
-| **sensei** | code graph (`nodes`/`edges`), `folders`/`projects`, `memories`, `libraries`, `rules`, `communities`, `file_tags`, `insight_copy` | the knowledge core; **one repo = one project = one owner** (see [daemon](daemon.md)) |
+| **sensei** | code graph (`nodes`/`edges`), `folders`/`projects`, `memories`, `libraries`, `rules`, `communities`, `file_tags`, `narration_cache` | the knowledge core; **one repo = one project = one owner** (see [daemon](daemon.md)) |
 | **activity** | `sessions`, `turns`, `assistant_events`, `tool_calls`, `transcript_turns` | the captured pair-behaviour — raw material for FTR |
 | **inference** | `recommendations`, `detected_patterns`, `corrections`, `reasoning_traces` | what the analyzer learns |
 | **gateway** | `routers`, `models`, `chains` | table-driven LLM routing config the daemon loads at boot |
@@ -100,5 +100,5 @@ nodes. This is enforced at scan-classification + a self-healing reconcile
 ## Where the gaps are
 
 Orphaned tables (`inference.insights`/`insight_batches` — no writer, superseded
-by `insight_copy`) and empty-by-design dojo tables (external-blocked). See
+by `narration_cache`) and empty-by-design dojo tables (external-blocked). See
 [the plan](../plan/README.md) G7.

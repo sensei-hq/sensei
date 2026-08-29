@@ -18,7 +18,7 @@ position) then this file (what's left).
 - [x] observatory-instruments-health `6336dc6a` (assistant_tools inventory + per-assistant ToolDiscovery trait + full capture + real 14d grid + L1 UI). MILESTONE: merge develop→main + bump v0.2.24 IN PROGRESS.
 
 ## Phase 2 — DEPTH: make the 5 shipped screens fully real (burn down deferrals = build the pipeline gaps)
-- [ ] pipeline/insight-copy — wire gemma4 copy chain; replace raw-DB-text fallback on Today/Insights/Projects/Overview cards
+- [ ] pipeline/narration-cache — wire gemma4 copy chain; replace raw-DB-text fallback on Today/Insights/Projects/Overview cards
 - [ ] pipeline/memory — define promotion/merge-readiness statuses; wire readyToShare/toMerge (Overview, Insights); adopted-lane
 - [ ] pipeline/insights + pipeline/patterns + pipeline/signals — the recommendation/pattern generators (tables exist, writers missing)
 - [ ] per-screen followups: observatory-today, observatory-projects (all-view chip, perf), project-overview (Replay nav, list_folders perf), observatory-insights (show-N-of-M, ViolationCard nav), observatory-sessions (all chip, URL range) — see park/*-followups.md
