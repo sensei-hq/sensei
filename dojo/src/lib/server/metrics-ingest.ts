@@ -37,6 +37,14 @@ export type RejectReason =
 	// time by any signed-up stranger. There is no `not_permitted` here for that
 	// reason.
 	| 'unknown_repository'
+	// The repository IS yours and the dōjō refused it anyway — unelected,
+	// unsubscribed, uncaptured. NOT the oracle the earlier `not_permitted` was: that
+	// one distinguished "registered in a tenant you are not in" from "registered
+	// nowhere", which let a stranger probe other orgs. This fires only AFTER the
+	// repository has resolved inside the caller's own tenants, so it reveals nothing
+	// they did not already know. `dojo.all_my_repositories.reason_code` carries the
+	// specific why.
+	| 'not_permitted'
 	| 'unknown_metric' //     no sensei.metrics row has that key
 	| 'ambiguous' //          that repo_key is registered under two of the caller's tenants
 	| 'unsupported_scope'; // scope=user, which has no principal to attribute to
@@ -81,6 +89,26 @@ export async function ingestMetrics(
 	//
 	// Two `in`-list reads resolve the whole batch. The per-row work that remains is
 	// the existing-row check and the write, which are genuinely per row.
+	// THE GATE. The daemon no longer filters the push locally (B2) on the premise
+	// that the dōjō re-decides entitlement at the write — and until this existed
+	// that premise was false: membership was the only check, so a member could push
+	// metrics for a repository that is unelected, unsubscribed, or whose forge
+	// visibility was never captured.
+	//
+	// `dojo.all_my_repositories` is the single source of truth for that verdict, so
+	// this reads it rather than re-deriving `may_share AND elected` here. A second
+	// derivation is exactly what the view exists to prevent.
+	const permitted = await db
+		.from('all_my_repositories')
+		.select('repo_key, sync_enabled')
+		.eq('principal_id', principalId);
+	if (permitted.error) throw new AdminError(500, permitted.error.message);
+	const maySync = new Set(
+		((permitted.data ?? []) as { repo_key: string; sync_enabled: boolean }[])
+			.filter((p) => p.sync_enabled)
+			.map((p) => p.repo_key)
+	);
+
 	const wantedKeys = [...new Set(rows.map((r) => r.repo_key))];
 	const wantedMetrics = [...new Set(rows.map((r) => r.metric))];
 
@@ -139,6 +167,12 @@ export async function ingestMetrics(
 			// The cost is a legitimate caller cannot tell "not yours" from "not
 			// known". They can: it is in their own tenant list either way.
 			reject('unknown_repository');
+			continue;
+		}
+		// Checked AFTER the repository resolves, so a repo_key that is simply unknown
+		// still answers `unknown_repository` rather than being masked as not-permitted.
+		if (!maySync.has(row.repo_key)) {
+			reject('not_permitted');
 			continue;
 		}
 		if (ours.length > 1) {
