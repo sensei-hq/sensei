@@ -102,6 +102,44 @@ function authMethodFor(provider: ForgeProvider): string {
 	);
 }
 
+/**
+ * Record the claim when a forge OWNER/ADMIN signs in (§II.4).
+ *
+ * An org tenant is created by whoever signs in first, who may be a plain member
+ * — so its existence proves nothing about who owns the org. Unclaimed, it may
+ * not hold a subscription and can never sync private data.
+ *
+ * This is not new information: `roleForOrg` already reads `org.role` at every
+ * sign-in, so a forge admin signing in IS the proof. No endpoint, no prompt, and
+ * re-verified against the forge on every sign-in rather than trusted once.
+ *
+ * FIRST CLAIM WINS. The `is('claimed_at', null)` on the update is the guard, not
+ * the read before it: two admins signing in together would both see NULL, and
+ * without it the later write would rewrite `claimed_by` to whoever logged in
+ * most recently — destroying the record of who actually established the claim.
+ *
+ * Errors PROPAGATE. A silently-failed claim leaves the tenant unclaimed, which
+ * now refuses every private repository — a denial caused by an error nobody saw.
+ */
+export async function claimTenantIfOwner(
+	db: DojoClient,
+	tenantId: string,
+	principalId: string,
+	role: string
+): Promise<void> {
+	// Membership is not ownership. Only the forge's own admin/owner standing
+	// claims a tenant; a contributor claiming it could subscribe on behalf of an
+	// organisation that never agreed.
+	if (role !== 'admin') return;
+
+	const { error } = await db
+		.from('tenants')
+		.update({ claimed_at: new Date().toISOString(), claimed_by: principalId })
+		.eq('id', tenantId)
+		.is('claimed_at', null);
+	if (error) throw new AdminError(500, error.message);
+}
+
 /** Forge standing → `dojo.member_role`. An org owner/admin administers the
  *  tenant; everyone else starts as a contributor and is promoted explicitly. */
 function roleForOrg(org: ForgeOrg): string {
@@ -460,6 +498,10 @@ async function ensureOrgTenant(
 			authenticatedVia,
 			roleForOrg(org)
 		);
+		// A tenant may have been created by a plain member long before an owner
+		// first signs in, so the claim is attempted on EVERY pass, not only at
+		// creation. `claimTenantIfOwner` is a no-op once claimed.
+		await claimTenantIfOwner(db, row.id, principalId, roleForOrg(org));
 		return { id: row.id, key: row.key, origin: 'organization', role, created: false };
 	}
 
@@ -514,6 +556,9 @@ async function ensureOrgTenant(
 		authenticatedVia,
 		roleForOrg(org)
 	);
+	// The creator may themselves be the forge owner, in which case the tenant is
+	// claimed the moment it exists rather than waiting for a second sign-in.
+	await claimTenantIfOwner(db, tenant.id, principalId, roleForOrg(org));
 	return { id: tenant.id, key: tenant.key, origin: 'organization', role, created: true };
 }
 

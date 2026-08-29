@@ -10,6 +10,18 @@ create table if not exists dojo.tenants (
 , name          text              not null
 , dojo_url      text              not null
 , self_hosted   boolean           not null default false
+-- CLAIM (§II.4). An org tenant is created by whoever signs in first, who may be
+-- a plain member — so existence proves nothing about ownership. `claimed_at` is
+-- set only once someone whose FORGE role is owner/admin has signed in, and an
+-- unclaimed tenant may not hold a subscription and therefore can never sync
+-- private data.
+--
+-- NULLABLE and NULL by default on purpose: every tenant that predates this
+-- column is unclaimed, which is the truthful answer rather than a flattering
+-- one. The forge role is re-read at every sign-in, so the claim is re-verified
+-- rather than trusted once.
+, claimed_at    timestamptz
+, claimed_by    uuid              references dojo.principals(id) on delete set null
 , settings      jsonb             not null default '{}'
 , created_at    timestamptz       not null default now()
 , updated_at    timestamptz       not null default now()
