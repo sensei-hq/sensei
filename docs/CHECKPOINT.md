@@ -1,58 +1,60 @@
 # Checkpoint
 
-**Slice:** Repository sharing — **VERIFIED LIVE**, not just built.
-`d27ffa1f` · `75b00683` · `849fa070` · `1182ab4b` · `b0b68f62` · `76bc040b` · `7b0f53ce`
+**Slice:** Repository sharing — **DONE, verified live.**
+`d27ffa1f` · `75b00683` · `849fa070` · `1182ab4b` · `b0b68f62` · `76bc040b` ·
+`7b0f53ce` · `e4232ccb` · `9d4e8441`
 
-## The model, on real data
+## Live state
 
 ```
-corpus   private  authority=organization (MANDATED)  -> not_subscribed
-dbd      public   authority=user  elected            -> SYNCING · 132 metrics · 0 pending
+corpus   private  organization (MANDATED)  -> not_subscribed
+dbd      public   user  elected            -> SYNCING
+torii    public   user  elected            -> SYNCING
 gateway
-sensei   public   authority=user                     -> not_elected_user
-torii
+sensei   public   user                     -> not_elected_user   (flip in the UI)
 ```
 
-Both axes independent; every refusal names itself. `not_subscribed` is the gate
-that used to fail **open**.
+Full cycle proven: `repo` scope granted (GitHub reports `read:org, repo,
+user:email` and sees the **private** `sensei-hq/corpus`) → capture → two-axis
+verdict → election over HTTP → push → 132 rows, 0 pending, idempotent.
 
-## `repo` scope proven at the source
+## Review backlog, worked
 
-GitHub reports `read:org, repo, user:email` for the daemon's token, and it can
-see `sensei-hq/corpus` — a **private** repo that would have 404'd before.
-Capture recorded it `private`, which is what makes the org mandate reachable.
+**Fixed** (`9d4e8441`) — PostgREST caps every read at 1000 rows
+(`PGRST_DB_MAX_ROWS=1000`, read off the running instance). Three reads were
+unbounded; the **ingest** one refused legitimately-permitted repos as
+`not_permitted`. Reads now page (stopping on a *short* page); the ingest filters
+by the batch's keys instead. Also: `drop view` discards ACLs and the DDL had no
+`grant` — the live ACL was `postgres` + `service_role` only.
 
-## Self-heal (`7b0f53ce`)
+**Fixed** (`e4232ccb`) — the Sharing screen. The election had a write path and no
+way to reach it.
 
-`refreshForgeVisibility` ran only at **sign-in** while repos keep registering via
-`dojo_sync` — so 4 of 5 sat at `forge_visibility_unknown` with remedy "sign in
-again", `corpus` included. The daemon holds the token, so it now asks when the
-plan's denials say the forge was never consulted. Narrow by design: only
-`forge_visibility_unknown|stale`. **Verified live: 4 uncaptured → 0 in one tick.**
+**False, corrected** — `configurable_by_me` grants `lead` (it grants `admin`
+alone); `uptimeSeconds` is wrong (it reports 1259s for a 1238s process — I had
+compared against a process that did not hold port 7744).
 
-## Also fixed this session
+**Deferred, with rationale** — a 404 leaves a stale visibility standing, bounded
+at 30 days by `forge_visibility_stale`. Not fixed by clearing the capture:
+that would trigger the new self-heal every 60s for a deleted repo, trading
+bounded staleness for an unbounded poison pill.
 
-- **Election write path** (`849fa070`) — nothing wrote `repository_elections`, so
-  every user-authority repo was permanently `elected = false`.
-- **Auth-id vs principal-id** (`1182ab4b`) — "My dōjōs" was empty for *everyone*
-  and `hasMembership` false, so real members were treated as solo.
-- **Concurrent provisioning forked tenants** (`b0b68f62`), 2ms apart.
-- **employer/client/community tag dropped** (`76bc040b`).
+**New, measured** — `GET /health` takes **13 seconds**; `bootstrap::check` probes
+binaries synchronously on every call.
 
-## Disclosure, measured
+## The recurring lesson, third time
 
-67 repo_keys are **transmitted**, only **5 stored** — 0 rows outside a connected
-tenant. An earlier warning of mine (that employer paths become rows) was wrong.
+**The fake is not the real thing.** The pagination tests passed immediately —
+`fakeDojoDb` returned 2350 rows, green against code that did not paginate. It now
+enforces `PGRST_MAX_ROWS` and supports `.range()`. Same shape as the invented
+`elected_by` column and the stub that keyed on call-count rather than causation.
 
 ## Next
 
-**The election UI.** `setElection` + `PATCH /v1/you/repositories/election` are
-proven over HTTP, but nothing renders a toggle — a user cannot elect
-gateway/sensei/torii without curl.
+Nothing blocking in this slice. Candidates: **phase 2 of
+`dojo-auth-provisioning`** (`claimed_at`, `seat_allocations` — the billing terms
+already sit COMMENTED at their precedence positions in the view); the **GitHub
+App migration** (backlog, with incremental consent as the cheaper interim); **D3
+governance pull**.
 
-Then: PostgREST 1000-row cap on the repositories read · a 404 leaves a stale
-value standing · view ACL dropped by `drop view` · `configurable_by_me` grants
-`lead` vs `admin` · `seats_included = 0` ambiguous · health `uptimeSeconds`
-reports 8.6h for a 28-minute-old process.
-
-**Gates:** daemon 2492 exit 0 · clippy 0 · fmt 0 · dōjō 1488 · check 0/0.
+**Gates:** daemon 2492 exit 0 · clippy 0 · fmt 0 · dōjō 1505 · check 0/0.
