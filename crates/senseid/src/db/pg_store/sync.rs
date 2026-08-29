@@ -136,16 +136,53 @@ impl PgStore {
         Ok(())
     }
 
-    /// Metric rows this machine computed and has not yet pushed, for repositories
-    /// marked shared.
+    /// Metric rows this machine computed and has not yet pushed, for the
+    /// repositories the dōjō's plan allows.
     ///
     /// Two filters carry the whole design:
     ///
     /// * `computed_by = 'local'` — never re-push what dōjō handed down. Without
     ///   it a pulled value is indistinguishable from an own one, so it gets
     ///   pushed back, pulled again, and the pair ping-pong forever.
-    /// * `visibility = 'shared'` — a private repository is not a sync failure, it
-    ///   is a choice, so its rows never enter the queue at all.
+    /// * `repo_key = ANY(allowed_keys)` — **the allow-list is the authority.**
+    ///
+    /// **`visibility = 'shared'` used to sit beside them and was REMOVED**
+    /// (`docs/spec/dojo/daemon-sync.md` §8a, finding B2). The reasoning, because it
+    /// is a narrowing of a promise and must not be rediscovered from a diff:
+    ///
+    /// 1. **It was a second derivation of a question the dōjō had already
+    ///    answered.** `allowed_keys` comes from `dojo.all_my_repositories`, whose
+    ///    whole purpose (§8c) is to be the single place `may_share AND elected` is
+    ///    computed, so the daemon, the API and the console cannot disagree. ANDing
+    ///    a local flag back in restores the disagreement the view exists to remove
+    ///    — and it is the local copy that would be wrong, since the user's election
+    ///    lives in `dojo.repository_elections` and the org's mandate has no local
+    ///    representation at all.
+    /// 2. **Keeping it "for user-authority repositories only" is not expressible
+    ///    here.** The daemon holds no fact that distinguishes user authority from
+    ///    org authority — that is derived from `dojo.tenants.origin` and the forge
+    ///    visibility, neither of which is mirrored locally. A subset predicate
+    ///    would need the plan to carry per-repository authority, which it does not;
+    ///    inventing the field before the dōjō emits it would degrade to either
+    ///    "always apply the local gate" (B2 unfixed) or "never" (this, with dead
+    ///    code attached).
+    /// 3. **The allow-list still bounds it absolutely.** The daemon syncs the set
+    ///    it was HANDED. It cannot include a repository it never offered, and the
+    ///    offer set is what was cloned. Offline still degrades to no-sync.
+    ///
+    /// What is genuinely given up: the local flag no longer independently vetoes a
+    /// push. *"Nothing leaves the machine without local consent"* became *"…without
+    /// local consent, or an organization's mandate on that organization's own
+    /// private code"*, and the daemon now trusts the dōjō to tell the two apart.
+    ///
+    /// **DEPLOYMENT ORDER, and it is not optional.** This query's only remaining
+    /// gate is whatever `dojo.all_my_repositories` puts in `plan.allowed`. Against
+    /// the version of that view which hardcoded `sync_enabled = true`, "allowed"
+    /// meant *every registered repository* — so a daemon carrying this change would
+    /// have pushed every clone's metrics with no election anywhere. The computing
+    /// view must be deployed before a daemon that trusts it, and must never be
+    /// rolled back behind one. Same ordering hazard §8a records for the authority
+    /// rule, one layer out; verified deployed before this shipped.
     ///
     /// `shared_at IS NULL OR modified_at > shared_at` catches both the never-sent
     /// and the changed-since-sent, so a recomputed day is re-pushed rather than
@@ -179,8 +216,7 @@ impl PgStore {
                FROM sensei.repository_metrics rm \
                JOIN sensei.repositories r ON r.id = rm.repository_id \
                JOIN sensei.metrics m      ON m.id = rm.metric_id \
-              WHERE r.visibility = 'shared' \
-                AND rm.computed_by = 'local' \
+              WHERE rm.computed_by = 'local' \
                 AND rm.scope::text = ANY($1) \
                 AND r.repo_key = ANY($2) \
                 AND (rm.shared_at IS NULL OR rm.modified_at > rm.shared_at) \
@@ -274,9 +310,15 @@ pub struct PushableMetric {
     pub source: String,
 }
 
-/// One repository this machine offers the dōjō, as gate 1 lets through.
+/// One repository this machine can name to the dōjō.
+///
+/// Returned by BOTH [`PgStore::offerable_repositories`] (the disclosure set —
+/// everything cloned) and [`PgStore::shared_repositories`] (gate 1 — what the user
+/// elected). The two answer different questions and stopped having the same answer
+/// in `docs/spec/dojo/daemon-sync.md` §8a, so the type is named for what it
+/// carries rather than for either gate.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SharedRepo {
+pub struct OfferedRepo {
     /// The DURABLE cross-install identity — the normalized remote
     /// (`host/org/repo`). This is what the dōjō maps to a tenant, so it is the
     /// one field that cannot be missing.
@@ -290,17 +332,35 @@ pub struct SharedRepo {
 impl PgStore {
     /// How many unpushed rows sit in these scopes — for reporting what is held
     /// back, so "pushed 66" is never printed without the reason 596 were not.
-    pub async fn unpushed_metric_count(&self, scopes: &[&str]) -> Result<i64, String> {
+    ///
+    /// **Every predicate is [`Self::unpushed_metric_rows`]', minus `scopes`.** That
+    /// is the point of the number: it answers *"and how many did this pass leave
+    /// behind purely because of their scope?"*, which is only true if the two
+    /// queries differ in exactly that one term.
+    ///
+    /// Both changed together in §8a's B2. `visibility = 'shared'` came out of both,
+    /// and `allowed_keys` — which the count had never carried — went in, because
+    /// with the visibility term gone an unfiltered count would sweep in every
+    /// cloned repository on the machine, including the ones no plan will ever
+    /// allow. It would report "596 held back" where the truthful answer for this
+    /// pass is twelve: over-stating a hold-back is the same mislead as
+    /// under-stating it, in the other direction.
+    pub async fn unpushed_metric_count(
+        &self,
+        scopes: &[&str],
+        allowed_keys: &[&str],
+    ) -> Result<i64, String> {
         let row: (i64,) = sqlx_core::query_as::query_as(
             "SELECT count(*) \
                FROM sensei.repository_metrics rm \
                JOIN sensei.repositories r ON r.id = rm.repository_id \
-              WHERE r.visibility = 'shared' \
-                AND rm.computed_by = 'local' \
+              WHERE rm.computed_by = 'local' \
                 AND rm.scope::text = ANY($1) \
+                AND r.repo_key = ANY($2) \
                 AND (rm.shared_at IS NULL OR rm.modified_at > rm.shared_at)",
         )
         .bind(scopes.iter().map(|s| s.to_string()).collect::<Vec<_>>())
+        .bind(allowed_keys.iter().map(|k| k.to_string()).collect::<Vec<_>>())
         .fetch_one(&self.pool)
         .await
         .map_err(|e| format!("unpushed_metric_count: {e}"))?;
@@ -341,39 +401,101 @@ impl PgStore {
         Ok(r.rows_affected())
     }
 
+    /// **THE OFFER SET** — every locally-scanned repository with a cross-install
+    /// identity, i.e. every repository the user CLONED.
+    ///
+    /// This is what the daemon discloses to the dōjō, and it is deliberately WIDER
+    /// than gate 1 ([`Self::shared_repositories`]). `docs/spec/dojo/daemon-sync.md`
+    /// §8a, finding B1: an organization's mandate over its own private code is a
+    /// decision only the dōjō can make — the daemon holds no local fact that
+    /// answers "is this mandated" — so filtering the offer on the user's local
+    /// election meant the cycle returned before the dōjō was ever asked, and the
+    /// mandate was unreachable for exactly the population it serves.
+    ///
+    /// **What bounds it is the CLONE, not the forge.** `sensei.repositories` is
+    /// populated by the scanner, never by a forge listing, so this set is what the
+    /// user actually works on. Belonging to an organization whose repositories are
+    /// not on this machine discloses nothing, because there is nothing to measure.
+    /// A forge listing was considered and rejected in §8a: it would turn a sign-in
+    /// into an inventory upload of everything the user can see.
+    ///
+    /// One filter, and it is the same one gate 1 carries: `repo_key IS NOT NULL`.
+    /// A NULL key is the registry's marker for a local-only repository with no
+    /// remote; it has no cross-install identity, so the dōjō would have nothing to
+    /// map it to and could only answer `unmapped`.
+    ///
+    /// See [`Self::repositories_where`] for why the ORDER BY is not `repo_key`.
+    pub async fn offerable_repositories(&self, limit: i64) -> Result<Vec<OfferedRepo>, String> {
+        self.repositories_where("repo_key IS NOT NULL", limit)
+            .await
+            .map_err(|e| format!("offerable_repositories: {e}"))
+    }
+
     /// The repositories the user has opted into sharing — GATE 1 (intent).
     ///
     /// The first of the three gates in spec §V.3, and the only one the daemon
     /// owns. Cost (the repo's visibility on the forge) and entitlement (claim,
-    /// billing, seat) belong to the dōjō and are never mirrored here; the daemon
-    /// simply never mentions a repository the user did not opt in.
+    /// billing, seat) belong to the dōjō and are never mirrored here.
+    ///
+    /// **This no longer filters the OFFER — it filters the PUSH, and only where the
+    /// USER holds authority** (§8a). The promise it encodes narrowed with it:
+    /// *"nothing leaves the machine without local consent"* became *"…without local
+    /// consent, or an organization's mandate on that organization's own private
+    /// code"*. Stated rather than left to be discovered.
     ///
     /// Two filters, both load-bearing:
     ///
     /// * `visibility = 'shared'` — a private repository is a CHOICE, not a
     ///   failure. Signing in must not start sharing a repo the user never
-    ///   offered, which is exactly what `sensei.repo_visibility`'s own comment
+    ///   elected, which is exactly what `sensei.repo_visibility`'s own comment
     ///   says the column is for.
-    /// * `repo_key IS NOT NULL` — a NULL key is the registry's marker for a
-    ///   local-only repository with no remote. It has no cross-install identity,
-    ///   so the dōjō would have nothing to map it to; sending one could only
-    ///   produce an `unmapped` answer.
-    pub async fn shared_repositories(&self, limit: i64) -> Result<Vec<SharedRepo>, String> {
-        let rows: Vec<(String, Option<String>, String)> = sqlx_core::query_as::query_as(
+    /// * `repo_key IS NOT NULL` — see [`Self::offerable_repositories`].
+    pub async fn shared_repositories(&self, limit: i64) -> Result<Vec<OfferedRepo>, String> {
+        self.repositories_where("visibility = 'shared' AND repo_key IS NOT NULL", limit)
+            .await
+            .map_err(|e| format!("shared_repositories: {e}"))
+    }
+
+    /// The projection both sets share. Private, and `predicate` is a compile-time
+    /// literal from the two callers above — never caller data, so there is no
+    /// injection surface to widen later.
+    ///
+    /// **`ORDER BY` is what keeps the limit a throughput bound instead of a
+    /// ceiling.** It used to be `repo_key`, which was harmless while the set was
+    /// the few repositories a user had elected and is not once the set is every
+    /// clone: an install with more repositories than the caller's limit would offer
+    /// the alphabetically-first N *forever*, and a freshly cloned org-mandated
+    /// repository sorting after them would never be registered — B1 reintroduced
+    /// one layer down, and invisible on the 67-repository install it was measured
+    /// on. So:
+    ///
+    /// * `tenant_id IS NULL DESC` — repositories the dōjō has not yet mapped go
+    ///   first. Registration is what CREATES the `dojo.repositories` row the plan
+    ///   is computed from, so an unregistered repository is the only kind that
+    ///   *needs* the slot; a mapped one is already in the dōjō's answer whether or
+    ///   not it is re-offered this pass.
+    /// * `modified_at DESC` — then the repositories actually being worked on.
+    /// * `repo_key` — a total order, so the window is deterministic on ties rather
+    ///   than varying per run (the same reason `unpushed_metric_rows` tiebreaks).
+    async fn repositories_where(
+        &self,
+        predicate: &str,
+        limit: i64,
+    ) -> Result<Vec<OfferedRepo>, String> {
+        let rows: Vec<(String, Option<String>, String)> = sqlx_core::query_as::query_as(&format!(
             "SELECT repo_key, remote_url, name \
                FROM sensei.repositories \
-              WHERE visibility = 'shared' \
-                AND repo_key IS NOT NULL \
-              ORDER BY repo_key \
-              LIMIT $1",
-        )
+              WHERE {predicate} \
+              ORDER BY (tenant_id IS NULL) DESC, modified_at DESC, repo_key \
+              LIMIT $1"
+        ))
         .bind(limit)
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| format!("shared_repositories: {e}"))?;
+        .map_err(|e| e.to_string())?;
         Ok(rows
             .into_iter()
-            .map(|(repo_key, remote_url, name)| SharedRepo { repo_key, remote_url, name })
+            .map(|(repo_key, remote_url, name)| OfferedRepo { repo_key, remote_url, name })
             .collect())
     }
 }

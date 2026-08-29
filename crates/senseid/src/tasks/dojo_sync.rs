@@ -12,15 +12,34 @@
 //! ```text
 //! for each persona that has signed in:            PgStore::signed_in_personas
 //!     token = live access token                   skip this persona on failure
-//!     shared = repositories marked 'shared'       gate 1, local, already exists
+//!     offered = every CLONED repo with a repo_key the offer set, §8a
 //!     POST /v1/you/repositories                   identity: which tenant?
 //!         store tenant_id per repo                D2
 //!         log unmapped[]                          D6
-//!     GET  /v1/you/sync/plan                      entitlement: what may sync?
+//!     GET  /v1/you/sync/plan                      may_share AND elected
 //!         on failure: record and skip the persona D7
 //!     POST /v1/you/metrics                        push the rows the plan allows
 //!         mark shared_at ONLY if the whole batch landed  the re-push watermark
 //! ```
+//!
+//! # Who decides that a repository syncs
+//!
+//! Two questions, not one (`docs/requirements/repository-sharing.md`):
+//! **entitlement** — may it? — and **election** — did whoever holds authority
+//! choose it? The dōjō answers both, in `dojo.all_my_repositories`, and hands the
+//! daemon the conjunction as `plan.allowed`.
+//!
+//! The daemon's own gate 1 (`sensei.repositories.visibility = 'shared'`) used to
+//! filter what was OFFERED. It no longer does, because authority is not always the
+//! user's: an organization's private code is elected by the organization, and that
+//! has no local representation the daemon could test. What bounds the disclosure
+//! instead is the CLONE — `sensei.repositories` comes from the scanner, so
+//! belonging to an org whose code is not on this machine discloses nothing.
+//!
+//! Stated plainly, because it narrows a promise: *"nothing leaves the machine
+//! without local consent"* is now *"nothing leaves the machine without local
+//! consent, or an organization's mandate on that organization's own private
+//! code"*.
 //!
 //! # What it deliberately does NOT do yet
 //!
@@ -41,7 +60,11 @@ use crate::db::pg_store::sync::SyncMark;
 use crate::dojo_client::settings::dojo_url;
 use crate::dojo_client::user_plane::{self, HttpUserPlane, RepoInput, UserPlane};
 
-/// How many shared repositories one pass will register at a time.
+/// How many repositories one pass will offer for registration at a time.
+///
+/// Since §8a this bounds the CLONE set, not the elected subset, so it is roughly
+/// two orders of magnitude closer to biting. `offerable_repositories` orders the
+/// window so it stays a throughput bound rather than a ceiling.
 const REGISTER_LIMIT: i64 = 500;
 
 /// How many metric rows one pass will push. The dōjō caps a batch at 1000; the
@@ -119,14 +142,27 @@ async fn sync_persona(
     token: &str,
     plane: &dyn UserPlane,
 ) -> Result<(), String> {
-    // Gate 1 (intent), local: only repositories the user marked 'shared'.
-    let shared = pg.shared_repositories(REGISTER_LIMIT).await?;
-    if shared.is_empty() {
-        tracing::debug!(persona, "dojo_sync: nothing shared");
+    // THE OFFER SET (§8a, finding B1): every locally-scanned repository with a
+    // `repo_key` — what the user CLONED — and NOT gate 1's subset.
+    //
+    // This used to be `shared_repositories`, and the early return below then fired
+    // for a new employee whose only repository is the org-mandated private one:
+    // nothing locally elected, so the pass returned before register, before the
+    // plan, before any push, and the mandate was unreachable for exactly the
+    // population it serves. The daemon holds no local fact that says "this one is
+    // mandated" — only the plan does — so it must ask FIRST and filter after.
+    //
+    // What bounds the disclosure is the CLONE. `sensei.repositories` is populated
+    // by the scanner, never by a forge listing, so this is what the user actually
+    // works on; membership of an org whose code is not on this machine discloses
+    // nothing. Gate 1 has not been discarded — it moved to the push, below.
+    let offered = pg.offerable_repositories(REGISTER_LIMIT).await?;
+    if offered.is_empty() {
+        tracing::debug!(persona, "dojo_sync: no cloned repository has a cross-install identity");
         return Ok(());
     }
 
-    let inputs: Vec<RepoInput<'_>> = shared
+    let inputs: Vec<RepoInput<'_>> = offered
         .iter()
         .map(|r| RepoInput {
             repo_key: &r.repo_key,
@@ -209,9 +245,16 @@ async fn push_allowed(
     plane: &dyn UserPlane,
     plan: &user_plane::SyncPlan,
 ) -> Result<u32, String> {
-    // The allow-list, as a set. The daemon syncs the set it was HANDED — it never
-    // asks "may I sync X?", so it cannot include a repository it never offered,
-    // and offline degrades to no-sync by construction.
+    // The allow-list, as a set, and since §8a it is the ONLY gate on the push. The
+    // daemon syncs the set it was HANDED — it never asks "may I sync X?", so it
+    // cannot include a repository it never offered, and offline degrades to no-sync
+    // by construction.
+    //
+    // `sensei.repositories.visibility` is deliberately NOT re-tested here or in the
+    // query: the dōjō's `all_my_repositories` is the single place `may_share AND
+    // elected` is decided, and an org's mandate over its own private code has no
+    // local representation to test. See `unpushed_metric_rows` for the full
+    // argument and for the deployment-ordering constraint it carries.
     let allowed: std::collections::HashSet<&str> =
         plan.allowed.iter().map(|a| a.repo_key.as_str()).collect();
     if allowed.is_empty() {
@@ -231,7 +274,9 @@ async fn push_allowed(
     let pushable = pg.unpushed_metric_rows(&["repo"], &keys, PUSH_LIMIT).await?;
     // A failure here must not print "0 held back" — that is the exact mislead the
     // counter exists to prevent.
-    let held = match pg.unpushed_metric_count(&["user"]).await {
+    // Scoped to the SAME allow-list, so the number means "held back out of what this
+    // pass could otherwise have sent" rather than "user-scoped rows on this machine".
+    let held = match pg.unpushed_metric_count(&["user"], &keys).await {
         Ok(n) => n,
         Err(e) => {
             tracing::warn!(persona, error = %e, "could not count held-back rows");
@@ -381,6 +426,11 @@ mod tests {
         register: Option<RegisterResult>,
         plan: Option<SyncPlan>,
         push: Option<Result<IngestResult, String>>,
+        /// Every `repo_key` the daemon DISCLOSED — the offer set, as it reached the
+        /// wire. Recorded because B1 is invisible from the outcome: a cycle that
+        /// never asks looks exactly like a cycle the dōjō answered "nothing".
+        offered: Mutex<Vec<String>>,
+        plan_calls: Mutex<usize>,
         pushed_rows: Mutex<Vec<(String, String)>>,
         push_calls: Mutex<usize>,
     }
@@ -390,11 +440,13 @@ mod tests {
         async fn register_repositories(
             &self,
             _t: &str,
-            _r: &[RepoInput<'_>],
+            r: &[RepoInput<'_>],
         ) -> Result<RegisterResult, String> {
+            self.offered.lock().unwrap().extend(r.iter().map(|i| i.repo_key.to_string()));
             Ok(self.register.clone().unwrap_or(RegisterResult { mapped: vec![], unmapped: vec![] }))
         }
         async fn sync_plan(&self, _t: &str) -> Result<SyncPlan, String> {
+            *self.plan_calls.lock().unwrap() += 1;
             Ok(self.plan.clone().unwrap_or(SyncPlan { allowed: vec![], denied: vec![] }))
         }
         async fn push_metrics(
@@ -422,15 +474,35 @@ mod tests {
         }
     }
 
-    /// A shared repository with one pushable repo-scoped metric row.
+    /// A locally-ELECTED repository with one pushable repo-scoped metric row.
     async fn seed(pg: &PgStore) -> (uuid::Uuid, String, String) {
+        seed_at(pg, "shared").await
+    }
+
+    /// The same fixture at a chosen local `sensei.repositories.visibility`.
+    ///
+    /// `'private'` is the org-mandate case: the user has elected nothing, so every
+    /// step of the cycle has to happen without local intent to authorise it.
+    ///
+    /// `modified_at` is dated forward deliberately. The offer set is now EVERY
+    /// cloned repository, and the shared test database carries thousands of
+    /// leftover fixtures — so with the real `REGISTER_LIMIT` these tests would
+    /// otherwise assert on whichever rows happened to win the window, not on the
+    /// row they seeded. Forward-dating puts the fixture at the head of the
+    /// recency order, which is where a just-cloned repository sits in production
+    /// anyway.
+    async fn seed_at(pg: &PgStore, visibility: &str) -> (uuid::Uuid, String, String) {
         let uniq = uuid::Uuid::new_v4();
         let pid = pg.create_project(&format!("_test:cycle:{uniq}"), None, None).await.unwrap();
         let rid = crate::tasks::test_support::seed_bare_repository(pg, &pid, &uniq).await;
         sqlx_core::query::query(
-            "UPDATE sensei.repositories SET visibility = 'shared' WHERE id = $1",
+            "UPDATE sensei.repositories \
+                SET visibility = $2::sensei.repo_visibility, \
+                    modified_at = now() + interval '10 years' \
+              WHERE id = $1",
         )
         .bind(rid)
+        .bind(visibility)
         .execute(pg.pool())
         .await
         .unwrap();
@@ -575,6 +647,39 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_machine_with_nothing_locally_elected_still_asks_the_dojo() {
+        // B1, docs/spec/dojo/daemon-sync.md §8a. The cycle used to open with
+        // `shared_repositories(); if shared.is_empty() { return Ok(()) }`, so a new
+        // employee whose only repository is the org-mandated private one returned
+        // BEFORE register, BEFORE the plan, before any push — the mandate
+        // structurally unreachable for exactly the population it serves.
+        //
+        // The daemon cannot pre-filter on "is this mandated": it holds no local fact
+        // that answers it. Only the plan does. So it has to ASK first and filter
+        // after, and this test is the one that says asking happened.
+        let pg = PgStore::connect_test().await.unwrap();
+        let (pid, key, _m) = seed_at(&pg, "private").await;
+        let plane = StubPlane {
+            plan: Some(SyncPlan { allowed: vec![], denied: vec![] }),
+            ..Default::default()
+        };
+
+        let out = sync_persona(&pg, "ztest-slot", "tok", &plane).await;
+        let offered = plane.offered.lock().unwrap().clone();
+        let plans = *plane.plan_calls.lock().unwrap();
+        crate::tasks::test_support::cleanup_metrics_fixture(&pg, &pid, None, &[]).await;
+
+        assert!(out.is_ok(), "{out:?}");
+        assert!(
+            offered.contains(&key),
+            "the unelected repository must be DISCLOSED — the dōjō is the only party \
+             that can know it is org-mandated; got {} keys, none of them {key}",
+            offered.len()
+        );
+        assert_eq!(plans, 1, "and the plan must be fetched, not short-circuited past");
+    }
+
+    #[tokio::test]
     async fn an_unparseable_tenant_id_is_skipped_without_failing_the_cycle() {
         // The dōjō sending a non-uuid tenant id is a bug on one side or the other.
         // It must not be written as a placeholder, and must not take the cycle down.
@@ -655,6 +760,85 @@ mod tests {
         assert!(out.is_ok());
         assert!(sent.is_empty(), "a denied repository's rows never reach the wire");
         assert_eq!(shared, 0);
+    }
+
+    #[tokio::test]
+    async fn a_mandated_repository_is_pushed_although_the_user_elected_nothing() {
+        // B2, docs/spec/dojo/daemon-sync.md §8a and scenario F of §8b. The mandate:
+        // an organization's own PRIVATE code, on the organization's subscription,
+        // under the organization's governance obligation. The user's local
+        // `visibility` is `private` and — for this one class of repository —
+        // irrelevant. Fixing the offer set (B1) does nothing here: the push query
+        // carried gate 1 in SQL of its own, so a correctly registered, correctly
+        // PLANNED repository still had every metric row excluded at push time.
+        //
+        // The allow-list IS the decision. It comes from `dojo.all_my_repositories`,
+        // which is `may_share AND elected` — so re-testing the local flag here would
+        // be a second derivation of a question the dōjō already answered.
+        let pg = PgStore::connect_test().await.unwrap();
+        let (pid, key, _m) = seed_at(&pg, "private").await;
+        let plane = StubPlane {
+            plan: Some(SyncPlan {
+                allowed: vec![mapped(&key, &uuid::Uuid::new_v4().to_string())],
+                denied: vec![],
+            }),
+            ..Default::default()
+        };
+
+        let out = sync_persona(&pg, "ztest-slot", "tok", &plane).await;
+        let sent = plane.pushed_rows.lock().unwrap().clone();
+        let shared = shared_count(&pg, &key).await;
+        crate::tasks::test_support::cleanup_metrics_fixture(&pg, &pid, None, &[]).await;
+
+        assert!(out.is_ok(), "{out:?}");
+        assert_eq!(
+            sent.iter().filter(|(r, _)| r == &key).count(),
+            1,
+            "a repository the PLAN allows is pushed even though the user elected \
+             nothing locally — that is what the org mandate means"
+        );
+        assert_eq!(shared, 1, "and its row is watermarked so the next cycle does not re-send it");
+    }
+
+    #[tokio::test]
+    async fn a_repository_that_is_neither_elected_nor_allowed_is_never_pushed() {
+        // The other half of B2, and the reason dropping `visibility = 'shared'` from
+        // the push query is safe: the allow-list still bounds it absolutely. Two
+        // repositories in ONE cycle, so this proves a per-repository filter rather
+        // than "the pass happened to send nothing".
+        let pg = PgStore::connect_test().await.unwrap();
+        let (allowed_pid, allowed_key, _am) = seed_at(&pg, "shared").await;
+        let (excluded_pid, excluded_key, _em) = seed_at(&pg, "private").await;
+        let plane = StubPlane {
+            plan: Some(SyncPlan {
+                allowed: vec![mapped(&allowed_key, &uuid::Uuid::new_v4().to_string())],
+                denied: vec![],
+            }),
+            ..Default::default()
+        };
+
+        let out = sync_persona(&pg, "ztest-slot", "tok", &plane).await;
+        let sent = plane.pushed_rows.lock().unwrap().clone();
+        let offered = plane.offered.lock().unwrap().clone();
+        let excluded_shared = shared_count(&pg, &excluded_key).await;
+        crate::tasks::test_support::cleanup_metrics_fixture(&pg, &allowed_pid, None, &[]).await;
+        crate::tasks::test_support::cleanup_metrics_fixture(&pg, &excluded_pid, None, &[]).await;
+
+        assert!(out.is_ok(), "{out:?}");
+        assert!(
+            offered.contains(&excluded_key),
+            "it was still OFFERED — disclosure is the clone, the decision is the dōjō's"
+        );
+        assert!(
+            sent.iter().any(|(r, _)| r == &allowed_key),
+            "the allowed repository's row is pushed"
+        );
+        assert!(
+            !sent.iter().any(|(r, _)| r == &excluded_key),
+            "a repository the plan did not allow must not reach the wire, whatever its \
+             local visibility says"
+        );
+        assert_eq!(excluded_shared, 0, "and nothing about it is marked shared");
     }
 
     #[tokio::test]

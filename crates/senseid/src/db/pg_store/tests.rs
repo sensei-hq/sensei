@@ -10086,13 +10086,26 @@ async fn all_task_kinds_match_the_database_enum() {
 
 /// A shared repository with one locally-computed metric row.
 async fn seed_sync_fixture(s: &PgStore, uniq: &uuid::Uuid) -> (uuid::Uuid, uuid::Uuid) {
+    seed_sync_fixture_at(s, uniq, "shared").await
+}
+
+/// The same, at a chosen local `sensei.repositories.visibility`. `'private'` is the
+/// org-mandate shape: nothing elected locally, and the dōjō's plan deciding anyway.
+async fn seed_sync_fixture_at(
+    s: &PgStore,
+    uniq: &uuid::Uuid,
+    visibility: &str,
+) -> (uuid::Uuid, uuid::Uuid) {
     let pid = s.create_project(&format!("_test:sync:{uniq}"), None, None).await.unwrap();
     let rid = crate::tasks::test_support::seed_bare_repository(s, &pid, uniq).await;
-    sqlx_core::query::query("UPDATE sensei.repositories SET visibility = 'shared' WHERE id = $1")
-        .bind(rid)
-        .execute(s.pool())
-        .await
-        .unwrap();
+    sqlx_core::query::query(
+        "UPDATE sensei.repositories SET visibility = $2::sensei.repo_visibility WHERE id = $1",
+    )
+    .bind(rid)
+    .bind(visibility)
+    .execute(s.pool())
+    .await
+    .unwrap();
     let mid = seed_metric(s, &format!("_test:sync:{uniq}:ftr"), "ComputeFtr", 0, None).await;
     s.upsert_project_metric_repo(
         &mid,
@@ -10109,6 +10122,52 @@ async fn seed_sync_fixture(s: &PgStore, uniq: &uuid::Uuid) -> (uuid::Uuid, uuid:
     .await
     .unwrap();
     (pid, rid)
+}
+
+#[tokio::test]
+async fn the_held_back_count_carries_the_same_predicates_as_the_push_window() {
+    // The count exists so "pushed 66" is never printed without the reason 596 were
+    // not — which is only a true statement if it counts the population the window
+    // draws from, differing in `scopes` alone.
+    //
+    // B2 changed both together: `visibility = 'shared'` came out of each, and
+    // `allowed_keys` — which the count had never carried — went in. Without that
+    // second half an unfiltered count would sweep in every cloned repository on the
+    // machine, reporting a hold-back no pass could ever have sent. That misleads in
+    // the opposite direction to the bug the counter was added for, which is still
+    // misleading.
+    let s = pg_store().await;
+    let mine_uniq = uuid::Uuid::new_v4();
+    let other_uniq = uuid::Uuid::new_v4();
+    // Locally PRIVATE, so the count also proves the visibility term is gone.
+    let (mine_pid, _) = seed_sync_fixture_at(&s, &mine_uniq, "private").await;
+    let (other_pid, _) = seed_sync_fixture_at(&s, &other_uniq, "private").await;
+    let mine_key = format!("test/bare-{mine_uniq}");
+    let other_key = format!("test/bare-{other_uniq}");
+
+    let window = s.unpushed_metric_rows(&["user"], &[&mine_key], 500).await.unwrap();
+    let held_mine = s.unpushed_metric_count(&["user"], &[&mine_key]).await.unwrap();
+    let held_other = s.unpushed_metric_count(&["user"], &[&other_key]).await.unwrap();
+    let held_none = s.unpushed_metric_count(&["user"], &[]).await.unwrap();
+
+    crate::tasks::test_support::cleanup_metrics_fixture(&s, &mine_pid, None, &[]).await;
+    crate::tasks::test_support::cleanup_metrics_fixture(&s, &other_pid, None, &[]).await;
+
+    assert_eq!(
+        held_mine,
+        window.len() as i64,
+        "the count and the window see the same rows for the same allow-list"
+    );
+    assert_eq!(held_mine, 1, "including a row whose repository is locally PRIVATE");
+    assert_eq!(
+        held_other, 1,
+        "a different allow-list counts that repository's rows, not this one's"
+    );
+    assert_eq!(
+        held_none, 0,
+        "and an EMPTY allow-list holds back nothing — the count must not report rows \
+         no pass could have sent"
+    );
 }
 
 #[tokio::test]
@@ -10147,26 +10206,38 @@ async fn a_pulled_row_is_never_pushed_back() {
 }
 
 #[tokio::test]
-async fn a_private_repository_is_skipped_not_queued() {
-    // Private is a choice, not a backlog item: its rows must never enter the
-    // push queue at all, or every private repo looks like a pending sync.
+async fn a_locally_private_repository_is_queued_only_when_the_plan_names_it() {
+    // Was `a_private_repository_is_skipped_not_queued`, which asserted that the
+    // LOCAL flag did the excluding. §8a's B2 moved that, and the assertion is
+    // rescoped rather than dropped because its concern survives: private is a
+    // choice, not a backlog item, and a repository nobody elected still never
+    // enters the queue — it is simply not in the dōjō's allow-list that keeps it
+    // out now, rather than a column the mandate cannot see.
+    //
+    // Both directions on the SAME private fixture, so it cannot pass by the local
+    // flag quietly doing the work again.
     let s = pg_store().await;
     let uniq = uuid::Uuid::new_v4();
     let (pid, rid) = seed_sync_fixture(&s, &uniq).await;
+    let key = format!("test/bare-{uniq}");
     sqlx_core::query::query("UPDATE sensei.repositories SET visibility = 'private' WHERE id = $1")
         .bind(rid)
         .execute(s.pool())
         .await
         .unwrap();
 
-    let rows = s
-        .unpushed_metric_rows(&["repo", "user"], &[&format!("test/bare-{uniq}")], 100)
-        .await
-        .unwrap();
-    let n = rows.iter().filter(|r| r.repo_key == format!("test/bare-{uniq}")).count();
+    let omitted = s.unpushed_metric_rows(&["repo", "user"], &[], 100).await.unwrap();
+    let named = s.unpushed_metric_rows(&["repo", "user"], &[&key], 100).await.unwrap();
+    let omitted_n = omitted.iter().filter(|r| r.repo_key == key).count();
+    let named_n = named.iter().filter(|r| r.repo_key == key).count();
 
     crate::tasks::test_support::cleanup_metrics_fixture(&s, &pid, None, &[]).await;
-    assert_eq!(n, 0, "a private repository's rows are never queued for push");
+    assert_eq!(omitted_n, 0, "a repository the plan does not name is never queued for push");
+    assert_eq!(
+        named_n, 1,
+        "and one the plan DOES name is queued despite `visibility = 'private'` — the org \
+         mandate is a dōjō decision with no local column to read"
+    );
 }
 
 #[tokio::test]
@@ -10317,21 +10388,178 @@ async fn a_renamed_github_login_still_matches_the_same_persona() {
     assert_eq!(login.as_deref(), Some("new-login"), "and the login is updated in place");
 }
 
-// ── Gate 1 · intent: what this machine offers the dōjō ──────────────────────
+// ── The OFFER set, and gate 1 · intent ──────────────────────────────────────
 //
-// `sensei.repositories.visibility` is the FIRST of the three gates
-// (docs/spec/dojo/dojo-auth-provisioning.md §V.3) and the only one the daemon
-// owns. It is user intent — "did you opt this repo in?" — and it is answered
-// locally, before the dōjō is asked anything. Cost (forge visibility) and
-// entitlement (claim/billing/seat) are the dōjō's and are never mirrored here.
+// Two different questions, and they stopped having the same answer in
+// docs/spec/dojo/daemon-sync.md §8a:
+//
+// * `offerable_repositories` — WHAT THIS MACHINE DISCLOSES. Every locally-scanned
+//   repository with a `repo_key`, i.e. every repository the user CLONED. Never a
+//   forge listing: membership of an org whose code you have not cloned discloses
+//   nothing, because there is nothing on the machine to measure.
+// * `shared_repositories` — GATE 1, user intent. `sensei.repositories.visibility`,
+//   the FIRST of the three gates (docs/spec/dojo/dojo-auth-provisioning.md §V.3)
+//   and the only one the daemon owns.
+//
+// Gate 1 used to filter the OFFER, which made an organization's mandate over its
+// own private code structurally unreachable — the daemon has no local fact that
+// says "this one is mandated", so filtering before asking meant never asking. It
+// now filters the PUSH, and only for repositories where the USER holds authority.
+// Cost (forge visibility) and entitlement (claim/billing/seat) are the dōjō's and
+// are never mirrored here.
+
+#[tokio::test]
+async fn every_cloned_repository_is_offered_even_when_the_user_has_not_elected_it() {
+    // B1. A new employee whose only repository is the org-mandated private one has
+    // nothing locally elected. Filtering the offer on gate 1 meant the cycle
+    // returned before `register_repositories`, before `sync_plan`, before any push
+    // — the feature defeated for exactly the population it exists to serve.
+    //
+    // The bound that makes disclosing an unelected repository acceptable is the
+    // CLONE, not the forge: `sensei.repositories` is populated by the scanner, so
+    // this set is what the user actually works on, never an inventory of what they
+    // can reach.
+    let s = pg_store().await;
+    let uniq = uuid::Uuid::new_v4();
+    let pid = s.create_project(&format!("_test:offer:{uniq}"), None, None).await.unwrap();
+
+    // elected locally
+    let elected = crate::tasks::test_support::seed_bare_repository(&s, &pid, &uniq).await;
+    sqlx_core::query::query("UPDATE sensei.repositories SET visibility = 'shared' WHERE id = $1")
+        .bind(elected)
+        .execute(s.pool())
+        .await
+        .unwrap();
+
+    // cloned, NOT elected — the org-mandate candidate. Only the dōjō can know.
+    let unelected_uniq = uuid::Uuid::new_v4();
+    let unelected =
+        crate::tasks::test_support::seed_bare_repository(&s, &pid, &unelected_uniq).await;
+
+    // cloned but LOCAL-ONLY (no remote → no repo_key). Still withheld: it has no
+    // cross-install identity, so the dōjō would have nothing to map it to.
+    let (localonly,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
+        "INSERT INTO sensei.repositories(repo_key, name, visibility) \
+         VALUES(NULL, $1, 'shared') RETURNING id",
+    )
+    .bind(format!("offer-localonly-{uniq}"))
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+
+    // A limit past the whole table: the shared test database carries thousands of
+    // leftover fixtures, and a 500-row window would answer "absent" for a reason
+    // that has nothing to do with the predicate under test.
+    const ALL: i64 = 1_000_000;
+    let offered = s.offerable_repositories(ALL).await.unwrap();
+    let offered_keys: std::collections::HashSet<String> =
+        offered.iter().map(|r| r.repo_key.clone()).collect();
+    let offered_localonly =
+        offered.iter().any(|r| r.name.starts_with(&format!("offer-localonly-{uniq}")));
+    let elected_keys: std::collections::HashSet<String> =
+        s.shared_repositories(ALL).await.unwrap().into_iter().map(|r| r.repo_key).collect();
+
+    sqlx_core::query::query("DELETE FROM sensei.repositories WHERE id = ANY($1)")
+        .bind(vec![elected, unelected, localonly])
+        .execute(s.pool())
+        .await
+        .ok();
+    sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
+        .bind(pid)
+        .execute(s.pool())
+        .await
+        .ok();
+
+    assert!(
+        offered_keys.contains(&format!("test/bare-{uniq}")),
+        "an elected repository is offered"
+    );
+    assert!(
+        offered_keys.contains(&format!("test/bare-{unelected_uniq}")),
+        "a CLONED but unelected repository must still be OFFERED — the daemon cannot \
+         tell whether the org mandated it, so refusing to ask is refusing the mandate"
+    );
+    assert!(
+        !offered_localonly,
+        "a local-only repository (NULL repo_key) has no cross-install identity and \
+         is offered by neither set"
+    );
+    // And the two sets are genuinely different — gate 1 did not simply move.
+    assert!(
+        elected_keys.contains(&format!("test/bare-{uniq}")),
+        "gate 1 still yields what the user elected"
+    );
+    assert!(
+        !elected_keys.contains(&format!("test/bare-{unelected_uniq}")),
+        "gate 1 still withholds the unelected repository from the ELECTED set"
+    );
+}
+
+#[tokio::test]
+async fn the_offer_window_is_a_throughput_bound_not_an_alphabetical_ceiling() {
+    // Widening the offer set from "what the user elected" to "every clone" makes the
+    // caller's LIMIT ~40x more load-bearing. Ordered by `repo_key`, an install with
+    // more repositories than the limit offers the alphabetically-first N forever —
+    // so a freshly cloned org-mandated repository sorting after them is never
+    // registered, never in the dōjō's plan, and never pushed. That is B1 again, one
+    // layer down, and invisible on the 67-repository install it was measured on.
+    //
+    // The ordering is asserted RELATIVELY (both fixtures dated into the future) so
+    // the test does not depend on how many rows the shared test database carries.
+    let s = pg_store().await;
+    let uniq = uuid::Uuid::new_v4();
+    let last_key = format!("zzz-sorts-last/{uniq}");
+    let first_key = format!("aaa-sorts-first/{uniq}");
+
+    // Cloned, never registered, sorts LAST alphabetically.
+    let (unmapped,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
+        "INSERT INTO sensei.repositories(repo_key, name, modified_at) \
+         VALUES($1, 'ztest-unmapped', now() + interval '10 years') RETURNING id",
+    )
+    .bind(&last_key)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    // Already mapped to a tenant, sorts FIRST alphabetically. It is already in the
+    // dōjō's answer whether or not it is re-offered, so it must yield the slot.
+    let (mapped,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
+        "INSERT INTO sensei.repositories(repo_key, name, tenant_id, modified_at) \
+         VALUES($1, 'ztest-mapped', gen_random_uuid(), now() + interval '9 years') RETURNING id",
+    )
+    .bind(&first_key)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+
+    let window = s.offerable_repositories(1).await.unwrap();
+
+    sqlx_core::query::query("DELETE FROM sensei.repositories WHERE id = ANY($1)")
+        .bind(vec![unmapped, mapped])
+        .execute(s.pool())
+        .await
+        .ok();
+
+    assert_eq!(
+        window.first().map(|r| r.repo_key.as_str()),
+        Some(last_key.as_str()),
+        "the unregistered repository takes the single slot even though it sorts last — \
+         registration is what creates the dōjō row the plan is computed from"
+    );
+}
 
 #[tokio::test]
 async fn shared_repositories_returns_only_opted_in_repos_with_a_remote() {
+    // GATE 1, and only gate 1. This test used to assert that an unelected repository
+    // "must NEVER be offered"; §8a narrowed that, so the claim is now scoped to what
+    // survives: gate 1 governs the PUSH for repositories where the USER holds
+    // authority. What this machine DISCLOSES is the wider clone-bounded set —
+    // asserted next door in
+    // `every_cloned_repository_is_offered_even_when_the_user_has_not_elected_it`.
     let s = pg_store().await;
     let uniq = uuid::Uuid::new_v4();
     let pid = s.create_project(&format!("_test:shared:{uniq}"), None, None).await.unwrap();
 
-    // opted in, has a remote → offered
+    // opted in, has a remote → in the elected set
     let shared = crate::tasks::test_support::seed_bare_repository(&s, &pid, &uniq).await;
     sqlx_core::query::query("UPDATE sensei.repositories SET visibility = 'shared' WHERE id = $1")
         .bind(shared)
@@ -10339,13 +10567,13 @@ async fn shared_repositories_returns_only_opted_in_repos_with_a_remote() {
         .await
         .unwrap();
 
-    // NOT opted in → withheld. Private is a choice, not a failure: signing in
+    // NOT opted in → not elected. Private is a choice, not a failure: signing in
     // must never start sharing a repo the user did not choose to share.
     let private_uniq = uuid::Uuid::new_v4();
     let private = crate::tasks::test_support::seed_bare_repository(&s, &pid, &private_uniq).await;
 
-    // opted in but LOCAL-ONLY (no remote → no repo_key) → withheld. A NULL
-    // repo_key is the DDL's marker for "never federated"; it has no
+    // opted in but LOCAL-ONLY (no remote → no repo_key) → withheld by BOTH sets. A
+    // NULL repo_key is the DDL's marker for "never federated"; it has no
     // cross-install identity, so the dōjō would have nothing to map it to.
     let (localonly,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
         "INSERT INTO sensei.repositories(repo_key, name, visibility) \
@@ -10356,21 +10584,24 @@ async fn shared_repositories_returns_only_opted_in_repos_with_a_remote() {
     .await
     .unwrap();
 
-    let offered = s.shared_repositories(500).await.unwrap();
-    let keys: Vec<&str> = offered.iter().map(|r| r.repo_key.as_str()).collect();
+    let elected = s.shared_repositories(1_000_000).await.unwrap();
+    let keys: std::collections::HashSet<&str> =
+        elected.iter().map(|r| r.repo_key.as_str()).collect();
 
     assert!(
         keys.contains(&format!("test/bare-{uniq}").as_str()),
-        "an opted-in repository with a remote must be offered; got {keys:?}"
+        "an opted-in repository with a remote is elected"
     );
     assert!(
         !keys.contains(&format!("test/bare-{private_uniq}").as_str()),
-        "a repository the user did not share must NEVER be offered — that is gate 1"
+        "a repository the user did not share is NOT ELECTED, so gate 1 still stops its \
+         rows being pushed on the user's own authority. It IS still disclosed — the \
+         dōjō is the only party that can tell a mandate from a private repository"
     );
     assert!(
-        offered.iter().all(|r| !r.name.starts_with(&format!("localonly-{uniq}"))),
+        elected.iter().all(|r| !r.name.starts_with(&format!("localonly-{uniq}"))),
         "a local-only repository (NULL repo_key) has no cross-install identity and \
-         must not be offered"
+         is in neither set"
     );
 
     // cleanup

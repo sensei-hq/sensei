@@ -33,6 +33,21 @@ function tables(): Record<string, FakeTable> {
 				{ id: 'met-churn', key: 'churn' }
 			]
 		},
+		// The gate the ingest reads. Modelled in the base fixture because every test
+		// that expects a row to be STORED needs the plan to permit it — the view is
+		// now part of the write path, not just the read.
+		all_my_repositories: {
+			rows: [
+				{
+					repository_id: 'r-api',
+					repo_key: 'github.com/acme/api',
+					principal_id: ALICE,
+					sync_enabled: true,
+					refused_by: null,
+					reason_code: null
+				}
+			]
+		},
 		repository_metrics: {
 			rows: [],
 			uniques: [
@@ -237,6 +252,53 @@ describe('ingestMetrics', () => {
 				count(small)(t)
 			);
 		}
+	});
+
+	it('refuses a repository the plan does not permit — the write RE-DECIDES', async () => {
+		// The daemon's local push gate was removed (B2) on the stated premise that
+		// "the dōjō re-decides entitlement on every write". That premise was FALSE:
+		// this function checked membership and nothing else, so dropping the daemon
+		// gate removed the only gate. A member of the tenant could push metrics for a
+		// repository that is unelected, unsubscribed, or whose forge visibility was
+		// never captured.
+		const t = tables();
+		t.all_my_repositories = {
+			rows: [
+				{
+					repository_id: 'r-api',
+					repo_key: 'github.com/acme/api',
+					principal_id: ALICE,
+					sync_enabled: false,
+					refused_by: 'election',
+					reason_code: 'not_elected_user'
+				}
+			]
+		};
+		const db = fakeDojoDb(t);
+		const out = await ingestMetrics(db as never, ALICE, [row()]);
+		expect(out.accepted).toBe(0);
+		expect(out.rejected[0].reason).toBe('not_permitted');
+		expect(db.tables.repository_metrics.rows).toHaveLength(0);
+	});
+
+	it('accepts a repository the plan permits', async () => {
+		const t = tables();
+		t.all_my_repositories = {
+			rows: [
+				{
+					repository_id: 'r-api',
+					repo_key: 'github.com/acme/api',
+					principal_id: ALICE,
+					sync_enabled: true,
+					refused_by: null,
+					reason_code: null
+				}
+			]
+		};
+		const db = fakeDojoDb(t);
+		const out = await ingestMetrics(db as never, ALICE, [row()]);
+		expect(out.rejected).toEqual([]);
+		expect(out.accepted).toBe(1);
 	});
 
 	it('accepts the good rows in a mixed batch and reports only the bad ones', async () => {
