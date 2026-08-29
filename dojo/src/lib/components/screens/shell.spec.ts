@@ -27,9 +27,9 @@ const acme: DojoOrg = {
 };
 const globex: DojoOrg = {
 	id: 'globex',
-	kanji: '客',
+	kanji: '社',
 	name: 'Globex',
-	kind: 'Client',
+	kind: 'Organization',
 	host: 'saas',
 	url: 'github/globex',
 	role: 'Maintainer',
