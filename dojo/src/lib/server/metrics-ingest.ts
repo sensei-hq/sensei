@@ -98,18 +98,28 @@ export async function ingestMetrics(
 	// `dojo.all_my_repositories` is the single source of truth for that verdict, so
 	// this reads it rather than re-deriving `may_share AND elected` here. A second
 	// derivation is exactly what the view exists to prevent.
+	const wantedKeys = [...new Set(rows.map((r) => r.repo_key))];
+
+	// Scoped to THIS BATCH, not to the account. PostgREST caps an unbounded read
+	// at `max_rows` (1000, verified live) and says nothing about truncating — so
+	// reading every repository the caller can see would, past that ceiling,
+	// silently drop rows from the allow-list and refuse a repository the user IS
+	// entitled to sync, with `not_permitted` naming the wrong reason.
+	//
+	// Filtering by the pushed keys also makes the read proportional to the push
+	// rather than to the account, which is why the ceiling stops applying: a
+	// batch is capped at MAX_ROWS metrics, so `wantedKeys` cannot exceed it.
 	const permitted = await db
 		.from('all_my_repositories')
 		.select('repo_key, sync_enabled')
-		.eq('principal_id', principalId);
+		.eq('principal_id', principalId)
+		.in('repo_key', wantedKeys);
 	if (permitted.error) throw new AdminError(500, permitted.error.message);
 	const maySync = new Set(
 		((permitted.data ?? []) as { repo_key: string; sync_enabled: boolean }[])
 			.filter((p) => p.sync_enabled)
 			.map((p) => p.repo_key)
 	);
-
-	const wantedKeys = [...new Set(rows.map((r) => r.repo_key))];
 	const wantedMetrics = [...new Set(rows.map((r) => r.metric))];
 
 	const repoRows = await db

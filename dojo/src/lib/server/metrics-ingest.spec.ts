@@ -313,3 +313,44 @@ describe('ingestMetrics', () => {
 		expect(db.tables.repository_metrics.rows).toHaveLength(2);
 	});
 });
+
+// The 1000-row cap, on the gate that decides whether a push is stored.
+//
+// `PGRST_DB_MAX_ROWS=1000` (verified live). The permission read had no `.range()`
+// and no `.in()`, so it fetched EVERY row of `all_my_repositories` for the
+// caller and silently kept the first 1000. A user past that ceiling would have
+// legitimate pushes refused as `not_permitted` — a denial naming the wrong
+// reason, for a repository they are entitled to sync.
+//
+// The fix is not only paging: the ingest needs the repos IN THIS BATCH, so it
+// filters by them. That makes the read proportional to the push rather than to
+// the account, which is also why it stops being a ceiling at all.
+describe('ingest permission read — bounded by the BATCH, not the account', () => {
+	it('permits a repo that sits past the first 1000 rows of the view', async () => {
+		const t = tables();
+		// 1200 unrelated permitted repos ahead of the one being pushed.
+		const filler = Array.from({ length: 1200 }, (_, i) => ({
+			repository_id: `r-filler-${i}`,
+			repo_key: `github.com/acme/filler-${i}`,
+			principal_id: ALICE,
+			sync_enabled: true,
+			refused_by: null,
+			reason_code: null
+		}));
+		t.all_my_repositories.rows = [...filler, ...t.all_my_repositories.rows];
+
+		const db = fakeDojoDb(t);
+		const out = await ingestMetrics(db as never, ALICE, [
+			{
+				repo_key: 'github.com/acme/api',
+				metric: 'commits_per_day',
+				scope: 'repo',
+				grain: 'day',
+				computed_on: '2026-08-29',
+				value: 3
+			}
+		]);
+		expect(out.accepted).toBe(1);
+		expect(out.rejected).toEqual([]);
+	});
+});

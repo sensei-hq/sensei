@@ -20,6 +20,11 @@ export interface FakeRow {
 
 /** A unique constraint: the columns that together must not repeat. `where`
  *  narrows it to a partial index (as `tenant_connections` uses). */
+/** PostgREST's server-side row cap. Mirrors `max_rows` in supabase/config.toml;
+ *  a read with no `.range()` never returns more than this, and says nothing
+ *  about having truncated. */
+export const PGRST_MAX_ROWS = 1000;
+
 export interface FakeUnique {
 	columns: string[];
 	where?: (row: FakeRow) => boolean;
@@ -123,12 +128,33 @@ export function fakeDojoDb(tables: Record<string, FakeTable>) {
 				state[table].rows = t.rows.filter((r) => !matches(r, filters));
 				return { data: hit, error: null };
 			}
-			return { data: t.rows.filter((r) => matches(r, filters)), error: null };
+			const hits = t.rows.filter((r) => matches(r, filters));
+			// Slice AFTER filtering, matching PostgREST: the range applies to the
+			// result set, not to the table.
+			//
+			// AN UNRANGED READ IS CAPPED, exactly as the server caps it
+			// (`PGRST_DB_MAX_ROWS=1000`, verified on the running instance). Without
+			// this the fake happily returns 5000 rows, every pagination test passes
+			// against code that does not paginate, and the cap stays a
+			// code-reading exercise instead of a tested one.
+			return {
+				data: range ? hits.slice(range.from, range.to + 1) : hits.slice(0, PGRST_MAX_ROWS),
+				error: null
+			};
 		};
+
+		/** `.range(from, to)` — INCLUSIVE both ends, as PostgREST defines it. Added
+		 *  so paginated reads are testable: without it a page loop is untestable
+		 *  and the 1000-row cap it exists to defeat stays a code-reading exercise. */
+		let range: { from: number; to: number } | null = null;
 
 		const api: Record<string, unknown> = {
 			select: () => api,
 			order: () => api,
+			range: (from: number, to: number) => {
+				range = { from, to };
+				return api;
+			},
 			eq: (column: string, value: unknown) => {
 				filters.push({ op: 'eq', column, value });
 				return api;
