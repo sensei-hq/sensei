@@ -612,3 +612,38 @@ Phases 1–7 are **code-complete on `develop`** (not merged to `main`): `resolve
 | ~~**Full-graph live migration**~~ ✅ **DONE 2026-08-07 (v0.7.0 deploy).** | `develop`→`main` merged (`5e83fcca`), released `0.7.0` (`make bump v=minor`), release binary installed. Live deploy gate applied: graph-cleared (`TRUNCATE sensei.nodes, sensei.edges CASCADE; TRUNCATE inference.communities; TRUNCATE sensei.scan_state;` + all folders → `discovered`) + `dbd reconcile --scope default` (additive-only) → full reindex of all 8,664 folders running on the 0.7.0 daemon (multi-hour; watch roots `~/Developer` + `~/Work`). Verified starting clean: FQN nodes emitting, no schema errors. |
 | ~~**`edges_target_id_idx` missing on live**~~ ✅ **DONE** — added by the v0.7.0 `dbd reconcile`; degree-recompute (in `detect_communities`, 7.1) is index-backed again. |
 | **Unresolved-calls residual vs plan's "tiny"** | On the sensei repo, 43.5% of `calls` stay `target_id IS NULL` — the honest dyn / out-of-0.7-binding residual (trait dispatch, chained/reassigned receivers), NOT false edges. The plan's "unresolved = tiny (dyn only)" was optimistic; 0.7 deliberately stubs out-of-scope receivers. Tightening this (more binding forms / light type inference) is a future increment, not a regression. |
+
+## Forge visibility needs a GitHub App, not the `repo` scope (2026-08-28)
+
+**Shipped:** `repo` added to both sign-in paths (`kavach.config.js`,
+`cli-auth.ts`), because without it forge capture cannot work at all — GitHub
+answers **404, not 403**, for a repository a token cannot see, so every private
+repository stays permanently uncaptured, fails closed, and never syncs. That is
+exactly the case the authority/mandate model exists for, so capture without it
+worked only where it was not needed.
+
+**Why it is still wrong.** Classic `repo` is full read **and write** over all
+private code, and there is no metadata-only classic OAuth scope. We are asking
+for the ability to push to every private repository a user can reach in order to
+learn one boolean per repo.
+
+It is worse on the CLI path than the web one. The web token exists only in the
+`onSessionSync` payload and never reaches the cookie. The daemon's is
+**persisted** — keychain rather than Postgres, which is the right store, but it
+is a stored, refreshable, full-private-code credential on a developer machine.
+
+**The fix:** a **GitHub App** with `metadata: read`, which is precisely and only
+the permission this needs. That changes the install story (per-org
+installation, not per-user consent) and the token model (installation tokens,
+short-lived, no refresh in the keychain), so it is a slice and not an edit.
+
+**Interim mitigation worth doing first, and cheaper:** request `repo`
+**incrementally** — sign in with `read:org`/`user:email`, and ask for `repo`
+only when a user actually elects a private repository or joins an org tenant
+with a mandate. Most users never grant it, and the consent screen then appears
+attached to the thing it is for. This is a change to WHEN we ask, not to what
+we ask for, so it does not need the App migration to land first.
+
+**Do not close this by deleting the scope** — that silently reverts private
+capture to permanently-uncaptured, which reads in the UI as "not shared" rather
+than as "we could not ask".
