@@ -144,6 +144,9 @@ pub trait UserPlane: Send + Sync {
 
     async fn sync_plan(&self, token: &str) -> Result<SyncPlan, String>;
 
+    /// Hand the dōjō the forge token so it can re-read repository visibility.
+    async fn provision(&self, token: &str, provider_token: &str) -> Result<(), String>;
+
     async fn push_metrics(
         &self,
         token: &str,
@@ -167,6 +170,9 @@ impl UserPlane for HttpUserPlane {
     }
     async fn sync_plan(&self, token: &str) -> Result<SyncPlan, String> {
         sync_plan(&self.dojo_url, token).await
+    }
+    async fn provision(&self, token: &str, provider_token: &str) -> Result<(), String> {
+        provision(&self.dojo_url, token, provider_token).await
     }
     async fn push_metrics(
         &self,
@@ -244,6 +250,25 @@ pub async fn push_metrics(
 pub async fn sync_plan(dojo_url: &str, token: &str) -> Result<SyncPlan, String> {
     let req = crate::federation::http_client().get(endpoint(dojo_url, "sync/plan"));
     decode("sync plan", &send(req, token, "sync plan").await?)
+}
+
+/// Ask the dōjō to re-read forge visibility, by handing it the forge token.
+///
+/// `POST /v1/you/provision` is the endpoint that runs `refreshForgeVisibility`,
+/// and it already accepts `provider_token` in the body precisely because the
+/// daemon's copy outlives the web session's (§IV.8). So this needs no new
+/// endpoint — only a caller.
+///
+/// The response is DISCARDED on purpose. Provisioning reports which tenants it
+/// touched; what this caller wants to know is whether the VERDICT changed, and
+/// that is the sync plan's answer, not this one. Re-reading the plan is how the
+/// result is observed.
+pub async fn provision(dojo_url: &str, token: &str, provider_token: &str) -> Result<(), String> {
+    let req = crate::federation::http_client()
+        .post(endpoint(dojo_url, "provision"))
+        .json(&serde_json::json!({ "provider_token": provider_token }));
+    send(req, token, "provision").await?;
+    Ok(())
 }
 
 #[cfg(test)]
