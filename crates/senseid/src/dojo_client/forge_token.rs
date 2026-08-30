@@ -237,3 +237,39 @@ mod probe_classification {
         );
     }
 }
+
+/// Record what a forge response implies about the token, opportunistically.
+///
+/// The scheduled check is not the only thing that talks to GitHub — sign-in
+/// reads `/user/orgs` and `/user/emails`, and provisioning reads repositories.
+/// Every one of those responses carries the same evidence, so learning from them
+/// means a token gets its deadline recorded at SIGN-IN rather than up to a
+/// scheduling interval later. It also means a token that dies between checks is
+/// noticed by the next thing that uses it, not by the next check.
+///
+/// Best-effort by construction: this observes a call made for another purpose
+/// and must never change its outcome. A write failure is logged, not propagated
+/// — the caller's own result is what matters, and failing an org list because a
+/// bookkeeping UPDATE failed would trade a working feature for a diagnostic.
+///
+/// `Unreachable` writes NOTHING. The caller may be handling its own network
+/// error; recording a standing we did not learn would be a fabrication.
+pub async fn observe(
+    pg: &crate::db::pg_store::PgStore,
+    session_slot: &str,
+    status: Option<u16>,
+    expiry_header: Option<&str>,
+) {
+    let (state, expires_at) = match classify_probe(status, expiry_header) {
+        ProbeOutcome::Alive { expires_at } => ("active", expires_at),
+        ProbeOutcome::Dead => ("dead", None),
+        ProbeOutcome::Unreachable => return,
+    };
+    if let Err(e) = pg.set_forge_token_state(session_slot, state, expires_at).await {
+        tracing::debug!(slot = session_slot, error = %e,
+                        "forge token: could not record what this call implied");
+    }
+}
+
+/// The header GitHub sets when a token has a deadline.
+pub const EXPIRY_HEADER: &str = "github-authentication-token-expiration";

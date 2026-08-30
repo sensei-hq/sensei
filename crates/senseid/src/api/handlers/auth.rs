@@ -195,6 +195,26 @@ pub(crate) async fn callback(
                         tracing::error!(persona, identity = %linked,
                                         "sign-in stored a session the sync cycle cannot use — the persona was not linked");
                     }
+                    // What we currently believe about the FORGE token — a
+                    // different credential from the session above, with its own
+                    // lifetime. Read-only: `status` reports, it never probes, so
+                    // opening this page cannot cost a GitHub call.
+                    let row = state
+                        .pg
+                        .forge_token_rows()
+                        .await
+                        .ok()
+                        .and_then(|rows| rows.into_iter().find(|r| r.session_slot == persona));
+                    let forge_dead = row.as_ref().is_some_and(|r| r.state == "dead");
+                    let forge = match &row {
+                        Some(r) => serde_json::json!({
+                            "state": r.state,
+                            "expiresAt": r.expires_at,
+                        }),
+                        // No row for this slot. Saying `unknown` is honest; making
+                        // one up would be the fabrication rule.
+                        None => serde_json::json!({ "state": "unknown", "expiresAt": null }),
+                    };
                     Json(serde_json::json!({
                         // NOT unconditionally true. The credential stored, but if
                         // the persona did not link there is no `session_slot`, so
@@ -210,7 +230,20 @@ pub(crate) async fn callback(
                         // Whether org provisioning will be possible for this
                         // persona — surfaced so a missing token is visible now
                         // rather than as an empty org list later.
+                        // A token is STORED. Deliberately NOT the same as one
+                        // that WORKS: a dead credential is still `Some`, which is
+                        // how this endpoint reported `signedIn: true` for a whole
+                        // morning while every forge call 401'd. `forgeToken`
+                        // below is the field that answers whether it works.
                         "canReadOrgs": tokens.provider_token.is_some(),
+                        // The forge token's actual standing, recorded by the
+                        // scheduled check and by any call that happened to learn
+                        // something. `unknown` is real — see the column comment.
+                        "forgeToken": forge,
+                        // The one remedy that fixes a dead forge token. Surfaced
+                        // as its own flag so the UI does not have to know that
+                        // "dead" is unrecoverable without a sign-in.
+                        "needsSignIn": forge_dead,
                         "error": (!will_sync).then_some(
                             "signed in, but this persona is not linked — the sync cycle will not \
                              pick the session up until it is"),
@@ -519,7 +552,10 @@ pub(crate) async fn status(
 /// bare `[]` is indistinguishable from "this user belongs to no organisations",
 /// which is the wrong conclusion to hand a provisioning step that would then
 /// create nothing and report success.
-pub(crate) async fn orgs(Query(p): Query<PersonaQuery>) -> Json<serde_json::Value> {
+pub(crate) async fn orgs(
+    State(state): State<AppState>,
+    Query(p): Query<PersonaQuery>,
+) -> Json<serde_json::Value> {
     let who = p.persona.clone();
     let token = match tokio::task::spawn_blocking(move || session::load_provider_token(&who)).await
     {
@@ -542,6 +578,25 @@ pub(crate) async fn orgs(Query(p): Query<PersonaQuery>) -> Json<serde_json::Valu
         .header("User-Agent", "sensei")
         .send()
         .await;
+
+    // Learn what this call implies about the token, before consuming the body.
+    // The response is here anyway; not reading it would mean waiting up to a
+    // scheduling interval to discover a deadline GitHub just told us.
+    if let Ok(r) = resp.as_ref() {
+        let status = r.status().as_u16();
+        let exp = r
+            .headers()
+            .get(crate::dojo_client::forge_token::EXPIRY_HEADER)
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_owned);
+        crate::dojo_client::forge_token::observe(
+            &state.pg,
+            &p.persona,
+            Some(status),
+            exp.as_deref(),
+        )
+        .await;
+    }
 
     match resp {
         Ok(r) if r.status().is_success() => {
