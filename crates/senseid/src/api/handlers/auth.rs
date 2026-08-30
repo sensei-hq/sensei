@@ -325,9 +325,15 @@ fn forge_report(row: Result<Option<&ForgeTokenRow>, String>, now: i64) -> ForgeR
 
 /// This persona's forge-token row, or why we could not read it.
 ///
-/// Read-only, and deliberately so: neither caller probes GitHub. Opening a
-/// status page must not cost a forge call — the scheduled check and
-/// [`crate::dojo_client::forge_token::observe`] are what keep this current.
+/// Read-only: this lookup adds no forge call of its own.
+///
+/// That is a claim about THIS function, not about `status`. An earlier version
+/// of this comment said opening the status page "cannot cost a GitHub call",
+/// which was never true — `status` backfills the verified identity, and that
+/// path has always read `/user/emails`. The honest statement is that the
+/// standing is kept current by the scheduled check and by
+/// [`crate::dojo_client::forge_token::observe`] riding on calls made for other
+/// reasons, and that reading the row costs nothing extra.
 async fn forge_row(state: &AppState, persona: &str) -> Result<Option<ForgeTokenRow>, String> {
     state
         .pg
@@ -553,9 +559,17 @@ pub(crate) async fn status(
     let (tokens, sess) = match live_session(&p.persona).await {
         Ok(live) => (live.tokens, live.session),
         Err(AuthError::SignedOut) => {
-            return Json(
-                serde_json::json!({ "signedIn": false, "persona": p.persona, "dojo": dojo_url() }),
-            );
+            return Json(serde_json::json!({
+                "signedIn": false,
+                "persona": p.persona,
+                // No credential at all, so signing in is both necessary and
+                // sufficient. Stated as a field for the same reason the forge
+                // token states it: a caller must not infer the remedy from the
+                // ABSENCE of a session, because an unreachable dōjō produces
+                // the same `signedIn: false`.
+                "needsSignIn": true,
+                "dojo": dojo_url(),
+            }));
         }
         Err(e @ (AuthError::Rejected(_) | AuthError::Unreachable(_))) => {
             let detail = match &e {
@@ -565,6 +579,12 @@ pub(crate) async fn status(
             return Json(serde_json::json!({
                 "signedIn": false,
                 "persona": p.persona,
+                // The distinction `AuthError` has drawn since it was written,
+                // finally on the wire. Without it every `signedIn: false` looks
+                // alike, and `sensei auth renew-if-needed` opened a browser for
+                // a GoTrue 504 — telling a signed-in user to re-authenticate
+                // over an outage that had nothing to do with their credential.
+                "needsSignIn": e.needs_sign_in(),
                 "error": if e.needs_sign_in() {
                     "stored session was rejected — sign in again"
                 } else {
@@ -759,7 +779,23 @@ async fn link_verified_identity(
     // one human commits under several, and only GitHub knows the full set.
     let mut emails: Vec<String> = primary.map(|e| vec![e.to_string()]).unwrap_or_default();
     if let Some(pt) = provider_token {
-        emails.extend(github_verified_emails(pt).await);
+        let seen = github_verified_emails(pt).await;
+        // The first forge call after a sign-in, so it is also the first chance
+        // to learn the NEW token's deadline. Without this a renewal recorded
+        // the previous token's expiry and kept reporting `renewalDue`, which
+        // makes `renew-if-needed` authorize on every run — verified by watching
+        // it stay "expires soon" seconds after a renewal that worked.
+        //
+        // Best-effort by construction: `observe` writes nothing when the call
+        // did not reach the forge, and never changes this function's outcome.
+        crate::dojo_client::forge_token::observe(
+            &state.pg,
+            persona,
+            seen.status,
+            seen.expiry_header.as_deref(),
+        )
+        .await;
+        emails.extend(seen.emails);
     }
     emails.sort();
     emails.dedup();
@@ -803,7 +839,23 @@ fn github_identity(user: &serde_json::Value) -> Option<(&str, i64)> {
 /// An empty result on failure is correct here and not a masked error — the
 /// caller treats these as ADDITIONS to the primary address, so "none found"
 /// simply links fewer aliases rather than fabricating any.
-async fn github_verified_emails(provider_token: &str) -> Vec<String> {
+/// Verified emails, and what the call revealed about the token.
+///
+/// The second half exists because this is the FIRST forge call after a sign-in.
+/// Its response carries the expiry header, and discarding it left a freshly
+/// minted token recorded with whatever deadline the previous one had — so a
+/// renewal that WORKED still read as `renewalDue`, and `renew-if-needed` would
+/// authorize again on every invocation. Observed exactly that.
+struct VerifiedEmails {
+    emails: Vec<String>,
+    /// `None` when no response arrived — which says nothing, and must not be
+    /// recorded as anything.
+    status: Option<u16>,
+    expiry_header: Option<String>,
+}
+
+async fn github_verified_emails(provider_token: &str) -> VerifiedEmails {
+    let none = |status| VerifiedEmails { emails: Vec::new(), status, expiry_header: None };
     let Ok(r) = crate::federation::http_client()
         .get("https://api.github.com/user/emails")
         .header("Authorization", format!("Bearer {provider_token}"))
@@ -812,20 +864,30 @@ async fn github_verified_emails(provider_token: &str) -> Vec<String> {
         .send()
         .await
     else {
-        return Vec::new();
+        return none(None);
     };
+    let status = r.status().as_u16();
+    let expiry_header = r
+        .headers()
+        .get(crate::dojo_client::forge_token::EXPIRY_HEADER)
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_owned);
     if !r.status().is_success() {
-        return Vec::new();
+        // A 401 here is exactly how a dead token announces itself, and the
+        // caller records it — so the status is carried out even on failure.
+        return VerifiedEmails { emails: Vec::new(), status: Some(status), expiry_header };
     }
     let list: serde_json::Value = r.json().await.unwrap_or_default();
-    list.as_array()
+    let emails = list
+        .as_array()
         .map(|a| {
             a.iter()
                 .filter(|e| e["verified"].as_bool() == Some(true))
                 .filter_map(|e| e["email"].as_str().map(String::from))
                 .collect()
         })
-        .unwrap_or_default()
+        .unwrap_or_default();
+    VerifiedEmails { emails, status: Some(status), expiry_header }
 }
 
 #[cfg(test)]
@@ -888,6 +950,18 @@ mod tests {
                 "{alive} must not ask for a sign-in"
             );
         }
+    }
+
+    #[test]
+    fn the_two_signed_out_reasons_carry_different_remedies() {
+        // `AuthError` has always known the difference; `status` did not report
+        // it, so every caller saw one undifferentiated `signedIn: false`.
+        // Rejected means the credential is GONE (already cleared) and a sign-in
+        // fixes it. Unreachable means it was deliberately left alone and a
+        // sign-in fixes nothing — it just destroys a working session.
+        assert!(AuthError::SignedOut.needs_sign_in());
+        assert!(AuthError::Rejected("401".into()).needs_sign_in());
+        assert!(!AuthError::Unreachable("504 request_timeout".into()).needs_sign_in());
     }
 
     #[test]
