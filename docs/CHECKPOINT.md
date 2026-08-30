@@ -1,42 +1,55 @@
 # Checkpoint
 
-**Slice:** Forge-token lifecycle — **all 6 steps DONE, verified live.**
-`ee3ccf7a` · `f6c77a8a` · `a37bedf1` · `2afe37f6` · `92c21577` · `e039601b` · `e4202b90`
+**Slice:** Forge-token lifecycle — **DONE, verified live.**
+`92c21577` · `e039601b` · `e4202b90` · `7ed7be0c` · `9e48b9c7`
 
-## What works, measured
+## The design, after Jerry rejected the first one
+
+`e4202b90` copied the GitHub App client secret into the Cloudflare Worker so the
+dōjō could redeem refresh tokens. Jerry caught the maintenance cost: recreating
+the client id would mean updating two dashboards, and the missed copy fails
+silently months later. **I should have raised that before building it.**
+
+Checked whether the secret could be read from Supabase instead — it cannot.
+`auth.custom_oauth_providers.client_secret` has 0 rows (custom OIDC only),
+`vault.secrets` is empty, and provider config is control-plane, unreachable by
+`service_role`. Only the Management API exposes it, which needs a strictly more
+powerful token.
+
+So renewal now re-runs the **authorize flow Supabase already owns**. One config
+location, forever.
 
 ```
-sign-in ─┬─> observe()  captures state+expiry from calls made for other purposes
-         └─> scheduled check (30m): Skip | Verify | VerifyAndMarkDead | Refresh
-Refresh ──> POST /v1/you/forge/refresh (dōjō holds the client secret)
-            └─> rotate + store both tokens ──> record active + new expiry
-/api/auth/status: forgeToken {state, expiresAt} · needsSignIn
+near expiry  ->  status: renewalDue=true
+             ->  sensei auth renew-if-needed
+             ->  Supabase /authorize (holds the secret)  ->  GitHub  ->  callback
+             ->  fresh 8h token, expiry recorded by observe
 ```
 
-Live proof, whole chain: expiry nudged to 15:49 → ticker 15:29:56 → new expiry
-23:29:56 (+8h) · refresh token `b897379b…`→`b803c860…` (rotated, stored) ·
-`/api/auth/orgs` → `['sensei-hq']`.
+**Silent re-auth proven: token replaced in ~6s, zero prompts, zero clicks.**
 
-**GitHub's real numbers:** `expires_in` 28800 (8h), `refresh_token_expires_in`
-15724800 (182d), scope preserved. Client id `Ov23…` = a **GitHub App**, which is
-why refresh tokens exist here at all.
+## Live-verified
 
-## Corrections made this session
+- `renewalDue` across all three states (7h out: false · 25m out: true · dead:
+  false + needsSignIn true)
+- dōjō stopped → reports the outage, opens **no** browser
+- GitHub measured: 8h access token, 182d refresh, client id `Ov23…` = GitHub App
 
-- Step 5's fields landed on the sign-in CALLBACK, not `status` — the endpoint the
-  UI polls. Found by installing and curling, not by tests. Extracted to a shared
-  `forge_report` so the two cannot disagree.
-- `forge_token_action` returned `Refresh` for any unexpired token: with refresh
-  implemented that is ~16 rotations per 8h lifetime. Now bounded to
-  `REFRESH_MARGIN_SECS` (1h), asserted against the seeded interval.
+## Bugs found by running it, not by testing it
 
-## Not done — needs you
+- step 5's fields landed on the sign-in callback, not `status`
+- `Refresh` fired for any unexpired token → would rotate ~16×/lifetime
+- CLI opened a browser on a GoTrue **504** — `AuthError` knew rejected-vs-
+  unreachable and `status` never put it on the wire
+- a renewal that worked still read `renewalDue` — sign-in discarded the expiry
+  header it was already receiving
 
-**Production `wrangler secret put GITHUB_OAUTH_CLIENT_SECRET`.** Until then the
-deployed dōjō answers 503 and tokens die at 8h with no renewal. Local
-`dojo/.dev.vars` is configured.
+## Not done
 
-**Unreproduced flake:** one full-suite run failed with 1 test; name lost to my own
-pipe. 3 full + 18 targeted reruns clean. Unidentified, so unfixed.
+**Desktop app has no auth surface at all** — nothing there calls
+`/api/auth/signin`. Renewal today is `sensei auth renew-if-needed`.
 
-**Gates:** daemon 2572 exit 0 · clippy 0 · fmt 0 · dōjō 1527 · check 0/0.
+**Unreproduced flake:** one full-suite run failed with 1 test; name lost to a
+pipe. 3 full + 18 targeted reruns clean.
+
+**Gates:** daemon 2569 exit 0 · cli 57 · clippy 0 · fmt 0 · dōjō 1514 · check 0/0.
