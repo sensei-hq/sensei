@@ -145,7 +145,14 @@ pub trait UserPlane: Send + Sync {
     async fn sync_plan(&self, token: &str) -> Result<SyncPlan, String>;
 
     /// Hand the dōjō the forge token so it can re-read repository visibility.
-    async fn provision(&self, token: &str, provider_token: &str) -> Result<(), String>;
+    ///
+    /// `Err` when the dōjō reports it did NOT provision, even though that answer
+    /// arrives as an HTTP 200.
+    async fn provision(
+        &self,
+        token: &str,
+        provider_token: &str,
+    ) -> Result<ProvisionOutcome, String>;
 
     async fn push_metrics(
         &self,
@@ -171,7 +178,11 @@ impl UserPlane for HttpUserPlane {
     async fn sync_plan(&self, token: &str) -> Result<SyncPlan, String> {
         sync_plan(&self.dojo_url, token).await
     }
-    async fn provision(&self, token: &str, provider_token: &str) -> Result<(), String> {
+    async fn provision(
+        &self,
+        token: &str,
+        provider_token: &str,
+    ) -> Result<ProvisionOutcome, String> {
         provision(&self.dojo_url, token, provider_token).await
     }
     async fn push_metrics(
@@ -252,6 +263,63 @@ pub async fn sync_plan(dojo_url: &str, token: &str) -> Result<SyncPlan, String> 
     decode("sync plan", &send(req, token, "sync plan").await?)
 }
 
+/// How many repositories one provisioning pass actually asked the forge about.
+///
+/// `captured` is the only count that moved a verdict. The others are why a pass
+/// can "succeed" and change nothing: `failed` is a forge read that threw,
+/// `deferred` is the per-pass cap (40) leaving rows for next time, and
+/// `unavailable` is a repository the token cannot see.
+#[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
+pub struct VisibilityCounts {
+    #[serde(default)]
+    pub captured: u32,
+    #[serde(default)]
+    pub unavailable: u32,
+    #[serde(default)]
+    pub failed: u32,
+    #[serde(default)]
+    pub deferred: u32,
+    #[serde(default)]
+    pub unsupported: u32,
+}
+
+/// What one `POST /v1/you/provision` pass reports it did.
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct ProvisionOutcome {
+    /// NOT defaulted. The dōjō documents this as never omitted, so an absent
+    /// field is a shape we do not understand — and inventing either value would
+    /// assert a verdict the dōjō never gave.
+    pub synced: bool,
+    /// `no_forge_token` | `forge_unreachable` | `forge_token_rejected` |
+    /// `no_identity`. A String for the same reason `UnmappedRepo::reason` is: a
+    /// reason from a newer dōjō must reach the log intact.
+    #[serde(default)]
+    pub reason: Option<String>,
+    /// Present only when the forge was genuinely read.
+    #[serde(default)]
+    pub visibility: Option<VisibilityCounts>,
+}
+
+/// Read the provisioning result, and treat "I could not do it" as a failure.
+///
+/// Split from the I/O so the verdict is testable without a dōjō — this is the
+/// whole point of the function, and it was previously unreachable by any test
+/// because the body never left the HTTP call.
+///
+/// The dōjō answers **HTTP 200** when it could not read the forge, carrying
+/// `{synced:false, reason:…}`. `send` only tests `status.is_success()`, so
+/// without this the caller could not tell a real capture from a total no-op.
+fn provision_verdict(text: &str) -> Result<ProvisionOutcome, String> {
+    let out: ProvisionOutcome = decode("provisioning result", text)?;
+    if !out.synced {
+        return Err(format!(
+            "the dōjō did not provision from the forge token: {}",
+            out.reason.as_deref().unwrap_or("no reason given")
+        ));
+    }
+    Ok(out)
+}
+
 /// Ask the dōjō to re-read forge visibility, by handing it the forge token.
 ///
 /// `POST /v1/you/provision` is the endpoint that runs `refreshForgeVisibility`,
@@ -259,16 +327,19 @@ pub async fn sync_plan(dojo_url: &str, token: &str) -> Result<SyncPlan, String> 
 /// daemon's copy outlives the web session's (§IV.8). So this needs no new
 /// endpoint — only a caller.
 ///
-/// The response is DISCARDED on purpose. Provisioning reports which tenants it
-/// touched; what this caller wants to know is whether the VERDICT changed, and
-/// that is the sync plan's answer, not this one. Re-reading the plan is how the
-/// result is observed.
-pub async fn provision(dojo_url: &str, token: &str, provider_token: &str) -> Result<(), String> {
+/// The tenant list in the response is genuinely not interesting here: whether
+/// the VERDICT changed is the sync plan's answer, not this one. But `synced` and
+/// `reason` are the dōjō's report on THIS call, and discarding them is what let
+/// a dead forge token read as a successful refresh — so they are returned.
+pub async fn provision(
+    dojo_url: &str,
+    token: &str,
+    provider_token: &str,
+) -> Result<ProvisionOutcome, String> {
     let req = crate::federation::http_client()
         .post(endpoint(dojo_url, "provision"))
         .json(&serde_json::json!({ "provider_token": provider_token }));
-    send(req, token, "provision").await?;
-    Ok(())
+    provision_verdict(&send(req, token, "provision").await?)
 }
 
 #[cfg(test)]
@@ -399,6 +470,60 @@ mod tests {
         let out: RegisterResult = serde_json::from_value(body).expect("decodes");
         let reasons: Vec<&str> = out.unmapped.iter().map(|u| u.reason.as_str()).collect();
         assert_eq!(reasons, ["unknown_host", "no_connection", "ambiguous", "not_a_member"]);
+    }
+
+    #[test]
+    fn a_provision_that_did_not_sync_is_a_failure_not_a_success() {
+        // THE defect this decode exists for. `POST /v1/you/provision` answers
+        // HTTP 200 carrying `{synced:false, reason:'forge_unreachable'}` — the
+        // dōjō reporting that it could not read the forge. The old client tested
+        // only `status.is_success()` and threw the body away, so the daemon's
+        // self-heal took its SUCCESS branch and logged "refreshed forge
+        // visibility and re-read the plan" on a pass that refreshed nothing.
+        //
+        // Live consequence: a dead GitHub token produced an unbounded 60s loop —
+        // forge_visibility_unknown → provision → 200 → identical plan → same
+        // denial — announcing success every time.
+        let body = serde_json::json!({
+            "synced": false, "reason": "forge_unreachable",
+            "personal": null, "tenants": []
+        });
+        let e = provision_verdict(&body.to_string()).unwrap_err();
+        assert!(e.contains("forge_unreachable"), "the dōjō's own reason must survive, got {e}");
+    }
+
+    #[test]
+    fn a_provision_with_no_forge_token_is_also_a_failure() {
+        // The daemon calls this ONLY when it holds a forge token, so being told
+        // the token was unusable is a real failure here even though the same
+        // reason is ordinary for the browser caller.
+        let body = serde_json::json!({ "synced": false, "reason": "no_forge_token",
+                                       "personal": null, "tenants": [] });
+        assert!(provision_verdict(&body.to_string()).unwrap_err().contains("no_forge_token"));
+    }
+
+    #[test]
+    fn a_successful_provision_carries_what_the_forge_answered_for() {
+        // `visibility` is present only when the forge was genuinely read. The
+        // counts are what tells an operator that a pass "succeeded" while
+        // capturing nothing — `failed` and `deferred` are the starvation signal.
+        let body = serde_json::json!({
+            "synced": true, "personal": null, "tenants": [],
+            "visibility": { "captured": 3, "unavailable": 1, "failed": 2,
+                            "deferred": 40, "unsupported": 0 }
+        });
+        let out = provision_verdict(&body.to_string()).expect("a synced pass is Ok");
+        let v = out.visibility.expect("counts present when the forge was read");
+        assert_eq!((v.captured, v.failed, v.deferred), (3, 2, 40));
+    }
+
+    #[test]
+    fn a_body_without_synced_fails_loudly_rather_than_being_assumed_good() {
+        // `synced` is documented as never omitted. If that ever stops holding,
+        // the daemon must say so with the body in hand — defaulting it either way
+        // invents a verdict the dōjō did not give.
+        let e = provision_verdict(&serde_json::json!({ "tenants": [] }).to_string()).unwrap_err();
+        assert!(e.contains("provisioning result"), "names what failed to decode, got {e}");
     }
 
     #[test]
