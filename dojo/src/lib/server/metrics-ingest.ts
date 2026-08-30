@@ -75,7 +75,17 @@ export async function ingestMetrics(
 	if (rows.length === 0) return { accepted, rejected };
 
 	// The caller's tenants — the authorization boundary, read once for the batch.
-	const mem = await db.from('memberships').select('tenant_id').eq('user_id', principalId);
+	//
+	// A REVOKED membership is no membership. This read used to omit `disabled_at`
+	// and relied, unknowingly, on the view gate below to catch an ex-member's
+	// push. The two checks answer different questions — this one asks whether the
+	// caller is anyone here at all, the view asks what they are entitled to — so
+	// each has to hold on its own rather than one covering for the other.
+	const mem = await db
+		.from('memberships')
+		.select('tenant_id')
+		.eq('user_id', principalId)
+		.is('disabled_at', null);
 	if (mem.error) throw new AdminError(500, mem.error.message);
 	const mine = new Set(((mem.data ?? []) as { tenant_id: string }[]).map((m) => m.tenant_id));
 
