@@ -226,7 +226,18 @@ async fn sync_persona(
     // What bounds the disclosure is the CLONE. `sensei.repositories` is populated
     // by the scanner, never by a forge listing, so this is what the user actually
     // works on; membership of an org whose code is not on this machine discloses
-    // nothing. Gate 1 has not been discarded — it moved to the push, below.
+    // nothing.
+    //
+    // This comment used to end "Gate 1 has not been discarded — it moved to the
+    // push, below." That is NOT true of the current code and is contradicted
+    // twelve lines into `push_allowed`, which says `sensei.repositories
+    // .visibility` is "deliberately NOT re-tested here or in the query".
+    // `shared_repositories` — the function that applies gate 1 — has zero
+    // production callers; every call site is inside a `#[cfg(test)]` module. So
+    // local visibility gates nothing today, for user-authority repositories as
+    // well as org-mandated ones. Whether the dōjō election is intended to
+    // supersede the local column, or the SQL term must be restored, is an open
+    // question for the user — recorded rather than silently decided here.
     let offered = pg.offerable_repositories(REGISTER_LIMIT).await?;
     if offered.is_empty() {
         tracing::debug!(persona, "dojo_sync: no cloned repository has a cross-install identity");
@@ -473,29 +484,44 @@ async fn push_allowed(
         .collect();
     pg.mark_metric_rows_shared(&ids).await?;
 
-    if result.rejected.is_empty() {
-        for key in &repos {
-            pg.mark_synced(&push_mark(key), None).await?;
+    // A refusal belongs to the REPOSITORY whose row was refused. The batch is per
+    // persona and spans many repositories, so marking them all `skipped` with a
+    // `why` assembled from the first five rejections anywhere in the response
+    // told a repository whose rows all landed that it was skipped because of a
+    // DIFFERENT repository's metric — a denial naming the wrong cause, on the one
+    // screen whose job is to name causes.
+    let mut refusals: std::collections::HashMap<&str, Vec<String>> =
+        std::collections::HashMap::new();
+    for r in &result.rejected {
+        refusals
+            .entry(r.repo_key.as_str())
+            .or_default()
+            .push(format!("{}: {}", r.metric, r.reason));
+    }
+    for key in &repos {
+        match refusals.get(*key) {
+            // Nothing of this repository's was refused, whatever happened to the
+            // rest of the batch.
+            None => pg.mark_synced(&push_mark(key), None).await?,
+            // `skipped`, not `error`: the dōjō answered, and a refusal is a
+            // decision rather than a fault. Both mean "not synced", but only one
+            // is a problem, and a dashboard that cannot tell them apart cries
+            // wolf or stays silent.
+            Some(reasons) => {
+                let why = reasons.iter().take(5).cloned().collect::<Vec<_>>().join("; ");
+                pg.mark_sync_skipped(&push_mark(key), &why).await?
+            }
         }
-    } else {
-        // `skipped`, not `error`: the dōjō answered, and a refusal is a decision
-        // rather than a fault. Both mean "not synced", but only one is a problem,
-        // and a dashboard that cannot tell them apart cries wolf or stays silent.
-        let why = result
-            .rejected
-            .iter()
-            .map(|r| format!("{}: {}", r.metric, r.reason))
-            .take(5)
-            .collect::<Vec<_>>()
-            .join("; ");
-        for key in &repos {
-            pg.mark_sync_skipped(&push_mark(key), &why).await?;
-        }
+    }
+    if !result.rejected.is_empty() {
         tracing::warn!(
             persona,
             accepted = result.accepted,
             refused = result.rejected.len(),
-            "dojo_sync: partial acceptance — nothing marked shared, the batch retries next cycle"
+            // This used to read "nothing marked shared, the batch retries next
+            // cycle", which had been false since the complement fix above: the
+            // rows that were NOT refused are marked, which is the whole point.
+            "dojo_sync: partial acceptance — the refused rows stay queued, the rest are marked shared"
         );
     }
     Ok(result.accepted)
@@ -1143,6 +1169,55 @@ mod tests {
         assert_eq!(shared, 0, "the REFUSED row stays queued so it can be retried");
         let (st, _) = state.expect("a refusal is recorded");
         assert_eq!(st, "skipped", "the dōjō answered — a refusal is a decision, not a fault");
+    }
+
+    #[tokio::test]
+    async fn a_refusal_is_recorded_against_the_repository_it_belongs_to() {
+        // The batch is per PERSONA but a refusal is per ROW. Every repository in
+        // the batch used to be marked `skipped` with a `why` assembled from the
+        // first five rejections in the whole response — so a repository whose
+        // rows all landed read `skipped: <some other repo's metric>:
+        // unknown_metric`, which is a denial naming the wrong cause on a screen
+        // whose entire job is to name causes.
+        let pg = PgStore::connect_test().await.unwrap();
+        let (pid_a, key_a, metric_a) = seed(&pg).await;
+        let (pid_b, key_b, _metric_b) = seed(&pg).await;
+        let plane = StubPlane {
+            plan: Some(SyncPlan {
+                allowed: vec![
+                    mapped(&key_a, &uuid::Uuid::new_v4().to_string()),
+                    mapped(&key_b, &uuid::Uuid::new_v4().to_string()),
+                ],
+                denied: vec![],
+            }),
+            // Only repo A is refused. Repo B's rows were accepted.
+            push: Some(Ok(IngestResult {
+                accepted: 1,
+                rejected: vec![RejectedMetric {
+                    repo_key: key_a.clone(),
+                    metric: metric_a.clone(),
+                    reason: "unknown_metric".into(),
+                }],
+            })),
+            ..Default::default()
+        };
+
+        let _ = sync_persona(&pg, "ztest-slot", "tok", &plane).await;
+        let a = push_state(&pg, &key_a).await;
+        let b = push_state(&pg, &key_b).await;
+        crate::tasks::test_support::cleanup_metrics_fixture(&pg, &pid_a, None, &[]).await;
+        crate::tasks::test_support::cleanup_metrics_fixture(&pg, &pid_b, None, &[]).await;
+
+        let (state_a, why_a) = a.expect("the refused repository is recorded");
+        assert_eq!(state_a, "skipped");
+        assert!(
+            why_a.unwrap_or_default().contains("unknown_metric"),
+            "and it carries its OWN reason"
+        );
+
+        let (state_b, why_b) = b.expect("the accepted repository is recorded too");
+        assert_eq!(state_b, "synced", "a repository nothing was refused for is not skipped");
+        assert_eq!(why_b, None, "and it is not annotated with another repository's refusal");
     }
 
     #[tokio::test]

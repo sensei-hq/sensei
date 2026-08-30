@@ -437,11 +437,21 @@ impl PgStore {
     /// owns. Cost (the repo's visibility on the forge) and entitlement (claim,
     /// billing, seat) belong to the dōjō and are never mirrored here.
     ///
-    /// **This no longer filters the OFFER — it filters the PUSH, and only where the
-    /// USER holds authority** (§8a). The promise it encodes narrowed with it:
-    /// *"nothing leaves the machine without local consent"* became *"…without local
-    /// consent, or an organization's mandate on that organization's own private
-    /// code"*. Stated rather than left to be discovered.
+    /// **It currently filters NEITHER.** §8a removed the `visibility` term from
+    /// the offer, intending it to move to the push. It did not: `push_allowed`
+    /// says outright that `visibility` is "deliberately NOT re-tested here or in
+    /// the query", and this function has no production caller at all — every call
+    /// site is inside a `#[cfg(test)]` module. So gate 1 is dead scaffolding, and
+    /// the doc that used to claim "this filters the PUSH, and only where the USER
+    /// holds authority" was describing an intention rather than the code.
+    ///
+    /// What that means concretely: `PATCH /api/repositories/{key}` writes
+    /// `visibility` and returns 200, and nothing reads it. The promise §8a
+    /// narrowed to *"nothing leaves the machine without local consent, or an
+    /// organization's mandate on that organization's own private code"* is not
+    /// enforced for the user-authority half either. Restoring the term is a
+    /// behaviour change with real consequences for what is shared, so it is
+    /// raised with the user rather than made here.
     ///
     /// Two filters, both load-bearing:
     ///

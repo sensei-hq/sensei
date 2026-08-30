@@ -105,7 +105,14 @@ pub(crate) async fn create_membership(
         b.attribution_default
             .as_deref()
             .unwrap_or(crate::collective::preferences::DEFAULT_ATTRIBUTION),
-        // A fresh pairing is mid-authentication until the first heartbeat.
+        // A fresh pairing is mid-authentication. This used to say "until the
+        // first heartbeat"; there is no heartbeat. Nothing in this repository
+        // writes `dojo_memberships.last_heartbeat_at`, and the only setter for
+        // `sync_status` — `dojo::memberships::set_sync_status` — is
+        // `#[allow(dead_code)]` with zero callers. So this literal is the FINAL
+        // value of the column, not its initial one, and every row on both sides
+        // of the fork still reads `authenticating` (the daemon's oldest since
+        // 2026-07-16, with `updated_at` still equal to `created_at`).
         "authenticating",
     )
     .map_err(|e| err(StatusCode::BAD_REQUEST, &e))?;

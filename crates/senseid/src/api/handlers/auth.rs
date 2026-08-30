@@ -162,7 +162,13 @@ pub(crate) async fn callback(
                     }
                 }
                 if let Some(pr) = provider_refresh.as_deref() {
-                    let _ = session::store_provider_refresh_token(&who, pr);
+                    // Warned, not discarded. This was `let _ =`, unlike the
+                    // provider-token write three lines up, so a failed write of
+                    // the one credential that could renew a dying forge token
+                    // was completely invisible.
+                    if let Err(e) = session::store_provider_refresh_token(&who, pr) {
+                        tracing::warn!(error = %e, "could not store the GitHub refresh token");
+                    }
                 }
                 session::store_refresh_token(&who, &refresh)
             })
