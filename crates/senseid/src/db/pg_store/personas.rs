@@ -341,3 +341,164 @@ impl PgStore {
         Ok(by_hint.map(|(id,)| id))
     }
 }
+
+/// A persona's forge-token standing, as the scheduled check needs it.
+///
+/// Keyed on `session_slot` rather than the persona LABEL: the Keychain account
+/// is `provider_token.<session_slot>`, and `link_persona_identity` rewrites
+/// `label` to the verified GitHub login — so a user who signed in as `default`
+/// ends up labelled `sensei-hq-org` while the credential still lives at
+/// `.default`. Reading the label here would look for a slot that does not exist,
+/// report SignedOut, and skip the persona silently. That exact bug shipped once.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ForgeTokenRow {
+    pub session_slot: String,
+    pub state: String,
+    /// Unix seconds. `None` when no expiry has ever been learned — see the
+    /// column comment: GoTrue does not report the provider's expiry.
+    pub expires_at: Option<i64>,
+}
+
+impl PgStore {
+    /// Every persona whose forge token the scheduled check should consider.
+    ///
+    /// Filters on `session_slot IS NOT NULL` for the reason above, and on
+    /// `verified_at IS NOT NULL` so a row whose slot survives a sign-out is not
+    /// re-enumerated — the same pair `signed_in_personas` uses.
+    pub async fn forge_token_rows(&self) -> Result<Vec<ForgeTokenRow>, String> {
+        let rows: Vec<(String, String, Option<chrono::DateTime<chrono::Utc>>)> =
+            sqlx_core::query_as::query_as(
+                "SELECT session_slot, forge_token_state::text, forge_token_expires_at \
+                   FROM sensei.personas \
+                  WHERE session_slot IS NOT NULL AND verified_at IS NOT NULL \
+                  ORDER BY session_slot",
+            )
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| format!("forge_token_rows: {e}"))?;
+        Ok(rows
+            .into_iter()
+            .map(|(session_slot, state, exp)| ForgeTokenRow {
+                session_slot,
+                state,
+                expires_at: exp.map(|t| t.timestamp()),
+            })
+            .collect())
+    }
+
+    /// Record what the check learned.
+    ///
+    /// `expires_at` is `Option` and is written ONLY when `Some`: a probe that
+    /// confirms the token is alive but carries no expiry header must not erase
+    /// an expiry learned earlier. Overwriting it with NULL would silently
+    /// downgrade a known deadline to `unknown` and turn a `Refresh` into a
+    /// `Verify` on every subsequent run.
+    ///
+    /// `checked_at` is always stamped, so "we asked and learned nothing" is
+    /// distinguishable from "we never asked".
+    pub async fn set_forge_token_state(
+        &self,
+        session_slot: &str,
+        state: &str,
+        expires_at: Option<i64>,
+    ) -> Result<(), String> {
+        let exp = expires_at.and_then(chrono::DateTime::from_timestamp_secs);
+        sqlx_core::query::query(
+            "UPDATE sensei.personas \
+                SET forge_token_state      = $2::sensei.forge_token_state \
+                  , forge_token_expires_at = COALESCE($3, forge_token_expires_at) \
+                  , forge_token_checked_at = now() \
+                  , modified_at            = now() \
+              WHERE session_slot = $1",
+        )
+        .bind(session_slot)
+        .bind(state)
+        .bind(exp)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| format!("set_forge_token_state: {e}"))?;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod forge_token_state_tests {
+    use super::*;
+
+    async fn seed(pg: &PgStore, slot: &str) -> uuid::Uuid {
+        let id = uuid::Uuid::new_v4();
+        sqlx_core::query::query(
+            "INSERT INTO sensei.personas (id, label, session_slot, verified_at) \
+             VALUES ($1, $2, $2, now())",
+        )
+        .bind(id)
+        .bind(slot)
+        .execute(pg.pool())
+        .await
+        .unwrap();
+        id
+    }
+
+    #[tokio::test]
+    async fn a_new_persona_starts_unknown_not_active() {
+        // The default must not flatter. A stored token nobody has verified is
+        // `unknown`; calling it `active` would make the very first check decide
+        // `Refresh` on a credential whose standing has never been established.
+        let Ok(pg) = PgStore::connect_test().await else { return };
+        let slot = format!("ztest-fts-{}", uuid::Uuid::new_v4());
+        seed(&pg, &slot).await;
+        let row = pg.forge_token_rows().await.unwrap().into_iter().find(|r| r.session_slot == slot);
+        let row = row.expect("the seeded persona is enumerated");
+        assert_eq!(row.state, "unknown");
+        assert_eq!(row.expires_at, None);
+    }
+
+    #[tokio::test]
+    async fn a_probe_with_no_expiry_does_not_erase_one_already_known() {
+        // The load-bearing case. GitHub returns the expiry header on some calls
+        // and not others, so a successful probe that carries none must leave the
+        // deadline standing. Overwriting with NULL would downgrade a known
+        // expiry to `unknown` and turn every later run into a Verify — the token
+        // would then be re-probed forever instead of refreshed on time.
+        let Ok(pg) = PgStore::connect_test().await else { return };
+        let slot = format!("ztest-fts-{}", uuid::Uuid::new_v4());
+        seed(&pg, &slot).await;
+
+        pg.set_forge_token_state(&slot, "active", Some(1_800_000_000)).await.unwrap();
+        pg.set_forge_token_state(&slot, "active", None).await.unwrap();
+
+        let row = pg
+            .forge_token_rows()
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|r| r.session_slot == slot)
+            .expect("row");
+        assert_eq!(
+            row.expires_at,
+            Some(1_800_000_000),
+            "a probe carrying no expiry must not erase the one we already had"
+        );
+        assert_eq!(row.state, "active");
+    }
+
+    #[tokio::test]
+    async fn marking_dead_is_recorded_and_the_expiry_is_kept_as_evidence() {
+        // The expiry is WHY it is dead. Clearing it on death would discard the
+        // reason and leave the UI unable to say more than "not working".
+        let Ok(pg) = PgStore::connect_test().await else { return };
+        let slot = format!("ztest-fts-{}", uuid::Uuid::new_v4());
+        seed(&pg, &slot).await;
+        pg.set_forge_token_state(&slot, "active", Some(1_700_000_000)).await.unwrap();
+        pg.set_forge_token_state(&slot, "dead", None).await.unwrap();
+        let row = pg
+            .forge_token_rows()
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|r| r.session_slot == slot)
+            .expect("row");
+        assert_eq!(row.state, "dead");
+        assert_eq!(row.expires_at, Some(1_700_000_000));
+    }
+}
