@@ -150,6 +150,55 @@ describe('registerRepositories', () => {
 		]);
 		expect(out.unmapped).toHaveLength(1);
 	});
+
+	it('refuses a tenant the caller has been REVOKED from', async () => {
+		// `callerTenants` calls itself the authorization boundary but did not
+		// filter `disabled_at`, unlike the six other membership reads in this
+		// codebase. So an offboarded employee's daemon — which keeps running and
+		// keeps posting every 60s — went on INSERTING rows into
+		// `dojo.repositories` for their former employer's tenant, and got the
+		// tenant id and key back in the response.
+		//
+		// The metric WRITE was still blocked (ingestMetrics gates on the view,
+		// whose join drops disabled members), so this was an unauthorised-write
+		// and identity-plane hole rather than a metrics leak. It is still a
+		// revoked person writing rows into a tenant they were removed from.
+		const t = tables();
+		t.memberships.rows = t.memberships.rows.map((m) =>
+			m.tenant_id === 't-acme' ? { ...m, disabled_at: '2026-08-01T00:00:00Z' } : m
+		);
+		const db = fakeDojoDb(t);
+
+		const out = await registerRepositories(db as never, ALICE, [
+			{ repo_key: 'github.com/acme/api', remote_url: 'git@github.com:acme/api.git', name: 'api' }
+		]);
+
+		expect(out.mapped).toEqual([]);
+		expect(out.unmapped[0]).toMatchObject({
+			repo_key: 'github.com/acme/api',
+			reason: 'not_a_member'
+		});
+		expect(db.tables.repositories.rows).toHaveLength(0);
+	});
+
+	it('still maps for a member whose OTHER membership is disabled', async () => {
+		// The filter must scope to the row, not to the person. Alice losing her
+		// consultancy seat cannot cost her her own personal dōjō.
+		const t = tables();
+		t.memberships.rows.push({
+			id: 'm4',
+			tenant_id: 't-other',
+			user_id: ALICE,
+			disabled_at: '2026-08-01T00:00:00Z'
+		});
+		const db = fakeDojoDb(t);
+
+		const out = await registerRepositories(db as never, ALICE, [
+			{ repo_key: 'github.com/acme/api', remote_url: 'git@github.com:acme/api.git', name: 'api' }
+		]);
+
+		expect(out.mapped[0]).toMatchObject({ tenant_id: 't-acme' });
+	});
 });
 
 describe('syncPlan', () => {
