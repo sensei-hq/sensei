@@ -60,7 +60,7 @@
   eyebrow="Observatory · Collective"
   kanji="群"
   title="What your sensei shares, and toward whom."
-  description="Choose where anonymized insight goes, how often batches are prepared, and which categories may leave. Source code, prompts, file paths and project names never leave your machine."
+  description="Choose where anonymized insight goes, how often batches are prepared, and which categories may leave. Only the generalized rewrite of a learning is shared — never the original text of a memory. File paths, project, client and person names are stripped from everything that goes, and anything that still looks identifying is held back instead of sent. Review each batch before it leaves."
 />
 
 {#if data.error || !state}
