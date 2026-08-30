@@ -550,9 +550,10 @@ export interface ProvisionedTenant {
 /** What `POST /v1/you/provision` returns — the daemon mirrors this too. */
 export interface ProvisionResult {
 	synced: boolean;
-	/** Present when `synced` is false. The three cases call for different advice,
-	 *  which is why they are not collapsed into one "nothing happened". */
-	reason?: 'no_forge_token' | 'forge_unreachable' | 'no_identity';
+	/** Present when `synced` is false. Each case calls for different advice,
+	 *  which is why they are not collapsed into one "nothing happened":
+	 *  connect GitHub, wait, or sign in again. */
+	reason?: 'no_forge_token' | 'forge_unreachable' | 'forge_token_rejected' | 'no_identity';
 	personal: ProvisionedTenant | null;
 	tenants: ProvisionedTenant[];
 }
