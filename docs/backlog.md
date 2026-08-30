@@ -837,8 +837,24 @@ Essentially any generalised engineering principle will contain one of ~300
 common tokens, so **the contribution pipeline can never publish**. It fails as a
 silent hold, which is the exact shape this codebase keeps fighting.
 
-**THE FIX IS A JUDGEMENT CALL AND HAS NOT BEEN MADE.** Loosening a
-confidentiality control is not something to do unilaterally. The options:
+**ON HOLD — user decision, 2026-08-29.** The checker is the wrong tool for this
+job, not merely a mistuned one: it asks *"does this text mention the project it
+came from?"*, but a memory DERIVED from a transcript should never reference its
+source context in the first place. Checking for a name that should not be there
+by construction buys little, and buys it at the cost of matching ordinary
+English.
+
+The work moved upstream instead — generate text that is clean at the source
+(see the entry below). Return to the checker only as a backstop, and when doing
+so keep the two halves apart:
+
+  * **generic patterns** (absolute paths, emails, UUIDs, session ids, long
+    key-like strings) catch real accidental leakage regardless of project and are
+    worth keeping;
+  * **name matching** is the noisy half. If any of it survives it should be
+    `client_name` and person names — never `docs`, `api` or `stores`.
+
+The options, for whenever that happens:
 
 1. **Filter the token list** (recommended). The defect is that `repo_names`
    carries ~300 generic folder names, most identifying nothing. A folder called

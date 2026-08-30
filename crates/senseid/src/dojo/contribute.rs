@@ -348,6 +348,10 @@ pub enum ItemResult {
     Staged,
     /// Held: the confidentiality gate refused it (residual identifier risk).
     HeldResidualRisk,
+    /// Held: nothing has been generalised for this memory, so there is nothing
+    /// shareable. Distinct from `HeldResidualRisk` because the remedy differs —
+    /// this one is waiting on generation, not on a scrub.
+    HeldNotGeneralised,
     /// A transient failure — left queued for replay.
     QueuedRetry,
     /// Already published earlier (dedup) — skipped, not re-sent.
@@ -397,7 +401,10 @@ impl ContributeOutcome {
         for it in &o.items {
             match it.result {
                 ItemResult::Published { .. } => o.published += 1,
-                ItemResult::HeldResidualRisk => o.held += 1,
+                // Both hold reasons count as held: the roll-up answers "how many
+                // did not go", and a caller wanting the distinction reads the
+                // per-item `result`.
+                ItemResult::HeldResidualRisk | ItemResult::HeldNotGeneralised => o.held += 1,
                 ItemResult::QueuedRetry => o.queued += 1,
                 ItemResult::Error { .. } => o.errored += 1,
                 ItemResult::AlreadySent => o.already_sent += 1,
@@ -432,7 +439,7 @@ impl StageOutcome {
         for it in &o.items {
             match it.result {
                 ItemResult::Staged => o.staged += 1,
-                ItemResult::HeldResidualRisk => o.held += 1,
+                ItemResult::HeldResidualRisk | ItemResult::HeldNotGeneralised => o.held += 1,
                 ItemResult::AlreadySent => o.already_sent += 1,
                 ItemResult::Error { .. } => o.errored += 1,
                 // Published / QueuedRetry never occur on the stage-only path;
@@ -540,6 +547,24 @@ where
             continue;
         };
         for it in &loaded.items {
+            // NOTHING GENERALISED = NOTHING SHAREABLE. `batch_share_items` no
+            // longer falls back to the raw memory, so an empty body means no
+            // generalised form exists yet. Refuse here, BEFORE the scrubber:
+            // handing it an empty string would produce a clean scrub of nothing
+            // and publish an empty artifact.
+            //
+            // Named distinctly from `HeldResidualRisk` because the remedy is
+            // different — this one waits on generation, not on a scrub.
+            if it.body.trim().is_empty() {
+                items.push(ItemOutcome {
+                    memory_id: it.memory_id,
+                    membership_id: None,
+                    tenant_key: None,
+                    kind: artifact_kind_for(&it.memory_type),
+                    result: ItemResult::HeldNotGeneralised,
+                });
+                continue;
+            }
             let kind = artifact_kind_for(&it.memory_type);
             let plan = build_artifact_for_target(
                 it,
@@ -684,6 +709,24 @@ where
             continue;
         };
         for it in &loaded.items {
+            // NOTHING GENERALISED = NOTHING SHAREABLE. `batch_share_items` no
+            // longer falls back to the raw memory, so an empty body means no
+            // generalised form exists yet. Refuse here, BEFORE the scrubber:
+            // handing it an empty string would produce a clean scrub of nothing
+            // and publish an empty artifact.
+            //
+            // Named distinctly from `HeldResidualRisk` because the remedy is
+            // different — this one waits on generation, not on a scrub.
+            if it.body.trim().is_empty() {
+                items.push(ItemOutcome {
+                    memory_id: it.memory_id,
+                    membership_id: None,
+                    tenant_key: None,
+                    kind: artifact_kind_for(&it.memory_type),
+                    result: ItemResult::HeldNotGeneralised,
+                });
+                continue;
+            }
             let kind = artifact_kind_for(&it.memory_type);
             let plan = build_artifact_for_target(
                 it,
@@ -1368,5 +1411,65 @@ mod tests {
             }
             ItemPlan::Held { .. } => panic!("clean pattern memory should publish"),
         }
+    }
+}
+
+#[cfg(test)]
+mod nothing_generalised_is_nothing_shareable {
+    use super::*;
+
+    /// The raw memory is the LOCAL reference and is never a candidate for
+    /// sending. `batch_share_items` used to `COALESCE(generalised_content,
+    /// content)` — "share the generalised version, or the RAW one if nobody
+    /// generalised it yet" — which made the safe path the one that happened to
+    /// have run rather than the one that was chosen.
+    ///
+    /// The fallback is gone, so an un-generalised memory arrives with an EMPTY
+    /// body. These pin what happens next.
+    fn item(body: &str) -> ShareBatchItem {
+        ShareBatchItem {
+            memory_id: Uuid::nil(),
+            title: "t".into(),
+            body: body.into(),
+            memory_type: "convention".into(),
+        }
+    }
+
+    #[test]
+    fn an_empty_body_is_held_and_names_why() {
+        // Not `HeldResidualRisk`: the remedy differs. That one waits on a scrub,
+        // this one waits on generation, and a user told "residual risk" would go
+        // looking for an identifier that was never there.
+        let held = ItemOutcome {
+            memory_id: Uuid::nil(),
+            membership_id: None,
+            tenant_key: None,
+            kind: artifact_kind_for(&item("").memory_type),
+            result: ItemResult::HeldNotGeneralised,
+        };
+        let json = serde_json::to_string(&held.result).expect("serialises");
+        assert!(
+            json.contains("held_not_generalised"),
+            "the refusal must name itself on the wire, got {json}"
+        );
+    }
+
+    #[test]
+    fn both_hold_reasons_count_as_held_in_the_roll_up() {
+        // The roll-up answers "how many did not go". A caller wanting the
+        // distinction reads the per-item result — but `held` must not undercount.
+        let mk = |r: ItemResult| ItemOutcome {
+            memory_id: Uuid::nil(),
+            membership_id: None,
+            tenant_key: None,
+            kind: ArtifactKind::Principle,
+            result: r,
+        };
+        let o = ContributeOutcome::from_items(
+            Uuid::nil(),
+            vec![mk(ItemResult::HeldResidualRisk), mk(ItemResult::HeldNotGeneralised)],
+        );
+        assert_eq!(o.held, 2, "both hold reasons must be counted");
+        assert_eq!(o.published, 0);
     }
 }
