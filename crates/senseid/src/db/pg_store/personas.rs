@@ -425,6 +425,20 @@ impl PgStore {
 mod forge_token_state_tests {
     use super::*;
 
+    /// Remove what a test created. These run against a SHARED `sensei_test`, and
+    /// a persona with a `session_slot` + `verified_at` is by definition
+    /// "signed in" — so leaving one behind makes
+    /// `dojo_sync::a_pass_with_no_signed_in_personas_is_a_no_op` fail for a
+    /// reason that has nothing to do with dojo_sync. It did: 21 rows accumulated
+    /// before this existed.
+    async fn cleanup(pg: &PgStore, slot: &str) {
+        sqlx_core::query::query("DELETE FROM sensei.personas WHERE session_slot = $1")
+            .bind(slot)
+            .execute(pg.pool())
+            .await
+            .ok();
+    }
+
     async fn seed(pg: &PgStore, slot: &str) -> uuid::Uuid {
         let id = uuid::Uuid::new_v4();
         sqlx_core::query::query(
@@ -451,6 +465,7 @@ mod forge_token_state_tests {
         let row = row.expect("the seeded persona is enumerated");
         assert_eq!(row.state, "unknown");
         assert_eq!(row.expires_at, None);
+        cleanup(&pg, &slot).await;
     }
 
     #[tokio::test]
@@ -480,6 +495,7 @@ mod forge_token_state_tests {
             "a probe carrying no expiry must not erase the one we already had"
         );
         assert_eq!(row.state, "active");
+        cleanup(&pg, &slot).await;
     }
 
     #[tokio::test]
@@ -500,5 +516,6 @@ mod forge_token_state_tests {
             .expect("row");
         assert_eq!(row.state, "dead");
         assert_eq!(row.expires_at, Some(1_700_000_000));
+        cleanup(&pg, &slot).await;
     }
 }

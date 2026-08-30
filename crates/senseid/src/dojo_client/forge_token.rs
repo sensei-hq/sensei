@@ -143,3 +143,97 @@ mod forge_token_decision {
         assert_eq!(forge_token_action(None, 0, TokenState::Absent), ForgeTokenAction::Skip);
     }
 }
+
+/// What a probe of the forge learned.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProbeOutcome {
+    /// The forge accepted the token. `expires_at` is what it said, when it said
+    /// anything — GitHub sends `github-authentication-token-expiration` on some
+    /// responses and not others.
+    Alive { expires_at: Option<i64> },
+    /// The forge REFUSED the credential. Definitive.
+    Dead,
+    /// We could not ask. Says nothing about the token.
+    Unreachable,
+}
+
+/// Classify a probe response.
+///
+/// The distinction that matters: **only the forge refusing the credential means
+/// dead.** A timeout, a DNS failure, a 500, a captive portal — none of those are
+/// evidence about the token, and recording `dead` on any of them would tell the
+/// user to sign in again because their wifi dropped. `dead` is the one state a
+/// sign-in is needed to leave, so it must never be entered on a guess.
+pub fn classify_probe(status: Option<u16>, expiry_header: Option<&str>) -> ProbeOutcome {
+    match status {
+        // GitHub answers 401 for a bad credential. 403 is a live token being
+        // refused a resource — a scope or rate-limit problem, not a dead token,
+        // and re-signing-in would not fix it.
+        Some(401) => ProbeOutcome::Dead,
+        Some(s) if (200..300).contains(&s) => {
+            ProbeOutcome::Alive { expires_at: expiry_header.and_then(parse_expiry) }
+        }
+        // Any other status, or no response at all: we learned nothing.
+        _ => ProbeOutcome::Unreachable,
+    }
+}
+
+/// GitHub's `github-authentication-token-expiration` is an RFC3339-ish stamp
+/// (`2026-08-30 12:00:00 UTC`). Unparseable means we learned no expiry — never a
+/// fabricated one, because a wrong deadline schedules a refresh at the wrong
+/// moment and looks exactly like a correct one.
+fn parse_expiry(raw: &str) -> Option<i64> {
+    let cleaned = raw.trim().replace(" UTC", "Z").replace(' ', "T");
+    chrono::DateTime::parse_from_rfc3339(&cleaned).ok().map(|t| t.timestamp())
+}
+
+#[cfg(test)]
+mod probe_classification {
+    use super::*;
+
+    #[test]
+    fn only_a_401_means_dead() {
+        assert_eq!(classify_probe(Some(401), None), ProbeOutcome::Dead);
+    }
+
+    #[test]
+    fn a_403_is_not_dead_it_is_a_live_token_refused_a_resource() {
+        // Scope or rate limit. Signing in again does not fix it, and marking the
+        // token dead would send the user to do exactly that.
+        assert_eq!(classify_probe(Some(403), None), ProbeOutcome::Unreachable);
+    }
+
+    #[test]
+    fn a_network_failure_says_nothing_about_the_token() {
+        // The important one. `dead` is the state only a sign-in can leave, so
+        // entering it because the wifi dropped strands a perfectly good token.
+        assert_eq!(classify_probe(None, None), ProbeOutcome::Unreachable);
+        assert_eq!(classify_probe(Some(500), None), ProbeOutcome::Unreachable);
+        assert_eq!(classify_probe(Some(502), None), ProbeOutcome::Unreachable);
+    }
+
+    #[test]
+    fn a_success_carries_the_expiry_when_the_forge_states_one() {
+        assert_eq!(
+            classify_probe(Some(200), Some("2026-08-30 12:00:00 UTC")),
+            ProbeOutcome::Alive { expires_at: Some(1_788_091_200) }
+        );
+    }
+
+    #[test]
+    fn a_success_without_the_header_is_alive_with_an_unknown_expiry() {
+        // Not an error, and not a guess. The store keeps any expiry it already
+        // had rather than overwriting it with None.
+        assert_eq!(classify_probe(Some(200), None), ProbeOutcome::Alive { expires_at: None });
+    }
+
+    #[test]
+    fn an_unparseable_expiry_is_dropped_not_invented() {
+        // A wrong deadline schedules the refresh at the wrong moment and looks
+        // exactly like a right one.
+        assert_eq!(
+            classify_probe(Some(200), Some("whenever")),
+            ProbeOutcome::Alive { expires_at: None }
+        );
+    }
+}

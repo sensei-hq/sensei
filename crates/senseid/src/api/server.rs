@@ -469,6 +469,10 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
     // is recovered or surfaced, never left silently wedged. Tolerates a
     // not-yet-deployed runs table (warn, never fatal).
     crate::tasks::watchdog_scheduler::spawn(task_queue.clone(), Arc::new(state.pg.clone()));
+    // Forge-token standing. Cheap (one GET /user per signed-in persona, only when
+    // the decision says asking is worth it) and the only thing that turns a
+    // silently-dead token into a fact the UI can act on.
+    crate::tasks::forge_token_check::spawn(Arc::new(state.pg.clone()));
 
     // Watcher safety net: frequently (boot + the `reconcile` schedule,
     // default 300s) re-scan every watch root so the index converges even when
