@@ -7821,13 +7821,25 @@ async fn dojo_outbox_and_batch_items_roundtrip() {
     let batch = pg.create_memory_share_batch(&proj, &[mem], None).await.unwrap();
     pg.set_memory_share_batch_status(&batch, "approved", None).await.unwrap();
 
-    // batch_share_items: approved batch, one member, body = content.
+    // batch_share_items: approved batch, one member. The body is
+    // `generalised_content` ONLY — this memory has none, so the body is EMPTY
+    // rather than the raw `content`.
+    //
+    // It used to COALESCE to `m.content` and this assertion read
+    // `body.contains("migration tool")` — i.e. it asserted that an
+    // UN-GENERALISED memory ships its raw text. The row still comes through
+    // (an absent row is indistinguishable from an empty batch); the caller
+    // refuses it as `held_not_generalised`.
     let (bp, status, items) = pg.batch_share_items(&batch).await.unwrap().expect("batch loads");
     assert_eq!(bp, proj);
     assert_eq!(status, "approved");
     assert_eq!(items.len(), 1);
     assert_eq!(items[0].memory_id, mem);
-    assert!(items[0].body.contains("migration tool"));
+    assert!(
+        items[0].body.is_empty(),
+        "no generalised_content means NOTHING shareable — the raw memory must not leak in as a fallback, got {:?}",
+        items[0].body
+    );
     assert_eq!(items[0].memory_type, "convention");
 
     // An unbound project → no routing anchor.

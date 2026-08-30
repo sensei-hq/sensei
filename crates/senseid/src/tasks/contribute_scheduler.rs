@@ -283,6 +283,14 @@ mod tests {
             })
             .await
             .unwrap();
+        // A generalised form MUST exist for anything to be shareable: the share
+        // query reads `generalised_content` only, with no fallback to the raw
+        // memory. Without this the item is held as `not_generalised` and this
+        // test — which is about STAGING — would be asserting the wrong thing.
+        pg.set_memory_generalisation(mem, "Prefer an explicit gate over an implicit default.")
+            .await
+            .unwrap()
+            .expect("the fixture memory exists");
         let batch = pg.create_memory_share_batch(&proj, &[mem], None).await.unwrap();
         pg.set_memory_share_batch_status(&batch, "approved", None).await.unwrap();
 
@@ -307,6 +315,24 @@ mod tests {
         // Clean slate for the watermark this test drives.
         pg.delete_config(LAST_PREPARED_KEY).await.unwrap();
 
+        // ...and for the BATCH it drives. `maybe_prepare_contribution_batch`
+        // selects an approved batch GLOBALLY, not the one this test just made,
+        // so approved batches left by earlier runs win — the test DB had three,
+        // against 4468 memories of which exactly one was generalised.
+        //
+        // This was latent while `batch_share_items` fell back to raw content: a
+        // stale batch still had a body, so it staged and the test passed on data
+        // it never created. With the fallback gone it holds as
+        // `not_generalised`, which is the same isolation bug finally visible.
+        sqlx_core::query::query(
+            "UPDATE sensei.memory_share_batches SET status = 'rejected'
+              WHERE status = 'approved' AND id <> $1",
+        )
+        .bind(batch)
+        .execute(pg.pool())
+        .await
+        .unwrap();
+
         // 1. PAUSED (default manual cadence) → no-op, nothing staged.
         set_prefs(&pg, "both", "manual").await;
         let paused = maybe_prepare_contribution_batch(&pg, &NoLlm, 1_000_000).await;
@@ -318,7 +344,7 @@ mod tests {
         let prepared = maybe_prepare_contribution_batch(&pg, &NoLlm, 2_000_000).await;
         match prepared {
             PrepareOutcome::Prepared(o) => {
-                assert_eq!(o.staged, 1, "one item staged");
+                assert_eq!(o.staged, 1, "one item staged; outcome={o:?}");
                 assert_eq!(o.held, 0);
             }
             other => panic!("expected Prepared, got {other:?}"),
