@@ -439,6 +439,10 @@ mod memory;
 mod metrics;
 mod patterns;
 mod personas;
+/// Named outside this module because THREE callers now share it — the scheduled
+/// check, `GET /api/auth/status`, and the sign-in callback — and the two
+/// handlers must not each re-invent what a missing row means.
+pub(crate) use personas::ForgeTokenRow;
 mod playbook;
 mod projects;
 mod repo_key;

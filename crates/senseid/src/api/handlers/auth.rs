@@ -20,6 +20,7 @@ use serde::Deserialize;
 use std::sync::Mutex;
 
 use crate::api::state::AppState;
+use crate::db::pg_store::ForgeTokenRow;
 use crate::dojo_client::{dojo_auth, pkce, session};
 
 /// The in-flight verifier, between the two legs.
@@ -197,24 +198,13 @@ pub(crate) async fn callback(
                     }
                     // What we currently believe about the FORGE token — a
                     // different credential from the session above, with its own
-                    // lifetime. Read-only: `status` reports, it never probes, so
-                    // opening this page cannot cost a GitHub call.
-                    let row = state
-                        .pg
-                        .forge_token_rows()
-                        .await
-                        .ok()
-                        .and_then(|rows| rows.into_iter().find(|r| r.session_slot == persona));
-                    let forge_dead = row.as_ref().is_some_and(|r| r.state == "dead");
-                    let forge = match &row {
-                        Some(r) => serde_json::json!({
-                            "state": r.state,
-                            "expiresAt": r.expires_at,
-                        }),
-                        // No row for this slot. Saying `unknown` is honest; making
-                        // one up would be the fabrication rule.
-                        None => serde_json::json!({ "state": "unknown", "expiresAt": null }),
-                    };
+                    // lifetime. Usually `unknown` at this instant: the sign-in
+                    // that just completed is what `observe` learns from, and the
+                    // org read that carries the expiry header has not happened
+                    // yet. Reported anyway so the shape matches `status`.
+                    let row = forge_row(&state, &persona).await;
+                    let (forge, forge_dead) =
+                        forge_report(row.as_ref().map(Option::as_ref).map_err(Clone::clone));
                     Json(serde_json::json!({
                         // NOT unconditionally true. The credential stored, but if
                         // the persona did not link there is no `session_slot`, so
@@ -261,6 +251,50 @@ pub(crate) async fn callback(
         // the body usually says which half is wrong.
         Err(e) => Json(serde_json::json!({ "ok": false, "error": e })),
     }
+}
+
+/// The forge token's standing, as a status field, plus whether it needs a sign-in.
+///
+/// Shared by [`status`] and the sign-in callback. They ask the same question and
+/// must not answer it differently — the first version of this lived inline in
+/// the callback ONLY, so `/api/auth/status` (the endpoint the UI actually polls)
+/// never learned the token was dead.
+///
+/// Three inputs, three distinct answers, because they call for different things:
+///
+/// - **A row** — report it. `dead` is the only state that asks for a sign-in;
+///   the daemon cannot mint a GitHub token, so nothing else it can do will fix
+///   one. `active`, `absent` and `unknown` must not nag.
+/// - **No row** — `unknown`, with no error. The check has not reached this
+///   persona yet. Reporting `active` would fabricate a standing; reporting
+///   `dead` would demand a sign-in nothing has established is needed.
+/// - **A failed read** — `unknown` WITH the error. Both are genuinely unknown,
+///   but "never checked" and "could not ask" call for different responses, and
+///   collapsing them makes a broken registry look like a fresh persona. Never
+///   `needsSignIn`: the remedy is to fix the daemon's database, not to make the
+///   user re-authenticate a credential that is probably fine.
+fn forge_report(row: Result<Option<&ForgeTokenRow>, String>) -> (serde_json::Value, bool) {
+    match row {
+        Ok(Some(r)) => {
+            (serde_json::json!({ "state": r.state, "expiresAt": r.expires_at }), r.state == "dead")
+        }
+        Ok(None) => (serde_json::json!({ "state": "unknown", "expiresAt": null }), false),
+        Err(e) => (serde_json::json!({ "state": "unknown", "expiresAt": null, "error": e }), false),
+    }
+}
+
+/// This persona's forge-token row, or why we could not read it.
+///
+/// Read-only, and deliberately so: neither caller probes GitHub. Opening a
+/// status page must not cost a forge call — the scheduled check and
+/// [`crate::dojo_client::forge_token::observe`] are what keep this current.
+async fn forge_row(state: &AppState, persona: &str) -> Result<Option<ForgeTokenRow>, String> {
+    state
+        .pg
+        .forge_token_rows()
+        .await
+        .map(|rows| rows.into_iter().find(|r| r.session_slot == persona))
+        .map_err(|e| e.to_string())
 }
 
 /// Whether a completed sign-in leaves a session the SYNC CYCLE will actually use.
@@ -526,14 +560,29 @@ pub(crate) async fn status(
         None => None,
     };
 
+    // The FORGE token — a second credential with its own lifetime, and the one
+    // this endpoint was silent about. Everything above concerns the dōjō session:
+    // it can refresh cleanly and report `signedIn: true` while every GitHub call
+    // 401s, which is exactly what happened for a whole morning.
+    let row = forge_row(&state, &p.persona).await;
+    let (forge, forge_dead) = forge_report(row.as_ref().map(Option::as_ref).map_err(Clone::clone));
+
     Json(serde_json::json!({
         "signedIn": auth_user_id.is_some(),
         "persona": p.persona,
         "authUserId": auth_user_id,
         "email": email,
         "identity": linked,
+        // The DŌJŌ session's expiry and refresh need. Named without a prefix for
+        // compatibility; `forgeToken.expiresAt` is the other credential's.
         "expiresAt": sess.expires_at,
         "needsRefresh": sess.needs_refresh(now),
+        // Whether forge-backed work — org provisioning, repository capture,
+        // visibility — will actually succeed right now.
+        "forgeToken": forge,
+        // The one remedy that fixes a dead forge token. Its own flag so the UI
+        // need not know that `dead` is the state no daemon action can recover.
+        "needsSignIn": forge_dead,
         "dojo": dojo_url(),
         // Present only when the token could NOT be used — an unusable session is
         // reported as such rather than as a bare signedIn:false.
@@ -769,6 +818,51 @@ mod tests {
         // A shape with no `verified` key at all is NOT assumed good: this decides
         // whether the user is told their sign-in works.
         assert!(!sign_in_will_sync(&serde_json::json!({})));
+    }
+
+    fn row(state: &str, expires_at: Option<i64>) -> ForgeTokenRow {
+        ForgeTokenRow { session_slot: "default".into(), state: state.into(), expires_at }
+    }
+
+    #[test]
+    fn a_dead_forge_token_is_the_one_state_that_asks_for_a_sign_in() {
+        // The whole point of the field. `dead` is unrecoverable without the user
+        // — the daemon cannot mint a GitHub token — and every other state is
+        // either fine or merely not-yet-known, neither of which should nag.
+        let (report, needs_sign_in) = forge_report(Ok(Some(&row("dead", Some(1_788_091_200)))));
+        assert!(needs_sign_in);
+        assert_eq!(report["state"], "dead");
+        assert_eq!(report["expiresAt"], 1_788_091_200_i64);
+
+        for alive in ["active", "unknown", "absent"] {
+            let (_, needs) = forge_report(Ok(Some(&row(alive, None))));
+            assert!(!needs, "{alive} must not ask for a sign-in");
+        }
+    }
+
+    #[test]
+    fn no_row_reports_unknown_rather_than_inventing_a_standing() {
+        // A persona the check has never reached has no recorded state. Reporting
+        // `active` would be a fabricated standing; reporting `dead` would nag for
+        // a sign-in nothing has established is needed.
+        let (report, needs_sign_in) = forge_report(Ok(None));
+        assert_eq!(report["state"], "unknown");
+        assert!(report["expiresAt"].is_null());
+        assert!(!needs_sign_in);
+        assert!(report.get("error").is_none(), "no row is not an error");
+    }
+
+    #[test]
+    fn a_failed_read_is_distinguishable_from_a_missing_row() {
+        // Both answer `unknown`, because both genuinely are. But "we have never
+        // checked" and "we could not ask" call for different responses, and
+        // collapsing them makes a broken registry look like a fresh persona.
+        let (report, needs_sign_in) = forge_report(Err("connection refused".into()));
+        assert_eq!(report["state"], "unknown");
+        assert_eq!(report["error"], "connection refused");
+        // Never on a read failure: the remedy is to fix the daemon's database,
+        // not to make the user re-authenticate a token that is probably fine.
+        assert!(!needs_sign_in);
     }
 
     #[test]
