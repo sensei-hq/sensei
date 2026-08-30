@@ -8,6 +8,7 @@ use sensei_bootstrap::{
     MCP_REGISTRY_KEY, SENSEI_BIN, SENSEI_MCP_BIN, SENSEID_BIN, SenseiConfig, SenseiLocalConfig,
 };
 
+mod auth;
 mod doctor;
 mod managed;
 mod scaffold;
@@ -35,6 +36,18 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Forge credential — show its standing, or renew it in the browser
+    Auth {
+        /// status | renew | renew-if-needed  (default: status)
+        #[arg(default_value = "status")]
+        action: String,
+
+        /// Which persona's credential. Personas keep separate identities, and
+        /// each has its own token with its own expiry.
+        #[arg(long, default_value = "default")]
+        persona: String,
+    },
+
     /// Initialize sensei — sets up MCP, commands, skills, agents, mindsets
     Init {
         /// Scope: user (global ~/.claude/) or project (repo .claude/)
@@ -215,6 +228,18 @@ fn main() -> ExitCode {
             // No subcommand and no --upgrade → show help rather than erroring.
             let _ = <Cli as clap::CommandFactory>::command().print_help();
             println!();
+        }
+        Some(Commands::Auth { action, persona }) => {
+            let act = match action.as_str() {
+                "status" => auth::AuthAction::Status,
+                "renew" => auth::AuthAction::Renew,
+                "renew-if-needed" => auth::AuthAction::RenewIfNeeded,
+                other => {
+                    eprintln!("unknown action `{other}` — use status, renew, or renew-if-needed");
+                    std::process::exit(2);
+                }
+            };
+            std::process::exit(auth::run(act, &persona));
         }
         Some(Commands::Init { scope, acp, recommended }) => {
             init(scope.as_deref(), acp.as_deref(), recommended);
