@@ -206,32 +206,44 @@ fn session_accounts_for(persona: &str) -> Vec<String> {
     all
 }
 
-/// Delete each account, and report the first real failure.
+/// Remove ONE Keychain entry.
 ///
 /// A MISSING entry is success — the goal is "no token stored", and that already
-/// holds. Every account is attempted even after one fails, because stopping at
-/// the first would leave the remaining credentials at rest, which is the exact
+/// holds.
+fn delete_one(account: &str) -> Result<(), crate::gateway_keys::KeychainError> {
+    let out = std::process::Command::new("/usr/bin/security")
+        .args(["delete-generic-password", "-s", KEYCHAIN_SERVICE, "-a", account])
+        .output()
+        .map_err(crate::gateway_keys::KeychainError::from)?;
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    match out.status.success() || stderr.contains("could not be found") {
+        true => Ok(()),
+        false => Err(crate::gateway_keys::KeychainError::CommandFailed(format!(
+            "{account}: {}",
+            stderr.trim()
+        ))),
+    }
+}
+
+/// Delete each account, and report the first real failure.
+///
+/// Every account is attempted even after one fails, because stopping at the
+/// first would leave the remaining credentials at rest, which is the exact
 /// failure this function exists to prevent.
-fn delete_accounts(accounts: &[String]) -> Result<(), crate::gateway_keys::KeychainError> {
+///
+/// The deleter is a PARAMETER so the wiring is testable. It is the wiring that
+/// carries the security property — `clear_session` and `clear_refresh_token` are
+/// each one line binding a list to this loop, and swapping one list for the
+/// other silently restores the defect where a GitHub `repo` token survives a
+/// sign-out. Asserting on the lists alone left that swap green, so the seam is
+/// here rather than a comment asking the next reader to be careful.
+fn delete_each(
+    accounts: &[String],
+    mut delete: impl FnMut(&str) -> Result<(), crate::gateway_keys::KeychainError>,
+) -> Result<(), crate::gateway_keys::KeychainError> {
     let mut first_error = None;
     for account in accounts {
-        let out = std::process::Command::new("/usr/bin/security")
-            .args(["delete-generic-password", "-s", KEYCHAIN_SERVICE, "-a", account])
-            .output();
-        let failure = match out {
-            Err(e) => Some(crate::gateway_keys::KeychainError::from(e)),
-            Ok(o) => {
-                let stderr = String::from_utf8_lossy(&o.stderr);
-                match o.status.success() || stderr.contains("could not be found") {
-                    true => None,
-                    false => Some(crate::gateway_keys::KeychainError::CommandFailed(format!(
-                        "{account}: {}",
-                        stderr.trim()
-                    ))),
-                }
-            }
-        };
-        if let Some(e) = failure {
+        if let Err(e) = delete(account) {
             tracing::warn!(account, error = %e, "could not remove a stored credential");
             first_error.get_or_insert(e);
         }
@@ -252,7 +264,15 @@ fn delete_accounts(accounts: &[String]) -> Result<(), crate::gateway_keys::Keych
 /// different lifetime, and the dōjō rejecting our session is no evidence about
 /// GitHub's token. [`clear_session`] is the one that takes everything.
 pub fn clear_refresh_token(persona: &str) -> Result<(), crate::gateway_keys::KeychainError> {
-    delete_accounts(&refresh_accounts_for(persona))
+    clear_refresh_token_with(persona, delete_one)
+}
+
+/// [`clear_refresh_token`] with the deleter handed in — see [`clear_session_with`].
+fn clear_refresh_token_with(
+    persona: &str,
+    delete: impl FnMut(&str) -> Result<(), crate::gateway_keys::KeychainError>,
+) -> Result<(), crate::gateway_keys::KeychainError> {
+    delete_each(&refresh_accounts_for(persona), delete)
 }
 
 /// Sign out — remove every credential this persona's sign-in stored.
@@ -263,7 +283,21 @@ pub fn clear_refresh_token(persona: &str) -> Result<(), crate::gateway_keys::Key
 /// or dōjō that could remove it. "Sign out" that leaves the broadest credential
 /// at rest is not a sign-out.
 pub fn clear_session(persona: &str) -> Result<(), crate::gateway_keys::KeychainError> {
-    delete_accounts(&session_accounts_for(persona))
+    clear_session_with(persona, delete_one)
+}
+
+/// [`clear_session`] with the deleter handed in.
+///
+/// The split exists so a test can watch WHICH slots are attempted without a
+/// Keychain. That is the security property — the public function is one line
+/// choosing a list, and choosing the wrong one puts a live GitHub token back on
+/// disk after a sign-out. Asserting on `session_accounts_for` alone left exactly
+/// that swap passing green, which was verified by making it.
+fn clear_session_with(
+    persona: &str,
+    delete: impl FnMut(&str) -> Result<(), crate::gateway_keys::KeychainError>,
+) -> Result<(), crate::gateway_keys::KeychainError> {
+    delete_each(&session_accounts_for(persona), delete)
 }
 
 /// Store a session secret. Delegates to [`crate::gateway_keys::keychain_set`],
@@ -369,6 +403,73 @@ mod tests {
             "nor GitHub's refresh token: {slots:?}"
         );
         assert!(slots.contains(&account_for("default")), "nor the Supabase one: {slots:?}");
+    }
+
+    /// Record what was attempted, and optionally refuse some of it.
+    ///
+    /// `failing` names accounts the Keychain rejects, so a test can assert the
+    /// loop KEEPS GOING — the guarantee that stops one stuck entry leaving the
+    /// rest of the credentials at rest.
+    fn recording_deleter<'a>(
+        seen: &'a mut Vec<String>,
+        failing: &'static [&'static str],
+    ) -> impl FnMut(&str) -> Result<(), crate::gateway_keys::KeychainError> + 'a {
+        move |account: &str| {
+            seen.push(account.to_string());
+            match failing.iter().any(|f| account.starts_with(f)) {
+                true => Err(crate::gateway_keys::KeychainError::CommandFailed(account.to_string())),
+                false => Ok(()),
+            }
+        }
+    }
+
+    #[test]
+    fn signing_out_actually_asks_for_every_one_of_those_slots() {
+        // The list being right is not the same as the sign-out USING it, and the
+        // difference is the whole security property. `clear_session` is one line
+        // choosing between two lists; pointing it at `refresh_accounts_for`
+        // silently restores the defect — a GitHub `repo`+`read:org` token left on
+        // disk after a sign-out — and that mutation was RUN and passed the entire
+        // suite while only `session_accounts_for` was asserted on.
+        let mut seen = Vec::new();
+        clear_session_with("default", recording_deleter(&mut seen, &[])).expect("all slots gone");
+
+        assert!(seen.contains(&provider_account_for("default")), "the GitHub token: {seen:?}");
+        assert!(seen.contains(&provider_refresh_account_for("default")), "its refresh: {seen:?}");
+        assert!(seen.contains(&account_for("default")), "the Supabase token: {seen:?}");
+        assert!(seen.iter().any(|a| a == LEGACY_ACCOUNT), "the legacy slot: {seen:?}");
+    }
+
+    #[test]
+    fn a_rejected_session_asks_for_the_supabase_slots_and_no_others() {
+        // The complement, and it has to be tested on the CALL too: a dōjō that
+        // rejects our refresh token is no evidence about GitHub's, and the
+        // separate slots exist precisely so revoking one does not discard the
+        // other. Widening this function is a silent data-loss change — the user
+        // would be re-prompted for GitHub over an unrelated dōjō 401.
+        let mut seen = Vec::new();
+        clear_refresh_token_with("default", recording_deleter(&mut seen, &[])).expect("ok");
+
+        assert!(seen.contains(&account_for("default")), "the Supabase token: {seen:?}");
+        assert!(!seen.contains(&provider_account_for("default")), "NOT GitHub's: {seen:?}");
+        assert!(!seen.contains(&provider_refresh_account_for("default")), "nor its refresh");
+    }
+
+    #[test]
+    fn one_stuck_slot_does_not_leave_the_others_at_rest() {
+        // Stopping at the first error is the failure mode this function exists to
+        // prevent: the Supabase slot is attempted FIRST, so a `?` there would
+        // return before the GitHub token — the broadest credential — was ever
+        // touched, and a sign-out would report an error having left the worst of
+        // it behind. Every slot is attempted, and the failure is still reported.
+        let mut seen = Vec::new();
+        let out = clear_session_with("default", recording_deleter(&mut seen, &["refresh_token."]));
+
+        assert!(out.is_err(), "a real Keychain failure is still surfaced");
+        assert!(
+            seen.contains(&provider_account_for("default")),
+            "the GitHub token is attempted even after an earlier slot failed: {seen:?}"
+        );
     }
 
     #[test]
