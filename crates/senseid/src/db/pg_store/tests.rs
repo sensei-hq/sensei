@@ -7887,6 +7887,73 @@ async fn dojo_outbox_and_batch_items_roundtrip() {
 }
 
 #[tokio::test]
+async fn generalisation_persists_the_example_and_the_share_path_carries_it() {
+    let Ok(pg) = PgStore::connect_test().await else {
+        return;
+    };
+
+    let proj = pg.create_project("_test:memories:example", None, None).await.unwrap();
+    let mem = pg
+        .insert_memory(&InsertMemory {
+            project_id: Some(proj),
+            scope: "project".into(),
+            scope_filter: None,
+            mtype: "convention".into(),
+            title: "green ci before merge".into(),
+            // The RAW memory — local reference only. It names a real repo path
+            // on purpose: nothing on the share path may ever echo it.
+            content: "Never merge acme-api from /Users/dev/work/acme-api on red CI.".into(),
+            impact: None,
+            tags: vec![],
+            triage_signal: None,
+            status: "active".into(),
+            namespace_id: None,
+            enforcement: None,
+            origin: Some("learned".into()),
+            source_id: None,
+            spine_slot: None,
+            feature: None,
+        })
+        .await
+        .unwrap();
+
+    // The generalisation writes BOTH the portable rule and its synthetic example.
+    pg.set_memory_generalisation(
+        mem,
+        "Gate merges on a green pipeline.",
+        Some("A team merges on a red build before a long weekend and loses Monday to a bisect."),
+    )
+    .await
+    .unwrap()
+    .expect("the memory exists");
+
+    let batch = pg.create_memory_share_batch(&proj, &[mem], None).await.unwrap();
+    pg.set_memory_share_batch_status(&batch, "approved", None).await.unwrap();
+    let (_p, _s, items) = pg.batch_share_items(&batch).await.unwrap().expect("batch loads");
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].body, "Gate merges on a green pipeline.");
+    assert_eq!(
+        items[0].example.as_deref(),
+        Some("A team merges on a red build before a long weekend and loses Monday to a bisect."),
+        "the synthetic example travels with the shareable body",
+    );
+    // The raw memory is NOT on this path — neither as the body nor as the example.
+    for text in [Some(items[0].body.as_str()), items[0].example.as_deref()].into_iter().flatten() {
+        assert!(!text.contains("acme-api"), "raw repo name reached the share path: {text:?}");
+        assert!(!text.contains("/Users/dev"), "raw path reached the share path: {text:?}");
+    }
+
+    // Re-generalising with NO example clears the stale one rather than pairing a
+    // new rule with an old illustration.
+    pg.set_memory_generalisation(mem, "Do not merge on red.", None).await.unwrap().unwrap();
+    let (_p, _s, items) = pg.batch_share_items(&batch).await.unwrap().expect("batch loads");
+    assert_eq!(items[0].body, "Do not merge on red.");
+    assert_eq!(items[0].example, None, "an example never outlives the rewrite it illustrates");
+
+    pg.delete_project(&proj).await.unwrap();
+}
+
+#[tokio::test]
 async fn dojo_inbox_upsert_apply_and_state_roundtrip() {
     let Ok(pg) = PgStore::connect_test().await else {
         return;

@@ -169,8 +169,11 @@ impl DojoClient {
     /// connect/total timeouts via [`crate::federation::http_client`]). Errors are
     /// returned, never panicked; the caller records the outcome in the outbox.
     ///
-    /// The `artifact.body`/`title` MUST already be the confidentiality-checked
-    /// text (see [`crate::dojo::contribute`]) — this seam performs no stripping.
+    /// Every text field on the artifact — `title`, `body` AND `example` — MUST
+    /// already be the confidentiality-checked text (see
+    /// [`crate::dojo::contribute`]); this seam performs no stripping. Adding a
+    /// text field to [`PublishedArtifact`] without routing it through that gate
+    /// ships it raw.
     pub async fn publish_artifact(
         &self,
         art: &PublishedArtifact,
@@ -621,12 +624,19 @@ mod tests {
             let (title, body) =
                 ("prefer small functions".to_string(), "keep units testable".to_string());
             let artifact = PublishedArtifact {
-                signature: artifact_signature(ArtifactKind::Principle, &title, &body, &payload),
+                signature: artifact_signature(
+                    ArtifactKind::Principle,
+                    &title,
+                    &body,
+                    None,
+                    &payload,
+                ),
                 tenant_key: "github/acme".into(),
                 engagement_id: None,
                 kind: ArtifactKind::Principle,
                 title,
                 body,
+                example: None,
                 payload,
                 scope: ArtifactScope { stack: Some("rust".into()), ..Default::default() },
                 attribution: Attribution {
