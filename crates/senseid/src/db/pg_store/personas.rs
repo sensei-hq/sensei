@@ -30,9 +30,16 @@ impl PgStore {
     /// pushing nothing. Observed live before this column existed, not theorised.
     ///
     /// Both conditions are needed. `session_slot IS NOT NULL` is the one that
-    /// matters — it is written at sign-in and is the only field that names a real
-    /// Keychain entry. `verified_at IS NOT NULL` is kept beside it so a row whose
-    /// slot survives a sign-out is not re-enumerated.
+    /// matters — it is written at sign-in, cleared by
+    /// [`Self::clear_persona_session`] at sign-out, and is the only field that
+    /// names a real Keychain entry. `verified_at IS NOT NULL` is kept beside it
+    /// so a row that was given a slot but never completed the OAuth callback is
+    /// not enumerated.
+    ///
+    /// This comment used to claim `verified_at` was what kept a signed-out row
+    /// from being re-enumerated. It was false in both halves: sign-out cleared
+    /// neither column, and `verified_at` is never cleared at all, so the cycle
+    /// went on listing signed-out personas every cadence forever.
     ///
     /// A row proves a sign-in HAPPENED, not that its token is still valid — the
     /// caller resolves a live access token per slot and skips the expired ones.
@@ -46,6 +53,30 @@ impl PgStore {
         .await
         .map_err(|e| format!("signed_in_personas: {e}"))?;
         Ok(rows.into_iter().map(|r| r.0).collect())
+    }
+
+    /// Release a persona's Keychain slot — the DATABASE half of signing out.
+    ///
+    /// Returns whether a row actually held the slot, so the caller can tell "I
+    /// forgot your session" from "there was nothing to forget". Reporting success
+    /// either way would hide a persona/slot mismatch, which is the class of bug
+    /// `session_slot` exists to make visible.
+    ///
+    /// Clears ONLY the slot. `verified_at`, `github_login` and `github_user_id`
+    /// stay: which GitHub account this persona is remains true after a sign-out,
+    /// and discarding it would force a second OAuth round trip to re-learn
+    /// something already proved. [`Self::signed_in_personas`] requires the slot,
+    /// so nulling it is sufficient to stop the sync cycle picking the row up.
+    pub async fn clear_persona_session(&self, session_slot: &str) -> Result<bool, String> {
+        let res = sqlx_core::query::query(
+            "UPDATE sensei.personas SET session_slot = NULL, modified_at = now() \
+              WHERE session_slot = $1",
+        )
+        .bind(session_slot)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| format!("clear_persona_session: {e}"))?;
+        Ok(res.rows_affected() > 0)
     }
 
     /// Create a persona, or return the existing one with that label.

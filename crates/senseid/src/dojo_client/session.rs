@@ -52,12 +52,17 @@ pub fn load_provider_token(persona: &str) -> Result<String, crate::gateway_keys:
     keychain_read(KEYCHAIN_SERVICE, &provider_account_for(persona))
 }
 
+/// Slot for GitHub's own refresh token, when the OAuth App issues expiring ones.
+fn provider_refresh_account_for(persona: &str) -> String {
+    format!("provider_refresh.{}", persona.to_lowercase())
+}
+
 /// Store GitHub's refresh token, when one was issued.
 pub fn store_provider_refresh_token(
     persona: &str,
     token: &str,
 ) -> Result<(), crate::gateway_keys::KeychainError> {
-    keychain_write(KEYCHAIN_SERVICE, &format!("provider_refresh.{}", persona.to_lowercase()), token)
+    keychain_write(KEYCHAIN_SERVICE, &provider_refresh_account_for(persona), token)
 }
 
 /// What Supabase returns from `/auth/v1/token`.
@@ -166,24 +171,86 @@ pub fn load_refresh_token(persona: &str) -> Result<String, crate::gateway_keys::
     }
 }
 
-/// Forget the session — sign-out, or a refresh token the server has rejected.
+/// The SUPABASE slots that must go when a session is rejected or signed out.
+///
+/// Includes [`LEGACY_ACCOUNT`] because [`load_refresh_token`] falls back to it
+/// and migrates it forward: leaving it behind meant the next cycle after a
+/// sign-out read the pre-persona slot, re-wrote the per-persona one, and signed
+/// the user back in — with a single `info!` as the only trace.
+fn refresh_accounts_for(persona: &str) -> Vec<String> {
+    vec![account_for(persona), LEGACY_ACCOUNT.to_string()]
+}
+
+/// EVERY slot a sign-in may have written — what a sign-out must clear.
+///
+/// A superset of [`refresh_accounts_for`], because the two provider slots are
+/// GitHub's credentials rather than the dōjō's: a rejected dōjō session says
+/// nothing about GitHub's token, so only an explicit sign-out takes those.
+fn session_accounts_for(persona: &str) -> Vec<String> {
+    let mut all = refresh_accounts_for(persona);
+    all.push(provider_account_for(persona));
+    all.push(provider_refresh_account_for(persona));
+    all
+}
+
+/// Delete each account, and report the first real failure.
+///
+/// A MISSING entry is success — the goal is "no token stored", and that already
+/// holds. Every account is attempted even after one fails, because stopping at
+/// the first would leave the remaining credentials at rest, which is the exact
+/// failure this function exists to prevent.
+fn delete_accounts(accounts: &[String]) -> Result<(), crate::gateway_keys::KeychainError> {
+    let mut first_error = None;
+    for account in accounts {
+        let out = std::process::Command::new("/usr/bin/security")
+            .args(["delete-generic-password", "-s", KEYCHAIN_SERVICE, "-a", account])
+            .output();
+        let failure = match out {
+            Err(e) => Some(crate::gateway_keys::KeychainError::from(e)),
+            Ok(o) => {
+                let stderr = String::from_utf8_lossy(&o.stderr);
+                match o.status.success() || stderr.contains("could not be found") {
+                    true => None,
+                    false => Some(crate::gateway_keys::KeychainError::CommandFailed(format!(
+                        "{account}: {}",
+                        stderr.trim()
+                    ))),
+                }
+            }
+        };
+        if let Some(e) = failure {
+            tracing::warn!(account, error = %e, "could not remove a stored credential");
+            first_error.get_or_insert(e);
+        }
+    }
+    match first_error {
+        Some(e) => Err(e),
+        None => Ok(()),
+    }
+}
+
+/// Forget the dōjō session — a refresh token the server has rejected.
 ///
 /// Removing a rejected token matters: a permanently-invalid one otherwise makes
 /// every subsequent refresh fail identically, and the daemon retries forever
 /// instead of surfacing "you need to sign in again".
+///
+/// Leaves the GitHub slots ALONE. They are a different credential with a
+/// different lifetime, and the dōjō rejecting our session is no evidence about
+/// GitHub's token. [`clear_session`] is the one that takes everything.
 pub fn clear_refresh_token(persona: &str) -> Result<(), crate::gateway_keys::KeychainError> {
-    let account = account_for(persona);
-    let out = std::process::Command::new("/usr/bin/security")
-        .args(["delete-generic-password", "-s", KEYCHAIN_SERVICE, "-a", &account])
-        .output()?;
-    // A missing entry is success: the goal is "no token stored", and that holds.
-    if out.status.success() || String::from_utf8_lossy(&out.stderr).contains("could not be found") {
-        Ok(())
-    } else {
-        Err(crate::gateway_keys::KeychainError::CommandFailed(
-            String::from_utf8_lossy(&out.stderr).trim().to_string(),
-        ))
-    }
+    delete_accounts(&refresh_accounts_for(persona))
+}
+
+/// Sign out — remove every credential this persona's sign-in stored.
+///
+/// Sign-out used to delete ONE of the three slots. `provider_token.<slot>`, a
+/// GitHub token carrying `repo` and `read:org`, survived it: verified live still
+/// able to read a private repository, with no code path in the daemon, CLI, app
+/// or dōjō that could remove it. "Sign out" that leaves the broadest credential
+/// at rest is not a sign-out.
+pub fn clear_session(persona: &str) -> Result<(), crate::gateway_keys::KeychainError> {
+    delete_accounts(&session_accounts_for(persona))
 }
 
 /// Store a session secret. Delegates to [`crate::gateway_keys::keychain_set`],
@@ -269,6 +336,50 @@ mod tests {
         // working identities can be linked at once.
         assert_ne!(account_for("sensei-hq"), account_for("jerrythomas"));
         assert!(account_for("sensei-hq").starts_with("refresh_token."));
+    }
+
+    #[test]
+    fn signing_out_targets_every_slot_the_sign_in_wrote() {
+        // THE sign-out defect. A sign-in writes up to three Keychain items;
+        // `signout` deleted exactly one — the Supabase refresh token. Left behind
+        // was `provider_token.<slot>`: a live GitHub credential with `repo` and
+        // `read:org`, confirmed on this machine to read a PRIVATE repository, at
+        // rest with no code path anywhere that removed it. There was no
+        // `clear_provider_token` function in the repository at all.
+        let slots = session_accounts_for("default");
+        assert!(
+            slots.contains(&provider_account_for("default")),
+            "the GitHub token must not survive a sign-out: {slots:?}"
+        );
+        assert!(
+            slots.contains(&provider_refresh_account_for("default")),
+            "nor GitHub's refresh token: {slots:?}"
+        );
+        assert!(slots.contains(&account_for("default")), "nor the Supabase one: {slots:?}");
+    }
+
+    #[test]
+    fn forgetting_a_refresh_token_also_drops_the_legacy_slot() {
+        // `load_refresh_token` falls back to the un-namespaced slot and MIGRATES
+        // it forward. While `clear_refresh_token` left that slot alone, the next
+        // cycle after a sign-out read it, re-wrote `refresh_token.<persona>`, and
+        // signed the user back in — with one info! line as the only trace.
+        assert!(
+            refresh_accounts_for("default").iter().any(|a| a == LEGACY_ACCOUNT),
+            "the pre-persona slot can resurrect a session that was signed out of"
+        );
+    }
+
+    #[test]
+    fn clearing_a_rejected_supabase_token_leaves_the_forge_token_alone() {
+        // The two credentials have different lifetimes and different blast
+        // radii, which is why they have separate slots. A dōjō that rejects our
+        // refresh token says nothing about GitHub's, so a 401 on the refresh leg
+        // must not throw away a working forge token — only an explicit sign-out
+        // does that.
+        let on_rejection = refresh_accounts_for("default");
+        assert!(!on_rejection.contains(&provider_account_for("default")));
+        assert!(!on_rejection.contains(&provider_refresh_account_for("default")));
     }
 
     #[test]
