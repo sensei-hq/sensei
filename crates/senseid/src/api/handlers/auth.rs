@@ -189,16 +189,33 @@ pub(crate) async fn callback(
             };
 
             match stored {
-                Ok(Ok(())) => Json(serde_json::json!({
-                    "ok": true,
-                    "signedIn": true,
-                    "persona": persona,
-                    "identity": linked,
-                    // Whether org provisioning will be possible for this
-                    // persona — surfaced so a missing token is visible now
-                    // rather than as an empty org list later.
-                    "canReadOrgs": tokens.provider_token.is_some(),
-                })),
+                Ok(Ok(())) => {
+                    let will_sync = sign_in_will_sync(&linked);
+                    if !will_sync {
+                        tracing::error!(persona, identity = %linked,
+                                        "sign-in stored a session the sync cycle cannot use — the persona was not linked");
+                    }
+                    Json(serde_json::json!({
+                        // NOT unconditionally true. The credential stored, but if
+                        // the persona did not link there is no `session_slot`, so
+                        // nothing will ever sync — see `sign_in_will_sync`.
+                        "ok": will_sync,
+                        // Still true, and deliberately separate: the session
+                        // itself IS usable, which is why one boolean could not
+                        // carry both facts.
+                        "signedIn": true,
+                        "willSync": will_sync,
+                        "persona": persona,
+                        "identity": linked,
+                        // Whether org provisioning will be possible for this
+                        // persona — surfaced so a missing token is visible now
+                        // rather than as an empty org list later.
+                        "canReadOrgs": tokens.provider_token.is_some(),
+                        "error": (!will_sync).then_some(
+                            "signed in, but this persona is not linked — the sync cycle will not \
+                             pick the session up until it is"),
+                    }))
+                }
                 Ok(Err(e)) => Json(serde_json::json!({
                     "ok": false,
                     "error": format!("signed in, but the refresh token could not be stored: {e}"),
@@ -211,6 +228,20 @@ pub(crate) async fn callback(
         // the body usually says which half is wrong.
         Err(e) => Json(serde_json::json!({ "ok": false, "error": e })),
     }
+}
+
+/// Whether a completed sign-in leaves a session the SYNC CYCLE will actually use.
+///
+/// A stored refresh token is not enough. `link_verified_identity` is what writes
+/// `personas.session_slot`, and `signed_in_personas` enumerates on exactly that
+/// column — so a sign-in whose identity did not link produces a usable
+/// credential that no cycle will ever pick up. `tick` then returns `Ok(())` on
+/// an empty persona list, `schedules.dojo_sync.last_ok` stays true, and nothing
+/// syncs, forever, over a sign-in reported as successful.
+///
+/// Absence is NOT treated as success: this decides what the user is told.
+fn sign_in_will_sync(linked: &serde_json::Value) -> bool {
+    linked["verified"].as_bool() == Some(true)
 }
 
 /// `POST /api/auth/signout` — forget the stored session.
@@ -651,6 +682,39 @@ async fn github_verified_emails(provider_token: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_sign_in_whose_identity_did_not_link_is_not_reported_as_a_success() {
+        // The callback answered `ok:true, signedIn:true` whenever the refresh
+        // token stored, regardless of whether the persona was LINKED. But
+        // `link_persona_identity` is what writes `personas.session_slot`, and
+        // `signed_in_personas` enumerates on exactly that column — so an
+        // unlinked sign-in leaves the cycle with nothing to iterate.
+        //
+        // The result was the quietest possible failure: `tick` returns Ok on an
+        // empty persona list, `schedules.dojo_sync.last_ok` stays true, no
+        // `sync_state` row is ever written, and not one row ever syncs — over a
+        // sign-in the user was told had worked.
+        for unlinked in [
+            serde_json::json!({ "verified": false, "reason": "the exchange returned no user" }),
+            serde_json::json!({ "verified": false, "reason": "no github identity on this account" }),
+            serde_json::json!({ "verified": false, "reason": "some database error" }),
+        ] {
+            assert!(!sign_in_will_sync(&unlinked), "unlinked: {unlinked}");
+        }
+    }
+
+    #[test]
+    fn a_linked_sign_in_is_reported_as_one() {
+        // The other half — a working sign-in must not be reported as broken, or
+        // the field is noise and gets ignored.
+        assert!(sign_in_will_sync(&serde_json::json!({
+            "verified": true, "personaId": "abc", "githubLogin": "sensei-hq-org"
+        })));
+        // A shape with no `verified` key at all is NOT assumed good: this decides
+        // whether the user is told their sign-in works.
+        assert!(!sign_in_will_sync(&serde_json::json!({})));
+    }
 
     #[test]
     fn only_a_401_or_403_is_terminal_enough_to_destroy_the_stored_session() {
