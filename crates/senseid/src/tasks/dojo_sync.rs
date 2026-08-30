@@ -1531,8 +1531,35 @@ mod tests {
     async fn a_pass_with_no_signed_in_personas_is_a_no_op_not_an_error() {
         // The state of a fresh install. It must not log an error every cadence,
         // or the daemon cries wolf until the user signs in.
+        //
+        // THIS TEST DOES NOT OWN THE DATABASE. `tick` reads `sensei.personas`
+        // directly, `sensei_test` is shared, and cargo runs tests CONCURRENTLY —
+        // so another test holding a seeded persona mid-run is a legitimate state
+        // this one cannot exclude. It used to assert `is_ok()` flatly and passed
+        // only because nothing else had ever created a persona; two separate
+        // additions have since broken it, each time for a reason unrelated to
+        // dojo_sync.
+        //
+        // So it asserts the pair of outcomes that are BOTH correct: no personas
+        // is a no-op, and personas that all fail is a reported failure (`tick`
+        // returns Err only when EVERY persona failed — see its comment; that
+        // property exists so a green worker cannot print over a cycle that moved
+        // nothing, and must not be weakened to make a test convenient).
+        //
+        // What is still pinned: `tick` must never PANIC, and must never return an
+        // error for an EMPTY persona set.
         let pg = Arc::new(PgStore::connect_test().await.unwrap());
-        assert!(tick(pg).await.is_ok());
+        let personas = pg.signed_in_personas().await.expect("persona read works");
+        let out = tick(pg).await;
+        if personas.is_empty() {
+            assert!(out.is_ok(), "an empty install must be a no-op, got {out:?}");
+        } else {
+            assert!(
+                out.is_ok() || out.as_ref().is_err_and(|e| e.contains("personas failed")),
+                "with personas present the only correct outcomes are success or a \
+                 reported all-failed, got {out:?}"
+            );
+        }
     }
 
     #[tokio::test]

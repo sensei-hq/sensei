@@ -519,3 +519,81 @@ mod forge_token_state_tests {
         cleanup(&pg, &slot).await;
     }
 }
+
+#[cfg(test)]
+mod forge_token_observe_tests {
+    use super::*;
+    use crate::dojo_client::forge_token::observe;
+
+    async fn seed(pg: &PgStore, slot: &str) {
+        sqlx_core::query::query(
+            "INSERT INTO sensei.personas (id, label, session_slot, verified_at) \
+             VALUES (gen_random_uuid(), $1, $1, now())",
+        )
+        .bind(slot)
+        .execute(pg.pool())
+        .await
+        .unwrap();
+    }
+    async fn cleanup(pg: &PgStore, slot: &str) {
+        sqlx_core::query::query("DELETE FROM sensei.personas WHERE session_slot = $1")
+            .bind(slot)
+            .execute(pg.pool())
+            .await
+            .ok();
+    }
+    async fn state_of(pg: &PgStore, slot: &str) -> (String, Option<i64>) {
+        let r = pg
+            .forge_token_rows()
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|r| r.session_slot == slot)
+            .expect("row");
+        (r.state, r.expires_at)
+    }
+
+    #[tokio::test]
+    async fn a_successful_call_records_active_and_the_deadline_it_carried() {
+        // The point of observing: sign-in reads /user/orgs anyway, so the token
+        // gets its expiry immediately instead of up to a scheduling interval later.
+        let Ok(pg) = PgStore::connect_test().await else { return };
+        let slot = format!("ztest-obs-{}", uuid::Uuid::new_v4());
+        seed(&pg, &slot).await;
+        observe(&pg, &slot, Some(200), Some("2026-08-30 12:00:00 UTC")).await;
+        assert_eq!(state_of(&pg, &slot).await, ("active".into(), Some(1_788_091_200)));
+        cleanup(&pg, &slot).await;
+    }
+
+    #[tokio::test]
+    async fn a_401_on_an_ordinary_call_marks_the_token_dead() {
+        // A token that dies between checks is caught by the next thing that uses
+        // it, rather than waiting for the scheduled probe.
+        let Ok(pg) = PgStore::connect_test().await else { return };
+        let slot = format!("ztest-obs-{}", uuid::Uuid::new_v4());
+        seed(&pg, &slot).await;
+        observe(&pg, &slot, Some(401), None).await;
+        assert_eq!(state_of(&pg, &slot).await.0, "dead");
+        cleanup(&pg, &slot).await;
+    }
+
+    #[tokio::test]
+    async fn an_unreachable_forge_writes_nothing_at_all() {
+        // The caller is probably handling its own network error. Recording a
+        // standing we did not learn would be a fabrication — and `checked_at`
+        // must stay untouched so "asked and learned nothing" is distinguishable
+        // from "never asked".
+        let Ok(pg) = PgStore::connect_test().await else { return };
+        let slot = format!("ztest-obs-{}", uuid::Uuid::new_v4());
+        seed(&pg, &slot).await;
+        observe(&pg, &slot, Some(200), Some("2026-08-30 12:00:00 UTC")).await;
+        observe(&pg, &slot, None, None).await; // network failure
+        observe(&pg, &slot, Some(500), None).await; // forge is unwell
+        assert_eq!(
+            state_of(&pg, &slot).await,
+            ("active".into(), Some(1_788_091_200)),
+            "a call we could not make must not change what we believe"
+        );
+        cleanup(&pg, &slot).await;
+    }
+}

@@ -35,16 +35,11 @@ use std::sync::Arc;
 
 use crate::db::pg_store::PgStore;
 use crate::dojo_client::forge_token::{
-    ForgeTokenAction, ProbeOutcome, TokenState, classify_probe, forge_token_action,
+    EXPIRY_HEADER, ForgeTokenAction, ProbeOutcome, TokenState, classify_probe, forge_token_action,
 };
 
 /// GitHub's own account probe. Cheap, and the response carries the expiry header.
 const PROBE_URL: &str = "https://api.github.com/user";
-
-/// The header GitHub sets when the token has a deadline. Absent on a
-/// non-expiring token, and absent on some responses even when one exists — which
-/// is why a probe that carries none must never erase a stored expiry.
-const EXPIRY_HEADER: &str = "github-authentication-token-expiration";
 
 fn state_of(stored: &str) -> TokenState {
     match stored {
