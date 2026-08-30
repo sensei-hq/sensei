@@ -27,6 +27,7 @@ pub const SCHEDULABLE: &[&str] = &[
     "capture_drain",
     "contribute",
     "dojo_sync",
+    "forge_token",
     "index_audit",
     "library_update",
     "log_prune",
