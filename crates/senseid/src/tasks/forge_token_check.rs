@@ -24,16 +24,21 @@
 //!
 //! ## Refresh is decided here and performed elsewhere
 //!
-//! The daemon CANNOT renew a GitHub token: that needs the OAuth app's client
-//! secret, which it deliberately does not hold and the dōjō does. Until that
-//! endpoint exists, a `Refresh` decision is carried out as a VERIFY — which is
-//! still worth doing, because a successful probe captures the expiry GoTrue
-//! never reports. The log says which happened; it does not claim a refresh it
-//! did not perform.
+//! The daemon CANNOT renew a GitHub token by itself: redemption needs the
+//! App's client secret, which it deliberately does not hold and the dōjō does.
+//! A `Refresh` decision therefore calls
+//! [`crate::dojo_client::forge_refresh::refresh_persona`], which posts the
+//! refresh token to the dōjō and stores what comes back.
+//!
+//! Renewal is attempted only near expiry — see `REFRESH_MARGIN_SECS`. GitHub
+//! rotates the refresh token on every redemption, so renewing on each pass would
+//! rotate ~16 times per 8-hour lifetime and multiply the chance of losing a
+//! rotation to a dropped response.
 
 use std::sync::Arc;
 
 use crate::db::pg_store::PgStore;
+use crate::dojo_client::forge_refresh::{RefreshOutcome, refresh_persona as refresh_forge_token};
 use crate::dojo_client::forge_token::{
     EXPIRY_HEADER, ForgeTokenAction, ProbeOutcome, TokenState, classify_probe, forge_token_action,
 };
@@ -85,9 +90,60 @@ pub async fn tick(pg: Arc<PgStore>) -> Result<(), String> {
             // is a per-interval call to GitHub that cannot change the answer.
             ForgeTokenAction::Skip => continue,
 
-            ForgeTokenAction::VerifyAndMarkDead
-            | ForgeTokenAction::Verify
-            | ForgeTokenAction::Refresh => {
+            // Close enough to expiry to spend the refresh. Attempted BEFORE the
+            // probe: the token is still alive right now, so probing it would
+            // only confirm what the expiry already says and delay the renewal
+            // by a round trip.
+            ForgeTokenAction::Refresh => {
+                match refresh_forge_token(&row.session_slot).await {
+                    RefreshOutcome::Renewed { expires_at } => {
+                        // `0` means the dōjō stated no deadline. Recorded as
+                        // `None` — unknown — rather than as the epoch, which
+                        // would read as "expired in 1970" and mark it dead.
+                        let exp = (expires_at > 0).then_some(expires_at);
+                        if let Err(e) =
+                            pg.set_forge_token_state(&row.session_slot, "active", exp).await
+                        {
+                            tracing::warn!(slot = row.session_slot, error = %e,
+                                           "forge_token_check: renewed but could not record it");
+                        } else {
+                            tracing::info!(
+                                slot = row.session_slot,
+                                expires_at,
+                                "forge_token_check: token RENEWED"
+                            );
+                        }
+                    }
+                    // Terminal. Recording `dead` is what stops the retry: the
+                    // next pass reads that state and skips, instead of spending
+                    // a call every interval on a grant that will never work.
+                    RefreshOutcome::Rejected(why) => {
+                        tracing::warn!(
+                            slot = row.session_slot,
+                            why,
+                            "forge_token_check: renewal REFUSED — sign in again"
+                        );
+                        if let Err(e) =
+                            pg.set_forge_token_state(&row.session_slot, "dead", None).await
+                        {
+                            tracing::warn!(slot = row.session_slot, error = %e,
+                                           "forge_token_check: could not record the refusal");
+                        }
+                    }
+                    // We could not complete the exchange, which says nothing
+                    // about the token. Write NOTHING and leave it for the next
+                    // pass — the refresh window is deliberately wider than the
+                    // interval so one failure does not cost the renewal.
+                    RefreshOutcome::Unavailable(why) => tracing::debug!(
+                        slot = row.session_slot,
+                        why,
+                        "forge_token_check: renewal unavailable, standing unchanged"
+                    ),
+                }
+                continue;
+            }
+
+            ForgeTokenAction::VerifyAndMarkDead | ForgeTokenAction::Verify => {
                 let slot = row.session_slot.clone();
                 let token = match tokio::task::spawn_blocking(move || {
                     crate::dojo_client::session::load_provider_token(&slot)
@@ -133,11 +189,6 @@ pub async fn tick(pg: Arc<PgStore>) -> Result<(), String> {
                 }
 
                 match (action, state) {
-                    (ForgeTokenAction::Refresh, "active") => tracing::debug!(
-                        slot = row.session_slot,
-                        "forge_token_check: token still valid; VERIFIED, not refreshed — \
-                         renewal needs the dōjō endpoint that holds the client secret"
-                    ),
                     (_, "dead") => tracing::warn!(
                         slot = row.session_slot,
                         "forge_token_check: forge token is DEAD — sign in again to restore sync"
