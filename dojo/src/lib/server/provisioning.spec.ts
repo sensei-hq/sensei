@@ -624,6 +624,44 @@ describe('provisionWithToken — the composition all three callers share', () =>
 		expect(out.personal?.key).toBe('personal/j');
 	});
 
+	it('reports forge_token_rejected — not forge_unreachable — when GitHub says 401', async () => {
+		// A REVOKED grant and a DOWN forge want opposite advice. Both used to
+		// produce 'forge_unreachable', whose console copy is "try again in a
+		// moment" — advice that can never come true for a dead token, and the
+		// daemon retried it every 60s forever on the strength of it.
+		//
+		// 401 is the unambiguous one: GitHub means "these credentials are bad".
+		const db = fakeDojoDb(tables());
+		const out = await provisionWithToken(
+			db as never,
+			PRINCIPAL,
+			'revoked-token',
+			{ email: 'j@example.com' },
+			forgeFetch(401, GH_USER, GH_ORGS)
+		);
+		expect(out.synced).toBe(false);
+		expect(out.reason).toBe('forge_token_rejected');
+		// Same safety property as the unreachable case: nothing is invented from
+		// a read that did not succeed.
+		expect(db.tables.tenant_connections.rows).toHaveLength(0);
+		expect(out.personal?.key).toBe('personal/j');
+	});
+
+	it('keeps a 403 as forge_unreachable, because it is not always the token', async () => {
+		// GitHub answers 403 for a rate limit as well as for SSO/scope refusals.
+		// Telling a rate-limited user to sign in again would be a wrong remedy, so
+		// only 401 is treated as a dead credential.
+		const db = fakeDojoDb(tables());
+		const out = await provisionWithToken(
+			db as never,
+			PRINCIPAL,
+			'gh-token',
+			{ email: 'j@example.com' },
+			forgeFetch(403, GH_USER, GH_ORGS)
+		);
+		expect(out.reason).toBe('forge_unreachable');
+	});
+
 	it('reports no_forge_token when there is no token at all', async () => {
 		const db = fakeDojoDb(tables());
 		const out = await provisionWithToken(db as never, PRINCIPAL, null, {

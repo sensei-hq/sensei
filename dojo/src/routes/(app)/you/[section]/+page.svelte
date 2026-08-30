@@ -92,14 +92,18 @@
 		ghMsg = null;
 		try {
 			const r = await provisionFromForge();
-			// A refusal names itself. 'no_forge_token' and 'forge_unreachable' are
-			// different problems and want different advice — collapsing them into
-			// one "nothing happened" is what hid the original defect.
+			// A refusal names itself. These are different problems and want
+			// different advice — collapsing them into one "nothing happened" is
+			// what hid the original defect. 'forge_token_rejected' in particular
+			// must NOT read as "try again": the token is dead, and retrying is
+			// exactly what the daemon was doing every 60s to no effect.
 			const created = r.tenants.filter((t) => t.created).length;
 			ghMsg = !r.synced
 				? r.reason === 'forge_unreachable'
 					? 'GitHub could not be reached — try again in a moment.'
-					: 'Sign in with GitHub to set up your org dōjōs.'
+					: r.reason === 'forge_token_rejected'
+						? 'GitHub rejected the stored access — sign in with GitHub again.'
+						: 'Sign in with GitHub to set up your org dōjōs.'
 				: created
 					? `Set up ${created} dōjō${created > 1 ? 's' : ''} from GitHub.`
 					: 'Everything from GitHub is already set up.';
