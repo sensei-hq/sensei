@@ -98,6 +98,18 @@ supabase-down:  ## Stop the local Dōjō supabase auth stack
 # debug binaries.
 
 install: install-service install-app
+	@# RECLAIM THE BUILD TREE. `target/` reaches tens of GB — measured at 49G
+	@# against 51Gi free on 2026-08-29, i.e. one more full build from a full
+	@# disk. A release install is infrequent and its artifacts are ALREADY
+	@# overlaid into the brew prefix by this point, so deleting the tree costs
+	@# nothing that was just built.
+	@#
+	@# Same trade `bump` makes and for the same reason: the next dev build is
+	@# COLD. That is the right side of the trade HERE (you just shipped) and the
+	@# wrong side for `install-debug`, which is the fast-iteration path and
+	@# instead prunes caches without discarding the build.
+	@echo "Reclaiming the build tree..."
+	@$(MAKE) clean
 
 # Snapshot the sensei DB before any install* runs. Custom-format pg_dump
 # (-F c) is binary, compressed, and supports `pg_restore -d sensei -c …`
@@ -272,6 +284,17 @@ install-debug: db-backup crates-debug
 	@echo "Restarting sensei service so the new daemon is live..."
 	-@brew services start sensei
 	@$(MAKE) mcp-refresh-note
+	@# RECLAIM THE BUILD TREE — user decision, 2026-08-29. `target/` was measured
+	@# at 49G against 51Gi free, i.e. roughly one more full build from a full
+	@# disk, so the disk wins over the rebuild.
+	@#
+	@# THE COST IS REAL AND IS ACCEPTED: this is the FAST-ITERATION target, and
+	@# the next `install-debug` is now a COLD build of several minutes rather
+	@# than an incremental one. Stated here so nobody later "fixes" it as an
+	@# oversight. The binaries are already overlaid into the brew prefix above,
+	@# so nothing just built is lost.
+	@echo "Reclaiming the build tree..."
+	@$(MAKE) clean
 
 # Post-install MCP/plugin refresh (shared by install-service + install-debug).
 # The sensei MCP is a long-lived stdio subprocess owned by the Claude Code
@@ -611,9 +634,10 @@ bump:
 	@# replaces /Applications/Sensei.app (quitting a running instance first).
 	@echo "Installing v$(_v) locally..."
 	@$(MAKE) install
-	@# ...then reclaim the tree that build needed. MUST come after install —
-	@# reversed, clean would delete target/ and install would rebuild it all from
-	@# cold for nothing.
+	@# ...and `install` now ends with `make clean` itself, so the tree that build
+	@# needed is reclaimed as part of it. There is deliberately NO second clean
+	@# here: it would be a no-op running `cargo clean` over an already-empty
+	@# target/, and a reader would reasonably wonder which one was the real one.
 	@#
 	@# This supersedes the `clean-cache` prune that used to run here: that kept the
 	@# 5 newest incremental caches, and `clean` removes target/ outright, so doing
@@ -622,8 +646,6 @@ bump:
 	@# The trade is deliberate: the next dev build after a bump is COLD (a full
 	@# rebuild, several minutes). A release is infrequent and target/ reaches tens
 	@# of GB, so paying the rebuild once per release beats carrying the disk.
-	@echo "Reclaiming the build tree..."
-	@$(MAKE) clean
 
 # Clear the dbd schema-source cache. The daemon resolves its DDL from
 # `sensei-hq/sensei/database@v<VERSION>` and dbd caches resolved sources per
