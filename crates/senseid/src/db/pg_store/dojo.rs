@@ -188,8 +188,20 @@ impl PgStore {
         };
 
         let rows: Vec<(uuid::Uuid, String, String, String)> = sqlx_core::query_as::query_as(
+            // `generalised_content` ONLY — there is deliberately NO fallback to
+            // `m.content`. The raw memory is the local reference: it may quote
+            // real code, paths and decisions, and it is never a candidate for
+            // sending. A COALESCE here meant "share the generalised version, or
+            // the RAW one if nobody generalised it yet", which made the safe
+            // path the one that happened to have run rather than the one that
+            // was chosen.
+            //
+            // An empty body is returned rather than the row being dropped, so
+            // the publish can report `held_not_generalised` and the user learns
+            // WHY nothing was sent. A vanished row is indistinguishable from an
+            // empty batch.
             "SELECT m.id, m.title,
-                    COALESCE(NULLIF(btrim(m.generalised_content), ''), m.content),
+                    COALESCE(btrim(m.generalised_content), ''),
                     m.type::text
                FROM sensei.memory_share_batch_members mm
                JOIN sensei.memories m ON m.id = mm.memory_id
