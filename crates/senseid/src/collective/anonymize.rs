@@ -22,6 +22,7 @@
 //! surface is `dead_code`-allowed.
 #![allow(dead_code)]
 
+use crate::api::handlers::knowledge::Generalisation;
 use crate::dojo::attribution::{
     Dereferenced, ProjectIdentifiers, Redaction, ResidualRisk, dereference,
 };
@@ -33,11 +34,12 @@ use std::future::Future;
 /// pipeline is unit-testable without a live gateway (tests pass a mock; the
 /// deterministic guarantee is exercised regardless of what the model returns).
 ///
-/// Returns `Some(rewrite)` when the model produced usable text, `None` when it
-/// was unavailable / timed out / returned nothing usable (the caller then keeps
-/// the deterministic text — still safe, just less polished).
+/// Returns `Some(rewrite)` when the model produced a usable rule (with or
+/// without its synthetic example), `None` when it was unavailable / timed out /
+/// returned nothing usable (the caller then keeps the deterministic text — still
+/// safe, just less polished).
 pub trait Generalizer {
-    fn generalize(&self, text: &str) -> impl Future<Output = Option<String>> + Send;
+    fn generalize(&self, text: &str) -> impl Future<Output = Option<Generalisation>> + Send;
 }
 
 /// Size bucket for a [`ProjectShape`] — a coarse descriptor, never a real
@@ -82,6 +84,11 @@ pub struct AnonymizedArtifact {
     /// The publish-safe body (deterministic text, optionally LLM-polished then
     /// re-verified).
     pub text: String,
+    /// A synthetic illustration of `text`, when the polish produced one that
+    /// survived the same deterministic re-check. `None` whenever there was no
+    /// model, no example, or an example that did not verify — this module never
+    /// invents one locally.
+    pub example: Option<String>,
     /// Project-shape descriptor — never the name.
     pub shape: ProjectShape,
     /// Rotating opaque contributor id — never the real user/project id.
@@ -150,17 +157,28 @@ pub async fn anonymize_for_global<G: Generalizer>(
     let base = Dereferenced::new(text, ctx)?;
 
     // 2. Optional LLM polish over the ALREADY-dereferenced text.
+    // A clean rewrite over already-safe text must have NOTHING to strip; if the
+    // strip finds anything or trips residual risk, the model reintroduced an
+    // identifier and its output is discarded.
+    let verified = |candidate: &str| {
+        let recheck = dereference(candidate, ctx);
+        !recheck.residual_risk && recheck.removed.is_empty()
+    };
+
     let mut best_text = base.text().to_string();
+    let mut example = None;
     let mut llm_polished = false;
     if let Some(candidate) = generalizer.generalize(base.text()).await {
-        // 3. Re-verify the model output deterministically. A clean rewrite over
-        //    already-safe text must have NOTHING to strip; if the strip finds
-        //    anything or trips residual risk, the model reintroduced an
-        //    identifier — discard it, keep the safe deterministic text.
-        let recheck = dereference(&candidate, ctx);
-        if !recheck.residual_risk && recheck.removed.is_empty() {
-            best_text = candidate;
+        // 3. Re-verify the model output deterministically — the safe text wins.
+        if verified(&candidate.generalised) {
+            best_text = candidate.generalised;
             llm_polished = true;
+            // The example is adopted only alongside an accepted body, and only
+            // if it verifies on its own. A model that reintroduced an identifier
+            // in the body is not trusted for the illustration either; and an
+            // illustration that leaks is simply dropped, since losing it costs
+            // an example, not the principle.
+            example = candidate.example.filter(|ex| verified(ex));
         }
     }
 
@@ -174,6 +192,7 @@ pub async fn anonymize_for_global<G: Generalizer>(
 
     Ok(AnonymizedArtifact {
         text: best_text,
+        example,
         shape,
         anon_id,
         attribution,
@@ -184,16 +203,20 @@ pub async fn anonymize_for_global<G: Generalizer>(
 
 // ── Production gateway adapter (forward seam for C6) ────────────────────────
 
-/// System prompt for the global-anonymisation rewrite. Stricter than the memory
-/// generalise prompt: the input is ALREADY dereferenced, so the model's only job
-/// is to restate it as a portable, stack-agnostic principle and — critically —
-/// to NOT reintroduce any identifier (the deterministic post-check enforces
-/// this regardless, but the instruction keeps the model on rails).
-const GLOBAL_ANONYMISE_SYSTEM: &str = "You rewrite an already-anonymised engineering lesson into a portable, stack-agnostic principle for a public collective. \
+/// Stage-2 preamble for the global-anonymisation rewrite. Stricter than the
+/// stage-1 memory preamble because the input is DIFFERENT: it has already been
+/// dereferenced, so the model's only job is to restate it as a portable,
+/// stack-agnostic principle and — critically — to NOT reintroduce any identifier
+/// (the deterministic post-check enforces this regardless, but the instruction
+/// keeps the model on rails).
+///
+/// The reply FORMAT is not restated here: it comes from the one shared
+/// [`GENERALISE_REPLY_CONTRACT`], because both stages are read by the same
+/// parser and must agree on the JSON shape and on what makes an example safe.
+pub(crate) const GLOBAL_ANONYMISE_PREAMBLE: &str = "You rewrite an already-anonymised engineering lesson into a portable, stack-agnostic principle for a public collective. \
 The text you receive has ALREADY had every project name, path, id, and person removed and replaced with placeholders like <project>, <path>, <session>. \
 Keep it that way: never invent or reintroduce a concrete name, path, repository, id, or person; leave placeholders as-is or drop them. \
-Restate the underlying learning so it applies across projects and stacks. Do not add advice the original did not contain. \
-Reply with ONLY a JSON object: {\"generalised\": <the rewritten principle as one or two plain sentences>}. No prose, no code fences.";
+Restate the underlying learning so it applies across projects and stacks. Do not add advice the original did not contain.";
 
 /// Token budget + wall-clock cap for the polish call (mirrors the shipped
 /// memory-generalise handler's discipline).
@@ -201,9 +224,10 @@ const POLISH_MAX_TOKENS: u32 = 512;
 const POLISH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// A [`Generalizer`] backed by the embedded gateway `reasoning` chain — the
-/// production polish path C6 uses. Reuses the shipped generalise message builder
-/// and JSON parser (DRY) so the prompt contract stays in lockstep with
-/// `POST /api/knowledge/memories/{id}/generalise`.
+/// production polish path C6 uses. Reuses the shipped generalise message builder,
+/// reply contract and JSON parser (DRY) so this stage stays in lockstep with
+/// `POST /api/knowledge/memories/{id}/generalise`; only the preamble differs,
+/// because only the INPUT differs.
 pub struct GatewayGeneralizer {
     gateway: std::sync::Arc<gateway::Gateway>,
 }
@@ -214,39 +238,49 @@ impl GatewayGeneralizer {
     }
 }
 
+/// Build the stage-2 polish request. Extracted and pure for the same reason as
+/// the stage-1 builder: a test asserts on the prompt actually SENT here, so this
+/// stage cannot quietly stop carrying the shared reply contract.
+pub(crate) fn build_polish_request(text: &str) -> gateway::types::request::InferenceRequest {
+    use gateway::types::capability::Capability;
+    use gateway::types::request::{InferenceRequest, Message, MessageRole, Payload};
+    // Reuse the shipped generalise message builder + system-prompt composer (DRY).
+    use crate::api::handlers::knowledge::{build_generalise_message, generalise_system_prompt};
+
+    InferenceRequest {
+        capability: Capability::TextChat,
+        model: None,
+        router: None,
+        // Same seed `reasoning` chain (embedded → ollama → cloud) as the memory
+        // generalise handler.
+        chain: Some("reasoning".into()),
+        payload: Payload::Chat {
+            messages: vec![Message::text(
+                MessageRole::User,
+                build_generalise_message("engineering principle", text),
+            )],
+            system: Some(generalise_system_prompt(GLOBAL_ANONYMISE_PREAMBLE)),
+            max_tokens: Some(POLISH_MAX_TOKENS),
+            temperature: None,
+            tools: Vec::new(),
+        },
+        budget: None,
+        auth: None,
+        panel: None,
+        consensus: None,
+        allow_fallback: true,
+        credentials: std::collections::HashMap::new(),
+    }
+}
+
 impl Generalizer for GatewayGeneralizer {
-    fn generalize(&self, text: &str) -> impl Future<Output = Option<String>> + Send {
-        use gateway::types::capability::Capability;
-        use gateway::types::request::{InferenceRequest, Message, MessageRole, Payload};
-        // Reuse the shipped generalise message builder + response parser (DRY).
-        use crate::api::handlers::knowledge::{
-            build_generalise_message, parse_generalise_response,
-        };
+    fn generalize(&self, text: &str) -> impl Future<Output = Option<Generalisation>> + Send {
+        // Reuse the shipped response parser (DRY) — one parser, both stages.
+        use crate::api::handlers::knowledge::parse_generalise_response;
 
         let gateway = self.gateway.clone();
-        let message = build_generalise_message("engineering principle", text);
+        let request = build_polish_request(text);
         async move {
-            let request = InferenceRequest {
-                capability: Capability::TextChat,
-                model: None,
-                router: None,
-                // Same seed `reasoning` chain (embedded → ollama → cloud) as the
-                // memory generalise handler.
-                chain: Some("reasoning".into()),
-                payload: Payload::Chat {
-                    messages: vec![Message::text(MessageRole::User, message)],
-                    system: Some(GLOBAL_ANONYMISE_SYSTEM.to_string()),
-                    max_tokens: Some(POLISH_MAX_TOKENS),
-                    temperature: None,
-                    tools: Vec::new(),
-                },
-                budget: None,
-                auth: None,
-                panel: None,
-                consensus: None,
-                allow_fallback: true,
-                credentials: std::collections::HashMap::new(),
-            };
             match tokio::time::timeout(POLISH_TIMEOUT, gateway.execute(&request)).await {
                 Ok(Ok(resp)) if resp.success => {
                     resp.content.as_deref().and_then(parse_generalise_response)
@@ -268,20 +302,34 @@ impl Generalizer for GatewayGeneralizer {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     /// A [`Generalizer`] that returns a canned response — the whole point is to
     /// prove the deterministic layer defends against a HOSTILE model.
-    struct MockGeneralizer {
-        response: Option<String>,
+    ///
+    /// `pub(crate)` because `dojo::contribute` needs the same seam to exercise
+    /// the model-bearing publish path. One mock, one place: a second copy would
+    /// let the two layers' idea of "what the model returns" drift apart.
+    pub(crate) struct MockGeneralizer {
+        pub(crate) response: Option<Generalisation>,
     }
 
     impl Generalizer for MockGeneralizer {
-        fn generalize(&self, _text: &str) -> impl Future<Output = Option<String>> + Send {
+        fn generalize(&self, _text: &str) -> impl Future<Output = Option<Generalisation>> + Send {
             let r = self.response.clone();
             async move { r }
         }
+    }
+
+    /// A polish reply carrying only the rewritten principle.
+    fn polish(generalised: &str) -> Option<Generalisation> {
+        Some(Generalisation { generalised: generalised.into(), example: None })
+    }
+
+    /// A polish reply carrying the principle AND a synthetic example.
+    pub(crate) fn polish_with(generalised: &str, example: &str) -> Option<Generalisation> {
+        Some(Generalisation { generalised: generalised.into(), example: Some(example.into()) })
     }
 
     fn ctx() -> ProjectIdentifiers {
@@ -289,7 +337,7 @@ mod tests {
             project_name: Some("Acme API".into()),
             client_name: Some("Acme Corp".into()),
             repo_names: vec!["acme-api".into()],
-            folder_paths: vec!["/Users/jerry/work/acme-api".into()],
+            folder_paths: vec!["/Users/dev/work/acme-api".into()],
             session_ids: vec!["s-9931".into()],
             person_names: vec!["Jane Doe".into()],
         }
@@ -344,7 +392,7 @@ mod tests {
     async fn global_output_carries_shape_and_opaque_anon_id_no_names() {
         let g = MockGeneralizer { response: None }; // LLM unavailable → deterministic fallback
         let art = anonymize_for_global(
-            "Jane Doe fixed acme-api at /Users/jerry/work/acme-api during the Acme Corp engagement",
+            "Jane Doe fixed acme-api at /Users/dev/work/acme-api during the Acme Corp engagement",
             &ctx(),
             shape(),
             &contributor(),
@@ -380,8 +428,8 @@ mod tests {
     async fn llm_reintroducing_a_path_is_discarded_and_safe_text_kept() {
         // The model tries to sneak an absolute path back in.
         let g = MockGeneralizer {
-            response: Some(
-                "Always run migrations first, e.g. under /Users/jerry/work/acme-api/db.".into(),
+            response: polish(
+                "Always run migrations first, e.g. under /Users/dev/work/acme-api/db.",
             ),
         };
         let art = anonymize_for_global(
@@ -412,7 +460,7 @@ mod tests {
         // The model reintroduces the client name — the deterministic re-check
         // must catch it and fall back to the safe text.
         let g = MockGeneralizer {
-            response: Some("The Acme Corp team learned to write tests first.".into()),
+            response: polish("The Acme Corp team learned to write tests first."),
         };
         let art = anonymize_for_global("write tests first", &ctx(), shape(), &contributor(), 1, &g)
             .await
@@ -428,9 +476,8 @@ mod tests {
     #[tokio::test]
     async fn clean_llm_rewrite_is_used() {
         let g = MockGeneralizer {
-            response: Some(
-                "Prefer a dedicated migration tool over hand-rolled SQL when the schema churns."
-                    .into(),
+            response: polish(
+                "Prefer a dedicated migration tool over hand-rolled SQL when the schema churns.",
             ),
         };
         let art = anonymize_for_global(
@@ -447,13 +494,104 @@ mod tests {
         assert!(art.text.contains("migration tool"));
     }
 
+    // ── the polish's synthetic example ───────────────────────────────────────
+
+    #[tokio::test]
+    async fn a_clean_polish_carries_its_synthetic_example() {
+        let g = polish_with(
+            "Prefer a dedicated migration tool over hand-rolled SQL.",
+            "A team hand-rolls one migration, then cannot reproduce the schema on a new laptop.",
+        );
+        let art = anonymize_for_global(
+            "run migrations before deploy in acme-api",
+            &ctx(),
+            shape(),
+            &contributor(),
+            1,
+            &MockGeneralizer { response: g },
+        )
+        .await
+        .expect("base is safe");
+        assert!(art.llm_polished);
+        assert_eq!(
+            art.example.as_deref(),
+            Some(
+                "A team hand-rolls one migration, then cannot reproduce the schema on a new laptop."
+            ),
+        );
+    }
+
+    #[tokio::test]
+    async fn no_polish_means_no_example_nothing_is_invented_locally() {
+        let art = anonymize_for_global(
+            "run migrations before deploy in acme-api",
+            &ctx(),
+            shape(),
+            &contributor(),
+            1,
+            &MockGeneralizer { response: None },
+        )
+        .await
+        .expect("base is safe");
+        assert!(!art.llm_polished);
+        assert_eq!(art.example, None, "no model, no illustration — never a fabricated one");
+    }
+
+    #[tokio::test]
+    async fn a_discarded_polish_takes_its_example_down_with_it() {
+        // The model reintroduced a path in the BODY. Its example is untrusted for
+        // the same reason, even though the example itself looks clean.
+        let g = polish_with(
+            "Always run migrations first, e.g. under /Users/dev/work/acme-api/db.",
+            "A team forgets a migration and the next deploy fails on a missing column.",
+        );
+        let art = anonymize_for_global(
+            "run migrations before deploy in acme-api",
+            &ctx(),
+            shape(),
+            &contributor(),
+            1,
+            &MockGeneralizer { response: g },
+        )
+        .await
+        .expect("base is safe");
+        assert!(!art.llm_polished, "hostile body must be discarded");
+        assert_eq!(
+            art.example, None,
+            "a model that leaked in the body is not trusted for the example either",
+        );
+    }
+
+    #[tokio::test]
+    async fn an_example_that_reintroduces_an_identifier_is_dropped_alone() {
+        // Body is clean and survives; the EXAMPLE smuggles the client name back
+        // in and must not ship. Dropping it loses an illustration, not the rule.
+        let g = polish_with(
+            "Prefer a dedicated migration tool over hand-rolled SQL.",
+            "Acme Corp hand-rolled a migration and lost a column.",
+        );
+        let art = anonymize_for_global(
+            "run migrations before deploy in acme-api",
+            &ctx(),
+            shape(),
+            &contributor(),
+            1,
+            &MockGeneralizer { response: g },
+        )
+        .await
+        .expect("base is safe");
+        assert!(art.llm_polished, "the clean body is still adopted");
+        assert!(art.text.contains("migration tool"));
+        assert_eq!(art.example, None, "an example that reintroduces an identifier is dropped");
+    }
+
     // ── fail-closed at the anonymise boundary ────────────────────────────────
 
     #[tokio::test]
     async fn anonymise_fails_closed_when_deterministic_strip_cant_guarantee_safety() {
         // A SCREAMING_SNAKE secret isn't a known token or a path, so the strip
         // leaves it — residual risk → the whole anonymise must refuse.
-        let g = MockGeneralizer { response: Some("safe rewrite".into()) };
+        let g = MockGeneralizer { response: polish("safe rewrite") };
         let out = anonymize_for_global(
             "set ACME_PROD_DB_PASSWORD then deploy",
             &ProjectIdentifiers::default(),

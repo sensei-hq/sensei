@@ -9,7 +9,9 @@
 //! 2. Route via [`crate::dojo::routing::client_precedence_route`] (C4) to the
 //!    destination membership(s) + the per-target `dereference` decision.
 //! 3. For each (destination × memory) build a [`dojo_protocol::PublishedArtifact`]
-//!    whose body is the CONFIDENTIALITY-CHECKED text:
+//!    whose title, body and synthetic example are all CONFIDENTIALITY-CHECKED
+//!    text (the body's handling below is what varies by credit posture; the
+//!    title and example always take the deterministic path):
 //!    - client route (`dereference`) → [`Dereferenced::new`] (C5); residual risk
 //!      → the item is HELD, never published — the hard gate;
 //!    - the global-dojo tenant → [`anonymize_for_global`] (C5, strip + optional
@@ -253,6 +255,21 @@ enum ItemPlan {
     Held { signature: String },
 }
 
+/// NOTHING GENERALISED = NOTHING SHAREABLE. `batch_share_items` does not fall
+/// back to the raw memory, so an empty body means no generalised form exists
+/// yet — refuse BEFORE the scrubber, which would clean an empty string happily
+/// and publish an empty artifact.
+///
+/// One predicate, three callers ([`run_contribution`], [`stage_contribution`],
+/// [`preview_batch`]). The preview used to decide this for itself — by not
+/// deciding it at all — and so promised to ship items the publish then held.
+///
+/// An `example` is deliberately not consulted: it illustrates the shareable
+/// text, it is never the shareable text.
+fn nothing_shareable(it: &ShareBatchItem) -> bool {
+    it.body.trim().is_empty()
+}
+
 /// Build the publish-safe artifact for one memory routed to one destination, or
 /// return [`ItemPlan::Held`] when the confidentiality gate refuses it. DB-free
 /// and pure w.r.t. the (mockable) generalizer — the confidentiality enforcement
@@ -272,7 +289,8 @@ async fn build_artifact_for_target<G: Generalizer>(
     let payload = payload_for(kind);
     // A stable signature over the SOURCE text keys a held/queued outbox row even
     // when no safe artifact could be built.
-    let source_signature = artifact_signature(kind, &item.title, &item.body, &payload);
+    let source_signature =
+        artifact_signature(kind, &item.title, &item.body, item.example.as_deref(), &payload);
     let held = || ItemPlan::Held { signature: source_signature.clone() };
 
     // The title is always run through the deterministic strip (short, name-like —
@@ -282,14 +300,31 @@ async fn build_artifact_for_target<G: Generalizer>(
         Err(_) => return held(),
     };
 
+    // The example takes the SAME deterministic path as the title in every branch:
+    // it is model-written text heading for a remote, and the credit posture that
+    // varies below is about the body, not about how hard we check. It is checked
+    // once here rather than per-branch so no branch can be added that forgets.
+    //
+    // Residual risk in the example holds the WHOLE item rather than dropping just
+    // the example: an illustration meant to be invented, yet carrying something
+    // that looks like a live secret, means the generation itself is not
+    // trustworthy — the remedy is to regenerate, not to ship the rest quietly.
+    let example = match item.example.as_deref() {
+        Some(ex) => match Dereferenced::new(ex, ctx) {
+            Ok(d) => Some(d.into_text()),
+            Err(_) => return held(),
+        },
+        None => None,
+    };
+
     let global = is_global_dojo(&membership.tenant_key);
     // Every branch strips the source (the deterministic `Dereferenced::new`, or
     // the global anonymiser which strips): source-dereference is always-on, not
     // a stored flag. The branches differ only in CREDIT posture.
-    let (body, attribution) = if dereference {
+    let (body, attribution, polished_example) = if dereference {
         // CLIENT — anonymous credit, no rotating id. Fail closed: residual risk → held.
         match Dereferenced::new(&item.body, ctx) {
-            Ok(d) => (d.into_text(), anonymous_attribution()),
+            Ok(d) => (d.into_text(), anonymous_attribution(), None),
             Err(_) => return held(),
         }
     } else if global {
@@ -304,7 +339,7 @@ async fn build_artifact_for_target<G: Generalizer>(
         )
         .await
         {
-            Ok(a) => (a.text, a.attribution),
+            Ok(a) => (a.text, a.attribution, a.example),
             Err(_) => return held(),
         }
     } else {
@@ -312,13 +347,20 @@ async fn build_artifact_for_target<G: Generalizer>(
         // memory is already generalised; the strip is a no-op in the happy path,
         // but a surviving raw identifier holds the item rather than shipping it.
         match Dereferenced::new(&item.body, ctx) {
-            Ok(d) => (d.into_text(), named_attribution()),
+            Ok(d) => (d.into_text(), named_attribution(), None),
             Err(_) => return held(),
         }
     };
 
+    // The memory's own example wins. The global polish's example is only a
+    // fallback for a memory generalised before examples existed: that model call
+    // is already paid for on this path and its output cleared the same
+    // deterministic re-check, so it illustrates rather than leaving a gap. No
+    // other branch has a model, so no other branch can fill one.
+    let example = example.or(polished_example);
+
     // Sign over the CHECKED text — the outbox dedups on exactly what ships.
-    let signature = artifact_signature(kind, &title, &body, &payload);
+    let signature = artifact_signature(kind, &title, &body, example.as_deref(), &payload);
     ItemPlan::Publish(Box::new(PublishedArtifact {
         signature,
         tenant_key: membership.tenant_key.clone(),
@@ -326,6 +368,7 @@ async fn build_artifact_for_target<G: Generalizer>(
         kind,
         title,
         body,
+        example,
         payload,
         scope: ArtifactScope { stack: shape.stack.first().cloned(), ..Default::default() },
         attribution,
@@ -547,15 +590,9 @@ where
             continue;
         };
         for it in &loaded.items {
-            // NOTHING GENERALISED = NOTHING SHAREABLE. `batch_share_items` no
-            // longer falls back to the raw memory, so an empty body means no
-            // generalised form exists yet. Refuse here, BEFORE the scrubber:
-            // handing it an empty string would produce a clean scrub of nothing
-            // and publish an empty artifact.
-            //
             // Named distinctly from `HeldResidualRisk` because the remedy is
             // different — this one waits on generation, not on a scrub.
-            if it.body.trim().is_empty() {
+            if nothing_shareable(it) {
                 items.push(ItemOutcome {
                     memory_id: it.memory_id,
                     membership_id: None,
@@ -709,15 +746,9 @@ where
             continue;
         };
         for it in &loaded.items {
-            // NOTHING GENERALISED = NOTHING SHAREABLE. `batch_share_items` no
-            // longer falls back to the raw memory, so an empty body means no
-            // generalised form exists yet. Refuse here, BEFORE the scrubber:
-            // handing it an empty string would produce a clean scrub of nothing
-            // and publish an empty artifact.
-            //
             // Named distinctly from `HeldResidualRisk` because the remedy is
             // different — this one waits on generation, not on a scrub.
-            if it.body.trim().is_empty() {
+            if nothing_shareable(it) {
                 items.push(ItemOutcome {
                     memory_id: it.memory_id,
                     membership_id: None,
@@ -823,7 +854,10 @@ pub async fn contribute_batch(
 pub struct NoLlm;
 
 impl Generalizer for NoLlm {
-    async fn generalize(&self, _text: &str) -> Option<String> {
+    async fn generalize(
+        &self,
+        _text: &str,
+    ) -> Option<crate::api::handlers::knowledge::Generalisation> {
         None
     }
 }
@@ -837,9 +871,22 @@ pub struct ItemPreview {
     pub kind: ArtifactKind,
     pub title: String,
     pub body: String,
+    /// The stored synthetic example that would ship alongside `body`, already
+    /// through the same deterministic check the publish applies.
+    ///
+    /// This is the DETERMINISTIC FLOOR, not a byte-for-byte forecast. The
+    /// preview runs [`NoLlm`] (cheap, model-free); a publish routed to the
+    /// global collective runs the real generalizer, which may rewrite `body`
+    /// and — for a memory generalised before examples existed — supply an
+    /// `example` where the preview showed none. Held items and every named
+    /// destination match exactly; the global route can only ever ADD
+    /// model-written text, and that text passes the same gate shown here.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub example: Option<String>,
     pub attribution: Attribution,
     pub will_dereference: bool,
-    /// `queued` (ships next batch) or `held` (residual risk — won't ship).
+    /// `queued` (ships next batch) or `held` (won't ship — residual risk, or
+    /// nothing generalised yet).
     pub state: &'static str,
 }
 
@@ -876,6 +923,14 @@ pub async fn preview_batch(
     let mut items = Vec::with_capacity(loaded.items.len());
     for it in &loaded.items {
         let kind = artifact_kind_for(&it.memory_type);
+        // The SAME refusal the publish makes, made here too. Without it the
+        // preview told the user an un-generalised memory was `queued` while the
+        // publish held it — a preview that disagrees with the publish is worse
+        // than no preview.
+        if nothing_shareable(it) {
+            items.push(held_preview(it, kind, will_dereference_primary(&loaded)));
+            continue;
+        }
         // Preview against the primary (highest-precedence) destination.
         let preview = match loaded.routing.targets.first() {
             Some(target) => {
@@ -900,29 +955,18 @@ pub async fn preview_batch(
                                 kind,
                                 title: art.title.clone(),
                                 body: art.body.clone(),
+                                example: art.example.clone(),
                                 attribution: art.attribution.clone(),
                                 will_dereference,
                                 state: "queued",
                             },
-                            ItemPlan::Held { .. } => ItemPreview {
-                                memory_id: it.memory_id,
-                                kind,
-                                title: String::new(),
-                                body: String::new(),
-                                attribution: if will_dereference {
-                                    anonymous_attribution()
-                                } else {
-                                    named_attribution()
-                                },
-                                will_dereference,
-                                state: "held",
-                            },
+                            ItemPlan::Held { .. } => held_preview(it, kind, will_dereference),
                         }
                     }
-                    None => held_no_destination(it, kind),
+                    None => held_preview(it, kind, false),
                 }
             }
-            None => held_no_destination(it, kind),
+            None => held_preview(it, kind, false),
         };
         items.push(preview);
     }
@@ -930,14 +974,29 @@ pub async fn preview_batch(
     Ok(BatchPreview { batch_id, destination, cadence: "manual", next_batch_at: None, items })
 }
 
-fn held_no_destination(it: &ShareBatchItem, kind: ArtifactKind) -> ItemPreview {
+/// Whether the primary destination would dereference — needed to describe an
+/// item that is held before a destination is even consulted.
+fn will_dereference_primary(loaded: &LoadedBatch) -> bool {
+    loaded.routing.targets.first().is_some_and(|t| {
+        t.dereference
+            || loaded
+                .memberships
+                .get(&t.membership_id)
+                .is_some_and(|m| is_global_dojo(&m.tenant_key))
+    })
+}
+
+/// A held item as previewed: no text at all. Nothing that will not ship is shown
+/// as if it would, and no unchecked text is echoed back on a refusal path.
+fn held_preview(it: &ShareBatchItem, kind: ArtifactKind, will_dereference: bool) -> ItemPreview {
     ItemPreview {
         memory_id: it.memory_id,
         kind,
         title: String::new(),
         body: String::new(),
-        attribution: named_attribution(),
-        will_dereference: false,
+        example: None,
+        attribution: if will_dereference { anonymous_attribution() } else { named_attribution() },
+        will_dereference,
         state: "held",
     }
 }
@@ -948,6 +1007,9 @@ mod tests {
     use std::collections::HashSet;
     use std::sync::Mutex;
 
+    // The model seam is mocked ONCE, next to the anonymiser it defends. Reused
+    // here so both layers agree on what "the model returned this" looks like.
+    use crate::collective::anonymize::tests::{MockGeneralizer, polish_with};
     use crate::dojo::routing::{RouteTarget, RoutingDecision};
 
     fn ctx() -> ProjectIdentifiers {
@@ -955,17 +1017,19 @@ mod tests {
             project_name: Some("Acme API".into()),
             client_name: Some("Acme Corp".into()),
             repo_names: vec!["acme-api".into()],
-            folder_paths: vec!["/Users/jerry/work/acme-api".into()],
+            folder_paths: vec!["/Users/dev/work/acme-api".into()],
             session_ids: vec!["s-9931".into()],
             person_names: vec!["Jane Doe".into()],
         }
     }
 
-    fn contributor() -> ContributorIdentity {
+    // `pub(super)` so the sibling test module reuses the same fixtures and the
+    // same leak assertions rather than growing a second copy.
+    pub(super) fn contributor() -> ContributorIdentity {
         ContributorIdentity { user_key: "local-user-secret".into() }
     }
 
-    fn membership(kind: &str, tenant: &str) -> DojoMembership {
+    pub(super) fn membership(kind: &str, tenant: &str) -> DojoMembership {
         DojoMembership {
             id: Uuid::new_v4(),
             registry_url: "http://localhost:7755".into(),
@@ -989,11 +1053,20 @@ mod tests {
             memory_id: Uuid::new_v4(),
             title: title.into(),
             body: body.into(),
+            example: None,
             memory_type: mtype.into(),
         }
     }
 
-    fn loaded(m: DojoMembership, dereference: bool, items: Vec<ShareBatchItem>) -> LoadedBatch {
+    fn item_with_example(title: &str, body: &str, example: &str, mtype: &str) -> ShareBatchItem {
+        ShareBatchItem { example: Some(example.into()), ..item(title, body, mtype) }
+    }
+
+    pub(super) fn loaded(
+        m: DojoMembership,
+        dereference: bool,
+        items: Vec<ShareBatchItem>,
+    ) -> LoadedBatch {
         let mid = m.id;
         let kind = MembershipKind::from_db_str(&m.kind).unwrap();
         LoadedBatch {
@@ -1010,22 +1083,22 @@ mod tests {
     }
 
     #[derive(Clone, Copy)]
-    enum Behavior {
+    pub(super) enum Behavior {
         Ok,
         Network,
         Bad4xx,
     }
 
-    struct RecordingPublisher {
+    pub(super) struct RecordingPublisher {
         calls: Mutex<Vec<(Uuid, PublishedArtifact)>>,
         behavior: Behavior,
     }
 
     impl RecordingPublisher {
-        fn new(behavior: Behavior) -> Self {
+        pub(super) fn new(behavior: Behavior) -> Self {
             Self { calls: Mutex::new(Vec::new()), behavior }
         }
-        fn published(&self) -> Vec<PublishedArtifact> {
+        pub(super) fn published(&self) -> Vec<PublishedArtifact> {
             self.calls.lock().unwrap().iter().map(|(_, a)| a.clone()).collect()
         }
     }
@@ -1050,9 +1123,9 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct MemOutbox {
-        sent: Mutex<HashSet<(Uuid, String)>>,
-        states: Mutex<Vec<(Uuid, String, OutboxState)>>,
+    pub(super) struct MemOutbox {
+        pub(super) sent: Mutex<HashSet<(Uuid, String)>>,
+        pub(super) states: Mutex<Vec<(Uuid, String, OutboxState)>>,
     }
 
     impl Outbox for MemOutbox {
@@ -1083,12 +1156,189 @@ mod tests {
         }
     }
 
-    fn no_identifier(text: &str) {
+    pub(super) fn no_identifier(text: &str) {
         let low = text.to_ascii_lowercase();
         assert!(!low.contains("acme"), "leaked project/client/repo name: {text:?}");
         assert!(!low.contains("jane"), "leaked person name: {text:?}");
-        assert!(!text.contains("/Users/"), "leaked path: {text:?}");
+        assert!(!text.contains("/Users/dev"), "leaked path: {text:?}");
         assert!(!low.contains("s-9931"), "leaked session id: {text:?}");
+    }
+
+    // ── the synthetic example rides to the Dōjō, under the same gate ─────────
+
+    #[tokio::test]
+    async fn a_published_artifact_carries_the_synthetic_example() {
+        let l = loaded(
+            membership("employer", "github/acme-corp"),
+            false,
+            vec![item_with_example(
+                "use ci gates",
+                "Gate merges on a green pipeline.",
+                "A team merges on a red build before a long weekend and loses Monday to a bisect.",
+                "convention",
+            )],
+        );
+        let pubr = RecordingPublisher::new(Behavior::Ok);
+        let obx = MemOutbox::default();
+        let out = run_contribution(&l, &pubr, &obx, &NoLlm, &contributor(), 1).await;
+
+        assert_eq!(out.published, 1);
+        let art = &pubr.published()[0];
+        assert_eq!(
+            art.example.as_deref(),
+            Some(
+                "A team merges on a red build before a long weekend and loses Monday to a bisect."
+            ),
+        );
+        // The example is part of what ships, so it must be part of what the
+        // outbox dedups on — otherwise a regenerated example never leaves.
+        assert_eq!(art.signature, art.compute_signature(), "the example is in the signature");
+    }
+
+    #[tokio::test]
+    async fn an_item_with_no_example_publishes_without_one() {
+        let l = loaded(
+            membership("employer", "github/acme-corp"),
+            false,
+            vec![item("use ci gates", "Gate merges on a green pipeline.", "convention")],
+        );
+        let pubr = RecordingPublisher::new(Behavior::Ok);
+        let obx = MemOutbox::default();
+        let out = run_contribution(&l, &pubr, &obx, &NoLlm, &contributor(), 1).await;
+        assert_eq!(out.published, 1);
+        assert_eq!(pubr.published()[0].example, None, "no illustration is not a failure");
+    }
+
+    #[tokio::test]
+    async fn an_example_with_residual_risk_holds_the_whole_item() {
+        // The example is LLM-written text heading for a remote, so it goes
+        // through the SAME deterministic gate as the title and the body. A
+        // "synthetic" example that carries a live secret means the generation is
+        // not trustworthy — hold the item and make the user regenerate it.
+        let l = loaded(
+            membership("employer", "github/acme-corp"),
+            false,
+            vec![item_with_example(
+                "use ci gates",
+                "Gate merges on a green pipeline.",
+                "For instance, export ACME_PROD_DB_PASSWORD before the deploy step.",
+                "convention",
+            )],
+        );
+        let pubr = RecordingPublisher::new(Behavior::Ok);
+        let obx = MemOutbox::default();
+        let out = run_contribution(&l, &pubr, &obx, &NoLlm, &contributor(), 1).await;
+
+        assert_eq!(out.held, 1);
+        assert_eq!(out.published, 0);
+        assert!(matches!(out.items[0].result, ItemResult::HeldResidualRisk));
+        assert!(pubr.published().is_empty(), "a risky example must not drag the body out with it");
+    }
+
+    #[tokio::test]
+    async fn a_known_identifier_in_the_example_is_stripped_like_the_title() {
+        // A KNOWN token (project/repo/person/path) is removable, so the strip
+        // removes it and the item still ships — same treatment as the title.
+        let l = loaded(
+            membership("employer", "github/acme-corp"),
+            false,
+            vec![item_with_example(
+                "use ci gates",
+                "Gate merges on a green pipeline.",
+                "Jane Doe merged acme-api from /Users/dev/work/acme-api on a red build.",
+                "convention",
+            )],
+        );
+        let pubr = RecordingPublisher::new(Behavior::Ok);
+        let obx = MemOutbox::default();
+        let out = run_contribution(&l, &pubr, &obx, &NoLlm, &contributor(), 1).await;
+
+        assert_eq!(out.published, 1);
+        let art = &pubr.published()[0];
+        no_identifier(art.example.as_deref().expect("the example still ships, stripped"));
+    }
+
+    #[tokio::test]
+    async fn a_global_publish_carries_the_example_through_the_anonymiser() {
+        let l = loaded(
+            membership("community", GLOBAL_DOJO_TENANT_KEY),
+            false,
+            vec![item_with_example(
+                "write tests",
+                "Write the failing test first.",
+                "A team on acme-api skips the red step and ships a test that never fails.",
+                "convention",
+            )],
+        );
+        let pubr = RecordingPublisher::new(Behavior::Ok);
+        let obx = MemOutbox::default();
+        let out = run_contribution(&l, &pubr, &obx, &NoLlm, &contributor(), 1).await;
+
+        assert_eq!(out.published, 1);
+        let art = &pubr.published()[0];
+        no_identifier(art.example.as_deref().expect("the example survives, stripped"));
+        no_identifier(&art.body);
+    }
+
+    #[tokio::test]
+    async fn a_legacy_memory_with_no_example_gets_one_from_the_global_polish() {
+        // Every memory generalised BEFORE `generalised_example` existed has a
+        // NULL example. On the global route the polish model is already being
+        // paid for, so its example fills the gap rather than shipping a rule
+        // with no illustration. This is the only branch that can fill one — no
+        // other destination has a model.
+        //
+        // It is also the one place the publish can carry text the deterministic
+        // `NoLlm` preview did not show; see `ItemPreview::example`.
+        let l = loaded(
+            membership("community", GLOBAL_DOJO_TENANT_KEY),
+            false,
+            vec![item("write tests", "Write the failing test first.", "convention")],
+        );
+        let pubr = RecordingPublisher::new(Behavior::Ok);
+        let obx = MemOutbox::default();
+        let g = MockGeneralizer {
+            response: polish_with(
+                "Write the failing test before the implementation.",
+                "A team writes the assertion after the code and never sees it fail.",
+            ),
+        };
+        let out = run_contribution(&l, &pubr, &obx, &g, &contributor(), 1).await;
+
+        assert_eq!(out.published, 1);
+        assert_eq!(
+            pubr.published()[0].example.as_deref(),
+            Some("A team writes the assertion after the code and never sees it fail."),
+            "the polish's example must reach the artifact, not be computed and dropped",
+        );
+    }
+
+    #[tokio::test]
+    async fn a_stored_example_is_not_replaced_by_the_polish() {
+        // The memory's own example was written against the memory's own
+        // situation. A polish example is a gap-filler, never an override.
+        let l = loaded(
+            membership("community", GLOBAL_DOJO_TENANT_KEY),
+            false,
+            vec![item_with_example(
+                "write tests",
+                "Write the failing test first.",
+                "A team ships a test that never fails and learns nothing from it.",
+                "convention",
+            )],
+        );
+        let pubr = RecordingPublisher::new(Behavior::Ok);
+        let obx = MemOutbox::default();
+        let g = MockGeneralizer {
+            response: polish_with("Write the failing test first.", "SOME OTHER ILLUSTRATION"),
+        };
+        let out = run_contribution(&l, &pubr, &obx, &g, &contributor(), 1).await;
+
+        assert_eq!(out.published, 1);
+        assert_eq!(
+            pubr.published()[0].example.as_deref(),
+            Some("A team ships a test that never fails and learns nothing from it."),
+        );
     }
 
     // ── the HARD confidentiality gate ────────────────────────────────────────
@@ -1416,6 +1666,9 @@ mod tests {
 
 #[cfg(test)]
 mod nothing_generalised_is_nothing_shareable {
+    use super::tests::{
+        Behavior, MemOutbox, RecordingPublisher, contributor, loaded, membership, no_identifier,
+    };
     use super::*;
 
     /// The raw memory is the LOCAL reference and is never a candidate for
@@ -1431,8 +1684,59 @@ mod nothing_generalised_is_nothing_shareable {
             memory_id: Uuid::nil(),
             title: "t".into(),
             body: body.into(),
+            example: None,
             memory_type: "convention".into(),
         }
+    }
+
+    #[test]
+    fn the_publish_stage_and_preview_paths_agree_on_nothing_shareable() {
+        // The preview used to answer this question by itself — it had no
+        // empty-body guard, so it reported `queued` for an item the publish then
+        // held. One predicate, three callers: they cannot drift apart again.
+        assert!(nothing_shareable(&item("")), "no generalised text → nothing shareable");
+        assert!(nothing_shareable(&item("   \n ")), "whitespace is not a body");
+        assert!(!nothing_shareable(&item("Gate merges on a green pipeline.")));
+        // An example is an illustration, never the thing being shared: it can
+        // never make an un-generalised memory shippable on its own.
+        let example_only = ShareBatchItem { example: Some("an illustration".into()), ..item("") };
+        assert!(nothing_shareable(&example_only), "an example alone is not a shareable memory");
+    }
+
+    /// The predicate above is only worth having if the PUBLISH path actually
+    /// consults it. Without the call-site guard an empty body reaches the
+    /// scrubber, which cleans an empty string happily, and the run reports
+    /// `published` for an artifact with no text in it.
+    #[tokio::test]
+    async fn the_publish_path_refuses_an_un_generalised_memory_before_the_scrubber() {
+        let l = loaded(membership("employer", "github/acme-corp"), false, vec![item("")]);
+        let pubr = RecordingPublisher::new(Behavior::Ok);
+        let obx = MemOutbox::default();
+        let out = run_contribution(&l, &pubr, &obx, &NoLlm, &contributor(), 1).await;
+
+        assert_eq!(out.published, 0, "an empty artifact must never be published");
+        assert_eq!(out.held, 1);
+        assert!(matches!(out.items[0].result, ItemResult::HeldNotGeneralised));
+        assert!(pubr.published().is_empty(), "nothing reached the publisher");
+    }
+
+    /// The cadence scheduler stages without a publisher, so the same refusal has
+    /// to be made independently there — an empty artifact staged as `pending` is
+    /// an empty artifact that a later manual C6 send will happily ship.
+    #[tokio::test]
+    async fn the_stage_path_refuses_an_un_generalised_memory_before_the_scrubber() {
+        let l = loaded(membership("employer", "github/acme-corp"), false, vec![item("")]);
+        let obx = MemOutbox::default();
+        let out = stage_contribution(&l, &obx, &NoLlm, &contributor(), 1).await;
+
+        assert_eq!(out.staged, 0, "an empty artifact must never be staged");
+        assert_eq!(out.held, 1);
+        assert!(matches!(out.items[0].result, ItemResult::HeldNotGeneralised));
+        // Pinning a KNOWN LIMIT, not endorsing it: the refusal happens before
+        // `build_artifact_for_target`, so unlike `HeldResidualRisk` it writes no
+        // outbox row and leaves no durable trace — it is reported in the outcome
+        // only. Parked in docs/plan/decisions.md.
+        assert!(obx.states.lock().unwrap().is_empty(), "no artifact was built, so no outbox row");
     }
 
     #[test]
@@ -1452,6 +1756,113 @@ mod nothing_generalised_is_nothing_shareable {
             json.contains("held_not_generalised"),
             "the refusal must name itself on the wire, got {json}"
         );
+    }
+
+    /// DB-gated end-to-end: what `GET /api/share-review/next-batch` shows must be
+    /// what the publish would actually do. Covers both halves at once — an
+    /// un-generalised memory previews as `held` (it used to preview as `queued`
+    /// and then be held at publish), and a generalised one previews with its
+    /// synthetic example, never with the raw `content`.
+    #[tokio::test]
+    async fn the_preview_shows_the_example_and_holds_what_the_publish_would_hold() {
+        use crate::db::pg_store::{InsertMemory, NewDojoMembership};
+
+        let Ok(pg) = PgStore::connect_test().await else {
+            return;
+        };
+        let (project, tenant) = ("_test:dojo:preview_example", "github/acme-preview");
+        sqlx_core::query::query("DELETE FROM sensei.projects WHERE name = $1")
+            .bind(project)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+        sqlx_core::query::query("DELETE FROM sensei.dojo_memberships WHERE tenant_key = $1")
+            .bind(tenant)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+
+        let proj = pg.create_project(project, None, None).await.unwrap();
+        let mem = |title: &str| InsertMemory {
+            project_id: Some(proj),
+            scope: "project".into(),
+            scope_filter: None,
+            mtype: "convention".into(),
+            title: title.into(),
+            // Raw, identifying, local-only — it must appear in NO preview field.
+            content: "In acme-api, Jane Doe gated merges at /Users/dev/work/acme-api.".into(),
+            impact: None,
+            tags: vec![],
+            triage_signal: None,
+            status: "active".into(),
+            namespace_id: None,
+            enforcement: None,
+            origin: Some("learned".into()),
+            source_id: None,
+            spine_slot: None,
+            feature: None,
+        };
+        let done = pg.insert_memory(&mem("a generalised one")).await.unwrap();
+        let raw = pg.insert_memory(&mem("b un-generalised one")).await.unwrap();
+        pg.set_memory_generalisation(
+            done,
+            "Gate merges on a green pipeline.",
+            Some(
+                "A team merges on a red build before a long weekend and loses Monday to a bisect.",
+            ),
+        )
+        .await
+        .unwrap()
+        .expect("the memory exists");
+
+        let batch = pg.create_memory_share_batch(&proj, &[done, raw], None).await.unwrap();
+        pg.set_memory_share_batch_status(&batch, "approved", None).await.unwrap();
+
+        let mid = Uuid::new_v4();
+        pg.create_dojo_membership(&NewDojoMembership {
+            id: mid,
+            registry_url: "http://localhost:7755".into(),
+            tenant_key: tenant.into(),
+            dojo_url: format!("http://localhost:7755/{tenant}"),
+            kind: "employer".into(),
+            org_slugs: vec![],
+            role: "contributor".into(),
+            authenticated_via: "device_code".into(),
+            attribution_default: "named".into(),
+            credential_ref: format!("dojo-{}", Uuid::new_v4()),
+            sync_status: "healthy".into(),
+        })
+        .await
+        .unwrap();
+        pg.bind_project_to_dojo(&proj, Some(&mid)).await.unwrap();
+
+        let preview = preview_batch(&pg, batch, &contributor()).await.expect("preview builds");
+        let shown = |id: Uuid| {
+            preview.items.iter().find(|i| i.memory_id == id).expect("item previewed").clone()
+        };
+
+        let generalised = shown(done);
+        assert_eq!(generalised.state, "queued");
+        assert_eq!(
+            generalised.example.as_deref(),
+            Some(
+                "A team merges on a red build before a long weekend and loses Monday to a bisect."
+            ),
+            "the user reviews the example that will actually ship",
+        );
+        no_identifier(&generalised.body);
+        no_identifier(generalised.example.as_deref().unwrap());
+
+        let ungeneralised = shown(raw);
+        assert_eq!(
+            ungeneralised.state, "held",
+            "an un-generalised memory must not be previewed as shipping — the publish holds it",
+        );
+        assert!(ungeneralised.body.is_empty(), "a held item shows no text");
+        assert_eq!(ungeneralised.example, None);
+
+        pg.delete_dojo_membership(&mid).await.unwrap();
+        pg.delete_project(&proj).await.unwrap();
     }
 
     #[test]

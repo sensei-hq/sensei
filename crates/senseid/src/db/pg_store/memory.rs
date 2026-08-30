@@ -554,18 +554,26 @@ impl PgStore {
     }
 
     /// Persist the project-agnostic rewrite of a memory and flag it
-    /// ready-to-share. Sets `generalised_content`, `generalised = true`, and
-    /// bumps `modified_at`. Returns the id when a row was updated, `None` when
-    /// no memory matched. Never panics — a DB error surfaces as `Err` for the
-    /// caller to log; the caller only sets the flag on success (never fabricated).
+    /// ready-to-share. Sets `generalised_content`, its synthetic
+    /// `generalised_example`, `generalised = true`, and bumps `modified_at`.
+    /// Returns the id when a row was updated, `None` when no memory matched.
+    /// Never panics — a DB error surfaces as `Err` for the caller to log; the
+    /// caller only sets the flag on success (never fabricated).
+    ///
+    /// `example` is written unconditionally, including `None`: the illustration
+    /// belongs to the rewrite it was generated with, so a regeneration that
+    /// produced none must clear the old one rather than pair a new rule with a
+    /// stale example that no longer illustrates it.
     pub async fn set_memory_generalisation(
         &self,
         id: uuid::Uuid,
         generalised: &str,
+        example: Option<&str>,
     ) -> Result<Option<uuid::Uuid>, String> {
         let row: Option<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
             "UPDATE sensei.memories
                 SET generalised_content = $2
+                  , generalised_example = $3
                   , generalised         = true
                   , modified_at         = now()
               WHERE id = $1
@@ -573,6 +581,7 @@ impl PgStore {
         )
         .bind(id)
         .bind(generalised)
+        .bind(example)
         .fetch_optional(&self.pool)
         .await
         .map_err(|e| e.to_string())?;

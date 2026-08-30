@@ -232,15 +232,32 @@ pub struct FederatedLink {
 }
 
 /// One member memory of a share batch, in the shape the C6 upstream-contribute
-/// path needs to build an artifact. `body` is the portable text that will be
-/// confidentiality-checked before it leaves the machine: the `generalised_content`
-/// rewrite when present, else the raw `content` (the deterministic dereference
-/// runs regardless — a raw content is still gated, never trusted).
+/// path needs to build an artifact. Every field here goes through the
+/// deterministic confidentiality strip again before it leaves the machine.
+///
+/// `body` and `example` are the generalised lane — a rewrite, never the raw
+/// `content`. `title` is NOT: it is `memories.title` verbatim, and the strip is
+/// the only thing standing between it and the wire. See the field.
 #[derive(Debug, Clone)]
 pub struct ShareBatchItem {
     pub memory_id: uuid::Uuid,
+    /// `memories.title` VERBATIM — there is no `generalised_title`. For an
+    /// `origin='learned'` memory the title is a truncated slice of the prompt
+    /// that produced it, so unlike `body` this field has no rewrite behind it:
+    /// only the deterministic strip runs, which removes KNOWN identifiers
+    /// (project/client/repo/folder/session/person) and pattern-matched
+    /// paths/emails/uuids/secrets — ordinary prose passes through unchanged.
+    /// Generalising the title is tracked in `docs/plan/decisions.md`.
     pub title: String,
+    /// The portable text: the `generalised_content` rewrite, or EMPTY when the
+    /// memory has not been generalised. Deliberately never the raw `content` —
+    /// an empty body means "nothing shareable exists yet" and the caller holds
+    /// the item (`HeldNotGeneralised`) instead of shipping the local reference.
     pub body: String,
+    /// The `generalised_example`: a synthetic illustration of `body`, invented by
+    /// the same rewrite and containing nothing from the raw memory. `None` when
+    /// the rewrite produced none — an artifact simply ships without one.
+    pub example: Option<String>,
     /// `sensei.memory_type` string — drives artifact-kind mapping (pattern → the
     /// `pattern` artifact; everything else → `principle`).
     pub memory_type: String,

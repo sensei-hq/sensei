@@ -1402,9 +1402,14 @@ export interface ShareReviewItem {
   type: DojoUpgradeType | string;
   title: string;
   body: string;
+  /** The synthetic example shipping alongside `body` — invented to illustrate
+   *  the rule, never taken from the raw memory. Absent when the generalisation
+   *  produced none, and always absent on a `held` item. */
+  example?: string;
   attribution: DojoUpgradeAttribution;
   will_dereference: boolean;
-  /** `queued` (ships next batch) or `held` (residual risk — won't ship). */
+  /** `queued` (ships next batch) or `held` (won't ship — residual risk, or
+   *  nothing generalised for this memory yet). */
   state: 'queued' | 'held' | string;
 }
 
