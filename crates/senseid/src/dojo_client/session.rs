@@ -57,24 +57,26 @@ fn provider_refresh_account_for(persona: &str) -> String {
     format!("provider_refresh.{}", persona.to_lowercase())
 }
 
-/// Store GitHub's refresh token, when one was issued.
-pub fn store_provider_refresh_token(
-    persona: &str,
-    token: &str,
-) -> Result<(), crate::gateway_keys::KeychainError> {
-    keychain_write(KEYCHAIN_SERVICE, &provider_refresh_account_for(persona), token)
-}
-
-/// Read GitHub's refresh token — the credential renewal is spent from.
+/// Discard GitHub's refresh token, and any previously stored for this persona.
 ///
-/// Written at the exchange since sign-in existed and, until renewal was built,
-/// never read: the slot held the one thing that could recover a dying session
-/// and nothing anywhere could reach it. `Err` covers both "no such item" and a
-/// Keychain failure; the caller cannot renew either way.
-pub fn load_provider_refresh_token(
+/// This slot used to be WRITTEN at every sign-in and read by nothing. Renewal
+/// now runs the authorize flow Supabase owns rather than redeeming the refresh
+/// token directly, because redeeming needs the App's client secret and that
+/// secret stays in exactly one place — Supabase's provider config. Duplicating
+/// it into a second service would mean recreating the App credential in two
+/// dashboards, with the missed copy failing silently months later.
+///
+/// So this credential can never be spent by anything we run. Keeping it would
+/// leave a 182-day GitHub grant at rest with no consumer and no upside — the
+/// same reasoning that already keeps access tokens out of the Keychain.
+/// Deleting on sign-in also clears the ones earlier builds stored.
+///
+/// A missing item is SUCCESS: this runs on every sign-in, and the common case is
+/// nothing to remove.
+pub fn discard_provider_refresh_token(
     persona: &str,
-) -> Result<String, crate::gateway_keys::KeychainError> {
-    keychain_read(KEYCHAIN_SERVICE, &provider_refresh_account_for(persona))
+) -> Result<(), crate::gateway_keys::KeychainError> {
+    delete_one(&provider_refresh_account_for(persona))
 }
 
 /// What Supabase returns from `/auth/v1/token`.
@@ -97,21 +99,6 @@ pub struct TokenResponse {
     /// truth is "we never asked".
     #[serde(default)]
     pub provider_token: Option<String>,
-    /// GitHub's refresh token, when the OAuth App issues expiring tokens.
-    ///
-    /// This used to say it was "usually absent" because a classic GitHub OAuth
-    /// App's tokens do not expire. Both halves turned out wrong on this install:
-    /// `provider_refresh.default` IS present in the Keychain, and the failure the
-    /// note predicted — "provisioning starts failing weeks later with an
-    /// unexplained 401" — is exactly what happened.
-    ///
-    /// Capturing it was long only half the fix: nothing read it, so the one
-    /// credential that could recover a dying session sat in the Keychain
-    /// unreachable. [`load_provider_refresh_token`] now reads it and
-    /// `POST /v1/you/forge/refresh` spends it — in the dōjō, which holds the
-    /// client secret the daemon deliberately does not.
-    #[serde(default)]
-    pub provider_refresh_token: Option<String>,
     /// The authenticated user, as GoTrue returns it alongside the tokens.
     ///
     /// Carries `identities[]`, which is where the VERIFIED GitHub login and
@@ -357,7 +344,6 @@ mod tests {
             refresh_token: "r".into(),
             expires_in: 3600,
             provider_token: None,
-            provider_refresh_token: None,
             user: None,
         };
         assert_eq!(Session::from_response(&r, 100).expires_at, 3700);
@@ -372,7 +358,6 @@ mod tests {
             refresh_token: "r".into(),
             expires_in: -5,
             provider_token: None,
-            provider_refresh_token: None,
             user: None,
         };
         assert_eq!(Session::from_response(&r, 100).expires_at, 100);
@@ -508,23 +493,34 @@ mod tests {
     }
 
     #[test]
-    fn the_forge_refresh_token_round_trips_through_its_own_slot() {
-        // The write existed from the first sign-in; the READ did not, so the one
-        // credential that can renew a dying session sat in the Keychain with no
-        // code path able to reach it. This pins the pair to the same slot — a
-        // loader reading a different account name returns "not found" forever,
-        // which reads exactly like "no refresh token was ever issued".
-        let persona = "round-trip-test";
-        let token = "ghr_roundtrip_probe";
-        // Skipped rather than failed where the Keychain is unavailable (CI, a
-        // locked login keychain): the assertion is about slot agreement, and a
-        // machine that cannot store secrets is not evidence against it.
-        if store_provider_refresh_token(persona, token).is_err() {
+    fn discarding_the_forge_refresh_token_removes_it_and_leaves_the_others() {
+        // The credential is unspendable under the current design — renewal goes
+        // through Supabase's authorize flow, not `grant_type=refresh_token` —
+        // so sign-in deletes it rather than storing a 182-day GitHub grant that
+        // nothing can use.
+        let persona = "discard-test";
+        // Skipped where the Keychain is unavailable (CI, a locked login
+        // keychain). A machine that cannot store secrets is not evidence.
+        if keychain_write(KEYCHAIN_SERVICE, &provider_refresh_account_for(persona), "ghr_x")
+            .is_err()
+        {
             return;
         }
-        assert_eq!(load_provider_refresh_token(persona).ok().as_deref(), Some(token));
-        // And it must NOT collide with the access-token slot.
-        assert_ne!(provider_refresh_account_for(persona), provider_account_for(persona));
+        let _ = store_provider_token(persona, "gho_keep");
+
+        assert!(discard_provider_refresh_token(persona).is_ok());
+        assert!(
+            keychain_read(KEYCHAIN_SERVICE, &provider_refresh_account_for(persona)).is_err(),
+            "the refresh slot must be gone"
+        );
+        // The ACCESS token is a different credential with a live consumer and
+        // must survive: deleting it here would sign the user out of the forge on
+        // every sign-in.
+        assert_eq!(load_provider_token(persona).ok().as_deref(), Some("gho_keep"));
+
+        // Idempotent — it runs on every sign-in, and usually there is nothing
+        // to remove. A missing item must not be an error.
+        assert!(discard_provider_refresh_token(persona).is_ok());
         let _ = clear_session(persona);
     }
 
