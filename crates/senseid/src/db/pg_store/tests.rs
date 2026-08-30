@@ -10967,3 +10967,70 @@ async fn a_user_edit_survives_the_seed_import() {
         "a stale row is exactly what the datafile is allowed to overwrite"
     );
 }
+
+#[tokio::test]
+async fn signing_out_stops_the_persona_being_enumerated_for_sync() {
+    // Sign-out took no `State` and touched no database, so `session_slot` and
+    // `verified_at` both survived it. `signed_in_personas` keys on exactly those
+    // two columns, so the cycle kept listing a persona whose Keychain slot had
+    // just been emptied: every 60s `live_access_token` returned SignedOut, and on
+    // a single-persona install `failures.len() == total` made `tick` return Err.
+    // A deliberate, clean sign-out red-lighted `schedules.dojo_sync` FOREVER,
+    // surfaced in the app as "failing".
+    let s = pg_store().await;
+    let uniq = uuid::Uuid::new_v4();
+    let slot = format!("ztest-signout-{uniq}");
+    let id = s.upsert_persona(&slot, true).await.unwrap();
+    sqlx_core::query::query(
+        "UPDATE sensei.personas SET verified_at = now(), session_slot = $2, \
+                                    github_login = 'ztest-login' WHERE id = $1",
+    )
+    .bind(id)
+    .bind(&slot)
+    .execute(s.pool())
+    .await
+    .unwrap();
+    assert!(
+        s.signed_in_personas().await.unwrap().contains(&slot),
+        "precondition: a signed-in persona is enumerated"
+    );
+
+    let cleared = s.clear_persona_session(&slot).await.unwrap();
+
+    let listed = s.signed_in_personas().await.unwrap();
+    let after: (Option<String>, Option<String>, Option<chrono::DateTime<chrono::Utc>>) =
+        sqlx_core::query_as::query_as(
+            "SELECT session_slot, github_login, verified_at FROM sensei.personas WHERE id = $1",
+        )
+        .bind(id)
+        .fetch_one(s.pool())
+        .await
+        .unwrap();
+    sqlx_core::query::query("DELETE FROM sensei.personas WHERE id = $1")
+        .bind(id)
+        .execute(s.pool())
+        .await
+        .unwrap();
+
+    assert!(cleared, "the row was found and cleared");
+    assert!(!listed.contains(&slot), "a signed-out persona must not be swept up by the cycle");
+    assert_eq!(after.0, None, "the Keychain slot no longer names anything");
+    // The VERIFIED IDENTITY is not destroyed. Which GitHub account this persona
+    // is remains true after a sign-out, and re-deriving it would mean a second
+    // OAuth round trip to learn something already proved. Both columns are
+    // asserted: a mutation probe that nulled `verified_at` passed while only
+    // `github_login` was checked, so half the claim was unguarded.
+    assert_eq!(after.1.as_deref(), Some("ztest-login"), "signing out is not un-verifying");
+    assert!(after.2.is_some(), "the proof of verification survives a sign-out too");
+}
+
+#[tokio::test]
+async fn signing_out_a_slot_nobody_holds_is_reported_as_such() {
+    // The daemon must be able to tell "I forgot your session" from "there was
+    // nothing to forget" — a sign-out that reports success for an unknown slot
+    // would hide a persona/slot mismatch, which is exactly the class of bug the
+    // `session_slot` column was added to fix.
+    let s = pg_store().await;
+    let missing = format!("ztest-absent-{}", uuid::Uuid::new_v4());
+    assert!(!s.clear_persona_session(&missing).await.unwrap());
+}

@@ -209,18 +209,57 @@ pub(crate) async fn callback(
 
 /// `POST /api/auth/signout` — forget the stored session.
 ///
-/// Clearing a rejected token matters: a permanently-invalid one otherwise makes
-/// every refresh fail identically and the daemon retries forever instead of
-/// surfacing "sign in again".
-pub(crate) async fn signout(Query(p): Query<PersonaQuery>) -> Json<serde_json::Value> {
+/// Sign-out has TWO halves, and having only the first is what made it a lie:
+///
+/// 1. **The Keychain.** [`session::clear_session`] removes every slot the
+///    sign-in wrote. This used to clear one of three, leaving
+///    `provider_token.<slot>` — a GitHub credential with `repo` and `read:org`,
+///    verified live still able to read a private repository — at rest with no
+///    code path anywhere that could remove it.
+/// 2. **The registry.** `personas.session_slot` is what
+///    [`crate::db::pg_store::PgStore::signed_in_personas`] enumerates. Leaving it
+///    set meant the sync cycle kept selecting a persona with no credential:
+///    every 60s it resolved `SignedOut`, and on a single-persona install that
+///    made `tick` fail and pinned `schedules.dojo_sync.last_ok = false` forever.
+///
+/// Both are attempted even if the first fails, and both outcomes are reported.
+/// A partial sign-out that answered `ok: true` would be the same class of lie.
+pub(crate) async fn signout(
+    State(state): State<AppState>,
+    Query(p): Query<PersonaQuery>,
+) -> Json<serde_json::Value> {
     let who = p.persona.clone();
-    match tokio::task::spawn_blocking(move || session::clear_refresh_token(&who)).await {
-        Ok(Ok(())) => {
-            Json(serde_json::json!({ "ok": true, "signedIn": false, "persona": p.persona }))
-        }
-        Ok(Err(e)) => Json(serde_json::json!({ "ok": false, "error": e.to_string() })),
-        Err(e) => Json(serde_json::json!({ "ok": false, "error": e.to_string() })),
+    let keychain = match tokio::task::spawn_blocking(move || session::clear_session(&who)).await {
+        Ok(r) => r.map_err(|e| e.to_string()),
+        Err(e) => Err(e.to_string()),
+    };
+    // Not short-circuited on a Keychain failure: a credential we could not delete
+    // is all the more reason to stop the cycle from presenting it every cadence.
+    let registry = state.pg.clear_persona_session(&p.persona).await;
+
+    let errors: Vec<String> = [keychain.as_ref().err().cloned(), registry.as_ref().err().cloned()]
+        .into_iter()
+        .flatten()
+        .collect();
+    if !errors.is_empty() {
+        tracing::error!(persona = %p.persona, errors = ?errors,
+                        "sign-out did not complete — credentials may remain at rest");
     }
+
+    Json(serde_json::json!({
+        "ok": errors.is_empty(),
+        // Only claimable when the Keychain actually gave the credentials up.
+        "signedIn": keychain.is_err(),
+        "persona": p.persona,
+        // Which halves happened, rather than one boolean covering both. `false`
+        // here means the registry held no such slot — not that it failed.
+        "credentialsCleared": keychain.is_ok(),
+        // `false` here is honest-empty ONLY because a failure is reported beside
+        // it: `ok` is false and `errors` names it. Read alone it would be
+        // indistinguishable from "no row held that slot".
+        "registryReleased": registry.unwrap_or(false),
+        "errors": errors,
+    }))
 }
 
 /// `GET /api/auth/status` — is there a USABLE session?
