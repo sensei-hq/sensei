@@ -87,10 +87,18 @@ pub struct TokenResponse {
     pub provider_token: Option<String>,
     /// GitHub's refresh token, when the OAuth App issues expiring tokens.
     ///
-    /// Usually absent: a classic GitHub OAuth App's tokens do not expire, so
-    /// there is nothing to refresh. Captured anyway because an App configured for
-    /// expiring tokens WOULD send one, and silently dropping it would make
-    /// provisioning start failing weeks later with an unexplained 401.
+    /// This used to say it was "usually absent" because a classic GitHub OAuth
+    /// App's tokens do not expire. Both halves turned out wrong on this install:
+    /// `provider_refresh.default` IS present in the Keychain, and the failure the
+    /// note predicted — "provisioning starts failing weeks later with an
+    /// unexplained 401" — is exactly what happened.
+    ///
+    /// Capturing it was never the fix, because NOTHING READS IT. There is no
+    /// `load_provider_refresh_token` and no call anywhere to GitHub's
+    /// `grant_type=refresh_token`. Renewing a GitHub token needs the OAuth app's
+    /// client secret, which the daemon deliberately does not hold, so the refresh
+    /// has to be a dōjō endpoint that does not exist yet. Until then this is a
+    /// stored credential with no consumer.
     #[serde(default)]
     pub provider_refresh_token: Option<String>,
     /// The authenticated user, as GoTrue returns it alongside the tokens.
@@ -117,12 +125,17 @@ pub struct Session {
 }
 
 impl Session {
-    /// Whether the access token should be refreshed before the next call.
+    /// Whether the access token would be due for refresh — REPORTED, not acted on.
     ///
-    /// Refreshes 60 seconds EARLY rather than on expiry. A token that expires
-    /// mid-request fails the request, and the caller cannot tell an expired
-    /// credential from a revoked one — so the retry looks like an auth failure
-    /// rather than a clock boundary.
+    /// The 60-second early margin below guards nothing today, because no access
+    /// token is ever held across calls: `live_session` performs a full network
+    /// refresh on every single use, so the token a caller holds is always seconds
+    /// old. The only non-test consumer is the `needsRefresh` field in
+    /// `GET /api/auth/status`; nothing branches on it.
+    ///
+    /// Kept because the field is honest as a report and the margin is the right
+    /// rule if a caller ever does cache a token — but the doc used to describe it
+    /// as the thing preventing mid-request expiry, which it is not.
     pub fn needs_refresh(&self, now_epoch_secs: i64) -> bool {
         now_epoch_secs >= self.expires_at - 60
     }
