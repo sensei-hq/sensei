@@ -104,9 +104,27 @@ fn sensei_dir() -> PathBuf {
     paths::sensei_dir()
 }
 
+/// What the daemon logs when `RUST_LOG` says nothing.
+///
+/// It ships under a launch agent that sets no `RUST_LOG`
+/// (`homebrew.mxcl.sensei.plist` passes only `HOME` and `PATH`), so this
+/// fallback is the filter it actually runs with — not a developer convenience.
+///
+/// It used to be `tracing_subscriber::fmt::init()`, whose filter is
+/// `EnvFilter::from_default_env()` and whose default directive is ERROR. That
+/// discarded every INFO and WARN the daemon emits: the shipped log held 1008
+/// lines and NOT ONE came from `dojo_sync`, which has 9 `warn!`, 6 `info!` and
+/// no `error!` at all. Every "not swallowed — it is logged" justification in the
+/// sync cycle was void in production, so a failing sync showed a red chip in
+/// Activity Logs and nothing whatsoever about the cause.
+///
+/// `senseid=info` for the daemon's own events; a bare `warn` floor so a
+/// dependency can still report a problem without narrating its progress.
+const DEFAULT_LOG_FILTER: &str = "senseid=info,sensei_bootstrap=warn,warn";
+
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::fmt::init();
+    sensei_bootstrap::tracing_init::install_daemon_console(DEFAULT_LOG_FILTER);
 
     let cli = Cli::parse();
 
@@ -314,5 +332,81 @@ fn clear_logs() {
     match std::fs::write(&log_path, "") {
         Ok(_) => println!("senseid: logs cleared"),
         Err(_) => eprintln!("senseid: no log file to clear"),
+    }
+}
+
+#[cfg(test)]
+mod logging_tests {
+    use tracing_subscriber::EnvFilter;
+    use tracing_subscriber::layer::SubscriberExt;
+
+    /// A writer that keeps what the subscriber emitted, so a test can assert on
+    /// the lines that actually survived filtering rather than on the filter's
+    /// own opinion of itself.
+    #[derive(Clone, Default)]
+    struct Capture(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+    impl std::io::Write for Capture {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap_or_else(|e| e.into_inner()).extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Capture {
+        type Writer = Capture;
+        fn make_writer(&'a self) -> Self::Writer {
+            self.clone()
+        }
+    }
+
+    /// Emit the three lines the sync cycle relies on, under `filter`, and return
+    /// what a console attached to this daemon would have shown.
+    fn emitted_under(filter: EnvFilter) -> String {
+        let cap = Capture::default();
+        let subscriber = tracing_subscriber::registry()
+            .with(filter)
+            .with(tracing_subscriber::fmt::layer().with_writer(cap.clone()).with_ansi(false));
+        tracing::subscriber::with_default(subscriber, || {
+            tracing::info!("dojo_sync: cycle complete");
+            tracing::warn!("scheduled: tick failed");
+            tracing::error!("a real error");
+        });
+        let bytes = cap.0.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        String::from_utf8(bytes).expect("utf8")
+    }
+
+    #[test]
+    fn the_default_filter_keeps_the_lines_that_explain_a_failed_sync() {
+        // The whole cycle justifies its error handling with "not swallowed — it
+        // is logged": `dojo_sync` has 9 warn! and 6 info! and NO error! at all.
+        // Under a filter that admits only ERROR every one of those is discarded,
+        // and the operator is left with a "failing" chip and no cause.
+        let out = emitted_under(EnvFilter::new(super::DEFAULT_LOG_FILTER));
+        assert!(
+            out.contains("dojo_sync: cycle complete"),
+            "INFO from the daemon's own crate must survive the default filter, got: {out:?}"
+        );
+        assert!(
+            out.contains("scheduled: tick failed"),
+            "WARN is how a failed tick explains itself, got: {out:?}"
+        );
+    }
+
+    #[test]
+    fn the_library_default_would_have_discarded_them() {
+        // Regression documentation. `tracing_subscriber::fmt::init()` resolves to
+        // `EnvFilter::from_default_env()`, whose default directive is ERROR, and
+        // the launch agent sets no RUST_LOG. This is what the daemon shipped:
+        // 1008 log lines, ZERO of them from dojo_sync.
+        let shipped = EnvFilter::builder()
+            .with_default_directive(tracing_subscriber::filter::LevelFilter::ERROR.into())
+            .parse_lossy("");
+        let out = emitted_under(shipped);
+        assert!(!out.contains("dojo_sync"), "this is the defect being fixed");
+        assert!(out.contains("a real error"), "only ERROR got through");
     }
 }
