@@ -41,6 +41,10 @@ const DESCRIPTIONS: &[(&str, &str)] = &[
         "dojo_sync",
         "Dōjō sync — maps shared repositories to tenants, fetches the sync plan, and pushes allowed metric rows",
     ),
+    (
+        "forge_token",
+        "Forge-token standing — verifies each persona GitHub token, records expiry, and marks a dead one so the UI can say \"sign in again\"",
+    ),
     ("index_audit", "Index integrity audit (read-only drift check)"),
     ("library_update", "Library-update detection — a new upstream version → a recommendation"),
     ("log_prune", "Structured-log TTL pruning"),
