@@ -293,6 +293,17 @@ install-debug: db-backup crates-debug
 	@# than an incremental one. Stated here so nobody later "fixes" it as an
 	@# oversight. The binaries are already overlaid into the brew prefix above,
 	@# so nothing just built is lost.
+	@#
+	@# `clean-cache` WAS CONSIDERED HERE AND MEASURED, not dismissed. On
+	@# 2026-08-29, target/debug was 49G: deps/ 42G (86%), incremental/ 6.3G,
+	@# everything else under 1G. `clean-cache` prunes only incremental and keeps
+	@# the 5 newest per crate, so it would have left ~43G — above the ceiling.
+	@#
+	@# An age-based sweep of deps/ was measured too and reclaims NOTHING: not one
+	@# of its 55,617 files was even a day old. The 42G is same-day churn — each
+	@# rebuild of a widely-depended-on crate re-emits everything under new
+	@# hashes, and cargo never collects the old ones. There is no stale layer to
+	@# shave, so there is no keep-it-warm-and-small option to find.
 	@echo "Reclaiming the build tree..."
 	@$(MAKE) clean
 
