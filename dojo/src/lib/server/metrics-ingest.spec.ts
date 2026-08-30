@@ -281,6 +281,28 @@ describe('ingestMetrics', () => {
 		expect(db.tables.repository_metrics.rows).toHaveLength(0);
 	});
 
+	it('treats a REVOKED membership as no membership', async () => {
+		// The membership read at the top of `ingestMetrics` calls itself "the
+		// authorization boundary" but did not filter `disabled_at`, so a revoked
+		// member still resolved their former tenant.
+		//
+		// In practice the view gate caught the write, which is why this was not a
+		// leak — but that made the boundary depend entirely on the OTHER check.
+		// Both must hold independently: `all_my_repositories` decides ENTITLEMENT,
+		// and this decides whether the caller is anyone at all here.
+		const t = tables();
+		t.memberships.rows = t.memberships.rows.map((m) =>
+			m.user_id === ALICE ? { ...m, disabled_at: '2026-08-01T00:00:00Z' } : m
+		);
+		const db = fakeDojoDb(t);
+
+		const out = await ingestMetrics(db as never, ALICE, [row()]);
+
+		expect(out.accepted).toBe(0);
+		expect(out.rejected[0].reason).toBe('unknown_repository');
+		expect(db.tables.repository_metrics.rows).toHaveLength(0);
+	});
+
 	it('accepts a repository the plan permits', async () => {
 		const t = tables();
 		t.all_my_repositories = {

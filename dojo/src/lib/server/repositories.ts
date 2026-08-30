@@ -73,12 +73,23 @@ function nameFromKey(repoKey: string): string {
 
 /** The caller's tenants, as `{ id → key }`. One query, reused across every repo
  *  in the batch — and it is also the authorization boundary: a repo can only be
- *  registered into a tenant the caller actually belongs to. */
+ *  registered into a tenant the caller actually belongs to.
+ *
+ *  `disabled_at` is part of that boundary, not decoration. Without it an
+ *  offboarded person's daemon — which keeps running and keeps posting every 60s
+ *  — went on INSERTING rows into `dojo.repositories` for their former
+ *  employer's tenant and receiving the tenant id back. Six other membership
+ *  reads in this codebase already filtered it; this one and `ingestMetrics` did
+ *  not. */
 async function callerTenants(
 	db: DojoClient,
 	principalId: string
 ): Promise<Map<string, string>> {
-	const mem = await db.from('memberships').select('tenant_id').eq('user_id', principalId);
+	const mem = await db
+		.from('memberships')
+		.select('tenant_id')
+		.eq('user_id', principalId)
+		.is('disabled_at', null);
 	if (mem.error) throw new AdminError(500, mem.error.message);
 	const ids = (mem.data ?? []).map((m) => (m as { tenant_id: string }).tenant_id);
 	if (ids.length === 0) return new Map();
