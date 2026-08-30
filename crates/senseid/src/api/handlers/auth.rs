@@ -21,6 +21,7 @@ use std::sync::Mutex;
 
 use crate::api::state::AppState;
 use crate::db::pg_store::ForgeTokenRow;
+use crate::dojo_client::forge_token::{ForgeTokenAction, forge_token_action, token_state_of};
 use crate::dojo_client::{dojo_auth, pkce, session};
 
 /// The in-flight verifier, between the two legs.
@@ -153,7 +154,6 @@ pub(crate) async fn callback(
             // read:org exists for — provisioning cannot list organisations
             // without it, and would report "none" rather than "never asked".
             let provider = tokens.provider_token.clone();
-            let provider_refresh = tokens.provider_refresh_token.clone();
             let stored = tokio::task::spawn_blocking(move || {
                 if let Some(pt) = provider.as_deref() {
                     // Non-fatal: a failed provider-token write costs
@@ -162,14 +162,14 @@ pub(crate) async fn callback(
                         tracing::warn!(error = %e, "could not store the GitHub token");
                     }
                 }
-                if let Some(pr) = provider_refresh.as_deref() {
-                    // Warned, not discarded. This was `let _ =`, unlike the
-                    // provider-token write three lines up, so a failed write of
-                    // the one credential that could renew a dying forge token
-                    // was completely invisible.
-                    if let Err(e) = session::store_provider_refresh_token(&who, pr) {
-                        tracing::warn!(error = %e, "could not store the GitHub refresh token");
-                    }
+                // GitHub's refresh token is deliberately NOT kept. Spending it
+                // needs the App's client secret, which stays in Supabase alone
+                // — so this credential has no consumer here, and a 182-day
+                // grant at rest with no upside is exactly what the Keychain
+                // rules already exclude access tokens for. The delete also
+                // clears what earlier builds stored.
+                if let Err(e) = session::discard_provider_refresh_token(&who) {
+                    tracing::warn!(error = %e, "could not discard the GitHub refresh token");
                 }
                 session::store_refresh_token(&who, &refresh)
             })
@@ -203,8 +203,10 @@ pub(crate) async fn callback(
                     // org read that carries the expiry header has not happened
                     // yet. Reported anyway so the shape matches `status`.
                     let row = forge_row(&state, &persona).await;
-                    let (forge, forge_dead) =
-                        forge_report(row.as_ref().map(Option::as_ref).map_err(Clone::clone));
+                    let forge = forge_report(
+                        row.as_ref().map(Option::as_ref).map_err(Clone::clone),
+                        chrono::Utc::now().timestamp(),
+                    );
                     Json(serde_json::json!({
                         // NOT unconditionally true. The credential stored, but if
                         // the persona did not link there is no `session_slot`, so
@@ -229,11 +231,11 @@ pub(crate) async fn callback(
                         // The forge token's actual standing, recorded by the
                         // scheduled check and by any call that happened to learn
                         // something. `unknown` is real — see the column comment.
-                        "forgeToken": forge,
+                        "forgeToken": forge.report,
                         // The one remedy that fixes a dead forge token. Surfaced
                         // as its own flag so the UI does not have to know that
                         // "dead" is unrecoverable without a sign-in.
-                        "needsSignIn": forge_dead,
+                        "needsSignIn": forge.needs_sign_in,
                         "error": (!will_sync).then_some(
                             "signed in, but this persona is not linked — the sync cycle will not \
                              pick the session up until it is"),
@@ -253,7 +255,28 @@ pub(crate) async fn callback(
     }
 }
 
-/// The forge token's standing, as a status field, plus whether it needs a sign-in.
+/// What `status` says about the forge token.
+pub(crate) struct ForgeReport {
+    /// The `forgeToken` field: `{ state, expiresAt }`, plus `error` when the
+    /// registry could not be read.
+    pub report: serde_json::Value,
+    /// Only a sign-in can fix this. The daemon cannot mint a forge token.
+    pub needs_sign_in: bool,
+    /// The token is alive but near expiry, and the app should re-authorize
+    /// through the dōjō while it still can.
+    ///
+    /// The daemon cannot do this itself. Redeeming a refresh token requires the
+    /// GitHub App's client secret, which lives in ONE place — Supabase's auth
+    /// provider config — and stays there: a second copy in the dōjō would mean
+    /// recreating the App credential in two dashboards, and the copy that got
+    /// missed would fail silently, months later, as an unrenewable token.
+    ///
+    /// So renewal runs the authorize flow Supabase already owns. That needs a
+    /// browser, which is why this is REPORTED rather than performed.
+    pub renewal_due: bool,
+}
+
+/// The forge token's standing, as a status field.
 ///
 /// Shared by [`status`] and the sign-in callback. They ask the same question and
 /// must not answer it differently — the first version of this lived inline in
@@ -273,13 +296,30 @@ pub(crate) async fn callback(
 ///   collapsing them makes a broken registry look like a fresh persona. Never
 ///   `needsSignIn`: the remedy is to fix the daemon's database, not to make the
 ///   user re-authenticate a credential that is probably fine.
-fn forge_report(row: Result<Option<&ForgeTokenRow>, String>) -> (serde_json::Value, bool) {
+///
+/// `renewal_due` is decided by [`forge_token_action`] — the SAME function the
+/// scheduled check runs — so the UI and the worker cannot disagree about when a
+/// token is near enough to expiry to act on.
+fn forge_report(row: Result<Option<&ForgeTokenRow>, String>, now: i64) -> ForgeReport {
     match row {
-        Ok(Some(r)) => {
-            (serde_json::json!({ "state": r.state, "expiresAt": r.expires_at }), r.state == "dead")
-        }
-        Ok(None) => (serde_json::json!({ "state": "unknown", "expiresAt": null }), false),
-        Err(e) => (serde_json::json!({ "state": "unknown", "expiresAt": null, "error": e }), false),
+        Ok(Some(r)) => ForgeReport {
+            report: serde_json::json!({ "state": r.state, "expiresAt": r.expires_at }),
+            needs_sign_in: r.state == "dead",
+            renewal_due: matches!(
+                forge_token_action(r.expires_at, now, token_state_of(&r.state)),
+                ForgeTokenAction::Refresh
+            ),
+        },
+        Ok(None) => ForgeReport {
+            report: serde_json::json!({ "state": "unknown", "expiresAt": null }),
+            needs_sign_in: false,
+            renewal_due: false,
+        },
+        Err(e) => ForgeReport {
+            report: serde_json::json!({ "state": "unknown", "expiresAt": null, "error": e }),
+            needs_sign_in: false,
+            renewal_due: false,
+        },
     }
 }
 
@@ -565,7 +605,7 @@ pub(crate) async fn status(
     // it can refresh cleanly and report `signedIn: true` while every GitHub call
     // 401s, which is exactly what happened for a whole morning.
     let row = forge_row(&state, &p.persona).await;
-    let (forge, forge_dead) = forge_report(row.as_ref().map(Option::as_ref).map_err(Clone::clone));
+    let forge = forge_report(row.as_ref().map(Option::as_ref).map_err(Clone::clone), now);
 
     Json(serde_json::json!({
         "signedIn": auth_user_id.is_some(),
@@ -579,10 +619,15 @@ pub(crate) async fn status(
         "needsRefresh": sess.needs_refresh(now),
         // Whether forge-backed work — org provisioning, repository capture,
         // visibility — will actually succeed right now.
-        "forgeToken": forge,
+        "forgeToken": forge.report,
         // The one remedy that fixes a dead forge token. Its own flag so the UI
         // need not know that `dead` is the state no daemon action can recover.
-        "needsSignIn": forge_dead,
+        "needsSignIn": forge.needs_sign_in,
+        // Alive, but near enough to expiry that the app should re-authorize now
+        // — through `POST /api/auth/signin`, whose authorize flow Supabase
+        // performs with the client secret it already holds. The daemon reports
+        // this rather than acting because the flow needs a browser.
+        "renewalDue": forge.renewal_due,
         "dojo": dojo_url(),
         // Present only when the token could NOT be used — an unusable session is
         // reported as such rather than as a bare signedIn:false.
@@ -820,6 +865,9 @@ mod tests {
         assert!(!sign_in_will_sync(&serde_json::json!({})));
     }
 
+    /// A fixed "now" so margin arithmetic in these tests is readable.
+    const NOW: i64 = 1_788_120_000;
+
     fn row(state: &str, expires_at: Option<i64>) -> ForgeTokenRow {
         ForgeTokenRow { session_slot: "default".into(), state: state.into(), expires_at }
     }
@@ -829,15 +877,49 @@ mod tests {
         // The whole point of the field. `dead` is unrecoverable without the user
         // — the daemon cannot mint a GitHub token — and every other state is
         // either fine or merely not-yet-known, neither of which should nag.
-        let (report, needs_sign_in) = forge_report(Ok(Some(&row("dead", Some(1_788_091_200)))));
-        assert!(needs_sign_in);
-        assert_eq!(report["state"], "dead");
-        assert_eq!(report["expiresAt"], 1_788_091_200_i64);
+        let r = forge_report(Ok(Some(&row("dead", Some(1_788_091_200)))), NOW);
+        assert!(r.needs_sign_in);
+        assert_eq!(r.report["state"], "dead");
+        assert_eq!(r.report["expiresAt"], 1_788_091_200_i64);
 
         for alive in ["active", "unknown", "absent"] {
-            let (_, needs) = forge_report(Ok(Some(&row(alive, None))));
-            assert!(!needs, "{alive} must not ask for a sign-in");
+            assert!(
+                !forge_report(Ok(Some(&row(alive, None))), NOW).needs_sign_in,
+                "{alive} must not ask for a sign-in"
+            );
         }
+    }
+
+    #[test]
+    fn renewal_becomes_due_inside_the_margin_and_not_before() {
+        // The signal that replaced the refresh endpoint. The daemon cannot renew
+        // a forge token unattended — redeeming needs the App's client secret,
+        // which lives in Supabase and stays there — so it REPORTS that renewal
+        // is due and the app runs the authorize flow Supabase already owns.
+        let due = forge_report(Ok(Some(&row("active", Some(NOW + 600)))), NOW);
+        assert!(due.renewal_due, "10 minutes from expiry is inside the margin");
+
+        let not_yet = forge_report(Ok(Some(&row("active", Some(NOW + 6 * 3600)))), NOW);
+        assert!(!not_yet.renewal_due, "6 hours out is not due");
+    }
+
+    #[test]
+    fn a_dead_token_asks_for_a_sign_in_rather_than_a_renewal() {
+        // Renewing a dead token cannot work: the authorize flow still needs the
+        // user, and `needsSignIn` is already the field that says so. Reporting
+        // both would have the UI offer two remedies for one problem.
+        let r = forge_report(Ok(Some(&row("dead", Some(NOW - 60)))), NOW);
+        assert!(r.needs_sign_in);
+        assert!(!r.renewal_due, "a dead token needs a sign-in, not a renewal");
+    }
+
+    #[test]
+    fn an_unknown_expiry_is_not_treated_as_due() {
+        // No deadline recorded means we cannot tell. Claiming renewal is due
+        // would make the app re-authorize on every poll forever.
+        assert!(!forge_report(Ok(Some(&row("active", None))), NOW).renewal_due);
+        assert!(!forge_report(Ok(None), NOW).renewal_due);
+        assert!(!forge_report(Err("db down".into()), NOW).renewal_due);
     }
 
     #[test]
@@ -845,7 +927,7 @@ mod tests {
         // A persona the check has never reached has no recorded state. Reporting
         // `active` would be a fabricated standing; reporting `dead` would nag for
         // a sign-in nothing has established is needed.
-        let (report, needs_sign_in) = forge_report(Ok(None));
+        let ForgeReport { report, needs_sign_in, .. } = forge_report(Ok(None), NOW);
         assert_eq!(report["state"], "unknown");
         assert!(report["expiresAt"].is_null());
         assert!(!needs_sign_in);
@@ -857,7 +939,8 @@ mod tests {
         // Both answer `unknown`, because both genuinely are. But "we have never
         // checked" and "we could not ask" call for different responses, and
         // collapsing them makes a broken registry look like a fresh persona.
-        let (report, needs_sign_in) = forge_report(Err("connection refused".into()));
+        let ForgeReport { report, needs_sign_in, .. } =
+            forge_report(Err("connection refused".into()), NOW);
         assert_eq!(report["state"], "unknown");
         assert_eq!(report["error"], "connection refused");
         // Never on a read failure: the remedy is to fix the daemon's database,
