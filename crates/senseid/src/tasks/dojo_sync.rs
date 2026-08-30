@@ -497,21 +497,52 @@ async fn recapture_and_replan(
     plane: &dyn UserPlane,
     current: user_plane::SyncPlan,
 ) -> Result<user_plane::SyncPlan, (String, user_plane::SyncPlan)> {
-    if let Err(e) = plane.provision(token, provider).await {
-        return Err((e, current));
+    // `provision` now reports the dōjō's OWN verdict on the call, which arrives
+    // as an HTTP 200 either way. Before this, a `{synced:false,
+    // reason:'forge_unreachable'}` body was discarded and this function took its
+    // success branch — announcing a refresh that never happened.
+    let outcome = match plane.provision(token, provider).await {
+        Ok(o) => o,
+        Err(e) => return Err((e, current)),
+    };
+    let plan = match plane.sync_plan(token).await {
+        Ok(p) => p,
+        Err(e) => return Err((e, current)),
+    };
+    // NOT defaulted to zeros. The dōjō omits `visibility` precisely so a pass
+    // that read nothing cannot be mistaken for one that read nothing NEW, and
+    // filling in five zeros here would re-create the ambiguity it avoids.
+    match outcome.visibility {
+        // `captured == 0` is the shape that loops: the denial that triggered
+        // this capture will still be there next cadence, and we will ask again.
+        Some(v) if v.captured == 0 => tracing::warn!(
+            persona,
+            unavailable = v.unavailable,
+            failed = v.failed,
+            deferred = v.deferred,
+            unsupported = v.unsupported,
+            allowed = plan.allowed.len(),
+            denied = plan.denied.len(),
+            "dojo_sync: the forge capture moved nothing — the same denial will return next cycle"
+        ),
+        Some(v) => tracing::info!(
+            persona,
+            captured = v.captured,
+            unavailable = v.unavailable,
+            failed = v.failed,
+            deferred = v.deferred,
+            allowed = plan.allowed.len(),
+            denied = plan.denied.len(),
+            "dojo_sync: refreshed forge visibility and re-read the plan"
+        ),
+        None => tracing::warn!(
+            persona,
+            allowed = plan.allowed.len(),
+            denied = plan.denied.len(),
+            "dojo_sync: the dōjō provisioned but reported no forge capture at all"
+        ),
     }
-    match plane.sync_plan(token).await {
-        Ok(p) => {
-            tracing::info!(
-                persona,
-                allowed = p.allowed.len(),
-                denied = p.denied.len(),
-                "dojo_sync: refreshed forge visibility and re-read the plan"
-            );
-            Ok(p)
-        }
-        Err(e) => Err((e, current)),
-    }
+    Ok(plan)
 }
 
 #[cfg(test)]
@@ -601,8 +632,8 @@ mod tests {
     }
 
     use crate::dojo_client::user_plane::{
-        DeniedRepo, IngestResult, MappedRepo, MetricPush, RegisterResult, RejectedMetric, SyncPlan,
-        UnmappedRepo,
+        DeniedRepo, IngestResult, MappedRepo, MetricPush, ProvisionOutcome, RegisterResult,
+        RejectedMetric, SyncPlan, UnmappedRepo, VisibilityCounts,
     };
     use std::sync::Mutex;
 
@@ -657,11 +688,15 @@ mod tests {
             }
             Ok(self.plan.clone().unwrap_or(SyncPlan { allowed: vec![], denied: vec![] }))
         }
-        async fn provision(&self, _t: &str, _p: &str) -> Result<(), String> {
+        async fn provision(&self, _t: &str, _p: &str) -> Result<ProvisionOutcome, String> {
             *self.provision_calls.lock().unwrap() += 1;
             match &self.provision_err {
                 Some(e) => Err(e.clone()),
-                None => Ok(()),
+                None => Ok(ProvisionOutcome {
+                    synced: true,
+                    reason: None,
+                    visibility: Some(VisibilityCounts { captured: 1, ..Default::default() }),
+                }),
             }
         }
         async fn push_metrics(

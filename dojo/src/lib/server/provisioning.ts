@@ -31,6 +31,7 @@ import { AdminError, slugify, type DojoClient } from './admin-data';
 import {
 	fetchGithubFacts,
 	fetchGithubRepoVisibility,
+	ForgeReadError,
 	type ForgeFacts,
 	type ForgeOrg,
 	type ForgeProvider,
@@ -74,7 +75,7 @@ export interface ProvisionResult {
 	 *  omitted on a partial pass: a silent no-op reading as success is exactly
 	 *  how the original bug stayed invisible. */
 	synced: boolean;
-	reason?: 'no_forge_token' | 'forge_unreachable' | 'no_identity';
+	reason?: 'no_forge_token' | 'forge_unreachable' | 'forge_token_rejected' | 'no_identity';
 	personal: ProvisionedTenant | null;
 	tenants: ProvisionedTenant[];
 	/** Present only when the forge was actually read — a pass with no token, or
@@ -784,10 +785,14 @@ export async function ensureProvisioned(
  *   reason: 'no_forge_token'         not a forge sign-in, or the token has expired
  *                                    out of the session (the ordinary later case)
  *   reason: 'forge_unreachable'      we had a token and the forge would not answer
+ *   reason: 'forge_token_rejected'   the forge answered 401 — the token is dead
  *
- * Collapsing the last two into one "nothing to sync" is precisely the shape that
- * kept the original defect invisible for two days, and they call for different
- * advice: one says "sign in with GitHub", the other says "try again".
+ * Collapsing these into one "nothing to sync" is precisely the shape that kept
+ * the original defect invisible for two days, and they call for different
+ * advice: "sign in with GitHub", "try again", and "sign in again" are three
+ * different instructions. The last split was added after a live incident in
+ * which a revoked grant reported `forge_unreachable`, so the console advised
+ * "try again in a moment" and the daemon retried a dead token every 60s.
  *
  * A failed forge read provisions NO org tenant — an org invented from an
  * unsuccessful read is a governance boundary conjured out of an outage. The
@@ -806,13 +811,21 @@ export async function provisionWithToken(
 	let facts: ForgeFacts;
 	try {
 		facts = await fetchGithubFacts(providerToken, fetchImpl);
-	} catch {
+	} catch (e) {
 		const degraded = await ensureProvisioned(db, principalId, null, fallback);
 		// Keep `no_identity` if that is what actually stopped us — it is a more
 		// specific answer than "the forge was down".
-		return degraded.reason === 'no_identity'
-			? degraded
-			: { ...degraded, reason: 'forge_unreachable' };
+		if (degraded.reason === 'no_identity') return degraded;
+		// 401 is GitHub saying the credential itself is bad: the grant was
+		// revoked, or the token expired. The remedy is a new sign-in, and the
+		// daemon must stop re-sending a corpse every 60s on the strength of
+		// "try again in a moment".
+		//
+		// 403 is deliberately NOT included. GitHub answers 403 for rate limiting
+		// as well as for SSO and scope refusals, and telling a rate-limited user
+		// to sign in again is a wrong remedy that also loses them their session.
+		const rejected = e instanceof ForgeReadError && e.forgeStatus === 401;
+		return { ...degraded, reason: rejected ? 'forge_token_rejected' : 'forge_unreachable' };
 	}
 	const result = await ensureProvisioned(db, principalId, facts, fallback);
 	// AFTER provisioning, deliberately: an org tenant this pass just created is a

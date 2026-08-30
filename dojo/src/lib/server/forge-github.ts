@@ -76,9 +76,29 @@ function nonEmpty(v: unknown): string | null {
 	return typeof v === 'string' && v.trim() ? v.trim() : null;
 }
 
+/**
+ * A forge read that came back non-2xx, carrying the FORGE's status.
+ *
+ * Separate from the 502 we answer our own caller with. "401 — this credential is
+ * dead" and "503 — try again shortly" both reach a caller as a 502, and the
+ * difference between them decides whether the user is told to sign in again or
+ * to wait. Keeping the forge status only inside the message text meant every
+ * consumer had to parse English to recover it, so none did: both collapsed into
+ * `forge_unreachable`, whose console copy is "try again in a moment" — advice
+ * that can never come true for a revoked grant.
+ */
+export class ForgeReadError extends AdminError {
+	constructor(
+		readonly forgeStatus: number,
+		message: string
+	) {
+		super(502, message);
+	}
+}
+
 async function getJson(url: string, token: string, fetchImpl: typeof fetch): Promise<unknown> {
 	const res = await fetchImpl(url, { headers: headers(token) });
-	if (!res.ok) throw new AdminError(502, `GitHub read failed (${res.status}) for ${url}`);
+	if (!res.ok) throw new ForgeReadError(res.status, `GitHub read failed (${res.status}) for ${url}`);
 	return res.json();
 }
 
@@ -151,8 +171,10 @@ export async function fetchGithubOrgs(
  *   null                   404 — this token cannot see the repository (no
  *                          access, or renamed upstream). A definite "we do not
  *                          know", so the caller leaves the row uncaptured.
- *   throws AdminError      any other non-2xx, or a body we cannot read. A FAULT,
- *                          not an answer — and never a defaulted visibility.
+ *   throws ForgeReadError  any other non-2xx — a FAULT, not an answer, and never
+ *                          a defaulted visibility. Carries the forge's status so
+ *                          a dead credential is distinguishable from an outage.
+ *   throws AdminError      a 2xx whose body has no usable `private` field.
  */
 export async function fetchGithubRepoVisibility(
 	owner: string,
@@ -165,7 +187,7 @@ export async function fetchGithubRepoVisibility(
 	const url = `${GITHUB_API}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
 	const res = await fetchImpl(url, { headers: headers(token) });
 	if (res.status === 404) return null;
-	if (!res.ok) throw new AdminError(502, `GitHub read failed (${res.status}) for ${url}`);
+	if (!res.ok) throw new ForgeReadError(res.status, `GitHub read failed (${res.status}) for ${url}`);
 
 	const body = (await res.json()) as Record<string, unknown> | null;
 	// `!body?.private` would read every unreadable response as "public" — the
