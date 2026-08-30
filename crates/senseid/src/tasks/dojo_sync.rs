@@ -57,6 +57,7 @@ use std::sync::Arc;
 use crate::api::handlers::auth::{AuthError, live_access_token};
 use crate::db::pg_store::PgStore;
 use crate::db::pg_store::sync::SyncMark;
+use crate::dojo_client::dojo_auth;
 use crate::dojo_client::settings::dojo_url;
 use crate::dojo_client::user_plane::{self, HttpUserPlane, RepoInput, UserPlane};
 
@@ -157,6 +158,54 @@ async fn sync_one(pg: &PgStore, persona: &str, plane: &dyn UserPlane) -> Result<
     sync_persona(pg, persona, &token, plane).await
 }
 
+/// Whether a user-plane failure is the dōjō refusing the CREDENTIAL itself.
+///
+/// Reuses `dojo_auth`'s classifier rather than matching on message text here.
+/// That classifier already parsed this exact shape — `user_plane`'s errors begin
+/// "dōjō returned {status} for the {what}" — but it had exactly ONE call site in
+/// the workspace, the refresh leg. So a 401 or 403 from `/v1/you/*` was recorded
+/// indistinguishably from a 500: the session was kept, nothing said "sign in
+/// again", and the daemon re-sent into the same refusal every 60s forever.
+///
+/// Narrow on purpose. Only 401/403 are the server's verdict on the credential;
+/// telling a user to re-authenticate over a 5xx sends them to fix an outage they
+/// did not cause.
+fn refuses_the_session(error: &str) -> bool {
+    dojo_auth::status_of(error).is_some_and(dojo_auth::is_rejection)
+}
+
+/// Record a user-plane failure against the plan row, and return the message.
+///
+/// One place for the two obligations that were previously applied unevenly:
+///
+/// - **Record it.** Without a row a failed cycle is indistinguishable from a
+///   cycle with nothing to do. Registration had no such row at all.
+/// - **Classify it.** A refusal names its remedy; a fault does not pretend to.
+///
+/// The bookkeeping write is deliberately NOT `?`: a failed `sync_state` write
+/// must not replace the real error with itself, which would report a storage
+/// problem where the dōjō gave a perfectly clear answer.
+async fn record_plane_failure(
+    pg: &PgStore,
+    mark: &SyncMark<'_>,
+    persona: &str,
+    what: &str,
+    error: String,
+) -> String {
+    let message = match refuses_the_session(&error) {
+        true => {
+            tracing::error!(persona, what, error = %error,
+                            "dojo_sync: the dōjō refused this session — it will not recover on its own");
+            format!("sign in again — {error}")
+        }
+        false => error,
+    };
+    if let Err(be) = pg.mark_sync_error(mark, &message).await {
+        tracing::warn!(persona, what, error = %be, "dojo_sync: could not record the failure");
+    }
+    message
+}
+
 /// One persona's cycle, with the credential and the transport handed in.
 async fn sync_persona(
     pg: &PgStore,
@@ -193,7 +242,18 @@ async fn sync_persona(
         })
         .collect();
 
-    let registered = plane.register_repositories(token, &inputs).await?;
+    // The mark is taken BEFORE the first network call, not just before the plan.
+    // Registration is the first thing that talks to the dōjō, so a `?` here
+    // aborted the persona before any `mark_sync_error` could run — leaving the
+    // row from the last good pass reading `synced` while nothing worked. That is
+    // the exact failure the plan row exists to prevent, and it was unguarded for
+    // the call that fails FIRST when a dōjō is down.
+    let mark = SyncMark { entity: PLAN_ENTITY, key: persona, direction: "pull" };
+
+    let registered = match plane.register_repositories(token, &inputs).await {
+        Ok(r) => r,
+        Err(e) => return Err(record_plane_failure(pg, &mark, persona, "registration", e).await),
+    };
     for m in &registered.mapped {
         match uuid::Uuid::parse_str(&m.tenant_id) {
             // Store what the dōjō said, never a guess: an unparseable tenant id
@@ -220,18 +280,9 @@ async fn sync_persona(
         );
     }
 
-    let mark = SyncMark { entity: PLAN_ENTITY, key: persona, direction: "pull" };
     let plan = match plane.sync_plan(token).await {
         Ok(p) => p,
-        Err(e) => {
-            // Recorded, not just logged: without a row here a failed cycle is
-            // indistinguishable from a cycle with nothing to do. Not `?` — see the
-            // push path below; the plan error is what matters, not the write.
-            if let Err(be) = pg.mark_sync_error(&mark, &e).await {
-                tracing::warn!(persona, error = %be, "could not record the plan failure");
-            }
-            return Err(e);
-        }
+        Err(e) => return Err(record_plane_failure(pg, &mark, persona, "sync plan", e).await),
     };
     for d in &plan.denied {
         tracing::info!(
@@ -662,6 +713,12 @@ mod tests {
         /// Set to make `provision` fail, so the caller's degrade-to-stale path is
         /// exercised rather than assumed.
         provision_err: Option<String>,
+        /// Set to make REGISTRATION fail — the cycle's FIRST network call, and
+        /// the one whose failure left no trace at all.
+        register_err: Option<String>,
+        /// Set to make the PLAN read fail, so the classification of a refusal
+        /// (401/403) against a fault (5xx) is exercised on the real path.
+        plan_err: Option<String>,
     }
 
     #[async_trait::async_trait]
@@ -672,10 +729,16 @@ mod tests {
             r: &[RepoInput<'_>],
         ) -> Result<RegisterResult, String> {
             self.offered.lock().unwrap().extend(r.iter().map(|i| i.repo_key.to_string()));
+            if let Some(e) = &self.register_err {
+                return Err(e.clone());
+            }
             Ok(self.register.clone().unwrap_or(RegisterResult { mapped: vec![], unmapped: vec![] }))
         }
         async fn sync_plan(&self, _t: &str) -> Result<SyncPlan, String> {
             *self.plan_calls.lock().unwrap() += 1;
+            if let Some(e) = &self.plan_err {
+                return Err(e.clone());
+            }
             // Keyed on whether the forge was actually ASKED, not on the call
             // count: the dōjō's answer changes because it captured, and a test
             // that calls `recapture_and_replan` directly makes only one plan
@@ -915,6 +978,110 @@ mod tests {
         .fetch_optional(pg.pool())
         .await
         .unwrap()
+    }
+
+    async fn plan_state(pg: &PgStore, slot: &str) -> Option<(String, Option<String>)> {
+        sqlx_core::query_as::query_as(
+            "SELECT state, last_error FROM sensei.sync_state \
+              WHERE entity = 'dojo_sync_plan' AND entity_key = $1 AND direction = 'pull'",
+        )
+        .bind(slot)
+        .fetch_optional(pg.pool())
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_failed_registration_is_recorded_rather_than_leaving_the_plan_reading_synced() {
+        // Registration is the cycle's FIRST network call, and its failure used to
+        // be a bare `?`. So a dōjō that was down aborted the persona BEFORE the
+        // plan's `mark_sync_error` could run: the row from the last good pass
+        // stayed `synced` and merely went stale. That is precisely the failure the
+        // plan row's own comment says it exists to prevent, applied to the plan
+        // and not to the call before it.
+        let pg = PgStore::connect_test().await.unwrap();
+        let (pid, _key, _m) = seed(&pg).await;
+        let slot = format!("ztest-reg-{}", uuid::Uuid::new_v4());
+        let plane = StubPlane {
+            register_err: Some(
+                "could not reach dōjō for the registration: connection refused".into(),
+            ),
+            ..Default::default()
+        };
+
+        let out = sync_persona(&pg, &slot, "tok", &plane).await;
+        let state = plan_state(&pg, &slot).await;
+        crate::tasks::test_support::cleanup_metrics_fixture(&pg, &pid, None, &[]).await;
+        let _ = sqlx_core::query::query("DELETE FROM sensei.sync_state WHERE entity_key = $1")
+            .bind(&slot)
+            .execute(pg.pool())
+            .await;
+
+        assert!(out.is_err(), "the persona's cycle reports the failure");
+        let (st, err) = state.expect("a failed registration is RECORDED, not just returned");
+        assert_eq!(st, "error");
+        assert!(
+            err.unwrap_or_default().contains("connection refused"),
+            "the transport's own reason is preserved"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_dojo_that_refuses_the_session_says_sign_in_again_rather_than_reading_as_a_5xx() {
+        // `is_rejection` was wired ONLY to the refresh leg. A 401/403 from
+        // `/v1/you/*` came back as a raw string and was recorded exactly like a
+        // 500 — so a revoked principal, a tightened RLS policy or a rotated
+        // service-role key produced an unbounded 60s retry of a request that can
+        // never succeed, while `GET /api/auth/status` kept answering signedIn.
+        let pg = PgStore::connect_test().await.unwrap();
+        let (pid, _key, _m) = seed(&pg).await;
+        let slot = format!("ztest-401-{}", uuid::Uuid::new_v4());
+        let plane = StubPlane {
+            register: Some(RegisterResult { mapped: vec![], unmapped: vec![] }),
+            plan_err: Some("dōjō returned 403 for the sync plan: row-level security".into()),
+            ..Default::default()
+        };
+
+        let out = sync_persona(&pg, &slot, "tok", &plane).await;
+        let state = plan_state(&pg, &slot).await;
+        crate::tasks::test_support::cleanup_metrics_fixture(&pg, &pid, None, &[]).await;
+        let _ = sqlx_core::query::query("DELETE FROM sensei.sync_state WHERE entity_key = $1")
+            .bind(&slot)
+            .execute(pg.pool())
+            .await;
+
+        let e = out.unwrap_err();
+        assert!(e.contains("sign in again"), "a refusal must name its remedy, got: {e}");
+        let (_st, err) = state.expect("recorded");
+        assert!(
+            err.unwrap_or_default().contains("sign in again"),
+            "and the recorded row must carry it too — that row is the durable evidence"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_server_fault_is_not_dressed_up_as_a_credential_problem() {
+        // The other half, and the one that matters more: telling a user to sign
+        // in again over a 500 sends them to re-authenticate for an outage they
+        // did not cause. Only 401/403 are the server's verdict on the credential.
+        let pg = PgStore::connect_test().await.unwrap();
+        let (pid, _key, _m) = seed(&pg).await;
+        let slot = format!("ztest-500-{}", uuid::Uuid::new_v4());
+        let plane = StubPlane {
+            plan_err: Some("dōjō returned 500 for the sync plan: boom".into()),
+            ..Default::default()
+        };
+
+        let out = sync_persona(&pg, &slot, "tok", &plane).await;
+        crate::tasks::test_support::cleanup_metrics_fixture(&pg, &pid, None, &[]).await;
+        let _ = sqlx_core::query::query("DELETE FROM sensei.sync_state WHERE entity_key = $1")
+            .bind(&slot)
+            .execute(pg.pool())
+            .await;
+
+        let e = out.unwrap_err();
+        assert!(!e.contains("sign in again"), "a 5xx is not a rejection, got: {e}");
+        assert!(e.contains("boom"), "and the server's own reason survives");
     }
 
     #[tokio::test]
