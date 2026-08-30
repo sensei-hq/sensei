@@ -73,11 +73,28 @@ pub fn forge_token_action(
         TokenState::Dead | TokenState::Absent => ForgeTokenAction::Skip,
         TokenState::Active => match expires_at {
             Some(exp) if now >= exp => ForgeTokenAction::VerifyAndMarkDead,
-            Some(_) => ForgeTokenAction::Refresh,
+            // Near the end of its life — renew now, while the refresh can still
+            // be spent. NOT on every run: see `REFRESH_MARGIN_SECS`.
+            Some(exp) if exp - now <= REFRESH_MARGIN_SECS => ForgeTokenAction::Refresh,
+            // Alive with hours left. Still worth asking about: an expiry cannot
+            // predict a REVOCATION, and a probe is one cheap call.
+            Some(_) => ForgeTokenAction::Verify,
             None => ForgeTokenAction::Verify,
         },
     }
 }
+
+/// How close to expiry a token must be before a refresh is spent on it.
+///
+/// Two competing costs. Refreshing too EAGERLY redeems on every run — GitHub
+/// rotates the refresh token each time, so a response lost in flight leaves the
+/// daemon holding a token GitHub has already replaced, and the only recovery is
+/// a sign-in. Refreshing too LATE misses the window entirely.
+///
+/// One hour against the 1800s schedule gives two runs inside the window, so a
+/// single missed pass — a suspended laptop, a slow tick, a restart — does not
+/// cost the renewal. Measured lifetime is 8h, so this renews in the last eighth.
+pub const REFRESH_MARGIN_SECS: i64 = 3600;
 
 #[cfg(test)]
 mod forge_token_decision {
@@ -95,6 +112,59 @@ mod forge_token_decision {
         assert_eq!(
             forge_token_action(Some(8 * H), 7 * H, TokenState::Active),
             ForgeTokenAction::Refresh
+        );
+    }
+
+    #[test]
+    fn a_token_with_hours_left_is_verified_rather_than_refreshed() {
+        // The rule this function had at first was "alive and not yet expired ->
+        // Refresh", which only looked right while refresh was unimplemented.
+        // GitHub ROTATES the refresh token on every redemption, and the check
+        // runs every 30 minutes: an 8h token would have been redeemed ~16 times
+        // per lifetime, each rotation a chance to lose the new token to a dropped
+        // response and strand the user at a sign-in prompt.
+        //
+        // Verifying is the cheap thing that is still worth doing — it catches a
+        // revocation the expiry cannot predict.
+        assert_eq!(
+            forge_token_action(Some(8 * H), H, TokenState::Active),
+            ForgeTokenAction::Verify
+        );
+    }
+
+    #[test]
+    fn the_refresh_window_is_wider_than_the_check_interval() {
+        // The window must span more than one tick or the only run inside it can
+        // be missed — the daemon asleep, a slow pass, a machine suspended — and
+        // the next run finds the token already dead. Two chances, minimum.
+        //
+        // The interval is asserted against the SEEDED value in
+        // `database/import/staging/schedules.jsonl`, not a constant restated
+        // here: a copy would keep agreeing with itself while someone shortens
+        // the real schedule to 30 minutes and silently leaves one chance to
+        // catch the window.
+        let seed = include_str!("../../../../database/import/staging/schedules.jsonl");
+        let line = seed
+            .lines()
+            .find(|l| l.contains("\"forge_token\""))
+            .expect("the forge_token schedule must be seeded");
+        let interval: i64 = serde_json::from_str::<serde_json::Value>(line)
+            .expect("a seed line must be JSON")["interval_secs"]
+            .as_i64()
+            .expect("interval_secs must be a number");
+        assert!(
+            REFRESH_MARGIN_SECS >= 2 * interval,
+            "margin {REFRESH_MARGIN_SECS}s must cover two runs of the seeded {interval}s schedule"
+        );
+        // Just inside the window: refresh.
+        assert_eq!(
+            forge_token_action(Some(8 * H), 8 * H - REFRESH_MARGIN_SECS + 1, TokenState::Active),
+            ForgeTokenAction::Refresh
+        );
+        // Just outside it: not yet.
+        assert_eq!(
+            forge_token_action(Some(8 * H), 8 * H - REFRESH_MARGIN_SECS - 1, TokenState::Active),
+            ForgeTokenAction::Verify
         );
     }
 
