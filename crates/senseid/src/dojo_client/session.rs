@@ -65,6 +65,18 @@ pub fn store_provider_refresh_token(
     keychain_write(KEYCHAIN_SERVICE, &provider_refresh_account_for(persona), token)
 }
 
+/// Read GitHub's refresh token — the credential renewal is spent from.
+///
+/// Written at the exchange since sign-in existed and, until renewal was built,
+/// never read: the slot held the one thing that could recover a dying session
+/// and nothing anywhere could reach it. `Err` covers both "no such item" and a
+/// Keychain failure; the caller cannot renew either way.
+pub fn load_provider_refresh_token(
+    persona: &str,
+) -> Result<String, crate::gateway_keys::KeychainError> {
+    keychain_read(KEYCHAIN_SERVICE, &provider_refresh_account_for(persona))
+}
+
 /// What Supabase returns from `/auth/v1/token`.
 #[derive(Debug, Clone, Deserialize)]
 pub struct TokenResponse {
@@ -93,12 +105,11 @@ pub struct TokenResponse {
     /// note predicted — "provisioning starts failing weeks later with an
     /// unexplained 401" — is exactly what happened.
     ///
-    /// Capturing it was never the fix, because NOTHING READS IT. There is no
-    /// `load_provider_refresh_token` and no call anywhere to GitHub's
-    /// `grant_type=refresh_token`. Renewing a GitHub token needs the OAuth app's
-    /// client secret, which the daemon deliberately does not hold, so the refresh
-    /// has to be a dōjō endpoint that does not exist yet. Until then this is a
-    /// stored credential with no consumer.
+    /// Capturing it was long only half the fix: nothing read it, so the one
+    /// credential that could recover a dying session sat in the Keychain
+    /// unreachable. [`load_provider_refresh_token`] now reads it and
+    /// `POST /v1/you/forge/refresh` spends it — in the dōjō, which holds the
+    /// client secret the daemon deliberately does not.
     #[serde(default)]
     pub provider_refresh_token: Option<String>,
     /// The authenticated user, as GoTrue returns it alongside the tokens.
@@ -494,6 +505,27 @@ mod tests {
         let on_rejection = refresh_accounts_for("default");
         assert!(!on_rejection.contains(&provider_account_for("default")));
         assert!(!on_rejection.contains(&provider_refresh_account_for("default")));
+    }
+
+    #[test]
+    fn the_forge_refresh_token_round_trips_through_its_own_slot() {
+        // The write existed from the first sign-in; the READ did not, so the one
+        // credential that can renew a dying session sat in the Keychain with no
+        // code path able to reach it. This pins the pair to the same slot — a
+        // loader reading a different account name returns "not found" forever,
+        // which reads exactly like "no refresh token was ever issued".
+        let persona = "round-trip-test";
+        let token = "ghr_roundtrip_probe";
+        // Skipped rather than failed where the Keychain is unavailable (CI, a
+        // locked login keychain): the assertion is about slot agreement, and a
+        // machine that cannot store secrets is not evidence against it.
+        if store_provider_refresh_token(persona, token).is_err() {
+            return;
+        }
+        assert_eq!(load_provider_refresh_token(persona).ok().as_deref(), Some(token));
+        // And it must NOT collide with the access-token slot.
+        assert_ne!(provider_refresh_account_for(persona), provider_account_for(persona));
+        let _ = clear_session(persona);
     }
 
     #[test]
