@@ -174,7 +174,8 @@ fn refuses_the_session(error: &str) -> bool {
     dojo_auth::status_of(error).is_some_and(dojo_auth::is_rejection)
 }
 
-/// Record a user-plane failure against the plan row, and return the message.
+/// Record a user-plane failure against every row it bears on, and return the
+/// message.
 ///
 /// One place for the two obligations that were previously applied unevenly:
 ///
@@ -182,12 +183,18 @@ fn refuses_the_session(error: &str) -> bool {
 ///   cycle with nothing to do. Registration had no such row at all.
 /// - **Classify it.** A refusal names its remedy; a fault does not pretend to.
 ///
+/// Takes MARKS rather than one mark because the cycle's three network calls are
+/// scoped differently: registration and the plan are per persona, the push is
+/// per repository in the batch. The push previously kept its own recording loop
+/// and so was the one site that never classified — the same 403 named its remedy
+/// on two screens and read as an unexplained fault on the third.
+///
 /// The bookkeeping write is deliberately NOT `?`: a failed `sync_state` write
 /// must not replace the real error with itself, which would report a storage
 /// problem where the dōjō gave a perfectly clear answer.
 async fn record_plane_failure(
     pg: &PgStore,
-    mark: &SyncMark<'_>,
+    marks: &[SyncMark<'_>],
     persona: &str,
     what: &str,
     error: String,
@@ -200,8 +207,11 @@ async fn record_plane_failure(
         }
         false => error,
     };
-    if let Err(be) = pg.mark_sync_error(mark, &message).await {
-        tracing::warn!(persona, what, error = %be, "dojo_sync: could not record the failure");
+    for mark in marks {
+        if let Err(be) = pg.mark_sync_error(mark, &message).await {
+            tracing::warn!(persona, what, key = mark.key, error = %be,
+                           "dojo_sync: could not record the failure");
+        }
     }
     message
 }
@@ -263,7 +273,16 @@ async fn sync_persona(
 
     let registered = match plane.register_repositories(token, &inputs).await {
         Ok(r) => r,
-        Err(e) => return Err(record_plane_failure(pg, &mark, persona, "registration", e).await),
+        Err(e) => {
+            return Err(record_plane_failure(
+                pg,
+                std::slice::from_ref(&mark),
+                persona,
+                "registration",
+                e,
+            )
+            .await);
+        }
     };
     for m in &registered.mapped {
         match uuid::Uuid::parse_str(&m.tenant_id) {
@@ -293,7 +312,16 @@ async fn sync_persona(
 
     let plan = match plane.sync_plan(token).await {
         Ok(p) => p,
-        Err(e) => return Err(record_plane_failure(pg, &mark, persona, "sync plan", e).await),
+        Err(e) => {
+            return Err(record_plane_failure(
+                pg,
+                std::slice::from_ref(&mark),
+                persona,
+                "sync plan",
+                e,
+            )
+            .await);
+        }
     };
     for d in &plan.denied {
         tracing::info!(
@@ -445,15 +473,15 @@ async fn push_allowed(
             // cycle is invisible: the plan row still reads `synced`, the schedule
             // still reads ok, and the only symptom is that nothing ever arrives.
             // Observed exactly that way before this existed.
-            for key in &repos {
-                // NOT `?`: a failed bookkeeping write must not replace the push
-                // error with itself. The operator needs to know why the dōjō
-                // refused, not that sync_state was briefly unwritable.
-                if let Err(be) = pg.mark_sync_error(&push_mark(key), &e).await {
-                    tracing::warn!(repo = key, error = %be, "could not record the push failure");
-                }
-            }
-            return Err(e);
+            //
+            // Through `record_plane_failure`, like registration and the plan. Its
+            // own loop used to live here and it was therefore the ONE site that
+            // never classified a refusal — a 403 on the push named no remedy,
+            // while the identical 403 on the plan said "sign in again". One mark
+            // per repository in the batch, because that is what the push is
+            // scoped to.
+            let marks: Vec<SyncMark<'_>> = repos.iter().map(|k| push_mark(k)).collect();
+            return Err(record_plane_failure(pg, &marks, persona, "metric push", e).await);
         }
     };
     for r in &result.rejected {
@@ -1136,6 +1164,45 @@ mod tests {
         assert_eq!(st, "error");
         assert!(err.unwrap_or_default().contains("boom"), "the dōjō's reason is preserved");
         assert_eq!(shared, 0, "a failed push must not mark anything shared");
+    }
+
+    #[tokio::test]
+    async fn a_dojo_that_refuses_the_push_names_its_remedy_too() {
+        // The THIRD failure site. Registration and the plan were routed through
+        // `record_plane_failure`, which classifies a 401/403 as "sign in again";
+        // the push kept its own hand-rolled loop and did not. So the identical
+        // refusal — a revoked principal, a tightened RLS policy, a rotated
+        // service-role key — read as a remedy on two screens and as an
+        // unexplained fault on the third, which is the only one the user has been
+        // watching, because it is the one that carries their data.
+        //
+        // The push is also the site where it matters most: it is the LAST call in
+        // the cycle, so a refusal here is the one that arrives after everything
+        // else reported success.
+        let pg = PgStore::connect_test().await.unwrap();
+        let (pid, key, _m) = seed(&pg).await;
+        let plane = StubPlane {
+            plan: Some(SyncPlan {
+                allowed: vec![mapped(&key, &uuid::Uuid::new_v4().to_string())],
+                denied: vec![],
+            }),
+            push: Some(Err("dōjō returned 403 for the metric push: row-level security".into())),
+            ..Default::default()
+        };
+
+        let out = sync_persona(&pg, "ztest-slot", "tok", &plane).await;
+        let state = push_state(&pg, &key).await;
+        crate::tasks::test_support::cleanup_metrics_fixture(&pg, &pid, None, &[]).await;
+
+        let e = out.unwrap_err();
+        assert!(e.contains("sign in again"), "a refusal must name its remedy, got: {e}");
+        let (st, err) = state.expect("recorded");
+        assert_eq!(st, "error");
+        assert!(
+            err.unwrap_or_default().contains("sign in again"),
+            "and the RECORDED row must carry it — that row is the durable evidence, \
+             and the returned string is gone as soon as the tick ends"
+        );
     }
 
     #[tokio::test]
