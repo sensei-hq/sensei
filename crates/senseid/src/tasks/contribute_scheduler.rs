@@ -287,10 +287,14 @@ mod tests {
         // query reads `generalised_content` only, with no fallback to the raw
         // memory. Without this the item is held as `not_generalised` and this
         // test — which is about STAGING — would be asserting the wrong thing.
-        pg.set_memory_generalisation(mem, "Prefer an explicit gate over an implicit default.")
-            .await
-            .unwrap()
-            .expect("the fixture memory exists");
+        pg.set_memory_generalisation(
+            mem,
+            "Prefer an explicit gate over an implicit default.",
+            Some("A team writes the gate down as a comment; the next release skips it."),
+        )
+        .await
+        .unwrap()
+        .expect("the fixture memory exists");
         let batch = pg.create_memory_share_batch(&proj, &[mem], None).await.unwrap();
         pg.set_memory_share_batch_status(&batch, "approved", None).await.unwrap();
 

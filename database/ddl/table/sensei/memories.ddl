@@ -35,9 +35,12 @@ create table if not exists memories (
 , modified_at              timestamptz   not null default now()
 -- Ready-to-share lane: sensei's assessment that this memory has been rewritten
 -- project-agnostic and is ready to widen up the scope ladder, plus the portable
--- rewrite itself (null until generalised).
+-- rewrite itself and its invented illustration (both null until generalised).
+-- Everything named `generalised_*` is a candidate to leave this machine; `content`
+-- above is not. That naming IS the rule — see the column comments.
 , generalised              boolean       not null default false
 , generalised_content      text
+, generalised_example      text
 );
 
 create index if not exists memories_project_id_idx
@@ -94,7 +97,7 @@ comment on column memories.type
 comment on column memories.title
      is 'Short label used as heading in context output.';
 comment on column memories.content
-     is 'The rule or learning — full body text surfaced to the agent.';
+     is 'The rule or learning — full body text surfaced to the agent. LOCAL REFERENCE: verbatim as captured, so it may quote real code, paths, ids and decisions. It is NOT the shareable form. Never sent on the collective/contribute lane: batch_share_items selects generalised_content only, with no fallback to this column — an un-generalised memory is held, not shipped. It is NOT unconditionally local: the separate federation rule-push (federation::push_promoted → POST /rules) sends this column verbatim, ungeneralised and unstripped, for an origin=promoted memory at a shareable namespace whose knowledge source is push-enabled. That is an explicit publish of the raw rule the user promoted, on a different lane with a different consent model — do not read this column as unsendable.';
 comment on column memories.impact
      is 'Consequence of ignoring this memory. Answers "what breaks if you skip this?"';
 comment on column memories.strength
@@ -122,4 +125,6 @@ comment on column memories.created_at
 comment on column memories.generalised
      is 'Ready-to-share flag: true once sensei has rewritten this memory into a project-agnostic rule (stored in generalised_content), meaning it is ready to widen up the scope ladder. Set only by an explicit /generalise action; never fabricated.';
 comment on column memories.generalised_content
-     is 'The project-agnostic rewrite of `content` — identifiers (project/repo/file/service/person names) stripped and restated as a general principle. Null until generalised.';
+     is 'The project-agnostic rewrite of `content` — identifiers (project/repo/file/service/person names) stripped and restated as a general principle. Null until generalised. SHAREABLE: this, not `content`, is what the upstream contribute path sends.';
+comment on column memories.generalised_example
+     is 'A SYNTHETIC illustration of generalised_content: the generalise prompt asks the model to invent a situation similar in SHAPE to the original while quoting none of it. Optional (null when the model produced none) and never fabricated by the daemon to fill a gap. "Synthetic" is a GENERATION CONTRACT carried by the prompt, not a checked invariant: nothing compares this text against `content`, so a model that parrots its input can land real names here. What IS enforced before it leaves the machine is the same deterministic identifier strip the body gets — a KNOWN project/repo/person/path token is removed, and residual risk holds the whole artifact. SHAREABLE, and rewritten together with generalised_content so an example never outlives the rule it illustrates.';

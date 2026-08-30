@@ -386,18 +386,26 @@ pub fn artifact_signature(
     kind: ArtifactKind,
     title: &str,
     body: &str,
+    example: Option<&str>,
     payload: &ArtifactPayload,
 ) -> String {
     let payload_value = serde_json::to_value(payload).unwrap_or(serde_json::Value::Null);
     // Unit separator keeps components from bleeding into one another.
-    let joined = [
+    let mut parts = vec![
         normalize_content(kind.as_db_str()),
         normalize_content(title),
         normalize_content(body),
         normalize_content(&canonical_json(&payload_value)),
-    ]
-    .join("\u{1f}");
-    content_hash(&joined)
+    ];
+    // The example is content, so it must move the digest — otherwise the outbox
+    // would dedup a regenerated illustration away as "already sent". It is
+    // appended ONLY when present so that an artifact without one keeps exactly
+    // the digest it had before the field existed: adding the field re-sends
+    // nothing already in an outbox.
+    if let Some(ex) = example.map(str::trim).filter(|s| !s.is_empty()) {
+        parts.push(normalize_content(ex));
+    }
+    content_hash(&parts.join("\u{1f}"))
 }
 
 /// An artifact contributed / published to a Dōjō — a flattened snapshot
@@ -418,6 +426,13 @@ pub struct PublishedArtifact {
     pub kind: ArtifactKind,
     pub title: String,
     pub body: String,
+    /// A synthetic illustration of `body` — invented to be shaped like the
+    /// situation the lesson came from while containing none of it. `None` when
+    /// the contributor's generalisation produced no example; it is an
+    /// illustration, never a requirement, and is never minted to fill the gap.
+    /// Confidentiality-checked on the publish path exactly like `title`/`body`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub example: Option<String>,
     pub payload: ArtifactPayload,
     #[serde(default)]
     pub scope: ArtifactScope,
@@ -431,9 +446,15 @@ pub struct PublishedArtifact {
 }
 
 impl PublishedArtifact {
-    /// Compute the signature from the current title / body / payload.
+    /// Compute the signature from the current title / body / example / payload.
     pub fn compute_signature(&self) -> String {
-        artifact_signature(self.kind, &self.title, &self.body, &self.payload)
+        artifact_signature(
+            self.kind,
+            &self.title,
+            &self.body,
+            self.example.as_deref(),
+            &self.payload,
+        )
     }
 
     /// Whether the declared `kind` agrees with the payload's tag.
@@ -512,12 +533,13 @@ mod tests {
         let title = "title".to_string();
         let body = "body".to_string();
         PublishedArtifact {
-            signature: artifact_signature(kind, &title, &body, &payload),
+            signature: artifact_signature(kind, &title, &body, None, &payload),
             tenant_key: "github/sensei-hq".into(),
             engagement_id: None,
             kind,
             title,
             body,
+            example: None,
             payload,
             scope: ArtifactScope { stack: Some("rust".into()), ..Default::default() },
             attribution: Attribution {
@@ -641,8 +663,8 @@ mod tests {
     #[test]
     fn signature_is_deterministic_and_sha256_hex() {
         let payload = sample_payload(ArtifactKind::Principle);
-        let a = artifact_signature(ArtifactKind::Principle, "Title", "Body", &payload);
-        let b = artifact_signature(ArtifactKind::Principle, "Title", "Body", &payload);
+        let a = artifact_signature(ArtifactKind::Principle, "Title", "Body", None, &payload);
+        let b = artifact_signature(ArtifactKind::Principle, "Title", "Body", None, &payload);
         assert_eq!(a, b);
         assert_eq!(a.len(), 64); // sha256 hex, same as the rules content_hash
     }
@@ -652,8 +674,9 @@ mod tests {
         // Mirrors the rules content_hash test: differing only by
         // surrounding whitespace / case yields the same signature.
         let payload = sample_payload(ArtifactKind::Guard);
-        let a = artifact_signature(ArtifactKind::Guard, "  Use TDD  ", "  Always.  ", &payload);
-        let b = artifact_signature(ArtifactKind::Guard, "use tdd", "always.", &payload);
+        let a =
+            artifact_signature(ArtifactKind::Guard, "  Use TDD  ", "  Always.  ", None, &payload);
+        let b = artifact_signature(ArtifactKind::Guard, "use tdd", "always.", None, &payload);
         assert_eq!(a, b);
     }
 
@@ -671,16 +694,16 @@ mod tests {
             description: None,
             manifest: json!({ "b": 2, "a": 1 }),
         });
-        let a = artifact_signature(ArtifactKind::Skill, "t", "b", &p1);
-        let b = artifact_signature(ArtifactKind::Skill, "t", "b", &p2);
+        let a = artifact_signature(ArtifactKind::Skill, "t", "b", None, &p1);
+        let b = artifact_signature(ArtifactKind::Skill, "t", "b", None, &p2);
         assert_eq!(a, b);
     }
 
     #[test]
     fn signature_differs_for_different_content() {
         let payload = sample_payload(ArtifactKind::Prompt);
-        let a = artifact_signature(ArtifactKind::Prompt, "one", "body", &payload);
-        let b = artifact_signature(ArtifactKind::Prompt, "two", "body", &payload);
+        let a = artifact_signature(ArtifactKind::Prompt, "one", "body", None, &payload);
+        let b = artifact_signature(ArtifactKind::Prompt, "two", "body", None, &payload);
         assert_ne!(a, b);
     }
 
@@ -692,12 +715,14 @@ mod tests {
             ArtifactKind::Principle,
             "t",
             "b",
+            None,
             &sample_payload(ArtifactKind::Principle),
         );
         let b = artifact_signature(
             ArtifactKind::Pattern,
             "t",
             "b",
+            None,
             &sample_payload(ArtifactKind::Pattern),
         );
         assert_ne!(a, b);
@@ -708,8 +733,88 @@ mod tests {
         let artifact = sample_artifact(ArtifactKind::Agent);
         assert_eq!(
             artifact.compute_signature(),
-            artifact_signature(artifact.kind, &artifact.title, &artifact.body, &artifact.payload)
+            artifact_signature(
+                artifact.kind,
+                &artifact.title,
+                &artifact.body,
+                artifact.example.as_deref(),
+                &artifact.payload,
+            )
         );
+    }
+
+    // ---- the synthetic example is content, so it is part of the signature ----
+
+    #[test]
+    fn signature_changes_when_the_example_changes() {
+        // The outbox dedups on the signature. If the example were outside it, a
+        // regenerated illustration would be judged "already sent" and never ship.
+        let payload = sample_payload(ArtifactKind::Principle);
+        let a = artifact_signature(
+            ArtifactKind::Principle,
+            "t",
+            "b",
+            Some("a team ships on red"),
+            &payload,
+        );
+        let b = artifact_signature(
+            ArtifactKind::Principle,
+            "t",
+            "b",
+            Some("a team ships on green"),
+            &payload,
+        );
+        assert_ne!(a, b, "a different example is different content");
+    }
+
+    #[test]
+    fn an_absent_example_hashes_exactly_as_before_examples_existed() {
+        // Backward compatibility with outbox rows already keyed by signature: an
+        // artifact with no example must keep the digest it had when the field did
+        // not exist, so adding the field re-sends nothing.
+        let payload = sample_payload(ArtifactKind::Principle);
+        let none = artifact_signature(ArtifactKind::Principle, "t", "b", None, &payload);
+        // The pre-example canonical form: kind ⧉ title ⧉ body ⧉ payload.
+        let legacy = content_hash(
+            &[
+                normalize_content(ArtifactKind::Principle.as_db_str()),
+                normalize_content("t"),
+                normalize_content("b"),
+                normalize_content(&canonical_json(
+                    &serde_json::to_value(&payload).expect("payload serialises"),
+                )),
+            ]
+            .join("\u{1f}"),
+        );
+        assert_eq!(none, legacy, "no example → the historical digest");
+        // A blank example is the same as none — never a distinct artifact.
+        assert_eq!(
+            artifact_signature(ArtifactKind::Principle, "t", "b", Some("   "), &payload),
+            none,
+        );
+        assert_ne!(
+            artifact_signature(ArtifactKind::Principle, "t", "b", Some("x"), &payload),
+            none,
+            "adding an example does change the digest",
+        );
+    }
+
+    #[test]
+    fn example_survives_the_artifact_wire_roundtrip_and_is_optional() {
+        let mut artifact = sample_artifact(ArtifactKind::Principle);
+        artifact.example = Some("A team gates merges on a green pipeline.".into());
+        let wire = serde_json::to_string(&artifact).expect("serialises");
+        let back: PublishedArtifact = serde_json::from_str(&wire).expect("deserialises");
+        assert_eq!(back, artifact);
+        assert_eq!(back.example.as_deref(), Some("A team gates merges on a green pipeline."));
+
+        // A peer that predates the field still parses, and an absent example is
+        // omitted from the wire rather than sent as an explicit null.
+        let none = sample_artifact(ArtifactKind::Principle);
+        let wire = serde_json::to_value(&none).expect("serialises");
+        assert!(wire.get("example").is_none(), "absent example is omitted: {wire}");
+        let back: PublishedArtifact = serde_json::from_value(wire).expect("deserialises");
+        assert_eq!(back.example, None);
     }
 
     // ---- rules wire contract (folded in from the former protocol crate) --

@@ -170,8 +170,10 @@ impl PgStore {
 
     /// Load a share batch's `(project_id, status, member items)` for the C6
     /// upstream-contribute path. `status` is returned so the caller can enforce
-    /// "only `approved` batches contribute". Each item's `body` is the
-    /// `generalised_content` rewrite when present, else the raw `content`.
+    /// "only `approved` batches contribute". Each item carries the SHAREABLE
+    /// lane only — the `generalised_content` rewrite as `body` (empty when the
+    /// memory has not been generalised) and its synthetic `generalised_example`.
+    /// The raw `content` is never projected here.
     pub async fn batch_share_items(
         &self,
         batch_id: &uuid::Uuid,
@@ -187,38 +189,45 @@ impl PgStore {
             return Ok(None);
         };
 
-        let rows: Vec<(uuid::Uuid, String, String, String)> = sqlx_core::query_as::query_as(
-            // `generalised_content` ONLY — there is deliberately NO fallback to
-            // `m.content`. The raw memory is the local reference: it may quote
-            // real code, paths and decisions, and it is never a candidate for
-            // sending. A COALESCE here meant "share the generalised version, or
-            // the RAW one if nobody generalised it yet", which made the safe
-            // path the one that happened to have run rather than the one that
-            // was chosen.
-            //
-            // An empty body is returned rather than the row being dropped, so
-            // the publish can report `held_not_generalised` and the user learns
-            // WHY nothing was sent. A vanished row is indistinguishable from an
-            // empty batch.
-            "SELECT m.id, m.title,
+        let rows: Vec<(uuid::Uuid, String, String, Option<String>, String)> =
+            sqlx_core::query_as::query_as(
+                // The `generalised_*` lane ONLY — there is deliberately NO
+                // fallback to `m.content`. The raw memory is the local
+                // reference: it may quote real code, paths and decisions, and it
+                // is never a candidate for sending. A COALESCE here meant "share
+                // the generalised version, or the RAW one if nobody generalised
+                // it yet", which made the safe path the one that happened to
+                // have run rather than the one that was chosen.
+                //
+                // An empty body is returned rather than the row being dropped,
+                // so the publish can report `held_not_generalised` and the user
+                // learns WHY nothing was sent. A vanished row is
+                // indistinguishable from an empty batch.
+                //
+                // `generalised_example` stays NULL-able rather than collapsing to
+                // '': a missing illustration is honestly absent, and unlike the
+                // body it does not block the publish.
+                "SELECT m.id, m.title,
                     COALESCE(btrim(m.generalised_content), ''),
+                    nullif(btrim(m.generalised_example), ''),
                     m.type::text
                FROM sensei.memory_share_batch_members mm
                JOIN sensei.memories m ON m.id = mm.memory_id
               WHERE mm.batch_id = $1
               ORDER BY m.title",
-        )
-        .bind(batch_id)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| e.to_string())?;
+            )
+            .bind(batch_id)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
 
         let items = rows
             .into_iter()
-            .map(|(memory_id, title, body, memory_type)| ShareBatchItem {
+            .map(|(memory_id, title, body, example, memory_type)| ShareBatchItem {
                 memory_id,
                 title,
                 body,
+                example,
                 memory_type,
             })
             .collect();

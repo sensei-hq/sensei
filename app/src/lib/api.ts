@@ -1065,8 +1065,11 @@ export function senseiApi(port: number) {
     // instead of a fabricated rewrite — the UI shows the error, keeps the
     // original. On success the daemon flips `generalised = true` and stores the
     // rewrite, so the caller re-fetches to reflect the new chip state.
+    // `example` is a SYNTHETIC illustration minted by the same rewrite; it is
+    // null when the model produced none — an absent illustration is not a failed
+    // generalisation, and the daemon never substitutes one.
     generaliseMemory: (id: string) =>
-      tryPost<{ id: string; original: string; generalised: string }>(
+      tryPost<{ id: string; original: string; generalised: string; example: string | null }>(
         `/api/knowledge/memories/${enc(id)}/generalise`, {},
       ),
 

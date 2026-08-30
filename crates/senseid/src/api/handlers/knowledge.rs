@@ -695,14 +695,87 @@ pub(crate) async fn merge_memory(
 // POST /api/knowledge/memories/{id}/generalise  — rewrite project-agnostic
 // ============================================================================
 
-/// System prompt for the generalise rewrite: turn a project-specific memory
+/// Stage-1 preamble for the generalise rewrite: turn a project-specific memory
 /// into a portable rule. Mirrors `corrections_llm::SYSTEM` — a strict
 /// JSON-only instruction the `reasoning` chain can honour deterministically.
-const GENERALISE_SYSTEM: &str = "You rewrite a developer's project-specific memory into a portable, project-agnostic rule. \
+/// Composed with [`GENERALISE_REPLY_CONTRACT`] via [`generalise_system_prompt`];
+/// it deliberately stops before the reply format.
+pub(crate) const GENERALISE_PREAMBLE: &str = "You rewrite a developer's project-specific memory into a portable, project-agnostic rule. \
 Strip every project-specific identifier — project names, repository names, file paths, service names, person names, ticket ids — \
 and restate the learning as a general principle that would apply across projects. \
-Stay faithful: do not invent scope, do not add advice the original did not contain, do not reproduce the identifiers you removed. \
-Reply with ONLY a JSON object: {\"generalised\": <the rewritten rule as one or two plain sentences>}. No prose, no code fences.";
+Stay faithful: do not invent scope, do not add advice the original did not contain, do not reproduce the identifiers you removed.";
+
+/// The reply contract shared by BOTH generalisation stages: the stage-1 rewrite
+/// of a raw memory ([`GENERALISE_PREAMBLE`]) and the pre-publish polish of
+/// already-dereferenced text (`collective::anonymize::GLOBAL_ANONYMISE_PREAMBLE`).
+///
+/// Shared rather than copy-pasted, and the two are NOT interchangeable elsewhere:
+/// the stages differ in what they are GIVEN (a raw project memory vs. text whose
+/// identifiers are already placeholders), which is why each keeps its own
+/// preamble. But both replies are read by one function
+/// ([`parse_generalise_response`]), so the JSON shape and the definition of a
+/// safe example must be identical — stating them once is what makes that true.
+/// A second copy could drift and silently teach one stage to leak.
+pub(crate) const GENERALISE_REPLY_CONTRACT: &str = "Also invent ONE short illustrative example of the rule in action. \
+The example must be SYNTHETIC: similar in SHAPE to the situation the rule came from, but made up — \
+never a real name, path, identifier, ticket, or fragment of the input's code, and never a verbatim quote of the input. \
+Use obviously generic stand-ins instead. If you cannot invent one faithfully, omit the field rather than copying from the input. \
+Reply with ONLY a JSON object: {\"generalised\": <the rule as one or two plain sentences>, \"example\": <the synthetic example as one or two plain sentences, omitted if you have none>}. \
+No prose, no code fences.";
+
+/// Compose a stage preamble with the shared reply contract into the system
+/// prompt actually sent.
+pub(crate) fn generalise_system_prompt(stage_preamble: &str) -> String {
+    format!("{stage_preamble} {GENERALISE_REPLY_CONTRACT}")
+}
+
+/// Build the whole stage-1 inference request. Extracted from the handler and
+/// pure so a test can assert on the prompt that is genuinely SENT — asserting on
+/// a prompt the test composed itself would pass even if the call site stopped
+/// using the shared contract.
+pub(crate) fn build_generalise_request(
+    title: &str,
+    content: &str,
+) -> gateway::types::request::InferenceRequest {
+    use gateway::types::capability::Capability;
+    use gateway::types::request::{InferenceRequest, Message, MessageRole, Payload};
+    InferenceRequest {
+        capability: Capability::TextChat,
+        model: None,
+        router: None,
+        // Faithful rewrite is synthesis — pin the seed `reasoning` chain
+        // (embedded → ollama → cloud), same as the corrections summariser.
+        chain: Some("reasoning".into()),
+        payload: Payload::Chat {
+            messages: vec![Message::text(
+                MessageRole::User,
+                build_generalise_message(title, content),
+            )],
+            system: Some(generalise_system_prompt(GENERALISE_PREAMBLE)),
+            max_tokens: Some(GENERALISE_MAX_TOKENS),
+            temperature: None,
+            tools: Vec::new(),
+        },
+        budget: None,
+        auth: None,
+        panel: None,
+        consensus: None,
+        allow_fallback: true,
+        credentials: std::collections::HashMap::new(),
+    }
+}
+
+/// The system prompt an [`gateway::types::request::InferenceRequest`] will send,
+/// for tests that need to inspect it.
+#[cfg(test)]
+pub(crate) fn system_prompt_of(req: &gateway::types::request::InferenceRequest) -> String {
+    match &req.payload {
+        gateway::types::request::Payload::Chat { system, .. } => {
+            system.clone().expect("a system prompt is always sent")
+        }
+        _ => panic!("the generalise stages send a chat payload"),
+    }
+}
 
 /// Token budget for the rewrite (one short JSON object; reasoning headroom).
 const GENERALISE_MAX_TOKENS: u32 = 512;
@@ -725,22 +798,46 @@ pub(crate) fn build_generalise_message(title: &str, content: &str) -> String {
     )
 }
 
-/// Parse the model's `{ "generalised": "..." }` object. Tolerates surrounding
-/// prose / code fences by extracting the first `{ … }`. Returns `None` when
-/// there is no usable text — the caller then degrades (503) rather than
-/// fabricating a generalisation. Mirrors `corrections_llm::parse_response`.
-pub(crate) fn parse_generalise_response(content: &str) -> Option<String> {
+/// What a generalisation stage produces: the portable rule, plus an optional
+/// SYNTHETIC illustration of it.
+///
+/// The example is deliberately `Option`: it is an illustration, not the payload.
+/// A row generalised before examples existed, or a model that ignored the field,
+/// yields `None` — never a minted stand-in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Generalisation {
+    /// The project-agnostic rule. Always non-empty (a reply without it is not a
+    /// generalisation at all).
+    pub generalised: String,
+    /// An invented example illustrating the rule — shaped like the original
+    /// situation but containing none of it. `None` when the model gave none.
+    pub example: Option<String>,
+}
+
+/// Parse the model's `{ "generalised": "...", "example": "..." }` object.
+/// Tolerates surrounding prose / code fences by extracting the first `{ … }`.
+/// Returns `None` when there is no usable RULE — the caller then degrades (503)
+/// rather than fabricating a generalisation. Mirrors
+/// `corrections_llm::parse_response`.
+///
+/// A missing, blank, or wrongly-typed `example` is NOT an error: the rule is the
+/// payload and stands on its own, so an unusable illustration is dropped to
+/// `None` rather than sinking a good rewrite — and nothing is substituted for it.
+pub(crate) fn parse_generalise_response(content: &str) -> Option<Generalisation> {
     let start = content.find('{')?;
     let end = content.rfind('}')?;
     if end <= start {
         return None;
     }
     let v: serde_json::Value = serde_json::from_str(&content[start..=end]).ok()?;
-    v.get("generalised")
-        .and_then(|t| t.as_str())
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(String::from)
+    let usable = |key: &str| -> Option<String> {
+        v.get(key)
+            .and_then(|t| t.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(String::from)
+    };
+    Some(Generalisation { generalised: usable("generalised")?, example: usable("example") })
 }
 
 /// Rewrite a project-scoped memory into a project-agnostic rule that is ready to
@@ -755,9 +852,6 @@ pub(crate) async fn generalise_memory(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    use gateway::types::capability::Capability;
-    use gateway::types::request::*;
-
     let mid =
         uuid::Uuid::parse_str(&id).map_err(|_| err(StatusCode::BAD_REQUEST, "bad memory id"))?;
     let memory = state
@@ -772,30 +866,7 @@ pub(crate) async fn generalise_memory(
         return Err(err(StatusCode::UNPROCESSABLE_ENTITY, "memory has no content to generalise"));
     }
 
-    let request = InferenceRequest {
-        capability: Capability::TextChat,
-        model: None,
-        router: None,
-        // Faithful rewrite is synthesis — pin the seed `reasoning` chain
-        // (embedded → ollama → cloud), same as the corrections summariser.
-        chain: Some("reasoning".into()),
-        payload: Payload::Chat {
-            messages: vec![Message::text(
-                MessageRole::User,
-                build_generalise_message(title, content),
-            )],
-            system: Some(GENERALISE_SYSTEM.to_string()),
-            max_tokens: Some(GENERALISE_MAX_TOKENS),
-            temperature: None,
-            tools: Vec::new(),
-        },
-        budget: None,
-        auth: None,
-        panel: None,
-        consensus: None,
-        allow_fallback: true,
-        credentials: std::collections::HashMap::new(),
-    };
+    let request = build_generalise_request(title, content);
 
     // Timeout / gateway error / empty-or-unparseable output all degrade the SAME
     // way: surface it (503 + tracing), leave the flag unset, never fabricate.
@@ -814,7 +885,7 @@ pub(crate) async fn generalise_memory(
                 None
             }
         };
-    let Some(text) = generalised else {
+    let Some(Generalisation { generalised: text, example }) = generalised else {
         tracing::warn!(memory_id = %mid, "generalise: no usable rewrite — flag left unset");
         return Err(err(
             StatusCode::SERVICE_UNAVAILABLE,
@@ -824,15 +895,18 @@ pub(crate) async fn generalise_memory(
 
     state
         .pg
-        .set_memory_generalisation(mid, &text)
+        .set_memory_generalisation(mid, &text, example.as_deref())
         .await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?
         .ok_or_else(|| err(StatusCode::NOT_FOUND, "memory not found"))?;
 
     Ok(Json(serde_json::json!({
         "id": mid,
+        // The raw memory, echoed back to the caller that already owns it — this
+        // is the LOCAL reference and goes no further than this response.
         "original": content,
         "generalised": text,
+        "example": example,
     })))
 }
 
@@ -1450,7 +1524,7 @@ mod tests {
     fn parse_generalise_extracts_text() {
         let c = r#"{"generalised":"Prefer a dedicated migration tool over hand-rolled SQL."}"#;
         assert_eq!(
-            parse_generalise_response(c).as_deref(),
+            parse_generalise_response(c).map(|g| g.generalised).as_deref(),
             Some("Prefer a dedicated migration tool over hand-rolled SQL."),
         );
     }
@@ -1460,22 +1534,106 @@ mod tests {
         let c =
             "Here you go:\n```json\n{\"generalised\":\"Run pre-commit before opening a PR.\"}\n```";
         assert_eq!(
-            parse_generalise_response(c).as_deref(),
+            parse_generalise_response(c).map(|g| g.generalised).as_deref(),
             Some("Run pre-commit before opening a PR."),
         );
     }
 
     #[test]
     fn parse_generalise_none_on_empty_or_missing() {
-        assert_eq!(parse_generalise_response(r#"{"generalised":""}"#), None, "empty string → None");
-        assert_eq!(
-            parse_generalise_response(r#"{"generalised":"   "}"#),
-            None,
+        assert!(
+            parse_generalise_response(r#"{"generalised":""}"#).is_none(),
+            "empty string → None"
+        );
+        assert!(
+            parse_generalise_response(r#"{"generalised":"   "}"#).is_none(),
             "whitespace → None"
         );
-        assert_eq!(parse_generalise_response(r#"{"other":"x"}"#), None, "missing key → None");
-        assert_eq!(parse_generalise_response("not json"), None, "no object → None");
-        assert_eq!(parse_generalise_response(""), None, "empty input → None");
+        assert!(parse_generalise_response(r#"{"other":"x"}"#).is_none(), "missing key → None");
+        assert!(parse_generalise_response("not json").is_none(), "no object → None");
+        assert!(parse_generalise_response("").is_none(), "empty input → None");
+    }
+
+    // ── the synthetic example rides alongside the rule ──────────────────────
+
+    #[test]
+    fn parse_generalise_extracts_the_synthetic_example() {
+        let c = r#"{"generalised":"Gate merges on a green pipeline.",
+                    "example":"A team lets a red build merge on Friday and spends Monday bisecting."}"#;
+        let g = parse_generalise_response(c).expect("a well-formed reply parses");
+        assert_eq!(g.generalised, "Gate merges on a green pipeline.");
+        assert_eq!(
+            g.example.as_deref(),
+            Some("A team lets a red build merge on Friday and spends Monday bisecting."),
+        );
+    }
+
+    #[test]
+    fn parse_generalise_missing_example_is_not_an_error() {
+        // An older cached reply, or a model that ignored the new field. The rule
+        // is still usable; the illustration is simply absent. NOTHING is minted
+        // to fill the gap.
+        let g = parse_generalise_response(r#"{"generalised":"Write the test first."}"#)
+            .expect("a reply without an example is still a usable generalisation");
+        assert_eq!(g.generalised, "Write the test first.");
+        assert_eq!(g.example, None);
+    }
+
+    #[test]
+    fn parse_generalise_blank_or_mistyped_example_is_absent_not_fabricated() {
+        for reply in [
+            r#"{"generalised":"g","example":""}"#,
+            r#"{"generalised":"g","example":"   "}"#,
+            r#"{"generalised":"g","example":null}"#,
+            // Wrong type: the illustration is dropped, the rule survives — the
+            // rule is the payload, so a junk example must not sink it.
+            r#"{"generalised":"g","example":42}"#,
+            r#"{"generalised":"g","example":{"text":"x"}}"#,
+        ] {
+            let g = parse_generalise_response(reply).expect("the rule still parses");
+            assert_eq!(g.generalised, "g");
+            assert_eq!(g.example, None, "unusable example → None, never fabricated: {reply}");
+        }
+    }
+
+    #[test]
+    fn parse_generalise_malformed_reply_is_still_an_error() {
+        // An example alone is NOT a generalisation — no rule, no result.
+        assert!(
+            parse_generalise_response(r#"{"example":"a team ships on red"}"#).is_none(),
+            "an example without a rule is not a usable generalisation",
+        );
+        assert!(parse_generalise_response("{ not json ").is_none(), "malformed JSON → None");
+    }
+
+    // ── the two stages share ONE reply contract ─────────────────────────────
+
+    #[test]
+    fn both_generalise_stages_send_the_one_shared_example_contract() {
+        // Asserted on the prompts the two stages actually SEND, not on prompts
+        // this test composed for itself — otherwise a call site could quietly
+        // stop using the shared contract and nothing would notice.
+        let initial = system_prompt_of(&build_generalise_request("a title", "a body"));
+        let polish = system_prompt_of(&crate::collective::anonymize::build_polish_request("text"));
+        assert!(initial.contains(GENERALISE_REPLY_CONTRACT), "stage 1 sends the contract");
+        assert!(polish.contains(GENERALISE_REPLY_CONTRACT), "stage 2 sends the same contract");
+        // ...while each keeps the framing its own stage needs.
+        assert!(initial.contains("project-specific memory"), "stage 1 keeps its preamble");
+        assert!(polish.contains("ALREADY had every project name"), "stage 2 keeps its preamble");
+        assert_ne!(initial, polish, "the preambles are stage-specific");
+    }
+
+    #[test]
+    fn the_shared_contract_demands_a_synthetic_example() {
+        let c = GENERALISE_REPLY_CONTRACT;
+        assert!(c.contains("\"example\""), "names the JSON key the parser reads");
+        assert!(c.contains("\"generalised\""), "names the rule key too");
+        assert!(c.contains("SYNTHETIC"), "the example must be invented, not copied");
+        assert!(
+            c.contains("never a real name, path, identifier"),
+            "spells out what must not appear",
+        );
+        assert!(c.contains("omit"), "omission beats copying the source");
     }
 
     #[tokio::test]
