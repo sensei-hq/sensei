@@ -53,6 +53,24 @@ pub enum ForgeTokenAction {
     Skip,
 }
 
+/// Map a stored `forge_token_state` value to a [`TokenState`].
+///
+/// Lives here rather than in the scheduled task because BOTH the task and
+/// `GET /api/auth/status` have to answer "is this token alive"; a second copy of
+/// the string list is how the worker and the UI come to disagree about the same
+/// row.
+pub fn token_state_of(stored: &str) -> TokenState {
+    match stored {
+        "active" => TokenState::Active,
+        "dead" => TokenState::Dead,
+        "absent" => TokenState::Absent,
+        // `unknown` and anything a future migration adds: treat as live enough to
+        // ask about. Verifying costs one call; assuming dead strands a working
+        // token behind a sign-in prompt nobody needed.
+        _ => TokenState::Active,
+    }
+}
+
 /// Decide what to do with a persona's forge token, given what we know.
 ///
 /// `expires_at` / `now` are unix seconds. `expires_at` is `None` for a token
