@@ -1,60 +1,42 @@
 # Checkpoint
 
-**Slice:** Repository sharing — **DONE, verified live.**
-`d27ffa1f` · `75b00683` · `849fa070` · `1182ab4b` · `b0b68f62` · `76bc040b` ·
-`7b0f53ce` · `e4232ccb` · `9d4e8441`
+**Slice:** Forge-token lifecycle — **all 6 steps DONE, verified live.**
+`ee3ccf7a` · `f6c77a8a` · `a37bedf1` · `2afe37f6` · `92c21577` · `e039601b` · `e4202b90`
 
-## Live state
+## What works, measured
 
 ```
-corpus   private  organization (MANDATED)  -> not_subscribed
-dbd      public   user  elected            -> SYNCING
-torii    public   user  elected            -> SYNCING
-gateway
-sensei   public   user                     -> not_elected_user   (flip in the UI)
+sign-in ─┬─> observe()  captures state+expiry from calls made for other purposes
+         └─> scheduled check (30m): Skip | Verify | VerifyAndMarkDead | Refresh
+Refresh ──> POST /v1/you/forge/refresh (dōjō holds the client secret)
+            └─> rotate + store both tokens ──> record active + new expiry
+/api/auth/status: forgeToken {state, expiresAt} · needsSignIn
 ```
 
-Full cycle proven: `repo` scope granted (GitHub reports `read:org, repo,
-user:email` and sees the **private** `sensei-hq/corpus`) → capture → two-axis
-verdict → election over HTTP → push → 132 rows, 0 pending, idempotent.
+Live proof, whole chain: expiry nudged to 15:49 → ticker 15:29:56 → new expiry
+23:29:56 (+8h) · refresh token `b897379b…`→`b803c860…` (rotated, stored) ·
+`/api/auth/orgs` → `['sensei-hq']`.
 
-## Review backlog, worked
+**GitHub's real numbers:** `expires_in` 28800 (8h), `refresh_token_expires_in`
+15724800 (182d), scope preserved. Client id `Ov23…` = a **GitHub App**, which is
+why refresh tokens exist here at all.
 
-**Fixed** (`9d4e8441`) — PostgREST caps every read at 1000 rows
-(`PGRST_DB_MAX_ROWS=1000`, read off the running instance). Three reads were
-unbounded; the **ingest** one refused legitimately-permitted repos as
-`not_permitted`. Reads now page (stopping on a *short* page); the ingest filters
-by the batch's keys instead. Also: `drop view` discards ACLs and the DDL had no
-`grant` — the live ACL was `postgres` + `service_role` only.
+## Corrections made this session
 
-**Fixed** (`e4232ccb`) — the Sharing screen. The election had a write path and no
-way to reach it.
+- Step 5's fields landed on the sign-in CALLBACK, not `status` — the endpoint the
+  UI polls. Found by installing and curling, not by tests. Extracted to a shared
+  `forge_report` so the two cannot disagree.
+- `forge_token_action` returned `Refresh` for any unexpired token: with refresh
+  implemented that is ~16 rotations per 8h lifetime. Now bounded to
+  `REFRESH_MARGIN_SECS` (1h), asserted against the seeded interval.
 
-**False, corrected** — `configurable_by_me` grants `lead` (it grants `admin`
-alone); `uptimeSeconds` is wrong (it reports 1259s for a 1238s process — I had
-compared against a process that did not hold port 7744).
+## Not done — needs you
 
-**Deferred, with rationale** — a 404 leaves a stale visibility standing, bounded
-at 30 days by `forge_visibility_stale`. Not fixed by clearing the capture:
-that would trigger the new self-heal every 60s for a deleted repo, trading
-bounded staleness for an unbounded poison pill.
+**Production `wrangler secret put GITHUB_OAUTH_CLIENT_SECRET`.** Until then the
+deployed dōjō answers 503 and tokens die at 8h with no renewal. Local
+`dojo/.dev.vars` is configured.
 
-**New, measured** — `GET /health` takes **13 seconds**; `bootstrap::check` probes
-binaries synchronously on every call.
+**Unreproduced flake:** one full-suite run failed with 1 test; name lost to my own
+pipe. 3 full + 18 targeted reruns clean. Unidentified, so unfixed.
 
-## The recurring lesson, third time
-
-**The fake is not the real thing.** The pagination tests passed immediately —
-`fakeDojoDb` returned 2350 rows, green against code that did not paginate. It now
-enforces `PGRST_MAX_ROWS` and supports `.range()`. Same shape as the invented
-`elected_by` column and the stub that keyed on call-count rather than causation.
-
-## Next
-
-Nothing blocking in this slice. Candidates: **phase 2 of
-`dojo-auth-provisioning`** (`claimed_at`, `seat_allocations` — the billing terms
-already sit COMMENTED at their precedence positions in the view); the **GitHub
-App migration** (backlog, with incremental consent as the cheaper interim); **D3
-governance pull**.
-
-**Gates:** daemon 2492 exit 0 · clippy 0 · fmt 0 · dōjō 1505 · check 0/0.
+**Gates:** daemon 2572 exit 0 · clippy 0 · fmt 0 · dōjō 1527 · check 0/0.
