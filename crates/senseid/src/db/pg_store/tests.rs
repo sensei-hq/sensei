@@ -11034,3 +11034,65 @@ async fn signing_out_a_slot_nobody_holds_is_reported_as_such() {
     let missing = format!("ztest-absent-{}", uuid::Uuid::new_v4());
     assert!(!s.clear_persona_session(&missing).await.unwrap());
 }
+
+#[tokio::test]
+async fn signing_out_matches_the_slot_however_the_caller_cased_the_persona() {
+    // The persona reaches `POST /api/auth/signout` from a QUERY STRING, and the
+    // two halves of sign-out disagreed about case. The Keychain half lowercases
+    // (`account_for`, with a test saying "Sensei-HQ" and "sensei-hq" must not
+    // become two half-signed-in states); `link_persona_identity` also stores
+    // `session_slot` lowercased. But the registry half compared the RAW
+    // parameter, so `?persona=Sensei-HQ` deleted the credentials and matched no
+    // row — leaving `session_slot` set.
+    //
+    // That is the precise failure the sign-out fix exists to prevent, restored
+    // by a capital letter: `signed_in_personas` keys on that column, so the cycle
+    // keeps selecting a persona whose Keychain slot is now empty, resolves
+    // SignedOut every 60s, and on a single-persona install pins
+    // `schedules.dojo_sync.last_ok = false` forever. And it is silent —
+    // `clear_persona_session` returns `Ok(false)`, not an error, so the handler
+    // reports `ok: true` over a sign-out that half happened.
+    let s = pg_store().await;
+    let uniq = uuid::Uuid::new_v4();
+    let gh_id: i64 = (uniq.as_u128() % 1_000_000) as i64 + 700_000;
+    // Mixed case throughout, exactly as it would arrive on the query string.
+    let hint = format!("Ztest-SignOut-{uniq}");
+
+    s.upsert_persona(&hint, true).await.unwrap();
+    let id = s.link_persona_identity(&hint, "ztest-cased-login", gh_id, None, &[]).await.unwrap();
+
+    let slot: Option<String> =
+        query_as::<_, (Option<String>,)>("SELECT session_slot FROM sensei.personas WHERE id = $1")
+            .bind(id)
+            .fetch_one(s.pool())
+            .await
+            .unwrap()
+            .0;
+    // Not an assumption about the writer — read back, so this test fails loudly
+    // if `link_persona_identity` ever stops normalising and the mismatch moves.
+    assert_eq!(
+        slot.as_deref(),
+        Some(hint.to_lowercase().as_str()),
+        "precondition: the sign-in stores the slot lowercased"
+    );
+    assert!(
+        s.signed_in_personas().await.unwrap().contains(&hint.to_lowercase()),
+        "precondition: the persona is enumerated for sync"
+    );
+
+    // What the handler passes: the query parameter, uncased.
+    let cleared = s.clear_persona_session(&hint).await.unwrap();
+
+    let listed = s.signed_in_personas().await.unwrap();
+    sqlx_core::query::query("DELETE FROM sensei.personas WHERE id = $1")
+        .bind(id)
+        .execute(s.pool())
+        .await
+        .unwrap();
+
+    assert!(cleared, "signing out must find the row the sign-in wrote, whatever the caller's case");
+    assert!(
+        !listed.contains(&hint.to_lowercase()),
+        "and the cycle must stop enumerating a persona whose credentials are gone"
+    );
+}

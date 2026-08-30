@@ -13,6 +13,22 @@
 
 use super::PgStore;
 
+/// The `personas.session_slot` value for a persona name.
+///
+/// The persona reaches the daemon from a QUERY STRING, so its case is the
+/// caller's choice, not a fact. The Keychain side settled this long ago —
+/// `dojo_client::session::account_for` lowercases, with a test spelling out that
+/// "Sensei-HQ" and "sensei-hq" must not become two half-signed-in states — and
+/// the registry has to agree or the two halves of a sign-out disagree about
+/// which row they are talking about.
+///
+/// One function for the write and the clear so they cannot drift: they did, and
+/// `?persona=Sensei-HQ` deleted the credentials while matching no row, leaving
+/// `session_slot` set for [`PgStore::signed_in_personas`] to keep enumerating.
+fn slot_of(persona: &str) -> String {
+    persona.to_lowercase()
+}
+
 impl PgStore {
     /// The KEYCHAIN SLOTS of personas that have completed a dōjō sign-in.
     ///
@@ -67,12 +83,18 @@ impl PgStore {
     /// and discarding it would force a second OAuth round trip to re-learn
     /// something already proved. [`Self::signed_in_personas`] requires the slot,
     /// so nulling it is sufficient to stop the sync cycle picking the row up.
-    pub async fn clear_persona_session(&self, session_slot: &str) -> Result<bool, String> {
+    ///
+    /// Takes the PERSONA as the caller has it — a query-string parameter whose
+    /// case is not a fact — and normalises through [`slot_of`], the same function
+    /// the sign-in writes with. Comparing the raw parameter meant
+    /// `?persona=Sensei-HQ` cleared the Keychain (which lowercases) and matched
+    /// no row, which is the original defect restored by a capital letter.
+    pub async fn clear_persona_session(&self, persona: &str) -> Result<bool, String> {
         let res = sqlx_core::query::query(
             "UPDATE sensei.personas SET session_slot = NULL, modified_at = now() \
               WHERE session_slot = $1",
         )
-        .bind(session_slot)
+        .bind(slot_of(persona))
         .execute(&self.pool)
         .await
         .map_err(|e| format!("clear_persona_session: {e}"))?;
@@ -251,8 +273,10 @@ impl PgStore {
         // the label the line above may have just rewritten. Recording it here is
         // what keeps the registry's lookup key and the Keychain key the same
         // string; deriving one from the other is what silently skipped the
-        // persona.
-        .bind(persona_hint.to_lowercase())
+        // persona. Through [`slot_of`], so the sign-out that has to find this row
+        // again normalises with the same function rather than a second copy of
+        // the rule.
+        .bind(slot_of(persona_hint))
         .execute(&self.pool)
         .await
         .map_err(|e| format!("link_persona_identity (verify): {e}"))?;
