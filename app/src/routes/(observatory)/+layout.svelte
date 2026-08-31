@@ -19,7 +19,7 @@
     onMount(() => {
         // Static commands: open the palette (mod+k, fires even while a field is
         // focused) + jump to each observatory section (reuses the rail nav).
-        const navCommands = buildNavItems({ focus: false })
+        const navCommands = buildNavItems()
             .flatMap((e) => ('children' in e ? e.children : 'href' in e ? [e] : []))
             .map((link) => ({
                 id: `nav:${link.href}`,
