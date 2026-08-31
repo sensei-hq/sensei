@@ -34,7 +34,17 @@ function tables(): Record<string, FakeTable> {
 		repositories: {
 			rows: [],
 			uniques: [{ columns: ['tenant_id', 'repo_key'] }]
-		}
+		},
+		// Declared empty in the shared set because that is the DEFAULT state and
+		// the one every dōjō starts in: no rows means the whole catalogue is on.
+		// The fake refuses undeclared tables, which is what caught syncPlan's new
+		// read — so the fake has to mirror the schema, not just the rows a test
+		// happens to care about.
+		metric_activations: {
+			rows: [],
+			uniques: [{ columns: ['tenant_id', 'repository_id', 'metric_id'] }]
+		},
+		metrics: { rows: [] }
 	};
 }
 
@@ -253,6 +263,65 @@ describe('syncPlan', () => {
 		expect(plan.allowed[0].tenant_id).toBe('t-acme');
 	});
 
+	it('carries the metrics a tenant has switched OFF for that repository', async () => {
+		// Absence = enabled, so the plan sends the DISABLED set. Sending "enabled"
+		// instead would make a metric added to the catalogue later arrive OFF for
+		// every existing repository, because no row would mention it.
+		const db = fakeDojoDb({
+			...withView(MINE),
+			metric_activations: {
+				rows: [
+					{ tenant_id: 't-acme', repository_id: 'r1', metric_id: 'm-ftr', enabled: false },
+					// enabled:true rows are the same as absence and must not be sent.
+					{ tenant_id: 't-acme', repository_id: 'r1', metric_id: 'm-churn', enabled: true }
+				]
+			},
+			metrics: { rows: [{ id: 'm-ftr', key: 'ftr' }, { id: 'm-churn', key: 'churn_rate' }] }
+		});
+		const plan = await syncPlan(db as never, ALICE);
+		const api = plan.allowed.find((a) => a.repo_key === 'github.com/acme/api');
+		const web = plan.allowed.find((a) => a.repo_key === 'github.com/acme/web');
+		expect(api?.disabled_metrics).toEqual(['ftr']);
+		// Per REPOSITORY: r2 was never mentioned, so nothing is off for it.
+		expect(web?.disabled_metrics).toEqual([]);
+	});
+
+	it('reports metric KEYS, not ids, because the daemon knows keys', async () => {
+		// `sensei.metrics.id` differs between the two planes — they are separate
+		// databases loaded from the same staging file — so sending the uuid would
+		// name a row the daemon cannot resolve. `key` is the stable slug.
+		const db = fakeDojoDb({
+			...withView(MINE),
+			metric_activations: {
+				rows: [{ tenant_id: 't-acme', repository_id: 'r1', metric_id: 'm-ftr', enabled: false }]
+			},
+			metrics: { rows: [{ id: 'm-ftr', key: 'ftr' }] }
+		});
+		const plan = await syncPlan(db as never, ALICE);
+		const api = plan.allowed.find((a) => a.repo_key === 'github.com/acme/api');
+		expect(api?.disabled_metrics).toEqual(['ftr']);
+	});
+
+	it('propagates an activations read failure instead of re-enabling everything', async () => {
+		// The wrong direction to fail for a cost lever. An empty map on error looks
+		// exactly like "nothing is disabled", so a broken read would silently start
+		// computing every metric a tenant is paying NOT to compute — and the only
+		// symptom would be the bill.
+		const db = fakeDojoDb({
+			...withView(MINE),
+			metric_activations: { rows: [], error: { message: 'connection reset' } }
+		});
+		await expect(syncPlan(db as never, ALICE)).rejects.toThrow(/connection reset/);
+	});
+
+	it('leaves disabled_metrics empty when nothing was ever switched off', async () => {
+		// The overwhelmingly common case, and the one a new dōjō is in: no rows,
+		// whole catalogue on.
+		const db = fakeDojoDb(withView(MINE));
+		const plan = await syncPlan(db as never, ALICE);
+		expect(plan.allowed.every((a) => a.disabled_metrics.length === 0)).toBe(true);
+	});
+
 	it('scopes to the caller, so one user never sees another user rows', async () => {
 		// The plan is an ALLOW-LIST the daemon acts on directly, so a leak here is
 		// not a display bug — it is the daemon syncing someone else code.
@@ -359,14 +428,15 @@ describe('listMyRepositories — what a human is shown', () => {
 		// An empty list reads as "you have no repositories", which is a different
 		// and load-bearing claim. Same fail-closed rule as `listUserOrgs`.
 		//
-		// `fakeDojoDb` cannot fail a read, so this uses a minimal chainable stub —
-		// the failure path is worth a bespoke double rather than going untested.
-		const failing = {
-			from: () => failing,
-			select: () => failing,
-			eq: () => Promise.resolve({ data: null, error: { message: 'boom' } })
-		} as unknown as Parameters<typeof listMyRepositories>[0];
-		await expect(listMyRepositories(failing, ALICE)).rejects.toThrow();
+		// `fakeDojoDb` can fail a read now (FakeTable.error), so this uses the one
+		// mechanism rather than a bespoke chainable stub. The stub had to mirror
+		// the client's chain by hand, which meant it silently stopped covering
+		// anything the real chain grew.
+		const db = fakeDojoDb({
+			...tables(),
+			all_my_repositories: { rows: [], error: { message: 'boom' } }
+		});
+		await expect(listMyRepositories(db as never, ALICE)).rejects.toThrow(/boom/);
 	});
 });
 
@@ -426,7 +496,10 @@ describe('paged reads — the 1000-row cap must not truncate silently', () => {
 	});
 
 	it('syncPlan pages too — a truncated plan silently under-syncs', async () => {
-		const db = fakeDojoDb({ all_my_repositories: { rows: manyRows(1200) } });
+		// `tables()` supplies the empty metric_activations/metrics the plan reads.
+		// Without them the fake refuses the read and this fails for a reason that
+		// has nothing to do with paging.
+		const db = fakeDojoDb({ ...tables(), all_my_repositories: { rows: manyRows(1200) } });
 		const plan = await syncPlan(db as never, ALICE);
 		expect(plan.allowed).toHaveLength(1200);
 	});

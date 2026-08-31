@@ -40,6 +40,17 @@ export interface FakeTable {
 	 *  row, which at 500 rows exceeded a Cloudflare Worker's per-invocation
 	 *  subrequest cap. Without a counter that invariant is untestable. */
 	reads?: number;
+	/**
+	 * Make every operation on this table FAIL with this error.
+	 *
+	 * Added because the error path is the one that matters and was the one the
+	 * fake could not express: a handler that swallows a read failure and returns
+	 * an empty set is indistinguishable from a genuinely empty table, and a test
+	 * written against this fake would pass either way. Verified by mutation —
+	 * replacing `throw` with `return empty` in syncPlan's activation read passed
+	 * every test until this existed.
+	 */
+	error?: { code?: string; message: string };
 }
 
 type Filter = { op: 'eq' | 'in' | 'is'; column: string; value: unknown };
@@ -87,7 +98,7 @@ function sameKey(a: FakeRow, b: FakeRow, u: FakeUnique): boolean {
 export function fakeDojoDb(tables: Record<string, FakeTable>) {
 	const state: Record<string, FakeTable> = {};
 	for (const [name, t] of Object.entries(tables)) {
-		state[name] = { rows: t.rows.map((r) => ({ ...r })), uniques: t.uniques, reads: 0 };
+		state[name] = { rows: t.rows.map((r) => ({ ...r })), uniques: t.uniques, reads: 0, error: t.error };
 	}
 
 	function builder(table: string) {
@@ -100,6 +111,9 @@ export function fakeDojoDb(tables: Record<string, FakeTable>) {
 
 		const run = (): { data: FakeRow[] | null; error: { code?: string; message: string } | null } => {
 			const t = state[table];
+			// Injected failure wins over everything: a table that cannot be read
+			// cannot be written or counted either.
+			if (t.error) return { data: null, error: t.error };
 			if (pending?.op === 'insert') {
 				const row: FakeRow = { id: nextId(table.slice(0, 4)), ...pending.payload };
 				for (const u of t.uniques ?? []) {
