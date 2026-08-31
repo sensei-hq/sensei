@@ -412,6 +412,61 @@ pub struct ProjectMetricSeries {
     pub points: Vec<ProjectMetricSeriesPoint>,
 }
 
+/// One row of `sensei.metric_status`: for one repository × one registry metric,
+/// should this compute, how far has it got, and if it is not current, WHY. The
+/// shape [`PgStore::metric_status`] returns.
+///
+/// `reason_code` is a `sensei.reason_codes` key in domain `metric_computation`,
+/// not a message — the human summary/detail/remedy is served ONCE per read (see
+/// [`ReasonCode`]) rather than repeated on all ~1.9k rows. `cadence` is read off
+/// `last_sha` by the view rather than a hardcoded group list, so it reports
+/// `commit` on its own if the engine ever writes one.
+///
+/// `sealed_through` / `watermark_updated_at` are `None` for a metric whose group
+/// has never run for the repository — an honest gap, and the state the view names
+/// `never_computed`. Never a fabricated date.
+/// `repo_key` is `Option`: it is the REMOTE identity, and a local-only repository
+/// has no remote. Such a repository still computes metrics normally (they are keyed
+/// on `repository_id`), but no dōjō can rule on them — activation is decided per
+/// `repo_key`. So a null here is not missing data; it is the reason the activation
+/// control does not apply, and `repository_id` is the identity to address it by.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct MetricStatusRow {
+    pub repository_id: uuid::Uuid,
+    pub repo_key: Option<String>,
+    pub repository_name: String,
+    pub metric: String,
+    pub metric_group: String,
+    pub cadence: String,
+    pub sealed_through: Option<chrono::NaiveDate>,
+    pub last_sha: Option<String>,
+    pub watermark_updated_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub effective_from: chrono::NaiveDate,
+    pub effective_until: Option<chrono::NaiveDate>,
+    pub deactivated: bool,
+    pub deactivated_observed_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub reason_code: String,
+}
+
+/// One `sensei.reason_codes` row — the registry that answers "why didn't this
+/// happen?" for one domain (see `docs/architecture/reason-codes.md`). The shape
+/// [`PgStore::reason_codes`] returns.
+///
+/// `kind` is the axis that earns the single table: `normal` clears itself,
+/// `refusal` is somebody's decision, `fault` needs attention. A `normal` code
+/// carries no `remedy` and no `actor` — the DDL enforces it — so a UI can tell
+/// fine from broken without a per-domain rule of its own.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ReasonCode {
+    pub code: String,
+    pub kind: String,
+    pub precedence: i16,
+    pub summary: String,
+    pub detail: String,
+    pub remedy: Option<String>,
+    pub actor: Option<String>,
+}
+
 /// The descriptive facets of ONE metric by registry key — its display `name` and
 /// its `how_to_read` "what this measures" line. The shape
 /// [`PgStore::get_metric_meaning`] returns, read from `sensei.metrics` by key (the
@@ -445,6 +500,7 @@ mod personas;
 pub(crate) use personas::ForgeTokenRow;
 mod playbook;
 mod projects;
+mod reasons;
 mod repo_key;
 mod runs;
 mod schedules;

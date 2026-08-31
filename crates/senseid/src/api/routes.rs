@@ -392,6 +392,11 @@ pub fn create_router(state: AppState) -> Router {
         // Phase 7 registry catalog — static `registry` wins over the `{project}`
         // param below (matchit precedence, same as /api/runs/plan vs /{id}).
         .route("/api/metrics/registry", get(metrics::get_metrics_registry))
+        // Per-(repository × metric) computation state + the reason vocabulary that
+        // explains it. `?repo=` is required — the view cross-joins the catalogue, so
+        // the whole estate is unbounded; `/summary` is the aggregated shape.
+        .route("/api/metrics/status", get(metrics::get_metric_status))
+        .route("/api/metrics/status/summary", get(metrics::get_metric_status_summary))
         .route("/api/metrics/{project}", get(observatory::get_metrics))
         // Workflow state
         .route(
@@ -645,6 +650,285 @@ mod tests {
             .execute(state.pg.pool())
             .await
             .unwrap();
+    }
+
+    /// How many rows `sensei.metrics` has right now.
+    ///
+    /// The two status tests read this on BOTH sides of the endpoint call and assert
+    /// the row count falls in the bracket, because sibling tests in this binary seed
+    /// and drop registry rows concurrently — a single count compared for equality
+    /// flakes by however many landed mid-read (observed: 3,020 vs 3,019).
+    async fn registry_size(pg: &crate::db::pg_store::PgStore) -> i64 {
+        let row: (i64,) = sqlx_core::query_as::query_as("SELECT count(*) FROM sensei.metrics")
+            .fetch_one(pg.pool())
+            .await
+            .unwrap();
+        row.0
+    }
+
+    /// `GET /api/metrics/status?repo=` — one repository's per-metric computation
+    /// state, which answers "why is there no row for today?" in one read (it
+    /// previously needed three tables and the planner's source).
+    ///
+    /// Five properties, each one a way the endpoint could lie:
+    ///
+    /// 1. **The reason vocabulary travels once, and every row's code resolves in
+    ///    it.** A `reason_code` with no entry in `reasons` renders as a bare slug,
+    ///    which is the failure this registry exists to prevent.
+    /// 2. **A known repository has a row for EVERY registry metric.** The view
+    ///    cross-joins on purpose: a metric that never ran still needs a row, or its
+    ///    absence is the one thing you cannot explain.
+    /// 3. **A deactivation is OBSERVABLE.** This is the gap #140 recorded — the
+    ///    repo-scope skip had never been seen live, because with no row appearing
+    ///    either way, "the gate works" and "the gate does nothing" looked identical.
+    ///    Here the ruling changes `reason_code` to `deactivated` and carries the
+    ///    remedy, so the two are finally distinguishable.
+    /// 4. **An unknown repository is a 404, not an empty success.** Because of the
+    ///    cross join, a known repository ALWAYS has rows — so `[]` can only mean the
+    ///    key names nothing, and reporting that as a 200 would read as "this
+    ///    repository has no metrics".
+    /// 5. **`repo` is required, and its absence is a 400 — never "all of them".**
+    ///    The unbounded read is the defect this asserts against: `repositories ×
+    ///    metrics` is 1,943 rows on the dev install but 10,928,780 in `sensei_test`
+    ///    (3,619 repositories × 3,019 accumulated synthetic metrics), where it
+    ///    exhausted the request. A silent default to "all" would be a latent
+    ///    outage on any large install.
+    ///
+    /// The registry-coverage check is BRACKETED rather than equal to one count:
+    /// sibling tests in this binary seed and drop `sensei.metrics` rows
+    /// concurrently, so a single `count(*)` compared for equality is off by however
+    /// many landed mid-read. Bracketing is what is actually knowable under
+    /// concurrency, and still fails loudly if the cross join drops metrics.
+    #[tokio::test]
+    async fn get_metric_status_endpoint() {
+        let (app, state) = test_app().await;
+        let uniq = uuid::Uuid::new_v4();
+        let (pid, fid) =
+            crate::tasks::test_support::seed_metrics_project_folder(&state.pg, &uniq).await;
+        let rid = crate::tasks::test_support::seed_bare_repository(&state.pg, &pid, &uniq).await;
+        let repo_key = format!("test/bare-{uniq}");
+        let key = format!("_test:status:{}", uuid::Uuid::new_v4());
+        let mid = seed_metric(&state.pg, &key, "pct", "higher_better").await;
+
+        // ── 5: no `repo` is a 400, not a whole-estate read ──────────────────
+        let (st, _) = req(app.clone(), "GET", "/api/metrics/status", None).await;
+        assert_eq!(
+            st,
+            StatusCode::BAD_REQUEST,
+            "a missing repo is a 400 — defaulting to every repository is an \
+             unbounded cross join (10.9M rows in sensei_test)"
+        );
+
+        // ── 1 + 2: the read, then the two structural properties ─────────────
+        let registry_before = registry_size(&state.pg).await;
+        let (st, body) =
+            req(app.clone(), "GET", &format!("/api/metrics/status?repo={repo_key}"), None).await;
+        let registry_after = registry_size(&state.pg).await;
+        assert_eq!(st, StatusCode::OK);
+        let reasons = body["reasons"].as_object().expect("the reason vocabulary is an object");
+        assert!(!reasons.is_empty(), "the reason registry is served, not omitted");
+        for (code, r) in reasons {
+            assert!(
+                r["summary"].as_str().is_some_and(|s| !s.is_empty()),
+                "reason `{code}` carries a summary line: {r}"
+            );
+            assert!(
+                r["kind"].as_str().is_some_and(|s| !s.is_empty()),
+                "reason `{code}` carries a kind, so the UI can tell fine from broken: {r}"
+            );
+        }
+
+        assert_eq!(body["repo_key"], repo_key.as_str(), "the read names the repository it is for");
+        let rows = body["metrics"].as_array().expect("metrics is an array");
+
+        let (lo, hi) = (registry_before.min(registry_after), registry_before.max(registry_after));
+        assert!(
+            (lo..=hi).contains(&(rows.len() as i64)),
+            "the cross join gives a known repository one row per registry metric — \
+             a metric that never ran must still appear, or its absence is unexplainable. \
+             got {} rows, registry was {lo}..={hi} across the read",
+            rows.len()
+        );
+
+        for row in rows {
+            let code = row["reason_code"].as_str().unwrap_or_default();
+            assert!(
+                reasons.contains_key(code),
+                "row's reason_code `{code}` resolves in the served vocabulary: {row}"
+            );
+        }
+
+        // The seeded metric has never computed for this fresh repository, and that
+        // is a real state with its own code — not a blank.
+        let seeded = rows
+            .iter()
+            .find(|r| r["metric"].as_str() == Some(key.as_str()))
+            .expect("the seeded metric has a row for this repository");
+        assert_eq!(
+            seeded["reason_code"], "never_computed",
+            "a metric with no watermark reports never_computed, never an empty reason"
+        );
+        assert_eq!(seeded["deactivated"], false, "nothing has been switched off yet");
+        assert!(
+            seeded["sealed_through"].is_null(),
+            "a never-computed metric has no watermark — honest-null, never a fabricated date"
+        );
+
+        // ── 3: the deactivation the daemon mirrors from the dōjō is visible ──
+        sqlx_core::query::query(
+            "INSERT INTO sensei.metric_deactivations (repository_id, metric_key) VALUES ($1, $2)",
+        )
+        .bind(rid)
+        .bind(&key)
+        .execute(state.pg.pool())
+        .await
+        .unwrap();
+
+        let (st, body) =
+            req(app.clone(), "GET", &format!("/api/metrics/status?repo={repo_key}"), None).await;
+        assert_eq!(st, StatusCode::OK);
+        let after = body["metrics"]
+            .as_array()
+            .expect("the read carries the repository's rows")
+            .iter()
+            .find(|r| r["metric"].as_str() == Some(key.as_str()))
+            .cloned()
+            .expect("the seeded metric still has a row");
+        assert_eq!(after["deactivated"], true, "the mirrored ruling is reported");
+        assert_eq!(
+            after["reason_code"], "deactivated",
+            "a choice outranks progress: the row says deactivated, not never_computed"
+        );
+        assert!(
+            body["reasons"]["deactivated"]["remedy"].as_str().is_some_and(|s| !s.is_empty()),
+            "the deactivated reason carries what to DO — it is a refusal, not a fault"
+        );
+
+        // ── 4: unknown repository is a 404, never an empty 200 ──────────────
+        let (st, _) =
+            req(app, "GET", &format!("/api/metrics/status?repo=test/does-not-exist-{uniq}"), None)
+                .await;
+        assert_eq!(
+            st,
+            StatusCode::NOT_FOUND,
+            "an unknown repo_key is a 404 — an empty 200 would read as \
+             'this repository has no metrics'"
+        );
+
+        sqlx_core::query::query("DELETE FROM sensei.metric_deactivations WHERE repository_id = $1")
+            .bind(rid)
+            .execute(state.pg.pool())
+            .await
+            .unwrap();
+        sqlx_core::query::query("DELETE FROM sensei.metrics WHERE id = $1")
+            .bind(mid)
+            .execute(state.pg.pool())
+            .await
+            .unwrap();
+        // Drops the project, its folders, and the repositories seeded onto them —
+        // including `rid`, so there is no separate repository delete here.
+        crate::tasks::test_support::cleanup_metrics_fixture(&state.pg, &pid, Some(&fid), &[]).await;
+    }
+
+    /// `GET /api/metrics/status/summary` — the whole estate, aggregated. The
+    /// bounded companion to the per-repository read, and the reason the latter can
+    /// require `?repo=`.
+    ///
+    /// Three properties:
+    ///
+    /// 1. **Each repository appears EXACTLY ONCE, with its reasons merged.** The
+    ///    seeded repository is given TWO distinct reason codes on purpose — one
+    ///    metric deactivated, the rest never computed — because with a single code
+    ///    a repository is one row and no grouping bug can show. That is not
+    ///    hypothetical: the first version of this test seeded one code, and a probe
+    ///    that removed the store's `ORDER BY` (which the handler's run-length
+    ///    grouping then depended on) did NOT fail it. The handler now accumulates
+    ///    into a map keyed on `repository_id`, and this asserts the merge.
+    /// 2. **`total` equals the sum of its own counts**, and lands in the registry
+    ///    bracket. A tally that does not equal the thing it names is the defect.
+    /// 3. **Every counted code resolves in `reasons`** — same contract as the
+    ///    per-repository read, so a client can rank by `precedence` without
+    ///    inventing a fallback for a code it does not recognise.
+    #[tokio::test]
+    async fn get_metric_status_summary_endpoint() {
+        let (app, state) = test_app().await;
+        let uniq = uuid::Uuid::new_v4();
+        let (pid, fid) =
+            crate::tasks::test_support::seed_metrics_project_folder(&state.pg, &uniq).await;
+        let rid = crate::tasks::test_support::seed_bare_repository(&state.pg, &pid, &uniq).await;
+        let repo_key = format!("test/bare-{uniq}");
+
+        // A SECOND reason code for this repository, so grouping has something to
+        // merge. Without it the repository is a single row and property 1 is
+        // vacuous — it passes whether the handler groups correctly or not.
+        let key = format!("_test:summary:{}", uuid::Uuid::new_v4());
+        let mid = seed_metric(&state.pg, &key, "pct", "higher_better").await;
+        sqlx_core::query::query(
+            "INSERT INTO sensei.metric_deactivations (repository_id, metric_key) VALUES ($1, $2)",
+        )
+        .bind(rid)
+        .bind(&key)
+        .execute(state.pg.pool())
+        .await
+        .unwrap();
+
+        let registry_before = registry_size(&state.pg).await;
+        let (st, body) = req(app, "GET", "/api/metrics/status/summary", None).await;
+        let registry_after = registry_size(&state.pg).await;
+        assert_eq!(st, StatusCode::OK);
+        let reasons = body["reasons"].as_object().expect("the reason vocabulary travels here too");
+        let repos = body["repositories"].as_array().expect("repositories is an array");
+
+        // 1: exactly once, with BOTH of its reason codes merged into one entry.
+        let ours: Vec<_> =
+            repos.iter().filter(|r| r["repo_key"].as_str() == Some(repo_key.as_str())).collect();
+        assert_eq!(
+            ours.len(),
+            1,
+            "the seeded repository appears exactly once — a second entry means its \
+             reasons were split across entries with partial counts"
+        );
+        let ours = ours[0];
+
+        // 2: the tally equals what it names, twice over.
+        let by_reason = ours["by_reason"].as_object().expect("by_reason is a code → count map");
+        assert!(
+            by_reason.contains_key("deactivated") && by_reason.contains_key("never_computed"),
+            "both of the repository's reason codes landed in ONE entry — this is the \
+             merge property, and it is only testable because the fixture seeds two: {ours}"
+        );
+        let summed: i64 = by_reason.values().filter_map(serde_json::Value::as_i64).sum();
+        assert_eq!(
+            ours["total"].as_i64(),
+            Some(summed),
+            "total equals the sum of its own per-reason counts: {ours}"
+        );
+        let (lo, hi) = (registry_before.min(registry_after), registry_before.max(registry_after));
+        assert!(
+            (lo..=hi).contains(&summed),
+            "every registry metric is counted exactly once for the repository — \
+             got {summed}, registry was {lo}..={hi} across the read"
+        );
+
+        // 3: no unresolvable code.
+        for code in by_reason.keys() {
+            assert!(
+                reasons.contains_key(code),
+                "counted reason `{code}` resolves in the served vocabulary"
+            );
+        }
+
+        sqlx_core::query::query("DELETE FROM sensei.metric_deactivations WHERE repository_id = $1")
+            .bind(rid)
+            .execute(state.pg.pool())
+            .await
+            .unwrap();
+        sqlx_core::query::query("DELETE FROM sensei.metrics WHERE id = $1")
+            .bind(mid)
+            .execute(state.pg.pool())
+            .await
+            .unwrap();
+        crate::tasks::test_support::cleanup_metrics_fixture(&state.pg, &pid, Some(&fid), &[]).await;
     }
 
     /// 7.2 `GET /api/projects/{id}/metrics`: latest-per-metric + facets + trend +
