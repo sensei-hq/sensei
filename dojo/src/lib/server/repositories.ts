@@ -42,6 +42,34 @@ export interface MappedRepo {
 	repo_id: string;
 }
 
+/**
+ * A repository the caller may sync, as the PLAN reports it.
+ *
+ * Separate from [`MappedRepo`] on purpose: registration answers "which tenant
+ * owns this repo", and knows nothing about activations. Widening `MappedRepo`
+ * would have forced three registration call sites to invent a field — the
+ * typechecker caught exactly that.
+ */
+export interface PlannedRepo extends MappedRepo {
+	/**
+	 * Catalogue metric KEYS this tenant has switched OFF for this repository.
+	 *
+	 * The DISABLED set, not the enabled one, because absence means enabled: a
+	 * metric added to the catalogue later is then automatically on everywhere,
+	 * whereas sending "enabled" would have it arrive off for every repository no
+	 * row happens to mention.
+	 *
+	 * KEYS, not ids. `sensei.metrics.id` differs between the two planes — they
+	 * are separate databases loaded from the same staging file — so a uuid would
+	 * name a row the daemon cannot resolve.
+	 *
+	 * Per (tenant, repository). A repository shared with two dōjōs appears twice
+	 * in `allowed`, once per tenant, each with its own set; the daemon computes
+	 * while ANY of them still wants the metric.
+	 */
+	disabled_metrics: string[];
+}
+
 /** Why a repository could not be attached to a tenant. Each is a different
  *  problem with different advice, so they are not collapsed into one. */
 export type UnmappedReason =
@@ -59,7 +87,7 @@ export interface RegisterResult {
  *  shape does not change when the gate arrives in phase 2, which is the whole
  *  argument for the plan endpoint (§V.5). */
 export interface SyncPlan {
-	allowed: MappedRepo[];
+	allowed: PlannedRepo[];
 	denied: { repo_key: string; tenant: string; reason: string }[];
 }
 
@@ -343,6 +371,60 @@ export async function listMyRepositories(
  * to no-sync by construction — no plan, nothing to sync — rather than needing a
  * nullable boolean whose NULL means no.
  */
+/**
+ * The metrics each (tenant, repository) has switched off, keyed `tenant|repo`.
+ *
+ * Only `enabled = false` rows matter: an `enabled = true` row means the same
+ * thing as no row at all, and sending it would imply the tenant had made a
+ * choice that constrains a metric catalogued later.
+ *
+ * A read failure PROPAGATES. Returning an empty map would silently re-enable
+ * every metric a tenant is paying not to compute, which is the wrong direction
+ * to fail for a cost lever.
+ */
+async function disabledMetricsByRepo(
+	db: DojoClient,
+	tenantIds: string[]
+): Promise<Map<string, string[]>> {
+	const out = new Map<string, string[]>();
+	if (tenantIds.length === 0) return out;
+
+	const { data, error } = await db
+		.from('metric_activations')
+		.select('tenant_id, repository_id, metric_id, enabled')
+		.in('tenant_id', tenantIds)
+		.eq('enabled', false);
+	if (error) throw new AdminError(500, `metric_activations: ${error.message}`);
+
+	const rows = (data ?? []) as {
+		tenant_id: string;
+		repository_id: string;
+		metric_id: string;
+	}[];
+	if (rows.length === 0) return out;
+
+	// One read for the ids actually referenced, rather than the whole catalogue.
+	const { data: mData, error: mErr } = await db
+		.from('metrics')
+		.select('id, key')
+		.in('id', [...new Set(rows.map((r) => r.metric_id))]);
+	if (mErr) throw new AdminError(500, `metrics: ${mErr.message}`);
+	const keyOf = new Map(
+		((mData ?? []) as { id: string; key: string }[]).map((m) => [m.id, m.key])
+	);
+
+	for (const r of rows) {
+		const key = keyOf.get(r.metric_id);
+		// A deactivation naming a metric the catalogue no longer has is dropped,
+		// not passed through as a uuid the daemon would silently never match.
+		if (!key) continue;
+		const k = `${r.tenant_id}|${r.repository_id}`;
+		out.set(k, [...(out.get(k) ?? []), key]);
+	}
+	for (const [k, v] of out) out.set(k, v.sort());
+	return out;
+}
+
 export async function syncPlan(db: DojoClient, principalId: string): Promise<SyncPlan> {
 	const data = await readAllPages<{
 		repository_id: string;
@@ -359,7 +441,14 @@ export async function syncPlan(db: DojoClient, principalId: string): Promise<Syn
 			.range(from, to)
 	);
 
-	const allowed: MappedRepo[] = [];
+	const rowsIn = (data ?? []) as { tenant_id: string; sync_enabled: boolean }[];
+	// Only the tenants that actually appear, so a user in many dōjōs does not
+	// read activations for tenants this plan says nothing about.
+	const disabled = await disabledMetricsByRepo(db, [
+		...new Set(rowsIn.filter((r) => r.sync_enabled).map((r) => r.tenant_id))
+	]);
+
+	const allowed: PlannedRepo[] = [];
 	const denied: { repo_key: string; tenant: string; reason: string }[] = [];
 	for (const row of (data ?? []) as {
 		repository_id: string;
@@ -374,7 +463,8 @@ export async function syncPlan(db: DojoClient, principalId: string): Promise<Syn
 				repo_key: row.repo_key,
 				tenant: row.tenant,
 				tenant_id: row.tenant_id,
-				repo_id: row.repository_id
+				repo_id: row.repository_id,
+				disabled_metrics: disabled.get(`${row.tenant_id}|${row.repository_id}`) ?? []
 			});
 		} else {
 			// A denial always names itself. "Nothing to sync" is the shape that hid
