@@ -6,7 +6,18 @@ select pm.project_id
      , m.key          as metric
      , pm.computed_on as date
      , case
+         -- Pooled ratio, but ONLY when the writers actually supplied the parts.
+         -- `cache_reuse` is a pct whose props are
+         -- {sessions, pooled_ratio, mean_of_session_ratios}: it is deliberately
+         -- the MEAN OF PER-SESSION RATIOS, because pooling is dominated by the
+         -- longest session and hides the signal the metric exists to surface
+         -- (see tasks/handlers/metrics/usage.rs). Without this guard the sums
+         -- were NULL, `NULL / nullif(NULL, 0)` was NULL, and every reader that
+         -- decodes `value` as non-nullable failed the whole project read —
+         -- measured: 68 NULL rows, all cache_reuse, 500 on exactly the 10
+         -- projects that had them.
          when m.type in ('ratio', 'pct')
+              and bool_or(pm.props ? 'denominator')
            then sum((pm.props->>'numerator')::numeric)
                 / nullif(sum((pm.props->>'denominator')::numeric), 0)
          when m.type in ('count', 'currency')
@@ -16,7 +27,11 @@ select pm.project_id
          else (array_agg(pm.value order by pm.repository_id nulls last))[1]
        end            as value
      , case
+         -- Same guard. Writing `numerator: 0, denominator: 0` for a metric that
+         -- never had them would fabricate a 0/0 reading that downstream
+         -- roll-ups would then re-derive from.
          when m.type in ('ratio', 'pct')
+              and bool_or(pm.props ? 'denominator')
            then (array_agg(pm.props order by pm.repository_id nulls last))[1]
                 || jsonb_build_object(
                      'numerator'
@@ -44,7 +59,11 @@ whole-tree twins (churn/quality) are NOT pooled here.
 
 Pooling is type-aware, so a multi-repo project never averages-of-averages:
 - ratio/pct: sum(numerator)/nullif(sum(denominator),0) across the projects repos —
-  the correct pooled ratio, NEVER the mean of per-repo ratios
+  the correct pooled ratio, NEVER the mean of per-repo ratios. This requires the
+  writer to put numerator/denominator in props; a ratio/pct metric that does NOT
+  (cache_reuse, which is deliberately a mean of per-session ratios) falls through
+  to the representative-repo value rather than pooling to NULL. It is still never
+  averaged across repos.
 - count/currency: sum(value) across repos
 - duration: avg(value) across repos (the pragmatic pooled latency; a true
   cross-repo median is not recoverable from per-repo rows)
