@@ -36,7 +36,6 @@ export type NavEntry = NavLink | NavGroup | NavSeparator;
 
 export interface NavOptions {
   /** Focus mode collapses the rail to anchors + "Needs you". */
-  focus: boolean;
   /** Live project count for the Projects badge (from `appState.projectCount`). */
   projectCount?: number;
 }
@@ -57,14 +56,18 @@ const link = (
 /**
  * Build the rail entries. In Focus mode the Review group, the separator and
  * Preferences are dropped — leaving anchors + "Needs you" (just what needs a
- * decision). Dōjō connections sit in Review (reached periodically, hidden in
- * Focus) — the entry point for pairing with an employer/client/community Dōjō.
+ * decision). Dōjō connections sit in Review (reached periodically) — the entry
+ * point for pairing with an employer/client/community Dōjō.
+ *
+ * There was an All|Focus toggle that hid Review and Settings. It is gone: the
+ * rail is short enough that hiding half of it bought little, and the rokkit
+ * Toggle it used has a dark-mode contrast bug in the `zen-sumi` style (the
+ * hover/focus rule is not guarded against `[data-selected]`, and is more
+ * specific, so focusing the chosen segment erases its own highlight).
  */
-export function buildNavItems({ focus, projectCount }: NavOptions): NavEntry[] {
+export function buildNavItems({ projectCount }: NavOptions = {}): NavEntry[] {
   const entries: NavEntry[] = [
-    // Anchors — where every day starts (top-level; the "Observatory" header +
-    // All|Focus toggle live in the sidebar chrome, not the List — the toggle
-    // can't live in a group header until rokkit stops disabling them).
+    // Anchors — where every day starts (top-level).
     // Intake (the front door) lives in the project window now — a chunk of work
     // always starts IN a project, so it's a per-project section, not observatory-wide.
     link("家", "Today", "/"),
@@ -82,8 +85,8 @@ export function buildNavItems({ focus, projectCount }: NavOptions): NavEntry[] {
     },
   ];
 
-  if (!focus) {
-    // Review & diagnostics — reached periodically, hidden in Focus.
+  {
+    // Review & diagnostics — reached periodically.
     entries.push({
       text: "Review",
       children: [
@@ -97,7 +100,7 @@ export function buildNavItems({ focus, projectCount }: NavOptions): NavEntry[] {
         link("送", "Share review", "/share-review"),
       ],
     });
-    // Settings — visited when something needs changing, hidden in Focus.
+    // Settings — visited when something needs changing.
     entries.push({ type: "separator" });
     entries.push(link("調", "Settings", "/settings"));
   }
@@ -105,10 +108,10 @@ export function buildNavItems({ focus, projectCount }: NavOptions): NavEntry[] {
   return entries;
 }
 
-/** Flatten every link href from the full rail (focus-independent). */
+/** Flatten every link href from the rail. */
 function allHrefs(): string[] {
   const out: string[] = [];
-  for (const e of buildNavItems({ focus: false })) {
+  for (const e of buildNavItems()) {
     if ("href" in e) out.push(e.href);
     else if ("children" in e) for (const c of e.children) out.push(c.href);
   }

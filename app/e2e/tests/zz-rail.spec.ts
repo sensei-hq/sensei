@@ -14,26 +14,15 @@ const DIR = '/tmp/sensei-shots';
 const settle = (ms = 2000) => new Promise<void>((r) => setTimeout(r, ms));
 
 test.describe('rail + new screens', () => {
-  test('capture rail (all/focus) and the three new screens', async ({ tauriPage }) => {
+  test('capture the rail and the three new screens', async ({ tauriPage }) => {
     mkdirSync(DIR, { recursive: true });
 
-    // Observatory root → the rail in All mode (every group visible).
+    // Observatory root → the whole rail. There is no longer an All|Focus
+    // toggle to capture a second state for: it was dropped, so the rail has
+    // one appearance.
     await navigateTo(tauriPage, '/');
     await settle();
-    await tauriPage.screenshot({ path: `${DIR}/rail-all.png` });
-
-    // Toggle Focus → rail collapses to anchors + "Needs you".
-    await tauriPage.evaluate(`
-      (function () {
-        var btns = Array.from(
-          document.querySelectorAll('[data-component="observatory-sidebar"] button'),
-        );
-        var focus = btns.find(function (b) { return (b.textContent || '').trim() === 'Focus'; });
-        if (focus) focus.click();
-      })()
-    `);
-    await settle(1200);
-    await tauriPage.screenshot({ path: `${DIR}/rail-focus.png` });
+    await tauriPage.screenshot({ path: `${DIR}/rail.png` });
 
     // The three new screens (stub pages — PageHeader + EmptyState).
     for (const route of ['impact', 'traceability', 'upgrades']) {
