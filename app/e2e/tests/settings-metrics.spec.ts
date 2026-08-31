@@ -18,7 +18,7 @@
  */
 
 import { test, expect } from '../fixtures';
-import { navigateTo, DAEMON_URL } from '../helpers';
+import { navigateToScreen, DAEMON_URL } from '../helpers';
 
 interface SummaryRow {
   repository_id: string;
@@ -33,25 +33,126 @@ interface Summary {
   reasons: Record<string, { summary: string; kind: string }>;
 }
 
-async function seedHealth(tauriPage: any): Promise<void> {
+/**
+ * The live summary, with the status checked before the body is parsed.
+ *
+ * `r.json()` on a failed response throws "Unexpected end of JSON input" — the
+ * daemon's error responses carry a bare status and no body. That message sent an
+ * investigation looking for a serialisation bug when the real cause was a 500
+ * from a database missing the `sensei.metric_status` view. Assert the status, and
+ * the failure names itself.
+ */
+async function liveSummary(): Promise<Summary> {
+  const r = await fetch(`${DAEMON_URL}/api/metrics/status/summary`);
+  expect(
+    r.ok,
+    `GET /api/metrics/status/summary returned ${r.status} — the e2e daemon's ` +
+      `database is missing the metric_status view or the metric_computation ` +
+      `reason codes`,
+  ).toBe(true);
+  return (await r.json()) as Summary;
+}
+
+/**
+ * Past both gates the observatory sits behind: the health check, and setup.
+ *
+ * Setup completion is DAEMON state (`PUT /api/config`), not just a localStorage
+ * flag — writing only the flag leaves the app on the setup wizard, and the
+ * assertions then run against the welcome page instead of the screen under test.
+ * Several older specs `removeItem` it and still reach their screen; that works
+ * only on a database where setup already happened, which a fresh e2e DB is not.
+ * Mirrors `atlas.spec.ts`, which survives a fresh DB.
+ */
+async function seedSetupComplete(tauriPage: any): Promise<void> {
+  await fetch(`${DAEMON_URL}/api/config`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ setup_complete: '1' }),
+  });
   await tauriPage.evaluate(`
     (function() {
       sessionStorage.setItem('sensei:health', 'ready');
-      localStorage.removeItem('sensei:setup-complete');
+      try { localStorage.setItem('sensei:setup-complete', '1'); } catch (e) { /* shim */ }
+      var s = window.__sensei_state__;
+      if (s && s.appState) {
+        s.appState.config = Object.assign({}, s.appState.config, { setup_complete: '1' });
+        s.appState.loaded = true;
+      }
     })()
   `);
 }
 
 test.describe('Settings · Metrics', () => {
   test.beforeEach(async ({ tauriPage }) => {
-    await seedHealth(tauriPage);
-    await navigateTo(tauriPage, '/settings/metrics');
+    // Cold health-bootstrap plus the setup reconcile for the first gated screen
+    // can take ~50s on a loaded box.
+    test.setTimeout(180_000);
+    await seedSetupComplete(tauriPage);
+    // `navigateToScreen`, not `navigateTo`: the observatory shell is gated on
+    // health + setup, and `wizardState.setupComplete` only reconciles from the
+    // daemon config on a health TRANSITION — so a single navigation right after
+    // seeding lands on /setup and no amount of waiting on the target selector
+    // helps, because we are on another route. This re-navigates until it mounts.
+    await navigateToScreen(tauriPage, '/settings/metrics', '[data-screen="settings-metrics"]');
+  });
+
+  /**
+   * The unconditional gate. Every other test here needs repositories, and a fresh
+   * e2e database has none — so they skip, and a suite of skips proves nothing.
+   *
+   * This one runs on any install and asserts the property that actually breaks:
+   * the screen distinguishes "no repositories" from "the read failed". Honest-empty
+   * is only correct when the data genuinely is empty, and an error state rendered
+   * over a working-but-empty install (or a blank rail hiding a 500) are the two
+   * ways this goes wrong.
+   */
+  test('renders against the daemon, and empty is not an error', async ({ tauriPage }) => {
+    const live = await liveSummary();
+
+    // `data-screen-state`, hyphenated — the attribute ScreenState actually emits.
+    // An earlier version asserted `[data-screenstate="error"]`, which matches
+    // nothing and so passed no matter what the screen showed: a check that cannot
+    // fail is worse than no check, because it reads as coverage.
+    await expect(tauriPage.locator('[data-screen-state="error"]')).toHaveCount(0);
+
+    // Named so a failure below reports what the screen SHOWED, rather than only
+    // that some selector was missing.
+    const shown = async () =>
+      (await tauriPage.locator('body').innerText()).slice(0, 400).replace(/\n+/g, ' | ');
+
+    if (live.count === 0) {
+      // Empty says so in words. The rail is a bordered box with no intrinsic
+      // height, so rendering it empty beside "choose a repository" would show an
+      // invisible list and an instruction that cannot be followed — which reads
+      // as broken, not as empty. This assertion is what caught that.
+      await expect(
+        tauriPage.locator('[data-empty]'),
+        `expected the honest-empty message; screen showed: ${await shown()}`,
+      ).toBeVisible({ timeout: 15_000 });
+      await expect(tauriPage.locator('[data-repo-rail]')).toHaveCount(0);
+      test.info().annotations.push({
+        type: 'coverage-gap',
+        description:
+          'Fresh e2e database has 0 repositories, so the rail/reason/toggle tests ' +
+          'below skip. They bite on a populated install; seeding a metric fixture ' +
+          'for e2e needs a sensei.repositories row, which no daemon endpoint ' +
+          'creates (POST /api/repos makes a PROJECT). Tracked with the metrics backlog.',
+      });
+      return;
+    }
+
+    const rail = tauriPage.locator('[data-repo-rail]');
+    await expect(rail).toBeVisible({ timeout: 15_000 });
+    await expect(rail.locator('[data-repo]')).toHaveCount(live.count, { timeout: 15_000 });
+    // The prompt is shown before anything is chosen — not a blank pane that reads
+    // as "loaded, and there is nothing".
+    await expect(tauriPage.getByText('Choose a repository')).toBeVisible({
+      timeout: 15_000,
+    });
   });
 
   test('lists the real estate, each repository exactly once', async ({ tauriPage }) => {
-    const live = (await fetch(`${DAEMON_URL}/api/metrics/status/summary`).then((r) =>
-      r.json(),
-    )) as Summary;
+    const live = await liveSummary();
     if (live.count === 0) {
       test.skip(true, 'No repositories registered — nothing to render');
       return;
@@ -79,9 +180,7 @@ test.describe('Settings · Metrics', () => {
   });
 
   test('every reason on screen is a sentence, never a bare code', async ({ tauriPage }) => {
-    const live = (await fetch(`${DAEMON_URL}/api/metrics/status/summary`).then((r) =>
-      r.json(),
-    )) as Summary;
+    const live = await liveSummary();
     if (live.count === 0) {
       test.skip(true, 'No repositories registered');
       return;
@@ -116,9 +215,7 @@ test.describe('Settings · Metrics', () => {
   test('a repository with no remote says why it cannot be configured', async ({
     tauriPage,
   }) => {
-    const live = (await fetch(`${DAEMON_URL}/api/metrics/status/summary`).then((r) =>
-      r.json(),
-    )) as Summary;
+    const live = await liveSummary();
     const keyless = live.repositories.find((r) => r.repo_key === null);
     if (!keyless) {
       test.skip(true, 'No local-only repository on this install');
