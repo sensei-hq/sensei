@@ -731,6 +731,25 @@ impl PgStore {
             .collect())
     }
 
+    /// The normalized remote key for a repository, when it has one.
+    ///
+    /// `None` for a local-only repository (no remote, so no key and never
+    /// federated) and for an id with no row. Used to look a repository up in the
+    /// dōjō's activation ruling, which is keyed on `repo_key` because that is the
+    /// one identity both planes share — `repositories.id` is per-install.
+    pub async fn repo_key_for_repository(
+        &self,
+        repository_id: &uuid::Uuid,
+    ) -> Result<Option<String>, String> {
+        let row: Option<(Option<String>,)> =
+            sqlx_core::query_as::query_as("SELECT repo_key FROM sensei.repositories WHERE id = $1")
+                .bind(repository_id)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(|e| format!("repo_key_for_repository: {e}"))?;
+        Ok(row.and_then(|(k,)| k))
+    }
+
     /// Latest stored value per metric for a project, with the catalog facets it is
     /// read through — reads `sensei.project_metric_daily` (project-scope daily
     /// rows) and keeps the newest `date` per metric (`DISTINCT ON`), joining

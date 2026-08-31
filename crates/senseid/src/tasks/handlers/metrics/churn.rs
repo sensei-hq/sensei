@@ -388,6 +388,9 @@ pub(super) async fn compute(
         // at each repository's first AI-transcript day — not its whole (years of,
         // all-authors) git history. `full`/`N` opt into pre-AI history.
         let baseline = crate::tasks::metrics_scheduler::baseline_history(pg).await;
+        // Loaded once, not per repository: it is one config read and the ruling
+        // does not change mid-pass.
+        let gate = super::MetricGate::load(pg).await;
         for (repository_id, root) in pg.repository_roots_for_project(&project_id).await? {
             // Resolve this repository's history floor. A repo with no captured AI
             // activity is SKIPPED under the default (nothing to measure).
@@ -399,7 +402,20 @@ pub(super) async fn compute(
             // identity=NULL) then one author-filtered row per local git identity
             // (scope=user, identity=that email — the value the project view pools).
             // A checkout with no git identity contributes only the scope=repo twin.
-            let mut scopes: Vec<(&str, Option<String>)> = vec![(SCOPE_REPO, None)];
+            // The whole-tree twin is the expensive half — a `git log` over ALL
+            // authors, and nothing outside the dōjō reads it. Skipped when every
+            // consuming tenant has switched off BOTH of this group's repo-scope
+            // metrics; one survivor pays for the log.
+            let repo_key = pg.repo_key_for_repository(&repository_id).await.unwrap_or(None);
+            let mut scopes: Vec<(&str, Option<String>)> = Vec::new();
+            if gate.wants_any(repo_key.as_deref(), &[KEY_CHURN_RATE, KEY_CHURN_CONCENTRATION]) {
+                scopes.push((SCOPE_REPO, None));
+            } else {
+                tracing::debug!(
+                    repository_id = %repository_id,
+                    "churn: whole-tree log skipped — every tenant disabled its repo-scope metrics"
+                );
+            }
             for email in local_identities(&root) {
                 scopes.push((SCOPE_USER, Some(email)));
             }
