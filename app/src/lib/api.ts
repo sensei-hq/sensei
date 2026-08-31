@@ -16,6 +16,7 @@ import type {
   SessionReplayResponse, McpServerRow, McpServerToolsManifest,
   ObservatoryToday, ObservatoryFtr, ProjectOverview,
   InsightsBoard, LogRow, ScheduledTask,
+  MetricStatusResponse, MetricStatusSummary, MetricActivationOutcome,
   IntakeGuide, PlaybookRecommendation,
   ProvisionModel, ProvisionPhase,
 } from './types.js';
@@ -155,6 +156,29 @@ export function senseiApi(port: number) {
     try {
       const res = await fetch(`${base}${path}`, {
         method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (res.ok) return { ok: true, data: await res.json() as T };
+      let message = res.statusText;
+      try {
+        const j = await res.json() as { error?: string };
+        if (j && typeof j.error === 'string' && j.error) message = j.error;
+      } catch { /* non-JSON error body — keep the status text */ }
+      return { ok: false, error: { status: res.status, message } };
+    } catch (e) {
+      return { ok: false, error: { status: 0, message: e instanceof Error ? e.message : 'Network error' } };
+    }
+  }
+
+  // Error-propagating PATCH returning the parsed body. Same daemon-message
+  // extraction as `tryPutJson`: on a refusal the endpoint's own text is the
+  // useful part (a dōjō 403/404 travels through the daemon's 502 as a message),
+  // and collapsing it to "Bad Gateway" would strip the reason.
+  async function tryPatchJson<T>(path: string, body: unknown): Promise<ApiResult<T>> {
+    try {
+      const res = await fetch(`${base}${path}`, {
+        method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
@@ -1299,6 +1323,46 @@ export function senseiApi(port: number) {
 
     putCollectivePreferences: (body: CollectivePreferences) =>
       tryPutJson<CollectivePreferences>('/api/preferences/collective', body),
+
+    // ── Metric computation status + activation (Settings · Metrics) ──────────
+    // Two reads, because "every repository × every metric" is a cross join and
+    // unbounded (10.9M rows in sensei_test): the SUMMARY is aggregated in SQL and
+    // bounded by repository count; the per-metric rows are one repository at a
+    // time. Both carry the reason vocabulary, so no row's code renders as a slug.
+    //
+    // Error-propagating throughout: a failed read here is a real error, and
+    // showing an empty metric list would read as "nothing to configure".
+    tryGetMetricStatusSummary: () =>
+      tryGet<MetricStatusSummary>('/api/metrics/status/summary'),
+
+    /** `repo` is a repo_key OR a repository uuid — a local-only repository has
+     *  no key, so the uuid is the only handle that always works. */
+    tryGetMetricStatus: (repo: string) =>
+      tryGet<MetricStatusResponse>(`/api/metrics/status?repo=${enc(repo)}`),
+
+    /**
+     * Switch one metric on or off for one repository under one tenant.
+     *
+     * A PROXY, not a local write: `dojo.metric_activations` is the tenant's
+     * record, and the daemon only reads the consequence back through the sync
+     * plan. So the response is the dōjō's re-read ruling, and the local
+     * `deactivated` column does not change until the next sync.
+     *
+     * `persona` is the KEYCHAIN SESSION SLOT (`personas.session_slot`), not a
+     * display label — signing against the label addresses a different credential
+     * or none. The tenant is deliberately NOT a parameter: the dōjō derives it
+     * from the caller's own repositories, so one dōjō's member cannot write
+     * another's cost decision.
+     */
+    patchMetricActivation: (
+      persona: string,
+      repoKey: string,
+      metric: string,
+      enabled: boolean,
+    ) =>
+      tryPatchJson<MetricActivationOutcome>('/api/dojo/metric-activation', {
+        persona, repo_key: repoKey, metric, enabled,
+      }),
 
     // ── Lifecycle ────────────────────────────────────────────────────────
     stop: () => post('/stop', {}, {}),

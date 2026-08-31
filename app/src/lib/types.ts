@@ -1584,6 +1584,101 @@ export interface ScheduledTask {
   avg_ms?: number | null;
 }
 
+// ─── Metric computation status (sensei.metric_status) ────────────────────────
+
+/** One `sensei.reason_codes` entry, as served with either metric-status read.
+ *
+ *  `kind` is the axis that lets the UI tell fine from broken WITHOUT a rule of
+ *  its own: `normal` clears itself (plain text), `refusal` is somebody's
+ *  decision (show the remedy), `fault` needs attention. A `normal` code carries
+ *  no `remedy` and no `actor` — the DDL enforces it — so `remedy === null` is
+ *  never a gap to fill in with a guess.
+ *
+ *  `precedence` orders codes WITHIN this domain, lower = fix first. The client
+ *  ranks with it rather than hardcoding an order, because the registry owns it. */
+export interface MetricReason {
+  code: string;
+  kind: 'normal' | 'refusal' | 'fault';
+  precedence: number;
+  summary: string;
+  detail: string;
+  remedy: string | null;
+  actor: string | null;
+}
+
+/** One (repository × metric) row of `GET /api/metrics/status?repo=`.
+ *
+ *  `sealed_through` / `watermark_updated_at` are null for a metric whose group
+ *  has never run — an honest gap (`reason_code` says `never_computed`), never a
+ *  fabricated date. `last_sha` is null everywhere today: the commit cadence the
+ *  watermark table documents is unimplemented, which is why `cadence` is read
+ *  off the column rather than a group name. */
+export interface MetricStatusRow {
+  repository_id: string;
+  /** Null for a local-only repository — see MetricStatusResponse.repo_key. */
+  repo_key: string | null;
+  repository_name: string;
+  metric: string;
+  metric_group: string;
+  cadence: 'day' | 'commit';
+  sealed_through: string | null;
+  last_sha: string | null;
+  watermark_updated_at: string | null;
+  effective_from: string;
+  effective_until: string | null;
+  /** True = every consuming dōjō switched this metric off for this repository.
+   *  The daemon MIRRORS the ruling; the write goes to the dōjō that owns it. */
+  deactivated: boolean;
+  deactivated_observed_at: string | null;
+  /** A key into `MetricStatusResponse.reasons`. Never rendered raw. */
+  reason_code: string;
+}
+
+/** `GET /api/metrics/status?repo=<repo_key|uuid>` — one repository's metrics.
+ *
+ *  `repo_key` is null for a local-only repository (no remote, so no key). That
+ *  is not missing data: it is the reason no dōjō can rule on its metrics, so the
+ *  activation toggle does not apply. `repository_id` always addresses it. */
+export interface MetricStatusResponse {
+  repository_id: string;
+  repo_key: string | null;
+  name: string | null;
+  metrics: MetricStatusRow[];
+  reasons: Record<string, MetricReason>;
+  count: number;
+}
+
+/** One repository in `GET /api/metrics/status/summary`. `by_reason` is a
+ *  code → count map; `total` is the sum, which equals the registry size. */
+export interface MetricStatusSummaryRow {
+  repository_id: string;
+  repo_key: string | null;
+  name: string;
+  by_reason: Record<string, number>;
+  total: number;
+}
+
+/** `GET /api/metrics/status/summary` — the whole estate, aggregated. Bounded by
+ *  repository count, unlike the per-metric read (`repositories × metrics`). */
+export interface MetricStatusSummary {
+  count: number;
+  repositories: MetricStatusSummaryRow[];
+  reasons: Record<string, MetricReason>;
+}
+
+/** What `PATCH /api/dojo/metric-activation` reports back — the tenant's ruling
+ *  as the dōjō re-read it, never an echo of the request.
+ *
+ *  `enabled: true` means NO stored row, which IS the default: the dōjō deletes
+ *  rather than storing `true`, so a metric catalogued later is on everywhere
+ *  without anyone touching a row. */
+export interface MetricActivationOutcome {
+  repoKey: string;
+  metric: string;
+  enabled: boolean;
+  tenant: string;
+}
+
 // ─── On-demand local-model provisioning ──────────────────────────────────────
 
 /** The phase of an on-demand local-model pull — the serde shape of
