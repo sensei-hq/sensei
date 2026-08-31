@@ -115,29 +115,72 @@ describe('SignInOverlay', () => {
     expect(rows(m)).toHaveLength(0);
   });
 
+  it('says it is reading rather than claiming emptiness before the first read', () => {
+    // Opening from the menu starts the read and shows the overlay in the same
+    // tick, so "No identities yet" would be visible over data not yet fetched.
+    const m = mountComponent(SignInOverlay, { ...BASE, personas: [], loaded: false });
+    cleanup.push(m.destroy);
+    expect(m.container.querySelector('[data-component="sign-in-loading"]')).not.toBeNull();
+    expect(root(m)!.textContent).not.toMatch(/no identities yet/i);
+  });
+
   it('distinguishes a genuinely empty registry from a failure', () => {
-    const m = mountComponent(SignInOverlay, { ...BASE, personas: [], error: null });
+    const m = mountComponent(SignInOverlay, { ...BASE, personas: [], error: null, loaded: true });
     cleanup.push(m.destroy);
     expect(m.container.querySelector('[role="alert"]')).toBeNull();
     expect(root(m)!.textContent).toMatch(/no identities yet/i);
   });
 
-  it('closes on Escape and on a backdrop click, but not on a click inside', () => {
+  it('moves focus into the dialog on open', () => {
+    // Load-bearing, not cosmetic: Escape is handled on the container, so without
+    // focus inside, the key goes to whatever was focused behind the overlay and
+    // the dialog cannot be dismissed by keyboard. The e2e run caught this; the
+    // old unit test did not, because it dispatched keydown onto the element.
+    const m = mountComponent(SignInOverlay, {
+      ...BASE,
+      personas: [persona({ action: 'connect' })]
+    });
+    cleanup.push(m.destroy);
+    const active = document.activeElement as HTMLElement;
+    expect(root(m)!.contains(active)).toBe(true);
+    // Prefers the first actionable control so a keyboard user can act at once.
+    expect(active.tagName).toBe('BUTTON');
+  });
+
+  it('focuses the card itself when there is nothing to click', () => {
+    // A list of healthy identities has no buttons. The card must still take
+    // focus or Escape is dead.
+    const m = mountComponent(SignInOverlay, BASE);
+    cleanup.push(m.destroy);
+    expect(root(m)!.contains(document.activeElement)).toBe(true);
+  });
+
+  it('closes on Escape pressed at wherever focus actually is', () => {
+    const onClose = vi.fn();
+    const m = mountComponent(SignInOverlay, { ...BASE, onClose });
+    cleanup.push(m.destroy);
+
+    // Dispatched on the ACTIVE element, which is what a real keypress does.
+    // Bubbling to the container is the behaviour under test.
+    document.activeElement!.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })
+    );
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('closes on a backdrop click, but not on a click inside', () => {
     const onClose = vi.fn();
     const m = mountComponent(SignInOverlay, { ...BASE, onClose });
     cleanup.push(m.destroy);
     const scrim = root(m) as HTMLElement;
 
-    scrim.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-    expect(onClose).toHaveBeenCalledTimes(1);
-
     scrim.click();
-    expect(onClose).toHaveBeenCalledTimes(2);
+    expect(onClose).toHaveBeenCalledTimes(1);
 
     // A click on the card must NOT dismiss — losing the dialog mid-read is the
     // classic misimplementation of click-outside.
     (scrim.firstElementChild as HTMLElement).click();
-    expect(onClose).toHaveBeenCalledTimes(2);
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 
   it('says that each identity opens its own window', () => {
