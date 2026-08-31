@@ -361,3 +361,126 @@ mod tests {
         );
     }
 }
+
+/// Which repo-scope metrics are still worth computing, per repository.
+///
+/// ## Why a gate exists at all
+///
+/// `scope=repo` metrics are produced by a whole-tree `git log` over ALL authors
+/// — a separate subprocess from the per-identity `git log --author=` that feeds
+/// the local view — and NOTHING outside the dōjō reads them. So a repository
+/// whose every consuming tenant has switched a metric off is paying real money
+/// for a value no one will look at. That is what
+/// `dojo.metric_activations` promised to prevent and never did, because nothing
+/// read it.
+///
+/// ## Fail OPEN, always
+///
+/// Every uncertainty resolves to "compute it": no config row, unparseable JSON,
+/// a repository the plan never mentioned, a metric no tenant named. Skipping is
+/// the destructive direction — a metric not computed leaves a hole in a series
+/// that only a backfill can fill, while computing one nobody wanted costs a
+/// single `git log`. The asymmetry decides the default.
+#[derive(Debug, Clone, Default)]
+pub(super) struct MetricGate {
+    /// repo_key → metric keys EVERY consuming tenant has switched off.
+    /// Absent repository = nothing disabled = compute everything.
+    disabled: std::collections::HashMap<String, Vec<String>>,
+}
+
+impl MetricGate {
+    /// Read the last plan's ruling. Never fails: see "fail OPEN".
+    pub(super) async fn load(pg: &PgStore) -> Self {
+        let raw = match pg.get_config(crate::dojo_client::user_plane::DISABLED_METRICS_KEY).await {
+            Ok(Some(s)) => s,
+            // No sync has run, or the read failed. Either way nothing is known to
+            // be unwanted.
+            _ => return Self::default(),
+        };
+        match serde_json::from_str(&raw) {
+            Ok(disabled) => Self { disabled },
+            Err(e) => {
+                tracing::warn!(error = %e, "disabled-metrics config is unreadable — computing everything");
+                Self::default()
+            }
+        }
+    }
+
+    /// Whether ANY of `keys` is still wanted for `repo_key`.
+    ///
+    /// Used to decide whether a whole group's repo-scope work is worth doing: the
+    /// `git log` is shared by every metric in the group, so it pays for itself if
+    /// even one survives.
+    pub(super) fn wants_any(&self, repo_key: Option<&str>, keys: &[&str]) -> bool {
+        let Some(repo_key) = repo_key else {
+            // Repository not registered with any dōjō — no tenant has an opinion,
+            // so nothing has been switched off.
+            return true;
+        };
+        match self.disabled.get(repo_key) {
+            None => true,
+            Some(off) => keys.iter().any(|k| !off.iter().any(|d| d == k)),
+        }
+    }
+}
+
+#[cfg(test)]
+mod metric_gate {
+    use super::MetricGate;
+
+    fn gate(pairs: &[(&str, &[&str])]) -> MetricGate {
+        let disabled = pairs
+            .iter()
+            .map(|(k, v)| ((*k).to_string(), v.iter().map(|s| (*s).to_string()).collect()))
+            .collect();
+        // Constructed directly rather than through `load`, so these tests cover
+        // the DECISION without a database.
+        MetricGate { disabled }
+    }
+
+    #[test]
+    fn an_empty_gate_wants_everything() {
+        // The state every install is in until a tenant switches something off,
+        // and the state a failed read falls back to.
+        let g = MetricGate::default();
+        assert!(g.wants_any(Some("github.com/a/b"), &["churn_rate", "churn_concentration"]));
+    }
+
+    #[test]
+    fn a_group_is_still_worth_running_while_one_of_its_metrics_survives() {
+        // The `git log` is shared across the group, so it pays for itself if even
+        // one metric is wanted. Skipping on "some are off" would silently drop
+        // the survivors.
+        let g = gate(&[("github.com/a/b", &["churn_rate"])]);
+        assert!(g.wants_any(Some("github.com/a/b"), &["churn_rate", "churn_concentration"]));
+    }
+
+    #[test]
+    fn the_group_is_skipped_only_when_every_one_of_its_metrics_is_off() {
+        let g = gate(&[("github.com/a/b", &["churn_rate", "churn_concentration"])]);
+        assert!(!g.wants_any(Some("github.com/a/b"), &["churn_rate", "churn_concentration"]));
+    }
+
+    #[test]
+    fn a_repository_the_plan_never_mentioned_is_computed() {
+        // Not shared with any dōjō, so no tenant has an opinion. Treating silence
+        // as "off" would stop computing for every unshared repository.
+        let g = gate(&[("github.com/a/b", &["churn_rate"])]);
+        assert!(g.wants_any(Some("github.com/other/repo"), &["churn_rate"]));
+    }
+
+    #[test]
+    fn an_unregistered_repository_is_computed() {
+        // No repo_key at all — never registered with a dōjō.
+        let g = gate(&[("github.com/a/b", &["churn_rate"])]);
+        assert!(g.wants_any(None, &["churn_rate"]));
+    }
+
+    #[test]
+    fn a_disabled_metric_outside_the_group_does_not_skip_the_group() {
+        // `ftr` is off, but it is not this group's metric. Matching loosely here
+        // would have one group's deactivation silence another's work.
+        let g = gate(&[("github.com/a/b", &["ftr"])]);
+        assert!(g.wants_any(Some("github.com/a/b"), &["churn_rate"]));
+    }
+}

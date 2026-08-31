@@ -403,12 +403,19 @@ async function disabledMetricsByRepo(
 	}[];
 	if (rows.length === 0) return out;
 
+	// `dojo.metric_catalogue`, NOT `metrics`. The client is scoped to the `dojo`
+	// schema and the `sensei` schema is deliberately not exposed to PostgREST, so
+	// a bare `.from('metrics')` resolves to `dojo.metrics` and answers
+	// "Could not find the table 'dojo.metrics' in the schema cache" — which is
+	// exactly what it did live, taking the whole sync plan down with it. The
+	// catalogue view is the sanctioned route (see metrics-ingest.ts).
+	//
 	// One read for the ids actually referenced, rather than the whole catalogue.
 	const { data: mData, error: mErr } = await db
-		.from('metrics')
+		.from('metric_catalogue')
 		.select('id, key')
 		.in('id', [...new Set(rows.map((r) => r.metric_id))]);
-	if (mErr) throw new AdminError(500, `metrics: ${mErr.message}`);
+	if (mErr) throw new AdminError(500, `metric_catalogue: ${mErr.message}`);
 	const keyOf = new Map(
 		((mData ?? []) as { id: string; key: string }[]).map((m) => [m.id, m.key])
 	);

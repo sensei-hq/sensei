@@ -30,6 +30,55 @@ pub struct MappedRepo {
     /// because a slug rename changes `tenant` and would strand every stored row.
     pub tenant_id: String,
     pub repo_id: String,
+    /// Catalogue metric KEYS this tenant has switched OFF for this repository.
+    ///
+    /// The DISABLED set, because absence means enabled: a metric added to the
+    /// catalogue later is then automatically on, whereas an "enabled" list would
+    /// have it arrive off everywhere no row happens to mention.
+    ///
+    /// `#[serde(default)]` so a dōjō that predates the field is read as "nothing
+    /// disabled" — the whole catalogue, which is the correct default and the only
+    /// safe direction: guessing DISABLED would silently stop computing metrics
+    /// nobody asked to stop.
+    #[serde(default)]
+    pub disabled_metrics: Vec<String>,
+}
+
+/// Which metrics are still wanted for each repository, across every tenant.
+///
+/// A UNION, and that is the whole point: a repository can be shared with more
+/// than one dōjō, and one tenant switching a metric off must not stop the others
+/// from getting it. So a metric is wanted while ANY consuming tenant still wants
+/// it, and skippable only when every one of them has turned it off.
+///
+/// Returns the DISABLED-everywhere set per repo_key, so an empty entry (the
+/// common case) means "compute everything" and costs nothing to carry.
+pub fn disabled_everywhere(plan: &SyncPlan) -> std::collections::HashMap<String, Vec<String>> {
+    use std::collections::{HashMap, HashSet};
+    // Per repo: the intersection of the tenants' disabled sets. Intersection,
+    // not union — a metric is only skippable when NO tenant wants it.
+    let mut acc: HashMap<String, Option<HashSet<String>>> = HashMap::new();
+    for r in &plan.allowed {
+        let mine: HashSet<String> = r.disabled_metrics.iter().cloned().collect();
+        match acc.get_mut(&r.repo_key) {
+            // Second and later tenants narrow the set.
+            Some(Some(seen)) => *seen = seen.intersection(&mine).cloned().collect(),
+            Some(None) => {}
+            None => {
+                acc.insert(r.repo_key.clone(), Some(mine));
+            }
+        }
+    }
+    acc.into_iter()
+        .filter_map(|(k, v)| {
+            let mut keys: Vec<String> = v?.into_iter().collect();
+            if keys.is_empty() {
+                return None;
+            }
+            keys.sort();
+            Some((k, keys))
+        })
+        .collect()
 }
 
 /// A repository that could not be attached to a tenant.
@@ -538,3 +587,106 @@ mod tests {
         assert_eq!(out.unmapped[0].reason, "quota_exceeded");
     }
 }
+
+#[cfg(test)]
+mod activation_union {
+    use super::*;
+
+    fn repo(key: &str, tenant: &str, disabled: &[&str]) -> MappedRepo {
+        MappedRepo {
+            repo_key: key.into(),
+            tenant: tenant.into(),
+            tenant_id: format!("t-{tenant}"),
+            repo_id: format!("r-{key}"),
+            disabled_metrics: disabled.iter().map(|s| (*s).to_string()).collect(),
+        }
+    }
+    fn plan(allowed: Vec<MappedRepo>) -> SyncPlan {
+        SyncPlan { allowed, denied: vec![] }
+    }
+
+    #[test]
+    fn one_tenant_disabling_does_not_stop_another_from_getting_it() {
+        // Jerry's rule, verbatim: "for a user who has two tenants and one
+        // disables ftr, other does not then computation needs to be done for the
+        // one that has not disabled."
+        let p = plan(vec![
+            repo("github.com/a/b", "acme", &["ftr"]),
+            repo("github.com/a/b", "personal", &[]),
+        ]);
+        assert!(
+            !disabled_everywhere(&p).contains_key("github.com/a/b"),
+            "one tenant still wants ftr, so nothing is skippable"
+        );
+    }
+
+    #[test]
+    fn a_metric_every_tenant_turned_off_is_skippable() {
+        let p = plan(vec![
+            repo("github.com/a/b", "acme", &["ftr", "churn_rate"]),
+            repo("github.com/a/b", "personal", &["ftr"]),
+        ]);
+        // Only `ftr` is off for BOTH. `churn_rate` still has a consumer.
+        assert_eq!(disabled_everywhere(&p).get("github.com/a/b"), Some(&vec!["ftr".to_string()]));
+    }
+
+    #[test]
+    fn deactivation_is_per_repository_not_per_tenant() {
+        // A tenant may want churn on the service it operates and not on a
+        // vendored mirror. Nothing about repo b may leak onto repo c.
+        let p = plan(vec![
+            repo("github.com/a/b", "acme", &["ftr"]),
+            repo("github.com/a/c", "acme", &[]),
+        ]);
+        let out = disabled_everywhere(&p);
+        assert_eq!(out.get("github.com/a/b"), Some(&vec!["ftr".to_string()]));
+        assert!(!out.contains_key("github.com/a/c"), "repo c was never touched");
+    }
+
+    #[test]
+    fn a_repository_nobody_disabled_anything_for_is_absent_not_empty() {
+        // The common case, and it must cost nothing: an absent entry means
+        // "compute everything", so the map stays empty on a normal install.
+        let p = plan(vec![repo("github.com/a/b", "acme", &[])]);
+        assert!(disabled_everywhere(&p).is_empty());
+    }
+
+    #[test]
+    fn an_older_dojo_that_sends_no_field_disables_nothing() {
+        // `#[serde(default)]`. Guessing DISABLED from a missing field would stop
+        // computing metrics nobody asked to stop — the unsafe direction.
+        let json = r#"{"allowed":[{"repo_key":"github.com/a/b","tenant":"personal/x",
+                       "tenant_id":"t1","repo_id":"r1"}],"denied":[]}"#;
+        let p: SyncPlan = serde_json::from_str(json).expect("an older plan still parses");
+        assert!(p.allowed[0].disabled_metrics.is_empty());
+        assert!(disabled_everywhere(&p).is_empty());
+    }
+
+    #[test]
+    fn the_result_is_sorted_so_logs_and_assertions_are_stable() {
+        let p = plan(vec![repo("github.com/a/b", "acme", &["zeta", "alpha"])]);
+        assert_eq!(
+            disabled_everywhere(&p).get("github.com/a/b"),
+            Some(&vec!["alpha".to_string(), "zeta".to_string()])
+        );
+    }
+}
+
+/// The config key holding the last plan's disabled-everywhere map.
+///
+/// ## Why this is cached when the entitlement ruling deliberately is not
+///
+/// `dojo_sync`'s module doc is emphatic: *"The daemon ASKS; it never
+/// remembers"*, because a cached `may_share` would be a second source of truth
+/// for CONSENT — a revoked seat has to bite on the next cycle, and a TTL whose
+/// only job is to bound how wrong the cache can be is not a design.
+///
+/// Activation is a different kind of fact and the asymmetry is the reason:
+/// staleness here costs one cycle of wasted computation, or one cycle of delay
+/// before a re-enabled metric returns. Neither ships data without consent.
+/// Meanwhile the metric tasks run on their own schedule and must not each open a
+/// dōjō round trip to ask — that WOULD make the cost lever cost something.
+///
+/// So: cached, keyed on nothing but the persona, and overwritten whole on every
+/// successful plan pull. A repository absent from the map has nothing disabled.
+pub const DISABLED_METRICS_KEY: &str = "dojo.disabled_metrics";

@@ -371,6 +371,23 @@ async fn sync_persona(
 
     pg.mark_synced(&mark, None).await?;
 
+    // Record what every consuming tenant has switched off, for the metric tasks
+    // to skip. Best-effort: a write failure costs one cycle of extra computation,
+    // never correctness, so it must not fail the sync that just succeeded.
+    let disabled = crate::dojo_client::user_plane::disabled_everywhere(&plan);
+    match serde_json::to_string(&disabled) {
+        Ok(json) => {
+            if let Err(e) =
+                pg.set_config(crate::dojo_client::user_plane::DISABLED_METRICS_KEY, &json).await
+            {
+                tracing::warn!(persona, error = %e, "could not record disabled metrics");
+            }
+        }
+        // Unreachable for a String->Vec map, but a silent `unwrap` here would be
+        // a panic in a scheduled task.
+        Err(e) => tracing::warn!(persona, error = %e, "could not encode disabled metrics"),
+    }
+
     let pushed = push_allowed(pg, persona, token, plane, &plan).await?;
     tracing::info!(
         persona,
@@ -853,6 +870,8 @@ mod tests {
                 tenant: "organization/acme".into(),
                 tenant_id: "11111111-1111-1111-1111-111111111111".into(),
                 repo_id: "22222222-2222-2222-2222-222222222222".into(),
+                // Nothing switched off: the default every dōjō starts in.
+                disabled_metrics: vec![],
             }
         }
 
@@ -941,6 +960,7 @@ mod tests {
             tenant: "organization/ztest".to_string(),
             tenant_id: tenant_id.to_string(),
             repo_id: uuid::Uuid::new_v4().to_string(),
+            disabled_metrics: vec![],
         }
     }
 
