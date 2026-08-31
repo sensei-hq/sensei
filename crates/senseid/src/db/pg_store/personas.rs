@@ -29,6 +29,23 @@ fn slot_of(persona: &str) -> String {
     persona.to_lowercase()
 }
 
+/// One persona as the sign-in list needs it.
+///
+/// Includes personas that have NEVER been connected — sensei infers them from
+/// commit authorship, so a fresh install has several, and they are precisely the
+/// ones a "connect an identity" list exists to offer. `forge_token_rows` cannot
+/// serve this: it filters to signed-in personas on purpose.
+#[derive(Debug, Clone)]
+pub struct PersonaRow {
+    pub label: String,
+    pub github_login: Option<String>,
+    /// `None` = never signed in from this machine.
+    pub session_slot: Option<String>,
+    pub verified: bool,
+    pub state: String,
+    pub expires_at: Option<i64>,
+}
+
 impl PgStore {
     /// The KEYCHAIN SLOTS of personas that have completed a dōjō sign-in.
     ///
@@ -360,6 +377,46 @@ pub struct ForgeTokenRow {
 }
 
 impl PgStore {
+    /// Every persona, connected or not, for the sign-in list.
+    ///
+    /// Ordered so the connected ones come first: they are the rows a user is
+    /// most likely to be looking for, and an inferred persona they have never
+    /// heard of should not head the list.
+    pub async fn persona_rows(&self) -> Result<Vec<PersonaRow>, String> {
+        type Row = (
+            String,
+            Option<String>,
+            Option<String>,
+            bool,
+            String,
+            Option<chrono::DateTime<chrono::Utc>>,
+        );
+        let rows: Vec<Row> = sqlx_core::query_as::query_as(
+            "SELECT label \
+                  , github_login \
+                  , session_slot \
+                  , (verified_at IS NOT NULL) AS verified \
+                  , forge_token_state::text \
+                  , forge_token_expires_at \
+               FROM sensei.personas \
+              ORDER BY (session_slot IS NULL), label",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| format!("persona_rows: {e}"))?;
+        Ok(rows
+            .into_iter()
+            .map(|(label, github_login, session_slot, verified, state, exp)| PersonaRow {
+                label,
+                github_login,
+                session_slot,
+                verified,
+                state,
+                expires_at: exp.map(|t| t.timestamp()),
+            })
+            .collect())
+    }
+
     /// Every persona whose forge token the scheduled check should consider.
     ///
     /// Filters on `session_slot IS NOT NULL` for the reason above, and on
