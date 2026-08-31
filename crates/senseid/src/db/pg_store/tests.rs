@@ -8736,6 +8736,65 @@ async fn get_project_metrics_reads_views() {
         .unwrap();
 }
 
+/// A ratio/pct metric whose props carry NO numerator/denominator must still
+/// produce a value, not NULL.
+///
+/// `sensei.project_metric_daily` recomputes ratio/pct metrics as
+/// `sum(numerator) / sum(denominator)` across a day's repositories. `cache_reuse`
+/// does not supply those: it is deliberately the MEAN OF PER-SESSION RATIOS,
+/// because pooling is dominated by the longest session and hides the very signal
+/// the metric exists to surface (see `tasks/handlers/metrics/usage.rs`).
+///
+/// So the view produced `NULL / NULLIF(NULL, 0)` = NULL, and
+/// `get_project_metrics` — which decodes `value` as a non-nullable `f64` — failed
+/// the whole read. Measured on the live DB: 68 NULL rows, all `cache_reuse`, and
+/// `/api/projects/{id}/metrics` answered 500 for exactly the 10 projects that had
+/// them. Every project WITHOUT cache-reuse data returned 200 with an empty grid,
+/// which is why this hid for so long.
+#[tokio::test]
+async fn a_pct_metric_without_numerator_props_still_yields_a_value() {
+    let s = pg_store().await;
+    let uniq = uuid::Uuid::new_v4();
+    let pid = s.create_project(&format!("_test:pctprops:{uniq}"), None, None).await.unwrap();
+    let rid =
+        crate::tasks::test_support::seed_bare_repository(&s, &pid, &uuid::Uuid::new_v4()).await;
+    let key = format!("_test:pctprops:{uniq}:reuse");
+    let mid = seed_metric(&s, &key, "CacheReuseLike", 0, None).await;
+    let day = chrono::NaiveDate::from_ymd_opt(2020, 3, 4).unwrap();
+
+    // Exactly the shape `usage.rs` writes: no numerator, no denominator.
+    s.upsert_project_metric(
+        &mid,
+        &rid,
+        day,
+        "daily",
+        0.957,
+        &serde_json::json!({
+            "sessions": 12, "pooled_ratio": 0.981, "mean_of_session_ratios": 0.957
+        }),
+        "measured",
+    )
+    .await
+    .unwrap();
+
+    let rows = s.get_project_metrics(&pid).await.unwrap();
+    let row = rows.iter().find(|r| r.metric == key).expect("the metric is present, not dropped");
+    // The stored value survives. Re-pooling it would be wrong even if props
+    // allowed: the mean-of-ratios IS the metric.
+    assert!((row.value - 0.957).abs() < 1e-9, "value must survive the view, got {}", row.value);
+
+    sqlx_core::query::query("DELETE FROM sensei.metrics WHERE id = $1")
+        .bind(mid)
+        .execute(s.pool())
+        .await
+        .unwrap();
+    sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
+        .bind(pid)
+        .execute(s.pool())
+        .await
+        .unwrap();
+}
+
 #[tokio::test]
 async fn get_project_metrics_excludes_a_retired_metric() {
     // A retired metric (past `effective_until`, e.g. project_health) keeps its
