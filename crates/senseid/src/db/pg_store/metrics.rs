@@ -779,6 +779,156 @@ impl PgStore {
         Ok(written)
     }
 
+    /// Per-(repository × metric) computation state from `sensei.metric_status`:
+    /// the registry window, the coverage cursor, the mirrored dōjō ruling, and the
+    /// `reason_code` saying why a metric is not current.
+    ///
+    /// ONE repository, never all of them. The view cross-joins the catalogue, so an
+    /// unfiltered read is `repositories × metrics` and unbounded: measured at 1,943
+    /// rows on this install but **10,928,780** in `sensei_test` (3,619 repositories
+    /// × 3,019 accumulated synthetic metrics), where it exhausted the request. A
+    /// caller that wants the whole estate takes [`Self::metric_status_summary`],
+    /// which aggregates in SQL and is bounded by repository count.
+    ///
+    /// Filtered on `repository_id`, NOT `repo_key`: the key is nullable (a
+    /// local-only repository has no remote, so no key — measured: one such row in
+    /// `sensei_test`) and the id is the only identity every repository has. Callers
+    /// resolve a user-supplied string through [`Self::resolve_repository_id`], which
+    /// accepts either form.
+    ///
+    /// Because of that cross join a known repository always has a row per registry
+    /// metric, so an empty result means the id names nothing. The caller turns that
+    /// into a 404 — but decides it on the resolve, not on emptiness, since an empty
+    /// registry would otherwise make every repository look unknown.
+    ///
+    /// Ordered by metric so the caller renders without sorting. Propagates a read
+    /// failure — a fabricated-empty here would report every metric as fine.
+    pub async fn metric_status(
+        &self,
+        repository_id: &uuid::Uuid,
+    ) -> Result<Vec<MetricStatusRow>, String> {
+        type Row = (
+            uuid::Uuid,
+            Option<String>,
+            String,
+            String,
+            String,
+            String,
+            Option<chrono::NaiveDate>,
+            Option<String>,
+            Option<chrono::DateTime<chrono::Utc>>,
+            chrono::NaiveDate,
+            Option<chrono::NaiveDate>,
+            bool,
+            Option<chrono::DateTime<chrono::Utc>>,
+            String,
+        );
+        let rows: Vec<Row> = sqlx_core::query_as::query_as(
+            "SELECT repository_id, repo_key, repository_name, metric, metric_group, cadence,
+                    sealed_through, last_sha, watermark_updated_at,
+                    effective_from, effective_until,
+                    deactivated, deactivated_observed_at, reason_code
+               FROM sensei.metric_status
+              WHERE repository_id = $1
+              ORDER BY metric",
+        )
+        .bind(repository_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| format!("metric_status: {e}"))?;
+
+        Ok(rows
+            .into_iter()
+            .map(|r| MetricStatusRow {
+                repository_id: r.0,
+                repo_key: r.1,
+                repository_name: r.2,
+                metric: r.3,
+                metric_group: r.4,
+                cadence: r.5,
+                sealed_through: r.6,
+                last_sha: r.7,
+                watermark_updated_at: r.8,
+                effective_from: r.9,
+                effective_until: r.10,
+                deactivated: r.11,
+                deactivated_observed_at: r.12,
+                reason_code: r.13,
+            })
+            .collect())
+    }
+
+    /// One row per (repository × reason_code) with a count — the whole estate's
+    /// metric computation state, aggregated in SQL. Returns
+    /// `(repository_id, repo_key, repository_name, reason_code, count)`.
+    ///
+    /// This is the bounded companion to [`Self::metric_status`]: `GROUP BY` collapses
+    /// `repositories × metrics` to `repositories × distinct reasons` (67 × ≤7 here),
+    /// so the landing view costs the same whether a repository has 29 metrics or
+    /// 3,000. The per-metric rows are then one repository at a time.
+    ///
+    /// Grouped on `repository_id`, not `repo_key`, for the same reason
+    /// [`Self::metric_status`] filters on it: the key is nullable, and grouping on it
+    /// would fold EVERY local-only repository into one bogus entry whose counts
+    /// belong to none of them.
+    ///
+    /// Deliberately does NOT rank the reasons: `precedence` lives in
+    /// `sensei.reason_codes` and the caller already holds that registry, so ranking
+    /// here would be a second copy of an ordering the registry owns.
+    ///
+    /// Row order is NOT part of the contract — the caller accumulates into a map
+    /// keyed on `repository_id`. An earlier version ordered here and grouped by
+    /// contiguous run in Rust, which made a repository's entry depend on the
+    /// planner's aggregate output order.
+    #[allow(clippy::type_complexity)]
+    pub async fn metric_status_summary(
+        &self,
+    ) -> Result<Vec<(uuid::Uuid, Option<String>, String, String, i64)>, String> {
+        sqlx_core::query_as::query_as(
+            "SELECT repository_id, repo_key, repository_name, reason_code, count(*)
+               FROM sensei.metric_status
+              GROUP BY repository_id, repo_key, repository_name, reason_code",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| format!("metric_status_summary: {e}"))
+    }
+
+    /// Resolve a repository reference — a `repo_key` OR a uuid — to its id.
+    ///
+    /// Both forms, mirroring the name-or-uuid convention the project endpoints
+    /// already use (`resolve_project_uuid`): a repository's `repo_key` is null when
+    /// it has no remote, so a key-only lookup would make local-only repositories
+    /// unaddressable even though their metrics compute normally.
+    ///
+    /// `None` when the reference names no repository — the caller's 404. Propagates
+    /// a read failure rather than reporting "not found", so a broken database is
+    /// never indistinguishable from an unknown repository.
+    pub async fn resolve_repository_id(
+        &self,
+        reference: &str,
+    ) -> Result<Option<uuid::Uuid>, String> {
+        // The uuid branch is tried first and only when the string parses, so a
+        // repo_key is never fed to a uuid comparison (which would be a cast error,
+        // not a miss).
+        if let Ok(id) = reference.parse::<uuid::Uuid>() {
+            let row: Option<(uuid::Uuid,)> =
+                sqlx_core::query_as::query_as("SELECT id FROM sensei.repositories WHERE id = $1")
+                    .bind(id)
+                    .fetch_optional(&self.pool)
+                    .await
+                    .map_err(|e| format!("resolve_repository_id({reference}): {e}"))?;
+            return Ok(row.map(|r| r.0));
+        }
+        let row: Option<(uuid::Uuid,)> =
+            sqlx_core::query_as::query_as("SELECT id FROM sensei.repositories WHERE repo_key = $1")
+                .bind(reference)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(|e| format!("resolve_repository_id({reference}): {e}"))?;
+        Ok(row.map(|r| r.0))
+    }
+
     /// Metrics no consuming dōjō wants, as `repo_key → [metric_key]`.
     ///
     /// Keyed on `repo_key` because that is what the gate compares against, and
