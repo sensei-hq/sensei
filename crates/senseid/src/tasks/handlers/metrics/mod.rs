@@ -390,17 +390,18 @@ pub(super) struct MetricGate {
 
 impl MetricGate {
     /// Read the last plan's ruling. Never fails: see "fail OPEN".
+    ///
+    /// Reads `sensei.metric_deactivations`. An earlier version kept the same map
+    /// as JSON under one `sensei.config` key, which served the gate and nothing
+    /// else: `sensei.metric_status` cannot join a blob, and an enable/disable
+    /// screen had nothing to read.
     pub(super) async fn load(pg: &PgStore) -> Self {
-        let raw = match pg.get_config(crate::dojo_client::user_plane::DISABLED_METRICS_KEY).await {
-            Ok(Some(s)) => s,
-            // No sync has run, or the read failed. Either way nothing is known to
-            // be unwanted.
-            _ => return Self::default(),
-        };
-        match serde_json::from_str(&raw) {
+        match pg.metric_deactivations().await {
             Ok(disabled) => Self { disabled },
+            // No sync has run, or the read failed. Either way nothing is KNOWN to
+            // be unwanted, and the safe answer is to compute.
             Err(e) => {
-                tracing::warn!(error = %e, "disabled-metrics config is unreadable — computing everything");
+                tracing::warn!(error = %e, "could not read metric deactivations — computing everything");
                 Self::default()
             }
         }
