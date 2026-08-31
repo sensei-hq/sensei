@@ -748,8 +748,8 @@ mod tests {
     }
 
     use crate::dojo_client::user_plane::{
-        DeniedRepo, IngestResult, MappedRepo, MetricPush, ProvisionOutcome, RegisterResult,
-        RejectedMetric, SyncPlan, UnmappedRepo, VisibilityCounts,
+        ActivationOutcome, DeniedRepo, IngestResult, MappedRepo, MetricPush, ProvisionOutcome,
+        RegisterResult, RejectedMetric, SyncPlan, UnmappedRepo, VisibilityCounts,
     };
     use std::sync::Mutex;
 
@@ -798,6 +798,19 @@ mod tests {
                 return Err(e.clone());
             }
             Ok(self.register.clone().unwrap_or(RegisterResult { mapped: vec![], unmapped: vec![] }))
+        }
+        // dojo_sync never writes activation — it only READS the plan's
+        // `disabled_metrics`. Unreachable rather than a fabricated Ok: a stub
+        // that answered here would let a sync that started writing tenant cost
+        // decisions pass its tests.
+        async fn set_metric_activation(
+            &self,
+            _t: &str,
+            _repo_key: &str,
+            _metric: &str,
+            _enabled: bool,
+        ) -> Result<ActivationOutcome, String> {
+            unreachable!("dojo_sync does not write metric activation")
         }
         async fn sync_plan(&self, _t: &str) -> Result<SyncPlan, String> {
             *self.plan_calls.lock().unwrap() += 1;

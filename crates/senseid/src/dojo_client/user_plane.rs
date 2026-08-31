@@ -208,6 +208,33 @@ pub trait UserPlane: Send + Sync {
         token: &str,
         metrics: &[MetricPush<'_>],
     ) -> Result<IngestResult, String>;
+
+    /// Switch one catalogue metric off (or back on) for one repository.
+    ///
+    /// The daemon does not decide this and does not cache the decision — it
+    /// carries a click from the settings screen to the tenant that owns the
+    /// ruling. The dōjō re-derives who may set it from
+    /// `all_my_repositories.configurable_by_me`, so a daemon that sent this for a
+    /// repository the caller cannot configure is refused, not trusted.
+    async fn set_metric_activation(
+        &self,
+        token: &str,
+        repo_key: &str,
+        metric: &str,
+        enabled: bool,
+    ) -> Result<ActivationOutcome, String>;
+}
+
+/// What the dōjō says the ruling now is, re-read rather than echoed.
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct ActivationOutcome {
+    pub repo_key: String,
+    pub metric: String,
+    /// `true` = no stored row, which IS the default. See the dōjō side: enabling
+    /// deletes rather than storing `true`, so that a metric catalogued later is
+    /// on everywhere without anyone touching a row.
+    pub enabled: bool,
+    pub tenant: String,
 }
 
 /// The real transport: HTTP to a dōjō.
@@ -226,6 +253,15 @@ impl UserPlane for HttpUserPlane {
     }
     async fn sync_plan(&self, token: &str) -> Result<SyncPlan, String> {
         sync_plan(&self.dojo_url, token).await
+    }
+    async fn set_metric_activation(
+        &self,
+        token: &str,
+        repo_key: &str,
+        metric: &str,
+        enabled: bool,
+    ) -> Result<ActivationOutcome, String> {
+        set_metric_activation(&self.dojo_url, token, repo_key, metric, enabled).await
     }
     async fn provision(
         &self,
@@ -310,6 +346,28 @@ pub async fn push_metrics(
 pub async fn sync_plan(dojo_url: &str, token: &str) -> Result<SyncPlan, String> {
     let req = crate::federation::http_client().get(endpoint(dojo_url, "sync/plan"));
     decode("sync plan", &send(req, token, "sync plan").await?)
+}
+
+/// `PATCH /v1/you/metrics/activation`.
+///
+/// The repo key goes in the BODY: `github.com/owner/name` contains slashes, so a
+/// path segment needs encoding at every caller and decodes ambiguously — a key
+/// that round-trips wrong addresses a different repository, or none.
+pub async fn set_metric_activation(
+    dojo_url: &str,
+    token: &str,
+    repo_key: &str,
+    metric: &str,
+    enabled: bool,
+) -> Result<ActivationOutcome, String> {
+    let req = crate::federation::http_client()
+        .patch(endpoint(dojo_url, "metrics/activation"))
+        .json(&serde_json::json!({
+            "repo_key": repo_key,
+            "metric": metric,
+            "enabled": enabled,
+        }));
+    decode("metric activation", &send(req, token, "metric activation").await?)
 }
 
 /// How many repositories one provisioning pass actually asked the forge about.
@@ -669,5 +727,34 @@ mod activation_union {
             disabled_everywhere(&p).get("github.com/a/b"),
             Some(&vec!["alpha".to_string(), "zeta".to_string()])
         );
+    }
+}
+
+#[cfg(test)]
+mod activation_decode {
+    use super::*;
+
+    /// The dōjō's answer is re-read, not echoed, so the daemon has to decode it.
+    /// Written AFTER the code (the interjection came mid-flight) — recorded rather
+    /// than pretended otherwise.
+    #[test]
+    fn an_activation_outcome_decodes_from_the_dojo_shape() {
+        let json = r#"{"repo_key":"github.com/acme/api","metric":"ftr",
+                       "enabled":false,"tenant":"organization/acme"}"#;
+        let out: ActivationOutcome = serde_json::from_str(json).expect("decodes");
+        assert_eq!(out.repo_key, "github.com/acme/api");
+        assert_eq!(out.metric, "ftr");
+        assert!(!out.enabled, "false means a stored deactivation");
+        assert_eq!(out.tenant, "organization/acme");
+    }
+
+    #[test]
+    fn enabled_true_is_the_default_state_not_a_stored_row() {
+        // The dōjō deletes on enable, so `true` coming back means "no row" —
+        // which is what absence means. Pinned here because a future reader may
+        // reasonably assume `true` implies a row with enabled=true.
+        let json = r#"{"repo_key":"r","metric":"m","enabled":true,"tenant":"t"}"#;
+        let out: ActivationOutcome = serde_json::from_str(json).expect("decodes");
+        assert!(out.enabled);
     }
 }
