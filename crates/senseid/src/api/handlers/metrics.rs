@@ -41,6 +41,166 @@ pub(crate) async fn get_metrics_registry(
     Ok(Json(serde_json::json!({ "metrics": metrics, "count": metrics.len() })))
 }
 
+/// The `sensei.reason_codes` domain the metric status vocabulary lives in. Named
+/// once so the reader and the doc comment cannot disagree about which slice of the
+/// registry this endpoint serves.
+const METRIC_REASON_DOMAIN: &str = "metric_computation";
+
+/// The reason vocabulary for this domain, keyed by code.
+///
+/// Served with BOTH status shapes rather than from a third endpoint: it is seven
+/// small rows, and a client that had to fetch it separately could render a row
+/// whose code it cannot resolve — a bare slug, which is the failure the registry
+/// exists to prevent. A read failure propagates for the same reason: rows with an
+/// empty vocabulary are worse than no rows.
+async fn reason_vocabulary(
+    state: &AppState,
+) -> Result<std::collections::BTreeMap<String, serde_json::Value>, StatusCode> {
+    let reasons = state
+        .pg
+        .reason_codes(METRIC_REASON_DOMAIN)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(reasons.into_iter().map(|r| (r.code.clone(), serde_json::json!(r))).collect())
+}
+
+/// `?repo=<repo_key|uuid>` — which repository's metrics to report. REQUIRED.
+#[derive(Deserialize)]
+pub(crate) struct StatusQuery {
+    repo: Option<String>,
+}
+
+/// `GET /api/metrics/status?repo=<repo_key|uuid>` — one repository's per-metric
+/// computation state: should this compute, how far has it got, and if it is not
+/// current, WHY.
+///
+/// One repository at a time, and `repo` is REQUIRED (400 when absent). The
+/// underlying view cross-joins the catalogue, so "every repository" is
+/// `repositories × metrics` and unbounded — 1,943 rows on this install but
+/// 10,928,780 in `sensei_test`, where an unfiltered read exhausted the request.
+/// [`get_metric_status_summary`] is the whole-estate shape, aggregated in SQL.
+///
+/// A repository is also the grain a deactivation is DECIDED at (one tenant, one
+/// repository, one metric), so this read and the write that changes it
+/// (`PATCH /api/dojo/metric-activation`) speak the same shape.
+///
+/// `repo` accepts a `repo_key` OR a uuid, matching the name-or-uuid convention the
+/// project endpoints already use: `repo_key` is null for a local-only repository,
+/// whose metrics compute normally, so a key-only parameter would leave it
+/// unaddressable.
+///
+/// Rows carry a `reason_code`; `reasons` resolves it (see [`reason_vocabulary`]).
+/// An unknown `repo` is a 404, decided on `sensei.repositories` rather than on an
+/// empty result — a known repository always has rows, so a 200 with `[]` would
+/// read as "this repository has no metrics".
+pub(crate) async fn get_metric_status(
+    State(state): State<AppState>,
+    Query(q): Query<StatusQuery>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let reference = q
+        .repo
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or(StatusCode::BAD_REQUEST)?;
+
+    let repository_id = state
+        .pg
+        .resolve_repository_id(reference)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    let rows = state
+        .pg
+        .metric_status(&repository_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let reasons = reason_vocabulary(&state).await?;
+    // The repository's identity travels once per response, not once per row. Both
+    // are honest-null when the registry is empty — the one case with no rows to read
+    // them from — never an echo of whatever the caller passed in.
+    let name = rows.first().map(|r| r.repository_name.clone());
+    let repo_key = rows.first().and_then(|r| r.repo_key.clone());
+
+    Ok(Json(serde_json::json!({
+        "repository_id": repository_id,
+        "repo_key": repo_key,
+        "name": name,
+        "metrics": rows,
+        "reasons": reasons,
+        "count": rows.len(),
+    })))
+}
+
+/// `GET /api/metrics/status/summary` — the whole estate at one row per
+/// (repository × reason), so the landing view costs the same whether a repository
+/// carries 29 metrics or 3,000.
+///
+/// `by_reason` is a code → count map; the caller ranks it using the `precedence`
+/// that travels in `reasons`. Ranking is deliberately NOT done here — precedence is
+/// owned by `sensei.reason_codes`, and a worst-first ordering computed in SQL would
+/// be a second copy of it.
+///
+/// Entries are keyed on `repository_id`, and `repo_key` is nullable: a local-only
+/// repository computes metrics normally but no dōjō can rule on them, so the client
+/// renders its state without an activation control. Grouping on the key instead
+/// would fold every such repository into one entry whose counts belong to none of
+/// them.
+pub(crate) async fn get_metric_status_summary(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let rows =
+        state.pg.metric_status_summary().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let reasons = reason_vocabulary(&state).await?;
+
+    /// One repository's accumulating entry.
+    struct Entry {
+        repo_key: Option<String>,
+        by_reason: serde_json::Map<String, serde_json::Value>,
+        total: i64,
+    }
+
+    // Keyed accumulation, NOT a run-length group over a sorted stream. The
+    // run-length form was written first and is wrong here: it emits a repository
+    // once per CONTIGUOUS run, so any change to the SQL ordering silently splits a
+    // repository into several entries with partial counts — the same repository
+    // listed twice with different numbers. Whether it splits depends on the
+    // planner's aggregate output order, so it also cannot be reliably tested.
+    // A map makes one-entry-per-repository structural, and `BTreeMap` keyed on
+    // (name, id) makes the response order deterministic without the SQL owning it.
+    let mut by_repo: std::collections::BTreeMap<(String, uuid::Uuid), Entry> =
+        std::collections::BTreeMap::new();
+    for (id, repo_key, name, reason_code, count) in rows {
+        let entry = by_repo.entry((name, id)).or_insert_with(|| Entry {
+            repo_key,
+            by_reason: serde_json::Map::new(),
+            total: 0,
+        });
+        entry.by_reason.insert(reason_code, serde_json::json!(count));
+        entry.total += count;
+    }
+
+    let repositories: Vec<serde_json::Value> = by_repo
+        .into_iter()
+        .map(|((name, id), e)| {
+            serde_json::json!({
+                "repository_id": id,
+                "repo_key": e.repo_key,
+                "name": name,
+                "by_reason": e.by_reason,
+                "total": e.total,
+            })
+        })
+        .collect();
+
+    Ok(Json(serde_json::json!({
+        "count": repositories.len(),
+        "repositories": repositories,
+        "reasons": reasons,
+    })))
+}
+
 /// `GET /api/projects/{id}/metrics` — latest-per-metric values for a project
 /// (project scope, daily grain) with the catalog facets attached and the weekly
 /// trend (`prior`/`delta`) merged in where available. Includes the
