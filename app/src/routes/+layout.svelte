@@ -114,6 +114,7 @@
     open={overlayOpen}
     personas={personaList.personas}
     error={personaList.error ?? forgeAuth.lastError}
+    loaded={personaList.loaded}
     isBusy={(p) => personaList.isBusy(p)}
     actionLabel={(p) => personaList.actionLabel(p)}
     describe={(p) => personaList.describe(p, Math.floor(Date.now() / 1000))}

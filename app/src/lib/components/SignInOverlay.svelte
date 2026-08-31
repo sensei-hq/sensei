@@ -25,6 +25,9 @@
     /** Non-null when the read or an attempt FAILED. Rendered instead of a
      *  list — "no identities" and "we could not ask" are different answers. */
     error?: string | null;
+    /** False until a read has succeeded. Distinguishes "none" from "not yet
+     *  asked" — without it the overlay claims emptiness on open. */
+    loaded?: boolean;
     /** Per-row, so one slow sign-in does not disable the others. */
     isBusy?: (p: PersonaWire) => boolean;
     actionLabel: (p: PersonaWire) => string;
@@ -36,6 +39,7 @@
     open,
     personas,
     error = null,
+    loaded = true,
     isBusy = () => false,
     actionLabel,
     describe,
@@ -45,6 +49,36 @@
 
   /** A row needs the user when it is not merely healthy. */
   const needsUser = (p: PersonaWire) => p.action === 'signIn' || p.action === 'connect';
+
+  let card = $state<HTMLElement | null>(null);
+  let restoreTo: HTMLElement | null = null;
+
+  // Move focus INTO the dialog when it opens, and put it back on close.
+  //
+  // Not decoration. Escape is handled on the container, so without this the key
+  // event goes to whatever had focus behind the overlay and the dialog cannot be
+  // dismissed by keyboard at all — caught by the e2e run, not by the unit tests,
+  // which dispatched the event directly onto the element and so never exercised
+  // the real path.
+  //
+  // It is also the correct modal behaviour: focus must not remain on content the
+  // user can no longer see or reach.
+  $effect(() => {
+    if (open && card) {
+      restoreTo = document.activeElement as HTMLElement | null;
+      // The first control if there is one, so a keyboard user can act
+      // immediately; otherwise the card itself, which still receives Escape.
+      const first = card.querySelector<HTMLElement>('button:not([disabled])');
+      (first ?? card).focus();
+      return;
+    }
+    // Closing: hand focus back where it was, rather than dropping it on <body>
+    // and leaving the next Tab to start from the top of the app.
+    if (!open && restoreTo) {
+      restoreTo.focus();
+      restoreTo = null;
+    }
+  });
 </script>
 
 {#if open}
@@ -63,7 +97,9 @@
     }}
   >
     <div
-      class="sign-in-card flex w-full max-w-md flex-col gap-4 rounded-xl border border-paper-edge bg-paper-soft p-6"
+      bind:this={card}
+      tabindex="-1"
+      class="sign-in-card flex w-full max-w-md flex-col gap-4 rounded-xl border border-paper-edge bg-paper-soft p-6 outline-none"
     >
       <header class="flex flex-col gap-1">
         <h2 id="sign-in-overlay-title" class="font-heading text-base text-ink">Identities</h2>
@@ -75,6 +111,10 @@
 
       {#if error}
         <p role="alert" class="text-xs text-danger">{error}</p>
+      {:else if !loaded}
+        <p data-component="sign-in-loading" class="text-xs text-ink-soft">
+          Reading identities…
+        </p>
       {:else if personas.length === 0}
         <p class="text-xs text-ink-soft">
           No identities yet. They appear once sensei has scanned a repository and

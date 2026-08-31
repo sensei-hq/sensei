@@ -67,6 +67,28 @@ create table if not exists personas (
   -- `label` would read `refresh_token.sensei-hq-org`, find nothing, and skip the
   -- persona while reporting the cycle successful. Observed, not theorised.
 , session_slot  text
+  -- What we currently believe about this persona's FORGE token — GitHub's,
+  -- not the dōjō session's. Two different credentials with two different
+  -- lifetimes: the dōjō session refreshes on every use, while the GitHub token
+  -- expires on a measured ~8-hour cycle. Nothing recorded the difference, so
+  -- `GET /api/auth/status` reported `signedIn: true` for a whole morning while
+  -- every forge call answered 401.
+  --
+  -- `unknown` is the DEFAULT and a real state, not a placeholder: a persona
+  -- created before anything asked GitHub genuinely has no standing, and
+  -- defaulting to `active` would claim a credential we have never tested.
+, forge_token_state      sensei.forge_token_state not null default 'unknown'
+  -- When the token stops working, as the FORGE states it. Null when no expiry
+  -- has ever been learned — GoTrue's exchange does not report the provider's
+  -- deadline, so it can only come from GitHub's own
+  -- `github-authentication-token-expiration` response header. Null therefore
+  -- means "not yet known", never "does not expire".
+, forge_token_expires_at timestamptz
+  -- When we last learned anything about it. Distinguishes a standing that is
+  -- current from one recorded days ago, and is deliberately NOT stamped when a
+  -- probe could not reach the forge: claiming a check that told us nothing
+  -- would make a stale belief look fresh.
+, forge_token_checked_at timestamptz
 , created_at    timestamptz not null default now()
 , modified_at   timestamptz not null default now()
 );
@@ -114,3 +136,9 @@ comment on column personas.principal_id
      is 'The dōjō login this persona pushes under (dojo.principals.id). Plain uuid — the referent is in another database. NULL until linked.';
 comment on column personas.session_slot
      is 'The Keychain slot holding this persona''s dōjō session (session.rs::account_for formats refresh_token.<slot>). NOT the label: a successful sign-in rewrites label to the verified GitHub login, so signing in as "default" yields a row labelled "sensei-hq-org" whose session is still at refresh_token.default. Looking the session up by label finds nothing and silently skips the persona. NULL = never signed in from this machine.';
+comment on column personas.forge_token_state
+     is 'What we believe about this persona''s FORGE (GitHub) token — a different credential from the dōjō session, with a different lifetime. The session refreshes on every use; the GitHub token expires on a measured ~8h cycle. `unknown` is the default and a REAL state: a persona nothing has asked GitHub about has no standing, and defaulting to `active` would claim a credential never tested.';
+comment on column personas.forge_token_expires_at
+     is 'When the forge token stops working, as the forge states it. NULL = not yet known, never "does not expire" — GoTrue''s exchange does not report the provider''s deadline, so it can only come from GitHub''s `github-authentication-token-expiration` response header.';
+comment on column personas.forge_token_checked_at
+     is 'When anything was last learned about the forge token. Deliberately NOT stamped when a probe could not reach the forge: recording a check that told us nothing would make a stale belief look fresh.';
