@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { List, Toggle } from '@rokkit/ui';
+    import { List } from '@rokkit/ui';
     import { Eyebrow, Wordmark } from '$lib/components';
     import { buildNavItems, resolveActiveHref } from './observatory-nav';
 
@@ -13,25 +13,13 @@
     }
     let { port, pathname, projectCount }: Props = $props();
 
-    // Focus tames the rail to anchors + "Needs you" — just what needs a decision.
-    let focus = $state(false);
-
-    const items = $derived(buildNavItems({ focus, projectCount }));
+    const items = $derived(buildNavItems({ projectCount }));
     const activeHref = $derived(resolveActiveHref(pathname));
 
     // List's default rendering handles icon + label + badge. Only remap the two
     // keys that differ from defaults: kanji → icon, text → label. href / value /
     // badge / children / type keep their default field names.
     const fields = { icon: 'kanji', label: 'text' };
-
-    // All|Focus segmented control (rokkit Toggle); its value is the focus flag.
-    // Lives in the header chrome (not a List group header — rokkit disables
-    // non-collapsible group headers, so a Toggle inside one is inert; see
-    // rokkit issue). Toggle reads proxy.label → the default 'label' field.
-    const DENSITY = [
-        { label: 'All', value: false },
-        { label: 'Focus', value: true },
-    ];
 </script>
 
 <aside
@@ -42,10 +30,8 @@
         <Wordmark />
     </div>
 
-    <div class="flex items-center gap-2 px-2">
+    <div class="px-2">
         <Eyebrow>Observatory</Eyebrow>
-        <span class="flex-1"></span>
-        <Toggle options={DENSITY} bind:value={focus} size="sm" />
     </div>
 
     <List {items} {fields} value={activeHref} collapsible={false} />
