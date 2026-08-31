@@ -54,7 +54,21 @@
     />
   </div>
 {:else}
-  <div class="max-w-[1060px] mx-auto px-7 pb-10 pt-6">
+  <!-- One stable root for both branches below: the e2e harness re-navigates
+       until a screen's selector mounts (setup reconciliation can take ~50s on a
+       cold boot), and it needs a selector that exists whether or not this install
+       has repositories. -->
+  <div class="max-w-[1060px] mx-auto px-7 pb-10 pt-6" data-screen="settings-metrics">
+  {#if state.entries.length === 0}
+    <!-- Honest-empty, and said in words. The rail is a bordered box with no
+         intrinsic height, so rendering it empty beside "choose a repository"
+         shows an invisible list and an instruction that cannot be followed. The
+         load succeeded — there is genuinely nothing yet. -->
+    <p class="text-sm text-ink-mute m-0" data-empty>
+      No repositories are registered yet, so there is nothing to compute metrics
+      for. Add a root under Settings · Roots and let a scan finish.
+    </p>
+  {:else}
     <!-- Repository rail. The estate arrives aggregated, so this list costs the
          same whether a repository carries 29 metrics or 3,000. -->
     <div class="grid grid-cols-[280px_1fr] gap-7 items-start">
@@ -153,5 +167,6 @@
         {/if}
       </section>
     </div>
+  {/if}
   </div>
 {/if}
