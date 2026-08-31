@@ -570,8 +570,21 @@ where
     // Pre-AI baseline policy (spec D17) — same rule as churn.
     let baseline = crate::tasks::metrics_scheduler::baseline_history(pg).await;
 
+    // Loaded once per pass: one config read, and the ruling does not change
+    // mid-pass.
+    let gate = super::MetricGate::load(pg).await;
+
     let mut written = 0u32;
     for (repository_id, abs_path) in repos {
+        // Whether the whole-tree half is worth its scan for THIS repository.
+        // Unlike churn the expensive work here is the tree walk that produces
+        // `qs`, which the scope=user rows also need — so this gates the WRITE,
+        // not the scan. Still the right lever: it stops a value nobody reads from
+        // being stored, pushed and paid for downstream.
+        let wants_repo_scope = {
+            let repo_key = pg.repo_key_for_repository(&repository_id).await.unwrap_or(None);
+            gate.wants_any(repo_key.as_deref(), &[KEY_DUPLICATION_RATIO, KEY_MODULE_QUALITY])
+        };
         // Baseline floor (spec D17): by default quality starts at this repository's
         // first AI-transcript day; a repo with no captured AI activity is skipped.
         let floor =
@@ -641,20 +654,26 @@ where
             }
 
             // scope = repo: the whole-tree twin (identity = NULL, D7/D8).
-            written += write_ratio_rows(
-                pg,
-                &repository_id,
-                SCOPE_REPO,
-                None,
-                &sha,
-                day,
-                dup_id,
-                mq_id,
-                qs.whole_tree_dup_lines(),
-                qs.whole_tree_maintainability(),
-                qs.total_lines,
-            )
-            .await?;
+            // Skipped when every consuming tenant has switched off both of this
+            // group's repo-scope metrics: the tree walk above is shared with the
+            // scope=user rows, so this gates the WRITE rather than the scan, and
+            // stops a value nobody reads from being stored, pushed and paid for.
+            if wants_repo_scope {
+                written += write_ratio_rows(
+                    pg,
+                    &repository_id,
+                    SCOPE_REPO,
+                    None,
+                    &sha,
+                    day,
+                    dup_id,
+                    mq_id,
+                    qs.whole_tree_dup_lines(),
+                    qs.whole_tree_maintainability(),
+                    qs.total_lines,
+                )
+                .await?;
+            }
 
             // scope = user: the SAME findings restricted to the local author's touched
             // files (P-B). Skipped when git has no local email OR the touched surface is
