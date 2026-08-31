@@ -75,6 +75,15 @@ export function buildNavItems(): NavEntry[] {
         link("想", "Inference", "/settings/inference"),
       ],
     },
+    // Measurement — what sensei measures, and why a metric is not current.
+    // Deliberately not folded into Reasoning: that cluster is models, chains and
+    // providers, i.e. how sensei THINKS. Metric activation is a cost decision
+    // recorded by the dōjō that owns the repository, which is a different
+    // question and would be buried next to Inference.
+    {
+      text: "Measurement",
+      children: [link("測", "Metrics", "/settings/metrics")],
+    },
     { type: "separator" },
     link("拡", "Extensions", "/settings/extensions"),
   ];
