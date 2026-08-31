@@ -731,6 +731,76 @@ impl PgStore {
             .collect())
     }
 
+    /// Replace the whole deactivation set with what the dōjō just said.
+    ///
+    /// Whole-set, in one transaction, because a plan is a COMPLETE statement: a
+    /// metric no longer listed has been re-enabled, and an incremental upsert
+    /// would leave the old row behind and keep skipping it forever. The delete
+    /// and the insert therefore have to be atomic — a reader between them would
+    /// see nothing disabled and do work the tenant is paying to avoid, which is
+    /// harmless, but a FAILED insert after a committed delete would silently
+    /// re-enable everything.
+    ///
+    /// `repo_key` is resolved to a repository id here rather than stored raw: a
+    /// key the daemon has never registered names no repository, and dropping it
+    /// is right — there is nothing local to skip.
+    pub async fn replace_metric_deactivations(
+        &self,
+        by_repo_key: &std::collections::HashMap<String, Vec<String>>,
+    ) -> Result<u64, String> {
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| format!("replace_metric_deactivations: begin: {e}"))?;
+
+        sqlx_core::query::query("DELETE FROM sensei.metric_deactivations")
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| format!("replace_metric_deactivations: clear: {e}"))?;
+
+        let mut written = 0u64;
+        for (repo_key, keys) in by_repo_key {
+            for metric_key in keys {
+                // The join is done in SQL so an unknown repo_key inserts nothing
+                // rather than needing a lookup round trip per row.
+                let r = sqlx_core::query::query(
+                    "INSERT INTO sensei.metric_deactivations (repository_id, metric_key)                      SELECT r.id, $2 FROM sensei.repositories r WHERE r.repo_key = $1                      ON CONFLICT (repository_id, metric_key)                      DO UPDATE SET observed_at = now()",
+                )
+                .bind(repo_key)
+                .bind(metric_key)
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| format!("replace_metric_deactivations: insert: {e}"))?;
+                written += r.rows_affected();
+            }
+        }
+        tx.commit().await.map_err(|e| format!("replace_metric_deactivations: commit: {e}"))?;
+        Ok(written)
+    }
+
+    /// Metrics no consuming dōjō wants, as `repo_key → [metric_key]`.
+    ///
+    /// Keyed on `repo_key` because that is what the gate compares against, and
+    /// what the plan speaks. Propagates a read failure: the gate's caller decides
+    /// what to do, and its rule is to fail OPEN.
+    pub async fn metric_deactivations(
+        &self,
+    ) -> Result<std::collections::HashMap<String, Vec<String>>, String> {
+        let rows: Vec<(String, String)> = sqlx_core::query_as::query_as(
+            "SELECT r.repo_key, d.metric_key                FROM sensei.metric_deactivations d                JOIN sensei.repositories r ON r.id = d.repository_id               ORDER BY r.repo_key, d.metric_key",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| format!("metric_deactivations: {e}"))?;
+        let mut out: std::collections::HashMap<String, Vec<String>> =
+            std::collections::HashMap::new();
+        for (repo_key, metric_key) in rows {
+            out.entry(repo_key).or_default().push(metric_key);
+        }
+        Ok(out)
+    }
+
     /// The normalized remote key for a repository, when it has one.
     ///
     /// `None` for a local-only repository (no remote, so no key and never

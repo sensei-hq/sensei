@@ -375,17 +375,11 @@ async fn sync_persona(
     // to skip. Best-effort: a write failure costs one cycle of extra computation,
     // never correctness, so it must not fail the sync that just succeeded.
     let disabled = crate::dojo_client::user_plane::disabled_everywhere(&plan);
-    match serde_json::to_string(&disabled) {
-        Ok(json) => {
-            if let Err(e) =
-                pg.set_config(crate::dojo_client::user_plane::DISABLED_METRICS_KEY, &json).await
-            {
-                tracing::warn!(persona, error = %e, "could not record disabled metrics");
-            }
-        }
-        // Unreachable for a String->Vec map, but a silent `unwrap` here would be
-        // a panic in a scheduled task.
-        Err(e) => tracing::warn!(persona, error = %e, "could not encode disabled metrics"),
+    match pg.replace_metric_deactivations(&disabled).await {
+        Ok(n) => tracing::debug!(persona, rows = n, "recorded metric deactivations"),
+        // Best-effort: a write failure costs one cycle of extra computation,
+        // never correctness, so it must not fail the sync that just succeeded.
+        Err(e) => tracing::warn!(persona, error = %e, "could not record metric deactivations"),
     }
 
     let pushed = push_allowed(pg, persona, token, plane, &plan).await?;
