@@ -1,55 +1,44 @@
 # Checkpoint
 
-**Slice:** Forge-token lifecycle — **DONE, verified live.**
-`92c21577` · `e039601b` · `e4202b90` · `7ed7be0c` · `9e48b9c7`
+**Slice:** Product cleanup — trail filed as issues, metrics first.
+Last commit `cb093b4a` (daemon activation proxy). Branch `develop`, 2 unpushed.
 
-## The design, after Jerry rejected the first one
+## Done
 
-`e4202b90` copied the GitHub App client secret into the Cloudflare Worker so the
-dōjō could redeem refresh tokens. Jerry caught the maintenance cost: recreating
-the client id would mean updating two dashboards, and the missed copy fails
-silently months later. **I should have raised that before building it.**
+- **#126 metric activation, both write halves.** Dōjō route + service
+  (`1541b9b2`), daemon proxy `PATCH /api/dojo/metric-activation` (`cb093b4a`).
+  Gates at `cb093b4a`: 2603 senseid pass, clippy `-D warnings` 0, fmt clean,
+  1622 app unit pass. Two mutation probes red (401/503 collapse; dropped trim).
+- **`sensei.metric_status` view** — one row per (repository × metric) with
+  watermark + status reason. Reads cadence off `w.last_sha`, not a hardcoded
+  group list. 402 live rows.
+- **Trail filed: #126–#140.** Nothing left only in conversation.
 
-Checked whether the secret could be read from Supabase instead — it cannot.
-`auth.custom_oauth_providers.client_secret` has 0 rows (custom OIDC only),
-`vault.secrets` is empty, and provider config is control-plane, unreachable by
-`service_role`. Only the Management API exposes it, which needs a strictly more
-powerful token.
+## Remains, in Jerry's stated order
 
-So renewal now re-runs the **authorize flow Supabase already owns**. One config
-location, forever.
+1. **Metrics** — `/settings/metrics` page (#126's UI half): rows from
+   `sensei.metric_status`, reason + watermark beside each toggle, PATCH on click.
+   Then #127 (dōjō connections + token expiry), then #128.
+2. **Scan scope** (#129) — non-git roots sweep unbounded; `find-me-board` = 1,230
+   folders.
+3. **Branch tagging vs delete/update** (#130).
+
+## Next command
 
 ```
-near expiry  ->  status: renewalDue=true
-             ->  sensei auth renew-if-needed
-             ->  Supabase /authorize (holds the secret)  ->  GitHub  ->  callback
-             ->  fresh 8h token, expiry recorded by observe
+# the daemon side is done and live; build the settings page against this view
+cat database/ddl/view/sensei/metric_status.ddl
 ```
 
-**Silent re-auth proven: token replaced in ~6s, zero prompts, zero clicks.**
+## Open questions
 
-## Live-verified
+- **#138 project/namespace** is a decision, not a task — the repository rung does
+  not exist, so project aggregation would aggregate an empty set.
+- **#137** blocks 4,329 user-scope sync rows: no production writer sets
+  `personas.principal_id`.
 
-- `renewalDue` across all three states (7h out: false · 25m out: true · dead:
-  false + needsSignIn true)
-- dōjō stopped → reports the outage, opens **no** browser
-- GitHub measured: 8h access token, 182d refresh, client id `Ov23…` = GitHub App
+## Known-broken
 
-## Bugs found by running it, not by testing it
-
-- step 5's fields landed on the sign-in callback, not `status`
-- `Refresh` fired for any unexpired token → would rotate ~16×/lifetime
-- CLI opened a browser on a GoTrue **504** — `AuthError` knew rejected-vs-
-  unreachable and `status` never put it on the wire
-- a renewal that worked still read `renewalDue` — sign-in discarded the expiry
-  header it was already receiving
-
-## Not done
-
-**Desktop app has no auth surface at all** — nothing there calls
-`/api/auth/signin`. Renewal today is `sensei auth renew-if-needed`.
-
-**Unreproduced flake:** one full-suite run failed with 1 test; name lost to a
-pipe. 3 full + 18 targeted reruns clean.
-
-**Gates:** daemon 2569 exit 0 · cli 57 · clippy 0 · fmt 0 · dōjō 1514 · check 0/0.
+- Repo-scope compute skip (#140) never observed live — dbd has no commits after
+  its sealed day, so no row appears either way.
+- 23 e2e failures triaged but unfixed (#134); no baseline recorded yet.
