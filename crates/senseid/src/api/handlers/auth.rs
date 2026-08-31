@@ -104,6 +104,136 @@ pub(crate) async fn signin(Query(p): Query<PersonaQuery>) -> Json<serde_json::Va
     }))
 }
 
+/// What the browser should be told at the end of the redirect.
+pub(crate) enum SignInPage {
+    Success {
+        login: String,
+    },
+    /// The credential stored and nothing will sync — see [`sign_in_will_sync`].
+    /// Neither other page is honest about this.
+    Partial {
+        detail: String,
+    },
+    Failure {
+        detail: String,
+    },
+}
+
+/// Escape text destined for HTML body content.
+///
+/// Both interpolated values are external: the login comes from GitHub and the
+/// detail from the dōjō's error body. Interpolating either raw would make this
+/// page an injection sink reachable by anyone able to influence an OAuth error
+/// message — and it renders in a browser on the user's own machine, same origin
+/// as the daemon on localhost.
+fn escape_html(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&#39;"),
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
+/// Whether this request came from a browser.
+///
+/// Content-negotiated rather than switched outright: the browser is the only
+/// caller today, but a client that asked for JSON and received a document would
+/// break with nothing explaining why. `*/*` — what curl sends — keeps the JSON.
+fn wants_html(accept: Option<&str>) -> bool {
+    accept.is_some_and(|a| a.contains("text/html"))
+}
+
+/// The page a human sees when the redirect lands.
+///
+/// This used to render the raw JSON body, which tells a person nothing and reads
+/// as a crash at the end of a flow that actually succeeded.
+///
+/// Self-contained: no external stylesheet, font or script. The window may be an
+/// incognito webview with no network beyond localhost by the time it renders.
+fn sign_in_html(page: &SignInPage) -> String {
+    let (heading, body, tone) = match page {
+        SignInPage::Success { login } if login.is_empty() => (
+            "Signed in".to_string(),
+            "sensei has what it needs. You can close this window.".to_string(),
+            "ok",
+        ),
+        SignInPage::Success { login } => (
+            format!("Signed in as {}", escape_html(login)),
+            "sensei has what it needs. You can close this window.".to_string(),
+            "ok",
+        ),
+        SignInPage::Partial { detail } => (
+            "Signed in, but not linked".to_string(),
+            format!(
+                "{} — sensei will not sync until that is resolved. You can close this window.",
+                escape_html(detail)
+            ),
+            "warn",
+        ),
+        SignInPage::Failure { detail } => (
+            "Sign-in did not complete".to_string(),
+            format!("{} — you can close this window and try again.", escape_html(detail)),
+            "bad",
+        ),
+    };
+    // Colours as literals because this document is served by the daemon and has
+    // no access to the app's token pipeline. Kept to the same sumi palette.
+    let accent = match tone {
+        "ok" => "#3f6f5b",
+        "warn" => "#8a6d3b",
+        _ => "#8c4a4a",
+    };
+    format!(
+        "<!doctype html>\n\
+         <html lang=\"en\"><head><meta charset=\"utf-8\">\
+         <meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\
+         <title>sensei</title><style>\
+         :root{{color-scheme:light dark}}\
+         body{{margin:0;min-height:100vh;display:grid;place-items:center;\
+         font:14px/1.6 ui-sans-serif,system-ui,-apple-system,sans-serif;\
+         background:#faf9f7;color:#2b2a28}}\
+         @media(prefers-color-scheme:dark){{body{{background:#1c1b1a;color:#e8e6e3}}}}\
+         main{{max-width:26rem;padding:2rem;text-align:center}}\
+         h1{{margin:0 0 .5rem;font-size:1.125rem;font-weight:600;color:{accent}}}\
+         p{{margin:0;opacity:.8}}\
+         </style></head><body><main><h1>{heading}</h1><p>{body}</p></main></body></html>"
+    )
+}
+
+/// Which page a callback body calls for.
+///
+/// Reads the SAME body the JSON callers receive, so the page and the payload
+/// cannot disagree — a page built from separate reasoning could congratulate a
+/// user whose JSON said the sign-in did not link.
+fn page_of(body: &serde_json::Value) -> SignInPage {
+    let stored = body["signedIn"].as_bool() == Some(true);
+    let will_sync = body["ok"].as_bool() == Some(true);
+    let detail = || {
+        body["error"]
+            .as_str()
+            .or_else(|| body["detail"].as_str())
+            .unwrap_or("the sign-in could not be completed")
+            .to_string()
+    };
+    match (stored, will_sync) {
+        // The login is absent on a dōjō that returns no identity block. Reported
+        // as an empty name, which the template drops — a placeholder would be a
+        // fabricated identity on the one screen whose job is to name it.
+        (true, true) => SignInPage::Success {
+            login: body["identity"]["githubLogin"].as_str().unwrap_or_default().to_string(),
+        },
+        (true, false) => SignInPage::Partial { detail: detail() },
+        _ => SignInPage::Failure { detail: detail() },
+    }
+}
+
 #[derive(Deserialize)]
 pub(crate) struct CallbackQuery {
     code: Option<String>,
@@ -118,28 +248,41 @@ pub(crate) struct CallbackQuery {
 /// exchange.
 pub(crate) async fn callback(
     State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
     Query(q): Query<CallbackQuery>,
-) -> Json<serde_json::Value> {
+) -> axum::response::Response {
+    use axum::response::IntoResponse as _;
+    let body = callback_body(state, q).await;
+    // A browser lands here at the end of the redirect and gets a page. Anything
+    // else keeps the JSON it has always received.
+    match wants_html(headers.get(axum::http::header::ACCEPT).and_then(|v| v.to_str().ok())) {
+        true => axum::response::Html(sign_in_html(&page_of(&body))).into_response(),
+        false => Json(body).into_response(),
+    }
+}
+
+/// The callback's outcome as data, shared by both representations.
+async fn callback_body(state: AppState, q: CallbackQuery) -> serde_json::Value {
     // The provider can redirect back with a refusal — a declined consent screen
     // is not an error to swallow, it is the answer.
     if let Some(err) = q.error {
-        return Json(serde_json::json!({
+        return serde_json::json!({
             "ok": false,
             "error": err,
             "detail": q.error_description,
-        }));
+        });
     }
 
     let Some(code) = q.code else {
-        return Json(serde_json::json!({ "ok": false, "error": "no code in callback" }));
+        return serde_json::json!({ "ok": false, "error": "no code in callback" });
     };
     let Some((persona, verifier)) =
         PENDING_VERIFIER.lock().unwrap_or_else(|e| e.into_inner()).take()
     else {
-        return Json(serde_json::json!({
+        return serde_json::json!({
             "ok": false,
             "error": "no sign-in in progress — start with POST /api/auth/signin",
-        }));
+        });
     };
 
     match dojo_auth::exchange(&dojo_url(), &code, &verifier).await {
@@ -207,7 +350,7 @@ pub(crate) async fn callback(
                         row.as_ref().map(Option::as_ref).map_err(Clone::clone),
                         chrono::Utc::now().timestamp(),
                     );
-                    Json(serde_json::json!({
+                    serde_json::json!({
                         // NOT unconditionally true. The credential stored, but if
                         // the persona did not link there is no `session_slot`, so
                         // nothing will ever sync — see `sign_in_will_sync`.
@@ -239,19 +382,19 @@ pub(crate) async fn callback(
                         "error": (!will_sync).then_some(
                             "signed in, but this persona is not linked — the sync cycle will not \
                              pick the session up until it is"),
-                    }))
+                    })
                 }
-                Ok(Err(e)) => Json(serde_json::json!({
+                Ok(Err(e)) => serde_json::json!({
                     "ok": false,
                     "error": format!("signed in, but the refresh token could not be stored: {e}"),
-                })),
-                Err(e) => Json(serde_json::json!({ "ok": false, "error": e.to_string() })),
+                }),
+                Err(e) => serde_json::json!({ "ok": false, "error": e.to_string() }),
             }
         }
         // Surface dōjō's own message rather than a generic failure. "invalid
         // grant" with no context is the most confusing outcome in this flow, and
         // the body usually says which half is wrong.
-        Err(e) => Json(serde_json::json!({ "ok": false, "error": e })),
+        Err(e) => serde_json::json!({ "ok": false, "error": e }),
     }
 }
 
@@ -655,6 +798,59 @@ pub(crate) async fn status(
     }))
 }
 
+/// `GET /api/auth/personas` — every identity, and what each one needs.
+///
+/// The sign-in surface reads this. It lists personas that have NEVER been
+/// connected as well as connected ones: sensei infers identities from commit
+/// authorship, so a fresh install has several, and those are exactly the rows a
+/// "connect an identity" list exists to offer.
+///
+/// READ-ONLY, and it does not probe the forge. The standing comes from what the
+/// scheduled check and `observe` have already recorded, so opening the list
+/// costs nothing.
+///
+/// A failed read is a 500, not an empty list. `[]` would read as "you have no
+/// identities" — and the remedy a user would reach for is to connect one, which
+/// is the wrong action against a database that is merely unreachable.
+pub(crate) async fn personas(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, axum::http::StatusCode> {
+    use crate::dojo_client::forge_token::{PersonaAction, persona_action};
+
+    let rows = state.pg.persona_rows().await.map_err(|e| {
+        tracing::error!(error = %e, "personas: could not read the registry");
+        axum::http::StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+    let now = chrono::Utc::now().timestamp();
+    let list: Vec<serde_json::Value> = rows
+        .iter()
+        .map(|r| {
+            let action =
+                persona_action(r.session_slot.as_deref(), r.verified, &r.state, r.expires_at, now);
+            serde_json::json!({
+                "label": r.label,
+                // The DISPLAY label is rewritten to the verified login on
+                // sign-in, so for a connected persona these usually match. For
+                // an inferred one the login is null — it has never been asked.
+                "githubLogin": r.github_login,
+                // What the Keychain slot is called. Carried so the caller can
+                // address the right credential: the label is NOT the slot, and
+                // signing in against the label silently skips the persona.
+                "sessionSlot": r.session_slot,
+                "connected": r.session_slot.is_some() && r.verified,
+                "forgeToken": { "state": r.state, "expiresAt": r.expires_at },
+                "action": match action {
+                    PersonaAction::Connect => "connect",
+                    PersonaAction::SignIn => "signIn",
+                    PersonaAction::Renew => "renew",
+                    PersonaAction::None => "none",
+                },
+            })
+        })
+        .collect();
+    Ok(Json(serde_json::json!({ "personas": list })))
+}
+
 /// `GET /api/auth/orgs?persona=…` — the GitHub organisations this persona can see.
 ///
 /// The first step of provisioning: an org becomes a tenant. Reads GitHub
@@ -950,6 +1146,133 @@ mod tests {
                 "{alive} must not ask for a sign-in"
             );
         }
+    }
+
+    /// The text a person actually reads — everything inside `<main>`, tags
+    /// stripped. Voice assertions belong here, not against the document.
+    fn visible_text(html: &str) -> String {
+        let inner = html
+            .split_once("<main>")
+            .and_then(|(_, rest)| rest.split_once("</main>"))
+            .map(|(inner, _)| inner)
+            .unwrap_or("");
+        let mut out = String::new();
+        let mut in_tag = false;
+        for c in inner.chars() {
+            match c {
+                '<' => in_tag = true,
+                '>' => in_tag = false,
+                _ if !in_tag => out.push(c),
+                _ => {}
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn the_sign_in_page_names_who_signed_in_and_says_the_window_can_close() {
+        // The browser lands here at the end of the OAuth redirect. It used to
+        // render the raw JSON body, which tells a person nothing and looks like
+        // a crash — Jerry hit exactly that.
+        let html = sign_in_html(&SignInPage::Success { login: "sensei-hq-org".into() });
+        assert!(html.contains("sensei-hq-org"), "names the account: {html}");
+        assert!(html.to_lowercase().contains("close"), "says the window can close");
+        assert!(html.starts_with("<!doctype html>"), "a real document, not a fragment");
+        // Voice rules apply to the PROSE, not the markup — `<!doctype>` and the
+        // CSS are not sentences. Checked against the visible text only.
+        let prose = visible_text(&html);
+        assert!(!prose.contains('!'), "no exclamations: {prose}");
+        assert!(!prose.contains("Sensei"), "lowercase sensei in prose: {prose}");
+    }
+
+    #[test]
+    fn a_failed_sign_in_says_what_went_wrong_rather_than_congratulating() {
+        // The redirect lands here on refusal too — a declined consent screen, a
+        // bad code. Showing a success page would be a lie the user only
+        // discovers when nothing syncs.
+        let html = sign_in_html(&SignInPage::Failure { detail: "invalid grant".into() });
+        assert!(html.contains("invalid grant"));
+        assert!(!html.to_lowercase().contains("signed in as"), "not a success page: {html}");
+    }
+
+    #[test]
+    fn a_stored_but_unlinked_sign_in_is_neither_success_nor_failure() {
+        // The credential works and nothing will sync — `sign_in_will_sync`. The
+        // page has to say so, because both other pages would mislead.
+        let html =
+            sign_in_html(&SignInPage::Partial { detail: "this persona is not linked".into() });
+        assert!(html.contains("this persona is not linked"));
+        assert!(html.to_lowercase().contains("close"));
+    }
+
+    #[test]
+    fn untrusted_text_is_escaped_before_it_reaches_the_page() {
+        // The login comes from GitHub and the detail from the dōjō's error body.
+        // Interpolating either raw makes this page an injection sink reachable
+        // by anyone who can influence an OAuth error message.
+        let html = sign_in_html(&SignInPage::Failure {
+            detail: "<img src=x onerror=alert(1)>&\"'".into(),
+        });
+        assert!(!html.contains("<img"), "tag not escaped: {html}");
+        assert!(html.contains("&lt;img"), "escaped form missing: {html}");
+        assert!(html.contains("&amp;"), "ampersand not escaped");
+        assert!(html.contains("&quot;"), "quote not escaped");
+
+        let html = sign_in_html(&SignInPage::Success { login: "<script>x</script>".into() });
+        assert!(!html.contains("<script>x"), "login not escaped: {html}");
+    }
+
+    #[test]
+    fn the_page_is_chosen_from_the_same_body_the_json_callers_get() {
+        // One source of truth. If the page were built from separate reasoning it
+        // could congratulate a user whose JSON said the sign-in did not link.
+        let success = serde_json::json!({
+            "ok": true, "signedIn": true,
+            "identity": { "verified": true, "githubLogin": "sensei-hq-org" }
+        });
+        assert!(
+            matches!(page_of(&success), SignInPage::Success { login } if login == "sensei-hq-org")
+        );
+
+        // Stored, but the persona did not link — `willSync` false. Neither a
+        // success nor a failure, and the page has to say which.
+        let partial = serde_json::json!({
+            "ok": false, "signedIn": true,
+            "error": "signed in, but this persona is not linked"
+        });
+        assert!(matches!(page_of(&partial), SignInPage::Partial { .. }));
+
+        // The exchange itself failed: no credential stored at all.
+        let failed = serde_json::json!({ "ok": false, "error": "invalid grant" });
+        assert!(
+            matches!(page_of(&failed), SignInPage::Failure { detail } if detail == "invalid grant")
+        );
+    }
+
+    #[test]
+    fn a_success_with_no_login_still_reports_success_without_inventing_a_name() {
+        // The identity block can be absent on an older dōjō. Saying "signed in"
+        // without a name is honest; printing a placeholder name is not.
+        let body = serde_json::json!({ "ok": true, "signedIn": true });
+        let page = page_of(&body);
+        assert!(matches!(&page, SignInPage::Success { login } if login.is_empty()));
+        // And the rendered heading must not read "Signed in as " with nothing.
+        let html = sign_in_html(&page);
+        assert!(!visible_text(&html).contains("as  "), "dangling name: {html}");
+        assert!(!visible_text(&html).trim_end().ends_with("as"), "dangling name: {html}");
+    }
+
+    #[test]
+    fn a_browser_gets_html_and_anything_else_gets_json() {
+        // Content negotiation rather than a hard switch: the browser is the only
+        // caller today, but a caller that asked for JSON and got a document
+        // would break with no way to tell why.
+        assert!(wants_html(Some("text/html,application/xhtml+xml,*/*;q=0.8")));
+        assert!(wants_html(Some("text/html")));
+        assert!(!wants_html(Some("application/json")));
+        // curl sends `*/*`. It is not a browser, so it keeps the JSON.
+        assert!(!wants_html(Some("*/*")));
+        assert!(!wants_html(None));
     }
 
     #[test]

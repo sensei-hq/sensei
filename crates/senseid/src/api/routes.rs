@@ -245,6 +245,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/auth/callback", get(crate::api::handlers::auth::callback))
         .route("/api/auth/signout", post(crate::api::handlers::auth::signout))
         .route("/api/auth/status", get(crate::api::handlers::auth::status))
+        .route("/api/auth/personas", get(crate::api::handlers::auth::personas))
         .route("/api/auth/orgs", get(crate::api::handlers::auth::orgs))
         .route("/api/tasks/kinds", get(crate::api::handlers::tasks::list_kinds))
         .route("/api/tasks/{id}", get(crate::api::handlers::tasks::get_task))

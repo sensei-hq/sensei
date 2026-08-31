@@ -114,6 +114,121 @@ pub fn forge_token_action(
 /// cost the renewal. Measured lifetime is 8h, so this renews in the last eighth.
 pub const REFRESH_MARGIN_SECS: i64 = 3600;
 
+/// What a persona needs from the user, if anything.
+///
+/// One value the UI renders directly, so the list cannot invent its own rules
+/// about which button to show.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PersonaAction {
+    /// Never signed in from this machine — no Keychain slot at all. Connecting
+    /// is a first-time act, not a repair, and the label has to say so.
+    Connect,
+    /// Signed in once, but the forge credential is gone. Only the user restores it.
+    SignIn,
+    /// Alive and near expiry. The app can do this without a prompt.
+    Renew,
+    /// Nothing to do.
+    None,
+}
+
+/// Decide what one persona needs.
+///
+/// `session_slot` is `None` for a persona inferred from a git email that has
+/// never been connected — sensei creates those from commit authorship, so a
+/// fresh install has several. Treating them as "signed out" would show a repair
+/// button for something that was never broken.
+pub fn persona_action(
+    session_slot: Option<&str>,
+    verified: bool,
+    state: &str,
+    expires_at: Option<i64>,
+    now: i64,
+) -> PersonaAction {
+    // Both conditions: `signed_in_personas` enumerates on the slot AND on
+    // verification, so a row with one but not the other is not usable and the
+    // remedy is the same first-time connect.
+    if session_slot.is_none() || !verified {
+        return PersonaAction::Connect;
+    }
+    match token_state_of(state) {
+        TokenState::Dead | TokenState::Absent => PersonaAction::SignIn,
+        TokenState::Active => match forge_token_action(expires_at, now, TokenState::Active) {
+            ForgeTokenAction::Refresh => PersonaAction::Renew,
+            _ => PersonaAction::None,
+        },
+    }
+}
+
+#[cfg(test)]
+mod persona_actions {
+    use super::*;
+
+    const NOW: i64 = 1_788_120_000;
+
+    #[test]
+    fn a_persona_that_never_signed_in_is_offered_a_connect_not_a_repair() {
+        // A fresh install infers these from commit authorship — this machine has
+        // two. Showing "sign in again" for an identity that was never connected
+        // reads as a fault the user caused.
+        assert_eq!(persona_action(None, false, "unknown", None, NOW), PersonaAction::Connect);
+    }
+
+    #[test]
+    fn a_slot_without_verification_is_also_a_connect() {
+        // `signed_in_personas` requires BOTH. A row with a slot but no
+        // verified_at is not usable by any sync, so the remedy is the same.
+        assert_eq!(
+            persona_action(Some("default"), false, "active", Some(NOW + 99_999), NOW),
+            PersonaAction::Connect
+        );
+    }
+
+    #[test]
+    fn a_dead_or_absent_token_asks_for_a_sign_in() {
+        for state in ["dead", "absent"] {
+            assert_eq!(
+                persona_action(Some("default"), true, state, None, NOW),
+                PersonaAction::SignIn,
+                "{state}"
+            );
+        }
+    }
+
+    #[test]
+    fn renewal_is_offered_only_inside_the_margin() {
+        assert_eq!(
+            persona_action(Some("default"), true, "active", Some(NOW + 600), NOW),
+            PersonaAction::Renew
+        );
+        assert_eq!(
+            persona_action(Some("default"), true, "active", Some(NOW + 25_200), NOW),
+            PersonaAction::None
+        );
+    }
+
+    #[test]
+    fn the_margin_is_not_re_implemented_here() {
+        // Same boundary as `forge_token_action`, because it IS that function. A
+        // second copy would drift from the scheduler.
+        let edge = NOW + REFRESH_MARGIN_SECS;
+        assert_eq!(
+            persona_action(Some("d"), true, "active", Some(edge - 1), NOW),
+            PersonaAction::Renew
+        );
+        assert_eq!(
+            persona_action(Some("d"), true, "active", Some(edge + 1), NOW),
+            PersonaAction::None
+        );
+    }
+
+    #[test]
+    fn an_unknown_expiry_on_a_live_token_asks_for_nothing() {
+        // Nothing is known to be wrong, and no deadline is known either. The
+        // scheduled check will probe it; nagging the user achieves nothing.
+        assert_eq!(persona_action(Some("default"), true, "active", None, NOW), PersonaAction::None);
+    }
+}
+
 #[cfg(test)]
 mod forge_token_decision {
     use super::*;
