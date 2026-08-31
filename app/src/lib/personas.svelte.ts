@@ -72,6 +72,16 @@ export class PersonaList {
    *  "no identities" and "we could not ask" are different answers. */
   error = $state<string | null>(null);
 
+  /**
+   * Whether a read has SUCCEEDED at least once.
+   *
+   * Without this the overlay renders "No identities yet" the instant it opens —
+   * an empty answer to a question not yet asked. Opening from the menu starts
+   * the read and shows the overlay in the same tick, so the fabricated empty is
+   * visible until the fetch lands, and stays visible if it fails.
+   */
+  loaded = $state(false);
+
   /** Per-row, keyed by label, so one slow sign-in does not disable the list. */
   #busy = $state<Set<string>>(new Set());
   #deps: PersonaListDeps;
@@ -111,6 +121,7 @@ export class PersonaList {
     }
     this.personas = res.personas;
     this.error = null;
+    this.loaded = true;
   }
 
   /** The verb for this row's button. */

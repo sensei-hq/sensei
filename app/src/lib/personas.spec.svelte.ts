@@ -67,6 +67,25 @@ describe('PersonaList.load', () => {
     await list.load();
     expect(list.personas).toHaveLength(0);
     expect(list.error).toBeNull();
+    expect(list.loaded).toBe(true);
+  });
+
+  it('is NOT loaded before the first read resolves', async () => {
+    // Otherwise the overlay renders "No identities yet" over data we have not
+    // fetched — an empty answer to a question we never asked. Visible for real:
+    // opening from the menu sets the overlay open and starts the read in the
+    // same tick, so the fabricated empty shows until the fetch lands.
+    const { list } = harness(LIST);
+    expect(list.loaded).toBe(false);
+    await list.load();
+    expect(list.loaded).toBe(true);
+  });
+
+  it('stays loaded=false when the read failed, so nothing claims emptiness', async () => {
+    const { list } = harness(null);
+    await list.load();
+    expect(list.loaded).toBe(false);
+    expect(list.error).toBeTruthy();
   });
 });
 
