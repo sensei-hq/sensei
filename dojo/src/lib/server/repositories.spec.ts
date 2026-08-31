@@ -44,7 +44,7 @@ function tables(): Record<string, FakeTable> {
 			rows: [],
 			uniques: [{ columns: ['tenant_id', 'repository_id', 'metric_id'] }]
 		},
-		metrics: { rows: [] }
+		metric_catalogue: { rows: [] }
 	};
 }
 
@@ -276,7 +276,7 @@ describe('syncPlan', () => {
 					{ tenant_id: 't-acme', repository_id: 'r1', metric_id: 'm-churn', enabled: true }
 				]
 			},
-			metrics: { rows: [{ id: 'm-ftr', key: 'ftr' }, { id: 'm-churn', key: 'churn_rate' }] }
+			metric_catalogue: { rows: [{ id: 'm-ftr', key: 'ftr' }, { id: 'm-churn', key: 'churn_rate' }] }
 		});
 		const plan = await syncPlan(db as never, ALICE);
 		const api = plan.allowed.find((a) => a.repo_key === 'github.com/acme/api');
@@ -295,7 +295,7 @@ describe('syncPlan', () => {
 			metric_activations: {
 				rows: [{ tenant_id: 't-acme', repository_id: 'r1', metric_id: 'm-ftr', enabled: false }]
 			},
-			metrics: { rows: [{ id: 'm-ftr', key: 'ftr' }] }
+			metric_catalogue: { rows: [{ id: 'm-ftr', key: 'ftr' }] }
 		});
 		const plan = await syncPlan(db as never, ALICE);
 		const api = plan.allowed.find((a) => a.repo_key === 'github.com/acme/api');
