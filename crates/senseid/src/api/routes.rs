@@ -2,7 +2,7 @@ use axum::{
     Router,
     http::StatusCode,
     response::Json,
-    routing::{delete, get, post, put},
+    routing::{delete, get, patch, post, put},
 };
 
 use crate::api::state::AppState;
@@ -454,6 +454,7 @@ pub fn create_router(state: AppState) -> Router {
         // Dōjō connections (memberships)
         .route("/api/dojo/memberships", get(dojo::list_memberships).post(dojo::create_membership))
         .route("/api/dojo/memberships/{id}/orgs", put(dojo::set_membership_orgs))
+        .route("/api/dojo/metric-activation", patch(dojo::set_metric_activation))
         // R3 infer-at-detect auto-bind: suggestion (read-only) + confirm-bind
         .route("/api/projects/{id}/dojo-suggestion", get(dojo::project_binding_suggestion))
         .route("/api/projects/{id}/dojo-binding", post(dojo::bind_project_to_membership))

@@ -575,6 +575,19 @@ pub(crate) enum AuthError {
     Unreachable(String),
 }
 
+/// The detail, so callers can report the cause without destructuring.
+///
+/// Added because three call sites had each written the same match to pull the
+/// String out — `dojo_sync`, the CLI, and the activation proxy.
+impl std::fmt::Display for AuthError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::SignedOut => write!(f, "no stored session"),
+            Self::Rejected(d) | Self::Unreachable(d) => write!(f, "{d}"),
+        }
+    }
+}
+
 impl AuthError {
     /// Whether the user has to sign in again, as opposed to just waiting.
     pub(crate) fn needs_sign_in(&self) -> bool {
