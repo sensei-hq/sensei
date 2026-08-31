@@ -18,14 +18,27 @@ const byHref = (entries: ReturnType<typeof buildNavItems>, href: string) =>
   allLinks(entries).find((l) => l.href === href);
 
 describe("settings buildNavItems", () => {
-  it("exposes three grouped clusters + a trailing leaf", () => {
+  it("exposes four grouped clusters + a trailing leaf", () => {
     const entries = buildNavItems();
     expect(groups(entries).map((g) => g.text)).toEqual([
       "You",
       "Sources",
       "Reasoning",
+      "Measurement",
     ]);
     expect(links(entries).map((l) => l.href)).toContain("/settings/extensions");
+  });
+
+  it("groups Measurement → Metrics, separate from Reasoning", () => {
+    // Not folded into Reasoning: that cluster is models, chains and providers —
+    // how sensei THINKS. Which metrics compute, and why one is not current, is a
+    // different question, and grouping them together would bury it.
+    const measurement = groups(buildNavItems()).find(
+      (g) => g.text === "Measurement",
+    )!;
+    expect(measurement.children.map((c) => c.href)).toEqual([
+      "/settings/metrics",
+    ]);
   });
 
   it("groups You → General + Assistants", () => {
@@ -101,6 +114,12 @@ describe("settings resolveActiveHref", () => {
     // Anticipates future nested pages like /settings/projects/abc-123.
     expect(resolveActiveHref("/settings/projects/abc-123")).toBe(
       "/settings/projects",
+    );
+  });
+
+  it("keeps Metrics highlighted on a per-repository sub-route", () => {
+    expect(resolveActiveHref("/settings/metrics/github.com-acme-api")).toBe(
+      "/settings/metrics",
     );
   });
 
