@@ -33,8 +33,14 @@ pooling in `project_metric_daily` — has only ever run with N = 1. The
 multi-repo path is therefore *implemented and untested by use*, which is worth
 knowing before relying on it.
 
-**79 projects are scan residue, not decisions.** They have folders but no
-repository:
+**79 projects have no repository — and most are INTENTIONAL.** Corrected by Jerry
+after the first draft called them scan residue: client work lives in folders that
+were never made git repos (proposals, estimation analysis, docs), and he wants
+those treated as projects. So "a project must have a repository" is wrong as a
+rule, and the earlier recommendation to stop creating them was wrong with it.
+
+What remains true is that the scan pulls in folders nobody chose either — the
+question is which, and that is a SCAN-scope question, not a project-model one:
 
 | project | folders | repositories |
 |---|---:|---:|
@@ -43,9 +49,9 @@ repository:
 | `value-pricing` | 77 | 0 |
 | `stories` | 34 | 0 |
 
-These are directories the scanner walked that never resolved to a git remote.
-Nobody chose them. They inflate the project count by 54%, and every "per
-project" loop pays for them.
+`find-me-board` at 1,230 folders is the shape of the problem: not "no git remote"
+but "swept in at a depth nobody nominated". A proposal folder with 12 documents is
+a project Jerry wants; 1,230 rows under it are not.
 
 ### The namespace ladder is project-centric, and has no repository rung
 
@@ -99,18 +105,21 @@ of which is the namespace.
 
 ## 3. Options for the project model
 
-### A — a project is what a repository gets by default
+### A — a project may or may not have a repository, and the scan gets narrower
 
-Keep one project per repository as the *rule*, stop pretending otherwise, and fix
-the residue: a scanned directory with no git remote does not become a project.
+A project is the unit of work, and a repository is one thing a project MAY have.
+Non-git client work is a first-class project; the fix is to stop the scan
+sweeping in folders nobody nominated.
 
-- **For:** matches reality; no migration of the 67 real projects; kills 79 shells;
-  every existing per-project loop keeps working unchanged.
+- **For:** matches what Jerry actually wants; no migration of the 67; no
+  deletion of the 79; every existing per-project loop keeps working.
 - **Against:** the multi-repo case stays theoretical, so grouping two
   repositories remains a manual act with no UI.
-- **Cost:** deciding what happens to the 79 (delete, or mark
-  `maturity='archived'`, or leave and filter). Their folders carry scan state, so
-  deletion is not free — `find-me-board` alone is 1,230 rows.
+- **Cost:** deciding scan scope. `find-me-board` has 1,230 folders — the issue
+  is depth and nomination, not the absence of a git remote.
+- **Open:** does a non-git project get metrics at all? Every `scope=repo` metric
+  comes from `git log`, so a repo-less project can only ever have the
+  session-derived ones. The UI should say so rather than showing empty cards.
 
 ### B — project becomes optional, with a view that presents repo-less repositories as projects
 
@@ -152,8 +161,9 @@ Anything touching the project model has to account for:
   progressively less so.
 - **`sensei.metric_status`** cross-joins repositories × metrics; it would need
   the same treatment as any other per-repository read.
-- **79 empty projects' folders**, which hold scan cursors. Deleting a project
-  cascades to them.
+- **79 repo-less projects' folders**, which hold scan cursors. Deleting a project
+  cascades to them — and most of these projects are wanted, so deletion is not
+  the default.
 
 ---
 
@@ -162,11 +172,11 @@ Anything touching the project model has to account for:
 Take Option **A** now and Option **C** later, in that order, because A is the
 only one that costs nothing to reverse and it shrinks the problem C has to solve:
 
-1. **Stop creating projects for repo-less scans.** This is a bug fix, not a model
-   change. It prevents the 79 from becoming 179.
-2. **Decide the fate of the existing 79.** Archive is safer than delete: their
-   folders carry scan state, and a project nobody chose is not obviously
-   disposable data.
+1. **Narrow the SCAN, not the project model.** A repo-less project is legitimate;
+   a 1,230-folder sweep under one is not. The lever is nomination and depth.
+2. **Leave the existing 79 alone.** Most are wanted. Archive only what Jerry
+   identifies as unwanted — their folders carry scan state, and a project he DID
+   choose must not be swept away with the residue.
 3. **Introduce the `repository:` rung and populate `level`.** Additive, testable
    on its own, and useful immediately — it gives `metric_status` and the sharing
    verdicts a common vocabulary.
