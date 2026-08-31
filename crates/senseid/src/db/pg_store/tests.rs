@@ -8736,6 +8736,78 @@ async fn get_project_metrics_reads_views() {
         .unwrap();
 }
 
+/// The deactivation set is REPLACED whole, so a re-enabled metric stops being
+/// skipped.
+///
+/// An incremental upsert would leave the old row behind and keep skipping a
+/// metric the tenant had switched back on — silently, and forever, because
+/// nothing else would ever delete it.
+#[tokio::test]
+async fn replacing_deactivations_forgets_the_ones_no_longer_listed() {
+    let s = pg_store().await;
+    let uniq = uuid::Uuid::new_v4();
+    let pid = s.create_project(&format!("_test:deact:{uniq}"), None, None).await.unwrap();
+    let rid =
+        crate::tasks::test_support::seed_bare_repository(&s, &pid, &uuid::Uuid::new_v4()).await;
+    // The gate compares repo_key, so the row needs one.
+    let key = format!("github.com/_test/deact-{uniq}");
+    sqlx_core::query::query("UPDATE sensei.repositories SET repo_key = $2 WHERE id = $1")
+        .bind(rid)
+        .bind(&key)
+        .execute(s.pool())
+        .await
+        .unwrap();
+
+    let two = std::collections::HashMap::from([(
+        key.clone(),
+        vec!["churn_rate".to_string(), "churn_concentration".to_string()],
+    )]);
+    s.replace_metric_deactivations(&two).await.unwrap();
+    let back = s.metric_deactivations().await.unwrap();
+    let mut got = back.get(&key).cloned().unwrap_or_default();
+    got.sort();
+    assert_eq!(got, vec!["churn_concentration".to_string(), "churn_rate".to_string()]);
+
+    // One re-enabled: the plan now lists only churn_rate.
+    let one = std::collections::HashMap::from([(key.clone(), vec!["churn_rate".to_string()])]);
+    s.replace_metric_deactivations(&one).await.unwrap();
+    assert_eq!(
+        s.metric_deactivations().await.unwrap().get(&key),
+        Some(&vec!["churn_rate".to_string()]),
+        "churn_concentration must be forgotten, not left behind"
+    );
+
+    // All re-enabled: an EMPTY map must clear the table, not be treated as "no
+    // news". This is the case an incremental writer gets wrong.
+    s.replace_metric_deactivations(&std::collections::HashMap::new()).await.unwrap();
+    assert!(
+        !s.metric_deactivations().await.unwrap().contains_key(&key),
+        "an empty plan clears every deactivation"
+    );
+
+    sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
+        .bind(pid)
+        .execute(s.pool())
+        .await
+        .unwrap();
+}
+
+/// A repo_key the daemon has never registered names no repository, so it inserts
+/// nothing rather than failing the whole replace.
+#[tokio::test]
+async fn a_deactivation_for_an_unknown_repository_is_dropped_not_fatal() {
+    let s = pg_store().await;
+    let unknown = std::collections::HashMap::from([(
+        format!("github.com/_test/never-registered-{}", uuid::Uuid::new_v4()),
+        vec!["churn_rate".to_string()],
+    )]);
+    // The dōjō may legitimately name a repository this install has not seen —
+    // another machine registered it. Failing here would take down the whole
+    // ruling for every repository that IS known.
+    let written = s.replace_metric_deactivations(&unknown).await.expect("must not fail");
+    assert_eq!(written, 0, "nothing local matched, so nothing was written");
+}
+
 /// A ratio/pct metric whose props carry NO numerator/denominator must still
 /// produce a value, not NULL.
 ///

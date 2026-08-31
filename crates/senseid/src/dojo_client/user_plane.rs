@@ -671,22 +671,3 @@ mod activation_union {
         );
     }
 }
-
-/// The config key holding the last plan's disabled-everywhere map.
-///
-/// ## Why this is cached when the entitlement ruling deliberately is not
-///
-/// `dojo_sync`'s module doc is emphatic: *"The daemon ASKS; it never
-/// remembers"*, because a cached `may_share` would be a second source of truth
-/// for CONSENT — a revoked seat has to bite on the next cycle, and a TTL whose
-/// only job is to bound how wrong the cache can be is not a design.
-///
-/// Activation is a different kind of fact and the asymmetry is the reason:
-/// staleness here costs one cycle of wasted computation, or one cycle of delay
-/// before a re-enabled metric returns. Neither ships data without consent.
-/// Meanwhile the metric tasks run on their own schedule and must not each open a
-/// dōjō round trip to ask — that WOULD make the cost lever cost something.
-///
-/// So: cached, keyed on nothing but the persona, and overwritten whole on every
-/// successful plan pull. A repository absent from the map has nothing disabled.
-pub const DISABLED_METRICS_KEY: &str = "dojo.disabled_metrics";
