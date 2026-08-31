@@ -65,9 +65,16 @@ fn build_app_menu(
     let logs_item = MenuItemBuilder::with_id("open-logs", "Diagnostic Logs")
         .accelerator("CmdOrCtrl+Shift+L")
         .build(app)?;
+    // The sign-in surface needs a way in that does not depend on something being
+    // broken. The overlay opens itself only when a CONNECTED identity has died;
+    // connecting a new one is an intentional act, so it needs a door.
+    let identities_item = MenuItemBuilder::with_id("open-identities", "Identities…")
+        .accelerator("CmdOrCtrl+Shift+I")
+        .build(app)?;
     let view_menu = SubmenuBuilder::new(app, "View")
         .text("toggle-sidebar", "Toggle Sidebar")
         .separator()
+        .item(&identities_item)
         .item(&logs_item)
         .separator()
         .text("go-health",      "Health")
@@ -223,6 +230,9 @@ pub fn run() {
                     "go-upgrade"     => { let _ = app.emit("dev-navigate", "/upgrade"); }
                     // "(observatory)" is a SvelteKit group, not a URL segment —
                     // the observatory page lives at "/".
+                    // Not a navigation: the overlay is global, so it opens
+                    // wherever the user already is rather than moving them.
+                    "open-identities" => { let _ = app.emit("open-identities", ()); }
                     "go-observatory" => { let _ = app.emit("dev-navigate", "/"); }
                     // `?force=1` lets the user re-enter setup after it's already
                     // been completed. The (config) layout's setupOk-redirect

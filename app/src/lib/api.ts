@@ -34,6 +34,8 @@ import type { ProjectHealth } from './metrics/health-radar.js';
 
 export type { DaySessions, DrilldownSession, ToolUsage };
 
+import type { PersonaWire } from './personas.svelte.js';
+
 export type ApiError = { status: number; message: string } | { status: 0; message: string };
 
 export type ApiResult<T> = { ok: true; data: T } | { ok: false; error: ApiError };
@@ -169,6 +171,31 @@ export function senseiApi(port: number) {
   }
 
   return {
+    // ── Auth ──────────────────────────────────────────────────────────────
+    // Result-based on purpose. A failed read of the credential's standing must
+    // NOT collapse into a fallback body: `{}` is indistinguishable from a
+    // daemon reporting a shape we do not understand, and either way the caller
+    // would be told something about a credential we never asked about.
+    tryGetAuthStatus: (persona = 'default') =>
+      tryGet<Record<string, unknown>>(`/api/auth/status?persona=${encodeURIComponent(persona)}`),
+
+    /** Every identity and what each one needs. Result-based: a failed read must
+     *  not become `[]`, which reads as "you have no identities". */
+    tryGetPersonas: () => tryGet<{ personas: PersonaWire[] }>('/api/auth/personas'),
+
+    /** Begin the PKCE flow. The daemon returns a URL rather than opening one —
+     *  it may be headless — so the caller owns the browser.
+     *
+     *  `expectedLogin` is passed through to GitHub so it preselects the right
+     *  account. Without it a browser already signed in to another account
+     *  quietly re-links THAT one — a success as the wrong person. */
+    tryStartSignIn: (persona = 'default', expectedLogin: string | null = null) =>
+      tryPost<{ authorizeUrl?: string }>(
+        `/api/auth/signin?persona=${encodeURIComponent(persona)}` +
+          (expectedLogin ? `&github_login=${encodeURIComponent(expectedLogin)}` : ''),
+        {},
+      ),
+
     // ── Health ────────────────────────────────────────────────────────────
     getHealth: () => get<Record<string, unknown>>('/health', {}),
 
