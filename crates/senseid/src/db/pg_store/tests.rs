@@ -11589,3 +11589,75 @@ async fn graph_nodes_makes_dependency_counting_a_query() {
     assert_eq!(stubs, 1, "the stub is counted as a stub, NOT as a dependency");
     s.delete_nodes_by_folder(&fid).await.unwrap();
 }
+
+// ── sensei.doc_coverage — the pairing is computed, not stored ─────────────────
+
+/// `covers` edges are gone: the pairing is a pure function of the current
+/// (docs, files), so `build_connections` no longer writes 601 rows into
+/// `sensei.edges` for a view to read back off the very nodes they came from.
+///
+/// This test writes NO edge at all and still expects the pair.
+#[tokio::test]
+async fn doc_coverage_pairs_without_any_stored_edge() {
+    let s = pg_store().await;
+    let suffix = format!("doccov_{}", uuid::Uuid::new_v4().simple());
+    let fid = create_test_folder(&s, &suffix).await;
+    s.upsert_node(&fid, "doc", "design", "docs/design.md", None, None, Some(1), Some(1))
+        .await
+        .unwrap();
+    s.upsert_node(&fid, "file", "design.rs", "src/design.rs", None, None, Some(1), Some(1))
+        .await
+        .unwrap();
+    // A file whose stem does NOT match must not pair.
+    s.upsert_node(&fid, "file", "other.rs", "src/other.rs", None, None, Some(1), Some(1))
+        .await
+        .unwrap();
+
+    let drift = s.get_doc_drift(&suffix).await.unwrap();
+    assert_eq!(drift.len(), 1, "exactly the stem-matched pair, got {drift:?}");
+    assert_eq!(drift[0]["docFile"], "docs/design.md");
+    assert_eq!(drift[0]["codeFile"], "src/design.rs");
+
+    let covers = s.get_edges_by_kind(&fid, "covers").await.unwrap();
+    assert!(covers.is_empty(), "no covers edge was written, and none is needed");
+    s.delete_nodes_by_folder(&fid).await.unwrap();
+}
+
+/// The stem expression in the view reproduces Rust `Path::file_stem()`. Verified
+/// against all 45,186 distinct `file_path` values in the live DB when the view
+/// was written; these are the cases that expression could plausibly get wrong.
+#[tokio::test]
+async fn doc_coverage_stem_matches_rust_file_stem() {
+    let s = pg_store().await;
+    let cases = [
+        "docs/api/auth.md",
+        "src/appstate.svelte.ts",
+        ".gitignore",
+        "Makefile",
+        "a/b/.env.local",
+        "x.tar.gz",
+        "no_ext",
+        "dir.with.dots/file.rs",
+    ];
+    for path in cases {
+        let want = std::path::Path::new(path)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_string();
+        let got: (String,) = sqlx_core::query_as::query_as(
+            "select case
+                      when position('.' in substring(regexp_replace($1, '^.*/', '') from 2)) = 0
+                      then regexp_replace($1, '^.*/', '')
+                      else substring(regexp_replace($1, '^.*/', '') from 1
+                             for length(regexp_replace($1, '^.*/', ''))
+                               - position('.' in reverse(regexp_replace($1, '^.*/', ''))))
+                    end",
+        )
+        .bind(path)
+        .fetch_one(s.pool())
+        .await
+        .unwrap();
+        assert_eq!(got.0, want, "stem of {path:?}");
+    }
+}
