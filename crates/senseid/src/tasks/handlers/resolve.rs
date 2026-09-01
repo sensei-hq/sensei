@@ -88,28 +88,32 @@ pub async fn build_connections(ctx: &TaskContext, task: &Task) -> Result<u32, St
         tracing::warn!(error = %e, folder = %folder_name, "build_connections: replace covers failed");
     }
 
-    // Collect libs from detected import targets
-    let edges = ctx.pg().get_edges_by_kind(&folder_id, "imports").await.unwrap_or_else(|e| { tracing::warn!(error = %e, folder = %folder_name, "build_connections: get_edges_by_kind failed"); Vec::new() });
-    let mut lib_set = std::collections::HashSet::new();
-    for edge in &edges {
-        if let Some(target_name) = edge["target_name"].as_str() {
-            // External imports (not resolved to local files) are likely library imports
-            if edge["target_id"].is_null() {
-                lib_set.insert(target_name.to_string());
-            }
-        }
-    }
-    let libs: Vec<String> = lib_set.into_iter().collect();
-
-    // D4.1: build_connections is NO LONGER the terminal barrier — it stamps the
-    // detected libs (folder metadata read by the Observatory/query views) but
-    // does NOT advance `folder_status`. DetectCommunities, chained after this,
-    // is the sole writer of `indexed` (so `indexed` implies communities exist).
-    // Stamping libs on a `failed` folder is harmless — it's metadata, not status.
-    if let Err(e) = ctx.pg().set_folder_props(&folder_id, &serde_json::json!({"libs": libs})).await
-    {
-        tracing::warn!(error = %e, folder = %folder_name, "build_connections: set libs props failed");
-    }
+    // Dependency detection deliberately does NOT happen here.
+    //
+    // This used to derive a lib list from the import edges by treating "the edge
+    // did not resolve" as "the target is external", then overwrite the list
+    // `resolve_libs` had already walked out of the manifest ("last write wins, as
+    // before"). The proxy was wrong in both directions. Measured 2026-09-01 on the
+    // live DB: 791 of the `sensei` folder's 1,040 entries were this repo's own
+    // code (`crate::log_collector::LogCollector`, `./WizardRail.svelte`,
+    // `$lib/nav`), rokkit 807 of 890, OmniRoute 4,085 of 5,468 — and it would have
+    // lost every genuine dependency the moment resolution started working, because
+    // `target_id` and `target_name` are mutually exclusive: resolving an edge
+    // erases the name the count was reading.
+    //
+    // The two questions now have one owner each. What a folder DECLARES it depends
+    // on comes from the manifest walk in `resolve_libs`, which this no longer
+    // clobbers. What its code actually CALLS INTO is a query over
+    // `sensei.graph_nodes`, which reads locality off the node the writer created
+    // rather than guessing from an edge:
+    //
+    //   SELECT count(DISTINCT n.name) FROM sensei.edges e
+    //     JOIN sensei.graph_nodes n ON n.id = e.target_id
+    //    WHERE e.folder_id = $1 AND n.locality = 'external'
+    //
+    // D4.1 still holds: this is NOT the terminal barrier and does not advance
+    // `folder_status`. DetectCommunities, chained after it, is the sole writer of
+    // `indexed` (so `indexed` implies communities exist).
 
     // D4.5: recompute node degree here (in+out edge count, incl. the covers edges
     // just built) so it is fresh before the DetectCommunities terminal barrier
@@ -122,12 +126,7 @@ pub async fn build_connections(ctx: &TaskContext, task: &Task) -> Result<u32, St
         tracing::warn!(error = %e, folder = %folder_name, "build_connections: recompute_degrees failed");
     }
 
-    tracing::info!(
-        "build_connections: {} — {} traceability edges, {} libs detected",
-        folder_name,
-        edges_created,
-        libs.len()
-    );
+    tracing::info!("build_connections: {} — {} traceability edges", folder_name, edges_created);
     Ok(edges_created)
 }
 
@@ -236,6 +235,66 @@ mod tests {
             ctx.pg().get_folder_status(&fid).await.unwrap().as_deref(),
             Some("indexing"),
             "build_connections leaves the folder indexing (D4.1 moved the terminal barrier to DetectCommunities)"
+        );
+        ctx.pg().remove_watch_root(&root_id).await.ok();
+    }
+
+    /// `build_connections` must NOT overwrite the dependency list that
+    /// `resolve_libs` derived from the manifest.
+    ///
+    /// It used to, by documented design ("re-stamps libs from its import-derived
+    /// set afterwards (last write wins, as before)"), and the set it stamped came
+    /// from asking "did this edge fail to resolve?" as a proxy for "is this
+    /// external?" — measured live 2026-09-01, that reported 791 of the `sensei`
+    /// folder's 1,040 entries as this repo's own code, and rokkit 807 of 890.
+    /// The locality question now belongs to `sensei.graph_nodes`, which reads what
+    /// the writer recorded on the node instead of guessing from an edge.
+    #[tokio::test]
+    async fn build_connections_does_not_clobber_the_manifest_derived_libs() {
+        let ctx = make_ctx().await;
+        let folder_path = format!("/tmp/libskeep_{}", uuid::Uuid::new_v4());
+        let root_id =
+            ctx.pg().add_watch_root(&folder_path, "lk", &serde_json::json!([])).await.unwrap();
+        let fid = ctx.pg().upsert_repo(&root_id, "lk-repo", &folder_path).await.unwrap();
+
+        // What resolve_libs (the manifest walk) would have left behind.
+        ctx.pg()
+            .set_folder_props(&fid, &serde_json::json!({"libs": ["axum", "serde"]}))
+            .await
+            .unwrap();
+
+        // An unresolved import edge whose target is plainly local — exactly the row
+        // the old proxy would have promoted to a "dependency".
+        let f = ctx
+            .pg()
+            .upsert_node(&fid, "file", "api.rs", "src/api.rs", None, None, Some(1), Some(9))
+            .await
+            .unwrap();
+        ctx.pg()
+            .insert_edge(&fid, &f, None, Some("crate::helpers::compute"), None, "imports")
+            .await
+            .unwrap();
+
+        let task = Task::new(TaskKind::BuildConnections, &folder_path, &folder_path);
+        build_connections(&ctx, &task).await.unwrap();
+
+        // Read by folder id, not by name: the repo name is fixed and `sensei_test`
+        // is shared, so a name lookup can return a folder left by an earlier run.
+        let props: (serde_json::Value,) =
+            sqlx_core::query_as::query_as("SELECT props FROM sensei.folders WHERE id = $1")
+                .bind(fid)
+                .fetch_one(ctx.pg().pool())
+                .await
+                .unwrap();
+        let libs: Vec<String> = props.0["libs"]
+            .as_array()
+            .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            .unwrap_or_default();
+        assert_eq!(
+            libs,
+            vec!["axum".to_string(), "serde".to_string()],
+            "the manifest-derived list survives; and `crate::helpers::compute` — a \
+             local module — is never promoted to a dependency"
         );
         ctx.pg().remove_watch_root(&root_id).await.ok();
     }
