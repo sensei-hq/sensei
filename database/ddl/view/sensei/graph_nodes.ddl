@@ -5,7 +5,7 @@ set search_path to sensei, extensions;
 -- ## Why this exists
 --
 -- Until now the only way to ask "is this external?" was to ask "did the edge fail
--- to resolve?" (`tasks/handlers/resolve.rs:102`). That proxy was wrong in BOTH
+-- to resolve?" — the proxy in the since-deleted `build_connections`. It was wrong in BOTH
 -- directions. Measured 2026-09-01 on the live DB: of the 1,040 entries it wrote
 -- into `folders.props.libs` for the `sensei` folder, **791 were this repo's own
 -- code** — `crate::log_collector::LogCollector`, `./WizardRail.svelte`, `$lib/nav`.
@@ -68,7 +68,6 @@ select n.id
      , n.resolved
      , n.is_exported
      , n.is_test
-     , n.degree
      , n.community_id
      , case
          -- The writer records a dependency's symbol and its package container

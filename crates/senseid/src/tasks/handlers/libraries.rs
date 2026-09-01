@@ -717,6 +717,8 @@ fn public_member_libs(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tasks::test_support::make_ctx;
+    use crate::tasks::{Task, TaskKind};
     use crate::types::PackageInfo;
 
     fn member(name: &str, pkg_type: &str, private: bool) -> PackageInfo {
@@ -929,5 +931,29 @@ mod tests {
         let r = resolve_index_library_id(&pg, &ghost.to_string(), &name, "local", Some("/x")).await;
         assert!(r.is_err(), "an unresolvable lib_id fails closed");
         assert!(!npm_row_exists(&pg, &name).await, "and creates no fallback (npm, name) row");
+    }
+
+    #[tokio::test]
+    async fn resolve_libs_is_fail_closed_on_a_failed_folder() {
+        // D4.1/D6d: resolve_libs stamps the walked libs but no longer advances
+        // the folder status, so a `failed` folder stays `failed` here — the
+        // terminal barrier (DetectCommunities) is the only writer of `indexed`.
+        let ctx = make_ctx().await;
+        let tmp = tempfile::tempdir().unwrap(); // empty dir → no libs to walk
+        let folder_path = tmp.path().to_string_lossy().to_string();
+        let root_id =
+            ctx.pg().add_watch_root(&folder_path, "rl_fc", &serde_json::json!([])).await.unwrap();
+        let fid = ctx.pg().upsert_repo(&root_id, "rl-fc-repo", &folder_path).await.unwrap();
+        ctx.pg().update_folder_status(&fid, "failed").await.unwrap();
+
+        let task = Task::new(TaskKind::ResolveLibs, &folder_path, &folder_path);
+        resolve_libs(&ctx, &task).await.unwrap();
+
+        assert_eq!(
+            ctx.pg().get_folder_status(&fid).await.unwrap().as_deref(),
+            Some("failed"),
+            "resolve_libs must not mark a failed folder indexed (fail-closed)"
+        );
+        ctx.pg().remove_watch_root(&root_id).await.ok();
     }
 }

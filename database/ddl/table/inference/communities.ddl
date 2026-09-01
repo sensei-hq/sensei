@@ -20,7 +20,9 @@ create index if not exists communities_folder_id_idx
 comment on table communities is
 'Leiden algorithm community clusters. Computed offline as a batch job.
 - community_id: integer cluster ID (referenced by nodes.community_id)
-- god_node_ids: top-5 highest-degree nodes in this community
+- god_node_ids: top-5 highest-degree nodes in this community. Degree is counted
+--   from the adjacency detect_communities already builds, not from a stored column
+--   (nodes.degree was dropped: a cache of a count(*) whose only consumer was this)
 - node_count: denormalized count of nodes in this cluster';
 
 comment on column communities.id
@@ -36,7 +38,7 @@ comment on column communities.description
 comment on column communities.node_count
      is 'Number of nodes assigned to this community.';
 comment on column communities.god_node_ids
-     is 'UUIDs of top-5 highest-degree nodes in this community.';
+     is 'UUIDs of top-5 members by degree, counted from the adjacency detect_communities builds (semantic edges + parent containment). Not from a stored column.';
 comment on column communities.props
      is 'Enrichment provenance/metadata. props.source records how `description` was
 produced: ''narration-cache'' (model-authored) or ''null'' (honest-empty on model
