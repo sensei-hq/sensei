@@ -11358,3 +11358,234 @@ async fn signing_out_matches_the_slot_however_the_caller_cased_the_persona() {
         "and the cycle must stop enumerating a persona whose credentials are gone"
     );
 }
+
+// ── sensei.graph_nodes — locality + hierarchy ────────────────────────────────
+//
+// The view a dependency count, a stub count, and the patterns-vs-graph split all
+// read from. It exists because the ONLY previous way to ask "is this external?"
+// was to ask "did the edge fail to resolve?" — a proxy that was wrong in both
+// directions (`resolve.rs:102` reported 791 of sensei's 1,040 "dependencies" as
+// this repo's own code, and would have lost every genuine one the moment
+// resolution started working, since target_id and target_name are mutually
+// exclusive).
+//
+// Locality is a property of the NODE, so the view reads what the WRITER already
+// decided (`kind`, `file_path`) rather than re-deriving it. That is the line
+// between this and `classify_import`: that function parses a specifier string and
+// exercises judgment, so it stays in Rust with one owner; this projects columns
+// the writer already set.
+
+/// Three-valued on purpose. A boolean would bin the 85,530 nodes that have
+/// neither a `file_path` nor `lib_symbol` kind as external and reproduce exactly
+/// the false positives this view exists to kill. `unknown` makes them countable,
+/// which is what turns "stub count → 0" into a query.
+#[tokio::test]
+async fn graph_nodes_locality_is_three_valued_not_boolean() {
+    let s = pg_store().await;
+    let fid = create_test_folder(&s, &format!("loc_{}", uuid::Uuid::new_v4())).await;
+
+    // A definition in a local file.
+    let internal = s
+        .upsert_node(&fid, "function", "compute", "src/lib.rs", None, None, Some(1), Some(9))
+        .await
+        .unwrap();
+    // A dependency's symbol: the writer records this as `lib_symbol`.
+    let external = s
+        .upsert_node_by_fqn(
+            &fid,
+            "lib·axum·axum::response·Json",
+            "lib_symbol",
+            "Json",
+            Some("rust"),
+            None,
+        )
+        .await
+        .unwrap();
+    // A reference the parser could not resolve: no file, not a lib_symbol.
+    let stub = s
+        .upsert_node_by_fqn(
+            &fid,
+            "rust·senseid·codebase·HashMap·get",
+            "function",
+            "get",
+            Some("rust"),
+            None,
+        )
+        .await
+        .unwrap();
+
+    let rows: Vec<(uuid::Uuid, String)> = sqlx_core::query_as::query_as(
+        "SELECT id, locality FROM sensei.graph_nodes WHERE folder_id = $1 ORDER BY locality",
+    )
+    .bind(fid)
+    .fetch_all(s.pool())
+    .await
+    .unwrap();
+    let by_id: std::collections::HashMap<uuid::Uuid, String> = rows.into_iter().collect();
+
+    assert_eq!(by_id.get(&internal).map(String::as_str), Some("internal"), "has a local file");
+    assert_eq!(by_id.get(&external).map(String::as_str), Some("external"), "lib_symbol kind");
+    assert_eq!(
+        by_id.get(&stub).map(String::as_str),
+        Some("unknown"),
+        "no file and not a lib_symbol — neither internal nor external, and saying \
+         'external' here is the bug this view replaces"
+    );
+    s.delete_nodes_by_folder(&fid).await.unwrap();
+}
+
+/// Locality must NOT read `nodes.resolved`. Measured live: 140,051 `section`
+/// rows are `resolved=false` yet sit in real files, so `resolved` answers "did
+/// FQN enrichment run", not "where does this live". Both fixtures below are
+/// `resolved=false` and must still classify differently.
+#[tokio::test]
+async fn graph_nodes_locality_does_not_depend_on_resolved() {
+    let s = pg_store().await;
+    let fid = create_test_folder(&s, &format!("locres_{}", uuid::Uuid::new_v4())).await;
+    let unresolved_but_local = s
+        .upsert_node(&fid, "section", "Overview", "docs/design.md", None, None, Some(1), Some(3))
+        .await
+        .unwrap();
+    let unresolved_lib = s
+        .upsert_node_by_fqn(
+            &fid,
+            "lib·serde·serde·Serialize",
+            "lib_symbol",
+            "Serialize",
+            Some("rust"),
+            None,
+        )
+        .await
+        .unwrap();
+
+    let rows: Vec<(uuid::Uuid, String, bool)> = sqlx_core::query_as::query_as(
+        "SELECT id, locality, resolved FROM sensei.graph_nodes WHERE folder_id = $1",
+    )
+    .bind(fid)
+    .fetch_all(s.pool())
+    .await
+    .unwrap();
+    let map: std::collections::HashMap<uuid::Uuid, (String, bool)> =
+        rows.into_iter().map(|(i, l, r)| (i, (l, r))).collect();
+
+    let (loc_local, res_local) = map.get(&unresolved_but_local).cloned().unwrap();
+    let (loc_lib, res_lib) = map.get(&unresolved_lib).cloned().unwrap();
+    assert!(!res_local && !res_lib, "both fixtures are resolved=false — that is the point");
+    assert_eq!(loc_local, "internal", "a doc section in a real file is internal");
+    assert_eq!(loc_lib, "external", "a lib_symbol is external regardless of enrichment");
+    s.delete_nodes_by_folder(&fid).await.unwrap();
+}
+
+/// The hierarchy half: `parent_id` already carries containment (296,744 rows
+/// populated), so grouping does not need a `contains` edge kind. The view
+/// surfaces the parent's name and kind so a caller can group without a
+/// self-join.
+#[tokio::test]
+async fn graph_nodes_exposes_the_parent_for_grouping() {
+    let s = pg_store().await;
+    let fid = create_test_folder(&s, &format!("locpar_{}", uuid::Uuid::new_v4())).await;
+    let class = s
+        .upsert_node(&fid, "class", "Widget", "src/widget.rs", None, None, Some(1), Some(40))
+        .await
+        .unwrap();
+    let method = s
+        .upsert_node(
+            &fid,
+            "method",
+            "render",
+            "src/widget.rs",
+            Some(&class),
+            None,
+            Some(5),
+            Some(9),
+        )
+        .await
+        .unwrap();
+
+    let row: (Option<String>, Option<String>, Option<uuid::Uuid>) = sqlx_core::query_as::query_as(
+        "SELECT parent_name, parent_kind, parent_id FROM sensei.graph_nodes WHERE id = $1",
+    )
+    .bind(method)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(row.0.as_deref(), Some("Widget"));
+    assert_eq!(row.1.as_deref(), Some("class"));
+    assert_eq!(row.2, Some(class));
+
+    let top: (Option<String>, Option<String>) = sqlx_core::query_as::query_as(
+        "SELECT parent_name, parent_kind FROM sensei.graph_nodes WHERE id = $1",
+    )
+    .bind(class)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(top, (None, None), "a top-level node has no parent — null, not a placeholder");
+    s.delete_nodes_by_folder(&fid).await.unwrap();
+}
+
+/// The dependency count the `libs` computation got wrong. Counting distinct
+/// external targets of `calls` edges is now a one-line query that cannot mistake
+/// an unresolved internal reference for a dependency.
+#[tokio::test]
+async fn graph_nodes_makes_dependency_counting_a_query() {
+    let s = pg_store().await;
+    let fid = create_test_folder(&s, &format!("locdep_{}", uuid::Uuid::new_v4())).await;
+    let caller = s
+        .upsert_node(&fid, "function", "handler", "src/api.rs", None, None, Some(1), Some(9))
+        .await
+        .unwrap();
+    let lib_a = s
+        .upsert_node_by_fqn(
+            &fid,
+            "lib·axum·axum::response·Json",
+            "lib_symbol",
+            "Json",
+            Some("rust"),
+            None,
+        )
+        .await
+        .unwrap();
+    let lib_b = s
+        .upsert_node_by_fqn(
+            &fid,
+            "lib·serde·serde·to_string",
+            "lib_symbol",
+            "to_string",
+            Some("rust"),
+            None,
+        )
+        .await
+        .unwrap();
+    // A stub — an internal reference the parser failed to resolve. The OLD rule
+    // counted this as a dependency; the new one must not.
+    let stub = s
+        .upsert_node_by_fqn(
+            &fid,
+            "rust·senseid·api·HashMap·get",
+            "function",
+            "get",
+            Some("rust"),
+            None,
+        )
+        .await
+        .unwrap();
+    for t in [lib_a, lib_b, stub] {
+        s.insert_edge(&fid, &caller, Some(&t), None, None, "calls").await.unwrap();
+    }
+
+    let (deps, stubs): (i64, i64) = sqlx_core::query_as::query_as(
+        "SELECT count(*) FILTER (WHERE n.locality = 'external')
+              , count(*) FILTER (WHERE n.locality = 'unknown')
+           FROM sensei.edges e
+           JOIN sensei.graph_nodes n ON n.id = e.target_id
+          WHERE e.folder_id = $1 AND e.kind = 'calls'",
+    )
+    .bind(fid)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(deps, 2, "two real dependencies");
+    assert_eq!(stubs, 1, "the stub is counted as a stub, NOT as a dependency");
+    s.delete_nodes_by_folder(&fid).await.unwrap();
+}
