@@ -1620,7 +1620,9 @@ export interface MetricStatusRow {
   repository_name: string;
   metric: string;
   metric_group: string;
-  cadence: 'day' | 'commit';
+  /** `snapshot` = the group keeps no cursor: it computes current state only.
+   *  Read off the DATA (which cursor columns are set), never a group list. */
+  cadence: 'day' | 'commit' | 'snapshot';
   sealed_through: string | null;
   last_sha: string | null;
   watermark_updated_at: string | null;
@@ -1632,6 +1634,10 @@ export interface MetricStatusRow {
   deactivated_observed_at: string | null;
   /** A key into `MetricStatusResponse.reasons`. Never rendered raw. */
   reason_code: string;
+  /** The last day this pair actually produced a value, independent of any cursor.
+   *  The evidence that separates "never ran" from "runs, but keeps no cursor" —
+   *  keying that on the watermark alone described 12 working pairs as never-run. */
+  last_computed_on: string | null;
 }
 
 /** `GET /api/metrics/status?repo=<repo_key|uuid>` — one repository's metrics.
