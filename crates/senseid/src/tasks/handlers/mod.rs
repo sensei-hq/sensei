@@ -22,7 +22,6 @@ mod prompt_classify;
 mod publish_run;
 mod publish_segments;
 mod rank;
-mod resolve;
 pub(crate) mod scan;
 pub(crate) mod scan_logic;
 pub(crate) mod session_process;
@@ -45,7 +44,6 @@ pub use process::{
 };
 pub use publish_run::publish_run;
 pub use publish_segments::publish_relay_segments;
-pub use resolve::build_connections;
 pub use scan::{branch_switch, scan_root};
 pub use tool_insights::aggregate_tool_insights;
 pub use verdicts::measure_verdicts;

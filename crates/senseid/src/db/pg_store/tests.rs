@@ -1350,121 +1350,51 @@ async fn community_adjacency_includes_extends() {
 }
 
 #[tokio::test]
-async fn recompute_degrees_counts_incident_edges() {
-    // D4.5: nodes.degree = in+out count of edges incident to the node (source,
-    // plus resolved target). An edgeless node is set to 0, not left NULL.
-    let s = pg_store().await;
-    let fid = create_test_folder(&s, &format!("degree_{}", uuid::Uuid::new_v4())).await;
-    let hub = s
-        .upsert_node(&fid, "function", "hub", "a.rs", None, Some("()"), Some(1), Some(2))
-        .await
-        .unwrap();
-    let a = s
-        .upsert_node(&fid, "function", "a", "a.rs", None, Some("()"), Some(3), Some(4))
-        .await
-        .unwrap();
-    let b = s
-        .upsert_node(&fid, "function", "b", "a.rs", None, Some("()"), Some(5), Some(6))
-        .await
-        .unwrap();
-    let lonely = s
-        .upsert_node(&fid, "function", "lonely", "a.rs", None, Some("()"), Some(7), Some(8))
-        .await
-        .unwrap();
-    s.insert_edge(&fid, &a, Some(&hub), None, None, "calls").await.unwrap(); // a→hub
-    s.insert_edge(&fid, &b, Some(&hub), None, None, "calls").await.unwrap(); // b→hub
-
-    s.recompute_degrees_for_folder(&fid).await.unwrap();
-
-    let deg = |id: uuid::Uuid| {
-        let pool = s.pool().clone();
-        async move {
-            let (d,): (Option<i32>,) = query_as("SELECT degree FROM sensei.nodes WHERE id=$1")
-                .bind(id)
-                .fetch_one(&pool)
-                .await
-                .unwrap();
-            d
-        }
-    };
-    assert_eq!(deg(hub).await, Some(2), "hub is the resolved target of 2 calls");
-    assert_eq!(deg(a).await, Some(1), "a is the source of 1 call");
-    assert_eq!(deg(b).await, Some(1), "b is the source of 1 call");
-    assert_eq!(deg(lonely).await, Some(0), "an edgeless node has degree 0, not NULL");
-
-    s.delete_nodes_by_folder(&fid).await.unwrap();
-}
-
-#[tokio::test]
-async fn recompute_degrees_reruns_change_zero_rows() {
-    // Regression (bloat incident): the degree barrier runs on EVERY indexing
-    // pass (build_connections). Without the `IS DISTINCT FROM` guard it rewrote
-    // every node in the folder each time, so a steady-state re-scan produced a
-    // full table's worth of dead tuples. Concurrent same-folder passes then
-    // blocked on each other's row locks, held hours-long transactions that
-    // pinned the xmin horizon, and autovacuum could never reclaim them —
-    // sensei.nodes reached 99% dead / 155 GB. A re-scan with no graph change
-    // MUST touch 0 rows.
-    let s = pg_store().await;
-    let fid = create_test_folder(&s, &format!("degree_norerun_{}", uuid::Uuid::new_v4())).await;
-    let hub = s
-        .upsert_node(&fid, "function", "hub", "a.rs", None, Some("()"), Some(1), Some(2))
-        .await
-        .unwrap();
-    let a = s
-        .upsert_node(&fid, "function", "a", "a.rs", None, Some("()"), Some(3), Some(4))
-        .await
-        .unwrap();
-    s.insert_edge(&fid, &a, Some(&hub), None, None, "calls").await.unwrap();
-
-    // First pass sets degree on the nodes whose degree changed (NULL → value).
-    let first = s.recompute_degrees_for_folder(&fid).await.unwrap();
-    assert_eq!(first, 2, "first pass sets degree on the 2 incident nodes");
-
-    // Steady state: nothing changed → the guarded UPDATE must rewrite 0 rows.
-    let second = s.recompute_degrees_for_folder(&fid).await.unwrap();
-    assert_eq!(second, 0, "a re-scan with no graph change rewrites 0 nodes (no dead tuples)");
-
-    s.delete_nodes_by_folder(&fid).await.unwrap();
-}
-
-#[tokio::test]
-async fn god_node_ids_are_top_by_degree() {
-    // D4.5: a community's god_node_ids are its highest-degree members (top-5),
-    // read from nodes.degree; the hub ranks first.
+async fn god_node_ids_rank_by_adjacency_not_by_a_stored_column() {
+    // A community's god_node_ids are its top-5 members by degree. Degree is
+    // counted from the adjacency `detect_communities_for_folder` has already
+    // built from the edges — NOT read back from a `nodes.degree` cache that a
+    // separate barrier had to populate first (56 of 430,988 rows were measurably
+    // stale, and that drift produced wrong god nodes in 4 live communities).
+    //
+    // Two things give this test teeth:
+    // The hub is LAST in natural-key order, so a ranking that fell back to the
+    // tie-break alone — which is what a missing degree signal degrades to — would
+    // put it last instead of first.
     let s = pg_store().await;
     let fid = create_test_folder(&s, &format!("godnode_{}", uuid::Uuid::new_v4())).await;
-    let hub = s
-        .upsert_node(&fid, "function", "hub", "a.rs", None, Some("()"), Some(1), Some(2))
-        .await
-        .unwrap();
     let a = s
-        .upsert_node(&fid, "function", "a", "a.rs", None, Some("()"), Some(3), Some(4))
+        .upsert_node(&fid, "function", "a", "a.rs", None, Some("()"), Some(1), Some(2))
         .await
         .unwrap();
     let b = s
-        .upsert_node(&fid, "function", "b", "a.rs", None, Some("()"), Some(5), Some(6))
+        .upsert_node(&fid, "function", "b", "a.rs", None, Some("()"), Some(3), Some(4))
         .await
         .unwrap();
     let c = s
-        .upsert_node(&fid, "function", "c", "a.rs", None, Some("()"), Some(7), Some(8))
+        .upsert_node(&fid, "function", "c", "a.rs", None, Some("()"), Some(5), Some(6))
         .await
         .unwrap();
-    // a→hub, b→hub, c→hub, a→b (calls). Degrees: hub=3, a=2, b=2, c=1 → one
-    // community {hub,a,b,c}; hub is the clear hub.
+    let hub = s
+        .upsert_node(&fid, "function", "hub", "a.rs", None, Some("()"), Some(9), Some(10))
+        .await
+        .unwrap();
+    // a→hub, b→hub, c→hub, a→b. Adjacency degrees: hub=3, a=2, b=2, c=1.
     s.insert_edge(&fid, &a, Some(&hub), None, None, "calls").await.unwrap();
     s.insert_edge(&fid, &b, Some(&hub), None, None, "calls").await.unwrap();
     s.insert_edge(&fid, &c, Some(&hub), None, None, "calls").await.unwrap();
     s.insert_edge(&fid, &a, Some(&b), None, None, "calls").await.unwrap();
 
-    s.recompute_degrees_for_folder(&fid).await.unwrap();
     crate::indexer::community::detect_communities_for_folder(&s, &fid).await.unwrap();
 
     let (god,): (Vec<uuid::Uuid>,) = query_as(
             "SELECT god_node_ids FROM inference.communities WHERE folder_id=$1 ORDER BY community_id LIMIT 1")
             .bind(fid).fetch_one(s.pool()).await.unwrap();
-    assert_eq!(god.first(), Some(&hub), "the highest-degree node is the first god node");
-    assert!(god.contains(&hub), "hub is a god node");
+    assert_eq!(
+        god.first(),
+        Some(&hub),
+        "the hub ranks first from the adjacency, despite being last by natural key"
+    );
     assert!(god.len() <= 5, "at most 5 god nodes per community");
 
     s.delete_nodes_by_folder(&fid).await.unwrap();
@@ -1620,8 +1550,14 @@ async fn upsert_node_at_same_line_keeps_id_and_renulls_embedding_on_sig_change()
 
     // Simulate a prior enrich + embed pass on this node.
     let zeros = format!("[{}]", vec!["0"; 384].join(","));
-    sqlx_core::query::query("UPDATE sensei.nodes SET community_id = 7, degree = 3, embedding = $2::vector WHERE id = $1")
-            .bind(id1).bind(&zeros).execute(s.pool()).await.unwrap();
+    sqlx_core::query::query(
+        "UPDATE sensei.nodes SET community_id = 7, embedding = $2::vector WHERE id = $1",
+    )
+    .bind(id1)
+    .bind(&zeros)
+    .execute(s.pool())
+    .await
+    .unwrap();
 
     // Re-upsert SAME line, SAME signature, only line_end grew → id kept, all preserved.
     let id2 = s
@@ -1638,16 +1574,15 @@ async fn upsert_node_at_same_line_keeps_id_and_renulls_embedding_on_sig_change()
         .await
         .unwrap();
     assert_eq!(id1, id2, "a re-upsert at the same identity keeps its id");
-    let (community, degree, has_emb): (Option<i32>, Option<i32>, bool) = query_as(
-        "SELECT community_id, degree, embedding IS NOT NULL FROM sensei.nodes WHERE id = $1",
-    )
-    .bind(id1)
-    .fetch_one(s.pool())
-    .await
-    .unwrap();
+    let (community, has_emb): (Option<i32>, bool) =
+        query_as("SELECT community_id, embedding IS NOT NULL FROM sensei.nodes WHERE id = $1")
+            .bind(id1)
+            .fetch_one(s.pool())
+            .await
+            .unwrap();
     assert_eq!(
-        (community, degree, has_emb),
-        (Some(7), Some(3), true),
+        (community, has_emb),
+        (Some(7), true),
         "community_id/degree/embedding preserved when signature is unchanged"
     );
 
@@ -10329,6 +10264,10 @@ async fn all_task_kinds_match_the_database_enum() {
     // outright and has no successor at all).
     let retired = [
         "resolve_edges",
+        // Retired outright: its `covers` set is now the sensei.doc_coverage view,
+        // and its degree refresh is counted from the adjacency detect_communities
+        // already builds. No successor kind — the work does not exist any more.
+        "build_connections",
         "plan_metric_days",
         "compute_metrics",
         "reconcile_identity",
@@ -11660,4 +11599,36 @@ async fn doc_coverage_stem_matches_rust_file_stem() {
         .unwrap();
         assert_eq!(got.0, want, "stem of {path:?}");
     }
+}
+
+/// The D2 concern the old `covers` replace guarded — "a covers edge whose covered
+/// file no longer matches is stale and must be removed" — is now structurally
+/// impossible rather than maintained. Nothing is stored, so nothing can go stale:
+/// rename the file and the pairing simply is not there on the next read. There is
+/// no replace pass and therefore no window in which a stale row is visible.
+#[tokio::test]
+async fn doc_coverage_cannot_hold_a_stale_pairing() {
+    let s = pg_store().await;
+    let suffix = format!("staleprs_{}", uuid::Uuid::new_v4().simple());
+    let fid = create_test_folder(&s, &suffix).await;
+    s.upsert_node(&fid, "doc", "auth", "docs/auth.md", None, None, Some(1), Some(1)).await.unwrap();
+    let code = s
+        .upsert_node(&fid, "file", "auth", "src/auth.rs", None, None, Some(1), Some(1))
+        .await
+        .unwrap();
+
+    let drift = s.get_doc_drift(&suffix).await.unwrap();
+    assert_eq!(drift.len(), 1, "the stem match pairs, got {drift:?}");
+    assert_eq!(drift[0]["codeFile"], "src/auth.rs");
+
+    // Rename the file out from under the doc. No task runs; no edge is rewritten.
+    sqlx_core::query::query("UPDATE sensei.nodes SET file_path = 'src/renamed.rs' WHERE id = $1")
+        .bind(code)
+        .execute(s.pool())
+        .await
+        .unwrap();
+
+    let drift = s.get_doc_drift(&suffix).await.unwrap();
+    assert!(drift.is_empty(), "the pairing is gone the instant the stem stops matching: {drift:?}");
+    s.delete_nodes_by_folder(&fid).await.unwrap();
 }

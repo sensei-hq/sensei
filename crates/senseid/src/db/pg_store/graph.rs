@@ -1229,43 +1229,6 @@ impl PgStore {
         Ok(row.0)
     }
 
-    /// Recompute `nodes.degree` for every node in a folder (D4.5) — the in+out
-    /// count of edges incident to the node (source, plus resolved target). Run at
-    /// the start of the `DetectCommunities` terminal barrier (Phase 7.1 moved it
-    /// there from the retired `ResolveEdges` pass) so degree is fresh before it
-    /// ranks each community's god nodes. Edgeless nodes are set to 0 (not left
-    /// stale/NULL), so a symbol that lost its last edge on a re-scan reflects it.
-    ///
-    /// Guarded by `degree IS DISTINCT FROM` the freshly-counted value (same shape
-    /// as `set_nodes_is_test_for_file` and `tag_file_nodes_by_framework_kind`) so
-    /// a steady-state re-scan changes 0 rows: it locks no rows and creates no dead
-    /// tuples. Without this guard the barrier rewrote every node in the folder on
-    /// EVERY indexing pass, so re-scans piled up full-table rewrites; concurrent
-    /// same-folder passes then blocked on each other's row locks, held hours-long
-    /// transactions that pinned the xmin horizon, and autovacuum could never
-    /// reclaim the dead tuples → `sensei.nodes` bloated unboundedly. Returns rows
-    /// changed.
-    pub async fn recompute_degrees_for_folder(
-        &self,
-        folder_id: &uuid::Uuid,
-    ) -> Result<u64, String> {
-        let res = sqlx_core::query::query(
-            "UPDATE sensei.nodes n
-                SET degree = COALESCE(d.deg, 0), modified_at = now()
-               FROM (SELECT id FROM sensei.nodes WHERE folder_id = $1) an
-               LEFT JOIN (
-                   SELECT node_id, count(*)::int AS deg FROM (
-                       SELECT source_id AS node_id FROM sensei.edges WHERE folder_id = $1
-                       UNION ALL
-                       SELECT target_id AS node_id FROM sensei.edges WHERE folder_id = $1 AND target_id IS NOT NULL
-                   ) inc GROUP BY node_id
-               ) d ON d.node_id = an.id
-              WHERE n.id = an.id
-                AND n.degree IS DISTINCT FROM COALESCE(d.deg, 0)"
-        ).bind(folder_id).execute(&self.pool).await.map_err(|e| e.to_string())?;
-        Ok(res.rows_affected())
-    }
-
     /// Set `is_test` for every node of a file (folder-scoped) to the file's
     /// test-ness (`languages::is_test_path`). `is_test` is a FILE-level property —
     /// all of a file's nodes (file/symbol/section/rationale/fqn-def) share it — so
@@ -1922,11 +1885,11 @@ impl PgStore {
         // `fqn`/`resolved` are projected (7.2) so the Atlas can key symbols by
         // moniker and distinguish enriched defs from reference stubs. `fqn` is NULL
         // for pre-FQN/legacy rows; `resolved` is NOT NULL (defaults false).
-        let rows: Vec<(uuid::Uuid, String, String, Option<String>, Option<uuid::Uuid>, Option<i32>, Option<i32>, Option<i32>, Option<i32>, uuid::Uuid, Option<String>, Option<String>, bool, bool)> = sqlx_core::query_as::query_as(
-            "SELECT id, kind::text, name, file_path, parent_id, line_start, line_end, degree, community_id, folder_id, language, fqn, resolved, is_test FROM sensei.nodes WHERE folder_id = ANY($1) ORDER BY file_path, line_start, parent_id, id"
+        let rows: Vec<(uuid::Uuid, String, String, Option<String>, Option<uuid::Uuid>, Option<i32>, Option<i32>, Option<i32>, uuid::Uuid, Option<String>, Option<String>, bool, bool)> = sqlx_core::query_as::query_as(
+            "SELECT id, kind::text, name, file_path, parent_id, line_start, line_end, community_id, folder_id, language, fqn, resolved, is_test FROM sensei.nodes WHERE folder_id = ANY($1) ORDER BY file_path, line_start, parent_id, id"
         ).bind(folder_ids).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
-        Ok(rows.into_iter().map(|(id, kind, name, fp, pid, ls, le, degree, community_id, folder_id, language, fqn, resolved, is_test)| {
-            serde_json::json!({ "id": id, "kind": kind, "name": name, "file_path": fp, "parent_id": pid, "line_start": ls, "line_end": le, "degree": degree, "community_id": community_id, "folder_id": folder_id, "language": language, "fqn": fqn, "resolved": resolved, "is_test": is_test })
+        Ok(rows.into_iter().map(|(id, kind, name, fp, pid, ls, le, community_id, folder_id, language, fqn, resolved, is_test)| {
+            serde_json::json!({ "id": id, "kind": kind, "name": name, "file_path": fp, "parent_id": pid, "line_start": ls, "line_end": le, "community_id": community_id, "folder_id": folder_id, "language": language, "fqn": fqn, "resolved": resolved, "is_test": is_test })
         }).collect())
     }
 
