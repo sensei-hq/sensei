@@ -46,7 +46,7 @@ pub struct ProvidedTool {
 ///
 /// `allow(dead_code)`: `library` enforces the required-field schema, `ecosystem` and
 /// `tools` are deserialize schema reserved for D's capability provisioning; not all
-/// are consumed by `load_manifest_from_root` yet.
+/// are consumed by `read_manifest` yet.
 #[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize)]
 pub struct LibraryManifest {
@@ -55,6 +55,17 @@ pub struct LibraryManifest {
     pub ecosystem: Option<String>,
     /// Semver RANGE the declared capabilities apply to (free text in v1).
     pub version: String,
+    /// The packages this library publishes, when it publishes under names other
+    /// than its own — `rokkit` → `@rokkit/ui`, `@rokkit/actions`, …
+    ///
+    /// DECLARED, not inferred. Dependency detection sees package names; the
+    /// manifest calls itself by the library name; without this the two identities
+    /// never meet, and a project depending on `@rokkit/ui` cannot reach rokkit's
+    /// skills. A name-prefix guess would break on any library whose packages are
+    /// not named after it, and the library is the only party that knows its own
+    /// membership. Empty for a library that publishes under its own name.
+    #[serde(default)]
+    pub packages: Vec<String>,
     #[serde(default)]
     pub skills: Vec<ProvidedSkill>,
     #[serde(default)]
@@ -97,6 +108,35 @@ mod tests {
         );
         assert_eq!(m.agents[0].name, "rokkit-styles-reviewer");
         assert!(m.tools.is_empty());
+    }
+
+    /// A library that publishes several packages declares them, so a project
+    /// depending on `@rokkit/ui` resolves to rokkit's skills.
+    ///
+    /// Without this the two identities never meet: dependency detection produces
+    /// `@rokkit/actions`, `@rokkit/app`, `@rokkit/ui`, … as separate rows (11 of
+    /// them live), while the manifest calls itself `rokkit`. An agent that knows
+    /// it depends on `@rokkit/ui` could not reach the four curated skills for it.
+    ///
+    /// DECLARED rather than inferred, per Jerry: a name-prefix guess would break
+    /// on any library whose packages are not named after it, and the library is
+    /// the only party that actually knows its own membership.
+    #[test]
+    fn packages_declare_the_libraries_component_membership() {
+        let m = parse_library_manifest(
+            r#"{"library":"rokkit","version":">=1.3",
+                "packages":["@rokkit/ui","@rokkit/actions","@rokkit/states"]}"#,
+        )
+        .unwrap();
+        assert_eq!(m.packages, vec!["@rokkit/ui", "@rokkit/actions", "@rokkit/states"]);
+    }
+
+    /// Absent `packages` is a library that publishes under its own name — the
+    /// common case, and not an error.
+    #[test]
+    fn packages_defaults_to_empty_not_an_error() {
+        let m = parse_library_manifest(r#"{"library":"dbd","version":"2"}"#).unwrap();
+        assert!(m.packages.is_empty());
     }
 
     #[test]

@@ -5812,6 +5812,70 @@ async fn update_folder_remotes_populates_and_is_matchable() {
 }
 
 #[tokio::test]
+async fn a_declared_package_resolves_to_its_parent_library() {
+    // Two identities for one library never met. Detection reads package.json and
+    // makes a row per PACKAGE (measured: 11 `@rokkit/*`, 7 `@jerrythomas/dbd-*`),
+    // while the manifest calls itself `rokkit` and the skills hang off THAT row.
+    // So a project depending on `@rokkit/ui` could not reach rokkit's four curated
+    // skills — nothing connected the name it knows to the name they live under.
+    use crate::libraries::manifest::ProvidedSkill;
+    let s = pg_store().await;
+    let uniq = uuid::Uuid::new_v4();
+    let parent = format!("_testlib_parent_{uniq}");
+    let pkg = format!("@{parent}/ui");
+    let lid = s.upsert_library(&parent, "npm", Some(">=1.0"), None, None, None).await.unwrap();
+    s.replace_library_capabilities(
+        &lid,
+        "manifest",
+        Some(">=1.0"),
+        &[ProvidedSkill {
+            name: "styling".into(),
+            focus: "styling".into(),
+            path: Some("p/s.md".into()),
+            body: Some("# styling".into()),
+        }],
+        &[],
+    )
+    .await
+    .unwrap();
+
+    // Before the link, the package name resolves to nothing — which is the bug.
+    assert_eq!(
+        s.library_id_for(&pkg).await.unwrap(),
+        None,
+        "an unlinked package name is not a library",
+    );
+
+    let n = s.replace_library_packages(&lid, "manifest", std::slice::from_ref(&pkg)).await.unwrap();
+    assert_eq!(n, 1);
+
+    // The parent's own name still resolves — the link is an addition, not a
+    // replacement of how libraries are addressed.
+    assert_eq!(s.library_id_for(&parent).await.unwrap(), Some(lid));
+    assert_eq!(s.library_id_for(&pkg).await.unwrap(), Some(lid), "the package resolves to it");
+
+    // And the payoff: the package name reaches the parent's skills.
+    let skills = s.list_library_skills(&pkg).await.unwrap();
+    assert_eq!(skills.len(), 1, "asking by package name returns the library's skills");
+    assert_eq!(skills[0]["focus"], "styling");
+
+    // Manifest-authoritative, like the capabilities: a package dropped from the
+    // manifest stops resolving instead of lingering.
+    s.replace_library_packages(&lid, "manifest", &[]).await.unwrap();
+    assert_eq!(
+        s.library_id_for(&pkg).await.unwrap(),
+        None,
+        "a package removed from the manifest stops resolving",
+    );
+
+    sqlx_core::query::query("DELETE FROM sensei.libraries WHERE id = $1")
+        .bind(lid)
+        .execute(s.pool())
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
 async fn replace_library_capabilities_is_manifest_authoritative() {
     use crate::libraries::manifest::{ProvidedAgent, ProvidedSkill};
     let s = pg_store().await;

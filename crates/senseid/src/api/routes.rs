@@ -294,6 +294,10 @@ pub fn create_router(state: AppState) -> Router {
         // Libraries
         .route("/api/libs", get(libraries::list_libs))
         .route("/api/libs/index", post(libraries::index_lib))
+        // Register every sensei.library.json under a root — skills, agents,
+        // declared packages, and the path it was read from. Decoupled from doc
+        // indexing, which is what made manifests un-re-readable.
+        .route("/api/libs/manifests/scan", post(libraries::scan_manifests))
         .route("/api/libs/docs", get(libraries::search_lib_docs))
         .route("/api/libs/{name}/docs", get(libraries::get_lib_docs))
         // Library-provided capabilities (workstream D)
