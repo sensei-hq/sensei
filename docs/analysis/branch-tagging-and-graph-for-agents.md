@@ -187,17 +187,31 @@ What is missing is coverage and identity:
 
 | library | manifest declares | ingested | version |
 |---|---|---|---|
-| rokkit | 5 skills · 3 agents | **4 · 2** | **null** (manifest says `>=1.3`) |
-| dbd | 1 skill · 1 agent | **0 · 0** | **null** |
-| kavach | 4 skills · 2 agents | **0 · 0** | 1.1.3 (from npm, not the manifest) |
+| rokkit | 5 skills · 3 agents | **4 · 2** (stale) | `>=1.3` on each capability row |
+| dbd | 1 skill · 1 agent | **0 · 0** | — |
+| kavach | 4 skills · 2 agents | **0 · 0** | — |
+
+`libraries.local_path` is empty for all 1,121 rows, so nothing knows where any
+library lives on disk, so no manifest can be re-read.
 
 Three defects, all small:
 
 1. **dbd and kavach manifests are never ingested** despite being on disk — and
    dbd already has 36 doc pages, so it is otherwise a known library.
 2. **rokkit lost one skill and one agent** (4/5, 2/3). Silent partial ingestion.
-3. **The manifest's `version` is dropped.** rokkit and dbd have a NULL version
-   while their manifests declare one.
+3. ~~The manifest's `version` is dropped.~~ **Wrong — corrected 2026-09-01.**
+   It is stored as `library_skills.version_range` / `library_agents.version_range`
+   (`>=1.3` on all six rokkit rows). `libraries.version` is the REGISTRY version
+   (what is installed), which is a different fact and correctly NULL until a
+   registry check runs. I conflated the two.
+
+   The real third defect is worse: **nothing can re-ingest a manifest.**
+   `libraries.local_path` is empty for **all 1,121 rows**, and manifest ingestion
+   runs only inside `index_library`, only when its transient `source` is a
+   `LocalDir`. So the path a manifest lives at is never recorded, and rokkit's two
+   newest entries (`charts-rokkit`, `rokkit-chart-reviewer` — both present on
+   disk) were simply never picked up. That is the cause of the 4/5 and 2/3: stale
+   ingestion, not failed body resolution.
 
 There is also an identity split worth deciding deliberately: the manifest says
 `library: "rokkit"`, while dependency detection produces `@rokkit/actions`,
