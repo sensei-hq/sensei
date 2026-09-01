@@ -553,25 +553,20 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
             )
             .await;
 
-        let build_id = ctx
-            .queue
-            .enqueue(
-                Task::new(TaskKind::BuildConnections, folder_path, "")
-                    .with_parent(task.id)
-                    .blocked_by(vec![libs_id]),
-            )
-            .await;
-
-        // D4.1: DetectCommunities is the TERMINAL barrier — chained after
-        // BuildConnections so the whole edge set exists before detection, and it
-        // is the sole writer of `indexed` (so `indexed` implies communities are
-        // computed). Its atomic per-folder replace (D4.2) makes a re-detect of an
-        // unchanged graph a no-op, so re-driving it on recovery is cheap.
+        // D4.1: DetectCommunities is the TERMINAL barrier — the sole writer of
+        // `indexed` (so `indexed` implies communities are computed). Its atomic
+        // per-folder replace (D4.2) makes a re-detect of an unchanged graph a
+        // no-op, so re-driving it on recovery is cheap.
+        //
+        // It used to chain behind a BuildConnections barrier. That barrier built
+        // `covers` edges (now computed by the `sensei.doc_coverage` view) and
+        // refreshed a `nodes.degree` cache (now counted from the adjacency this
+        // step already builds), so it had nothing left to do and is gone.
         ctx.queue
             .enqueue(
                 Task::new(TaskKind::DetectCommunities, folder_path, "")
                     .with_parent(task.id)
-                    .blocked_by(vec![build_id]),
+                    .blocked_by(vec![libs_id]),
             )
             .await;
 
@@ -1864,10 +1859,12 @@ mod tests {
             !kinds.iter().any(|k| k == "resolve_edges"),
             "the scan pipeline has NO resolve_edges pass — edges resolve at emit, got {kinds:?}"
         );
-        // The surviving barrier chain is intact (build_connections + the terminal detect).
+        // The barrier chain is resolve_libs → the terminal detect. build_connections
+        // is gone: its `covers` set is now the `sensei.doc_coverage` view and its
+        // degree refresh is counted from the adjacency detect already builds.
         assert!(
-            kinds.iter().any(|k| k == "build_connections"),
-            "build_connections still enqueued, got {kinds:?}"
+            !kinds.iter().any(|k| k == "build_connections"),
+            "build_connections is retired and must not be enqueued, got {kinds:?}"
         );
         assert!(
             kinds.iter().any(|k| k == "detect_communities"),
@@ -2382,12 +2379,6 @@ mod tests {
                     .await
                     .unwrap();
             }
-            crate::tasks::handlers::build_connections(
-                ctx,
-                &Task::new(TaskKind::BuildConnections, repo_path, repo_path),
-            )
-            .await
-            .unwrap();
             crate::tasks::handlers::detect_communities(
                 ctx,
                 &Task::new(TaskKind::DetectCommunities, repo_path, ""),

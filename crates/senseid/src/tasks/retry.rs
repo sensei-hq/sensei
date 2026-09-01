@@ -86,7 +86,6 @@ mod tests {
             TaskKind::ProcessFile,
             TaskKind::ProcessGitFolder,
             TaskKind::ProcessFolder,
-            TaskKind::BuildConnections,
             TaskKind::DetectCommunities,
         ] {
             assert!(is_retryable(&k), "{k} is a graph-pipeline write kind — retryable");
