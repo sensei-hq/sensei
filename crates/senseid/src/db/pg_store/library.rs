@@ -231,18 +231,149 @@ impl PgStore {
         Ok((ns, na))
     }
 
-    /// Skills a library provides, by library NAME. Enum-free; errors propagate.
+    /// Record where a library's source lives on disk.
+    ///
+    /// `libraries.local_path` had **no writer** — empty on all 1,121 rows — while
+    /// manifest ingestion ran only inside `index_library` and only for a TRANSIENT
+    /// `LocalDir` source. So nothing recorded where a manifest lived, nothing could
+    /// re-read one, and rokkit's two newest capabilities (both present on disk)
+    /// were never picked up. Writing this is what makes re-ingestion possible.
+    pub async fn set_library_local_path(
+        &self,
+        library_id: &uuid::Uuid,
+        local_path: &str,
+    ) -> Result<(), String> {
+        sqlx_core::query::query(
+            "UPDATE sensei.libraries SET local_path = $2, modified_at = now() WHERE id = $1",
+        )
+        .bind(library_id)
+        .bind(local_path)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| format!("set_library_local_path: {e}"))?;
+        Ok(())
+    }
+
+    /// Libraries whose source location is known, as `(id, name, local_path)`.
+    ///
+    /// The set a manifest refresh can revisit. Empty until
+    /// [`Self::set_library_local_path`] has run for something — which is exactly
+    /// the state that made manifests un-re-readable.
+    pub async fn libraries_with_local_path(
+        &self,
+    ) -> Result<Vec<(uuid::Uuid, String, String)>, String> {
+        sqlx_core::query_as::query_as(
+            "SELECT id, name, local_path FROM sensei.libraries
+              WHERE local_path IS NOT NULL AND local_path <> '' ORDER BY name",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| format!("libraries_with_local_path: {e}"))
+    }
+
+    /// Resolve a library reference — its own NAME or one of its declared PACKAGE
+    /// names — to a library id.
+    ///
+    /// The single owner of that resolution. Three readers need it
+    /// ([`Self::list_library_skills`], [`Self::get_library_skill`],
+    /// [`Self::list_library_agents`]), and three copies of a resolution rule is
+    /// how the exclusion resolver came to gate the watcher while pruning nothing.
+    ///
+    /// The library's own name WINS over a package link. A library that publishes a
+    /// package under its own name must resolve to itself, and a stale link must
+    /// never shadow a real library.
+    ///
+    /// `None` on a genuine miss; propagates a read failure, because "no such
+    /// library" and "the lookup broke" lead a caller to different places.
+    pub async fn library_id_for(&self, reference: &str) -> Result<Option<uuid::Uuid>, String> {
+        let row: Option<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
+            "SELECT COALESCE(
+                      (SELECT id FROM sensei.libraries WHERE name = $1),
+                      (SELECT library_id FROM sensei.library_packages WHERE package_name = $1)
+                    ) AS id
+              WHERE COALESCE(
+                      (SELECT id FROM sensei.libraries WHERE name = $1),
+                      (SELECT library_id FROM sensei.library_packages WHERE package_name = $1)
+                    ) IS NOT NULL",
+        )
+        .bind(reference)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| format!("library_id_for({reference}): {e}"))?;
+        Ok(row.map(|r| r.0))
+    }
+
+    /// Replace the packages a library declares it publishes.
+    ///
+    /// Whole-set and manifest-authoritative, exactly like
+    /// [`Self::replace_library_capabilities`]: a package dropped from the manifest
+    /// must stop resolving, and an incremental upsert would leave it pointing at
+    /// this library forever.
+    ///
+    /// A package claimed by a DIFFERENT library is re-pointed rather than
+    /// duplicated — the primary key is `package_name`, because a package belongs to
+    /// exactly one library and two claims are a conflict, not two rows.
+    pub async fn replace_library_packages(
+        &self,
+        library_id: &uuid::Uuid,
+        source: &str,
+        packages: &[String],
+    ) -> Result<u64, String> {
+        let mut tx = self.pool.begin().await.map_err(|e| e.to_string())?;
+        sqlx_core::query::query(
+            "DELETE FROM sensei.library_packages WHERE library_id = $1 AND source = $2",
+        )
+        .bind(library_id)
+        .bind(source)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| format!("replace_library_packages: clear: {e}"))?;
+
+        let mut written = 0u64;
+        for name in packages {
+            let name = name.trim();
+            if name.is_empty() {
+                continue;
+            }
+            let r = sqlx_core::query::query(
+                "INSERT INTO sensei.library_packages (package_name, library_id, source)
+                 VALUES ($1, $2, $3)
+                 ON CONFLICT (package_name) DO UPDATE
+                    SET library_id = EXCLUDED.library_id,
+                        source      = EXCLUDED.source,
+                        modified_at = now()",
+            )
+            .bind(name)
+            .bind(library_id)
+            .bind(source)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| format!("replace_library_packages: insert {name}: {e}"))?;
+            written += r.rows_affected();
+        }
+        tx.commit().await.map_err(|e| format!("replace_library_packages: commit: {e}"))?;
+        Ok(written)
+    }
+
+    /// Skills a library provides, by its own NAME or one of its declared PACKAGE
+    /// names (see [`Self::library_id_for`]). Enum-free; errors propagate.
+    ///
+    /// Resolved to an id first rather than joining on `l.name`, so `@rokkit/ui`
+    /// reaches rokkit's skills. Two round trips, one owner of the resolution.
     pub async fn list_library_skills(
         &self,
         library: &str,
     ) -> Result<Vec<serde_json::Value>, String> {
+        let Some(lib_id) = self.library_id_for(library).await? else {
+            return Ok(Vec::new());
+        };
         let rows: Vec<(String, String, Option<String>, String, Option<String>)> =
             sqlx_core::query_as::query_as(
                 "SELECT s.name, s.focus, s.body, s.source, s.version_range
-               FROM sensei.library_skills s JOIN sensei.libraries l ON l.id = s.library_id
-              WHERE l.name = $1 ORDER BY s.focus",
+               FROM sensei.library_skills s
+              WHERE s.library_id = $1 ORDER BY s.focus",
             )
-            .bind(library)
+            .bind(lib_id)
             .fetch_all(&self.pool)
             .await
             .map_err(|e| e.to_string())?;
@@ -259,13 +390,16 @@ impl PgStore {
         library: &str,
         focus: &str,
     ) -> Result<Option<serde_json::Value>, String> {
+        let Some(lib_id) = self.library_id_for(library).await? else {
+            return Ok(None);
+        };
         let row: Option<(String, String, Option<String>, String, Option<String>)> =
             sqlx_core::query_as::query_as(
                 "SELECT s.name, s.focus, s.body, s.source, s.version_range
-               FROM sensei.library_skills s JOIN sensei.libraries l ON l.id = s.library_id
-              WHERE l.name = $1 AND s.focus = $2 ORDER BY s.modified_at DESC LIMIT 1",
+               FROM sensei.library_skills s
+              WHERE s.library_id = $1 AND s.focus = $2 ORDER BY s.modified_at DESC LIMIT 1",
             )
-            .bind(library)
+            .bind(lib_id)
             .bind(focus)
             .fetch_optional(&self.pool)
             .await
@@ -280,13 +414,16 @@ impl PgStore {
         &self,
         library: &str,
     ) -> Result<Vec<serde_json::Value>, String> {
+        let Some(lib_id) = self.library_id_for(library).await? else {
+            return Ok(Vec::new());
+        };
         let rows: Vec<(String, String, Option<String>, String, Option<String>)> =
             sqlx_core::query_as::query_as(
                 "SELECT a.name, a.focus, a.body, a.source, a.version_range
-               FROM sensei.library_agents a JOIN sensei.libraries l ON l.id = a.library_id
-              WHERE l.name = $1 ORDER BY a.focus",
+               FROM sensei.library_agents a
+              WHERE a.library_id = $1 ORDER BY a.focus",
             )
-            .bind(library)
+            .bind(lib_id)
             .fetch_all(&self.pool)
             .await
             .map_err(|e| e.to_string())?;

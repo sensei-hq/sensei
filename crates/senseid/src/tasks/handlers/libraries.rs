@@ -341,20 +341,17 @@ pub async fn index_library(ctx: &TaskContext, task: &Task) -> Result<u32, String
     // in v1 — a manifest read needs the files on disk) so its declared skills/agents
     // become associable capabilities. Non-fatal: a bad/absent manifest never fails
     // the doc index. Manifest-authoritative — removed entries disappear on re-index.
-    if let LibSource::LocalDir(p) = &source
-        && let Some((version, skills, agents)) =
-            crate::libraries::load_manifest_from_root(std::path::Path::new(p))
-    {
-        match ctx
-            .pg()
-            .replace_library_capabilities(&lib_id, "manifest", Some(&version), &skills, &agents)
-            .await
+    if let LibSource::LocalDir(p) = &source {
+        // Through the shared ingestion so this path also records `local_path` and
+        // the declared `packages`. It used to write capabilities only, which is why
+        // nothing could ever re-read a manifest: the location was never stored.
+        match crate::libraries::ingest_manifest_at(ctx.pg(), &lib_id, std::path::Path::new(p)).await
         {
-            Ok((ns, na)) => tracing::info!(
-                "index_library: {lib_name} sensei.library.json → {ns} skill(s), {na} agent(s)"
+            Some((ns, na, np)) => tracing::info!(
+                "index_library: {lib_name} sensei.library.json → {ns} skill(s), {na} agent(s), {np} package(s)"
             ),
-            Err(e) => {
-                tracing::warn!(error = %e, lib = %lib_name, "index_library: replace_library_capabilities failed")
+            None => {
+                tracing::debug!(lib = %lib_name, "index_library: no usable sensei.library.json")
             }
         }
     }
