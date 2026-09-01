@@ -1679,6 +1679,41 @@ export interface MetricActivationOutcome {
   tenant: string;
 }
 
+// ─── Dōjō sync state (sensei.sync_state) ─────────────────────────────────────
+
+/** One row of `GET /api/dojo/sync-state` — what has been agreed with the dōjō.
+ *
+ *  Both timestamps travel and answer different questions: `synced_at` is when the
+ *  two sides last AGREED, `attempted_at` is when it was last TRIED. A failed row
+ *  KEEPS its `synced_at` (the writer does not clear it), which is what separates
+ *  "broken since Tuesday" from "never synced".
+ *
+ *  `state` is a four-value vocabulary, not a boolean, because `skipped` is
+ *  deliberate (a private repository) and `error` is a fault. Collapsing them
+ *  would either cry wolf about every private repo or hide real failures. */
+export interface SyncStateRow {
+  entity: string;
+  entity_key: string;
+  direction: 'push' | 'pull';
+  state: 'pending' | 'synced' | 'error' | 'skipped';
+  /** The failure message, or on a `skipped` row the REASON — which is not a
+   *  fault. Null on `synced`: the writer clears it, because a stale message
+   *  beside a success reads as "it failed". */
+  last_error: string | null;
+  attempted_at: string | null;
+  synced_at: string | null;
+  updated_at: string;
+}
+
+/** `GET /api/dojo/sync-state`. Rows arrive worst-first (error, pending, skipped,
+ *  synced) so a caller rendering the head of the list sees what needs attention
+ *  without re-ranking. `counts` is the by-state tally for a summary line. */
+export interface SyncStateResponse {
+  count: number;
+  counts: Record<string, number>;
+  entities: SyncStateRow[];
+}
+
 // ─── On-demand local-model provisioning ──────────────────────────────────────
 
 /** The phase of an on-demand local-model pull — the serde shape of

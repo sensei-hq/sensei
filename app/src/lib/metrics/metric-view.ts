@@ -1,3 +1,4 @@
+import { isoDay } from '../dates.js';
 // Pure view logic for project metrics: wire rows -> presentational card models.
 //
 // The daemon serves two shapes (see crates/senseid): the per-project *values*
@@ -444,10 +445,13 @@ export interface DaySessions {
     count: number;
 }
 
-/** Normalize a series `period` to a `YYYY-MM-DD` day, or null when it is too
- *  short to be a date (defensive — the daily series always carries a date). */
+/** Normalize a series `period` to a `YYYY-MM-DD` day, or null.
+ *
+ *  Delegates to the shared `isoDay`, which MATCHES rather than slicing: the old
+ *  `length >= 10` test accepted any long-enough string, so a non-date would have
+ *  become a day like `"unavailabl"`. */
 function dayOf(period: string | null | undefined): string | null {
-    return typeof period === 'string' && period.length >= 10 ? period.slice(0, 10) : null;
+    return isoDay(period);
 }
 
 /**

@@ -246,3 +246,43 @@ describe('PersonaList presentation', () => {
     expect(list.describe(list.personas[1], 0)).toMatch(/never/i);
   });
 });
+
+describe('PersonaList.tone', () => {
+  // The whole point of #127: renewal is automatic and takes ~6s, so a credential
+  // with hours left needs no alarm — but when it CANNOT renew there is currently
+  // nowhere to see it coming. The tone is what makes "30 minutes left" look
+  // different from "7 hours left" at a glance.
+  it('is calm with hours left and urgent within the hour', async () => {
+    const { list } = harness(LIST);
+    await list.load();
+    const p = list.personas[0];
+    const exp = 1_788_204_679;
+    expect(list.tone(p, exp - 25_200)).toBe('ok'); // 7 hours
+    expect(list.tone(p, exp - 1_800)).toBe('warn'); // 30 minutes
+  });
+
+  it('is urgent for an expired credential, not merely a warning', async () => {
+    const { list } = harness(LIST);
+    await list.load();
+    const dead = { ...list.personas[0], forgeToken: { state: 'dead', expiresAt: 1 } };
+    expect(list.tone(dead, 2)).toBe('dead');
+  });
+
+  it('treats a never-connected persona as neutral, not as a failure', async () => {
+    // Nothing is wrong with an identity you have not connected. Colouring it red
+    // makes the settings screen look broken on a fresh install.
+    const { list } = harness(LIST);
+    await list.load();
+    expect(list.tone(list.personas[1], 0)).toBe('idle');
+  });
+
+  it('is neutral when the expiry is unknown rather than assuming the worst', async () => {
+    // `expiresAt` is null for a session whose expiry the daemon has not learned.
+    // Rendering that as expired would send the user to re-authenticate a
+    // credential that is probably fine.
+    const { list } = harness(LIST);
+    await list.load();
+    const unknown = { ...list.personas[0], forgeToken: { state: 'active', expiresAt: null } };
+    expect(list.tone(unknown, 0)).toBe('idle');
+  });
+});
