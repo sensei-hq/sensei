@@ -238,6 +238,34 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
     let exclude = build_globset();
     let mut dirs = std::collections::HashSet::new();
 
+    // Per-root exclusions (`folders_to_watch.excluded`), applied HERE and not only
+    // at discovery.
+    //
+    // `scan.rs` filters `find_git_folders` / `all_directories`, which decides which
+    // folders become PROJECTS. This walk decides what a project CONTAINS, and it
+    // consulted nothing — so excluding a subtree inside a repository pruned its
+    // rows and the next scan put them all back (#143: 1,212 pruned, 1,212
+    // returned). The store's own note on `root_exclusion_prefixes` says the point
+    // is to stop the scanner indexing excluded content; this is where that has to
+    // happen.
+    //
+    // Fail-closed, for the reason that note gives: a read error must NOT read as
+    // "no exclusions", which would index the very content the user excluded.
+    let exclusions = match ctx
+        .pg()
+        .enclosing_watch_root(&repo_path.to_string_lossy())
+        .await
+        .map_err(|e| format!("enclosing_watch_root for exclusions: {e}"))?
+    {
+        Some((_, watch_root)) => ctx
+            .pg()
+            .root_exclusion_prefixes(&watch_root)
+            .await
+            .map_err(|e| format!("read exclusions for {watch_root}: {e}"))?,
+        // A repo under no registered watch root has no exclusion list to honour.
+        None => Vec::new(),
+    };
+
     // Walk all files to discover directories
     let walker = super::helpers::build_walker(repo_path).build();
 
@@ -263,6 +291,14 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
             continue;
         }
         if is_binary_ext(&ext) {
+            continue;
+        }
+
+        // Before `visible`, so an excluded subtree is neither INDEXED nor
+        // materialised as folder rows. The same predicate discovery uses — a
+        // second copy of the matching rule is what already produced a silent
+        // no-op once (see `folders::resolve_exclusion`).
+        if super::scan_logic::is_excluded(entry.path(), &exclusions) {
             continue;
         }
 
@@ -3054,6 +3090,75 @@ mod tests {
         assert_eq!(
             calls_after, 0,
             "the removed call's stale edge is reconciled away (replace, not append)"
+        );
+
+        ctx.pg().remove_watch_root(&rid).await.ok();
+    }
+
+    #[tokio::test]
+    async fn process_git_folder_skips_a_subtree_the_root_excludes() {
+        // #143: exclusions gated project DISCOVERY (`scan.rs` filters
+        // `find_git_folders` / `all_directories`) but not the per-project folder
+        // walk here, so a configured exclusion was undone by the next scan.
+        //
+        // MEASURED on the live install: excluding
+        // `find-me-board/docs/proposal/deck-node` pruned 1,212 folders, and a
+        // re-scan put all 1,212 back. The exclusion is stored, the prune is
+        // correct, and the walk ignores both — so the control looked like a
+        // preference that did not hold.
+        //
+        // The subtree here is NOT gitignored, which is the whole point: the walker
+        // honours `.gitignore`, and a folder nobody put in one is exactly the case
+        // `folders_to_watch.excluded` exists for.
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let repo = root.join("repo");
+        let kept = repo.join("src");
+        let vendored = repo.join("vendor/toolchain/include");
+        std::fs::create_dir_all(&kept).unwrap();
+        std::fs::create_dir_all(&vendored).unwrap();
+        std::fs::write(kept.join("main.rs"), "fn main() {}\n").unwrap();
+        std::fs::write(vendored.join("thing.rs"), "pub fn a() {}\n").unwrap();
+
+        let ctx = make_ctx().await;
+        let repo_path = repo.to_string_lossy().to_string();
+        // The exclusion is RELATIVE to the watch root — the stored form (see
+        // `folders::resolve_exclusion`). `root` is the watch root, so the repo
+        // directory is part of the entry.
+        let rid = ctx
+            .pg()
+            .add_watch_root(&root.to_string_lossy(), "excl143", &serde_json::json!(["repo/vendor"]))
+            .await
+            .unwrap();
+        ctx.pg().upsert_repo_kind(&rid, "git", "repo", &repo_path).await.unwrap();
+        let (fid,): (uuid::Uuid,) =
+            sqlx_core::query_as::query_as("SELECT id FROM sensei.folders WHERE abs_path = $1")
+                .bind(&repo_path)
+                .fetch_one(ctx.pg().pool())
+                .await
+                .unwrap();
+        ctx.pg().update_folder_status(&fid, "indexing").await.unwrap();
+
+        let task = Task::new(TaskKind::ProcessGitFolder, &repo_path, &repo_path);
+        process_git_folder(&ctx, &task).await.unwrap();
+
+        let recorded: Vec<(String,)> = sqlx_core::query_as::query_as(
+            "SELECT abs_path FROM sensei.folders WHERE starts_with(abs_path, $1)",
+        )
+        .bind(format!("{repo_path}/"))
+        .fetch_all(ctx.pg().pool())
+        .await
+        .unwrap();
+        let paths: Vec<String> = recorded.into_iter().map(|(p,)| p).collect();
+
+        assert!(
+            paths.iter().any(|p| p.ends_with("/src")),
+            "a folder outside the exclusion is still recorded: {paths:?}"
+        );
+        assert!(
+            !paths.iter().any(|p| p.contains("/vendor")),
+            "no folder row under an excluded subtree — an exclusion the scan undoes \
+             is a preference that does not hold: {paths:?}"
         );
 
         ctx.pg().remove_watch_root(&rid).await.ok();
