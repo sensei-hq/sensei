@@ -102,6 +102,72 @@ pub(crate) struct TraceQuery {
     pub name: String,
 }
 
+/// `GET /api/graph/imports` — what import edges ARE, broken down by class.
+///
+/// MEASURED: 136,484 import edges at 0% resolved, which reads as total failure and
+/// is not. 110,501 of them (81%) point OUTSIDE the indexed codebase — `node:fs`,
+/// `java.util.List`, `lombok.Getter` — and those are complete facts about a file's
+/// dependencies, not resolutions that failed. Only ~19% could ever point at a local
+/// node, because `process.rs` inserts every import edge with `target_id = None`
+/// and nothing has ever tried to resolve one.
+///
+/// Reporting a single "0% resolved" conflates the two, which is the same
+/// misattribution `sensei.metric_status` carried before #128. This names the state
+/// instead: how many are external (complete), how many are local (resolvable), and
+/// how many of the local ones actually resolve.
+///
+/// It is also the before/after baseline for giving imports the get-or-create target
+/// treatment that already makes call edges 64.8% resolved.
+pub(crate) async fn graph_imports(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    use crate::languages::import_target::classify_import;
+
+    let rows =
+        state.pg.import_target_counts().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    // Aggregated per class. `BTreeMap` so the response order is stable — a
+    // breakdown that reorders between calls is hard to diff by eye.
+    let mut classes: std::collections::BTreeMap<&'static str, (i64, i64, i64)> =
+        std::collections::BTreeMap::new();
+    let mut total_edges = 0i64;
+    let mut total_resolved = 0i64;
+    let mut external_edges = 0i64;
+
+    for (target, edges, resolved) in rows {
+        let class = classify_import(&target);
+        let entry = classes.entry(class.label()).or_insert((0, 0, 0));
+        entry.0 += edges;
+        entry.1 += resolved;
+        entry.2 += 1; // distinct targets in this class
+        total_edges += edges;
+        total_resolved += resolved;
+        if class.is_external() {
+            external_edges += edges;
+        }
+    }
+
+    let by_class: serde_json::Map<String, serde_json::Value> = classes
+        .into_iter()
+        .map(|(label, (edges, resolved, targets))| {
+            (
+                label.to_string(),
+                serde_json::json!({ "edges": edges, "resolved": resolved, "targets": targets }),
+            )
+        })
+        .collect();
+
+    Ok(Json(serde_json::json!({
+        "total_edges": total_edges,
+        "total_resolved": total_resolved,
+        // The headline the old single number hid: how much of the "unresolved"
+        // majority is simply outside the codebase.
+        "external_edges": external_edges,
+        "local_edges": total_edges - external_edges,
+        "classes": by_class,
+    })))
+}
+
 pub(crate) async fn fn_callers(
     State(state): State<AppState>,
     Query(q): Query<TraceQuery>,

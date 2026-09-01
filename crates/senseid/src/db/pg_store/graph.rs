@@ -405,6 +405,31 @@ impl PgStore {
     /// NULL `file_path` (no local file); the symbol's `parent_id` is its container.
     /// Owned by the referencing repo-root `folder_id` so they cascade with it.
     /// Stable ids across repeated references (arbiter = `nodes_unique_fqn`).
+    /// Distinct import targets with their edge and resolved counts.
+    ///
+    /// DISTINCT on purpose: 136,484 import edges reduce to 15,533 distinct targets,
+    /// so the caller classifies 15k strings instead of 136k rows. The
+    /// classification itself stays in Rust
+    /// ([`crate::languages::import_target::classify_import`]) — one owner. A SQL
+    /// copy of the rule is how the scan exclusion resolver came to gate the watcher
+    /// while pruning nothing.
+    ///
+    /// Propagates a read failure: an empty breakdown would report a codebase with
+    /// no dependencies, which no codebase has.
+    pub async fn import_target_counts(&self) -> Result<Vec<(String, i64, i64)>, String> {
+        sqlx_core::query_as::query_as(
+            "SELECT COALESCE(target_name, '') AS target,
+                    count(*) AS edges,
+                    count(*) FILTER (WHERE target_id IS NOT NULL) AS resolved
+               FROM sensei.edges
+              WHERE kind = 'imports'
+              GROUP BY 1",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| format!("import_target_counts: {e}"))
+    }
+
     pub async fn upsert_lib_node_by_fqn(
         &self,
         folder_id: &uuid::Uuid,
