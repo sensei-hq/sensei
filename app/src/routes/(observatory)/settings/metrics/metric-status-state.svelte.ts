@@ -159,10 +159,18 @@ export function reasonLine(
   };
 }
 
-/** How a group settles. Read off the DATA by the view (`last_sha`), so this
- *  follows it — the commit cadence is documented but unimplemented today. */
+/**
+ * How a group settles. Read off the DATA by the view (which cursor columns are
+ * set), so this follows it rather than naming groups.
+ *
+ * `snapshot` is a group with no cursor at all — it computes CURRENT STATE and has
+ * no historical day to settle, so there is nothing to advance. The commit cadence
+ * is documented but unimplemented today.
+ */
 export function cadenceLabel(cadence: MetricStatusRow['cadence']): string {
-  return cadence === 'commit' ? 'per commit' : 'daily';
+  if (cadence === 'commit') return 'per commit';
+  if (cadence === 'snapshot') return 'current state';
+  return 'daily';
 }
 
 /**
@@ -176,6 +184,12 @@ export function cadenceLabel(cadence: MetricStatusRow['cadence']): string {
 export function watermarkLabel(row: MetricStatusRow): string {
   if (row.cadence === 'commit' && row.last_sha) {
     return `walked to ${row.last_sha.slice(0, 7)}`;
+  }
+  // A snapshot group has no cursor to report, so the honest measure of progress
+  // is when it last produced a value. Falling through to "never run" here is what
+  // described 12 working pairs as never-run before #128.
+  if (row.cadence === 'snapshot') {
+    return row.last_computed_on ? `last computed ${row.last_computed_on}` : 'never run';
   }
   if (row.sealed_through) return `settled through ${row.sealed_through}`;
   return 'never run';
