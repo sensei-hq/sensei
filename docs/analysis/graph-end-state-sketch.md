@@ -271,3 +271,93 @@ An unresolved edge is honest. A stub that names an external symbol and claims lo
 provenance is a wrong answer dressed as a resolved one — worse than the gap it
 fills, and the reason §5 step 1 (one classifier, everywhere) is the first thing to
 do rather than the third.
+
+---
+
+## 8. Language internals — bundle them, but not into one node per language
+
+Asked: do we need language internals at all, or should they be bundled as
+`rust:internal`?
+
+**Bundle, yes. To one node per language, no** — that loses the only part of them
+that carries signal.
+
+### What the internals actually are
+
+After fixing #146 those 108,174 stub edges have to land somewhere. Measured, they
+are 56,699 distinct nodes over 16,146 distinct symbol names, and the top names show
+they are not one population:
+
+```
+when            3,055   ← Mockito
+Some            3,029   ← Rust std
+new             2,701   ← constructor, every language
+assertEquals    2,230   ← JUnit
+Ok              2,228   ← Rust std
+String          2,175   ← builtin
+assertNotNull   1,940   ← JUnit
+any             1,719   ← Mockito
+getId           1,660   ← Lombok-GENERATED accessor
+setId           1,630   ← Lombok-generated
+anyLong         1,502   ← Mockito
+default         1,297   ← builtin
+anyString       1,079   ← Mockito
+fetch           1,021   ← runtime builtin
+```
+
+Three groups with very different value:
+
+| group | example | signal to an agent |
+|---|---|---|
+| language builtins / syntax | `Some`, `Ok`, `new`, `String`, `default` | **none** — every Rust function calls `Some` |
+| third-party framework symbols | `when`, `assertEquals`, `anyLong` | the PACKAGE is the signal ("this is a Mockito test"), the symbol is not |
+| behaviourally meaningful stdlib | `std::fs::read_to_string`, `std::process::Command`, `std::thread::spawn` | **high** — this is what a security or blocking-IO review looks for |
+
+### Why one node per language is too coarse
+
+`rust:internal` collapses `std::fs` and `std::sync` and `std::process` into one
+bubble. That throws away the third group — and "what in my codebase touches the
+filesystem / spawns a process / blocks a thread" is one of the few graph questions
+an agent genuinely cannot answer from grep.
+
+### The cut that keeps the signal
+
+Keep **package·module** as the external rung, and drop the per-symbol node:
+
+```
+lib_package  std::fs          ← module-level, so fs / process / sync stay distinct
+lib_package  org.mockito
+lib_package  node:fs
+lib_package  @rokkit/ui
+```
+
+and point the call edge at THAT, not at a symbol node.
+
+- keeps: "this file depends on `std::fs`", "this is a Mockito test", "this touches
+  the filesystem"
+- loses: "this file calls `anyLong`" — which nobody asks
+- costs: 56,699 symbol nodes collapse to a few thousand package·module nodes
+
+`external_package` already produces this granularity for two of the three shapes —
+dotted paths collapse to two segments (`java.util`, `org.mockito`) and `node:`
+schemes keep their module (`node:fs`). Rust is the gap: it currently yields `std`,
+while the FQN carries the module path (`lib·std·std::sync::mpsc·channel`), so
+`std::sync::mpsc` is available and simply not used as the rung.
+
+### The catch, and where it leads
+
+For a STUB the resolver often knows only the bare symbol name — `when`, with no
+package attached. That is precisely why it stubbed instead of taking the
+`lib_symbol` branch.
+
+The package is recoverable, from a source already in the graph: **the file's own
+import edges.** A file calling `when` that imports `org.mockito.Mockito.when` tells
+you the package unambiguously. Which means the resolution order is:
+
+1. resolve imports (they name their packages explicitly — the earlier step 3)
+2. use the file's resolved imports to attribute bare call names to packages
+3. anything still unattributable stays UNRESOLVED, honestly
+
+So the import work is not a parallel track to the call work — it is the input to
+it. That is a change to the sequencing in §5: imports move ahead of the call-path
+correction, because the correction needs them.
