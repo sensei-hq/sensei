@@ -176,6 +176,43 @@ pub(crate) fn watch_root_for_path(path: &Path, roots: &[PathBuf]) -> Option<Path
     roots.iter().filter(|r| path.starts_with(r)).max_by_key(|r| r.as_os_str().len()).cloned()
 }
 
+/// The path to reconcile after a branch switch: the REPOSITORY whose `.git/HEAD`
+/// moved, not the watch root containing it.
+///
+/// A `ScanRoot` walks from `task.path` (`scan.rs` resolves the enclosing watch
+/// root for `root_id`, but discovers folders from the path it was given), so
+/// handing it the repository scopes the reconcile to that repository while the
+/// folder rows still land under the right root.
+///
+/// This matters because of scale, not correctness of the old behaviour:
+/// `/Users/Jerry/Developer` holds 67 repositories, so reconciling the root turned
+/// one `git checkout` into a discovery walk and a per-folder stat sweep across all
+/// of them. The per-FILE cost was never the issue — `process_git_folder`'s
+/// two-tier gate skips an unchanged file without reading it, and its own comment
+/// names `branch-switch-to-same`.
+///
+/// `None` when the path is not a `.git/HEAD` or the repository lies outside every
+/// watch root. Both are fail-closed on SCOPE: a repository nobody asked us to
+/// watch must not pull a scan in, and a helper that reconciled the grandparent of
+/// any path would be a trap for the next caller.
+pub(crate) fn branch_switch_reconcile_target(
+    head_path: &Path,
+    roots: &[PathBuf],
+) -> Option<PathBuf> {
+    // Shape check, component-wise: `<repo>/.git/HEAD`.
+    if head_path.file_name()? != "HEAD" {
+        return None;
+    }
+    let git_dir = head_path.parent()?;
+    if git_dir.file_name()? != ".git" {
+        return None;
+    }
+    let repo = git_dir.parent()?;
+    // Must be inside a watch root — the repo itself being the root is fine, and
+    // is then the narrowest scope available.
+    watch_root_for_path(repo, roots).map(|_| repo.to_path_buf())
+}
+
 /// Given an FSEvents rescan/overflow event's paths and the watch roots, return
 /// the roots to force-reconcile. An empty path list (a global overflow with no
 /// specific path), or a path outside every root, conservatively reconciles ALL
@@ -195,11 +232,15 @@ pub(crate) fn rescan_reconcile_roots(paths: &[PathBuf], roots: &[PathBuf]) -> Ve
     if out.is_empty() { roots.to_vec() } else { out }
 }
 
-/// Enqueue one `ScanRoot` reconcile per target root — the same task the
-/// `scan_folder` API, version-rescan, and reconcile-scheduler use. Overlap-guarded
-/// (skips when a `ScanRoot` is already in flight) so watcher-driven reconciles
-/// never stack on top of a running scan. Fire-and-forget onto the tokio runtime
-/// because the caller is the (non-async) watch thread.
+/// Enqueue one `ScanRoot` reconcile per target — the same task the `scan_folder`
+/// API, version-rescan, and reconcile-scheduler use. A target is a watch root for
+/// an overflow rescan, or a single REPOSITORY for a branch switch (see
+/// [`branch_switch_reconcile_target`]).
+///
+/// Overlap-guarded per TARGET PATH so watcher-driven reconciles never stack on the
+/// same scope, while two different repositories switching branches still both get
+/// one. Fire-and-forget onto the tokio runtime because the caller is the
+/// (non-async) watch thread.
 fn enqueue_scanroot_reconcile(
     rt: &tokio::runtime::Handle,
     queue: &Arc<TaskQueue>,
@@ -210,11 +251,22 @@ fn enqueue_scanroot_reconcile(
     }
     let q = queue.clone();
     rt.spawn(async move {
-        if q.has_pending_kind(TaskKind::ScanRoot).await {
-            return; // a scan/reconcile already covers these roots
-        }
         for r in roots {
-            q.enqueue(Task::new(TaskKind::ScanRoot, "", &r.to_string_lossy())).await;
+            let path = r.to_string_lossy().to_string();
+            // Per-PATH, not per-kind. The guard was global, which was safe while
+            // every reconcile targeted a whole watch root — but branch switches
+            // now target a REPOSITORY, and a global guard would let a pending
+            // scan of one repository silently drop another's reconcile.
+            //
+            // Known tradeoff: a pending scan of an ANCESTOR (the whole root) also
+            // covers this repository, and this will still enqueue a scoped scan
+            // for it. That is one extra repo-scoped, idempotent pass — cheaper
+            // than the containment logic it would take to avoid, and far cheaper
+            // than the dropped reconcile the global guard risked.
+            if q.has_pending_kind_path(TaskKind::ScanRoot, &path).await {
+                continue; // a reconcile of this exact target is already queued
+            }
+            q.enqueue(Task::new(TaskKind::ScanRoot, "", &path)).await;
         }
     });
 }
@@ -387,14 +439,17 @@ impl RootWatcher {
                             // than only an incremental re-index. Fire even when the
                             // branch is unreadable (detached HEAD mid-rebase).
                             if RootWatcher::is_branch_switch(&path) {
-                                if let Some(root) = watch_root_for_path(&path, &roots) {
+                                // The REPOSITORY, not the watch root containing it:
+                                // a root here holds 67 repositories, and one
+                                // checkout should not re-walk the other 66.
+                                if let Some(repo) = branch_switch_reconcile_target(&path, &roots) {
                                     let branch = read_git_head(&path.to_string_lossy());
                                     tracing::info!(
-                                        root = %root.display(),
+                                        repo = %repo.display(),
                                         branch = ?branch,
-                                        ".git/HEAD changed — forcing repo reconcile",
+                                        ".git/HEAD changed — reconciling this repository",
                                     );
-                                    enqueue_scanroot_reconcile(&rt, &queue, vec![root]);
+                                    enqueue_scanroot_reconcile(&rt, &queue, vec![repo]);
                                 }
                                 continue;
                             }
@@ -891,6 +946,139 @@ mod tests {
         assert!(watcher_is_stalled(now - 900_001, now, 900_000, true));
         // One ms under the threshold is still healthy.
         assert!(!watcher_is_stalled(now - 899_999, now, 900_000, true));
+    }
+
+    // ── enqueue_scanroot_reconcile dedup ─────────────────────────────
+
+    /// Two repositories switching branches must BOTH get a reconcile.
+    ///
+    /// The guard used to be `has_pending_kind(ScanRoot)` — global. That was safe
+    /// while every target was a whole watch root, but with per-repository targets
+    /// it would let the first repository's queued scan silently swallow the
+    /// second's. A dropped reconcile is invisible: the graph just keeps the old
+    /// branch's folders.
+    #[tokio::test]
+    async fn reconcile_dedups_per_target_not_across_repos() {
+        let q = std::sync::Arc::new(TaskQueue::new());
+        let rt = tokio::runtime::Handle::current();
+        let a = PathBuf::from("/dev/repo-a");
+        let b = PathBuf::from("/dev/repo-b");
+
+        enqueue_scanroot_reconcile(&rt, &q, vec![a.clone()]);
+        enqueue_scanroot_reconcile(&rt, &q, vec![b.clone()]);
+        // The enqueue is fire-and-forget onto the runtime; let both land.
+        for _ in 0..50 {
+            if q.has_pending_kind_path(TaskKind::ScanRoot, &b.to_string_lossy()).await {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+
+        assert!(
+            q.has_pending_kind_path(TaskKind::ScanRoot, &a.to_string_lossy()).await,
+            "repo-a's reconcile is queued",
+        );
+        assert!(
+            q.has_pending_kind_path(TaskKind::ScanRoot, &b.to_string_lossy()).await,
+            "repo-b's reconcile is queued too — a global guard would have dropped it",
+        );
+    }
+
+    /// The same target twice collapses, which is what the guard is for.
+    #[tokio::test]
+    async fn reconcile_dedups_the_same_target() {
+        let q = std::sync::Arc::new(TaskQueue::new());
+        let rt = tokio::runtime::Handle::current();
+        let a = PathBuf::from("/dev/repo-dedup");
+
+        enqueue_scanroot_reconcile(&rt, &q, vec![a.clone()]);
+        for _ in 0..50 {
+            if q.has_pending_kind_path(TaskKind::ScanRoot, &a.to_string_lossy()).await {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        enqueue_scanroot_reconcile(&rt, &q, vec![a.clone()]);
+        tokio::time::sleep(std::time::Duration::from_millis(120)).await;
+
+        let queued = q
+            .snapshot()
+            .await
+            .iter()
+            .filter(|(kind, _, p)| {
+                *kind == TaskKind::ScanRoot && p == &a.to_string_lossy().to_string()
+            })
+            .count();
+        assert_eq!(queued, 1, "one reconcile per target, not one per event");
+    }
+
+    // ── branch_switch_reconcile_target ───────────────────────────────
+
+    /// A branch switch must reconcile the REPOSITORY whose HEAD moved, not the
+    /// watch root containing it.
+    ///
+    /// MEASURED: `/Users/Jerry/Developer` holds 67 repositories, so the previous
+    /// behaviour turned one `git checkout` into a folder-discovery walk and a
+    /// per-folder stat sweep across all 67. The per-FILE cost was never the
+    /// problem — `process_git_folder`'s two-tier gate already skips an unchanged
+    /// file without reading it, and its own comment names
+    /// `branch-switch-to-same`. The problem was the scope.
+    #[test]
+    fn branch_switch_reconciles_the_repo_not_the_whole_root() {
+        let roots = vec![PathBuf::from("/dev")];
+        assert_eq!(
+            branch_switch_reconcile_target(&PathBuf::from("/dev/sensei/.git/HEAD"), &roots),
+            Some(PathBuf::from("/dev/sensei")),
+            "the repo, not /dev — reconciling the root re-walks every sibling repository",
+        );
+    }
+
+    #[test]
+    fn branch_switch_target_handles_a_nested_repo() {
+        let roots = vec![PathBuf::from("/dev")];
+        assert_eq!(
+            branch_switch_reconcile_target(&PathBuf::from("/dev/group/repo/.git/HEAD"), &roots),
+            Some(PathBuf::from("/dev/group/repo")),
+        );
+    }
+
+    /// A repository that IS its own watch root reconciles that root — there is no
+    /// narrower scope available, and returning None would drop the reconcile.
+    #[test]
+    fn branch_switch_target_allows_the_repo_to_be_the_root() {
+        let roots = vec![PathBuf::from("/dev/sensei")];
+        assert_eq!(
+            branch_switch_reconcile_target(&PathBuf::from("/dev/sensei/.git/HEAD"), &roots),
+            Some(PathBuf::from("/dev/sensei")),
+        );
+    }
+
+    /// Outside every root there is nothing to reconcile. Fail closed on scope:
+    /// a repository nobody asked us to watch must not pull a scan in.
+    #[test]
+    fn branch_switch_target_is_none_outside_every_root() {
+        let roots = vec![PathBuf::from("/dev")];
+        assert_eq!(
+            branch_switch_reconcile_target(&PathBuf::from("/elsewhere/repo/.git/HEAD"), &roots),
+            None,
+        );
+    }
+
+    /// Defensive: only a `.git/HEAD` shape yields a target. `is_branch_switch`
+    /// gates the caller today, but a helper that silently reconciled the
+    /// grandparent of ANY path would be a trap for the next caller.
+    #[test]
+    fn branch_switch_target_is_none_for_a_non_head_path() {
+        let roots = vec![PathBuf::from("/dev")];
+        assert_eq!(
+            branch_switch_reconcile_target(&PathBuf::from("/dev/sensei/src/main.rs"), &roots),
+            None,
+        );
+        assert_eq!(
+            branch_switch_reconcile_target(&PathBuf::from("/dev/sensei/HEAD"), &roots),
+            None,
+            "HEAD not under .git is not a branch switch",
+        );
     }
 
     // ── watch_root_for_path ───────────────────────────────────────────
