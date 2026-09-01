@@ -834,6 +834,21 @@ export function senseiApi(port: number) {
     removeWatchRoot: (id: string) =>
       del(`/api/scan/roots/${enc(id)}`),
 
+    /**
+     * Replace one root's scan exclusions.
+     *
+     * A FULL REPLACE, which is what the endpoint is: it diffs the new list
+     * against the stored one to decide which subtrees to prune and which to
+     * re-scan. A delta would leave it unable to tell a removal from an omission.
+     *
+     * Error-propagating: an exclusion that appears set but was not stored means
+     * the sweep continues while the screen says it stopped.
+     */
+    updateWatchRoot: (id: string, excluded: string[]) =>
+      tryPutJson<{ ok: boolean; excluded: string[] }>(
+        `/api/scan/roots/${enc(id)}`, { excluded },
+      ),
+
     scanFolder: (root: string, maxDepth = 3) =>
       post<{ ok: boolean; scanning: boolean }>(
         '/api/scan', { root, max_depth: maxDepth }, { ok: false, scanning: false },
