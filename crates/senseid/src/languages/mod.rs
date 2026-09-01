@@ -1,5 +1,7 @@
 pub mod c_lang;
 pub mod common;
+#[cfg(test)]
+mod corpus_tests;
 pub mod fqn;
 pub mod import_target;
 pub mod java;

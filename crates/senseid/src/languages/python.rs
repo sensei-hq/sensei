@@ -352,47 +352,121 @@ fn collect_py_decorators(decorated_node: &Node, src: &[u8]) -> Vec<String> {
     decos
 }
 
-fn extract_py_imports(node: &Node, src: &[u8], imports: &mut Vec<IRImport>) {
-    match node.kind() {
+/// One name a Python import brings into scope.
+struct PyBinding {
+    /// The name in scope after the statement — the alias when one is given, the
+    /// TOP segment for a dotted plain import (`import os.path` binds `os`), and
+    /// `*` for a star-import.
+    local_name: String,
+    /// Dotted path the name refers to.
+    full_path: String,
+}
+
+/// Join a `from`-base and a member, tolerating the relative forms (`.`, `..pkg`).
+fn py_join(base: &str, name: &str) -> String {
+    match (base.is_empty(), base.ends_with('.')) {
+        (true, _) => name.to_string(),
+        (_, true) => format!("{base}{name}"),
+        _ => format!("{base}.{name}"),
+    }
+}
+
+/// Every binding one `import_statement` / `import_from_statement` introduces.
+///
+/// The three import readers in this file each re-derived this. Two of them matched
+/// only `dotted_name` under `import_statement`, so `import numpy as np` — which
+/// parses to an `aliased_import` — produced no record whatsoever; and both
+/// recorded the pre-`as` name for `from a import b as c`, which is the one name
+/// that is not in scope.
+fn py_bindings(stmt: &Node, src: &[u8]) -> Vec<PyBinding> {
+    let mut out = Vec::new();
+    let named = |c: &Node, field: &str| c.child_by_field_name(field).map(|n| node_text(&n, src));
+    match stmt.kind() {
         "import_statement" => {
-            for j in 0..node.child_count() {
-                if let Some(c) = node.child(j)
-                    && c.kind() == "dotted_name"
-                {
-                    let text = c.utf8_text(src).unwrap_or_default().to_string();
-                    let name = text.rsplit('.').next().unwrap_or(&text).to_string();
-                    imports.push(IRImport { source: text, names: vec![name], is_reexport: false });
+            for j in 0..stmt.child_count() {
+                let c = stmt.child(j).unwrap();
+                match c.kind() {
+                    "dotted_name" => {
+                        let full = node_text(&c, src);
+                        let top = full.split('.').next().unwrap_or(&full).to_string();
+                        out.push(PyBinding { local_name: top, full_path: full });
+                    }
+                    "aliased_import" => {
+                        if let (Some(name), Some(alias)) = (named(&c, "name"), named(&c, "alias")) {
+                            out.push(PyBinding { local_name: alias, full_path: name });
+                        }
+                    }
+                    _ => {}
                 }
             }
         }
         "import_from_statement" => {
-            let mut target = String::new();
-            let mut names = Vec::new();
-            for j in 0..node.child_count() {
-                if let Some(c) = node.child(j) {
-                    match c.kind() {
-                        "dotted_name" | "relative_import" => {
-                            let text = c.utf8_text(src).unwrap_or_default().to_string();
-                            if target.is_empty() {
-                                target = text;
-                            } else {
-                                names.push(text);
-                            }
-                        }
-                        "aliased_import" => {
-                            if let Some(n) = c.child_by_field_name("name") {
-                                names.push(n.utf8_text(src).unwrap_or_default().to_string());
-                            }
-                        }
-                        _ => {}
+            let mut base = String::new();
+            for j in 0..stmt.child_count() {
+                let c = stmt.child(j).unwrap();
+                match c.kind() {
+                    "dotted_name" | "relative_import" if base.is_empty() => {
+                        base = node_text(&c, src)
                     }
+                    "dotted_name" => {
+                        let name = node_text(&c, src);
+                        out.push(PyBinding { full_path: py_join(&base, &name), local_name: name });
+                    }
+                    "aliased_import" => {
+                        if let (Some(name), Some(alias)) = (named(&c, "name"), named(&c, "alias")) {
+                            out.push(PyBinding {
+                                local_name: alias,
+                                full_path: py_join(&base, &name),
+                            });
+                        }
+                    }
+                    "wildcard_import" => {
+                        out.push(PyBinding { local_name: "*".into(), full_path: base.clone() })
+                    }
+                    _ => {}
                 }
-            }
-            if !target.is_empty() {
-                imports.push(IRImport { source: target, names, is_reexport: false });
             }
         }
         _ => {}
+    }
+    out
+}
+
+/// Collapse an import statement into the `(path, names)` shape both import
+/// records use. A plain `import` yields one record per bound module (so
+/// `import a, b` stays two); a `from` import yields one record whose `names`
+/// carry `source as bound` wherever an alias renames the member.
+fn py_import_records(stmt: &Node, src: &[u8]) -> Vec<(String, Vec<String>)> {
+    let bindings = py_bindings(stmt, src);
+    if bindings.is_empty() {
+        return Vec::new();
+    }
+    if stmt.kind() == "import_statement" {
+        return bindings.into_iter().map(|b| (b.full_path, vec![b.local_name])).collect();
+    }
+    // `from <base> import …` — the base is the first dotted/relative child.
+    let base = (0..stmt.child_count())
+        .filter_map(|j| stmt.child(j))
+        .find(|c| matches!(c.kind(), "dotted_name" | "relative_import"))
+        .map(|c| node_text(&c, src))
+        .unwrap_or_default();
+    let names = bindings
+        .iter()
+        .map(|b| {
+            let member = b.full_path.rsplit('.').next().unwrap_or_default();
+            if member == b.local_name {
+                b.local_name.clone()
+            } else {
+                format!("{member} as {}", b.local_name)
+            }
+        })
+        .collect();
+    vec![(base, names)]
+}
+
+fn extract_py_imports(node: &Node, src: &[u8], imports: &mut Vec<IRImport>) {
+    for (source, names) in py_import_records(node, src) {
+        imports.push(IRImport { source, names, is_reexport: false });
     }
 }
 
@@ -512,44 +586,8 @@ fn extract_docstring(node: &Node, src: &[u8]) -> Option<String> {
 fn extract_imports(root: &Node, src: &[u8], imports: &mut Vec<ParsedImport>) {
     for i in 0..root.child_count() {
         let child = root.child(i).unwrap();
-        match child.kind() {
-            "import_statement" => {
-                for j in 0..child.child_count() {
-                    let c = child.child(j).unwrap();
-                    if c.kind() == "dotted_name" {
-                        let text = c.utf8_text(src).unwrap_or_default().to_string();
-                        let name = text.rsplit('.').next().unwrap_or(&text).to_string();
-                        imports.push(ParsedImport { target_path: text, names: vec![name] });
-                    }
-                }
-            }
-            "import_from_statement" => {
-                let mut target = String::new();
-                let mut names = Vec::new();
-                for j in 0..child.child_count() {
-                    let c = child.child(j).unwrap();
-                    match c.kind() {
-                        "dotted_name" | "relative_import" => {
-                            let text = c.utf8_text(src).unwrap_or_default().to_string();
-                            if target.is_empty() {
-                                target = text;
-                            } else {
-                                names.push(text);
-                            }
-                        }
-                        "aliased_import" => {
-                            if let Some(n) = c.child_by_field_name("name") {
-                                names.push(n.utf8_text(src).unwrap_or_default().to_string());
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-                if !target.is_empty() {
-                    imports.push(ParsedImport { target_path: target, names });
-                }
-            }
-            _ => {}
+        for (target_path, names) in py_import_records(&child, src) {
+            imports.push(ParsedImport { target_path, names });
         }
     }
 }
@@ -602,7 +640,7 @@ fn find_calls(
 // enclosing class, a bounded `x = Type()` binding, or (external module) a lib node.
 pub(crate) mod python_fqn {
     use super::super::fqn::{self, FileFqnContext, FqnDefinition, FqnFileOutput, FqnReference};
-    use super::{Node, Parser, SymbolKind};
+    use super::{Node, Parser, SymbolKind, py_bindings};
     use std::collections::{HashMap, HashSet};
 
     const PY_LANG: &str = "python";
@@ -703,62 +741,17 @@ pub(crate) mod python_fqn {
         out
     }
 
-    /// Pass 1: import map (bound name → dotted source path).
+    /// Pass 1: import map (bound name → dotted source path), off the shared
+    /// binding reader so the FQN map and the import records cannot disagree.
     fn collect_scope(node: &Node, src: &[u8], imports: &mut HashMap<String, String>) {
         for i in 0..node.child_count() {
             let child = unwrap_decorated(&node.child(i).unwrap());
-            match child.kind() {
-                "import_statement" => {
-                    for j in 0..child.child_count() {
-                        let c = child.child(j).unwrap();
-                        match c.kind() {
-                            // `import a.b.c` binds the top name `a`.
-                            "dotted_name" => {
-                                let full = text(&c, src);
-                                let top = full.split('.').next().unwrap_or(&full).to_string();
-                                imports.insert(top, full);
-                            }
-                            // `import a.b as x` binds `x` → `a.b`.
-                            "aliased_import" => {
-                                if let (Some(n), Some(a)) =
-                                    (c.child_by_field_name("name"), c.child_by_field_name("alias"))
-                                {
-                                    imports.insert(text(&a, src), text(&n, src));
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
+            for b in py_bindings(&child, src) {
+                // A star-import binds names this pass cannot enumerate.
+                if b.local_name == "*" {
+                    continue;
                 }
-                "import_from_statement" => {
-                    // `from a.b import c, d as e` → c→a.b.c, e→a.b.d. First dotted_name
-                    // (or relative_import) is the base module; the rest are imports.
-                    let mut base = String::new();
-                    for j in 0..child.child_count() {
-                        let c = child.child(j).unwrap();
-                        match c.kind() {
-                            "dotted_name" | "relative_import" if base.is_empty() => {
-                                base = text(&c, src)
-                            }
-                            "dotted_name" => {
-                                let name = text(&c, src);
-                                imports.insert(name.clone(), format!("{base}.{name}"));
-                            }
-                            "aliased_import" => {
-                                if let (Some(n), Some(a)) =
-                                    (c.child_by_field_name("name"), c.child_by_field_name("alias"))
-                                {
-                                    imports.insert(
-                                        text(&a, src),
-                                        format!("{}.{}", base, text(&n, src)),
-                                    );
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-                _ => {}
+                imports.insert(b.local_name, b.full_path);
             }
         }
     }
@@ -1315,5 +1308,47 @@ mod tests {
     fn ir_imports() {
         let pf = parse_ir("import os\nfrom typing import Optional, List\n");
         assert!(pf.modules[0].imports.len() >= 2);
+    }
+
+    /// `import numpy as np` parses to an `aliased_import`, and both import
+    /// readers only matched `dotted_name` under `import_statement` — so the
+    /// single most common form of a Python import produced no record at all.
+    #[test]
+    fn py_aliased_plain_import_is_recorded() {
+        let pf = parse("import numpy as np\nimport os\n");
+        assert_eq!(pf.imports.len(), 2, "`import numpy as np` must not vanish");
+        assert_eq!(pf.imports[0].target_path, "numpy");
+        assert_eq!(pf.imports[0].names, vec!["np"], "the alias is the name in scope");
+    }
+
+    #[test]
+    fn ir_aliased_plain_import_is_recorded() {
+        let pf = parse_ir("import pandas as pd\n");
+        let imports = &pf.modules[0].imports;
+        assert_eq!(imports.len(), 1, "`import pandas as pd` must not vanish");
+        assert_eq!(imports[0].source, "pandas");
+        assert_eq!(imports[0].names, vec!["pd"]);
+    }
+
+    /// `from a import b as c` binds `c`. Both readers recorded `b` — the one
+    /// name that is *not* in scope.
+    #[test]
+    fn py_from_import_alias_keeps_both_names() {
+        let pf = parse("from collections import OrderedDict as OD\n");
+        assert_eq!(pf.imports[0].target_path, "collections");
+        assert_eq!(
+            pf.imports[0].names,
+            vec!["OrderedDict as OD"],
+            "the source name and the bound name are both facts"
+        );
+    }
+
+    /// A dotted plain import binds its TOP name (`a`), which is what a later
+    /// `a.b.c()` reference is looked up under.
+    #[test]
+    fn py_dotted_plain_import_binds_the_top_name() {
+        let pf = parse("import os.path\n");
+        assert_eq!(pf.imports[0].target_path, "os.path");
+        assert_eq!(pf.imports[0].names, vec!["os"]);
     }
 }
