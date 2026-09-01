@@ -336,28 +336,8 @@ fn walk_ir(
                 });
             }
             "use_declaration" => {
-                let text = child.utf8_text(src).unwrap_or_default();
-                let path = text.trim_start_matches("use ").trim_end_matches(';').trim();
-                if path.contains("::{") {
-                    if let Some((base, rest)) = path.split_once("::{") {
-                        let names: Vec<String> = rest
-                            .trim_end_matches('}')
-                            .split(',')
-                            .map(|s| s.trim().to_string())
-                            .collect();
-                        imports.push(IRImport {
-                            source: base.to_string(),
-                            names,
-                            is_reexport: false,
-                        });
-                    }
-                } else {
-                    let name = path.rsplit("::").next().unwrap_or(path).to_string();
-                    imports.push(IRImport {
-                        source: path.to_string(),
-                        names: vec![name],
-                        is_reexport: false,
-                    });
+                if let Some((source, names, is_reexport)) = use_import_record(&child, src) {
+                    imports.push(IRImport { source, names, is_reexport });
                 }
             }
             _ => {}
@@ -451,6 +431,147 @@ fn collect_attributes(node: &Node, src: &[u8]) -> Vec<String> {
 /// Get full source text of a node.
 fn source_text(node: &Node, src: &[u8]) -> String {
     node.utf8_text(src).unwrap_or_default().to_string()
+}
+
+/// Join two `::`-path fragments, tolerating either being empty.
+fn join_mod(a: &str, b: &str) -> String {
+    match (a.is_empty(), b.is_empty()) {
+        (true, _) => b.to_string(),
+        (_, true) => a.to_string(),
+        _ => format!("{a}::{b}"),
+    }
+}
+
+/// Parent of a `::`-path (`a::b::c` → `a::b`; `a` → "").
+fn parent_mod(m: &str) -> String {
+    match m.rsplit_once("::") {
+        Some((head, _)) => head.to_string(),
+        None => String::new(),
+    }
+}
+
+/// One name a `use` declaration brings into scope.
+struct UseBinding {
+    /// The name as written at the use site — the alias when one is given, `*` for
+    /// a glob.
+    local_name: String,
+    /// Fully-qualified `::`-joined path. For a glob, the module it draws from.
+    full_path: String,
+}
+
+/// Every binding a `use_declaration` introduces, read off the grammar.
+///
+/// The three readers in this file previously each split the declaration's text on
+/// `"::{"` and then `','`. That cannot parse a nested or multi-line group: `use
+/// axum::{extract::{Path, State}, response::Json}` yielded `extract::{Path`,
+/// `State}` and `response::Json`, so two of the three names could never be looked
+/// up again. It also never matched `pub use` (leaving the keywords in the path) or
+/// `as` aliases (leaving `Error as IoError` as a single name).
+fn use_bindings(decl: &Node, src: &[u8]) -> Vec<UseBinding> {
+    let mut out = Vec::new();
+    if let Some(arg) = decl.child_by_field_name("argument") {
+        walk_use_clause(&arg, src, "", &mut out);
+    }
+    out
+}
+
+fn walk_use_clause(node: &Node, src: &[u8], prefix: &str, out: &mut Vec<UseBinding>) {
+    match node.kind() {
+        "scoped_use_list" => {
+            let base =
+                node.child_by_field_name("path").map(|p| source_text(&p, src)).unwrap_or_default();
+            let next = join_mod(prefix, &base);
+            if let Some(list) = node.child_by_field_name("list") {
+                walk_use_clause(&list, src, &next, out);
+            }
+        }
+        "use_list" => {
+            for i in 0..node.named_child_count() {
+                let child = node.named_child(i).unwrap();
+                walk_use_clause(&child, src, prefix, out);
+            }
+        }
+        "use_as_clause" => {
+            let path =
+                node.child_by_field_name("path").map(|p| source_text(&p, src)).unwrap_or_default();
+            let alias =
+                node.child_by_field_name("alias").map(|a| source_text(&a, src)).unwrap_or_default();
+            if !alias.is_empty() && alias != "_" {
+                out.push(UseBinding { local_name: alias, full_path: join_mod(prefix, &path) });
+            }
+        }
+        "use_wildcard" => {
+            // A glob binds names this pass cannot enumerate, so `*` stands in for
+            // them. The module still matters: dependency detection reads the path.
+            let base = node
+                .named_child(0)
+                .map(|p| source_text(&p, src))
+                .unwrap_or_else(|| prefix.to_string());
+            let full = if node.named_child(0).is_some() { join_mod(prefix, &base) } else { base };
+            out.push(UseBinding { local_name: "*".into(), full_path: full });
+        }
+        _ => {
+            let path = source_text(node, src);
+            if path.is_empty() {
+                return;
+            }
+            // `use a::b::{self, c}` binds `b` under its own name.
+            let full = if path == "self" { prefix.to_string() } else { join_mod(prefix, &path) };
+            let leaf = full.rsplit("::").next().unwrap_or_default().to_string();
+            if !leaf.is_empty() {
+                out.push(UseBinding { local_name: leaf, full_path: full });
+            }
+        }
+    }
+}
+
+/// Collapse a `use_declaration` into the `(path, names, is_reexport)` shape both
+/// import records use. One record per declaration, as before: `path` is the whole
+/// path for a lone binding and the group's common prefix otherwise, so every
+/// binding's full path is recoverable as `path::name`.
+fn use_import_record(decl: &Node, src: &[u8]) -> Option<(String, Vec<String>, bool)> {
+    let bindings = use_bindings(decl, src);
+    let is_reexport = has_child_kind(decl, "visibility_modifier");
+    match bindings.as_slice() {
+        [] => None,
+        [one] => Some((one.full_path.clone(), vec![one.local_name.clone()], is_reexport)),
+        many => {
+            let prefix = common_path_prefix(many.iter().map(|b| b.full_path.as_str()));
+            let names = many
+                .iter()
+                .map(|b| {
+                    let rel = b
+                        .full_path
+                        .strip_prefix(&prefix)
+                        .map(|r| r.trim_start_matches("::"))
+                        .unwrap_or(&b.full_path);
+                    let leaf = rel.rsplit("::").next().unwrap_or_default();
+                    if leaf == b.local_name {
+                        rel.to_string()
+                    } else {
+                        format!("{rel} as {}", b.local_name)
+                    }
+                })
+                .collect();
+            Some((prefix, names, is_reexport))
+        }
+    }
+}
+
+/// Longest `::`-segment prefix shared by every path.
+fn common_path_prefix<'a>(paths: impl Iterator<Item = &'a str>) -> String {
+    let mut shared: Option<Vec<&str>> = None;
+    for path in paths {
+        let segs: Vec<&str> = path.split("::").collect();
+        shared = Some(match shared {
+            None => segs[..segs.len().saturating_sub(1)].to_vec(),
+            Some(acc) => {
+                let keep = acc.iter().zip(segs.iter()).take_while(|(a, b)| a == b).count();
+                acc[..keep].to_vec()
+            }
+        });
+    }
+    shared.unwrap_or_default().join("::")
 }
 
 fn empty(path: &str) -> ParsedFile {
@@ -664,21 +785,8 @@ fn walk_nodes(
                 }
             }
             "use_declaration" => {
-                let text = child.utf8_text(src).unwrap_or_default();
-                // Parse: use path::to::thing; or use path::{a, b};
-                let path = text.trim_start_matches("use ").trim_end_matches(';').trim();
-                if path.contains("::{") {
-                    if let Some((base, rest)) = path.split_once("::{") {
-                        let names: Vec<String> = rest
-                            .trim_end_matches('}')
-                            .split(',')
-                            .map(|s| s.trim().to_string())
-                            .collect();
-                        imports.push(ParsedImport { target_path: base.to_string(), names });
-                    }
-                } else {
-                    let name = path.rsplit("::").next().unwrap_or(path).to_string();
-                    imports.push(ParsedImport { target_path: path.to_string(), names: vec![name] });
+                if let Some((target_path, names, _)) = use_import_record(&child, src) {
+                    imports.push(ParsedImport { target_path, names });
                 }
             }
             _ => {}
@@ -773,7 +881,7 @@ pub(crate) mod rust_fqn {
         let root = tree.root_node();
 
         let mut scope = FileScope::default();
-        collect_scope(&root, src, &mut scope);
+        collect_scope(&root, src, &mut scope, false);
 
         let mut out = FqnFileOutput {
             package: ctx.package.clone(),
@@ -785,30 +893,26 @@ pub(crate) mod rust_fqn {
         out
     }
 
-    /// Pass 1: gather the file-global use-map, local type names, and submodule names.
-    fn collect_scope(node: &Node, src: &[u8], scope: &mut FileScope) {
+    /// Pass 1: gather the use-map, local type names, and submodule names.
+    ///
+    /// `local` is true once the walk has descended into a function or expression
+    /// body. A `use` found there is real (this repo has 738 of them) but it must
+    /// not silently override what the file declared at the top level, so it is
+    /// inserted only where the name is still free.
+    fn collect_scope(node: &Node, src: &[u8], scope: &mut FileScope, local: bool) {
         for i in 0..node.child_count() {
             let child = node.child(i).unwrap();
             match child.kind() {
                 "use_declaration" => {
-                    let text = child.utf8_text(src).unwrap_or_default();
-                    let path = text.trim_start_matches("use ").trim_end_matches(';').trim();
-                    if let Some((base, rest)) = path.split_once("::{") {
-                        for name in rest.trim_end_matches('}').split(',') {
-                            let name = name.trim();
-                            if name.is_empty() || name == "self" {
-                                continue;
-                            }
-                            let leaf = name.rsplit("::").next().unwrap_or(name).trim();
-                            scope.use_map.insert(leaf.to_string(), format!("{base}::{name}"));
+                    for b in use_bindings(&child, src) {
+                        // A glob binds no name this pass can key on.
+                        if b.local_name == "*" {
+                            continue;
                         }
-                    } else if !path.is_empty() {
-                        let leaf = path.rsplit("::").next().unwrap_or(path).trim();
-                        // `use a::b as c` → key on the alias.
-                        if let Some((full, alias)) = path.split_once(" as ") {
-                            scope.use_map.insert(alias.trim().to_string(), full.trim().to_string());
+                        if local {
+                            scope.use_map.entry(b.local_name).or_insert(b.full_path);
                         } else {
-                            scope.use_map.insert(leaf.to_string(), path.to_string());
+                            scope.use_map.insert(b.local_name, b.full_path);
                         }
                     }
                 }
@@ -824,10 +928,12 @@ pub(crate) mod rust_fqn {
                         scope.local_modules.insert(name);
                     }
                     if let Some(body) = child.child_by_field_name("body") {
-                        collect_scope(&body, src, scope);
+                        collect_scope(&body, src, scope, local);
                     }
                 }
-                _ => {}
+                // Any other item — a function, an `impl`, a block — may contain a
+                // nested `use`. Descend, marking everything below as local.
+                _ => collect_scope(&child, src, scope, true),
             }
         }
     }
@@ -1002,7 +1108,14 @@ pub(crate) mod rust_fqn {
             let module = match first {
                 "crate" => mid(1),
                 "self" => join_mod(&ctx.module, &mid(1)),
-                "super" => join_mod(&parent_mod(&ctx.module), &mid(1)),
+                // Every leading `super::` consumes one module level. Consuming only
+                // the first left the rest in the module path, minting names like
+                // `tasks::handlers::super::executor` that no module ever had.
+                "super" => {
+                    let ups = segs.iter().take_while(|s| **s == "super").count();
+                    let base = (0..ups).fold(ctx.module.clone(), |m, _| parent_mod(&m));
+                    join_mod(&base, &mid(ups))
+                }
                 _ => {
                     // current-crate name prefix, or a local submodule used without `crate::`.
                     if norm_crate(first) == norm_crate(&ctx.package) { mid(1) } else { mid(0) }
@@ -1287,23 +1400,6 @@ pub(crate) mod rust_fqn {
         s.replace('-', "_")
     }
 
-    /// Join two module-path fragments, dropping empties (crate root stays "").
-    fn join_mod(a: &str, b: &str) -> String {
-        match (a.is_empty(), b.is_empty()) {
-            (true, _) => b.to_string(),
-            (_, true) => a.to_string(),
-            _ => format!("{a}::{b}"),
-        }
-    }
-
-    /// Parent of a module path (`a::b::c` → `a::b`; `a` → ""). Best-effort for `super`.
-    fn parent_mod(m: &str) -> String {
-        match m.rsplit_once("::") {
-            Some((head, _)) => head.to_string(),
-            None => String::new(),
-        }
-    }
-
     /// Reduce a type expression's text to its base type name, peeling references,
     /// lifetimes, `dyn`/`impl`, and unwrapping smart-pointer wrappers (`Box<dyn T>`
     /// → `T`). Returns the final path's last segment (`crate::a::Widget` → `Widget`).
@@ -1511,6 +1607,109 @@ impl Engine {
         assert!(r.is_lib);
     }
 
+    /// A nested or multi-line group `use` must register every leaf under its own
+    /// path. The string-splitting reader keyed `{Json` and `Event}` instead of
+    /// `Json` and `Event`, so a call to `Json()` missed the use-map and was
+    /// attributed to the importing module — the live
+    /// `rust·senseid·api::handlers::workspace·Json` stub with 20 in-edges.
+    #[test]
+    fn rust_nested_group_use_registers_every_leaf() {
+        let src = r#"
+use axum::{
+    extract::{Path, State},
+    http::StatusCode,
+    response::{Json, sse::Event},
+};
+pub fn handler() { Json(); Event(); State(); Path(); StatusCode(); }
+"#;
+        let out = produce(src, "senseid", "api::handlers::workspace");
+        for (name, want) in [
+            ("Json", "lib·axum·axum::response·Json"),
+            ("Event", "lib·axum·axum::response::sse·Event"),
+            ("State", "lib·axum·axum::extract·State"),
+            ("Path", "lib·axum·axum::extract·Path"),
+            ("StatusCode", "lib·axum·axum::http·StatusCode"),
+        ] {
+            let r = ref_to(&out, name);
+            assert_eq!(r.target_fqn.as_deref(), Some(want), "nested group leaf `{name}`");
+            assert!(r.is_lib, "`{name}` is an axum item, not senseid code");
+        }
+    }
+
+    /// `use a::b::{self, c}` imports `b` itself under the name `b`.
+    #[test]
+    fn rust_group_use_self_registers_the_parent() {
+        let src = "use axum::response::{self, Json};\npub fn h() { response(); Json(); }\n";
+        let out = produce(src, "senseid", "api");
+        assert_eq!(
+            ref_to(&out, "response").target_fqn.as_deref(),
+            Some("lib·axum·axum·response"),
+            "`self` in a group imports the parent module under its own name"
+        );
+    }
+
+    /// Every leading `super::` must consume one module level. Only the first was
+    /// consumed, so the rest survived into the module path — the live
+    /// `rust·senseid·tasks::handlers::super::executor·TaskContext·pg` stub, the
+    /// highest-degree Rust stub in the graph.
+    #[test]
+    fn rust_repeated_super_consumes_every_level() {
+        let src = "pub fn f() { super::super::executor::run(); super::sibling::go(); }\n";
+        let out = produce(src, "senseid", "tasks::handlers::process");
+        assert_eq!(
+            ref_to(&out, "run").target_fqn.as_deref(),
+            Some("rust·senseid·tasks::executor·run"),
+            "`super::super::` walks up twice from tasks::handlers::process"
+        );
+        assert_eq!(
+            ref_to(&out, "go").target_fqn.as_deref(),
+            Some("rust·senseid·tasks::handlers::sibling·go"),
+            "a single `super::` still walks up exactly once"
+        );
+    }
+
+    /// A `use` inside a function body is a real import. `collect_scope` only
+    /// walked top-level items and `mod` bodies, so 738 function-local `use`
+    /// statements in this repo never reached the use-map and every call through
+    /// them was attributed to the importing module.
+    #[test]
+    fn rust_function_local_use_reaches_the_use_map() {
+        let src = r#"
+pub fn outer() {
+    use crate::helpers::compute;
+    compute();
+}
+"#;
+        let out = produce(src, "senseid", "codebase");
+        let r = ref_to(&out, "compute");
+        assert_eq!(
+            r.target_fqn.as_deref(),
+            Some("rust·senseid·helpers·compute"),
+            "a function-local `use crate::…` resolves like a file-global one"
+        );
+        assert!(!r.is_lib);
+    }
+
+    /// A file-global `use` outranks a function-local one on the same leaf name:
+    /// the local import is additional information, never a silent override of
+    /// what the file already declared.
+    #[test]
+    fn rust_file_global_use_outranks_function_local() {
+        let src = r#"
+use crate::alpha::Thing;
+pub fn outer() {
+    use crate::beta::Thing;
+    Thing();
+}
+"#;
+        let out = produce(src, "senseid", "codebase");
+        assert_eq!(
+            ref_to(&out, "Thing").target_fqn.as_deref(),
+            Some("rust·senseid·alpha·Thing"),
+            "file-global wins over function-local on a name collision"
+        );
+    }
+
     #[test]
     fn rust_adapter_and_trait_methods_do_not_collapse() {
         let src = r#"
@@ -1621,6 +1820,57 @@ impl std::fmt::Debug for A { fn fmt(&self) {} }
         assert_eq!(pf.imports.len(), 2);
         assert_eq!(pf.imports[0].target_path, "std::io");
         assert_eq!(pf.imports[1].names, vec!["HashMap", "HashSet"]);
+    }
+
+    /// The same `"::{"`-then-`','` splitter sat in three readers. All three
+    /// mangled a nested group into leaves like `extract::{Path` and `State}`.
+    #[test]
+    fn parses_nested_group_use_without_mangling_names() {
+        let pf = parse("use axum::{extract::{Path, State}, response::Json};");
+        assert_eq!(pf.imports.len(), 1);
+        assert_eq!(pf.imports[0].target_path, "axum", "common prefix of the group");
+        assert_eq!(
+            pf.imports[0].names,
+            vec!["extract::Path", "extract::State", "response::Json"],
+            "each leaf carries its own path, and no brace survives"
+        );
+    }
+
+    /// `trim_start_matches("use ")` does not match `pub use`, so the whole
+    /// declaration text became the target path.
+    #[test]
+    fn parses_pub_use_as_a_path_not_prose() {
+        let pf = parse("pub use crate::inner::Thing;");
+        assert_eq!(pf.imports[0].target_path, "crate::inner::Thing");
+        assert_eq!(pf.imports[0].names, vec!["Thing"]);
+    }
+
+    /// `use a::B as C` keys on the alias; the old reader produced a target path
+    /// of `std::io::Error as IoError` and a name of `Error as IoError`.
+    #[test]
+    fn parses_aliased_use_keys_on_the_alias() {
+        let pf = parse("use std::io::Error as IoError;");
+        assert_eq!(pf.imports[0].target_path, "std::io::Error");
+        assert_eq!(pf.imports[0].names, vec!["IoError"]);
+    }
+
+    /// A glob still names the module it draws from — dependency detection reads
+    /// `target_path`, so `axum` must stay visible even though the bound names
+    /// cannot be enumerated.
+    #[test]
+    fn parses_glob_use_keeps_the_module_visible() {
+        let pf = parse("use axum::extract::*;");
+        assert_eq!(pf.imports[0].target_path, "axum::extract");
+        assert_eq!(pf.imports[0].names, vec!["*"]);
+    }
+
+    #[test]
+    fn ir_pub_use_is_a_reexport() {
+        let pf = parse_ir("pub use crate::inner::Thing;\nuse std::io;");
+        let imports = &pf.modules[0].imports;
+        assert_eq!(imports[0].source, "crate::inner::Thing");
+        assert!(imports[0].is_reexport, "`pub use` re-exports");
+        assert!(!imports[1].is_reexport, "a plain `use` does not");
     }
 
     #[test]
