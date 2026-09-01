@@ -28,6 +28,51 @@
 //! "unresolved" is the same misattribution `sensei.metric_status` had before #128,
 //! where a group that keeps no cursor was read as one that never ran.
 //!
+//! ## What this can and cannot decide
+//!
+//! It reads the target STRING, so it is authoritative only where the language
+//! marks locality syntactically. MEASURED per source language:
+//!
+//! ```text
+//! language     edges    local imports syntactically distinguishable?
+//! java        74,325    NO   — own classes look like org.junit.Test
+//! typescript  45,638    yes  — ./  ../  $lib  @/  ~/
+//! kotlin       3,713    NO   — same shape as Java
+//! rust         3,711    yes  — crate::  super::  self::
+//! javascript   3,535    yes
+//! svelte       3,100    yes
+//! python       1,924    partly — `.mod` yes; `app.models.x` NO
+//! c              537    NO   — the "local.h" vs <system.h> distinction is
+//!                              dropped at extraction, so `pljava/Type.h`
+//!                              (a project header) is indistinguishable from
+//!                              `postgres.h` (a system one)
+//! ```
+//!
+//! So for **59%** of edges (Java, Kotlin, Python-absolute, C) a local import is
+//! NOT distinguishable from an external one by string. This classifier calls them
+//! `External`, which is right for most of them and wrong for a project's own
+//! packages — and it cannot tell which without knowing the repository's owned
+//! package roots.
+//!
+//! **That gap does not have to be closed here.** The resolver this feeds must try a
+//! LOCAL LOOKUP FIRST and fall back to a `lib_symbol` only on a miss — data, not
+//! string. Under that rule a misclassified Java import still resolves correctly,
+//! because the lookup finds the node. The classification stays useful for
+//! REPORTING (what shape are these imports) and as a hint, and must not be treated
+//! as the authority on locality.
+//!
+//! ## Resolution DROPS the name — which the resolver must account for
+//!
+//! MEASURED across all 715,985 edges: `target_id` and `target_name` are mutually
+//! exclusive. A resolved edge carries an id and a NULL name (207,868 calls, 601
+//! covers); an unresolved one carries a name and a NULL id. Zero edges carry both,
+//! and zero carry neither.
+//!
+//! So resolving an import ERASES the original target string. The node it resolves
+//! to must therefore carry that string — which is what a `lib_symbol` keyed on the
+//! package does, and why the external branch produces a package name rather than
+//! discarding it.
+//!
 //! ## One owner, two consumers
 //!
 //! This is a pure function of the target string — `node:fs` is external whenever
@@ -139,6 +184,12 @@ pub fn classify_import(target: &str) -> ImportTarget {
     if t.starts_with("./") || t.starts_with("../") || t == "." || t == ".." {
         return ImportTarget::Relative;
     }
+    // Python explicit-relative: `.module`, `..package.module`. A leading dot with
+    // no slash. MEASURED: 85 such edges, which the dotted-external rule below
+    // would have called a package named `.module`.
+    if t.starts_with('.') && !t.contains('/') {
+        return ImportTarget::Relative;
+    }
     if t.starts_with("$lib") || t.starts_with("$app") || t.starts_with("$env") {
         return ImportTarget::Alias { kind: AliasKind::SvelteKit };
     }
@@ -197,6 +248,34 @@ mod tests {
             ImportTarget::External { package: "@rokkit/ui".into() },
             "a subpath still belongs to its package",
         );
+    }
+
+    /// Python's explicit-relative form is a leading dot with no slash. The dotted
+    /// EXTERNAL rule would otherwise call `.module` a package named `.module`.
+    /// MEASURED: 85 such edges live.
+    #[test]
+    fn python_explicit_relative_is_local() {
+        assert_eq!(classify_import(".module"), ImportTarget::Relative);
+        assert_eq!(classify_import("..package.module"), ImportTarget::Relative);
+    }
+
+    /// The limit of a string-only classifier, pinned so nobody mistakes it for
+    /// authority. A Java project's own class and a third-party one are the same
+    /// shape, and C loses the quoted-vs-angled distinction at extraction — 59% of
+    /// import edges are in languages where this holds.
+    ///
+    /// Both are called External here, which is right for most and wrong for a
+    /// project's own packages. The resolver must try a local lookup FIRST and fall
+    /// back to `lib_symbol` on a miss, so a misclassification here does not become
+    /// a wrong edge.
+    #[test]
+    fn java_and_c_local_imports_are_not_string_distinguishable() {
+        // Indistinguishable from `org.junit.Test` without knowing the repo's roots.
+        assert!(classify_import("org.postgresql.pljava.Function").is_external());
+        // A real project header from the measured data, indistinguishable from a
+        // system include once the angle brackets are gone.
+        assert!(classify_import("pljava/type/Type_priv.h").is_external());
+        assert!(classify_import("postgres.h").is_external());
     }
 
     #[test]
