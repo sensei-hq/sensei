@@ -227,13 +227,61 @@ so an agent that knows it depends on `@rokkit/ui` cannot reach rokkit's skills.
 
 Ranked by measured impact, not by how interesting the work is.
 
-### 4.1 Resolve `imports` (136,484 edges, 0%)
+### 4.1 Resolve `imports` (136,484 edges, 0%) — REVISED after measuring
 
-The highest-value single change. Import resolution is how an agent answers "what
-does this file depend on" and "what will break if I change this" — the two
-questions that most often precede an edit. It is also the *easiest* kind to
-resolve: an import names a module path explicitly, unlike a call which may be
-dynamic.
+The recommendation stands but the METHOD I proposed was wrong, and the reason is
+worth more than the original suggestion.
+
+**Measured 2026-09-01.** Import targets classify like this:
+
+```
+bare             62,600      mostly npm/crates packages
+java-stdlib      29,237      external
+relative         15,924      LOCAL — ./x, ../y
+node-builtin     11,989      external
+ts-alias          7,032      LOCAL — @/…, ~/…  (needs tsconfig paths)
+scoped-npm        6,675      mostly external
+sveltekit-alias   1,802      LOCAL — $lib/…
+rust-internal     1,225      LOCAL — crate::, super::, self::
+```
+
+So only **19%** (25,983) could ever resolve to a local node by path arithmetic,
+and a sampled 3,000 relative imports showed a **70.3% hit rate** with dirname +
+extension/index guessing — about 11k edges, 8% of all imports. My claim that this
+was "the easiest kind to resolve" and the highest-value single change was
+overstated by roughly an order of magnitude.
+
+**The actual cause is structural, and the fix is a pattern already working.**
+`process.rs:1351` inserts EVERY import edge with `target_id = None`, from a field
+literally named `unresolved_imports`. Imports are unresolved *by construction* —
+nothing ever tries.
+
+Twelve lines below, the comment on call edges says why calls reach 64.8%:
+
+> The FQN path emits RESOLVED node→node edges AT EMIT: the target is
+> get-or-created by FQN (a stub if its definition isn't indexed yet — enriched
+> later, keeping the same id; a `lib_symbol` for an external crate).
+
+**Calls resolve because they CREATE the target when one does not exist.** Imports
+never do. That is the whole difference, and there are already 7,424 `lib_symbol`
+nodes proving the mechanism works.
+
+So the fix is not path arithmetic on 19%. It is to apply the existing
+get-or-create pattern (`upsert_lib_node_by_fqn`) to imports:
+
+- external target (`node:fs`, `lombok.Getter`, `java.util.List`) → a `lib_symbol`
+  node, exactly as an external call target gets one;
+- local target (relative / alias / `crate::`) → the file or module node.
+
+That takes imports from 0% toward near-complete, and it gives agents a query they
+cannot ask today: **"what else imports this?"** — which is the question that
+actually precedes changing a shared file. It also makes the 81% external majority
+*useful* rather than dead weight: `node:fs` becomes a node with in-edges, not a
+string on an unresolved row.
+
+The 81% is also not a failure, and should stop being reported as one — the same
+misattribution `metric_status` had before #128, where "no cursor" was being read
+as "never ran".
 
 ### 4.2 Resolve `references` (249,979 edges, 0%)
 
@@ -275,8 +323,9 @@ Forward-only; no step depends on a later one.
 2. **Ingest every `sensei.library.json`**, keep the declared version, and fix the
    partial rokkit ingestion. Then link detected packages (`@rokkit/*`) to their
    manifest library so a dependency resolves to its skills.
-3. **Resolve `imports`**, then `references`. This is the work that makes the graph
-   worth preferring over grep.
+3. **Resolve `imports`** by giving them the same get-or-create target treatment
+   calls already have (§4.1, revised) — not by path arithmetic, which reaches only
+   19%. Then `references`.
 4. **Report unresolved counts** on `get_callers`/`get_callees` so a partial answer
    announces itself.
 5. **Then** revisit library versioning — once more than two libraries have docs,
