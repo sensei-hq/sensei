@@ -659,3 +659,83 @@ and `rationale_for`/`traces_to` fall out of resolving `references`.
    permanently unwritable.
 
 Steps 1–2 are the same work seen from two ends, which is why they are adjacent.
+
+---
+
+## 12. The root cause, in one type
+
+The diagnosis — *the parsers parse imports but do not build a registry the ref
+resolution can look up* — is exactly right, and it is visible in a single struct:
+
+```rust
+/// Per-file context a producer needs: the owning crate/package name (from the
+/// nearest manifest, supplied by the Phase-3 processor) and this file's
+/// crate-relative module path.
+pub struct FileFqnContext {
+    pub package: String,   // the file's OWN package
+    pub module: String,    // the file's OWN module path
+}
+```
+
+**There are no imports in it.** The imports ARE parsed — they become
+`FileProcessResult.unresolved_imports: Vec<String>` — but that list never reaches
+the FQN producer. So when a producer encounters a call to `when`, the only names in
+scope are the file's own package and module. Minting
+`rust·senseid·api::handlers::observatory·HashMap·get` is not a bug in the producer;
+it is the only thing the producer *can* do with the context it is given.
+
+That single omission explains everything measured in this document:
+
+| symptom | measured | follows from |
+|---|---|---|
+| stubs in the caller's namespace | 108,174 edges, 84,379 nodes | no import registry → no correct identity available |
+| local aliases as library packages | 2,204 `lib_symbol` (30%) | `is_lib` decided per-path without the import that would settle it |
+| imports 0% resolved | 136,484 | the list is an output, never an input |
+| calls resolve to real code only 18% | of 320,715 | the two above, combined |
+
+### The fix is one field
+
+```rust
+pub struct FileFqnContext {
+    pub package: String,
+    pub module: String,
+    /// Local name → where it came from, built from the imports this file already
+    /// parses. `when` → `org.mockito.Mockito`, `HashMap` → `std::collections`,
+    /// `worstReason` → `./metric-status-state`.
+    pub imports: ImportRegistry,
+}
+```
+
+Everything else falls out of it, with no new mechanism:
+
+1. **Correct identity.** A bare name found in the registry mints the FQN of its
+   ORIGIN, not the caller's. `when` → `lib·org.mockito·…·when`. Get-or-create then
+   converges instead of orphaning, because the second encounter computes the same
+   key.
+2. **One owner for external-vs-local.** `is_lib` becomes
+   `classify_import(origin).is_external()` — the function that already knows `$lib`
+   and `@/…` are local (`804ef1fb`). The call path stops disagreeing with the
+   import path because it stops deciding independently.
+3. **Imports resolve as a by-product.** Building the registry IS resolving the
+   imports; the edge target is whatever the registry entry points at.
+4. **Honest gaps.** A name not in the registry stays unresolved. No guessed
+   identity, per §11.2's rule.
+
+So the import work and the call-path work are not two steps that happen to be
+adjacent — they are one change seen from either end, and the registry is the thing
+in the middle. That collapses steps 1 and 2 of §11.4 into a single slice.
+
+### 12.1 Class diagrams fall out of the same parse
+
+`interface` → `implements`, `class` → `extends` are both in the syntax, so once
+`implements` has a writer and `extends` means inheritance (§11.3), a class diagram
+is a filter over the graph rather than a separate extraction: nodes of kind
+`class`/`interface`/`trait`, edges of kind `extends`/`implements`, containment from
+`parent_id`. 22,669 such nodes exist already.
+
+### 12.2 Reusing dbd's entity graphing for the DB — noted, later
+
+dbd already renders entity diagrams from a schema. The same surface could render
+`sensei`'s own tables, and possibly any dbd-managed project's. Deliberately parked:
+it shares a renderer with §12.1 but nothing else, and none of the resolution work
+depends on it.
