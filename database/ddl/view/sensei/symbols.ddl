@@ -20,7 +20,6 @@ select n.id
      , n.line_end
      , n.is_exported
      , n.community_id
-     , n.degree
      , n.tags
      , n.props
      , n.modified_at

@@ -54,7 +54,6 @@ pub enum TaskKind {
     ResolveLibs,
     ImportLib,
     BranchSwitch,
-    BuildConnections,
     EmbedNodes,
     IndexLibrary,
     IndexLibraryPage,
@@ -262,7 +261,6 @@ impl TaskKind {
         Self::DeleteFolder,
         Self::BranchSwitch,
         Self::ExtractDeps,
-        Self::BuildConnections,
         Self::EmbedNodes,
         Self::DetectCommunities,
         Self::ResolveLibs,
@@ -357,14 +355,6 @@ impl TaskKind {
                 budget_secs: 180,
                 high_priority: false,
                 retryable: false,
-            },
-            Self::BuildConnections => KindInfo {
-                name: "build_connections",
-                pipeline: Pipeline::Index,
-                stage: Stage::Derive,
-                budget_secs: 600,
-                high_priority: false,
-                retryable: true,
             },
             Self::EmbedNodes => KindInfo {
                 name: "embed_nodes",
@@ -840,7 +830,7 @@ impl Task {
 
     #[allow(dead_code)]
     pub fn is_barrier(&self) -> bool {
-        matches!(self.kind, TaskKind::ResolveLibs | TaskKind::BuildConnections)
+        matches!(self.kind, TaskKind::ResolveLibs | TaskKind::DetectCommunities)
     }
 }
 
@@ -862,7 +852,7 @@ mod tests {
 
     #[test]
     fn blocked_task() {
-        let t = Task::new(TaskKind::BuildConnections, "/code/myrepo", "/code/myrepo")
+        let t = Task::new(TaskKind::DetectCommunities, "/code/myrepo", "/code/myrepo")
             .blocked_by(vec![1, 2, 3]);
         assert_eq!(t.status, TaskStatus::Blocked);
         assert!(!t.is_runnable());
@@ -983,7 +973,7 @@ mod tests {
         names.sort_unstable();
         names.dedup();
         assert_eq!(names.len(), total, "a kind appears twice in ALL");
-        assert_eq!(total, 35, "ALL is missing a kind — add it beside its info() arm");
+        assert_eq!(total, 34, "ALL is missing a kind — add it beside its info() arm");
     }
 
     #[test]

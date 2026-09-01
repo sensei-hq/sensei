@@ -18,7 +18,6 @@ create table if not exists nodes (
 , is_exported              boolean     not null default false
 , is_test                  boolean     not null default false
 , community_id             integer
-, degree                   integer
 , embedding                vector(384)
 , tags                     text[]      not null default '{}'
 , props                    jsonb       not null default '{}'
@@ -158,8 +157,6 @@ Lets the UI filter tests out when focusing on production code. lib_symbol/lib_pa
 (external deps) are never test. Reference stubs inherit it from their definition.';
 comment on column nodes.community_id
      is 'Leiden community cluster ID. Batch-computed. Null until computed.';
-comment on column nodes.degree
-     is 'Precomputed in+out edge count. Used for god-node detection.';
 comment on column nodes.embedding
      is '384-dim vector embedding for semantic search. Computed by local model during indexing. HNSW indexed.';
 comment on column nodes.tags

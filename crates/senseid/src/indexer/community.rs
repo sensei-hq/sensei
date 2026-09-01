@@ -100,15 +100,25 @@ pub async fn detect_communities_for_folder(
         let label = generate_community_label(&nodes, members);
         let member_node_ids: Vec<uuid::Uuid> =
             members.iter().filter_map(|&idx| uuid::Uuid::parse_str(&node_ids[idx]).ok()).collect();
-        // D4.5 god nodes: the community's top-5 members by `degree` (the hubs).
+        // D4.5 god nodes: the community's top-5 members by degree (the hubs).
+        //
+        // Degree is counted from `adjacency`, which this function has already built
+        // from every calls/imports/extends/references edge plus parent containment.
+        // It used to be read from a `nodes.degree` column that a separate
+        // `build_connections` barrier had to populate first — a cache of a
+        // `count(*)`, whose only consumer was this loop, running immediately after
+        // it. Measured live: 56 of 430,988 rows were stale and 19 were NULL, and
+        // that drift produced wrong god nodes in 4 of 76,973 communities.
+        //
+        // The adjacency count is also the BETTER number here: it spans exactly the
+        // semantic + containment edges that formed the community, where the column
+        // counted every edge kind plus source-side occurrences of unresolved edges.
+        //
         // Rank by degree desc, tie-break on member index asc (== natural key, since
         // nodes are sorted) so the set is deterministic for an unchanged graph.
         let mut by_degree = members.clone();
-        by_degree.sort_by(|&a, &b| {
-            let da = nodes[a]["degree"].as_i64().unwrap_or(0);
-            let db = nodes[b]["degree"].as_i64().unwrap_or(0);
-            db.cmp(&da).then_with(|| a.cmp(&b))
-        });
+        by_degree
+            .sort_by(|&a, &b| adjacency[b].len().cmp(&adjacency[a].len()).then_with(|| a.cmp(&b)));
         let god_node_ids: Vec<uuid::Uuid> = by_degree
             .iter()
             .take(5)
