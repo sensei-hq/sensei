@@ -445,3 +445,96 @@ largest single thing still owed to the visualisation.
 
 Worth stating plainly: the render is possible today, but seven of every ten edges
 have nowhere to land.
+
+---
+
+## 10. The six empty edge kinds, and why 71% of edges have no target node
+
+### 10.1 The empty kinds: declared, never written
+
+Six of eleven `edge_kind` values have **zero rows**, and none has a writer
+anywhere in the crate:
+
+| kind | intent (from the code that would use it) | status |
+|---|---|---|
+| `implements` | interface/trait implementation | no writer. `extends` is used for everything structural instead |
+| `depends_on` | module/package dependency | no writer. `imports` covers the same ground |
+| `traces_to` | requirement/spec → code traceability | no writer. The traceability screen exists; the edge does not |
+| `rationale_for` | a rationale → the decision it justifies | no writer — **and 1,700 `rationale` nodes exist**, parented, linked to nothing |
+| `duplicates` | near-duplicate symbols | no writer. `get_duplicates` computes them on the fly and returns JSON |
+| `similar_to` | semantic similarity | no writer. Embedding search is done at query time |
+
+Two different situations. `duplicates` and `similar_to` are computed at query
+time — the enum value is aspirational and arguably should go, since a value nothing
+can write is a promise the schema cannot keep. `rationale_for` and `traces_to` are
+real gaps: the nodes and the screens exist, the connection does not.
+
+### 10.2 Why 507,260 edges (70.8%) name a target but point at no node
+
+Four different causes, one per kind. None is "the resolver tried and failed".
+
+**`imports` — 136,484, by construction.** `process.rs:1351` inserts every one with
+`target_id = None`, iterating a field named `unresolved_imports`. Nothing has ever
+attempted resolution. Analysed in §4.1 and #146.
+
+**`references` — 250,072, doc mentions with no resolver.** Written only for
+documents:
+
+```rust
+if result.kind == "doc" {
+    for file_ref in &result.file_refs { insert_edge(…, Some(file_ref), …, "references") }
+    for fn_ref in &result.fn_mentions { insert_edge(…, Some(fn_ref), …, "references") }
+}
+```
+
+So a `references` edge is *this doc mentions this file path* or *this doc mentions
+this symbol name*. Both are resolvable in principle — a path like a relative
+import, a symbol by name within the repository — and nothing tries. This is the
+largest single unresolved block in the graph and the one with no plan attached.
+
+**`extends` — 7,863, mislabelled containment from the wrong source.** The writer:
+
+```rust
+// Parent refs (HAS_METHOD: type → method).
+for pref in &result.parent_refs {
+    insert_edge(&folder_id, &file_node_id, None, Some(&pref.parent_name), None, "extends")
+}
+```
+
+The comment says HAS_METHOD — type owns method, which is **containment**, not
+inheritance. And the source is the FILE node, not the type. So each edge reads
+"this file extends a name" when it means "a type in this file owns a method".
+`nodes.parent_id` already records that same relation correctly (method → type).
+
+So `extends` is redundant with `parent_id`, sourced from the wrong node, and named
+after a relation it does not represent. It is the one kind here that should
+probably be deleted rather than resolved.
+
+**`calls` — 112,841, receiver type unknown.** The honest residual, and uniform
+across languages (60–73% in each, §7.1). Sampled TypeScript targets: `stringify`,
+`isArray`, `now`, `toLowerCase`, `prepare`, `subscribe`, `floor`. The AST gives the
+call site and the method name; resolving needs the receiver's TYPE, which needs
+inference the parser does not do. `x.toLowerCase()` parses perfectly and is
+unresolvable without knowing what `x` is.
+
+Note most of those are runtime builtins (`JSON`, `Array`, `Date`, `Math`), so they
+belong in §8's package·module rung rather than being resolution failures at all.
+
+### 10.3 Depth, kind, and root class — all three axes already exist
+
+The proposed controls need no new data:
+
+* **depth / level** — `parent_id` chains, already on the wire (§9.3)
+* **kind** — 18 node kinds, already returned
+* **root class** — derivable today:
+
+```
+code    258,421      everything else
+doc     147,579      kind in (section, doc, rationale)
+test     24,904      is_test = true
+```
+
+So "show me only the code graph", "show me only packages", "collapse to depth 2"
+are all client-side filters over data the endpoint already sends. `nodes.tags` is
+NOT the axis to use for this — only 1,685 of 430,874 nodes carry any tag (0.4%),
+so it is effectively empty.
