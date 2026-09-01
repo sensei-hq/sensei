@@ -1274,6 +1274,39 @@ impl PgStore {
     /// changes 0 rows (cheap) while a test↔prod rename flips them. `lib_symbol`/
     /// `lib_package` nodes (file_path NULL) are never matched (external deps aren't
     /// test). Returns rows changed.
+    /// Correct the language stamp for one file's nodes.
+    ///
+    /// `upsert_node_ex` derives `language` from the file EXTENSION at write time,
+    /// which is right for code and cannot work for `.txt`: `docs/llms/index.txt` is
+    /// markdown (rokkit's corpus — headings, tables, fenced code) while
+    /// `docs/License.txt` is prose, and only the CONTENT distinguishes them.
+    ///
+    /// A post-write correction rather than a new parameter on every node write,
+    /// mirroring [`Self::set_nodes_is_test_for_file`]: the extension remains the
+    /// default and the doc path, which has the content, overrides it. Threading a
+    /// language through `upsert_node_ex` would touch every caller for one file type.
+    ///
+    /// Returns rows changed. The `IS DISTINCT FROM` guard makes a re-index a no-op
+    /// rather than a write, so this does not churn `modified_at`.
+    pub async fn set_nodes_language_for_file(
+        &self,
+        folder_id: &uuid::Uuid,
+        file_path: &str,
+        language: &str,
+    ) -> Result<u64, String> {
+        let res = sqlx_core::query::query(
+            "UPDATE sensei.nodes SET language = $3, modified_at = now()
+              WHERE folder_id = $1 AND file_path = $2 AND language IS DISTINCT FROM $3",
+        )
+        .bind(folder_id)
+        .bind(file_path)
+        .bind(language)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| format!("set_nodes_language_for_file: {e}"))?;
+        Ok(res.rows_affected())
+    }
+
     pub async fn set_nodes_is_test_for_file(
         &self,
         folder_id: &uuid::Uuid,

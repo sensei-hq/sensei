@@ -1476,6 +1476,22 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
         // the UI can filter tests out when focusing on production code. Set after
         // emit (all nodes exist); IS DISTINCT FROM makes a no-op re-scan cheap and
         // a test↔prod rename flips the file's nodes.
+        // `.txt` is parsed by the markdown doc processor, but the write-time stamp
+        // is extension-derived and `.txt` cannot be decided from the extension —
+        // the llms corpus is markdown, a licence is not. Correct it here, where the
+        // content is in hand. MEASURED: 2,565 of 2,896 null-language `.txt` nodes
+        // are rokkit's `docs/llms/**` corpus.
+        if result.rel_path.to_ascii_lowercase().ends_with(".txt")
+            && let Ok(text) = std::fs::read_to_string(&result.abs_path)
+        {
+            let lang = crate::languages::text_language_from_content(&text);
+            if let Err(e) =
+                ctx.pg().set_nodes_language_for_file(&folder_id, &result.rel_path, lang).await
+            {
+                tracing::warn!(file = %result.rel_path, error = %e, "set_nodes_language_for_file failed");
+            }
+        }
+
         let is_test = crate::languages::is_test_path(
             &result.rel_path,
             crate::languages::language_for_path(&result.rel_path),

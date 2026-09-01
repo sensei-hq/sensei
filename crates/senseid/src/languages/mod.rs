@@ -146,7 +146,9 @@ pub fn language_for_ext_slug(ext: &str) -> Option<&'static str> {
         "go" => Some("go"),
         "rb" => Some("ruby"),
         "sh" | "bash" => Some("shell"),
-        "md" | "markdown" => Some("markdown"),
+        "md" | "markdown" | "mdx" => Some("markdown"),
+        // NOTE: `txt` is deliberately absent — see `text_language_from_content`.
+        // The extension cannot decide (llms corpus vs a licence), so this abstains.
         "toml" => Some("toml"),
         "yaml" | "yml" => Some("yaml"),
         "json" => Some("json"),
@@ -154,6 +156,50 @@ pub fn language_for_ext_slug(ext: &str) -> Option<&'static str> {
         "html" => Some("html"),
         _ => None,
     }
+}
+
+/// Whether a `.txt` file's CONTENT is markdown, or just text.
+///
+/// `router.rs` parses every `.txt` with the markdown doc processor, so both end up
+/// as doc/section nodes — but the LANGUAGE stamp should say which it actually is.
+/// The extension cannot: `docs/llms/index.txt` is markdown (rokkit's corpus —
+/// headings, tables, fenced code) while `docs/License.txt` is prose. MEASURED:
+/// 2,565 of the 2,896 null-language `.txt` nodes are that corpus.
+///
+/// Structure, not prose heuristics. Three markers, any one of which is decisive:
+///
+/// * an ATX heading — `#` … `######` followed by a SPACE. The space is required:
+///   `#include <stdio.h>` and `#!/bin/sh` both start a line with `#`, and counting
+///   those would call most C and shell files markdown.
+/// * a fenced code block (```` ``` ````).
+/// * a table delimiter row (`|---|`), which is what the llms component docs are
+///   built from.
+///
+/// Deliberately NOT looking for `*emphasis*` or `[links](…)`: both appear in plain
+/// prose and in code, and a false positive here is a lie a language-scoped query
+/// then repeats. Erring toward `text` costs nothing — the node is still indexed and
+/// still searchable.
+pub fn text_language_from_content(content: &str) -> &'static str {
+    for line in content.lines() {
+        let t = line.trim_start();
+        // ATX heading: 1..=6 '#' then a space.
+        let hashes = t.bytes().take_while(|b| *b == b'#').count();
+        if (1..=6).contains(&hashes) && t.as_bytes().get(hashes) == Some(&b' ') {
+            return "markdown";
+        }
+        if t.starts_with("```") {
+            return "markdown";
+        }
+        // Table delimiter row: only pipes, dashes, colons and spaces, with at
+        // least one pipe and one dash.
+        if t.contains('|')
+            && t.contains('-')
+            && t.chars().all(|c| matches!(c, '|' | '-' | ':' | ' '))
+        {
+            return "markdown";
+        }
+    }
+    "text"
 }
 
 /// Canonical language slug for a file PATH, or `None`. Compound-extension aware
@@ -241,6 +287,75 @@ pub fn compute_complexity(body: &str) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// An extension that UNAMBIGUOUSLY means markdown is stamped from the table.
+    ///
+    /// `router.rs` sends `md`, `mdx` and `txt` to the same `doc::process` markdown
+    /// parser, but this table only knew `md` — so `.mdx` nodes were parsed as
+    /// markdown and stamped with no language. MEASURED 2026-09-01: 3 such nodes.
+    #[test]
+    fn unambiguous_markdown_extensions_are_stamped_from_the_table() {
+        for ext in ["md", "markdown", "mdx"] {
+            assert_eq!(
+                language_for_ext_slug(ext),
+                Some("markdown"),
+                "`.{ext}` always means markdown",
+            );
+        }
+    }
+
+    /// `.txt` deliberately does NOT resolve here, because the extension cannot
+    /// decide. `docs/llms/index.txt` is markdown; `docs/License.txt` is not. Only
+    /// the CONTENT knows, and this table only sees a path — so it abstains rather
+    /// than guessing, and [`text_language_from_content`] makes the call where the
+    /// content is in hand.
+    #[test]
+    fn txt_abstains_because_the_extension_cannot_decide() {
+        assert_eq!(language_for_ext_slug("txt"), None);
+    }
+
+    /// The llms corpus is markdown despite the extension — headings, tables, fenced
+    /// code. MEASURED: 2,565 null-language section nodes come from
+    /// `docs/llms/**/*.txt`, which is exactly this content.
+    #[test]
+    fn markdown_shaped_text_is_markdown() {
+        let llms = "# Rokkit Switch Component\n\n> iOS-style boolean toggle.\n\n## Props\n\n| Prop | Type |\n|---|---|\n| `value` | bool |\n";
+        assert_eq!(text_language_from_content(llms), "markdown");
+        assert_eq!(
+            text_language_from_content("Intro\n\n## A heading\n\nbody\n"),
+            "markdown",
+            "a setext-free ATX heading anywhere is enough",
+        );
+        assert_eq!(
+            text_language_from_content("some prose\n\n```rust\nfn main() {}\n```\n"),
+            "markdown",
+            "a fenced code block is markdown structure",
+        );
+    }
+
+    /// A licence or a changelog fragment with no markdown structure is text, and
+    /// calling it markdown would be a small lie that a language-scoped query then
+    /// repeats.
+    #[test]
+    fn structureless_prose_is_text() {
+        let licence = "Copyright (c) 2026 Someone\n\nPermission is hereby granted, free of charge,\nto any person obtaining a copy of this software.\n";
+        assert_eq!(text_language_from_content(licence), "text");
+        assert_eq!(text_language_from_content(""), "text", "empty is text, not markdown");
+    }
+
+    /// A `#` that is not a heading must not count. `#include` and a shell comment
+    /// both start a line with `#`, and treating them as headings would call most
+    /// config and C files markdown.
+    #[test]
+    fn a_hash_that_is_not_a_heading_does_not_count() {
+        assert_eq!(text_language_from_content("#include <stdio.h>\nint main(){}\n"), "text");
+        assert_eq!(text_language_from_content("#!/bin/sh\necho hi\n"), "text");
+        assert_eq!(
+            text_language_from_content("#hashtag not a heading\nmore text\n"),
+            "text",
+            "ATX requires a space after the hashes",
+        );
+    }
 
     #[test]
     fn adapter_for_known_extensions() {
