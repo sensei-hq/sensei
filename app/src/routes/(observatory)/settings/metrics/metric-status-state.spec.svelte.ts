@@ -107,6 +107,7 @@ function row(over: Partial<MetricStatusResponse['metrics'][0]> = {}) {
     deactivated: false,
     deactivated_observed_at: null,
     reason_code: 'sealed',
+    last_computed_on: '2026-08-30',
     ...over,
   };
 }
@@ -192,6 +193,27 @@ describe('cadenceLabel + watermarkLabel', () => {
     expect(watermarkLabel(row({ sealed_through: null, reason_code: 'never_computed' }))).toBe(
       'never run',
     );
+  });
+
+  it('names the snapshot cadence, and dates it by the last value', () => {
+    // A snapshot group (cost / coverage / knowledge) computes current state only
+    // and keeps NO watermark by design, so there is no settled-through day. Saying
+    // "never run" of it was the #128 defect; the honest line is when it last
+    // produced a value, which the view now carries as `last_computed_on`.
+    expect(cadenceLabel('snapshot')).toBe('current state');
+    expect(
+      watermarkLabel(
+        row({ cadence: 'snapshot', sealed_through: null, last_computed_on: '2026-09-01' }),
+      ),
+    ).toBe('last computed 2026-09-01');
+  });
+
+  it('still says never run for a snapshot group that has produced nothing', () => {
+    // 189 of the 201 are genuinely this. The new cadence must not turn them into
+    // a reassuring line.
+    expect(
+      watermarkLabel(row({ cadence: 'snapshot', sealed_through: null, last_computed_on: null })),
+    ).toBe('never run');
   });
 
   it('reports a commit cursor when the engine writes one', () => {
