@@ -20,6 +20,37 @@ use crate::api::handlers::err;
 use crate::api::state::AppState;
 use crate::dojo::memberships::{self, NewConnection};
 
+/// `GET /api/dojo/sync-state` — when each entity last agreed with the dōjō, and
+/// what went wrong where it has not.
+///
+/// The first read of `sensei.sync_state`. Three writers existed and nothing
+/// surfaced them, so "when did this last sync?" was answerable only by opening
+/// the database — which is the gap #127 records for the credential too.
+///
+/// Rows arrive worst-first from the store (`error`, `pending`, `skipped`,
+/// `synced`), so a caller rendering the head of the list sees what needs
+/// attention without re-ranking. `counts` is a by-state tally for a summary line,
+/// derived here rather than in a second query.
+///
+/// A read failure is a 500 — an empty list would read as "everything is fine",
+/// which for a sync surface is the most expensive possible lie.
+pub(crate) async fn sync_state(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let rows = state.pg.sync_state_rows().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let mut counts: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
+    for r in &rows {
+        *counts.entry(r.state.as_str()).or_default() += 1;
+    }
+
+    Ok(Json(serde_json::json!({
+        "count": rows.len(),
+        "counts": counts,
+        "entities": rows,
+    })))
+}
+
 /// GET /api/dojo/memberships — list the daemon's Dōjō connections with each
 /// one's bound projects and sync-status. Returns a top-level array (the shape
 /// `docs/spec/pipeline/dojo-lifecycle.md` documents: `jq '.[] | ...'`).

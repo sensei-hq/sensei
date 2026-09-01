@@ -460,6 +460,9 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/dojo/memberships", get(dojo::list_memberships).post(dojo::create_membership))
         .route("/api/dojo/memberships/{id}/orgs", put(dojo::set_membership_orgs))
         .route("/api/dojo/metric-activation", patch(dojo::set_metric_activation))
+        // When each entity last AGREED with the dōjō, and what went wrong where it
+        // has not. `sensei.sync_state` had three writers and no reader.
+        .route("/api/dojo/sync-state", get(dojo::sync_state))
         // R3 infer-at-detect auto-bind: suggestion (read-only) + confirm-bind
         .route("/api/projects/{id}/dojo-suggestion", get(dojo::project_binding_suggestion))
         .route("/api/projects/{id}/dojo-binding", post(dojo::bind_project_to_membership))
@@ -929,6 +932,113 @@ mod tests {
             .await
             .unwrap();
         crate::tasks::test_support::cleanup_metrics_fixture(&state.pg, &pid, Some(&fid), &[]).await;
+    }
+
+    /// `GET /api/dojo/sync-state` — when each entity last agreed with the dōjō,
+    /// and what went wrong if it is not agreeing now.
+    ///
+    /// The store has three WRITERS (`mark_synced` / `mark_sync_error` /
+    /// `mark_sync_skipped`) and had no reader at all, so nothing could show this.
+    ///
+    /// Four properties:
+    ///
+    /// 1. **A failure keeps `synced_at`.** `mark_sync_error` deliberately does not
+    ///    clear it, because it still says when the two sides last agreed — the
+    ///    first thing worth knowing when a sync starts failing. If the read drops
+    ///    it, a broken-since-Tuesday entity is indistinguishable from one that has
+    ///    never synced.
+    /// 2. **`last_error` travels.** A row that says `error` with no message sends
+    ///    the reader to the logs for something the table already knows.
+    /// 3. **`skipped` is not `error`.** Deliberate and faulty must stay
+    ///    distinguishable — the distinction `sensei.sync_state` was built for.
+    /// 4. **A success CLEARS the error.** A stale message beside a `synced` state
+    ///    reads as "it failed".
+    #[tokio::test]
+    async fn get_dojo_sync_state_endpoint() {
+        use crate::db::pg_store::sync::SyncMark;
+        let (app, state) = test_app().await;
+        let uniq = uuid::Uuid::new_v4();
+        let ok_key = format!("test/sync-ok-{uniq}");
+        let err_key = format!("test/sync-err-{uniq}");
+        let skip_key = format!("test/sync-skip-{uniq}");
+
+        let ok = SyncMark { entity: "repository", key: &ok_key, direction: "push" };
+        let err = SyncMark { entity: "repository", key: &err_key, direction: "push" };
+        let skip = SyncMark { entity: "repository", key: &skip_key, direction: "push" };
+
+        state.pg.mark_synced(&ok, Some(7)).await.unwrap();
+        // Synced FIRST, then failed — so this row carries both a `synced_at` and
+        // an error, which is property 1.
+        state.pg.mark_synced(&err, None).await.unwrap();
+        state.pg.mark_sync_error(&err, "the dojo refused: 402").await.unwrap();
+        state.pg.mark_sync_skipped(&skip, "repository is private").await.unwrap();
+
+        let (st, body) = req(app, "GET", "/api/dojo/sync-state", None).await;
+        assert_eq!(st, StatusCode::OK);
+        let rows = body["entities"].as_array().expect("entities is an array");
+        let find = |key: &str| {
+            rows.iter()
+                .find(|r| r["entity_key"].as_str() == Some(key))
+                .unwrap_or_else(|| panic!("row for {key} is served"))
+                .clone()
+        };
+
+        let ok_row = find(&ok_key);
+        assert_eq!(ok_row["state"], "synced");
+        assert!(ok_row["synced_at"].is_string(), "a synced row carries when it agreed");
+        assert!(ok_row["last_error"].is_null(), "nothing failed, so no message");
+
+        // ── 1 + 2: a failure keeps the last agreement AND carries the reason ──
+        let err_row = find(&err_key);
+        assert_eq!(err_row["state"], "error");
+        assert_eq!(
+            err_row["last_error"], "the dojo refused: 402",
+            "the error travels — otherwise the reader goes to the logs for \
+             something this table already knows"
+        );
+        assert!(
+            err_row["synced_at"].is_string(),
+            "a FAILED row keeps synced_at: it still says when the two sides last \
+             agreed, and losing it makes broken-since-Tuesday look never-synced"
+        );
+
+        // ── 3: deliberate is not faulty ─────────────────────────────────────
+        let skip_row = find(&skip_key);
+        assert_eq!(
+            skip_row["state"], "skipped",
+            "a deliberate skip stays distinguishable from a fault — the whole \
+             reason sync_state has four states rather than a boolean"
+        );
+        assert_eq!(skip_row["last_error"], "repository is private");
+
+        // ── 4: recovering clears the message ────────────────────────────────
+        state.pg.mark_synced(&err, Some(9)).await.unwrap();
+        let (st, body) = req(
+            crate::api::routes::create_router(state.clone()),
+            "GET",
+            "/api/dojo/sync-state",
+            None,
+        )
+        .await;
+        assert_eq!(st, StatusCode::OK);
+        let recovered = body["entities"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["entity_key"].as_str() == Some(err_key.as_str()))
+            .cloned()
+            .expect("the recovered row is still served");
+        assert_eq!(recovered["state"], "synced");
+        assert!(
+            recovered["last_error"].is_null(),
+            "a stale error beside a synced state reads as 'it failed'"
+        );
+
+        sqlx_core::query::query("DELETE FROM sensei.sync_state WHERE entity_key = ANY($1)")
+            .bind(vec![ok_key, err_key, skip_key])
+            .execute(state.pg.pool())
+            .await
+            .unwrap();
     }
 
     /// 7.2 `GET /api/projects/{id}/metrics`: latest-per-metric + facets + trend +
