@@ -84,6 +84,15 @@ export function buildNavItems(): NavEntry[] {
       text: "Measurement",
       children: [link("測", "Metrics", "/settings/metrics")],
     },
+    // Dōjō — the credential that reaches it, and what has been agreed. NOT the
+    // connections editor: `/dojo/connections` already owns choosing WHICH dōjōs,
+    // and rebuilding that list here would be a second copy to keep in step. These
+    // two are what had no surface at all — a forge token could only be seen after
+    // it died (the sign-in overlay) or from a terminal.
+    {
+      text: "Dōjō",
+      children: [link("結", "Connection", "/settings/dojo")],
+    },
     { type: "separator" },
     link("拡", "Extensions", "/settings/extensions"),
   ];

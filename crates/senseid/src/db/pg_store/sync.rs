@@ -20,6 +20,30 @@ pub struct SyncMark<'a> {
     pub direction: &'a str,
 }
 
+/// One `sensei.sync_state` row — the shape [`PgStore::sync_state_rows`] returns.
+///
+/// Both timestamps travel, and they answer different questions: `synced_at` is
+/// when the two sides last AGREED, `attempted_at` is when it was last TRIED.
+/// Together they separate "failing repeatedly" from "nobody has run it", which a
+/// single timestamp cannot.
+///
+/// `last_error` is `None` on a `synced` row because the writer clears it — a
+/// stale message beside a success reads as "it failed". On a `skipped` row it
+/// carries the REASON, which is not a fault: `skipped` is deliberate (a private
+/// repository), and conflating the two would either cry wolf about every private
+/// repo or stay silent about real failures.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SyncStateRow {
+    pub entity: String,
+    pub entity_key: String,
+    pub direction: String,
+    pub state: String,
+    pub last_error: Option<String>,
+    pub attempted_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub synced_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+}
+
 /// The push query's column tuple. Named for the same reason `ScheduleRow` and
 /// `TaskExecutionRow` are: ten positional columns inline is a type nobody can
 /// read, and clippy is right to say so.
@@ -134,6 +158,76 @@ impl PgStore {
         .await
         .map_err(|e| format!("mark_sync_skipped: {e}"))?;
         Ok(())
+    }
+
+    /// Every `sensei.sync_state` row: what has been agreed with the dōjō, when,
+    /// and what went wrong where it has not.
+    ///
+    /// The first READER of this table. Three writers existed
+    /// ([`Self::mark_synced`], [`Self::mark_sync_error`],
+    /// [`Self::mark_sync_skipped`]) and nothing read it back, so the answer to
+    /// "when did this last sync?" lived only in the table and was never surfaced.
+    ///
+    /// Carries `last_error` and BOTH timestamps deliberately:
+    ///
+    /// * `synced_at` survives a failure ([`Self::mark_sync_error`] does not clear
+    ///   it), so it still says when the two sides last agreed. Dropping it here
+    ///   would waste that — a broken-since-Tuesday entity would look identical to
+    ///   one that has never synced.
+    /// * `attempted_at` says when it was last TRIED, which with `synced_at` is the
+    ///   difference between "failing repeatedly" and "nobody has run it".
+    ///
+    /// Ordered worst-first — `error`, then `pending`, then `skipped`, then
+    /// `synced` — so a caller rendering the head of the list sees what needs
+    /// attention. Within a state, most-recently-attempted first.
+    ///
+    /// Unbounded by design: one row per (entity × key × direction), which is
+    /// three on this install and grows with repositories, not with metric rows.
+    /// If that changes, the caller wants a summary, not a limit that would hide
+    /// exactly the failing rows this exists to show.
+    pub async fn sync_state_rows(&self) -> Result<Vec<SyncStateRow>, String> {
+        /// `sensei.sync_state` in [`SyncStateRow`] field order. Both enums are
+        /// projected as text so this decodes without the Postgres types.
+        type Row = (
+            String,
+            String,
+            String,
+            String,
+            Option<String>,
+            Option<chrono::DateTime<chrono::Utc>>,
+            Option<chrono::DateTime<chrono::Utc>>,
+            chrono::DateTime<chrono::Utc>,
+        );
+        let rows: Vec<Row> = sqlx_core::query_as::query_as(
+            "SELECT entity::text, entity_key, direction::text, state, last_error,
+                    attempted_at, synced_at, updated_at
+               FROM sensei.sync_state
+              ORDER BY CASE state
+                         WHEN 'error'   THEN 0
+                         WHEN 'pending' THEN 1
+                         WHEN 'skipped' THEN 2
+                         ELSE                3
+                       END,
+                       attempted_at DESC NULLS LAST,
+                       entity::text, entity_key",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| format!("sync_state_rows: {e}"))?;
+
+        Ok(rows
+            .into_iter()
+            .map(|r| SyncStateRow {
+                entity: r.0,
+                entity_key: r.1,
+                direction: r.2,
+                state: r.3,
+                last_error: r.4,
+                attempted_at: r.5,
+                synced_at: r.6,
+                updated_at: r.7,
+            })
+            .collect())
     }
 
     /// Metric rows this machine computed and has not yet pushed, for the
