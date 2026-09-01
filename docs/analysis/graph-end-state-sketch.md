@@ -186,3 +186,88 @@ corrections rather than new structure.
 - ~~Whether `const` should be filtered by `is_exported`.~~ Measured after writing
   this: **2,145 of 3,061 (70%) are exported**, so the kind earns its place as-is.
   Only the 916 unexported ones are arguable, and they are cheap.
+
+---
+
+## 7. The identity question, answered
+
+Asked: could `lib_package` just BE `package`, parented to a `library` the way an
+internal package is, with a `library_id` reference when a library row exists — and
+is `library_id` needed at all, if internal-vs-external is knowable from whether a
+file is associated?
+
+**Yes to the unification, and no to `library_id`.** Both parts hold up against the
+data, with one caveat.
+
+### `file_path` already separates internal from external
+
+```
+kind          total    no file    has file
+lib_symbol    7,424     7,424           0
+lib_package   1,091     1,091           0
+method       59,571         0      59,571
+section     140,016         0     140,016
+file/module  58,432         0      58,432
+...every other kind      0       all filed
+function    130,958    84,379      46,579   ← the exception, and it is a BUG
+```
+
+Every kind is cleanly on one side **except `function`**, where 84,379 nodes (64%)
+have no file — and those are the misattributed stubs of §7.1 below, not real
+functions. **Once those are fixed, "has a file" is a clean discriminator and no
+flag is needed.**
+
+Caveat worth stating: it means "no file **in this folder**". A library that is also
+checked out locally — rokkit is both an app dependency and a repo at
+`/Users/Jerry/Developer/rokkit` — does have files, in a different folder. The
+discriminator is a scoping fact, not an ontological one.
+
+### `library_id` on the node would be a second copy
+
+The lookup already has a single owner: package NAME → `sensei.library_packages` →
+`library_id`, declared by the library itself and landed in `6eea76bf`. Adding
+`library_id` to the node would make two places assert the same mapping, and they
+would drift — which is the failure that has now bitten four times in one day (the
+scan exclusion resolver, the two manifest readers, the import classifier, and §7.1
+below). A join by name costs one index lookup and cannot go stale.
+
+So: `package` nodes parented to a `library` node, `lib_symbol` parented to its
+`package`, internal-vs-external read off `file_path`, and the library row reached
+by name when someone actually wants its docs or skills.
+
+### 7.1 The measurement that makes this urgent
+
+While testing the file-path discriminator: **of 207,874 "resolved" call edges,
+150,157 (72%) point at a file-less node.** Split by target kind:
+
+```
+target_kind   resolved_edges   of which file-less
+function             149,386            108,174    ← stubs
+lib_symbol            41,983             41,983    ← correct
+method                15,541                  0
+class                    806                  0
+struct                   158                  0
+```
+
+Against all 320,692 call edges:
+
+| | edges | share |
+|---|---:|---|
+| resolve to real local code | 57,717 | **18.0%** |
+| resolve to a proper `lib_symbol` | 41,983 | 13.1% |
+| resolve to a misattributed stub | 108,174 | **33.7%** |
+| unresolved | 112,818 | 35.2% |
+
+Sampled stubs: `rust·senseid·api::handlers::observatory·HashMap·get`,
+`rust·senseid·api::handlers::logs·Ok`, `rust·dbd-core·adapter::mock::tests·Some`.
+These are **std** symbols minted as `function` nodes inside the CALLING module's
+namespace — the graph asserting that `HashMap::get` is senseid code.
+
+So the "64.8% resolved" figure this document opened with is inflated **3.6×**. It
+also explains #141: `get_callers` missing a caller is expected when the graph
+reaches real local code 18% of the time. Filed as #146.
+
+An unresolved edge is honest. A stub that names an external symbol and claims local
+provenance is a wrong answer dressed as a resolved one — worse than the gap it
+fills, and the reason §5 step 1 (one classifier, everywhere) is the first thing to
+do rather than the third.
