@@ -417,6 +417,16 @@ impl PgStore {
     /// Propagates a read failure: an empty breakdown would report a codebase with
     /// no dependencies, which no codebase has.
     pub async fn import_target_counts(&self) -> Result<Vec<(String, i64, i64)>, String> {
+        // `COALESCE` guards the DECODE, not a case in the data: `target_name` is
+        // nullable in the schema but MEASURED non-null on all 136,484 import edges
+        // (and no edge anywhere has neither target set — 0 of 715,985). The tuple
+        // decodes to `String`, so a NULL that ever appeared would be a 500 rather
+        // than one odd row.
+        //
+        // Grouped by TARGET, not by class: the classification lives in Rust
+        // (`classify_import`) and putting it here too would be a second copy of the
+        // rule. 136,484 edges reduce to 15,533 distinct targets, so the caller
+        // classifies 15k strings instead of 136k rows.
         sqlx_core::query_as::query_as(
             "SELECT COALESCE(target_name, '') AS target,
                     count(*) AS edges,
