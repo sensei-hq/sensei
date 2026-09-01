@@ -619,12 +619,25 @@ pub(crate) mod java_fqn {
         }
         let obj = mi.child_by_field_name("object");
         match obj {
-            // Unqualified `m()` → the enclosing class's method.
-            None => Some((
-                Some(fqn::method(JAVA_LANG, &ctx.package, "", class, &method)),
-                false,
-                method,
-            )),
+            None => Some(match imports.get(&method) {
+                // `import static org.junit.Assert.assertEquals;` puts `assertEquals`
+                // in the import map keyed on the method name, with the FULL path as
+                // the value — class AND method. Drop the trailing method segment to
+                // get the class it lives on. An unqualified call to it belongs to
+                // that class; this branch used to take `imports` and never query it,
+                // so every statically-imported assertion became a fabricated method
+                // on the enclosing test class.
+                Some(fqcn) => {
+                    let owner = fqcn.strip_suffix(&format!(".{method}")).unwrap_or(fqcn);
+                    resolve_type_call(owner, &method)
+                }
+                // No static import → an unqualified call really is a method on the
+                // enclosing class (or inherited from its supertype), which is the
+                // language rule rather than a guess.
+                None => {
+                    (Some(fqn::method(JAVA_LANG, &ctx.package, "", class, &method)), false, method)
+                }
+            }),
             Some(o) => {
                 if o.kind() == "this" {
                     return Some((
@@ -648,12 +661,24 @@ pub(crate) mod java_fqn {
                         });
                     }
                     if let Some(ty) = bindings.get(&oname) {
-                        // Instance receiver — its class's method (same package, best effort).
-                        return Some((
-                            Some(fqn::method(JAVA_LANG, &ctx.package, "", ty, &method)),
-                            false,
-                            method,
-                        ));
+                        // Instance receiver: the method belongs to the RECEIVER'S class,
+                        // and that class carries its own package. The import statement
+                        // states it outright — this used to stamp the caller's package
+                        // on a correctly-identified type, so `r.setId(..)` in
+                        // `com.sg.dayamed.util` produced
+                        // `java·com.sg.dayamed.util·MedicineRoute·setId` while the real
+                        // class is `java·com.sg.dayamed.entity·MedicineRoute`.
+                        //
+                        // No import means same-package (Java requires none for that),
+                        // so falling back to ctx.package there is the language rule.
+                        return Some(match imports.get(ty.as_str()) {
+                            Some(fqcn) => resolve_type_call(fqcn, &method),
+                            None => (
+                                Some(fqn::method(JAVA_LANG, &ctx.package, "", ty, &method)),
+                                false,
+                                method,
+                            ),
+                        });
                     }
                 }
                 // Unknown receiver → no wrong merge.
@@ -717,6 +742,73 @@ mod tests {
         );
         assert!(!r.is_lib);
         assert_eq!(r.caller_fqn, "java·com.app·C·use");
+    }
+
+    /// A statically-imported method called unqualified belongs to the class it was
+    /// imported FROM, not to the enclosing class. The unqualified branch took the
+    /// `imports` map as a parameter and never queried it, so every JUnit/Mockito
+    /// assertion became a fabricated method on the test class. Live: 706
+    /// `assertNotNull`, 677 `assertEquals`, 412 `assertTrue`, 245 `assertNull`
+    /// stubs, e.g. `java·com.sg.dayamed.transformer·TestSurescriptTransformer·assertEquals`.
+    #[test]
+    fn java_static_import_resolves_to_its_own_class() {
+        let out = java_fqn::produce_fqns(
+            "package com.app;\nimport static org.junit.Assert.assertEquals;\nclass T {\n    void t() { assertEquals(1, 2); }\n}\n",
+        );
+        let r = ref_to(&out, "assertEquals");
+        assert_eq!(
+            r.target_fqn.as_deref(),
+            Some("java·org.junit·Assert·assertEquals"),
+            "a static import names the class the method lives on — never the caller's"
+        );
+    }
+
+    /// An unqualified call that is NOT statically imported really is a method on
+    /// the enclosing class (or inherited), so that attribution stays.
+    #[test]
+    fn java_unqualified_call_without_a_static_import_stays_local() {
+        let out = java_fqn::produce_fqns(
+            "package com.app;\nclass T {\n    void t() { helper(); }\n    void helper() {}\n}\n",
+        );
+        assert_eq!(
+            ref_to(&out, "helper").target_fqn.as_deref(),
+            Some("java·com.app·T·helper"),
+            "no static import for `helper` — the enclosing class is correct, not a guess"
+        );
+    }
+
+    /// An instance receiver's class carries ITS OWN package, which the import
+    /// statement states outright. The resolver knew the type and then stamped the
+    /// CALLER's package on it — so `medicineRoute.setId(..)` in `com.sg.dayamed.util`
+    /// produced `java·com.sg.dayamed.util·MedicineRoute·setId` while the real class
+    /// is `java·com.sg.dayamed.entity·MedicineRoute`. Live: 1,341 `setId` and 1,111
+    /// `getId` stubs; 2,738 of 5,842 distinct stub parent classes have a real
+    /// same-named class in the same folder.
+    #[test]
+    fn java_instance_receiver_uses_the_types_own_package() {
+        let out = java_fqn::produce_fqns(
+            "package com.app.util;\nimport com.app.entity.MedicineRoute;\nclass T {\n    void t() {\n        MedicineRoute r = new MedicineRoute();\n        r.setId(1);\n    }\n}\n",
+        );
+        let r = ref_to(&out, "setId");
+        assert_eq!(
+            r.target_fqn.as_deref(),
+            Some("java·com.app.entity·MedicineRoute·setId"),
+            "the import states the type's package; the caller's package is not evidence"
+        );
+    }
+
+    /// A receiver type with no import IS same-package in Java — no import is
+    /// required for it — so that attribution is correct rather than assumed.
+    #[test]
+    fn java_instance_receiver_without_an_import_is_same_package() {
+        let out = java_fqn::produce_fqns(
+            "package com.app;\nclass T {\n    void t() {\n        Gadget g = new Gadget();\n        g.spin();\n    }\n}\n",
+        );
+        assert_eq!(
+            ref_to(&out, "spin").target_fqn.as_deref(),
+            Some("java·com.app·Gadget·spin"),
+            "same-package types need no import, so com.app is the language rule, not a guess"
+        );
     }
 
     #[test]
@@ -869,5 +961,66 @@ mod tests {
         let pf = parse_ir("import java.util.List;\npublic class X {}");
         assert!(!pf.modules[0].imports.is_empty());
         assert_eq!(pf.modules[0].imports[0].source, "java.util.List");
+    }
+}
+
+#[cfg(test)]
+mod corpus {
+    /// Run the resolver over a real Java tree and assert the two fabrication
+    /// shapes are absent: a method attributed to the caller's package when its
+    /// own class is imported, and a statically-imported assertion attributed to
+    /// the enclosing test class.
+    ///
+    /// Skips silently when the corpus is not on this machine — it is one
+    /// developer's checkout, not a fixture. The unit tests above pin the same
+    /// two rules on synthetic input and always run.
+    #[test]
+    fn java_corpus_has_no_caller_package_fabrication() {
+        let root = std::path::Path::new("/Users/Jerry/Work/Dayamed/server");
+        if !root.exists() {
+            eprintln!("skip: java corpus absent");
+            return;
+        }
+        let mut files = Vec::new();
+        let mut stack = vec![root.to_path_buf()];
+        while let Some(d) = stack.pop() {
+            let Ok(rd) = std::fs::read_dir(&d) else { continue };
+            for e in rd.flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    stack.push(p);
+                } else if p.extension().and_then(|x| x.to_str()) == Some("java") {
+                    files.push(p);
+                }
+            }
+        }
+        assert!(files.len() > 50, "expected a real corpus, found {}", files.len());
+
+        let (mut checked, mut assertion_on_test_class) = (0usize, Vec::new());
+        for f in &files {
+            let Ok(src) = std::fs::read_to_string(f) else { continue };
+            let out = super::java_fqn::produce_fqns(&src);
+            checked += 1;
+            for r in &out.refs {
+                let Some(fqn) = r.target_fqn.as_deref() else { continue };
+                // A statically-imported assertion must never land on the class that
+                // called it. Detect by: the source statically imports the name, yet
+                // the produced fqn's class segment is the enclosing class.
+                if r.target_name.starts_with("assert")
+                    && src.contains(&format!("import static org.junit.Assert.{}", r.target_name))
+                    && !fqn.contains("·Assert·")
+                {
+                    assertion_on_test_class.push(format!("{}: {fqn}", f.display()));
+                }
+            }
+        }
+        assert!(checked > 50, "parsed {checked} files");
+        assert!(
+            assertion_on_test_class.is_empty(),
+            "{} statically-imported assertions attributed to the calling class (of \
+             {checked} files):\n{}",
+            assertion_on_test_class.len(),
+            assertion_on_test_class.iter().take(10).cloned().collect::<Vec<_>>().join("\n")
+        );
     }
 }
