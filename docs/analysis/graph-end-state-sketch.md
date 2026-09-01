@@ -361,3 +361,87 @@ you the package unambiguously. Which means the resolution order is:
 So the import work is not a parallel track to the call work — it is the input to
 it. That is a change to the sequencing in §5: imports move ahead of the call-path
 correction, because the correction needs them.
+
+---
+
+## 9. One `package` kind, edge coverage, and what can be rendered today
+
+Four questions, three of which the data answers outright.
+
+### 9.1 One `package` kind with a DERIVED flag — yes, and it is unambiguous
+
+Measured: `module` is **100% filed** (23,092 nodes, zero file-less) and
+`lib_package` is **100% file-less** (1,091 nodes, zero filed). The two populations
+are perfectly disjoint on `file_path`, so collapsing them into one `package` kind
+introduces no ambiguity at all.
+
+Derive `is_external` in a VIEW, not a column — `file_path IS NULL` already carries
+the fact, and a stored flag would be a second copy of it. That is the same rule
+that settled `library_id` in §7, and the failure it avoids has now bitten five
+times in one day.
+
+The UI should read the view's flag rather than re-deriving from `file_path` itself,
+for the same reason: one owner. Render external groups distinctly (muted fill,
+different border) — the distinction matters to a reader because an external bubble
+is a boundary they cannot edit.
+
+Caveat carried from §7: "file-less" means "no file **in this folder**". A library
+also checked out locally has files, elsewhere. For a per-repository graph view that
+is exactly the right scoping; for a cross-repo view it would need care.
+
+### 9.2 Are all edges covered? No — 36% is untouched
+
+```
+kind             total   resolved   name_only   neither
+calls          320,715    207,874     112,841         0
+references     250,072          0     250,072         0
+imports        136,484          0     136,484         0
+extends          7,863          0       7,863         0
+covers             601        601           0         0
+implements           0          –           –         –
+depends_on           0          –           –         –
+traces_to            0          –           –         –
+rationale_for        0          –           –         –
+duplicates           0          –           –         –
+similar_to           0          –           –         –
+```
+
+The plan covers `calls` + `imports` = 457,199 of 715,735 edges (**64%**).
+
+Untouched: **`references` 250,072 (35%)** and **`extends` 7,863 (1%)**, both at 0%.
+`references` is the single largest unresolved block in the graph and has no plan
+attached to it.
+
+Also: **6 of 11 edge kinds have zero rows** — declared in the enum and never
+written. `rationale_for` is the striking one: 1,700 `rationale` nodes exist and are
+parented, but nothing links a rationale to the thing it justifies, which is the
+entire point of having them.
+
+### 9.3 Can the view render nested bubbles today? Yes — no schema change needed
+
+`parent_id` is **already on the wire**: the graph node query selects
+`id, kind, name, file_path, parent_id, line_start, line_end, degree, community_id,
+folder_id, language, fqn, resolved, is_test`. And external nodes are parented too
+(7,424 of 7,424 `lib_symbol`).
+
+So the nesting the visualisation wants is fully derivable from data the endpoint
+already returns. **The gap is in the client, not the model** — which also confirms
+§2.2's conclusion: do not add a `contains` edge kind. `parent_id` is sufficient and
+already delivered.
+
+### 9.4 Edges with no target — none, but 71% cannot be drawn
+
+Two readings, and they differ sharply:
+
+* **No target at all** (`target_id` and `target_name` both null): **zero**, across
+  all 11 kinds. Every edge names something.
+* **No target NODE** (`target_id` null): **507,260 of 715,735 — 70.8%.** These name
+  a target without pointing at a node, so a renderer cannot draw them as a line
+  between two bubbles.
+
+After the plan (`calls` + `imports` resolved) that would fall to roughly the
+`references` + `extends` share — about **36%** — and the remaining gap would be the
+largest single thing still owed to the visualisation.
+
+Worth stating plainly: the render is possible today, but seven of every ten edges
+have nowhere to land.
