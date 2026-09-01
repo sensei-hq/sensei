@@ -1,58 +1,62 @@
 # Checkpoint
 
-**Slice:** #126 and #127 both COMPLETE. Last commit `9b9adee8`. Branch `develop`.
+**Slice:** #126 · #127 · #128 · #129 · #143 all COMPLETE and closed.
+Last commit `ea6fcbd8`. Branch `develop`.
 
-## Done
+## Done this run
 
-- **#126 metric activation** — dōjō route (`1541b9b2`), daemon proxy (`cb093b4a`),
-  status read (`060f2a22`), screen (`8bb1a671`), honest-empty + e2e (`6feaac57`).
-  `GET /api/metrics/status?repo=<repo_key|uuid>` + `/summary`.
-- **#127 dōjō credential + sync** — endpoint + screen (`2f94488b`), e2e
-  (`9b9adee8`). `GET /api/dojo/sync-state` is the FIRST reader of
-  `sensei.sync_state`; `/settings/dojo` shows credential standing (reusing
-  `PersonaList.describe`) and per-entity agreement.
-- **#142 filed** — `sensei_test` and `sensei_e2e` age out of the DDL tree.
-- **Gates at `9b9adee8`:** 2606 senseid pass, clippy `-D warnings` 0, fmt clean,
-  1678 app unit / 117 files, svelte-check 0/0. e2e: settings-dojo 2 passed,
-  settings-metrics 1 passed / 3 skipped.
+| issue | what landed | commits |
+|---|---|---|
+| #126 | metric activation: read, write, screen | `060f2a22` `8bb1a671` `6feaac57` |
+| #127 | dōjō credential + sync-state surface | `2f94488b` `9b9adee8` |
+| #128 | 12 pairs read never_computed while computing | `3d3f0790` |
+| #129 | per-root scan exclusions, reachable at last | `9d1aca8b` `3265a355` |
+| #143 | the scan now honours those exclusions | `ea6fcbd8` |
+
+- **Gates at `ea6fcbd8`:** 2607 senseid pass / 0 fail / 6 ignored, clippy
+  `-D warnings` 0, fmt clean, 1698 app unit / 118 files, svelte-check 0/0.
+- **Live result:** `find-me-board` 1,230 → 18 folders; total 8,984 → 7,772; and
+  it survives a re-scan. `metric_status` 1,943 rows / 67 repositories intact.
 
 ## Remains, in Jerry's stated order
 
-1. **#128** — 201 (repo × metric) pairs read `never_computed`; attribute them
-   correctly. The `metric_status` view now makes this diagnosable.
-2. **Scan scope** (#129) — non-git roots sweep unbounded; `find-me-board` = 1,230
-   folders.
-3. **Branch tagging vs delete/update** (#130).
+1. **#130** — watcher: a branch switch forces a full reconcile; should tagging
+   replace re-walking?
+2. Then the mockup-alignment pair (#131 sensei, #132 dōjō) and #133
+   (kanji ↔ icon display mode), which is where "clean up the product" was headed.
 
 ## Next command
 
 ```
-gh issue view 128
+gh issue view 130
 ```
+
+## Filed this run, not started
+
+- **#142** `sensei_test` / `sensei_e2e` age out of the DDL tree.
+- **#144** repo-less projects should say `scope=repo` metrics cannot exist.
 
 ## Open questions
 
 - **#138 project/namespace** is a decision, not a task — the repository rung does
   not exist, so project aggregation would aggregate an empty set.
 - **#137** blocks 4,329 user-scope sync rows (no writer sets
-  `personas.principal_id`). Does NOT block activation — the dōjō resolves the
-  caller from the bearer token.
+  `personas.principal_id`). Does not block activation.
 
 ## Known-broken
 
 - **`dojo_memberships.sync_status` is dead.** `memberships::set_sync_status` has
-  zero callers, so every row reads `authenticating` forever and the connections
-  pane's "healthy" count is permanently 0. `sensei.sync_state` is the table that
-  actually knows. Worth an issue or a deletion.
+  zero callers, so every row reads `authenticating` and the connections pane's
+  "healthy" count is permanently 0. `sensei.sync_state` is the table that knows.
 - **e2e populated-path gap.** settings-metrics' three data-dependent tests skip on
   a fresh DB (needs a `sensei.repositories` row; `POST /api/repos` makes a
-  PROJECT). settings-dojo's populated branch was verified by seeding
-  `sensei.sync_state` by hand — SQL is in the spec header.
-- `/settings/projects` e2e fails on a fresh DB; shares no code with either slice.
-  Consistent with **#134**'s 23 triaged failures.
-- **The repo's security-reminder hook has a false positive on the regex `match`
-  sibling method** (the one named the same as the `child_process` function). It
-  fires on ANY file containing that identifier, including Markdown — it blocked
-  this checkpoint until reworded. A regex helper in `$lib/dates.ts` uses
-  `String.match` because of it; `collective-sharing-state.svelte.ts` still holds
-  the older form, so edits there will hit the same wall.
+  PROJECT). settings-dojo's populated branch was verified by hand-seeding
+  `sync_state` — SQL is in that spec's header.
+- `/settings/projects` e2e fails on a fresh DB, unrelated to these slices (#134).
+- **Removing an exclusion enqueues a re-scan that races the prune.** Observed
+  while applying one: clear-then-set in quick succession let the re-scan restore
+  rows the prune had just removed. Harmless now that the scan honours exclusions,
+  but the sequencing is still unguarded.
+- **The security-reminder hook false-positives** on the regex `match` sibling
+  method, in ANY file including Markdown — it blocked a checkpoint until reworded.
+  `$lib/dates.ts` uses `String.match` because of it.
