@@ -15,13 +15,26 @@
 // EXCLUDE_DIRS list correctly does not touch it, and a non-git folder has no
 // `.gitignore` to bound it either.
 //
+// ## Entries are stored RELATIVE to the root
+//
+// `pg_store::folders::resolve_exclusion` joins each stored entry onto its root
+// exactly once — for the live watcher and for the prune, from one place. So the
+// stored form is relative (`Code`, `archive/old`), which is what the existing live
+// data holds.
+//
+// Storing an ABSOLUTE path is therefore a silent no-op: it gets joined anyway and
+// becomes `/root/root/…`, which matches nothing. Measured on this control's first
+// live use — the endpoint answered `{"ok":true,"prunedFolders":0}` with 1,212
+// folders still sitting under the subtree. A pasted absolute path is converted
+// here rather than rejected, because pasting one is the natural thing to do.
+//
 // ## The two forms are not alike
 //
-// `should_watch_path` accepts an ABSOLUTE path (a subtree prefix) or a BARE NAME
-// (any path segment, anywhere under the root). They look almost identical when
-// typed and behave very differently — excluding `docs` to stop one vendored tree
-// would silently drop every `docs` folder under the root. So the UI states which
-// one it is before it is saved, rather than after someone notices what went.
+// After resolution, a SINGLE-SEGMENT entry is compared as `/name/` anywhere under
+// the root, while a multi-segment one is a subtree prefix. They look almost
+// identical when typed and behave very differently — excluding `docs` to stop one
+// vendored tree would drop every `docs` folder under the root. So the UI states
+// which one it is before it is saved, not after someone notices what went.
 
 /** The result of validating what a user typed. */
 export type Normalised =
@@ -45,29 +58,35 @@ export function normaliseExclusion(input: string, rootPath: string): Normalised 
   if (!trimmed) return { ok: false, error: 'Enter a folder name or a path to exclude.' };
 
   const root = rootPath.replace(/\/+$/, '');
-  // `~` is expanded against the ROOT rather than the process home: this runs in a
-  // webview with no home of its own, and a `~` a user types here means "inside
-  // the place I am configuring".
+  // `~` is expanded against the ROOT's parent rather than the process home: this
+  // runs in a webview with no home of its own, and a `~` typed here means "the
+  // home this root lives under".
   const expanded = trimmed.startsWith('~/')
     ? `${root.slice(0, root.lastIndexOf('/'))}/${trimmed.slice(2)}`
     : trimmed;
 
-  if (!expanded.startsWith('/')) return { ok: true, value: expanded };
+  const cleaned = expanded.replace(/\/+$/, '');
+  if (!cleaned.startsWith('/')) return { ok: true, value: cleaned };
 
-  const value = expanded.replace(/\/+$/, '');
-  if (value !== root && !value.startsWith(`${root}/`)) {
+  // Absolute → root-relative, because that is the stored form. A path that cannot
+  // be made relative to THIS root could never match once resolved, so it is
+  // refused rather than stored as something that looks set and does nothing.
+  if (!cleaned.startsWith(`${root}/`)) {
     return {
       ok: false,
-      error: `An absolute exclusion must be inside ${root} — a path elsewhere would never match.`,
+      error: `That path is not inside ${root}, so excluding it here would do nothing.`,
     };
   }
-  return { ok: true, value };
+  return { ok: true, value: cleaned.slice(root.length + 1) };
 }
 
 /** Plain-language statement of what one entry will exclude. Shown BEFORE saving,
  *  because the bare-name form is far broader than it looks. */
 export function describeExclusion(value: string, rootPath: string): string {
-  if (!value.startsWith('/')) {
+  // Single segment → matched as `/name/` anywhere under the root once resolved.
+  // Multi-segment → one subtree. The distinction is invisible in the typed text,
+  // which is why it is spelled out.
+  if (!value.includes('/')) {
     return `Skips every folder named "${value}" anywhere under this root.`;
   }
   const root = rootPath.replace(/\/+$/, '');
