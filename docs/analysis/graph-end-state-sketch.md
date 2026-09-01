@@ -1,5 +1,141 @@
 # The graph's end state — sketched with worked examples
 
+**Status: NOT SAFE TO BUILD FROM. Superseded by review — see the correction block
+below before reading any of it.**
+
+Written 2026-09-01 against live measurements. An adversarial review the same day
+(two independent agents, both re-deriving from code and the live DB) found the
+central claim FALSE and four higher-value concrete bugs this document missed.
+Sections 1–12 are retained for the trail; treat every claim as suspect unless the
+correction block confirms it.
+
+---
+
+## CORRECTION BLOCK (2026-09-01, post-review)
+
+### The root cause in §12 is wrong
+
+§12 claims the parsers build no import registry and that adding one field to
+`FileFqnContext` is the fix. **Verified false.** All four FQN producers already
+build a local-name-keyed registry from the source they parse:
+
+| producer | registry | file:line |
+|---|---|---|
+| rust | `FileScope.use_map` — "Imported leaf name → full use path" | `rust_lang.rs:746`, filled `:789-833` |
+| java | `imports: HashMap<String,String>`, INCLUDING `import static` | `java.rs:416, 429-441` |
+| typescript | `imports: HashMap<String, ImportTarget>`, keyed on `local.name` (so aliases work) | `typescript.rs:527-548` |
+| python | `imports: HashMap<String,String>` | `python.rs:693-694, 707-725` |
+
+Java's producer does not even receive a `FileFqnContext` — it builds its own
+(`java.rs:444`). Adding `ImportRegistry` to that struct would be a FIFTH copy of a
+fact four modules own, and would change **zero** of the 108,174 stubs.
+
+§12's flagship example disproves it twice over: `when` IS in java's map
+(`java.rs:437-439`) and the stub is minted because the unqualified-call branch
+never queries the map it was handed (`java.rs:620-627`); and `HashMap::get` comes
+from `observatory.rs:596`, which writes `std::collections::HashMap::new()` inline
+with **no `use` statement to register**.
+
+### The real defect: four fallback branches that guess
+
+| site | what it does on a registry miss |
+|---|---|
+| `rust_lang.rs:1171-1173` | mints `fqn::item(RUST, ctx.package, module, name)` — the caller's namespace |
+| `rust_lang.rs:981` | `resolve_type_module` miss → `(ctx.package, module, false)` |
+| `typescript.rs:1018-1022` | same shape, `resolve_name`'s `None` arm |
+| `java.rs:620-627` | unqualified call → the enclosing class |
+
+The RULE §11.2 derived survives and is the fix: **never mint an identity you had to
+guess — leave the edge unresolved.**
+
+### Four concrete bugs this document missed, all live
+
+1. **Nested group `use` is mis-parsed.** `rust_lang.rs:796` splits on `"::{"` then
+   on `,`, so `use axum::{extract::{Path,State}, response::Json}` yields leaves
+   `{Path`, `State}`, `{Json`. Live: `rust·senseid·api::handlers::workspace·Json`
+   with **20 in-edges**.
+2. **`super::super::` walks up once.** `rust_lang.rs:1005` consumes one `super`
+   and pastes the rest verbatim →
+   `rust·senseid·tasks::handlers::super::executor·TaskContext·pg`, **32 in-edges**
+   — the highest-in-degree Rust stub, untouched by anything proposed here.
+3. **Function-local `use` is never collected.** `collect_scope` descends only into
+   `mod_item`; 738 indented `use` statements exist. Live example in a file edited
+   today: `codebase.rs:124`.
+4. **Python drops aliased plain imports.** `python.rs:517-524` matches only
+   `dotted_name`, so `import numpy as np` produces no `ParsedImport`; `:540-544`
+   records the original name, not the alias.
+
+### Two consumers the plan would break
+
+* **`folders.props.libs` empties silently.** `resolve.rs:92-102` derives `libs`
+  from `target_id IS NULL`. Resolving imports NULLs `target_name`, so `libs`
+  becomes `[]` and the Observatory reports zero dependencies — a 200 with `[]`,
+  the exact failure the no-fabrication rule forbids. Must be rewritten FIRST.
+* **`extends` has two scheduled fates** (§10.2 delete vs §11.3 fix) and
+  `codebase.rs:55` already consumes it for the Atlas layout.
+
+### Claims retracted
+
+* **"`references` unlocks `rationale_for`/`traces_to` as a by-product"** — false.
+  0 of 1,700 rationale nodes have any out-edge; every `references` edge is sourced
+  from the FILE node. There is no by-product; a rationale→code extractor does not
+  exist.
+* **"`references` are resolvable"** — the targets are not resolvable data. Top
+  values include `/` (2,000 edges), `id`, `true`, `false`, `main`, `429`. And
+  `doc_indexer.rs:587` calls `repo.join(trimmed)` on possibly-absolute paths,
+  which DISCARDS `repo` — hence 54,740 absolute `/Users/Jerry/...` targets against
+  repo-relative `nodes.file_path`. Resolving by name reinstates the bare-name
+  matching Phase 7.1 deliberately retired (`process.rs:1363`).
+* **"`is_lib = classify_import(origin).is_external()`"** — contradicts
+  `import_target.rs:56-62`, which says it "must not be treated as the authority on
+  locality", and would turn a Java project's own `com.app.*` classes into
+  `lib_symbol` nodes (74,325 import edges, the largest language block).
+* **"60–73% resolved, uniform across languages"** — that is the inflated reading.
+  Honest (target has a file): java **9.1**, python 17.9, rust 19.0, js 24.7,
+  svelte 24.9, ts 26.0, sql 72.7. A **2.9× spread**, so §11.1's conclusion that
+  adapters do not differ materially is unsupported.
+* **`$lib`/`$app`/`$env` all local** — `$app` and `$env` are `@sveltejs/kit`
+  virtual modules with no repo file. 240 edges would get LESS correct.
+* **`library_packages` "exists" in §1's what-already-exists table** — the table and
+  writer exist; it has **0 rows**, and no manifest declares `packages`. The other
+  document is right that nothing links `@rokkit/ui` to rokkit.
+
+### Numbers corrected
+
+| claim | actual |
+|---|---|
+| 2,204 local aliases (30%) | **2,556 (34.4%)** over 26 aliases — I summed a truncated top-7 |
+| 10 edge kinds | **11** (`similar_to` omitted from §2.2) |
+| test 24,904 | **35,734** |
+| only `function` straddles the file discriminator | `class` too — **43** file-less |
+| `/Users/Jerry/Developer` holds 67 repositories | unverifiable under any definition (18 at depth 2, 30 daemon git rows). Also corrected in `root_watcher.rs` |
+| stub edges "108,174 edges, 84,379 nodes" | 108,174 edges point at **56,699** nodes; 27,680 of the 84,379 have no inbound edge at all |
+
+### Two things that make verification harder than stated
+
+* **84,379 stub nodes are never deleted.** `prune_file_nodes` filters
+  `file_path = $2`; a stub has NULL. There is no GC path. Worse:
+  `delete_edges_from_sources` removes the in-edges on reindex, so the fix destroys
+  the information needed to verify it. **Stub GC must land WITH the identity fix.**
+* **The live DB cannot be the baseline.** `nodes` has `modified_at` only (bumped on
+  every upsert), so residue from earlier derivations is indistinguishable from
+  fresh output. Every before/after must be taken on a wiped-and-reindexed folder.
+* **"Resolved %" is the wrong headline.** A correct fix converts stubs into
+  unresolved edges or no edges, so the rate FALLS (64.8% → ~31%). The invariant is
+  the STUB COUNT, which must reach 0.
+
+### Alias resolution has an unsourced dependency
+
+`ImportTarget::Alias` carries no target path. `$lib → src/lib` is a SvelteKit
+default; `@/…` (7,032 edges, the largest local class) comes from tsconfig `paths`,
+which live in `.svelte-kit/tsconfig.json` — **gitignored**, and absent for `app/`.
+Indexing quality would depend on whether someone has run a build. Nothing in §5
+provides this mapping.
+
+---
+
+**Original document follows, uncorrected.**
+
 **Status:** design sketch, no indexing changed. Written 2026-09-01 against live
 measurements (430,874 nodes · 715,985 edges · 18 node kinds · 10 edge kinds).
 

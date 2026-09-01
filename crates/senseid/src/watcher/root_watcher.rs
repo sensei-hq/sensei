@@ -184,10 +184,11 @@ pub(crate) fn watch_root_for_path(path: &Path, roots: &[PathBuf]) -> Option<Path
 /// handing it the repository scopes the reconcile to that repository while the
 /// folder rows still land under the right root.
 ///
-/// This matters because of scale, not correctness of the old behaviour:
-/// `/Users/Jerry/Developer` holds 67 repositories, so reconciling the root turned
-/// one `git checkout` into a discovery walk and a per-folder stat sweep across all
-/// of them. The per-FILE cost was never the issue — `process_git_folder`'s
+/// This matters because of scale, not correctness of the old behaviour: a watch
+/// root holds MANY repositories (measured on the dev install: 18 at depth 2, 30
+/// registered as git folders), so reconciling the root turned one `git checkout`
+/// into a discovery walk and a per-folder stat sweep across all of them. The
+/// per-FILE cost was never the issue — `process_git_folder`'s
 /// two-tier gate skips an unchanged file without reading it, and its own comment
 /// names `branch-switch-to-same`.
 ///
