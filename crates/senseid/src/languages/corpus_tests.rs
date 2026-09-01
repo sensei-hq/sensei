@@ -169,3 +169,57 @@ fn docs_corpus_maps_to_markdown_and_txt_abstains() {
     }
     assert_eq!(language_for_ext_slug("txt"), None, "`.txt` is decided by content");
 }
+
+/// A runtime global must never be attributed to the module that called it.
+///
+/// The unresolved arm used to mint `<pkg>·<caller module>·String` per call site,
+/// so one built-in became hundreds of distinct fabricated nodes. Checked over
+/// this repo's own TypeScript and Svelte, which call these constantly.
+#[test]
+fn no_runtime_global_is_attributed_to_the_calling_module() {
+    const GLOBALS: &[&str] = &[
+        "String",
+        "Number",
+        "Boolean",
+        "Object",
+        "Array",
+        "JSON",
+        "Math",
+        "Promise",
+        "fetch",
+        "setTimeout",
+        "clearTimeout",
+        "parseInt",
+        "encodeURIComponent",
+        "console",
+    ];
+    let mut bad = Vec::new();
+    let mut files = 0usize;
+    let mut hits = 0usize;
+    for path in corpus(&["ts", "svelte"]) {
+        let Some((adapter, content)) = read(&path) else { continue };
+        let Some(out) = adapter.fqn_output(&path.to_string_lossy(), &content) else { continue };
+        files += 1;
+        for r in &out.refs {
+            let Some(fqn) = r.target_fqn.as_deref() else { continue };
+            if !GLOBALS.contains(&r.target_name.as_str()) {
+                continue;
+            }
+            hits += 1;
+            // Resolved to the runtime => `lib·…`. Anything else claims the global
+            // is defined in project code.
+            if !fqn.starts_with("lib·") {
+                bad.push(format!("{}: {fqn}", path.display()));
+            }
+        }
+    }
+    assert!(files > 100, "corpus too small: {files} files produced FQNs");
+    assert!(hits > 50, "expected real global usage, saw {hits} references");
+    assert!(
+        bad.is_empty(),
+        "{} runtime globals attributed to project code across {files} files \
+         ({hits} global references seen):\n{}",
+        bad.len(),
+        bad.iter().take(20).cloned().collect::<Vec<_>>().join("\n")
+    );
+}
