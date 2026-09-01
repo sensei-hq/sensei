@@ -11632,3 +11632,117 @@ async fn doc_coverage_cannot_hold_a_stale_pairing() {
     assert!(drift.is_empty(), "the pairing is gone the instant the stem stops matching: {drift:?}");
     s.delete_nodes_by_folder(&fid).await.unwrap();
 }
+
+/// A re-detect must not destroy the model-authored `description`.
+///
+/// `replace_communities_for_folder` DELETEs the folder's rows and re-INSERTs with
+/// `description = NULL`, so every DetectCommunities pass discards prose that cost
+/// a model call to produce — and `enrich_community_descriptions` is capped at 25
+/// communities per folder, so what it wipes it cannot fully replace.
+#[tokio::test]
+async fn re_detect_preserves_the_model_authored_description() {
+    let s = pg_store().await;
+    let fid = create_test_folder(&s, &format!("desckeep_{}", uuid::Uuid::new_v4())).await;
+    let n1 = s
+        .upsert_node(&fid, "function", "a", "a.rs", None, Some("()"), Some(1), Some(2))
+        .await
+        .unwrap();
+    let n2 = s
+        .upsert_node(&fid, "function", "b", "a.rs", None, Some("()"), Some(3), Some(4))
+        .await
+        .unwrap();
+    s.insert_edge(&fid, &n1, Some(&n2), None, None, "calls").await.unwrap();
+
+    crate::indexer::community::detect_communities_for_folder(&s, &fid).await.unwrap();
+
+    // What enrich_community_descriptions writes, off-barrier, after a model call.
+    sqlx_core::query::query(
+        "UPDATE inference.communities
+            SET description = 'the auth module', props = '{\"source\":\"narration-cache\"}'::jsonb
+          WHERE folder_id = $1",
+    )
+    .bind(fid)
+    .execute(s.pool())
+    .await
+    .unwrap();
+
+    // An unchanged graph re-detected — the common case on any re-scan.
+    crate::indexer::community::detect_communities_for_folder(&s, &fid).await.unwrap();
+
+    let rows: Vec<(Option<String>, serde_json::Value)> = sqlx_core::query_as::query_as(
+        "SELECT description, props FROM inference.communities WHERE folder_id = $1",
+    )
+    .bind(fid)
+    .fetch_all(s.pool())
+    .await
+    .unwrap();
+    assert!(!rows.is_empty(), "the folder still has communities");
+    assert!(
+        rows.iter().any(|(d, _)| d.as_deref() == Some("the auth module")),
+        "the model-authored description survives a re-detect of an unchanged graph; got {rows:?}"
+    );
+    s.delete_nodes_by_folder(&fid).await.unwrap();
+}
+
+/// The other half of preserving a description: it must be DISCARDED when the
+/// community is no longer the same cluster.
+///
+/// `community_id` is positional (rank+1), so on a changed graph id 3 can be an
+/// entirely different set of symbols. Keeping the old prose would caption the
+/// wrong thing — a fabricated-looking summary nobody could distinguish from a
+/// real one. The hub set is the evidence; when it differs the text goes.
+#[tokio::test]
+async fn re_detect_discards_a_description_whose_cluster_changed() {
+    let s = pg_store().await;
+    let fid = create_test_folder(&s, &format!("descdrop_{}", uuid::Uuid::new_v4())).await;
+    let a = s
+        .upsert_node(&fid, "function", "a", "a.rs", None, Some("()"), Some(1), Some(2))
+        .await
+        .unwrap();
+    let b = s
+        .upsert_node(&fid, "function", "b", "a.rs", None, Some("()"), Some(3), Some(4))
+        .await
+        .unwrap();
+    s.insert_edge(&fid, &a, Some(&b), None, None, "calls").await.unwrap();
+    crate::indexer::community::detect_communities_for_folder(&s, &fid).await.unwrap();
+
+    sqlx_core::query::query(
+        "UPDATE inference.communities
+            SET description = 'describes the OLD cluster',
+                props = '{\"source\":\"narration-cache\"}'::jsonb
+          WHERE folder_id = $1",
+    )
+    .bind(fid)
+    .execute(s.pool())
+    .await
+    .unwrap();
+
+    // Grow the graph so the hubs change: c becomes the hub of that community.
+    let c = s
+        .upsert_node(&fid, "function", "c", "a.rs", None, Some("()"), Some(5), Some(6))
+        .await
+        .unwrap();
+    let d = s
+        .upsert_node(&fid, "function", "d", "a.rs", None, Some("()"), Some(7), Some(8))
+        .await
+        .unwrap();
+    for src in [a, b, d] {
+        s.insert_edge(&fid, &src, Some(&c), None, None, "calls").await.unwrap();
+    }
+    crate::indexer::community::detect_communities_for_folder(&s, &fid).await.unwrap();
+
+    let stale: (i64,) = sqlx_core::query_as::query_as(
+        "SELECT count(*) FROM inference.communities
+          WHERE folder_id = $1 AND description = 'describes the OLD cluster'",
+    )
+    .bind(fid)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        stale.0, 0,
+        "a description must not survive onto a community whose hubs changed — \
+         captioning the wrong cluster is worse than having no caption"
+    );
+    s.delete_nodes_by_folder(&fid).await.unwrap();
+}
