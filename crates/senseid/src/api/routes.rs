@@ -269,6 +269,9 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/graph/nodes", get(codebase::graph_nodes))
         .route("/api/graph/functions", get(codebase::search_functions))
         .route("/api/graph/types", get(codebase::search_types))
+        // What import edges ARE, by class — 81% of them point outside the codebase
+        // and were being reported as unresolved.
+        .route("/api/graph/imports", get(codebase::graph_imports))
         .route("/api/graph/callers", get(codebase::fn_callers))
         .route("/api/graph/callees", get(codebase::fn_callees))
         .route("/api/graph/files", get(codebase::files_by_tag))
@@ -1035,6 +1038,94 @@ mod tests {
             .execute(state.pg.pool())
             .await
             .unwrap();
+        crate::tasks::test_support::cleanup_metrics_fixture(&state.pg, &pid, Some(&fid), &[]).await;
+    }
+
+    /// `GET /api/graph/imports` — what import edges ARE, not merely that they are
+    /// unresolved.
+    ///
+    /// MEASURED: 136,484 import edges, 0% resolved — which reads as total failure
+    /// and is not. 81% (110,501) point outside the indexed codebase: `node:fs`,
+    /// `java.util.List`, `lombok.Getter`. Those are complete facts about a file's
+    /// dependencies, not resolutions that failed. Only ~19% could ever point at a
+    /// local node.
+    ///
+    /// Same misattribution `sensei.metric_status` carried before #128, and the same
+    /// remedy: name the state instead of implying one.
+    ///
+    /// Three properties:
+    ///
+    /// 1. **Every class in the served breakdown is a known label**, so a caller
+    ///    never renders a bare slug.
+    /// 2. **The per-class edge counts sum to the total.** A breakdown that does not
+    ///    add up is worse than no breakdown — it invites the reader to trust a
+    ///    number that is missing rows.
+    /// 3. **External and local are reported separately**, because conflating them
+    ///    is the entire defect. An install with any import at all must report a
+    ///    non-zero external share, since every codebase imports something it does
+    ///    not contain.
+    #[tokio::test]
+    async fn get_graph_imports_breakdown_endpoint() {
+        let (app, state) = test_app().await;
+        let uniq = uuid::Uuid::new_v4();
+        let (pid, fid) =
+            crate::tasks::test_support::seed_metrics_project_folder(&state.pg, &uniq).await;
+
+        // One of each shape, so the breakdown has something known to report.
+        let src = state
+            .pg
+            .upsert_node(&fid, "file", "src/probe.ts", "src/probe.ts", None, None, None, None)
+            .await
+            .unwrap();
+        for target in ["node:fs", "java.util.List", "./sibling", "$lib/x", "crate::db", "@/alias"] {
+            state.pg.insert_edge(&fid, &src, None, Some(target), None, "imports").await.unwrap();
+        }
+
+        let (st, body) = req(app, "GET", "/api/graph/imports", None).await;
+        assert_eq!(st, StatusCode::OK);
+
+        let classes = body["classes"].as_object().expect("classes is a code → counts map");
+        const KNOWN: [&str; 5] =
+            ["external", "relative", "sveltekit-alias", "ts-alias", "internal"];
+        for name in classes.keys() {
+            assert!(
+                KNOWN.contains(&name.as_str()),
+                "class `{name}` is a known label, not a bare slug"
+            );
+        }
+
+        // 2: the breakdown adds up.
+        let summed: i64 = classes.values().filter_map(|v| v["edges"].as_i64()).sum();
+        assert_eq!(
+            body["total_edges"].as_i64(),
+            Some(summed),
+            "the per-class counts sum to the total: {body}"
+        );
+
+        // 3: external is reported, and separately from local.
+        let external = classes["external"]["edges"].as_i64().unwrap_or(0);
+        assert!(
+            external > 0,
+            "every codebase imports something it does not contain — reporting zero \
+             external means the two are still conflated"
+        );
+        assert!(
+            classes.contains_key("relative"),
+            "the local classes are reported alongside, not folded into external"
+        );
+        assert!(
+            body["external_edges"].as_i64().unwrap_or(0) >= external,
+            "the headline external count agrees with the per-class figure"
+        );
+
+        // The seeded shapes each landed in their own class.
+        for expected in ["external", "relative", "sveltekit-alias", "ts-alias", "internal"] {
+            assert!(
+                classes.contains_key(expected),
+                "seeded a `{expected}` import, so the breakdown reports it: {body}"
+            );
+        }
+
         crate::tasks::test_support::cleanup_metrics_fixture(&state.pg, &pid, Some(&fid), &[]).await;
     }
 
