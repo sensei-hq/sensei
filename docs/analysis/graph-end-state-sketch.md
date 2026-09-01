@@ -48,7 +48,42 @@ with **no `use` statement to register**.
 The RULE §11.2 derived survives and is the fix: **never mint an identity you had to
 guess — leave the edge unresolved.**
 
-### Four concrete bugs this document missed, all live
+**Still open — this is the next slice, and it is NOT what `95ed30f1` did.** Fixing
+the four collection bugs shrinks the population reaching these branches; it does
+not change what they do when they are reached. Two facts to carry in:
+
+- `java.rs:620` is confirmed by measurement: `import static
+  org.mockito.Mockito.when;` **does** populate `imports["when"]` (`java.rs:429-441`
+  strips `static` before taking the leaf), and the unqualified-call branch never
+  reads it. An unqualified call to a statically-imported method is not a method on
+  the enclosing class.
+- **Stub GC must land in the same slice.** `delete_edges_from_sources` removes the
+  in-edges on reindex, and `prune_file_nodes` filters on `file_path = $2` while
+  stubs have `file_path IS NULL` — so 84,379 stub nodes have no GC path and the
+  fix destroys the evidence needed to verify it. The invariant is **stub count →
+  0**, not resolution rate.
+
+### Four concrete bugs this document missed, all live — ALL FOUR FIXED in `95ed30f1`
+
+Fixed 2026-09-01, before any of the design work below. They needed none of it.
+Each language now has ONE grammar-driven binding reader shared by the FQN map and
+both import records; five string-splitting copies are gone. Two further defects
+fell out of the unification: `trim_start_matches("use ")` never matched `pub use`
+(60 re-exports here carried the keywords into the path), and `as` aliases left
+`Error as IoError` as a single name.
+
+Verified by `languages/corpus_tests.rs`, which runs the parsers over the working
+tree and asserts negative invariants. Against the pre-fix parsers, on this repo's
+own **1,398** source files:
+
+| invariant | pre-fix | post-fix |
+|---|---|---|
+| import names containing `{`/`}`/`,` | **66** | 0 |
+| import paths carrying keywords | **65** | 0 |
+| FQNs retaining `super`/`self`/`crate` (387 Rust files) | **111** | 0 |
+
+Rate was deliberately not asserted: a correct fix makes resolved% FALL, because a
+confident pointer at a fabricated node becomes an honest unresolved edge.
 
 1. **Nested group `use` is mis-parsed.** `rust_lang.rs:796` splits on `"::{"` then
    on `,`, so `use axum::{extract::{Path,State}, response::Json}` yields leaves
