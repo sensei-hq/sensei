@@ -31,62 +31,19 @@ pub async fn build_connections(ctx: &TaskContext, task: &Task) -> Result<u32, St
         }
     };
 
-    let nodes = ctx.pg().get_nodes_by_folder(&folder_id).await.unwrap_or_else(|e| { tracing::warn!(error = %e, folder = %folder_name, "build_connections: get_nodes_by_folder failed"); Vec::new() });
-
-    // Separate docs and code nodes
-    let docs: Vec<&serde_json::Value> =
-        nodes.iter().filter(|n| n["kind"].as_str() == Some("doc")).collect();
-    let _functions: std::collections::HashMap<&str, &serde_json::Value> = nodes
-        .iter()
-        .filter(|n| matches!(n["kind"].as_str(), Some("function" | "method")))
-        .filter_map(|n| n["name"].as_str().map(|name| (name, n)))
-        .collect();
-    let files: std::collections::HashMap<&str, &serde_json::Value> = nodes
-        .iter()
-        .filter(|n| n["kind"].as_str() == Some("file"))
-        .filter_map(|n| n["file_path"].as_str().map(|fp| (fp, n)))
-        .collect();
-
-    // Covers = doc-stem × file-stem proximity, a folder-DERIVED set. D2: build
-    // the current set and REPLACE it in one transaction, so a doc that no longer
-    // matches a file (renamed/deleted/moved) drops its stale covers instead of
-    // them accumulating. `covers` becomes a pure function of the current
-    // (docs, files) — idempotent, no duplication (which D1 also prevents).
-    let mut covers: Vec<crate::db::pg_store::EdgeSpec> = Vec::new();
-    for doc in &docs {
-        let doc_id = match crate::api::util::json_uuid(&doc["id"]) {
-            Some(id) => id,
-            None => continue,
-        };
-        let doc_path = doc["file_path"].as_str().unwrap_or("");
-        // e.g. docs/api/auth.md → src/api/auth.ts
-        let doc_stem =
-            std::path::Path::new(doc_path).file_stem().and_then(|s| s.to_str()).unwrap_or("");
-        if doc_stem.is_empty() {
-            continue;
-        }
-
-        for (file_path, file_node) in &files {
-            let file_stem =
-                std::path::Path::new(file_path).file_stem().and_then(|s| s.to_str()).unwrap_or("");
-            if file_stem == doc_stem
-                && file_path != &doc_path
-                && let Some(file_id) = crate::api::util::json_uuid(&file_node["id"])
-            {
-                covers.push(crate::db::pg_store::EdgeSpec {
-                    source_id: doc_id,
-                    target_id: Some(file_id),
-                    target_name: None,
-                    target_file: None,
-                });
-            }
-        }
-    }
-    let edges_created = covers.len() as u32;
-    // Atomic replace (rolls back to the old set on failure — never zero covers).
-    if let Err(e) = ctx.pg().replace_edges_of_kind(&folder_id, "covers", &covers).await {
-        tracing::warn!(error = %e, folder = %folder_name, "build_connections: replace covers failed");
-    }
+    // Doc↔code traceability is NOT built here any more.
+    //
+    // It was 601 `covers` rows in `sensei.edges`, rebuilt wholesale on every index
+    // via `replace_edges_of_kind`, and then read back by the `sensei.doc_coverage`
+    // view — which joined those rows to the very nodes they had been derived from.
+    // The comment that used to sit here conceded what that made it: "covers becomes
+    // a pure function of the current (docs, files) — idempotent."
+    //
+    // A pure function of current stored state is a view, not a row somebody writes.
+    // `doc_coverage` now computes the stem match itself and reproduces all 601 pairs
+    // exactly (verified live, 0 divergent). The `Path::file_stem()` call that lived
+    // here is gone, so the stem rule has exactly one implementation — a move, not a
+    // SQL copy of a Rust rule.
 
     // Dependency detection deliberately does NOT happen here.
     //
@@ -122,12 +79,20 @@ pub async fn build_connections(ctx: &TaskContext, task: &Task) -> Result<u32, St
     // but that pushed edge-heavy giants (e.g. 287k-edge folders) past detect's 600s
     // watchdog, so degree-recompute moved back to its own barrier. Fail-open: a
     // degree miss must not strand the folder.
-    if let Err(e) = ctx.pg().recompute_degrees_for_folder(&folder_id).await {
-        tracing::warn!(error = %e, folder = %folder_name, "build_connections: recompute_degrees failed");
-    }
+    let degrees_changed = match ctx.pg().recompute_degrees_for_folder(&folder_id).await {
+        Ok(n) => n,
+        Err(e) => {
+            tracing::warn!(error = %e, folder = %folder_name, "build_connections: recompute_degrees failed");
+            0
+        }
+    };
 
-    tracing::info!("build_connections: {} — {} traceability edges", folder_name, edges_created);
-    Ok(edges_created)
+    tracing::info!(
+        "build_connections: {} — {} node degrees refreshed",
+        folder_name,
+        degrees_changed
+    );
+    Ok(degrees_changed as u32)
 }
 
 #[cfg(test)]
@@ -239,6 +204,36 @@ mod tests {
         ctx.pg().remove_watch_root(&root_id).await.ok();
     }
 
+    /// `build_connections` no longer produces `covers` edges — `sensei.doc_coverage`
+    /// computes the doc↔code pairing from (docs, files) directly, so storing 601
+    /// rows for a view to read back off the same nodes was duplication.
+    #[tokio::test]
+    async fn build_connections_writes_no_covers_edges() {
+        let ctx = make_ctx().await;
+        let folder_path = format!("/tmp/nocovers_{}", uuid::Uuid::new_v4());
+        let root_id =
+            ctx.pg().add_watch_root(&folder_path, "nc", &serde_json::json!([])).await.unwrap();
+        let fid = ctx.pg().upsert_repo(&root_id, "nc-repo", &folder_path).await.unwrap();
+        // A doc and a stem-matching file: the input the old builder paired.
+        ctx.pg()
+            .upsert_node(&fid, "doc", "design", "docs/design.md", None, None, Some(1), Some(1))
+            .await
+            .unwrap();
+        ctx.pg()
+            .upsert_node(&fid, "file", "design.rs", "src/design.rs", None, None, Some(1), Some(1))
+            .await
+            .unwrap();
+
+        let task = Task::new(TaskKind::BuildConnections, &folder_path, &folder_path);
+        build_connections(&ctx, &task).await.unwrap();
+
+        assert!(
+            ctx.pg().get_edges_by_kind(&fid, "covers").await.unwrap().is_empty(),
+            "the pairing lives in sensei.doc_coverage, not in sensei.edges"
+        );
+        ctx.pg().remove_watch_root(&root_id).await.ok();
+    }
+
     /// `build_connections` must NOT overwrite the dependency list that
     /// `resolve_libs` derived from the manifest.
     ///
@@ -323,63 +318,49 @@ mod tests {
         ctx.pg().remove_watch_root(&root_id).await.ok();
     }
 
+    /// The D2 concern this replaces — "a covers edge whose covered file no longer
+    /// matches is stale and must be removed" — is now structurally impossible
+    /// rather than maintained by a wholesale replace. Nothing is stored, so
+    /// nothing can go stale: rename the file and the pairing simply is not there
+    /// on the next read.
     #[tokio::test]
-    async fn build_connections_replaces_stale_covers() {
-        // D2: covers is REPLACED, not appended. A covers edge whose covered file
-        // no longer matches (renamed/removed) is GONE after build_connections —
-        // the shrink case nothing exercised before. Re-running is idempotent.
+    async fn doc_coverage_cannot_hold_a_stale_pairing() {
         let ctx = make_ctx().await;
-        let folder_path = format!("/tmp/coversreplace_{}", uuid::Uuid::new_v4());
+        let suffix = format!("cr_{}", uuid::Uuid::new_v4().simple());
+        let folder_path = format!("/tmp/{suffix}");
         let root_id =
             ctx.pg().add_watch_root(&folder_path, "cr", &serde_json::json!([])).await.unwrap();
-        let fid = ctx.pg().upsert_repo(&root_id, "cr-repo", &folder_path).await.unwrap();
-        ctx.pg().update_folder_status(&fid, "indexing").await.unwrap();
+        let fid = ctx.pg().upsert_repo(&root_id, &suffix, &folder_path).await.unwrap();
 
-        // Doc "auth.md" + a matching file "auth.rs" (stem "auth"); plus "other.rs".
-        let doc = ctx
-            .pg()
+        ctx.pg()
             .upsert_node(&fid, "doc", "auth", "docs/auth.md", None, None, None, None)
             .await
             .unwrap();
-        let auth = ctx
+        let code = ctx
             .pg()
             .upsert_node(&fid, "file", "auth", "src/auth.rs", None, None, None, None)
             .await
             .unwrap();
-        let other = ctx
-            .pg()
-            .upsert_node(&fid, "file", "other", "src/other.rs", None, None, None, None)
-            .await
-            .unwrap();
 
-        // A STALE covers edge doc→other (as if a prior scan matched it).
-        ctx.pg().insert_edge(&fid, &doc, Some(&other), None, None, "covers").await.unwrap();
+        let drift = ctx.pg().get_doc_drift(&suffix).await.unwrap();
+        assert_eq!(drift.len(), 1, "the stem match pairs, got {drift:?}");
+        assert_eq!(drift[0]["codeFile"], "src/auth.rs");
 
-        let covers_count = "SELECT count(*) FROM sensei.edges WHERE folder_id=$1 AND kind='covers'::sensei.edge_kind";
+        // Rename the file out from under the doc. No task runs; no edge is rewritten.
+        sqlx_core::query::query(
+            "UPDATE sensei.nodes SET file_path = 'src/renamed.rs' WHERE id = $1",
+        )
+        .bind(code)
+        .execute(ctx.pg().pool())
+        .await
+        .unwrap();
 
-        let task = Task::new(TaskKind::BuildConnections, &folder_path, &folder_path);
-        build_connections(&ctx, &task).await.unwrap();
-
-        let (n,): (i64,) = sqlx_core::query_as::query_as(covers_count)
-            .bind(fid)
-            .fetch_one(ctx.pg().pool())
-            .await
-            .unwrap();
-        assert_eq!(n, 1, "exactly the current covers match — stale one removed");
-        let (tgt,): (Option<uuid::Uuid>,) = sqlx_core::query_as::query_as(
-            "SELECT target_id FROM sensei.edges WHERE folder_id=$1 AND kind='covers'::sensei.edge_kind")
-            .bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
-        assert_eq!(tgt, Some(auth), "the surviving covers edge points at the matching file");
-
-        // Idempotent: a second run yields the same single edge.
-        build_connections(&ctx, &task).await.unwrap();
-        let (n2,): (i64,) = sqlx_core::query_as::query_as(covers_count)
-            .bind(fid)
-            .fetch_one(ctx.pg().pool())
-            .await
-            .unwrap();
-        assert_eq!(n2, 1, "re-running build_connections is idempotent");
-
+        let drift = ctx.pg().get_doc_drift(&suffix).await.unwrap();
+        assert!(
+            drift.is_empty(),
+            "the pairing is gone the instant the stem stops matching — no replace \
+             pass, no window in which a stale row is visible; got {drift:?}"
+        );
         ctx.pg().remove_watch_root(&root_id).await.ok();
     }
 
