@@ -484,7 +484,7 @@ mod commands;
 mod config;
 mod dojo;
 mod extensions;
-mod folders;
+pub(crate) mod folders;
 mod governance;
 mod graph;
 mod library;

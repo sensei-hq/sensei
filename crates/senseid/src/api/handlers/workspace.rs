@@ -479,12 +479,13 @@ pub(crate) async fn update_watch_root(
 
     let mut pruned_folders: u64 = 0;
     if let Some(new_list) = body.excluded.as_ref() {
-        let abs = |entry: &str| {
-            format!("{}/{}", root_path.trim_end_matches('/'), entry.trim_start_matches('/'))
-        };
         // Added entries → delete the matching subtree (folders + children).
         for entry in new_list.iter().filter(|e| !old_excluded.contains(*e)) {
-            pruned_folders += state.pg.prune_under_prefix(&abs(entry)).await.unwrap_or_else(|e| {
+            // The SAME resolver the live watcher is registered with, so a stored
+            // exclusion cannot gate the watcher while pruning nothing. A second
+            // copy of this formula is exactly how that happens.
+            let prefix = crate::db::pg_store::folders::resolve_exclusion(&root_path, entry);
+            pruned_folders += state.pg.prune_under_prefix(&prefix).await.unwrap_or_else(|e| {
                 tracing::warn!(error = %e, entry, "update_watch_root: prune excluded subtree failed"); 0
             });
         }

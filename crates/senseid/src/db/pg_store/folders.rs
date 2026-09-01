@@ -12,6 +12,22 @@ pub struct RepoAnchor {
     pub matched_via: String,
 }
 
+/// Resolve ONE stored exclusion entry against its root.
+///
+/// Stored entries are RELATIVE to the root (`"Code"`, `"archive/old"`) — see
+/// `root_exclusion_prefixes_resolves_relative_entries_against_root`. This is the
+/// single place that turns one into the absolute prefix the watcher compares and
+/// the pruner deletes under.
+///
+/// It exists because there were briefly two copies: `root_exclusion_prefixes`
+/// (feeding the live watcher) and a closure in `update_watch_root` (feeding the
+/// prune). Two copies of a path formula is how a stored exclusion comes to gate
+/// the watcher while pruning nothing.
+pub(crate) fn resolve_exclusion(root_path: &str, entry: &str) -> String {
+    let root = root_path.trim_end_matches('/');
+    format!("{root}/{}", entry.trim_start_matches('/').trim_end_matches('/'))
+}
+
 #[allow(dead_code, clippy::too_many_arguments, clippy::type_complexity)]
 impl PgStore {
     /// The absolute-path exclusion prefixes for a watch root — each `excluded`
@@ -35,7 +51,7 @@ impl PgStore {
             .into_iter()
             .filter_map(|e| e.as_str().map(str::to_string))
             .filter(|e| !e.is_empty())
-            .map(|e| format!("{root}/{}", e.trim_start_matches('/')))
+            .map(|e| resolve_exclusion(root, &e))
             .collect())
     }
 

@@ -22,30 +22,33 @@ import {
 const ROOT = '/Users/Jerry/Work';
 
 describe('normaliseExclusion', () => {
-  it('keeps an absolute path under the root as a subtree prefix', () => {
+  // The STORED form is RELATIVE to the root. `pg_store::folders::resolve_exclusion`
+  // joins each entry onto the root exactly once, for both the live watcher and the
+  // prune; existing live data agrees (`["Code"]` on the Developer root).
+  //
+  // Storing an ABSOLUTE path is therefore a silent no-op: the resolver joins it
+  // anyway, producing `/Users/Jerry/Work/Users/Jerry/Work/…`, which matches
+  // nothing. That is not hypothetical — it is what this control did on its first
+  // live use, and the endpoint answered `{"ok":true,"prunedFolders":0}` with 1,212
+  // folders sitting under the subtree.
+  it('converts a pasted absolute path to root-relative', () => {
     expect(normaliseExclusion('/Users/Jerry/Work/find-me-board/docs/proposal/deck-node', ROOT))
-      .toEqual({ ok: true, value: '/Users/Jerry/Work/find-me-board/docs/proposal/deck-node' });
+      .toEqual({ ok: true, value: 'find-me-board/docs/proposal/deck-node' });
   });
 
-  it('strips a trailing slash, which the watcher also trims', () => {
-    // `should_watch_path` does `trim_end_matches('/')` on the absolute form.
-    // Storing the slash would still work, but the stored value and the compared
-    // value would differ, and only one of them is what the user sees.
+  it('strips a trailing slash', () => {
     expect(normaliseExclusion('/Users/Jerry/Work/vendor/', ROOT)).toEqual({
       ok: true,
-      value: '/Users/Jerry/Work/vendor',
+      value: 'vendor',
     });
   });
 
-  it('expands ~ against the root, so a typed home path is not a silent no-op', () => {
-    expect(normaliseExclusion('~/Work/vendor', ROOT).value).toBe('/Users/Jerry/Work/vendor');
+  it('expands ~ and still stores relative', () => {
+    expect(normaliseExclusion('~/Work/vendor', ROOT).value).toBe('vendor');
   });
 
   it('REFUSES an absolute path outside the root instead of storing a no-op', () => {
-    // Exclusions are per root and compared as a prefix of paths under it. A path
-    // elsewhere can never match, so storing it would look like it worked and
-    // change nothing — the worst outcome for a control whose whole job is to
-    // stop a sweep.
+    // It cannot be made relative to this root, so it could never match.
     const res = normaliseExclusion('/Users/Jerry/Developer/other', ROOT);
     expect(res.ok).toBe(false);
     expect(res.error).toContain('/Users/Jerry/Work');
@@ -58,6 +61,10 @@ describe('normaliseExclusion', () => {
     });
   });
 
+  it('keeps an already-relative path as typed', () => {
+    expect(normaliseExclusion('find-me-board/docs', ROOT).value).toBe('find-me-board/docs');
+  });
+
   it('refuses an empty or whitespace-only entry', () => {
     expect(normaliseExclusion('   ', ROOT).ok).toBe(false);
     expect(normaliseExclusion('', ROOT).ok).toBe(false);
@@ -65,18 +72,17 @@ describe('normaliseExclusion', () => {
 });
 
 describe('describeExclusion', () => {
-  it('says a bare name matches EVERYWHERE, which is the surprising case', () => {
-    // The two forms behave very differently and look almost identical when typed.
-    // Someone excluding `docs` to stop one vendored tree would silently lose every
-    // docs folder under the root.
+  it('says a single NAME matches everywhere, which is the surprising case', () => {
+    // A one-segment entry is compared as `/name/` anywhere under the root; a
+    // multi-segment one is a subtree. They look almost identical typed, and
+    // excluding `docs` to stop one vendored tree would drop every docs folder.
     expect(describeExclusion('docs', ROOT)).toContain('every folder named');
   });
 
-  it('says an absolute path is one subtree, and shows it relative to the root', () => {
+  it('says a multi-segment path is one subtree', () => {
     // Matched on the distinguishing PHRASE, not the substring "every" — the
-    // subtree wording legitimately contains "everything under it", so a looser
-    // assertion fails on correct output.
-    const text = describeExclusion('/Users/Jerry/Work/find-me-board/docs', ROOT);
+    // subtree wording legitimately contains "everything under it".
+    const text = describeExclusion('find-me-board/docs', ROOT);
     expect(text).toContain('find-me-board/docs');
     expect(text).not.toContain('every folder named');
   });
@@ -104,7 +110,7 @@ describe('RootExclusions', () => {
   const api = (over: Partial<Record<string, unknown>> = {}) => ({
     updateWatchRoot: vi
       .fn()
-      .mockResolvedValue({ ok: true, data: { excluded: ['/Users/Jerry/Work/vendor'] } }),
+      .mockResolvedValue({ ok: true, data: { excluded: ['vendor'] } }),
     ...over,
   });
 
@@ -112,17 +118,14 @@ describe('RootExclusions', () => {
     const a = api();
     const s = new RootExclusions('root-1', ROOT, ['node_modules'], a as never);
     await s.add('/Users/Jerry/Work/vendor');
-    expect(a.updateWatchRoot).toHaveBeenCalledWith('root-1', [
-      'node_modules',
-      '/Users/Jerry/Work/vendor',
-    ]);
+    expect(a.updateWatchRoot).toHaveBeenCalledWith('root-1', ['node_modules', 'vendor']);
   });
 
   it('adopts the list the daemon echoes back, not the one it sent', async () => {
     const a = api();
     const s = new RootExclusions('root-1', ROOT, ['node_modules'], a as never);
     await s.add('/Users/Jerry/Work/vendor');
-    expect(s.excluded).toEqual(['/Users/Jerry/Work/vendor']);
+    expect(s.excluded).toEqual(['vendor']);
   });
 
   it('refuses a path outside the root WITHOUT calling the daemon', async () => {
