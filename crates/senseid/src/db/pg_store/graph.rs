@@ -1302,11 +1302,21 @@ impl PgStore {
         communities: &[CommunityAssignment],
     ) -> Result<u64, String> {
         let mut tx = self.pool.begin().await.map_err(|e| e.to_string())?;
-        sqlx_core::query::query("DELETE FROM inference.communities WHERE folder_id = $1")
-            .bind(folder_id)
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| e.to_string())?;
+        // Drop only the communities that VANISHED. This used to delete every row for
+        // the folder and re-insert with `description = NULL`, so each re-detect
+        // discarded model-authored prose — and `enrich_community_descriptions` is
+        // capped at 25 communities per folder, so it could not replace what the
+        // refresh wiped. A steady-state re-scan therefore burned model calls
+        // regenerating text it had just thrown away.
+        let surviving: Vec<i32> = communities.iter().map(|c| c.community_id).collect();
+        sqlx_core::query::query(
+            "DELETE FROM inference.communities WHERE folder_id = $1 AND community_id <> ALL($2)",
+        )
+        .bind(folder_id)
+        .bind(&surviving)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| e.to_string())?;
         // Assign members FIRST, each guarded by `IS DISTINCT FROM`, THEN NULL only
         // the leftovers (nodes that had a community but are in none of the new ones)
         // — instead of null-all-then-reset. `community_id` is deterministic for an
@@ -1320,11 +1330,30 @@ impl PgStore {
         let mut changed: u64 = 0;
         let mut all_members: Vec<uuid::Uuid> = Vec::new();
         for c in communities {
-            // Authoritative write: description honest-empty (`props.source='null'`);
-            // enrich_community_descriptions fills real prose later, off-barrier.
+            // Authoritative write for the DERIVED columns. `description` is not
+            // derived — it costs a model call — so it is written once by
+            // `enrich_community_descriptions` (off-barrier) and preserved here.
+            //
+            // Preserved only when this is demonstrably the SAME cluster, evidenced by
+            // an identical hub set. `community_id` is positional (rank+1), so on a
+            // changed graph id 3 can be an entirely different cluster; keeping its old
+            // prose would caption the wrong thing. Differing hubs → the description is
+            // discarded and enrichment regenerates it. Fails closed on doubt rather
+            // than mislabelling.
             sqlx_core::query::query(
                 "INSERT INTO inference.communities(folder_id, community_id, label, node_count, god_node_ids, description, props)
-                 VALUES($1, $2, $3, $4, $5, NULL, '{\"source\":\"null\"}'::jsonb)"
+                 VALUES($1, $2, $3, $4, $5, NULL, '{\"source\":\"null\"}'::jsonb)
+                 ON CONFLICT (folder_id, community_id) DO UPDATE
+                   SET label        = EXCLUDED.label,
+                       node_count   = EXCLUDED.node_count,
+                       god_node_ids = EXCLUDED.god_node_ids,
+                       description  = CASE WHEN communities.god_node_ids = EXCLUDED.god_node_ids
+                                           THEN communities.description END,
+                       props        = CASE WHEN communities.god_node_ids = EXCLUDED.god_node_ids
+                                           THEN communities.props
+                                           ELSE '{\"source\":\"null\"}'::jsonb END,
+                       computed_at  = now(),
+                       modified_at  = now()"
             ).bind(folder_id).bind(c.community_id).bind(&c.label).bind(c.member_node_ids.len() as i32)
                 .bind(&c.god_node_ids)
                 .execute(&mut *tx).await.map_err(|e| e.to_string())?;
