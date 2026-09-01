@@ -17,6 +17,7 @@ import type {
   ObservatoryToday, ObservatoryFtr, ProjectOverview,
   InsightsBoard, LogRow, ScheduledTask,
   MetricStatusResponse, MetricStatusSummary, MetricActivationOutcome,
+  SyncStateResponse,
   IntakeGuide, PlaybookRecommendation,
   ProvisionModel, ProvisionPhase,
 } from './types.js';
@@ -1363,6 +1364,13 @@ export function senseiApi(port: number) {
       tryPatchJson<MetricActivationOutcome>('/api/dojo/metric-activation', {
         persona, repo_key: repoKey, metric, enabled,
       }),
+
+    // ── Dōjō sync state (Settings · Dōjō) ────────────────────────────────────
+    // When each entity last AGREED with the dōjō, and what went wrong where it
+    // has not. Error-propagating: an empty list on a failed read would say
+    // "everything is fine", which for a sync surface is the most expensive lie
+    // available.
+    tryGetDojoSyncState: () => tryGet<SyncStateResponse>('/api/dojo/sync-state'),
 
     // ── Lifecycle ────────────────────────────────────────────────────────
     stop: () => post('/stop', {}, {}),

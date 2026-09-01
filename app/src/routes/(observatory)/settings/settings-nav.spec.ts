@@ -18,13 +18,14 @@ const byHref = (entries: ReturnType<typeof buildNavItems>, href: string) =>
   allLinks(entries).find((l) => l.href === href);
 
 describe("settings buildNavItems", () => {
-  it("exposes four grouped clusters + a trailing leaf", () => {
+  it("exposes five grouped clusters + a trailing leaf", () => {
     const entries = buildNavItems();
     expect(groups(entries).map((g) => g.text)).toEqual([
       "You",
       "Sources",
       "Reasoning",
       "Measurement",
+      "Dōjō",
     ]);
     expect(links(entries).map((l) => l.href)).toContain("/settings/extensions");
   });
@@ -68,6 +69,16 @@ describe("settings buildNavItems", () => {
       "/settings/inference",
     ]);
     expect(byHref(buildNavItems(), "/settings/assignments")).toBeUndefined();
+  });
+
+  it("groups Dōjō → the credential + sync surface, not the connections editor", () => {
+    // `/dojo/connections` (managing WHICH dōjōs) stays in the observatory where it
+    // already lives; this settings entry is the credential standing and what has
+    // been agreed — the two things that had no surface at all. Rebuilding the
+    // membership list here would be a second copy to keep in step.
+    const dojo = groups(buildNavItems()).find((g) => g.text === "Dōjō")!;
+    expect(dojo.children.map((c) => c.href)).toEqual(["/settings/dojo"]);
+    expect(byHref(buildNavItems(), "/settings/dojo/connections")).toBeUndefined();
   });
 
   it("renders a separator before Extensions", () => {

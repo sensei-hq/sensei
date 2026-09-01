@@ -153,6 +153,36 @@ export class PersonaList {
   }
 
   /**
+   * How alarming this persona's credential standing is.
+   *
+   * Beside [`describe`] because the two answer the same question in different
+   * media — the sentence and the colour — and a second copy of the thresholds
+   * would drift from it. `describe` switches wording at one hour; this switches
+   * tone at the same boundary, from the same fields.
+   *
+   * The distinctions matter on a settings screen:
+   *
+   * * `idle` — never connected, or an expiry the daemon has not learned. Nothing
+   *   is wrong. Colouring either red makes a fresh install look broken, and sends
+   *   the user to re-authenticate a credential that is probably fine.
+   * * `ok` — more than an hour left. Renewal is automatic and takes ~6s, so this
+   *   needs no alarm.
+   * * `warn` — under an hour. This is the state #127 exists for: the only current
+   *   surfaces open AFTER death, so there is nowhere to see it coming.
+   * * `dead` — expired. Distinct from `warn` because the action differs: one is a
+   *   heads-up, the other is a thing you must now do.
+   */
+  tone(p: PersonaWire, now: number): 'idle' | 'ok' | 'warn' | 'dead' {
+    if (!p.connected) return 'idle';
+    if (p.forgeToken.state === 'dead') return 'dead';
+    const exp = p.forgeToken.expiresAt;
+    if (exp === null) return 'idle';
+    const seconds = exp - now;
+    if (seconds <= 0) return 'dead';
+    return seconds < 3600 ? 'warn' : 'ok';
+  }
+
+  /**
    * Start a sign-in for one persona in its own fresh window.
    *
    * Addressed by `sessionSlot` when there is one. The label is rewritten to the
