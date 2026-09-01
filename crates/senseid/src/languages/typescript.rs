@@ -558,6 +558,113 @@ pub(crate) mod typescript_fqn {
         out
     }
 
+    /// ECMAScript language built-ins — available with no import in every JS/TS
+    /// runtime, so a call to one is a call into the LANGUAGE, not into the calling
+    /// module. Attributing them to `ctx.module` minted a separate fabricated node
+    /// per caller: live, 1,330 `String` references across 1,321 distinct FQNs.
+    ///
+    /// Kept deliberately narrow — only names that are unambiguously built-in. A
+    /// name absent from these lists falls through to the existing behaviour rather
+    /// than being guessed at from the other direction.
+    const ECMASCRIPT_GLOBALS: &[&str] = &[
+        "Array",
+        "ArrayBuffer",
+        "BigInt",
+        "Boolean",
+        "DataView",
+        "Date",
+        "Error",
+        "EvalError",
+        "Float32Array",
+        "Float64Array",
+        "Function",
+        "Infinity",
+        "Int8Array",
+        "Int16Array",
+        "Int32Array",
+        "Intl",
+        "JSON",
+        "Map",
+        "Math",
+        "NaN",
+        "Number",
+        "Object",
+        "Promise",
+        "Proxy",
+        "RangeError",
+        "ReferenceError",
+        "Reflect",
+        "RegExp",
+        "Set",
+        "String",
+        "Symbol",
+        "SyntaxError",
+        "TypeError",
+        "URIError",
+        "Uint8Array",
+        "Uint16Array",
+        "Uint32Array",
+        "WeakMap",
+        "WeakSet",
+        "decodeURI",
+        "decodeURIComponent",
+        "encodeURI",
+        "encodeURIComponent",
+        "globalThis",
+        "isFinite",
+        "isNaN",
+        "parseFloat",
+        "parseInt",
+        "undefined",
+    ];
+
+    /// Web/Node platform globals. Named apart from the language built-ins because
+    /// they are a different population — a project can run without them (a pure
+    /// library never calls `fetch`), and lumping the two would make that
+    /// undetectable.
+    const PLATFORM_GLOBALS: &[&str] = &[
+        "AbortController",
+        "Blob",
+        "Buffer",
+        "FormData",
+        "Headers",
+        "Request",
+        "Response",
+        "TextDecoder",
+        "TextEncoder",
+        "URL",
+        "URLSearchParams",
+        "WebSocket",
+        "atob",
+        "btoa",
+        "clearInterval",
+        "clearTimeout",
+        "console",
+        "crypto",
+        "document",
+        "fetch",
+        "localStorage",
+        "navigator",
+        "process",
+        "queueMicrotask",
+        "sessionStorage",
+        "setInterval",
+        "setTimeout",
+        "structuredClone",
+        "window",
+    ];
+
+    /// The runtime a bare global belongs to, if any.
+    fn global_runtime(name: &str) -> Option<&'static str> {
+        if ECMASCRIPT_GLOBALS.contains(&name) {
+            Some("ecmascript")
+        } else if PLATFORM_GLOBALS.contains(&name) {
+            Some("webapi")
+        } else {
+            None
+        }
+    }
+
     fn classify_import(spec: &str, current_module: &str) -> ImportTarget {
         if spec.starts_with('.') {
             ImportTarget {
@@ -1015,11 +1122,20 @@ pub(crate) mod typescript_fqn {
                     false,
                     name.to_string(),
                 ),
-                None => (
-                    Some(fqn::item(TS_LANG, &self.ctx.package, &self.ctx.module, name)),
-                    false,
-                    name.to_string(),
-                ),
+                // A runtime global needs no import, so its absence from the map is
+                // not evidence that it lives here. Naming the runtime also merges
+                // every caller's reference onto ONE node instead of minting a
+                // fabricated module-local one each time.
+                None => match global_runtime(name) {
+                    Some(runtime) => {
+                        (Some(fqn::lib(runtime, "globalThis", name)), true, name.to_string())
+                    }
+                    None => (
+                        Some(fqn::item(TS_LANG, &self.ctx.package, &self.ctx.module, name)),
+                        false,
+                        name.to_string(),
+                    ),
+                },
             }
         }
         fn resolve_member(&self, t: &ImportTarget, method: &str) -> (Option<String>, bool, String) {
@@ -1117,6 +1233,66 @@ mod tests {
             def_fqn(&out, "spin"),
             "typescript·app·lib/util·Widget·spin",
             "method nests on its class"
+        );
+    }
+
+    /// A call to a runtime global is not a call into the calling module.
+    ///
+    /// The unresolved arm attributed every unknown name to `ctx.module`, so each
+    /// caller minted its OWN `String`/`fetch`/`setTimeout` node: live, 1,330
+    /// `String` stubs across 1,321 distinct FQNs, 826 `fetch` across 818, 652
+    /// `Number` across 617. Naming the runtime collapses each to one node.
+    #[test]
+    fn ts_runtime_globals_resolve_to_the_runtime_not_the_caller() {
+        let out = produce_ts(
+            "export function f(x: unknown) {\n  String(x);\n  Number(x);\n  parseInt('1');\n}\n",
+            "app",
+            "lib/convert",
+        );
+        for (name, want) in [
+            ("String", "lib·ecmascript·globalThis·String"),
+            ("Number", "lib·ecmascript·globalThis·Number"),
+            ("parseInt", "lib·ecmascript·globalThis·parseInt"),
+        ] {
+            let r = ref_to(&out, name);
+            assert_eq!(r.target_fqn.as_deref(), Some(want), "`{name}` belongs to the runtime");
+            assert!(r.is_lib, "`{name}` is not this project's code");
+        }
+    }
+
+    /// Platform globals are named for the platform, not for ECMAScript — `fetch`
+    /// and `setTimeout` are Web/Node APIs, not language built-ins, and saying so
+    /// keeps the two populations countable apart.
+    #[test]
+    fn ts_platform_globals_are_named_as_platform_not_language() {
+        let out = produce_ts(
+            "export async function f() {\n  await fetch('/x');\n  setTimeout(() => {}, 1);\n}\n",
+            "app",
+            "lib/net",
+        );
+        assert_eq!(
+            ref_to(&out, "fetch").target_fqn.as_deref(),
+            Some("lib·webapi·globalThis·fetch")
+        );
+        assert_eq!(
+            ref_to(&out, "setTimeout").target_fqn.as_deref(),
+            Some("lib·webapi·globalThis·setTimeout")
+        );
+    }
+
+    /// An imported name still wins over the globals list — a module that exports
+    /// its own `fetch` is that module's, and the import states it.
+    #[test]
+    fn ts_an_import_outranks_the_globals_list() {
+        let out = produce_ts(
+            "import { fetch } from './http';\nexport function f() { fetch('/x'); }\n",
+            "app",
+            "lib/net",
+        );
+        assert_eq!(
+            ref_to(&out, "fetch").target_fqn.as_deref(),
+            Some("typescript·app·lib/http·fetch"),
+            "the import is evidence; the globals list is only a fallback"
         );
     }
 
