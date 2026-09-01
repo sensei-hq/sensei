@@ -538,3 +538,124 @@ So "show me only the code graph", "show me only packages", "collapse to depth 2"
 are all client-side filters over data the endpoint already sends. `nodes.tags` is
 NOT the axis to use for this — only 1,685 of 430,874 nodes carry any tag (0.4%),
 so it is effectively empty.
+
+---
+
+## 11. The uniform pipeline, get-or-create, and where patterns belong
+
+Three propositions, and the evidence splits them: one is already true, one is
+already implemented **and is the cause of #146**, and one is right with a
+correction.
+
+### 11.1 "parser → AST → nodes + edges → persist, for all adapters" — already the shape
+
+That pipeline exists:
+
+```
+router::process → code::process → adapter.parse(content) → FileProcessResult {
+    symbols, parent_refs, unresolved_imports, unresolved_calls, fqn
+} → process.rs writes nodes + edges
+```
+
+Every language adapter goes through it. So making it uniform will not, on its own,
+recover the missing links — because the three biggest gaps are not per-language
+disagreements:
+
+* **`imports` 136,484** — no adapter is ASKED to resolve them. The field is named
+  `unresolved_imports`. Uniform adapters all emitting unresolved imports still
+  yields 0%.
+* **`references` 250,072** — written by the DOC processor, not a language adapter
+  at all. No adapter uniformity touches it.
+* **`calls` 112,841** — already uniform: 60–73% resolved in *every* language
+  (§7.1). The residual is receiver-type inference, which no adapter contract fixes.
+
+Uniformity is necessary — the `language` field being filled by one writer, nulled
+by another and read by nobody (§2.3) is exactly the contract rot it would prevent —
+but it is not sufficient. **The links are missing because nothing attempts
+resolution, not because adapters disagree.**
+
+### 11.2 Get-or-create-then-enrich — already implemented, and it is the bug
+
+This is the current design, verbatim from `process.rs`:
+
+> the target is get-or-created by FQN (a stub if its definition isn't indexed yet —
+> **enriched later, keeping the same id**; a `lib_symbol` for an external crate)
+
+And it produced the 108,174 misattributed stubs of §7.1. So the approach is not
+untried; it is in place and failing.
+
+**Why it fails is the useful part, and it is one thing: the stub's IDENTITY is
+wrong.** A stub for `HashMap::get` is minted as
+
+```
+rust·senseid·api::handlers::observatory·HashMap·get
+```
+
+— the caller's namespace. When the real `HashMap::get` is later encountered its FQN
+is `rust·std·std::collections·get`, which is a *different* key, so the enrichment
+never matches. A second node is created and the stub is orphaned forever. That is
+why 84,379 file-less `function` nodes have accumulated rather than converging.
+
+So get-or-create-then-enrich is sound **only if the stub's identity is derivable
+from the reference alone**, independent of who is referencing it. Get that right
+and it is genuinely simpler than a connect pass — no second traversal, and the id
+is stable so edges written early stay valid.
+
+Which is precisely why imports come first (§8): an import statement names the
+package explicitly, so it is the one source that can give a bare call name a
+correct identity. `when` is unidentifiable alone; `when` in a file that imports
+`org.mockito.Mockito.when` is not.
+
+**The corollary is a rule worth stating: never mint a stub whose identity you had
+to guess.** Leave the edge unresolved instead. An unresolved edge is a known gap; a
+stub with a fabricated FQN is a wrong answer that also blocks its own repair.
+
+### 11.3 Patterns are a different plane — and it already exists
+
+Agreed, and the separation is already built. `inference.detected_patterns` has
+**1,429 rows** and exactly the shape described:
+
+```
+name             family   instance_count   is_anti_pattern
+rule-candidates      –               24    f
+correction-prone     –               15    t
+…
+```
+
+plus `instances jsonb`, `evidence jsonb`, `confidence`, `severity`, `lifecycle`.
+"We have an adapter pattern and there are n adapters" is `name='adapter',
+instance_count=n, instances=[…]` — a finding with evidence and a confidence, which
+is not what an edge is. Edges are facts the parser can see; patterns are
+conclusions drawn over many of them, and they change as the code changes without
+any edge changing.
+
+So the six empty kinds do **not** all belong to a pattern pass. They split three
+ways:
+
+| kind | where it belongs | why |
+|---|---|---|
+| `implements` | **the parser** — structural | `class X implements Y`, `impl Trait for Type` is in the syntax. Not a pattern; not inference |
+| `extends` | **the parser**, fixed | currently mislabelled containment from the file node (§10.2). Real inheritance is equally parseable |
+| `rationale_for` | **resolved `references`** | a rationale node → the code it justifies is a doc link, not a detected pattern |
+| `traces_to` | **resolved `references`** | spec → code, same mechanism |
+| `duplicates` | **not an edge** | computed at query time today, correctly. A finding, not a fact |
+| `similar_to` | **not an edge** | embedding search at query time. Same |
+
+So the pattern pass owns nothing currently in the enum — it owns
+`detected_patterns`, which it already has. What the enum should lose is
+`duplicates` and `similar_to`; what it should gain a writer for is `implements`;
+and `rationale_for`/`traces_to` fall out of resolving `references`.
+
+### 11.4 Revised order
+
+1. **Resolve `imports`.** They name their packages, so they are the only source
+   that can give call targets a correct identity.
+2. **Fix stub identity in the call path**, using (1), and never mint a guessed
+   identity — leave it unresolved.
+3. **Resolve `references`** (doc→file, doc→symbol). This is 250,072 edges and it
+   unlocks `rationale_for` and `traces_to` as a by-product.
+4. **Emit `implements`** from the adapters, and fix `extends` to mean inheritance.
+5. **Drop `duplicates` and `similar_to`** from the enum, or accept that they are
+   permanently unwritable.
+
+Steps 1–2 are the same work seen from two ends, which is why they are adjacent.
