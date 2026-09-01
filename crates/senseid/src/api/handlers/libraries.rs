@@ -43,6 +43,82 @@ pub(crate) async fn list_libs(
 }
 
 #[derive(Deserialize)]
+pub(crate) struct ScanManifestsBody {
+    /// Directory to look under — typically the dev root holding sibling library
+    /// checkouts. `~` is NOT expanded here; the caller sends an absolute path.
+    root: String,
+}
+
+/// `POST /api/libs/manifests/scan` — register every `sensei.library.json` under a
+/// root: its skills, its agents, its declared packages, and where it was read from.
+///
+/// Decoupled from doc indexing on purpose. Manifest ingestion used to run only
+/// inside `index_library`, and only when that task happened to carry a local-dir
+/// source, so a library with a manifest but no local docs never got its skills —
+/// and because nothing recorded `local_path`, nothing could ever re-read one.
+/// MEASURED before this existed: rokkit 4 of 5 skills and 2 of 3 agents (both
+/// missing files present on disk), dbd and kavach nothing at all, and
+/// `libraries.local_path` empty on all 1,121 rows.
+///
+/// The library is keyed on the manifest's OWN `library` name, which is the name its
+/// capabilities are addressed by. Its published packages become links so a project
+/// depending on `@rokkit/ui` resolves to them.
+///
+/// A malformed or unreadable manifest is skipped and counted, never fatal: one bad
+/// sibling must not stop the rest being registered. A DB failure IS fatal — a
+/// partial success reported as a success is how this went unnoticed before.
+pub(crate) async fn scan_manifests(
+    State(state): State<AppState>,
+    Json(body): Json<ScanManifestsBody>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let root = body.root.trim();
+    if root.is_empty() {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let root_path = std::path::Path::new(root);
+    if !root_path.is_dir() {
+        return Err(StatusCode::NOT_FOUND);
+    }
+
+    let roots = crate::libraries::find_manifests(root_path, crate::libraries::MANIFEST_SCAN_DEPTH);
+    let mut registered = Vec::new();
+    let mut skipped = 0u32;
+
+    for lib_root in roots {
+        // One read, which now carries the library name too — there is no second
+        // reader to fall out of step with.
+        let Some(m) = crate::libraries::read_manifest(&lib_root) else {
+            skipped += 1;
+            continue;
+        };
+
+        let lib_id = state
+            .pg
+            .upsert_library(&m.library, "npm", None, None, Some("local"), None)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+        match crate::libraries::ingest_manifest_at(&state.pg, &lib_id, &lib_root).await {
+            Some((ns, na, np)) => registered.push(serde_json::json!({
+                "library": m.library,
+                "path": lib_root.to_string_lossy(),
+                "skills": ns,
+                "agents": na,
+                "packages": np,
+            })),
+            None => skipped += 1,
+        }
+    }
+
+    Ok(Json(serde_json::json!({
+        "root": root,
+        "registered": registered.len(),
+        "skipped": skipped,
+        "libraries": registered,
+    })))
+}
+
+#[derive(Deserialize)]
 pub(crate) struct IndexLibBody {
     #[serde(rename = "libName")]
     lib_name: String,
