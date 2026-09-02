@@ -686,35 +686,11 @@ pub(crate) mod typescript_fqn {
         }
     }
 
-    /// Resolve a relative import against the current module path (both `/`-joined,
-    /// extension-free). `lib/util` + `./helper` → `lib/helper`; `+ ../x/y` → `x/y`.
-    fn resolve_relative(current_module: &str, spec: &str) -> String {
-        let mut parts: Vec<&str> = current_module.split('/').filter(|s| !s.is_empty()).collect();
-        parts.pop(); // drop the current file, leaving its directory
-        for seg in spec.split('/') {
-            match seg {
-                "." | "" => {}
-                ".." => {
-                    parts.pop();
-                }
-                s => parts.push(s),
-            }
-        }
-        let joined = parts.join("/");
-        // Drop a trailing file extension on the final segment.
-        match joined.rsplit_once('/') {
-            Some((head, tail)) => format!("{head}/{}", strip_ext(tail)),
-            None => strip_ext(&joined).to_string(),
-        }
-    }
-    fn strip_ext(s: &str) -> &str {
-        for ext in [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".svelte", ".vue"] {
-            if let Some(b) = s.strip_suffix(ext) {
-                return b;
-            }
-        }
-        s
-    }
+    // `resolve_relative` and `strip_ext` MOVED to `languages::import_target`,
+    // which owns specifier arithmetic. The import resolver in `process.rs` needs
+    // the identical arithmetic to build its lookup candidates, and a second copy
+    // here would drift from it — the failure mode named at the top of that module.
+    use crate::languages::import_target::{resolve_relative, strip_ext};
 
     fn walk_stmt(
         stmt: &Statement,

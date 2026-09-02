@@ -257,6 +257,35 @@ impl PgStore {
         Ok(row.0)
     }
 
+    /// LOOK UP a node by fqn without creating anything — `None` when absent.
+    ///
+    /// The counterpart [`Self::upsert_node_by_fqn`] get-or-CREATES, which makes it
+    /// unusable for multi-candidate matching: creating a stub on candidate 1 would
+    /// satisfy candidate 1 forever, so the real target sitting at candidate 2
+    /// could never be found. An import specifier has several plausible fqns (a
+    /// `src/`-stripped variant, an unstable language segment), so it needs a
+    /// non-mutating probe first and a create only after every candidate misses.
+    ///
+    /// Folder-scoped, and that scope is load-bearing: fqns are only unique per
+    /// folder (`nodes_unique_fqn` is `(folder_id, fqn)`), so an unscoped lookup
+    /// would resolve an import to an identically-named module in a DIFFERENT
+    /// checkout — and 5 repos here have two checkouts each.
+    pub async fn node_id_by_fqn(
+        &self,
+        folder_id: &uuid::Uuid,
+        fqn: &str,
+    ) -> Result<Option<uuid::Uuid>, String> {
+        let row: Option<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
+            "SELECT id FROM sensei.nodes WHERE folder_id = $1 AND fqn = $2",
+        )
+        .bind(folder_id)
+        .bind(fqn)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| format!("node_id_by_fqn: {e}"))?;
+        Ok(row.map(|(id,)| id))
+    }
+
     /// Get-or-create a node by its fully-qualified name (SCIP/LSIF moniker model).
     /// A REFERENCE (`def = None`) creates — or returns — an unresolved STUB
     /// (`resolved=false`, NULL `file_path`). A DEFINITION (`def = Some`) creates or

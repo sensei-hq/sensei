@@ -3,9 +3,21 @@
 //! Tasks form a dependency tree:
 //!   scan_root → process_git_folder → process_folder → process_file → resolve_libs → build_connections → detect_communities
 //!
-//! FQN call/import edges resolve to their target node AT EMIT (Phase 7.1), so
-//! there is no `resolve_edges` pass. Barrier tasks (resolve_libs,
-//! build_connections, detect_communities) wait for all dependencies to complete.
+//! FQN call edges, and LOCAL import edges, resolve to their target node AT EMIT
+//! (Phase 7.1) — so there is no `resolve_edges` pass, and adding one would be the
+//! wrong shape. Emit-time resolution is order-independent because a miss creates a
+//! stub on the target's own fqn which the target's later definition enriches in
+//! place, keeping the id.
+//!
+//! EXTERNAL import edges stay unresolved by design and keep `target_name`: the
+//! package name IS the useful answer to "what does this file depend on", and it is
+//! the only place that string survives (a resolved edge has a NULL `target_name`).
+//! This sentence previously claimed ALL import edges resolved at emit, which was
+//! false for every one of them — `process.rs` passed `target_id = None`
+//! unconditionally, so 0 of 162,690 resolved.
+//!
+//! Barrier tasks (resolve_libs, build_connections, detect_communities) wait for all
+//! dependencies to complete.
 
 pub mod activity_pruner;
 pub mod advance_run_scheduler;
