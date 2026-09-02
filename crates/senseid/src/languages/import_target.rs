@@ -240,6 +240,40 @@ pub fn strip_ext(s: &str) -> &str {
     s
 }
 
+/// What an import specifier anchors a symbol's FQN to.
+///
+/// The FQN path needs one decision from a specifier — local module or external
+/// package — and it must be the SAME decision the resolver makes, or a symbol
+/// gets filed under a package while the import edge points at a local module.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ImportAnchor {
+    /// A module inside this package: `fqn::item(lang, package, module, name)`.
+    Local { module: String },
+    /// Outside it: `fqn::lib(package, spec, name)`.
+    External { package: String },
+}
+
+/// Where an import specifier anchors — the one owner of that decision.
+///
+/// A specifier this classifies as LOCAL but cannot place (`$app/navigation`,
+/// `$env/dynamic/public`) anchors as EXTERNAL, and that is not a contradiction:
+/// SvelteKit *provides* those modules, so no local file can exist for them and
+/// their symbols genuinely belong to a package. "Local" in the classifier means
+/// "the string names something in this project's own tree"; anchoring asks the
+/// narrower question "is there a module here to file this under".
+pub fn import_anchor(current_module: &str, spec: &str) -> ImportAnchor {
+    let class = classify_import(spec);
+    if let ImportTarget::External { package } = &class {
+        return ImportAnchor::External { package: package.clone() };
+    }
+    match local_module_candidates(&class, current_module, spec).into_iter().next() {
+        Some(module) => ImportAnchor::Local { module },
+        // Placeable-in-principle, no module in practice — anchor externally on
+        // the same package key the external branch would have produced.
+        None => ImportAnchor::External { package: external_package(spec.trim()) },
+    }
+}
+
 /// The module paths a LOCAL specifier could name, in priority order.
 ///
 /// `src/`-stripped variants are offered because `ts_module_path` already strips a
@@ -647,6 +681,62 @@ mod tests {
         let c =
             local_import_candidates("python", "app", "pkg/mod", "./sib", &ImportTarget::Relative);
         assert_eq!(c, vec!["python·app·pkg/sib"]);
+    }
+
+    /// THE SHADOW-CLASSIFIER DEFECT. `typescript_fqn` had its OWN
+    /// `classify_import` that called every non-dot specifier external, so a
+    /// `@/lib/x` import filed its symbols under a fabricated package named
+    /// `@/lib` — a `lib_symbol` FQN for the project's own code. `804ef1fb` fixed
+    /// the classification in THIS module and wired it to the reporting endpoint
+    /// only; the shadow was never routed through it and stayed wrong for a day.
+    ///
+    /// Breaking mutation: in `typescript_fqn::classify_import`, replace the
+    /// `import_anchor` call with the old inline `spec.starts_with('.')` branch —
+    /// `@/lib/x` anchors External again.
+    #[test]
+    fn an_alias_import_anchors_locally_not_as_a_fabricated_package() {
+        assert_eq!(
+            import_anchor("routes/page", "@/lib/x"),
+            ImportAnchor::Local { module: "lib/x".into() },
+            "@/lib/x is this project's own code, not a package named @/lib",
+        );
+        assert_eq!(
+            import_anchor("routes/page", "~/stores/user"),
+            ImportAnchor::Local { module: "stores/user".into() }
+        );
+        assert_eq!(
+            import_anchor("routes/page", "$lib/triage/view"),
+            ImportAnchor::Local { module: "lib/triage/view".into() }
+        );
+        // Relative anchors on the resolved module, same arithmetic as the resolver.
+        assert_eq!(
+            import_anchor("lib/builder", "./util"),
+            ImportAnchor::Local { module: "lib/util".into() }
+        );
+    }
+
+    /// The distinction that keeps the fix from over-reaching. A scoped npm
+    /// package differs from a tsconfig alias by ONE character after the `@`, and
+    /// SvelteKit's `$app`/`$env` are LOCAL-shaped but framework-PROVIDED — no
+    /// local file can exist for them, so their symbols do belong to a package.
+    #[test]
+    fn packages_and_framework_modules_still_anchor_externally() {
+        for (spec, pkg) in [
+            ("react", "react"),
+            ("@rokkit/ui", "@rokkit/ui"),
+            ("@rokkit/ui/List.svelte", "@rokkit/ui"),
+            ("node:fs", "node:fs"),
+            ("lodash/debounce", "lodash"),
+            // Framework-provided: local-shaped, but there is no file to anchor on.
+            ("$app/navigation", "$app"),
+            ("$env/dynamic/public", "$env"),
+        ] {
+            assert_eq!(
+                import_anchor("routes/page", spec),
+                ImportAnchor::External { package: pkg.into() },
+                "{spec} must anchor on package {pkg}",
+            );
+        }
     }
 
     /// `ts_module_path` strips a leading `src/`, so a `../` that climbs out of
