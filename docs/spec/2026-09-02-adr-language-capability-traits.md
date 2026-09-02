@@ -248,6 +248,61 @@ The matrix is also worth surfacing (an MCP tool or `get_project_summary` field),
 so a caller can see "this repo is 38% Kotlin and Kotlin has no FQN support"
 rather than inferring it from a disappointing result.
 
+### 4g. Two shapes, not one: INTENT vs STORAGE
+
+`GraphFacts` (4d) is what the business layer wants to be TRUE. It is not a row.
+Keeping them distinct matters, because they answer different questions:
+
+| shape | question | owner |
+|---|---|---|
+| `EdgeFact` | "this file imports `./util`, resolve it however you must" | business |
+| `EdgeRow` | "row in `sensei.edges` with these columns" | data |
+
+The persister translates intent → rows, applying `OnMiss`. Conflating them is how
+`process.rs` ended up calling `insert_edge` inline.
+
+### 4h. The data layer needs types before it needs a pattern
+
+MEASURED today:
+
+```
+PgStore:  551 public methods · 139 return untyped serde_json::Value
+Typed Node / Edge / Folder structs:  NONE
+```
+
+Callers read fields stringly: `r["kind"].as_str().unwrap_or("")`
+(`scan.rs:334,342,471,472`). A renamed column or a typo'd key yields `""`, the
+`matches!` falls through, and the folder is silently skipped — a fabricated
+default on a read path, which this project's own rules forbid, reachable from 139
+methods.
+
+**Recommended: typed rows + data-mapper, NOT active record.**
+
+```rust
+#[derive(sqlx::FromRow, Serialize, Deserialize)]
+pub struct FolderRow { pub id: Uuid, pub kind: FolderKind, pub abs_path: String, ... }
+```
+
+* **Shape** — one definition, compile-checked. `r["kind"]` becomes `row.kind`; a
+  typo is a build error rather than a silent skip.
+* **Wire format** — `Serialize` DERIVES the JSON the API already hand-builds with
+  `json!({...})`, so the wire shape cannot drift from the row shape.
+* **CRUD** — the store keeps the connection and becomes generic over the shape,
+  instead of 551 bespoke methods.
+* **Built from outside** — the business layer constructs values with no DB
+  knowledge, which is the whole point.
+
+Active record was considered and rejected: an entity that persists itself needs a
+pool or transaction handle, so it either carries a lifetime that infects every
+task or takes the store as an argument — which is data-mapper with extra steps —
+and it makes entities unconstructable without a database, losing cheap unit
+tests.
+
+**Scope discipline.** 551 methods is not a rewrite. New code uses typed rows;
+existing methods convert when touched (the boy-scout rule), starting with the
+ones this ADR's slices already modify. `FolderRow` first — it has the most
+stringly-typed readers.
+
 ## 5. Sequencing (forward-only, each independently shippable)
 
 1. **This ADR.** Cheapest point to disagree.
