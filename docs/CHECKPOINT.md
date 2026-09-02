@@ -1,54 +1,36 @@
 # Checkpoint
 
-**Slice:** doc-reference extraction fixed (`a3edfe9c`); before that, ALL local
-import classes resolve — rust use-paths (`d910c291`)
-on top of the shadow-classifier retirement (`8035ec3e`), local imports
-(`cc534c63`), the stub-GC ordering fix (`a7a1bee9`) and the MCP shape fixes
-(`93cef04a`). Branch `develop`. Gates: rust 2,693/0, app 1,698/118, clippy 0,
-fmt clean.
+**Slice:** FULL REINDEX DONE — 51,971 files / 8,855 folders in ~30 min on the
+binary built from HEAD. Every **local** import now resolves graph-wide. Branch
+`develop`, last code commit `a3edfe9c`.
 
-## Doc references: three extractor defects
+## Reindex result
 
-`extract_file_refs` scanned prose OUTSIDE backticks (its sibling
-`extract_fn_mentions` filters `i % 2 == 1` twelve lines away), and `Path::join`
-REPLACES the path when its argument is absolute — so `repo.join("/")` is `/`,
-which exists and got inserted: 2,038 live edges targeting literally `/`.
-`extract_fn_mentions` also took any all-alphanumeric token, so 4,342 edges
-targeted things like `429`; rejected now by a leading-digit rule, which is the
-language's own identifier rule rather than a denylist.
+Cleared `sensei.scan_state` entirely (replace-per-file) rather than wiping
+folders — no data loss, no 12-minute cascade delete.
 
-No keyword/env-var denylist: `true`/`PORT`/`JWT_SECRET` still extract, and the
-honest filter for them is resolution — they will not match a node.
+| | before | after |
+|---|---|---|
+| imports resolved | 21,153 / 162,689 (13.0%) | **25,786 / 162,691 (15.8%)** |
+| references | 250,939 (0%) | **241,514** (0%) — 9,425 garbage edges gone |
+| calls | 218,766 / 336,180 (65.1%) | 218,941 / 336,400 (65.1%) — untouched |
+| extends | 7,901 / 0 | 7,901 / 0 — untouched |
+| nodes / folders | 728,304 / 8,855 | 727,939 / 8,855 |
+| communities | 46,372 | 44,760 (−1,612 phantom) |
 
-**Measured** (sensei, forced reindex): `/` 204 → 0, bare numbers 22 → 0.
+**Every local import resolves.** By bucket across all 162,691 edges: RESOLVED
+25,786 · external 136,642 (correct) · `$virtual` 263 (framework, correct) ·
+**zero** relative / alias / rust-internal / `$lib` misses. The 25,786 matches the
+pre-fix local count of ~25,693, which is what confirms the plateau mid-run was
+completeness rather than a stall.
 
-**Correcting my own framing:** I had bucketed all `target_name LIKE '/%'` as
-garbage. Most is not — `extract_file_refs` RETURNS the joined absolute path by
-design. Only `/` and near-`/` were the bug.
+**15.8% is the correct ceiling, not a shortfall** — 84% of imports here are
+genuinely external, and a resolved edge would be *wrong* for them: the package
+name in `target_name` is the answer, and it is the only place that string
+survives.
 
-**And that surfaces why `references` is 0% resolved, which is NOT these three
-defects:** file-ref targets are absolute while node `file_path` is mostly
-repo-relative, so they cannot match — and `file_path` is not even internally
-consistent (`.env.dev` alongside an absolute path to `app/`). That is the next
-slice and needs its own measurement.
-
-## Rust use-paths: imports 1,911 → 2,434
-
-`local_import_candidates` returned empty for `ImportTarget::Internal`, so 1,151
-`crate::`/`self::`/`super::` edges stayed unresolved. `classify_segments` already
-had the arithmetic — including the leading-`super` up-count fold whose comment
-records what a second copy cost before (`tasks::handlers::super::executor`, a
-module that never existed) — so the pure half became
-`rust_lang::internal_use_module` and `classify_segments` now calls it.
-
-Rust needs two candidate SHAPES, not two module paths: `use crate::db::pg_store`
-names either the module `db::pg_store` or an item `pg_store` in module `db`, and
-only the graph knows which. The lookup-first probe picks whichever exists.
-
-**Measured:** +523, exactly the rust-internal count; that bucket is now empty.
-Remaining unresolved are 1,145 external, 71 `$app`/`$env`, 2 `$kavach` — all
-correct, since those virtual modules are framework-*provided*. `graphHealth`
-imports across the three slices: **0% → 52% → 66%**.
+The −9,425 references edges are the doc-extraction fix landing globally. That
+kind is still 0% *resolved* because resolution for it was never written.
 
 ## The `@/` fix that was "already done" — and wasn't live
 
@@ -101,24 +83,26 @@ the only place that string survives), 523 rust-internal (staged), 71 `$app`/`$en
 (framework, no local file). **Zero** unresolved relative/`$lib`/`@/`/`~/` edges,
 against a predicted 86%. `graphHealth` reports imports at 52% where it read 0%.
 
-## Next
+## Next — in recommended order
 
-1. **Externals → `lib_symbol`** — 136,997 edges. MUST be lookup-first: 59% of
-   edges (Java/Kotlin/Python-absolute/C) are locally-owned packages that merely
-   look external, and a local hit must win.
-2. **`references` still 0% resolved** — extraction is fixed, but the
-   absolute-target vs repo-relative-`file_path` mismatch remains, and
-   `nodes.file_path` is itself inconsistent. Measure that before resolving.
-3. **`library_usage.unresolved_import_count`** (`library_usage.ddl:9-14`) counts
-   unresolved edges of ANY kind, so its name over-promises. LATENT, not live: all
-   9 matching edges are `imports`, because an unresolved external call resolves
-   to a `lib_symbol` and never satisfies `target_id IS NULL`. One-line fix.
-4. **`libraries.rs:62-119`** is still a third copy of the import filter (no `@/`
-   or `~/` skip) — but INERT: its output goes to `folders.props.libs`, not to
-   `sensei.libraries`/`referenced_libraries` (both zero alias rows), and
-   `props.libs` is the clobbered-and-unread field from `95e23315`. Cosmetic;
-   route it through the owner when convenient. (I earlier repeated an agent's
-   claim that it produced live wrong libraries — it does not.)
+1. **`references` resolution** — 241,514 edges at 0%, the largest broken kind,
+   and **now unblocked**. I previously called it blocked on a format mismatch;
+   measured, that was overstated: 666,511 of 673,929 node `file_path` values
+   (98.9%) are repo-relative, so normalise doc-ref targets to repo-relative and
+   reuse the existing fqn/file lookup. The 7,418 absolute `file_path` rows (1.1%)
+   are a separate small inconsistency.
+2. **`extends` 7,901 / 0%** (#147) — small, and `codebase.rs:55` consumes it, so
+   a live reader silently gets nothing.
+3. **Externals → `lib_symbol`** — 136,642 edges. Largest count, riskiest: mints
+   nodes, and MUST be lookup-first because 59% of edges (Java/Kotlin/
+   Python-absolute/C) are locally-owned packages that merely *look* external.
+4. **46,117 unknown stubs** — all have in-edges, so no GC touches them;
+   java-dominated. Need resolution.
+5. **TS/JS local callbacks** — `t` (573), `fn` (189), `setLoading` (235) need a
+   locally-declared-names pre-pass.
+6. Latent/cosmetic: `library_usage.unresolved_import_count` missing a kind
+   filter; `libraries.rs` third classifier copy (inert); #150 content-hash
+   identity (684 multi-folder path groups); #149 community re-measure.
 
 ## Known-broken
 
