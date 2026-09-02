@@ -11847,3 +11847,50 @@ async fn prune_orphan_stubs_never_cascades_onto_real_children() {
     assert_eq!(kids, 1, "the real method survives — 574 of these exist live");
     s.delete_nodes_by_folder(&fid).await.unwrap();
 }
+
+/// Branch belongs in the typed column, and `graph_nodes` must expose it.
+///
+/// `folders.branch` was declared but had ZERO writers — NULL in all 7,772 rows —
+/// while `process_git_folder` wrote `props->>'branch'` instead. Two stores for
+/// one fact, and the dead one was the typed, indexable one.
+///
+/// It is a real partition key: the design is one folder per checkout ("develop
+/// vs main = two folders, one repository"), and that is already live — fitness,
+/// strategos and website each have two folder rows on two branches. So filtering
+/// `graph_nodes` by branch separates the graphs, because folder_id already does.
+#[tokio::test]
+async fn folder_branch_is_a_typed_column_and_a_graph_nodes_dimension() {
+    let s = pg_store().await;
+    let fid = create_test_folder(&s, &format!("br_{}", uuid::Uuid::new_v4())).await;
+    s.set_folder_branch(&fid, "release/v9").await.unwrap();
+    s.upsert_node(&fid, "function", "f", "src/a.rs", None, None, Some(1), Some(2)).await.unwrap();
+
+    let (col,): (Option<String>,) =
+        sqlx_core::query_as::query_as("SELECT branch FROM sensei.folders WHERE id = $1")
+            .bind(fid)
+            .fetch_one(s.pool())
+            .await
+            .unwrap();
+    assert_eq!(col.as_deref(), Some("release/v9"), "written to the typed column");
+
+    let (via_view,): (Option<String>,) = sqlx_core::query_as::query_as(
+        "SELECT branch FROM sensei.graph_nodes WHERE folder_id = $1 LIMIT 1",
+    )
+    .bind(fid)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(via_view.as_deref(), Some("release/v9"), "and filterable from the graph view");
+
+    // Idempotent, and a re-index to the same branch changes nothing.
+    s.set_folder_branch(&fid, "release/v9").await.unwrap();
+    s.set_folder_branch(&fid, "main").await.unwrap();
+    let (after,): (Option<String>,) =
+        sqlx_core::query_as::query_as("SELECT branch FROM sensei.folders WHERE id = $1")
+            .bind(fid)
+            .fetch_one(s.pool())
+            .await
+            .unwrap();
+    assert_eq!(after.as_deref(), Some("main"), "a switch updates it in place");
+    s.delete_nodes_by_folder(&fid).await.unwrap();
+}
