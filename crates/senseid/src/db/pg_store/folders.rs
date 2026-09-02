@@ -472,6 +472,27 @@ impl PgStore {
         Ok(row.0)
     }
 
+    /// Just the folder IDs under one watch root — the scope a root-level
+    /// reconcile step needs to hand to a `_scoped` query.
+    ///
+    /// Separate from [`Self::list_folders_by_root`] because that returns the full
+    /// row as JSON for every folder (7,642 of them under this machine's
+    /// `Developer` root), and a caller that only needs a scope array would be
+    /// paying for eight columns plus JSON construction per folder to throw all of
+    /// it away.
+    pub async fn folder_ids_for_root(
+        &self,
+        root_id: &uuid::Uuid,
+    ) -> Result<Vec<uuid::Uuid>, String> {
+        let rows: Vec<(uuid::Uuid,)> =
+            sqlx_core::query_as::query_as("SELECT id FROM sensei.folders WHERE root_id = $1")
+                .bind(root_id)
+                .fetch_all(&self.pool)
+                .await
+                .map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(id,)| id).collect())
+    }
+
     pub async fn list_folders_by_root(
         &self,
         root_id: &uuid::Uuid,

@@ -1016,9 +1016,32 @@ impl PgStore {
     /// Folder-scoped and idempotent — 84ms on this repo's largest folder (141,186
     /// nodes). Returns rows deleted.
     pub async fn prune_orphan_stubs(&self, folder_id: &uuid::Uuid) -> Result<u64, String> {
+        self.prune_orphan_stubs_scoped(std::slice::from_ref(folder_id)).await
+    }
+
+    /// [`Self::prune_orphan_stubs`] across several folders in one statement — the
+    /// form the scan_root reconcile needs.
+    ///
+    /// It exists because the reconcile's `dedup_structural_folder_nodes` CREATES
+    /// this garbage: deleting a structural duplicate cascades its edges away, and
+    /// an edge pointing at a stub is exactly what made that stub ineligible. The
+    /// per-folder pass already ran at the community barrier by then, so nothing
+    /// collected the newly-orphaned rows — measured 9,863 of them, every one in a
+    /// `kind='folder'` folder, the dedup's exact target set.
+    ///
+    /// One statement rather than a loop over folders: the reconcile is
+    /// root-scoped and a watch root here holds 7,642 folders, so per-folder round
+    /// trips would dominate a pass that is otherwise a single indexed delete.
+    pub async fn prune_orphan_stubs_scoped(
+        &self,
+        folder_ids: &[uuid::Uuid],
+    ) -> Result<u64, String> {
+        if folder_ids.is_empty() {
+            return Ok(0); // genuine: no folders in scope, nothing to collect
+        }
         let res = sqlx_core::query::query(
             "DELETE FROM sensei.nodes n
-              WHERE n.folder_id = $1
+              WHERE n.folder_id = ANY($1)
                 AND n.file_path IS NULL
                 AND n.kind NOT IN ('lib_symbol'::sensei.node_kind, 'lib_package'::sensei.node_kind)
                 AND NOT EXISTS (
@@ -1027,7 +1050,7 @@ impl PgStore {
                 AND NOT EXISTS (
                     SELECT 1 FROM sensei.nodes c WHERE c.parent_id = n.id)",
         )
-        .bind(folder_id)
+        .bind(folder_ids)
         .execute(&self.pool)
         .await
         .map_err(|e| format!("prune_orphan_stubs: {e}"))?;
@@ -1043,13 +1066,13 @@ impl PgStore {
         if res.rows_affected() > 0
             && let Err(e) = sqlx_core::query::query(
                 "DELETE FROM inference.communities c
-                  WHERE c.folder_id = $1
+                  WHERE c.folder_id = ANY($1)
                     AND NOT EXISTS (
                         SELECT 1 FROM sensei.nodes n
                          WHERE n.folder_id = c.folder_id
                            AND n.community_id = c.community_id)",
             )
-            .bind(folder_id)
+            .bind(folder_ids)
             .execute(&self.pool)
             .await
         {
