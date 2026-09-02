@@ -1,56 +1,70 @@
 # Checkpoint
 
-**Slice:** MCP shape + `call_graph` column fixes DONE (`93cef04a`, pushed), after
-the clean rebuild (`268c242f`: 7,642 folders / 408,969 nodes / 731,370 edges).
-Gates: rust 2,679/0, app 1,698/118, dojo 1,535/138, SQL 8, clippy 0, fmt clean.
+**Slice:** stub-GC ordering FIXED and verified in production (`a7a1bee9`), after
+the MCP shape fixes (`93cef04a`) and the clean rebuild (`268c242f`). Branch
+`develop`. Gates: rust 2,680/0, app 1,698/118, dojo 1,535/138, SQL 8, clippy 0,
+fmt clean.
 
-## What was wrong
+## The GC ran before the thing that creates its work
 
-`get_callers("prune_orphan_stubs")` returned `[]` for a symbol with two real
-callers — and the SAME bytes for one that does not exist. `call_graph` exposes
-`tgt.name AS target_name` off a LEFT JOIN, NULL for every unresolved edge while
-the name sits in `unresolved_target`, so filtering the resolved-only column made
-**117,201 of 335,756 `calls` edges (34.9%) unreachable**. The view's own "Common
-queries" comment recommended that exact filter. Six fixes, each TDD +
-mutation-probed:
+Per-folder `prune_orphan_stubs` fires at the community terminal barrier; then
+`scan_root reconcile` runs `dedup_structural_folder_nodes` and deletes the
+structural duplicates — and *that* cascade strips the edges which were the only
+reason those stubs were ineligible. Nothing ran the GC again.
 
-| # | fix | live proof |
-|---|---|---|
-| 1 | `target_symbol` coalesce on `call_graph` | 117,201 edges recovered |
-| 2 | `found` + `coverage` envelope (#148) | not-found now `found:false` |
-| 3 | `is_test_path` bare `tests.rs` | 373 test fns were `is_test=false` |
-| 4 | exact-name-first search | definition #2 → **#1** |
-| 5 | `locality` on callees (read from `graph_nodes`) | `query`/`Ok` external |
-| 6 | `graphHealth` on summary | calls 57%, refs/imports/extends 0% |
+`prune_orphan_stubs_scoped` now runs immediately after the dedup, root-scoped in
+one statement (8,855 folders under a root, so per-folder round trips would
+dominate a single indexed delete), fail-open like the per-folder pass, with
+`stubs_collected` in the reconcile summary. The predicate is untouched and
+unduplicated — `prune_orphan_stubs` delegates via `std::slice::from_ref`, the
+same idiom `get_edges_by_kind` uses, and all three existing stub-GC tests pass
+unchanged through the new path.
 
-Left undone on purpose: search relevance score + `exclude_tests` (needs SQL
-plumbing and a manifest input — own slice); no combinator denylist for callees,
-since `locality:"unknown"` already filters them.
+**Production proof, not just the test:** log `collected 9863 stub(s) the dedup
+orphaned` · eligible stubs **9,863 → 0** · `unknown` locality **54,602 → 44,739**
+(down exactly 9,863) · the 4 `cluster:*` folders now zero rows.
 
-## Next: stub-GC ordering bug (open from `268c242f`)
+## Test lesson worth keeping
 
-9,863 stubs match the GC predicate yet survive, 100% attributed: per-folder GC
-fires at the community terminal barrier, then `scan_root reconcile` runs
-`dedup_structural_folder_nodes` (`graph.rs:1830`), deleting 36,032 duplicates
-whose cascade strips the in-edges that made those stubs ineligible — and nothing
-GCs again. All 9,863 sit in `kind='folder'` folders across 4. **Red-first:** a
-test that dedups a structural folder and asserts no orphan stub survives the
-reconcile, then call `prune_orphan_stubs` after the dedup. Fix the ordering.
+The test drives `scan_root`, not dedup-then-prune by hand, because the defect IS
+the order of two calls inside that reconcile. The first version **passed before
+the fix existed**: `reconcile_roots` pruned the whole repo root (the fixture had
+no `.git`, so the walk never classified it live) and cascaded the stub away — a
+green test proving nothing. Asserting the member *folder* survives exposed it; a
+real `.git` made the fixture reach the dedup. Then mutation-probed by removing
+only the prune call, refactor left in place.
+
+## Graph state
+
+728,985 nodes / 8,855 folders / 51,971 files. internal 673,870 · unknown 44,739 ·
+external 10,376. Growth from the 408,969 at rebuild time is continued indexing,
+not duplication (folders 7,642→8,855, files 46,512→51,971 track it). 684
+`(project, file_path)` groups still span >1 folder — #150's content-hash
+territory.
+
+## Next — pick one
+
+**(a) Resolution, not GC.** The 44,689 remaining `unknown` stubs all have
+in-edges, so no GC will touch them. Java-dominated: java 27,967 (51%), ts 10,969,
+js 10,409, rust 4,306.
+
+**(b) `imports` 0 of 136,532 resolved**, of which 25,692 are LOCAL and must
+resolve (relative 15,924 · alias 8,618 · `crate::` 1,150). This also unblocks
+#149: detection reads calls+imports+extends+references (`community.rs:185`) and
+three of the four are 0%, which is why 97.8% of communities are single-file.
 
 ## Known-broken
 
-`imports` 0 of 136,532 resolved (25,692 are LOCAL and must). Detection reads
-calls+imports+extends+references (`community.rs:185`) and three are 0% — hence
-97.8% single-file communities (#149: cross-file stub share 20.3%). `references`
-251,185/0 (`doc_indexer.rs:584` and `:587` — two defects). `extends` 7,901/0
-(#147). `dojo_memberships.sync_status` dead. `graph-end-state-sketch.md` §1–12
-NOT SAFE TO BUILD FROM.
+`references` 251,185/0 (`doc_indexer.rs:584` and `:587` — two defects).
+`extends` 7,901/0 (#147). `calls` 57% for this project. `graphHealth` on
+`get_project_summary` now reports these live. `dojo_memberships.sync_status`
+dead. `graph-end-state-sketch.md` §1–12 NOT SAFE TO BUILD FROM.
 
 ## Traps
 
-`sensei_test` has NO automated schema provisioning (manual prerequisite), so a
-DDL change must be applied to BOTH DBs or the DB tests fail on a missing column.
-`app/.../wizard-state.spec.svelte.ts` is not hermetic — real fetch to `:7744`.
-Never pipe a gate through `| head`: SIGPIPE truncated a run and masked a real
-`fmt --check` failure. Wipe needs the daemon STOPPED; `/health` not
-`/api/health`; a cold graph starves its own rebuild (`queue.rs:479`).
+`sensei_test` has NO automated schema provisioning — a DDL change must be applied
+to BOTH DBs or the DB tests fail on a missing column. Never pipe a gate through
+`| head`: SIGPIPE truncated a run and masked a real `fmt --check` failure.
+`app/.../wizard-state.spec.svelte.ts` is not hermetic (real fetch to `:7744`).
+Wipe needs the daemon STOPPED; `/health` not `/api/health`; a cold graph starves
+its own rebuild (`queue.rs:479`).
