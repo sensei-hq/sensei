@@ -1,87 +1,50 @@
 # Checkpoint
 
-**Slice:** #146 complete; clean rebuild IN FLIGHT AND BLOCKED. Branch `develop`.
-Last commit `85ada17c`.
+**Slice:** clean rebuild DONE (the install blocking `ccd5517e` completed). Branch
+`develop`, last commit `ccd5517e`. Rebuilt on the new binary: 7,642 folders /
+408,969 nodes / 731,370 edges / 46,512 files. Branch canary POSITIVE — 84
+folders, 9 branches. internal 344,001 (84.1%) · unknown 54,594 (13.3%) ·
+external 10,374 (2.5%).
 
-## IN-FLIGHT — read this first
+## The headline invariant did NOT hold
 
-`make install-service` is running and blocked on its `db-backup` prerequisite,
-which is dumping the DB while a throwaway scan writes to it concurrently
-(36 MB after 7 min; scan at ~168k nodes). Both will finish; the scan's output is
-DISPOSABLE — see why below.
+`ccd5517e` predicted `unknown` "near 0". It went **56,748 → 54,594** (3.8%) — the
+three language fixes did not clear the stubs, so do not plan on that premise. Of
+the 54,594: **44,689 have in-edges** (need RESOLUTION, not GC), **9,863 match the
+GC predicate yet survive**, 42 are the known stub parents. Still java-dominated:
+java 27,967 · ts 10,969 · js 10,409 · rust 4,306.
 
-### The sequence that must complete
+## Root-caused: the GC runs before the thing that creates its work
 
-1. Wait for `make install-service` (it stops the service, overlays binaries,
-   codesigns, restarts). Verify: `stat -f '%Sm' /opt/homebrew/opt/sensei/bin/senseid`
-   must be TODAY, not `Sep 1 09:40`.
-2. `psql -d sensei -c "delete from sensei.folders;"` — the in-flight scan ran on
-   the OLD binary, so its graph reproduces the pre-fix bugs. **Run it twice if the
-   first fails**: the first attempt today rolled back on a `project_commands`
-   trigger and deleted nothing, the retry worked.
-3. Re-scan both roots:
-   `curl -sX POST localhost:7744/api/scan -H 'Content-Type: application/json' -d '{"root":"/Users/Jerry/Developer"}'`
-   and the same for `/Users/Jerry/Work`. Field is `root`, not `path`.
-4. THEN measure. `select count(*) from sensei.graph_nodes where locality='unknown'`
-   should be near 0 — pre-rebuild it was 56,748.
-   `select count(*) from sensei.folders where branch is not null` must be > 0;
-   it is the canary that the new binary is live (the old one wrote props instead).
+The 9,863 are an ORDERING bug, attributed 100%. Per-folder stub GC fires at the
+community terminal barrier (14:12–14:15); `scan_root reconcile` then runs
+`dedup_structural_folder_nodes` (`graph.rs:1830`) at 14:19:18, deleting 36,032
+duplicates. That cascade strips the in-edges that made those stubs ineligible,
+and nothing GCs again. All 9,863 sit in `kind='folder'` folders — the dedup's
+exact target set — across 4 (cluster:scheduler 4,852 · server 4,526 · external
+469 · web-portal 16). Zero in any git/standalone/subtree folder.
 
-### Why the in-flight scan is disposable
-
-The running daemon binary is dated `Sep 1 09:40`, which predates every fix in
-this session. Its rebuild reproduces the old behaviour on a clean slate, so its
-numbers measure nothing. (I first reported this binary as `Aug 19` — that was
-the symlink's mtime, not the running process's. Conclusion unchanged.)
-
-## Wipe already done, and what survived
-
-`delete from sensei.folders` cascaded nodes/edges/scan_state/communities.
-`scan_state` cascading is what prevents a silently EMPTY rebuild — stale
-fingerprints would make the incremental gate skip every file.
-
-Kept, verified after the wipe: memories 16, mcp_servers 6, transcript_turns
-3,867, sessions 284, projects 146, watch roots 2. Session→folder attribution
-(284 rows) is captured at `/tmp/rebuild/session_folder.csv`; the 22
-irreplaceable rows at `/tmp/rebuild/irreplaceable.sql` (not needed — projects
-was not wiped).
-
-## Done this run
-
-| commit | what |
-|---|---|
-| `e1114215` | java: resolve calls through the import map (49% of stubs) |
-| `1bf668ed` | ts/js: runtime globals to the runtime (39%) |
-| `7c7d9d1c` | rust: prelude items and types to std (10%) |
-| `4773da89` | stub GC — the missing exit; 84,339 → 56,748 live |
-| `95e23315` | branch as a typed column + `graph_nodes.branch` filter dimension |
-| `85ada17c` | GC removes the communities it empties (regression from 4773da89) |
-
-Three languages, three DIFFERENT causes. The design sketch's one-root-cause
-premise was wrong; profiling each separately is what found them.
-
-## Filed, not started
-
-**#150** content-hash node identity — Jerry's de-dup argument supersedes the
-"measured performance drop" trigger I filed it under: 5 repos already have two
-checkouts each, ~80% of files identical, so sharing node rows by content hash
-SHRINKS storage and scan time. Scope correction needed in the issue: sharing
-across checkouts means dropping `folder_id` from node identity, so nodes belong
-to a file VERSION, not a folder. Bigger than adding a column.
-
-**#149** label propagation — post-GC, 0-file stub communities went 27,923 → 233,
-so 97.3% of live communities are single-file. But cross-file communities are
-still 26–35% stub members (those stubs retain in-edges), so re-measure only
-AFTER the clean rebuild.
-
-#147, #148, #131–#145 unstarted. Two loose ends never filed: TS/JS local
-callbacks (`t` 573, `fn` 189, `setLoading` 235) need a locally-declared-names
-pre-pass; and 42 stub parents carry 575 real method nodes.
+**Next:** red-first — a test that dedups a structural folder and asserts no
+orphan stub survives the reconcile, then call `prune_orphan_stubs` after
+`dedup_structural_folder_nodes`. Fix the ordering, not the GC.
 
 ## Known-broken
 
-- `docs/analysis/graph-end-state-sketch.md` §1–12 NOT SAFE TO BUILD FROM.
-- `references`: 250,126 edges, 0 resolved; targets are `/`, `id`, `true`, `429`.
-  `doc_indexer.rs:587` joins absolute paths, discarding the repo root.
-- `extends`: 7,863 edges, 0 resolved, while `codebase.rs:55` consumes it (#147).
-- `dojo_memberships.sync_status` dead — `set_sync_status` has no callers.
+- **`imports`: 0 of 136,532 resolved — NEW.** 25,692 are LOCAL and must resolve
+  (relative 15,924 · alias 8,618 · `crate::` 1,150); 110,840 external, correctly
+  unresolved. Detection reads calls+imports+extends+references
+  (`community.rs:185`) and three are 0% — hence 97.8% single-file communities
+  (#149: cross-file stub share 20.3%, was 26–35%).
+- `references` 251,185 / 0 (`doc_indexer.rs:584` and `:587` — two separate
+  defects, see commit msg). `extends` 7,901 / 0 (#147). `calls` 65.1%, the only
+  working kind. `dojo_memberships.sync_status` dead.
+  `graph-end-state-sketch.md` §1–12 NOT SAFE TO BUILD FROM.
+
+## Environment state
+
+Nothing is left disabled: `sensei.metrics` was temporarily retired to stop a
+boot-time metric wave starving the scan, then **restored and verified** (9 active
+task names, 29 rows, 2 retired). Daemon is up under brew services on the new
+binary. Rebuild traps worth knowing before the next one are in this commit's
+message (cold-graph queue starvation `queue.rs:479`, wipe needs the daemon
+stopped, `/health` not `/api/health`).
