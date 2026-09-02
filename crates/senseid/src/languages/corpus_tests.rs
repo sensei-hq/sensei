@@ -223,3 +223,45 @@ fn no_runtime_global_is_attributed_to_the_calling_module() {
         bad.iter().take(20).cloned().collect::<Vec<_>>().join("\n")
     );
 }
+
+/// A prelude item or type must never be attributed to project code. Checked over
+/// this repo's own Rust, which uses `Some`/`Ok`/`Err`/`String::new` constantly.
+#[test]
+fn no_rust_prelude_name_is_attributed_to_project_code() {
+    const ITEMS: &[&str] = &["Some", "None", "Ok", "Err"];
+    let mut bad = Vec::new();
+    let (mut files, mut hits) = (0usize, 0usize);
+    for path in corpus(&["rs"]) {
+        let Some((adapter, content)) = read(&path) else { continue };
+        let Some(out) = adapter.fqn_output(&path.to_string_lossy(), &content) else { continue };
+        files += 1;
+        for r in &out.refs {
+            let Some(fqn) = r.target_fqn.as_deref() else { continue };
+            // A BARE prelude item resolves to `lib·std·prelude·X` (4 segments); a
+            // qualified `Type::Ok` on a LOCAL enum legitimately resolves to
+            // `rust·pkg·module·Type·Ok` (5). This repo has three such enums —
+            // WarmAttempt, BatchOutcome, ProbeOutcome — each with an `Ok` variant,
+            // and attributing those to std would be the opposite error. So only
+            // count refs whose fqn has no type segment before the name.
+            let segments = fqn.split('·').count();
+            let bare_prelude_item = ITEMS.contains(&r.target_name.as_str()) && segments == 4;
+            let on_prelude_type = fqn.contains("·String·") || fqn.contains("·Vec·");
+            if !(bare_prelude_item || on_prelude_type) {
+                continue;
+            }
+            hits += 1;
+            if !fqn.starts_with("lib·") {
+                bad.push(format!("{}: {fqn}", path.display()));
+            }
+        }
+    }
+    assert!(files > 100, "corpus too small: {files} files produced FQNs");
+    assert!(hits > 50, "expected real prelude usage, saw {hits} references");
+    assert!(
+        bad.is_empty(),
+        "{} prelude names attributed to project code across {files} files \
+         ({hits} prelude references seen):\n{}",
+        bad.len(),
+        bad.iter().take(20).cloned().collect::<Vec<_>>().join("\n")
+    );
+}
