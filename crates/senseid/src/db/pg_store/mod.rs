@@ -487,6 +487,11 @@ mod extensions;
 pub(crate) mod folders;
 mod governance;
 mod graph;
+/// Named outside this module because the MCP handler picks the direction and
+/// `graph` consumes it — the caller/callee envelope and `call_coverage` must
+/// agree on which side of the relation is being counted, so the choice is one
+/// shared enum rather than a string each side re-interprets.
+pub(crate) use graph::CallDirection;
 mod library;
 mod logs;
 mod mcp;

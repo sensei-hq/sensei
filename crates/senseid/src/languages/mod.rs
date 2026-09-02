@@ -249,10 +249,18 @@ pub fn is_test_path(rel_path: &str, language: Option<&str>) -> bool {
 
     // Cross-language: foo.test.* / foo.spec.* (JS/TS/Svelte/Vue), *_test.*
     // (Go/Py/Rust), test_*.py-style prefix, pytest's conftest.
+    //
+    // The bare `test`/`tests` stem is EXACT equality, not a prefix or suffix
+    // rule: it names Rust's idiomatic sibling test module (`pg_store/tests.rs`),
+    // where no path segment is a `tests/` DIRECTORY so the stem is the only
+    // signal. Widening it to a substring would swallow `latest.rs`,
+    // `contest.rs` and `testable.rs`, which the false-match test pins.
     if file_lower.contains(".test.")
         || file_lower.contains(".spec.")
         || stem_lower.ends_with("_test")
         || stem_lower.starts_with("test_")
+        || stem_lower == "test"
+        || stem_lower == "tests"
         || file_lower == "conftest.py"
     {
         return true;
@@ -394,6 +402,16 @@ mod tests {
         assert!(is_test_path("mymod/parser_test.rs", Some("rust")));
         assert!(is_test_path("pkg/test_parser.py", Some("python")));
         assert!(is_test_path("pkg/conftest.py", Some("python")));
+        // A BARE `tests.rs` / `test.rs` stem — Rust's idiomatic sibling test
+        // module. Nothing in the path is a `tests/` DIRECTORY segment, so the
+        // stem is the only signal; the affix rules above match `foo_test.rs`
+        // and `test_foo.py` but never the bare word. Live consequence of the
+        // gap: all 373 test fns in pg_store/tests.rs indexed as is_test=false,
+        // so "exclude tests" filtered nothing and returned them as production.
+        assert!(is_test_path("crates/senseid/src/db/pg_store/tests.rs", Some("rust")));
+        assert!(is_test_path("src/parser/test.rs", Some("rust")));
+        // Language-agnostic: the stem carries the convention on its own.
+        assert!(is_test_path("app/src/lib/tests.ts", Some("typescript")));
         // Java/Kotlin class-name suffixes (gated by language).
         assert!(is_test_path("src/main/java/com/FooTest.java", Some("java")));
         assert!(is_test_path("src/main/java/com/FooTests.java", Some("java")));
@@ -410,6 +428,13 @@ mod tests {
             "src/lib/pg_store.rs",
             "app/src/routes/+page.svelte",
             "src/main.rs",
+            // Bare-stem matching is EXACT equality, so a stem that merely ends
+            // or starts with the word is still production. These pin that the
+            // `tests.rs` rule did not widen into a `contains`.
+            "src/latest.rs",
+            "src/contest.rs",
+            "src/protest.ts",
+            "src/testable.rs",
         ] {
             assert!(!is_test_path(p, language_for_path(p)), "should NOT be a test path: {p}");
         }

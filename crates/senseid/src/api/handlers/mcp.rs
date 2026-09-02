@@ -1,6 +1,7 @@
 use super::query::{resolve_folder_id, resolve_scope_ids};
 use crate::api::state::AppState;
 use crate::api::util::json_uuid;
+use crate::db::pg_store::CallDirection;
 use axum::{extract::State, http::StatusCode, response::Json};
 
 // ── MCP Tool Proxy ──────────────────────────────────────────────────────────
@@ -13,6 +14,56 @@ use axum::{extract::State, http::StatusCode, response::Json};
 /// listing stays in lockstep with `mcp_call_tool` (guarded by a unit test).
 pub(crate) async fn mcp_list_tools() -> Json<serde_json::Value> {
     Json(serde_json::json!({ "tools": super::mcp_manifests::manifests() }))
+}
+
+/// Wrap a caller/callee list in an envelope that answers "does this symbol even
+/// exist" and "is this list complete" alongside the list itself.
+///
+/// A bare `{"callers": []}` is three different answers wearing one shape, and an
+/// assistant must act differently on each: the symbol is absent from the graph
+/// (recheck the name/scope, or grep); the symbol exists and truly has no callers
+/// (safe to delete); or the symbol exists and the graph holds `calls` edges it
+/// could not resolve, so the list is INCOMPLETE and a grep is still owed. Only
+/// `symbol.found` plus `coverage.unresolved` can distinguish them — a list
+/// length cannot, which is why an empty list alone was never a usable answer.
+///
+/// `symbol.found = false` is a genuine not-found, never a masked failure: a DB
+/// error on either read propagates as a 500 instead of degrading to "not found".
+async fn symbol_relation_envelope(
+    state: &AppState,
+    folder_ids: &[uuid::Uuid],
+    name: &str,
+    list_key: &str,
+    list: Vec<serde_json::Value>,
+) -> Result<serde_json::Value, StatusCode> {
+    let direction =
+        if list_key == "callers" { CallDirection::Incoming } else { CallDirection::Outgoing };
+
+    let definitions = state.pg.symbol_definitions(folder_ids, name).await.map_err(|e| {
+        tracing::warn!(error = %e, name, "mcp symbol_relation_envelope: symbol_definitions failed");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+    let (resolved, unresolved) =
+        state.pg.call_coverage(folder_ids, name, direction).await.map_err(|e| {
+            tracing::warn!(error = %e, name, "mcp symbol_relation_envelope: call_coverage failed");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+
+    Ok(serde_json::json!({
+        "symbol": {
+            "name":        name,
+            "found":       !definitions.is_empty(),
+            "defined_at":  definitions,
+        },
+        list_key: list,
+        "coverage": {
+            "resolved":   resolved,
+            "unresolved": unresolved,
+            // Spelled out so a reader does not have to infer the rule from two
+            // integers: `complete` means every recorded edge was placed.
+            "complete":   unresolved == 0,
+        },
+    }))
 }
 
 pub(crate) async fn mcp_call_tool(
@@ -53,15 +104,25 @@ pub(crate) async fn mcp_call_tool(
             };
             serde_json::json!({"results": fns})
         }
+        // `get_callers` / `get_callees` report WHETHER THE SYMBOL EXISTS
+        // alongside the list, because a bare `[]` conflates three different
+        // answers an assistant must act on differently: the symbol is not in
+        // the graph (check the spelling, or the scope, or fall back to grep);
+        // the symbol exists and nothing calls it (safe to delete); the symbol
+        // exists and the graph holds calls it could not resolve (the list is
+        // INCOMPLETE — grep before concluding anything). `coverage.unresolved`
+        // is the only honest way to say that third case; a list length cannot.
         "get_callers" => {
             let name = params["name"].as_str().unwrap_or(query);
+            let ids = resolve_scope_ids(&state, repo_id).await?;
             let callers = state.pg.get_callers_by_name(repo_id, name).await.map_err(|e| { tracing::warn!(error = %e, repo_id, name, "mcp get_callers: get_callers_by_name failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
-            serde_json::json!({"callers": callers})
+            symbol_relation_envelope(&state, &ids, name, "callers", callers).await?
         }
         "get_callees" => {
             let name = params["name"].as_str().unwrap_or(query);
+            let ids = resolve_scope_ids(&state, repo_id).await?;
             let callees = state.pg.get_callees_by_name(repo_id, name).await.map_err(|e| { tracing::warn!(error = %e, repo_id, name, "mcp get_callees: get_callees_by_name failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
-            serde_json::json!({"callees": callees})
+            symbol_relation_envelope(&state, &ids, name, "callees", callees).await?
         }
         "get_file_tags" => {
             let tag = params["tag"].as_str().unwrap_or(query);
@@ -274,10 +335,35 @@ pub(crate) async fn mcp_call_tool(
                 None => state.pg.get_repo_by_name(repo_id).await
                     .map_err(|e| { tracing::warn!(error = %e, repo_id, "mcp get_project_summary: get_repo_by_name fallback failed"); StatusCode::INTERNAL_SERVER_ERROR })?,
             };
+            // How far to trust the graph tools, stated rather than inferred. A
+            // symbol count says nothing about whether `get_callers` can answer:
+            // an edge kind at 0% resolved means every lookup over it comes back
+            // empty for reasons that have nothing to do with the code.
+            let graph_health = if ids.is_empty() {
+                serde_json::json!([])
+            } else {
+                let by_kind = state.pg.edge_resolution_by_kind(&ids).await.map_err(|e| { tracing::warn!(error = %e, repo_id, "mcp get_project_summary: edge_resolution_by_kind failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+                serde_json::Value::Array(
+                    by_kind
+                        .into_iter()
+                        .map(|(kind, resolved, total)| {
+                            serde_json::json!({
+                                "kind":     kind,
+                                "edges":    total,
+                                "resolved": resolved,
+                                // Integer percent — enough to decide "trust it"
+                                // vs "grep first", without implying precision.
+                                "resolved_pct": if total > 0 { resolved * 100 / total } else { 0 },
+                            })
+                        })
+                        .collect(),
+                )
+            };
             serde_json::json!({
                 "project": project,
                 "functions": fns,
                 "types": types,
+                "graphHealth": graph_health,
             })
         }
         "get_metrics" => {

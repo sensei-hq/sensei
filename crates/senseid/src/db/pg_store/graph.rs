@@ -13,6 +13,16 @@ fn is_identity_conflict(e: &sqlx_core::error::Error) -> bool {
     )
 }
 
+/// Which side of a `calls` relation a coverage count is about — incoming edges
+/// (who calls this) or outgoing ones (what this calls). A closed enum rather
+/// than a string so [`PgStore::call_coverage`] picks its filter column at
+/// compile time and no caller input ever reaches the SQL text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CallDirection {
+    Incoming,
+    Outgoing,
+}
+
 #[allow(dead_code, clippy::too_many_arguments, clippy::type_complexity)]
 impl PgStore {
     /// BM25-style keyword ranking: matches nodes by name/signature/docstring.
@@ -1146,10 +1156,86 @@ impl PgStore {
 
     // ── View-based graph queries ────────────────────────────────────
 
+    /// Where a symbol is DEFINED within a scope — the lookup that separates
+    /// "no such symbol" from "symbol with no callers". Returns one entry per
+    /// definition site (a name can be defined in several folders of a
+    /// monorepo), empty only when the name genuinely is not in the graph.
+    ///
+    /// Stubs are excluded (`file_path IS NOT NULL`): an unresolved reference
+    /// stub carries the name but is not a definition, so counting it as one
+    /// would report `found` for a symbol that was only ever mentioned.
+    pub async fn symbol_definitions(
+        &self,
+        folder_ids: &[uuid::Uuid],
+        name: &str,
+    ) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(String, String, Option<i32>)> = sqlx_core::query_as::query_as(
+            "SELECT kind::text, file_path, line_start
+               FROM sensei.nodes
+              WHERE folder_id = ANY($1) AND name = $2 AND file_path IS NOT NULL
+              ORDER BY file_path, line_start LIMIT 20",
+        )
+        .bind(folder_ids)
+        .bind(name)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(rows
+            .into_iter()
+            .map(|(kind, file, line)| {
+                serde_json::json!({ "kind": kind, "file_path": file, "line_start": line })
+            })
+            .collect())
+    }
+
+    /// Resolution coverage as `(resolved, unresolved)` for one symbol's `calls`
+    /// edges. This is the number that tells a caller how much to trust a
+    /// caller/callee list: an unresolved count above zero means the graph knows
+    /// a call happened but could not place both ends, so the list is incomplete
+    /// and grep is still worth running.
+    ///
+    /// Counted with its own query rather than tallied from the returned list,
+    /// because those lists are `LIMIT 100` — deriving coverage from a truncated
+    /// list would under-report exactly when completeness matters most.
+    pub async fn call_coverage(
+        &self,
+        folder_ids: &[uuid::Uuid],
+        name: &str,
+        direction: CallDirection,
+    ) -> Result<(i64, i64), String> {
+        // The filter column comes from a closed enum, never from caller input,
+        // so this stays static SQL with the name passed as a bind parameter.
+        let sql = match direction {
+            CallDirection::Incoming => {
+                "SELECT count(target_id), count(*) - count(target_id)
+                   FROM sensei.call_graph
+                  WHERE folder_id = ANY($1) AND target_symbol = $2 AND edge_kind = 'calls'"
+            }
+            CallDirection::Outgoing => {
+                "SELECT count(target_id), count(*) - count(target_id)
+                   FROM sensei.call_graph
+                  WHERE folder_id = ANY($1) AND source_name = $2 AND edge_kind = 'calls'"
+            }
+        };
+        let row: (i64, i64) = sqlx_core::query_as::query_as(sql)
+            .bind(folder_ids)
+            .bind(name)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(row)
+    }
+
     /// Find callers of a function by name via the call_graph view.
     /// `scope` is resolved via [`scope_folder_ids`]: a project name/UUID expands
     /// to all of that project's folders; a bare folder name falls back to just
     /// that folder.
+    ///
+    /// Filters `target_symbol`, NOT `target_name`. `target_name` is `tgt.name`
+    /// off the view's LEFT JOIN and is therefore NULL for every unresolved
+    /// edge, so the old filter silently dropped 117,201 of 335,756 `calls`
+    /// edges and returned an empty list for 8,680 symbol names that had
+    /// callers. See the `target_symbol` column comment.
     pub async fn get_callers_by_name(
         &self,
         scope: &str,
@@ -1159,10 +1245,10 @@ impl PgStore {
         if folder_ids.is_empty() {
             return Ok(vec![]);
         }
-        let rows: Vec<(String, String, String, Option<i32>)> = sqlx_core::query_as::query_as(
-            "SELECT source_name, source_kind::text, source_file, source_line
+        let rows: Vec<(String, String, String, Option<i32>, bool)> = sqlx_core::query_as::query_as(
+            "SELECT source_name, source_kind::text, source_file, source_line, target_id IS NOT NULL
                FROM sensei.call_graph
-              WHERE folder_id = ANY($1) AND target_name = $2 AND edge_kind = 'calls'
+              WHERE folder_id = ANY($1) AND target_symbol = $2 AND edge_kind = 'calls'
               ORDER BY source_file, source_line LIMIT 100",
         )
         .bind(&folder_ids[..])
@@ -1170,8 +1256,8 @@ impl PgStore {
         .fetch_all(&self.pool)
         .await
         .map_err(|e| e.to_string())?;
-        Ok(rows.into_iter().map(|(name, kind, file, line)| {
-            serde_json::json!({ "name": name, "kind": kind, "file_path": file, "line_start": line })
+        Ok(rows.into_iter().map(|(name, kind, file, line, resolved)| {
+            serde_json::json!({ "name": name, "kind": kind, "file_path": file, "line_start": line, "resolved": resolved })
         }).collect())
     }
 
@@ -1188,26 +1274,34 @@ impl PgStore {
         if folder_ids.is_empty() {
             return Ok(vec![]);
         }
-        let rows: Vec<(
-            Option<String>,
-            Option<String>,
-            Option<String>,
-            Option<i32>,
-            Option<String>,
-        )> = sqlx_core::query_as::query_as(
-            "SELECT target_name, target_kind::text, target_file, target_line, unresolved_target
-               FROM sensei.call_graph
-              WHERE folder_id = ANY($1) AND source_name = $2 AND edge_kind = 'calls'
-              ORDER BY target_file, target_line LIMIT 100",
-        )
-        .bind(&folder_ids[..])
-        .bind(source)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| e.to_string())?;
-        Ok(rows.into_iter().map(|(name, kind, file, line, unresolved)| {
-            let display_name = name.or(unresolved).unwrap_or_default();
-            serde_json::json!({ "name": display_name, "kind": kind, "file_path": file, "line_start": line })
+        // `target_symbol` is the view's coalesce of the resolved and unresolved
+        // name, so the display name is no longer stitched together here — one
+        // owner for that rule.
+        //
+        // `locality` is READ FROM `sensei.graph_nodes`, never recomputed here. A
+        // second SQL copy of that three-branch judgement is precisely what the
+        // graph_nodes comment warns about, so internal/external come from the
+        // owning view and the only thing this query decides is the edge-level
+        // fact the owner cannot know: an unresolved edge has NO target node, so
+        // there is no row to classify and it is `unknown`. That is what the
+        // COALESCE means — "no target node", not a reimplementation of the rule.
+        let rows: Vec<(String, Option<String>, Option<String>, Option<i32>, String)> =
+            sqlx_core::query_as::query_as(
+                "SELECT cg.target_symbol, cg.target_kind::text, cg.target_file, cg.target_line,
+                        coalesce(gn.locality, 'unknown')
+                   FROM sensei.call_graph        cg
+                   LEFT JOIN sensei.graph_nodes  gn ON gn.id = cg.target_id
+                  WHERE cg.folder_id = ANY($1) AND cg.source_name = $2
+                    AND cg.edge_kind = 'calls' AND cg.target_symbol IS NOT NULL
+                  ORDER BY cg.target_file, cg.target_line LIMIT 100",
+            )
+            .bind(&folder_ids[..])
+            .bind(source)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(name, kind, file, line, locality)| {
+            serde_json::json!({ "name": name, "kind": kind, "file_path": file, "line_start": line, "locality": locality })
         }).collect())
     }
 
@@ -1958,6 +2052,33 @@ impl PgStore {
         Ok(rows.into_iter().map(|(id, name, fp, line)| {
             serde_json::json!({ "id": id, "name": name, "file_path": fp, "line_start": line })
         }).collect())
+    }
+
+    /// Per-edge-kind resolution coverage for a scope: `(kind, resolved, total)`.
+    ///
+    /// This is how much the graph-navigation tools can actually be trusted, and
+    /// until now nothing reported it — `get_project_summary` answered "10,614
+    /// functions" while 43% of this project's `calls` edges were unresolved and
+    /// `imports`/`extends`/`references` were at 0%, so a caller had no way to
+    /// know a caller list might be partial or that a whole edge kind was empty.
+    /// Surfacing it lets a reader decide to grep BEFORE trusting a lookup,
+    /// instead of inferring it from a suspiciously short answer.
+    pub async fn edge_resolution_by_kind(
+        &self,
+        folder_ids: &[uuid::Uuid],
+    ) -> Result<Vec<(String, i64, i64)>, String> {
+        let rows: Vec<(String, i64, i64)> = sqlx_core::query_as::query_as(
+            "SELECT kind::text, count(target_id), count(*)
+               FROM sensei.edges
+              WHERE folder_id = ANY($1)
+              GROUP BY kind
+              ORDER BY count(*) DESC",
+        )
+        .bind(folder_ids)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(rows)
     }
 
     /// Count nodes by kind across multiple folders (project-scoped variant).
