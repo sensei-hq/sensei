@@ -57,6 +57,7 @@ create or replace view graph_nodes as
 select n.id
      , n.folder_id
      , f.name         as folder
+     , f.branch       as branch
      , f.project_id
      , p.name         as project
      , n.kind::text   as kind
@@ -120,6 +121,7 @@ Common queries:
   SELECT n.parent_name, n.kind, count(*) FROM sensei.graph_nodes n
    WHERE n.project = ''sensei'' AND n.locality = ''internal'' GROUP BY 1, 2';
 
+comment on column graph_nodes.branch is 'The checked-out branch of this node''s folder. A real partition key, not a label: the design is one folder per checkout (develop vs main = two folders, one repository), already live for fitness/strategos/website — so filtering by branch separates genuine graphs without branch appearing in node identity.';
 comment on column graph_nodes.locality is 'internal (has a local file) | external (lib_symbol/lib_package — the writer said so) | unknown (unresolved reference stub). Never inferred from an edge''s resolution state.';
 comment on column graph_nodes.parent_name is 'Containing node''s name — NULL at top level, not a placeholder. Lets a caller group by container without a self-join.';
 comment on column graph_nodes.resolved is 'Whether FQN enrichment ran. Projected for filtering; NOT a locality signal — 140,051 section rows are resolved=false inside real files.';
