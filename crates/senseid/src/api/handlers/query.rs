@@ -321,6 +321,12 @@ pub(crate) async fn query_general(
                 .await;
         let tys =
             fuse_semantic(state, query_vec.as_ref(), &ids, tys_lex, TYPE_KINDS, type_hit).await;
+        // Promoted against `term`, not the raw `q`: `extract_search_term` is what
+        // reduces "where are orphan stubs collected" to the symbol-ish token, so
+        // it is the only form that can equal a symbol name. Applied after fusion
+        // so an exact hit outranks both arms rather than competing inside one.
+        let fns = promote_exact_name_match(&term, fns);
+        let tys = promote_exact_name_match(&term, tys);
         (fns, tys)
     } else {
         (vec![], vec![])
@@ -801,6 +807,27 @@ async fn fuse_semantic(
     fused
 }
 
+/// Move EXACT name matches to the front of a fused result list.
+///
+/// RRF fuses a lexical ranking with a semantic one, and neither knows that an
+/// exact symbol-name hit is categorically better than a prefix hit or a concept
+/// neighbour. Measured live before this: `search("prune_orphan_stubs")` put the
+/// definition at position 2 behind a test whose name merely starts with it, and
+/// the natural-language form put it at 4 — so the one result the caller asked
+/// for by name was never the first thing they read.
+///
+/// A stable partition, not a re-scoring: exact matches keep their relative order
+/// and so does everything else, which leaves the hybrid ranking in charge of
+/// every case where the caller did NOT name a symbol outright. With no exact
+/// match the list is returned untouched rather than nudged toward the nearest
+/// spelling — a near-miss is not a hit and must not be promoted like one.
+fn promote_exact_name_match(term: &str, items: Vec<serde_json::Value>) -> Vec<serde_json::Value> {
+    let (exact, rest): (Vec<_>, Vec<_>) = items
+        .into_iter()
+        .partition(|it| it["name"].as_str().is_some_and(|n| n.eq_ignore_ascii_case(term)));
+    exact.into_iter().chain(rest).collect()
+}
+
 /// Extract the most meaningful search term from a natural language query.
 pub(crate) fn extract_search_term(q: &str) -> String {
     let stop_words = [
@@ -864,6 +891,54 @@ pub(crate) fn extract_search_term(q: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Searching a symbol's EXACT name must return its definition first. RRF
+    /// fuses a lexical ranking with a semantic one and neither knows that an
+    /// exact name hit is categorically better than a prefix or a concept
+    /// neighbour: live, `search("prune_orphan_stubs")` returned the definition
+    /// at position 2, behind a TEST whose name merely starts with it, and
+    /// position 4 for the natural-language form.
+    ///
+    /// Promotion is stable — it moves exact matches to the front and disturbs
+    /// nothing else, so the fused ordering still decides the rest.
+    #[test]
+    fn exact_name_match_is_promoted_above_prefix_and_concept_hits() {
+        let hit = |name: &str| serde_json::json!({ "name": name, "file_path": "src/x.rs" });
+        let fused = vec![
+            hit("prune_orphan_stubs_collects_unreferenced_stubs_only"),
+            hit("prune_orphan_stubs"),
+            hit("prune_orphan_stubs_removes_communities_it_emptied"),
+            hit("unrelated_symbol"),
+        ];
+
+        let ranked = promote_exact_name_match("prune_orphan_stubs", fused);
+        assert_eq!(ranked[0]["name"], "prune_orphan_stubs", "the definition ranks first");
+        // Everything else keeps its relative order.
+        assert_eq!(ranked[1]["name"], "prune_orphan_stubs_collects_unreferenced_stubs_only");
+        assert_eq!(ranked[2]["name"], "prune_orphan_stubs_removes_communities_it_emptied");
+        assert_eq!(ranked[3]["name"], "unrelated_symbol");
+
+        // Case-insensitive, because a query rarely matches a symbol's casing.
+        let ranked = promote_exact_name_match(
+            "HandleAuth",
+            vec![hit("handleAuthRequest"), hit("handleAuth")],
+        );
+        assert_eq!(ranked[0]["name"], "handleAuth");
+
+        // No exact match: the fused order is returned untouched, NOT reordered
+        // toward whatever happens to be closest.
+        let ranked = promote_exact_name_match("nothingMatches", vec![hit("alpha"), hit("beta")]);
+        assert_eq!(ranked[0]["name"], "alpha");
+        assert_eq!(ranked[1]["name"], "beta");
+
+        // Several definitions of one name across a monorepo: all promoted, and
+        // their relative order preserved.
+        let ranked =
+            promote_exact_name_match("dup", vec![hit("dup_helper"), hit("dup"), hit("dup")]);
+        assert_eq!(ranked[0]["name"], "dup");
+        assert_eq!(ranked[1]["name"], "dup");
+        assert_eq!(ranked[2]["name"], "dup_helper");
+    }
 
     #[test]
     fn extract_snippet_clamps_range_and_caps() {
