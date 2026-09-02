@@ -1,8 +1,33 @@
 # Checkpoint
 
-**Slice:** local import resolution DONE and verified (`cc534c63`), after the
-stub-GC ordering fix (`a7a1bee9`) and the MCP shape fixes (`93cef04a`). Branch
-`develop`. Gates: rust 2,689/0, app 1,698/118, clippy 0, fmt clean.
+**Slice:** shadow import classifier retired + residue cleaned (`8035ec3e`), on
+top of local import resolution (`cc534c63`), the stub-GC ordering fix
+(`a7a1bee9`) and the MCP shape fixes (`93cef04a`). Branch `develop`. Gates: rust
+2,691/0, app 1,698/118, clippy 0, fmt clean.
+
+## The `@/` fix that was "already done" — and wasn't live
+
+`804ef1fb` added the correct `@/` rule to `import_target` yesterday and wired it
+to ONE consumer: the reporting endpoint `codebase.rs:138`. It touched **zero**
+indexing files, so the classification was right for a day while the code that
+writes the graph read a different copy. `git log -S '"@/"'` on `typescript.rs`
+returns nothing — that shadow never had the rule.
+
+It filed the project's OWN symbols under fabricated packages: **2,527**
+`lib_symbol`/`lib_package` nodes from `@/`, `~/` and `$lib`, e.g.
+`lib·@/validation·…·createTenantDetailSchema`. `import_anchor` is now the single
+owner of the local-module-vs-external-package decision; `typescript_fqn::
+classify_import` is a pure shape conversion with no judgement.
+
+`$app`/`$env`/`$kavach` still anchor **externally** on purpose — those virtual
+modules are framework-*provided*, so no local file can exist for them.
+
+**Verified then cleaned:** one folder first (base-app-webapp 512 files, 181 → 0),
+then all 2,527 deleted and both roots reindexed — OmniRoute re-walked 9,822 files
+and produced **zero**. A reindex alone would not have cleared them: nothing
+deletes lib nodes (`prune_file_nodes` filters `file_path=$2`, which is NULL for
+them; `prune_orphan_stubs` excludes lib kinds by design). Only `$app`/`$kavach`
+remain, correctly.
 
 ## Imports resolved 0 → 1,911
 
@@ -40,10 +65,12 @@ against a predicted 86%. `graphHealth` reports imports at 52% where it read 0%.
 2. **Externals → `lib_symbol`** — 136,997 edges. MUST be lookup-first: 59% of
    edges (Java/Kotlin/Python-absolute/C) are locally-owned packages that merely
    look external, and a local hit must win.
-3. **Two shadow classifiers found by the investigation.** `typescript.rs:668-687`
-   defines a second `classify_import` calling every non-dot specifier external;
-   `libraries.rs:62-119` is a third drifted copy that records `@/lib/foo` as an
-   external library named `@/lib`. Route both through the owner.
+3. **`libraries.rs:62-119`** is still a third copy of the import filter (no `@/`
+   or `~/` skip) — but INERT: its output goes to `folders.props.libs`, not to
+   `sensei.libraries`/`referenced_libraries` (both zero alias rows), and
+   `props.libs` is the clobbered-and-unread field from `95e23315`. Cosmetic;
+   route it through the owner when convenient. (I earlier repeated an agent's
+   claim that it produced live wrong libraries — it does not.)
 
 ## Known-broken
 
@@ -67,3 +94,10 @@ to both DBs. Never pipe a gate through `| head` (SIGPIPE truncated a run and
 masked a real `fmt --check` failure). An incremental scan skips unchanged files,
 so verifying an indexer fix needs `delete from sensei.scan_state` for the folder
 first. Wipe needs the daemon STOPPED; `/health` not `/api/health`.
+
+## Cleanup lesson
+
+A cleanup predicate narrower than the classifier it cleans up after is easy to
+get wrong: I cleared `@/` and `~/` and MISSED `lib·$lib%`, catching it only by
+re-checking the remaining `$`-prefixed `lib_package` names instead of declaring
+done. Enumerate the predicate from the classifier's own local classes.
