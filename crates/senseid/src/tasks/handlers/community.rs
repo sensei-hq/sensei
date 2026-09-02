@@ -37,10 +37,27 @@ pub async fn detect_communities(ctx: &TaskContext, task: &Task) -> Result<u32, S
     let folder_id = crate::api::util::json_uuid(&folder["id"]).ok_or("Invalid folder id")?;
     let folder_name = folder["name"].as_str().unwrap_or_else(|| task.folder_name());
 
-    // Degree is recomputed by the preceding BuildConnections barrier (D4.5), so it
-    // is already fresh here when detection ranks each community's god nodes. It was
-    // briefly co-located in this handler (7.1) but that pushed edge-heavy giants
-    // past detect's 600s watchdog — see build_connections.
+    // Degree is counted from the adjacency `detect_communities_for_folder` builds,
+    // so nothing has to precompute it — the BuildConnections barrier that used to
+    // do that was deleted along with the `nodes.degree` column.
+
+    // Collect unresolved reference stubs nothing points at any more. This runs at
+    // the terminal barrier because it is folder-scoped: a stub is only garbage once
+    // EVERY file that could reference it has been processed, and the per-file
+    // `prune_file_nodes` cannot reach one at all (it filters `file_path = $2`, and
+    // every stub has `file_path IS NULL`).
+    //
+    // Fail-OPEN, deliberately, and unlike the detection below: reclaiming garbage
+    // is housekeeping, and a folder that indexed correctly must not be marked
+    // `failed` because a cleanup DELETE lost a race. The rows simply stay until the
+    // next pass.
+    match ctx.pg().prune_orphan_stubs(&folder_id).await {
+        Ok(0) => {}
+        Ok(n) => tracing::info!(folder = %folder_name, "pruned {n} orphan reference stubs"),
+        Err(e) => {
+            tracing::warn!(error = %e, folder = %folder_name, "prune_orphan_stubs failed")
+        }
+    }
 
     // Authoritative detection — no model calls; this is what the terminal barrier
     // gates on. A failure here is FATAL for the folder: record `failed` (D6d
