@@ -608,9 +608,13 @@ pub fn extract_file_refs(content: &str, repo_path: &str) -> Vec<String> {
             continue; // absolute: `join` would discard the repo root entirely
         }
         if trimmed.contains('/') && !trimmed.contains(' ') && trimmed.len() < 200 {
-            let abs = repo.join(trimmed);
-            if abs.exists() {
-                refs.insert(abs.to_string_lossy().to_string());
+            // Existence is checked against the ABSOLUTE path, but what is STORED
+            // is the repo-relative one. A machine-absolute target can never match
+            // a node's `file_path` — 666,511 of 673,929 of those (98.9%) are
+            // repo-relative — which is why doc references resolved at 0%, and it
+            // also kept a local filesystem layout out of a shared graph.
+            if repo.join(trimmed).exists() {
+                refs.insert(trimmed.trim_start_matches("./").to_string());
             }
         }
     }
@@ -788,7 +792,12 @@ This is IMPORTANT: keep it.
         let content = "See `src/real.py` and `x` src/prose.py `y` done.";
         let refs = extract_file_refs(content, &root);
         assert_eq!(refs.len(), 1, "only the backticked path is a reference: {refs:?}");
-        assert!(refs[0].ends_with("src/real.py"));
+        assert_eq!(
+            refs[0], "src/real.py",
+            "REPO-RELATIVE, not the joined absolute path — a machine-absolute target can \
+             never match a node's file_path (98.9% of which are repo-relative), which is \
+             why doc references could not resolve at all"
+        );
     }
 
     /// DEFECT 2: `Path::join` REPLACES the whole path when its argument is
@@ -845,7 +854,7 @@ This is IMPORTANT: keep it.
         let content = "See `src/main.py` for the entry point.";
         let refs = extract_file_refs(content, &dir.path().to_string_lossy());
         assert_eq!(refs.len(), 1);
-        assert!(refs[0].contains("src/main.py"));
+        assert_eq!(refs[0], "src/main.py", "repo-relative");
     }
 
     // index_docs and marketplace tests moved to tasks/processors/doc.rs and tests.rs
