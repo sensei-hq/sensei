@@ -1523,20 +1523,60 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
         // wholesale; a doc→file ref must not be `covers` or that replace would
         // wipe it (the two-producer data-loss D2 review caught).
         if result.kind == "doc" {
+            // Doc references RESOLVE to what they name, like call and import
+            // edges do — 241,514 of these sat at 0% because nothing tried.
+            //
+            // A file reference is repo-relative (the extractor stores it that
+            // way now) and `nodes.file_path` is too, so the two match directly.
+            // A miss stays unresolved and keeps `target_name`; unlike an import,
+            // a doc reference must NOT create a stub, because a doc naming a file
+            // that does not exist is a broken link — that is a fact about the
+            // doc, not evidence the file exists somewhere unindexed.
             for file_ref in &result.file_refs {
-                ctx.pg()
-                    .insert_edge(
-                        &folder_id,
-                        &file_node_id,
-                        None,
-                        Some(file_ref),
-                        None,
-                        "references",
-                    )
+                let target = ctx
+                    .pg()
+                    .file_node_id_by_path(&folder_id, file_ref)
                     .await
-                    .map_err(|e| format!("insert_edge (references, file): {e}"))?;
+                    .map_err(|e| format!("file_node_id_by_path({file_ref}): {e}"))?;
+                match target {
+                    Some(t) => ctx
+                        .pg()
+                        .insert_edge(&folder_id, &file_node_id, Some(&t), None, None, "references")
+                        .await
+                        .map_err(|e| format!("insert_edge (references, file resolved): {e}"))?,
+                    None => ctx
+                        .pg()
+                        .insert_edge(
+                            &folder_id,
+                            &file_node_id,
+                            None,
+                            Some(file_ref),
+                            None,
+                            "references",
+                        )
+                        .await
+                        .map_err(|e| format!("insert_edge (references, file): {e}"))?,
+                };
             }
+            // A symbol mention resolves ONLY when the name is unambiguous in this
+            // folder. A doc writes `` `handleAuth` `` with no signature and no
+            // module path, so with several same-named definitions there is
+            // nothing to choose on — picking one would publish a guess as a fact.
+            // Ambiguous and absent both stay unresolved, carrying the mention in
+            // `target_name`.
             for fn_ref in &result.fn_mentions {
+                if let Some(t) = ctx
+                    .pg()
+                    .sole_definition_id_by_name(&folder_id, fn_ref)
+                    .await
+                    .map_err(|e| format!("sole_definition_id_by_name({fn_ref}): {e}"))?
+                {
+                    ctx.pg()
+                        .insert_edge(&folder_id, &file_node_id, Some(&t), None, None, "references")
+                        .await
+                        .map_err(|e| format!("insert_edge (references, symbol resolved): {e}"))?;
+                    continue;
+                }
                 ctx.pg()
                     .insert_edge(&folder_id, &file_node_id, None, Some(fn_ref), None, "references")
                     .await
@@ -2350,6 +2390,105 @@ mod tests {
             "unexpected target fqn: {fqn}"
         );
         assert_eq!(file.as_deref(), Some("src/b.rs"), "and it is the real definition, not a stub");
+
+        ctx.pg().delete_nodes_by_folder(&fid).await.unwrap();
+    }
+
+    /// A doc's file reference and its unambiguous symbol mention both RESOLVE;
+    /// an ambiguous mention and a broken link stay unresolved. 241,514
+    /// `references` edges sat at 0% because nothing tried to resolve them.
+    ///
+    /// Breaking mutation: revert either arm to the unconditional
+    /// `insert_edge(.., None, Some(x), .., "references")`.
+    #[tokio::test]
+    async fn doc_references_resolve_to_files_and_unambiguous_symbols() {
+        let ctx = make_ctx().await;
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("docref");
+        std::fs::create_dir_all(repo.join("src")).unwrap();
+        std::fs::write(repo.join("Cargo.toml"), "[package]\nname = \"docref\"\n").unwrap();
+        std::fs::write(repo.join("src/lib.rs"), "pub fn only_once() -> i32 { 1 }\n").unwrap();
+        // `twice` is defined in TWO files — an ambiguous mention.
+        std::fs::write(repo.join("src/a.rs"), "pub fn twice() -> i32 { 1 }\n").unwrap();
+        std::fs::write(repo.join("src/b.rs"), "pub fn twice() -> i32 { 2 }\n").unwrap();
+        std::fs::write(
+            repo.join("README.md"),
+            "# Doc\n\nSee `src/lib.rs` for `only_once`, and `twice` lives in two places. \
+             Also `src/missing.rs` is a broken link.\n",
+        )
+        .unwrap();
+        let repo_path = repo.to_string_lossy().to_string();
+        let rid = ctx
+            .pg()
+            .add_watch_root(&tmp.path().to_string_lossy(), "docref", &serde_json::json!([]))
+            .await
+            .unwrap();
+        let fid = ctx.pg().upsert_repo_kind(&rid, "git", "docref", &repo_path).await.unwrap();
+        ctx.pg().update_folder_status(&fid, "indexing").await.unwrap();
+
+        // Code first, so the doc has something to resolve against.
+        for f in ["src/lib.rs", "src/a.rs", "src/b.rs", "README.md"] {
+            let abs = repo.join(f).to_string_lossy().to_string();
+            process_file(&ctx, &Task::for_file(TaskKind::ProcessFile, &repo_path, &abs))
+                .await
+                .unwrap();
+        }
+
+        let rows: Vec<(Option<uuid::Uuid>, Option<String>)> = sqlx_core::query_as::query_as(
+            "SELECT e.target_id, e.target_name FROM sensei.edges e
+               JOIN sensei.nodes n ON n.id = e.source_id
+              WHERE e.folder_id = $1 AND e.kind = 'references'::sensei.edge_kind
+                AND n.file_path = 'README.md'",
+        )
+        .bind(fid)
+        .fetch_all(ctx.pg().pool())
+        .await
+        .unwrap();
+        assert!(!rows.is_empty(), "the README produced reference edges");
+
+        // The file reference resolved to src/lib.rs's file node.
+        let resolved_files: Vec<uuid::Uuid> = rows.iter().filter_map(|(t, _)| *t).collect();
+        let mut hit_lib = false;
+        for t in &resolved_files {
+            let (kind, fp): (String, Option<String>) = sqlx_core::query_as::query_as(
+                "SELECT kind::text, file_path FROM sensei.nodes WHERE id = $1",
+            )
+            .bind(t)
+            .fetch_one(ctx.pg().pool())
+            .await
+            .unwrap();
+            if kind == "file" && fp.as_deref() == Some("src/lib.rs") {
+                hit_lib = true;
+            }
+        }
+        assert!(hit_lib, "`src/lib.rs` must resolve to that file's node");
+
+        // The unambiguous symbol resolved; the ambiguous one and the broken link
+        // did not — and both kept their mention.
+        let unresolved: Vec<&str> =
+            rows.iter().filter(|(t, _)| t.is_none()).filter_map(|(_, n)| n.as_deref()).collect();
+        assert!(
+            !unresolved.contains(&"only_once"),
+            "an unambiguous symbol mention resolves: {unresolved:?}"
+        );
+        assert!(
+            unresolved.contains(&"twice"),
+            "an AMBIGUOUS mention must stay unresolved rather than pick one: {unresolved:?}"
+        );
+        // A broken link produces NO reference edge at all — `extract_file_refs`
+        // gates on the file existing, so it never reaches the emit site. (Broken
+        // links are tracked separately by the doc-drift scan.) What matters here
+        // is the invariant either way: it must not mint a node for a file that
+        // does not exist.
+        assert!(
+            !unresolved.contains(&"src/missing.rs"),
+            "a nonexistent file is filtered at extraction, not carried as a ref: {unresolved:?}"
+        );
+        assert_eq!(
+            ctx.pg().file_node_id_by_path(&fid, "src/missing.rs").await.unwrap(),
+            None,
+            "a doc naming a nonexistent file is never evidence the file exists"
+        );
 
         ctx.pg().delete_nodes_by_folder(&fid).await.unwrap();
     }

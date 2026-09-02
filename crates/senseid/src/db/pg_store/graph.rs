@@ -286,6 +286,66 @@ impl PgStore {
         Ok(row.map(|(id,)| id))
     }
 
+    /// The `file` node for a repo-relative path — what a doc's file reference
+    /// points at. `None` when the path names nothing indexed.
+    ///
+    /// Repo-relative on purpose: a doc reference is written relative to the repo
+    /// and `nodes.file_path` is stored the same way, so the two match directly.
+    /// (7,418 of 673,929 `file_path` rows are absolute — a separate
+    /// inconsistency; those simply will not match, which is honest.)
+    pub async fn file_node_id_by_path(
+        &self,
+        folder_id: &uuid::Uuid,
+        rel_path: &str,
+    ) -> Result<Option<uuid::Uuid>, String> {
+        let row: Option<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
+            "SELECT id FROM sensei.nodes
+              WHERE folder_id = $1 AND file_path = $2 AND kind = 'file'::sensei.node_kind
+              LIMIT 1",
+        )
+        .bind(folder_id)
+        .bind(rel_path)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| format!("file_node_id_by_path: {e}"))?;
+        Ok(row.map(|(id,)| id))
+    }
+
+    /// A definition node for `name`, but ONLY when exactly one exists in the
+    /// folder. `None` when the name is absent OR ambiguous.
+    ///
+    /// A doc says `` `handleAuth` `` with no signature and no module path, so an
+    /// ambiguous name cannot be resolved — it can only be GUESSED. Picking the
+    /// first of several would attach the doc to an arbitrary same-named symbol
+    /// and read as a fact; the honest answer is to leave the edge unresolved and
+    /// let `target_name` carry the mention. That is why this returns `None` on
+    /// ambiguity rather than a best match: two rows means "I don't know which",
+    /// which is not the same as an answer.
+    ///
+    /// Stubs are excluded (`file_path IS NOT NULL`): a doc mention must land on a
+    /// definition, not on another unresolved reference to the same name.
+    pub async fn sole_definition_id_by_name(
+        &self,
+        folder_id: &uuid::Uuid,
+        name: &str,
+    ) -> Result<Option<uuid::Uuid>, String> {
+        let rows: Vec<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
+            "SELECT id FROM sensei.nodes
+              WHERE folder_id = $1 AND name = $2 AND file_path IS NOT NULL
+                AND kind NOT IN ('file'::sensei.node_kind, 'section'::sensei.node_kind,
+                                 'lib_symbol'::sensei.node_kind, 'lib_package'::sensei.node_kind)
+              LIMIT 2",
+        )
+        .bind(folder_id)
+        .bind(name)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| format!("sole_definition_id_by_name: {e}"))?;
+        // LIMIT 2 is the whole trick: one row is unambiguous, two means ambiguous
+        // and we stop counting — no full scan just to learn "more than one".
+        Ok(if rows.len() == 1 { Some(rows[0].0) } else { None })
+    }
+
     /// Get-or-create a node by its fully-qualified name (SCIP/LSIF moniker model).
     /// A REFERENCE (`def = None`) creates — or returns — an unresolved STUB
     /// (`resolved=false`, NULL `file_path`). A DEFINITION (`def = Some`) creates or

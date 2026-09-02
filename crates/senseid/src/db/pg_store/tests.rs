@@ -12188,3 +12188,78 @@ async fn node_id_by_fqn_looks_up_without_creating_and_is_folder_scoped() {
     s.delete_nodes_by_folder(&a).await.unwrap();
     s.delete_nodes_by_folder(&b).await.unwrap();
 }
+
+/// A doc's symbol mention resolves ONLY when the name is unambiguous.
+///
+/// A doc writes `` `handleAuth` `` with no signature and no module path. With
+/// two same-named definitions there is nothing to choose on, so picking one
+/// would publish a guess as a fact — the honest answer is `None`, leaving the
+/// edge unresolved with the mention in `target_name`.
+///
+/// Breaking mutation: change `rows.len() == 1` to `!rows.is_empty()` — the
+/// ambiguous case starts returning an arbitrary one of the two.
+#[tokio::test]
+async fn sole_definition_by_name_returns_none_when_ambiguous() {
+    let s = pg_store().await;
+    let fid = create_test_folder(&s, &format!("soledef_{}", uuid::Uuid::new_v4())).await;
+
+    // Unambiguous: exactly one definition.
+    let only = s
+        .upsert_node(&fid, "function", "uniqueThing", "src/a.rs", None, None, Some(1), Some(2))
+        .await
+        .unwrap();
+    assert_eq!(s.sole_definition_id_by_name(&fid, "uniqueThing").await.unwrap(), Some(only));
+
+    // Ambiguous: two definitions of the same name in different files.
+    s.upsert_node(&fid, "function", "dupThing", "src/b.rs", None, None, Some(1), Some(2))
+        .await
+        .unwrap();
+    s.upsert_node(&fid, "function", "dupThing", "src/c.rs", None, None, Some(1), Some(2))
+        .await
+        .unwrap();
+    assert_eq!(
+        s.sole_definition_id_by_name(&fid, "dupThing").await.unwrap(),
+        None,
+        "two candidates means 'I don't know which' — never a best guess"
+    );
+
+    // Absent.
+    assert_eq!(s.sole_definition_id_by_name(&fid, "neverDefined").await.unwrap(), None);
+
+    // A STUB is not a definition: a doc mention must land on real code, not on
+    // another unresolved reference to the same name.
+    s.upsert_node_by_fqn(&fid, "rust·p·m·Ghost·stubbed", "function", "stubbed", Some("rust"), None)
+        .await
+        .unwrap();
+    assert_eq!(
+        s.sole_definition_id_by_name(&fid, "stubbed").await.unwrap(),
+        None,
+        "a stub has no file_path and cannot anchor a doc reference"
+    );
+
+    s.delete_nodes_by_folder(&fid).await.unwrap();
+}
+
+/// A doc's file reference resolves against the repo-relative path, which is the
+/// form `nodes.file_path` uses. Before this, refs were stored machine-absolute
+/// and could never match.
+#[tokio::test]
+async fn file_node_lookup_matches_the_repo_relative_path() {
+    let s = pg_store().await;
+    let fid = create_test_folder(&s, &format!("fileref_{}", uuid::Uuid::new_v4())).await;
+
+    let f = s
+        .upsert_node(&fid, "file", "main.rs", "src/main.rs", None, None, None, None)
+        .await
+        .unwrap();
+    assert_eq!(s.file_node_id_by_path(&fid, "src/main.rs").await.unwrap(), Some(f));
+    assert_eq!(
+        s.file_node_id_by_path(&fid, "/abs/root/src/main.rs").await.unwrap(),
+        None,
+        "an absolute target cannot match a repo-relative file_path — the whole reason \
+         doc references resolved at 0%"
+    );
+    assert_eq!(s.file_node_id_by_path(&fid, "src/absent.rs").await.unwrap(), None);
+
+    s.delete_nodes_by_folder(&fid).await.unwrap();
+}
