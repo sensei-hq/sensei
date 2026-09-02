@@ -11746,3 +11746,104 @@ async fn re_detect_discards_a_description_whose_cluster_changed() {
     );
     s.delete_nodes_by_folder(&fid).await.unwrap();
 }
+
+// ── stub GC ──────────────────────────────────────────────────────────────────
+
+/// An unresolved reference stub that nothing points at is garbage, and until now
+/// nothing could collect it: `prune_file_nodes` filters `file_path = $2` and
+/// every stub has `file_path IS NULL`, so 84,446 accumulated with no GC path.
+/// That is also why the invariant `count(*) where locality='unknown'` could not
+/// be driven to zero by fixing the parsers alone.
+#[tokio::test]
+async fn prune_orphan_stubs_collects_unreferenced_stubs_only() {
+    let s = pg_store().await;
+    let fid = create_test_folder(&s, &format!("gc_{}", uuid::Uuid::new_v4())).await;
+
+    // Garbage: a stub nothing references.
+    let orphan = s
+        .upsert_node_by_fqn(&fid, "rust·p·m·Orphan·gone", "function", "gone", Some("rust"), None)
+        .await
+        .unwrap();
+    // Live: a stub that an edge still points at — a caller has not been reindexed
+    // yet, and dropping it would lose the fact that the reference exists.
+    let referenced = s
+        .upsert_node_by_fqn(&fid, "rust·p·m·Kept·held", "function", "held", Some("rust"), None)
+        .await
+        .unwrap();
+    let caller = s
+        .upsert_node(&fid, "function", "caller", "src/a.rs", None, None, Some(1), Some(2))
+        .await
+        .unwrap();
+    s.insert_edge(&fid, &caller, Some(&referenced), None, None, "calls").await.unwrap();
+    // Must survive: a real local definition.
+    let real = s
+        .upsert_node(&fid, "function", "real", "src/b.rs", None, None, Some(1), Some(2))
+        .await
+        .unwrap();
+    // Must survive: an external symbol is not a stub.
+    let lib = s
+        .upsert_node_by_fqn(&fid, "lib·axum·axum·Json", "lib_symbol", "Json", Some("rust"), None)
+        .await
+        .unwrap();
+
+    let removed = s.prune_orphan_stubs(&fid).await.unwrap();
+    assert_eq!(removed, 1, "exactly the unreferenced stub");
+
+    let survivors: Vec<(uuid::Uuid,)> =
+        sqlx_core::query_as::query_as("SELECT id FROM sensei.nodes WHERE id = ANY($1)")
+            .bind(vec![orphan, referenced, real, lib])
+            .fetch_all(s.pool())
+            .await
+            .unwrap();
+    let alive: std::collections::HashSet<uuid::Uuid> =
+        survivors.into_iter().map(|(id,)| id).collect();
+    assert!(!alive.contains(&orphan), "the unreferenced stub is collected");
+    assert!(alive.contains(&referenced), "a stub with an in-edge is still evidence of a reference");
+    assert!(alive.contains(&real), "a real definition is never a stub");
+    assert!(alive.contains(&lib), "a lib_symbol is external, not unresolved");
+
+    // Idempotent: a second pass has nothing left to do.
+    assert_eq!(s.prune_orphan_stubs(&fid).await.unwrap(), 0, "second pass is a no-op");
+    s.delete_nodes_by_folder(&fid).await.unwrap();
+}
+
+/// A stub with CHILDREN must not be collected. `nodes.parent_id` cascades on
+/// delete, and live there are 42 stub parents carrying 574 real internal method
+/// nodes — an unguarded delete would destroy every one of them. The stub is
+/// wrong, but it is load-bearing until its children are re-parented.
+#[tokio::test]
+async fn prune_orphan_stubs_never_cascades_onto_real_children() {
+    let s = pg_store().await;
+    let fid = create_test_folder(&s, &format!("gckids_{}", uuid::Uuid::new_v4())).await;
+    let stub_parent = s
+        .upsert_node_by_fqn(&fid, "java·p·StubClass", "class", "StubClass", Some("java"), None)
+        .await
+        .unwrap();
+    let child = s
+        .upsert_node(
+            &fid,
+            "method",
+            "setId",
+            "src/Model.java",
+            Some(&stub_parent),
+            None,
+            Some(3),
+            Some(4),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        s.prune_orphan_stubs(&fid).await.unwrap(),
+        0,
+        "a stub carrying children is not collected"
+    );
+    let (kids,): (i64,) =
+        sqlx_core::query_as::query_as("SELECT count(*) FROM sensei.nodes WHERE id = $1")
+            .bind(child)
+            .fetch_one(s.pool())
+            .await
+            .unwrap();
+    assert_eq!(kids, 1, "the real method survives — 574 of these exist live");
+    s.delete_nodes_by_folder(&fid).await.unwrap();
+}
