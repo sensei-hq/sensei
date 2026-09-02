@@ -370,6 +370,35 @@ pub fn local_import_candidates(
     spec: &str,
     class: &ImportTarget,
 ) -> Vec<String> {
+    // Rust needs TWO fqn SHAPES, not two module paths, so it cannot go through
+    // `local_module_candidates`: `use crate::db::pg_store` names either the
+    // MODULE `db::pg_store` or the ITEM `pg_store` inside module `db`, and only
+    // the graph knows which. Module first — a `use` path more often ends at a
+    // module than at a re-exported item.
+    //
+    // The arithmetic itself is NOT reimplemented here: `rust_lang::
+    // internal_use_module` owns it, including the leading-`super` up-count fold.
+    if matches!(class, ImportTarget::Internal) {
+        let segs: Vec<&str> = spec.trim().split("::").filter(|s| !s.is_empty()).collect();
+        let Some((module, leaf)) =
+            crate::languages::rust_lang::internal_use_module(current_module, &segs)
+        else {
+            return Vec::new();
+        };
+        if leaf.is_empty() {
+            return Vec::new();
+        }
+        let mut out = Vec::new();
+        // Leaf is itself a module: `db` + `pg_store` → `db::pg_store`.
+        let as_module = if module.is_empty() { leaf.clone() } else { format!("{module}::{leaf}") };
+        out.push(crate::languages::fqn::item(lang, package, "", &as_module));
+        // Leaf is an item in `module`.
+        let as_item = crate::languages::fqn::item(lang, package, &module, &leaf);
+        if !out.contains(&as_item) {
+            out.push(as_item);
+        }
+        return out;
+    }
     let modules = local_module_candidates(class, current_module, spec);
     let mut out: Vec<String> = Vec::new();
     for m in &modules {
@@ -648,17 +677,66 @@ mod tests {
                 "{spec} is external and must not produce a local candidate",
             );
         }
-        // Rust internal paths need rust_lang's module arithmetic, not a string
-        // rewrite — empty until that is hoisted.
-        assert!(
+    }
+
+    /// Rust `use` paths, resolved through `rust_lang::internal_use_module` — the
+    /// SAME arithmetic `classify_segments` uses, not a copy.
+    ///
+    /// Two shapes per path, because `use crate::db::pg_store` names either the
+    /// module `db::pg_store` or an item `pg_store` re-exported from module `db`,
+    /// and only the graph knows which. Module first: a `use` more often ends at
+    /// a module.
+    ///
+    /// Breaking mutation: delete the `super`-arm's `take_while(|s| **s ==
+    /// "super")` up-count in `internal_use_module` so only one level is
+    /// consumed — `super::super::x` then resolves one module too deep.
+    #[test]
+    fn rust_use_paths_resolve_through_the_shared_module_arithmetic() {
+        assert_eq!(
             local_import_candidates(
                 "rust",
                 "senseid",
                 "db::pg_store",
                 "crate::db::graph",
                 &classify_import("crate::db::graph")
-            )
-            .is_empty()
+            ),
+            vec!["rust·senseid·db::graph", "rust·senseid·db·graph"],
+        );
+
+        // `super::` climbs one module per marker, relative to the importer.
+        assert_eq!(
+            local_import_candidates(
+                "rust",
+                "senseid",
+                "tasks::handlers::process",
+                "super::common",
+                &classify_import("super::common")
+            )[0],
+            "rust·senseid·tasks::handlers::common",
+        );
+        // TWO markers climb two levels — the fold this test exists to pin.
+        assert_eq!(
+            local_import_candidates(
+                "rust",
+                "senseid",
+                "tasks::handlers::process",
+                "super::super::executor",
+                &classify_import("super::super::executor")
+            )[0],
+            "rust·senseid·tasks::executor",
+            "each leading `super` consumes one level; consuming only the first mints \
+             a module path that never existed",
+        );
+        // `self::` stays inside the importing module.
+        assert_eq!(
+            local_import_candidates(
+                "rust",
+                "senseid",
+                "db::pg_store",
+                "self::graph",
+                &classify_import("self::graph")
+            )[0],
+            "rust·senseid·db::pg_store::graph",
         );
     }
 
