@@ -450,6 +450,35 @@ fn parent_mod(m: &str) -> String {
     }
 }
 
+/// `(module, leaf)` for a crate-internal `use` path, resolved against the
+/// importing module. `None` when the path is not `crate::`/`self::`/`super::`
+/// rooted — that case needs the crate name and the file's local-module set,
+/// which only `rust_fqn::classify_segments` has.
+///
+/// Extracted from that function so the IMPORT RESOLVER can build lookup
+/// candidates from the same arithmetic instead of a second copy. The `super::`
+/// up-count fold is exactly where a second copy went wrong before: consuming
+/// only the first `super` left the rest in the path and minted names like
+/// `tasks::handlers::super::executor`, a module that never existed.
+pub(crate) fn internal_use_module(current_module: &str, segs: &[&str]) -> Option<(String, String)> {
+    let leaf = segs.last().copied().unwrap_or("").to_string();
+    // Modules strictly between the root marker and the leaf.
+    let mid = |from: usize| -> String {
+        if segs.len() <= from + 1 { String::new() } else { segs[from..segs.len() - 1].join("::") }
+    };
+    let module = match segs.first().copied().unwrap_or("") {
+        "crate" => mid(1),
+        "self" => join_mod(current_module, &mid(1)),
+        "super" => {
+            let ups = segs.iter().take_while(|s| **s == "super").count();
+            let base = (0..ups).fold(current_module.to_string(), |m, _| parent_mod(&m));
+            join_mod(&base, &mid(ups))
+        }
+        _ => return None,
+    };
+    Some((module, leaf))
+}
+
 /// One name a `use` declaration brings into scope.
 struct UseBinding {
     /// The name as written at the use site — the alias when one is given, `*` for
@@ -1126,22 +1155,18 @@ pub(crate) mod rust_fqn {
             || norm_crate(first) == norm_crate(&ctx.package)
             || scope.local_modules.contains(first);
         if internal_root {
-            let module = match first {
-                "crate" => mid(1),
-                "self" => join_mod(&ctx.module, &mid(1)),
-                // Every leading `super::` consumes one module level. Consuming only
-                // the first left the rest in the module path, minting names like
-                // `tasks::handlers::super::executor` that no module ever had.
-                "super" => {
-                    let ups = segs.iter().take_while(|s| **s == "super").count();
-                    let base = (0..ups).fold(ctx.module.clone(), |m, _| parent_mod(&m));
-                    join_mod(&base, &mid(ups))
-                }
-                _ => {
-                    // current-crate name prefix, or a local submodule used without `crate::`.
-                    if norm_crate(first) == norm_crate(&ctx.package) { mid(1) } else { mid(0) }
-                }
-            };
+            // `crate::`/`self::`/`super::` arithmetic (including the leading-`super`
+            // up-count fold) lives in `internal_use_module`, which the import
+            // resolver also calls — one owner, so the two cannot disagree about
+            // which module a `use` path names.
+            if let Some((module, leaf)) = super::internal_use_module(&ctx.module, segs) {
+                return PathClass::Internal { module, leaf };
+            }
+            // Not marker-rooted: a current-crate name prefix, or a local submodule
+            // used without `crate::`. Needs the crate name / local-module set, which
+            // is why this case stays here rather than moving to the shared helper.
+            let module =
+                if norm_crate(first) == norm_crate(&ctx.package) { mid(1) } else { mid(0) };
             PathClass::Internal { module, leaf }
         } else {
             let path =
