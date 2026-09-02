@@ -187,6 +187,31 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
         tracing::warn!(error = %e, "scan_root: dedup_structural_folder_nodes failed");
         0
     });
+    // MUST FOLLOW THE DEDUP. The dedup CREATES orphan stubs: deleting a
+    // structural duplicate cascades its edges away, and an edge pointing at a
+    // stub is precisely what made that stub ineligible for collection. The
+    // per-folder pass already ran at the community terminal barrier by this
+    // point, so nothing collected the rows the dedup had just orphaned —
+    // measured 9,863 stubs matching the GC predicate exactly and surviving
+    // anyway, every one of them in a `kind='folder'` folder.
+    //
+    // Fail-OPEN like the per-folder pass: reclaiming garbage is housekeeping and
+    // must not fail a scan that indexed correctly. The rows wait for next pass.
+    let stubs_collected = match ctx.pg().folder_ids_for_root(&root_id).await {
+        Ok(ids) => ctx.pg().prune_orphan_stubs_scoped(&ids).await.unwrap_or_else(|e| {
+            tracing::warn!(error = %e, "scan_root: prune_orphan_stubs_scoped failed");
+            0
+        }),
+        Err(e) => {
+            tracing::warn!(error = %e, "scan_root: folder_ids_for_root failed — stub GC skipped");
+            0
+        }
+    };
+    if stubs_collected > 0 {
+        tracing::info!(
+            "scan_root reconcile: collected {stubs_collected} stub(s) the dedup orphaned"
+        );
+    }
     let orphaned = ctx.pg().mark_orphaned_projects().await.unwrap_or_else(|e| {
         tracing::warn!(error = %e, "scan_root: mark_orphaned_projects failed");
         0
@@ -217,18 +242,19 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
         || archived > 0
         || ghosts > 0
         || deduped > 0
+        || stubs_collected > 0
         || pruned_projects > 0
         || repos_assigned > 0
     {
         emit(StateEvent::activity(ActivityEvent::new(
             ActivityLevel::Info,
             &format!(
-                "reconcile · {removed} stale roots removed · {remapped} moved roots remapped · {archived} vanished roots archived · {ghosts} ghost folders pruned · {deduped} duplicate nodes deduped · {pruned_projects} empty projects purged · {repos_assigned} folders linked to repositories · {marked} flagged stale · {orphaned} projects re-tagged"
+                "reconcile · {removed} stale roots removed · {remapped} moved roots remapped · {archived} vanished roots archived · {ghosts} ghost folders pruned · {deduped} duplicate nodes deduped · {stubs_collected} orphaned stubs collected · {pruned_projects} empty projects purged · {repos_assigned} folders linked to repositories · {marked} flagged stale · {orphaned} projects re-tagged"
             ),
             start.elapsed().as_secs_f64(),
         )));
         tracing::info!(
-            "scan_root reconcile: removed={removed} remapped={remapped} archived={archived} ghost_folders={ghosts} deduped_nodes={deduped} empty_projects_purged={pruned_projects} repos_assigned={repos_assigned} marked={marked} orphaned_retagged={orphaned}"
+            "scan_root reconcile: removed={removed} remapped={remapped} archived={archived} ghost_folders={ghosts} deduped_nodes={deduped} stubs_collected={stubs_collected} empty_projects_purged={pruned_projects} repos_assigned={repos_assigned} marked={marked} orphaned_retagged={orphaned}"
         );
     }
 
@@ -852,6 +878,138 @@ mod tests {
                     .unwrap();
             assert_eq!(alive, 1, "{msg}");
         }
+    }
+
+    /// THE ORDERING: the reconcile's dedup ORPHANS stubs, so the stub GC has to
+    /// run AFTER it, not before.
+    ///
+    /// The per-folder GC fires at the community terminal barrier, then
+    /// `scan_root reconcile` runs `dedup_structural_folder_nodes` and deletes the
+    /// structural duplicates. That cascade takes their edges with them — and an
+    /// edge pointing at a stub is the only thing that made the stub ineligible
+    /// for collection. Nothing ran the GC again, so live 9,863 stubs matched the
+    /// GC predicate exactly and survived anyway, every one of them in a
+    /// `kind='folder'` folder (the dedup's exact target set) across 4 folders.
+    ///
+    /// Driven through `scan_root` on purpose: the defect IS the order of two
+    /// calls inside the reconcile, so a test that called dedup and then prune
+    /// itself would pass while production stayed broken.
+    #[tokio::test]
+    async fn reconcile_collects_stubs_the_dedup_orphans() {
+        let ctx = make_ctx().await;
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let root_str = root.to_string_lossy().to_string();
+
+        // Real directories, INCLUDING `.git`, so the walk classifies `repo` as a
+        // live git root. Without it `reconcile_roots` prunes the root as
+        // undiscovered and the whole subtree cascades away — which silently
+        // satisfies the stub assertion for the wrong reason.
+        let repo = root.join("repo");
+        let member = repo.join("crates/member");
+        std::fs::create_dir_all(&member).unwrap();
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+
+        let root_id =
+            ctx.pg().add_watch_root(&root_str, "gcorder", &serde_json::json!([])).await.unwrap();
+        let pid = ctx.pg().create_project("gcorder-proj", None, None).await.unwrap();
+        let repo_fid = ctx
+            .pg()
+            .upsert_repo_kind(&root_id, "git", "repo", &repo.to_string_lossy())
+            .await
+            .unwrap();
+        ctx.pg().set_folder_project(&repo_fid, &pid, "root", None).await.unwrap();
+        let member_fid = ctx
+            .pg()
+            .upsert_subfolder(
+                &root_id,
+                "member",
+                "crates/member",
+                &member.to_string_lossy(),
+                Some(&repo_fid),
+                Some(&pid),
+            )
+            .await
+            .unwrap();
+
+        // The canonical root copy, and the structural duplicate the dedup removes.
+        ctx.pg()
+            .upsert_node(
+                &repo_fid,
+                "function",
+                "run_task",
+                "crates/member/src/lib.rs",
+                None,
+                None,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        let dup = ctx
+            .pg()
+            .upsert_node(&member_fid, "function", "run_task", "src/lib.rs", None, None, None, None)
+            .await
+            .unwrap();
+
+        // A stub whose ONLY in-edge comes from the duplicate. Before the dedup it
+        // is correctly ineligible — something references it. After the dedup that
+        // edge is gone and it is garbage.
+        let stub = ctx
+            .pg()
+            .upsert_node_by_fqn(
+                &member_fid,
+                "rust·p·m·Ghost·vanishes",
+                "function",
+                "vanishes",
+                Some("rust"),
+                None,
+            )
+            .await
+            .unwrap();
+        ctx.pg().insert_edge(&member_fid, &dup, Some(&stub), None, None, "calls").await.unwrap();
+
+        // Pre-state: the GC would NOT take it, which is what makes the ordering
+        // the whole defect rather than a weak predicate.
+        assert_eq!(
+            ctx.pg().prune_orphan_stubs(&member_fid).await.unwrap(),
+            0,
+            "while the duplicate still references it, the stub is legitimately kept"
+        );
+
+        let task = Task::new(TaskKind::ScanRoot, "", &root_str);
+        scan_root(&ctx, &task).await.unwrap();
+
+        // The member FOLDER must survive: if the reconcile pruned it instead,
+        // every node under it would cascade away and this test would pass for
+        // entirely the wrong reason.
+        let (member_alive,): (i64,) =
+            sqlx_core::query_as::query_as("SELECT count(*) FROM sensei.folders WHERE id=$1")
+                .bind(member_fid)
+                .fetch_one(ctx.pg().pool())
+                .await
+                .unwrap();
+        assert_eq!(member_alive, 1, "the structural member folder is still indexed");
+
+        let (dup_alive,): (i64,) =
+            sqlx_core::query_as::query_as("SELECT count(*) FROM sensei.nodes WHERE id=$1")
+                .bind(dup)
+                .fetch_one(ctx.pg().pool())
+                .await
+                .unwrap();
+        assert_eq!(dup_alive, 0, "the reconcile's dedup removed the structural duplicate");
+
+        let (stub_alive,): (i64,) =
+            sqlx_core::query_as::query_as("SELECT count(*) FROM sensei.nodes WHERE id=$1")
+                .bind(stub)
+                .fetch_one(ctx.pg().pool())
+                .await
+                .unwrap();
+        assert_eq!(
+            stub_alive, 0,
+            "the dedup orphaned this stub, so the SAME reconcile must collect it — \
+             leaving it is the 9,863-stub residue"
+        );
     }
 
     #[tokio::test]
