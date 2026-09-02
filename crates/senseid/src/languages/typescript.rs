@@ -665,24 +665,24 @@ pub(crate) mod typescript_fqn {
         }
     }
 
+    /// Adapter over `import_target::import_anchor` — the ONE owner of the
+    /// local-module-vs-external-package decision.
+    ///
+    /// This used to be a second classifier that called every non-dot specifier
+    /// external, so `@/lib/x` filed the project's OWN symbols under a fabricated
+    /// package named `@/lib`. The owner had the correct `@/` rule for a day
+    /// while this copy stayed wrong, because the commit that added it wired only
+    /// the reporting endpoint. Keep this a pure shape conversion: any judgement
+    /// added here is a third copy.
     fn classify_import(spec: &str, current_module: &str) -> ImportTarget {
-        if spec.starts_with('.') {
-            ImportTarget {
-                external: false,
-                module_or_pkg: resolve_relative(current_module, spec),
-                spec: spec.to_string(),
+        use crate::languages::import_target::{ImportAnchor, import_anchor};
+        match import_anchor(current_module, spec) {
+            ImportAnchor::Local { module } => {
+                ImportTarget { external: false, module_or_pkg: module, spec: spec.to_string() }
             }
-        } else {
-            let pkg = if let Some(rest) = spec.strip_prefix('@') {
-                let mut it = rest.splitn(3, '/');
-                match (it.next(), it.next()) {
-                    (Some(a), Some(b)) => format!("@{a}/{b}"),
-                    _ => spec.to_string(),
-                }
-            } else {
-                spec.split('/').next().unwrap_or(spec).to_string()
-            };
-            ImportTarget { external: true, module_or_pkg: pkg, spec: spec.to_string() }
+            ImportAnchor::External { package } => {
+                ImportTarget { external: true, module_or_pkg: package, spec: spec.to_string() }
+            }
         }
     }
 
@@ -690,7 +690,10 @@ pub(crate) mod typescript_fqn {
     // which owns specifier arithmetic. The import resolver in `process.rs` needs
     // the identical arithmetic to build its lookup candidates, and a second copy
     // here would drift from it — the failure mode named at the top of that module.
-    use crate::languages::import_target::{resolve_relative, strip_ext};
+    //
+    // `resolve_relative` has no caller left here at all: the only one was this
+    // module's shadow `classify_import`, which now delegates to `import_anchor`.
+    use crate::languages::import_target::strip_ext;
 
     fn walk_stmt(
         stmt: &Statement,
