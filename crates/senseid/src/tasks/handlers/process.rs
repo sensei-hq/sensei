@@ -2287,6 +2287,73 @@ mod tests {
         ctx.pg().delete_nodes_by_folder(&fid).await.unwrap();
     }
 
+    /// A rust `use crate::…` import resolves to the target's node, through the
+    /// same module arithmetic `classify_segments` uses. 1,151 such edges were
+    /// unresolved because `local_import_candidates` returned empty for
+    /// `ImportTarget::Internal`.
+    ///
+    /// Breaking mutation: make the `Internal` arm of `local_import_candidates`
+    /// return `Vec::new()` again.
+    #[tokio::test]
+    async fn rust_use_imports_resolve_to_the_target_module_or_item() {
+        let ctx = make_ctx().await;
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("rsimp");
+        std::fs::create_dir_all(repo.join("src")).unwrap();
+        std::fs::write(repo.join("Cargo.toml"), "[package]\nname = \"rsimp\"\n").unwrap();
+        std::fs::write(repo.join("src/b.rs"), "pub struct Thing { pub n: i32 }\n").unwrap();
+        std::fs::write(
+            repo.join("src/a.rs"),
+            "use crate::b::Thing;\npub fn make() -> Thing { Thing { n: 1 } }\n",
+        )
+        .unwrap();
+        let repo_path = repo.to_string_lossy().to_string();
+        let rid = ctx
+            .pg()
+            .add_watch_root(&tmp.path().to_string_lossy(), "rsimp", &serde_json::json!([]))
+            .await
+            .unwrap();
+        let fid = ctx.pg().upsert_repo_kind(&rid, "git", "rsimp", &repo_path).await.unwrap();
+        ctx.pg().update_folder_status(&fid, "indexing").await.unwrap();
+
+        for f in ["src/b.rs", "src/a.rs"] {
+            let abs = repo.join(f).to_string_lossy().to_string();
+            process_file(&ctx, &Task::for_file(TaskKind::ProcessFile, &repo_path, &abs))
+                .await
+                .unwrap();
+        }
+
+        let (tid, tname): (Option<uuid::Uuid>, Option<String>) = sqlx_core::query_as::query_as(
+            "SELECT e.target_id, e.target_name FROM sensei.edges e
+               JOIN sensei.nodes n ON n.id = e.source_id
+              WHERE e.folder_id = $1 AND e.kind = 'imports'::sensei.edge_kind
+                AND n.file_path = 'src/a.rs'",
+        )
+        .bind(fid)
+        .fetch_one(ctx.pg().pool())
+        .await
+        .unwrap();
+        assert!(tid.is_some(), "`use crate::b::Thing` names this crate's own code");
+        assert_eq!(tname, None, "resolving erases target_name");
+
+        // It lands on something REAL in b.rs — either b's module or the `Thing`
+        // item inside it; both are correct answers to `use crate::b::Thing`.
+        let (fqn, file): (Option<String>, Option<String>) =
+            sqlx_core::query_as::query_as("SELECT fqn, file_path FROM sensei.nodes WHERE id = $1")
+                .bind(tid.unwrap())
+                .fetch_one(ctx.pg().pool())
+                .await
+                .unwrap();
+        let fqn = fqn.unwrap_or_default();
+        assert!(
+            fqn == "rust·rsimp·b::Thing" || fqn == "rust·rsimp·b·Thing",
+            "unexpected target fqn: {fqn}"
+        );
+        assert_eq!(file.as_deref(), Some("src/b.rs"), "and it is the real definition, not a stub");
+
+        ctx.pg().delete_nodes_by_folder(&fid).await.unwrap();
+    }
+
     /// Order-independence, which is why this needs no barrier: importing a file
     /// that is not indexed yet creates a STUB on the target's own fqn, and the
     /// later definition ENRICHES that same row keeping its id. Mirrors
