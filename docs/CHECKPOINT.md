@@ -1,70 +1,69 @@
 # Checkpoint
 
-**Slice:** stub-GC ordering FIXED and verified in production (`a7a1bee9`), after
-the MCP shape fixes (`93cef04a`) and the clean rebuild (`268c242f`). Branch
-`develop`. Gates: rust 2,680/0, app 1,698/118, dojo 1,535/138, SQL 8, clippy 0,
-fmt clean.
+**Slice:** local import resolution DONE and verified (`cc534c63`), after the
+stub-GC ordering fix (`a7a1bee9`) and the MCP shape fixes (`93cef04a`). Branch
+`develop`. Gates: rust 2,689/0, app 1,698/118, clippy 0, fmt clean.
 
-## The GC ran before the thing that creates its work
+## Imports resolved 0 → 1,911
 
-Per-folder `prune_orphan_stubs` fires at the community terminal barrier; then
-`scan_root reconcile` runs `dedup_structural_folder_nodes` and deletes the
-structural duplicates — and *that* cascade strips the edges which were the only
-reason those stubs were ineligible. Nothing ran the GC again.
+0 of 162,690 `imports` edges resolved — not because resolution failed but
+because nothing tried: `process.rs` passed `target_id = None` unconditionally.
+Twelve lines below, call edges reach 65% at the SAME emit site by get-or-creating
+their target by FQN. It was one missing branch at one emit site.
 
-`prune_orphan_stubs_scoped` now runs immediately after the dedup, root-scoped in
-one statement (8,855 folders under a root, so per-folder round trips would
-dominate a single indexed delete), fail-open like the per-folder pass, with
-`stubs_collected` in the reconcile summary. The predicate is untouched and
-unduplicated — `prune_orphan_stubs` delegates via `std::slice::from_ref`, the
-same idiom `get_edges_by_kind` uses, and all three existing stub-GC tests pass
-unchanged through the new path.
+**Both my initial framings were wrong**, refuted by a 26-agent investigation:
+there is no resolution *pass* to add a kind-filter to (`TaskKind` has no
+`ResolveEdges`; `resolve_edge` has zero production callers), and the ResolveLibs
+barrier is the wrong home (the watcher re-inserts imports with NULL on every
+edit, so a barrier fix is erased on the next keystroke).
 
-**Production proof, not just the test:** log `collected 9863 stub(s) the dedup
-orphaned` · eligible stubs **9,863 → 0** · `unknown` locality **54,602 → 44,739**
-(down exactly 9,863) · the 4 `cluster:*` folders now zero rows.
+Resolution is at emit and order-independent: a miss creates a stub on the
+target's own fqn, and the target's later definition enriches that row in place
+keeping its id. **Lookup-first** via the new non-mutating `node_id_by_fqn` —
+get-or-creating on candidate 1 would satisfy candidate 1 forever and hide the
+real target at candidate 2. It is folder-scoped, which matters because 5 repos
+here have two checkouts each.
 
-## Test lesson worth keeping
+**Measured on the shipped artifact** (sensei project, forced reindex):
+imports **0/3652 → 1911/3652**; remaining are 1,147 external (correct — the
+package name is the answer, and a resolved edge has a NULL `target_name` so it is
+the only place that string survives), 523 rust-internal (staged), 71 `$app`/`$env`
+(framework, no local file). **Zero** unresolved relative/`$lib`/`@/`/`~/` edges,
+against a predicted 86%. `graphHealth` reports imports at 52% where it read 0%.
 
-The test drives `scan_root`, not dedup-then-prune by hand, because the defect IS
-the order of two calls inside that reconcile. The first version **passed before
-the fix existed**: `reconcile_roots` pruned the whole repo root (the fixture had
-no `.git`, so the walk never classified it live) and cascaded the stub away — a
-green test proving nothing. Asserting the member *folder* survives exposed it; a
-real `.git` made the fixture reach the dedup. Then mutation-probed by removing
-only the prune call, refactor left in place.
+## Next
 
-## Graph state
-
-728,985 nodes / 8,855 folders / 51,971 files. internal 673,870 · unknown 44,739 ·
-external 10,376. Growth from the 408,969 at rebuild time is continued indexing,
-not duplication (folders 7,642→8,855, files 46,512→51,971 track it). 684
-`(project, file_path)` groups still span >1 folder — #150's content-hash
-territory.
-
-## Next — pick one
-
-**(a) Resolution, not GC.** The 44,689 remaining `unknown` stubs all have
-in-edges, so no GC will touch them. Java-dominated: java 27,967 (51%), ts 10,969,
-js 10,409, rust 4,306.
-
-**(b) `imports` 0 of 136,532 resolved**, of which 25,692 are LOCAL and must
-resolve (relative 15,924 · alias 8,618 · `crate::` 1,150). This also unblocks
-#149: detection reads calls+imports+extends+references (`community.rs:185`) and
-three of the four are 0%, which is why 97.8% of communities are single-file.
+1. **Rust `crate::`/`super::`/`self::`** — 1,151 edges. Needs `rust_lang`'s
+   `classify_segments`/`parent_mod` arithmetic hoisted to `import_target`;
+   `local_import_candidates` returns empty for `Internal` today, leaving those
+   edges honestly unresolved.
+2. **Externals → `lib_symbol`** — 136,997 edges. MUST be lookup-first: 59% of
+   edges (Java/Kotlin/Python-absolute/C) are locally-owned packages that merely
+   look external, and a local hit must win.
+3. **Two shadow classifiers found by the investigation.** `typescript.rs:668-687`
+   defines a second `classify_import` calling every non-dot specifier external;
+   `libraries.rs:62-119` is a third drifted copy that records `@/lib/foo` as an
+   external library named `@/lib`. Route both through the owner.
 
 ## Known-broken
 
-`references` 251,185/0 (`doc_indexer.rs:584` and `:587` — two defects).
-`extends` 7,901/0 (#147). `calls` 57% for this project. `graphHealth` on
-`get_project_summary` now reports these live. `dojo_memberships.sync_status`
-dead. `graph-end-state-sketch.md` §1–12 NOT SAFE TO BUILD FROM.
+`references` 251,229/0 (`doc_indexer.rs:584` and `:587` — two defects).
+`extends` 7,901/0 (#147). `calls` 57% for this project.
+`dojo_memberships.sync_status` dead. `graph-end-state-sketch.md` §1–12 NOT SAFE
+TO BUILD FROM. 44,689 `unknown` stubs all have in-edges, so they need resolution
+not GC (java 27,967 = 51%).
 
 ## Traps
 
+**Never `git checkout -- <path>` to undo a mutation** — I did, and destroyed all
+uncommitted work in `process.rs` (emit branch, hoisted `fqn_lang`, two tests).
+Take a `cp` backup to /tmp before mutating and restore from that. Related: that
+same bad mutation did NOT fail its test, which exposed a real gap — nothing
+pinned lookup-first, since probe and get-or-create reach the same node when the
+target already exists. A mutation that fails to fail is a finding.
+
 `sensei_test` has NO automated schema provisioning — a DDL change must be applied
-to BOTH DBs or the DB tests fail on a missing column. Never pipe a gate through
-`| head`: SIGPIPE truncated a run and masked a real `fmt --check` failure.
-`app/.../wizard-state.spec.svelte.ts` is not hermetic (real fetch to `:7744`).
-Wipe needs the daemon STOPPED; `/health` not `/api/health`; a cold graph starves
-its own rebuild (`queue.rs:479`).
+to both DBs. Never pipe a gate through `| head` (SIGPIPE truncated a run and
+masked a real `fmt --check` failure). An incremental scan skips unchanged files,
+so verifying an indexer fix needs `delete from sensei.scan_state` for the folder
+first. Wipe needs the daemon STOPPED; `/health` not `/api/health`.
