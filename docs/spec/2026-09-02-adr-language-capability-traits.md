@@ -192,9 +192,68 @@ The persister owns lookup-first, stub creation, and the never-fabricate rule
 policies in §3 collapse into three `OnMiss` values that a reviewer can see at a
 glance.
 
+### 4e. Frameworks compose over a host language — already true
+
+`svelte.rs` and `vue.rs` both call `common::extract_script_blocks()`, hand the
+script source to `TypeScriptAdapter::parse()`, adjust line offsets, and add only
+framework-specific detection (Svelte 5 runes). **The framework adapter HAS a host
+adapter and delegates to it** — composition, not inheritance, and it is the
+pattern already in the tree.
+
+That relationship is visible in the data too: a `.svelte` file's symbols carry
+`typescript·` fqns because the TS adapter produced them, which is precisely why
+import resolution needed a JS-family language fanout.
+
+Capabilities compose the same way:
+
+```rust
+impl LanguageAdapter for SvelteAdapter {
+    fn imports(&self)     -> Option<&dyn ImportPaths> { TypeScriptAdapter.imports() }
+    fn components(&self)  -> Option<&dyn Components>  { Some(self) }
+    fn inheritance(&self) -> Option<&dyn Inheritance> { None }
+}
+```
+
+So a framework declares a `host()` and inherits its host's capabilities unless it
+overrides them. `Components` is the only capability that is framework-ONLY.
+
+### 4f. The capability matrix is DERIVED, never hand-written
+
+A table of "which language supports what" maintained by hand is the parallel list
+this repo forbids — it goes stale the first time someone adds an adapter. Derive
+it from the trait impls instead:
+
+```rust
+pub struct CapabilityReport {
+    pub language: &'static str,
+    pub host:     Option<&'static str>,   // svelte -> typescript
+    pub inheritance: bool, pub components: bool,
+    pub imports: bool,     pub libraries: bool,  pub fqn: bool,
+}
+pub fn capability_matrix() -> Vec<CapabilityReport>;   // walks every adapter
+```
+
+This needs one small prerequisite: `adapter_for_ext` is a `match` on extension, so
+there is no enumerable registry. Add `all_adapters()` and have the match delegate
+to it — ONE list, not two.
+
+Then a test pins the matrix, which makes two things impossible:
+
+* adding a language without deciding its capabilities (the test fails), and
+* the silent gap that exists today — kotlin, swift and c_lang fall through
+  `fqn_output()`'s `None` default and produce no FQN nodes at all, with nothing
+  anywhere recording whether that is a decision or an omission.
+
+The matrix is also worth surfacing (an MCP tool or `get_project_summary` field),
+so a caller can see "this repo is 38% Kotlin and Kotlin has no FQN support"
+rather than inferring it from a disappointing result.
+
 ## 5. Sequencing (forward-only, each independently shippable)
 
 1. **This ADR.** Cheapest point to disagree.
+1b. **`all_adapters()` + `capability_matrix()` + its pinning test.** Tiny, and it
+   makes every later slice self-documenting — each capability added lights up a
+   cell that a test can see.
 2. **`Inheritance`** — SMALLER than it looks: java, python and rust already
    extract it (§2), so the first slice is persistence, not parsing. Emit real
    `extends` / `implements` edges from `IRClass`, and retire the 7,901
