@@ -1105,15 +1105,28 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
             std::collections::HashMap::new();
         let mut fqn_ids: std::collections::HashMap<String, uuid::Uuid> =
             std::collections::HashMap::new();
+        // The `nodes.language` column for every FQN node is the FILE's language
+        // (derived from its extension) — NOT the fqn's grouping lang and NOT a
+        // hardcoded "rust". Keeps the same-language fallback (0.8) honest across
+        // the migrated languages.
+        let file_lang = crate::languages::language_for_path(&result.rel_path);
+        // The fqn LANGUAGE SEGMENT for this file's own nodes. Hoisted above both
+        // users — the module container below and the import-edge resolution
+        // further down — because an import must be looked up under the same
+        // segment the module node was written with, and a second copy of this
+        // derivation would drift from it silently.
+        let fqn_lang = result
+            .fqn
+            .as_ref()
+            .and_then(|f| f.defs.first())
+            .and_then(|d| d.fqn.split('·').next())
+            .filter(|seg| !seg.is_empty())
+            .or(file_lang)
+            .unwrap_or("rust");
         if let Some(fqn_out) = &result.fqn {
             // D5c: a `module` container per file (nested under the file). Top-level
             // items nest under it (or the file node at the crate root); methods nest
             // under their TYPE node — so the graph is file → module → type → method.
-            // The `nodes.language` column for every FQN node is the FILE's language
-            // (derived from its extension) — NOT the fqn's grouping lang and NOT a
-            // hardcoded "rust". Keeps the same-language fallback (0.8) honest across
-            // the migrated languages.
-            let file_lang = crate::languages::language_for_path(&result.rel_path);
             let mut top_parent = file_node_id;
             if !fqn_out.module.is_empty() {
                 // The module container's fqn language matches the file's defs (the
@@ -1128,14 +1141,10 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
                 // feeds) and unstable: the fqn flipped as soon as defs reappeared.
                 // Only `adopt_node_by_identity` keeps such a flip from wedging the
                 // file forever, so don't rely on it — emit a stable value here.
-                let lang = fqn_out
-                    .defs
-                    .first()
-                    .and_then(|d| d.fqn.split('·').next())
-                    .filter(|seg| !seg.is_empty())
-                    .or(file_lang)
-                    .unwrap_or("rust");
-                let mfqn = crate::languages::fqn::item(lang, &fqn_out.package, "", &fqn_out.module);
+                // `fqn_lang` is hoisted above this block — the import resolver
+                // below must look up modules under the SAME segment this writes.
+                let mfqn =
+                    crate::languages::fqn::item(fqn_lang, &fqn_out.package, "", &fqn_out.module);
                 let mname = fqn_out.module.rsplit("::").next().unwrap_or(&fqn_out.module);
                 let mid = ctx
                     .pg()
@@ -1348,12 +1357,74 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
             .await
             .map_err(|e| format!("delete_edges_from_sources: {e}"))?;
 
-        // Unresolved import edges.
+        // Import edges. A LOCAL specifier resolves to the target's module node
+        // AT EMIT, exactly as a call edge resolves to its target — which is the
+        // whole reason calls reach 65% while imports sat at 0 of 162,690.
+        //
+        // Order-independent, so this needs no barrier and no second pass: on a
+        // total candidate miss `upsert_node_by_fqn(.., None)` creates a STUB
+        // keyed on the same fqn, and when the target file is processed later the
+        // module upsert above hits that same `(folder_id, fqn)` and ENRICHES the
+        // row in place, keeping its id.
+        //
+        // LOOKUP FIRST, create only after every candidate misses — the rule
+        // `import_target.rs` states as the reason it must not be trusted as the
+        // authority on locality. Get-or-creating on candidate 1 would satisfy
+        // candidate 1 forever and hide the real target at candidate 2.
+        //
+        // An EXTERNAL target stays unresolved here (it keeps `target_name`, which
+        // is the useful fact for a dependency question); minting `lib_symbol`
+        // nodes for those is a separate slice.
+        let import_pkg = result.fqn.as_ref().map(|f| f.package.as_str()).unwrap_or("");
+        let import_module = result.fqn.as_ref().map(|f| f.module.as_str()).unwrap_or("");
         for import in &result.unresolved_imports {
-            ctx.pg()
-                .insert_edge(&folder_id, &file_node_id, None, Some(import), None, "imports")
-                .await
-                .map_err(|e| format!("insert_edge (imports): {e}"))?;
+            let class = crate::languages::import_target::classify_import(import);
+            let candidates = crate::languages::import_target::local_import_candidates(
+                fqn_lang,
+                import_pkg,
+                import_module,
+                import,
+                &class,
+            );
+            let mut target: Option<uuid::Uuid> = None;
+            for cand in &candidates {
+                if let Some(id) = ctx
+                    .pg()
+                    .node_id_by_fqn(&folder_id, cand)
+                    .await
+                    .map_err(|e| format!("node_id_by_fqn({cand}): {e}"))?
+                {
+                    target = Some(id);
+                    break;
+                }
+            }
+            // Total miss on a placeable specifier: create the stub on the FIRST
+            // candidate, the one the target's own module node would be written
+            // with, so a later definition enriches this very row.
+            if target.is_none()
+                && let Some(first) = candidates.first()
+            {
+                let leaf = first.rsplit('·').next().unwrap_or(first);
+                let leaf = leaf.rsplit('/').next().unwrap_or(leaf);
+                target = Some(
+                    ctx.pg()
+                        .upsert_node_by_fqn(&folder_id, first, "module", leaf, file_lang, None)
+                        .await
+                        .map_err(|e| format!("upsert import stub {first}: {e}"))?,
+                );
+            }
+            match target {
+                Some(t) => ctx
+                    .pg()
+                    .insert_edge(&folder_id, &file_node_id, Some(&t), None, None, "imports")
+                    .await
+                    .map_err(|e| format!("insert_edge (imports, resolved): {e}"))?,
+                None => ctx
+                    .pg()
+                    .insert_edge(&folder_id, &file_node_id, None, Some(import), None, "imports")
+                    .await
+                    .map_err(|e| format!("insert_edge (imports): {e}"))?,
+            };
         }
 
         // Call edges. The FQN path emits RESOLVED node→node edges AT EMIT: the
@@ -2068,6 +2139,224 @@ mod tests {
             "SELECT target_id FROM sensei.edges WHERE folder_id=$1 AND source_id=$2 AND kind='calls'::sensei.edge_kind")
             .bind(fid).bind(drive_id).fetch_one(ctx.pg().pool()).await.unwrap();
         assert_eq!(tid2, Some(run_id), "edge still resolved to the enriched node after enrichment");
+
+        ctx.pg().delete_nodes_by_folder(&fid).await.unwrap();
+    }
+
+    /// A LOCAL import resolves to the target's module node AT EMIT. Before this,
+    /// `process.rs` passed `target_id = None` for every import, so 0 of 162,690
+    /// import edges resolved — 25,693 of them pointing at local code.
+    #[tokio::test]
+    async fn local_imports_resolve_to_the_target_module_at_emit() {
+        let ctx = make_ctx().await;
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("tsimp");
+        std::fs::create_dir_all(repo.join("src")).unwrap();
+        std::fs::write(repo.join("package.json"), "{\"name\":\"tsimp\"}\n").unwrap();
+        std::fs::write(repo.join("src/b.ts"), "export function x() { return 1; }\n").unwrap();
+        std::fs::write(
+            repo.join("src/a.ts"),
+            "import { x } from './b';\nexport function drive() { return x(); }\n",
+        )
+        .unwrap();
+        let repo_path = repo.to_string_lossy().to_string();
+        let rid = ctx
+            .pg()
+            .add_watch_root(&tmp.path().to_string_lossy(), "tsimp", &serde_json::json!([]))
+            .await
+            .unwrap();
+        let fid = ctx.pg().upsert_repo_kind(&rid, "git", "tsimp", &repo_path).await.unwrap();
+        ctx.pg().update_folder_status(&fid, "indexing").await.unwrap();
+
+        for f in ["src/b.ts", "src/a.ts"] {
+            let abs = repo.join(f).to_string_lossy().to_string();
+            process_file(&ctx, &Task::for_file(TaskKind::ProcessFile, &repo_path, &abs))
+                .await
+                .unwrap();
+        }
+
+        let (tid, tname): (Option<uuid::Uuid>, Option<String>) = sqlx_core::query_as::query_as(
+            "SELECT e.target_id, e.target_name FROM sensei.edges e
+               JOIN sensei.nodes n ON n.id = e.source_id
+              WHERE e.folder_id = $1 AND e.kind = 'imports'::sensei.edge_kind
+                AND n.file_path = 'src/a.ts'",
+        )
+        .bind(fid)
+        .fetch_one(ctx.pg().pool())
+        .await
+        .unwrap();
+        assert!(tid.is_some(), "the './b' import must resolve — it names a file in this repo");
+        assert_eq!(
+            tname, None,
+            "resolving ERASES target_name; the two are mutually exclusive across all edges"
+        );
+
+        let (kind, file): (String, Option<String>) = sqlx_core::query_as::query_as(
+            "SELECT kind::text, file_path FROM sensei.nodes WHERE id = $1",
+        )
+        .bind(tid.unwrap())
+        .fetch_one(ctx.pg().pool())
+        .await
+        .unwrap();
+        assert_eq!(kind, "module");
+        assert_eq!(file.as_deref(), Some("src/b.ts"), "resolved to the imported file's module");
+
+        ctx.pg().delete_nodes_by_folder(&fid).await.unwrap();
+    }
+
+    /// LOOKUP-FIRST, pinned. The resolver probes EVERY candidate fqn before it
+    /// creates anything, because get-or-creating on candidate 1 would satisfy
+    /// candidate 1 forever and hide the real target sitting at candidate 2.
+    ///
+    /// The real module here is pre-seeded at the SRC-STRIPPED candidate (the
+    /// second one) with a real file, while the first candidate does not exist —
+    /// the live shape, since `ts_module_path` strips a leading `src/` so a `../`
+    /// that climbs out of `src` lands one segment high.
+    ///
+    /// Breaking mutation: in the emit branch, replace the probe loop with
+    /// `upsert_node_by_fqn(candidates[0], .., None)` — the edge then points at a
+    /// freshly minted stub whose `file_path` is NULL instead of the real module.
+    #[tokio::test]
+    async fn import_resolution_probes_every_candidate_before_creating_one() {
+        let ctx = make_ctx().await;
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("tsfan");
+        std::fs::create_dir_all(repo.join("src/routes")).unwrap();
+        std::fs::write(repo.join("package.json"), "{\"name\":\"tsfan\"}\n").unwrap();
+        std::fs::write(
+            repo.join("src/routes/page.ts"),
+            "import { h } from '../src/lib/x';\nexport function v() { return h(); }\n",
+        )
+        .unwrap();
+        let repo_path = repo.to_string_lossy().to_string();
+        let rid = ctx
+            .pg()
+            .add_watch_root(&tmp.path().to_string_lossy(), "tsfan", &serde_json::json!([]))
+            .await
+            .unwrap();
+        let fid = ctx.pg().upsert_repo_kind(&rid, "git", "tsfan", &repo_path).await.unwrap();
+        ctx.pg().update_folder_status(&fid, "indexing").await.unwrap();
+
+        // Pre-seed the REAL module at the src-stripped candidate — candidate 2.
+        // Candidate 1 (`typescript·tsfan·src/lib/x`) is deliberately absent.
+        let real = ctx
+            .pg()
+            .upsert_node_by_fqn(
+                &fid,
+                "typescript·tsfan·lib/x",
+                "module",
+                "x",
+                Some("typescript"),
+                Some(crate::db::pg_store::FqnDef {
+                    file_path: "src/lib/x.ts",
+                    signature: None,
+                    line_start: None,
+                    line_end: None,
+                    is_exported: false,
+                    parent_id: None,
+                }),
+            )
+            .await
+            .unwrap();
+
+        let abs = repo.join("src/routes/page.ts").to_string_lossy().to_string();
+        process_file(&ctx, &Task::for_file(TaskKind::ProcessFile, &repo_path, &abs)).await.unwrap();
+
+        let (tid,): (Option<uuid::Uuid>,) = sqlx_core::query_as::query_as(
+            "SELECT e.target_id FROM sensei.edges e JOIN sensei.nodes n ON n.id = e.source_id
+              WHERE e.folder_id = $1 AND e.kind = 'imports'::sensei.edge_kind
+                AND n.file_path = 'src/routes/page.ts'",
+        )
+        .bind(fid)
+        .fetch_one(ctx.pg().pool())
+        .await
+        .unwrap();
+        assert_eq!(
+            tid,
+            Some(real),
+            "must land on the REAL module found by probing a LATER candidate — not a phantom \
+             stub minted from the first one"
+        );
+        // And nothing was created at candidate 1.
+        assert_eq!(
+            ctx.pg().node_id_by_fqn(&fid, "typescript·tsfan·src/lib/x").await.unwrap(),
+            None,
+            "probing must not create the candidate it missed"
+        );
+
+        ctx.pg().delete_nodes_by_folder(&fid).await.unwrap();
+    }
+
+    /// Order-independence, which is why this needs no barrier: importing a file
+    /// that is not indexed yet creates a STUB on the target's own fqn, and the
+    /// later definition ENRICHES that same row keeping its id. Mirrors
+    /// `rust_call_before_def_creates_stub_then_enriched` for imports.
+    #[tokio::test]
+    async fn an_import_before_its_target_creates_a_stub_then_enriches_it() {
+        let ctx = make_ctx().await;
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("tsord");
+        std::fs::create_dir_all(repo.join("src")).unwrap();
+        std::fs::write(repo.join("package.json"), "{\"name\":\"tsord\"}\n").unwrap();
+        std::fs::write(repo.join("src/b.ts"), "export function x() { return 1; }\n").unwrap();
+        std::fs::write(
+            repo.join("src/a.ts"),
+            "import { x } from './b';\nexport function drive() { return x(); }\n",
+        )
+        .unwrap();
+        let repo_path = repo.to_string_lossy().to_string();
+        let rid = ctx
+            .pg()
+            .add_watch_root(&tmp.path().to_string_lossy(), "tsord", &serde_json::json!([]))
+            .await
+            .unwrap();
+        let fid = ctx.pg().upsert_repo_kind(&rid, "git", "tsord", &repo_path).await.unwrap();
+        ctx.pg().update_folder_status(&fid, "indexing").await.unwrap();
+
+        // IMPORTER FIRST — its target does not exist yet.
+        let abs_a = repo.join("src/a.ts").to_string_lossy().to_string();
+        process_file(&ctx, &Task::for_file(TaskKind::ProcessFile, &repo_path, &abs_a))
+            .await
+            .unwrap();
+
+        let (tid,): (Option<uuid::Uuid>,) = sqlx_core::query_as::query_as(
+            "SELECT e.target_id FROM sensei.edges e JOIN sensei.nodes n ON n.id = e.source_id
+              WHERE e.folder_id = $1 AND e.kind = 'imports'::sensei.edge_kind
+                AND n.file_path = 'src/a.ts'",
+        )
+        .bind(fid)
+        .fetch_one(ctx.pg().pool())
+        .await
+        .unwrap();
+        let stub_id = tid.expect("resolved to a stub even though the target is not indexed yet");
+        let (resolved, file): (bool, Option<String>) = sqlx_core::query_as::query_as(
+            "SELECT resolved, file_path FROM sensei.nodes WHERE id = $1",
+        )
+        .bind(stub_id)
+        .fetch_one(ctx.pg().pool())
+        .await
+        .unwrap();
+        assert!(!resolved, "it is a stub until its file is indexed");
+        assert_eq!(file, None, "a stub has no file");
+
+        let abs_b = repo.join("src/b.ts").to_string_lossy().to_string();
+        process_file(&ctx, &Task::for_file(TaskKind::ProcessFile, &repo_path, &abs_b))
+            .await
+            .unwrap();
+
+        let (resolved2, file2): (bool, Option<String>) = sqlx_core::query_as::query_as(
+            "SELECT resolved, file_path FROM sensei.nodes WHERE id = $1",
+        )
+        .bind(stub_id)
+        .fetch_one(ctx.pg().pool())
+        .await
+        .unwrap();
+        assert!(resolved2, "the definition enriched the stub in place");
+        assert_eq!(
+            file2.as_deref(),
+            Some("src/b.ts"),
+            "same node id, now carrying the file — so no barrier or second pass is needed"
+        );
 
         ctx.pg().delete_nodes_by_folder(&fid).await.unwrap();
     }
