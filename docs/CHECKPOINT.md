@@ -1,9 +1,28 @@
 # Checkpoint
 
-**Slice:** shadow import classifier retired + residue cleaned (`8035ec3e`), on
-top of local import resolution (`cc534c63`), the stub-GC ordering fix
-(`a7a1bee9`) and the MCP shape fixes (`93cef04a`). Branch `develop`. Gates: rust
-2,691/0, app 1,698/118, clippy 0, fmt clean.
+**Slice:** ALL local import classes now resolve — rust use-paths (`d910c291`)
+on top of the shadow-classifier retirement (`8035ec3e`), local imports
+(`cc534c63`), the stub-GC ordering fix (`a7a1bee9`) and the MCP shape fixes
+(`93cef04a`). Branch `develop`. Gates: rust 2,693/0, app 1,698/118, clippy 0,
+fmt clean.
+
+## Rust use-paths: imports 1,911 → 2,434
+
+`local_import_candidates` returned empty for `ImportTarget::Internal`, so 1,151
+`crate::`/`self::`/`super::` edges stayed unresolved. `classify_segments` already
+had the arithmetic — including the leading-`super` up-count fold whose comment
+records what a second copy cost before (`tasks::handlers::super::executor`, a
+module that never existed) — so the pure half became
+`rust_lang::internal_use_module` and `classify_segments` now calls it.
+
+Rust needs two candidate SHAPES, not two module paths: `use crate::db::pg_store`
+names either the module `db::pg_store` or an item `pg_store` in module `db`, and
+only the graph knows which. The lookup-first probe picks whichever exists.
+
+**Measured:** +523, exactly the rust-internal count; that bucket is now empty.
+Remaining unresolved are 1,145 external, 71 `$app`/`$env`, 2 `$kavach` — all
+correct, since those virtual modules are framework-*provided*. `graphHealth`
+imports across the three slices: **0% → 52% → 66%**.
 
 ## The `@/` fix that was "already done" — and wasn't live
 
@@ -58,14 +77,17 @@ against a predicted 86%. `graphHealth` reports imports at 52% where it read 0%.
 
 ## Next
 
-1. **Rust `crate::`/`super::`/`self::`** — 1,151 edges. Needs `rust_lang`'s
-   `classify_segments`/`parent_mod` arithmetic hoisted to `import_target`;
-   `local_import_candidates` returns empty for `Internal` today, leaving those
-   edges honestly unresolved.
-2. **Externals → `lib_symbol`** — 136,997 edges. MUST be lookup-first: 59% of
+1. **Externals → `lib_symbol`** — 136,997 edges. MUST be lookup-first: 59% of
    edges (Java/Kotlin/Python-absolute/C) are locally-owned packages that merely
    look external, and a local hit must win.
-3. **`libraries.rs:62-119`** is still a third copy of the import filter (no `@/`
+2. **`references` 251,229 / 0** — two separate defects: `doc_indexer.rs:584`
+   omits the `i % 2 == 1` backtick-parity filter its sibling applies, so it scans
+   prose; `:587` has `repo.join` discarding the root on an absolute token.
+3. **`library_usage.unresolved_import_count`** (`library_usage.ddl:9-14`) counts
+   unresolved edges of ANY kind, so its name over-promises. LATENT, not live: all
+   9 matching edges are `imports`, because an unresolved external call resolves
+   to a `lib_symbol` and never satisfies `target_id IS NULL`. One-line fix.
+4. **`libraries.rs:62-119`** is still a third copy of the import filter (no `@/`
    or `~/` skip) — but INERT: its output goes to `folders.props.libs`, not to
    `sensei.libraries`/`referenced_libraries` (both zero alias rows), and
    `props.libs` is the clobbered-and-unread field from `95e23315`. Cosmetic;
