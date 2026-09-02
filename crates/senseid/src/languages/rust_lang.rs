@@ -587,6 +587,19 @@ fn empty(path: &str) -> ParsedFile {
 /// Ubiquitous std/library methods whose call-sites carry no navigation signal.
 /// Skipped at extraction to keep unresolvable noise out of `calls` edges.
 /// Per-adapter by design — each language owns its own list.
+/// Prelude items callable with no `use` — so absence from the file's use-map is
+/// not evidence they are local. Attributing them to the calling module minted one
+/// fabricated node per caller: 826 `Some` references became 657 distinct FQNs.
+const RUST_PRELUDE_ITEMS: &[&str] = &["Some", "None", "Ok", "Err", "drop"];
+
+/// Prelude TYPES, for `Type::assoc_fn()` — `String::new()` is std's constructor
+/// wherever it is called from. Deliberately only names the 2021 prelude: anything
+/// requiring a `use` will already be in the use-map, and a name absent from both
+/// falls through to existing behaviour rather than being guessed from the other
+/// direction.
+const RUST_PRELUDE_TYPES: &[&str] =
+    &["Box", "Default", "Option", "Result", "String", "ToString", "Vec"];
+
 const RUST_CALL_DENYLIST: &[&str] = &[
     "clone",
     "unwrap",
@@ -1084,6 +1097,14 @@ pub(crate) mod rust_fqn {
                 PathClass::External { package, path, .. } => return (package, path, true),
             }
         }
+        // A prelude type needs no `use`, so a use-map miss does not make it local.
+        // This used to return the CALLER's package/module, so `String::new()` in
+        // `session-report::vscode` produced `rust·session-report·vscode·String·new`
+        // — one std constructor fragmented across 759 distinct FQNs. Checked AFTER
+        // `local_types`, so a type defined in this file still wins.
+        if RUST_PRELUDE_TYPES.contains(&type_name) {
+            return ("std".to_string(), type_name.to_string(), true);
+        }
         (ctx.package.clone(), module.to_string(), false)
     }
 
@@ -1281,6 +1302,10 @@ pub(crate) mod rust_fqn {
                             Some((Some(fqn::lib(&package, &path, &leaf)), true, name))
                         }
                     }
+                } else if RUST_PRELUDE_ITEMS.contains(&name.as_str()) {
+                    // In scope everywhere without a `use`; naming std also merges
+                    // every caller's reference onto one node.
+                    Some((Some(fqn::lib("std", "prelude", &name)), true, name))
                 } else {
                     Some((Some(fqn::item(RUST_LANG, &ctx.package, module, &name)), false, name))
                 }
@@ -1592,6 +1617,57 @@ impl Engine {
             None,
             "out-of-0.7 receiver → unresolved, no wrong merge"
         );
+    }
+
+    /// Prelude items need no `use`, so their absence from the use-map is not
+    /// evidence that they live here. Attributing them to `ctx.module` minted a
+    /// separate fabricated node per caller: live, 826 `Some` references across
+    /// 657 distinct FQNs, 521 `Ok` across 411, 299 `Err` across 224.
+    #[test]
+    fn rust_prelude_items_resolve_to_std_not_the_caller() {
+        let src =
+            "pub fn f(x: u8) -> Option<u8> { Some(x) }\npub fn g() -> Result<(), ()> { Ok(()) }\n";
+        let out = produce(src, "senseid", "indexer::community");
+        for name in ["Some", "Ok"] {
+            let r = ref_to(&out, name);
+            assert_eq!(
+                r.target_fqn.as_deref(),
+                Some(format!("lib·std·prelude·{name}").as_str()),
+                "`{name}` is std's, not this module's"
+            );
+            assert!(r.is_lib);
+        }
+    }
+
+    /// `String::new()` is an associated fn on a std type. The resolver knew the
+    /// type and then stamped the CALLER's package on it — live,
+    /// `rust·session-report·vscode·String·new`, one std constructor fragmented
+    /// across 759 distinct FQNs under the name `new`.
+    #[test]
+    fn rust_prelude_type_assoc_fn_resolves_to_std() {
+        let out = produce("pub fn f() -> String { String::new() }\n", "session-report", "vscode");
+        let r = ref_to(&out, "new");
+        assert_eq!(
+            r.target_fqn.as_deref(),
+            Some("lib·std·String·new"),
+            "String belongs to std regardless of who calls it"
+        );
+        assert!(r.is_lib);
+    }
+
+    /// A local type's associated fn still anchors on this crate — the prelude list
+    /// is a fallback for a use-map miss, never an override of local evidence.
+    #[test]
+    fn rust_local_type_assoc_fn_is_not_stolen_by_the_prelude_list() {
+        let src = "pub struct String;\nimpl String { pub fn new() -> Self { String } }\npub fn f() { String::new(); }\n";
+        let out = produce(src, "senseid", "shadow");
+        let r = ref_to(&out, "new");
+        assert_eq!(
+            r.target_fqn.as_deref(),
+            Some("rust·senseid·shadow·String·new"),
+            "a type defined in this file outranks the prelude list"
+        );
+        assert!(!r.is_lib);
     }
 
     #[test]
