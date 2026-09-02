@@ -576,13 +576,37 @@ pub fn extract_title(content: &str) -> Option<String> {
     None
 }
 
-/// Extract file path references from markdown content.
+/// Extract file path references from markdown content — from INSIDE backticks
+/// only, and repo-relative only.
+///
+/// Two defects lived here, and both produced edges rather than dropping them:
+///
+/// * **No backtick parity.** This iterated every `split('`')` segment, so prose
+///   OUTSIDE backticks was scanned as code, while the sibling
+///   [`extract_fn_mentions`] filtered `i % 2 == 1` correctly. The no-space rule
+///   masked most of it, which is why the original test passed either way.
+///
+/// * **Absolute specifiers.** `Path::join` REPLACES the whole path when its
+///   argument is absolute, so `repo.join("/")` is `/` — which exists, and got
+///   inserted. MEASURED live: 2,038 edges targeting literally `/` and 53,018
+///   targeting absolute paths, including machine-specific ones like
+///   `/abs/path/to/some-repo/src/`, which leak a local filesystem
+///   layout into the graph and cannot be a reference to anything IN the repo.
+///   A doc reference is repo-relative by definition, so an absolute specifier is
+///   rejected rather than silently re-rooted.
 pub fn extract_file_refs(content: &str, repo_path: &str) -> Vec<String> {
     let mut refs = HashSet::new();
     let repo = Path::new(repo_path);
 
-    for cap in content.split('`') {
+    for (i, cap) in content.split('`').enumerate() {
+        // Odd segments are between a pair of backticks; even ones are prose.
+        if i % 2 == 0 {
+            continue;
+        }
         let trimmed = cap.trim();
+        if trimmed.starts_with('/') {
+            continue; // absolute: `join` would discard the repo root entirely
+        }
         if trimmed.contains('/') && !trimmed.contains(' ') && trimmed.len() < 200 {
             let abs = repo.join(trimmed);
             if abs.exists() {
@@ -601,11 +625,17 @@ pub fn extract_fn_mentions(content: &str) -> Vec<String> {
     for (i, part) in parts.iter().enumerate() {
         if i % 2 == 1 {
             let trimmed = part.trim();
+            // A leading digit is rejected because no identifier in any indexed
+            // language may start with one — a language rule, not a denylist.
+            // Without it any backticked number became a "function mention":
+            // MEASURED 4,342 live edges targeting things like `429`. Identifiers
+            // that merely CONTAIN digits (`parseV2`) still pass.
             if !trimmed.contains('/')
                 && !trimmed.contains(' ')
                 && !trimmed.contains('.')
                 && trimmed.len() > 1
                 && trimmed.len() < 50
+                && !trimmed.starts_with(|c: char| c.is_ascii_digit())
                 && trimmed.chars().all(|c| c.is_alphanumeric() || c == '_')
             {
                 names.insert(trimmed.to_string());
@@ -733,6 +763,77 @@ This is IMPORTANT: keep it.
         assert!(names.contains(&"greet".to_string()));
         assert!(names.contains(&"validate".to_string()));
         assert!(!names.iter().any(|n| n.contains("src")));
+    }
+
+    /// DEFECT 1: `extract_file_refs` iterated EVERY `split('`')` segment, so it
+    /// scanned prose OUTSIDE backticks — while its sibling `extract_fn_mentions`
+    /// correctly filters `i % 2 == 1`. The old test could not catch this: its
+    /// only slash-bearing segment happened to be the backticked one.
+    ///
+    /// Breaking mutation: drop the `i % 2 == 1` guard — the prose path below is
+    /// extracted even though nothing in the doc marks it as code.
+    #[test]
+    fn file_refs_come_only_from_inside_backticks() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::create_dir_all(dir.path().join("src")).unwrap();
+        std::fs::write(dir.path().join("src/real.py"), "pass").unwrap();
+        std::fs::write(dir.path().join("src/prose.py"), "pass").unwrap();
+        let root = dir.path().to_string_lossy().to_string();
+
+        // Both paths exist on disk. `src/real.py` is backticked; src/prose.py sits
+        // in an EVEN (outside-backticks) segment as its own whitespace-delimited
+        // token — so it survives the existing no-space rule and only the parity
+        // filter can reject it. That is exactly the case the old test missed,
+        // because its prose segment still held spaces after `trim()`.
+        let content = "See `src/real.py` and `x` src/prose.py `y` done.";
+        let refs = extract_file_refs(content, &root);
+        assert_eq!(refs.len(), 1, "only the backticked path is a reference: {refs:?}");
+        assert!(refs[0].ends_with("src/real.py"));
+    }
+
+    /// DEFECT 2: `Path::join` REPLACES the whole path when its argument is
+    /// absolute, so `repo.join("/")` is `/` — which exists, and got inserted.
+    /// Live consequence: 2,038 edges targeting literally `/`, plus 53,018
+    /// targeting absolute paths, including machine-specific ones like
+    /// `/abs/path/to/some-repo/src/` that leak a local filesystem
+    /// layout into the graph and can never be repo-relative.
+    ///
+    /// Breaking mutation: remove the `starts_with('/')` rejection — `/` and the
+    /// absolute path are both extracted again.
+    #[test]
+    fn an_absolute_specifier_is_not_a_repo_reference() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::create_dir_all(dir.path().join("src")).unwrap();
+        std::fs::write(dir.path().join("src/ok.py"), "pass").unwrap();
+        let root = dir.path().to_string_lossy().to_string();
+
+        // `/` exists on every machine; the absolute path exists too (it IS the
+        // tempdir). Neither is a reference to something in this repo.
+        let content = format!("Root `/` and `{root}/src/ok.py` and `src/ok.py`.");
+        let refs = extract_file_refs(&content, &root);
+        assert_eq!(refs.len(), 1, "only the repo-relative path counts: {refs:?}");
+        assert!(refs[0].ends_with("src/ok.py"));
+        assert!(!refs.iter().any(|r| r == "/"), "`/` is never a doc reference");
+    }
+
+    /// DEFECT 3: `extract_fn_mentions` accepted any all-alphanumeric token, so a
+    /// bare number became a "function mention" — live, 4,342 edges target things
+    /// like `429`. No identifier in any indexed language starts with a digit, so
+    /// this is a language rule rather than a denylist.
+    ///
+    /// Breaking mutation: remove the leading-digit rejection.
+    #[test]
+    fn a_numeric_literal_is_not_a_function_mention() {
+        let names = extract_fn_mentions("Returns `429` on rate limit, handled by `retryAfter`.");
+        assert!(names.contains(&"retryAfter".to_string()), "a real identifier still counts");
+        assert!(
+            !names.iter().any(|n| n == "429"),
+            "a bare number cannot name a function: {names:?}"
+        );
+        // Identifiers that merely CONTAIN digits are still fine.
+        let names = extract_fn_mentions("Call `parseV2` and `h264Decode`.");
+        assert!(names.contains(&"parseV2".to_string()));
+        assert!(names.contains(&"h264Decode".to_string()));
     }
 
     #[test]
