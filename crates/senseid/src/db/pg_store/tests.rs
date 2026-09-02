@@ -11950,3 +11950,195 @@ async fn prune_orphan_stubs_removes_communities_it_emptied() {
     assert_eq!(ids, vec![2], "the emptied community goes; the one with a real member stays");
     s.delete_nodes_by_folder(&fid).await.unwrap();
 }
+
+/// THE REGRESSION: a caller reached through an UNRESOLVED edge must still be
+/// found. `get_callers_by_name` used to filter `call_graph.target_name`, which
+/// is `tgt.name` off the view's LEFT JOIN and therefore NULL for every
+/// unresolved edge — the name lives in `e.target_name`. Live consequence:
+/// 117,201 of 335,756 `calls` edges (34.9%) were unreachable and the tool
+/// returned an empty list for 8,680 symbol names that demonstrably had callers.
+///
+/// Mutation that must break this test: swap `target_symbol` back to
+/// `target_name` in the query.
+#[tokio::test]
+async fn get_callers_by_name_finds_a_caller_through_an_unresolved_edge() {
+    let s = pg_store().await;
+    let folder = format!("callers_{}", uuid::Uuid::new_v4());
+    let fid = create_test_folder(&s, &folder).await;
+
+    // The target IS defined locally — this is not a phantom symbol.
+    s.upsert_node(&fid, "function", "handleAuth", "src/auth.rs", None, None, Some(10), Some(20))
+        .await
+        .unwrap();
+    // Two callers: one whose edge RESOLVED, one still unresolved (the caller was
+    // indexed before the definition, which is the normal steady state for 35% of
+    // this graph). Both are real callers and both must be reported.
+    let resolved_caller = s
+        .upsert_node(&fid, "function", "login", "src/login.rs", None, None, Some(1), Some(5))
+        .await
+        .unwrap();
+    let unresolved_caller = s
+        .upsert_node(&fid, "function", "middleware", "src/mw.rs", None, None, Some(1), Some(5))
+        .await
+        .unwrap();
+    let target_id = s
+        .upsert_node(&fid, "function", "handleAuth", "src/auth.rs", None, None, Some(10), Some(20))
+        .await
+        .unwrap();
+    s.insert_edge(&fid, &resolved_caller, Some(&target_id), None, None, "calls").await.unwrap();
+    s.insert_edge(&fid, &unresolved_caller, None, Some("handleAuth"), None, "calls").await.unwrap();
+
+    let callers = s.get_callers_by_name(&folder, "handleAuth").await.unwrap();
+    let names: std::collections::HashSet<String> =
+        callers.iter().map(|c| c["name"].as_str().unwrap_or_default().to_string()).collect();
+    assert!(names.contains("login"), "the resolved caller was always found");
+    assert!(
+        names.contains("middleware"),
+        "the caller behind an UNRESOLVED edge must be found too — this is the 34.9% \
+         that target_name silently dropped"
+    );
+    // Each row says which it was, so a reader can tell an exact hit from a
+    // name-matched one rather than treating the list as uniformly certain.
+    let unresolved_row = callers.iter().find(|c| c["name"] == "middleware").unwrap();
+    assert_eq!(unresolved_row["resolved"], serde_json::json!(false));
+
+    s.delete_nodes_by_folder(&fid).await.unwrap();
+}
+
+/// `symbol_definitions` is what separates "no such symbol" from "symbol with no
+/// callers" — the two answers a bare `[]` used to conflate. A reference STUB
+/// carries the name but is not a definition, so it must NOT count as found;
+/// otherwise a symbol that was only ever mentioned would report `found: true`
+/// and send a reader looking for a definition that does not exist.
+#[tokio::test]
+async fn symbol_definitions_does_not_count_a_stub_as_a_definition() {
+    let s = pg_store().await;
+    let fid = create_test_folder(&s, &format!("symdef_{}", uuid::Uuid::new_v4())).await;
+
+    s.upsert_node(&fid, "function", "realThing", "src/real.rs", None, None, Some(7), Some(9))
+        .await
+        .unwrap();
+    // A stub: named, but no file_path — an unresolved reference, not a definition.
+    s.upsert_node_by_fqn(
+        &fid,
+        "rust·p·m·Stub·ghostThing",
+        "function",
+        "ghostThing",
+        Some("rust"),
+        None,
+    )
+    .await
+    .unwrap();
+
+    let defined = s.symbol_definitions(&[fid], "realThing").await.unwrap();
+    assert_eq!(defined.len(), 1, "a local definition is found");
+    assert_eq!(defined[0]["file_path"], "src/real.rs");
+    assert_eq!(defined[0]["line_start"], serde_json::json!(7));
+
+    assert!(
+        s.symbol_definitions(&[fid], "ghostThing").await.unwrap().is_empty(),
+        "a stub is a mention, not a definition — reporting it as found would promise \
+         a definition site that does not exist"
+    );
+    assert!(
+        s.symbol_definitions(&[fid], "neverHeardOfIt").await.unwrap().is_empty(),
+        "an absent name is genuinely empty"
+    );
+
+    s.delete_nodes_by_folder(&fid).await.unwrap();
+}
+
+/// Coverage must count the UNRESOLVED edges too, because that count is the only
+/// thing that can say "this list is incomplete". Derived from its own query
+/// rather than the returned list, which is `LIMIT 100`.
+#[tokio::test]
+async fn call_coverage_reports_unresolved_separately_per_direction() {
+    let s = pg_store().await;
+    let fid = create_test_folder(&s, &format!("cov_{}", uuid::Uuid::new_v4())).await;
+
+    let target = s
+        .upsert_node(&fid, "function", "target", "src/t.rs", None, None, Some(1), Some(2))
+        .await
+        .unwrap();
+    let caller = s
+        .upsert_node(&fid, "function", "caller", "src/c.rs", None, None, Some(1), Some(2))
+        .await
+        .unwrap();
+    s.insert_edge(&fid, &caller, Some(&target), None, None, "calls").await.unwrap();
+    s.insert_edge(&fid, &caller, None, Some("target"), None, "calls").await.unwrap();
+
+    let (resolved, unresolved) =
+        s.call_coverage(&[fid], "target", CallDirection::Incoming).await.unwrap();
+    assert_eq!(resolved, 1, "one edge landed on the target's id");
+    assert_eq!(unresolved, 1, "one names it without landing — the list is incomplete");
+
+    // Outgoing counts the same two edges from the caller's side.
+    let (out_resolved, out_unresolved) =
+        s.call_coverage(&[fid], "caller", CallDirection::Outgoing).await.unwrap();
+    assert_eq!(out_resolved, 1);
+    assert_eq!(out_unresolved, 1);
+
+    s.delete_nodes_by_folder(&fid).await.unwrap();
+}
+
+/// `get_callees_by_name` must label each callee's LOCALITY, and must read it
+/// from `sensei.graph_nodes` rather than re-deriving it. Before this, every
+/// callee came back with `kind`/`file_path`/`line_start` all null and no way to
+/// tell a real internal dependency from an external library symbol from a name
+/// the indexer never placed — live, `dedup_structural_folder_nodes` returned
+/// `map_err`, `bind`, `execute`, `Ok`, `query` as one undifferentiated list.
+#[tokio::test]
+async fn get_callees_by_name_labels_locality_from_graph_nodes() {
+    let s = pg_store().await;
+    let folder = format!("callees_{}", uuid::Uuid::new_v4());
+    let fid = create_test_folder(&s, &folder).await;
+
+    let caller = s
+        .upsert_node(&fid, "function", "extract_deps", "src/deps.rs", None, None, Some(1), Some(9))
+        .await
+        .unwrap();
+    // internal: a local definition.
+    let local = s
+        .upsert_node(&fid, "function", "parse_cargo", "src/cargo.rs", None, None, Some(3), Some(8))
+        .await
+        .unwrap();
+    // external: the writer recorded a dependency's symbol.
+    let lib = s
+        .upsert_node_by_fqn(
+            &fid,
+            "lib·serde·serde·from_str",
+            "lib_symbol",
+            "from_str",
+            Some("rust"),
+            None,
+        )
+        .await
+        .unwrap();
+
+    s.insert_edge(&fid, &caller, Some(&local), None, None, "calls").await.unwrap();
+    s.insert_edge(&fid, &caller, Some(&lib), None, None, "calls").await.unwrap();
+    // unknown: an unresolved edge has NO target node to classify at all.
+    s.insert_edge(&fid, &caller, None, Some("map_err"), None, "calls").await.unwrap();
+
+    let callees = s.get_callees_by_name(&folder, "extract_deps").await.unwrap();
+    let by_name: std::collections::HashMap<String, String> = callees
+        .iter()
+        .map(|c| {
+            (
+                c["name"].as_str().unwrap_or_default().to_string(),
+                c["locality"].as_str().unwrap_or_default().to_string(),
+            )
+        })
+        .collect();
+
+    assert_eq!(by_name.get("parse_cargo").map(String::as_str), Some("internal"));
+    assert_eq!(by_name.get("from_str").map(String::as_str), Some("external"));
+    assert_eq!(
+        by_name.get("map_err").map(String::as_str),
+        Some("unknown"),
+        "an unresolved callee has no target node, so it is unknown — NOT external, \
+         which is the misclassification the locality view exists to prevent"
+    );
+
+    s.delete_nodes_by_folder(&fid).await.unwrap();
+}
