@@ -978,6 +978,52 @@ impl PgStore {
         Ok(())
     }
 
+    /// Collect unresolved reference stubs that nothing points at any more.
+    ///
+    /// A stub is a node with NO `file_path` and a kind other than
+    /// `lib_symbol`/`lib_package` — the `unknown` locality in
+    /// `sensei.graph_nodes`. It is minted by `upsert_node_by_fqn` when a reference
+    /// resolves to a name no definition backs, and until now nothing could remove
+    /// one: `prune_file_nodes` filters `file_path = $2`, which no stub can match.
+    /// 84,446 accumulated. That absence is also why "stub count → 0" could not be
+    /// driven by fixing the parsers alone — they stopped CREATING stubs, but the
+    /// existing rows had no exit.
+    ///
+    /// TWO GUARDS, both load-bearing:
+    ///
+    /// * **Still referenced.** A stub with any edge is evidence that a reference
+    ///   exists, even though its target is unknown. Dropping it would silently
+    ///   lose the reference; it becomes collectable once the referencing file is
+    ///   reindexed (`delete_edges_from_sources` drops the old edge, and the fixed
+    ///   resolvers do not create a replacement). Measured 2026-09-01: 27,740 of
+    ///   84,446 are already edge-free, the rest convert as their callers reindex.
+    ///
+    /// * **Has children.** `nodes.parent_id` cascades on delete, and live there are
+    ///   42 stub parents carrying 574 REAL internal method nodes with file paths.
+    ///   An unguarded delete would destroy all 574. The stub parent is wrong, but
+    ///   it is load-bearing until its children are re-parented.
+    ///
+    /// Folder-scoped and idempotent — 84ms on this repo's largest folder (141,186
+    /// nodes). Returns rows deleted.
+    pub async fn prune_orphan_stubs(&self, folder_id: &uuid::Uuid) -> Result<u64, String> {
+        let res = sqlx_core::query::query(
+            "DELETE FROM sensei.nodes n
+              WHERE n.folder_id = $1
+                AND n.file_path IS NULL
+                AND n.kind NOT IN ('lib_symbol'::sensei.node_kind, 'lib_package'::sensei.node_kind)
+                AND NOT EXISTS (
+                    SELECT 1 FROM sensei.edges e
+                     WHERE e.target_id = n.id OR e.source_id = n.id)
+                AND NOT EXISTS (
+                    SELECT 1 FROM sensei.nodes c WHERE c.parent_id = n.id)",
+        )
+        .bind(folder_id)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| format!("prune_orphan_stubs: {e}"))?;
+        Ok(res.rows_affected())
+    }
+
     /// Prune a file's nodes that vanished from the latest parse (D3 upsert-then-
     /// prune): every node for `(folder, file_path)` whose id is NOT in `kept_ids`.
     /// First unresolve inbound edges pointing at them (clear `target_id`, KEEP
