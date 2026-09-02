@@ -211,6 +211,38 @@ impl PgStore {
         }))
     }
 
+    /// Record the checked-out branch in the TYPED column.
+    ///
+    /// `folders.branch` was declared and never written — NULL in all 7,772 rows —
+    /// while `process_git_folder` put the value in `props->>'branch'`. Two stores
+    /// for one fact, and the dead one was the typed, indexable, queryable one.
+    ///
+    /// It is a genuine partition key rather than a label, because the design is one
+    /// folder per checkout ("develop vs main = two folders, one repository") and
+    /// that is already live: fitness, strategos and website each have two folder
+    /// rows on two branches, so their graphs are already separate. Filtering
+    /// `sensei.graph_nodes` by branch therefore separates real graphs — no
+    /// branch-in-node-identity needed, which would have cost ~2.1 GB per extra
+    /// branch (nodes is 2,150 MB, dominated by embeddings).
+    ///
+    /// Guarded so a re-index to the same branch changes 0 rows.
+    pub async fn set_folder_branch(
+        &self,
+        folder_id: &uuid::Uuid,
+        branch: &str,
+    ) -> Result<u64, String> {
+        let res = sqlx_core::query::query(
+            "UPDATE sensei.folders SET branch = $2, modified_at = now()
+              WHERE id = $1 AND branch IS DISTINCT FROM $2",
+        )
+        .bind(folder_id)
+        .bind(branch)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| format!("set_folder_branch: {e}"))?;
+        Ok(res.rows_affected())
+    }
+
     /// Set folder props (metadata like stack, libs, indexed_at, etc.).
     pub async fn set_folder_props(
         &self,
