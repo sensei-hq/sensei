@@ -144,7 +144,7 @@ pub fn manifests() -> Vec<McpToolManifest> {
             id: "sensei.get_callers",
             name: "get_callers",
             kind: McpToolKind::Query,
-            summary: "Return functions that call the given symbol.",
+            summary: "Return functions that call the given symbol, with whether the symbol was found and whether the list is complete.",
             inputs: vec![
                 McpToolInput {
                     key: "name",
@@ -166,7 +166,7 @@ pub fn manifests() -> Vec<McpToolManifest> {
                 },
             ],
             example: McpToolExample {
-                response: "3 callers of upsert_referenced_library:\n  extract_deps  · libraries.rs:249\n  extract_dep_versions · lib_indexer.rs:88\n  seed_library · pg_store.rs:1914",
+                response: "upsert_referenced_library — found, defined at pg_store/library.rs:311\n3 callers (coverage: 3 resolved, 0 unresolved — complete):\n  extract_deps  · libraries.rs:249\n  extract_dep_versions · lib_indexer.rs:88\n  seed_library · pg_store.rs:1914",
             },
         },
         McpToolManifest {
@@ -174,7 +174,7 @@ pub fn manifests() -> Vec<McpToolManifest> {
             id: "sensei.get_callees",
             name: "get_callees",
             kind: McpToolKind::Query,
-            summary: "Return functions the given symbol calls.",
+            summary: "Return functions the given symbol calls, each tagged internal / external / unknown, with whether the list is complete.",
             inputs: vec![
                 McpToolInput {
                     key: "name",
@@ -196,7 +196,7 @@ pub fn manifests() -> Vec<McpToolManifest> {
                 },
             ],
             example: McpToolExample {
-                response: "extract_deps calls:\n  upsert_referenced_library\n  upsert_project_dependency\n  parse_cargo_deps",
+                response: "extract_deps — found, defined at tasks/handlers/libraries.rs:249\ncalls (coverage: 3 resolved, 1 unresolved — INCOMPLETE, grep to confirm):\n  upsert_referenced_library · internal · pg_store/library.rs:311\n  upsert_project_dependency · internal · pg_store/projects.rs:88\n  parse_cargo_deps · internal · adapters/manifest/cargo.rs:41\n  serde_json::from_str · external",
             },
         },
         McpToolManifest {
