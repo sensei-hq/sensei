@@ -11894,3 +11894,59 @@ async fn folder_branch_is_a_typed_column_and_a_graph_nodes_dimension() {
     assert_eq!(after.as_deref(), Some("main"), "a switch updates it in place");
     s.delete_nodes_by_folder(&fid).await.unwrap();
 }
+
+/// Collecting stubs must not leave community rows describing zero nodes.
+///
+/// `prune_orphan_stubs` deletes nodes outside the detect transaction, so a
+/// community whose every member was an orphan stub survived as a row with no
+/// members. Measured immediately after the first GC pass: 27,693 such rows, and
+/// `list_communities` / the Atlas `communities/info` endpoint read them — a
+/// phantom community with a label and a node_count that no longer matches
+/// anything. Derived rows with nothing left to describe are garbage by the same
+/// rule as the stubs themselves.
+#[tokio::test]
+async fn prune_orphan_stubs_removes_communities_it_emptied() {
+    let s = pg_store().await;
+    let fid = create_test_folder(&s, &format!("gccom_{}", uuid::Uuid::new_v4())).await;
+    let stub = s
+        .upsert_node_by_fqn(&fid, "rust·p·m·Ghost·gone", "function", "gone", Some("rust"), None)
+        .await
+        .unwrap();
+    let real = s
+        .upsert_node(&fid, "function", "real", "src/a.rs", None, None, Some(1), Some(2))
+        .await
+        .unwrap();
+    // Community 1 is stub-only (emptied by GC); community 2 keeps a real member.
+    for (id, cid) in [(stub, 1i32), (real, 2i32)] {
+        sqlx_core::query::query("UPDATE sensei.nodes SET community_id = $2 WHERE id = $1")
+            .bind(id)
+            .bind(cid)
+            .execute(s.pool())
+            .await
+            .unwrap();
+    }
+    for cid in [1i32, 2] {
+        sqlx_core::query::query(
+            "INSERT INTO inference.communities(folder_id, community_id, label, node_count)
+             VALUES($1, $2, 'l', 1)",
+        )
+        .bind(fid)
+        .bind(cid)
+        .execute(s.pool())
+        .await
+        .unwrap();
+    }
+
+    assert_eq!(s.prune_orphan_stubs(&fid).await.unwrap(), 1, "the orphan stub is collected");
+
+    let rows: Vec<(i32,)> = sqlx_core::query_as::query_as(
+        "SELECT community_id FROM inference.communities WHERE folder_id = $1 ORDER BY 1",
+    )
+    .bind(fid)
+    .fetch_all(s.pool())
+    .await
+    .unwrap();
+    let ids: Vec<i32> = rows.into_iter().map(|(c,)| c).collect();
+    assert_eq!(ids, vec![2], "the emptied community goes; the one with a real member stays");
+    s.delete_nodes_by_folder(&fid).await.unwrap();
+}
