@@ -1,106 +1,87 @@
 # Checkpoint
 
-**Slice:** stored-derived-value cleanup. Last commit `d79cfc9f`. Branch `develop`.
+**Slice:** #146 complete; clean rebuild IN FLIGHT AND BLOCKED. Branch `develop`.
+Last commit `85ada17c`.
 
-Five commits. The governing rule: *if a value is a pure function of current
-stored state, it is a view — not a row somebody writes.* It held four times out
-of five, and the fifth is the useful correction.
+## IN-FLIGHT — read this first
+
+`make install-service` is running and blocked on its `db-backup` prerequisite,
+which is dumping the DB while a throwaway scan writes to it concurrently
+(36 MB after 7 min; scan at ~168k nodes). Both will finish; the scan's output is
+DISPOSABLE — see why below.
+
+### The sequence that must complete
+
+1. Wait for `make install-service` (it stops the service, overlays binaries,
+   codesigns, restarts). Verify: `stat -f '%Sm' /opt/homebrew/opt/sensei/bin/senseid`
+   must be TODAY, not `Sep 1 09:40`.
+2. `psql -d sensei -c "delete from sensei.folders;"` — the in-flight scan ran on
+   the OLD binary, so its graph reproduces the pre-fix bugs. **Run it twice if the
+   first fails**: the first attempt today rolled back on a `project_commands`
+   trigger and deleted nothing, the retry worked.
+3. Re-scan both roots:
+   `curl -sX POST localhost:7744/api/scan -H 'Content-Type: application/json' -d '{"root":"/Users/Jerry/Developer"}'`
+   and the same for `/Users/Jerry/Work`. Field is `root`, not `path`.
+4. THEN measure. `select count(*) from sensei.graph_nodes where locality='unknown'`
+   should be near 0 — pre-rebuild it was 56,748.
+   `select count(*) from sensei.folders where branch is not null` must be > 0;
+   it is the canary that the new binary is live (the old one wrote props instead).
+
+### Why the in-flight scan is disposable
+
+The running daemon binary is dated `Sep 1 09:40`, which predates every fix in
+this session. Its rebuild reproduces the old behaviour on a clean slate, so its
+numbers measure nothing. (I first reported this binary as `Aug 19` — that was
+the symlink's mtime, not the running process's. Conclusion unchanged.)
+
+## Wipe already done, and what survived
+
+`delete from sensei.folders` cascaded nodes/edges/scan_state/communities.
+`scan_state` cascading is what prevents a silently EMPTY rebuild — stale
+fingerprints would make the incremental gate skip every file.
+
+Kept, verified after the wipe: memories 16, mcp_servers 6, transcript_turns
+3,867, sessions 284, projects 146, watch roots 2. Session→folder attribution
+(284 rows) is captured at `/tmp/rebuild/session_folder.csv`; the 22
+irreplaceable rows at `/tmp/rebuild/irreplaceable.sql` (not needed — projects
+was not wiped).
 
 ## Done this run
 
 | commit | what |
 |---|---|
-| `796a56a9` | retired `folders.props.libs` — the proxy was 75–91% this repo's own code |
-| `89e46395` | `covers` → the `doc_coverage` view; 601 pairs reproduced exactly, 0 divergent |
-| `bc59b4c4` | dropped `nodes.degree` + deleted the `build_connections` barrier (−474 lines) |
-| `d79cfc9f` | stopped re-detect destroying 1,545 model-authored community descriptions |
+| `e1114215` | java: resolve calls through the import map (49% of stubs) |
+| `1bf668ed` | ts/js: runtime globals to the runtime (39%) |
+| `7c7d9d1c` | rust: prelude items and types to std (10%) |
+| `4773da89` | stub GC — the missing exit; 84,339 → 56,748 live |
+| `95e23315` | branch as a typed column + `graph_nodes.branch` filter dimension |
+| `85ada17c` | GC removes the communities it empties (regression from 4773da89) |
 
-## The correction, recorded accurately
-
-`d79cfc9f`'s message says "measurement is what caught it" about `god_node_ids`
-not being viewable. **That is false and the commit message is wrong.** The
-11.3s/21.9s degree-in-SQL numbers are in `bc59b4c4` — the PREVIOUS commit. The
-measurement was already in hand; the failure was writing a forward plan
-("communities' four derived columns become a view") that the measurement had
-already invalidated, since `god_node_ids` is ranked by degree. Noticing that a
-turn later was re-reading my own result, not a new finding.
-
-The technical conclusion is still right: `inference.communities` legitimately
-materialises `god_node_ids` (too expensive to derive) and `description` (not
-derivable), with `label`/`node_count` cheap by-products of the same pass.
-
-**Sharpened rule:** "if it's derivable, make it a view" is only true when
-deriving it is affordable. Measure the derivation cost BEFORE planning the view,
-and re-check any forward plan against measurements already taken.
-
-## Gates at d79cfc9f
-
-2657 senseid pass / 0 fail / 6 ignored, clippy `-D warnings` 0, fmt clean.
-Every behavioural change mutation-probed: the god-node test placed the hub last
-in natural-key order and was verified red against the old implementation; the
-description-discard test fails if the CASE is relaxed to preserve
-unconditionally (left: 1, right: 0).
-
-One flake seen mid-run — `full_bridge_publishes_status_segments` — passes in
-isolation; parallel interference, unrelated.
-
-## Next command
-
-```
-gh issue view 146
-```
-
-Identity-fabrication branches (`rust_lang.rs:981`, `rust_lang.rs:1171`,
-`typescript.rs:1018`, `java.rs:620`) landing WITH stub GC in the same commit —
-`delete_edges_from_sources` removes the in-edges that prove the fix worked, and
-`prune_file_nodes` filters `file_path = $2` while stubs have `file_path IS NULL`.
-
-The invariant is now a query, which is what the view was for:
-
-```sql
-select folder, count(*) from sensei.graph_nodes
- where locality = 'unknown' group by 1 order by 2 desc;
--- 84,442 total. OmniRoute 11650, sensei 10618, cluster 8228, server 7479
-```
-
-Target 0 — NOT resolution rate, which a correct fix makes FALL.
-
-`java.rs:620` confirmed: `import static org.mockito.Mockito.when;` DOES populate
-`imports["when"]` and the unqualified-call branch never reads it.
-
-## Open questions
-
-- **Fallback is the wrong default.** The word names two opposite operations:
-  *widening* (look in A then B for the SAME question, still able to answer
-  "don't know" — legitimate, e.g. `which_binary`) and *substituting* (answer a
-  DIFFERENT question and present it as the answer — a fabrication). Mechanical
-  test: **can the fallback path return "I don't know"?** If it cannot fail, it
-  is a fabrication. All four #146 branches fail that test, as did the `libs`
-  proxy and `get_project_summary`'s dead project→folder fallback. `CLAUDE.md`
-  forbids this on *failure* paths (`Err`) but is silent on *miss* paths
-  (`None`) — the gap every one of them used. Proposed as a rule; not yet written.
-- **#149** — does label propagation earn its keep? 62% of communities restate the
-  file boundary, 36% are stub singletons. Deliberately not actionable until #146
-  removes the stub artifacts and the numbers can be re-measured fairly.
-- **#138** project/namespace is a decision, not a task.
-- **#137** blocks 4,329 user-scope sync rows.
-
-## Known-broken
-
-- `docs/analysis/graph-end-state-sketch.md` §1–12 remain **NOT SAFE TO BUILD
-  FROM**; its correction block is authoritative.
-- **`references` targets are not resolvable data** — `/` alone has 2,000 edges;
-  also `id`, `true`, `429`. `doc_indexer.rs:587` joins absolute paths, discarding
-  the repo root (54,740 absolute targets). 0 of 1,700 rationale nodes have any
-  out-edge, so `references` does not unlock `rationale_for`.
-- **`extends` is 0-resolved** across all 7,863 edges while `codebase.rs:55`
-  already consumes it — #147.
-- **`dojo_memberships.sync_status` is dead** — `set_sync_status` has no callers,
-  so the connections pane's "healthy" count is permanently 0.
-- `/settings/projects` e2e fails on a fresh DB (#134).
-- **The security-reminder hook false-positives** on the regex `match` sibling
-  method in ANY file including Markdown.
+Three languages, three DIFFERENT causes. The design sketch's one-root-cause
+premise was wrong; profiling each separately is what found them.
 
 ## Filed, not started
 
-#131–#136, #139–#142, #144, #145, #146, #147, #148, #149.
+**#150** content-hash node identity — Jerry's de-dup argument supersedes the
+"measured performance drop" trigger I filed it under: 5 repos already have two
+checkouts each, ~80% of files identical, so sharing node rows by content hash
+SHRINKS storage and scan time. Scope correction needed in the issue: sharing
+across checkouts means dropping `folder_id` from node identity, so nodes belong
+to a file VERSION, not a folder. Bigger than adding a column.
+
+**#149** label propagation — post-GC, 0-file stub communities went 27,923 → 233,
+so 97.3% of live communities are single-file. But cross-file communities are
+still 26–35% stub members (those stubs retain in-edges), so re-measure only
+AFTER the clean rebuild.
+
+#147, #148, #131–#145 unstarted. Two loose ends never filed: TS/JS local
+callbacks (`t` 573, `fn` 189, `setLoading` 235) need a locally-declared-names
+pre-pass; and 42 stub parents carry 575 real method nodes.
+
+## Known-broken
+
+- `docs/analysis/graph-end-state-sketch.md` §1–12 NOT SAFE TO BUILD FROM.
+- `references`: 250,126 edges, 0 resolved; targets are `/`, `id`, `true`, `429`.
+  `doc_indexer.rs:587` joins absolute paths, discarding the repo root.
+- `extends`: 7,863 edges, 0 resolved, while `codebase.rs:55` consumes it (#147).
+- `dojo_memberships.sync_status` dead — `set_sync_status` has no callers.
