@@ -203,6 +203,155 @@ pub fn classify_import(target: &str) -> ImportTarget {
     ImportTarget::External { package: external_package(t) }
 }
 
+/// Resolve a relative import against the current module path (both `/`-joined,
+/// extension-free). `lib/util` + `./helper` → `lib/helper`; `+ ../x/y` → `x/y`.
+///
+/// Hoisted here from `typescript_fqn` because it is specifier arithmetic, which
+/// this module owns. The TS classifier now calls it rather than keeping a second
+/// copy — two copies of a resolution rule is the incident named at the top of
+/// this file.
+pub fn resolve_relative(current_module: &str, spec: &str) -> String {
+    let mut parts: Vec<&str> = current_module.split('/').filter(|s| !s.is_empty()).collect();
+    parts.pop(); // drop the current file, leaving its directory
+    for seg in spec.split('/') {
+        match seg {
+            "." | "" => {}
+            ".." => {
+                parts.pop();
+            }
+            s => parts.push(s),
+        }
+    }
+    let joined = parts.join("/");
+    // Drop a trailing file extension on the final segment.
+    match joined.rsplit_once('/') {
+        Some((head, tail)) => format!("{head}/{}", strip_ext(tail)),
+        None => strip_ext(&joined).to_string(),
+    }
+}
+
+/// Drop a JS-family module extension. `./foo.ts` and `./foo` name one module.
+pub fn strip_ext(s: &str) -> &str {
+    for ext in [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".svelte", ".vue"] {
+        if let Some(b) = s.strip_suffix(ext) {
+            return b;
+        }
+    }
+    s
+}
+
+/// The module paths a LOCAL specifier could name, in priority order.
+///
+/// `src/`-stripped variants are offered because `ts_module_path` already strips a
+/// leading `src/` when it builds a module path, so a `../` that climbs out of
+/// `src` lands one segment too high. MEASURED: adding the variant lifts `../`
+/// hits from 5,049 to 6,292.
+fn local_module_candidates(class: &ImportTarget, current_module: &str, spec: &str) -> Vec<String> {
+    let with_src_variant = |m: String| -> Vec<String> {
+        match m.strip_prefix("src/") {
+            Some(s) if !s.is_empty() => vec![m.clone(), s.to_string()],
+            _ => vec![m],
+        }
+    };
+    match class {
+        ImportTarget::Relative => with_src_variant(resolve_relative(current_module, spec)),
+        // `$lib` maps to `src/lib` by SvelteKit convention, and module paths are
+        // already `src/`-relative, so the target module is `lib/…`. `$app` and
+        // `$env` are FRAMEWORK modules with no file in this repo — they must stay
+        // unresolved rather than mint a stub for something that does not exist.
+        ImportTarget::Alias { kind: AliasKind::SvelteKit } => {
+            let t = spec.trim();
+            if let Some(rest) = t.strip_prefix("$lib/") {
+                with_src_variant(format!("lib/{}", strip_ext(rest)))
+            } else if t == "$lib" {
+                vec!["lib".to_string()]
+            } else {
+                Vec::new()
+            }
+        }
+        // `@/x` and `~/x` are tsconfig `paths` entries whose mapping is in
+        // principle arbitrary, but MEASURED 6,413 of 7,032 such edges resolve by
+        // simply stripping the prefix — the `@/*` → `./src/*` convention is
+        // near-universal and module paths are already `src/`-relative. No config
+        // read is needed for that, and a miss stays a miss.
+        ImportTarget::Alias { kind: AliasKind::TsPaths } => {
+            let t = spec.trim();
+            match t.strip_prefix("@/").or_else(|| t.strip_prefix("~/")) {
+                Some(rest) if !rest.is_empty() => with_src_variant(strip_ext(rest).to_string()),
+                _ => Vec::new(),
+            }
+        }
+        // Rust `crate::`/`super::`/`self::` needs the module-path arithmetic that
+        // lives in `rust_lang`, not this string rewrite. Deliberately empty until
+        // that is hoisted — an empty candidate list leaves the edge unresolved,
+        // which is the honest outcome, not a wrong one.
+        ImportTarget::Internal => Vec::new(),
+        ImportTarget::External { .. } => Vec::new(),
+    }
+}
+
+/// The FQN language segments to try for a module in `lang`.
+///
+/// The segment is NOT a function of the file's extension. MEASURED on live
+/// `kind='module'` nodes: `.svelte` files carry 757 `svelte·…` fqns AND 544
+/// `typescript·…`; `.js` files carry 1,023 `javascript·…` AND 1,072
+/// `typescript·…`. The derivation copies the leading segment of the first def's
+/// fqn and only falls back to the file's language, so the same file type lands on
+/// different segments depending on what it happens to define.
+///
+/// So a single-segment lookup misses a real target for reasons that have nothing
+/// to do with the import. Fanning out across the JS family recovers 881 relative
+/// edges. Stabilising the segment instead would rewrite existing fqns, which is a
+/// bigger decision than this slice.
+fn fqn_language_candidates(lang: &str) -> Vec<&str> {
+    match lang {
+        "typescript" | "javascript" | "svelte" | "vue" => {
+            let mut out = vec![lang];
+            for l in ["typescript", "javascript", "svelte"] {
+                if l != lang {
+                    out.push(l);
+                }
+            }
+            out
+        }
+        other => vec![other],
+    }
+}
+
+/// Every FQN a LOCAL import specifier could resolve to, best guess first.
+///
+/// Empty for anything this cannot place — an external package, a `$app`/`$env`
+/// framework module, a Rust internal path. An empty list means "leave the edge
+/// unresolved", which is the honest answer; the caller must NOT invent a target
+/// from a guess.
+///
+/// The caller must try these as a LOOKUP first and only create a node on a total
+/// miss. Get-or-creating on the first candidate would poison the second: the
+/// created stub would satisfy candidate 1 forever and the real target at
+/// candidate 2 would never be found.
+pub fn local_import_candidates(
+    lang: &str,
+    package: &str,
+    current_module: &str,
+    spec: &str,
+    class: &ImportTarget,
+) -> Vec<String> {
+    let modules = local_module_candidates(class, current_module, spec);
+    let mut out: Vec<String> = Vec::new();
+    for m in &modules {
+        if m.is_empty() {
+            continue;
+        }
+        for l in fqn_language_candidates(lang) {
+            let fqn = crate::languages::fqn::item(l, package, "", m);
+            if !out.contains(&fqn) {
+                out.push(fqn);
+            }
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -349,5 +498,170 @@ mod tests {
     fn whitespace_is_trimmed_and_empty_does_not_panic() {
         assert_eq!(classify_import("  ./x  "), ImportTarget::Relative);
         assert_eq!(classify_import(""), ImportTarget::External { package: String::new() });
+    }
+
+    // ── local_import_candidates ────────────────────────────────────────────
+    //
+    // 15,924 relative + 7,032 `@/`,`~/` + 1,836 `$lib` import edges point at
+    // local code and NONE resolve, because `process.rs` inserts every import
+    // edge with `target_id = None`. These pin the arithmetic that gives that
+    // emit site something to look up.
+
+    /// The relative case, and the one line that makes it correct: a specifier is
+    /// relative to the importing file's DIRECTORY, so the current file's own
+    /// segment must be dropped first.
+    ///
+    /// Breaking mutation: delete `parts.pop()` in `resolve_relative` — the
+    /// candidate becomes `typescript·app·lib/builder/util`, i.e. resolving as if
+    /// `builder` were a directory.
+    #[test]
+    fn a_relative_import_resolves_against_the_importing_files_directory() {
+        let c = local_import_candidates(
+            "typescript",
+            "app",
+            "lib/builder",
+            "./util",
+            &ImportTarget::Relative,
+        );
+        assert_eq!(c[0], "typescript·app·lib/util");
+
+        // `../` climbs out of the directory.
+        let c = local_import_candidates(
+            "typescript",
+            "app",
+            "routes/admin/page",
+            "../shared/table",
+            &ImportTarget::Relative,
+        );
+        assert_eq!(c[0], "typescript·app·routes/shared/table");
+
+        // An extension names the same module as the bare path.
+        let c = local_import_candidates(
+            "svelte",
+            "app",
+            "lib/x",
+            "./Card.svelte",
+            &ImportTarget::Relative,
+        );
+        assert_eq!(c[0], "svelte·app·lib/Card");
+    }
+
+    /// Aliases. `@/`,`~/` recover 6,413 of 7,032 edges by prefix strip alone —
+    /// module paths are already `src/`-relative, so no tsconfig read is needed.
+    ///
+    /// Breaking mutation: delete the `$lib/` → `lib/` rewrite — `$lib/nav`
+    /// produces no candidate and 1,836 edges stay unresolved.
+    #[test]
+    fn aliases_map_to_local_modules_but_framework_modules_do_not() {
+        assert_eq!(
+            local_import_candidates(
+                "svelte",
+                "app",
+                "routes/page",
+                "$lib/triage/view",
+                &classify_import("$lib/triage/view")
+            )[0],
+            "svelte·app·lib/triage/view"
+        );
+        assert_eq!(
+            local_import_candidates(
+                "typescript",
+                "app",
+                "routes/page",
+                "@/lib/x",
+                &classify_import("@/lib/x")
+            )[0],
+            "typescript·app·lib/x"
+        );
+        assert_eq!(
+            local_import_candidates(
+                "typescript",
+                "app",
+                "routes/page",
+                "~/stores/user",
+                &classify_import("~/stores/user")
+            )[0],
+            "typescript·app·stores/user"
+        );
+
+        // `$app`/`$env` are SvelteKit FRAMEWORK modules — no file exists in the
+        // repo, so they must yield NO candidate. Minting a stub for them would
+        // fabricate a local module that cannot be opened.
+        for framework in ["$app/navigation", "$app/state", "$env/dynamic/public"] {
+            assert!(
+                local_import_candidates(
+                    "svelte",
+                    "app",
+                    "routes/page",
+                    framework,
+                    &classify_import(framework)
+                )
+                .is_empty(),
+                "{framework} has no local file and must stay unresolved",
+            );
+        }
+    }
+
+    /// Nothing this cannot place may produce a candidate. An external package or
+    /// a Rust internal path returning a guess here would resolve an edge to the
+    /// wrong node, which is worse than leaving it unresolved.
+    #[test]
+    fn unplaceable_specifiers_yield_no_candidate() {
+        for spec in ["react", "node:fs", "java.util.List", "@rokkit/ui"] {
+            assert!(
+                local_import_candidates("typescript", "app", "lib/x", spec, &classify_import(spec))
+                    .is_empty(),
+                "{spec} is external and must not produce a local candidate",
+            );
+        }
+        // Rust internal paths need rust_lang's module arithmetic, not a string
+        // rewrite — empty until that is hoisted.
+        assert!(
+            local_import_candidates(
+                "rust",
+                "senseid",
+                "db::pg_store",
+                "crate::db::graph",
+                &classify_import("crate::db::graph")
+            )
+            .is_empty()
+        );
+    }
+
+    /// The FQN language segment is not a function of the file type — live,
+    /// `.svelte` files carry both `svelte·` and `typescript·` module fqns. A
+    /// single-segment lookup therefore misses real targets for a reason unrelated
+    /// to the import, so the JS family fans out.
+    ///
+    /// Breaking mutation: return `vec![lang]` from `fqn_language_candidates` —
+    /// the cross-segment candidates vanish and 881 relative edges stop resolving.
+    #[test]
+    fn js_family_fans_out_across_unstable_fqn_language_segments() {
+        let c =
+            local_import_candidates("svelte", "app", "lib/x", "./util", &ImportTarget::Relative);
+        assert_eq!(c[0], "svelte·app·lib/util", "the file's own language ranks first");
+        assert!(c.contains(&"typescript·app·lib/util".to_string()));
+        assert!(c.contains(&"javascript·app·lib/util".to_string()));
+
+        // A non-JS language does NOT fan out — rust modules are not typescript.
+        let c =
+            local_import_candidates("python", "app", "pkg/mod", "./sib", &ImportTarget::Relative);
+        assert_eq!(c, vec!["python·app·pkg/sib"]);
+    }
+
+    /// `ts_module_path` strips a leading `src/`, so a `../` that climbs out of
+    /// `src` lands one segment high. Offering the stripped variant lifts `../`
+    /// hits from 5,049 to 6,292 — measured.
+    #[test]
+    fn a_src_stripped_variant_is_offered_for_paths_that_climb_out_of_src() {
+        let c = local_import_candidates(
+            "typescript",
+            "app",
+            "routes/page",
+            "../src/lib/x",
+            &ImportTarget::Relative,
+        );
+        assert!(c.contains(&"typescript·app·src/lib/x".to_string()), "the literal path");
+        assert!(c.contains(&"typescript·app·lib/x".to_string()), "and the src-stripped form");
     }
 }

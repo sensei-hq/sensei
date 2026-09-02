@@ -12142,3 +12142,49 @@ async fn get_callees_by_name_labels_locality_from_graph_nodes() {
 
     s.delete_nodes_by_folder(&fid).await.unwrap();
 }
+
+/// `node_id_by_fqn` must LOOK UP without creating, and must be folder-scoped.
+///
+/// The scope is the load-bearing half: fqns are unique per folder
+/// (`nodes_unique_fqn` is `(folder_id, fqn)`), and 5 repos on this machine have
+/// two checkouts each — an unscoped lookup would resolve an import to the
+/// identically-named module in the OTHER checkout.
+///
+/// Breaking mutation: drop `AND folder_id = $1` from the SELECT — the cross-folder
+/// case below starts returning Some.
+#[tokio::test]
+async fn node_id_by_fqn_looks_up_without_creating_and_is_folder_scoped() {
+    let s = pg_store().await;
+    let a = create_test_folder(&s, &format!("fqnlook_a_{}", uuid::Uuid::new_v4())).await;
+    let b = create_test_folder(&s, &format!("fqnlook_b_{}", uuid::Uuid::new_v4())).await;
+
+    let fqn = "typescript·app·lib/util";
+    let id =
+        s.upsert_node_by_fqn(&a, fqn, "module", "util", Some("typescript"), None).await.unwrap();
+
+    assert_eq!(s.node_id_by_fqn(&a, fqn).await.unwrap(), Some(id), "finds the node in its folder");
+    assert_eq!(
+        s.node_id_by_fqn(&b, fqn).await.unwrap(),
+        None,
+        "the SAME fqn in another folder is a different module — two checkouts of one repo \
+         must not resolve into each other"
+    );
+    assert_eq!(
+        s.node_id_by_fqn(&a, "typescript·app·nope/absent").await.unwrap(),
+        None,
+        "an absent fqn is None"
+    );
+
+    // And it must not have CREATED anything while looking.
+    let (created,): (i64,) = sqlx_core::query_as::query_as(
+        "SELECT count(*) FROM sensei.nodes WHERE folder_id = ANY($1) AND fqn LIKE 'typescript·app·nope%'",
+    )
+    .bind(vec![a, b])
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(created, 0, "a lookup miss creates nothing — that is why it is not the upsert");
+
+    s.delete_nodes_by_folder(&a).await.unwrap();
+    s.delete_nodes_by_folder(&b).await.unwrap();
+}
