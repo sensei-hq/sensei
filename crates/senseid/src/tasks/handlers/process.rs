@@ -196,19 +196,25 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
         tracing::warn!(folder_id = %fid, project_id = %pid, error = %e, "set_folder_project failed");
     }
 
-    // Record the indexed git branch in props.branch — preferred from the
+    // Record the indexed git branch in the TYPED column — preferred from the
     // BranchSwitch task that triggered this re-index, otherwise read from
-    // .git/HEAD. Lets the UI show which branch is indexed and gives a later
-    // switch the prior branch for context. (Quasi-repos have no HEAD → skipped.)
+    // .git/HEAD. (Quasi-repos have no HEAD → skipped.)
+    //
+    // This used to write `props->>'branch'` while `folders.branch` sat declared and
+    // NULL in all 7,772 rows. The column is the queryable home, and it is a real
+    // partition key rather than a label: the design is one folder per checkout
+    // ("develop vs main = two folders, one repository"), already live for
+    // fitness/strategos/website, so `sensei.graph_nodes.branch` separates genuine
+    // graphs. Two branches held at once means two worktrees, NOT branch in node
+    // identity — which would cost ~2.1 GB per extra branch.
     if let Some(fid) = &folder_uuid {
         let branch = task.branch.clone().or_else(|| {
             crate::watcher::root_watcher::read_git_head(&format!("{}/.git/HEAD", task.path))
         });
         if let Some(br) = branch
-            && let Err(e) =
-                ctx.pg().set_folder_props(fid, &serde_json::json!({ "branch": br })).await
+            && let Err(e) = ctx.pg().set_folder_branch(fid, &br).await
         {
-            tracing::warn!(folder_id = %fid, branch = %br, error = %e, "set_folder_props (branch) failed");
+            tracing::warn!(folder_id = %fid, branch = %br, error = %e, "set_folder_branch failed");
         }
     }
 
