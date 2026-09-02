@@ -1021,6 +1021,32 @@ impl PgStore {
         .execute(&self.pool)
         .await
         .map_err(|e| format!("prune_orphan_stubs: {e}"))?;
+
+        // Clean up after ourselves. Deleting nodes here happens OUTSIDE the detect
+        // transaction, so a community whose every member was an orphan stub is left
+        // as a row describing nothing — measured 27,693 of them immediately after
+        // the first GC pass, and `list_communities` / the Atlas communities/info
+        // endpoint read them as phantom communities with a stale node_count. A
+        // derived row with nothing left to describe is garbage by the same rule as
+        // the stubs. `description` is not at risk: an emptied community has no
+        // cluster left to caption.
+        if res.rows_affected() > 0
+            && let Err(e) = sqlx_core::query::query(
+                "DELETE FROM inference.communities c
+                  WHERE c.folder_id = $1
+                    AND NOT EXISTS (
+                        SELECT 1 FROM sensei.nodes n
+                         WHERE n.folder_id = c.folder_id
+                           AND n.community_id = c.community_id)",
+            )
+            .bind(folder_id)
+            .execute(&self.pool)
+            .await
+        {
+            // Non-fatal: the next detect replaces the folder's community set
+            // anyway. Reclaiming garbage must not fail the caller.
+            tracing::warn!(error = %e, "prune_orphan_stubs: emptied-community cleanup failed");
+        }
         Ok(res.rows_affected())
     }
 
