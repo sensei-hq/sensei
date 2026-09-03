@@ -922,6 +922,30 @@ pub(crate) mod rust_fqn {
         External { package: String, path: String, leaf: String },
     }
 
+    impl PathClass {
+        /// The canonical FQN for this path, and whether it is external.
+        ///
+        /// The ONE owner of this mapping. Call targets, path-call targets and
+        /// trait parents all need it, and an external node's key must match
+        /// exactly what `upsert_lib_node_by_fqn` writes — three hand-copies
+        /// would be three chances to drift onto a second node for one trait.
+        fn to_fqn(&self, ctx: &FileFqnContext) -> (String, bool) {
+            match self {
+                Self::Internal { module, leaf } => {
+                    (fqn::item(RUST_LANG, &ctx.package, module, leaf), false)
+                }
+                Self::External { package, path, leaf } => (fqn::lib(package, path, leaf), true),
+            }
+        }
+
+        /// The bare last segment, whichever variant this is.
+        fn leaf(&self) -> &str {
+            match self {
+                Self::Internal { leaf, .. } | Self::External { leaf, .. } => leaf,
+            }
+        }
+    }
+
     /// Produce canonical FQNs (plan 0.1) for every definition and reference in a Rust
     /// source file. Pure over `(source, ctx)`.
     pub fn produce_fqns(source: &str, ctx: &FileFqnContext) -> FqnFileOutput {
@@ -1102,6 +1126,25 @@ pub(crate) mod rust_fqn {
                         .child_by_field_name("trait")
                         .and_then(|t| base_type_name(&source_text(&t, src)));
                     let (_, type_module, _) = resolve_type_module(&type_name, ctx, module, scope);
+                    // `impl Trait for Type` is an inheritance fact. An INHERENT
+                    // impl (`impl Type { .. }`) has no trait and is not a
+                    // relation to anything, so the guard is the whole semantics.
+                    if child.child_by_field_name("trait").is_some()
+                        && let Some(tn) = trait_name.clone()
+                    {
+                        let raw = child
+                            .child_by_field_name("trait")
+                            .map(|t| source_text(&t, src))
+                            .unwrap_or_default();
+                        let resolved = resolve_trait_fqn(&raw, ctx, module, scope);
+                        out.relations.push(fqn::TypeRelation {
+                            child_fqn: fqn::item(RUST_LANG, &ctx.package, &type_module, &type_name),
+                            parent_fqn: resolved.as_ref().map(|(f, _)| f.clone()),
+                            parent_name: tn,
+                            is_lib: resolved.as_ref().is_some_and(|(_, l)| *l),
+                            relation: crate::types::RelationKind::TraitImpl,
+                        });
+                    }
                     let ic = ImplCtx { type_name, type_module, trait_name };
                     if let Some(body) = child.child_by_field_name("body") {
                         walk_fqn(&body, src, lines, ctx, module, scope, Some(&ic), out);
@@ -1148,6 +1191,50 @@ pub(crate) mod rust_fqn {
             return ("std".to_string(), type_name.to_string(), true);
         }
         (ctx.package.clone(), module.to_string(), false)
+    }
+
+    /// Resolve a trait reference in an `impl Trait for Type` to `(fqn, is_lib)`.
+    ///
+    /// Follows the CALL path's convention via [`PathClass::to_fqn`] rather than
+    /// `resolve_type_module`, which returns a different shape for prelude types
+    /// (it puts the type name in the module slot). That difference is not
+    /// cosmetic: an external trait must land on the same key
+    /// `upsert_lib_node_by_fqn` writes, or the edge points at a second node for
+    /// the same trait and never merges.
+    ///
+    /// Returns `None` for a trait this file gives no way to place. A miss is a
+    /// miss — the emit path records the bare name unresolved rather than
+    /// guessing, because a guessed supertype is a confident wrong answer.
+    fn resolve_trait_fqn(
+        raw: &str,
+        ctx: &FileFqnContext,
+        module: &str,
+        scope: &FileScope,
+    ) -> Option<(String, bool)> {
+        let name = base_type_name(raw)?;
+        if name.is_empty() {
+            return None;
+        }
+        // A qualified path carries its own placement.
+        if raw.contains("::") {
+            let cleaned: String = raw.chars().filter(|c| !c.is_whitespace()).collect();
+            let segs: Vec<&str> = cleaned.split("::").collect();
+            return Some(classify_segments(&segs, ctx, scope).to_fqn(ctx));
+        }
+        // A `use`d trait resolves through the same map calls use.
+        if let Some(full) = scope.use_map.get(&name) {
+            let segs: Vec<&str> = full.split("::").collect();
+            return Some(classify_segments(&segs, ctx, scope).to_fqn(ctx));
+        }
+        if scope.local_types.contains(&name) {
+            return Some((fqn::item(RUST_LANG, &ctx.package, module, &name), false));
+        }
+        // In scope everywhere without a `use`. Same key the call path uses, so
+        // `impl Debug` and a `Debug` reference name one node.
+        if RUST_PRELUDE_TYPES.contains(&name.as_str()) {
+            return Some((fqn::lib("std", "prelude", &name), true));
+        }
+        None
     }
 
     /// Classify a `::`-path as current-crate vs dependency.
@@ -1332,14 +1419,8 @@ pub(crate) mod rust_fqn {
                 }
                 if let Some(full) = scope.use_map.get(&name) {
                     let segs: Vec<&str> = full.split("::").collect();
-                    match classify_segments(&segs, ctx, scope) {
-                        PathClass::Internal { module: m, leaf } => {
-                            Some((Some(fqn::item(RUST_LANG, &ctx.package, &m, &leaf)), false, name))
-                        }
-                        PathClass::External { package, path, leaf } => {
-                            Some((Some(fqn::lib(&package, &path, &leaf)), true, name))
-                        }
-                    }
+                    let (f, is_lib) = classify_segments(&segs, ctx, scope).to_fqn(ctx);
+                    Some((Some(f), is_lib, name))
                 } else if RUST_PRELUDE_ITEMS.contains(&name.as_str()) {
                     // In scope everywhere without a `use`; naming std also merges
                     // every caller's reference onto one node.
@@ -1393,14 +1474,10 @@ pub(crate) mod rust_fqn {
                         ))
                     }
                 } else {
-                    match classify_segments(&segs, ctx, scope) {
-                        PathClass::Internal { module: m, leaf } => {
-                            Some((Some(fqn::item(RUST_LANG, &ctx.package, &m, &leaf)), false, leaf))
-                        }
-                        PathClass::External { package, path, leaf } => {
-                            Some((Some(fqn::lib(&package, &path, &leaf)), true, leaf))
-                        }
-                    }
+                    let pc = classify_segments(&segs, ctx, scope);
+                    let leaf = pc.leaf().to_string();
+                    let (f, is_lib) = pc.to_fqn(ctx);
+                    Some((Some(f), is_lib, leaf))
                 }
             }
             "field_expression" => {
@@ -1578,6 +1655,76 @@ mod tests {
             .iter()
             .find(|r| r.target_name == target_name)
             .unwrap_or_else(|| panic!("no ref to `{target_name}` in {:?}", out.refs))
+    }
+
+    /// A trait impl is an inheritance FACT and must survive as one.
+    ///
+    /// Rust has no inheritance, but `impl Trait for Type` is the same shape of
+    /// fact as Java's `implements`, which is why it rides the `implements` edge
+    /// kind with its own `trait_impl` discriminant.
+    ///
+    /// The parent FQN follows the CALL path's convention exactly
+    /// (Internal -> fqn::item, External -> fqn::lib). That is not cosmetic:
+    /// `upsert_lib_node_by_fqn` writes external nodes under that key, so a
+    /// different shape here would create a second node for the same trait and
+    /// the edges would not merge onto it.
+    ///
+    /// Breaking mutations: (1) drop the `trait_name.is_some()` guard — the
+    /// inherent-impl assertion fails, because inherent impls would be emitted
+    /// as relations to nothing; (2) build the external parent with
+    /// `resolve_type_module` instead — `impl std::fmt::Debug` resolves to a key
+    /// that no lib node uses.
+    #[test]
+    fn trait_impls_become_relations_and_inherent_impls_do_not() {
+        let src = r#"
+pub trait Greet {}
+pub struct W;
+impl Greet for W {}
+impl W {
+    pub fn bar(&self) {}
+}
+pub struct Wrapper<T> { pub inner: T }
+impl<T> std::fmt::Display for Wrapper<T> {}
+impl std::fmt::Debug for W {}
+"#;
+        let out = produce(src, "demo", "widget");
+
+        let rel = |parent: &str| {
+            out.relations
+                .iter()
+                .find(|r| r.parent_name == parent)
+                .unwrap_or_else(|| panic!("no relation to `{parent}` in {:?}", out.relations))
+        };
+
+        // (a) Local trait: both sides resolve inside this crate.
+        let g = rel("Greet");
+        assert_eq!(g.relation, crate::types::RelationKind::TraitImpl);
+        assert_eq!(g.child_fqn, def_fqn(&out, "W"));
+        assert_eq!(g.parent_fqn.as_deref(), Some(def_fqn(&out, "Greet")));
+        assert!(!g.is_lib, "a trait defined in this crate is not external");
+
+        // (b) The generic case. A naive string parse dropped these entirely.
+        let d = rel("Display");
+        assert_eq!(d.child_fqn, def_fqn(&out, "Wrapper"), "generics must not break the child");
+
+        // (c) External trait: the lib shape the call path uses, so the edge
+        // merges onto the SAME node a `std::fmt::Debug` reference would.
+        let dbg = rel("Debug");
+        assert!(dbg.is_lib, "std is external");
+        // `std` twice is the ESTABLISHED shape, not a bug: the live graph holds
+        // `lib·std·std::fs·create_dir_all` and `lib·std·std::env·var` from the
+        // call path, so a trait parent must use the same encoding or its edge
+        // lands on a second node. Normalising it is a separate concern across
+        // every existing lib node, not something to "tidy" here.
+        assert_eq!(dbg.parent_fqn.as_deref(), Some("lib·std·std::fmt·Debug"));
+
+        // (d) An INHERENT impl is not a relation to anything.
+        assert!(
+            !out.relations.iter().any(|r| r.parent_name == "W"),
+            "inherent `impl W` must not emit a relation: {:?}",
+            out.relations
+        );
+        assert_eq!(out.relations.len(), 3, "exactly the three trait impls: {:?}", out.relations);
     }
 
     #[test]

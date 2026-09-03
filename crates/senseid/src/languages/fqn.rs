@@ -58,6 +58,30 @@ pub struct FqnReference {
     pub is_lib: bool,
 }
 
+/// One type's relation to a supertype, resolved the same way a call target is.
+///
+/// `parent_fqn = None` means the producer could not resolve the supertype and
+/// deliberately did NOT guess — the emit path stores `target_name` only, which
+/// is the truthful unresolved shape. Guessing here is how a bare name gets
+/// matched to a same-named type in another language or of another kind: a
+/// confident wrong answer, which is worse than an unresolved one.
+///
+/// `is_lib` splits the emit path exactly as it does for [`FqnReference`]: an
+/// external supertype becomes a `lib·` node (so "which of our models extend
+/// `pydantic.BaseModel`" is answerable), an internal one a graph node.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TypeRelation {
+    /// FQN of the subtype — the type that declares the relation.
+    pub child_fqn: String,
+    /// FQN of the supertype, or `None` when unresolvable.
+    pub parent_fqn: Option<String>,
+    /// Bare last segment of the supertype, always present.
+    pub parent_name: String,
+    /// True when the supertype resolves to an external dependency (`lib·…`).
+    pub is_lib: bool,
+    pub relation: crate::types::RelationKind,
+}
+
 /// Output of a per-language FQN producer over one file.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct FqnFileOutput {
@@ -68,6 +92,11 @@ pub struct FqnFileOutput {
     /// This file's crate-relative module path (empty at the crate root). The emit
     /// path materialises a `module` container node for it, nested under the file.
     pub module: String,
+    /// Inheritance facts declared in this file. Empty for a language with no
+    /// inheritance producer yet — distinct from a language that HAS one and
+    /// found none, which is why the capability is declared separately rather
+    /// than inferred from this being empty.
+    pub relations: Vec<TypeRelation>,
 }
 
 /// Per-file context a producer needs: the owning crate/package name (from the

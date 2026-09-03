@@ -347,3 +347,72 @@ fn no_produced_fqn_embeds_an_absolute_path() {
     bad.truncate(10);
     assert!(bad.is_empty(), "{} fqns embed an absolute path, e.g. {bad:#?}", bad.len());
 }
+
+/// Trait-impl relations must be produced AT SCALE over the real tree, and most
+/// must resolve to a parent FQN.
+///
+/// A unit test with three hand-written impls proves the shape; it cannot prove
+/// the producer survives real Rust — generic bounds, `where` clauses, nested
+/// modules, macro-adjacent code. In slice 1b a fixture-only producer agreed with
+/// a real bug, so the volume and the resolution rate are asserted here against
+/// the actual corpus.
+///
+/// The floor is deliberately loose: this pins "the producer works broadly", not
+/// an exact count that churns with every commit to this repo.
+#[test]
+fn trait_impl_relations_are_produced_and_mostly_resolve_over_the_real_tree() {
+    let mut total = 0usize;
+    let mut resolved = 0usize;
+    let mut lib_parents = 0usize;
+    let mut files = 0usize;
+
+    for path in corpus(&["rs"]) {
+        let Some((adapter, content)) = read(&path) else { continue };
+        let Some(out) = adapter.fqn_output(&path.to_string_lossy(), &rel_of(&path), &content)
+        else {
+            continue;
+        };
+        files += 1;
+        for r in &out.relations {
+            total += 1;
+            if r.parent_fqn.is_some() {
+                resolved += 1;
+            }
+            if r.is_lib {
+                lib_parents += 1;
+            }
+            // An unresolved relation must STILL name its parent — that is the
+            // difference between an honest unresolved edge and a useless one.
+            assert!(
+                !r.parent_name.trim().is_empty(),
+                "{}: relation with no parent_name: {r:?}",
+                rel_of(&path)
+            );
+            // A parent_fqn must never be a bare name; it is a lookup key.
+            if let Some(f) = &r.parent_fqn {
+                assert!(
+                    f.contains(super::fqn::SEP),
+                    "{}: parent_fqn {f:?} is not an encoded FQN",
+                    rel_of(&path)
+                );
+            }
+        }
+    }
+
+    assert!(files > 100, "corpus walk found only {files} rust files — test would be vacuous");
+    // Floor, not a pin. MEASURED at 112 across 386 files when written. A regex
+    // for `impl .. for ..` reports 122, and the 10 it adds are impls written
+    // inside raw-string TEST FIXTURES — which tree-sitter correctly parses as
+    // string literals and does not emit. The parser's number is the accurate
+    // one; the regex over-counts.
+    assert!(total > 100, "only {total} trait-impl relations across {files} files");
+    let rate = resolved as f64 / total as f64;
+    assert!(
+        rate > 0.90,
+        "only {resolved}/{total} ({:.1}%) relations resolved a parent FQN",
+        rate * 100.0
+    );
+    // std/external traits (Debug, Display, From, Default) are pervasive in this
+    // tree, so zero lib parents would mean the external arm never fires.
+    assert!(lib_parents > 0, "no external trait parents among {total} relations");
+}
