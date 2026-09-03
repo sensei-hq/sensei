@@ -843,6 +843,33 @@ pub(crate) mod python_fqn {
                         parent_type: None,
                         parent_fqn: None,
                     });
+
+                    // Bases. Python has no `implements`, so every base is
+                    // Extends — including the multiple-inheritance case, which
+                    // is why IRClass.extends (ONE parent) could never hold this.
+                    if let Some(sup) = child.child_by_field_name("superclasses") {
+                        let child_fqn = fqn::item(PY_LANG, &ctx.package, &ctx.module, &name);
+                        for dotted in base_class_paths(&sup, src) {
+                            let leaf = dotted.rsplit('.').next().unwrap_or(&dotted).to_string();
+                            // A bare name may have been brought in by a
+                            // from-import; a dotted path carries its own route.
+                            let path = match imports.get(&leaf) {
+                                Some(full) if !dotted.contains('.') => full.clone(),
+                                _ if dotted.contains('.') => dotted.clone(),
+                                // No import and no dots: defined in this module.
+                                _ => format!("{}.{}", ctx.package, leaf),
+                            };
+                            let (parent_fqn, is_lib, _) = classify(&path, ctx, &leaf);
+                            out.relations.push(fqn::TypeRelation {
+                                child_fqn: child_fqn.clone(),
+                                parent_fqn,
+                                parent_name: leaf,
+                                is_lib,
+                                relation: crate::types::RelationKind::Extends,
+                            });
+                        }
+                    }
+
                     if let Some(body) = child.child_by_field_name("body") {
                         walk(&body, src, lines, ctx, imports, Some(&name), out);
                     }
@@ -993,6 +1020,33 @@ pub(crate) mod python_fqn {
         }
     }
 
+    /// The POSITIONAL base classes in a `class_definition`'s `superclasses`.
+    ///
+    /// That field is an `argument_list`, so it holds keyword arguments —
+    /// `metaclass=ABCMeta`, `total=False` — beside the real bases. Taking every
+    /// child yields supertypes named `metaclass` or `ABCMeta`, neither of which
+    /// is a base class. Only `identifier` and dotted `attribute` children count.
+    ///
+    /// Returns each base's dotted source text, so `classify` can resolve
+    /// `module.Base` as well as a bare name.
+    fn base_class_paths(superclasses: &Node, src: &[u8]) -> Vec<String> {
+        let mut out = Vec::new();
+        for i in 0..superclasses.child_count() {
+            let Some(c) = superclasses.child(i) else { continue };
+            match c.kind() {
+                "identifier" | "attribute" => {
+                    let t = text(&c, src);
+                    if !t.is_empty() {
+                        out.push(t);
+                    }
+                }
+                // keyword_argument, comma, parens, and anything else: not a base.
+                _ => {}
+            }
+        }
+        out
+    }
+
     /// Classify a dotted path as current-package (internal) vs a dependency, and
     /// build the target fqn. `target_name` is the bare leaf.
     fn classify(
@@ -1086,6 +1140,46 @@ mod tests {
             "python·mypkg·app·Widget·spin",
             "method nests on its class"
         );
+    }
+
+    #[test]
+    fn py_bases_become_relations_and_keyword_arguments_are_filtered() {
+        // `superclasses` is an argument_list, so it holds POSITIONAL bases
+        // alongside keyword arguments like `metaclass=ABCMeta`. Taking every
+        // child yields a supertype named "metaclass" or "ABCMeta" that is not a
+        // base class at all.
+        let out = produce_py(
+            "from mypkg.core import BaseService\nfrom abc import ABCMeta\n\nclass Widget(BaseService, Mixin, metaclass=ABCMeta):\n    pass\n",
+            "mypkg",
+            "app",
+        );
+        let rel = |n: &str| {
+            out.relations
+                .iter()
+                .find(|r| r.parent_name == n)
+                .unwrap_or_else(|| panic!("no relation to `{n}` in {:?}", out.relations))
+        };
+
+        // An imported same-package base → internal.
+        let base = rel("BaseService");
+        assert_eq!(base.relation, crate::types::RelationKind::Extends);
+        assert_eq!(base.child_fqn, "python·mypkg·app·Widget");
+        assert_eq!(base.parent_fqn.as_deref(), Some("python·mypkg·core·BaseService"));
+        assert!(!base.is_lib);
+
+        // A base with no import resolves against this module — python's own rule.
+        let mixin = rel("Mixin");
+        assert_eq!(mixin.relation, crate::types::RelationKind::Extends);
+
+        // The keyword argument is NOT a base.
+        assert!(
+            !out.relations.iter().any(|r| r.parent_name == "ABCMeta"
+                || r.parent_name == "metaclass"
+                || r.parent_name.contains('=')),
+            "metaclass= is not a base class: {:?}",
+            out.relations
+        );
+        assert_eq!(out.relations.len(), 2, "exactly the two positional bases: {:?}", out.relations);
     }
 
     #[test]
