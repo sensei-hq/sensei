@@ -197,16 +197,34 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
     //
     // Fail-OPEN like the per-folder pass: reclaiming garbage is housekeeping and
     // must not fail a scan that indexed correctly. The rows wait for next pass.
-    let stubs_collected = match ctx.pg().folder_ids_for_root(&root_id).await {
-        Ok(ids) => ctx.pg().prune_orphan_stubs_scoped(&ids).await.unwrap_or_else(|e| {
-            tracing::warn!(error = %e, "scan_root: prune_orphan_stubs_scoped failed");
-            0
-        }),
+    //
+    // The same pass also collects the mislabelled containment rows the retired
+    // `parent_refs` emit wrote under `extends` (7,916 in the live graph, all
+    // unresolved). Both are housekeeping over the same folder set, so they
+    // share the one `folder_ids_for_root` read.
+    let (stubs_collected, bogus_extends) = match ctx.pg().folder_ids_for_root(&root_id).await {
+        Ok(ids) => {
+            let stubs = ctx.pg().prune_orphan_stubs_scoped(&ids).await.unwrap_or_else(|e| {
+                tracing::warn!(error = %e, "scan_root: prune_orphan_stubs_scoped failed");
+                0
+            });
+            let bogus =
+                ctx.pg().prune_mislabelled_containment_extends(&ids).await.unwrap_or_else(|e| {
+                    tracing::warn!(error = %e, "scan_root: prune_mislabelled_extends failed");
+                    0
+                });
+            (stubs, bogus)
+        }
         Err(e) => {
             tracing::warn!(error = %e, "scan_root: folder_ids_for_root failed — stub GC skipped");
-            0
+            (0, 0)
         }
     };
+    if bogus_extends > 0 {
+        tracing::info!(
+            "scan_root reconcile: removed {bogus_extends} mislabelled containment `extends` edge(s)"
+        );
+    }
     if stubs_collected > 0 {
         tracing::info!(
             "scan_root reconcile: collected {stubs_collected} stub(s) the dedup orphaned"
