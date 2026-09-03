@@ -145,6 +145,22 @@ impl NodeKind {
     }
 }
 
+/// The `edge_kind` labels the DDL actually declares.
+///
+/// Test-only, and the ONE owner of this parse: `RelationKind`,
+/// `GRAPH_LAYOUT_KINDS` and `COMMUNITY_EDGE_KINDS` all need to check
+/// themselves against the schema, and three hand-copies of the same
+/// `split('\'')` trick would be three chances to drift.
+#[cfg(test)]
+pub(crate) fn declared_edge_kinds() -> std::collections::HashSet<&'static str> {
+    let ddl = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../database/ddl/enum/sensei/edge_kind.ddl"
+    ));
+    // Enum labels are the only single-quoted tokens in this file.
+    ddl.split('\'').skip(1).step_by(2).collect()
+}
+
 /// How one type relates to another.
 ///
 /// `IRClass.extends: Option<String>` holds ONE parent, which cannot faithfully
@@ -453,11 +469,7 @@ mod node_kind_schema_tests {
     /// make `as_str()` return `"implements"` for it.
     #[test]
     fn relation_kinds_map_onto_declared_edge_kinds_and_stay_distinguishable() {
-        let ddl = include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../database/ddl/enum/sensei/edge_kind.ddl"
-        ));
-        let enum_values: HashSet<&str> = ddl.split('\'').skip(1).step_by(2).collect();
+        let enum_values = super::declared_edge_kinds();
         for r in RelationKind::all() {
             assert!(
                 enum_values.contains(r.edge_kind()),
