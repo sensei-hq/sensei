@@ -2186,6 +2186,74 @@ mod tests {
     /// A LOCAL import resolves to the target's module node AT EMIT. Before this,
     /// `process.rs` passed `target_id = None` for every import, so 0 of 162,690
     /// import edges resolved — 25,693 of them pointing at local code.
+    /// Slice 1b end to end: kotlin, C and swift symbols must reach the DB WITH
+    /// an fqn.
+    ///
+    /// The unit and corpus tests prove the producers work on real source. This
+    /// proves the daemon's own path calls them and persists the result — a
+    /// producer nothing invokes is indistinguishable from no producer, and the
+    /// live graph showed exactly that shape before this landed: kotlin 0/1542
+    /// nodes with an fqn, swift 0/8, c 1/322.
+    ///
+    /// Breaking mutation: return `false` from any of the three adapters'
+    /// `supports_fqn`, or make `fqn_output` return `None` — that language's
+    /// assertion fails with its node names printed.
+    #[tokio::test]
+    async fn kotlin_c_and_swift_symbols_reach_the_db_with_fqns() {
+        let ctx = make_ctx().await;
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("mixed");
+        std::fs::create_dir_all(repo.join("src")).unwrap();
+        // A build file, so the C producer takes its build-root branch (the one
+        // this repo's own corpus exercises).
+        std::fs::write(repo.join("Makefile"), "all:\n").unwrap();
+        std::fs::write(
+            repo.join("src/Widget.kt"),
+            "package com.acme.svc\n\nclass Widget {\n    fun render() {}\n}\n",
+        )
+        .unwrap();
+        std::fs::write(repo.join("src/util.c"), "int compute(void) {\n  return 1;\n}\n").unwrap();
+        std::fs::write(repo.join("src/Thing.swift"), "class Thing {\n    func go() {}\n}\n")
+            .unwrap();
+
+        let repo_path = repo.to_string_lossy().to_string();
+        let rid = ctx
+            .pg()
+            .add_watch_root(&tmp.path().to_string_lossy(), "mixed", &serde_json::json!([]))
+            .await
+            .unwrap();
+        let fid = ctx.pg().upsert_repo_kind(&rid, "git", "mixed", &repo_path).await.unwrap();
+        ctx.pg().update_folder_status(&fid, "indexing").await.unwrap();
+
+        for f in ["src/Widget.kt", "src/util.c", "src/Thing.swift"] {
+            let abs = repo.join(f).to_string_lossy().to_string();
+            process_file(&ctx, &Task::for_file(TaskKind::ProcessFile, &repo_path, &abs))
+                .await
+                .unwrap();
+        }
+
+        for (lang, sym) in [("kotlin", "Widget"), ("c", "compute"), ("swift", "Thing")] {
+            let fqns: Vec<Option<String>> = sqlx_core::query_scalar::query_scalar(
+                "SELECT fqn FROM sensei.nodes
+                  WHERE folder_id = $1 AND language = $2 AND name = $3",
+            )
+            .bind(fid)
+            .bind(lang)
+            .bind(sym)
+            .fetch_all(ctx.pg().pool())
+            .await
+            .unwrap();
+
+            assert!(!fqns.is_empty(), "{lang}: no node named {sym} was persisted at all");
+            assert!(
+                fqns.iter().any(|f| f.as_deref().is_some_and(|f| f.starts_with(lang))),
+                "{lang}: {sym} persisted without an fqn beginning `{lang}·`: {fqns:?}"
+            );
+        }
+
+        ctx.pg().remove_watch_root(&rid).await.ok();
+    }
+
     #[tokio::test]
     async fn local_imports_resolve_to_the_target_module_at_emit() {
         let ctx = make_ctx().await;
