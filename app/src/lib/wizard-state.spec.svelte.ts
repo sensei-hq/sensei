@@ -442,10 +442,24 @@ describe('WizardState', () => {
       spy.mockRestore();
     });
 
-    it('commitStage("welcome") with no handler resolves to void and marks stage done', async () => {
+    // The name of this test used to say "with no handler". `welcome` has a
+    // handler — an EMPTY one (`async () => {}`) — and `commitStage` writes the
+    // `setup.X: done` marker for any stage whose handler exists, empty or not.
+    // So it always made a real daemon call, and passed only when a daemon
+    // happened to be listening: green on a dev machine, `fetch failed` in the
+    // pre-commit hook, which is meant to need no daemon at all.
+    it('commitStage("welcome") writes its setup marker despite an empty handler', async () => {
       const ws = new WizardState();
+      const appStateModule = await import('./appstate.svelte.js');
+      const spy = vi.spyOn(appStateModule.appState, 'setConfigs').mockResolvedValue(undefined);
+
       await expect(ws.commitStage('welcome')).resolves.toBeUndefined();
+
+      // The marker write is the reason this path touches appState at all, and
+      // nothing pinned it before — reroute()'s setup gate reads these keys.
+      expect(spy).toHaveBeenCalledWith({ 'setup.welcome': 'done' });
       expect(ws.stages.find(s => s.id === 'welcome')?.status).toBe('done');
+      spy.mockRestore();
     });
   });
 
