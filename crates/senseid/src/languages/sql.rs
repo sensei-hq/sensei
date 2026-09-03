@@ -8,6 +8,14 @@ use sqlparser::parser::Parser as SqlParser;
 pub struct SqlAdapter;
 
 impl LanguageAdapter for SqlAdapter {
+    fn supports_fqn(&self) -> bool {
+        true
+    }
+
+    fn extensions(&self) -> &[&'static str] {
+        &[".sql", ".ddl"]
+    }
+
     fn language(&self) -> &str {
         "sql"
     }
