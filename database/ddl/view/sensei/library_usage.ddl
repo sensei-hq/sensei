@@ -9,6 +9,7 @@ SELECT rl.library_id
      , (SELECT COUNT(*)
           FROM sensei.edges e
          WHERE e.folder_id = rl.folder_id
+           AND e.kind = 'imports'::sensei.edge_kind
            AND e.target_id IS NULL
            AND e.target_name LIKE l.name || '::%'
        )                                                AS unresolved_import_count
@@ -24,5 +25,8 @@ Powers the library detail panel: detected libraries, versions, and call site cou
 - library_id/library_name: which library
 - folder/project_id: which repo uses it
 - version_used: version from manifest (package.json, Cargo.toml)
-- unresolved_import_count: edges targeting this library (approximation via name prefix)
+- unresolved_import_count: unresolved IMPORT edges naming this library (approximation via name prefix).
+  The kind filter is deliberate: without it the column counts any unresolved edge whose
+  target_name happens to start with the library name, which is not what its name promises.
+  Latent when added (only imports matched), but the shape is shared by calls and references.
 - props: extensible metadata from referenced_libraries';
