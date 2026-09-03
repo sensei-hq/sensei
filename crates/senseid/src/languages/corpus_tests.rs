@@ -52,6 +52,15 @@ fn corpus(exts: &[&str]) -> Vec<PathBuf> {
     out
 }
 
+/// The folder-relative path the indexer would store in `nodes.file_path`.
+///
+/// The corpus walk yields absolute paths, but `fqn_output` takes rel_path as its
+/// scope anchor for path-scoped languages — passing the absolute path here would
+/// test a shape production never sees.
+fn rel_of(path: &Path) -> String {
+    path.strip_prefix(repo_root()).unwrap_or(path).to_string_lossy().to_string()
+}
+
 fn read(path: &Path) -> Option<(Box<dyn super::LanguageAdapter>, String)> {
     let name = path.file_name()?.to_str()?;
     let adapter = adapter_for_filename(name)?;
@@ -133,7 +142,10 @@ fn no_produced_fqn_retains_a_navigation_segment() {
     let mut files = 0usize;
     for path in corpus(&["rs"]) {
         let Some((adapter, content)) = read(&path) else { continue };
-        let Some(out) = adapter.fqn_output(&path.to_string_lossy(), &content) else { continue };
+        let Some(out) = adapter.fqn_output(&path.to_string_lossy(), &rel_of(&path), &content)
+        else {
+            continue;
+        };
         files += 1;
         let produced = out
             .defs
@@ -198,7 +210,10 @@ fn no_runtime_global_is_attributed_to_the_calling_module() {
     let mut hits = 0usize;
     for path in corpus(&["ts", "svelte"]) {
         let Some((adapter, content)) = read(&path) else { continue };
-        let Some(out) = adapter.fqn_output(&path.to_string_lossy(), &content) else { continue };
+        let Some(out) = adapter.fqn_output(&path.to_string_lossy(), &rel_of(&path), &content)
+        else {
+            continue;
+        };
         files += 1;
         for r in &out.refs {
             let Some(fqn) = r.target_fqn.as_deref() else { continue };
@@ -233,7 +248,10 @@ fn no_rust_prelude_name_is_attributed_to_project_code() {
     let (mut files, mut hits) = (0usize, 0usize);
     for path in corpus(&["rs"]) {
         let Some((adapter, content)) = read(&path) else { continue };
-        let Some(out) = adapter.fqn_output(&path.to_string_lossy(), &content) else { continue };
+        let Some(out) = adapter.fqn_output(&path.to_string_lossy(), &rel_of(&path), &content)
+        else {
+            continue;
+        };
         files += 1;
         for r in &out.refs {
             let Some(fqn) = r.target_fqn.as_deref() else { continue };
@@ -264,4 +282,68 @@ fn no_rust_prelude_name_is_attributed_to_project_code() {
         bad.len(),
         bad.iter().take(20).cloned().collect::<Vec<_>>().join("\n")
     );
+}
+
+/// NO produced FQN may embed an absolute filesystem path.
+///
+/// `fqn_output` receives both `abs_path` (for the manifest walk) and `rel_path`
+/// (the scope anchor). Passing the wrong one is a silent, compiler-invisible
+/// mistake: the fqns still look well-formed, and every unit test with a tempdir
+/// fixture still passes — the tempdir path just leaks into the value. In
+/// production it would mean an fqn that can never match across machines, and a
+/// home directory written into the graph.
+///
+/// This ran against the real tree because the defect it guards was found in real
+/// tree data, not by reasoning: a C project with parallel `Cpp/` and `Hpp/`
+/// trees and no build file, where a stem-only module made a header and its
+/// implementation share an fqn. Hand-written fixtures had agreed with the bug.
+///
+/// WHAT THIS DOES AND DOES NOT COVER, established by probing rather than
+/// assumed: this repo has a `Makefile` at its root, so every `.c` file in the
+/// tree resolves through `c_fqn`'s BUILD-ROOT branch. Mutating that branch to
+/// use `abs_path` fails this test with 10 named offenders. The no-build-root
+/// FALLBACK is unreachable from this corpus and is covered by
+/// `c_fqn_tests::a_header_impl_pair_in_parallel_trees_does_not_collide_without_a_build_root`
+/// instead — a mutation there will NOT fail this test, so do not read a pass
+/// here as covering it.
+///
+/// Breaking mutation: in `c_fqn::c_file_context`, derive the build-root module
+/// from `abs_path` instead of `path.strip_prefix(d)`.
+#[test]
+fn no_produced_fqn_embeds_an_absolute_path() {
+    let root = repo_root().to_string_lossy().to_string();
+    let mut bad: Vec<String> = Vec::new();
+    let mut files = 0usize;
+
+    // Every extension the adapters claim, so a new language is covered the day
+    // it registers rather than whenever someone remembers to extend this list.
+    let exts: Vec<String> = super::all_adapters()
+        .iter()
+        .flat_map(|a| a.extensions().iter().map(|e| e.trim_start_matches('.').to_string()))
+        .collect();
+    let ext_refs: Vec<&str> = exts.iter().map(String::as_str).collect();
+
+    for path in corpus(&ext_refs) {
+        let Some((adapter, content)) = read(&path) else { continue };
+        let rel = rel_of(&path);
+        let Some(out) = adapter.fqn_output(&path.to_string_lossy(), &rel, &content) else {
+            continue;
+        };
+        files += 1;
+
+        // Compared against the checkout root rather than a literal home path, so
+        // the assertion holds on any machine and CI.
+        for d in &out.defs {
+            if d.fqn.contains(&root) || d.fqn.contains("··/") {
+                bad.push(format!("{rel}: {}", d.fqn));
+            }
+        }
+        if out.module.starts_with('/') || out.module.contains(&root) {
+            bad.push(format!("{rel}: module={}", out.module));
+        }
+    }
+
+    assert!(files > 0, "corpus walk produced no FQN files — the test would vacuously pass");
+    bad.truncate(10);
+    assert!(bad.is_empty(), "{} fqns embed an absolute path, e.g. {bad:#?}", bad.len());
 }

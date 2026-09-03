@@ -24,7 +24,12 @@ impl LanguageAdapter for SvelteAdapter {
         "svelte"
     }
 
-    fn fqn_output(&self, abs_path: &str, content: &str) -> Option<super::fqn::FqnFileOutput> {
+    fn fqn_output(
+        &self,
+        abs_path: &str,
+        _rel_path: &str,
+        content: &str,
+    ) -> Option<super::fqn::FqnFileOutput> {
         super::common::sfc_fqn_output(abs_path, content)
     }
 
@@ -127,7 +132,9 @@ mod tests {
         let file = root.join("src/Card.svelte");
         let content = "<script lang=\"ts\">\nimport { helper } from './util';\nexport function build() { helper(); }\n</script>\n<div>hi</div>\n";
         std::fs::write(&file, content).unwrap();
-        let out = SvelteAdapter.fqn_output(&file.to_string_lossy(), content).unwrap();
+        let out = SvelteAdapter
+            .fqn_output(&file.to_string_lossy(), "src/lib/Comp.svelte", content)
+            .unwrap();
         assert!(
             out.defs.iter().any(|d| d.fqn == "typescript·app·Card·build"),
             "component script def, got: {:?}",

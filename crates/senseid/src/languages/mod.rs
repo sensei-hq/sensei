@@ -37,11 +37,24 @@ pub trait LanguageAdapter: Send + Sync {
     /// Produce the FQN symbol-table output for this file (plan Phase 3+): every
     /// definition and reference resolved to a canonical FQN so `process_file` can
     /// emit resolved node→node edges. The default is `None` — the file stays on the
-    /// bare-name path (the language isn't FQN-migrated yet). A migrated adapter
-    /// overrides this: derive the file's `(package, module)` context from its own
-    /// manifest/layout rules, then run its per-language producer. `abs_path` is the
-    /// on-disk path (for the manifest walk); `content` is the source.
-    fn fqn_output(&self, _abs_path: &str, _content: &str) -> Option<fqn::FqnFileOutput> {
+    /// bare-name path. Every shipped adapter overrides this: derive the file's
+    /// `(package, module)` context from its own manifest/layout rules, then run its
+    /// per-language producer.
+    ///
+    /// Params, in order: `abs_path` is the on-disk path, used ONLY for walking up to
+    /// a manifest; `rel_path` is folder-relative — the same value stored in
+    /// `nodes.file_path` — and is the correct anchor for a language whose scope comes
+    /// from layout rather than a package declaration (C, Swift); `content` is source.
+    ///
+    /// A path-scoped language MUST prefer `rel_path`: `abs_path` would bake this
+    /// machine's home directory into every FQN, and a bare file stem collides across
+    /// directories (see the header/impl case in `c_fqn`).
+    fn fqn_output(
+        &self,
+        _abs_path: &str,
+        _rel_path: &str,
+        _content: &str,
+    ) -> Option<fqn::FqnFileOutput> {
         None
     }
 
@@ -520,7 +533,9 @@ mod tests {
             std::fs::create_dir_all(parent).expect("mkdir");
         }
         std::fs::write(&abs, src).expect("write source");
-        a.fqn_output(&abs.to_string_lossy(), src).is_some()
+        // rel_path is what production passes (folder-relative), so the probe
+        // passes the same shape rather than the tempdir's absolute path.
+        a.fqn_output(&abs.to_string_lossy(), src_name, src).is_some()
     }
 
     /// THE DECLARATION MUST NOT LIE. Every adapter states `supports_fqn`; this
@@ -607,30 +622,30 @@ mod tests {
         assert_eq!(host_of("typescript"), None, "typescript IS a host");
     }
 
-    /// FQN support is REQUIRED, not optional — an adapter without it produces
-    /// symbols that an fqn lookup can never find while name-based lookups still
-    /// match them, so the same symbol is visible to one mechanism and invisible
-    /// to another. This test names the languages that still lack it; the list
-    /// must only ever SHRINK, and reaching empty is the definition of that work
-    /// being done.
+    /// FQN support is REQUIRED of every adapter, with NO exceptions.
+    ///
+    /// An adapter without it produces symbols an fqn lookup can never find while
+    /// name-based lookups still match them — the same symbol visible to one
+    /// mechanism and invisible to the other, which is how a reference ends up
+    /// unmatched or matched to the wrong definition.
+    ///
+    /// This test used to carry a shrinking allowlist of known gaps (swift,
+    /// kotlin, c). It is empty now, so the allowlist is gone rather than left
+    /// behind at zero: an exception mechanism that exists is an exception
+    /// mechanism that gets used. Adding a language means giving it an fqn
+    /// producer in the same change, and this assert is what says so.
+    ///
+    /// Breaking mutation: return `false` from any adapter's `supports_fqn`, or
+    /// drop any `fqn_output` override — the language is named in the failure.
     #[test]
-    fn fqn_support_gaps_are_named_and_must_only_shrink() {
-        const KNOWN_GAPS: &[&str] = &["swift", "kotlin", "c"];
+    fn every_adapter_supports_fqn_with_no_exceptions() {
+        let gaps: Vec<String> =
+            capability_matrix().into_iter().filter(|r| !r.fqn).map(|r| r.language).collect();
 
-        let m = capability_matrix();
-        let gaps: Vec<&str> = m.iter().filter(|r| !r.fqn).map(|r| r.language.as_str()).collect();
-
-        for g in &gaps {
-            assert!(
-                KNOWN_GAPS.contains(g),
-                "{g} lost FQN support — that is a REGRESSION, not a known gap"
-            );
-        }
-        assert!(gaps.len() <= KNOWN_GAPS.len(), "gap list grew: {gaps:?} vs known {KNOWN_GAPS:?}");
-        // Everything not in the gap list must actually probe Some.
-        for r in m.iter().filter(|r| !KNOWN_GAPS.contains(&r.language.as_str())) {
-            assert!(r.fqn, "{} is expected to support FQN but the probe returned None", r.language);
-        }
+        assert!(
+            gaps.is_empty(),
+            "these adapters have no working FQN producer: {gaps:?} — every language must have one"
+        );
     }
 
     #[test]
