@@ -30,7 +30,12 @@ impl LanguageAdapter for TypeScriptAdapter {
     fn parse(&self, source: &str, file_path: &str) -> ParsedFile {
         parse_oxc(source, file_path)
     }
-    fn fqn_output(&self, abs_path: &str, content: &str) -> Option<super::fqn::FqnFileOutput> {
+    fn fqn_output(
+        &self,
+        abs_path: &str,
+        _rel_path: &str,
+        content: &str,
+    ) -> Option<super::fqn::FqnFileOutput> {
         typescript_fqn::ts_file_context(abs_path)
             .map(|ctx| typescript_fqn::produce_fqns(content, &ctx))
     }
@@ -54,7 +59,12 @@ impl LanguageAdapter for JavaScriptAdapter {
     fn parse(&self, source: &str, file_path: &str) -> ParsedFile {
         parse_oxc(source, file_path)
     }
-    fn fqn_output(&self, abs_path: &str, content: &str) -> Option<super::fqn::FqnFileOutput> {
+    fn fqn_output(
+        &self,
+        abs_path: &str,
+        _rel_path: &str,
+        content: &str,
+    ) -> Option<super::fqn::FqnFileOutput> {
         typescript_fqn::ts_file_context(abs_path)
             .map(|ctx| typescript_fqn::produce_fqns(content, &ctx))
     }

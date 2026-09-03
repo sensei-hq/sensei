@@ -15,10 +15,19 @@ unsafe extern "C" {
 pub struct SwiftAdapter;
 
 impl LanguageAdapter for SwiftAdapter {
-    // No FQN producer yet — symbols land on the bare-name path, so an fqn
-    // lookup cannot find them. Tracked as a gap that must shrink.
     fn supports_fqn(&self) -> bool {
-        false
+        true
+    }
+
+    fn fqn_output(
+        &self,
+        abs_path: &str,
+        rel_path: &str,
+        content: &str,
+    ) -> Option<super::fqn::FqnFileOutput> {
+        // Needs the path: Swift has no in-source package declaration, so scope
+        // comes from the nearest `Package.swift` and the file's place under it.
+        Some(swift_fqn::produce_fqns(abs_path, rel_path, content))
     }
 
     fn extensions(&self) -> &[&'static str] {
@@ -577,5 +586,147 @@ mod tests {
     fn ir_protocol() {
         let pf = parse_ir("protocol Drawable {\n    func draw()\n}");
         assert_eq!(pf.classes[0].class_kind, ClassKind::Protocol);
+    }
+}
+
+/// Swift FQN production — module-scoped from `Package.swift`.
+///
+/// Swift has no in-source package declaration: scope comes from the SwiftPM
+/// target, so the nearest ancestor holding `Package.swift` names the package and
+/// the path below it names the module — the same shape `c_fqn` uses for build
+/// roots and the TS/Rust producers use for `package.json`/`Cargo.toml`.
+///
+/// A PROJECTION of the existing tree-sitter `parse()`, not a second walk: that
+/// already extracts declarations and records a method's owning type, so
+/// re-deriving them here would be a copy that could disagree.
+///
+/// CAVEAT ON VERIFICATION: this corpus contains 8 Swift nodes total, so unlike
+/// the Kotlin and C producers this one is exercised by its unit tests and by
+/// nothing else. Treat production behaviour as unproven until real Swift is
+/// indexed.
+pub(crate) mod swift_fqn {
+    use super::super::LanguageAdapter;
+    use super::super::fqn::{self, FqnDefinition, FqnFileOutput};
+    use super::SwiftAdapter;
+
+    const SWIFT_LANG: &str = "swift";
+
+    /// `(package, module)` from the nearest `Package.swift`. With none found the
+    /// package is empty and the module is the file stem — degraded but still
+    /// scoped, which beats returning `None` and losing the file to bare-name
+    /// matching.
+    pub(crate) fn swift_file_context(abs_path: &str, rel_path: &str) -> (String, String) {
+        let path = std::path::Path::new(abs_path);
+
+        let mut dir = path.parent();
+        while let Some(d) = dir {
+            if d.join("Package.swift").is_file() {
+                let package =
+                    d.file_name().and_then(|n| n.to_str()).unwrap_or_default().to_string();
+                if let Some(module) = path
+                    .strip_prefix(d)
+                    .ok()
+                    .and_then(|r| r.to_str())
+                    .map(|r| r.trim_end_matches(".swift").to_string())
+                {
+                    return (package, module);
+                }
+            }
+            dir = d.parent();
+        }
+
+        // No `Package.swift`: the folder-relative path, for the same reason C
+        // uses it — a bare stem collides across directories, and an absolute
+        // path would embed this machine's home directory in every fqn.
+        (String::new(), rel_path.trim_end_matches(".swift").to_string())
+    }
+
+    pub fn produce_fqns(abs_path: &str, rel_path: &str, content: &str) -> FqnFileOutput {
+        let (package, module) = swift_file_context(abs_path, rel_path);
+        let parsed = SwiftAdapter.parse(content, abs_path);
+
+        let defs: Vec<FqnDefinition> = parsed
+            .symbols
+            .into_iter()
+            .filter(|s| !s.name.trim().is_empty())
+            .map(|s| {
+                // A method anchors under its type; everything else under the module.
+                let f = match s.parent.as_deref() {
+                    Some(ty) if !ty.is_empty() => {
+                        fqn::method(SWIFT_LANG, &package, &module, ty, &s.name)
+                    }
+                    _ => fqn::item(SWIFT_LANG, &package, &module, &s.name),
+                };
+                let parent_fqn = s
+                    .parent
+                    .as_deref()
+                    .filter(|t| !t.is_empty())
+                    .map(|t| fqn::item(SWIFT_LANG, &package, &module, t));
+                FqnDefinition {
+                    fqn: f,
+                    name: s.name,
+                    kind: s.kind,
+                    line_start: s.line_start,
+                    line_end: s.line_end,
+                    is_exported: s.is_exported,
+                    signature: s.signature,
+                    docstring: s.docstring,
+                    parent_type: s.parent,
+                    parent_fqn,
+                }
+            })
+            .collect();
+
+        FqnFileOutput { defs, refs: Vec::new(), package, module }
+    }
+}
+
+#[cfg(test)]
+mod swift_fqn_tests {
+    use super::swift_fqn::{produce_fqns, swift_file_context};
+
+    /// `Package.swift` names the package; the path below it names the module.
+    ///
+    /// Breaking mutation: drop the `Package.swift` walk — every fqn collapses to
+    /// the file stem and two same-named types in different targets collide.
+    #[test]
+    fn package_swift_names_the_package_and_the_path_names_the_module() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("MyKit");
+        std::fs::create_dir_all(root.join("Sources/Core")).unwrap();
+        std::fs::write(root.join("Package.swift"), "// swift-tools-version:5.9\n").unwrap();
+        let file = root.join("Sources/Core/Widget.swift");
+        let src = "class Widget {\n    func render() {}\n}\n";
+        std::fs::write(&file, src).unwrap();
+
+        let (pkg, module) =
+            swift_file_context(&file.to_string_lossy(), "Sources/Core/Widget.swift");
+        assert_eq!(pkg, "MyKit");
+        assert_eq!(module, "Sources/Core/Widget");
+
+        let out = produce_fqns(&file.to_string_lossy(), "Sources/Core/Widget.swift", src);
+        let fqns: Vec<&str> = out.defs.iter().map(|d| d.fqn.as_str()).collect();
+        assert!(fqns.contains(&"swift·MyKit·Sources/Core/Widget·Widget"), "type: {fqns:?}");
+        // The method anchors under its TYPE, not directly under the module.
+        assert!(
+            fqns.contains(&"swift·MyKit·Sources/Core/Widget·Widget·render"),
+            "method under its type: {fqns:?}"
+        );
+    }
+
+    /// No `Package.swift`: degraded to the file stem rather than `None`, so the
+    /// file keeps an fqn instead of falling back to bare-name matching.
+    #[test]
+    fn a_file_outside_a_package_still_gets_a_scoped_fqn() {
+        let tmp = tempfile::tempdir().unwrap();
+        let file = tmp.path().join("Loose.swift");
+        let src = "class Loose {\n    func m() {}\n}\n";
+        std::fs::write(&file, src).unwrap();
+
+        let out = produce_fqns(&file.to_string_lossy(), "Loose.swift", src);
+        assert_eq!(out.package, "");
+        assert_eq!(out.module, "Loose");
+        let fqns: Vec<&str> = out.defs.iter().map(|d| d.fqn.as_str()).collect();
+        assert!(fqns.contains(&"swift·Loose·Loose"), "{fqns:?}");
     }
 }
