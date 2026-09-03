@@ -364,6 +364,12 @@ pub(crate) async fn mcp_call_tool(
                 "functions": fns,
                 "types": types,
                 "graphHealth": graph_health,
+                // What each language CAN do, derived from the adapter impls. Pairs
+                // with graphHealth: that says how much of the graph resolved, this
+                // says which languages are even capable of resolving. A repo that
+                // is mostly Kotlin and a Kotlin adapter with no FQN support explain
+                // a disappointing number far better than the number alone.
+                "languageCapabilities": crate::languages::capability_matrix(),
             })
         }
         "get_metrics" => {

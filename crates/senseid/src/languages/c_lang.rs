@@ -6,6 +6,16 @@ use crate::types::{ParsedFile, ParsedSymbol, SymbolKind};
 pub struct CAdapter;
 
 impl LanguageAdapter for CAdapter {
+    // No FQN producer yet — symbols land on the bare-name path, so an fqn
+    // lookup cannot find them. Tracked as a gap that must shrink.
+    fn supports_fqn(&self) -> bool {
+        false
+    }
+
+    fn extensions(&self) -> &[&'static str] {
+        &[".c", ".h", ".cpp", ".hpp", ".cc"]
+    }
+
     fn language(&self) -> &str {
         "c"
     }

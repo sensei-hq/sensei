@@ -6,6 +6,20 @@ use crate::types::{ParsedFile, ParsedSymbol, SymbolKind};
 pub struct SvelteAdapter;
 
 impl LanguageAdapter for SvelteAdapter {
+    fn supports_fqn(&self) -> bool {
+        true
+    }
+
+    fn extensions(&self) -> &[&'static str] {
+        &[".svelte"]
+    }
+
+    /// Composes over TypeScript: `<script>` blocks are handed to the TS
+    /// adapter, which is why this file type's symbols carry `typescript·` fqns.
+    fn host_language(&self) -> Option<&'static str> {
+        Some("typescript")
+    }
+
     fn language(&self) -> &str {
         "svelte"
     }

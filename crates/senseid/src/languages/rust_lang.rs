@@ -12,6 +12,14 @@ use tree_sitter::{Node, Parser};
 pub struct RustAdapter;
 
 impl LanguageAdapter for RustAdapter {
+    fn supports_fqn(&self) -> bool {
+        true
+    }
+
+    fn extensions(&self) -> &[&'static str] {
+        &[".rs"]
+    }
+
     fn language(&self) -> &str {
         "rust"
     }

@@ -13,6 +13,16 @@ unsafe extern "C" {
 pub struct KotlinAdapter;
 
 impl LanguageAdapter for KotlinAdapter {
+    // No FQN producer yet — symbols land on the bare-name path, so an fqn
+    // lookup cannot find them. Tracked as a gap that must shrink.
+    fn supports_fqn(&self) -> bool {
+        false
+    }
+
+    fn extensions(&self) -> &[&'static str] {
+        &[".kt", ".kts"]
+    }
+
     fn language(&self) -> &str {
         "kotlin"
     }
