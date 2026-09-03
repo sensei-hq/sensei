@@ -165,11 +165,22 @@ fn natural_key(node: &serde_json::Value) -> (String, i64, String, String, String
     )
 }
 
+/// The edge kinds community detection walks.
+///
+/// Named so it can be pinned: a typo here does not error, it silently drops a
+/// whole edge class from adjacency and quietly changes every community.
+///
+/// `implements` is here because inheritance is a real structural tie — a
+/// subclass belongs with its supertype. Unresolved edges are skipped below, so
+/// adding a kind with no resolved rows yet is inert rather than distorting.
+const COMMUNITY_EDGE_KINDS: &[&str] = &["calls", "imports", "extends", "references", "implements"];
+
 /// Build the undirected adjacency list community detection runs over.
 ///
 /// D4.4 — two adjacency sources:
-/// - **Semantic edges** `calls,imports,extends,references` (resolved only). The
-///   dead `implements` kind (0 rows produced) is dropped.
+/// - **Semantic edges** [`COMMUNITY_EDGE_KINDS`] (resolved only). `implements`
+///   was excluded here while it had 0 rows; slice 2 gives it a producer, so it
+///   is back in the set.
 /// - **Structural containment** via `parent_id`: a node is adjacent to its
 ///   enclosing parent (file/class/module). This clusters a file's symbols
 ///   together and gives a symbol with no semantic edge a path into its
@@ -182,7 +193,7 @@ async fn build_adjacency(
 ) -> Result<Vec<Vec<usize>>, String> {
     let mut adj: Vec<Vec<usize>> = vec![Vec::new(); nodes.len()];
 
-    for kind in &["calls", "imports", "extends", "references"] {
+    for kind in COMMUNITY_EDGE_KINDS {
         let edges = pg
             .get_edges_by_kind(folder_id, kind)
             .await
@@ -436,5 +447,30 @@ mod tests {
         let label = generate_community_label(&nodes, &[0, 1, 2]);
         assert!(label.contains("function"));
         assert!(label.contains("src/api"));
+    }
+}
+
+#[cfg(test)]
+mod community_edge_kind_tests {
+    use super::COMMUNITY_EDGE_KINDS;
+
+    /// Every community edge kind must be a declared `edge_kind` label, and
+    /// inheritance must be among them.
+    ///
+    /// `get_edges_by_kind` binds the label as text, so a typo returns zero rows
+    /// instead of erroring — the community set would silently change with
+    /// nothing to notice.
+    ///
+    /// Breaking mutation: drop `"implements"`, or misspell any entry.
+    #[test]
+    fn community_edge_kinds_are_declared_and_include_inheritance() {
+        let declared = crate::types::declared_edge_kinds();
+        for k in COMMUNITY_EDGE_KINDS {
+            assert!(declared.contains(k), "{k:?} is not an edge_kind label: {declared:?}");
+        }
+        assert!(
+            COMMUNITY_EDGE_KINDS.contains(&"implements"),
+            "inheritance is a structural tie and belongs in adjacency: {COMMUNITY_EDGE_KINDS:?}"
+        );
     }
 }
