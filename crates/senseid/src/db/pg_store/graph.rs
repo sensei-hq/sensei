@@ -1157,6 +1157,49 @@ impl PgStore {
     /// One statement rather than a loop over folders: the reconcile is
     /// root-scoped and a watch root here holds 7,642 folders, so per-folder round
     /// trips would dominate a pass that is otherwise a single indexed delete.
+    /// Remove the mislabelled containment rows that the retired `parent_refs`
+    /// emit wrote under the `extends` kind.
+    ///
+    /// That emit produced `file -> (unresolved type declared in that same
+    /// file)`: 7,916 rows in the live graph, every one unresolved, all
+    /// duplicating containment that `nodes.parent_id` already carries at
+    /// 60,201/60,201 method nodes. The emit is gone, so nothing creates more;
+    /// this collects what was already written.
+    ///
+    /// The discriminant is the WHOLE predicate, deliberately. Every edge the
+    /// inheritance path writes carries `props.relation`, and before
+    /// `insert_edge_with_props` no code path could write props at all — so
+    /// "unstamped `extends`" identifies the legacy rows exactly.
+    ///
+    /// An earlier version also required a file source and a null target. Both
+    /// were dropped: mutation-probing showed each was redundant given the
+    /// others, so no test could isolate them, and an unpinned clause in a
+    /// DELETE is a liability rather than safety. In particular a file source
+    /// would have been WRONG — the inheritance emit anchors on the file node
+    /// when a child fqn is missing, so a real relation can legitimately be
+    /// file-sourced and unresolved.
+    ///
+    /// Returns the number removed, for the reconcile summary.
+    pub async fn prune_mislabelled_containment_extends(
+        &self,
+        folder_ids: &[uuid::Uuid],
+    ) -> Result<u64, String> {
+        if folder_ids.is_empty() {
+            return Ok(0); // genuine: no folders in scope
+        }
+        let res = sqlx_core::query::query(
+            "DELETE FROM sensei.edges e
+              WHERE e.folder_id = ANY($1)
+                AND e.kind = 'extends'::sensei.edge_kind
+                AND e.props->>'relation' IS NULL",
+        )
+        .bind(folder_ids)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| format!("prune_mislabelled_containment_extends: {e}"))?;
+        Ok(res.rows_affected())
+    }
+
     pub async fn prune_orphan_stubs_scoped(
         &self,
         folder_ids: &[uuid::Uuid],
