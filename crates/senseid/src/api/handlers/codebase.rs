@@ -24,6 +24,20 @@ async fn repo_folder_id(state: &AppState, name: &str) -> Result<Option<uuid::Uui
 
 // ── Graph Queries ───────────────────────────────────────────────────────────
 
+/// The edge kinds the Atlas graph lays out.
+///
+/// A named constant rather than a literal at the call site, because the literal
+/// could not be pinned by a test: `get_edges_scoped_kinds` takes `kinds` as a
+/// PARAMETER and matches it generically, so a store-level test passes whatever
+/// it is handed and can never notice a kind going missing here.
+///
+/// `extends` earns its place only once real inheritance is persisted. It was
+/// added to this set to cure a sparse layout ("scattered circles"), but every
+/// one of the 7,905 `extends` edges in the live graph is unresolved
+/// (`target_id IS NULL`), so it contributed exactly ZERO layout edges — the
+/// widening that actually helped was `imports`, at 25,785 usable.
+pub(crate) const GRAPH_LAYOUT_KINDS: &[&str] = &["calls", "imports", "extends"];
+
 #[derive(Deserialize)]
 pub(crate) struct GraphQuery {
     #[serde(rename = "repoId")]
@@ -45,14 +59,16 @@ pub(crate) async fn graph_nodes(
     if ids.is_empty() {
         return Ok(Json(serde_json::json!({"nodes": [], "edges": []})));
     }
-    // 7.1: nodes now carry `community_id` (via get_nodes_scoped), and the edge
-    // set is the full graph-layout set `calls,imports,extends` — not just `calls`,
-    // which was too sparse to lay out a nested map (the "scattered circles").
+    // 7.1: nodes carry `community_id` (via get_nodes_scoped), and the edge set is
+    // the layout set rather than `calls` alone, which was too sparse to lay out a
+    // nested map (the "scattered circles"). See GRAPH_LAYOUT_KINDS for which
+    // widening actually did that work — it was not the one this comment used to
+    // credit.
     let nodes = state.pg.get_nodes_scoped(&ids).await.map_err(|e| {
         tracing::warn!(error = %e, repo_id = %repo_id, "graph_nodes: get_nodes_scoped failed");
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
-    let edges = state.pg.get_edges_scoped_kinds(&ids, &["calls", "imports", "extends"]).await
+    let edges = state.pg.get_edges_scoped_kinds(&ids, GRAPH_LAYOUT_KINDS).await
         .map_err(|e| { tracing::warn!(error = %e, repo_id = %repo_id, "graph_nodes: get_edges_scoped_kinds failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
     Ok(Json(serde_json::json!({"nodes": nodes, "edges": edges})))
 }
@@ -1032,5 +1048,42 @@ mod tests {
         assert_eq!(p[0]["name"], "Adapter");
         assert_eq!(p[0]["family"], "structural");
         assert_eq!(p[0]["instance_count"], 4);
+    }
+}
+
+#[cfg(test)]
+mod graph_layout_kinds_tests {
+    use super::GRAPH_LAYOUT_KINDS;
+    use std::collections::HashSet;
+
+    /// Every layout kind must be a declared `edge_kind` label.
+    ///
+    /// `get_edges_scoped_kinds` binds these as `kind::text = ANY($2)`, so a typo
+    /// does not error — it silently matches nothing, and the Atlas quietly loses
+    /// a whole edge class. Nothing could catch that before: the store takes
+    /// `kinds` as a parameter and matches it generically, so a store-level test
+    /// passes whatever it is handed.
+    ///
+    /// Uses the same DDL-reading idiom as
+    /// `types::tests::every_node_kind_is_a_valid_enum_value` rather than a second
+    /// copy of the parse.
+    ///
+    /// Breaking mutation: add `"extend"` (or any non-label) to
+    /// GRAPH_LAYOUT_KINDS.
+    #[test]
+    fn every_graph_layout_kind_is_a_declared_edge_kind() {
+        let ddl = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../database/ddl/enum/sensei/edge_kind.ddl"
+        ));
+        // Enum labels are the only single-quoted tokens in this file.
+        let enum_values: HashSet<&str> = ddl.split('\'').skip(1).step_by(2).collect();
+        for k in GRAPH_LAYOUT_KINDS {
+            assert!(
+                enum_values.contains(k),
+                "GRAPH_LAYOUT_KINDS contains {k:?}, absent from edge_kind.ddl: {enum_values:?}"
+            );
+        }
+        assert!(!GRAPH_LAYOUT_KINDS.is_empty(), "an empty layout set renders no edges at all");
     }
 }
