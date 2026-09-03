@@ -17,7 +17,6 @@ pub struct FileProcessResult {
     pub symbols: Vec<SymbolResult>,
     pub unresolved_imports: Vec<String>,
     pub unresolved_calls: Vec<UnresolvedCall>,
-    pub parent_refs: Vec<ParentRef>,
     pub file_refs: Vec<String>,   // doc: backtick file references
     pub fn_mentions: Vec<String>, // doc: backtick function mentions
     /// doc (D5b): heading sections, in document order. Written as a nested
@@ -58,12 +57,6 @@ pub struct UnresolvedCall {
     pub callee_name: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub struct ParentRef {
-    pub method_id: String,
-    pub parent_name: String,
-}
-
 impl FileProcessResult {
     /// Create a minimal result for files with no extractable content.
     pub fn minimal(
@@ -86,7 +79,6 @@ impl FileProcessResult {
             symbols: vec![],
             unresolved_imports: vec![],
             unresolved_calls: vec![],
-            parent_refs: vec![],
             file_refs: vec![],
             fn_mentions: vec![],
             sections: vec![],
