@@ -55,14 +55,41 @@ pub fn find_git_folders(root: &Path, max_depth: u32) -> Vec<PathBuf> {
     result
 }
 
-/// True if `path` is at or under any excluded prefix. Prefixes are absolute
-/// dirs (e.g. `/Users/x/Developer/Code`); a folder is excluded when it equals a
-/// prefix or sits beneath it. Boundary-safe: `/a/Code` never matches `/a/Coder`.
+/// True if `path` is at or under any exclusion. THE one owner of that rule —
+/// [`crate::watcher::root_watcher::RootWatcher::should_watch_path`] calls this
+/// rather than keeping its own copy.
+///
+/// TWO FORMS, because users write both and the watcher has always honoured both:
+///
+/// * **absolute** (`/Users/dev/Developer/Code`) — a subtree prefix.
+/// * **bare / relative** (`Code`, `a/b/c`) — matches that run of path SEGMENTS
+///   anywhere in the path, so a user can exclude `Code` without knowing where
+///   the watch root sits.
+///
+/// Boundary-safe in both: `/a/Code` never matches `/a/Coder`, because the
+/// comparison is segment-anchored (`/Code/`), never a raw substring.
+///
+/// This function previously supported ONLY the absolute form while the watcher
+/// supported both. Both live exclusions were stored in the bare form, so the
+/// watcher honoured them and the scanner ignored them — the exclusion "gated the
+/// watcher while pruning nothing", the incident cited at `import_target.rs:85`
+/// and `graph.rs:513`. It cost 289,258 vendored OpenSSL `#define` nodes, 40% of
+/// the graph, indexed from a path that HAD been excluded.
 pub fn is_excluded(path: &Path, exclusions: &[String]) -> bool {
     let p = path.to_string_lossy();
     exclusions.iter().any(|ex| {
-        let ex = ex.trim_end_matches('/');
-        !ex.is_empty() && (p == ex || p.starts_with(&format!("{ex}/")))
+        let ex = ex.trim_start_matches('/').trim_end_matches('/');
+        if ex.is_empty() {
+            return false;
+        }
+        // Absolute form: an anchored subtree prefix.
+        if p == format!("/{ex}") || p.starts_with(&format!("/{ex}/")) {
+            return true;
+        }
+        // Bare/relative form: the same segment run anywhere in the path. Wrapped
+        // in separators on BOTH sides so `Code` cannot match `Coder`, and
+        // additionally allowed to terminate the path (`…/Code`).
+        p.contains(&format!("/{ex}/")) || p.ends_with(&format!("/{ex}"))
     })
 }
 
@@ -1105,17 +1132,54 @@ mod tests {
         );
     }
 
+    /// Both exclusion FORMS, because the two callers supply different ones.
+    ///
+    /// `scan.rs` passes prefixes already resolved to absolute by
+    /// `root_exclusion_prefixes` (`root + entry`), while `workspace.rs` hands the
+    /// watcher the RAW relative entries straight off the request. That is why
+    /// `RootWatcher::should_watch_path` had grown its own two-form matcher — and
+    /// why it and this function could disagree. One matcher, both forms, so they
+    /// cannot drift apart again.
+    ///
+    /// NOTE ON PROVENANCE: an earlier version of this comment blamed the missing
+    /// bare-name arm for 289k vendored OpenSSL nodes being indexed. That was
+    /// wrong — those got in because the stored exclusion entry was missing a
+    /// `pre-sales/` path segment, so the RESOLVED absolute prefix pointed at a
+    /// directory that does not exist. This function is hardening; it was not the
+    /// bug. Kept because the two callers genuinely do supply different forms.
+    ///
+    /// Breaking mutation: drop the bare-name arm — the segment cases below fail.
+    #[test]
+    fn a_bare_name_exclusion_matches_a_path_segment_like_the_watcher_does() {
+        let ex = vec!["Code".to_string()];
+        assert!(is_excluded(Path::new("/Users/dev/Developer/Code/repo"), &ex));
+        assert!(is_excluded(Path::new("/Users/dev/Developer/Code"), &ex), "the segment itself");
+        // Boundary-safe: a bare name must not match a longer sibling segment.
+        assert!(!is_excluded(Path::new("/Users/dev/Developer/Coder/repo"), &ex));
+        assert!(!is_excluded(Path::new("/Users/dev/Codebase/repo"), &ex));
+
+        // A multi-segment relative run, the second live exclusion's shape.
+        let ex = vec!["find-me-board/docs/proposal/deck-node".to_string()];
+        assert!(is_excluded(
+            Path::new(
+                "/Users/dev/Work/pre-sales/find-me-board/docs/proposal/deck-node/include/a.h"
+            ),
+            &ex,
+        ));
+        assert!(!is_excluded(Path::new("/Users/dev/Work/pre-sales/find-me-board/src/a.ts"), &ex));
+    }
+
     #[test]
     fn is_excluded_matches_prefix_and_self_but_not_siblings() {
-        let ex = vec!["/Users/x/Developer/Code".to_string(), "/tmp/junk/".to_string()];
+        let ex = vec!["/Users/dev/Developer/Code".to_string(), "/tmp/junk/".to_string()];
         // The prefix itself and anything under it are excluded.
-        assert!(is_excluded(Path::new("/Users/x/Developer/Code"), &ex));
-        assert!(is_excluded(Path::new("/Users/x/Developer/Code/archive/repo"), &ex));
+        assert!(is_excluded(Path::new("/Users/dev/Developer/Code"), &ex));
+        assert!(is_excluded(Path::new("/Users/dev/Developer/Code/archive/repo"), &ex));
         // Trailing slash in the exclusion is normalized.
         assert!(is_excluded(Path::new("/tmp/junk/repo"), &ex));
         // Boundary-safe: a sibling that merely shares the prefix string is NOT excluded.
-        assert!(!is_excluded(Path::new("/Users/x/Developer/Coder"), &ex));
-        assert!(!is_excluded(Path::new("/Users/x/Developer/Other"), &ex));
+        assert!(!is_excluded(Path::new("/Users/dev/Developer/Coder"), &ex));
+        assert!(!is_excluded(Path::new("/Users/dev/Developer/Other"), &ex));
         // Empty exclusion list excludes nothing.
         assert!(!is_excluded(Path::new("/anything"), &[]));
     }

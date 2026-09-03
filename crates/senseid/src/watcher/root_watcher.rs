@@ -517,17 +517,12 @@ impl RootWatcher {
         if EXCLUDE_DIRS.iter().any(|d| path_str.contains(&format!("/{}/", d))) {
             return false;
         }
-        // Two exclusion forms: an absolute path (starts with `/`) is a subtree
-        // prefix; a bare name matches any path segment.
-        let excluded = exclusions.iter().any(|d| {
-            if d.starts_with('/') {
-                let d = d.trim_end_matches('/');
-                path_str == d || path_str.starts_with(&format!("{d}/"))
-            } else {
-                path_str.contains(&format!("/{}/", d))
-            }
-        });
-        if excluded {
+        // ONE owner for the exclusion rule. This used to be a second copy that
+        // supported both the absolute and bare forms while `is_excluded`
+        // supported only the first — so a bare exclusion gated the watcher here
+        // and pruned nothing in the scanner. Delegating is what keeps the two
+        // from disagreeing again.
+        if crate::tasks::handlers::scan_logic::is_excluded(path, exclusions) {
             return false;
         }
 
