@@ -1601,20 +1601,13 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
             }
         }
 
-        // Parent refs (HAS_METHOD: type → method).
-        for pref in &result.parent_refs {
-            ctx.pg()
-                .insert_edge(
-                    &folder_id,
-                    &file_node_id,
-                    None,
-                    Some(&pref.parent_name),
-                    None,
-                    "extends",
-                )
-                .await
-                .map_err(|e| format!("insert_edge (extends): {e}"))?;
-        }
+        // No containment edge here. This used to emit `extends` per parent ref,
+        // which was wrong three ways: `extends` means inheritance, the source
+        // was the FILE rather than the type, and `pref.method_id` — the only
+        // field that could have expressed "type -> method" — was discarded. All
+        // 7,905 such edges in the live graph were unresolved, so they carried
+        // nothing. Type -> method containment lives on `nodes.parent_id`, set
+        // from `parent_fqn` in the FQN emit above.
 
         // Doc references (D2): an explicit doc→file path ref AND a doc→symbol
         // mention are both `references` edges — per the edge_kind contract
@@ -2286,6 +2279,77 @@ mod tests {
     /// A LOCAL import resolves to the target's module node AT EMIT. Before this,
     /// `process.rs` passed `target_id = None` for every import, so 0 of 162,690
     /// import edges resolved — 25,693 of them pointing at local code.
+    /// `extends` means INHERITANCE, and nothing else may claim it.
+    ///
+    /// Every one of the 7,905 `extends` edges in the live graph was
+    /// `file -> (unresolved type declared in that same file)`. The emit's own
+    /// comment said "HAS_METHOD: type -> method", but it passed `file_node_id`
+    /// as the source and DISCARDED `pref.method_id`, so it could never express
+    /// the relation it described. All 7,905 were unresolved, so they
+    /// contributed zero usable edges to the Atlas or to community adjacency.
+    ///
+    /// Retiring them loses nothing, because the containment they garbled is
+    /// already carried correctly by `nodes.parent_id` — measured at
+    /// 60,201/60,201 method nodes. This asserts BOTH halves: no `extends` edge
+    /// from a file, and the real containment still present.
+    ///
+    /// Breaking mutation: restore the `for pref in &result.parent_refs` emit.
+    #[tokio::test]
+    async fn a_type_with_methods_emits_no_extends_edge_but_keeps_its_parent_link() {
+        let ctx = make_ctx().await;
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("cont");
+        std::fs::create_dir_all(repo.join("src")).unwrap();
+        std::fs::write(repo.join("Cargo.toml"), "[package]\nname = \"cont\"\n").unwrap();
+        std::fs::write(
+            repo.join("src/lib.rs"),
+            "pub struct Holder;\nimpl Holder {\n    pub fn one(&self) {}\n    pub fn two(&self) {}\n}\n",
+        )
+        .unwrap();
+
+        let repo_path = repo.to_string_lossy().to_string();
+        let rid = ctx
+            .pg()
+            .add_watch_root(&tmp.path().to_string_lossy(), "cont", &serde_json::json!([]))
+            .await
+            .unwrap();
+        let fid = ctx.pg().upsert_repo_kind(&rid, "git", "cont", &repo_path).await.unwrap();
+        ctx.pg().update_folder_status(&fid, "indexing").await.unwrap();
+        let abs = repo.join("src/lib.rs").to_string_lossy().to_string();
+        process_file(&ctx, &Task::for_file(TaskKind::ProcessFile, &repo_path, &abs)).await.unwrap();
+
+        let extends: Vec<(Option<String>,)> = sqlx_core::query_as::query_as(
+            "SELECT e.target_name FROM sensei.edges e
+              WHERE e.folder_id = $1 AND e.kind = 'extends'::sensei.edge_kind",
+        )
+        .bind(fid)
+        .fetch_all(ctx.pg().pool())
+        .await
+        .unwrap();
+        assert!(
+            extends.is_empty(),
+            "`extends` is inheritance; a type's own methods must not produce one: {extends:?}"
+        );
+
+        // The containment that emit was garbling must still be here, on the node.
+        let parent_names: Vec<Option<String>> = sqlx_core::query_scalar::query_scalar(
+            "SELECT p.name FROM sensei.nodes n
+               LEFT JOIN sensei.nodes p ON p.id = n.parent_id
+              WHERE n.folder_id = $1 AND n.name IN ('one', 'two')",
+        )
+        .bind(fid)
+        .fetch_all(ctx.pg().pool())
+        .await
+        .unwrap();
+        assert!(!parent_names.is_empty(), "the methods themselves must be indexed");
+        assert!(
+            parent_names.iter().all(|p| p.as_deref() == Some("Holder")),
+            "each method must still hang off its TYPE via parent_id: {parent_names:?}"
+        );
+
+        ctx.pg().remove_watch_root(&rid).await.ok();
+    }
+
     /// Inheritance persists as an edge, and the SUBTYPE-FIRST order still
     /// resolves.
     ///
