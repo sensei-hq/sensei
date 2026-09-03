@@ -131,14 +131,23 @@ inheritance" is something a test can assert, instead of a silent no-op default.
 
 ```rust
 pub struct TypeRelation { pub child: String, pub parent: String, pub kind: RelationKind }
-pub enum RelationKind { Extends, Implements, TraitImpl, Mixin }
+pub enum RelationKind { Extends, Implements, TraitImpl }  // Mixin dropped — see below
 ```
 
 `IRClass.extends: Option<String>` holds **one** parent. Java has one superclass
 *plus N interfaces*; Rust has no inheritance but N `impl Trait for`; Python has N
 bases. That field could not faithfully represent any real language — plausibly
-why it was never populated. `RelationKind` maps 1:1 onto the already-declared
-`extends` / `implements` edge kinds.
+why it was never populated. `RelationKind` maps onto the already-declared `extends` / `implements` edge
+kinds, but NOT 1:1 — `Implements` and `TraitImpl` deliberately share the
+`implements` edge kind while keeping separate discriminants in
+`edges.props.relation`. A Rust `impl Trait for Type` is the same SHAPE of fact
+as Java interface implementation and not the same fact; collapsing them would
+make "what implements Serializable" and "what impls Display" one query.
+
+**`Mixin` was dropped when this was implemented.** `IRClass.mixins` has no
+writer in any adapter, so the variant would have been one no producer could ever
+emit — speculative generality that `RelationKind::all()` would then have to keep
+alive for the DDL guard test. Add it in the same change as its first producer.
 
 ### 4c. Three layers, one portable contract between them
 
