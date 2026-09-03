@@ -16,9 +16,17 @@
 - **Graph layout kinds** named + DDL-pinned; dead `app/tests/graph.test.ts` removed
   (`21b0cd85`). That file was unreachable by any runner and asserted `e.type` where
   the API emits `kind` — apparent coverage for the endpoint slice 2 must not break.
-- **Slice 2 increment 1** — `RelationKind` {Extends, Implements, TraitImpl} with the
-  `edges.props.relation` discriminant, DDL-guarded (`49725e7b`). ADR amended: its
-  `Mixin` variant dropped because `IRClass.mixins` has no writer.
+- **Slice 2, increments 1–4 DONE:**
+  - `49725e7b` `RelationKind` {Extends, Implements, TraitImpl} + the
+    `edges.props.relation` discriminant, DDL-guarded. ADR amended: its `Mixin`
+    variant dropped because `IRClass.mixins` has no writer.
+  - `e6522e20` `TypeRelation` on `FqnFileOutput` + the rust trait-impl producer.
+    MEASURED over the real tree: 112 relations / 386 files, 107 (95.5%) resolving.
+    Extracted `PathClass::to_fqn` as the one owner (would have been a third copy).
+  - `97f4f44a` `insert_edge_with_props`. Before it, 0 of 724,926 edge rows had
+    props because no code path named the column. Merges, never clobbers.
+  - `5364d862` `implements` added to `GRAPH_LAYOUT_KINDS` + `COMMUNITY_EDGE_KINDS`,
+    both hoisted to pinnable constants first.
 
 ## Remaining
 
@@ -28,24 +36,27 @@ Slices 2–10 in the map: `Inheritance` persistence → `GraphFacts` + persister
 
 ## Next command
 
-Slice 2 increment 1b: add the relations carrier to `FqnFileOutput`
-(`languages/fqn.rs:59-71`), then increment 2 (rust trait impls from the `ImplCtx`
-that already computes them at `rust_lang.rs:1105`). Plan + adversarial verdicts:
-`/private/tmp/claude-502/.../tasks/w1b00fnoq.output` — 11 increments, 6 blocking
-objections already folded into the design.
+Slice 2 increment 5 — persist relations as edges in `process_file`. This is the
+big one and the three fixes below are its whole point. Then 6 (retire the
+mislabelled emit), 7 (sweep the stale rows), 8 (java), 9 (python), 10 (delete
+the fabricating rust IR trait hack), 11 (`library_usage` kind filter).
+
+Full plan + adversarial verdicts: `/private/tmp/claude-502/.../tasks/w1b00fnoq.output`.
 
 THE THREE FIXES THAT MUST SURVIVE (adversarial review killed the naive design):
 1. NO bare-name fallback. `sole_definition_id_by_name` is kind- AND
    language-agnostic (written for doc mentions), so an inheritance target would
    resolve confidently WRONG: llm-gateway defines its own `BaseModel`, so 12
-   classes would point at it instead of pydantic's. Needs a type+language
-   restricted sibling, or no fallback.
+   classes would point at it instead of pydantic's.
 2. STUB the internal branch on a miss, mirroring the import emit. Measured:
    404/406 (99.5%) java relations have their parent in a DIFFERENT file, so
    probe-only resolution is order-dependent and never heals.
-3. External supertypes need the lib branch (`upsert_lib_node_by_fqn`), or
-   "which models extend pydantic.BaseModel" — the headline question — is exactly
-   what this cannot answer.
+3. External supertypes need `upsert_lib_node_by_fqn`, or "which models extend
+   pydantic.BaseModel" — the headline question — is what this cannot answer.
+
+Increment 6 is now known SAFE for communities: `build_adjacency` does
+`None => continue`, and all 7,905 mislabelled `extends` edges are unresolved,
+so retiring them cannot move a community.
 
 ## Open questions
 
