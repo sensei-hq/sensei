@@ -172,6 +172,12 @@ pub enum RelationKind {
     TraitImpl,
 }
 
+/// `as_str`/`edge_kind` are consumed by the inheritance persist step, which
+/// lands after this enum — the producer must exist before there is anything to
+/// persist. Silenced the same way `NodeKind::all()` and
+/// `LanguageAdapter::display_name` are, rather than left as a warning; the DDL
+/// guard test calls both, so they are not unverified in the meantime.
+#[allow(dead_code)]
 impl RelationKind {
     /// The `edges.props.relation` discriminant. Distinguishes variants that
     /// deliberately share an edge kind.
@@ -196,9 +202,7 @@ impl RelationKind {
         }
     }
 
-    /// Every relation kind, in declaration order. Backs the DDL guard test and
-    /// keeps `-D warnings` quiet while only some variants have producers.
-    #[allow(dead_code)]
+    /// Every relation kind, in declaration order. Backs the DDL guard test.
     pub fn all() -> &'static [RelationKind] {
         &[Self::Extends, Self::Implements, Self::TraitImpl]
     }

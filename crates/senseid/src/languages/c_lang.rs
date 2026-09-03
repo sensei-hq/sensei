@@ -375,7 +375,7 @@ pub(crate) mod c_fqn {
             })
             .collect();
 
-        FqnFileOutput { defs, refs: Vec::new(), package, module }
+        FqnFileOutput { defs, refs: Vec::new(), package, module, relations: Vec::new() }
     }
 }
 
