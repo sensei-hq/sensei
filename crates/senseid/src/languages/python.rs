@@ -9,6 +9,14 @@ use tree_sitter::{Node, Parser};
 pub struct PythonAdapter;
 
 impl LanguageAdapter for PythonAdapter {
+    fn supports_fqn(&self) -> bool {
+        true
+    }
+
+    fn extensions(&self) -> &[&'static str] {
+        &[".py"]
+    }
+
     fn language(&self) -> &str {
         "python"
     }

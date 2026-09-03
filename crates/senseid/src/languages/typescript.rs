@@ -13,6 +13,14 @@ pub struct TypeScriptAdapter;
 pub struct JavaScriptAdapter;
 
 impl LanguageAdapter for TypeScriptAdapter {
+    fn supports_fqn(&self) -> bool {
+        true
+    }
+
+    fn extensions(&self) -> &[&'static str] {
+        &[".ts", ".tsx", ".cts"]
+    }
+
     fn language(&self) -> &str {
         "typescript"
     }
@@ -29,6 +37,14 @@ impl LanguageAdapter for TypeScriptAdapter {
 }
 
 impl LanguageAdapter for JavaScriptAdapter {
+    fn supports_fqn(&self) -> bool {
+        true
+    }
+
+    fn extensions(&self) -> &[&'static str] {
+        &[".js", ".jsx", ".mjs", ".cjs"]
+    }
+
     fn language(&self) -> &str {
         "javascript"
     }
