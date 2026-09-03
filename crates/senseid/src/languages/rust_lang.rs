@@ -261,9 +261,15 @@ fn walk_ir(
                 });
             }
             "impl_item" => {
-                let full_text = source_text(&child, src);
                 let type_name = field_text(&child, "type", src);
-                let trait_name = extract_trait_from_impl(&full_text);
+                // The AST labels this: `impl_item` has a `trait` field only for
+                // a real trait impl. The old text search for `" for "` over the
+                // whole block matched any `for` loop in a method body, so an
+                // inherent impl produced a "trait name" of whatever source
+                // preceded the loop.
+                let trait_name = child
+                    .child_by_field_name("trait")
+                    .and_then(|t| base_type_name(&source_text(&t, src)));
 
                 // Find or create the class for this impl
                 let class_idx = classes.iter().position(|c| c.base.name == type_name);
@@ -411,19 +417,6 @@ fn extract_const_type(node: &Node, src: &[u8]) -> Option<String> {
 }
 
 /// Extract trait name from "impl Trait for Type" pattern.
-fn extract_trait_from_impl(text: &str) -> Option<String> {
-    // Match: impl TraitName for TypeName
-    if let Some(for_pos) = text.find(" for ") {
-        let before_for = text[..for_pos].trim();
-        let trait_part = before_for.strip_prefix("impl ")?.trim();
-        // Strip generics
-        let trait_name = trait_part.split('<').next()?.trim();
-        if trait_name.is_empty() { None } else { Some(trait_name.to_string()) }
-    } else {
-        None
-    }
-}
-
 /// Collect #[attribute] decorators from preceding siblings.
 fn collect_attributes(node: &Node, src: &[u8]) -> Vec<String> {
     let mut attrs = Vec::new();
@@ -888,6 +881,54 @@ fn collect_doc_comments(node: &Node, src: &[u8]) -> Option<String> {
 // stays honest (it resolves to the type's method node, never a wrong trait merge);
 // definitions of trait-impl methods DO carry the trait qualifier so `Display::fmt`
 // and `Debug::fmt` on one type are distinct nodes.
+/// Strip references, `mut`, lifetimes and generics down to a bare type name.
+///
+/// Module level because BOTH the IR walk and the fqn producer need it: the IR
+/// walk used to text-search for `" for "` instead, which matched any `for`
+/// loop in a method body and fabricated a trait name from the source around
+/// it. One owner, so the two cannot disagree.
+/// Reduce a type expression's text to its base type name, peeling references,
+/// lifetimes, `dyn`/`impl`, and unwrapping smart-pointer wrappers (`Box<dyn T>`
+/// → `T`). Returns the final path's last segment (`crate::a::Widget` → `Widget`).
+fn base_type_name(text: &str) -> Option<String> {
+    let mut t = text.trim();
+    loop {
+        if let Some(r) = t.strip_prefix('&') {
+            t = r.trim();
+            continue;
+        }
+        if let Some(r) = t.strip_prefix("mut ") {
+            t = r.trim();
+            continue;
+        }
+        if t.starts_with('\'') {
+            // Lifetime token (e.g. `'a`) — drop it.
+            t = t[1..].trim_start_matches(|c: char| c.is_alphanumeric() || c == '_').trim();
+            continue;
+        }
+        break;
+    }
+    if let Some(r) = t.strip_prefix("dyn ") {
+        t = r.trim();
+    } else if let Some(r) = t.strip_prefix("impl ") {
+        t = r.trim();
+    }
+    for wrapper in ["Box", "Rc", "Arc", "RefCell", "Cell", "Mutex", "RwLock"] {
+        if let Some(rest) = t.strip_prefix(wrapper)
+            && let Some(inner) = rest.trim().strip_prefix('<').and_then(|s| s.strip_suffix('>'))
+        {
+            return base_type_name(inner.trim());
+        }
+    }
+    let base = t.split('<').next().unwrap_or(t).trim();
+    let name = base.rsplit("::").next().unwrap_or(base).trim();
+    let name = name.trim_end_matches(|c: char| !(c.is_alphanumeric() || c == '_'));
+    if name.is_empty() || !name.chars().next().unwrap().is_alphabetic() {
+        return None;
+    }
+    Some(name.to_string())
+}
+
 pub(crate) mod rust_fqn {
     use super::*;
 
@@ -1540,48 +1581,6 @@ pub(crate) mod rust_fqn {
         s.replace('-', "_")
     }
 
-    /// Reduce a type expression's text to its base type name, peeling references,
-    /// lifetimes, `dyn`/`impl`, and unwrapping smart-pointer wrappers (`Box<dyn T>`
-    /// → `T`). Returns the final path's last segment (`crate::a::Widget` → `Widget`).
-    fn base_type_name(text: &str) -> Option<String> {
-        let mut t = text.trim();
-        loop {
-            if let Some(r) = t.strip_prefix('&') {
-                t = r.trim();
-                continue;
-            }
-            if let Some(r) = t.strip_prefix("mut ") {
-                t = r.trim();
-                continue;
-            }
-            if t.starts_with('\'') {
-                // Lifetime token (e.g. `'a`) — drop it.
-                t = t[1..].trim_start_matches(|c: char| c.is_alphanumeric() || c == '_').trim();
-                continue;
-            }
-            break;
-        }
-        if let Some(r) = t.strip_prefix("dyn ") {
-            t = r.trim();
-        } else if let Some(r) = t.strip_prefix("impl ") {
-            t = r.trim();
-        }
-        for wrapper in ["Box", "Rc", "Arc", "RefCell", "Cell", "Mutex", "RwLock"] {
-            if let Some(rest) = t.strip_prefix(wrapper)
-                && let Some(inner) = rest.trim().strip_prefix('<').and_then(|s| s.strip_suffix('>'))
-            {
-                return base_type_name(inner.trim());
-            }
-        }
-        let base = t.split('<').next().unwrap_or(t).trim();
-        let name = base.rsplit("::").next().unwrap_or(base).trim();
-        let name = name.trim_end_matches(|c: char| !(c.is_alphanumeric() || c == '_'));
-        if name.is_empty() || !name.chars().next().unwrap().is_alphabetic() {
-            return None;
-        }
-        Some(name.to_string())
-    }
-
     /// Resolve a Rust file's FQN context: the owning crate's package name (from the
     /// nearest `Cargo.toml` carrying a `[package]`) and this file's crate-relative
     /// module path. None when no crate manifest is found (the file falls back to the
@@ -1655,6 +1654,41 @@ mod tests {
             .iter()
             .find(|r| r.target_name == target_name)
             .unwrap_or_else(|| panic!("no ref to `{target_name}` in {:?}", out.refs))
+    }
+
+    /// `IRClass.implements` must hold TRAIT NAMES, not fragments of source.
+    ///
+    /// `extract_trait_from_impl` searched the WHOLE impl block's text for
+    /// `" for "`, so any `for` loop in a method body made an inherent impl look
+    /// like a trait impl — and the "trait name" it produced was whatever text
+    /// preceded that loop. The AST already labels this: tree-sitter gives
+    /// `impl_item` a `trait` field, present only for a real trait impl.
+    ///
+    /// Nothing read `IRClass.implements`, so this fabricated quietly. It is
+    /// fixed rather than deleted because slice 2 gives the field a consumer.
+    ///
+    /// Breaking mutation: restore the `" for "` text search — the inherent impl
+    /// below gains a bogus `implements` entry containing a brace or a newline.
+    #[test]
+    fn an_inherent_impl_with_a_for_loop_is_not_a_trait_impl() {
+        let ir = RustAdapter.parse_to_ir(
+            "pub struct W;\nimpl W {\n    pub fn bar(&self) {\n        for _ in 0..1 {}\n    }\n}\n",
+            "src/lib.rs",
+        );
+        let w = ir.classes.iter().find(|c| c.base.name == "W").expect("W class");
+        assert!(
+            w.implements.is_empty(),
+            "an inherent impl implements nothing; got {:?}",
+            w.implements
+        );
+
+        // And a REAL trait impl still records its trait, cleanly.
+        let ir2 = RustAdapter.parse_to_ir(
+            "pub trait Greet {}\npub struct V;\nimpl Greet for V {\n    fn x(&self) { for _ in 0..1 {} }\n}\n",
+            "src/lib.rs",
+        );
+        let v = ir2.classes.iter().find(|c| c.base.name == "V").expect("V class");
+        assert_eq!(v.implements, vec!["Greet".to_string()], "real trait impl, clean name");
     }
 
     /// A trait impl is an inheritance FACT and must survive as one.
