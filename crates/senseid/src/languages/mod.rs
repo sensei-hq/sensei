@@ -197,7 +197,13 @@ pub fn adapter_for_filename(filename: &str) -> Option<Box<dyn LanguageAdapter>> 
     }
 
     // Fall back to regular extension
-    let ext = std::path::Path::new(filename)
+    // Derive the extension from the LOWERCASED name. Adapters declare their
+    // extensions lowercase and `adapter_for_ext` matches exactly, so taking the
+    // extension from the original name skipped every uppercase-extension file —
+    // `ADVMATH.CPP` in `Labs/Bezier3D` produced a file node and no symbols at
+    // all, and nothing said so. An unmatched extension is indistinguishable
+    // from a file that genuinely has no symbols.
+    let ext = std::path::Path::new(&lower)
         .extension()
         .and_then(|e| e.to_str())
         .map(|e| format!(".{}", e))
@@ -565,6 +571,42 @@ mod tests {
     /// `adapter_for_ext` dispatches off that declaration — so a new language
     /// cannot be half-added (present in the list, invisible to lookup) the way a
     /// separate `match` arm allowed.
+    /// An UPPERCASE extension must find its adapter.
+    ///
+    /// Found in production, not by reasoning: `Labs/Bezier3D` holds `ADVMATH.CPP`
+    /// and `ADVMATH.H`, and those files produced only `file` and `module` nodes —
+    /// no symbols at all, ever. `adapter_for_filename` lowercases the filename
+    /// for the compound-`.svelte.ts` check and then derives the extension from
+    /// the ORIGINAL, so `.CPP` matched nothing and the file was silently skipped
+    /// for symbol extraction.
+    ///
+    /// Silently is the problem: an unmatched extension is indistinguishable from
+    /// a file with no symbols in it.
+    ///
+    /// Breaking mutation: derive `ext` from `filename` instead of `lower` in
+    /// `adapter_for_filename`.
+    #[test]
+    fn an_uppercase_extension_still_finds_its_adapter() {
+        for (name, want) in [
+            ("ADVMATH.CPP", "c"),
+            ("ADVMATH.H", "c"),
+            ("Widget.KT", "kotlin"),
+            ("Main.JAVA", "java"),
+            ("script.PY", "python"),
+        ] {
+            let a = adapter_for_filename(name)
+                .unwrap_or_else(|| panic!("no adapter for {name} — uppercase extension skipped"));
+            assert_eq!(a.language(), want, "{name} resolved to the wrong adapter");
+        }
+        // Mixed case too, since real trees hold `Foo.Cpp`.
+        assert!(adapter_for_filename("Foo.Cpp").is_some(), "mixed-case extension");
+        // The lowercase path must keep working.
+        assert_eq!(
+            adapter_for_filename("main.rs").map(|a| a.language().to_string()).as_deref(),
+            Some("rust")
+        );
+    }
+
     #[test]
     fn every_registered_adapter_is_reachable_by_its_own_declared_extensions() {
         let adapters = all_adapters();
