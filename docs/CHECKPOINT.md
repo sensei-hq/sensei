@@ -35,7 +35,10 @@
 | kotlin fqn | 0 / 1,542 | **1,709 / 2,062 (82.9%)** |
 | c fqn | 1 / 322 | **325 / 442** |
 | swift fqn | 0 / 8 | **8 / 9** |
-| inheritance edges | 0 | **120 trait_impl, 115 resolved (95.8%)** |
+| inheritance edges | 0 | **2,677 — 2,672 resolved (99.8%)** |
+| by language | — | java 2,169 · python 386 · rust 122 |
+| by relation | — | extends 1,553 · implements 1,002 · trait_impl 122 |
+| syntax leakage in supertype names | — | **0** |
 | mislabelled `extends` | 7,916 (0 usable) | **0 — swept at reconcile** |
 
 GRAPH VIEW BEFORE/AFTER (the comparison that was an explicit decision): the
@@ -67,8 +70,9 @@ Slices 2–10 in the map: `Inheritance` persistence → `GraphFacts` + persister
 
 ## Next command
 
-Slice 2 increment 8 — java heritage in `java_fqn` (de-keyworded, interfaces
-included); ~676 relations, the largest remaining volume. Increments 1-7 DONE
+Slice 2 increment 10 — delete the fabricating rust IR trait hack
+(`extract_trait_from_impl`, rust_lang.rs:414-425), then 11 (`library_usage`
+unresolved-import count needs a kind filter). Increments 1-9 DONE
 (`49725e7b` `e6522e20` `97f4f44a` `5364d862` `722cd43e` `3fad5845` `c51d3d1e`),
 all deployed and verified. Then (retire the
 mislabelled emit), 7 (sweep the stale rows), 8 (java), 9 (python), 10 (delete
