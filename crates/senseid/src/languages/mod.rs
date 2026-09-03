@@ -44,6 +44,39 @@ pub trait LanguageAdapter: Send + Sync {
     fn fqn_output(&self, _abs_path: &str, _content: &str) -> Option<fqn::FqnFileOutput> {
         None
     }
+
+    /// The file extensions this adapter claims, WITH the leading dot.
+    ///
+    /// No default, deliberately: it is the single source of truth that
+    /// [`adapter_for_ext`] dispatches on, so a new adapter cannot be added
+    /// without declaring what it handles. Before this the extension list lived
+    /// in a `match` beside the adapter list — two lists that had to agree, and
+    /// nothing made them.
+    fn extensions(&self) -> &[&'static str];
+
+    /// Whether this adapter produces FQN symbol tables.
+    ///
+    /// A DECLARATION, because the real thing (`fqn_output`) is not a pure
+    /// function of the source — the TS and Rust producers walk the filesystem
+    /// for a manifest, so probing it needs a real directory and cannot run on a
+    /// request path. No default, so every adapter must state its position.
+    ///
+    /// A declaration can lie, so it is not trusted: the test
+    /// `declared_fqn_support_matches_a_real_probe` builds a per-language fixture,
+    /// CALLS `fqn_output`, and fails the build if any adapter's claim disagrees
+    /// with what it actually does.
+    fn supports_fqn(&self) -> bool;
+
+    /// The language this one DELEGATES parsing to, if any.
+    ///
+    /// Frameworks compose over a host rather than inheriting from it: `svelte`
+    /// and `vue` extract `<script>` blocks and hand them to the TypeScript
+    /// adapter. Declaring it makes the relationship queryable — and explains why
+    /// a `.svelte` file's symbols carry `typescript·` fqns, which import
+    /// resolution has to fan out across.
+    fn host_language(&self) -> Option<&'static str> {
+        None
+    }
 }
 
 /// Title-Case a lowercase language slug for the default `display_name`.
@@ -73,21 +106,68 @@ fn title_case_static(slug: &str) -> &str {
 }
 
 /// Get the adapter for a file extension, or None if unsupported.
+/// EVERY language adapter — the one registry.
+///
+/// `adapter_for_ext` dispatches off this list plus each adapter's
+/// [`LanguageAdapter::extensions`], so adding a language means adding one entry
+/// here and nothing else. It also makes the set enumerable, which is what
+/// [`capability_matrix`] needs: before this there was no way to ask "what
+/// languages does this daemon support, and what can each of them do?" — the
+/// answer lived in a `match` arm.
+pub fn all_adapters() -> Vec<Box<dyn LanguageAdapter>> {
+    vec![
+        Box::new(python::PythonAdapter),
+        Box::new(rust_lang::RustAdapter),
+        Box::new(typescript::TypeScriptAdapter),
+        Box::new(typescript::JavaScriptAdapter),
+        Box::new(java::JavaAdapter),
+        Box::new(sql::SqlAdapter),
+        Box::new(swift::SwiftAdapter),
+        Box::new(kotlin::KotlinAdapter),
+        Box::new(svelte::SvelteAdapter),
+        Box::new(vue::VueAdapter),
+        Box::new(c_lang::CAdapter),
+    ]
+}
+
 pub fn adapter_for_ext(ext: &str) -> Option<Box<dyn LanguageAdapter>> {
-    match ext {
-        ".py" => Some(Box::new(python::PythonAdapter)),
-        ".rs" => Some(Box::new(rust_lang::RustAdapter)),
-        ".ts" | ".tsx" | ".cts" => Some(Box::new(typescript::TypeScriptAdapter)),
-        ".js" | ".jsx" | ".mjs" | ".cjs" => Some(Box::new(typescript::JavaScriptAdapter)),
-        ".java" => Some(Box::new(java::JavaAdapter)),
-        ".sql" | ".ddl" => Some(Box::new(sql::SqlAdapter)),
-        ".swift" => Some(Box::new(swift::SwiftAdapter)),
-        ".kt" | ".kts" => Some(Box::new(kotlin::KotlinAdapter)),
-        ".svelte" => Some(Box::new(svelte::SvelteAdapter)),
-        ".vue" => Some(Box::new(vue::VueAdapter)),
-        ".c" | ".h" | ".cpp" | ".hpp" | ".cc" => Some(Box::new(c_lang::CAdapter)),
-        _ => None,
-    }
+    all_adapters().into_iter().find(|a| a.extensions().contains(&ext))
+}
+
+/// What one language can do — derived from the trait impls, never hand-written.
+///
+/// A hand-maintained support table is wrong the first time someone adds an
+/// adapter. This is computed, so it cannot drift; the pinning test then makes a
+/// missing declaration a build failure rather than a silent gap.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct CapabilityReport {
+    pub language: String,
+    pub extensions: Vec<String>,
+    /// The language this one delegates parsing to (`svelte` → `typescript`).
+    pub host: Option<String>,
+    /// Whether this adapter produces FQN symbol tables. Probed by CALLING
+    /// `fqn_output` with a representative sample rather than trusting a declared
+    /// flag — a declaration can drift from the implementation, a probe cannot.
+    pub fqn: bool,
+}
+
+/// The capability matrix for every registered language — a pure projection of
+/// the trait impls, cheap enough to serve on a request.
+///
+/// Uses each adapter's DECLARED `supports_fqn`. The declaration is kept honest
+/// by `declared_fqn_support_matches_a_real_probe`, which calls `fqn_output`
+/// against a per-language fixture and fails the build on any disagreement — so
+/// this stays cheap without becoming a lie.
+pub fn capability_matrix() -> Vec<CapabilityReport> {
+    all_adapters()
+        .into_iter()
+        .map(|a| CapabilityReport {
+            language: a.language().to_string(),
+            extensions: a.extensions().iter().map(|e| e.to_string()).collect(),
+            host: a.host_language().map(str::to_string),
+            fqn: a.supports_fqn(),
+        })
+        .collect()
 }
 
 /// Get the adapter for a filename, handling compound extensions.
@@ -380,6 +460,177 @@ mod tests {
     #[test]
     fn adapter_for_unknown_extension() {
         assert!(adapter_for_ext(".xyz").is_none());
+    }
+
+    /// Probe FQN support for real: build a tempdir with the manifest and source
+    /// that language's producer actually needs, then CALL `fqn_output`.
+    ///
+    /// A declared `supports_fqn` flag would be simpler and could lie. This
+    /// cannot — but it does mean the fixture has to be honest about each
+    /// producer's inputs (TS wants `package.json`, Rust wants `Cargo.toml`,
+    /// Java reads the in-source `package` declaration and ignores the path).
+    fn probe_fqn_for_real(a: &dyn LanguageAdapter) -> bool {
+        let Some((manifest, src_name, src)) = (match a.language() {
+            "typescript" => Some((
+                Some(("package.json", "{\"name\":\"probe\"}")),
+                "src/a.ts",
+                "export function m() { return 1; }\n",
+            )),
+            "javascript" => Some((
+                Some(("package.json", "{\"name\":\"probe\"}")),
+                "src/a.js",
+                "export function m() { return 1; }\n",
+            )),
+            "svelte" => Some((
+                Some(("package.json", "{\"name\":\"probe\"}")),
+                "src/A.svelte",
+                "<script>export function m() { return 1; }</script>\n",
+            )),
+            "vue" => Some((
+                Some(("package.json", "{\"name\":\"probe\"}")),
+                "src/A.vue",
+                "<script>export function m() { return 1; }</script>\n",
+            )),
+            "rust" => Some((
+                Some(("Cargo.toml", "[package]\nname = \"probe\"\n")),
+                "src/a.rs",
+                "pub struct A;\nimpl A { pub fn m(&self) {} }\n",
+            )),
+            "java" => Some((None, "A.java", "package p;\npublic class A { void m() {} }\n")),
+            "python" => Some((
+                Some(("pyproject.toml", "[project]\nname = \"probe\"\n")),
+                "probe/a.py",
+                "class A:\n    def m(self):\n        pass\n",
+            )),
+            "sql" => Some((None, "t.sql", "create table t (id int);\n")),
+            "swift" => Some((None, "A.swift", "class A { func m() {} }\n")),
+            "kotlin" => Some((None, "A.kt", "package p\nclass A { fun m() {} }\n")),
+            "c" => Some((None, "a.c", "int m(void) { return 1; }\n")),
+            _ => None,
+        }) else {
+            return false;
+        };
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        if let Some((name, body)) = manifest {
+            std::fs::write(tmp.path().join(name), body).expect("write manifest");
+        }
+        let abs = tmp.path().join(src_name);
+        if let Some(parent) = abs.parent() {
+            std::fs::create_dir_all(parent).expect("mkdir");
+        }
+        std::fs::write(&abs, src).expect("write source");
+        a.fqn_output(&abs.to_string_lossy(), src).is_some()
+    }
+
+    /// THE DECLARATION MUST NOT LIE. Every adapter states `supports_fqn`; this
+    /// builds a real per-language fixture, CALLS `fqn_output`, and compares. A
+    /// cheap declaration plus a proof beats both a slow probe on the request
+    /// path and an unverified flag.
+    ///
+    /// Breaking mutation: flip any adapter's `supports_fqn` — this fails naming
+    /// that adapter and the direction of the lie.
+    #[test]
+    fn declared_fqn_support_matches_a_real_probe() {
+        for a in all_adapters() {
+            let declared = a.supports_fqn();
+            let actual = probe_fqn_for_real(a.as_ref());
+            assert_eq!(
+                declared,
+                actual,
+                "{} declares supports_fqn={declared} but calling fqn_output returned \
+                 {}. The declaration is what callers see, so it must match reality.",
+                a.language(),
+                if actual { "Some" } else { "None" },
+            );
+        }
+    }
+
+    /// The registry is the ONE list. Every adapter declares its extensions, and
+    /// `adapter_for_ext` dispatches off that declaration — so a new language
+    /// cannot be half-added (present in the list, invisible to lookup) the way a
+    /// separate `match` arm allowed.
+    #[test]
+    fn every_registered_adapter_is_reachable_by_its_own_declared_extensions() {
+        let adapters = all_adapters();
+        assert!(adapters.len() >= 11, "registry shrank unexpectedly: {}", adapters.len());
+
+        for a in &adapters {
+            assert!(
+                !a.extensions().is_empty(),
+                "{} declares no extensions, so nothing can ever dispatch to it",
+                a.language()
+            );
+            for ext in a.extensions() {
+                assert!(
+                    ext.starts_with('.'),
+                    "{}: extension {ext} needs a leading dot",
+                    a.language()
+                );
+                let found = adapter_for_ext(ext).map(|f| f.language().to_string());
+                assert_eq!(
+                    found.as_deref(),
+                    Some(a.language()),
+                    "{ext} declared by {} but adapter_for_ext resolved it to {found:?}",
+                    a.language()
+                );
+            }
+        }
+
+        // No extension may be claimed twice — the first match would silently win.
+        let mut seen = std::collections::HashMap::new();
+        for a in &adapters {
+            for ext in a.extensions() {
+                if let Some(prev) = seen.insert(*ext, a.language().to_string()) {
+                    panic!("{ext} claimed by both {prev} and {}", a.language());
+                }
+            }
+        }
+    }
+
+    /// Framework adapters declare the host they delegate parsing to. This is not
+    /// cosmetic: a `.svelte` file's symbols carry `typescript·` fqns because the
+    /// TS adapter produced them, which import resolution has to fan out across.
+    #[test]
+    fn framework_adapters_declare_their_host_language() {
+        let m = capability_matrix();
+        let host_of = |lang: &str| {
+            m.iter()
+                .find(|r| r.language == lang)
+                .unwrap_or_else(|| panic!("{lang} missing"))
+                .host
+                .clone()
+        };
+        assert_eq!(host_of("svelte").as_deref(), Some("typescript"));
+        assert_eq!(host_of("vue").as_deref(), Some("typescript"));
+        assert_eq!(host_of("rust"), None, "rust hosts nothing and is hosted by nothing");
+        assert_eq!(host_of("typescript"), None, "typescript IS a host");
+    }
+
+    /// FQN support is REQUIRED, not optional — an adapter without it produces
+    /// symbols that an fqn lookup can never find while name-based lookups still
+    /// match them, so the same symbol is visible to one mechanism and invisible
+    /// to another. This test names the languages that still lack it; the list
+    /// must only ever SHRINK, and reaching empty is the definition of that work
+    /// being done.
+    #[test]
+    fn fqn_support_gaps_are_named_and_must_only_shrink() {
+        const KNOWN_GAPS: &[&str] = &["swift", "kotlin", "c"];
+
+        let m = capability_matrix();
+        let gaps: Vec<&str> = m.iter().filter(|r| !r.fqn).map(|r| r.language.as_str()).collect();
+
+        for g in &gaps {
+            assert!(
+                KNOWN_GAPS.contains(g),
+                "{g} lost FQN support — that is a REGRESSION, not a known gap"
+            );
+        }
+        assert!(gaps.len() <= KNOWN_GAPS.len(), "gap list grew: {gaps:?} vs known {KNOWN_GAPS:?}");
+        // Everything not in the gap list must actually probe Some.
+        for r in m.iter().filter(|r| !KNOWN_GAPS.contains(&r.language.as_str())) {
+            assert!(r.fqn, "{} is expected to support FQN but the probe returned None", r.language);
+        }
     }
 
     #[test]

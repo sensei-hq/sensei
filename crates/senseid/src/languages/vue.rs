@@ -6,6 +6,20 @@ use crate::types::{ParsedFile, ParsedSymbol, SymbolKind};
 pub struct VueAdapter;
 
 impl LanguageAdapter for VueAdapter {
+    fn supports_fqn(&self) -> bool {
+        true
+    }
+
+    fn extensions(&self) -> &[&'static str] {
+        &[".vue"]
+    }
+
+    /// Composes over TypeScript: `<script>` blocks are handed to the TS
+    /// adapter, which is why this file type's symbols carry `typescript·` fqns.
+    fn host_language(&self) -> Option<&'static str> {
+        Some("typescript")
+    }
+
     fn language(&self) -> &str {
         "vue"
     }

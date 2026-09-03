@@ -9,6 +9,14 @@ use tree_sitter::{Node, Parser};
 pub struct JavaAdapter;
 
 impl LanguageAdapter for JavaAdapter {
+    fn supports_fqn(&self) -> bool {
+        true
+    }
+
+    fn extensions(&self) -> &[&'static str] {
+        &[".java"]
+    }
+
     fn language(&self) -> &str {
         "java"
     }
