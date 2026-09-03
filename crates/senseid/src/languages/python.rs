@@ -21,7 +21,12 @@ impl LanguageAdapter for PythonAdapter {
         "python"
     }
 
-    fn fqn_output(&self, abs_path: &str, content: &str) -> Option<super::fqn::FqnFileOutput> {
+    fn fqn_output(
+        &self,
+        abs_path: &str,
+        _rel_path: &str,
+        content: &str,
+    ) -> Option<super::fqn::FqnFileOutput> {
         python_fqn::python_file_context(abs_path).map(|ctx| python_fqn::produce_fqns(content, &ctx))
     }
 
