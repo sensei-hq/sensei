@@ -36,6 +36,12 @@
 | c fqn | 1 / 322 | **325 / 442** |
 | swift fqn | 0 / 8 | **8 / 9** |
 | inheritance edges | 0 | **120 trait_impl, 115 resolved (95.8%)** |
+| mislabelled `extends` | 7,916 (0 usable) | **0 — swept at reconcile** |
+
+GRAPH VIEW BEFORE/AFTER (the comparison that was an explicit decision): the
+Atlas previously received 7,916 `extends` rows of which **0 were usable**
+(every one had a NULL target). It now receives 0 of those and 112 `implements`
+rows, **107 usable**. The layout traded 7,916 dead rows for 107 real edges.
 
 Deploying found a defect no test would have: `Labs/Bezier3D` came back with only
 `file`/`module` nodes because `adapter_for_filename` derived the extension from
@@ -61,8 +67,10 @@ Slices 2–10 in the map: `Inheritance` persistence → `GraphFacts` + persister
 
 ## Next command
 
-Slice 2 increment 6 — retire the mislabelled file-sourced `extends` emit
-(`process.rs`, the parent_refs loop). Increment 5 is DONE (`722cd43e`). Then (retire the
+Slice 2 increment 8 — java heritage in `java_fqn` (de-keyworded, interfaces
+included); ~676 relations, the largest remaining volume. Increments 1-7 DONE
+(`49725e7b` `e6522e20` `97f4f44a` `5364d862` `722cd43e` `3fad5845` `c51d3d1e`),
+all deployed and verified. Then (retire the
 mislabelled emit), 7 (sweep the stale rows), 8 (java), 9 (python), 10 (delete
 the fabricating rust IR trait hack), 11 (`library_usage` kind filter).
 
