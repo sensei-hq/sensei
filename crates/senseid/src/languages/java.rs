@@ -490,6 +490,35 @@ pub(crate) mod java_fqn {
                         "enum_declaration" => SymbolKind::Enum,
                         _ => SymbolKind::Class,
                     };
+
+                    // Heritage. `extends` on an interface declaration lists
+                    // SUPER-INTERFACES, so it is Implements there and Extends
+                    // on a class — the same syntax meaning two different facts.
+                    let child_fqn = fqn::item(JAVA_LANG, &ctx.package, "", &name);
+                    let is_iface = child.kind() == "interface_declaration";
+                    for (field_name, rel_kind) in [
+                        (
+                            "superclass",
+                            if is_iface {
+                                crate::types::RelationKind::Implements
+                            } else {
+                                crate::types::RelationKind::Extends
+                            },
+                        ),
+                        ("interfaces", crate::types::RelationKind::Implements),
+                    ] {
+                        let Some(n) = child.child_by_field_name(field_name) else { continue };
+                        for sup in supertype_names(&text(&n, src)) {
+                            let resolved = resolve_supertype(&sup, imports, &ctx.package);
+                            out.relations.push(fqn::TypeRelation {
+                                child_fqn: child_fqn.clone(),
+                                parent_fqn: resolved.as_ref().map(|(f, _)| f.clone()),
+                                parent_name: sup,
+                                is_lib: resolved.as_ref().is_some_and(|(_, l)| *l),
+                                relation: rel_kind,
+                            });
+                        }
+                    }
                     out.defs.push(FqnDefinition {
                         fqn: fqn::item(JAVA_LANG, &ctx.package, "", &name),
                         name: name.clone(),
@@ -700,6 +729,58 @@ pub(crate) mod java_fqn {
         }
     }
 
+    /// The bare type names in a `superclass` / `interfaces` node.
+    ///
+    /// tree-sitter includes the KEYWORD in these fields' text — `extends Base`,
+    /// `implements A, B` — so reading them raw yields a supertype literally
+    /// named "extends Base" that no lookup can match. Also strips generic
+    /// arguments and any package qualification, leaving the simple name the
+    /// import map is keyed on.
+    fn supertype_names(raw: &str) -> Vec<String> {
+        raw.trim()
+            .trim_start_matches("extends")
+            .trim_start_matches("implements")
+            .split(',')
+            .map(|s| {
+                let s = s.trim();
+                // Drop generic args, then any package prefix.
+                let s = s.split('<').next().unwrap_or(s).trim();
+                s.rsplit('.').next().unwrap_or(s).to_string()
+            })
+            .filter(|s| !s.is_empty() && is_pascal(s))
+            .collect()
+    }
+
+    /// Resolve a supertype's simple name to `(fqn, is_lib)`.
+    ///
+    /// Same two-way split as [`resolve_type_call`] and the same `is_external_pkg`
+    /// test, so a JDK supertype lands on the key a JDK call already writes.
+    /// An unimported name falls back to THIS file's package, which is how java
+    /// resolves same-package types — not a guess.
+    fn resolve_supertype(
+        name: &str,
+        imports: &HashMap<String, String>,
+        package: &str,
+    ) -> Option<(String, bool)> {
+        if name.is_empty() {
+            return None;
+        }
+        match imports.get(name) {
+            Some(fqcn) => {
+                let (pkg, cls) = fqcn.rsplit_once('.').unwrap_or(("", fqcn.as_str()));
+                if is_external_pkg(pkg) {
+                    let top = pkg.split('.').next().unwrap_or(pkg);
+                    Some((fqn::lib(top, pkg, cls), true))
+                } else {
+                    Some((fqn::item(JAVA_LANG, pkg, "", cls), false))
+                }
+            }
+            // Same package. Java resolves an unqualified type this way, so it
+            // is the language rule rather than a fallback guess.
+            None => Some((fqn::item(JAVA_LANG, package, "", name), false)),
+        }
+    }
+
     /// Resolve a call on an imported/fully-qualified class `a.b.Foo` → `a.b.Foo.m`:
     /// JDK-family packages become `lib` nodes; any other package is treated as a
     /// project package and resolves to its own class-method fqn.
@@ -838,6 +919,61 @@ mod tests {
             Some("java·com.app·Gadget·spin"),
             "Type v = new Type(); v.m() → Type.m (0.7 binding)"
         );
+    }
+
+    #[test]
+    fn java_heritage_becomes_relations_de_keyworded() {
+        // tree-sitter's `superclass` and `interfaces` fields include the
+        // KEYWORD in their text (`extends Base`, `implements A, B`), so a naive
+        // read produces a supertype literally named "extends Base" that no
+        // lookup can ever match.
+        let src = r#"
+package com.acme.svc;
+
+import com.acme.core.BaseService;
+import java.io.Serializable;
+
+public class Widget extends BaseService implements Serializable, Runnable {
+    public void go() {}
+}
+"#;
+        let out = super::java_fqn::produce_fqns(src);
+        let rel = |n: &str| {
+            out.relations
+                .iter()
+                .find(|r| r.parent_name == n)
+                .unwrap_or_else(|| panic!("no relation to `{n}` in {:?}", out.relations))
+        };
+
+        // The superclass: an imported PROJECT class → internal fqn.
+        let base = rel("BaseService");
+        assert_eq!(base.relation, crate::types::RelationKind::Extends);
+        // The empty module segment is DROPPED by the encoder (fqn.rs: "empty
+        // segments are dropped when encoding"), so java items are three
+        // segments, not four. Same shape the java def emit already produces.
+        assert_eq!(base.child_fqn, "java·com.acme.svc·Widget");
+        assert_eq!(base.parent_fqn.as_deref(), Some("java·com.acme.core·BaseService"));
+        assert!(!base.is_lib, "a project package is not external");
+
+        // A JDK interface → lib node, same shape resolve_type_call uses.
+        let ser = rel("Serializable");
+        assert_eq!(ser.relation, crate::types::RelationKind::Implements);
+        assert!(ser.is_lib, "java.io is external");
+
+        // The SECOND interface must survive the comma split — the one a naive
+        // implementation drops.
+        let run = rel("Runnable");
+        assert_eq!(run.relation, crate::types::RelationKind::Implements);
+
+        // And no supertype may carry a keyword or punctuation.
+        for r in &out.relations {
+            assert!(
+                !r.parent_name.contains(' ') && !r.parent_name.contains(','),
+                "supertype name is not de-keyworded: {:?}",
+                r.parent_name
+            );
+        }
+        assert_eq!(out.relations.len(), 3, "one extends + two implements: {:?}", out.relations);
     }
 
     #[test]

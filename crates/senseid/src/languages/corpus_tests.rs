@@ -416,3 +416,65 @@ fn trait_impl_relations_are_produced_and_mostly_resolve_over_the_real_tree() {
     // tree, so zero lib parents would mean the external arm never fires.
     assert!(lib_parents > 0, "no external trait parents among {total} relations");
 }
+
+/// Java heritage over the real tree: produced at scale, resolved, and never
+/// carrying a keyword.
+///
+/// The unit test proves the shape on one hand-written class. This corpus has
+/// real java with generic bounds, nested types, annotations and multi-interface
+/// declarations — and the de-keywording defect this guards is invisible in a
+/// fixture that happens to be simple.
+///
+/// Loose floors: this pins "the producer works broadly", not counts that churn.
+#[test]
+fn java_heritage_over_the_real_tree_is_de_keyworded_and_mostly_resolves() {
+    let mut total = 0usize;
+    let mut resolved = 0usize;
+    let mut lib_parents = 0usize;
+    let mut files = 0usize;
+    let mut bad: Vec<String> = Vec::new();
+
+    for path in corpus(&["java"]) {
+        let Some((adapter, content)) = read(&path) else { continue };
+        let Some(out) = adapter.fqn_output(&path.to_string_lossy(), &rel_of(&path), &content)
+        else {
+            continue;
+        };
+        files += 1;
+        for r in &out.relations {
+            total += 1;
+            if r.parent_fqn.is_some() {
+                resolved += 1;
+            }
+            if r.is_lib {
+                lib_parents += 1;
+            }
+            // A keyword, a comma, a space or a generic bracket in a supertype
+            // name means the extraction leaked syntax, and no lookup can match
+            // it again.
+            if r.parent_name.contains(' ')
+                || r.parent_name.contains(',')
+                || r.parent_name.contains('<')
+                || r.parent_name.starts_with("extends")
+                || r.parent_name.starts_with("implements")
+            {
+                bad.push(format!("{}: {:?}", rel_of(&path), r.parent_name));
+            }
+        }
+    }
+
+    if files == 0 {
+        // No java in this checkout — say so rather than passing vacuously.
+        eprintln!("no java files in the corpus; this test asserted nothing");
+        return;
+    }
+    bad.truncate(10);
+    assert!(bad.is_empty(), "{} supertype names leaked syntax, e.g. {bad:#?}", bad.len());
+    assert!(total > 0, "{files} java files and not one heritage relation");
+    let rate = resolved as f64 / total as f64;
+    assert!(rate > 0.95, "only {resolved}/{total} ({:.1}%) resolved", rate * 100.0);
+    eprintln!(
+        "java heritage: {total} relations over {files} files, {resolved} resolved, \
+         {lib_parents} external"
+    );
+}
