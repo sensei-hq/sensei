@@ -33,9 +33,9 @@ finishing a job the codebase already started twice.
 | sql | ✓ | n/a | — | n/a |
 | svelte | ✓ | — | ✓ → typescript | ✓ |
 | vue | ✓ | — | ✓ → typescript | ✓ |
-| **kotlin** | **✗** | ✗ | — | — |
-| **swift** | **✗** | ✗ | — | — |
-| **c_lang** | **✗** | ✗ | n/a | n/a |
+| kotlin | ✓ *(slice 1b)* | ✗ | — | — |
+| swift | ✓ *(slice 1b)* | ✗ | — | — |
+| c_lang | ✓ *(slice 1b)* | ✗ | n/a | n/a |
 
 Three languages produce **no FQN nodes at all** and nothing records whether that
 is a decision or an omission — the gap the derived matrix + pinning test closes.
@@ -186,3 +186,35 @@ before/after measurement, not just a green suite.
 
 6. **Retiring the bogus `extends` edges requires a before/after check of the
    graph view (`codebase.rs:55`) — DECIDED.**
+
+
+## Slice 1b — CLOSED (030e34db)
+
+Every adapter now has an FQN producer and the `KNOWN_GAPS` allowlist is gone
+rather than left at zero. `every_adapter_supports_fqn_with_no_exceptions` is the
+gate; adding a language without a producer is now a build failure.
+
+`LanguageAdapter::fqn_output` gained `rel_path`. C and Swift scope on layout
+rather than a package declaration, and the indexer already held the correct
+anchor without passing it — `rel_path` is folder-relative and is the same value
+stored in `nodes.file_path`, so a C module now equals its `file_path` minus the
+extension.
+
+Two things worth carrying forward:
+
+- **Real data refuted a fallback that reasoning had approved.** The no-build-root
+  case originally used the bare file stem. A C project in the corpus has parallel
+  `Cpp/` and `Hpp/` trees with no build file, so a header and its implementation
+  shared a module — and a header/impl pair declares and defines the same names by
+  construction, making the collision certain rather than unlikely. Hand-written
+  fixtures had agreed with the bug.
+- **A passing corpus test does not mean the branch you changed is covered.**
+  Mutating the no-build-root fallback did NOT fail
+  `no_produced_fqn_embeds_an_absolute_path`, because this repo has a root
+  `Makefile` and every `.c` file here resolves through the build-root branch
+  instead. The fallback is covered by unit tests only. The coverage boundary is
+  now written into that test's doc comment.
+
+NOT YET LIVE IN THE GRAPH: the running daemon is the previously installed 0.9.1
+binary. Kotlin/C/Swift FQNs require `make install-debug` + a reindex, batched
+with the later slices rather than run per-slice.
