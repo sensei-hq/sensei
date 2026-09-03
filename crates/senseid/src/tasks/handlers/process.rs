@@ -1488,6 +1488,106 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
                     }
                 }
             }
+
+            // Inheritance. The SAME three-branch ladder the call emit above
+            // uses, deliberately: external → a `lib·` node, internal →
+            // stub-then-enrich, unresolvable → target_name only.
+            //
+            // The stub is not laziness. Measured over the corpus, 404 of 406
+            // java relations (99.5%) have their parent type in a DIFFERENT
+            // file, so a probe-only resolver would leave about half of them
+            // unresolved on a cold index and never heal — trading the 7,905
+            // mislabelled edges for a fresh pile of unresolved ones. A stub
+            // created here is ENRICHED when the real definition is indexed,
+            // whichever order the files arrive in.
+            //
+            // There is deliberately NO bare-name fallback. The one available
+            // resolver, `sole_definition_id_by_name`, is kind- and
+            // language-agnostic (it exists for doc mentions), so a miss would
+            // resolve confidently WRONG: a repo defining its own `BaseModel`
+            // would capture every subclass of `pydantic.BaseModel`. An
+            // unresolved parent is worse than nothing only if you think a
+            // wrong answer is better than no answer.
+            for rel in &fqn_out.relations {
+                let source = match fqn_ids.get(&rel.child_fqn) {
+                    Some(id) => *id,
+                    // The child is declared in THIS file, so a miss means the
+                    // def emit skipped it; anchoring on the file keeps the fact
+                    // rather than dropping it.
+                    None => file_node_id,
+                };
+                let kind = rel.relation.edge_kind();
+                let props = serde_json::json!({ "relation": rel.relation.as_str() });
+
+                match &rel.parent_fqn {
+                    Some(pf) if rel.is_lib => {
+                        let pkg = pf.split(crate::languages::fqn::SEP).nth(1).unwrap_or("");
+                        let tid = ctx
+                            .pg()
+                            .upsert_lib_node_by_fqn(&folder_id, pf, &rel.parent_name, pkg)
+                            .await
+                            .map_err(|e| format!("upsert lib supertype {pf}: {e}"))?;
+                        ctx.pg()
+                            .insert_edge_with_props(
+                                &folder_id,
+                                &source,
+                                Some(&tid),
+                                None,
+                                None,
+                                kind,
+                                &props,
+                            )
+                            .await
+                            .map_err(|e| format!("insert_edge ({kind}, lib): {e}"))?;
+                    }
+                    Some(pf) => {
+                        let tid = match fqn_ids.get(pf) {
+                            Some(id) => *id,
+                            None => ctx
+                                .pg()
+                                .upsert_node_by_fqn(
+                                    &folder_id,
+                                    pf,
+                                    // A supertype is a TYPE. The stub carries the
+                                    // right kind so an enrich does not have to
+                                    // correct it.
+                                    "class",
+                                    &rel.parent_name,
+                                    file_lang,
+                                    None,
+                                )
+                                .await
+                                .map_err(|e| format!("upsert supertype {pf}: {e}"))?,
+                        };
+                        ctx.pg()
+                            .insert_edge_with_props(
+                                &folder_id,
+                                &source,
+                                Some(&tid),
+                                None,
+                                None,
+                                kind,
+                                &props,
+                            )
+                            .await
+                            .map_err(|e| format!("insert_edge ({kind}): {e}"))?;
+                    }
+                    None => {
+                        ctx.pg()
+                            .insert_edge_with_props(
+                                &folder_id,
+                                &source,
+                                None,
+                                Some(&rel.parent_name),
+                                None,
+                                kind,
+                                &props,
+                            )
+                            .await
+                            .map_err(|e| format!("insert_edge ({kind}, unresolved): {e}"))?;
+                    }
+                }
+            }
         } else {
             for call in &result.unresolved_calls {
                 let source = sym_ids
@@ -2186,6 +2286,86 @@ mod tests {
     /// A LOCAL import resolves to the target's module node AT EMIT. Before this,
     /// `process.rs` passed `target_id = None` for every import, so 0 of 162,690
     /// import edges resolved — 25,693 of them pointing at local code.
+    /// Inheritance persists as an edge, and the SUBTYPE-FIRST order still
+    /// resolves.
+    ///
+    /// Order-independence is the whole design constraint, not a nicety: measured
+    /// over the corpus, 404 of 406 java relations (99.5%) have their parent type
+    /// in a DIFFERENT file. A probe-only resolver would leave roughly half of
+    /// them unresolved on a cold index and never heal, trading the 7,905
+    /// mislabelled edges for a fresh pile of unresolved ones. So the impl file
+    /// here is processed BEFORE the file defining the trait.
+    ///
+    /// Breaking mutations: (1) replace the `upsert_node_by_fqn` stub with a
+    /// `node_id_by_fqn` probe — the target is NULL because the trait does not
+    /// exist yet; (2) drop the props stamp — the discriminant is NULL and a rust
+    /// trait impl becomes indistinguishable from java `implements`.
+    #[tokio::test]
+    async fn a_trait_impl_persists_as_an_implements_edge_before_its_trait_exists() {
+        let ctx = make_ctx().await;
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("inh");
+        std::fs::create_dir_all(repo.join("src")).unwrap();
+        std::fs::write(repo.join("Cargo.toml"), "[package]\nname = \"inh\"\n").unwrap();
+        std::fs::write(repo.join("src/greet.rs"), "pub trait Greet {\n    fn hi(&self);\n}\n")
+            .unwrap();
+        std::fs::write(
+            repo.join("src/widget.rs"),
+            "use crate::greet::Greet;\npub struct W;\nimpl Greet for W {\n    fn hi(&self) {}\n}\n",
+        )
+        .unwrap();
+
+        let repo_path = repo.to_string_lossy().to_string();
+        let rid = ctx
+            .pg()
+            .add_watch_root(&tmp.path().to_string_lossy(), "inh", &serde_json::json!([]))
+            .await
+            .unwrap();
+        let fid = ctx.pg().upsert_repo_kind(&rid, "git", "inh", &repo_path).await.unwrap();
+        ctx.pg().update_folder_status(&fid, "indexing").await.unwrap();
+
+        // SUBTYPE FIRST — its parent does not exist in the graph yet.
+        for f in ["src/widget.rs", "src/greet.rs"] {
+            let abs = repo.join(f).to_string_lossy().to_string();
+            process_file(&ctx, &Task::for_file(TaskKind::ProcessFile, &repo_path, &abs))
+                .await
+                .unwrap();
+        }
+
+        // (target_id, target_name, props.relation, resolved target's name)
+        type ImplEdgeRow = (Option<uuid::Uuid>, Option<String>, Option<String>, Option<String>);
+        let rows: Vec<ImplEdgeRow> = sqlx_core::query_as::query_as(
+            "SELECT e.target_id, e.target_name, e.props->>'relation', t.name
+                   FROM sensei.edges e
+                   LEFT JOIN sensei.nodes t ON t.id = e.target_id
+                  WHERE e.folder_id = $1 AND e.kind = 'implements'::sensei.edge_kind",
+        )
+        .bind(fid)
+        .fetch_all(ctx.pg().pool())
+        .await
+        .unwrap();
+
+        assert_eq!(rows.len(), 1, "exactly one trait impl should persist: {rows:?}");
+        let (tid, tname, relation, target_name) = &rows[0];
+        assert_eq!(
+            relation.as_deref(),
+            Some("trait_impl"),
+            "the discriminant separates this from java `implements`"
+        );
+        assert!(
+            tid.is_some(),
+            "must resolve even though the trait was indexed AFTER the impl \
+             (stub-then-enrich, not probe-only): target_name={tname:?}"
+        );
+        assert_eq!(
+            target_name.as_deref(),
+            Some("Greet"),
+            "and it must point at the trait, not something same-named"
+        );
+
+        ctx.pg().remove_watch_root(&rid).await.ok();
+    }
+
     /// Slice 1b end to end: kotlin, C and swift symbols must reach the DB WITH
     /// an fqn.
     ///
