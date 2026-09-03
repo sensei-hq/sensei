@@ -36,7 +36,7 @@ async fn repo_folder_id(state: &AppState, name: &str) -> Result<Option<uuid::Uui
 /// one of the 7,905 `extends` edges in the live graph is unresolved
 /// (`target_id IS NULL`), so it contributed exactly ZERO layout edges — the
 /// widening that actually helped was `imports`, at 25,785 usable.
-pub(crate) const GRAPH_LAYOUT_KINDS: &[&str] = &["calls", "imports", "extends"];
+pub(crate) const GRAPH_LAYOUT_KINDS: &[&str] = &["calls", "imports", "extends", "implements"];
 
 #[derive(Deserialize)]
 pub(crate) struct GraphQuery {
@@ -1054,7 +1054,6 @@ mod tests {
 #[cfg(test)]
 mod graph_layout_kinds_tests {
     use super::GRAPH_LAYOUT_KINDS;
-    use std::collections::HashSet;
 
     /// Every layout kind must be a declared `edge_kind` label.
     ///
@@ -1072,12 +1071,7 @@ mod graph_layout_kinds_tests {
     /// GRAPH_LAYOUT_KINDS.
     #[test]
     fn every_graph_layout_kind_is_a_declared_edge_kind() {
-        let ddl = include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../database/ddl/enum/sensei/edge_kind.ddl"
-        ));
-        // Enum labels are the only single-quoted tokens in this file.
-        let enum_values: HashSet<&str> = ddl.split('\'').skip(1).step_by(2).collect();
+        let enum_values = crate::types::declared_edge_kinds();
         for k in GRAPH_LAYOUT_KINDS {
             assert!(
                 enum_values.contains(k),
@@ -1085,5 +1079,11 @@ mod graph_layout_kinds_tests {
             );
         }
         assert!(!GRAPH_LAYOUT_KINDS.is_empty(), "an empty layout set renders no edges at all");
+        // Inheritance must reach the Atlas, or persisting it changes nothing a
+        // user can see. This is the only thing pinning that widening.
+        assert!(
+            GRAPH_LAYOUT_KINDS.contains(&"implements"),
+            "inheritance edges must be laid out: {GRAPH_LAYOUT_KINDS:?}"
+        );
     }
 }
