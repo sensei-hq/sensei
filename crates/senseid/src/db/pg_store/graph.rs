@@ -917,6 +917,9 @@ impl PgStore {
     /// by its target node; an unresolved edge by `(target_name, target_file)`.
     /// `DO UPDATE SET modified_at = now()` (not `DO NOTHING`) so `RETURNING id`
     /// is always the surviving row's id.
+    /// Insert an edge with no props. Thin wrapper over
+    /// [`Self::insert_edge_with_props`] so there is exactly ONE pair of
+    /// edge-INSERT statements in the tree.
     pub async fn insert_edge(
         &self,
         folder_id: &uuid::Uuid,
@@ -926,29 +929,62 @@ impl PgStore {
         target_file: Option<&str>,
         kind: &str,
     ) -> Result<uuid::Uuid, String> {
+        self.insert_edge_with_props(
+            folder_id,
+            source_id,
+            target_id,
+            target_name,
+            target_file,
+            kind,
+            &serde_json::json!({}),
+        )
+        .await
+    }
+
+    /// Insert an edge carrying `props`.
+    ///
+    /// `props` MERGES (`edges.props || EXCLUDED.props`) rather than replacing,
+    /// the same idiom `set_node_props` uses. An edge is re-inserted on every
+    /// rescan, so a later caller that knows less about it must not erase what an
+    /// earlier one recorded.
+    ///
+    /// Needed because `implements` carries two distinct facts — Java-style
+    /// interface implementation and a Rust trait impl — told apart only by
+    /// `props.relation`. Before this, no code path named the column at all.
+    pub async fn insert_edge_with_props(
+        &self,
+        folder_id: &uuid::Uuid,
+        source_id: &uuid::Uuid,
+        target_id: Option<&uuid::Uuid>,
+        target_name: Option<&str>,
+        target_file: Option<&str>,
+        kind: &str,
+        props: &serde_json::Value,
+    ) -> Result<uuid::Uuid, String> {
         let row: (uuid::Uuid,) = if let Some(tid) = target_id {
             sqlx_core::query_as::query_as(
-                "INSERT INTO sensei.edges(folder_id, source_id, target_id, kind)
-                 VALUES($1, $2, $3, $4::sensei.edge_kind)
+                "INSERT INTO sensei.edges(folder_id, source_id, target_id, kind, props)
+                 VALUES($1, $2, $3, $4::sensei.edge_kind, $5)
                  ON CONFLICT (folder_id, source_id, target_id, kind) WHERE target_id IS NOT NULL
-                   DO UPDATE SET modified_at = now()
+                   DO UPDATE SET modified_at = now(), props = edges.props || EXCLUDED.props
                  RETURNING id",
             )
             .bind(folder_id)
             .bind(source_id)
             .bind(tid)
             .bind(kind)
+            .bind(props)
             .fetch_one(&self.pool)
             .await
             .map_err(|e| e.to_string())?
         } else {
             sqlx_core::query_as::query_as(
-                "INSERT INTO sensei.edges(folder_id, source_id, target_name, target_file, kind)
-                 VALUES($1, $2, $3, $4, $5::sensei.edge_kind)
+                "INSERT INTO sensei.edges(folder_id, source_id, target_name, target_file, kind, props)
+                 VALUES($1, $2, $3, $4, $5::sensei.edge_kind, $6)
                  ON CONFLICT (folder_id, source_id, target_name, target_file, kind) WHERE target_id IS NULL
-                   DO UPDATE SET modified_at = now()
+                   DO UPDATE SET modified_at = now(), props = edges.props || EXCLUDED.props
                  RETURNING id"
-            ).bind(folder_id).bind(source_id).bind(target_name).bind(target_file).bind(kind)
+            ).bind(folder_id).bind(source_id).bind(target_name).bind(target_file).bind(kind).bind(props)
                 .fetch_one(&self.pool).await.map_err(|e| e.to_string())?
         };
         Ok(row.0)

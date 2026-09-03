@@ -12263,3 +12263,90 @@ async fn file_node_lookup_matches_the_repo_relative_path() {
 
     s.delete_nodes_by_folder(&fid).await.unwrap();
 }
+
+/// `edges.props` needs a write path, and it must MERGE rather than clobber.
+///
+/// Measured before this existed: 0 of 724,926 live edge rows carried non-empty
+/// props, because neither `insert_edge` branch named the column. Inheritance
+/// needs it — `Implements` and `TraitImpl` share the `implements` edge kind and
+/// are told apart only by `props.relation`.
+///
+/// Merge, not overwrite, for the same reason `upsert_node` merges: an edge is
+/// re-inserted on every rescan, and a later caller that knows less about the
+/// edge must not erase what an earlier one recorded.
+///
+/// Breaking mutation: change `props = edges.props || EXCLUDED.props` to
+/// `props = EXCLUDED.props` — the second-write assertion reads `relation` as
+/// NULL and fails.
+#[tokio::test]
+async fn insert_edge_with_props_stamps_and_merges() {
+    let s = pg_store().await;
+    let fid = create_test_folder(&s, &format!("edgeprops_{}", uuid::Uuid::new_v4())).await;
+    let a =
+        s.upsert_node(&fid, "class", "Sub", "a.rs", None, None, Some(1), Some(5)).await.unwrap();
+    let b =
+        s.upsert_node(&fid, "class", "Base", "b.rs", None, None, Some(1), Some(5)).await.unwrap();
+
+    let props = serde_json::json!({ "relation": "trait_impl" });
+    let e1 = s
+        .insert_edge_with_props(&fid, &a, Some(&b), None, None, "implements", &props)
+        .await
+        .unwrap();
+
+    let stamped: Option<String> = sqlx_core::query_scalar::query_scalar(
+        "SELECT props->>'relation' FROM sensei.edges WHERE id = $1",
+    )
+    .bind(e1)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(stamped.as_deref(), Some("trait_impl"), "the discriminant must persist");
+
+    // A second write with DIFFERENT keys must not erase the first.
+    let e2 = s
+        .insert_edge_with_props(
+            &fid,
+            &a,
+            Some(&b),
+            None,
+            None,
+            "implements",
+            &serde_json::json!({ "other": 1 }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(e1, e2, "same edge identity");
+    let after: Option<String> = sqlx_core::query_scalar::query_scalar(
+        "SELECT props->>'relation' FROM sensei.edges WHERE id = $1",
+    )
+    .bind(e1)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(after.as_deref(), Some("trait_impl"), "merge must not clobber the discriminant");
+
+    // The UNRESOLVED branch carries props too — an unresolved supertype is the
+    // common case on a cold index, and it must still say which relation it is.
+    let u = s
+        .insert_edge_with_props(&fid, &a, None, Some("Serializable"), None, "implements", &props)
+        .await
+        .unwrap();
+    let u_rel: Option<String> = sqlx_core::query_scalar::query_scalar(
+        "SELECT props->>'relation' FROM sensei.edges WHERE id = $1",
+    )
+    .bind(u)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(u_rel.as_deref(), Some("trait_impl"), "unresolved edges need the discriminant too");
+
+    // The plain wrapper must still work and leave props empty.
+    let plain = s.insert_edge(&fid, &b, Some(&a), None, None, "calls").await.unwrap();
+    let empty: serde_json::Value =
+        sqlx_core::query_scalar::query_scalar("SELECT props FROM sensei.edges WHERE id = $1")
+            .bind(plain)
+            .fetch_one(s.pool())
+            .await
+            .unwrap();
+    assert_eq!(empty, serde_json::json!({}), "insert_edge must not invent props");
+}
