@@ -57,7 +57,12 @@ impl LanguageAdapter for RustAdapter {
         }
     }
 
-    fn fqn_output(&self, abs_path: &str, content: &str) -> Option<super::fqn::FqnFileOutput> {
+    fn fqn_output(
+        &self,
+        abs_path: &str,
+        _rel_path: &str,
+        content: &str,
+    ) -> Option<super::fqn::FqnFileOutput> {
         rust_fqn::rust_file_context(abs_path).map(|ctx| rust_fqn::produce_fqns(content, &ctx))
     }
 }

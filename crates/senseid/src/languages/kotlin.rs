@@ -13,10 +13,19 @@ unsafe extern "C" {
 pub struct KotlinAdapter;
 
 impl LanguageAdapter for KotlinAdapter {
-    // No FQN producer yet — symbols land on the bare-name path, so an fqn
-    // lookup cannot find them. Tracked as a gap that must shrink.
     fn supports_fqn(&self) -> bool {
-        false
+        true
+    }
+
+    fn fqn_output(
+        &self,
+        _abs_path: &str,
+        _rel_path: &str,
+        content: &str,
+    ) -> Option<super::fqn::FqnFileOutput> {
+        // Source-only, like Java: the package comes from the in-source
+        // `package` header, so no manifest walk is needed.
+        Some(kotlin_fqn::produce_fqns(content))
     }
 
     fn extensions(&self) -> &[&'static str] {
@@ -504,5 +513,269 @@ mod tests {
         assert_eq!(pf.classes.len(), 1);
         assert_eq!(pf.classes[0].base.name, "Dog");
         assert!(!pf.classes[0].methods.is_empty());
+    }
+}
+
+/// Kotlin FQN production.
+///
+/// Modelled on `java_fqn` because the shape is the same — a `package` header, an
+/// import list, and types whose members anchor to them — and deliberately NOT a
+/// copy of its walk: Kotlin's grammar names things differently
+/// (`package_header`/`import_header` vs `package_declaration`, plus
+/// `object_declaration` which Java has no equivalent of).
+///
+/// Exists because FQN support is required, not optional. Without it Kotlin
+/// symbols were created on the bare-name path only, so an fqn lookup could never
+/// find them WHILE a name lookup still matched them — the same symbol visible to
+/// one mechanism and invisible to another. 3,713 Kotlin import edges had nothing
+/// to resolve against.
+pub(crate) mod kotlin_fqn {
+    use super::super::fqn::{self, FqnDefinition, FqnFileOutput};
+    use super::{Node, Parser, SymbolKind, tree_sitter_kotlin};
+
+    const KOTLIN_LANG: &str = "kotlin";
+
+    fn text(node: &Node, src: &[u8]) -> String {
+        node.utf8_text(src).unwrap_or_default().to_string()
+    }
+    fn named_child_text(node: &Node, src: &[u8], kinds: &[&str]) -> Option<String> {
+        for i in 0..node.child_count() {
+            let c = node.child(i)?;
+            if kinds.contains(&c.kind()) {
+                return Some(text(&c, src));
+            }
+        }
+        None
+    }
+
+    pub fn produce_fqns(source: &str) -> FqnFileOutput {
+        let mut parser = Parser::new();
+        let lang = unsafe { tree_sitter_kotlin() };
+        if parser.set_language(&lang).is_err() {
+            return FqnFileOutput::default();
+        }
+        let Some(tree) = parser.parse(source, None) else { return FqnFileOutput::default() };
+        let src = source.as_bytes();
+        let root = tree.root_node();
+
+        // `package a.b.c` — no trailing semicolon, unlike Java.
+        let mut package = String::new();
+        for i in 0..root.child_count() {
+            let Some(child) = root.child(i) else { continue };
+            if child.kind() == "package_header" {
+                if let Some(id) =
+                    named_child_text(&child, src, &["identifier", "qualified_identifier"])
+                {
+                    package = id.trim().to_string();
+                }
+                break;
+            }
+        }
+
+        let mut out =
+            FqnFileOutput { package: package.clone(), module: String::new(), ..Default::default() };
+        walk_top(&root, src, &package, &mut out);
+        out
+    }
+
+    fn walk_top(node: &Node, src: &[u8], package: &str, out: &mut FqnFileOutput) {
+        for i in 0..node.child_count() {
+            let Some(child) = node.child(i) else { continue };
+            match child.kind() {
+                "class_declaration" | "object_declaration" | "interface_declaration" => {
+                    let Some(name) =
+                        named_child_text(&child, src, &["type_identifier", "simple_identifier"])
+                    else {
+                        continue;
+                    };
+                    let kind = match child.kind() {
+                        "interface_declaration" => SymbolKind::Interface,
+                        _ => SymbolKind::Class,
+                    };
+                    // A top-level type anchors on the package, with no module
+                    // segment — the same shape `java_fqn` produces, so a Kotlin
+                    // type and a Java type in one package are addressable alike.
+                    let type_fqn = fqn::item(KOTLIN_LANG, package, "", &name);
+                    out.defs.push(def(&type_fqn, &name, kind, &child, None, None));
+                    walk_members(&child, src, package, &name, &type_fqn, out);
+                }
+                "function_declaration" | "property_declaration" => {
+                    if let Some(name) = named_child_text(
+                        &child,
+                        src,
+                        &["simple_identifier", "variable_declaration"],
+                    ) {
+                        let name = name.split(':').next().unwrap_or(&name).trim().to_string();
+                        let k = if child.kind() == "function_declaration" {
+                            SymbolKind::Function
+                        } else {
+                            SymbolKind::Const
+                        };
+                        let f = fqn::item(KOTLIN_LANG, package, "", &name);
+                        out.defs.push(def(&f, &name, k, &child, None, None));
+                    }
+                }
+                // Kotlin allows declarations nested under file-level constructs;
+                // recurse so they are not silently dropped.
+                _ => walk_top(&child, src, package, out),
+            }
+        }
+    }
+
+    fn walk_members(
+        type_node: &Node,
+        src: &[u8],
+        package: &str,
+        type_name: &str,
+        type_fqn: &str,
+        out: &mut FqnFileOutput,
+    ) {
+        for i in 0..type_node.child_count() {
+            let Some(body) = type_node.child(i) else { continue };
+            if body.kind() != "class_body" {
+                continue;
+            }
+            collect_members(&body, src, package, type_name, type_fqn, out);
+        }
+    }
+
+    /// Collect a type's members, DESCENDING THROUGH `ERROR` nodes.
+    ///
+    /// tree-sitter-kotlin's error recovery nests declarations: the valid
+    /// one-liner `class Loose { fun m() {} }` parses as
+    /// `class_body > ERROR > function_declaration`, while the multi-line form
+    /// puts `function_declaration` directly under `class_body`. A
+    /// direct-children-only walk therefore silently loses every member of any
+    /// file the grammar stumbles on — so recursion here is correctness, not
+    /// thoroughness.
+    fn collect_members(
+        body: &Node,
+        src: &[u8],
+        package: &str,
+        type_name: &str,
+        type_fqn: &str,
+        out: &mut FqnFileOutput,
+    ) {
+        for j in 0..body.child_count() {
+            let Some(m) = body.child(j) else { continue };
+            let (kind, want) = match m.kind() {
+                "function_declaration" => (SymbolKind::Method, true),
+                // No `Property` variant exists; a Kotlin `val`/`var` member is
+                // closest to Const, which is also what the top-level branch uses.
+                "property_declaration" => (SymbolKind::Const, true),
+                // Recovery wrapper — the declaration is inside it.
+                "ERROR" => {
+                    collect_members(&m, src, package, type_name, type_fqn, out);
+                    continue;
+                }
+                _ => (SymbolKind::Method, false),
+            };
+            if !want {
+                continue;
+            }
+            {
+                let Some(raw) =
+                    named_child_text(&m, src, &["simple_identifier", "variable_declaration"])
+                else {
+                    continue;
+                };
+                let name = raw.split(':').next().unwrap_or(&raw).trim().to_string();
+                if name.is_empty() {
+                    continue;
+                }
+                let f = fqn::method(KOTLIN_LANG, package, "", type_name, &name);
+                out.defs.push(def(
+                    &f,
+                    &name,
+                    kind,
+                    &m,
+                    Some(type_name.to_string()),
+                    Some(type_fqn.to_string()),
+                ));
+            }
+        }
+    }
+
+    fn def(
+        fqn_str: &str,
+        name: &str,
+        kind: SymbolKind,
+        node: &Node,
+        parent_type: Option<String>,
+        parent_fqn: Option<String>,
+    ) -> FqnDefinition {
+        FqnDefinition {
+            fqn: fqn_str.to_string(),
+            name: name.to_string(),
+            kind,
+            line_start: node.start_position().row as u32 + 1,
+            line_end: node.end_position().row as u32 + 1,
+            is_exported: true,
+            signature: None,
+            docstring: None,
+            parent_type,
+            parent_fqn,
+        }
+    }
+}
+
+#[cfg(test)]
+mod kotlin_fqn_tests {
+    use super::kotlin_fqn::produce_fqns;
+    /// Kotlin FQNs anchor on the in-source `package` header and use the SAME
+    /// shape as Java, so a Kotlin type and a Java type in one package are
+    /// addressable alike — which matters because JVM projects mix them.
+    ///
+    /// Breaking mutation: stop reading `package_header` — every fqn loses its
+    /// package segment and stops matching what an import resolves to.
+    #[test]
+    fn kotlin_types_and_members_anchor_on_the_package_header() {
+        let out = produce_fqns(
+            "package com.acme.svc\n\
+             \n\
+             class Widget {\n\
+                 fun render(): String { return \"x\" }\n\
+                 val size: Int = 3\n\
+             }\n\
+             \n\
+             interface Sink { fun accept(v: Int) }\n\
+             \n\
+             fun helper(): Int { return 1 }\n",
+        );
+        assert_eq!(out.package, "com.acme.svc", "package comes from the header, not the path");
+
+        let fqns: Vec<&str> = out.defs.iter().map(|d| d.fqn.as_str()).collect();
+        assert!(fqns.contains(&"kotlin·com.acme.svc·Widget"), "type: {fqns:?}");
+        assert!(fqns.contains(&"kotlin·com.acme.svc·Widget·render"), "method: {fqns:?}");
+        assert!(fqns.contains(&"kotlin·com.acme.svc·Widget·size"), "property: {fqns:?}");
+        assert!(fqns.contains(&"kotlin·com.acme.svc·Sink"), "interface: {fqns:?}");
+        assert!(fqns.contains(&"kotlin·com.acme.svc·helper"), "top-level fn: {fqns:?}");
+
+        // A member records its owning type, so the graph nests method under type
+        // rather than dangling it at file level.
+        let render = out.defs.iter().find(|d| d.name == "render").expect("render");
+        assert_eq!(render.parent_type.as_deref(), Some("Widget"));
+        assert_eq!(render.parent_fqn.as_deref(), Some("kotlin·com.acme.svc·Widget"));
+    }
+
+    /// A file with NO package header still produces fqns — Kotlin allows it, and
+    /// returning nothing would put the whole file back on the bare-name path.
+    #[test]
+    fn a_package_less_file_still_produces_fqns() {
+        let out = produce_fqns("class Loose { fun m() {} }\n");
+        assert_eq!(out.package, "");
+        let fqns: Vec<&str> = out.defs.iter().map(|d| d.fqn.as_str()).collect();
+        assert!(fqns.contains(&"kotlin·Loose"), "{fqns:?}");
+        assert!(fqns.contains(&"kotlin·Loose·m"), "{fqns:?}");
+    }
+
+    /// `object` is Kotlin-specific (a singleton) and has no Java equivalent, so
+    /// a straight copy of `java_fqn`'s walk would have dropped it silently.
+    #[test]
+    fn an_object_declaration_is_not_dropped() {
+        let out = produce_fqns("package p\nobject Registry { fun lookup() {} }\n");
+        let fqns: Vec<&str> = out.defs.iter().map(|d| d.fqn.as_str()).collect();
+        assert!(fqns.contains(&"kotlin·p·Registry"), "{fqns:?}");
+        assert!(fqns.contains(&"kotlin·p·Registry·lookup"), "{fqns:?}");
     }
 }

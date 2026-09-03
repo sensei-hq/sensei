@@ -85,12 +85,15 @@ pub fn process(
 
     let ir = Some(adapter.parse_to_ir(content, rel_path));
 
-    // Phase 3+: FQN production, dispatched per language via the adapter. A migrated
-    // adapter derives this file's (package, module) context from its own
-    // manifest/layout rules and produces canonical FQNs so process_file can emit
-    // resolved node→node edges; an un-migrated language returns None and stays on the
-    // bare-name path.
-    let fqn = adapter.fqn_output(abs_path, content);
+    // FQN production, dispatched per language via the adapter: each derives this
+    // file's (package, module) context from its own manifest/layout rules and
+    // produces canonical FQNs so process_file can emit resolved node→node edges.
+    //
+    // EVERY adapter now implements this — there is no bare-name fallback left, and
+    // `languages::tests::every_adapter_supports_fqn_with_no_exceptions` is what
+    // keeps it that way. A `None` here means a genuine parse failure, not an
+    // unmigrated language.
+    let fqn = adapter.fqn_output(abs_path, rel_path, content);
 
     Some(FileProcessResult {
         file_id,

@@ -24,7 +24,12 @@ impl LanguageAdapter for VueAdapter {
         "vue"
     }
 
-    fn fqn_output(&self, abs_path: &str, content: &str) -> Option<super::fqn::FqnFileOutput> {
+    fn fqn_output(
+        &self,
+        abs_path: &str,
+        _rel_path: &str,
+        content: &str,
+    ) -> Option<super::fqn::FqnFileOutput> {
         super::common::sfc_fqn_output(abs_path, content)
     }
 
@@ -121,7 +126,8 @@ mod tests {
         let file = root.join("src/Card.vue");
         let content = "<script lang=\"ts\">\nimport { helper } from './util';\nexport function build() { helper(); }\n</script>\n<template><div/></template>\n";
         std::fs::write(&file, content).unwrap();
-        let out = VueAdapter.fqn_output(&file.to_string_lossy(), content).unwrap();
+        let out =
+            VueAdapter.fqn_output(&file.to_string_lossy(), "src/lib/Comp.vue", content).unwrap();
         assert!(
             out.defs.iter().any(|d| d.fqn == "typescript·app·Card·build"),
             "component script def, got: {:?}",

@@ -23,7 +23,12 @@ impl LanguageAdapter for SqlAdapter {
         "SQL"
     }
 
-    fn fqn_output(&self, abs_path: &str, content: &str) -> Option<super::fqn::FqnFileOutput> {
+    fn fqn_output(
+        &self,
+        abs_path: &str,
+        _rel_path: &str,
+        content: &str,
+    ) -> Option<super::fqn::FqnFileOutput> {
         Some(sql_fqn::produce_fqns(content, &sql_fqn::schema_from_path(abs_path)))
     }
 

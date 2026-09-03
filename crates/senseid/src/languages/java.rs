@@ -21,7 +21,12 @@ impl LanguageAdapter for JavaAdapter {
         "java"
     }
 
-    fn fqn_output(&self, _abs_path: &str, content: &str) -> Option<super::fqn::FqnFileOutput> {
+    fn fqn_output(
+        &self,
+        _abs_path: &str,
+        _rel_path: &str,
+        content: &str,
+    ) -> Option<super::fqn::FqnFileOutput> {
         Some(java_fqn::produce_fqns(content))
     }
 
