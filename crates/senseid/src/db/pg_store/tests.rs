@@ -12350,3 +12350,98 @@ async fn insert_edge_with_props_stamps_and_merges() {
             .unwrap();
     assert_eq!(empty, serde_json::json!({}), "insert_edge must not invent props");
 }
+
+/// The sweep removes ONLY the mislabelled containment `extends` rows, and
+/// cannot touch a real inheritance edge.
+///
+/// The old emit produced `file -> (unresolved type in that same file)` under
+/// the `extends` kind: 7,916 rows in the live graph, all unresolved, all
+/// duplicating containment that `nodes.parent_id` already carried. Retiring the
+/// emit stops new ones; these are the ones already written.
+///
+/// The discriminant is the whole predicate. Every edge the inheritance path
+/// writes carries `props.relation`; before `insert_edge_with_props` nothing
+/// could write props at all — so "unstamped `extends`" names the legacy rows
+/// exactly.
+///
+/// This test earns that narrowing. The first version also asserted a
+/// file-source and null-target predicate, and mutation-probing showed the test
+/// passed with EITHER clause removed — the fixtures did not isolate them. The
+/// third edge below is the isolating case: file-sourced, unresolved, and
+/// stamped, which the emit genuinely produces when a child fqn is missing. A
+/// predicate keyed on file-source-and-unresolved would delete it.
+///
+/// Breaking mutation: drop `props->>'relation' IS NULL` from the WHERE — two
+/// real inheritance edges are deleted and `removed` is 3.
+#[tokio::test]
+async fn the_sweep_takes_mislabelled_containment_and_spares_real_inheritance() {
+    let s = pg_store().await;
+    let fid = create_test_folder(&s, &format!("sweep_{}", uuid::Uuid::new_v4())).await;
+    let file =
+        s.upsert_node(&fid, "file", "a.rs", "a.rs", None, None, Some(1), Some(9)).await.unwrap();
+    let sub =
+        s.upsert_node(&fid, "class", "Sub", "a.rs", None, None, Some(2), Some(3)).await.unwrap();
+    let base =
+        s.upsert_node(&fid, "class", "Base", "b.rs", None, None, Some(1), Some(3)).await.unwrap();
+
+    // The mislabelled shape: FILE source, unresolved, no discriminant.
+    s.insert_edge(&fid, &file, None, Some("Sub"), None, "extends").await.unwrap();
+    // Real inheritance, resolved and stamped.
+    s.insert_edge_with_props(
+        &fid,
+        &sub,
+        Some(&base),
+        None,
+        None,
+        "extends",
+        &serde_json::json!({ "relation": "extends" }),
+    )
+    .await
+    .unwrap();
+    // A real UNRESOLVED inheritance edge — stamped but with no target yet. This
+    // is the common cold-index case and must NOT be swept.
+    s.insert_edge_with_props(
+        &fid,
+        &sub,
+        None,
+        Some("Missing"),
+        None,
+        "extends",
+        &serde_json::json!({ "relation": "extends" }),
+    )
+    .await
+    .unwrap();
+
+    // The case that ISOLATES the discriminant clause: file-sourced AND
+    // unresolved AND stamped. The inheritance emit really produces this — it
+    // anchors on the file node when a child fqn is missing — so a predicate
+    // keyed on "file-sourced and unresolved" would delete a real relation.
+    s.insert_edge_with_props(
+        &fid,
+        &file,
+        None,
+        Some("FromFileAnchor"),
+        None,
+        "extends",
+        &serde_json::json!({ "relation": "extends" }),
+    )
+    .await
+    .unwrap();
+
+    let removed = s.prune_mislabelled_containment_extends(&[fid]).await.unwrap();
+    assert_eq!(removed, 1, "exactly the one mislabelled row");
+
+    let left: Vec<(Option<String>,)> = sqlx_core::query_as::query_as(
+        "SELECT props->>'relation' FROM sensei.edges
+          WHERE folder_id = $1 AND kind = 'extends'::sensei.edge_kind",
+    )
+    .bind(fid)
+    .fetch_all(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(left.len(), 3, "all three real inheritance edges survive: {left:?}");
+    assert!(
+        left.iter().all(|(r,)| r.as_deref() == Some("extends")),
+        "every survivor is discriminated: {left:?}"
+    );
+}
