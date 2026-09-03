@@ -28,6 +28,31 @@
   - `5364d862` `implements` added to `GRAPH_LAYOUT_KINDS` + `COMMUNITY_EDGE_KINDS`,
     both hoisted to pinnable constants first.
 
+## LIVE IN THE GRAPH (deployed 13:07, verified)
+
+| | before | after |
+|---|---|---|
+| kotlin fqn | 0 / 1,542 | **1,709 / 2,062 (82.9%)** |
+| c fqn | 1 / 322 | **325 / 442** |
+| swift fqn | 0 / 8 | **8 / 9** |
+| inheritance edges | 0 | **120 trait_impl, 115 resolved (95.8%)** |
+
+Deploying found a defect no test would have: `Labs/Bezier3D` came back with only
+`file`/`module` nodes because `adapter_for_filename` derived the extension from
+the ORIGINAL name while adapters declare theirs lowercase — every
+uppercase-extension file was silently skipped. Fixed in `9c6c72eb`; that folder
+now yields 19/18 nodes.
+
+TWO CORRECTIONS TO MY OWN CLAIMS about the C header/impl collision fix:
+1. Those files were never parsed at all (uppercase extensions), so no collision
+   was occurring — I inferred a live bug from path shapes without checking that
+   the files produced symbols.
+2. Production splits `Bezier3D/Cpp` and `Bezier3D/Hpp` into SEPARATE folders, so
+   `rel_path` carries no directory prefix and both collapse to `c·ADVMATH`
+   anyway. Harmless — `node_id_by_fqn` is folder-scoped — but it means the fix's
+   scenario (both trees in ONE folder) is still unexercised by this corpus. The
+   unit test passes; production does not test it.
+
 ## Remaining
 
 Slices 2–10 in the map: `Inheritance` persistence → `GraphFacts` + persister →
@@ -36,8 +61,8 @@ Slices 2–10 in the map: `Inheritance` persistence → `GraphFacts` + persister
 
 ## Next command
 
-Slice 2 increment 5 — persist relations as edges in `process_file`. This is the
-big one and the three fixes below are its whole point. Then 6 (retire the
+Slice 2 increment 6 — retire the mislabelled file-sourced `extends` emit
+(`process.rs`, the parent_refs loop). Increment 5 is DONE (`722cd43e`). Then (retire the
 mislabelled emit), 7 (sweep the stale rows), 8 (java), 9 (python), 10 (delete
 the fabricating rust IR trait hack), 11 (`library_usage` kind filter).
 
