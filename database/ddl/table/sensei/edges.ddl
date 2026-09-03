@@ -82,6 +82,6 @@ comment on column edges.confidence
 comment on column edges.confidence_score
      is 'Numeric confidence 0.00-1.00. Used for similarity/duplicate edges.';
 comment on column edges.props
-     is 'Extensible metadata. For imports: {names:["a","b"]}. For duplicates: {similarity:0.86}.';
+     is 'Extensible metadata, MERGED on re-insert (props || EXCLUDED.props) so a later writer cannot erase an earlier one. For imports: {names:["a","b"]}. For duplicates: {similarity:0.86}. For extends/implements: {relation:"extends"|"implements"|"trait_impl"} — the discriminant that separates a Rust trait impl from Java-style interface implementation, which share the implements kind.';
 comment on column edges.modified_at
      is 'Timestamp of the last modification to this row.';
