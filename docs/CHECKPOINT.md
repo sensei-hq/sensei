@@ -70,30 +70,15 @@ Slices 2–10 in the map: `Inheritance` persistence → `GraphFacts` + persister
 
 ## Next command
 
-Slice 2 increment 10 — delete the fabricating rust IR trait hack
-(`extract_trait_from_impl`, rust_lang.rs:414-425), then 11 (`library_usage`
-unresolved-import count needs a kind filter). Increments 1-9 DONE
-(`49725e7b` `e6522e20` `97f4f44a` `5364d862` `722cd43e` `3fad5845` `c51d3d1e`),
-all deployed and verified. Then (retire the
-mislabelled emit), 7 (sweep the stale rows), 8 (java), 9 (python), 10 (delete
-the fabricating rust IR trait hack), 11 (`library_usage` kind filter).
+**SLICE 2 IS COMPLETE** — all 11 increments landed, gated and deployed.
+Increments 1-9 verified in the graph; 10 and 11 are code/DDL fixes not yet
+redeployed (10 changes IR extraction, so it needs an install + reindex before
+its effect is visible; 11 was applied to the live DB directly and re-measured
+unchanged).
 
-Full plan + adversarial verdicts: `/private/tmp/claude-502/.../tasks/w1b00fnoq.output`.
-
-THE THREE FIXES THAT MUST SURVIVE (adversarial review killed the naive design):
-1. NO bare-name fallback. `sole_definition_id_by_name` is kind- AND
-   language-agnostic (written for doc mentions), so an inheritance target would
-   resolve confidently WRONG: llm-gateway defines its own `BaseModel`, so 12
-   classes would point at it instead of pydantic's.
-2. STUB the internal branch on a miss, mirroring the import emit. Measured:
-   404/406 (99.5%) java relations have their parent in a DIFFERENT file, so
-   probe-only resolution is order-dependent and never heals.
-3. External supertypes need `upsert_lib_node_by_fqn`, or "which models extend
-   pydantic.BaseModel" — the headline question — is what this cannot answer.
-
-Increment 6 is now known SAFE for communities: `build_adjacency` does
-`None => continue`, and all 7,905 mislabelled `extends` edges are unresolved,
-so retiring them cannot move a community.
+Next is slice 3 of `docs/spec/2026-09-02-capability-refactor-map.md`:
+`GraphFacts` + a shared persister, then the `OnMiss` migration of the four
+existing resolution policies.
 
 ## Open questions
 
@@ -107,7 +92,6 @@ excluding rust trait impls" stays a pure props predicate).
   binary. Needs `make install-debug` + reindex, batched with later slices.
 - 44,689/46,117 unknown stubs unresolved (java-dominated).
 - TS/JS locally-declared-names pre-pass missing (`t` 573, `fn` 189, `setLoading` 235).
-- `library_usage.unresolved_import_count` has no kind filter (latent).
 - `libraries.rs` holds a third import-classifier copy (inert — writes a dead field).
 - 7,418 `nodes.file_path` rows are absolute.
 - #149 community re-measure; #150 content-hash identity (684 multi-folder groups).
