@@ -32,7 +32,6 @@ pub fn process(
         rel_path.rsplit_once('.').map(|(n, _)| n).unwrap_or(rel_path).replace('\\', "/");
 
     let mut symbols = Vec::new();
-    let mut parent_refs = Vec::new();
 
     for sym in &parsed.symbols {
         let node_kind = NodeKind::from_symbol_kind(&sym.kind);
@@ -64,10 +63,6 @@ pub fn process(
             complexity,
             parent: sym.parent.clone(),
         });
-
-        if let Some(ref parent_name) = sym.parent {
-            parent_refs.push(ParentRef { method_id: sym_id, parent_name: parent_name.clone() });
-        }
     }
 
     let unresolved_imports: Vec<String> =
@@ -108,7 +103,6 @@ pub fn process(
         symbols,
         unresolved_imports,
         unresolved_calls,
-        parent_refs,
         file_refs: vec![],
         fn_mentions: vec![],
         sections: vec![],
@@ -236,8 +230,14 @@ mod tests {
             );
         }
 
-        // parent_refs should match
-        assert_eq!(r.parent_refs.len(), methods_with_parent.len());
+        // The parser fact this used to check via the dead `parent_refs` mirror:
+        // every method-like symbol with an enclosing type names it. Containment
+        // is persisted from `parent` (via parent_fqn -> nodes.parent_id), so
+        // that is the field worth asserting.
+        assert!(
+            methods_with_parent.iter().all(|m| m.parent.as_deref().is_some_and(|p| !p.is_empty())),
+            "a method with a parent must name it"
+        );
     }
 
     #[test]
