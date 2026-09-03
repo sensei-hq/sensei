@@ -13,6 +13,12 @@
   than zeroed; `every_adapter_supports_fqn_with_no_exceptions` gates it.
   `fqn_output` now takes `rel_path` (folder-relative, = `nodes.file_path`).
 - App unit tests no longer need a live daemon (`335d2421`).
+- **Graph layout kinds** named + DDL-pinned; dead `app/tests/graph.test.ts` removed
+  (`21b0cd85`). That file was unreachable by any runner and asserted `e.type` where
+  the API emits `kind` — apparent coverage for the endpoint slice 2 must not break.
+- **Slice 2 increment 1** — `RelationKind` {Extends, Implements, TraitImpl} with the
+  `edges.props.relation` discriminant, DDL-guarded (`49725e7b`). ADR amended: its
+  `Mixin` variant dropped because `IRClass.mixins` has no writer.
 
 ## Remaining
 
@@ -22,14 +28,30 @@ Slices 2–10 in the map: `Inheritance` persistence → `GraphFacts` + persister
 
 ## Next command
 
-Slice 2 (`Inheritance`). java/python/rust already EXTRACT inheritance and nothing
-reads it, so this slice is persistence, not parsing. Measure the graph view at
-`codebase.rs:55` BEFORE retiring the 7,901 mislabelled `extends` containment
-edges — that before/after was an explicit decision.
+Slice 2 increment 1b: add the relations carrier to `FqnFileOutput`
+(`languages/fqn.rs:59-71`), then increment 2 (rust trait impls from the `ImplCtx`
+that already computes them at `rust_lang.rs:1105`). Plan + adversarial verdicts:
+`/private/tmp/claude-502/.../tasks/w1b00fnoq.output` — 11 increments, 6 blocking
+objections already folded into the design.
+
+THE THREE FIXES THAT MUST SURVIVE (adversarial review killed the naive design):
+1. NO bare-name fallback. `sole_definition_id_by_name` is kind- AND
+   language-agnostic (written for doc mentions), so an inheritance target would
+   resolve confidently WRONG: llm-gateway defines its own `BaseModel`, so 12
+   classes would point at it instead of pydantic's. Needs a type+language
+   restricted sibling, or no fallback.
+2. STUB the internal branch on a miss, mirroring the import emit. Measured:
+   404/406 (99.5%) java relations have their parent in a DIFFERENT file, so
+   probe-only resolution is order-dependent and never heals.
+3. External supertypes need the lib branch (`upsert_lib_node_by_fqn`), or
+   "which models extend pydantic.BaseModel" — the headline question — is exactly
+   what this cannot answer.
 
 ## Open questions
 
-None blocking.
+None blocking. Two resolved by fiat and documented in code/ADR: props key is
+`relation`, and every inheritance edge is stamped uniformly (so "implements X
+excluding rust trait impls" stays a pure props predicate).
 
 ## Known broken
 
