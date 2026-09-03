@@ -1,92 +1,80 @@
 # Checkpoint
 
-**Slice:** doc references now RESOLVE (`6bee2674`) — 0 → 74,427 (30.8%),
-verified on a full reindex of 51,971 files. Branch `develop`.
+**Slice:** capability-refactor slices 0 + 1 DONE (`0a31582e`, `e49b1ac1`).
+Branch `develop`. Gates: rust 2,705/0, app 1,698/118, clippy 0, fmt clean.
+Plan: `docs/spec/2026-09-02-capability-refactor-map.md` (+ the ADR beside it).
 
-## Graph-wide edge resolution
+## Slice 0 — 45% of the graph was not your code
 
-| kind | edges | resolved |
+A vendored Node/OpenSSL tree was indexed from a path that HAD an exclusion
+entry. The entry read `find-me-board/docs/proposal/deck-node`; the real path was
+`pre-sales/find-me-board/…`. `root_exclusion_prefixes` correctly joins
+`root + entry`, so the resolved prefix pointed nowhere, matched nothing, and
+**nothing said so**.
+
+The fix is the silence: `check_exclusions` resolves each entry through the shared
+resolver, probes disk, warns, and returns `exclusionChecks` from
+`add_watch_root`. Also unified the matcher — `add_watch_root` registered the
+watcher with RAW relative entries while `scan.rs` uses resolved absolute ones,
+which is why `should_watch_path` had its own two-form copy that could disagree.
+
+| | before | after |
 |---|---|---|
-| `calls` | 336,682 | 65.1% |
-| `references` | 241,515 | **30.8%** (was 0) |
-| `imports` | 162,691 | 15.8% — **every local one**; rest genuinely external |
-| `extends` | 7,901 | **0%** — next (#147) |
+| nodes | 728,742 | **399,722** (−45.1%) |
+| files | 51,973 | 46,516 |
+| nodes under excluded path | 329,087 | **0** |
+| largest kind | `const` 292,555 | section 141,088 · function 95,168 |
 
-## Why references could never resolve
+## Slice 1 — one registry, and a matrix that cannot lie
 
-`extract_file_refs` returned `repo.join(spec)`, so a doc pointing at
-`crates/mcp/src/lib.rs` was stored **machine-absolute** — while 98.9% of
-`nodes.file_path` are repo-relative. They could never match. It now stores the
-repo-relative form (existence still checked against the absolute one), which also
-keeps a local filesystem layout out of a shared graph. And nothing tried to
-resolve them at all — the same shape as the imports defect.
+`extensions()` is declared per adapter with **no default**; `all_adapters()` is
+the single list; `adapter_for_ext` derives from both. Frameworks declare
+`host_language()` (svelte, vue → typescript), which is why a `.svelte` file's
+symbols carry `typescript·` fqns. `capability_matrix()` is surfaced as
+`languageCapabilities` on `get_project_summary`, beside `graphHealth`.
 
-**Ambiguity is not resolved, deliberately.** A doc writes `` `handleAuth` `` with
-no signature and no module path; with two same-named definitions there is nothing
-to choose on. `sole_definition_id_by_name` returns `None` for ambiguous *and*
-absent alike — a doc silently attached to the wrong same-named symbol is worse
-than one attached to nothing. `LIMIT 2` is the trick: one row is unambiguous, two
-means stop counting.
+It reads a **declared** `supports_fqn` — cheap enough to serve — but the
+declaration is not trusted: `declared_fqn_support_matches_a_real_probe` builds a
+per-language fixture and CALLS `fqn_output`, failing the build on disagreement.
 
-**A broken link mints nothing** — unlike an import, a file reference never
-get-or-creates. A doc naming a nonexistent file is a fact about the doc.
+```
+python rust typescript javascript java sql svelte vue   fqn=true
+swift kotlin c                                          fqn=FALSE
+svelte, vue                                             host=typescript
+```
 
-Remaining unresolved, all correct: 121,510 bare words (ambiguous, or not symbols
-— `true`, `id`), 29,767 SHOUTY_CASE env vars, 15,811 links outside the index.
-Zero resolved to a stub or lib node. Spot-checked as real traceability:
-`local-agent-coordinator.md` → the `run_status` enum DDL, the `advance_run`
-handler, `playbook_run`, `driver_for`, `AcpObserveDriver`.
+Those three gaps were invisible before: `fqn_output`'s `None` default could not
+distinguish "no such concept" from "not written yet", so their symbols stayed
+findable by NAME while an fqn lookup could never see them.
 
-## Next — in order
+## Next — slice 1b
 
-1. **`extends` 7,901 / 0%** (#147) — small, and `codebase.rs:55` consumes it, so
-   a live reader silently gets nothing.
-2. **Externals → `lib_symbol`** — 136,642 edges. Largest, riskiest: mints nodes,
-   MUST be lookup-first (59% of edges are locally-owned packages that only *look*
-   external).
-3. **46,117 unknown stubs** — all have in-edges so no GC touches them;
-   java-dominated. Need resolution.
-4. **TS/JS local callbacks** — `t` (573), `fn` (189), `setLoading` (235) need a
-   locally-declared-names pre-pass.
-5. Latent/cosmetic: `library_usage.unresolved_import_count` missing a kind
-   filter; `libraries.rs` third classifier copy (inert); #150 content-hash
-   identity (684 multi-folder path groups); 7,418 absolute `nodes.file_path`
-   rows (1.1%); #149 community re-measure.
+FQN for **swift, kotlin, c**. `fqn_support_gaps_are_named_and_must_only_shrink`
+pins the list at exactly those three; it may only shrink, and empty is done.
+Kotlin is closest to Java (package declarations); C needs a file-scoped scheme
+(`c·<package>·<file>·<name>`), constructible and more precise than name-matching.
 
-## Known-broken
+Then slice 2 (`Inheritance` — java/python/rust already EXTRACT it, so that slice
+is persistence, not parsing) and the rest of the map.
 
-`references` 251,229/0 (`doc_indexer.rs:584` and `:587` — two defects).
-`extends` 7,901/0 (#147). `calls` 57% for this project.
-`dojo_memberships.sync_status` dead. `graph-end-state-sketch.md` §1–12 NOT SAFE
-TO BUILD FROM. 44,689 `unknown` stubs all have in-edges, so they need resolution
-not GC (java 27,967 = 51%).
+## Graph state
+
+399,722 nodes / 46,516 files / 8,855 folders. Edge resolution: calls 65.1% ·
+references 30.8% · imports 18.9% (every LOCAL one) · extends 0% — and `extends`
+is misnamed containment, not inheritance (see the map).
 
 ## Traps
 
-**Never `git checkout -- <path>` to undo a mutation** — I did, and destroyed all
-uncommitted work in `process.rs` (emit branch, hoisted `fqn_lang`, two tests).
-Take a `cp` backup to /tmp before mutating and restore from that. Related: that
-same bad mutation did NOT fail its test, which exposed a real gap — nothing
-pinned lookup-first, since probe and get-or-create reach the same node when the
-target already exists. A mutation that fails to fail is a finding.
+Run the full gate with the daemon STOPPED (`metrics_pipeline_end_to_end` is
+timing-sensitive under contention). Never `git checkout --` to undo a mutation —
+use a `cp` backup. Never pipe a gate through `| head` (SIGPIPE truncation masked
+a real `fmt` failure). The leak hook rejects `/Users/x/` — use `/Users/dev/`.
+`sensei_test` has no automated schema provisioning, so DDL changes need applying
+to both DBs. Verifying an indexer fix needs `delete from sensei.scan_state`
+first, and stale nodes for now-excluded files need explicit deletion.
 
-**Run the full gate with the daemon STOPPED.** `metrics_pipeline_end_to_end`
-failed once at 711s under daemon CPU/DB contention (`blocked=1 running=1`), then
-passed in isolation in 5s and in a 186s uncontended full run. Timing-sensitive,
-not flaky-for-no-reason.
+## Lesson worth keeping
 
-The leak hook blocks real home-directory paths in source comments — use
-placeholder shapes in doc examples.
-
-`sensei_test` has NO automated schema provisioning — a DDL change must be applied
-to both DBs. Never pipe a gate through `| head` (SIGPIPE truncated a run and
-masked a real `fmt --check` failure). An incremental scan skips unchanged files,
-so verifying an indexer fix needs `delete from sensei.scan_state` for the folder
-first. Wipe needs the daemon STOPPED; `/health` not `/api/health`.
-
-## Cleanup lesson
-
-A cleanup predicate narrower than the classifier it cleans up after is easy to
-get wrong: I cleared `@/` and `~/` and MISSED `lib·$lib%`, catching it only by
-re-checking the remaining `$`-prefixed `lib_package` names instead of declaring
-done. Enumerate the predicate from the classifier's own local classes.
+I misdiagnosed slice 0 twice before printing what the resolver ACTUALLY produces
+and testing it against disk. Trace the value end-to-end first; theorising from
+one layer cost three wrong answers.
