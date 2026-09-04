@@ -70,15 +70,27 @@ Slices 2–10 in the map: `Inheritance` persistence → `GraphFacts` + persister
 
 ## Next command
 
-**SLICE 2 IS COMPLETE** — all 11 increments landed, gated and deployed.
-Increments 1-9 verified in the graph; 10 and 11 are code/DDL fixes not yet
-redeployed (10 changes IR extraction, so it needs an install + reindex before
-its effect is visible; 11 was applied to the live DB directly and re-measured
-unchanged).
+SLICE 2 COMPLETE (11/11). Slice 3 TRIMMED to increments 0-4 with the user's
+approval; deviation + 3 map corrections recorded in `f2d7ea5d`.
 
-Next is slice 3 of `docs/spec/2026-09-02-capability-refactor-map.md`:
-`GraphFacts` + a shared persister, then the `OnMiss` migration of the four
-existing resolution policies.
+NEXT: slice 3 increment 0 — the golden differential, REDESIGNED. The first
+design drew 8 blocking objections; the three that matter:
+1. Arms must be INSTRUMENTED AT THE EMIT SITE and recorded as their own row
+   type (`A|{arm}|{count}`). Four arms (`imports/probe-hit` vs `imports/stub`,
+   `inh/in-file` vs `inh/stub`) converge to identical FINAL-STATE rows, so a
+   post-hoc classifier cannot prove the branches increments 3-4 delete.
+2. Anti-vacuity must iterate a HARDCODED arm list. Counting observed rows then
+   asserting each >= 1 is a tautology — a missing arm is an absent key.
+3. Two-order equality may cover ONLY calls + inheritance. Doc references resolve
+   at emit with no stub arm, so they are legitimately order-dependent; hold the
+   doc file in a fixed position and write the reason down.
+
+Also fix `TargetRef::LibFqn` to carry `name` — `upsert_lib_node_by_fqn` takes
+one, and 6,910 live lib_symbol rows would be silently rewritten by a
+last-segment derivation.
+
+Full plan + 8 blocking objections:
+`/private/tmp/claude-502/.../tasks/w9pzlhuqj.output`
 
 ## Open questions
 
@@ -87,6 +99,12 @@ None blocking. Two resolved by fiat and documented in code/ADR: props key is
 excluding rust trait impls" stays a pure props predicate).
 
 ## Known broken
+
+- Increment 10 (rust IR trait fix) is committed but NOT redeployed, so its
+  effect is unverified in the graph. Needs install + reindex.
+- `nodes.language` is last-writer-wins on the reference path (`graph.rs:392`
+  lacks the `CASE WHEN EXCLUDED.resolved` guard its neighbours have), so a
+  cross-language reference can relabel a node. Pre-existing.
 
 - Slice 1b is **not live in the graph**: the daemon runs the installed 0.9.1
   binary. Needs `make install-debug` + reindex, batched with later slices.
