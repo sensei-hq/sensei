@@ -1,6 +1,49 @@
 //! Process phase: index repos, folders, and files; handle deletions.
 
 use super::super::executor::TaskContext;
+
+/// Which emit ARM each edge came from — test-only observability.
+///
+/// Several arms are indistinguishable in final state: an internal target
+/// resolved from `fqn_ids` and one created as a stub both end as a resolved
+/// edge to an enriched node. So a check that classifies rows AFTER the fact
+/// cannot prove which branch ran, and a refactor that dropped the in-file fast
+/// path would leave the graph byte-identical and be caught by nothing.
+///
+/// A thread-local rather than a return value: the emit block is deep inside
+/// `process_file` and threading a counter through it would change production
+/// signatures to serve a test. `#[cfg(test)]` so there is no shipped cost.
+#[cfg(test)]
+pub(crate) mod arm_tally {
+    use std::cell::RefCell;
+    use std::collections::BTreeMap;
+
+    thread_local! {
+        static TALLY: RefCell<BTreeMap<&'static str, usize>> = const { RefCell::new(BTreeMap::new()) };
+    }
+
+    pub(crate) fn bump(arm: &'static str) {
+        TALLY.with(|t| *t.borrow_mut().entry(arm).or_insert(0) += 1);
+    }
+
+    pub(crate) fn reset() {
+        TALLY.with(|t| t.borrow_mut().clear());
+    }
+
+    /// Read and clear. Tests assert against a HARDCODED arm list — counting
+    /// what was observed and asserting each count >= 1 is a tautology.
+    pub(crate) fn take() -> BTreeMap<&'static str, usize> {
+        TALLY.with(|t| std::mem::take(&mut *t.borrow_mut()))
+    }
+}
+
+/// Record an emit arm. Compiles away entirely outside tests.
+macro_rules! arm {
+    ($name:literal) => {
+        #[cfg(test)]
+        crate::tasks::handlers::process::arm_tally::bump($name);
+    };
+}
 use super::super::{Task, TaskKind};
 use super::helpers::{build_globset, is_binary_ext, is_probably_binary};
 use std::path::Path;
@@ -1522,6 +1565,7 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
                 match &rel.parent_fqn {
                     Some(pf) if rel.is_lib => {
                         let pkg = pf.split(crate::languages::fqn::SEP).nth(1).unwrap_or("");
+                        arm!("inh/lib");
                         let tid = ctx
                             .pg()
                             .upsert_lib_node_by_fqn(&folder_id, pf, &rel.parent_name, pkg)
@@ -1542,8 +1586,13 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
                     }
                     Some(pf) => {
                         let tid = match fqn_ids.get(pf) {
-                            Some(id) => *id,
-                            None => ctx
+                            Some(id) => {
+                                arm!("inh/in-file");
+                                *id
+                            }
+                            None => {
+                                arm!("inh/stub");
+                                ctx
                                 .pg()
                                 .upsert_node_by_fqn(
                                     &folder_id,
@@ -1557,7 +1606,8 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
                                     None,
                                 )
                                 .await
-                                .map_err(|e| format!("upsert supertype {pf}: {e}"))?,
+                                .map_err(|e| format!("upsert supertype {pf}: {e}"))?
+                            }
                         };
                         ctx.pg()
                             .insert_edge_with_props(
@@ -1573,6 +1623,7 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
                             .map_err(|e| format!("insert_edge ({kind}): {e}"))?;
                     }
                     None => {
+                        arm!("inh/unresolvable");
                         ctx.pg()
                             .insert_edge_with_props(
                                 &folder_id,
@@ -2346,6 +2397,79 @@ mod tests {
             parent_names.iter().all(|p| p.as_deref() == Some("Holder")),
             "each method must still hang off its TYPE via parent_id: {parent_names:?}"
         );
+
+        ctx.pg().remove_watch_root(&rid).await.ok();
+    }
+
+    /// Every inheritance emit ARM must actually fire, and the list is hardcoded.
+    ///
+    /// This is the mechanism the slice-3 gate needs. Four of the emit arms are
+    /// indistinguishable in FINAL STATE — `inh/in-file` and `inh/stub` both end
+    /// as a resolved edge to an enriched node — so a check that classifies rows
+    /// after the fact cannot prove which branch ran. A migration that routed
+    /// every internal target through `upsert_node_by_fqn`, dropping the
+    /// `fqn_ids` fast path, would leave the graph identical and be caught by
+    /// nothing.
+    ///
+    /// The arm list is a CONST, iterated. An earlier design built a map by
+    /// counting observed arms and asserted each count >= 1, which cannot fail:
+    /// an arm that stops firing is an absent key, not a zero.
+    ///
+    /// Breaking mutation: delete any one arm's `bump` call, or collapse two
+    /// branches into one — the missing arm is named in the failure.
+    #[tokio::test]
+    async fn every_inheritance_emit_arm_fires() {
+        const ARMS: [&str; 4] = ["inh/lib", "inh/stub", "inh/in-file", "inh/unresolvable"];
+
+        let ctx = make_ctx().await;
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("arms");
+        std::fs::create_dir_all(repo.join("src")).unwrap();
+        std::fs::write(repo.join("Cargo.toml"), "[package]\nname = \"arms\"\n").unwrap();
+        std::fs::write(repo.join("src/greet.rs"), "pub trait Greet {}\n").unwrap();
+        // One file reaching all three arms: an external trait (lib), a trait in
+        // ANOTHER file (stub — the 99.5% real case), and one nothing can place.
+        std::fs::write(
+            repo.join("src/widget.rs"),
+            "use crate::greet::Greet;\npub struct W;\nimpl std::fmt::Debug for W {}\nimpl Greet for W {}\nimpl Mystery for W {}\n",
+        )
+        .unwrap();
+
+        let repo_path = repo.to_string_lossy().to_string();
+        let rid = ctx
+            .pg()
+            .add_watch_root(&tmp.path().to_string_lossy(), "arms", &serde_json::json!([]))
+            .await
+            .unwrap();
+        let fid = ctx.pg().upsert_repo_kind(&rid, "git", "arms", &repo_path).await.unwrap();
+        ctx.pg().update_folder_status(&fid, "indexing").await.unwrap();
+
+        // `inh/in-file` needs BOTH sides in ONE file, because `fqn_ids` holds
+        // only this file's defs. Without such a fixture, collapsing the fast
+        // path into the stub path leaves every test green — verified by probing
+        // exactly that, which is why this file exists.
+        std::fs::write(
+            repo.join("src/pair.rs"),
+            "pub trait Pair {}\npub struct P;\nimpl Pair for P {}\n",
+        )
+        .unwrap();
+
+        arm_tally::reset();
+        for f in ["src/widget.rs", "src/pair.rs"] {
+            let abs = repo.join(f).to_string_lossy().to_string();
+            process_file(&ctx, &Task::for_file(TaskKind::ProcessFile, &repo_path, &abs))
+                .await
+                .unwrap();
+        }
+        let fired = arm_tally::take();
+
+        assert!(!fired.is_empty(), "no arms fired at all — the tally is not wired");
+        for arm in ARMS {
+            assert!(
+                fired.get(arm).copied().unwrap_or(0) >= 1,
+                "emit arm {arm:?} never fired; got {fired:?}"
+            );
+        }
 
         ctx.pg().remove_watch_root(&rid).await.ok();
     }
