@@ -81,9 +81,26 @@ emit paths. Slice 3 changed no graph output BY DESIGN — its value is that a
 dropped in-file fast path is now caught, which was invisible to every
 pre-existing test (demonstrated by probe).
 
-IN FLIGHT: deploy to verify (a) slice 2 increment 10's IR trait fix, still
-never deployed, and (b) slice 3's behaviour-preservation claim, via a scoped
-reindex compared against `/tmp/pre_slice3.txt`.
+DEPLOYED 2026-09-04 10:47 and verified. Slice 2 increment 10 and all of slice 3
+are now live.
+
+MY FIRST VERIFICATION DESIGN WAS INVALID and is recorded so it is not repeated:
+I compared edge counts before/after reindexing
+`/Users/Jerry/Developer/sensei-hq/sensei` — the one repo whose SOURCE I had
+been editing all session (deleted `extract_trait_from_impl`, removed two
+ladders, ~130 lines of emit code). Fewer call edges is the expected consequence
+of deleting code, not evidence about the refactor. The confound is total, and
+the old binary was gone so no clean baseline could be retaken.
+
+WHAT DID VERIFY IT — invariants that need no before-snapshot, all holding with
+the persister live:
+- props asymmetry EXACT: calls/imports/references 0% stamped,
+  extends/implements 100%. A persister that stamped uniformly would break this.
+- `target_id` xor `target_name`: 0 rows have both, so resolving still erases
+  the name.
+- inheritance resolution intact: extends 1,553/1,553, implements 1,253/1,260.
+- both stub kinds live and distinct: 45,479 `function` stubs vs 254 `class`
+  stubs, proving the per-caller `kind` on the policy still fires.
 
 THEN: slice 4 — `ImportPaths` trait, then `LibraryOrigin` and externals as
 `lib_symbol` (136,569 import edges, only 25,788 resolved — the largest
