@@ -12445,3 +12445,163 @@ async fn the_sweep_takes_mislabelled_containment_and_spares_real_inheritance() {
         "every survivor is discriminated: {left:?}"
     );
 }
+
+/// `persist_edge_fact` must reproduce each inheritance arm's OBSERVED
+/// behaviour, not a plausible version of it.
+///
+/// Written against what the arms at process.rs actually do, because a persister
+/// tested against my assumptions would codify the assumptions. Each assertion
+/// below mirrors a named existing test: the Lib arm mirrors the external half
+/// of `trait_impls_become_relations_and_inherent_impls_do_not`, the stub arm
+/// mirrors `a_trait_impl_persists_as_an_implements_edge_before_its_trait_exists`,
+/// and the unresolvable arm mirrors the `parent_fqn = None` branch.
+///
+/// Breaking mutations: (1) consult `known` AFTER the stub instead of before —
+/// the in-file assertion gets a different id; (2) drop `props` from the
+/// insert — the discriminant assertion fails; (3) make `LeaveUnresolved`
+/// create a node — the unresolved assertion finds a target_id.
+#[tokio::test]
+async fn persist_edge_fact_reproduces_every_inheritance_arm() {
+    use crate::graph_facts::{EdgeFact, OnMiss, TargetRef};
+    use std::collections::HashMap;
+
+    let s = pg_store().await;
+    let fid = create_test_folder(&s, &format!("facts_{}", uuid::Uuid::new_v4())).await;
+    let sub =
+        s.upsert_node(&fid, "class", "Sub", "a.rs", None, None, Some(1), Some(3)).await.unwrap();
+    let inflight =
+        s.upsert_node(&fid, "class", "Known", "a.rs", None, None, Some(5), Some(7)).await.unwrap();
+    let mut known = HashMap::new();
+    known.insert("rust·demo·a·Known".to_string(), inflight);
+
+    let props = serde_json::json!({ "relation": "trait_impl" });
+    let rel = |id: uuid::Uuid| async move {
+        let row: (Option<uuid::Uuid>, Option<String>, Option<String>) =
+            sqlx_core::query_as::query_as(
+                "SELECT target_id, target_name, props->>'relation' FROM sensei.edges WHERE id = $1",
+            )
+            .bind(id)
+            .fetch_one(pg_store().await.pool())
+            .await
+            .unwrap();
+        row
+    };
+
+    // ARM: in-file hit. `known` is consulted FIRST, so no upsert happens and
+    // the existing node's id is used — which is what protects it from being
+    // relabelled by `language = COALESCE(EXCLUDED.language, nodes.language)`.
+    let e = s
+        .persist_edge_fact(
+            &fid,
+            &EdgeFact {
+                source_id: sub,
+                target: TargetRef::Internal {
+                    fqn: "rust·demo·a·Known".into(),
+                    name: "Known".into(),
+                    on_miss: OnMiss::CreateStub { kind: "class" },
+                },
+                kind: "implements",
+                props: props.clone(),
+            },
+            &known,
+            Some("rust"),
+        )
+        .await
+        .unwrap();
+    let (tid, tname, r) = rel(e).await;
+    assert_eq!(tid, Some(inflight), "an in-file target must reuse its id, not be re-upserted");
+    assert_eq!(tname, None, "resolving erases target_name");
+    assert_eq!(r.as_deref(), Some("trait_impl"), "props must reach the row");
+
+    // ARM: stub. The target is unknown, so a placeholder is created with the
+    // stated kind and the edge resolves to it — the property that makes
+    // resolution order-independent.
+    let e = s
+        .persist_edge_fact(
+            &fid,
+            &EdgeFact {
+                source_id: sub,
+                target: TargetRef::Internal {
+                    fqn: "rust·demo·b·Later".into(),
+                    name: "Later".into(),
+                    on_miss: OnMiss::CreateStub { kind: "class" },
+                },
+                kind: "implements",
+                props: props.clone(),
+            },
+            &known,
+            Some("rust"),
+        )
+        .await
+        .unwrap();
+    let (tid, _, _) = rel(e).await;
+    assert!(tid.is_some(), "a stub must resolve the edge");
+    let stub_kind: Option<String> = sqlx_core::query_scalar::query_scalar(
+        "SELECT kind::text FROM sensei.nodes WHERE folder_id = $1 AND fqn = $2",
+    )
+    .bind(fid)
+    .bind("rust·demo·b·Later")
+    .fetch_optional(s.pool())
+    .await
+    .unwrap()
+    .flatten();
+    assert_eq!(stub_kind.as_deref(), Some("class"), "the stub carries the kind the policy stated");
+
+    // ARM: LeaveUnresolved on a probe miss — no node is invented.
+    let e = s
+        .persist_edge_fact(
+            &fid,
+            &EdgeFact {
+                source_id: sub,
+                target: TargetRef::Internal {
+                    fqn: "rust·demo·c·Absent".into(),
+                    name: "Absent".into(),
+                    on_miss: OnMiss::LeaveUnresolved,
+                },
+                kind: "implements",
+                props: props.clone(),
+            },
+            &known,
+            Some("rust"),
+        )
+        .await
+        .unwrap();
+    let (tid, tname, _) = rel(e).await;
+    assert_eq!(tid, None, "LeaveUnresolved must NOT create a node");
+    assert_eq!(tname.as_deref(), Some("Absent"), "the name is kept so the fact survives");
+    let invented: Option<uuid::Uuid> = s.node_id_by_fqn(&fid, "rust·demo·c·Absent").await.unwrap();
+    assert!(invented.is_none(), "no row may be minted on a probe miss");
+
+    // ARM: external. Mints a lib_symbol under a lib_package, carrying the
+    // EXPLICIT name rather than the fqn's last segment.
+    let e = s
+        .persist_edge_fact(
+            &fid,
+            &EdgeFact {
+                source_id: sub,
+                target: TargetRef::Lib {
+                    fqn: "lib·std·std::fmt·Debug".into(),
+                    name: "Debug".into(),
+                    package: "std".into(),
+                },
+                kind: "implements",
+                props,
+            },
+            &known,
+            Some("rust"),
+        )
+        .await
+        .unwrap();
+    let (tid, _, _) = rel(e).await;
+    assert!(tid.is_some(), "an external supertype resolves to a lib node");
+    let lib_name: Option<String> = sqlx_core::query_scalar::query_scalar(
+        "SELECT name FROM sensei.nodes WHERE folder_id = $1 AND fqn = $2",
+    )
+    .bind(fid)
+    .bind("lib·std·std::fmt·Debug")
+    .fetch_optional(s.pool())
+    .await
+    .unwrap()
+    .flatten();
+    assert_eq!(lib_name.as_deref(), Some("Debug"), "the lib node's name is the one supplied");
+}
