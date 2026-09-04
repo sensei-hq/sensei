@@ -107,11 +107,18 @@ pub mod arm_tally {
     use std::collections::BTreeMap;
 
     thread_local! {
-        static TALLY: RefCell<BTreeMap<&'static str, usize>> = const { RefCell::new(BTreeMap::new()) };
+        static TALLY: RefCell<BTreeMap<String, usize>> = const { RefCell::new(BTreeMap::new()) };
     }
 
-    pub(crate) fn bump(arm: &'static str) {
-        TALLY.with(|t| *t.borrow_mut().entry(arm).or_insert(0) += 1);
+    /// Record an arm firing, SCOPED BY EDGE KIND.
+    ///
+    /// The kind is part of the key because one persister serves every kind. An
+    /// unscoped tally would let the inheritance test pass on a CALL arm's
+    /// firing once both are migrated — a test that cannot distinguish which
+    /// caller exercised a branch does not pin either.
+    pub(crate) fn bump(kind: &str, arm: &'static str) {
+        let key = format!("{kind}/{arm}");
+        TALLY.with(|t| *t.borrow_mut().entry(key).or_insert(0) += 1);
     }
 
     pub(crate) fn reset() {
@@ -120,7 +127,7 @@ pub mod arm_tally {
 
     /// Read and clear. Tests assert against a HARDCODED arm list — counting
     /// what was observed and asserting each count >= 1 is a tautology.
-    pub(crate) fn take() -> BTreeMap<&'static str, usize> {
+    pub(crate) fn take() -> BTreeMap<String, usize> {
         TALLY.with(|t| std::mem::take(&mut *t.borrow_mut()))
     }
 }
