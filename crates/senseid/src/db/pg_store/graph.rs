@@ -1188,7 +1188,7 @@ impl PgStore {
         let (target_id, target_name) = match &fact.target {
             TargetRef::Lib { fqn, name, package } => {
                 #[cfg(test)]
-                crate::graph_facts::arm_tally::bump("fact/lib");
+                crate::graph_facts::arm_tally::bump(fact.kind, "lib");
                 let id = self.upsert_lib_node_by_fqn(folder_id, fqn, name, package).await?;
                 (Some(id), None)
             }
@@ -1199,13 +1199,13 @@ impl PgStore {
                     // demonstrated by probe, both end as a resolved edge to an
                     // enriched node — so nothing else can prove it still runs.
                     #[cfg(test)]
-                    crate::graph_facts::arm_tally::bump("fact/in-file");
+                    crate::graph_facts::arm_tally::bump(fact.kind, "in-file");
                     (Some(*id), None)
                 }
                 None => match on_miss {
                     OnMiss::CreateStub { kind } => {
                         #[cfg(test)]
-                        crate::graph_facts::arm_tally::bump("fact/stub");
+                        crate::graph_facts::arm_tally::bump(fact.kind, "stub");
                         let id = self
                             .upsert_node_by_fqn(folder_id, fqn, kind, name, language, None)
                             .await?;
@@ -1221,7 +1221,7 @@ impl PgStore {
             },
             TargetRef::Unresolvable { name } => {
                 #[cfg(test)]
-                crate::graph_facts::arm_tally::bump("fact/unresolvable");
+                crate::graph_facts::arm_tally::bump(fact.kind, "unresolvable");
                 (None, Some(name.clone()))
             }
         };
