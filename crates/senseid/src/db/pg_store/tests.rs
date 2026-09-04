@@ -12605,3 +12605,52 @@ async fn persist_edge_fact_reproduces_every_inheritance_arm() {
     .flatten();
     assert_eq!(lib_name.as_deref(), Some("Debug"), "the lib node's name is the one supplied");
 }
+
+/// A RESOLVED import must stay distinguishable from an external one.
+///
+/// `import_target_counts` used `COALESCE(target_name, '')`, justified by a
+/// comment reading "MEASURED non-null on all 136,484 import edges". That was
+/// true when written — imports were 0% resolved. Resolving ERASES `target_name`
+/// (the `target_id` xor `target_name` invariant), so once 25,788 imports
+/// resolved, every one of them collapsed into a single `target = ''` group,
+/// which `classify_import("")` then reported as ONE external package.
+///
+/// Live effect: `/api/graph/imports` reported external 136,329 / local 244 when
+/// the truth is 110,785 / 25,788. That is the instrument any claim about
+/// import resolution would be measured with.
+///
+/// Breaking mutation: restore `COALESCE(target_name, '')` — the resolved row
+/// arrives as `Some("")` instead of `None` and the assertion fails.
+#[tokio::test]
+async fn a_resolved_import_is_not_reported_as_an_empty_external_target() {
+    let s = pg_store().await;
+    let fid = create_test_folder(&s, &format!("impcount_{}", uuid::Uuid::new_v4())).await;
+    let src =
+        s.upsert_node(&fid, "file", "a.ts", "a.ts", None, None, Some(1), Some(9)).await.unwrap();
+    let tgt =
+        s.upsert_node(&fid, "module", "b", "b.ts", None, None, Some(1), Some(9)).await.unwrap();
+
+    // A resolved import: target_id set, target_name NULL — the shape the
+    // invariant guarantees.
+    s.insert_edge(&fid, &src, Some(&tgt), None, None, "imports").await.unwrap();
+    // An external one, unresolved, carrying its specifier.
+    s.insert_edge(&fid, &src, None, Some("java.util.List"), None, "imports").await.unwrap();
+
+    let rows = s.import_target_counts().await.unwrap();
+    let mine: Vec<_> = rows
+        .iter()
+        .filter(|(t, _, _)| t.is_none() || t.as_deref() == Some("java.util.List"))
+        .collect();
+
+    let resolved = mine
+        .iter()
+        .find(|(t, _, _)| t.is_none())
+        .expect("a resolved import must arrive with target = None, not Some(\"\")");
+    assert!(resolved.2 >= 1, "the resolved row must count as resolved: {resolved:?}");
+
+    let external = mine
+        .iter()
+        .find(|(t, _, _)| t.as_deref() == Some("java.util.List"))
+        .expect("the external specifier must survive as itself");
+    assert_eq!(external.2, 0, "an unresolved external counts 0 resolved: {external:?}");
+}
