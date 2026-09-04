@@ -53,6 +53,43 @@ pub fn lib_package_of(fqn: &str) -> Option<&str> {
     }
 }
 
+/// Where an edge points, and what the persister may do about a miss.
+///
+/// Three shapes because the emit arms have three, each with a DIFFERENT write:
+/// an external target mints a `lib·` node, an internal one is reused or stubbed,
+/// and an unresolvable one carries only its name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(dead_code)]
+pub enum TargetRef {
+    /// An external dependency. Carries `name` EXPLICITLY rather than deriving it
+    /// from the fqn's last segment: `upsert_lib_node_by_fqn` writes it to
+    /// `nodes.name`, and 6,910 live `lib_symbol` rows depend on it. The last
+    /// segment happens to equal the name in every current construction, which
+    /// is exactly why deriving it would go unnoticed when it stops being true.
+    Lib { fqn: String, name: String, package: String },
+    /// A target inside the indexed tree. Reused if already known, otherwise
+    /// handled per [`OnMiss`].
+    Internal { fqn: String, name: String, on_miss: OnMiss },
+    /// Nothing to point at. The edge records the name and no target_id — the
+    /// truthful unresolved shape, never a guess.
+    Unresolvable { name: String },
+}
+
+/// One edge to write.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(dead_code)]
+pub struct EdgeFact {
+    pub source_id: uuid::Uuid,
+    pub target: TargetRef,
+    /// The `sensei.edge_kind` label.
+    pub kind: &'static str,
+    /// Merged into `edges.props`. Empty for the arms that stamp nothing —
+    /// measured, `calls`/`imports`/`references` are 0% stamped while
+    /// `extends`/`implements` are 100%, and a persister that unified that
+    /// would regress one side or the other.
+    pub props: serde_json::Value,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
