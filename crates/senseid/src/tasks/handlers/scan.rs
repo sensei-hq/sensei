@@ -213,6 +213,18 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
                     tracing::warn!(error = %e, "scan_root: prune_mislabelled_extends failed");
                     0
                 });
+            // Lib nodes are GC-exempt from the stub pass above, so without this
+            // one a minted lib node is permanent. It runs on every reconcile so
+            // externals-as-lib_symbol is reversible by rescanning rather than by
+            // hand-written SQL.
+            let libs =
+                ctx.pg().prune_unreferenced_lib_nodes_scoped(&ids).await.unwrap_or_else(|e| {
+                    tracing::warn!(error = %e, "scan_root: prune_unreferenced_lib_nodes failed");
+                    0
+                });
+            if libs > 0 {
+                tracing::info!("scan_root reconcile: collected {libs} unreferenced lib node(s)");
+            }
             (stubs, bogus)
         }
         Err(e) => {

@@ -1288,6 +1288,66 @@ impl PgStore {
         Ok(res.rows_affected())
     }
 
+    /// Collect lib nodes nothing points at.
+    ///
+    /// `prune_orphan_stubs_scoped` deliberately EXCLUDES the lib kinds, and no
+    /// other path deletes them — `delete_nodes_by_file` and `prune_file_nodes`
+    /// both key on `file_path`, which a lib node does not have. So until this
+    /// existed, a lib node once minted was permanent, and a wrong derivation
+    /// could only be undone by hand-written SQL against the live graph.
+    ///
+    /// That is why this lands BEFORE externals-as-lib_symbol mints anything:
+    /// the mint is reversible only if the collector exists first.
+    ///
+    /// TWO STATEMENTS, in this order and not combinable. Symbols go first;
+    /// containers go second, and only once empty. A `lib_package` whose symbols
+    /// are still referenced must survive, or the next scan re-mints it and the
+    /// pair churns every pass. Doing containers first would delete a parent
+    /// whose children are about to be judged.
+    ///
+    /// Returns the total removed, for the reconcile summary.
+    pub async fn prune_unreferenced_lib_nodes_scoped(
+        &self,
+        folder_ids: &[uuid::Uuid],
+    ) -> Result<u64, String> {
+        if folder_ids.is_empty() {
+            return Ok(0); // genuine: no folders in scope
+        }
+        // Symbols with no edge in either direction and no children.
+        let symbols = sqlx_core::query::query(
+            "DELETE FROM sensei.nodes n
+              WHERE n.folder_id = ANY($1)
+                AND n.kind = 'lib_symbol'::sensei.node_kind
+                AND NOT EXISTS (
+                    SELECT 1 FROM sensei.edges e
+                     WHERE e.target_id = n.id OR e.source_id = n.id)
+                AND NOT EXISTS (
+                    SELECT 1 FROM sensei.nodes c WHERE c.parent_id = n.id)",
+        )
+        .bind(folder_ids)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| format!("prune_unreferenced_lib_nodes (symbols): {e}"))?;
+
+        // Containers left with no children and no edges of their own.
+        let containers = sqlx_core::query::query(
+            "DELETE FROM sensei.nodes n
+              WHERE n.folder_id = ANY($1)
+                AND n.kind = 'lib_package'::sensei.node_kind
+                AND NOT EXISTS (
+                    SELECT 1 FROM sensei.nodes c WHERE c.parent_id = n.id)
+                AND NOT EXISTS (
+                    SELECT 1 FROM sensei.edges e
+                     WHERE e.target_id = n.id OR e.source_id = n.id)",
+        )
+        .bind(folder_ids)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| format!("prune_unreferenced_lib_nodes (containers): {e}"))?;
+
+        Ok(symbols.rows_affected() + containers.rows_affected())
+    }
+
     pub async fn prune_orphan_stubs_scoped(
         &self,
         folder_ids: &[uuid::Uuid],
