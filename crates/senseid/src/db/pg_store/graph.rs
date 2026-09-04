@@ -1187,13 +1187,25 @@ impl PgStore {
 
         let (target_id, target_name) = match &fact.target {
             TargetRef::Lib { fqn, name, package } => {
+                #[cfg(test)]
+                crate::graph_facts::arm_tally::bump("fact/lib");
                 let id = self.upsert_lib_node_by_fqn(folder_id, fqn, name, package).await?;
                 (Some(id), None)
             }
             TargetRef::Internal { fqn, name, on_miss } => match known.get(fqn) {
-                Some(id) => (Some(*id), None),
+                Some(id) => {
+                    // The in-file fast path. Instrumented because it is
+                    // INDISTINGUISHABLE from the stub path in final state —
+                    // demonstrated by probe, both end as a resolved edge to an
+                    // enriched node — so nothing else can prove it still runs.
+                    #[cfg(test)]
+                    crate::graph_facts::arm_tally::bump("fact/in-file");
+                    (Some(*id), None)
+                }
                 None => match on_miss {
                     OnMiss::CreateStub { kind } => {
+                        #[cfg(test)]
+                        crate::graph_facts::arm_tally::bump("fact/stub");
                         let id = self
                             .upsert_node_by_fqn(folder_id, fqn, kind, name, language, None)
                             .await?;
@@ -1207,7 +1219,11 @@ impl PgStore {
                     },
                 },
             },
-            TargetRef::Unresolvable { name } => (None, Some(name.clone())),
+            TargetRef::Unresolvable { name } => {
+                #[cfg(test)]
+                crate::graph_facts::arm_tally::bump("fact/unresolvable");
+                (None, Some(name.clone()))
+            }
         };
 
         self.insert_edge_with_props(

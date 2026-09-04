@@ -90,6 +90,41 @@ pub struct EdgeFact {
     pub props: serde_json::Value,
 }
 
+/// Which emit ARM each edge came from — test-only observability.
+///
+/// Several arms are indistinguishable in final state: an internal target
+/// resolved from `fqn_ids` and one created as a stub both end as a resolved
+/// edge to an enriched node. So a check that classifies rows AFTER the fact
+/// cannot prove which branch ran, and a refactor that dropped the in-file fast
+/// path would leave the graph byte-identical and be caught by nothing.
+///
+/// A thread-local rather than a return value: the emit block is deep inside
+/// `process_file` and threading a counter through it would change production
+/// signatures to serve a test. `#[cfg(test)]` so there is no shipped cost.
+#[cfg(test)]
+pub mod arm_tally {
+    use std::cell::RefCell;
+    use std::collections::BTreeMap;
+
+    thread_local! {
+        static TALLY: RefCell<BTreeMap<&'static str, usize>> = const { RefCell::new(BTreeMap::new()) };
+    }
+
+    pub(crate) fn bump(arm: &'static str) {
+        TALLY.with(|t| *t.borrow_mut().entry(arm).or_insert(0) += 1);
+    }
+
+    pub(crate) fn reset() {
+        TALLY.with(|t| t.borrow_mut().clear());
+    }
+
+    /// Read and clear. Tests assert against a HARDCODED arm list — counting
+    /// what was observed and asserting each count >= 1 is a tautology.
+    pub(crate) fn take() -> BTreeMap<&'static str, usize> {
+        TALLY.with(|t| std::mem::take(&mut *t.borrow_mut()))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

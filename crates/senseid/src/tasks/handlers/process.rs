@@ -2,48 +2,6 @@
 
 use super::super::executor::TaskContext;
 
-/// Which emit ARM each edge came from — test-only observability.
-///
-/// Several arms are indistinguishable in final state: an internal target
-/// resolved from `fqn_ids` and one created as a stub both end as a resolved
-/// edge to an enriched node. So a check that classifies rows AFTER the fact
-/// cannot prove which branch ran, and a refactor that dropped the in-file fast
-/// path would leave the graph byte-identical and be caught by nothing.
-///
-/// A thread-local rather than a return value: the emit block is deep inside
-/// `process_file` and threading a counter through it would change production
-/// signatures to serve a test. `#[cfg(test)]` so there is no shipped cost.
-#[cfg(test)]
-pub(crate) mod arm_tally {
-    use std::cell::RefCell;
-    use std::collections::BTreeMap;
-
-    thread_local! {
-        static TALLY: RefCell<BTreeMap<&'static str, usize>> = const { RefCell::new(BTreeMap::new()) };
-    }
-
-    pub(crate) fn bump(arm: &'static str) {
-        TALLY.with(|t| *t.borrow_mut().entry(arm).or_insert(0) += 1);
-    }
-
-    pub(crate) fn reset() {
-        TALLY.with(|t| t.borrow_mut().clear());
-    }
-
-    /// Read and clear. Tests assert against a HARDCODED arm list — counting
-    /// what was observed and asserting each count >= 1 is a tautology.
-    pub(crate) fn take() -> BTreeMap<&'static str, usize> {
-        TALLY.with(|t| std::mem::take(&mut *t.borrow_mut()))
-    }
-}
-
-/// Record an emit arm. Compiles away entirely outside tests.
-macro_rules! arm {
-    ($name:literal) => {
-        #[cfg(test)]
-        crate::tasks::handlers::process::arm_tally::bump($name);
-    };
-}
 use super::super::{Task, TaskKind};
 use super::helpers::{build_globset, is_binary_ext, is_probably_binary};
 use std::path::Path;
@@ -1568,89 +1526,41 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
                     // rather than dropping it.
                     None => file_node_id,
                 };
-                let kind = rel.relation.edge_kind();
-                let props = serde_json::json!({ "relation": rel.relation.as_str() });
-
-                match &rel.parent_fqn {
-                    Some(pf) if rel.is_lib => {
-                        // Same shared derivation as the call arm above. These
-                        // two used to differ: one hardcoded '·', the other used
-                        // fqn::SEP, so changing the separator would have broken
-                        // exactly one of them.
-                        let pkg = crate::graph_facts::lib_package_of(pf).unwrap_or("");
-                        arm!("inh/lib");
-                        let tid = ctx
-                            .pg()
-                            .upsert_lib_node_by_fqn(&folder_id, pf, &rel.parent_name, pkg)
-                            .await
-                            .map_err(|e| format!("upsert lib supertype {pf}: {e}"))?;
-                        ctx.pg()
-                            .insert_edge_with_props(
-                                &folder_id,
-                                &source,
-                                Some(&tid),
-                                None,
-                                None,
-                                kind,
-                                &props,
-                            )
-                            .await
-                            .map_err(|e| format!("insert_edge ({kind}, lib): {e}"))?;
-                    }
-                    Some(pf) => {
-                        let tid = match fqn_ids.get(pf) {
-                            Some(id) => {
-                                arm!("inh/in-file");
-                                *id
-                            }
-                            None => {
-                                arm!("inh/stub");
-                                ctx
-                                .pg()
-                                .upsert_node_by_fqn(
-                                    &folder_id,
-                                    pf,
-                                    // A supertype is a TYPE. The stub carries the
-                                    // right kind so an enrich does not have to
-                                    // correct it.
-                                    "class",
-                                    &rel.parent_name,
-                                    file_lang,
-                                    None,
-                                )
-                                .await
-                                .map_err(|e| format!("upsert supertype {pf}: {e}"))?
-                            }
-                        };
-                        ctx.pg()
-                            .insert_edge_with_props(
-                                &folder_id,
-                                &source,
-                                Some(&tid),
-                                None,
-                                None,
-                                kind,
-                                &props,
-                            )
-                            .await
-                            .map_err(|e| format!("insert_edge ({kind}): {e}"))?;
-                    }
-                    None => {
-                        arm!("inh/unresolvable");
-                        ctx.pg()
-                            .insert_edge_with_props(
-                                &folder_id,
-                                &source,
-                                None,
-                                Some(&rel.parent_name),
-                                None,
-                                kind,
-                                &props,
-                            )
-                            .await
-                            .map_err(|e| format!("insert_edge ({kind}, unresolved): {e}"))?;
-                    }
-                }
+                // One fact, one policy. The three-branch ladder that used to
+                // live here is now `persist_edge_fact`, shared with the call
+                // arm — it was the SAME ladder written twice, which is the
+                // duplication this slice exists to collapse.
+                let target = match &rel.parent_fqn {
+                    Some(pf) if rel.is_lib => crate::graph_facts::TargetRef::Lib {
+                        fqn: pf.clone(),
+                        name: rel.parent_name.clone(),
+                        package: crate::graph_facts::lib_package_of(pf).unwrap_or("").to_string(),
+                    },
+                    Some(pf) => crate::graph_facts::TargetRef::Internal {
+                        fqn: pf.clone(),
+                        name: rel.parent_name.clone(),
+                        // A supertype is a TYPE, and the stub says so, so a
+                        // later enrich need not correct it.
+                        on_miss: crate::graph_facts::OnMiss::CreateStub { kind: "class" },
+                    },
+                    None => crate::graph_facts::TargetRef::Unresolvable {
+                        name: rel.parent_name.clone(),
+                    },
+                };
+                ctx.pg()
+                    .persist_edge_fact(
+                        &folder_id,
+                        &crate::graph_facts::EdgeFact {
+                            source_id: source,
+                            target,
+                            kind: rel.relation.edge_kind(),
+                            props: serde_json::json!({ "relation": rel.relation.as_str() }),
+                        },
+                        &fqn_ids,
+                        file_lang,
+                    )
+                    .await
+                    .map_err(|e| format!("persist inheritance fact: {e}"))?;
             }
         } else {
             for call in &result.unresolved_calls {
@@ -2432,7 +2342,11 @@ mod tests {
     /// branches into one — the missing arm is named in the failure.
     #[tokio::test]
     async fn every_inheritance_emit_arm_fires() {
-        const ARMS: [&str; 4] = ["inh/lib", "inh/stub", "inh/in-file", "inh/unresolvable"];
+        // Kind-agnostic: the persister serves every edge kind. Only inheritance
+        // is migrated in this increment, so attribution is unambiguous; when
+        // calls migrate too, this test must scope by kind or it will pass on
+        // another arm's firing.
+        const ARMS: [&str; 4] = ["fact/lib", "fact/stub", "fact/in-file", "fact/unresolvable"];
 
         let ctx = make_ctx().await;
         let tmp = tempfile::tempdir().unwrap();
@@ -2467,14 +2381,14 @@ mod tests {
         )
         .unwrap();
 
-        arm_tally::reset();
+        crate::graph_facts::arm_tally::reset();
         for f in ["src/widget.rs", "src/pair.rs"] {
             let abs = repo.join(f).to_string_lossy().to_string();
             process_file(&ctx, &Task::for_file(TaskKind::ProcessFile, &repo_path, &abs))
                 .await
                 .unwrap();
         }
-        let fired = arm_tally::take();
+        let fired = crate::graph_facts::arm_tally::take();
 
         assert!(!fired.is_empty(), "no arms fired at all — the tally is not wired");
         for arm in ARMS {
