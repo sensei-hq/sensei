@@ -70,27 +70,24 @@ Slices 2–10 in the map: `Inheritance` persistence → `GraphFacts` + persister
 
 ## Next command
 
-SLICE 2 COMPLETE (11/11). Slice 3 TRIMMED to increments 0-4 with the user's
-approval; deviation + 3 map corrections recorded in `f2d7ea5d`.
+SLICE 2 COMPLETE (11/11). SLICE 3 COMPLETE at the approved scope 0-4:
+`47a04a51` arm instrumentation, `6a8f2098` GraphFacts + shared lib-package
+derivation, `dccec36c` persist_edge_fact, `c79aaa7c` inheritance migrated,
+`c156239a` calls migrated. Increments 5-6 CUT as churn, with approval.
 
-NEXT: slice 3 increment 0 — the golden differential, REDESIGNED. The first
-design drew 8 blocking objections; the three that matter:
-1. Arms must be INSTRUMENTED AT THE EMIT SITE and recorded as their own row
-   type (`A|{arm}|{count}`). Four arms (`imports/probe-hit` vs `imports/stub`,
-   `inh/in-file` vs `inh/stub`) converge to identical FINAL-STATE rows, so a
-   post-hoc classifier cannot prove the branches increments 3-4 delete.
-2. Anti-vacuity must iterate a HARDCODED arm list. Counting observed rows then
-   asserting each >= 1 is a tautology — a missing arm is an absent key.
-3. Two-order equality may cover ONLY calls + inheritance. Doc references resolve
-   at emit with no stub arm, so they are legitimately order-dependent; hold the
-   doc file in a fixed position and write the reason down.
+The call and inheritance arms ran the SAME three-branch ladder written twice;
+they are now the same code. That was the only real duplication across the six
+emit paths. Slice 3 changed no graph output BY DESIGN — its value is that a
+dropped in-file fast path is now caught, which was invisible to every
+pre-existing test (demonstrated by probe).
 
-Also fix `TargetRef::LibFqn` to carry `name` — `upsert_lib_node_by_fqn` takes
-one, and 6,910 live lib_symbol rows would be silently rewritten by a
-last-segment derivation.
+IN FLIGHT: deploy to verify (a) slice 2 increment 10's IR trait fix, still
+never deployed, and (b) slice 3's behaviour-preservation claim, via a scoped
+reindex compared against `/tmp/pre_slice3.txt`.
 
-Full plan + 8 blocking objections:
-`/private/tmp/claude-502/.../tasks/w9pzlhuqj.output`
+THEN: slice 4 — `ImportPaths` trait, then `LibraryOrigin` and externals as
+`lib_symbol` (136,569 import edges, only 25,788 resolved — the largest
+remaining resolution gap in the graph).
 
 ## Open questions
 
