@@ -1399,20 +1399,59 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
                     break;
                 }
             }
-            // Total miss on a placeable specifier: create the stub on the FIRST
-            // candidate, the one the target's own module node would be written
-            // with, so a later definition enriches this very row.
-            if target.is_none()
-                && let Some(first) = candidates.first()
-            {
-                let leaf = first.rsplit('·').next().unwrap_or(first);
-                let leaf = leaf.rsplit('/').next().unwrap_or(leaf);
-                target = Some(
-                    ctx.pg()
-                        .upsert_node_by_fqn(&folder_id, first, "module", leaf, file_lang, None)
-                        .await
-                        .map_err(|e| format!("upsert import stub {first}: {e}"))?,
-                );
+            // Every candidate missed. What that MEANS depends on whether the
+            // specifier was ever placeable locally, and `import_anchor` is the
+            // declared owner of that question — not a re-classification here.
+            //
+            // LOCAL: stub a module on the FIRST candidate, the fqn the target's
+            // own module node would carry, so a later definition enriches this
+            // very row. That is what keeps resolution order-independent.
+            //
+            // EXTERNAL: mint a lib node. 109,944 of 110,785 unresolved imports
+            // (99.2%) name nothing local — `node:fs`, `java.util.List` — and
+            // those are complete facts about a dependency, not failed lookups.
+            // The probe above is what earns this: the miss is evidence, since
+            // a dotted specifier now has a real candidate to miss.
+            //
+            // Stubbing a MODULE here would be wrong and was briefly possible:
+            // once dotted specifiers gained a candidate, `candidates.first()`
+            // for `java.util.List` became `java·java.util·List`, so the old
+            // code would have written a module named `List` for a JDK class.
+            if target.is_none() {
+                let anchor = crate::languages::import_target::import_anchor(import_module, import);
+                use crate::languages::import_target::ImportAnchor;
+                match anchor {
+                    ImportAnchor::External { package } if !package.is_empty() => {
+                        // Keyed on the PACKAGE, so every importer of `node:fs`
+                        // shares one node and the graph can answer "who depends
+                        // on this".
+                        let lib_fqn = crate::languages::fqn::lib(&package, import, "");
+                        target = Some(
+                            ctx.pg()
+                                .upsert_lib_node_by_fqn(&folder_id, &lib_fqn, import, &package)
+                                .await
+                                .map_err(|e| format!("mint lib import {lib_fqn}: {e}"))?,
+                        );
+                    }
+                    // Local, or external with no derivable package: fall back to
+                    // the module stub only when there is a candidate to hang it
+                    // on. No candidate means nothing to name, and inventing one
+                    // is the fabrication the rules forbid.
+                    _ => {
+                        if let Some(first) = candidates.first() {
+                            let leaf = first.rsplit('·').next().unwrap_or(first);
+                            let leaf = leaf.rsplit('/').next().unwrap_or(leaf);
+                            target = Some(
+                                ctx.pg()
+                                    .upsert_node_by_fqn(
+                                        &folder_id, first, "module", leaf, file_lang, None,
+                                    )
+                                    .await
+                                    .map_err(|e| format!("upsert import stub {first}: {e}"))?,
+                            );
+                        }
+                    }
+                }
             }
             match target {
                 Some(t) => ctx
@@ -2300,6 +2339,85 @@ mod tests {
         assert!(
             parent_names.iter().all(|p| p.as_deref() == Some("Holder")),
             "each method must still hang off its TYPE via parent_id: {parent_names:?}"
+        );
+
+        ctx.pg().remove_watch_root(&rid).await.ok();
+    }
+
+    /// An EXTERNAL import that misses becomes a lib node; a LOCAL one still
+    /// becomes a module stub.
+    ///
+    /// The distinction comes from `import_anchor`, the declared owner of
+    /// local-vs-external, NOT from re-classifying the string here. Both halves
+    /// matter:
+    ///
+    /// - External miss -> `lib_symbol`. This is the 109,944 edges (99.2% of
+    ///   unresolved imports) that name nothing local. `java.util.List` is a
+    ///   complete fact about a dependency, and a lib node makes it answerable.
+    /// - Local miss -> `module` stub, UNCHANGED. A relative import whose file
+    ///   is not indexed yet must still stub, or resolution stops being
+    ///   order-independent.
+    ///
+    /// Guards a regression I introduced one commit earlier: adding the dotted
+    /// candidate made `candidates.first()` for `java.util.List` be
+    /// `java·java.util·List`, so the old code would have minted a MODULE stub
+    /// named `List` for a JDK class. Unshipped — it needed a reindex to
+    /// manifest — but it is exactly the silent kind.
+    ///
+    /// Breaking mutations: (1) mint a module stub for the external case — the
+    /// kind assertion fails; (2) mint a lib node for the relative case — the
+    /// local half fails.
+    #[tokio::test]
+    async fn an_external_import_mints_a_lib_node_and_a_local_one_still_stubs() {
+        let ctx = make_ctx().await;
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("mint");
+        std::fs::create_dir_all(repo.join("src")).unwrap();
+        std::fs::write(repo.join("package.json"), "{\"name\":\"mint\"}\n").unwrap();
+        // A relative import whose target is NOT written to disk, so it misses.
+        std::fs::write(
+            repo.join("src/a.ts"),
+            "import { x } from './missing';\nimport { readFile } from 'node:fs';\nexport function go() { return x(readFile); }\n",
+        )
+        .unwrap();
+
+        let repo_path = repo.to_string_lossy().to_string();
+        let rid = ctx
+            .pg()
+            .add_watch_root(&tmp.path().to_string_lossy(), "mint", &serde_json::json!([]))
+            .await
+            .unwrap();
+        let fid = ctx.pg().upsert_repo_kind(&rid, "git", "mint", &repo_path).await.unwrap();
+        ctx.pg().update_folder_status(&fid, "indexing").await.unwrap();
+        let abs = repo.join("src/a.ts").to_string_lossy().to_string();
+        process_file(&ctx, &Task::for_file(TaskKind::ProcessFile, &repo_path, &abs)).await.unwrap();
+
+        let kinds: Vec<(Option<String>, Option<String>)> = sqlx_core::query_as::query_as(
+            "SELECT t.kind::text, t.fqn FROM sensei.edges e
+               JOIN sensei.nodes t ON t.id = e.target_id
+              WHERE e.folder_id = $1 AND e.kind = 'imports'::sensei.edge_kind",
+        )
+        .bind(fid)
+        .fetch_all(ctx.pg().pool())
+        .await
+        .unwrap();
+
+        // The external one is a lib symbol under a lib package.
+        assert!(
+            kinds.iter().any(|(k, f)| k.as_deref() == Some("lib_symbol")
+                && f.as_deref().is_some_and(|f| f.starts_with("lib·node:fs"))),
+            "`node:fs` must mint a lib_symbol: {kinds:?}"
+        );
+        // The relative one still stubs as a module — order-independence.
+        assert!(
+            kinds.iter().any(|(k, _)| k.as_deref() == Some("module")),
+            "a missing relative import must still stub a module: {kinds:?}"
+        );
+        // And nothing external became a module stub.
+        assert!(
+            !kinds.iter().any(|(k, f)| k.as_deref() == Some("module")
+                && f.as_deref().is_some_and(|f| f.contains("node:fs"))),
+            "an external specifier must not become a module stub: {kinds:?}"
         );
 
         ctx.pg().remove_watch_root(&rid).await.ok();
