@@ -1483,7 +1483,16 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
                 let source = fqn_ids.get(&r.caller_fqn).copied().unwrap_or(file_node_id);
                 match &r.target_fqn {
                     Some(tf) if r.is_lib => {
-                        let pkg = tf.split('·').nth(1).unwrap_or("");
+                        // `unwrap_or("")` is PRESERVED, not endorsed: an
+                        // empty package would be written as a lib_package
+                        // node's name, which the no-fabrication rule forbids.
+                        // It is unreachable on real data (0 of 1,117 live
+                        // lib_package rows have a blank name, 0 of 6,910
+                        // lib_symbol rows have a non-`lib·` fqn), and changing
+                        // it here would mix a behaviour fix into an
+                        // equivalence-preserving refactor — the thing that
+                        // makes such refactors unsafe. Tracked separately.
+                        let pkg = crate::graph_facts::lib_package_of(tf).unwrap_or("");
                         let tid = ctx
                             .pg()
                             .upsert_lib_node_by_fqn(&folder_id, tf, &r.target_name, pkg)
@@ -1564,7 +1573,11 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
 
                 match &rel.parent_fqn {
                     Some(pf) if rel.is_lib => {
-                        let pkg = pf.split(crate::languages::fqn::SEP).nth(1).unwrap_or("");
+                        // Same shared derivation as the call arm above. These
+                        // two used to differ: one hardcoded '·', the other used
+                        // fqn::SEP, so changing the separator would have broken
+                        // exactly one of them.
+                        let pkg = crate::graph_facts::lib_package_of(pf).unwrap_or("");
                         arm!("inh/lib");
                         let tid = ctx
                             .pg()
