@@ -218,3 +218,55 @@ Two things worth carrying forward:
 NOT YET LIVE IN THE GRAPH: the running daemon is the previously installed 0.9.1
 binary. Kotlin/C/Swift FQNs require `make install-debug` + a reindex, batched
 with the later slices rather than run per-slice.
+
+
+## Slice 3 — SCOPE TRIMMED, with the user's approval (2026-09-04)
+
+Slice 3 as mapped was `GraphFacts` + a persister + migrating every emit policy
+onto `OnMiss`. It is trimmed to increments 0-4: the golden differential, the
+contract types, the persister, and migrating INHERITANCE and CALLS. Imports and
+doc references stay as they are.
+
+The reason is measured, not aesthetic. The DRY duplication that actually exists
+across the emit paths is ONE resolution ladder written twice — calls
+(`process.rs:1443`) and inheritance (`process.rs:1524`) — plus one lib-package
+derivation written twice. Both collapse at increment 4. The import and
+doc-reference arms each have exactly one lookup strategy and one miss action,
+are already the best-covered by tests, and migrating them would reopen paths
+carrying 730,967 live edges for no measurable gain.
+
+Recorded here rather than in a source comment, per the CLAUDE.md rule on
+documenting deviations.
+
+### Corrections to this map, found while designing slice 3
+
+- There are **SIX** emit paths, not five. The sixth is the non-FQN legacy call
+  arm at `process.rs:1591`, reached when a file has no manifest so
+  `result.fqn` is None. Any claim of "all emit paths" that lists five is wrong.
+- The ADR's `OnMiss { LeaveUnresolved, CreateStub, RequireUnambiguous }` has a
+  variant with no real user and is missing one real behaviour. Use the
+  distinct-behaviour count from the code, not the ADR's three.
+- `nodes.language` is last-writer-wins on the reference path
+  (`graph.rs:392` uses `COALESCE(EXCLUDED.language, nodes.language)` without the
+  `CASE WHEN EXCLUDED.resolved` guard its neighbours have), while the calls,
+  imports and inheritance stub arms all pass the REFERRING file's language. A
+  cross-language reference can therefore relabel a node. Pre-existing; not
+  introduced by slice 2.
+
+### The gate's design was WRONG and is redesigned
+
+The first design of increment 0 drew eight blocking objections. Three mattered:
+
+1. **Two-order equality is false by construction.** Doc references resolve at
+   emit and never heal — there is no stub arm — so processing the doc file first
+   vs last yields different records. Order-invariance may only be asserted over
+   the arms that have it (calls, inheritance), with the doc file held in a fixed
+   position and the reason written down.
+2. **The anti-vacuity check was a tautology.** A map built by counting observed
+   rows, then asserting each count >= 1, cannot fail: a missing arm is an absent
+   key, not a zero. Iterate a HARDCODED arm list instead.
+3. **Four arms are not derivable from final state.** `imports/probe-hit` vs
+   `imports/stub` and `inh/in-file` vs `inh/stub` converge to identical rows once
+   the fixture is fully processed. Arms must be instrumented AT THE EMIT SITE and
+   recorded as their own row type, or the gate cannot prove the branches
+   increments 3-4 delete.
