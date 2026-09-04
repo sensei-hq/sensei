@@ -173,6 +173,27 @@ fn natural_key(node: &serde_json::Value) -> (String, i64, String, String, String
 /// `implements` is here because inheritance is a real structural tie — a
 /// subclass belongs with its supertype. Unresolved edges are skipped below, so
 /// adding a kind with no resolved rows yet is inert rather than distorting.
+/// Whether an edge of this kind, pointing at a node of that kind, is a
+/// CODE-STRUCTURE tie for community purposes.
+///
+/// False only for an import of an EXTERNAL package. Two files that both
+/// `import node:fs` are not one module — they share a dependency, not a
+/// structure. Admitting those would make one `lib_symbol` a hub: `node:test`
+/// alone has 3,365 importers and `java.util.List` 2,641, so resolving external
+/// imports would merge thousands of unrelated files into single communities.
+///
+/// Deliberately narrow. A CALL into a library IS a structural tie — the caller
+/// genuinely depends on that code path — and 54,816 such edges already inform
+/// adjacency, so widening this to all lib targets would silently drop them.
+/// The companion test pins that distinction.
+///
+/// Landed while measurably INERT: zero import edges point at a lib node today,
+/// so this changes nothing now and prevents a regression the moment externals
+/// start resolving.
+fn admits_to_adjacency(edge_kind: &str, target_kind: &str) -> bool {
+    !(edge_kind == "imports" && matches!(target_kind, "lib_symbol" | "lib_package"))
+}
+
 const COMMUNITY_EDGE_KINDS: &[&str] = &["calls", "imports", "extends", "references", "implements"];
 
 /// Build the undirected adjacency list community detection runs over.
@@ -207,6 +228,12 @@ async fn build_adjacency(
             };
 
             if let (Some(&si), Some(&ti)) = (id_to_idx.get(src), id_to_idx.get(tgt)) {
+                // The target's kind is already projected by `get_nodes_scoped`,
+                // so this costs no extra query.
+                let tk = nodes[ti]["kind"].as_str().unwrap_or("");
+                if !admits_to_adjacency(kind, tk) {
+                    continue;
+                }
                 adj[si].push(ti);
                 adj[ti].push(si); // undirected
             }
@@ -472,5 +499,42 @@ mod community_edge_kind_tests {
             COMMUNITY_EDGE_KINDS.contains(&"implements"),
             "inheritance is a structural tie and belongs in adjacency: {COMMUNITY_EDGE_KINDS:?}"
         );
+    }
+}
+
+#[cfg(test)]
+mod adjacency_policy_tests {
+    use super::admits_to_adjacency;
+
+    /// An external import is a DEPENDENCY tie, not a structural one.
+    ///
+    /// Without this, resolving external imports makes one `lib_symbol` a hub:
+    /// `node:test` has 3,365 importers and `java.util.List` 2,641, so thousands
+    /// of unrelated files would merge into single communities the moment
+    /// externals start resolving.
+    ///
+    /// Breaking mutation: make `admits_to_adjacency` return `true`
+    /// unconditionally.
+    #[test]
+    fn an_external_import_is_not_a_structural_tie() {
+        assert!(!admits_to_adjacency("imports", "lib_symbol"));
+        assert!(!admits_to_adjacency("imports", "lib_package"));
+    }
+
+    /// The exclusion is NARROW on purpose, and this is what stops it widening.
+    ///
+    /// A CALL into a library is a real structural tie — the caller depends on
+    /// that code path — and 54,816 such edges already inform adjacency.
+    /// Excluding all lib targets would silently drop every one of them.
+    ///
+    /// Breaking mutation: change the guard to exclude any lib target
+    /// regardless of edge kind.
+    #[test]
+    fn a_call_into_a_library_is_still_a_structural_tie() {
+        assert!(admits_to_adjacency("calls", "lib_symbol"));
+        assert!(admits_to_adjacency("references", "lib_symbol"));
+        // And a local import is unaffected.
+        assert!(admits_to_adjacency("imports", "module"));
+        assert!(admits_to_adjacency("imports", "file"));
     }
 }
