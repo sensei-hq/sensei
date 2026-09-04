@@ -1157,6 +1157,71 @@ impl PgStore {
     /// One statement rather than a loop over folders: the reconcile is
     /// root-scoped and a watch root here holds 7,642 folders, so per-folder round
     /// trips would dominate a pass that is otherwise a single indexed delete.
+    /// Write ONE edge fact, applying its miss policy.
+    ///
+    /// Per-fact rather than batched, deliberately. No `.begin()` exists anywhere
+    /// under `tasks/` and no graph method is executor-generic, so a batching
+    /// variant would need either transaction-taking copies of every helper or a
+    /// second copy of the merge SQL. More importantly the import arm probes
+    /// against whatever stubs exist AT THAT INSTANT, so batching would change
+    /// resolution — a behaviour change wearing a performance costume.
+    ///
+    /// Zero new SQL: this composes `upsert_lib_node_by_fqn`,
+    /// `upsert_node_by_fqn` and `insert_edge_with_props`. It is a policy
+    /// executor, not a second write path.
+    ///
+    /// `known` is the caller's already-resolved fqn→id map (today `fqn_ids`, the
+    /// current file's own defs). Consulting it FIRST is load-bearing: an
+    /// in-file target must not be re-upserted, because
+    /// `language = COALESCE(EXCLUDED.language, nodes.language)` is
+    /// last-writer-wins and a reference from another language would relabel it.
+    #[allow(dead_code)]
+    pub async fn persist_edge_fact(
+        &self,
+        folder_id: &uuid::Uuid,
+        fact: &crate::graph_facts::EdgeFact,
+        known: &std::collections::HashMap<String, uuid::Uuid>,
+        language: Option<&str>,
+    ) -> Result<uuid::Uuid, String> {
+        use crate::graph_facts::{OnMiss, TargetRef};
+
+        let (target_id, target_name) = match &fact.target {
+            TargetRef::Lib { fqn, name, package } => {
+                let id = self.upsert_lib_node_by_fqn(folder_id, fqn, name, package).await?;
+                (Some(id), None)
+            }
+            TargetRef::Internal { fqn, name, on_miss } => match known.get(fqn) {
+                Some(id) => (Some(*id), None),
+                None => match on_miss {
+                    OnMiss::CreateStub { kind } => {
+                        let id = self
+                            .upsert_node_by_fqn(folder_id, fqn, kind, name, language, None)
+                            .await?;
+                        (Some(id), None)
+                    }
+                    // A probe that misses leaves the NAME, never an invented row.
+                    // A probe that misses leaves the NAME, never an invented row.
+                    OnMiss::LeaveUnresolved => match self.node_id_by_fqn(folder_id, fqn).await? {
+                        Some(id) => (Some(id), None),
+                        None => (None, Some(name.clone())),
+                    },
+                },
+            },
+            TargetRef::Unresolvable { name } => (None, Some(name.clone())),
+        };
+
+        self.insert_edge_with_props(
+            folder_id,
+            &fact.source_id,
+            target_id.as_ref(),
+            target_name.as_deref(),
+            None,
+            fact.kind,
+            &fact.props,
+        )
+        .await
+    }
+
     /// Remove the mislabelled containment rows that the retired `parent_refs`
     /// emit wrote under the `extends` kind.
     ///
