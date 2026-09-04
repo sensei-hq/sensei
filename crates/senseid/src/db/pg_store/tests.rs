@@ -12718,3 +12718,65 @@ async fn the_resolution_classes_are_distinct_and_only_one_is_a_defect() {
     .unwrap();
     assert_eq!(total, edges, "every edge must fall in exactly one class");
 }
+
+/// A lib node with no edges must be collectable.
+///
+/// Today it is not: `prune_orphan_stubs_scoped` explicitly EXCLUDES
+/// `lib_symbol`/`lib_package`, and no other path deletes them
+/// (`delete_nodes_by_file` and `prune_file_nodes` both key on `file_path`,
+/// which lib nodes do not have). So a lib node, once minted, is permanent.
+///
+/// That is why this lands BEFORE any minting. Slice 4 proposes creating
+/// ~11,714 lib_symbol rows plus ~3,196 containers from a derivation that has
+/// already been wrong once in review; without a collector, a bad mint could
+/// only be undone by hand-written SQL against the live graph.
+///
+/// Containers are collected too, but only when EMPTY — a `lib_package` whose
+/// symbols are still referenced must survive, or the next scan re-mints it and
+/// the pair churns forever.
+///
+/// Breaking mutations: (1) drop the lib kinds from the DELETE — the orphan
+/// survives; (2) drop the `NOT EXISTS` edge guard — the REFERENCED lib symbol
+/// is deleted, which would break live edges.
+#[tokio::test]
+async fn an_unreferenced_lib_node_is_collected_and_a_referenced_one_survives() {
+    let s = pg_store().await;
+    let fid = create_test_folder(&s, &format!("libgc_{}", uuid::Uuid::new_v4())).await;
+    let src =
+        s.upsert_node(&fid, "file", "a.rs", "a.rs", None, None, Some(1), Some(9)).await.unwrap();
+
+    // Referenced: a lib symbol with an edge pointing at it.
+    let kept = s
+        .upsert_lib_node_by_fqn(&fid, "lib·serde·serde·Serialize", "Serialize", "serde")
+        .await
+        .unwrap();
+    s.insert_edge(&fid, &src, Some(&kept), None, None, "calls").await.unwrap();
+
+    // Orphan: minted and never pointed at — the shape a wrong derivation leaves.
+    let orphan =
+        s.upsert_lib_node_by_fqn(&fid, "lib·typo·typo·Nothing", "Nothing", "typo").await.unwrap();
+
+    let removed = s.prune_unreferenced_lib_nodes_scoped(&[fid]).await.unwrap();
+    assert!(removed >= 1, "the orphan must be collected, got {removed}");
+
+    assert!(
+        s.node_id_by_fqn(&fid, "lib·typo·typo·Nothing").await.unwrap().is_none(),
+        "the unreferenced lib symbol is gone"
+    );
+    assert_eq!(
+        s.node_id_by_fqn(&fid, "lib·serde·serde·Serialize").await.unwrap(),
+        Some(kept),
+        "a REFERENCED lib symbol must survive — deleting it would break a live edge"
+    );
+    // Its container survives with it.
+    assert!(
+        s.node_id_by_fqn(&fid, "lib·serde").await.unwrap().is_some(),
+        "a container with surviving symbols must not be collected"
+    );
+    // The orphan's now-empty container goes too.
+    assert!(
+        s.node_id_by_fqn(&fid, "lib·typo").await.unwrap().is_none(),
+        "an empty container is collected with its last symbol"
+    );
+    let _ = orphan;
+}
