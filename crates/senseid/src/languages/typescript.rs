@@ -1123,6 +1123,21 @@ pub(crate) mod typescript_fqn {
                                     method,
                                 ));
                             }
+                            // A GLOBAL receiver needs no import, so it could
+                            // never reach `resolve_member` — that is only
+                            // reachable through `self.imports.get`. Consulted
+                            // AFTER imports and bindings, so a shadowing import
+                            // or a typed local still wins.
+                            //
+                            // Keyed on the RECEIVER, not the method: every
+                            // caller of `JSON.stringify` merges onto one node,
+                            // and `Math.max` lands on a different one under the
+                            // same runtime package. `global_runtime` already
+                            // owns this classification and the bare-identifier
+                            // path already used it; this arm did not.
+                            if let Some(rt) = global_runtime(oname) {
+                                return Some((Some(fqn::lib(rt, oname, &method)), true, method));
+                            }
                             Some((None, false, method))
                         }
                         _ => Some((None, false, method)),
@@ -1233,6 +1248,60 @@ mod tests {
             .iter()
             .find(|r| r.target_name == target_name)
             .unwrap_or_else(|| panic!("no ref to `{target_name}` in {:?}", out.refs))
+    }
+
+    /// A member call on a GLOBAL receiver must resolve to a runtime lib node.
+    ///
+    /// `JSON.stringify`, `Math.max`, `Array.isArray`, `Date.now` are the head of
+    /// the unresolved TS/JS call distribution: stringify 2,350, isArray 2,180,
+    /// now 1,488, max 833. Measured 12,371 unresolved edges have a receiver
+    /// already on one of the two global lists.
+    ///
+    /// `global_runtime` (this file) ALREADY classifies those receivers, and the
+    /// bare-identifier path already calls it. The StaticMemberExpression arm
+    /// never did, so a receiver needing no import could not reach
+    /// `resolve_member` — that function is only reachable via
+    /// `self.imports.get(oname)`.
+    ///
+    /// Keyed on the RECEIVER, not the method, so every caller of
+    /// `JSON.stringify` merges onto one node and `Math.max` lands on a
+    /// different one under the same runtime package.
+    ///
+    /// Breaking mutation: delete the `global_runtime` call from the
+    /// StaticMemberExpression arm — every assertion below goes back to
+    /// target_fqn = None.
+    #[test]
+    fn a_member_call_on_a_global_receiver_resolves_to_a_runtime_lib() {
+        let out = produce_ts(
+            "export function go(v: unknown) {\n  const a = JSON.stringify(v);\n  const b = Math.max(1, 2);\n  const c = Array.isArray(v);\n  const d = Date.now();\n  return [a, b, c, d];\n}\n",
+            "app",
+            "svc",
+        );
+
+        for (recv, method, pkg) in [
+            ("JSON", "stringify", "ecmascript"),
+            ("Math", "max", "ecmascript"),
+            ("Array", "isArray", "ecmascript"),
+            ("Date", "now", "ecmascript"),
+        ] {
+            let r = ref_to(&out, method);
+            assert!(r.is_lib, "{recv}.{method} is a runtime call, so is_lib");
+            assert_eq!(
+                r.target_fqn.as_deref(),
+                Some(format!("lib·{pkg}·{recv}·{method}").as_str()),
+                "{recv}.{method} must key on the RECEIVER under its runtime package"
+            );
+        }
+
+        // A NON-global receiver must still fall through unresolved — the fix
+        // must not become a blanket "any member call is a lib call".
+        let other =
+            produce_ts("export function go(x: any) {\n  return x.mystery();\n}\n", "app", "svc");
+        let m = ref_to(&other, "mystery");
+        assert_eq!(
+            m.target_fqn, None,
+            "an unknown receiver must stay unresolved, not be minted as a lib"
+        );
     }
 
     #[test]
