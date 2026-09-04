@@ -12655,27 +12655,27 @@ async fn a_resolved_import_is_not_reported_as_an_empty_external_target() {
     assert_eq!(external.2, 0, "an unresolved external counts 0 resolved: {external:?}");
 }
 
-/// The DEFECT CLASS must be bounded, and the other classes must not be
-/// optimised away.
+/// The classes must PARTITION the edges, and each must mean what it is named.
 ///
-/// A single "% resolved" number cannot be read: imports sit at 18.9% and that
-/// sounds broken, but 109,944 of 110,785 unresolved imports name something no
-/// local definition bears — an external dependency. Unresolved is the truthful
-/// state there, not a failure.
+/// The view answers exactly one question — does any LOCAL node share the target
+/// name — and the classes are named for that, not for a verdict. An earlier
+/// version named them `unambiguous-miss`/`ambiguous`/`absent` and this test
+/// asserted the first was "the defect class". Adversarial review refuted it:
+/// the head of that population is `json` 1,600, `path` 483, `join` 443 —
+/// external accessor methods sharing a name with one local symbol — and the
+/// only mechanism that drives the number down is `sole_definition_id_by_name`,
+/// the bare-name resolver `process.rs` explicitly refuses because "a miss would
+/// resolve confidently WRONG".
 ///
-/// `sensei.edge_resolution_class` partitions every edge, and only
-/// `unambiguous-miss` is a defect: exactly one local definition bears the name
-/// and resolution did not find it. MEASURED at creation across 405,787
-/// unresolved edges — unambiguous-miss 27,495 (6.8%), ambiguous 42,236 (10.4%),
-/// absent 336,056 (82.8%).
+/// So this test now pins the PARTITION and the naming, which are true, and
+/// asserts nothing about defects, which was not.
 ///
-/// `ambiguous` is DELIBERATELY not a defect and must never be driven to zero:
-/// several local definitions share the name, so resolving would publish a guess
-/// as a fact. A change that "improved resolution" by collapsing ambiguous into
-/// resolved would be fabrication, and this test's second half is what says so.
+/// The solid finding it does protect: `no-local-name` for imports is 109,944 of
+/// 110,785 (99.2%), which is why externals need lib nodes rather than better
+/// local resolution.
 ///
-/// Breaking mutation: change the view's `= 1` to `>= 1` — ambiguous collapses
-/// into unambiguous-miss and the class invariant fails.
+/// Breaking mutation: change the view's `= 1` to `>= 1` — degree-one and
+/// degree-n collapse and the per-class assertions fail.
 #[tokio::test]
 async fn the_resolution_classes_are_distinct_and_only_one_is_a_defect() {
     let s = pg_store().await;
@@ -12703,9 +12703,9 @@ async fn the_resolution_classes_are_distinct_and_only_one_is_a_defect() {
     let get =
         |c: &str| rows.iter().find(|(k, _)| k.as_deref() == Some(c)).map(|(_, n)| *n).unwrap_or(0);
 
-    assert_eq!(get("unambiguous-miss"), 1, "`only` exists once and was missed: {rows:?}");
-    assert_eq!(get("ambiguous"), 1, "`twin` exists twice — resolving it would guess: {rows:?}");
-    assert_eq!(get("absent"), 1, "`nowhere` names nothing local: {rows:?}");
+    assert_eq!(get("name-collision-1"), 1, "`only` is borne by exactly one local node: {rows:?}");
+    assert_eq!(get("name-collision-n"), 1, "`twin` is borne by two local nodes: {rows:?}");
+    assert_eq!(get("no-local-name"), 1, "`nowhere` names nothing local: {rows:?}");
 
     // The classes must be a PARTITION — every edge in exactly one.
     let total: i64 = rows.iter().map(|(_, n)| *n).sum();
