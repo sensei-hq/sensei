@@ -363,6 +363,32 @@ fn fqn_language_candidates(lang: &str) -> Vec<&str> {
 /// miss. Get-or-creating on the first candidate would poison the second: the
 /// created stub would satisfy candidate 1 forever and the real target at
 /// candidate 2 would never be found.
+/// Languages whose absolute import specifiers are DOTTED package paths.
+///
+/// These are the ones where `a.b.C` names a class in package `a.b`, so the
+/// last dot separates the two. A path-based specifier (`node:fs`,
+/// `@scope/pkg`, `lodash/debounce`) must never be split this way.
+const DOTTED_PACKAGE_LANGS: &[&str] = &["java", "kotlin"];
+
+/// Split a dotted specifier into `(package, class)` on the LAST dot — the same
+/// `rsplit_once('.')` the java resolver uses, so the candidate matches the fqn
+/// the call path writes.
+///
+/// `None` when there is no dot (nothing to split) or when the specifier looks
+/// like a PATH rather than a package, because a slash or a colon means the
+/// dots are filename punctuation, not package separators.
+fn dotted_package_and_class(spec: &str) -> Option<(&str, &str)> {
+    let s = spec.trim();
+    if s.contains('/') || s.contains(':') {
+        return None;
+    }
+    let (pkg, cls) = s.rsplit_once('.')?;
+    if pkg.is_empty() || cls.is_empty() {
+        return None;
+    }
+    Some((pkg, cls))
+}
+
 pub fn local_import_candidates(
     lang: &str,
     package: &str,
@@ -399,8 +425,32 @@ pub fn local_import_candidates(
         }
         return out;
     }
-    let modules = local_module_candidates(class, current_module, spec);
+    // A DOTTED specifier gets the fqn the per-language call path already
+    // writes, so a miss is EVIDENCE rather than a restatement.
+    //
+    // Without this, `local_module_candidates` returns nothing for every
+    // `External` classification and "no candidates therefore external" is
+    // circular — it only repeats the classification that emptied the list. The
+    // graph decides instead: if `java·com.acme.core·BaseService` is present,
+    // the import resolves locally; if not, the miss is real.
+    //
+    // Deliberately NOT gated on `is_external_pkg`: that tests 7 JDK prefixes
+    // (`java. javax. kotlin. android. sun. scala. jakarta.`), so gating on it
+    // would treat `org.springframework` and `com.acme` as local without
+    // looking. Every dotted specifier is probed; the data answers.
     let mut out: Vec<String> = Vec::new();
+    if DOTTED_PACKAGE_LANGS.contains(&lang)
+        && let Some((pkg, cls)) = dotted_package_and_class(spec)
+    {
+        for l in fqn_language_candidates(lang) {
+            let fqn = crate::languages::fqn::item(l, pkg, "", cls);
+            if !out.contains(&fqn) {
+                out.push(fqn);
+            }
+        }
+    }
+
+    let modules = local_module_candidates(class, current_module, spec);
     for m in &modules {
         if m.is_empty() {
             continue;
@@ -418,6 +468,77 @@ pub fn local_import_candidates(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A DOTTED specifier must yield a real candidate, so the probe can fire.
+    ///
+    /// This is the circularity the adversarial review found in the mint design:
+    /// `local_module_candidates` returns nothing for every `External`
+    /// classification, so "no candidates therefore external" proves nothing —
+    /// it restates the classification that produced the empty list. A miss is
+    /// only evidence of externality if a lookup actually happened.
+    ///
+    /// The candidate is the one the JAVA CALL PATH already writes:
+    /// `fqn::item(JAVA_LANG, pkg, "", cls)` split on the last dot (java.rs).
+    /// So `com.acme.core.BaseService` probes `java·com.acme.core·BaseService`
+    /// — and if a class by that fqn is in the graph, the import resolves
+    /// locally instead of being minted as a library.
+    ///
+    /// Breaking mutation: return early for `External`, or split on the FIRST
+    /// dot instead of the last — the candidate no longer matches what the call
+    /// path writes and every dotted import misses.
+    #[test]
+    fn a_dotted_specifier_probes_the_fqn_the_call_path_writes() {
+        let ext = ImportTarget::External { package: "com.acme".into() };
+
+        // A first-party java package: the candidate must match what java.rs's
+        // own resolver produces for the same class.
+        let c =
+            local_import_candidates("java", "com.acme.svc", "", "com.acme.core.BaseService", &ext);
+        assert!(
+            c.contains(&"java·com.acme.core·BaseService".to_string()),
+            "a dotted java import must probe its class fqn: {c:?}"
+        );
+
+        // A JDK specifier gets a candidate too — the PROBE is what decides,
+        // not a prefix allowlist. `is_external_pkg` tests only 7 JDK prefixes,
+        // so using it as the externality rule would call `org.springframework`
+        // and `com.acme` local. The graph answers instead.
+        let jdk = local_import_candidates("java", "com.acme.svc", "", "java.util.List", &ext);
+        assert!(
+            jdk.contains(&"java·java.util·List".to_string()),
+            "a JDK import must still be probed, not assumed: {jdk:?}"
+        );
+
+        // A SINGLE-segment specifier has no package to split, so no dotted
+        // candidate — it must not become `java··Foo`.
+        let bare = local_import_candidates("java", "com.acme.svc", "", "Foo", &ext);
+        assert!(
+            !bare.iter().any(|f| f.contains("··")),
+            "a package-less specifier must not produce an empty segment: {bare:?}"
+        );
+
+        // A PATH specifier is not a dotted package name: a slash or a colon
+        // means the dots are filename punctuation.
+        //
+        // Asserted on the HELPER, not through `local_import_candidates` with a
+        // typescript lang — my first version did that, and it passed with the
+        // guard deleted because `DOTTED_PACKAGE_LANGS` excludes typescript, so
+        // the branch never ran. The guard was unpinned and the probe proved it.
+        for spec in ["node:fs", "@scope/pkg/mod.js", "lodash/debounce", "a/b.c"] {
+            assert_eq!(
+                dotted_package_and_class(spec),
+                None,
+                "{spec} is a path, not a dotted package"
+            );
+        }
+        // And a genuine dotted package still splits on the LAST dot.
+        assert_eq!(
+            dotted_package_and_class("com.acme.core.BaseService"),
+            Some(("com.acme.core", "BaseService"))
+        );
+        assert_eq!(dotted_package_and_class("Foo"), None, "nothing to split");
+        assert_eq!(dotted_package_and_class("a."), None, "empty class segment");
+    }
 
     #[test]
     fn relative_paths_are_local() {
