@@ -12654,3 +12654,67 @@ async fn a_resolved_import_is_not_reported_as_an_empty_external_target() {
         .expect("the external specifier must survive as itself");
     assert_eq!(external.2, 0, "an unresolved external counts 0 resolved: {external:?}");
 }
+
+/// The DEFECT CLASS must be bounded, and the other classes must not be
+/// optimised away.
+///
+/// A single "% resolved" number cannot be read: imports sit at 18.9% and that
+/// sounds broken, but 109,944 of 110,785 unresolved imports name something no
+/// local definition bears — an external dependency. Unresolved is the truthful
+/// state there, not a failure.
+///
+/// `sensei.edge_resolution_class` partitions every edge, and only
+/// `unambiguous-miss` is a defect: exactly one local definition bears the name
+/// and resolution did not find it. MEASURED at creation across 405,787
+/// unresolved edges — unambiguous-miss 27,495 (6.8%), ambiguous 42,236 (10.4%),
+/// absent 336,056 (82.8%).
+///
+/// `ambiguous` is DELIBERATELY not a defect and must never be driven to zero:
+/// several local definitions share the name, so resolving would publish a guess
+/// as a fact. A change that "improved resolution" by collapsing ambiguous into
+/// resolved would be fabrication, and this test's second half is what says so.
+///
+/// Breaking mutation: change the view's `= 1` to `>= 1` — ambiguous collapses
+/// into unambiguous-miss and the class invariant fails.
+#[tokio::test]
+async fn the_resolution_classes_are_distinct_and_only_one_is_a_defect() {
+    let s = pg_store().await;
+    let fid = create_test_folder(&s, &format!("rescls_{}", uuid::Uuid::new_v4())).await;
+    let src =
+        s.upsert_node(&fid, "file", "a.rs", "a.rs", None, None, Some(1), Some(9)).await.unwrap();
+    // One local definition named `only` → a miss on it is UNAMBIGUOUS.
+    s.upsert_node(&fid, "function", "only", "b.rs", None, None, Some(1), Some(2)).await.unwrap();
+    // Two named `twin` → a miss on it is AMBIGUOUS, and correctly unresolved.
+    s.upsert_node(&fid, "function", "twin", "c.rs", None, None, Some(1), Some(2)).await.unwrap();
+    s.upsert_node(&fid, "function", "twin", "d.rs", None, None, Some(1), Some(2)).await.unwrap();
+
+    for name in ["only", "twin", "nowhere"] {
+        s.insert_edge(&fid, &src, None, Some(name), None, "calls").await.unwrap();
+    }
+
+    let rows: Vec<(Option<String>, i64)> = sqlx_core::query_as::query_as(
+        "SELECT resolution_class, count(*) FROM sensei.edge_resolution_class
+          WHERE folder_id = $1 GROUP BY 1",
+    )
+    .bind(fid)
+    .fetch_all(s.pool())
+    .await
+    .unwrap();
+    let get =
+        |c: &str| rows.iter().find(|(k, _)| k.as_deref() == Some(c)).map(|(_, n)| *n).unwrap_or(0);
+
+    assert_eq!(get("unambiguous-miss"), 1, "`only` exists once and was missed: {rows:?}");
+    assert_eq!(get("ambiguous"), 1, "`twin` exists twice — resolving it would guess: {rows:?}");
+    assert_eq!(get("absent"), 1, "`nowhere` names nothing local: {rows:?}");
+
+    // The classes must be a PARTITION — every edge in exactly one.
+    let total: i64 = rows.iter().map(|(_, n)| *n).sum();
+    let edges: i64 = sqlx_core::query_scalar::query_scalar(
+        "SELECT count(*) FROM sensei.edges WHERE folder_id = $1",
+    )
+    .bind(fid)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(total, edges, "every edge must fall in exactly one class");
+}
