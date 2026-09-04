@@ -13,6 +13,11 @@ impl LanguageAdapter for JavaAdapter {
         true
     }
 
+    /// Backed by real machinery: an imports map (simple name -> fqcn) plus same-package resolution.
+    fn resolves_in_scope(&self) -> bool {
+        true
+    }
+
     fn extensions(&self) -> &[&'static str] {
         &[".java"]
     }
