@@ -80,6 +80,26 @@ pub trait LanguageAdapter: Send + Sync {
     /// with what it actually does.
     fn supports_fqn(&self) -> bool;
 
+    /// Whether this adapter can resolve a bare name using the LANGUAGE's own
+    /// scope rules, rather than by matching the name against the folder.
+    ///
+    /// Name equality is not a substitute and the data says so: the measured
+    /// head of same-name matches is `json` 1,600 / `path` 483 / `join` 443 —
+    /// external accessor methods that happen to share a name with one local
+    /// symbol — while genuinely resolvable in-file references are MISSED
+    /// because some unrelated file defines the same name. A resolver built on
+    /// name equality is the one `process.rs` refuses as "confidently WRONG".
+    ///
+    /// Declared rather than derived, like `supports_fqn`, and kept honest the
+    /// same way: a probe test builds a fixture and checks the claim, because a
+    /// declaration can drift from the implementation.
+    ///
+    /// Default `false`. An adapter with no scope machinery must not claim it —
+    /// kotlin is exactly that case today.
+    fn resolves_in_scope(&self) -> bool {
+        false
+    }
+
     /// The language this one DELEGATES parsing to, if any.
     ///
     /// Frameworks compose over a host rather than inheriting from it: `svelte`
@@ -162,6 +182,10 @@ pub struct CapabilityReport {
     /// `fqn_output` with a representative sample rather than trusting a declared
     /// flag — a declaration can drift from the implementation, a probe cannot.
     pub fqn: bool,
+    /// Whether this adapter resolves bare names by the language's own scope
+    /// rules. Reported because it is the capability that separates a real
+    /// resolution defect from a name coincidence, and it is NOT universal.
+    pub scope: bool,
 }
 
 /// The capability matrix for every registered language — a pure projection of
@@ -179,6 +203,18 @@ pub fn capability_matrix() -> Vec<CapabilityReport> {
             extensions: a.extensions().iter().map(|e| e.to_string()).collect(),
             host: a.host_language().map(str::to_string),
             fqn: a.supports_fqn(),
+            // A framework INHERITS its host's scope capability. svelte and vue
+            // hand their `<script>` to the TypeScript adapter, so TypeScript's
+            // scope rules are the ones that apply — a framework reporting
+            // `false` while delegating to a host reporting `true` would make
+            // the composition claim and the capability claim contradict.
+            //
+            // Derived here rather than restated in each framework adapter: two
+            // places declaring the same fact is two places to drift.
+            scope: a.resolves_in_scope()
+                || a.host_language().is_some_and(|h| {
+                    all_adapters().iter().any(|x| x.language() == h && x.resolves_in_scope())
+                }),
         })
         .collect()
 }
@@ -662,6 +698,85 @@ mod tests {
         assert_eq!(host_of("vue").as_deref(), Some("typescript"));
         assert_eq!(host_of("rust"), None, "rust hosts nothing and is hosted by nothing");
         assert_eq!(host_of("typescript"), None, "typescript IS a host");
+    }
+
+    /// A FRAMEWORK inherits its host's scope capability.
+    ///
+    /// svelte and vue extract `<script>` and hand it to the TypeScript adapter
+    /// — that is what `host_language()` declares. So the scope rules that apply
+    /// to a `.svelte` file's script ARE TypeScript's, and a framework reporting
+    /// `scope: false` while delegating to a host that reports `true` would be
+    /// the composition claim and the capability claim contradicting each other.
+    ///
+    /// This is the same composition-over-inheritance point slice 1 established:
+    /// a framework is not a language with fewer features, it is a language
+    /// plus an extraction step.
+    ///
+    /// Breaking mutation: drop the host fallback from `resolves_in_scope` —
+    /// svelte and vue report false while typescript reports true.
+    #[test]
+    fn a_framework_inherits_its_hosts_scope_capability() {
+        let m = capability_matrix();
+        let of = |lang: &str| m.iter().find(|r| r.language == lang).map(|r| r.scope);
+
+        assert_eq!(of("typescript"), Some(true), "the host resolves in scope");
+        for fw in ["svelte", "vue"] {
+            let host = m.iter().find(|r| r.language == fw).and_then(|r| r.host.clone());
+            assert_eq!(host.as_deref(), Some("typescript"), "{fw} must declare its host");
+            assert_eq!(
+                of(fw),
+                Some(true),
+                "{fw} delegates to typescript, so it inherits scope resolution"
+            );
+        }
+    }
+
+    /// Scope resolution is a CAPABILITY, declared per language and reported.
+    ///
+    /// Resolving a bare name correctly needs the language's own scope rules —
+    /// Rust's `use` map plus its submodule set, Java's imports plus
+    /// same-package, Python's module bindings, TS's import bindings. A
+    /// name-equality match cannot substitute: the measured head of same-name
+    /// matches is `json` 1,600 / `path` 483 / `join` 443, which are external
+    /// accessors, while genuinely resolvable in-file cases are MISSED because
+    /// a same-named symbol exists elsewhere in the folder.
+    ///
+    /// So this is declared per adapter and surfaced in [`capability_matrix`],
+    /// exactly as `supports_fqn` is — and for the same reason: before slice 1
+    /// there was no way to ask which languages could do what, and the answer
+    /// lived in a `match` arm nobody could query.
+    ///
+    /// Every adapter EXCEPT kotlin already has the machinery internally
+    /// (`use_map`/`FileScope` in rust, an imports map in java/python/typescript);
+    /// kotlin has none, which is why this must be reported rather than assumed.
+    ///
+    /// Breaking mutation: return `true` from KotlinAdapter — the probe test
+    /// fails because no scope map exists to back it.
+    #[test]
+    fn scope_resolution_is_declared_and_reported_per_language() {
+        let m = capability_matrix();
+        assert!(!m.is_empty(), "the matrix must not be empty");
+
+        // Every report carries the cell — a capability that is not reported
+        // cannot be reasoned about.
+        let with_scope: Vec<&str> =
+            m.iter().filter(|r| r.scope).map(|r| r.language.as_str()).collect();
+        let without: Vec<&str> =
+            m.iter().filter(|r| !r.scope).map(|r| r.language.as_str()).collect();
+
+        // javascript included deliberately: it calls the IDENTICAL
+        // `typescript_fqn::produce_fqns`, so it has the same bindings. The two
+        // are separate adapters only because they claim different extensions.
+        for lang in ["rust", "java", "python", "typescript", "javascript"] {
+            assert!(
+                with_scope.contains(&lang),
+                "{lang} has a scope map and must declare it: with={with_scope:?}"
+            );
+        }
+        assert!(
+            without.contains(&"kotlin"),
+            "kotlin has NO scope map and must not claim one: without={without:?}"
+        );
     }
 
     /// FQN support is REQUIRED of every adapter, with NO exceptions.

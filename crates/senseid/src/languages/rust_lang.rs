@@ -16,6 +16,11 @@ impl LanguageAdapter for RustAdapter {
         true
     }
 
+    /// Backed by real machinery: FileScope carries use_map, local_types and submodules.
+    fn resolves_in_scope(&self) -> bool {
+        true
+    }
+
     fn extensions(&self) -> &[&'static str] {
         &[".rs"]
     }

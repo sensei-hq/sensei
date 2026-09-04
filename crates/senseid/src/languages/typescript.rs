@@ -17,6 +17,11 @@ impl LanguageAdapter for TypeScriptAdapter {
         true
     }
 
+    /// Backed by real machinery: import bindings collected per file.
+    fn resolves_in_scope(&self) -> bool {
+        true
+    }
+
     fn extensions(&self) -> &[&'static str] {
         &[".ts", ".tsx", ".cts"]
     }
@@ -43,6 +48,15 @@ impl LanguageAdapter for TypeScriptAdapter {
 
 impl LanguageAdapter for JavaScriptAdapter {
     fn supports_fqn(&self) -> bool {
+        true
+    }
+
+    /// Same machinery as TypeScript: this adapter calls the identical
+    /// `typescript_fqn::produce_fqns`, so it has the same import bindings. They
+    /// are separate adapters only because they declare different extensions —
+    /// declaring the capability on one and not the other would be a difference
+    /// with no cause in the code.
+    fn resolves_in_scope(&self) -> bool {
         true
     }
 

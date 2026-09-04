@@ -13,6 +13,11 @@ impl LanguageAdapter for PythonAdapter {
         true
     }
 
+    /// Backed by real machinery: an imports map keyed on the bound name.
+    fn resolves_in_scope(&self) -> bool {
+        true
+    }
+
     fn extensions(&self) -> &[&'static str] {
         &[".py"]
     }
