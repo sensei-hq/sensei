@@ -1439,64 +1439,45 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
             let file_lang = crate::languages::language_for_path(&result.rel_path);
             for r in &fqn_out.refs {
                 let source = fqn_ids.get(&r.caller_fqn).copied().unwrap_or(file_node_id);
-                match &r.target_fqn {
-                    Some(tf) if r.is_lib => {
-                        // `unwrap_or("")` is PRESERVED, not endorsed: an
-                        // empty package would be written as a lib_package
-                        // node's name, which the no-fabrication rule forbids.
-                        // It is unreachable on real data (0 of 1,117 live
-                        // lib_package rows have a blank name, 0 of 6,910
-                        // lib_symbol rows have a non-`lib·` fqn), and changing
-                        // it here would mix a behaviour fix into an
-                        // equivalence-preserving refactor — the thing that
-                        // makes such refactors unsafe. Tracked separately.
-                        let pkg = crate::graph_facts::lib_package_of(tf).unwrap_or("");
-                        let tid = ctx
-                            .pg()
-                            .upsert_lib_node_by_fqn(&folder_id, tf, &r.target_name, pkg)
-                            .await
-                            .map_err(|e| format!("upsert lib node {tf}: {e}"))?;
-                        ctx.pg()
-                            .insert_edge(&folder_id, &source, Some(&tid), None, None, "calls")
-                            .await
-                            .map_err(|e| format!("insert_edge (fqn call, lib): {e}"))?;
-                    }
-                    Some(tf) => {
-                        // Target defined in THIS file → reuse its id; else get-or-create a stub.
-                        let tid = match fqn_ids.get(tf) {
-                            Some(id) => *id,
-                            None => ctx
-                                .pg()
-                                .upsert_node_by_fqn(
-                                    &folder_id,
-                                    tf,
-                                    "function",
-                                    &r.target_name,
-                                    file_lang,
-                                    None,
-                                )
-                                .await
-                                .map_err(|e| format!("upsert fqn target {tf}: {e}"))?,
-                        };
-                        ctx.pg()
-                            .insert_edge(&folder_id, &source, Some(&tid), None, None, "calls")
-                            .await
-                            .map_err(|e| format!("insert_edge (fqn call): {e}"))?;
-                    }
-                    None => {
-                        ctx.pg()
-                            .insert_edge(
-                                &folder_id,
-                                &source,
-                                None,
-                                Some(&r.target_name),
-                                None,
-                                "calls",
-                            )
-                            .await
-                            .map_err(|e| format!("insert_edge (fqn call, unresolved): {e}"))?;
-                    }
-                }
+                // The SAME ladder inheritance uses, now literally the same
+                // code. This block and the inheritance one below were the two
+                // copies the churn audit identified as the slice's only real
+                // duplication.
+                let target = match &r.target_fqn {
+                    Some(tf) if r.is_lib => crate::graph_facts::TargetRef::Lib {
+                        fqn: tf.clone(),
+                        name: r.target_name.clone(),
+                        package: crate::graph_facts::lib_package_of(tf).unwrap_or("").to_string(),
+                    },
+                    Some(tf) => crate::graph_facts::TargetRef::Internal {
+                        fqn: tf.clone(),
+                        name: r.target_name.clone(),
+                        // A call target is a FUNCTION, where a supertype is a
+                        // class. The stub kind differs per caller, which is why
+                        // it belongs on the policy rather than in the persister.
+                        on_miss: crate::graph_facts::OnMiss::CreateStub { kind: "function" },
+                    },
+                    None => crate::graph_facts::TargetRef::Unresolvable {
+                        name: r.target_name.clone(),
+                    },
+                };
+                ctx.pg()
+                    .persist_edge_fact(
+                        &folder_id,
+                        &crate::graph_facts::EdgeFact {
+                            source_id: source,
+                            target,
+                            kind: "calls",
+                            // Calls stamp NO props. Measured: calls/imports/
+                            // references are 0% stamped while extends/implements
+                            // are 100%, and unifying that would regress a side.
+                            props: serde_json::json!({}),
+                        },
+                        &fqn_ids,
+                        file_lang,
+                    )
+                    .await
+                    .map_err(|e| format!("persist call fact: {e}"))?;
             }
 
             // Inheritance. The SAME three-branch ladder the call emit above
@@ -2324,6 +2305,60 @@ mod tests {
         ctx.pg().remove_watch_root(&rid).await.ok();
     }
 
+    /// Every CALL emit arm must fire, scoped to the `calls` kind.
+    ///
+    /// Calls had no arm coverage before this. Their ladder is the same shape as
+    /// inheritance's — lib / in-file / stub / unresolvable — which is the
+    /// duplication increment 4 collapses, and the `in-file` arm is again
+    /// invisible in final state.
+    ///
+    /// Breaking mutation: remove the `fqn_ids` lookup from the persister's
+    /// Internal arm — `calls/in-file` stops firing while every other call test
+    /// stays green.
+    #[tokio::test]
+    async fn every_call_emit_arm_fires() {
+        const ARMS: [&str; 3] = ["calls/lib", "calls/stub", "calls/in-file"];
+
+        let ctx = make_ctx().await;
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("callarms");
+        std::fs::create_dir_all(repo.join("src")).unwrap();
+        std::fs::write(repo.join("Cargo.toml"), "[package]\nname = \"callarms\"\n").unwrap();
+        std::fs::write(repo.join("src/other.rs"), "pub fn faraway() {}\n").unwrap();
+        // One file reaching three arms: a std call (lib), a call into another
+        // file (stub, since `other.rs` is processed second), and a call to a
+        // function defined in THIS file (in-file).
+        std::fs::write(
+            repo.join("src/caller.rs"),
+            "use crate::other::faraway;\npub fn local() {}\npub fn drive() {\n    local();\n    faraway();\n    let _ = String::new();\n}\n",
+        )
+        .unwrap();
+
+        let repo_path = repo.to_string_lossy().to_string();
+        let rid = ctx
+            .pg()
+            .add_watch_root(&tmp.path().to_string_lossy(), "callarms", &serde_json::json!([]))
+            .await
+            .unwrap();
+        let fid = ctx.pg().upsert_repo_kind(&rid, "git", "callarms", &repo_path).await.unwrap();
+        ctx.pg().update_folder_status(&fid, "indexing").await.unwrap();
+
+        crate::graph_facts::arm_tally::reset();
+        let abs = repo.join("src/caller.rs").to_string_lossy().to_string();
+        process_file(&ctx, &Task::for_file(TaskKind::ProcessFile, &repo_path, &abs)).await.unwrap();
+        let fired = crate::graph_facts::arm_tally::take();
+
+        assert!(!fired.is_empty(), "no arms fired — calls are not going through the persister");
+        for arm in &ARMS {
+            assert!(
+                fired.get(*arm).copied().unwrap_or(0) >= 1,
+                "call emit arm {arm:?} never fired; got {fired:?}"
+            );
+        }
+
+        ctx.pg().remove_watch_root(&rid).await.ok();
+    }
+
     /// Every inheritance emit ARM must actually fire, and the list is hardcoded.
     ///
     /// This is the mechanism the slice-3 gate needs. Four of the emit arms are
@@ -2346,7 +2381,12 @@ mod tests {
         // is migrated in this increment, so attribution is unambiguous; when
         // calls migrate too, this test must scope by kind or it will pass on
         // another arm's firing.
-        const ARMS: [&str; 4] = ["fact/lib", "fact/stub", "fact/in-file", "fact/unresolvable"];
+        // SCOPED BY EDGE KIND. One persister serves every kind, so an unscoped
+        // list would let this test pass on a CALL arm's firing once calls
+        // migrate too — a test that cannot tell which caller exercised a branch
+        // pins neither.
+        const ARMS: [&str; 4] =
+            ["implements/lib", "implements/stub", "implements/in-file", "implements/unresolvable"];
 
         let ctx = make_ctx().await;
         let tmp = tempfile::tempdir().unwrap();
