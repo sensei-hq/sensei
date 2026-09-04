@@ -120,20 +120,23 @@ pub(crate) struct TraceQuery {
 
 /// `GET /api/graph/imports` — what import edges ARE, broken down by class.
 ///
-/// MEASURED: 136,484 import edges at 0% resolved, which reads as total failure and
-/// is not. 110,501 of them (81%) point OUTSIDE the indexed codebase — `node:fs`,
-/// `java.util.List`, `lombok.Getter` — and those are complete facts about a file's
-/// dependencies, not resolutions that failed. Only ~19% could ever point at a local
-/// node, because `process.rs` inserts every import edge with `target_id = None`
-/// and nothing has ever tried to resolve one.
+/// MEASURED NOW: 136,573 import edges, 25,788 resolved (18.9%). 110,785 point
+/// OUTSIDE the indexed codebase — `node:fs`, `java.util.List`, `lombok.Getter` —
+/// and those are complete facts about a file's dependencies, not resolutions that
+/// failed. Reporting one "% resolved" over both conflates them, which is the same
+/// misattribution `sensei.metric_status` carried before #128.
 ///
-/// Reporting a single "0% resolved" conflates the two, which is the same
-/// misattribution `sensei.metric_status` carried before #128. This names the state
-/// instead: how many are external (complete), how many are local (resolvable), and
-/// how many of the local ones actually resolve.
+/// THIS DOC USED TO SAY "0% resolved … nothing has ever tried to resolve one".
+/// That was true when written and became false as imports began resolving —
+/// and the endpoint's own numbers drifted with it, because
+/// `import_target_counts` collapsed every resolved row into a single
+/// `target = ''` group that `classify_import` then called external. It reported
+/// external 136,329 / local 244 against a truth of 110,785 / 25,788. A
+/// measurement that degrades as the thing it measures improves is worse than
+/// none, so both the query and this comment are now stated as of a date.
 ///
-/// It is also the before/after baseline for giving imports the get-or-create target
-/// treatment that already makes call edges 64.8% resolved.
+/// A `None` target from the store MEANS resolved. It is counted as `internal`
+/// rather than classified as a string.
 pub(crate) async fn graph_imports(
     State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
@@ -151,14 +154,25 @@ pub(crate) async fn graph_imports(
     let mut external_edges = 0i64;
 
     for (target, edges, resolved) in rows {
-        let class = classify_import(&target);
-        let entry = classes.entry(class.label()).or_insert((0, 0, 0));
+        // A NULL target means RESOLVED — resolving erases `target_name`. There is
+        // no string to classify, and classifying the empty string reported every
+        // resolved import as one external package (the defect this replaces).
+        // A resolved import points at a node in the indexed tree, so it IS the
+        // existing `Internal` class — not a new label. Taken from the enum so
+        // the vocabulary keeps one owner.
+        let label = match &target {
+            Some(t) => classify_import(t).label(),
+            None => crate::languages::import_target::ImportTarget::Internal.label(),
+        };
+        let is_external = target.as_deref().is_some_and(|t| classify_import(t).is_external());
+
+        let entry = classes.entry(label).or_insert((0, 0, 0));
         entry.0 += edges;
         entry.1 += resolved;
         entry.2 += 1; // distinct targets in this class
         total_edges += edges;
         total_resolved += resolved;
-        if class.is_external() {
+        if is_external {
             external_edges += edges;
         }
     }

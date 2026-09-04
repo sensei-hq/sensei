@@ -515,19 +515,26 @@ impl PgStore {
     ///
     /// Propagates a read failure: an empty breakdown would report a codebase with
     /// no dependencies, which no codebase has.
-    pub async fn import_target_counts(&self) -> Result<Vec<(String, i64, i64)>, String> {
-        // `COALESCE` guards the DECODE, not a case in the data: `target_name` is
-        // nullable in the schema but MEASURED non-null on all 136,484 import edges
-        // (and no edge anywhere has neither target set — 0 of 715,985). The tuple
-        // decodes to `String`, so a NULL that ever appeared would be a 500 rather
-        // than one odd row.
+    pub async fn import_target_counts(&self) -> Result<Vec<(Option<String>, i64, i64)>, String> {
+        // `target_name` IS NULL for a resolved import, and the count of those is
+        // not small: resolving ERASES the name (the `target_id` xor
+        // `target_name` invariant), so 25,788 of 136,573 import edges carry no
+        // name at all.
         //
-        // Grouped by TARGET, not by class: the classification lives in Rust
-        // (`classify_import`) and putting it here too would be a second copy of the
-        // rule. 136,484 edges reduce to 15,533 distinct targets, so the caller
-        // classifies 15k strings instead of 136k rows.
+        // This used to `COALESCE(target_name, '')`, justified by a comment
+        // reading "MEASURED non-null on all 136,484 import edges". That was true
+        // when written — imports were 0% resolved then. As imports began
+        // resolving, every resolved row collapsed into one `target = ''` group,
+        // and `classify_import("")` reported the lot as a single external
+        // package: `/api/graph/imports` said external 136,329 / local 244 when
+        // the truth was 110,785 / 25,788. A measurement that drifts as the thing
+        // it measures improves is worse than none.
+        //
+        // `None` therefore MEANS resolved, and the caller must not classify it
+        // as a string. Grouped by target rather than by class so the
+        // classification stays in Rust (`classify_import`) with one owner.
         sqlx_core::query_as::query_as(
-            "SELECT COALESCE(target_name, '') AS target,
+            "SELECT target_name AS target,
                     count(*) AS edges,
                     count(*) FILTER (WHERE target_id IS NOT NULL) AS resolved
                FROM sensei.edges
