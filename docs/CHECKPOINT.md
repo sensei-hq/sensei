@@ -183,7 +183,32 @@ WORKAROUND USED (scoped, reversible, backup at 07:26 predates it): delete
 logs `0 git, 0 standalone project roots` and does nothing. Scan the watch root
 (`$HOME/Work`), not the repo inside it (`$HOME/Work/<org>/<repo>`).
 
-### B. Kotlin build variants are a poison pill — blocks #4
+### B. Kotlin build variants were a poison pill — FIXED (`cbe379b6`)
+
+**The constraint that decides this: an fqn is a LOOKUP KEY.** A reference mints
+its target from what the CALL SITE can see — for kotlin, package + name — with
+no idea which file holds the definition. So the DEFINITION side must not add
+file/path information to disambiguate, or the two sides mint different strings
+and never match. N files therefore legitimately map to ONE fqn.
+
+I first tried to fix this in the PRODUCER (anchor top-level members on their
+source root, since every variant's file is `Color.kt`). That was WRONG and was
+reverted before landing — it would have made kotlin references never resolve,
+i.e. traded a poison pill for a silently unresolvable language. **Do not retry
+it.** The fqn scheme is unchanged.
+
+Fixed in `upsert_node_by_fqn` instead: an `nodes_unique_fqn` conflict raised
+from the `adopt_node_by_identity` recovery now resolves to the existing holder
+rather than erroring. Reuses `node_id_by_fqn`; a holder the constraint reports
+but the SELECT cannot find still errors rather than inventing an id.
+
+MEASURED by parsing the corpus directly: 423 top-level declarations, 26
+colliding, ALL 26 `val` — no class/object/interface/fun collides.
+
+Known and unchanged: the canonical node's `file_path` is last-writer-wins across
+declaring files. Lossy, not fabricated, pre-existing.
+
+### B (original description, kept for context)
 
 `base-app-android` never finishes indexing. Every per-country source set
 (`app/src/{sgalert,panama,ecuador,guatemala,panamacity,cityofdoral}/`) declares the
