@@ -602,8 +602,30 @@ pub(crate) mod typescript_fqn {
             module: ctx.module.clone(),
             ..Default::default()
         };
+        let mut residual: Vec<&Statement> = Vec::new();
         for stmt in &program.body {
-            walk_stmt(stmt, source, ctx, &imports, &mut out, Some(&locals));
+            walk_stmt(stmt, source, ctx, &imports, &mut out, Some(&locals), &mut residual);
+        }
+
+        // MODULE-LEVEL CALLS. `scan_statements` is the only thing that builds a
+        // `CallVisitor`, and it was reachable solely from `emit_function`,
+        // `emit_class` and `emit_var`. A file whose body carries no declaration
+        // this walk owns — a vitest/jest suite is `ImportDeclaration` plus one
+        // `describe(...)` `ExpressionStatement` — therefore built NO visitor and
+        // produced `defs: [], refs: []` for the entire file. Measured: test files
+        // are 22% of TS/JS files but yielded 7.0% of call edges.
+        //
+        // The oxc `Visit` was never the limitation; it already descends into
+        // arrow bodies and call arguments. What was missing is a caller to
+        // attribute a top-level call TO. `fqn::item(lang, package, "", module)`
+        // is the module container the emit path already mints, so this
+        // introduces no new fqn form — which is required, not merely tidy: a
+        // NESTED declaration has no representable fqn, and inventing one would
+        // collide with a real method under the unique `(folder_id, fqn)` index.
+        // Hence no defs are emitted here.
+        if !residual.is_empty() {
+            let anchor = fqn::item(TS_LANG, &ctx.package, "", &ctx.module);
+            scan_statements(&residual, &anchor, None, ctx, &imports, source, &mut out, &locals);
         }
         out
     }
@@ -633,8 +655,10 @@ pub(crate) mod typescript_fqn {
         imports: &HashMap<String, ImportTarget>,
     ) -> HashMap<String, String> {
         let mut scratch = FqnFileOutput::default();
+        // The defs pass has no use for the residual — it scans no bodies.
+        let mut ignored: Vec<&Statement> = Vec::new();
         for stmt in body {
-            walk_stmt(stmt, source, ctx, imports, &mut scratch, None);
+            walk_stmt(stmt, source, ctx, imports, &mut scratch, None, &mut ignored);
         }
         scratch
             .defs
@@ -810,13 +834,17 @@ pub(crate) mod typescript_fqn {
     /// `locals = None` is the DEFINITION pass: emit defs, scan no bodies.
     /// `locals = Some(set)` is the reference pass: emit defs and scan bodies,
     /// resolving bare identifiers against `set`.
-    fn walk_stmt(
-        stmt: &Statement,
+    /// A statement this walk has no declaration arm for is pushed to `residual`
+    /// rather than dropped — see `produce_fqns_with_locals` for why.
+    #[allow(clippy::too_many_arguments)]
+    fn walk_stmt<'a>(
+        stmt: &'a Statement<'a>,
         source: &str,
         ctx: &FileFqnContext,
         imports: &HashMap<String, ImportTarget>,
         out: &mut FqnFileOutput,
         locals: Option<&HashMap<String, String>>,
+        residual: &mut Vec<&'a Statement<'a>>,
     ) {
         match stmt {
             Statement::FunctionDeclaration(f) => {
@@ -872,7 +900,10 @@ pub(crate) mod typescript_fqn {
                 source,
                 out,
             ),
-            _ => {}
+            // NOT a declaration this walk owns. It may still CONTAIN calls — a
+            // vitest file's whole body is `ExpressionStatement` — so it is
+            // handed back for the module-level scan instead of dropped.
+            other => residual.push(other),
         }
     }
 
@@ -1115,8 +1146,31 @@ pub(crate) mod typescript_fqn {
         out: &mut FqnFileOutput,
         locals: &HashMap<String, String>,
     ) {
+        let stmts: Vec<&Statement> = body.statements.iter().collect();
+        scan_statements(&stmts, caller_fqn, class, ctx, imports, source, out, locals);
+    }
+
+    /// Collect calls in a statement sequence, attributed to `caller_fqn`.
+    ///
+    /// The ONE `CallVisitor` construction site, shared by function bodies and by
+    /// the module-level residual scan, so the two cannot resolve differently.
+    ///
+    /// Takes `&[&Statement]` because the module-level caller holds BORROWS into
+    /// the parser arena (`Statement` is arena-allocated and not `Clone`), so a
+    /// slice of values cannot be produced for it.
+    #[allow(clippy::too_many_arguments)]
+    fn scan_statements(
+        statements: &[&Statement],
+        caller_fqn: &str,
+        class: Option<&str>,
+        ctx: &FileFqnContext,
+        imports: &HashMap<String, ImportTarget>,
+        source: &str,
+        out: &mut FqnFileOutput,
+        locals: &HashMap<String, String>,
+    ) {
         let mut bindings = HashMap::new();
-        for stmt in &body.statements {
+        for stmt in statements {
             collect_binding(stmt, &mut bindings);
         }
         let mut v = CallVisitor {
@@ -1130,7 +1184,7 @@ pub(crate) mod typescript_fqn {
             seen: HashSet::new(),
             refs: Vec::new(),
         };
-        for stmt in &body.statements {
+        for stmt in statements {
             v.visit_statement(stmt);
         }
         out.refs.append(&mut v.refs);
@@ -1580,6 +1634,71 @@ function helperBelow() {}
 
         // And no phantom def was invented for the unknown name.
         assert_eq!(def_fqn(&out, "mysteryGlobal"), "<no-def>");
+    }
+
+    /// A call in a TOP-LEVEL statement is attributed to the MODULE, so a file
+    /// whose whole body is expression statements is not silently dropped.
+    ///
+    /// `walk_stmt` matched eight declaration forms and had `_ => {}` for
+    /// everything else. `scan_body` is the ONLY place a `CallVisitor` is ever
+    /// constructed, and it is reached solely from `emit_function`, `emit_class`
+    /// and `emit_var`. A vitest/jest file's body is `ImportDeclaration` +
+    /// `ExpressionStatement`, so no emitter ran, no visitor was ever built, and
+    /// `produce_fqns` returned `defs: [], refs: []` — nothing at all for the
+    /// whole file. Measured live: test files are 22% of TS/JS files
+    /// (1,761/7,933) but produced 7.0% of call edges, 5.2 per file against 19.8
+    /// for non-test files.
+    ///
+    /// The oxc `Visit` was never the problem — it already recurses through
+    /// arrow bodies, call arguments, blocks and try. What was missing is a
+    /// module-level ANCHOR to start one visitor from. That anchor is
+    /// `fqn::item(lang, package, "", module)`, the string the emit path already
+    /// mints for the module container, so this needs no new fqn form — which
+    /// matters because a NESTED declaration cannot be named: `fqn.rs` has four
+    /// forms and none expresses one, and `nodes.ddl`'s unique `(folder_id, fqn)`
+    /// would merge a nested `inner` with a top-level `inner`. Hence zero new
+    /// defs here.
+    ///
+    /// Breaking mutation: restore `_ => {}` in `walk_stmt` — `out.refs` goes
+    /// empty and every assertion below fails.
+    #[test]
+    fn a_call_in_a_top_level_statement_is_attributed_to_the_module() {
+        let src = "\
+import { describe, it, expect } from 'vitest';
+import { build } from './builder';
+
+describe('build', () => {
+  it('returns one', () => {
+    expect(build()).toBe(1);
+  });
+});
+";
+        let out = produce_ts(src, "app", "svc");
+
+        assert!(!out.refs.is_empty(), "a top-level statement's calls must be collected");
+
+        // The imported local resolves normally, and is attributed to the MODULE
+        // rather than to any function — there is no enclosing function.
+        let b = ref_to(&out, "build");
+        assert_eq!(
+            b.target_fqn.as_deref(),
+            Some("typescript·app·builder·build"),
+            "the relative import still resolves from a top-level call site"
+        );
+        assert_eq!(
+            b.caller_fqn, "typescript·app·svc",
+            "a module-level call anchors on the module container, not a function"
+        );
+
+        // The runner globals ARE imported here, so they resolve to the package.
+        assert!(out.refs.iter().any(|r| r.target_name == "describe"), "describe collected");
+
+        // ZERO new definitions: a nested declaration has no representable fqn.
+        assert!(
+            !out.defs.iter().any(|d| d.name == "describe" || d.name == "it"),
+            "no defs may be invented for a call site: {:?}",
+            out.defs.iter().map(|d| &d.name).collect::<Vec<_>>()
+        );
     }
 
     #[test]
