@@ -434,10 +434,11 @@ pub fn local_import_candidates(
     // graph decides instead: if `java·com.acme.core·BaseService` is present,
     // the import resolves locally; if not, the miss is real.
     //
-    // Deliberately NOT gated on `is_external_pkg`: that tests 7 JDK prefixes
-    // (`java. javax. kotlin. android. sun. scala. jakarta.`), so gating on it
-    // would treat `org.springframework` and `com.acme` as local without
-    // looking. Every dotted specifier is probed; the data answers.
+    // Deliberately NOT gated on ANY prefix rule. A JDK allowlist would treat
+    // `org.springframework` and `com.acme` alike as local without looking; even
+    // java.rs's `is_first_party` package-ROOT test only answers "same project",
+    // which is a weaker question than "does this actually exist here". Every
+    // dotted specifier is probed; the data answers.
     let mut out: Vec<String> = Vec::new();
     if DOTTED_PACKAGE_LANGS.contains(&lang)
         && let Some((pkg, cls)) = dotted_package_and_class(spec)
@@ -500,9 +501,9 @@ mod tests {
         );
 
         // A JDK specifier gets a candidate too — the PROBE is what decides,
-        // not a prefix allowlist. `is_external_pkg` tests only 7 JDK prefixes,
-        // so using it as the externality rule would call `org.springframework`
-        // and `com.acme` local. The graph answers instead.
+        // not any prefix rule. A 7-prefix JDK allowlist would call
+        // `org.springframework` and `com.acme` alike local. The graph answers
+        // instead.
         let jdk = local_import_candidates("java", "com.acme.svc", "", "java.util.List", &ext);
         assert!(
             jdk.contains(&"java·java.util·List".to_string()),
