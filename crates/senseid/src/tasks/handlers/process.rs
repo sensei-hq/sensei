@@ -1116,14 +1116,7 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
         // further down — because an import must be looked up under the same
         // segment the module node was written with, and a second copy of this
         // derivation would drift from it silently.
-        let fqn_lang = result
-            .fqn
-            .as_ref()
-            .and_then(|f| f.defs.first())
-            .and_then(|d| d.fqn.split('·').next())
-            .filter(|seg| !seg.is_empty())
-            .or(file_lang)
-            .unwrap_or("rust");
+        let fqn_lang = fqn_lang_of(result.fqn.as_ref(), file_lang);
         if let Some(fqn_out) = &result.fqn {
             // D5c: a `module` container per file (nested under the file). Top-level
             // items nest under it (or the file node at the crate root); methods nest
@@ -1725,6 +1718,45 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
 /// `indexed` (the fail-closed barrier D6d checks this status) and boot-reconcile
 /// / bounded-retry re-drives it. Marking the status is best-effort — if THAT
 /// write also fails we still surface the original fatal error, never swallow it.
+/// The fqn LANGUAGE SEGMENT a file's own nodes must be written under.
+///
+/// Every fqn this file emits — the module container, its defs, and the module
+/// anchor its refs name as caller — has to agree on this segment, because an
+/// import is looked up under the same segment the module node was written with.
+/// Extracted into one function precisely because a second copy of the
+/// derivation would drift from it silently.
+///
+/// Order matters. The PRODUCER's own output wins over the file extension, since
+/// the producer is what actually wrote the fqns:
+///
+/// 1. A top-level def's leading segment.
+/// 2. Failing that, a ref's `caller_fqn` leading segment. A file can produce
+///    REFS AND NO DEFS — a vitest/jest suite is entirely expression statements —
+///    and its refs are anchored on the producer's module fqn. Consulting
+///    `file_lang` here instead wrote `javascript·<pkg>·<mod>` for a `.js` file
+///    whose producer had written `typescript·<pkg>·<mod>` (the TS and JS adapters
+///    share one producer, which hardcodes the typescript segment), so the module
+///    node and the edge's caller disagreed and the lookup missed.
+/// 3. Failing that, the file's own language.
+/// 4. Failing that, `rust` — the historical default, kept so a file that yields
+///    no fqn output at all behaves as before.
+fn fqn_lang_of<'a>(
+    fqn_out: Option<&'a crate::languages::fqn::FqnFileOutput>,
+    file_lang: Option<&'a str>,
+) -> &'a str {
+    fqn_out
+        .and_then(|f| {
+            f.defs
+                .first()
+                .map(|d| d.fqn.as_str())
+                .or_else(|| f.refs.first().map(|r| r.caller_fqn.as_str()))
+        })
+        .and_then(|f| f.split('·').next())
+        .filter(|seg| !seg.is_empty())
+        .or(file_lang)
+        .unwrap_or("rust")
+}
+
 async fn fail_folder(
     ctx: &TaskContext,
     folder_id: &uuid::Uuid,
@@ -1842,6 +1874,67 @@ mod tests {
 
     /// Build a TaskContext backed by PgStore and a fresh TaskQueue.
     use crate::tasks::test_support::make_ctx;
+
+    /// A file that produces REFS AND NO DEFS still writes its module container
+    /// under the segment its own producer used.
+    ///
+    /// The TS and JS adapters share one producer, which hardcodes the
+    /// `typescript` segment. A `.js` vitest suite is entirely expression
+    /// statements, so it emits refs and no top-level defs — and `fqn_lang`
+    /// consulted the FILE's language next, yielding `javascript`. The module
+    /// container was then written `javascript·<pkg>·<mod>` while every ref named
+    /// `typescript·<pkg>·<mod>` as its caller, so the fqn→id lookup missed and
+    /// the edge sourced from the file node instead of the module.
+    ///
+    /// Breaking mutation: drop the `.or_else(|| f.refs.first() …)` arm — the
+    /// refs-only case falls through to `file_lang` and returns "javascript".
+    #[test]
+    fn fqn_lang_prefers_the_producers_own_segment_over_the_file_extension() {
+        use crate::languages::fqn::{FqnDefinition, FqnFileOutput, FqnReference};
+        use crate::types::SymbolKind;
+
+        let a_ref = |caller: &str| FqnReference {
+            caller_fqn: caller.to_string(),
+            caller_line: 1,
+            target_fqn: None,
+            target_name: "x".to_string(),
+            is_lib: false,
+        };
+
+        // REFS, NO DEFS — the case this fixes.
+        let refs_only =
+            FqnFileOutput { refs: vec![a_ref("typescript·app·e2e/spec")], ..Default::default() };
+        assert_eq!(
+            fqn_lang_of(Some(&refs_only), Some("javascript")),
+            "typescript",
+            "a refs-only file follows its producer's anchor, not its extension"
+        );
+
+        // A def still outranks a ref.
+        let with_def = FqnFileOutput {
+            defs: vec![FqnDefinition {
+                fqn: "python·app·mod·f".to_string(),
+                name: "f".to_string(),
+                kind: SymbolKind::Function,
+                line_start: 1,
+                line_end: 1,
+                is_exported: false,
+                signature: None,
+                docstring: None,
+                parent_type: None,
+                parent_fqn: None,
+            }],
+            refs: vec![a_ref("typescript·app·mod")],
+            ..Default::default()
+        };
+        assert_eq!(fqn_lang_of(Some(&with_def), Some("javascript")), "python");
+
+        // Neither ⇒ the file's language, then the historical default.
+        let empty = FqnFileOutput::default();
+        assert_eq!(fqn_lang_of(Some(&empty), Some("javascript")), "javascript");
+        assert_eq!(fqn_lang_of(None, Some("svelte")), "svelte");
+        assert_eq!(fqn_lang_of(None, None), "rust");
+    }
 
     #[tokio::test]
     async fn process_git_folder_errors_on_nonexistent_path() {
