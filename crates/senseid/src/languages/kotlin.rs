@@ -779,3 +779,202 @@ mod kotlin_fqn_tests {
         assert!(fqns.contains(&"kotlin·p·Registry·lookup"), "{fqns:?}");
     }
 }
+
+/// The tree-sitter-kotlin SHAPES the fqn producer resolves against.
+///
+/// This grammar ships NO `node-types.json` (only `parser.c`, `scanner.c`,
+/// `tree_sitter/` under `crates/senseid/grammars/kotlin/src/`), so the node
+/// kinds a resolver matches on cannot be looked up — they can only be observed.
+/// A wrong kind does not fail loudly: the match arm simply never fires and the
+/// producer emits NOTHING, which is indistinguishable from a language that has
+/// no producer at all. That is precisely how kotlin came to emit 3,713 import
+/// edges and zero calls, extends or implements.
+///
+/// So these are pinned here. A grammar bump that renames a kind breaks THIS
+/// test loudly instead of silently emptying the producer.
+#[cfg(test)]
+mod kotlin_grammar_shapes {
+    use super::*;
+
+    fn parse(src: &str) -> (tree_sitter::Tree, String) {
+        let mut p = Parser::new();
+        p.set_language(&unsafe { tree_sitter_kotlin() }).expect("kotlin grammar");
+        (p.parse(src, None).expect("parse"), src.to_string())
+    }
+
+    /// Depth-first search for the first node of `kind`.
+    fn find<'t>(n: tree_sitter::Node<'t>, kind: &str) -> Option<tree_sitter::Node<'t>> {
+        if n.kind() == kind {
+            return Some(n);
+        }
+        for i in 0..n.child_count() {
+            if let Some(hit) = n.child(i).and_then(|c| find(c, kind)) {
+                return Some(hit);
+            }
+        }
+        None
+    }
+    fn kinds_of(n: tree_sitter::Node) -> Vec<String> {
+        (0..n.child_count()).filter_map(|i| n.child(i)).map(|c| c.kind().to_string()).collect()
+    }
+
+    /// `child_by_field_name` is USELESS for kotlin — `FIELD_COUNT 0`.
+    ///
+    /// Every java resolver line that reads a field (`field(node,"name",src)`)
+    /// must become a positional kind scan when ported. Getting this wrong yields
+    /// a producer that silently returns nothing.
+    #[test]
+    fn no_kotlin_node_exposes_a_field() {
+        let (t, _) = parse("class W { fun go() {} }\n");
+        let cls = find(t.root_node(), "class_declaration").expect("class_declaration");
+        assert!(cls.child_by_field_name("name").is_none(), "FIELD_COUNT is 0 — scan kinds instead");
+        let f = find(t.root_node(), "function_declaration").expect("function_declaration");
+        assert!(f.child_by_field_name("name").is_none(), "FIELD_COUNT is 0 — scan kinds instead");
+    }
+
+    /// An INTERFACE is a `class_declaration` carrying the `interface` keyword.
+    ///
+    /// There is no `interface_declaration` kind in this grammar, yet
+    /// `kotlin_fqn::walk_top` matches on one — a DEAD ARM, which is why every
+    /// kotlin interface is currently emitted as `SymbolKind::Class`. The
+    /// non-fqn walk already gets this right via `has_keyword(.., "interface")`.
+    #[test]
+    fn an_interface_is_a_class_declaration_with_a_keyword() {
+        let (t, src) = parse("interface Handler { fun handle() }\n");
+        assert!(
+            find(t.root_node(), "interface_declaration").is_none(),
+            "no such kind — the walk_top arm matching it is dead"
+        );
+        let cls = find(t.root_node(), "class_declaration").expect("an interface parses as a class");
+        assert!(kinds_of(cls).contains(&"interface".to_string()), "{:?}", kinds_of(cls));
+        assert!(has_keyword(&cls, src.as_bytes(), "interface"));
+    }
+
+    /// A CALL is `call_expression`; the callee is its FIRST child.
+    ///
+    /// Unqualified → `simple_identifier`. Qualified → `navigation_expression`,
+    /// whose receiver is its first `simple_identifier` and whose method is the
+    /// `simple_identifier` inside its `navigation_suffix`.
+    #[test]
+    fn a_call_is_a_call_expression_and_a_qualified_one_nests_a_navigation() {
+        let (t, src) = parse("fun go() {\n  helper()\n  obj.method()\n}\n");
+        let b = src.as_bytes();
+        let mut calls = Vec::new();
+        fn collect<'t>(n: tree_sitter::Node<'t>, out: &mut Vec<tree_sitter::Node<'t>>) {
+            if n.kind() == "call_expression" {
+                out.push(n);
+            }
+            for i in 0..n.child_count() {
+                if let Some(c) = n.child(i) {
+                    collect(c, out);
+                }
+            }
+        }
+        collect(t.root_node(), &mut calls);
+        assert_eq!(calls.len(), 2, "two calls");
+
+        // Unqualified: first child names the callee outright.
+        let plain = calls[0].child(0).unwrap();
+        assert_eq!(plain.kind(), "simple_identifier");
+        assert_eq!(plain.utf8_text(b).unwrap(), "helper");
+
+        // Qualified: receiver + navigation_suffix.
+        let nav = calls[1].child(0).unwrap();
+        assert_eq!(nav.kind(), "navigation_expression");
+        assert_eq!(nav.child(0).unwrap().utf8_text(b).unwrap(), "obj", "receiver");
+        let suffix = find(nav, "navigation_suffix").expect("navigation_suffix");
+        let method = find(suffix, "simple_identifier").expect("method name");
+        assert_eq!(method.utf8_text(b).unwrap(), "method");
+    }
+
+    /// HERITAGE is `delegation_specifier`, and the SUPERCLASS is the one holding
+    /// a `constructor_invocation` — a structural discriminator, not a heuristic.
+    ///
+    /// `class W : Base(), Iface` puts the superclass and the interfaces in ONE
+    /// list. Java splits them by field (`superclass` / `interfaces`); kotlin
+    /// cannot, so the parentheses are the signal.
+    #[test]
+    fn a_superclass_is_the_delegation_specifier_holding_a_constructor_invocation() {
+        let (t, src) = parse("class W : Base(), Iface {\n}\n");
+        let b = src.as_bytes();
+        let cls = find(t.root_node(), "class_declaration").unwrap();
+        let specs: Vec<_> = (0..cls.child_count())
+            .filter_map(|i| cls.child(i))
+            .filter(|c| c.kind() == "delegation_specifier")
+            .collect();
+        assert_eq!(specs.len(), 2, "one superclass + one interface");
+
+        let sup = specs[0];
+        assert!(find(sup, "constructor_invocation").is_some(), "Base() is the SUPERCLASS");
+        assert_eq!(find(sup, "type_identifier").unwrap().utf8_text(b).unwrap(), "Base");
+
+        let iface = specs[1];
+        assert!(find(iface, "constructor_invocation").is_none(), "Iface is an INTERFACE");
+        assert_eq!(find(iface, "type_identifier").unwrap().utf8_text(b).unwrap(), "Iface");
+    }
+
+    /// A COMPANION OBJECT nests its members in its OWN `class_body`.
+    ///
+    /// `collect_members` walks only the type's direct `class_body`, so companion
+    /// members are dropped today — and a MISSING def is what turns a legitimate
+    /// `W.create()` into a minted phantom.
+    #[test]
+    fn a_companion_object_nests_a_second_class_body() {
+        let (t, src) = parse("class W {\n  companion object {\n    fun create() = 1\n  }\n}\n");
+        let comp = find(t.root_node(), "companion_object").expect("companion_object exists");
+        let body = find(comp, "class_body").expect("its own class_body");
+        let f = find(body, "function_declaration").expect("member is inside it");
+        assert_eq!(
+            find(f, "simple_identifier").unwrap().utf8_text(src.as_bytes()).unwrap(),
+            "create"
+        );
+    }
+
+    /// An ENUM body is `enum_class_body`, not `class_body`.
+    #[test]
+    fn an_enum_uses_its_own_body_kind() {
+        let (t, _) = parse("enum class Color { RED, GREEN }\n");
+        assert!(find(t.root_node(), "enum_class_body").is_some());
+        assert!(find(t.root_node(), "enum_entry").is_some());
+    }
+
+    /// IMPORTS are `import_header` under an `import_list`, and a star import is
+    /// marked by a `wildcard_import` child — so it can be skipped rather than
+    /// keyed on a bogus simple name.
+    #[test]
+    fn imports_nest_under_an_import_list_and_star_imports_are_marked() {
+        let (t, src) = parse("package p\nimport a.b.C\nimport d.e.*\n");
+        let list = find(t.root_node(), "import_list").expect("import_list wraps them");
+        let headers: Vec<_> = (0..list.child_count())
+            .filter_map(|i| list.child(i))
+            .filter(|c| c.kind() == "import_header")
+            .collect();
+        assert_eq!(headers.len(), 2);
+        assert!(find(headers[0], "wildcard_import").is_none(), "a.b.C is not a star import");
+        assert!(find(headers[1], "wildcard_import").is_some(), "d.e.* IS a star import");
+        assert!(headers[0].utf8_text(src.as_bytes()).unwrap().contains("a.b.C"));
+    }
+
+    /// `by` DELEGATION parses cleanly and does NOT cost the class body.
+    ///
+    /// Worth pinning because the opposite was asserted during design ("`by`
+    /// delegation destroys the parse of the class body") and it is not true —
+    /// acting on it would have meant writing off every delegating class's
+    /// members as unreachable. A delegating specifier is `explicit_delegation`,
+    /// and it carries NO `constructor_invocation`, so the superclass rule above
+    /// correctly treats it as an interface-like supertype rather than a base
+    /// class.
+    #[test]
+    fn by_delegation_parses_and_keeps_the_class_body() {
+        let (t, src) = parse("class W : Store by delegate {\n  fun go() {}\n}\n");
+        let del = find(t.root_node(), "explicit_delegation").expect("`by` is explicit_delegation");
+        assert!(find(del, "constructor_invocation").is_none(), "a delegate is not a base class");
+
+        let f = find(t.root_node(), "function_declaration").expect("the body SURVIVES");
+        assert_eq!(
+            find(f, "simple_identifier").unwrap().utf8_text(src.as_bytes()).unwrap(),
+            "go",
+            "members of a by-delegating class are reachable"
+        );
+    }
+}

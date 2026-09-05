@@ -40,7 +40,37 @@ def walk, so #5's new arms stay in sync by construction.
    `produce_fqns` returns `defs: [] refs: []`. Fix = a module-level caller anchor
    (`fqn::item(lang, pkg, "", module)`, already minted at process.rs:1148) over the
    RESIDUAL statements. Emit ZERO new defs.
-3. **#4 kotlin — BLOCKED, do not start it. Three compounding blockers:**
+3. **#4 kotlin — UNBLOCKED. Step 8 (verify node kinds) is DONE.**
+
+   `mod kotlin_grammar_shapes` in kotlin.rs now PINS every shape the producer
+   will resolve against, all observed in-tree rather than inherited:
+   - `child_by_field_name` returns None for every node (FIELD_COUNT 0) — port
+     java's field reads as positional KIND SCANS.
+   - `interface_declaration` DOES NOT EXIST; an interface is `class_declaration`
+     + the `interface` keyword. kotlin.rs's arm matching it is DEAD, which is why
+     every kotlin interface is emitted as `SymbolKind::Class`.
+   - call: `call_expression > simple_identifier + call_suffix` (unqualified);
+     `call_expression > navigation_expression(recv, navigation_suffix(method))`
+     (qualified).
+   - heritage: `delegation_specifier`; the SUPERCLASS is the one holding a
+     `constructor_invocation` — structural, not a heuristic.
+   - `companion_object` nests its OWN `class_body`; enums use `enum_class_body`.
+   - imports: `import_header` under `import_list`; a star import carries
+     `wildcard_import`.
+
+   **Two design claims were REFUTED here — do not act on them.** "`by` delegation
+   destroys the class body" is FALSE (the member is reachable; a delegate carries
+   no `constructor_invocation`, so the superclass rule already treats it right),
+   and I could not reproduce ANY parse-degrading shape, so no test asserts one.
+
+   Remaining sub-steps: lift `package_root`/`is_first_party` into a shared
+   `languages/jvm.rs` (PRIVATE to `mod java_fqn`, so copying violates DRY) →
+   shared test helpers (5 byte-identical `def_fqn`/`ref_to` copies; kotlin has
+   neither) → defs (companion_object, enum_class_body, the dead interface arm) →
+   heritage → calls LAST. Calls last because kotlin emits 0 refs today, so that
+   step is the only one whose failure mode is a NEW fabrication pile.
+
+3b. **Historical: #4's three blockers, now cleared or scoped:**
    - There is NO `node-types.json` in `crates/senseid/grammars/kotlin/src/` (only
      `parser.c`, `scanner.c`, `tree_sitter/`), and `#define FIELD_COUNT 0` means
      `child_by_field_name` returns None for EVERY kotlin node — so every java
