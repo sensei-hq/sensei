@@ -676,7 +676,7 @@ pub(crate) mod java_fqn {
                 // on the enclosing test class.
                 Some(fqcn) => {
                     let owner = fqcn.strip_suffix(&format!(".{method}")).unwrap_or(fqcn);
-                    resolve_type_call(owner, &method)
+                    resolve_type_call(owner, &method, &ctx.package)
                 }
                 // No static import → an unqualified call really is a method on the
                 // enclosing class (or inherited from its supertype), which is the
@@ -699,7 +699,7 @@ pub(crate) mod java_fqn {
                         // `Type.staticMethod()` — resolve Type via imports (its own
                         // package) or as a same-package class.
                         return Some(match imports.get(&oname) {
-                            Some(fqcn) => resolve_type_call(fqcn, &method),
+                            Some(fqcn) => resolve_type_call(fqcn, &method, &ctx.package),
                             None => (
                                 Some(fqn::method(JAVA_LANG, &ctx.package, "", &oname, &method)),
                                 false,
@@ -719,7 +719,7 @@ pub(crate) mod java_fqn {
                         // No import means same-package (Java requires none for that),
                         // so falling back to ctx.package there is the language rule.
                         return Some(match imports.get(ty.as_str()) {
-                            Some(fqcn) => resolve_type_call(fqcn, &method),
+                            Some(fqcn) => resolve_type_call(fqcn, &method, &ctx.package),
                             None => (
                                 Some(fqn::method(JAVA_LANG, &ctx.package, "", ty, &method)),
                                 false,
@@ -786,12 +786,44 @@ pub(crate) mod java_fqn {
         }
     }
 
-    /// Resolve a call on an imported/fully-qualified class `a.b.Foo` → `a.b.Foo.m`:
-    /// JDK-family packages become `lib` nodes; any other package is treated as a
-    /// project package and resolves to its own class-method fqn.
-    fn resolve_type_call(fqcn: &str, method: &str) -> (Option<String>, bool, String) {
+    /// The first two segments of a java package — its project ROOT.
+    ///
+    /// `com.acme.svc` and `com.acme.core` share `com.acme` and are one project;
+    /// `org.mockito` does not. Two segments because java's reverse-domain
+    /// convention puts the owning organisation there, which is exactly the
+    /// boundary between "our code" and "a dependency".
+    fn package_root(pkg: &str) -> &str {
+        match pkg.match_indices('.').nth(1) {
+            Some((i, _)) => &pkg[..i],
+            None => pkg,
+        }
+    }
+
+    /// Resolve a call on an imported/fully-qualified class `a.b.Foo` → `a.b.Foo.m`.
+    ///
+    /// FIRST-PARTY when the target shares THIS FILE's package root; everything
+    /// else is a dependency and becomes a `lib` node.
+    ///
+    /// This used to test `is_external_pkg`, a 7-prefix JDK allowlist — so every
+    /// Maven/Gradle package fell through and was minted as a first-party java
+    /// node. Measured: `org.mockito` 8,528 edges and `org.junit` 5,220, 17,209
+    /// fabricated in total. The same adapter's IMPORT path already produced
+    /// `lib·org.mockito·…` for the identical string, so two paths inside one
+    /// adapter disagreed about the same package.
+    ///
+    /// `is_external_pkg` is kept for the heritage path, where the question is
+    /// different: a supertype's externality is judged against the JDK families
+    /// that need no import.
+    fn resolve_type_call(
+        fqcn: &str,
+        method: &str,
+        own_package: &str,
+    ) -> (Option<String>, bool, String) {
         let (pkg, cls) = fqcn.rsplit_once('.').unwrap_or(("", fqcn));
-        if is_external_pkg(pkg) {
+        let first_party = !own_package.is_empty()
+            && !pkg.is_empty()
+            && package_root(pkg) == package_root(own_package);
+        if !first_party {
             let top = pkg.split('.').next().unwrap_or(pkg);
             (Some(fqn::lib(top, fqcn, method)), true, method.to_string())
         } else {
@@ -831,12 +863,16 @@ mod tests {
     #[test]
     fn java_ref_fqn_import() {
         let out = java_fqn::produce_fqns(
-            "package com.app;\nimport a.b.Helper;\nclass C {\n    void use() { Helper.run(); }\n}\n",
+            // The fixture now uses a package that SHARES this file's root, which
+            // is what "project class" means. It previously imported `a.b`, an
+            // unrelated root, and asserted a first-party fqn for it — encoding
+            // the defect that minted `java·org.mockito·…` nodes.
+            "package com.app;\nimport com.app.util.Helper;\nclass C {\n    void use() { Helper.run(); }\n}\n",
         );
         let r = ref_to(&out, "run");
         assert_eq!(
             r.target_fqn.as_deref(),
-            Some("java·a.b·Helper·run"),
+            Some("java·com.app.util·Helper·run"),
             "imported project class resolves to its own package"
         );
         assert!(!r.is_lib);
@@ -855,9 +891,14 @@ mod tests {
             "package com.app;\nimport static org.junit.Assert.assertEquals;\nclass T {\n    void t() { assertEquals(1, 2); }\n}\n",
         );
         let r = ref_to(&out, "assertEquals");
+        // CORRECTED: this asserted `java·org.junit·Assert·assertEquals`, a
+        // FIRST-PARTY node for junit. That was the defect, not the contract —
+        // 5,220 live edges' worth. org.junit does not share `com.app`'s root,
+        // so it is a dependency.
+        assert!(r.is_lib, "org.junit is third-party: {:?}", r.target_fqn);
         assert_eq!(
             r.target_fqn.as_deref(),
-            Some("java·org.junit·Assert·assertEquals"),
+            Some("lib·org·org.junit.Assert·assertEquals"),
             "a static import names the class the method lives on — never the caller's"
         );
     }
@@ -923,6 +964,72 @@ mod tests {
             ref_to(&out, "spin").target_fqn.as_deref(),
             Some("java·com.app·Gadget·spin"),
             "Type v = new Type(); v.m() → Type.m (0.7 binding)"
+        );
+    }
+
+    /// A THIRD-PARTY package must become a lib node, not a first-party one.
+    ///
+    /// `is_external_pkg` is a 7-prefix JDK allowlist (java. javax. kotlin.
+    /// android. sun. scala. jakarta.), so every Maven/Gradle package fell
+    /// through and was minted as a FIRST-PARTY java node: measured
+    /// `org.mockito` 8,528 edges and `org.junit` 5,220, 17,209 fabricated in
+    /// total.
+    ///
+    /// The same adapter's IMPORT path already gets this right — it creates
+    /// `lib·org.mockito·…` for the identical string — so two paths inside one
+    /// adapter disagreed about the same package.
+    ///
+    /// The rule is java's own: a type is first-party when it shares this
+    /// file's package ROOT. `com.acme.svc` and `com.acme.core` are one project;
+    /// `org.mockito` is not.
+    ///
+    /// Breaking mutation: restore the `is_external_pkg` allowlist as the test —
+    /// `org.mockito.Mockito.when` goes back to a first-party `java·` fqn.
+    #[test]
+    fn a_third_party_package_call_resolves_to_a_lib_not_a_first_party_node() {
+        let src = r#"
+package com.acme.svc;
+
+import com.acme.core.BaseService;
+import org.mockito.Mockito;
+import java.util.Collections;
+
+public class Widget {
+    public void go() {
+        Mockito.when(null);
+        BaseService.helper();
+        Collections.emptyList();
+    }
+}
+"#;
+        let out = super::java_fqn::produce_fqns(src);
+        let r = |n: &str| {
+            out.refs
+                .iter()
+                .find(|r| r.target_name == n)
+                .unwrap_or_else(|| panic!("no ref to `{n}` in {:?}", out.refs))
+        };
+
+        // Third-party: a lib node, NOT a first-party java node.
+        let m = r("when");
+        assert!(m.is_lib, "org.mockito is third-party: {:?}", m.target_fqn);
+        assert!(
+            m.target_fqn.as_deref().is_some_and(|f| f.starts_with("lib·")),
+            "must be a lib fqn, got {:?}",
+            m.target_fqn
+        );
+
+        // JDK: still a lib node — the allowlist cases must not regress.
+        let c = r("emptyList");
+        assert!(c.is_lib, "java.util is external: {:?}", c.target_fqn);
+
+        // FIRST-PARTY: shares this file's package root, so it stays internal.
+        let b = r("helper");
+        assert!(!b.is_lib, "com.acme.core shares the project root: {:?}", b.target_fqn);
+        assert_eq!(
+            b.target_fqn.as_deref(),
+            Some("java·com.acme.core·BaseService·helper"),
+            "a first-party call keeps its java fqn"
         );
     }
 
@@ -1160,9 +1267,15 @@ mod corpus {
                 // A statically-imported assertion must never land on the class that
                 // called it. Detect by: the source statically imports the name, yet
                 // the produced fqn's class segment is the enclosing class.
+                // The INTENT is unchanged: a statically-imported assertion must
+                // not be attributed to the calling class. The shape changed —
+                // junit is now correctly `lib·org·org.junit.Assert·…` rather
+                // than a fabricated first-party `java·org.junit·Assert·…` — so
+                // the check accepts either, and still catches attribution to
+                // the caller.
                 if r.target_name.starts_with("assert")
                     && src.contains(&format!("import static org.junit.Assert.{}", r.target_name))
-                    && !fqn.contains("·Assert·")
+                    && !fqn.contains("Assert·")
                 {
                     assertion_on_test_class.push(format!("{}: {fqn}", f.display()));
                 }
