@@ -105,9 +105,14 @@ install: install-service install-app
 	@# nothing that was just built.
 	@#
 	@# Same trade `bump` makes and for the same reason: the next dev build is
-	@# COLD. That is the right side of the trade HERE (you just shipped) and the
-	@# wrong side for `install-debug`, which is the fast-iteration path and
-	@# instead prunes caches without discarding the build.
+	@# COLD. That is plainly the right side of the trade HERE, because you just
+	@# shipped.
+	@#
+	@# `install-debug` MAKES THE SAME TRADE — see its own recipe and the
+	@# 2026-08-29 decision recorded there. This comment used to claim it "instead
+	@# prunes caches without discarding the build", which has been false since
+	@# that decision and cost a reader a wrong prediction about deploy cost.
+	@# `clean-cache` was measured and rejected there: it would have left ~43G.
 	@echo "Reclaiming the build tree..."
 	@$(MAKE) clean
 
