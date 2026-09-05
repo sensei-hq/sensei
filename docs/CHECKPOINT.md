@@ -31,7 +31,8 @@ repos alone). The def-set worry is handled by harvesting the probe set FROM the
 def walk, so #5's new arms stay in sync by construction.
 
 1. ~~MEASURE #1/#2/#2b/#3~~ **DONE — deployed and verified live, see below.**
-2. **#5** — NOT what the issue said. Call collection is driven by `scan_body`, not
+2. ~~#5~~ **DONE (`571b934b`), deployed and measured — see below.** Was NOT what
+   the issue said. Call collection is driven by `scan_body`, not
    `walk_stmt`; the oxc `Visit` already recurses through arrow bodies/args/try
    (verified `oxc_ast_visit-0.124.0/src/generated/visit.rs:1640,2522,3849`). A
    vitest file's body is `ImportDeclaration` + `ExpressionStatement`, so `walk_stmt`
@@ -39,10 +40,32 @@ def walk, so #5's new arms stay in sync by construction.
    `produce_fqns` returns `defs: [] refs: []`. Fix = a module-level caller anchor
    (`fqn::item(lang, pkg, "", module)`, already minted at process.rs:1148) over the
    RESIDUAL statements. Emit ZERO new defs.
-3. **#4** kotlin (independent). 7 sub-steps: lift `package_root`/`is_first_party`
-   into a shared `languages/jvm.rs` (they are PRIVATE to `mod java_fqn`, so copying
-   would violate DRY) → shared test helpers → verify node kinds → defs → heritage →
-   calls LAST.
+3. **#4 kotlin — BLOCKED, do not start it. Three compounding blockers:**
+   - There is NO `node-types.json` in `crates/senseid/grammars/kotlin/src/` (only
+     `parser.c`, `scanner.c`, `tree_sitter/`), and `#define FIELD_COUNT 0` means
+     `child_by_field_name` returns None for EVERY kotlin node — so every java
+     resolver line that reads a field must become a kind scan. Only 2 of ~7
+     required node kinds were verifiable in-tree (`interface_declaration` is
+     ABSENT — kotlin.rs:585's arm is dead, and every kotlin interface is already
+     emitted as `SymbolKind::Class`).
+   - `find . -name '*.kt'` returns **0** in this repo, so `corpus(&["kt"])` is
+     empty and the corpus invariants assert NOTHING about kotlin.
+   - The one real kotlin corpus has a folder permanently `failed` — defect B.
+   A wrong node kind yields a silently EMPTY producer, indistinguishable from
+   today's behaviour, so hand-written fixtures cannot tell you it is wrong.
+   **Unblock in this order:** fix defect B (it is a prerequisite AND it makes the
+   245-file corpus available to verify the kinds empirically), then do the 7
+   sub-steps: lift `package_root`/`is_first_party` into a shared
+   `languages/jvm.rs` (they are PRIVATE to `mod java_fqn`, so copying violates
+   DRY) → shared test helpers (5 byte-identical `def_fqn`/`ref_to` copies exist;
+   kotlin has neither) → verify node kinds → defs (companion_object 41,
+   enum_class_body 11) → heritage → calls LAST.
+
+   Recommended shape for defect B: kotlin's own JVM naming puts a top-level
+   member on a synthetic `<File>Kt` class, so anchoring top-level functions and
+   properties on the FILE resolves the collision while leaving TYPES anchored on
+   the package — which preserves the deliberate java/kotlin addressability parity
+   at kotlin.rs:595-597. Needs user sign-off: it changes existing kotlin fqns.
 4. **#2c** lib-package keying: `resolve_type_call`/`resolve_supertype` key on ONE
    segment (`lib·java·…` 1,206) while `import_target.rs` uses TWO (`lib·java.util·…`
    371, `lib·java.io·…` 131). Same dependency, two groupings, two code paths. Do it
@@ -71,6 +94,32 @@ Reindexed ONLY `Labs/OmniRoute` + `Dayamed/server`, so global figures understate
 - **Edge movement is #1+#3 COMBINED and must not be split**: OmniRoute resolved
   50,578 → 53,999 (+3,421), unresolved 26,903 → 23,568 (−3,335). Both shipped in
   one binary. Only the phantom-NODE drop is attributable to #3 alone.
+
+## #5 MEASURED LIVE (deployed, OmniRoute reindexed)
+
+- **module nodes as call SOURCES: 0 → 35,368.** The anchor works as designed.
+- **call edges from test-file sources: 9,167 → 43,752 (4.8x).** Test files went
+  from 7.0% of TS/JS call edges to ~26%.
+- OmniRoute resolved 53,999 → 77,115; unresolved 23,568 → 35,820.
+- **COST, and it is real: OmniRoute phantoms regrew 1,453 → 3,496 (+2,043)** —
+  against the map's prediction of ~2,050. Still −59% vs the 8,504 at session
+  start. #3 did NOT prevent this because the new phantoms come from two OTHER
+  minting paths, now both identified:
+  - **#1b bindings arm** (below) — `…·executors/deepseek-web·TextDecoder·decode`.
+  - **#3b, FIXED THIS ROUND** — `import_anchor` took the FIRST of
+    `local_module_candidates`, i.e. the `src/`-PREFIXED variant.
+    `ts_module_path` strips a leading `src/` unconditionally, so that names a
+    module no def can carry: **0 of 21,881** real defs have a `src/` segment
+    against **1,038 phantoms** that do. The import-EDGE path survives this
+    because slice 4 gave it a graph probe that tries both; the CALL path has no
+    probe. Third instance this session of a fix landing on one path and not its
+    sibling (cf. #2b). Fixed by taking `next_back()`. NOT yet reindexed — the
+    1,038 figure is the eligible count, not an observed drop.
+
+### Also found, not fixed
+
+A BARE `src/…` specifier classifies as EXTERNAL with package `"src"` — that is
+where the 230 `lib·src·…` nodes come from. A fabricated npm package named `src`.
 
 ### #1b — the residual, now characterised
 
