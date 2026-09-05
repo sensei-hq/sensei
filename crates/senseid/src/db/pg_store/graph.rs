@@ -13,6 +13,16 @@ fn is_identity_conflict(e: &sqlx_core::error::Error) -> bool {
     )
 }
 
+/// The fqn is already held by a DIFFERENT row in this folder — several files
+/// declaring one symbol, which an fqn is allowed to name. See the recovery in
+/// [`PgStore::upsert_node_by_fqn`] for why that is not an error.
+fn is_fqn_conflict(e: &sqlx_core::error::Error) -> bool {
+    matches!(
+        e,
+        sqlx_core::error::Error::Database(db) if db.constraint() == Some("nodes_unique_fqn")
+    )
+}
+
 /// Which side of a `calls` relation a coverage count is about — incoming edges
 /// (who calls this) or outgoing ones (what this calls). A closed enum rather
 /// than a string so [`PgStore::call_coverage`] picks its filter column at
@@ -419,21 +429,56 @@ impl PgStore {
                 // Adopt the existing row by re-pointing its fqn at the new value.
                 // Keyed on the identity columns so we update exactly the row that
                 // blocked us — NULLS NOT DISTINCT mirrors the index semantics.
-                self.adopt_node_by_identity(
-                    folder_id,
-                    fqn,
-                    kind,
-                    name,
-                    language,
-                    resolved,
-                    file_path,
-                    signature,
-                    line_start,
-                    line_end,
-                    is_exported,
-                    parent_id,
-                )
-                .await?
+                match self
+                    .adopt_node_by_identity(
+                        folder_id,
+                        fqn,
+                        kind,
+                        name,
+                        language,
+                        resolved,
+                        file_path,
+                        signature,
+                        line_start,
+                        line_end,
+                        is_exported,
+                        parent_id,
+                    )
+                    .await
+                {
+                    Ok(r) => r,
+                    // ANOTHER FILE IN THIS FOLDER ALREADY OWNS THIS FQN, so the
+                    // adoption cannot re-point this row at it.
+                    //
+                    // That is not a corruption to reject — it is what an fqn
+                    // MEANS. A reference mints its target from what the call site
+                    // can see (for kotlin, the package and the name) with no
+                    // knowledge of which file holds the definition, so the
+                    // definition side cannot add path information to
+                    // disambiguate without making the two sides mint different
+                    // strings and never match. N files therefore legitimately
+                    // map to one fqn, and one fqn must resolve to one node.
+                    //
+                    // Android build variants are the real case: one `Color.kt`
+                    // per variant, each declaring `val colorPrimary` in one
+                    // package. Measured over a 245-file repo: 423 top-level
+                    // declarations, 26 colliding, all 26 `val`.
+                    //
+                    // Erroring here was a POISON PILL, not a safeguard:
+                    // `process_file` returned Err, `fail_folder` withheld
+                    // `scan_state`, the reconcile re-drove the folder every tick,
+                    // and the whole repo never finished indexing.
+                    // Reuses the existing `node_id_by_fqn`. A holder that the
+                    // constraint just reported but the SELECT cannot find is a
+                    // genuine inconsistency, so it errors rather than invents an id.
+                    Err(e) if is_fqn_conflict(&e) => {
+                        let id = self.node_id_by_fqn(folder_id, fqn).await?.ok_or_else(|| {
+                            format!("fqn {fqn} reported as taken but no holder found ({name})")
+                        })?;
+                        (id,)
+                    }
+                    Err(e) => return Err(format!("adopt node by identity ({name}): {e}")),
+                }
             }
             Err(e) => return Err(e.to_string()),
         };
@@ -459,7 +504,7 @@ impl PgStore {
         line_end: Option<i32>,
         is_exported: bool,
         parent_id: Option<&uuid::Uuid>,
-    ) -> Result<(uuid::Uuid,), String> {
+    ) -> Result<(uuid::Uuid,), sqlx_core::error::Error> {
         sqlx_core::query_as::query_as(
             "UPDATE sensei.nodes SET
                  fqn         = $2,
@@ -494,7 +539,6 @@ impl PgStore {
         .bind(parent_id)
         .fetch_one(&self.pool)
         .await
-        .map_err(|e| format!("adopt node by identity ({name}): {e}"))
     }
 
     /// Get-or-create a first-class `lib_symbol` node for an EXTERNAL reference (a
