@@ -413,12 +413,6 @@ pub(crate) mod java_fqn {
     fn is_pascal(s: &str) -> bool {
         s.chars().next().is_some_and(|c| c.is_ascii_uppercase())
     }
-    /// JDK / well-known runtime roots → treated as external dependencies.
-    fn is_external_pkg(pkg: &str) -> bool {
-        ["java.", "javax.", "kotlin.", "android.", "sun.", "scala.", "jakarta."]
-            .iter()
-            .any(|p| pkg.starts_with(p))
-    }
 
     pub fn produce_fqns(source: &str) -> FqnFileOutput {
         let mut parser = Parser::new();
@@ -758,8 +752,10 @@ pub(crate) mod java_fqn {
 
     /// Resolve a supertype's simple name to `(fqn, is_lib)`.
     ///
-    /// Same two-way split as [`resolve_type_call`] and the same `is_external_pkg`
-    /// test, so a JDK supertype lands on the key a JDK call already writes.
+    /// Same two-way split as [`resolve_type_call`] and, since it shares
+    /// [`is_first_party`], the same ANSWER — so a third-party supertype lands on
+    /// the very key a third-party call already writes, and the two paths cannot
+    /// disagree about one package again.
     /// An unimported name falls back to THIS file's package, which is how java
     /// resolves same-package types — not a guess.
     fn resolve_supertype(
@@ -773,11 +769,11 @@ pub(crate) mod java_fqn {
         match imports.get(name) {
             Some(fqcn) => {
                 let (pkg, cls) = fqcn.rsplit_once('.').unwrap_or(("", fqcn.as_str()));
-                if is_external_pkg(pkg) {
+                if is_first_party(pkg, package) {
+                    Some((fqn::item(JAVA_LANG, pkg, "", cls), false))
+                } else {
                     let top = pkg.split('.').next().unwrap_or(pkg);
                     Some((fqn::lib(top, pkg, cls), true))
-                } else {
-                    Some((fqn::item(JAVA_LANG, pkg, "", cls), false))
                 }
             }
             // Same package. Java resolves an unqualified type this way, so it
@@ -799,6 +795,20 @@ pub(crate) mod java_fqn {
         }
     }
 
+    /// Is `pkg` first-party relative to `own_package`? — they share a package ROOT.
+    ///
+    /// The SINGLE test both the call path and the heritage path ask, so the two
+    /// cannot drift apart again. They already had: `2aaf6a09` moved calls onto
+    /// the package-root rule and left supertypes on a 7-prefix JDK allowlist, so
+    /// `org.springframework…AbstractAuditable` was a `lib·` node when called and
+    /// a fabricated first-party `java·` node when extended.
+    ///
+    /// An empty package on either side is not evidence of kinship, so it answers
+    /// false — an unknown owner is a dependency, never silently ours.
+    fn is_first_party(pkg: &str, own_package: &str) -> bool {
+        !own_package.is_empty() && !pkg.is_empty() && package_root(pkg) == package_root(own_package)
+    }
+
     /// Resolve a call on an imported/fully-qualified class `a.b.Foo` → `a.b.Foo.m`.
     ///
     /// FIRST-PARTY when the target shares THIS FILE's package root; everything
@@ -811,18 +821,16 @@ pub(crate) mod java_fqn {
     /// `lib·org.mockito·…` for the identical string, so two paths inside one
     /// adapter disagreed about the same package.
     ///
-    /// `is_external_pkg` is kept for the heritage path, where the question is
-    /// different: a supertype's externality is judged against the JDK families
-    /// that need no import.
+    /// That allowlist is now gone entirely: [`resolve_supertype`] was the last
+    /// caller and shares [`is_first_party`] with this function, which is what
+    /// keeps the call and heritage paths answering alike.
     fn resolve_type_call(
         fqcn: &str,
         method: &str,
         own_package: &str,
     ) -> (Option<String>, bool, String) {
         let (pkg, cls) = fqcn.rsplit_once('.').unwrap_or(("", fqcn));
-        let first_party = !own_package.is_empty()
-            && !pkg.is_empty()
-            && package_root(pkg) == package_root(own_package);
+        let first_party = is_first_party(pkg, own_package);
         if !first_party {
             let top = pkg.split('.').next().unwrap_or(pkg);
             (Some(fqn::lib(top, fqcn, method)), true, method.to_string())
@@ -1086,6 +1094,72 @@ public class Widget extends BaseService implements Serializable, Runnable {
             );
         }
         assert_eq!(out.relations.len(), 3, "one extends + two implements: {:?}", out.relations);
+    }
+
+    /// A THIRD-PARTY SUPERTYPE must become a lib node, exactly as a third-party
+    /// CALL target already does.
+    ///
+    /// `2aaf6a09` moved the call path off the `is_external_pkg` JDK allowlist and
+    /// onto java's own package-ROOT rule, but left `resolve_supertype` on the
+    /// allowlist. So the two paths in one adapter disagree about the same string:
+    /// `org.springframework.data.jpa.domain.AbstractAuditable` is a `lib·` node
+    /// when CALLED and a fabricated first-party `java·` node when EXTENDED.
+    ///
+    /// The allowlist is the wrong question in the imported branch. An import
+    /// states the supertype's package outright, so there is nothing to guess —
+    /// the JDK-families reasoning only ever applied to the un-imported branch,
+    /// where java's same-package rule already answers it.
+    ///
+    /// Measured live: 125 heritage edges point at fabricated first-party java
+    /// nodes — `org.springframework` 81, plus apache, hibernate, hamcrest,
+    /// junit.framework, fasterxml, itextpdf. "Which of our services extend a
+    /// Spring base class" is unanswerable until they are lib nodes.
+    ///
+    /// Breaking mutation: restore `is_external_pkg(pkg)` as the test in
+    /// `resolve_supertype` — `HandlerInterceptor` goes back to a first-party fqn.
+    #[test]
+    fn a_third_party_supertype_resolves_to_a_lib_not_a_first_party_node() {
+        let src = r#"
+package com.acme.svc;
+
+import com.acme.core.BaseService;
+import org.springframework.web.servlet.HandlerInterceptor;
+import java.io.Serializable;
+
+public class Widget extends BaseService implements Serializable, HandlerInterceptor {
+    public void go() {}
+}
+"#;
+        let out = super::java_fqn::produce_fqns(src);
+        let rel = |n: &str| {
+            out.relations
+                .iter()
+                .find(|r| r.parent_name == n)
+                .unwrap_or_else(|| panic!("no relation to `{n}` in {:?}", out.relations))
+        };
+
+        // Third-party: a lib node, NOT a first-party java node. This is the
+        // assertion that fails before the fix.
+        let spring = rel("HandlerInterceptor");
+        assert!(spring.is_lib, "org.springframework is third-party: {:?}", spring.parent_fqn);
+        assert!(
+            spring.parent_fqn.as_deref().is_some_and(|f| f.starts_with("lib·")),
+            "must be a lib fqn, got {:?}",
+            spring.parent_fqn
+        );
+
+        // JDK: still a lib node — the allowlist cases must not regress.
+        let ser = rel("Serializable");
+        assert!(ser.is_lib, "java.io is external: {:?}", ser.parent_fqn);
+
+        // FIRST-PARTY: shares this file's package root, so it stays internal.
+        let base = rel("BaseService");
+        assert!(!base.is_lib, "com.acme.core shares the project root: {:?}", base.parent_fqn);
+        assert_eq!(
+            base.parent_fqn.as_deref(),
+            Some("java·com.acme.core·BaseService"),
+            "a first-party supertype keeps its java fqn"
+        );
     }
 
     #[test]
