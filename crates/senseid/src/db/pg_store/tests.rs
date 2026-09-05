@@ -1710,6 +1710,105 @@ async fn upsert_node_by_fqn_adopts_row_when_only_the_fqn_changed() {
     );
 }
 
+/// TWO FILES declaring ONE fqn must resolve to one node, not fail the folder.
+///
+/// An fqn is a LOOKUP KEY: a reference mints it from what the call site can see
+/// — for kotlin, the package and the name — with no knowledge of which file
+/// holds the definition. So the definition side cannot add file or path
+/// information to disambiguate, or the two sides would never produce the same
+/// string and every reference would miss. It follows that N files legitimately
+/// map to one fqn, and one fqn must mean one node.
+///
+/// An Android project makes this concrete: `app/src/panama/java/…/Color.kt` and
+/// `app/src/ecuador/java/…/Color.kt` each declare `val colorPrimary` in one
+/// package. MEASURED over that 245-file repo: 423 distinct top-level
+/// declarations, 26 colliding, all 26 `val`.
+///
+/// The failure needed three rows, which is why it survived: row A holds the fqn
+/// for file A; file B already has a row under a DIFFERENT fqn (its state from an
+/// earlier index); upserting B with A's fqn matches `ON CONFLICT (folder_id,
+/// fqn)`, re-points row A's file_path to B, collides with row B on
+/// `nodes_unique_identity`, and the `adopt_node_by_identity` recovery then tries
+/// to give row B the fqn row A already owns — violating `nodes_unique_fqn`.
+/// `process_file` returned Err, `fail_folder` withheld scan_state, the reconcile
+/// re-drove the folder every tick, and the repo never finished indexing: 112
+/// retries per 200KB of daemon log, folder stuck `failed`.
+///
+/// Breaking mutation: drop the fqn-conflict fallback in `upsert_node_by_fqn` —
+/// the third upsert returns Err and the poison pill is back.
+#[tokio::test]
+async fn upsert_node_by_fqn_resolves_two_files_declaring_one_fqn() {
+    let s = pg_store().await;
+    let fid = create_test_folder(&s, &format!("variant_{}", uuid::Uuid::new_v4())).await;
+
+    let shared = "kotlin·com.acme.theme·colorPrimary";
+    let panama = "app/src/panama/java/com/acme/theme/Color.kt";
+    let ecuador = "app/src/ecuador/java/com/acme/theme/Color.kt";
+    let def = |file_path: &'static str| FqnDef {
+        file_path,
+        signature: None,
+        line_start: Some(3),
+        line_end: Some(3),
+        is_exported: true,
+        parent_id: None,
+    };
+
+    // Variant A claims the fqn.
+    let a = s
+        .upsert_node_by_fqn(
+            &fid,
+            shared,
+            "const",
+            "colorPrimary",
+            Some("kotlin"),
+            Some(def(panama)),
+        )
+        .await
+        .unwrap();
+
+    // Variant B already exists under its own (earlier) fqn — the state that
+    // turns the collision into a hard error rather than a plain ON CONFLICT.
+    s.upsert_node_by_fqn(
+        &fid,
+        "kotlin·com.acme.theme·colorPrimary·ecuador",
+        "const",
+        "colorPrimary",
+        Some("kotlin"),
+        Some(def(ecuador)),
+    )
+    .await
+    .unwrap();
+
+    // Now B is re-derived onto the SHARED fqn. This used to be Err.
+    let b = s
+        .upsert_node_by_fqn(
+            &fid,
+            shared,
+            "const",
+            "colorPrimary",
+            Some("kotlin"),
+            Some(def(ecuador)),
+        )
+        .await
+        .expect("a second file declaring one fqn must resolve, not fail the folder");
+
+    assert_eq!(
+        a, b,
+        "one fqn is one node — that is what makes it a key the caller can mint from (package, name)"
+    );
+
+    // And exactly one row holds it, so a reference cannot resolve ambiguously.
+    let holders: i64 = sqlx_core::query_scalar::query_scalar(
+        "SELECT count(*) FROM sensei.nodes WHERE folder_id=$1 AND fqn=$2",
+    )
+    .bind(fid)
+    .bind(shared)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(holders, 1, "an fqn must name exactly one node");
+}
+
 #[tokio::test]
 async fn upsert_node_by_fqn_merges_ref_and_def() {
     // FQN get-or-create (SCIP/LSIF moniker model): a REFERENCE creates an
