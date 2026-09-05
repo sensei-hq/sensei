@@ -221,9 +221,22 @@ fn no_runtime_global_is_attributed_to_the_calling_module() {
                 continue;
             }
             hits += 1;
-            // Resolved to the runtime => `lib·…`. Anything else claims the global
-            // is defined in project code.
-            if !fqn.starts_with("lib·") {
+            // THE DEFECT'S EXACT SIGNATURE: the global stamped with the CALLING
+            // file's own module, which is literally what the old mint produced —
+            // `fqn::item(lang, ctx.package, ctx.module, name)`.
+            //
+            // Deliberately NOT the broader "anything that isn't `lib·`". A
+            // `target_name` is the METHOD name for a member call, so
+            // `test.setTimeout(180_000)` on a `test` imported from `../fixtures`
+            // resolves — correctly — to `…·e2e/fixtures·setTimeout`, which the
+            // broader form flagged. Eight such calls in this repo's e2e specs
+            // were invisible until top-level statements began to be scanned, and
+            // they are legitimate: a member of an imported object that happens to
+            // share a built-in's name. Telling the two apart needs the RECEIVER,
+            // which a resolved ref does not carry — so this asserts the case the
+            // doc comment above actually describes.
+            let lang = fqn.split('·').next().unwrap_or_default();
+            if fqn == super::fqn::item(lang, &out.package, &out.module, &r.target_name) {
                 bad.push(format!("{}: {fqn}", path.display()));
             }
         }
