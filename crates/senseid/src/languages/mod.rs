@@ -5,6 +5,7 @@ mod corpus_tests;
 pub mod fqn;
 pub mod import_target;
 pub mod java;
+pub mod jvm;
 pub mod kotlin;
 pub mod python;
 pub mod rust_lang;

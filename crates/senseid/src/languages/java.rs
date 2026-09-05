@@ -752,91 +752,24 @@ pub(crate) mod java_fqn {
 
     /// Resolve a supertype's simple name to `(fqn, is_lib)`.
     ///
-    /// Same two-way split as [`resolve_type_call`] and, since it shares
-    /// [`is_first_party`], the same ANSWER — so a third-party supertype lands on
-    /// the very key a third-party call already writes, and the two paths cannot
-    /// disagree about one package again.
-    /// An unimported name falls back to THIS file's package, which is how java
-    /// resolves same-package types — not a guess.
+    /// Java's view of the shared JVM rules. `kotlin` resolves through the SAME
+    /// functions, so a Kotlin type and a Java type in one package stay
+    /// addressable alike and the two languages cannot drift apart on what counts
+    /// as first-party.
     fn resolve_supertype(
         name: &str,
         imports: &HashMap<String, String>,
         package: &str,
     ) -> Option<(String, bool)> {
-        if name.is_empty() {
-            return None;
-        }
-        match imports.get(name) {
-            Some(fqcn) => {
-                let (pkg, cls) = fqcn.rsplit_once('.').unwrap_or(("", fqcn.as_str()));
-                if is_first_party(pkg, package) {
-                    Some((fqn::item(JAVA_LANG, pkg, "", cls), false))
-                } else {
-                    let top = pkg.split('.').next().unwrap_or(pkg);
-                    Some((fqn::lib(top, pkg, cls), true))
-                }
-            }
-            // Same package. Java resolves an unqualified type this way, so it
-            // is the language rule rather than a fallback guess.
-            None => Some((fqn::item(JAVA_LANG, package, "", name), false)),
-        }
+        crate::languages::jvm::resolve_supertype(JAVA_LANG, name, imports, package)
     }
 
-    /// The first two segments of a java package — its project ROOT.
-    ///
-    /// `com.acme.svc` and `com.acme.core` share `com.acme` and are one project;
-    /// `org.mockito` does not. Two segments because java's reverse-domain
-    /// convention puts the owning organisation there, which is exactly the
-    /// boundary between "our code" and "a dependency".
-    fn package_root(pkg: &str) -> &str {
-        match pkg.match_indices('.').nth(1) {
-            Some((i, _)) => &pkg[..i],
-            None => pkg,
-        }
-    }
-
-    /// Is `pkg` first-party relative to `own_package`? — they share a package ROOT.
-    ///
-    /// The SINGLE test both the call path and the heritage path ask, so the two
-    /// cannot drift apart again. They already had: `2aaf6a09` moved calls onto
-    /// the package-root rule and left supertypes on a 7-prefix JDK allowlist, so
-    /// `org.springframework…AbstractAuditable` was a `lib·` node when called and
-    /// a fabricated first-party `java·` node when extended.
-    ///
-    /// An empty package on either side is not evidence of kinship, so it answers
-    /// false — an unknown owner is a dependency, never silently ours.
-    fn is_first_party(pkg: &str, own_package: &str) -> bool {
-        !own_package.is_empty() && !pkg.is_empty() && package_root(pkg) == package_root(own_package)
-    }
-
-    /// Resolve a call on an imported/fully-qualified class `a.b.Foo` → `a.b.Foo.m`.
-    ///
-    /// FIRST-PARTY when the target shares THIS FILE's package root; everything
-    /// else is a dependency and becomes a `lib` node.
-    ///
-    /// This used to test `is_external_pkg`, a 7-prefix JDK allowlist — so every
-    /// Maven/Gradle package fell through and was minted as a first-party java
-    /// node. Measured: `org.mockito` 8,528 edges and `org.junit` 5,220, 17,209
-    /// fabricated in total. The same adapter's IMPORT path already produced
-    /// `lib·org.mockito·…` for the identical string, so two paths inside one
-    /// adapter disagreed about the same package.
-    ///
-    /// That allowlist is now gone entirely: [`resolve_supertype`] was the last
-    /// caller and shares [`is_first_party`] with this function, which is what
-    /// keeps the call and heritage paths answering alike.
     fn resolve_type_call(
         fqcn: &str,
         method: &str,
         own_package: &str,
     ) -> (Option<String>, bool, String) {
-        let (pkg, cls) = fqcn.rsplit_once('.').unwrap_or(("", fqcn));
-        let first_party = is_first_party(pkg, own_package);
-        if !first_party {
-            let top = pkg.split('.').next().unwrap_or(pkg);
-            (Some(fqn::lib(top, fqcn, method)), true, method.to_string())
-        } else {
-            (Some(fqn::method(JAVA_LANG, pkg, "", cls, method)), false, method.to_string())
-        }
+        crate::languages::jvm::resolve_type_call(JAVA_LANG, fqcn, method, own_package)
     }
 }
 
