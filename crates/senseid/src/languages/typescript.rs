@@ -557,15 +557,96 @@ pub(crate) mod typescript_fqn {
     }
 
     pub fn produce_fqns(source: &str, ctx: &FileFqnContext) -> FqnFileOutput {
+        produce_fqns_with_locals(source, ctx, &HashMap::new())
+    }
+
+    /// As [`produce_fqns`], but seeded with module-local names defined OUTSIDE
+    /// this source text.
+    ///
+    /// A single-file component's `<script context="module">` and `<script>`
+    /// share one module scope, yet `sfc_fqn_output` parses each block
+    /// separately. Without the seed, a function declared in one block and called
+    /// in another is not in the callee block's `locals` and the call reports
+    /// unresolved — trading the old fabrication for a false negative on a name
+    /// we can actually see.
+    pub(crate) fn produce_fqns_with_locals(
+        source: &str,
+        ctx: &FileFqnContext,
+        extra_locals: &HashMap<String, String>,
+    ) -> FqnFileOutput {
         let allocator = Allocator::default();
         let ret = Parser::new(&allocator, source, SourceType::tsx()).parse();
         if ret.panicked {
             return FqnFileOutput::default();
         }
         let program = &ret.program;
+        let imports = collect_imports(&program.body, ctx);
 
-        let mut imports: HashMap<String, ImportTarget> = HashMap::new();
+        // PASS 1 — definitions only, into a scratch output that is discarded.
+        //
+        // `locals` has to be COMPLETE before any body is scanned: a call may
+        // precede its callee's declaration (function hoisting), so reading
+        // `out.defs` mid-walk would report a legitimate local call as
+        // unresolved. Harvesting from the real def walk — rather than from a
+        // second hand-written match on statement kinds — keeps the probe set
+        // identical to the def set by construction, including for arms added
+        // later.
+        let mut locals = local_defs(&program.body, source, ctx, &imports);
+        for (name, fqn) in extra_locals {
+            locals.entry(name.clone()).or_insert_with(|| fqn.clone());
+        }
+
+        // PASS 2 — defs and refs, with the probe set in hand.
+        let mut out = FqnFileOutput {
+            package: ctx.package.clone(),
+            module: ctx.module.clone(),
+            ..Default::default()
+        };
         for stmt in &program.body {
+            walk_stmt(stmt, source, ctx, &imports, &mut out, Some(&locals));
+        }
+        out
+    }
+
+    /// The module-local definitions in `source`, `name` → `fqn`.
+    ///
+    /// Exposed so an SFC can union the scopes of its sibling `<script>` blocks
+    /// before resolving any of them.
+    pub(crate) fn local_defs_of(source: &str, ctx: &FileFqnContext) -> HashMap<String, String> {
+        let allocator = Allocator::default();
+        let ret = Parser::new(&allocator, source, SourceType::tsx()).parse();
+        if ret.panicked {
+            return HashMap::new();
+        }
+        let imports = collect_imports(&ret.program.body, ctx);
+        local_defs(&ret.program.body, source, ctx, &imports)
+    }
+
+    /// Run the definition pass and harvest the top-level names it emitted.
+    ///
+    /// Only defs with no `parent_fqn` are module-local bindings; a method's name
+    /// is reachable through its class, never as a bare identifier.
+    fn local_defs(
+        body: &[Statement],
+        source: &str,
+        ctx: &FileFqnContext,
+        imports: &HashMap<String, ImportTarget>,
+    ) -> HashMap<String, String> {
+        let mut scratch = FqnFileOutput::default();
+        for stmt in body {
+            walk_stmt(stmt, source, ctx, imports, &mut scratch, None);
+        }
+        scratch
+            .defs
+            .into_iter()
+            .filter(|d| d.parent_fqn.is_none())
+            .map(|d| (d.name, d.fqn))
+            .collect()
+    }
+
+    fn collect_imports(body: &[Statement], ctx: &FileFqnContext) -> HashMap<String, ImportTarget> {
+        let mut imports: HashMap<String, ImportTarget> = HashMap::new();
+        for stmt in body {
             if let Statement::ImportDeclaration(imp) = stmt {
                 let target = classify_import(&imp.source.value, &ctx.module);
                 if let Some(specs) = &imp.specifiers {
@@ -586,16 +667,7 @@ pub(crate) mod typescript_fqn {
                 }
             }
         }
-
-        let mut out = FqnFileOutput {
-            package: ctx.package.clone(),
-            module: ctx.module.clone(),
-            ..Default::default()
-        };
-        for stmt in &program.body {
-            walk_stmt(stmt, source, ctx, &imports, &mut out);
-        }
-        out
+        imports
     }
 
     /// ECMAScript language built-ins — available with no import in every JS/TS
@@ -735,28 +807,38 @@ pub(crate) mod typescript_fqn {
     // module's shadow `classify_import`, which now delegates to `import_anchor`.
     use crate::languages::import_target::strip_ext;
 
+    /// `locals = None` is the DEFINITION pass: emit defs, scan no bodies.
+    /// `locals = Some(set)` is the reference pass: emit defs and scan bodies,
+    /// resolving bare identifiers against `set`.
     fn walk_stmt(
         stmt: &Statement,
         source: &str,
         ctx: &FileFqnContext,
         imports: &HashMap<String, ImportTarget>,
         out: &mut FqnFileOutput,
+        locals: Option<&HashMap<String, String>>,
     ) {
         match stmt {
-            Statement::FunctionDeclaration(f) => emit_function(f, false, ctx, imports, source, out),
-            Statement::ClassDeclaration(c) => emit_class(c, false, ctx, imports, source, out),
-            Statement::VariableDeclaration(v) => emit_var(v, false, ctx, imports, source, out),
+            Statement::FunctionDeclaration(f) => {
+                emit_function(f, false, ctx, imports, source, out, locals)
+            }
+            Statement::ClassDeclaration(c) => {
+                emit_class(c, false, ctx, imports, source, out, locals)
+            }
+            Statement::VariableDeclaration(v) => {
+                emit_var(v, false, ctx, imports, source, out, locals)
+            }
             Statement::ExportNamedDeclaration(e) => {
                 if let Some(decl) = &e.declaration {
-                    emit_decl(decl, ctx, imports, source, out);
+                    emit_decl(decl, ctx, imports, source, out, locals);
                 }
             }
             Statement::ExportDefaultDeclaration(e) => match &e.declaration {
                 ExportDefaultDeclarationKind::FunctionDeclaration(f) => {
-                    emit_function(f, true, ctx, imports, source, out)
+                    emit_function(f, true, ctx, imports, source, out, locals)
                 }
                 ExportDefaultDeclarationKind::ClassDeclaration(c) => {
-                    emit_class(c, true, ctx, imports, source, out)
+                    emit_class(c, true, ctx, imports, source, out, locals)
                 }
                 _ => {}
             },
@@ -800,13 +882,18 @@ pub(crate) mod typescript_fqn {
         imports: &HashMap<String, ImportTarget>,
         source: &str,
         out: &mut FqnFileOutput,
+        locals: Option<&HashMap<String, String>>,
     ) {
         match decl {
             Declaration::FunctionDeclaration(f) => {
-                emit_function(f, true, ctx, imports, source, out)
+                emit_function(f, true, ctx, imports, source, out, locals)
             }
-            Declaration::ClassDeclaration(c) => emit_class(c, true, ctx, imports, source, out),
-            Declaration::VariableDeclaration(v) => emit_var(v, true, ctx, imports, source, out),
+            Declaration::ClassDeclaration(c) => {
+                emit_class(c, true, ctx, imports, source, out, locals)
+            }
+            Declaration::VariableDeclaration(v) => {
+                emit_var(v, true, ctx, imports, source, out, locals)
+            }
             Declaration::TSInterfaceDeclaration(i) => type_def(
                 &i.id.name,
                 i.span.start,
@@ -866,6 +953,7 @@ pub(crate) mod typescript_fqn {
         });
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn emit_function(
         f: &Function,
         exported: bool,
@@ -873,6 +961,7 @@ pub(crate) mod typescript_fqn {
         imports: &HashMap<String, ImportTarget>,
         source: &str,
         out: &mut FqnFileOutput,
+        locals: Option<&HashMap<String, String>>,
     ) {
         let Some(id) = &f.id else { return };
         let name = id.name.to_string();
@@ -889,11 +978,14 @@ pub(crate) mod typescript_fqn {
             parent_type: None,
             parent_fqn: None,
         });
-        if let Some(body) = &f.body {
-            scan_body(body, &fqn_str, None, ctx, imports, source, out);
+        if let Some(locals) = locals
+            && let Some(body) = &f.body
+        {
+            scan_body(body, &fqn_str, None, ctx, imports, source, out, locals);
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn emit_class(
         c: &Class,
         exported: bool,
@@ -901,6 +993,7 @@ pub(crate) mod typescript_fqn {
         imports: &HashMap<String, ImportTarget>,
         source: &str,
         out: &mut FqnFileOutput,
+        locals: Option<&HashMap<String, String>>,
     ) {
         let Some(id) = &c.id else { return };
         let class_name = id.name.to_string();
@@ -934,8 +1027,10 @@ pub(crate) mod typescript_fqn {
                     parent_type: Some(class_name.clone()),
                     parent_fqn: Some(class_fqn.clone()),
                 });
-                if let Some(body) = &m.value.body {
-                    scan_body(body, &mfqn, Some(&class_name), ctx, imports, source, out);
+                if let Some(locals) = locals
+                    && let Some(body) = &m.value.body
+                {
+                    scan_body(body, &mfqn, Some(&class_name), ctx, imports, source, out, locals);
                 }
             }
         }
@@ -943,6 +1038,7 @@ pub(crate) mod typescript_fqn {
 
     /// `const foo = () => {…}` / `const foo = function(){}` → a function def (arrow
     /// bodies are scanned for calls); other consts are ignored by the FQN producer.
+    #[allow(clippy::too_many_arguments)]
     fn emit_var(
         v: &VariableDeclaration,
         exported: bool,
@@ -950,6 +1046,7 @@ pub(crate) mod typescript_fqn {
         imports: &HashMap<String, ImportTarget>,
         source: &str,
         out: &mut FqnFileOutput,
+        locals: Option<&HashMap<String, String>>,
     ) {
         for d in &v.declarations {
             let BindingPattern::BindingIdentifier(id) = &d.id else { continue };
@@ -969,7 +1066,9 @@ pub(crate) mod typescript_fqn {
                         parent_type: None,
                         parent_fqn: None,
                     });
-                    scan_body(&arrow.body, &fqn_str, None, ctx, imports, source, out);
+                    if let Some(locals) = locals {
+                        scan_body(&arrow.body, &fqn_str, None, ctx, imports, source, out, locals);
+                    }
                 }
                 Some(Expression::FunctionExpression(f)) => {
                     let fqn_str = fqn::item(TS_LANG, &ctx.package, &ctx.module, &name);
@@ -985,8 +1084,10 @@ pub(crate) mod typescript_fqn {
                         parent_type: None,
                         parent_fqn: None,
                     });
-                    if let Some(body) = &f.body {
-                        scan_body(body, &fqn_str, None, ctx, imports, source, out);
+                    if let Some(locals) = locals
+                        && let Some(body) = &f.body
+                    {
+                        scan_body(body, &fqn_str, None, ctx, imports, source, out, locals);
                     }
                 }
                 _ => {}
@@ -1003,6 +1104,7 @@ pub(crate) mod typescript_fqn {
     }
 
     /// Collect calls in a function body, attributed to `caller_fqn`.
+    #[allow(clippy::too_many_arguments)]
     fn scan_body(
         body: &FunctionBody,
         caller_fqn: &str,
@@ -1011,6 +1113,7 @@ pub(crate) mod typescript_fqn {
         imports: &HashMap<String, ImportTarget>,
         source: &str,
         out: &mut FqnFileOutput,
+        locals: &HashMap<String, String>,
     ) {
         let mut bindings = HashMap::new();
         for stmt in &body.statements {
@@ -1021,6 +1124,7 @@ pub(crate) mod typescript_fqn {
             imports,
             class,
             bindings,
+            locals,
             caller_fqn,
             source,
             seen: HashSet::new(),
@@ -1051,6 +1155,9 @@ pub(crate) mod typescript_fqn {
         imports: &'v HashMap<String, ImportTarget>,
         class: Option<&'v str>,
         bindings: HashMap<String, String>,
+        /// Module-local definitions, `name` → `fqn`. The probe that turns the
+        /// bare-identifier arm from an assertion into a lookup.
+        locals: &'v HashMap<String, String>,
         caller_fqn: &'v str,
         source: &'v str,
         seen: HashSet<String>,
@@ -1156,20 +1263,30 @@ pub(crate) mod typescript_fqn {
                     false,
                     name.to_string(),
                 ),
-                // A runtime global needs no import, so its absence from the map is
-                // not evidence that it lives here. Naming the runtime also merges
-                // every caller's reference onto ONE node instead of minting a
-                // fabricated module-local one each time.
-                None => match global_runtime(name) {
-                    Some(runtime) => {
-                        (Some(fqn::lib(runtime, "globalThis", name)), true, name.to_string())
+                None => {
+                    // DEFINED IN THIS FILE → its real fqn. Probed before the
+                    // runtime globals so a local `function Date()` shadows the
+                    // built-in, which is what the language does. This is the
+                    // legitimate case the old mint was serving.
+                    if let Some(fqn) = self.locals.get(name) {
+                        return (Some(fqn.clone()), false, name.to_string());
                     }
-                    None => (
-                        Some(fqn::item(TS_LANG, &self.ctx.package, &self.ctx.module, name)),
-                        false,
-                        name.to_string(),
-                    ),
-                },
+                    // A runtime global needs no import, so its absence from the
+                    // map is not evidence that it lives here. Naming the runtime
+                    // also merges every caller's reference onto ONE node.
+                    match global_runtime(name) {
+                        Some(runtime) => {
+                            (Some(fqn::lib(runtime, "globalThis", name)), true, name.to_string())
+                        }
+                        // Not imported, not local, not a runtime global: we do
+                        // not know where this lives, so we do not say. Minting
+                        // `ctx.module` here asserted a definition that exists
+                        // nowhere — 21,981 phantom nodes absorbing 25,696 call
+                        // edges. `target_fqn = None` is the supported
+                        // unresolved shape; nothing downstream needs the lie.
+                        None => (None, false, name.to_string()),
+                    }
+                }
             }
         }
         fn resolve_member(&self, t: &ImportTarget, method: &str) -> (Option<String>, bool, String) {
@@ -1399,6 +1516,70 @@ mod tests {
         );
         assert!(!r.is_lib);
         assert_eq!(r.caller_fqn, "typescript·app·lib/builder·build");
+    }
+
+    /// A bare identifier that is neither imported, nor a runtime global, nor
+    /// DEFINED IN THIS FILE is unknown — so the reference is UNRESOLVED, not a
+    /// fabricated module-local definition.
+    ///
+    /// `resolve_name`'s last arm asserted the opposite: any remaining bare name
+    /// got `fqn::item(TS_LANG, package, ctx.module, name)`, claiming the symbol
+    /// is defined in this very file. Nothing checked that claim. Measured live:
+    /// 21,981 phantom TS/JS function nodes (typescript 11,562 + javascript
+    /// 10,419) absorbing 25,696 call edges against 33,547 real definitions — 41%
+    /// of TS/JS function call edges pointed at a node with no definition
+    /// anywhere. Honest-unresolved is already the supported shape
+    /// (`FqnReference.target_fqn = None`), so nothing downstream needs the lie.
+    ///
+    /// The hoisted case is why this needs a definition PRE-PASS rather than a
+    /// read of `out.defs` in flight: `produce_fqns` emits each def and
+    /// IMMEDIATELY scans its body, so when `run`'s calls are collected
+    /// `helperBelow` has not been emitted yet. A probe against a partially-built
+    /// def set would call a legitimate local call unresolved — trading a
+    /// fabrication for a false negative.
+    ///
+    /// Breaking mutation: restore the mint in the `None` arm — `mysteryGlobal`
+    /// goes back to `typescript·app·svc·mysteryGlobal`, a node that exists
+    /// nowhere. Or drop the pre-pass and build the probe set from `out.defs`
+    /// mid-walk — `helperBelow` goes to None.
+    #[test]
+    fn a_bare_call_to_an_unknown_name_is_unresolved_not_fabricated() {
+        let src = "\
+function helperAbove() {}
+
+export function run() {
+  helperAbove();
+  helperBelow();
+  mysteryGlobal();
+}
+
+function helperBelow() {}
+";
+        let out = produce_ts(src, "app", "svc");
+
+        // An unknown bare name: we do not know where it lives, so we do not say.
+        let m = ref_to(&out, "mysteryGlobal");
+        assert_eq!(
+            m.target_fqn, None,
+            "an un-imported non-global name must not be minted as module-local"
+        );
+        assert!(!m.is_lib, "unresolved is not a lib either");
+
+        // A name DEFINED in this file still resolves to its real fqn — the
+        // legitimate case the fabrication was serving must not regress.
+        assert_eq!(
+            ref_to(&out, "helperAbove").target_fqn.as_deref(),
+            Some("typescript·app·svc·helperAbove"),
+            "a local function declared ABOVE the call still resolves"
+        );
+        assert_eq!(
+            ref_to(&out, "helperBelow").target_fqn.as_deref(),
+            Some("typescript·app·svc·helperBelow"),
+            "a HOISTED local declared below the call still resolves"
+        );
+
+        // And no phantom def was invented for the unknown name.
+        assert_eq!(def_fqn(&out, "mysteryGlobal"), "<no-def>");
     }
 
     #[test]
