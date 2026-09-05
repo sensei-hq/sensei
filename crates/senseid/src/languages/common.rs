@@ -87,8 +87,17 @@ pub(crate) fn sfc_fqn_output(
         module: ctx.module.clone(),
         ..Default::default()
     };
-    for (script, offset, _is_ts) in extract_script_blocks(content) {
-        let sub = typescript_fqn::produce_fqns(&script, &ctx);
+    // A component's `<script context="module">` and `<script>` share ONE module
+    // scope, but each block is parsed on its own below. Union their local
+    // definitions first, so a function declared in one and called in the other
+    // resolves instead of reporting unresolved.
+    let blocks = extract_script_blocks(content);
+    let mut locals: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    for (script, _, _) in &blocks {
+        locals.extend(typescript_fqn::local_defs_of(script, &ctx));
+    }
+    for (script, offset, _is_ts) in blocks {
+        let sub = typescript_fqn::produce_fqns_with_locals(&script, &ctx, &locals);
         out.defs.extend(sub.defs.into_iter().map(|mut d| {
             d.line_start += offset;
             d.line_end += offset;
