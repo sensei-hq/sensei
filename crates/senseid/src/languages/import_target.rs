@@ -266,7 +266,15 @@ pub fn import_anchor(current_module: &str, spec: &str) -> ImportAnchor {
     if let ImportTarget::External { package } = &class {
         return ImportAnchor::External { package: package.clone() };
     }
-    match local_module_candidates(&class, current_module, spec).into_iter().next() {
+    // The LAST candidate, not the first. `local_module_candidates` orders
+    // `src/x` before `x` for the import-EDGE path, which probes the graph and
+    // takes whichever module actually exists. There is no probe here — this
+    // anchor feeds `fqn::item(lang, pkg, module, name)` on the CALL path — and
+    // `ts_module_path` strips a leading `src/` unconditionally, so the prefixed
+    // variant names a module NO definition can carry. Measured in one repo: 0 of
+    // 21,881 real TS/JS defs have a `src/` module segment, against 1,038 phantom
+    // stubs that do. Taking the stripped variant makes the two derivations agree.
+    match local_module_candidates(&class, current_module, spec).into_iter().next_back() {
         Some(module) => ImportAnchor::Local { module },
         // Placeable-in-principle, no module in practice — anchor externally on
         // the same package key the external branch would have produced.
@@ -913,6 +921,44 @@ mod tests {
             import_anchor("lib/builder", "./util"),
             ImportAnchor::Local { module: "lib/util".into() }
         );
+    }
+
+    /// An anchor must name a module a DEFINITION can actually carry, so a
+    /// leading `src/` is stripped exactly as `ts_module_path` strips it.
+    ///
+    /// `local_module_candidates` offers both variants in priority order for the
+    /// import-EDGE path, which probes the graph and takes whichever exists.
+    /// `import_anchor` has no probe — it feeds `fqn::item(lang, pkg, module,
+    /// name)` on the CALL path — and took `.next()`, i.e. the `src/`-PREFIXED
+    /// variant. `ts_module_path` strips a leading `src/` unconditionally, so
+    /// that variant is a module no definition can ever have: measured 0 of
+    /// 21,881 real TS/JS defs in one repo carry a `src/` module segment, against
+    /// 1,038 phantom stubs that do.
+    ///
+    /// This is the same defect slice 4 fixed for import edges, left unfixed on
+    /// the sibling call path — the same shape as `resolve_supertype` keeping the
+    /// JDK allowlist after the call path moved off it.
+    ///
+    /// Breaking mutation: take `.next()` instead of the stripped form — the
+    /// first assertion returns `src/lib/db/runner`, which nothing defines.
+    #[test]
+    fn an_anchor_names_a_module_a_definition_can_carry() {
+        // A `../` climb OUT of a route tree and back into `src/` — the shape
+        // that actually produces these. (A BARE `src/…` specifier is a separate
+        // defect: it classifies External with package "src", which is where the
+        // 230 `lib·src·…` nodes come from.)
+        assert_eq!(
+            import_anchor("app/dashboard/page", "../../src/lib/db/runner"),
+            ImportAnchor::Local { module: "lib/db/runner".into() },
+            "a src/-rooted resolution must anchor where ts_module_path puts the def"
+        );
+        // A module with no leading `src/` is untouched.
+        assert_eq!(
+            import_anchor("lib/builder", "./util"),
+            ImportAnchor::Local { module: "lib/util".into() }
+        );
+        // `src` alone is not a module prefix to strip into nothing.
+        assert!(matches!(import_anchor("app/page", "./src"), ImportAnchor::Local { .. }));
     }
 
     /// The distinction that keeps the fix from over-reaching. A scoped npm
