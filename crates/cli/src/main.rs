@@ -1150,6 +1150,18 @@ fn print_index_doctor(r: &serde_json::Value) {
             .map(|a| a.iter().filter_map(|s| s.as_str()).map(str::to_string).collect())
             .unwrap_or_default()
     };
+    // Say when the sample list is SHORTER than the count. The daemon caps samples
+    // per class, so a reader comparing "7" against five printed lines would
+    // otherwise be left to guess whether two are missing or the count is wrong.
+    let print_samples = |key: &str, count: u64| {
+        let samples = samples_for(key);
+        for s in &samples {
+            println!("      - {s}");
+        }
+        if (samples.len() as u64) < count {
+            println!("      … and {} more (sample capped)", count - samples.len() as u64);
+        }
+    };
 
     if total > 0 {
         println!("drift detected (repaired automatically by the daemon's periodic audit):");
@@ -1157,9 +1169,7 @@ fn print_index_doctor(r: &serde_json::Value) {
             let count = n(count_key);
             println!("  {:<42} {}", label, count);
             if count > 0 {
-                for s in samples_for(sample_key) {
-                    println!("      - {s}");
-                }
+                print_samples(sample_key, count);
             }
         }
     }
@@ -1179,9 +1189,7 @@ fn print_index_doctor(r: &serde_json::Value) {
                 continue;
             }
             println!("  {:<42} {}", label, count);
-            for s in samples_for(key) {
-                println!("      - {s}");
-            }
+            print_samples(key, count);
         }
         println!(
             "\n  The same code is indexed once per path, so its symbols have twins and\n  \
