@@ -74,6 +74,9 @@ pub struct AuditSamples {
     /// One repository registered at several paths, rendered as
     /// `name: /path/a | /path/b` so the report names the copies to choose between.
     pub duplicate_repository_paths: Vec<String>,
+    /// A folder indexed twice because it is registered inside another holding the
+    /// same files, rendered as `inner (n files) inside outer`.
+    pub contained_duplicate_folders: Vec<String>,
 }
 
 impl AuditSamples {
@@ -114,6 +117,10 @@ pub struct AuditReport {
     /// the user's call. Measured before symlink grouping existed, the largest
     /// such pair (`~/Developer/gateway` and its symlink) duplicated 4,543 fqns.
     pub duplicate_repository_paths: u64,
+    /// Folders indexed TWICE because one is registered inside another and holds
+    /// the same files. REPORTED ONLY: `homebrew/` and `marketplace/` are git
+    /// SUBTREES of this repository and are indistinguishable here from a mistake.
+    pub contained_duplicate_folders: u64,
     /// A few example paths/ids per class.
     pub samples: AuditSamples,
 }
@@ -126,6 +133,7 @@ impl AuditReport {
             || self.nested_standalone > 0
             || self.duplicate_name_projects > 0
             || self.duplicate_repository_paths > 0
+            || self.contained_duplicate_folders > 0
     }
 }
 
@@ -280,6 +288,28 @@ pub async fn audit_index_integrity(
             );
         }
         Err(e) => tracing::warn!(error = %e, "index_audit: duplicate_repository_paths failed"),
+    }
+
+    // Class 6 — A FOLDER INDEXED TWICE because it is registered INSIDE another
+    // that holds the same files. Git-inside-git, which class 3 cannot see: it
+    // only matches a `standalone` folder inside a `git` one.
+    //
+    // REPORTED, NEVER REPAIRED, for the same reason as class 5 and one more:
+    // `homebrew/` and `marketplace/` are git SUBTREES of this very repository —
+    // intentionally present twice — and nothing here distinguishes them from an
+    // accidental nested checkout. Measured live, every case sits at exactly 100%
+    // overlap, subtree and accident alike.
+    match pg.contained_duplicate_folders().await {
+        Ok(dups) => {
+            report.contained_duplicate_folders = dups.len() as u64;
+            AuditSamples::extend_capped(
+                &mut report.samples.contained_duplicate_folders,
+                dups.iter().map(|(outer, inner, _, files)| {
+                    format!("{inner} ({files} files) inside {outer}")
+                }),
+            );
+        }
+        Err(e) => tracing::warn!(error = %e, "index_audit: contained_duplicate_folders failed"),
     }
 
     report
