@@ -249,8 +249,8 @@ indexed twice. That is packaging output, not distinct code.
   fake. Also narrowed both sides of the folder join to node-bearing folders
   first: it was a self-cross-product, 70s against the test DB's 107,230 folders,
   now 4.07s there and 0.68s live.
-  **NOT DEPLOYED** — the deploy died at `pg_dump: No space left on device` before
-  touching binaries, so the live doctor still shows the 7-case over-report.
+  DEPLOYED AND VERIFIED: `sensei index doctor` now reports containment **1**, the
+  single genuine case (`swarco/documentation`, 770 files, inside `swarco`).
 - **STALE `scan_state` AFTER A HEAL IS ITS OWN OPEN DEFECT.** That residue is
   what fooled the first version. `heal_nested_standalone_roots` should delete the
   folder's scan_state alongside its nodes.
