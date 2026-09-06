@@ -628,6 +628,23 @@ fn dir_has_ext(path: &Path, exts: &[&str]) -> bool {
     false
 }
 
+/// Does this FILE pass the scan's file-level filters?
+///
+/// ONE definition, because there were three. `count_indexable_files`,
+/// `dir_has_indexable_content` and the `process_git_folder` walk each re-derived
+/// it, and the walk's copy differed in a way nobody could see from reading it:
+/// it applied the exclude glob only to decide whether the file's PARENT
+/// DIRECTORY was discoverable, never to the file itself. So an excluded file
+/// sitting beside an included one was indexed anyway, and the count and the
+/// index disagreed about the same tree — 13,523 `.spec.ts`/`.test.ts` files in
+/// the graph against an exclude list that named them.
+///
+/// Same shape as every other defect in this area: two paths answering one
+/// question, drifting silently.
+pub fn file_passes_scan_filters(rel: &str, ext: &str, exclude: &globset::GlobSet) -> bool {
+    !ext.is_empty() && !super::helpers::is_binary_ext(ext) && !exclude.is_match(rel)
+}
+
 /// Count indexable files in a git folder (respecting ignore patterns).
 /// Returns (file_paths, total_count).
 pub fn count_indexable_files(path: &Path) -> (Vec<PathBuf>, u32) {
@@ -641,19 +658,10 @@ pub fn count_indexable_files(path: &Path) -> (Vec<PathBuf>, u32) {
             continue;
         }
         let rel = entry.path().strip_prefix(path).unwrap_or(entry.path());
-        let rel_str = rel.to_string_lossy();
-        if exclude.is_match(&*rel_str) {
-            continue;
-        }
-
         let ext = entry.path().extension().and_then(|e| e.to_str()).unwrap_or("");
-        if ext.is_empty() {
+        if !file_passes_scan_filters(&rel.to_string_lossy(), ext, exclude) {
             continue;
         }
-        if super::helpers::is_binary_ext(ext) {
-            continue;
-        }
-
         files.push(entry.path().to_path_buf());
     }
 
@@ -783,6 +791,98 @@ pub fn decide_stale_root(
 
 #[cfg(test)]
 mod tests {
+
+    /// The graph is for CODE, TESTS and DOCS — not build output.
+    ///
+    /// Two halves, both of which were wrong:
+    ///
+    /// 1. TESTS BELONG. `*.spec.ts`, `*.test.ts`, `*_test.py`, `*_test.go` and
+    ///    `*_test.rs` were on the exclude list, which contradicts what the graph
+    ///    is for. They were also INERT on the indexing path (see
+    ///    `file_passes_scan_filters`), so 13,523 spec/test files were indexed
+    ///    while `count_indexable_files` reported them excluded — the count and
+    ///    the index disagreed about the same tree.
+    ///
+    /// 2. BUILD OUTPUT DOES NOT BELONG, and the list never named it. Measured in
+    ///    the live graph: `documentation/artifacts/erd/assets/index-Cgv8QKbu.js`,
+    ///    a Vite bundle, produced 540 call references to single-letter minified
+    ///    identifiers (`t`, `u`, `a`), and the same file vendored at a second
+    ///    path produced 540 more. It escaped every glob because it lives under
+    ///    `artifacts/`, not `dist/` or `build/`.
+    ///
+    /// Breaking mutation: put `**/*.spec.ts` back, or drop `**/*.min.js` — one
+    /// half of this test fails immediately.
+    #[test]
+    fn tests_are_indexable_and_build_output_is_not() {
+        let gs = super::super::helpers::build_globset();
+        // Mirror `Path::extension()` — a name with no dot has NO extension, and
+        // a plain `rsplit('.')` would hand back the whole file name instead.
+        let idx = |rel: &str| {
+            let ext = Path::new(rel).extension().and_then(|e| e.to_str()).unwrap_or("");
+            file_passes_scan_filters(rel, ext, gs)
+        };
+
+        // CODE and TESTS are part of the structure being described.
+        assert!(idx("src/lib/widget.ts"), "source is indexable");
+        assert!(idx("src/lib/widget.spec.ts"), "a spec IS part of the codebase");
+        assert!(idx("src/lib/widget.test.ts"), "a test IS part of the codebase");
+        assert!(idx("app/e2e/flow.spec.ts"), "an e2e spec too");
+        assert!(idx("pkg/thing_test.py"), "a python test too");
+        assert!(idx("crates/x/src/thing.rs"), "rust source");
+
+        // BUILD OUTPUT is not.
+        assert!(!idx("documentation/artifacts/erd/assets/index-Cgv8QKbu.js"), "a Vite bundle");
+        assert!(!idx("web/static/app.min.js"), "minified js");
+        assert!(!idx("web/static/app.min.css"), "minified css");
+        assert!(!idx("web/static/app.bundle.js"), "an explicit bundle");
+        assert!(!idx("web/static/app.js.map"), "a source map");
+        assert!(!idx("node_modules/left-pad/index.js"), "dependencies stay excluded");
+        assert!(!idx("target/debug/thing.rs"), "build trees stay excluded");
+
+        // Binary and extension-less files are still rejected.
+        assert!(!idx("docs/diagram.png"), "binary");
+        assert!(!idx("Makefile"), "no extension");
+    }
+
+    /// The count path and the index path must answer identically, because they
+    /// now share one predicate. They did not: the walk applied the exclude glob
+    /// only to decide whether a file's PARENT DIRECTORY was discoverable, so an
+    /// excluded file sitting beside an included one was indexed anyway.
+    #[test]
+    fn the_count_path_and_the_file_predicate_agree_on_one_tree() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        for (name, _) in [
+            ("src/widget.ts", ()),
+            ("src/widget.spec.ts", ()),
+            ("src/app.min.js", ()),
+            ("src/app.js.map", ()),
+        ] {
+            std::fs::write(root.join(name), "export const a = 1;\n").unwrap();
+        }
+
+        let (counted, _) = count_indexable_files(root);
+        let counted: std::collections::BTreeSet<String> = counted
+            .iter()
+            .map(|p| p.strip_prefix(root).unwrap().to_string_lossy().to_string())
+            .collect();
+
+        let gs = super::super::helpers::build_globset();
+        let predicted: std::collections::BTreeSet<String> =
+            ["src/widget.ts", "src/widget.spec.ts", "src/app.min.js", "src/app.js.map"]
+                .iter()
+                .filter(|rel| {
+                    let ext = Path::new(rel).extension().and_then(|e| e.to_str()).unwrap_or("");
+                    file_passes_scan_filters(rel, ext, gs)
+                })
+                .map(|s| s.to_string())
+                .collect();
+
+        assert_eq!(counted, predicted, "the two paths must select the same files");
+        assert!(counted.contains("src/widget.spec.ts"), "the spec is kept");
+        assert!(!counted.contains("src/app.min.js"), "the bundle is dropped");
+    }
     use super::*;
 
     // ── role inference ───────────────────────────────────────────────────
