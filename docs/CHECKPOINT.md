@@ -193,6 +193,35 @@ the member arm. REQUIRES rewriting `ts_method_scope`, which pins it as correct.
 - Headline unchanged: real def-to-def call linkage is 73,792/340,229 = **21.7%**, not
   65.2%. The defect is INVENTION, not absence.
 
+## IS THE KOTLIN FQN FIX APPLICABLE TO OTHER LANGUAGES? — YES, MEASURED
+
+**The fix is language-agnostic.** All TEN languages declaring `supports_fqn`
+(c, java, kotlin, python, rust, sql, svelte, swift, typescript, vue) emit defs
+through `upsert_node_by_fqn`, which is where `cbe379b6` landed. Nothing bypasses it.
+
+**Other languages hit it far harder than kotlin.** Measured by running each
+producer over real corpora (colliding fqns / extra rows):
+
+| corpus | lang | colliding | extra |
+|---|---|---|---|
+| Dayamed | java | 16,154 | 40,488 (66% of 61,396 defs) |
+| Dayamed | ts/tsx | 1,740 | 1,740 |
+| Dayamed | sql | 26 | 66 |
+| OmniRoute | sql | 16 | 19 |
+| base-app-android | kt | 26 | 69 |
+| this repo | ts/js/svelte/rs/sql/c | 0 | 0 |
+
+**Build variants are noise. The dominant cause is a VENDORED TREE**: `cluster/`
+holds byte-identical copies of its siblings —
+`cluster/external/src/.../SurescriptPanelTransformation.java` vs
+`external/src/.../SurescriptPanelTransformation.java`, and
+`cluster/web-portal/src/app/app.component.ts` vs `web-portal/src/...`. Same file,
+indexed twice. That is packaging output, not distinct code.
+
+STILL OPEN: the vendored-tree duplication is a FOLDER-REGISTRY defect and is NOT
+fixed by `422bd248` — `cluster/` is project-specific and cannot be a global glob.
+The fix is duplicate-tree detection at registration time.
+
 ## TWO NEW DEFECTS FOUND WHILE MEASURING — both worth their own issue
 
 ### A. A code change to the indexer can never trigger a reindex
