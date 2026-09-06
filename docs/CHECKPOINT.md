@@ -218,9 +218,34 @@ holds byte-identical copies of its siblings —
 `cluster/web-portal/src/app/app.component.ts` vs `web-portal/src/...`. Same file,
 indexed twice. That is packaging output, not distinct code.
 
-STILL OPEN: the vendored-tree duplication is a FOLDER-REGISTRY defect and is NOT
-fixed by `422bd248` — `cluster/` is project-specific and cannot be a global glob.
-The fix is duplicate-tree detection at registration time.
+### DONE AND VERIFIED LIVE
+
+- **`422bd248` build output excluded** — bundle/minified/map/hashed-asset nodes
+  **3,555 across 13 files → 0**; the Vite bundle `index-Cgv8QKbu.js` is gone.
+  4,515 test files stay, and the list now says so.
+- **`296b9a32` one repository at several paths is grouped and reported.**
+  `~/Developer/sensei-hq/gateway` IS A SYMLINK to `~/Developer/gateway` (`pwd -P`
+  proves it) — one inode tree, two registrations, 4,543 shared fqns, the whole
+  rust duplicate population. `assign_repositories` skipped it because it keys on
+  a git remote and filters `kind IN ('git','subtree')`, and a symlinked twin is
+  `standalone` with no `.git`. Now `symlink_repository_links` (pure, scan_logic)
+  groups by resolved path; verified live via `symlinks_linked=1` and a shared
+  `repository_id`. A fifth `index doctor` class reports it under "needs your
+  decision (NOT repaired automatically)" — output confirmed:
+  `gateway: …/gateway | …/sensei-hq/gateway` and `variants: … | …`.
+  A directory claimed by TWO repositories is left alone, not resolved by guessing.
+
+### STILL OPEN — genuine VENDORING, not a registration artefact
+
+`Dayamed/cluster` holds byte-identical copies of `server`, `scheduler`,
+`external`, `web-portal` (12–13k shared fqns each; java 16,154 colliding fqns /
+40,488 extra nodes). That is real duplicated source on disk, so neither the glob
+change nor repository grouping touches it, and the doctor's new class does not
+claim to. Note the containment sub-shape measured at 100% overlap:
+`cluster` ⊃ `cluster/server`, `cluster/scheduler`, `cluster/web-portal`,
+`cluster/external`, and — in THIS repo — `sensei ⊃ sensei/marketplace` (77 files)
+and `sensei/homebrew` (3). The last two are legitimate git SUBTREES, which is
+exactly why containment must never be auto-healed.
 
 ## TWO NEW DEFECTS FOUND WHILE MEASURING — both worth their own issue
 
