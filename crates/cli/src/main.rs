@@ -1131,9 +1131,15 @@ fn print_index_doctor(r: &serde_json::Value) {
         ("duplicate-name projects", "duplicate_name_projects", "duplicate_name_projects"),
     ];
     let total: u64 = classes.iter().map(|(_, count_key, _)| n(count_key)).sum();
-    let dup_repos = n("duplicate_repository_paths");
+    // Advisory classes — surfaced separately below because the daemon does NOT
+    // repair them, and saying otherwise would be a lie.
+    let advisory = [
+        ("one repository at several paths", "duplicate_repository_paths"),
+        ("folder indexed twice (nested inside another)", "contained_duplicate_folders"),
+    ];
+    let advisory_total: u64 = advisory.iter().map(|(_, k)| n(k)).sum();
 
-    if total == 0 && dup_repos == 0 {
+    if total == 0 && advisory_total == 0 {
         println!("index is invariant-clean — no drift detected.");
         return;
     }
@@ -1162,20 +1168,27 @@ fn print_index_doctor(r: &serde_json::Value) {
     // directories the user may be working in, and the graph cannot know which is
     // canonical — so this asks rather than acts. Lumping it in above would have
     // told the user it was already handled.
-    if dup_repos > 0 {
+    if advisory_total > 0 {
         if total > 0 {
             println!();
         }
         println!("needs your decision (NOT repaired automatically):");
-        println!("  {:<42} {}", "one repository at several paths", dup_repos);
-        for s in samples_for("duplicate_repository_paths") {
-            println!("      - {s}");
+        for (label, key) in advisory {
+            let count = n(key);
+            if count == 0 {
+                continue;
+            }
+            println!("  {:<42} {}", label, count);
+            for s in samples_for(key) {
+                println!("      - {s}");
+            }
         }
         println!(
             "\n  The same code is indexed once per path, so its symbols have twins and\n  \
              counts over it are doubled. Remove the copy you no longer work in, then\n  \
              re-scan its watch root. A git SUBTREE (a repo intentionally vendored\n  \
-             inside another) is expected here and can be left alone."
+             inside another, as `homebrew/` and `marketplace/` are here) is expected\n  \
+             and can be left alone."
         );
     }
 }
