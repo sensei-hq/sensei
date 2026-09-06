@@ -235,6 +235,32 @@ indexed twice. That is packaging output, not distinct code.
   `gateway: …/gateway | …/sensei-hq/gateway` and `variants: … | …`.
   A directory claimed by TWO repositories is left alone, not resolved by guessing.
 
+- **`621677b9` CORRECTS `ce9e1657` — read this before trusting the class.** The
+  first version keyed on `scan_state.content_hash` and reported SEVEN cases; SIX
+  were false. `heal_nested_standalone_roots` deletes a mis-scoped root's NODES and
+  re-classifies the folder but NEVER deletes its `scan_state` rows, so a folder
+  healed long ago still looks fully duplicated by content while holding one
+  module-container node. Own nodes vs own scan_state: `swarco/documentation`
+  4,311/469 (REAL), `cluster/server` 1/1,970, `cluster/scheduler` 1/1,816,
+  `cluster/web-portal` 1/912, `cluster/external` 1/268, `sensei/marketplace`
+  1/77, `sensei/homebrew` 1/3. Only `swarco/documentation` is genuine — its own
+  git checkout, own remote, inside the `swarco` repo. The check now asks whether
+  the SAME FILE carries nodes under BOTH folders, which stale bookkeeping cannot
+  fake. Also narrowed both sides of the folder join to node-bearing folders
+  first: it was a self-cross-product, 70s against the test DB's 107,230 folders,
+  now 4.07s there and 0.68s live.
+  **NOT DEPLOYED** — the deploy died at `pg_dump: No space left on device` before
+  touching binaries, so the live doctor still shows the 7-case over-report.
+- **STALE `scan_state` AFTER A HEAL IS ITS OWN OPEN DEFECT.** That residue is
+  what fooled the first version. `heal_nested_standalone_roots` should delete the
+  folder's scan_state alongside its nodes.
+- **MARKETPLACE IS NOT DOUBLE-SCANNED** (asked and checked): it has no `.git`
+  (git subtree), gets ONE folder row (`workspace_member`) from sensei's own
+  monorepo sub-project pass at process.rs:845-885 — structural only, enqueues no
+  second scan. Parent holds 774 nodes for `marketplace/%`; the member folder
+  holds 1. An earlier "77 nodes" figure here was a query error (a LEFT JOIN
+  multiplied 1 node by 77 scan_state rows).
+
 - **`ce9e1657` containment reported** — a sixth doctor class for a folder indexed
   TWICE because it is registered inside another holding the same files. Class 3
   (`nested_standalone`) cannot see these: it matches only `standalone` inside
