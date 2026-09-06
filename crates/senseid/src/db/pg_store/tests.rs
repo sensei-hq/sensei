@@ -9600,6 +9600,95 @@ async fn repositories_schema_invariants() {
 /// A git checkout with a remote is linked to a canonical `sensei.repositories`
 /// row keyed on the NORMALIZED remote; a remote-less checkout stays NULL
 /// (local-only, never federated); re-running is a no-op (idempotent).
+/// A symlinked checkout is grouped onto the real directory's repository, and the
+/// result is then REPORTABLE as one repository at two paths.
+///
+/// `assign_repositories` keys on a git remote, and a symlinked twin has no
+/// `.git` of its own — it is classified `standalone` and was skipped, left
+/// `repository_id = NULL`, so no query could relate the two. Measured:
+/// `~/Developer/sensei-hq/gateway` symlinks to `~/Developer/gateway`, one inode
+/// tree indexed under two paths, sharing 4,543 fqns — the largest duplicate pair
+/// in the graph and the entire rust duplicate population.
+///
+/// Covers the three pieces the handler composes: `folder_identities_for_root`
+/// must return the standalone twin (not just git/subtree kinds),
+/// `link_folders_to_repositories` must point it at the real folder's repository
+/// and be idempotent, and `duplicate_repository_paths` must then report both
+/// paths so the doctor can recommend removing one.
+#[tokio::test]
+async fn a_symlinked_checkout_is_grouped_and_then_reported_as_one_repository() {
+    let s = PgStore::connect_test().await.unwrap();
+    let tag = uuid::Uuid::new_v4();
+    let root_id = s
+        .add_watch_root(&format!("/tmp/symrepo-{tag}"), "sr", &serde_json::json!([]))
+        .await
+        .unwrap();
+
+    // The real checkout, with a remote → gets a repository.
+    let real = s
+        .upsert_repo_kind(&root_id, "git", "gateway", &format!("/tmp/symrepo-{tag}/gateway"))
+        .await
+        .unwrap();
+    let url = format!("git@github.com:Org/Gateway-{tag}.git");
+    s.update_folder_remotes(&real, &serde_json::json!([{"name": "origin", "url": url}]))
+        .await
+        .unwrap();
+    // The symlinked twin: STANDALONE, no remote — exactly what was skipped.
+    let link = s
+        .upsert_repo_kind(
+            &root_id,
+            "standalone",
+            "gateway",
+            &format!("/tmp/symrepo-{tag}/org/gateway"),
+        )
+        .await
+        .unwrap();
+    s.assign_repositories(&root_id).await.unwrap();
+
+    // The twin must be VISIBLE to the identity read despite being standalone.
+    let ids = s.folder_identities_for_root(&root_id).await.unwrap();
+    assert!(
+        ids.iter().any(|(id, _, repo)| *id == link && repo.is_none()),
+        "the standalone symlink must be offered for grouping: {ids:?}"
+    );
+    let repo_id = ids
+        .iter()
+        .find(|(id, _, _)| *id == real)
+        .and_then(|(_, _, r)| *r)
+        .expect("the real checkout is linked to a repository");
+
+    // Both paths canonicalise to the same real directory, so they group.
+    let identities: Vec<crate::tasks::handlers::scan_logic::FolderPathIdentity> = ids
+        .into_iter()
+        .map(|(id, abs_path, repository_id)| {
+            crate::tasks::handlers::scan_logic::FolderPathIdentity {
+                id,
+                real_path: format!("/tmp/symrepo-{tag}/gateway"),
+                abs_path,
+                repository_id,
+            }
+        })
+        .collect();
+    let links = crate::tasks::handlers::scan_logic::symlink_repository_links(&identities);
+    assert_eq!(links, vec![(link, repo_id)], "the symlink adopts the real dir's repository");
+
+    assert_eq!(s.link_folders_to_repositories(&links).await.unwrap(), 1, "one row changed");
+    assert_eq!(
+        s.link_folders_to_repositories(&links).await.unwrap(),
+        0,
+        "idempotent — a settled registry writes nothing"
+    );
+
+    // And now it is reportable: one repository, two paths.
+    let dups = s.duplicate_repository_paths().await.unwrap();
+    let mine = dups
+        .iter()
+        .find(|(_, url, _)| url.as_deref().is_some_and(|u| u.contains(&tag.to_string())))
+        .expect("the grouped repository is reported as duplicated");
+    assert_eq!(mine.2.len(), 2, "both paths are named so the user can pick one: {:?}", mine.2);
+    assert!(mine.2.iter().any(|p| p.ends_with("/org/gateway")), "{:?}", mine.2);
+}
+
 #[tokio::test]
 async fn assign_repositories_links_folders_to_canonical_repo_key() {
     let s = PgStore::connect_test().await.unwrap();

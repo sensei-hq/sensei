@@ -1131,22 +1131,52 @@ fn print_index_doctor(r: &serde_json::Value) {
         ("duplicate-name projects", "duplicate_name_projects", "duplicate_name_projects"),
     ];
     let total: u64 = classes.iter().map(|(_, count_key, _)| n(count_key)).sum();
-    if total == 0 {
+    let dup_repos = n("duplicate_repository_paths");
+
+    if total == 0 && dup_repos == 0 {
         println!("index is invariant-clean — no drift detected.");
         return;
     }
 
-    println!("drift detected (repaired automatically by the daemon's periodic audit):");
-    for (label, count_key, sample_key) in classes {
-        let count = n(count_key);
-        println!("  {:<42} {}", label, count);
-        if count > 0
-            && let Some(samples) = r["samples"][sample_key].as_array()
-        {
-            for s in samples.iter().filter_map(|s| s.as_str()) {
-                println!("      - {s}");
+    let samples_for = |key: &str| -> Vec<String> {
+        r["samples"][key]
+            .as_array()
+            .map(|a| a.iter().filter_map(|s| s.as_str()).map(str::to_string).collect())
+            .unwrap_or_default()
+    };
+
+    if total > 0 {
+        println!("drift detected (repaired automatically by the daemon's periodic audit):");
+        for (label, count_key, sample_key) in classes {
+            let count = n(count_key);
+            println!("  {:<42} {}", label, count);
+            if count > 0 {
+                for s in samples_for(sample_key) {
+                    println!("      - {s}");
+                }
             }
         }
+    }
+
+    // Reported separately BECAUSE IT IS NOT REPAIRED. Both paths are real
+    // directories the user may be working in, and the graph cannot know which is
+    // canonical — so this asks rather than acts. Lumping it in above would have
+    // told the user it was already handled.
+    if dup_repos > 0 {
+        if total > 0 {
+            println!();
+        }
+        println!("needs your decision (NOT repaired automatically):");
+        println!("  {:<42} {}", "one repository at several paths", dup_repos);
+        for s in samples_for("duplicate_repository_paths") {
+            println!("      - {s}");
+        }
+        println!(
+            "\n  The same code is indexed once per path, so its symbols have twins and\n  \
+             counts over it are doubled. Remove the copy you no longer work in, then\n  \
+             re-scan its watch root. A git SUBTREE (a repo intentionally vendored\n  \
+             inside another) is expected here and can be left alone."
+        );
     }
 }
 
