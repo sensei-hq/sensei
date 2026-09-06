@@ -1194,9 +1194,9 @@ fn print_index_doctor(r: &serde_json::Value) {
         println!(
             "\n  The same code is indexed once per path, so its symbols have twins and\n  \
              counts over it are doubled. Remove the copy you no longer work in, then\n  \
-             re-scan its watch root. A git SUBTREE (a repo intentionally vendored\n  \
-             inside another, as `homebrew/` and `marketplace/` are here) is expected\n  \
-             and can be left alone."
+             re-scan its watch root. Not every case is a mistake: a nested checkout\n  \
+             can be deliberate (a vendored dependency, a docs repo kept inside its\n  \
+             product), which is why nothing here is removed for you."
         );
     }
 }
