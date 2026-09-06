@@ -735,60 +735,61 @@ impl PgStore {
         Ok(changed)
     }
 
-    /// The fraction of an inner folder's files that must also live in the outer
-    /// one before the inner is called a contained duplicate.
+    /// Folders indexed TWICE because one is registered inside another and BOTH
+    /// hold nodes for the same files — `(outer_path, inner_path, files_in_both,
+    /// inner_files)`.
     ///
-    /// Not 1.0: an inner checkout legitimately gains a file the outer copy has
-    /// not picked up yet (a `.gitignore`d artefact, a branch ahead by one
-    /// commit), and demanding perfection would hide the duplication that
-    /// matters. Measured over the live index every real case sits at exactly
-    /// 100%, so 0.95 costs nothing and tolerates that skew.
-    const CONTAINMENT_THRESHOLD: f64 = 0.95;
-
-    /// Folders indexed TWICE because one is registered inside another and holds
-    /// the same files — `(outer_path, inner_path, shared_files, inner_files)`.
+    /// Distinct from `detect_nested_standalone_roots`, which only matches a
+    /// `standalone` folder inside a `git` one. The live case is git-inside-git:
+    /// `swarco/documentation` is its own checkout (its own remote) sitting inside
+    /// the `swarco` repo, so 469 files carry nodes under both folders.
     ///
-    /// Distinct from `detect_nested_standalone_roots`, which only sees a
-    /// `standalone` folder inside a `git` one. These are git-inside-git:
-    /// `Dayamed/cluster` is a checkout that also registers `cluster/server`,
-    /// `cluster/scheduler`, `cluster/web-portal` and `cluster/external` as
-    /// projects of their own, so every file in them is indexed under both.
+    /// KEYED ON NODES, NOT `scan_state`, and that distinction is the whole
+    /// accuracy of this check. A first version compared `scan_state.content_hash`
+    /// and reported SEVEN cases; six were false. `heal_nested_standalone_roots`
+    /// deletes a mis-scoped root's NODES and re-classifies the folder but leaves
+    /// its `scan_state` rows behind, so a folder that was healed long ago still
+    /// looks fully duplicated by content while holding a single module container
+    /// node. Measured: `cluster/server` 1 node against 1,970 stale scan_state
+    /// rows, `cluster/scheduler` 1 against 1,816, `sensei/marketplace` 1 against
+    /// 77. Only `swarco/documentation` (4,311 own nodes) was real.
     ///
-    /// Read-only, and it must stay that way: `sensei/marketplace` and
-    /// `sensei/homebrew` are git SUBTREES of this repository — intentionally
-    /// present twice — and they are indistinguishable here from an accident.
+    /// Asking "does the same FILE have nodes under both folders" answers the
+    /// question the report actually makes — this content is in the graph twice —
+    /// and is immune to stale bookkeeping. Measured 0.20s over the live index.
     ///
-    /// Content-compared on `scan_state.content_hash`, which the scan already
-    /// stores per file, so this needs no new bookkeeping. Restricted to folders
-    /// that actually carry scan_state (179 of 9,131), which keeps the candidate
-    /// pair space small — measured 0.13s over the live index.
+    /// Read-only, and it must stay that way: a nested checkout can be deliberate
+    /// (a git subtree, a vendored dependency), and nothing here tells that apart
+    /// from an accident.
     pub async fn contained_duplicate_folders(
         &self,
     ) -> Result<Vec<(String, String, i64, i64)>, String> {
         sqlx_core::query_as::query_as(
-            "WITH indexed AS (SELECT DISTINCT folder_id FROM sensei.scan_state), \
+            // BOTH sides are narrowed to folders that actually hold a
+            // file-bearing node BEFORE the pair join. Without that the join is a
+            // self-cross-product over every folder row — measured 70s against a
+            // test database holding 107,230 folders, where the live index's 9,131
+            // hid the cost entirely.
+            "WITH nf AS (SELECT DISTINCT folder_id FROM sensei.nodes \
+                          WHERE file_path IS NOT NULL), \
                   f AS (SELECT fo.id, fo.abs_path FROM sensei.folders fo \
-                          JOIN indexed i ON i.folder_id = fo.id), \
-                  cand AS ( \
-                    SELECT o.id AS oid, o.abs_path AS opath, n.id AS iid, n.abs_path AS ipath \
-                      FROM f o JOIN f n \
-                        ON n.id <> o.id AND starts_with(n.abs_path, o.abs_path || '/')), \
-                  tot AS (SELECT folder_id, count(DISTINCT content_hash) AS n \
-                            FROM sensei.scan_state GROUP BY 1), \
-                  sh AS ( \
-                    SELECT c.oid, c.iid, c.opath, c.ipath, \
-                           count(DISTINCT si.content_hash) AS shared \
-                      FROM cand c \
-                      JOIN sensei.scan_state si ON si.folder_id = c.iid \
-                      JOIN sensei.scan_state so ON so.folder_id = c.oid \
-                                              AND so.content_hash = si.content_hash \
-                     GROUP BY 1,2,3,4) \
-             SELECT sh.opath, sh.ipath, sh.shared, t.n \
-               FROM sh JOIN tot t ON t.folder_id = sh.iid \
-              WHERE t.n > 0 AND sh.shared::numeric / t.n >= $1 \
-              ORDER BY sh.shared DESC, sh.ipath",
+                          JOIN nf ON nf.folder_id = fo.id), \
+                  pair AS ( \
+                SELECT o.id AS oid, o.abs_path AS opath, i.id AS iid, i.abs_path AS ipath, \
+                       substring(i.abs_path from length(o.abs_path) + 2) AS rel \
+                  FROM f o JOIN f i \
+                    ON i.id <> o.id AND starts_with(i.abs_path, o.abs_path || '/')) \
+             SELECT p.opath, p.ipath, \
+                    count(DISTINCT ni.file_path) AS files_both, \
+                    (SELECT count(DISTINCT n2.file_path) FROM sensei.nodes n2 \
+                      WHERE n2.folder_id = p.iid AND n2.file_path IS NOT NULL) AS inner_files \
+               FROM pair p \
+               JOIN sensei.nodes ni ON ni.folder_id = p.iid AND ni.file_path IS NOT NULL \
+               JOIN sensei.nodes no2 ON no2.folder_id = p.oid \
+                                    AND no2.file_path = p.rel || '/' || ni.file_path \
+              GROUP BY p.opath, p.ipath, p.iid \
+              ORDER BY files_both DESC, p.ipath",
         )
-        .bind(Self::CONTAINMENT_THRESHOLD)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| e.to_string())
