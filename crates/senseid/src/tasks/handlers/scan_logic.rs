@@ -628,6 +628,64 @@ fn dir_has_ext(path: &Path, exts: &[&str]) -> bool {
     false
 }
 
+/// One registered folder's inputs for symlink de-duplication.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FolderPathIdentity {
+    pub id: uuid::Uuid,
+    pub abs_path: String,
+    /// `abs_path` with symlinks resolved. Equals `abs_path` when already real.
+    pub real_path: String,
+    pub repository_id: Option<uuid::Uuid>,
+}
+
+/// Folders that are THE SAME DIRECTORY reached by two paths share one repository.
+///
+/// Returns the `(folder_id, repository_id)` links to apply.
+///
+/// This is NOT the abs_path fallback `assign_repositories` deliberately refuses.
+/// That refusal is about INVENTING an identity for a repo that has none — a
+/// local-only checkout gets `NULL`, never a path-derived key. Here the identity
+/// already exists and belongs to a folder that is provably the same directory:
+/// `~/Developer/sensei-hq/gateway` is a symlink to `~/Developer/gateway`, one
+/// inode tree reached by two paths. Recognising that is not a guess.
+///
+/// Measured: that pair shared 4,543 fqns — the largest duplicate pair in the
+/// graph and the whole of the rust duplicate population. `assign_repositories`
+/// could not link them because the symlinked path is classified `standalone`
+/// with no remote, so it was skipped entirely.
+///
+/// A group whose members disagree about their repository is left ALONE rather
+/// than resolved arbitrarily — two identities for one directory is a different
+/// defect, and picking a winner here would hide it.
+pub fn symlink_repository_links(folders: &[FolderPathIdentity]) -> Vec<(uuid::Uuid, uuid::Uuid)> {
+    let mut by_real: std::collections::HashMap<&str, Vec<&FolderPathIdentity>> =
+        std::collections::HashMap::new();
+    for f in folders {
+        by_real.entry(f.real_path.as_str()).or_default().push(f);
+    }
+
+    let mut links = Vec::new();
+    for (_, group) in by_real {
+        if group.len() < 2 {
+            continue;
+        }
+        // Exactly ONE identity may be present, or this is the two-repositories
+        // -one-directory defect and nothing here can choose correctly.
+        let mut claimed: Vec<uuid::Uuid> =
+            group.iter().filter_map(|f| f.repository_id).collect::<Vec<_>>();
+        claimed.sort();
+        claimed.dedup();
+        let [repo] = claimed.as_slice() else { continue };
+
+        for f in group.iter().filter(|f| f.repository_id.is_none()) {
+            links.push((f.id, *repo));
+        }
+    }
+    // Deterministic, so a re-run writes the same rows in the same order.
+    links.sort();
+    links
+}
+
 /// Does this FILE pass the scan's file-level filters?
 ///
 /// ONE definition, because there were three. `count_indexable_files`,
@@ -791,6 +849,114 @@ pub fn decide_stale_root(
 
 #[cfg(test)]
 mod tests {
+
+    /// A SYMLINKED checkout adopts the repository of the directory it points at.
+    ///
+    /// `~/Developer/sensei-hq/gateway` is a symlink to `~/Developer/gateway` —
+    /// one inode tree reached by two paths, both registered, both indexed. They
+    /// shared 4,543 fqns, the largest duplicate pair in the graph and the entire
+    /// rust duplicate population. `assign_repositories` skipped the symlinked
+    /// path because it is classified `standalone` with no git remote, so nothing
+    /// linked the two and the UI had no way to show them as one repository.
+    ///
+    /// Breaking mutation: return `Vec::new()` — the symlink keeps
+    /// `repository_id = NULL` and stays an invisible second copy.
+    #[test]
+    fn a_symlinked_checkout_adopts_the_repository_it_points_at() {
+        let repo = uuid::Uuid::new_v4();
+        let real = uuid::Uuid::new_v4();
+        let link = uuid::Uuid::new_v4();
+
+        let links = symlink_repository_links(&[
+            FolderPathIdentity {
+                id: real,
+                abs_path: "/w/gateway".into(),
+                real_path: "/w/gateway".into(),
+                repository_id: Some(repo),
+            },
+            FolderPathIdentity {
+                id: link,
+                abs_path: "/w/org/gateway".into(),
+                real_path: "/w/gateway".into(),
+                repository_id: None,
+            },
+        ]);
+
+        assert_eq!(links, vec![(link, repo)], "the symlink adopts the real dir's repository");
+    }
+
+    /// A folder that is genuinely its own directory is left alone, and a group
+    /// that already agrees needs no write.
+    #[test]
+    fn distinct_directories_and_settled_groups_produce_no_links() {
+        let repo_a = uuid::Uuid::new_v4();
+        let repo_b = uuid::Uuid::new_v4();
+
+        // Two real, different directories.
+        let links = symlink_repository_links(&[
+            FolderPathIdentity {
+                id: uuid::Uuid::new_v4(),
+                abs_path: "/w/a".into(),
+                real_path: "/w/a".into(),
+                repository_id: Some(repo_a),
+            },
+            FolderPathIdentity {
+                id: uuid::Uuid::new_v4(),
+                abs_path: "/w/b".into(),
+                real_path: "/w/b".into(),
+                repository_id: Some(repo_b),
+            },
+        ]);
+        assert!(links.is_empty(), "different directories are different repositories");
+
+        // Same directory, already linked — nothing to write.
+        let settled = symlink_repository_links(&[
+            FolderPathIdentity {
+                id: uuid::Uuid::new_v4(),
+                abs_path: "/w/gateway".into(),
+                real_path: "/w/gateway".into(),
+                repository_id: Some(repo_a),
+            },
+            FolderPathIdentity {
+                id: uuid::Uuid::new_v4(),
+                abs_path: "/w/org/gateway".into(),
+                real_path: "/w/gateway".into(),
+                repository_id: Some(repo_a),
+            },
+        ]);
+        assert!(settled.is_empty(), "an already-linked group is idempotent");
+    }
+
+    /// Two DIFFERENT repositories claiming one directory is a separate defect.
+    /// Picking a winner here would hide it, so the group is left untouched.
+    #[test]
+    fn a_directory_claimed_by_two_repositories_is_left_alone() {
+        let repo_a = uuid::Uuid::new_v4();
+        let repo_b = uuid::Uuid::new_v4();
+        let orphan = uuid::Uuid::new_v4();
+
+        let links = symlink_repository_links(&[
+            FolderPathIdentity {
+                id: uuid::Uuid::new_v4(),
+                abs_path: "/w/one".into(),
+                real_path: "/w/real".into(),
+                repository_id: Some(repo_a),
+            },
+            FolderPathIdentity {
+                id: uuid::Uuid::new_v4(),
+                abs_path: "/w/two".into(),
+                real_path: "/w/real".into(),
+                repository_id: Some(repo_b),
+            },
+            FolderPathIdentity {
+                id: orphan,
+                abs_path: "/w/three".into(),
+                real_path: "/w/real".into(),
+                repository_id: None,
+            },
+        ]);
+        assert!(links.is_empty(), "conflicting identities must not be resolved by guessing");
+    }
 
     /// The graph is for CODE, TESTS and DOCS — not build output.
     ///

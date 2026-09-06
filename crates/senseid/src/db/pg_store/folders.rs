@@ -691,6 +691,74 @@ impl PgStore {
         Ok(assigned)
     }
 
+    /// Every folder under `root_id` that could take part in symlink de-duplication,
+    /// as `(id, abs_path, repository_id)`.
+    ///
+    /// Deliberately NOT filtered to `kind IN ('git','subtree')` the way
+    /// `assign_repositories` is: the symlinked twin of a git checkout is
+    /// classified `standalone` (it has no `.git` of its own to find), and
+    /// excluding it is exactly why nothing ever linked
+    /// `~/Developer/sensei-hq/gateway` to `~/Developer/gateway`.
+    pub async fn folder_identities_for_root(
+        &self,
+        root_id: &uuid::Uuid,
+    ) -> Result<Vec<(uuid::Uuid, String, Option<uuid::Uuid>)>, String> {
+        sqlx_core::query_as::query_as(
+            "SELECT id, abs_path, repository_id FROM sensei.folders \
+              WHERE root_id = $1 AND parent_id IS NULL",
+        )
+        .bind(root_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())
+    }
+
+    /// Point each folder at the given repository. Returns the rows actually
+    /// changed, so a settled registry reports 0 rather than churning.
+    pub async fn link_folders_to_repositories(
+        &self,
+        links: &[(uuid::Uuid, uuid::Uuid)],
+    ) -> Result<u64, String> {
+        let mut changed = 0u64;
+        for (folder_id, repository_id) in links {
+            let res = sqlx_core::query::query(
+                "UPDATE sensei.folders SET repository_id = $2, modified_at = now() \
+                  WHERE id = $1 AND repository_id IS DISTINCT FROM $2",
+            )
+            .bind(folder_id)
+            .bind(repository_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+            changed += res.rows_affected();
+        }
+        Ok(changed)
+    }
+
+    /// Repositories registered at MORE THAN ONE folder path — a clone, a symlink
+    /// or a stale checkout left behind. Read-only: the caller reports it and
+    /// recommends removing one, because which copy is canonical is the user's
+    /// call, not the daemon's.
+    ///
+    /// Returns `(repository name, remote_url, paths)` ordered by how many paths
+    /// claim the repository.
+    pub async fn duplicate_repository_paths(
+        &self,
+    ) -> Result<Vec<(String, Option<String>, Vec<String>)>, String> {
+        let rows: Vec<(String, Option<String>, Vec<String>)> = sqlx_core::query_as::query_as(
+            "SELECT r.name, r.remote_url, array_agg(f.abs_path ORDER BY f.abs_path) \
+               FROM sensei.folders f \
+               JOIN sensei.repositories r ON r.id = f.repository_id \
+              GROUP BY r.id, r.name, r.remote_url \
+             HAVING count(*) > 1 \
+              ORDER BY count(*) DESC, r.name",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(rows)
+    }
+
     /// The repositories a project spans — the distinct `repository_id`s on its
     /// git/subtree checkout folders (D2: a project is a GROUP of repositories). The
     /// repo-grain compute iterates THIS instead of the single `project_root_path`

@@ -173,6 +173,40 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
         tracing::warn!(error = %e, "scan_root: assign_repositories failed");
         0
     });
+    // A SYMLINKED checkout adopts the repository of the directory it points at.
+    //
+    // `assign_repositories` keys on a git remote, and the symlinked twin of a
+    // checkout has no `.git` of its own — it is classified `standalone`, so it
+    // was skipped and left `repository_id = NULL`. Measured:
+    // `~/Developer/sensei-hq/gateway` symlinks to `~/Developer/gateway`, one
+    // inode tree indexed under two paths, sharing 4,543 fqns — the largest
+    // duplicate pair in the graph and the whole rust duplicate population.
+    //
+    // Canonicalisation happens HERE because it touches the filesystem; the
+    // grouping decision is pure and lives in `scan_logic`. Best-effort, like the
+    // assignment above: a symlink we cannot resolve is simply not grouped.
+    let symlinks_linked = match ctx.pg().folder_identities_for_root(&root_id).await {
+        Ok(rows) => {
+            let identities: Vec<super::scan_logic::FolderPathIdentity> = rows
+                .into_iter()
+                .map(|(id, abs_path, repository_id)| {
+                    let real_path = std::fs::canonicalize(&abs_path)
+                        .map(|p| p.to_string_lossy().to_string())
+                        .unwrap_or_else(|_| abs_path.clone());
+                    super::scan_logic::FolderPathIdentity { id, abs_path, real_path, repository_id }
+                })
+                .collect();
+            let links = super::scan_logic::symlink_repository_links(&identities);
+            ctx.pg().link_folders_to_repositories(&links).await.unwrap_or_else(|e| {
+                tracing::warn!(error = %e, "scan_root: link_folders_to_repositories failed");
+                0
+            })
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "scan_root: folder_identities_for_root failed");
+            0
+        }
+    };
     // Then prune ghost folder subtrees whose directory was deleted/moved on disk
     // (e.g. a renamed sub-crate). `reconcile_roots` only prunes project ROOTS and
     // `prune_vanished` only reconciles files *within* an indexed folder, so nothing
@@ -275,16 +309,17 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
         || stubs_collected > 0
         || pruned_projects > 0
         || repos_assigned > 0
+        || symlinks_linked > 0
     {
         emit(StateEvent::activity(ActivityEvent::new(
             ActivityLevel::Info,
             &format!(
-                "reconcile · {removed} stale roots removed · {remapped} moved roots remapped · {archived} vanished roots archived · {ghosts} ghost folders pruned · {deduped} duplicate nodes deduped · {stubs_collected} orphaned stubs collected · {pruned_projects} empty projects purged · {repos_assigned} folders linked to repositories · {marked} flagged stale · {orphaned} projects re-tagged"
+                "reconcile · {removed} stale roots removed · {remapped} moved roots remapped · {archived} vanished roots archived · {ghosts} ghost folders pruned · {deduped} duplicate nodes deduped · {stubs_collected} orphaned stubs collected · {pruned_projects} empty projects purged · {repos_assigned} folders linked to repositories · {symlinks_linked} symlinked checkouts grouped · {marked} flagged stale · {orphaned} projects re-tagged"
             ),
             start.elapsed().as_secs_f64(),
         )));
         tracing::info!(
-            "scan_root reconcile: removed={removed} remapped={remapped} archived={archived} ghost_folders={ghosts} deduped_nodes={deduped} stubs_collected={stubs_collected} empty_projects_purged={pruned_projects} repos_assigned={repos_assigned} marked={marked} orphaned_retagged={orphaned}"
+            "scan_root reconcile: removed={removed} remapped={remapped} archived={archived} ghost_folders={ghosts} deduped_nodes={deduped} stubs_collected={stubs_collected} empty_projects_purged={pruned_projects} repos_assigned={repos_assigned} symlinks_linked={symlinks_linked} marked={marked} orphaned_retagged={orphaned}"
         );
     }
 
