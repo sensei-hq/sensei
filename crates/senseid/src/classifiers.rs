@@ -406,15 +406,30 @@ const DEFAULT_EXCLUDE_GLOBS: &[&str] = &[
     "**/__MACOSX/**",
     "**/.venv/**",
     "**/venv/**",
-    "**/*.spec.ts",
-    "**/*.spec.tsx",
-    "**/*.spec.js",
-    "**/*.test.ts",
-    "**/*.test.tsx",
-    "**/*.test.js",
-    "**/*_test.py",
-    "**/*_test.go",
-    "**/*_test.rs",
+    // GENERATED OUTPUT. The graph describes code, tests and docs — a bundle is
+    // none of those, and its identifiers are not the codebase's identifiers.
+    // Measured: `documentation/artifacts/erd/assets/index-Cgv8QKbu.js`, a Vite
+    // build, contributed 540 call references to single-letter minified names
+    // (`t` 744 refs graph-wide, `u` 159, `a` 149), and the same file vendored at
+    // a second path contributed 540 more. It escaped every directory glob
+    // because it sits under `artifacts/`, not `dist/` or `build/`.
+    "**/*.min.js",
+    "**/*.min.css",
+    "**/*.min.mjs",
+    "**/*.bundle.js",
+    "**/*.bundle.mjs",
+    "**/*.map",
+    // Vite/Rollup/webpack emit `assets/<name>-<contenthash>.<ext>`. The hash
+    // suffix is the signal — a hand-written `assets/index.js` has no `-`, so it
+    // is untouched.
+    "**/assets/*-[A-Za-z0-9_]*.js",
+    "**/assets/*-[A-Za-z0-9_]*.css",
+    // NOT excluded, deliberately: `*.spec.ts`, `*.test.ts`, `*_test.py`,
+    // `*_test.go`, `*_test.rs`. A test IS part of the structure being described —
+    // it is often the only place a public API's real usage is written down. They
+    // were on this list AND inert on the indexing path, so 13,523 of them were
+    // indexed while `count_indexable_files` reported them excluded. Removing them
+    // makes the list say what the scanner does.
     "**/*.d.ts",
 ];
 

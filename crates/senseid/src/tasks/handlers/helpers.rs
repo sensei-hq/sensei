@@ -372,19 +372,53 @@ mod tests {
         assert!(visible.contains(&f), "an unignored file must be visible, got {visible:?}");
     }
 
+    /// DEPENDENCIES and GENERATED OUTPUT are excluded; TESTS are not.
+    ///
+    /// This test previously asserted the opposite for tests — `src/foo.spec.ts`,
+    /// `src/foo.test.tsx`, `tests/foo_test.py`, `pkg/foo_test.go` were all
+    /// required to match. That pinned the old list rather than the intent: the
+    /// graph describes code, TESTS and docs, and a test is often the only place a
+    /// public API's real usage is written down. Those globs were also INERT on
+    /// the indexing path, so the files were indexed anyway while
+    /// `count_indexable_files` reported them excluded.
     #[test]
-    fn build_globset_matches_excluded_paths() {
+    fn build_globset_excludes_dependencies_and_generated_output() {
         let gs = build_globset();
         assert!(gs.is_match("node_modules/foo/bar.js"));
-        assert!(gs.is_match("src/foo.spec.ts"));
-        assert!(gs.is_match("src/foo.test.tsx"));
-        assert!(gs.is_match("tests/foo_test.py"));
-        assert!(gs.is_match("pkg/foo_test.go"));
-        assert!(gs.is_match("src/types.d.ts"));
         assert!(gs.is_match("dist/bundle.js"));
         assert!(gs.is_match("target/debug/foo"));
         assert!(gs.is_match("__pycache__/foo.pyc"));
         assert!(gs.is_match("__MACOSX/._foo"));
+        assert!(gs.is_match("src/types.d.ts"), "generated declarations");
+
+        // Build output that lives OUTSIDE dist/build — the case that put 3,555
+        // minified nodes in the graph.
+        assert!(gs.is_match("web/static/app.min.js"));
+        assert!(gs.is_match("web/static/app.min.css"));
+        assert!(gs.is_match("web/static/app.bundle.js"));
+        assert!(gs.is_match("web/static/app.js.map"));
+        assert!(
+            gs.is_match("documentation/artifacts/erd/assets/index-Cgv8QKbu.js"),
+            "a Vite content-hashed asset"
+        );
+    }
+
+    /// A TEST is part of the structure being described, so it must NOT match.
+    #[test]
+    fn build_globset_keeps_tests_and_normal_source() {
+        let gs = build_globset();
+        for kept in [
+            "src/foo.spec.ts",
+            "src/foo.test.tsx",
+            "tests/foo_test.py",
+            "pkg/foo_test.go",
+            "crates/x/src/lib_test.rs",
+            "app/e2e/flow.spec.ts",
+        ] {
+            assert!(!gs.is_match(kept), "{kept} is part of the codebase");
+        }
+        // A hand-written asset with no content hash is untouched.
+        assert!(!gs.is_match("src/assets/index.js"), "no hash suffix — not generated");
     }
 
     #[test]
