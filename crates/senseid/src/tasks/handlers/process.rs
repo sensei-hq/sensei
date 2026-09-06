@@ -292,12 +292,14 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
         let rel = entry.path().strip_prefix(repo_path).unwrap_or(entry.path());
         let rel_str = rel.to_string_lossy().to_string();
 
-        // Skip binary files and files without extensions
+        // The SAME predicate `count_indexable_files` uses, so the count and the
+        // index cannot disagree about a tree. This walk used to apply the
+        // exclude glob AFTER pushing to `visible`, and only to decide whether the
+        // file's parent directory was discoverable — so an excluded file beside
+        // an included one was indexed regardless, and a build artefact under
+        // `artifacts/` entered the graph with 540 minified references.
         let ext = entry.path().extension().and_then(|e| e.to_str()).unwrap_or("").to_string();
-        if ext.is_empty() {
-            continue;
-        }
-        if is_binary_ext(&ext) {
+        if !super::scan_logic::file_passes_scan_filters(&rel_str, &ext, exclude) {
             continue;
         }
 
@@ -311,9 +313,6 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
 
         visible.push((entry.path().to_path_buf(), rel_str.clone()));
 
-        if exclude.is_match(&rel_str) {
-            continue;
-        }
         if let Some(parent) = entry.path().parent() {
             dirs.insert(parent.to_path_buf());
         }
