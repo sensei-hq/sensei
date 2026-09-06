@@ -735,6 +735,65 @@ impl PgStore {
         Ok(changed)
     }
 
+    /// The fraction of an inner folder's files that must also live in the outer
+    /// one before the inner is called a contained duplicate.
+    ///
+    /// Not 1.0: an inner checkout legitimately gains a file the outer copy has
+    /// not picked up yet (a `.gitignore`d artefact, a branch ahead by one
+    /// commit), and demanding perfection would hide the duplication that
+    /// matters. Measured over the live index every real case sits at exactly
+    /// 100%, so 0.95 costs nothing and tolerates that skew.
+    const CONTAINMENT_THRESHOLD: f64 = 0.95;
+
+    /// Folders indexed TWICE because one is registered inside another and holds
+    /// the same files — `(outer_path, inner_path, shared_files, inner_files)`.
+    ///
+    /// Distinct from `detect_nested_standalone_roots`, which only sees a
+    /// `standalone` folder inside a `git` one. These are git-inside-git:
+    /// `Dayamed/cluster` is a checkout that also registers `cluster/server`,
+    /// `cluster/scheduler`, `cluster/web-portal` and `cluster/external` as
+    /// projects of their own, so every file in them is indexed under both.
+    ///
+    /// Read-only, and it must stay that way: `sensei/marketplace` and
+    /// `sensei/homebrew` are git SUBTREES of this repository — intentionally
+    /// present twice — and they are indistinguishable here from an accident.
+    ///
+    /// Content-compared on `scan_state.content_hash`, which the scan already
+    /// stores per file, so this needs no new bookkeeping. Restricted to folders
+    /// that actually carry scan_state (179 of 9,131), which keeps the candidate
+    /// pair space small — measured 0.13s over the live index.
+    pub async fn contained_duplicate_folders(
+        &self,
+    ) -> Result<Vec<(String, String, i64, i64)>, String> {
+        sqlx_core::query_as::query_as(
+            "WITH indexed AS (SELECT DISTINCT folder_id FROM sensei.scan_state), \
+                  f AS (SELECT fo.id, fo.abs_path FROM sensei.folders fo \
+                          JOIN indexed i ON i.folder_id = fo.id), \
+                  cand AS ( \
+                    SELECT o.id AS oid, o.abs_path AS opath, n.id AS iid, n.abs_path AS ipath \
+                      FROM f o JOIN f n \
+                        ON n.id <> o.id AND starts_with(n.abs_path, o.abs_path || '/')), \
+                  tot AS (SELECT folder_id, count(DISTINCT content_hash) AS n \
+                            FROM sensei.scan_state GROUP BY 1), \
+                  sh AS ( \
+                    SELECT c.oid, c.iid, c.opath, c.ipath, \
+                           count(DISTINCT si.content_hash) AS shared \
+                      FROM cand c \
+                      JOIN sensei.scan_state si ON si.folder_id = c.iid \
+                      JOIN sensei.scan_state so ON so.folder_id = c.oid \
+                                              AND so.content_hash = si.content_hash \
+                     GROUP BY 1,2,3,4) \
+             SELECT sh.opath, sh.ipath, sh.shared, t.n \
+               FROM sh JOIN tot t ON t.folder_id = sh.iid \
+              WHERE t.n > 0 AND sh.shared::numeric / t.n >= $1 \
+              ORDER BY sh.shared DESC, sh.ipath",
+        )
+        .bind(Self::CONTAINMENT_THRESHOLD)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())
+    }
+
     /// Repositories registered at MORE THAN ONE folder path — a clone, a symlink
     /// or a stale checkout left behind. Read-only: the caller reports it and
     /// recommends removing one, because which copy is canonical is the user's

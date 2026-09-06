@@ -9600,6 +9600,66 @@ async fn repositories_schema_invariants() {
 /// A git checkout with a remote is linked to a canonical `sensei.repositories`
 /// row keyed on the NORMALIZED remote; a remote-less checkout stays NULL
 /// (local-only, never federated); re-running is a no-op (idempotent).
+/// A folder registered INSIDE another, holding the same files, is reported as a
+/// contained duplicate — and a nested folder with its OWN content is not.
+///
+/// `detect_nested_standalone_roots` only sees a `standalone` folder inside a
+/// `git` one. These are git-inside-git: `Dayamed/cluster` is a checkout that also
+/// registers `cluster/server`, `cluster/scheduler`, `cluster/web-portal` and
+/// `cluster/external` as projects of their own, so every file in them is indexed
+/// under both paths. Measured live, all five sit at exactly 100% overlap — as do
+/// `sensei/marketplace` (77 files) and `sensei/homebrew` (3), which are git
+/// SUBTREES and therefore intentional.
+///
+/// Breaking mutation: drop the containment predicate and every nested folder is
+/// reported, subtree or not; drop the ratio test and a nested folder that merely
+/// shares a licence file is reported.
+#[tokio::test]
+async fn a_nested_folder_holding_the_same_files_is_reported_as_a_contained_duplicate() {
+    let s = PgStore::connect_test().await.unwrap();
+    let tag = uuid::Uuid::new_v4();
+    let base = format!("/tmp/contain-{tag}");
+    let root_id = s.add_watch_root(&base, "ct", &serde_json::json!([])).await.unwrap();
+
+    let outer =
+        s.upsert_repo_kind(&root_id, "git", "outer", &format!("{base}/outer")).await.unwrap();
+    // Registered INSIDE outer, same files → a contained duplicate.
+    let inner =
+        s.upsert_repo_kind(&root_id, "git", "inner", &format!("{base}/outer/inner")).await.unwrap();
+    // Also inside, but its own content → must NOT be reported.
+    let distinct = s
+        .upsert_repo_kind(&root_id, "git", "distinct", &format!("{base}/outer/distinct"))
+        .await
+        .unwrap();
+
+    let shared: Vec<String> = (0..10).map(|i| format!("hash-shared-{tag}-{i}")).collect();
+    for (i, h) in shared.iter().enumerate() {
+        // The outer holds every shared file...
+        s.upsert_scan_state(&outer, &format!("inner/f{i}.rs"), 1, h).await.unwrap();
+        // ...and the inner holds exactly those, so overlap is 100%.
+        s.upsert_scan_state(&inner, &format!("f{i}.rs"), 1, h).await.unwrap();
+    }
+    for i in 0..10 {
+        s.upsert_scan_state(&distinct, &format!("d{i}.rs"), 1, &format!("hash-own-{tag}-{i}"))
+            .await
+            .unwrap();
+    }
+
+    let dups = s.contained_duplicate_folders().await.unwrap();
+    let mine: Vec<_> = dups.iter().filter(|(o, _, _, _)| o.contains(&tag.to_string())).collect();
+
+    assert_eq!(mine.len(), 1, "exactly one contained duplicate expected, got {mine:?}");
+    let (outer_path, inner_path, shared_n, inner_n) = mine[0];
+    assert!(outer_path.ends_with("/outer"), "{outer_path}");
+    assert!(inner_path.ends_with("/outer/inner"), "{inner_path}");
+    assert_eq!((*shared_n, *inner_n), (10, 10), "all ten of the inner's files are also outside");
+
+    assert!(
+        !dups.iter().any(|(_, i, _, _)| i.ends_with("/outer/distinct")),
+        "a nested folder with its own content is NOT a duplicate: {dups:?}"
+    );
+}
+
 /// A symlinked checkout is grouped onto the real directory's repository, and the
 /// result is then REPORTABLE as one repository at two paths.
 ///
