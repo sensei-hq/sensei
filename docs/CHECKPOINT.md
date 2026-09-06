@@ -235,6 +235,26 @@ indexed twice. That is packaging output, not distinct code.
   `gateway: …/gateway | …/sensei-hq/gateway` and `variants: … | …`.
   A directory claimed by TWO repositories is left alone, not resolved by guessing.
 
+- **`ce9e1657` containment reported** — a sixth doctor class for a folder indexed
+  TWICE because it is registered inside another holding the same files. Class 3
+  (`nested_standalone`) cannot see these: it matches only `standalone` inside
+  `git`, and these are git-inside-git. Detected on `scan_state.content_hash`
+  (already written per file) with `starts_with(inner, outer || '/')` — the same
+  predicate `nested_standalone_candidates` uses — restricted to the 179 of 9,131
+  folders that carry scan_state, so it costs 0.13s. Threshold 0.95, not 1.0: an
+  inner checkout legitimately gains a file the outer has not picked up. Live
+  output: 7 cases — `cluster/{server,scheduler,web-portal,external}`,
+  `swarco/documentation`, and `sensei/{marketplace,homebrew}`.
+- **`f9672f1d`** the doctor now prints "… and N more (sample capped)" — the
+  containment count said 7 above five lines, and the two dropped were the exact
+  subtrees the recommendation cites.
+
+**NEITHER ADVISORY CLASS IS EVER AUTO-REPAIRED, and class 6 is why.**
+`homebrew/` and `marketplace/` are git SUBTREES of THIS repository, deliberately
+present twice, and they sit at 100% overlap exactly like an accidental nested
+checkout. Nothing in the data distinguishes them. Auto-healing would delete a
+legitimate subtree.
+
 ### STILL OPEN — genuine VENDORING, not a registration artefact
 
 `Dayamed/cluster` holds byte-identical copies of `server`, `scheduler`,
