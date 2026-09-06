@@ -71,6 +71,9 @@ pub struct AuditSamples {
     pub nested_standalone: Vec<String>,
     /// Ids of duplicate-name phantom projects.
     pub duplicate_name_projects: Vec<String>,
+    /// One repository registered at several paths, rendered as
+    /// `name: /path/a | /path/b` so the report names the copies to choose between.
+    pub duplicate_repository_paths: Vec<String>,
 }
 
 impl AuditSamples {
@@ -106,6 +109,11 @@ pub struct AuditReport {
     pub nested_standalone: u64,
     /// Duplicate-name phantom projects (merged / to merge).
     pub duplicate_name_projects: u64,
+    /// Repositories registered at MORE THAN ONE path — a clone, a symlink or a
+    /// stale checkout. REPORTED ONLY, never repaired: which copy is canonical is
+    /// the user's call. Measured before symlink grouping existed, the largest
+    /// such pair (`~/Developer/gateway` and its symlink) duplicated 4,543 fqns.
+    pub duplicate_repository_paths: u64,
     /// A few example paths/ids per class.
     pub samples: AuditSamples,
 }
@@ -117,6 +125,7 @@ impl AuditReport {
             || self.ghost_folders > 0
             || self.nested_standalone > 0
             || self.duplicate_name_projects > 0
+            || self.duplicate_repository_paths > 0
     }
 }
 
@@ -246,6 +255,31 @@ pub async fn audit_index_integrity(
                 tracing::warn!(error = %e, "index_audit: heal_duplicate_name_projects failed")
             }
         }
+    }
+
+    // Class 5 — ONE REPOSITORY REGISTERED AT SEVERAL PATHS. A clone, a symlink,
+    // or a checkout left behind after a move: the same code indexed twice, so
+    // every symbol in it has a twin and every count over it is doubled.
+    //
+    // REPORTED, NEVER REPAIRED — and that is deliberate rather than unfinished.
+    // Both paths are real directories the user may still be working in, and the
+    // graph cannot know which is canonical. Deleting the wrong one loses work;
+    // deleting either without being asked is not the daemon's call. Nor is this
+    // always a mistake: `homebrew/` and `marketplace/` are git SUBTREES of this
+    // very repository, legitimately present twice.
+    //
+    // Symlinked twins are grouped onto one repository by `scan_root`, which is
+    // what makes them visible here at all — before that they carried
+    // `repository_id = NULL` and no query could relate them.
+    match pg.duplicate_repository_paths().await {
+        Ok(dups) => {
+            report.duplicate_repository_paths = dups.len() as u64;
+            AuditSamples::extend_capped(
+                &mut report.samples.duplicate_repository_paths,
+                dups.iter().map(|(name, _, paths)| format!("{name}: {}", paths.join(" | "))),
+            );
+        }
+        Err(e) => tracing::warn!(error = %e, "index_audit: duplicate_repository_paths failed"),
     }
 
     report
