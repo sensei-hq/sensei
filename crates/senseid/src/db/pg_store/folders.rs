@@ -1164,6 +1164,33 @@ impl PgStore {
         Ok(stale)
     }
 
+    /// Drop every `scan_state` row under a watch root, so the next scan re-derives
+    /// the graph instead of skipping unchanged files. Returns rows cleared.
+    ///
+    /// This is what makes a version rescan actually rescan. `plan_reindex`
+    /// compares `(rel_path, mtime)` and then a content hash — there is NO
+    /// indexer-version component — so a content-identical file is skipped no
+    /// matter how much the PRODUCER changed. `version_rescan` enqueued one
+    /// `ScanRoot` per root and its doc claimed "the code graph rebuilds under the
+    /// new binary", but the fan-out hit that gate and rebuilt nothing: observed
+    /// `process_git_folder: OmniRoute — 0 changed files, 9822 unchanged`. Every
+    /// measurement of an indexer fix this cycle needed a manual
+    /// `DELETE FROM sensei.scan_state` first, which is the same admission.
+    ///
+    /// Scoped to the root being rescanned and driven only by a binary-version
+    /// change, so an ordinary reconcile keeps its cheap stat-only path.
+    pub async fn clear_scan_state_for_root(&self, root_id: &uuid::Uuid) -> Result<u64, String> {
+        let res = sqlx_core::query::query(
+            "DELETE FROM sensei.scan_state s USING sensei.folders f \
+              WHERE s.folder_id = f.id AND f.root_id = $1",
+        )
+        .bind(root_id)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| format!("clear_scan_state_for_root: {e}"))?;
+        Ok(res.rows_affected())
+    }
+
     pub async fn delete_scan_state(&self, folder_id: &uuid::Uuid) -> Result<(), String> {
         sqlx_core::query::query("DELETE FROM sensei.scan_state WHERE folder_id = $1")
             .bind(folder_id)
