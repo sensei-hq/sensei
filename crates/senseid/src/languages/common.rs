@@ -107,6 +107,11 @@ pub(crate) fn sfc_fqn_output(
             r.caller_line += offset;
             r
         }));
+        // Relations carry no line, so they need no offset — but they DO need
+        // forwarding. Omitting them silently dropped every `extends`/`implements`
+        // a single-file component declares, which is the whole inheritance
+        // capability for svelte and vue.
+        out.relations.extend(sub.relations);
     }
     Some(out)
 }

@@ -13,6 +13,11 @@ impl LanguageAdapter for PythonAdapter {
         true
     }
 
+    /// Emits `extends`/`implements` (or trait impls) into `relations`.
+    fn emits_inheritance(&self) -> bool {
+        true
+    }
+
     /// Backed by real machinery: an imports map keyed on the bound name.
     fn resolves_in_scope(&self) -> bool {
         true
