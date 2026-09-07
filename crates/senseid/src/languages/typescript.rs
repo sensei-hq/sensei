@@ -1404,22 +1404,14 @@ mod tests {
     }
 
     // ── FQN producer (Phase 6.1) ────────────────────────────────────────────
-    use crate::languages::fqn::{FileFqnContext, FqnFileOutput, FqnReference};
+    use crate::languages::fqn::{FileFqnContext, FqnFileOutput};
     fn produce_ts(src: &str, package: &str, module: &str) -> FqnFileOutput {
         typescript_fqn::produce_fqns(
             src,
             &FileFqnContext { package: package.into(), module: module.into() },
         )
     }
-    fn def_fqn<'a>(out: &'a FqnFileOutput, name: &str) -> &'a str {
-        out.defs.iter().find(|d| d.name == name).map(|d| d.fqn.as_str()).unwrap_or("<no-def>")
-    }
-    fn ref_to<'a>(out: &'a FqnFileOutput, target_name: &str) -> &'a FqnReference {
-        out.refs
-            .iter()
-            .find(|r| r.target_name == target_name)
-            .unwrap_or_else(|| panic!("no ref to `{target_name}` in {:?}", out.refs))
-    }
+    use crate::languages::fqn::finders::{def_fqn, ref_to};
 
     /// A member call on a GLOBAL receiver must resolve to a runtime lib node.
     ///

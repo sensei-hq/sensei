@@ -1651,15 +1651,7 @@ mod tests {
             &FileFqnContext { package: package.into(), module: module.into() },
         )
     }
-    fn def_fqn<'a>(out: &'a FqnFileOutput, name: &str) -> &'a str {
-        out.defs.iter().find(|d| d.name == name).map(|d| d.fqn.as_str()).unwrap_or("<no-def>")
-    }
-    fn ref_to<'a>(out: &'a FqnFileOutput, target_name: &str) -> &'a FqnReference {
-        out.refs
-            .iter()
-            .find(|r| r.target_name == target_name)
-            .unwrap_or_else(|| panic!("no ref to `{target_name}` in {:?}", out.refs))
-    }
+    use crate::languages::fqn::finders::{def_fqn, ref_to};
 
     /// `IRClass.implements` must hold TRAIT NAMES, not fragments of source.
     ///
