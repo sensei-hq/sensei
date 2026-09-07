@@ -643,6 +643,96 @@ pub(crate) mod kotlin_fqn {
             .find_map(|c| descendant_of_kind(&c, kind))
     }
 
+    /// Record every call site under `caller_fqn`, naming a target ONLY when the
+    /// language says so unambiguously.
+    ///
+    /// Kotlin emitted 0 refs before this, so ANY target named wrongly here
+    /// becomes a minted node at process.rs's `OnMiss::CreateStub`. That makes
+    /// this the one step in the kotlin work whose failure mode is a fresh
+    /// fabrication pile rather than a rate regression, so the ladder is
+    /// miss-first and deliberately incomplete:
+    ///
+    /// - `Type.method()` where `Type` is imported and PascalCase → the shared
+    ///   `jvm::resolve_type_call`, so it lands on the key a java call already
+    ///   writes for that string.
+    /// - `obj.method()` on a lowercase receiver → UNRESOLVED. Naming it needs
+    ///   type inference this producer does not do.
+    /// - a bare `helper()` → UNRESOLVED. Kotlin has top-level functions, so
+    ///   java's "an unqualified call is a method on the enclosing class" rule is
+    ///   FALSE here. Resolving it wants the definition pre-pass typescript's
+    ///   `#3` fix introduced; until that exists a miss is the honest answer.
+    ///
+    /// The call site is recorded either way, so "who calls this" and "how much
+    /// of this file is call sites" both work before targets improve.
+    fn collect_calls(
+        node: &Node,
+        src: &[u8],
+        package: &str,
+        caller_fqn: &str,
+        imports: &std::collections::HashMap<String, String>,
+        out: &mut FqnFileOutput,
+    ) {
+        for i in 0..node.child_count() {
+            let Some(child) = node.child(i) else { continue };
+            if child.kind() == "call_expression"
+                && let Some((target_fqn, is_lib, target_name)) =
+                    resolve_call(&child, src, package, imports)
+            {
+                out.refs.push(fqn::FqnReference {
+                    caller_fqn: caller_fqn.to_string(),
+                    caller_line: child.start_position().row as u32 + 1,
+                    target_fqn,
+                    target_name,
+                    is_lib,
+                });
+            }
+            collect_calls(&child, src, package, caller_fqn, imports, out);
+        }
+    }
+
+    /// The callee is a `call_expression`'s FIRST child: a `simple_identifier`
+    /// when unqualified, a `navigation_expression` when qualified (both pinned
+    /// in `kotlin_grammar_shapes`).
+    fn resolve_call(
+        call: &Node,
+        src: &[u8],
+        package: &str,
+        imports: &std::collections::HashMap<String, String>,
+    ) -> Option<(Option<String>, bool, String)> {
+        let callee = call.child(0)?;
+        match callee.kind() {
+            // `helper()` — see above: not necessarily a member, so unresolved.
+            "simple_identifier" => {
+                let name = text(&callee, src);
+                (!name.is_empty()).then_some((None, false, name))
+            }
+            "navigation_expression" => {
+                let receiver = child_of_kind(&callee, "simple_identifier")?;
+                let suffix = child_of_kind(&callee, "navigation_suffix")?;
+                let method = text(&descendant_of_kind(&suffix, "simple_identifier")?, src);
+                if method.is_empty() {
+                    return None;
+                }
+                let recv = text(&receiver, src);
+                // PascalCase AND imported ⇒ a type whose package the import
+                // states outright. Anything else is a value whose type we do not
+                // know, so it stays unresolved rather than being stamped onto
+                // this file's package.
+                let is_type = recv.chars().next().is_some_and(|c| c.is_ascii_uppercase());
+                match imports.get(&recv).filter(|_| is_type) {
+                    Some(fqcn) => Some(crate::languages::jvm::resolve_type_call(
+                        KOTLIN_LANG,
+                        fqcn,
+                        &method,
+                        package,
+                    )),
+                    None => Some((None, false, method)),
+                }
+            }
+            _ => None,
+        }
+    }
+
     /// Emit this type's `extends` / `implements` facts.
     ///
     /// Kotlin lists the superclass and every interface in ONE
@@ -728,7 +818,7 @@ pub(crate) mod kotlin_fqn {
                     let type_fqn = fqn::item(KOTLIN_LANG, package, "", &name);
                     out.defs.push(def(&type_fqn, &name, kind, &child, None, None));
                     emit_relations(&child, src, package, &type_fqn, imports, out);
-                    walk_members(&child, src, package, &name, &type_fqn, out);
+                    walk_members(&child, src, package, &name, &type_fqn, imports, out);
                 }
                 "function_declaration" | "property_declaration" => {
                     if let Some(name) = named_child_text(
@@ -753,12 +843,14 @@ pub(crate) mod kotlin_fqn {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn walk_members(
         type_node: &Node,
         src: &[u8],
         package: &str,
         type_name: &str,
         type_fqn: &str,
+        imports: &std::collections::HashMap<String, String>,
         out: &mut FqnFileOutput,
     ) {
         for i in 0..type_node.child_count() {
@@ -769,7 +861,7 @@ pub(crate) mod kotlin_fqn {
             if !matches!(body.kind(), "class_body" | "enum_class_body") {
                 continue;
             }
-            collect_members(&body, src, package, type_name, type_fqn, out);
+            collect_members(&body, src, package, type_name, type_fqn, imports, out);
         }
     }
 
@@ -782,12 +874,14 @@ pub(crate) mod kotlin_fqn {
     /// direct-children-only walk therefore silently loses every member of any
     /// file the grammar stumbles on — so recursion here is correctness, not
     /// thoroughness.
+    #[allow(clippy::too_many_arguments)]
     fn collect_members(
         body: &Node,
         src: &[u8],
         package: &str,
         type_name: &str,
         type_fqn: &str,
+        imports: &std::collections::HashMap<String, String>,
         out: &mut FqnFileOutput,
     ) {
         for j in 0..body.child_count() {
@@ -805,12 +899,12 @@ pub(crate) mod kotlin_fqn {
                 // definition is precisely what `OnMiss::CreateStub` turns into a
                 // phantom, which is why defs land before refs in this slice.
                 "companion_object" => {
-                    walk_members(&m, src, package, type_name, type_fqn, out);
+                    walk_members(&m, src, package, type_name, type_fqn, imports, out);
                     continue;
                 }
                 // Recovery wrapper — the declaration is inside it.
                 "ERROR" => {
-                    collect_members(&m, src, package, type_name, type_fqn, out);
+                    collect_members(&m, src, package, type_name, type_fqn, imports, out);
                     continue;
                 }
                 _ => (SymbolKind::Method, false),
@@ -837,6 +931,7 @@ pub(crate) mod kotlin_fqn {
                     Some(type_name.to_string()),
                     Some(type_fqn.to_string()),
                 ));
+                collect_calls(&m, src, package, &f, imports, out);
             }
         }
     }
@@ -1035,6 +1130,90 @@ mod kotlin_fqn_tests {
         assert_eq!(run.parent_fqn.as_deref(), Some("kotlin·com.acme.svc·Runnable"));
 
         assert_eq!(out.relations.len(), 3, "one extends + two implements: {:?}", out.relations);
+    }
+
+    /// CALLS: a call site is always recorded; a target is named only when the
+    /// language says so unambiguously, and is `None` otherwise.
+    ///
+    /// This is the one step in the kotlin work whose failure mode is a NEW
+    /// FABRICATION PILE rather than a rate regression. Kotlin emits 0 refs
+    /// today, so anything this names wrongly becomes a minted node at
+    /// process.rs's `OnMiss::CreateStub` — the exact defect the whole slice
+    /// exists to remove. So the ladder is MISS-FIRST:
+    ///
+    /// - `Type.method()` on an IMPORTED PascalCase receiver → resolved through
+    ///   the shared `jvm::resolve_type_call`, so it lands on the key a java call
+    ///   already writes (third-party ⇒ `lib·`, first-party ⇒ its own package).
+    /// - `obj.method()` on a lowercase receiver → UNRESOLVED. Naming it would
+    ///   require type inference this producer does not do, and java's
+    ///   `bindings` shortcut (`val x = Type()`) is not ported yet.
+    /// - a bare `helper()` → UNRESOLVED. Kotlin has top-level functions, so
+    ///   java's "an unqualified call is a method on the enclosing class" rule is
+    ///   simply false here. Resolving it needs the definition pre-pass that
+    ///   typescript's `#3` fix introduced; until then a miss is the honest
+    ///   answer.
+    ///
+    /// The caller is the enclosing member, so "who calls this" works even when
+    /// the target is unknown.
+    ///
+    /// Breaking mutation: resolve the lowercase-receiver or bare arm to
+    /// `fqn::method(KOTLIN_LANG, package, "", enclosing_type, name)` and every
+    /// such call site mints a phantom.
+    #[test]
+    fn a_call_is_recorded_and_only_an_unambiguous_target_is_named() {
+        use crate::languages::fqn::finders::ref_to;
+
+        let out = produce_fqns(
+            "package com.acme.svc\n\
+             \n\
+             import com.acme.core.Helper\n\
+             import org.mockito.Mockito\n\
+             \n\
+             class Widget {\n\
+             \x20   fun go(obj: Thing) {\n\
+             \x20       Helper.run()\n\
+             \x20       Mockito.mock()\n\
+             \x20       obj.doThing()\n\
+             \x20       bare()\n\
+             \x20   }\n\
+             }\n",
+        );
+
+        // A first-party imported type resolves to its own package.
+        let helper = ref_to(&out, "run");
+        assert_eq!(
+            helper.target_fqn.as_deref(),
+            Some("kotlin·com.acme.core·Helper·run"),
+            "an imported first-party type keeps its package"
+        );
+        assert!(!helper.is_lib);
+        assert_eq!(helper.caller_fqn, "kotlin·com.acme.svc·Widget·go", "caller is the member");
+
+        // A third-party one becomes a lib node — same answer java gives.
+        let mockito = ref_to(&out, "mock");
+        assert!(mockito.is_lib, "org.mockito is third-party: {:?}", mockito.target_fqn);
+        assert!(mockito.target_fqn.as_deref().is_some_and(|f| f.starts_with("lib·")));
+
+        // An UNKNOWN receiver is recorded but NOT named.
+        let unknown = ref_to(&out, "doThing");
+        assert_eq!(unknown.target_fqn, None, "no type inference ⇒ no guess");
+        assert!(!unknown.is_lib);
+        assert_eq!(unknown.caller_fqn, "kotlin·com.acme.svc·Widget·go");
+
+        // A bare call is recorded but NOT named — kotlin has top-level functions.
+        let bare = ref_to(&out, "bare");
+        assert_eq!(bare.target_fqn, None, "an unqualified call is not necessarily a member");
+
+        // And nothing was invented: every named target is either a lib node or
+        // an imported type's own package, never this file's.
+        for r in &out.refs {
+            if let Some(f) = r.target_fqn.as_deref() {
+                assert!(
+                    f.starts_with("lib·") || !f.starts_with("kotlin·com.acme.svc·Widget·"),
+                    "a call target must not be stamped onto the calling type: {f}"
+                );
+            }
+        }
     }
 
     #[test]
