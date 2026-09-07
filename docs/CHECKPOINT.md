@@ -63,12 +63,24 @@ def walk, so #5's new arms stay in sync by construction.
    no `constructor_invocation`, so the superclass rule already treats it right),
    and I could not reproduce ANY parse-degrading shape, so no test asserts one.
 
-   Remaining sub-steps: lift `package_root`/`is_first_party` into a shared
-   `languages/jvm.rs` (PRIVATE to `mod java_fqn`, so copying violates DRY) →
-   shared test helpers (5 byte-identical `def_fqn`/`ref_to` copies; kotlin has
-   neither) → defs (companion_object, enum_class_body, the dead interface arm) →
-   heritage → calls LAST. Calls last because kotlin emits 0 refs today, so that
-   step is the only one whose failure mode is a NEW fabrication pile.
+   **ALL SUB-STEPS DONE at producer level.** `09fd073b` jvm lift → `9373d3f7`
+   shared finders (+`rel_to`, net -16 lines) → `345e4b21` defs → `9a4d4d9c`
+   heritage → `4622d2d5` calls.
+
+   `resolves_in_scope` STAYS FALSE for kotlin, and mod.rs:777 is still correct.
+   The plan said to flip it once an import map existed; that was wrong. The
+   capability is specifically "resolve a BARE NAME using the language's own scope
+   rules", and the bare arm is exactly what is left unresolved on purpose —
+   kotlin has TOP-LEVEL FUNCTIONS, so java's "an unqualified call is a method on
+   the enclosing class" rule is false here and porting it would mint a phantom
+   per top-level call.
+
+   NOT YET DEPLOYED OR MEASURED. Every kotlin figure so far is a call-SITE count
+   from parsing the corpus (10,072 call expressions: 5,903 navigation, 3,496
+   unqualified; 127 delegation specifiers), not an observed edge count. Next:
+   deploy, clear `scan_state` for the kotlin corpus, scan the WATCH ROOT, then
+   measure refs/relations. The bare-call arm (3,496 sites) is the largest known
+   gap and wants the definition pre-pass typescript's #3 introduced.
 
 3b. **Historical: #4's three blockers, now cleared or scoped:**
    - There is NO `node-types.json` in `crates/senseid/grammars/kotlin/src/` (only
