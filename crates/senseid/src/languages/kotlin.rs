@@ -582,15 +582,24 @@ pub(crate) mod kotlin_fqn {
         for i in 0..node.child_count() {
             let Some(child) = node.child(i) else { continue };
             match child.kind() {
-                "class_declaration" | "object_declaration" | "interface_declaration" => {
+                "class_declaration" | "object_declaration" => {
                     let Some(name) =
                         named_child_text(&child, src, &["type_identifier", "simple_identifier"])
                     else {
                         continue;
                     };
-                    let kind = match child.kind() {
-                        "interface_declaration" => SymbolKind::Interface,
-                        _ => SymbolKind::Class,
+                    // An interface and an enum are BOTH `class_declaration`,
+                    // distinguished by an unnamed keyword child. This arm used to
+                    // match `"interface_declaration"`, which is not a node kind in
+                    // this grammar at all (pinned in `kotlin_grammar_shapes`), so
+                    // it was DEAD and every Kotlin interface was emitted as a
+                    // Class. The non-fqn walk above already tests the keyword.
+                    let kind = if super::has_keyword(&child, src, "interface") {
+                        SymbolKind::Interface
+                    } else if super::has_keyword(&child, src, "enum") {
+                        SymbolKind::Enum
+                    } else {
+                        SymbolKind::Class
                     };
                     // A top-level type anchors on the package, with no module
                     // segment — the same shape `java_fqn` produces, so a Kotlin
@@ -632,7 +641,10 @@ pub(crate) mod kotlin_fqn {
     ) {
         for i in 0..type_node.child_count() {
             let Some(body) = type_node.child(i) else { continue };
-            if body.kind() != "class_body" {
+            // An ENUM's body is `enum_class_body`, not `class_body` (pinned in
+            // `kotlin_grammar_shapes`), so testing only for `class_body` dropped
+            // every member of every enum.
+            if !matches!(body.kind(), "class_body" | "enum_class_body") {
                 continue;
             }
             collect_members(&body, src, package, type_name, type_fqn, out);
@@ -663,6 +675,17 @@ pub(crate) mod kotlin_fqn {
                 // No `Property` variant exists; a Kotlin `val`/`var` member is
                 // closest to Const, which is also what the top-level branch uses.
                 "property_declaration" => (SymbolKind::Const, true),
+                // A COMPANION OBJECT nests its members in its OWN `class_body`
+                // (pinned in `kotlin_grammar_shapes`), so a direct-children walk
+                // saw none of them. They are attributed to the ENCLOSING type,
+                // which is how the JVM addresses them and how a
+                // `Widget.create()` reference will resolve — a member with no
+                // definition is precisely what `OnMiss::CreateStub` turns into a
+                // phantom, which is why defs land before refs in this slice.
+                "companion_object" => {
+                    walk_members(&m, src, package, type_name, type_fqn, out);
+                    continue;
+                }
                 // Recovery wrapper — the declaration is inside it.
                 "ERROR" => {
                     collect_members(&m, src, package, type_name, type_fqn, out);
@@ -760,6 +783,76 @@ mod kotlin_fqn_tests {
 
     /// A file with NO package header still produces fqns — Kotlin allows it, and
     /// returning nothing would put the whole file back on the bare-name path.
+    /// An INTERFACE is an interface, a COMPANION member is a member, and an ENUM
+    /// entry is not lost — the three def gaps that make a later `Foo.create()`
+    /// reference mint a phantom.
+    ///
+    /// All three come from matching the wrong node kind, verified in
+    /// `kotlin_grammar_shapes`:
+    ///
+    /// - `walk_top` matched `"interface_declaration"`, which DOES NOT EXIST in
+    ///   this grammar. The arm was dead, so every Kotlin interface was emitted as
+    ///   `SymbolKind::Class`. The non-fqn walk already gets this right via
+    ///   `has_keyword(.., "interface")`.
+    /// - `collect_members` walks a type's direct `class_body` only, and a
+    ///   `companion_object` nests its members in its OWN `class_body` — so
+    ///   `Widget.create()` had no definition to land on. A missing def is exactly
+    ///   what turns a legitimate call into a minted stub at
+    ///   `OnMiss::CreateStub`, which is why defs must precede refs in this slice.
+    /// - an enum's body is `enum_class_body`, not `class_body`, so its members
+    ///   were dropped too.
+    ///
+    /// Breaking mutation: restore the `"interface_declaration"` arm and `Handler`
+    /// goes back to `SymbolKind::Class`; drop the `companion_object` recursion and
+    /// `create` loses its definition.
+    #[test]
+    fn an_interface_a_companion_member_and_an_enum_member_all_get_definitions() {
+        use crate::languages::fqn::finders::def_fqn;
+        use crate::types::SymbolKind;
+
+        let out = produce_fqns(
+            "package com.acme\n\
+             \n\
+             interface Handler {\n\
+             \x20   fun handle()\n\
+             }\n\
+             \n\
+             class Widget {\n\
+             \x20   companion object {\n\
+             \x20       fun create(): Widget = Widget()\n\
+             \x20   }\n\
+             \x20   fun go() {}\n\
+             }\n\
+             \n\
+             enum class Colour { RED, GREEN }\n",
+        );
+        let kind_of = |n: &str| out.defs.iter().find(|d| d.name == n).map(|d| d.kind.clone());
+
+        // 1. An interface is an Interface, not a Class.
+        assert_eq!(
+            kind_of("Handler"),
+            Some(SymbolKind::Interface),
+            "an interface is `class_declaration` + the `interface` keyword: {:?}",
+            out.defs.iter().map(|d| (&d.name, d.kind.clone())).collect::<Vec<_>>()
+        );
+        assert_eq!(def_fqn(&out, "Handler"), "kotlin·com.acme·Handler");
+
+        // 2. A companion member has a definition, nested on its OWNING type so a
+        //    `Widget.create()` reference resolves to it.
+        assert_eq!(
+            def_fqn(&out, "create"),
+            "kotlin·com.acme·Widget·create",
+            "a companion member belongs to its enclosing type: {:?}",
+            out.defs.iter().map(|d| &d.fqn).collect::<Vec<_>>()
+        );
+        // The ordinary member still works.
+        assert_eq!(def_fqn(&out, "go"), "kotlin·com.acme·Widget·go");
+
+        // 3. The enum type and its entries survive.
+        assert_eq!(def_fqn(&out, "Colour"), "kotlin·com.acme·Colour");
+        assert_eq!(kind_of("Colour"), Some(SymbolKind::Enum), "an enum is an Enum");
+    }
+
     #[test]
     fn a_package_less_file_still_produces_fqns() {
         let out = produce_fqns("class Loose { fun m() {} }\n");
