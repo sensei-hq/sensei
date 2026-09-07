@@ -702,3 +702,67 @@ mis-derivation as absence.
   on all 1,451 rows.
 - defect A: an indexer code change still cannot trigger a reindex — delete the
   folder's `scan_state` rows and scan the WATCH ROOT.
+
+## FINAL STATE — the remaining backlog items are DONE
+
+### TS/JS/SVELTE INHERITANCE (`5b3cc0e5`) — 0 -> 239 edges, ZERO phantoms
+
+`typescript.rs` never wrote `out.relations`. Now emits extends/implements,
+resolved through the SAME ladder a call target uses: external import -> `lib·`,
+local import -> sibling module, same-file -> here, otherwise UNRESOLVED. A
+computed superclass (`extends mixin(Base)`) is skipped rather than guessed.
+`sfc_fqn_output` also forwarded defs and refs but NOT relations — that was the
+whole capability for svelte/vue.
+
+Measured after reindexing two repos: typescript extends 208 (6 lib, 95 real def,
+95 honest-unresolved), typescript implements 26 (24 real def), javascript
+extends 5. **119 to real definitions, 7 to lib, 0 phantoms.** The OO structure is
+now visible and pattern detection is unblocked:
+
+    RedisQuotaStore  implements  …lib/quota/types·QuotaStore
+    SqliteQuotaStore implements  …lib/quota/types·QuotaStore
+    MockTransport    implements  …lib/health-transport·HealthTransport
+    MapLocalStorage  implements  Storage (unresolved — a DOM global, not invented)
+
+### THE GAP IS NOW SELF-REPORTING
+
+`capability_matrix()` reported `fqn` and `scope` only, so an empty `relations`
+list could not distinguish "no producer" from "nothing to report" — which is
+exactly why this hid for so long. Added `emits_inheritance`, defaulting false,
+inherited by a framework from its host, and PROBED against a per-language
+fixture. The probe earned its place immediately: it caught that
+`JavaScriptAdapter` had not declared the capability despite calling the identical
+`typescript_fqn::produce_fqns`.
+
+### DEFECT A FIXED (`166cd89d`)
+
+`version_rescan` promised a rebuild and delivered none — `plan_reindex` has no
+indexer-version component, so a content-identical file is skipped however much
+the producer changed ("0 changed files, 9822 unchanged"). It now clears
+`scan_state` for the root it is rescanning. NOT exercised by `make install-debug`
+(VERSION stays 0.9.1, so `version_changed` is false); it takes effect on the next
+real `make bump`.
+
+## WHAT IS GENUINELY LEFT — none of it is a fabrication
+
+- **OO DESIGN PATTERNS** (adapter/factory/strategy) are still not detected.
+  `inference.detected_patterns` does WORKFLOW patterns and its `family` is NULL
+  on all 1,451 rows. Now UNBLOCKED — inheritance edges are the substrate it
+  needed. This is a new feature, not a defect.
+- rust `let`-bound CLOSURE calls (~105 here) — unresolvable by nature, correct as
+  unresolved.
+- java's remaining ~36,600 phantoms after the wildcard fix: the review measured
+  1,718 as same-folder mis-qualifications; the rest need per-case diagnosis, NOT
+  a blanket retraction (see the reverted-retraction section above).
+- python is the thinnest producer: class/file/function/method/module only — no
+  const, enum, or protocol.
+
+## THE RULE THAT ENDED THE CHURN
+
+Every fix that worked took one shape: **derive an fqn from where a symbol is
+DECLARED, never from where it is referenced.** #3 ts locals, #2b java supertype,
+#3b src/ anchor, rust types, rust functions, java wildcards, ts inheritance. When
+the declaration cannot be determined, emit UNRESOLVED. The one attempt that
+failed — stub retraction — failed because it treated the SYMPTOM of a
+mis-derivation as absence, and would have deleted 593 real definitions via an
+ON DELETE CASCADE while doing so.
