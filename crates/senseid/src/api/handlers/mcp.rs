@@ -29,6 +29,29 @@ pub(crate) async fn mcp_list_tools() -> Json<serde_json::Value> {
 ///
 /// `symbol.found = false` is a genuine not-found, never a masked failure: a DB
 /// error on either read propagates as a 500 instead of degrading to "not found".
+/// Split a call list into first-party targets and library targets.
+///
+/// `get_callees` answers "what does this depend on", and a call into a library
+/// is not a dependency in the sense that question means. Interleaved, the
+/// plumbing crowds out the answer: `scan_root`'s list carried `Ok`, `Err`,
+/// `from`, `new`, `map_err`, `filter`, `and_then`, `unwrap_or_else` and `count`
+/// alongside the real in-crate calls, in a list a reader scans by eye.
+///
+/// The split is read from `locality`, which `sensei.graph_nodes` already owns —
+/// no new hardcoded name list, and none would work anyway: `new` is plumbing on
+/// `Vec::new()` and meaningful on `PgStore::new()`, and a denylist keyed on the
+/// bare name cannot tell those apart.
+///
+/// `unknown` stays with the first-party side deliberately. An unknown locality
+/// means the edge had no target node to classify — a dependency that failed to
+/// resolve, not a library call. Filing it under "library" would hide precisely
+/// the gap `coverage.unresolved` exists to report.
+fn partition_by_locality(
+    list: Vec<serde_json::Value>,
+) -> (Vec<serde_json::Value>, Vec<serde_json::Value>) {
+    list.into_iter().partition(|h| h["locality"].as_str() != Some("external"))
+}
+
 async fn symbol_relation_envelope(
     state: &AppState,
     folder_ids: &[uuid::Uuid],
@@ -49,13 +72,22 @@ async fn symbol_relation_envelope(
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
 
+    // Library calls are reported in full, just not interleaved with the answer.
+    // Nothing is dropped: `library_calls.count` is exact and the symbols are
+    // listed, so a reader who wants them still has them.
+    let (first_party, library) = partition_by_locality(list);
+
     Ok(serde_json::json!({
         "symbol": {
             "name":        name,
             "found":       !definitions.is_empty(),
             "defined_at":  definitions,
         },
-        list_key: list,
+        list_key: first_party,
+        "library_calls": {
+            "count":   library.len(),
+            "symbols": library,
+        },
         "coverage": {
             "resolved":   resolved,
             "unresolved": unresolved,
@@ -463,4 +495,49 @@ async fn discover_lib_url(name: &str, explicit_url: &str) -> Option<String> {
     }
 
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `get_callees` answers "what does this depend on", and a library call is
+    /// not a dependency in the sense the question means. Measured live on
+    /// `scan_root`, the list interleaved real in-crate calls with `Ok`, `Err`,
+    /// `from`, `new`, `map_err`, `filter`, `and_then`, `unwrap_or_else`,
+    /// `count`, `to_string_lossy` and `as_secs_f64` — plumbing that crowds out
+    /// the answer in a list a reader has to scan by eye.
+    ///
+    /// The graph already knows the difference: `locality` comes from
+    /// `sensei.graph_nodes` and says `internal` for a first-party target and
+    /// `external` for a library symbol. Partitioning on it needs no new
+    /// hardcoded name list — and a denylist could not do this job anyway,
+    /// because `new` is plumbing on `Vec::new()` and meaningful on
+    /// `PgStore::new()`, which share a bare name.
+    #[test]
+    fn library_calls_are_partitioned_out_of_the_dependency_list() {
+        let hit = |name: &str, loc: &str| serde_json::json!({ "name": name, "locality": loc });
+        let list = vec![
+            hit("Ok", "external"),
+            hit("folder_ids_for_root", "internal"),
+            hit("map_err", "external"),
+            hit("assign_repositories", "internal"),
+            hit("some_unplaced_call", "unknown"),
+        ];
+
+        let (first_party, library) = partition_by_locality(list);
+
+        assert_eq!(
+            first_party.iter().filter_map(|h| h["name"].as_str()).collect::<Vec<_>>(),
+            vec!["folder_ids_for_root", "assign_repositories", "some_unplaced_call"],
+            "internal AND unknown stay in the dependency list — an unresolved call is a \
+             dependency we failed to place, not a library call, and dropping it would hide \
+             exactly the gap `coverage.unresolved` exists to report"
+        );
+        assert_eq!(
+            library.iter().filter_map(|h| h["name"].as_str()).collect::<Vec<_>>(),
+            vec!["Ok", "map_err"],
+            "library calls are reported in full, just not interleaved"
+        );
+    }
 }
