@@ -93,6 +93,28 @@ pub async fn maybe_rescan_on_version_change(
                 // ScanRoot pending/running.
                 if queue.enqueue_unique(Task::new(TaskKind::ScanRoot, "", path)).await.is_some() {
                     enqueued += 1;
+                    // CLEAR THE PER-FILE GATE, or the ScanRoot below rebuilds
+                    // nothing. `plan_reindex` skips a file whose (mtime, hash) is
+                    // unchanged and knows nothing about the indexer version, so a
+                    // new binary that parses code differently was silently served
+                    // the old graph — the exact thing this function claims to
+                    // prevent. Observed before this: "0 changed files, 9822
+                    // unchanged" immediately after a fresh install.
+                    //
+                    // Best-effort: a failure here leaves the stat gate in place,
+                    // so the rescan degrades to today's no-op rather than
+                    // stranding the root.
+                    if let Some(rid) = crate::api::util::json_uuid(&r["id"]) {
+                        match pg.clear_scan_state_for_root(&rid).await {
+                            Ok(n) if n > 0 => tracing::info!(
+                                root = %path,
+                                "version rescan: cleared {n} scan_state rows so the graph re-derives"
+                            ),
+                            Ok(_) => {}
+                            Err(e) => tracing::warn!(error = %e, root = %path,
+                                "version rescan: clearing scan_state failed; the rescan will skip unchanged files"),
+                        }
+                    }
                 }
             }
             tracing::info!("version rescan: enqueued {enqueued} ScanRoot task(s)");
@@ -316,6 +338,68 @@ mod tests {
         // Cleanup shared-DB state.
         pg.remove_watch_root(&rid).await.unwrap();
         pg.delete_config(LAST_VERSION_KEY).await.unwrap();
+    }
+
+    /// A version rescan CLEARS the per-file gate, or it rebuilds nothing.
+    ///
+    /// `plan_reindex` skips a file whose `(mtime, hash)` is unchanged and knows
+    /// nothing about the indexer version, so a new binary that parses code
+    /// differently was silently served the old graph — while this function's doc
+    /// claimed "the code graph rebuilds under the new binary". Observed
+    /// immediately after a fresh install: `process_git_folder: OmniRoute — 0
+    /// changed files, 9822 unchanged`. Every indexer fix measured this cycle
+    /// needed a manual `DELETE FROM sensei.scan_state` first, which is the same
+    /// admission.
+    ///
+    /// Breaking mutation: drop the `clear_scan_state_for_root` call and the row
+    /// survives, so the enqueued ScanRoot skips the file it was queued to
+    /// re-derive.
+    #[tokio::test]
+    async fn a_version_rescan_clears_the_per_file_gate_so_the_graph_re_derives() {
+        let _serialised = VERSION_KEY_LOCK.enter();
+        let pg = PgStore::connect_test().await.unwrap();
+
+        let tmp = tempfile::tempdir().unwrap();
+        let root_path = tmp.path().to_string_lossy().to_string();
+        let rid = pg
+            .add_watch_root(&root_path, "version_gate_root", &serde_json::json!([]))
+            .await
+            .unwrap();
+        let fid = pg.upsert_repo(&rid, "gate-repo", &format!("{root_path}/repo")).await.unwrap();
+
+        // A file the old binary already indexed — the row that makes the next
+        // scan skip it.
+        pg.upsert_scan_state(&fid, "src/lib.rs", 1, "hash-unchanged").await.unwrap();
+        let before: (i64,) = sqlx_core::query_as::query_as(
+            "SELECT count(*) FROM sensei.scan_state WHERE folder_id = $1",
+        )
+        .bind(fid)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        assert_eq!(before.0, 1, "the gate row must exist before the rescan");
+
+        pg.set_config(LAST_VERSION_KEY, "0.0.0-old").await.unwrap();
+        let q = Arc::new(TaskQueue::with_max_repos(4096));
+        assert!(
+            maybe_rescan_on_version_change(&pg, &q, "9.9.9-new").await,
+            "a version change must trigger a rebuild",
+        );
+
+        let after: (i64,) = sqlx_core::query_as::query_as(
+            "SELECT count(*) FROM sensei.scan_state WHERE folder_id = $1",
+        )
+        .bind(fid)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        assert_eq!(
+            after.0, 0,
+            "the version rescan must clear the per-file gate, or the ScanRoot it \
+             queued will skip every unchanged file and rebuild nothing"
+        );
+
+        pg.remove_watch_root(&rid).await.ok();
     }
 
     #[tokio::test]
