@@ -1039,6 +1039,15 @@ pub(crate) mod rust_fqn {
         out
     }
 
+    /// Does this `use` path start at a marker that means "inside this crate"?
+    ///
+    /// `crate::`, `self::` and `super::` are the only roots that say so
+    /// unambiguously — a bare first segment could equally be a dependency, which
+    /// is exactly the ambiguity that must NOT be guessed at.
+    fn is_internal_use_root(full_path: &str) -> bool {
+        matches!(full_path.split("::").next(), Some("crate" | "self" | "super"))
+    }
+
     /// Pass 1: gather the use-map, local type names, and submodule names.
     ///
     /// `local` is true once the walk has descended into a function or expression
@@ -1054,6 +1063,17 @@ pub(crate) mod rust_fqn {
                         // A glob binds no name this pass can key on.
                         if b.local_name == "*" {
                             continue;
+                        }
+                        // A `use` rooted at `crate`/`self`/`super` names something
+                        // INSIDE this crate, so whatever it binds is crate-local.
+                        // Without this, a sibling module (`use super::scan_logic;`
+                        // then `scan_logic::f()`) failed every arm of the internal
+                        // test — not a marker root, not the crate name, not a `mod`
+                        // declared in this file — and was minted as an external
+                        // crate named after the module, giving the real function a
+                        // phantom lib twin that callers resolved to instead.
+                        if is_internal_use_root(&b.full_path) {
+                            scope.local_modules.insert(b.local_name.clone());
                         }
                         if local {
                             scope.use_map.entry(b.local_name).or_insert(b.full_path);
@@ -1338,6 +1358,21 @@ pub(crate) mod rust_fqn {
             || norm_crate(first) == norm_crate(&ctx.package)
             || scope.local_modules.contains(first);
         if internal_root {
+            // A sibling module reached through an ALIAS carries its real location
+            // only in the use-map: `use super::scan_logic;` then `scan_logic::f()`
+            // arrives here as `["scan_logic", "f"]`, which on its own would anchor
+            // the module at the crate root (`senseid·scan_logic`) rather than at
+            // `tasks::handlers::scan_logic` where the function is declared — and a
+            // definition and a reference that mint different fqns never merge.
+            // Splice the bound path in front so the SAME arithmetic below resolves
+            // it, rather than growing a second copy of the rule here.
+            if let Some(bound) = scope.use_map.get(first).filter(|p| is_internal_use_root(p)) {
+                let mut spliced: Vec<&str> = bound.split("::").collect();
+                spliced.extend_from_slice(&segs[1..]);
+                if let Some((module, leaf)) = super::internal_use_module(&ctx.module, &spliced) {
+                    return PathClass::Internal { module, leaf };
+                }
+            }
             // `crate::`/`self::`/`super::` arithmetic (including the leading-`super`
             // up-count fold) lives in `internal_use_module`, which the import
             // resolver also calls — one owner, so the two cannot disagree about
@@ -2029,6 +2064,62 @@ impl Engine {
             "external crate path → lib node"
         );
         assert!(r.is_lib);
+    }
+
+    /// A SIBLING module brought in with `use super::x;` and then called as
+    /// `x::f()` is crate-local, and must not be minted as an external crate.
+    ///
+    /// `local_modules` only ever held modules declared IN THIS FILE (`mod x;`),
+    /// so a sibling failed every arm of the internal test — it is not
+    /// `crate`/`self`/`super`, not the crate name, not a `mod` here — and fell
+    /// through to `External { package: "x" }`. That invented a whole crate out
+    /// of a module name and gave the real function a phantom lib twin:
+    ///
+    ///   lib·scan_logic·scan_logic·classify_folders      (lib_symbol, no file)
+    ///   rust·senseid·tasks::handlers::scan_logic·classify_folders  (the real fn)
+    ///
+    /// Callers resolved to the twin, so a first-party dependency was reported as
+    /// an external library call and the real definition looked uncalled.
+    /// Measured: 979 lib_symbol nodes across the corpus share a name with a real
+    /// in-repo rust function.
+    ///
+    /// The `use` is the evidence: a path rooted at `crate`/`self`/`super` names
+    /// something inside this crate, so whatever it binds is crate-local.
+    #[test]
+    fn rust_sibling_module_via_use_super_is_internal_not_a_crate() {
+        let src = "use super::scan_logic;\n\
+                   pub fn scan() { scan_logic::classify_folders(); }\n";
+        let out = produce(src, "senseid", "tasks::handlers::scan");
+        let r = ref_to(&out, "classify_folders");
+        assert!(!r.is_lib, "a sibling module is not a dependency — got {:?}", r.target_fqn);
+        assert_eq!(
+            r.target_fqn.as_deref(),
+            Some("rust·senseid·tasks::handlers::scan_logic·classify_folders"),
+            "resolves to the module that DECLARES it, so it merges with the real definition"
+        );
+    }
+
+    /// The converse must still hold: a genuine external crate reached through a
+    /// plain `use` is still external. The fix keys on the `crate`/`self`/`super`
+    /// root, so nothing without one is reclassified.
+    #[test]
+    fn rust_a_real_dependency_stays_external_after_the_sibling_fix() {
+        let src = "use serde_json::Value;\n\
+                   use tokio::time;\n\
+                   pub fn go() { time::sleep(); let _: Value; }\n";
+        let out = produce(src, "senseid", "io");
+        let r = ref_to(&out, "sleep");
+        assert!(r.is_lib, "tokio is a dependency, not a sibling module");
+        assert!(
+            r.target_fqn.as_deref().is_some_and(|f| f.starts_with("lib·")),
+            "still a lib node, got {:?}",
+            r.target_fqn
+        );
+        // NOTE: this currently mints `lib·time·time·sleep` — a `use tokio::time;`
+        // alias is keyed on the module segment rather than the crate. That is a
+        // real but SEPARATE defect (the external fqn is imprecise, not wrong
+        // about being external), so it is not asserted here and not fixed by
+        // this change. Tracked in #152.
     }
 
     /// A nested or multi-line group `use` must register every leaf under its own
