@@ -4227,6 +4227,13 @@ async fn heal_nested_standalone_roots_reabsorbs_and_removes_phantom() {
         .upsert_node(&crate_fid, "struct", "DojoStore", "src/store.rs", None, None, None, None)
         .await
         .unwrap();
+    // Its scan_state too. The heal dropped nodes and re-classified the folder but
+    // left these rows behind, so a folder healed long ago still looked fully
+    // indexed by content while holding no content nodes. Measured live:
+    // `cluster/server` 1 node against 1,970 stale rows, `cluster/scheduler`
+    // 1/1,816, `sensei/marketplace` 1/77 — enough to make a content-based
+    // duplicate check report six false positives out of seven.
+    s.upsert_scan_state(&crate_fid, "src/store.rs", 1, &format!("hash-{uniq}")).await.unwrap();
 
     // Heal.
     let healed = s.heal_nested_standalone_roots().await.unwrap();
@@ -4253,6 +4260,19 @@ async fn heal_nested_standalone_roots_reabsorbs_and_removes_phantom() {
             .await
             .unwrap();
     assert!(!node_exists, "the mis-scoped root's own nodes should be pruned");
+
+    // AND its scan_state, which describes an indexing unit that no longer
+    // exists. Leaving it made the folder look fully indexed by content while
+    // holding no content nodes — the residue that produced six false positives
+    // in the contained-duplicate check.
+    let (stale_rows,): (i64,) = sqlx_core::query_as::query_as(
+        "SELECT count(*) FROM sensei.scan_state WHERE folder_id = $1",
+    )
+    .bind(crate_fid)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(stale_rows, 0, "the mis-scoped root's scan_state must go with its nodes");
 
     // The phantom project (lived entirely inside the repo) is gone.
     let (phantom_exists,): (bool,) =
