@@ -391,3 +391,83 @@ scripted edits, so prefer `Edit`. `PIPESTATUS` is bash — in this zsh it is sil
 EMPTY, and a backgrounded chain reports the LAST command's code, not cargo's; redirect
 and read `$?` unpiped. `make install-debug` ends with `cargo clean` + a multi-GB dump,
 so every deploy is ~10 min. DDL goes to BOTH `sensei` and `sensei_test`.
+
+## #4 KOTLIN MEASURED LIVE (deployed, corpus reindexed)
+
+| metric | before | after |
+|---|---|---|
+| calls | 0 | **3,150** (599 resolved / 2,551 honest-unresolved) |
+| extends | 0 | **43** |
+| implements | 0 | **20** |
+| interface nodes | 0 | **12** |
+| enum nodes | 0 | **7** |
+| definition nodes | 1,992 | **2,353** (+361 companion/enum members) |
+| phantom code nodes | — | **18** (0.6% of the new edges) |
+
+The 18 is what justifies defs→heritage→calls ordering: a naive java port would
+have minted one per bare call, ~3,496. Resolved calls split 425 lib / 174
+first-party; heritage 56 lib / 7 first-party (an Android app extends framework
+classes).
+
+## GRAPH-WIDE ASSESSMENT — measured, supersedes any earlier estimate
+
+### Call edges are NOT complete. 46% honest, 19% fabricated, 35% unresolved.
+
+| lang | calls | real def | lib | PHANTOM | unresolved | honest % |
+|---|---|---|---|---|---|---|
+| typescript | 150,235 | 36,411 | 51,355 | 9,926 | 52,543 | 58.4 |
+| **java** | 119,429 | 16,107 | 15,557 | **47,616** | 40,149 | **26.5** |
+| rust | 81,512 | 15,919 | 26,109 | 11,485 | 27,999 | 51.6 |
+| javascript | 19,711 | 4,938 | 5,154 | 1,045 | 8,574 | 51.2 |
+| python | 4,992 | 904 | 1,864 | 885 | 1,339 | 55.4 |
+| kotlin | 3,150 | 112 | 425 | 62 | 2,551 | 17.0 |
+| svelte | 2,170 | 651 | 303 | 370 | 846 | 44.0 |
+| sql | 1,164 | 894 | 0 | 270 | 0 | 76.8 |
+
+**JAVA IS NOW THE LARGEST FABRICATION PILE: 47,616 phantoms, 40% of its call
+edges** — bigger than typescript's ever was. Same shape as TS's #3: java's
+`resolve_call` unqualified arm mints
+`fqn::method(JAVA_LANG, package, "", class, method)` on the "an unqualified call
+is a method on the enclosing class" rule, which is false whenever the method is
+inherited from a lib supertype or came from a static import the map missed. It
+needs the member/locals probe #3 gave typescript. THIS IS THE HIGHEST-VALUE
+REMAINING FIX IN THE WHOLE SLICE.
+
+### Inheritance: 4 of 8 languages. TS/JS/SVELTE HAVE NONE.
+
+java 1,166 extends + 1,002 implements, rust 753 implements (trait impls), python
+389 extends, kotlin 43 + 20. **typescript/javascript/svelte: ZERO** —
+`typescript.rs` never touches `relations` (0 occurrences), yet 33 TS/svelte
+classes declare `extends`/`implements` in THIS repo alone. Direct analogue of
+what kotlin just got.
+
+Also: `capability_matrix()` reports `fqn` and `scope` only — there is NO
+inheritance capability cell, so the system cannot self-report this gap.
+
+### OO DESIGN PATTERNS ARE NOT DETECTED AT ALL.
+
+`inference.detected_patterns` (1,451 rows, `family` NULL on ALL — still) detects
+WORKFLOW patterns: `rule-candidates`, `correction-prone`, `rework: <file>`. No
+adapter, factory, strategy, repository, decorator. Nothing structural.
+
+### Node-kind coverage is uneven
+
+- rust: class, const, enum, file, function, interface, method, module, struct, type
+- typescript / kotlin: no struct, otherwise full
+- java: NO const/field, no module
+- python: THINNEST — class, file, function, method, module only (no const, enum, protocol)
+- svelte: component, file, function, hook, interface, module, type (no class/method)
+
+### Docs and tests are well covered
+
+markdown is the LARGEST language by nodes: 154,771 (146,514 section, 6,398 doc,
+1,743 rationale). Test nodes flagged: typescript 17,913/78,943, java
+7,411/81,868, rust 2,880/27,259.
+
+### Depth works, but is truncated by the linkage
+
+Real def-to-def rust chains: 15,919 at depth 1 → 2,636 still alive at depth 12
+(bounded by the query, not the data). So depth IS computable and non-trivial —
+but it rides on ~20% real linkage, so absolute complexity numbers systematically
+UNDER-report. Usable for relative comparison within a language; not yet as an
+absolute measure.
