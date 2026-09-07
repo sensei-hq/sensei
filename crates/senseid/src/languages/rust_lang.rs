@@ -962,6 +962,15 @@ pub(crate) mod rust_fqn {
         /// dropping one `::tests` segment. A type's canonical module is where it
         /// is declared.
         local_types: HashMap<String, String>,
+        /// Free-function name → the module that DECLARES it, crate-relative.
+        ///
+        /// The same defect `local_types` had, for the other half of the symbols:
+        /// a bare call fell back to the CALLER's module, so a file-level `fn`
+        /// called from inside `mod tests` was named `<module>::tests·f` — a
+        /// function that does not exist there. Measured: of 562 remaining
+        /// `::tests` stubs in this repo, ALL were `kind = function`, and 460 had
+        /// a real definition at the stripped fqn.
+        local_fns: HashMap<String, String>,
         /// Submodules declared in this file (`mod util;`) — so `util::f()` classifies
         /// as internal, not as an external crate.
         local_modules: HashSet<String>,
@@ -1047,6 +1056,14 @@ pub(crate) mod rust_fqn {
                             scope.use_map.insert(b.local_name, b.full_path);
                         }
                     }
+                }
+                "function_item" => {
+                    let name = field_text(&child, "name", src);
+                    if !name.is_empty() {
+                        scope.local_fns.entry(name).or_insert_with(|| module.to_string());
+                    }
+                    // Still descend: a nested `use` inside a fn body binds names.
+                    collect_scope(&child, src, scope, true, module);
                 }
                 "struct_item" | "enum_item" | "trait_item" | "type_item" | "union_item" => {
                     let name = field_text(&child, "name", src);
@@ -1486,6 +1503,13 @@ pub(crate) mod rust_fqn {
                     // In scope everywhere without a `use`; naming std also merges
                     // every caller's reference onto one node.
                     Some((Some(fqn::lib("std", "prelude", &name)), true, name))
+                } else if let Some(declared_in) = scope.local_fns.get(&name) {
+                    // The module that DECLARES the fn, not the caller's position.
+                    Some((
+                        Some(fqn::item(RUST_LANG, &ctx.package, declared_in, &name)),
+                        false,
+                        name,
+                    ))
                 } else {
                     Some((Some(fqn::item(RUST_LANG, &ctx.package, module, &name)), false, name))
                 }
@@ -1689,10 +1713,12 @@ mod tests {
             "pub struct Store;\n\
              impl Store { pub fn open() -> Self { Store } }\n\
              \n\
+             pub fn helper() -> u8 { 1 }\n\
+             \n\
              mod tests {\n\
              \x20   use super::*;\n\
              \x20   pub struct Fixture;\n\
-             \x20   fn t() { let _ = Store::open(); let _ = Fixture; }\n\
+             \x20   fn t() { let _ = Store::open(); let _ = Fixture; let _ = helper(); }\n\
              }\n",
             "app",
             "svc",
@@ -1713,6 +1739,26 @@ mod tests {
                 "a file-level type must not anchor on the inline mod: {f}"
             );
             assert!(f.starts_with("rust·app·svc·"), "{f}");
+        }
+
+        // A FREE FUNCTION declared at file level and CALLED from the inline mod
+        // anchors on the file too. This is the other half of the same defect:
+        // all 562 remaining `::tests` stubs in this repo were `kind = function`,
+        // 460 of them with a real definition at the stripped fqn — including
+        // `…::scan_logic::tests·symlink_repository_links` against the real
+        // `…::scan_logic·symlink_repository_links`.
+        let helper_refs: Vec<&str> = out
+            .refs
+            .iter()
+            .filter(|r| r.target_name == "helper")
+            .filter_map(|r| r.target_fqn.as_deref())
+            .collect();
+        assert!(!helper_refs.is_empty(), "the call to helper() must be recorded: {:?}", out.refs);
+        for f in &helper_refs {
+            assert_eq!(
+                *f, "rust·app·svc·helper",
+                "a file-level fn called from the inline mod anchors on the FILE"
+            );
         }
 
         // And a type declared INSIDE the inline mod still anchors THERE — the fix
