@@ -471,3 +471,59 @@ Real def-to-def rust chains: 15,919 at depth 1 → 2,636 still alive at depth 12
 but it rides on ~20% real linkage, so absolute complexity numbers systematically
 UNDER-report. Usable for relative comparison within a language; not yet as an
 absolute measure.
+
+## JAVA PHANTOMS — DIAGNOSED. It is a STUB-LIFECYCLE gap, not a resolver bug.
+
+My own two hypotheses were REFUTED by measurement. Do not repeat them:
+
+1. "Most of the 47,616 is stale, from repos not reindexed since #2/#2b." FALSE.
+   Reindexed `Dayamed/cluster` deliberately to test it: phantoms went
+   **18,174 -> 29,814**. The old number was an UNDER-count from a partial index.
+   Java total is now **59,256**.
+2. "The dominant arm is `resolve_call`'s unqualified -> enclosing-class mint."
+   FALSE — it is the SMALLEST at 4%. Also refuted: "wildcard static imports are
+   the cause" — there are 61 wildcards against 2,382 explicit static imports.
+
+MEASURED distribution, by comparing each phantom target's package/class against
+its caller's:
+
+| arm | edges | share |
+|---|---|---|
+| C: imported type, target has NO source def | 40,520 | 68% |
+| B: receiver assumed same-package | 16,304 | 28% |
+| A: unqualified -> enclosing class | 2,432 | 4% |
+
+C's head is Lombok: `SurescriptDetails·setId/getId/setStatus`,
+`PatientModel·getUserDetails` — `@Data` entities whose accessors are generated at
+compile time and genuinely absent from source. The CLASS is named correctly; the
+METHOD does not exist to be found.
+
+### THE ACTUAL MECHANISM
+
+- A reference creates an unresolved stub; a later definition with the same
+  `(folder_id, fqn)` MERGES into it and flips `resolved=true` (the SCIP/LSIF
+  moniker model, `upsert_node_by_fqn_merges_ref_and_def`). Legitimate and
+  necessary — a ref can precede its def.
+- `prune_orphan_stubs_scoped` collects only stubs with NO EDGES AT ALL
+  (`NOT EXISTS … e.target_id = n.id OR e.source_id = n.id`, graph.rs:1407).
+
+So **a stub with inbound edges whose def never arrives is PERMANENT by
+construction.** Nothing reconciles it once ordering is no longer a factor.
+
+### THE FIX (not implemented — next task)
+
+At the SAME terminal barrier `mark_folder_indexed_fail_closed` uses (after every
+ProcessFile for the folder has drained, so ordering cannot explain a miss): for
+each `resolved=false AND file_path IS NULL` node in the folder, unresolve its
+inbound edges (`target_id = NULL`, KEEP `target_name`) and delete the node. The
+primitives already exist and are used for removed files —
+`unresolve_edges_to_file` + `delete_nodes_by_file`.
+
+LANGUAGE-AGNOSTIC and it is the single biggest honesty win left: java 59,256,
+typescript 9,926, rust 11,485, javascript 1,045, python 885, svelte 370, sql 270
+— roughly 71,000 fabricated call targets become honest-unresolved.
+
+CAUTION for whoever implements it: the barrier condition is load-bearing. Run it
+before the folder's files have all drained and it will delete stubs whose def was
+merely late, turning real edges into unresolved ones. Verify against
+`upsert_node_by_fqn_merges_ref_and_def` and the D4.1 community barrier.
