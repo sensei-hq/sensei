@@ -804,3 +804,61 @@ What remains is not defect work:
   retraction (see the reverted-retraction section and its four measured blockers).
 - `version_rescan`'s gate clear takes effect on the next real `make bump`;
   `make install-debug` keeps VERSION at 0.9.1 so it does not fire in the dev loop.
+
+## MCP EVALUATION AGAINST THE REINDEXED GRAPH
+
+Exercised the tools on symbols whose state I know exactly.
+
+### `get_callers` — GOOD, and the graph work is why
+
+`symlink_repository_links` → 5 callers, `resolved: 5, unresolved: 0,
+complete: true`. It found the production caller (`scan_root`, scan.rs:13) AND the
+three callers that live inside `mod tests`. **Those three would have been missed
+before the rust module-anchoring fix** — they were qualified `…::tests·` and
+pointed at a stub. This is the single clearest payoff of the cycle.
+
+The `coverage` block is good design: the tool reports its own completeness rather
+than implying it.
+
+### `get_callees` — HONEST BUT HALF-BLIND
+
+`scan_root` → `resolved: 24, unresolved: 31, complete: false`. Correctly labels
+`locality: internal | external | unknown`, and does not fabricate. But the 31
+unresolved are almost all REAL methods in this very crate —
+`assign_repositories`, `heal_nested_standalone_roots`, `folder_ids_for_root`,
+`link_folders_to_repositories` — reached as `ctx.pg().method()`. Rust
+receiver-method resolution needs type inference the producer does not do
+(`bindings` covers only `let x = Type::new()`), so "what does this depend on" is
+~44% answerable for idiomatic rust.
+
+**THIS IS NOW THE LARGEST REMAINING RESOLUTION GAP** and it is honest-unresolved,
+not fabricated. Fixing it means inferring a receiver's type from a function's
+return type — a real feature, not a defect patch.
+
+Also: the callee list is padded with language plumbing — `Ok`, `Err`, `from`,
+`new`, `map_err`, `filter`, `and_then`, `unwrap_or_else`, `count` — which is
+noise for "what does this depend on". `RUST_CALL_DENYLIST` exists; it is too
+narrow. And `Array` appears as a `lib_symbol` callee of a RUST function, which
+looks like the ECMAScript globals list leaking across languages — worth a look.
+
+### `search` — THE WEAKEST LINK, and a real defect
+
+- `retract_undefined_stubs` (which I reverted — it does NOT exist) returned TEN
+  confident results about *retry*: `is_retryable`, `retryAssistant`,
+  `permanent_failure_kinds_are_not_retryable`. No score, no "not found".
+- `clear_scan_state_for_root` (exists) DID rank first — followed by 26 mostly
+  irrelevant hits (`scan-state.svelte.ts` getters, `stale_root_*` tests).
+
+So it is usable if you read only the first result, but it pads with noise and
+CANNOT say "no match". For an agent that is the same confidently-wrong failure
+this whole cycle removed from the graph, reappearing at the tool layer. It needs
+a relevance score, a threshold, and an explicit empty result.
+
+### VERDICT
+
+The graph is now genuinely useful for **"who calls this"** and for **inheritance**
+(4,248 relation edges, TS/JS included for the first time). It is still weak for
+**"what does this depend on"** in rust, and the `search` tool undersells the
+improved graph by returning unranked noise. Neither is a fabrication — the
+honesty work held — but both are the next real improvements, and `search` is the
+cheapest high-value one.
