@@ -2099,6 +2099,25 @@ impl Engine {
         );
     }
 
+    /// The `{self}` group form — `use super::fqn::{self, FqnReference};` — is how
+    /// this codebase actually imports a sibling module, so it is the form that
+    /// matters most. It binds the module name `fqn` alongside the items, and a
+    /// later `fqn::item()` must resolve internally exactly as the plain
+    /// `use super::fqn;` form does.
+    #[test]
+    fn rust_sibling_module_via_use_self_group_is_internal() {
+        let src = "use super::fqn::{self, FqnReference};\n\
+                   pub fn go() { fqn::item(); }\n";
+        let out = produce(src, "senseid", "languages::rust_lang");
+        let r = ref_to(&out, "item");
+        assert!(!r.is_lib, "a `{{self}}`-bound sibling is not a crate — got {:?}", r.target_fqn);
+        assert_eq!(
+            r.target_fqn.as_deref(),
+            Some("rust·senseid·languages::fqn·item"),
+            "resolves to the sibling module that declares it"
+        );
+    }
+
     /// The converse must still hold: a genuine external crate reached through a
     /// plain `use` is still external. The fix keys on the `crate`/`self`/`super`
     /// root, so nothing without one is reclassified.
