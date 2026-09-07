@@ -16,6 +16,11 @@ impl LanguageAdapter for RustAdapter {
         true
     }
 
+    /// Emits `extends`/`implements` (or trait impls) into `relations`.
+    fn emits_inheritance(&self) -> bool {
+        true
+    }
+
     /// Backed by real machinery: FileScope carries use_map, local_types and submodules.
     fn resolves_in_scope(&self) -> bool {
         true
