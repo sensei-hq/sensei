@@ -953,8 +953,15 @@ pub(crate) mod rust_fqn {
     struct FileScope {
         /// Imported leaf name → full use path (`Widget` → `crate::widget::Widget`).
         use_map: HashMap<String, String>,
-        /// Type names defined in this file (anchor on this file's module).
-        local_types: HashSet<String>,
+        /// Type name → the module that DECLARES it, crate-relative.
+        ///
+        /// A map, not a set. As a set it recorded only THAT the file declares a
+        /// type, so a reference resolved against the CALLER's current module —
+        /// inside `mod tests` that is `<module>::tests`, naming a type that does
+        /// not exist there. Measured: 1,341 of 4,560 rust stubs recovered by
+        /// dropping one `::tests` segment. A type's canonical module is where it
+        /// is declared.
+        local_types: HashMap<String, String>,
         /// Submodules declared in this file (`mod util;`) — so `util::f()` classifies
         /// as internal, not as an external crate.
         local_modules: HashSet<String>,
@@ -1006,7 +1013,7 @@ pub(crate) mod rust_fqn {
         let root = tree.root_node();
 
         let mut scope = FileScope::default();
-        collect_scope(&root, src, &mut scope, false);
+        collect_scope(&root, src, &mut scope, false, &ctx.module);
 
         let mut out = FqnFileOutput {
             package: ctx.package.clone(),
@@ -1024,7 +1031,7 @@ pub(crate) mod rust_fqn {
     /// body. A `use` found there is real (this repo has 738 of them) but it must
     /// not silently override what the file declared at the top level, so it is
     /// inserted only where the name is still free.
-    fn collect_scope(node: &Node, src: &[u8], scope: &mut FileScope, local: bool) {
+    fn collect_scope(node: &Node, src: &[u8], scope: &mut FileScope, local: bool, module: &str) {
         for i in 0..node.child_count() {
             let child = node.child(i).unwrap();
             match child.kind() {
@@ -1044,21 +1051,26 @@ pub(crate) mod rust_fqn {
                 "struct_item" | "enum_item" | "trait_item" | "type_item" | "union_item" => {
                     let name = field_text(&child, "name", src);
                     if !name.is_empty() {
-                        scope.local_types.insert(name);
+                        // First declaration wins, so an inline `mod` re-declaring
+                        // a file-level name cannot re-point the outer one.
+                        scope.local_types.entry(name.clone()).or_insert_with(|| module.to_string());
                     }
                 }
                 "mod_item" => {
                     let name = field_text(&child, "name", src);
                     if !name.is_empty() {
-                        scope.local_modules.insert(name);
+                        scope.local_modules.insert(name.clone());
                     }
                     if let Some(body) = child.child_by_field_name("body") {
-                        collect_scope(&body, src, scope, local);
+                        // Descend WITH the inline module appended, so a type
+                        // declared inside it anchors there rather than on the file.
+                        let inner = join_mod(module, &name);
+                        collect_scope(&body, src, scope, local, &inner);
                     }
                 }
                 // Any other item — a function, an `impl`, a block — may contain a
                 // nested `use`. Descend, marking everything below as local.
-                _ => collect_scope(&child, src, scope, true),
+                _ => collect_scope(&child, src, scope, true, module),
             }
         }
     }
@@ -1182,7 +1194,7 @@ pub(crate) mod rust_fqn {
                             .child_by_field_name("trait")
                             .map(|t| source_text(&t, src))
                             .unwrap_or_default();
-                        let resolved = resolve_trait_fqn(&raw, ctx, module, scope);
+                        let resolved = resolve_trait_fqn(&raw, ctx, scope);
                         out.relations.push(fqn::TypeRelation {
                             child_fqn: fqn::item(RUST_LANG, &ctx.package, &type_module, &type_name),
                             parent_fqn: resolved.as_ref().map(|(f, _)| f.clone()),
@@ -1218,8 +1230,9 @@ pub(crate) mod rust_fqn {
         module: &str,
         scope: &FileScope,
     ) -> (String, String, bool) {
-        if scope.local_types.contains(type_name) {
-            return (ctx.package.clone(), module.to_string(), false);
+        // The DECLARING module, not the caller's walk position.
+        if let Some(declared_in) = scope.local_types.get(type_name) {
+            return (ctx.package.clone(), declared_in.clone(), false);
         }
         if let Some(full) = scope.use_map.get(type_name) {
             let segs: Vec<&str> = full.split("::").collect();
@@ -1251,10 +1264,12 @@ pub(crate) mod rust_fqn {
     /// Returns `None` for a trait this file gives no way to place. A miss is a
     /// miss — the emit path records the bare name unresolved rather than
     /// guessing, because a guessed supertype is a confident wrong answer.
+    /// Takes no `module`: a local trait now anchors on the module that DECLARES
+    /// it (via `scope.local_types`), so the caller's walk position is irrelevant
+    /// here — that dependency was the bug.
     fn resolve_trait_fqn(
         raw: &str,
         ctx: &FileFqnContext,
-        module: &str,
         scope: &FileScope,
     ) -> Option<(String, bool)> {
         let name = base_type_name(raw)?;
@@ -1272,8 +1287,8 @@ pub(crate) mod rust_fqn {
             let segs: Vec<&str> = full.split("::").collect();
             return Some(classify_segments(&segs, ctx, scope).to_fqn(ctx));
         }
-        if scope.local_types.contains(&name) {
-            return Some((fqn::item(RUST_LANG, &ctx.package, module, &name), false));
+        if let Some(declared_in) = scope.local_types.get(&name) {
+            return Some((fqn::item(RUST_LANG, &ctx.package, declared_in, &name), false));
         }
         // In scope everywhere without a `use`. Same key the call path uses, so
         // `impl Debug` and a `Debug` reference name one node.
@@ -1645,6 +1660,72 @@ mod tests {
     }
 
     // ── FQN producer (Phase 2) ──────────────────────────────────────────────
+    /// A type declared at FILE level and referenced from inside `mod tests`
+    /// resolves to the FILE's module — not `<module>::tests`.
+    ///
+    /// `local_types` was a flat `HashSet`: it recorded that the file declares
+    /// `Store` but not WHERE, so `resolve_type_module` fell back to the CALLER's
+    /// current walk position. Inside `mod tests` that is `<module>::tests`, which
+    /// names a type that does not exist — so the reference minted a stub instead
+    /// of linking to the definition sitting in the same file.
+    ///
+    /// Measured live: **1,341 of 4,560 rust stubs** recover by deleting one
+    /// `::tests` segment, e.g.
+    /// `rust·senseid·tasks::executor::tests·run_task` against the real
+    /// `rust·senseid·tasks::executor·run_task`. This is the defect that made the
+    /// stub-retraction idea wrong: those definitions were never missing, the
+    /// resolver was building the wrong fqn.
+    ///
+    /// The rule is general, not a `tests` special case — a type's canonical
+    /// module is where it is DECLARED, for any inline `mod`. A helper declared
+    /// INSIDE the inline module still anchors there, which the second assertion
+    /// pins.
+    ///
+    /// Breaking mutation: make `local_types` a set again and return the caller's
+    /// `module` — `Store` goes back to `svc::tests·Store`.
+    #[test]
+    fn a_file_level_type_used_in_an_inline_mod_anchors_on_the_file_not_the_inline_mod() {
+        let out = produce(
+            "pub struct Store;\n\
+             impl Store { pub fn open() -> Self { Store } }\n\
+             \n\
+             mod tests {\n\
+             \x20   use super::*;\n\
+             \x20   pub struct Fixture;\n\
+             \x20   fn t() { let _ = Store::open(); let _ = Fixture; }\n\
+             }\n",
+            "app",
+            "svc",
+        );
+
+        // Every produced fqn that names `Store` must anchor on `svc`, never
+        // `svc::tests` — a module that declares no such type.
+        let store_refs: Vec<&str> = out
+            .refs
+            .iter()
+            .filter_map(|r| r.target_fqn.as_deref())
+            .filter(|f| f.ends_with("Store") || f.contains("Store·"))
+            .collect();
+        assert!(!store_refs.is_empty(), "the call to Store::open must be recorded: {:?}", out.refs);
+        for f in &store_refs {
+            assert!(
+                !f.contains("svc::tests"),
+                "a file-level type must not anchor on the inline mod: {f}"
+            );
+            assert!(f.starts_with("rust·app·svc·"), "{f}");
+        }
+
+        // And a type declared INSIDE the inline mod still anchors THERE — the fix
+        // is "where it is declared", not "always strip the inline segment".
+        let fixture = out.defs.iter().find(|d| d.name == "Fixture").map(|d| d.fqn.as_str());
+        assert_eq!(
+            fixture,
+            Some("rust·app·svc::tests·Fixture"),
+            "a type declared in the inline mod belongs to it: {:?}",
+            out.defs.iter().map(|d| &d.fqn).collect::<Vec<_>>()
+        );
+    }
+
     fn produce(src: &str, package: &str, module: &str) -> FqnFileOutput {
         rust_fqn::produce_fqns(
             src,
