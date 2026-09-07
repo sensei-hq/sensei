@@ -370,16 +370,8 @@ mod tests {
     }
 
     // ── FQN producer (Phase 6.7) ────────────────────────────────────────────
-    use crate::languages::fqn::{FqnFileOutput, FqnReference};
-    fn def_fqn<'a>(out: &'a FqnFileOutput, name: &str) -> &'a str {
-        out.defs.iter().find(|d| d.name == name).map(|d| d.fqn.as_str()).unwrap_or("<no-def>")
-    }
-    fn ref_to<'a>(out: &'a FqnFileOutput, target_name: &str) -> &'a FqnReference {
-        out.refs
-            .iter()
-            .find(|r| r.target_name == target_name)
-            .unwrap_or_else(|| panic!("no ref to `{target_name}` in {:?}", out.refs))
-    }
+
+    use crate::languages::fqn::finders::{def_fqn, ref_to};
 
     #[test]
     fn sql_def_fqn() {

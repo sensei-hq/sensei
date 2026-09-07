@@ -218,3 +218,42 @@ mod tests {
         );
     }
 }
+
+/// Finders every language's producer tests need over an [`FqnFileOutput`].
+///
+/// One definition, because there were FIVE byte-identical copies of `def_fqn`
+/// and `ref_to` — typescript, java, python, rust_lang, sql — and kotlin had
+/// NEITHER, which is the gap a kotlin producer test hits first. There was no
+/// relation finder at all: the same
+/// `out.relations.iter().find(|r| r.parent_name == n)` closure was hand-written
+/// three times, in java twice and python once.
+///
+/// `#[cfg(test)]`, so none of this is reachable from a shipped path.
+#[cfg(test)]
+pub(crate) mod finders {
+    use super::{FqnFileOutput, FqnReference, TypeRelation};
+
+    /// A definition's fqn by name, or `"<no-def>"` — a sentinel rather than a
+    /// panic, so a test can assert a definition is ABSENT without catching.
+    pub(crate) fn def_fqn<'a>(out: &'a FqnFileOutput, name: &str) -> &'a str {
+        out.defs.iter().find(|d| d.name == name).map(|d| d.fqn.as_str()).unwrap_or("<no-def>")
+    }
+
+    /// A reference by target name. Panics with the whole ref list, because a
+    /// missing ref is almost always a producer that emitted nothing and the list
+    /// is what tells you which.
+    pub(crate) fn ref_to<'a>(out: &'a FqnFileOutput, target_name: &str) -> &'a FqnReference {
+        out.refs
+            .iter()
+            .find(|r| r.target_name == target_name)
+            .unwrap_or_else(|| panic!("no ref to `{target_name}` in {:?}", out.refs))
+    }
+
+    /// A relation by SUPERTYPE name — the missing third finder.
+    pub(crate) fn rel_to<'a>(out: &'a FqnFileOutput, parent_name: &str) -> &'a TypeRelation {
+        out.relations
+            .iter()
+            .find(|r| r.parent_name == parent_name)
+            .unwrap_or_else(|| panic!("no relation to `{parent_name}` in {:?}", out.relations))
+    }
+}
