@@ -426,6 +426,7 @@ pub(crate) mod java_fqn {
         // Package (from `package a.b.c;`) + import map (simple class → fqcn).
         let mut package = String::new();
         let mut imports: HashMap<String, String> = HashMap::new();
+        let mut has_wildcard_import = false;
         for i in 0..root.child_count() {
             let child = root.child(i).unwrap();
             match child.kind() {
@@ -446,7 +447,17 @@ pub(crate) mod java_fqn {
                         .trim_end_matches(';')
                         .trim()
                         .to_string();
-                    if !path.is_empty() && !path.ends_with('*') {
+                    if path.ends_with('*') {
+                        // A wildcard binds NO simple name this pass can key on, so
+                        // an unqualified type in this file is genuinely ambiguous:
+                        // it may come from any wildcard package OR be
+                        // same-package. Recorded so `resolve_call` can decline to
+                        // guess. 694 such imports in the measured corpus, and they
+                        // are why `com.rfs.admin.domain.OnboardingConfiguration`
+                        // was minted under the CALLER's package
+                        // `com.rfs.admin.service.impl` — 1,718 java stubs.
+                        has_wildcard_import = true;
+                    } else if !path.is_empty() {
                         let leaf = path.rsplit('.').next().unwrap_or(&path).to_string();
                         imports.insert(leaf, path);
                     }
@@ -462,7 +473,7 @@ pub(crate) mod java_fqn {
             ..Default::default()
         };
         let lines: Vec<&str> = source.lines().collect();
-        walk(&root, src, &lines, &ctx, &imports, None, &mut out);
+        walk(&root, src, &lines, &ctx, &imports, None, has_wildcard_import, &mut out);
         out
     }
 
@@ -474,6 +485,7 @@ pub(crate) mod java_fqn {
         ctx: &FileFqnContext,
         imports: &HashMap<String, String>,
         class: Option<&str>,
+        wildcard: bool,
         out: &mut FqnFileOutput,
     ) {
         for i in 0..node.child_count() {
@@ -533,7 +545,7 @@ pub(crate) mod java_fqn {
                         parent_fqn: None,
                     });
                     if let Some(body) = child.child_by_field_name("body") {
-                        walk(&body, src, lines, ctx, imports, Some(&name), out);
+                        walk(&body, src, lines, ctx, imports, Some(&name), wildcard, out);
                     }
                 }
                 "method_declaration" | "constructor_declaration" => {
@@ -561,7 +573,8 @@ pub(crate) mod java_fqn {
                         let bindings = build_bindings(&child, src);
                         let mut seen = HashSet::new();
                         collect_calls(
-                            &body, src, ctx, imports, cls, &bindings, &fqn_str, &mut seen, out,
+                            &body, src, ctx, imports, cls, &bindings, &fqn_str, wildcard,
+                            &mut seen, out,
                         );
                     }
                 }
@@ -624,6 +637,7 @@ pub(crate) mod java_fqn {
         class: &str,
         bindings: &HashMap<String, String>,
         caller_fqn: &str,
+        wildcard: bool,
         seen: &mut HashSet<String>,
         out: &mut FqnFileOutput,
     ) {
@@ -631,7 +645,7 @@ pub(crate) mod java_fqn {
             let child = node.child(i).unwrap();
             if child.kind() == "method_invocation"
                 && let Some((target_fqn, is_lib, target_name)) =
-                    resolve_call(&child, src, ctx, imports, class, bindings)
+                    resolve_call(&child, src, ctx, imports, class, bindings, wildcard)
                 && seen.insert(target_fqn.clone().unwrap_or_else(|| format!("?{target_name}")))
             {
                 out.refs.push(FqnReference {
@@ -642,10 +656,13 @@ pub(crate) mod java_fqn {
                     is_lib,
                 });
             }
-            collect_calls(&child, src, ctx, imports, class, bindings, caller_fqn, seen, out);
+            collect_calls(
+                &child, src, ctx, imports, class, bindings, caller_fqn, wildcard, seen, out,
+            );
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn resolve_call(
         mi: &Node,
         src: &[u8],
@@ -653,6 +670,7 @@ pub(crate) mod java_fqn {
         imports: &HashMap<String, String>,
         class: &str,
         bindings: &HashMap<String, String>,
+        wildcard: bool,
     ) -> Option<(Option<String>, bool, String)> {
         let method = field(mi, "name", src);
         if method.is_empty() || JAVA_CALL_DENYLIST.contains(&method.as_str()) {
@@ -694,6 +712,17 @@ pub(crate) mod java_fqn {
                         // package) or as a same-package class.
                         return Some(match imports.get(&oname) {
                             Some(fqcn) => resolve_type_call(fqcn, &method, &ctx.package),
+                            // Not explicitly imported. With NO wildcard in the
+                            // file, java's own rule makes this same-package and
+                            // `ctx.package` is correct. With a wildcard present it
+                            // is AMBIGUOUS — the type may come from any
+                            // wildcard-imported package — so we decline to guess.
+                            // Stamping the caller's package here is what minted
+                            // `java·com.rfs.admin.service.impl·OnboardingConfiguration·
+                            // setDateAdded` for a class that lives in
+                            // `com.rfs.admin.domain`: 1,718 java stubs, 694
+                            // wildcard imports in the measured corpus.
+                            None if wildcard => (None, false, method),
                             None => (
                                 Some(fqn::method(JAVA_LANG, &ctx.package, "", &oname, &method)),
                                 false,
@@ -714,6 +743,8 @@ pub(crate) mod java_fqn {
                         // so falling back to ctx.package there is the language rule.
                         return Some(match imports.get(ty.as_str()) {
                             Some(fqcn) => resolve_type_call(fqcn, &method, &ctx.package),
+                            // Same ambiguity as the static-receiver arm above.
+                            None if wildcard => (None, false, method),
                             None => (
                                 Some(fqn::method(JAVA_LANG, &ctx.package, "", ty, &method)),
                                 false,
@@ -1074,6 +1105,61 @@ public class Widget extends BaseService implements Serializable, HandlerIntercep
             base.parent_fqn.as_deref(),
             Some("java·com.acme.core·BaseService"),
             "a first-party supertype keeps its java fqn"
+        );
+    }
+
+    /// A WILDCARD import makes an unqualified type ambiguous, so the call is left
+    /// UNRESOLVED rather than stamped with the caller's package.
+    ///
+    /// Java's rule is that an unqualified type is either imported or
+    /// same-package, which is why `ctx.package` is the right answer when the file
+    /// has no wildcard. With `import com.acme.domain.*;` present the name may
+    /// come from THAT package instead, and the producer cannot tell — so it must
+    /// not choose. Stamping the caller's package is what minted
+    /// `java·com.rfs.admin.service.impl·OnboardingConfiguration·setDateAdded` for a
+    /// class that actually lives in `com.rfs.admin.domain`: measured 1,718 java
+    /// stubs recoverable by same-class lookup, against 694 wildcard imports in the
+    /// corpus. The caller genuinely does `import com.rfs.admin.domain.*;`.
+    ///
+    /// Both directions are pinned, because the no-wildcard case must KEEP
+    /// resolving — declining everywhere would trade a fabrication for a blanket
+    /// loss.
+    ///
+    /// Breaking mutation: drop the `None if wildcard` arm and the first assertion
+    /// gets `java·com.acme.svc·Widget·save`, a class that does not exist there.
+    #[test]
+    fn a_wildcard_import_makes_an_unqualified_type_unresolved_not_caller_packaged() {
+        // WITH a wildcard: ambiguous ⇒ unresolved.
+        let ambiguous = java_fqn::produce_fqns(
+            "package com.acme.svc;\n             import com.acme.domain.*;\n             class C {\n             \x20 void f() { Widget.save(); }\n             }\n",
+        );
+        let r = ref_to(&ambiguous, "save");
+        assert_eq!(
+            r.target_fqn, None,
+            "a wildcard import makes the package unknowable — do not guess: {:?}",
+            r.target_fqn
+        );
+        assert!(!r.is_lib);
+        assert_eq!(r.caller_fqn, "java·com.acme.svc·C·f", "the call site is still recorded");
+
+        // WITHOUT a wildcard: java's same-package rule applies and still resolves.
+        let same_pkg = java_fqn::produce_fqns(
+            "package com.acme.svc;\n             class C {\n             \x20 void f() { Widget.save(); }\n             }\n",
+        );
+        assert_eq!(
+            ref_to(&same_pkg, "save").target_fqn.as_deref(),
+            Some("java·com.acme.svc·Widget·save"),
+            "with no wildcard, an unqualified type IS same-package — that is the language rule"
+        );
+
+        // An EXPLICIT import still wins over both.
+        let explicit = java_fqn::produce_fqns(
+            "package com.acme.svc;\n             import com.acme.domain.*;\n             import com.acme.domain.Widget;\n             class C {\n             \x20 void f() { Widget.save(); }\n             }\n",
+        );
+        assert_eq!(
+            ref_to(&explicit, "save").target_fqn.as_deref(),
+            Some("java·com.acme.domain·Widget·save"),
+            "an explicit import is evidence and outranks the wildcard ambiguity"
         );
     }
 
