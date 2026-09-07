@@ -572,13 +572,134 @@ pub(crate) mod kotlin_fqn {
             }
         }
 
+        let imports = collect_imports(&root, src);
+
         let mut out =
             FqnFileOutput { package: package.clone(), module: String::new(), ..Default::default() };
-        walk_top(&root, src, &package, &mut out);
+        walk_top(&root, src, &package, &imports, &mut out);
         out
     }
 
-    fn walk_top(node: &Node, src: &[u8], package: &str, out: &mut FqnFileOutput) {
+    /// Simple name → fully-qualified name, from this file's `import` headers.
+    ///
+    /// `import_header` is wrapped in an `import_list` under `source_file`
+    /// (pinned in `kotlin_grammar_shapes`), so java's root-level loop finds
+    /// nothing here and this descends one level.
+    ///
+    /// A star import carries a `wildcard_import` child and is SKIPPED: it binds
+    /// no simple name, and keying it on `*` — or on the package's last segment —
+    /// would invent a binding the source never made. A supertype that came in
+    /// through a star import therefore resolves same-package, which is honest:
+    /// the file does not say where it came from.
+    fn collect_imports(root: &Node, src: &[u8]) -> std::collections::HashMap<String, String> {
+        let mut imports = std::collections::HashMap::new();
+        for i in 0..root.child_count() {
+            let Some(list) = root.child(i) else { continue };
+            if list.kind() != "import_list" {
+                continue;
+            }
+            for j in 0..list.child_count() {
+                let Some(header) = list.child(j) else { continue };
+                if header.kind() != "import_header" {
+                    continue;
+                }
+                if child_of_kind(&header, "wildcard_import").is_some() {
+                    continue;
+                }
+                // Read the dotted path from the identifier node rather than
+                // string-stripping the header text, so an alias or trailing
+                // comment cannot leak into the path.
+                let Some(path) =
+                    named_child_text(&header, src, &["identifier", "qualified_identifier"])
+                else {
+                    continue;
+                };
+                let path = path.trim();
+                if let Some(leaf) = path.rsplit('.').next().filter(|l| !l.is_empty()) {
+                    imports.insert(leaf.to_string(), path.to_string());
+                }
+            }
+        }
+        imports
+    }
+
+    fn child_of_kind<'t>(node: &Node<'t>, kind: &str) -> Option<Node<'t>> {
+        (0..node.child_count()).filter_map(|i| node.child(i)).find(|c| c.kind() == kind)
+    }
+
+    /// First DESCENDANT of `kind`, depth-first.
+    ///
+    /// A supertype's name is not a direct child of its `delegation_specifier`:
+    /// a base class nests `constructor_invocation > user_type > type_identifier`
+    /// and an interface nests `user_type > type_identifier`. `named_child_text`
+    /// looks at direct children only, so it returned None for both and every
+    /// relation was silently dropped.
+    fn descendant_of_kind<'t>(node: &Node<'t>, kind: &str) -> Option<Node<'t>> {
+        if node.kind() == kind {
+            return Some(*node);
+        }
+        (0..node.child_count())
+            .filter_map(|i| node.child(i))
+            .find_map(|c| descendant_of_kind(&c, kind))
+    }
+
+    /// Emit this type's `extends` / `implements` facts.
+    ///
+    /// Kotlin lists the superclass and every interface in ONE
+    /// `delegation_specifier` sequence — `class W : Base(), Iface` — and
+    /// `child_by_field_name` is unusable here (FIELD_COUNT 0), so java's
+    /// split-by-field approach cannot be ported. The discriminator is
+    /// STRUCTURAL: a base class is CONSTRUCTED, so its specifier holds a
+    /// `constructor_invocation`; an interface's does not. A `by` delegation
+    /// (`explicit_delegation`) carries no constructor invocation either, so it
+    /// classifies as interface-like, which is correct — a delegate is not a base
+    /// class.
+    ///
+    /// Resolution is the SHARED `jvm::resolve_supertype`, so a kotlin supertype
+    /// lands on the exact key a java call already writes for the same string.
+    fn emit_relations(
+        type_node: &Node,
+        src: &[u8],
+        package: &str,
+        child_fqn: &str,
+        imports: &std::collections::HashMap<String, String>,
+        out: &mut FqnFileOutput,
+    ) {
+        for i in 0..type_node.child_count() {
+            let Some(spec) = type_node.child(i) else { continue };
+            if spec.kind() != "delegation_specifier" {
+                continue;
+            }
+            let Some(name_node) = descendant_of_kind(&spec, "type_identifier") else { continue };
+            let name = text(&name_node, src);
+            let name = name.trim();
+            if name.is_empty() {
+                continue;
+            }
+            let relation = if child_of_kind(&spec, "constructor_invocation").is_some() {
+                crate::types::RelationKind::Extends
+            } else {
+                crate::types::RelationKind::Implements
+            };
+            let resolved =
+                crate::languages::jvm::resolve_supertype(KOTLIN_LANG, name, imports, package);
+            out.relations.push(fqn::TypeRelation {
+                child_fqn: child_fqn.to_string(),
+                parent_fqn: resolved.as_ref().map(|(f, _)| f.clone()),
+                parent_name: name.to_string(),
+                is_lib: resolved.as_ref().is_some_and(|(_, l)| *l),
+                relation,
+            });
+        }
+    }
+
+    fn walk_top(
+        node: &Node,
+        src: &[u8],
+        package: &str,
+        imports: &std::collections::HashMap<String, String>,
+        out: &mut FqnFileOutput,
+    ) {
         for i in 0..node.child_count() {
             let Some(child) = node.child(i) else { continue };
             match child.kind() {
@@ -606,6 +727,7 @@ pub(crate) mod kotlin_fqn {
                     // type and a Java type in one package are addressable alike.
                     let type_fqn = fqn::item(KOTLIN_LANG, package, "", &name);
                     out.defs.push(def(&type_fqn, &name, kind, &child, None, None));
+                    emit_relations(&child, src, package, &type_fqn, imports, out);
                     walk_members(&child, src, package, &name, &type_fqn, out);
                 }
                 "function_declaration" | "property_declaration" => {
@@ -626,7 +748,7 @@ pub(crate) mod kotlin_fqn {
                 }
                 // Kotlin allows declarations nested under file-level constructs;
                 // recurse so they are not silently dropped.
-                _ => walk_top(&child, src, package, out),
+                _ => walk_top(&child, src, package, imports, out),
             }
         }
     }
@@ -851,6 +973,68 @@ mod kotlin_fqn_tests {
         // 3. The enum type and its entries survive.
         assert_eq!(def_fqn(&out, "Colour"), "kotlin·com.acme·Colour");
         assert_eq!(kind_of("Colour"), Some(SymbolKind::Enum), "an enum is an Enum");
+    }
+
+    /// HERITAGE: a superclass is `Extends`, an interface is `Implements`, and the
+    /// discriminator is STRUCTURAL — the parenthesised one is the base class.
+    ///
+    /// Kotlin puts the superclass and every interface in ONE
+    /// `delegation_specifier` list: `class W : Base(), Iface`. Java splits them
+    /// by field (`superclass` / `interfaces`); Kotlin cannot, because
+    /// `child_by_field_name` returns None for every node in this grammar
+    /// (FIELD_COUNT 0). The signal is the `constructor_invocation` — you call a
+    /// base class's constructor, never an interface's. Pinned in
+    /// `kotlin_grammar_shapes`.
+    ///
+    /// Resolution goes through the SHARED `jvm::resolve_supertype`, so a kotlin
+    /// supertype lands on the exact key a java call already writes: a
+    /// third-party one becomes a `lib·` node, a first-party one keeps its
+    /// package. That sharing is why `09fd073b` lifted the rule out of java
+    /// instead of copying it.
+    ///
+    /// Breaking mutation: treat every `delegation_specifier` as Extends and the
+    /// interface becomes a base class; drop the `jvm::` call and
+    /// `org.springframework` goes back to a fabricated first-party kotlin node.
+    #[test]
+    fn a_superclass_extends_and_an_interface_implements_via_the_shared_jvm_rule() {
+        use crate::languages::fqn::finders::rel_to;
+        use crate::types::RelationKind;
+
+        let out = produce_fqns(
+            "package com.acme.svc\n\
+             \n\
+             import com.acme.core.BaseService\n\
+             import org.springframework.web.servlet.HandlerInterceptor\n\
+             \n\
+             class Widget : BaseService(), HandlerInterceptor, Runnable {\n\
+             \x20   fun go() {}\n\
+             }\n",
+        );
+
+        // The parenthesised specifier is the BASE CLASS.
+        let base = rel_to(&out, "BaseService");
+        assert_eq!(base.relation, RelationKind::Extends, "Base() is a superclass");
+        assert_eq!(base.child_fqn, "kotlin·com.acme.svc·Widget");
+        assert_eq!(
+            base.parent_fqn.as_deref(),
+            Some("kotlin·com.acme.core·BaseService"),
+            "a first-party supertype keeps its own package"
+        );
+        assert!(!base.is_lib);
+
+        // A bare specifier is an INTERFACE, and a third-party one is a lib node —
+        // the same answer the java call path gives for the same string.
+        let spring = rel_to(&out, "HandlerInterceptor");
+        assert_eq!(spring.relation, RelationKind::Implements, "no parens ⇒ interface");
+        assert!(spring.is_lib, "org.springframework is third-party: {:?}", spring.parent_fqn);
+        assert!(spring.parent_fqn.as_deref().is_some_and(|f| f.starts_with("lib·")));
+
+        // An UNIMPORTED interface resolves same-package, which is the language rule.
+        let run = rel_to(&out, "Runnable");
+        assert_eq!(run.relation, RelationKind::Implements);
+        assert_eq!(run.parent_fqn.as_deref(), Some("kotlin·com.acme.svc·Runnable"));
+
+        assert_eq!(out.relations.len(), 3, "one extends + two implements: {:?}", out.relations);
     }
 
     #[test]
