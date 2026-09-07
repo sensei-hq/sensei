@@ -640,3 +640,65 @@ a derivation using the caller's position instead of the declaration's.
 Also measured by the review, and it kills any "def never arrives" argument:
 20,467 fqn nodes flipped `resolved` inside one six-minute window while the stub
 set fell 41,298 -> 32,129.
+
+## BOTH DERIVATION FIXES SHIPPED AND MEASURED LIVE (`cb9fc944`)
+
+One defect class, two languages: a call target derived from the CALLER's position
+instead of the DECLARATION's.
+
+### rust free functions — RECOVERY
+
+| scope | before | after |
+|---|---|---|
+| `::tests` stubs, this repo | 562 | **105** (−81%) |
+| real def-to-def call edges, global | 16,173 | **17,348 (+1,175)** |
+| phantom call edges, global | 11,235 | **10,056 (−1,179)** |
+
+The residual 105 matches the 102 previously identified as `let`-bound CLOSURES in
+test bodies (`let r = |n| …`) — those have no definition node and are correctly
+unresolvable. Not a defect; do not chase it.
+
+### java wildcard imports — HONESTY
+
+| scope | before | after |
+|---|---|---|
+| phantom call edges, rfsjava | 3,641 | **150 (−96%)** |
+| phantom call edges, global java | 40,099 | **36,608 (−3,491)** |
+| real def-to-def, global java | 16,355 | 16,332 (flat) |
+
+Flat real_def is EXPECTED and correct: this fix declines to guess rather than
+recovering. `import com.acme.domain.*;` binds no simple name, so an unqualified
+type is ambiguous between every wildcard package and same-package. With NO
+wildcard, java's own rule makes it same-package and `ctx.package` stays correct —
+both directions are pinned by the test, so this is not a blanket retreat.
+
+**Combined: 4,670 fabricated call edges removed, 1,175 of them replaced by REAL
+def-to-def links rather than merely unresolved.**
+
+### AND IT CORRECTED A CLAIM I HAD MADE
+
+I attributed java's largest phantom bucket to Lombok-generated accessors. Wrong —
+the adversarial review verified `setDateAdded`, `setTitle`, `getQuestionText` are
+hand-written, in source, and indexed. The cause was this derivation.
+
+### THE STANDING LESSON FOR THIS WHOLE SLICE
+
+Every real fix took the same shape: **derive an fqn from where the symbol is
+DECLARED, never from where it is referenced.** #3 (ts locals probe), #2b (java
+supertype), #3b (src/ anchor), rust types, rust functions, java wildcards — all
+one rule. When a target cannot be derived that way, emit unresolved. The
+stub-retraction attempt failed precisely because it treated the SYMPTOM of a
+mis-derivation as absence.
+
+### REMAINING, and none of it is a fabrication
+
+- rust `let`-bound closure calls (~105 here) — unresolvable by nature.
+- typescript/javascript/svelte INHERITANCE: still zero. `typescript.rs` never
+  touches `relations`, yet 33 TS/svelte classes declare `extends`/`implements` in
+  this repo alone. Direct analogue of what kotlin received.
+- `capability_matrix()` has no inheritance cell, so that gap cannot self-report.
+- OO DESIGN patterns (adapter/factory/strategy) are not detected at all;
+  `inference.detected_patterns` does workflow patterns and its `family` is NULL
+  on all 1,451 rows.
+- defect A: an indexer code change still cannot trigger a reindex — delete the
+  folder's `scan_state` rows and scan the WATCH ROOT.
