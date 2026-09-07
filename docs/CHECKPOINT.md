@@ -527,3 +527,69 @@ CAUTION for whoever implements it: the barrier condition is load-bearing. Run it
 before the folder's files have all drained and it will delete stubs whose def was
 merely late, turning real edges into unresolved ones. Verify against
 `upsert_node_by_fqn_merges_ref_and_def` and the D4.1 community barrier.
+
+## STUB RETRACTION — BUILT, ADVERSARIALLY REVIEWED, REVERTED. DO NOT RETRY AS SPECIFIED.
+
+I implemented `retract_undefined_stubs` at the D4.1 barrier (unresolve inbound
+edges, delete the node), it passed its own red test and the full 2,776-test gate,
+and a 4-agent adversarial review then found it UNSAFE on measured grounds. It is
+reverted. The findings below are worth more than the fix was.
+
+### Blocker 1 — THE BARRIER IS NOT TERMINAL. This kills the whole premise.
+
+- `analyzer_scheduler.rs:252` enqueues `DetectCommunities` with plain `enqueue`,
+  **no `blocked_by`** — daily, per indexed folder. It can fire mid-`process_file`.
+- `queue.rs:321` on failure: *"Still unblock dependents (they'll see partial data
+  but won't deadlock)"* → a transiently-failed ProcessFile's retry lands 2-8s
+  AFTER the barrier already ran.
+- The housekeeping call sits BEFORE the status gate, and `community.rs`'s own test
+  `detect_communities_is_fail_closed_on_failed_folder` proves the barrier RUNS on
+  `failed` folders — exactly where a definition is missing because its file never
+  processed.
+
+So "every file that could define this has been processed" is FALSE. The existing
+`prune_orphan_stubs` survives this only because a stub with no edges at all is
+garbage regardless of timing.
+
+### Blocker 2 — THE PREMISE IS ~48% FALSE. The def exists under a DIFFERENT fqn.
+
+15,407 of 32,087 edge-bearing stubs have a sibling node with the SAME `name`, the
+SAME `folder_id`, and a real `file_path`. The definition is not absent — THE
+RESOLVER BUILT THE WRONG FQN. Verified rust case: stub
+`rust·<pkg>·postgres::tests·PostgresContentStore·new` against the real
+`rust·<pkg>·postgres·PostgresContentStore·new` — 1,361 of 4,404 rust stubs
+recover by deleting one `::tests` module segment. Retracting these would DESTROY
+a recoverable link and hide a resolver bug.
+
+### Blocker 3 — `edges_unique_unresolved` aborts the UPDATE
+
+`unique (folder_id, source_id, target_name, target_file, kind) NULLS NOT DISTINCT
+WHERE target_id IS NULL`. All 88,094 inbound edges have `target_name IS NULL`
+(because `insert_edge` stores the name ONLY on the `target_id IS NULL` branch),
+so `SET target_id = NULL` alone violates it on 59,586 rows. Measured collisions:
+NULL 59,586, `n.name` 2,357-3,478, **`n.fqn` 0**. My code used `n.name` — still
+broken.
+
+### Blocker 4 — `nodes_parent_id_fkey` is ON DELETE CASCADE
+
+42 predicate-matching nodes are parents of **593 REAL file-bearing definitions**.
+Without the children guard the delete destroys them. (My implementation DID carry
+the guard — but the naive predicate as written in the spec does not.)
+
+### Also must-handle
+
+`edges_target_id_fkey` is ON DELETE CASCADE, so unresolve-then-delete must be ONE
+transaction (`prune_file_nodes` at graph.rs:1460 is the precedent using
+`pool.begin()`); ~41,294 of the matched nodes carry a `community_id` and the
+existing emptied-community cleanup is gated on the OTHER delete's row count; and
+NO existing test would have caught a late-def deletion.
+
+### THE REAL FIX THIS EXPOSED, and it is better
+
+Blocker 2 is a genuine resolver defect, not a lifecycle one: a reference made from
+inside an inline `mod tests` is qualified with the CALLER's module path
+(`postgres::tests`) instead of the TYPE's own canonical module (`postgres`). Fix
+that and 1,361 rust stubs become REAL def-to-def edges — an increase in honest
+linkage rather than a retraction of fabrication. The checkpoint already noted the
+cause: "local_types is module-flat, so names inside `mod tests` anchor on the
+tests module."
