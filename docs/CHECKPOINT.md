@@ -766,3 +766,41 @@ the declaration cannot be determined, emit UNRESOLVED. The one attempt that
 failed — stub retraction — failed because it treated the SYMPTOM of a
 mis-derivation as absence, and would have deleted 593 real definitions via an
 ON DELETE CASCADE while doing so.
+
+## FULL REINDEX — ALL 48,654 FILES RE-DERIVED UNDER EVERY FIX
+
+Not a sample: `DELETE FROM sensei.scan_state` then both watch roots scanned, so
+every fix in this cycle is applied everywhere. ~16 minutes.
+
+| metric | before | after | delta |
+|---|---|---|---|
+| **phantom call edges** | 58,053 | **38,945** | **−19,108 (−33%)** |
+| **real def-to-def edges** | 79,694 | **83,184** | **+3,490** |
+| call edges total | 390,495 | 411,254 | +20,759 discovered |
+
+Per language, phantoms: typescript 8,764 → 5,760 (−34%), java 36,608 → 24,274
+(−34%), rust 10,062 → 7,189 (−29%), javascript 1,037 → 250 (−76%), svelte
+365 → 262. Real def-to-def: rust 17,359 → **20,233** (+2,874, the module-anchoring
+fix), typescript 38,487 → 39,230, javascript 4,936 → 5,361. Java real_def dips
+16,332 → 15,723 (−609) — EXPECTED: the wildcard fix declines to guess, trading a
+confident wrong answer for an honest unresolved one.
+
+INHERITANCE, graph-wide: java 2,170, **typescript 858**, rust 753, python 389,
+kotlin 63, **javascript 15** — TS/JS went 0 → 873.
+
+PYTHON CONSTANTS: 0 → **223**.
+
+## THE SLICE IS COMPLETE
+
+Every item that was a DEFECT is fixed, deployed, and measured on the whole index.
+What remains is not defect work:
+
+- **OO design-pattern detection** (adapter/factory/strategy) — a NEW FEATURE, now
+  unblocked because inheritance edges exist to build on.
+  `inference.detected_patterns` does workflow patterns; `family` is NULL on all
+  1,451 rows.
+- rust `let`-bound CLOSURE calls — unresolvable by nature; unresolved is correct.
+- java's residual 24,274 phantoms — need per-case diagnosis, NOT a blanket
+  retraction (see the reverted-retraction section and its four measured blockers).
+- `version_rescan`'s gate clear takes effect on the next real `make bump`;
+  `make install-debug` keeps VERSION at 0.9.1 so it does not fire in the dev loop.
