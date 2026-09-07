@@ -834,6 +834,36 @@ pub(crate) mod python_fqn {
                         );
                     }
                 }
+                // A module-level CONSTANT. The non-fqn walk has emitted these
+                // for a long time; the fqn producer did not, which is why python
+                // was the thinnest producer in the graph. Same rule as that walk
+                // — ALL-CAPS identifier, longer than one character — so the two
+                // cannot disagree about what counts as a constant.
+                "expression_statement" if class.is_none() => {
+                    if let Some(expr) = child.child(0)
+                        && expr.kind() == "assignment"
+                        && let Some(left) = expr.child_by_field_name("left")
+                        && left.kind() == "identifier"
+                    {
+                        let name = left.utf8_text(src).unwrap_or_default().to_string();
+                        if name.len() > 1 && name == name.to_uppercase() {
+                            out.defs.push(FqnDefinition {
+                                fqn: fqn::item(PY_LANG, &ctx.package, &ctx.module, &name),
+                                name: name.clone(),
+                                kind: SymbolKind::Const,
+                                line_start: child.start_position().row as u32 + 1,
+                                line_end: child.end_position().row as u32 + 1,
+                                is_exported: !name.starts_with('_'),
+                                signature: lines
+                                    .get(child.start_position().row)
+                                    .map(|l| l.trim().to_string()),
+                                docstring: None,
+                                parent_type: None,
+                                parent_fqn: None,
+                            });
+                        }
+                    }
+                }
                 "class_definition" => {
                     let name = field(&child, "name", src);
                     if name.is_empty() {
@@ -1120,6 +1150,45 @@ mod tests {
 
     // ── FQN producer (Phase 6.2) ────────────────────────────────────────────
     use crate::languages::fqn::{FileFqnContext, FqnFileOutput};
+    /// A module-level CONSTANT gets an fqn definition.
+    ///
+    /// The non-fqn `parse` path has emitted `SymbolKind::Const` for a top-level
+    /// `FOO = …` for a long time, but the FQN producer had no such arm — only
+    /// `function_definition` and `class_definition`. So python was the thinnest
+    /// producer in the graph: class, file, function, method, module and nothing
+    /// else, while rust emitted ten kinds and typescript nine. A constant with no
+    /// definition is a constant no reference can resolve to.
+    ///
+    /// Same rule the non-fqn walk already applies, so the two cannot disagree
+    /// about what a constant is: a module-level assignment to an ALL-CAPS
+    /// identifier longer than one character. `x = 1` is a variable, not a
+    /// constant, and is deliberately not claimed.
+    ///
+    /// Breaking mutation: drop the `expression_statement` arm and `MAX_RETRIES`
+    /// loses its definition again.
+    #[test]
+    fn a_module_level_constant_gets_a_definition() {
+        use crate::types::SymbolKind;
+        let out = produce_py(
+            "MAX_RETRIES = 3\n             TIMEOUT_MS = 500\n             lowercase_var = 1\n             \n             def go():\n             \x20   return MAX_RETRIES\n",
+            "app",
+            "svc",
+        );
+        assert_eq!(def_fqn(&out, "MAX_RETRIES"), "python·app·svc·MAX_RETRIES");
+        assert_eq!(def_fqn(&out, "TIMEOUT_MS"), "python·app·svc·TIMEOUT_MS");
+        assert_eq!(
+            out.defs.iter().find(|d| d.name == "MAX_RETRIES").map(|d| d.kind.clone()),
+            Some(SymbolKind::Const)
+        );
+        // A lower-case binding is a VARIABLE, not a constant — not claimed.
+        assert_eq!(
+            def_fqn(&out, "lowercase_var"),
+            "<no-def>",
+            "a lower-case module binding is a variable, not a constant: {:?}",
+            out.defs.iter().map(|d| &d.name).collect::<Vec<_>>()
+        );
+    }
+
     fn produce_py(src: &str, package: &str, module: &str) -> FqnFileOutput {
         python_fqn::produce_fqns(
             src,
