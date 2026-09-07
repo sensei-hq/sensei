@@ -17,6 +17,11 @@ impl LanguageAdapter for TypeScriptAdapter {
         true
     }
 
+    /// Emits `extends`/`implements` (or trait impls) into `relations`.
+    fn emits_inheritance(&self) -> bool {
+        true
+    }
+
     /// Backed by real machinery: import bindings collected per file.
     fn resolves_in_scope(&self) -> bool {
         true
@@ -57,6 +62,14 @@ impl LanguageAdapter for JavaScriptAdapter {
     /// declaring the capability on one and not the other would be a difference
     /// with no cause in the code.
     fn resolves_in_scope(&self) -> bool {
+        true
+    }
+
+    /// Same producer as TypeScript, so the same relations. Declared here TOO
+    /// rather than inherited: javascript is not a framework delegating to a host,
+    /// it is a peer adapter calling the identical `typescript_fqn::produce_fqns`,
+    /// and the capability probe caught exactly this omission.
+    fn emits_inheritance(&self) -> bool {
         true
     }
 
@@ -1016,6 +1029,62 @@ pub(crate) mod typescript_fqn {
         }
     }
 
+    /// A supertype's bare name from a `extends` expression. Only the forms a
+    /// producer can name: `extends Base` and `extends ns.Base`. A computed
+    /// superclass (`extends mixin(Base)`) is deliberately skipped — naming it
+    /// would be a guess.
+    fn supertype_name(e: &Expression) -> Option<String> {
+        match e {
+            Expression::Identifier(id) => Some(id.name.to_string()),
+            Expression::StaticMemberExpression(m) => Some(m.property.name.to_string()),
+            _ => None,
+        }
+    }
+
+    /// The bare name of an `implements` clause's type reference.
+    fn ts_type_name(t: &TSTypeName) -> Option<String> {
+        match t {
+            TSTypeName::IdentifierReference(id) => Some(id.name.to_string()),
+            TSTypeName::QualifiedName(q) => Some(q.right.name.to_string()),
+            _ => None,
+        }
+    }
+
+    /// Resolve a supertype the SAME way a call target is resolved, then record it.
+    ///
+    /// Reuses the reference ladder rather than inventing a second one: an
+    /// EXTERNAL import becomes a `lib·` node (so "which components extend
+    /// React.Component" is answerable and every caller merges onto one node), a
+    /// LOCAL import anchors on the sibling module, a name declared in THIS file
+    /// anchors here, and anything else is UNRESOLVED. Stamping `ctx.module` on an
+    /// unknown supertype is the same fabrication `#3` removed from the call path.
+    #[allow(clippy::too_many_arguments)]
+    fn push_relation(
+        child_fqn: &str,
+        name: &str,
+        relation: crate::types::RelationKind,
+        ctx: &FileFqnContext,
+        imports: &HashMap<String, ImportTarget>,
+        locals: Option<&HashMap<String, String>>,
+        out: &mut FqnFileOutput,
+    ) {
+        let (parent_fqn, is_lib) = match imports.get(name) {
+            Some(t) if t.external => (Some(fqn::lib(&t.module_or_pkg, &t.spec, name)), true),
+            Some(t) => (Some(fqn::item(TS_LANG, &ctx.package, &t.module_or_pkg, name)), false),
+            None => match locals.and_then(|l| l.get(name)) {
+                Some(f) => (Some(f.clone()), false),
+                None => (None, false),
+            },
+        };
+        out.relations.push(fqn::TypeRelation {
+            child_fqn: child_fqn.to_string(),
+            parent_fqn,
+            parent_name: name.to_string(),
+            is_lib,
+            relation,
+        });
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn emit_class(
         c: &Class,
@@ -1041,6 +1110,42 @@ pub(crate) mod typescript_fqn {
             parent_type: None,
             parent_fqn: None,
         });
+        // INHERITANCE. This file never wrote `out.relations`, so typescript,
+        // javascript and svelte produced zero extends/implements edges while
+        // every other fqn language produced them. 33 classes in this repo alone
+        // declare one.
+        //
+        // `extends` on a CLASS is Extends; `implements` is Implements. TS has no
+        // interface-extends-interface ambiguity here because an interface is a
+        // separate declaration form, so unlike java the keyword maps 1:1 onto the
+        // relation.
+        if let Some(sup) = &c.super_class
+            && let Some(name) = supertype_name(sup)
+        {
+            push_relation(
+                &class_fqn,
+                &name,
+                crate::types::RelationKind::Extends,
+                ctx,
+                imports,
+                locals,
+                out,
+            );
+        }
+        for impl_ in &c.implements {
+            if let Some(name) = ts_type_name(&impl_.expression) {
+                push_relation(
+                    &class_fqn,
+                    &name,
+                    crate::types::RelationKind::Implements,
+                    ctx,
+                    imports,
+                    locals,
+                    out,
+                );
+            }
+        }
+
         for element in &c.body.body {
             if let ClassElement::MethodDefinition(m) = element
                 && let Some(name) = method_name(&m.key)
@@ -1690,6 +1795,63 @@ describe('build', () => {
             !out.defs.iter().any(|d| d.name == "describe" || d.name == "it"),
             "no defs may be invented for a call site: {:?}",
             out.defs.iter().map(|d| &d.name).collect::<Vec<_>>()
+        );
+    }
+
+    /// TS/JS INHERITANCE: `extends` is Extends, `implements` is Implements, and
+    /// the supertype resolves through the same ladder a call target does.
+    ///
+    /// `typescript.rs` never touched `out.relations` — the string did not appear
+    /// in the file — so typescript, javascript and svelte produced ZERO
+    /// inheritance edges while java had 1,166+1,002, rust 753 and kotlin 43+20.
+    /// Measured: 33 TS/svelte classes declare `extends`/`implements` in this repo
+    /// alone, and the graph held none of them. Without these edges no OO
+    /// reasoning is possible — an adapter or a strategy cannot be recognised
+    /// from calls alone, which is why design-pattern detection was blocked on
+    /// this.
+    ///
+    /// Resolution reuses the reference ladder rather than inventing one:
+    /// an EXTERNAL import becomes a `lib·` node so "which of our components
+    /// extend React.Component" is answerable; a LOCAL import anchors on the
+    /// sibling module; a name defined in THIS file anchors here; anything else is
+    /// UNRESOLVED, never stamped onto this module.
+    ///
+    /// Breaking mutation: stop pushing to `out.relations` and every assertion
+    /// fails; resolve the unknown supertype to `ctx.module` and the last one does.
+    #[test]
+    fn a_ts_class_emits_extends_and_implements_resolved_like_a_call() {
+        use crate::languages::fqn::finders::rel_to;
+        use crate::types::RelationKind;
+
+        let out = produce_ts(
+            "import { Base } from './base';\n             import { Component } from 'react';\n             \n             export interface Shape {}\n             \n             export class Widget extends Base implements Shape {}\n             export class Panel extends Component {}\n             export class Orphan extends Mystery {}\n",
+            "app",
+            "ui/widget",
+        );
+
+        // A LOCAL import anchors on the sibling module.
+        let base = rel_to(&out, "Base");
+        assert_eq!(base.relation, RelationKind::Extends);
+        assert_eq!(base.child_fqn, "typescript·app·ui/widget·Widget");
+        assert_eq!(base.parent_fqn.as_deref(), Some("typescript·app·ui/base·Base"));
+        assert!(!base.is_lib);
+
+        // An `implements` is Implements, and a same-file interface anchors here.
+        let shape = rel_to(&out, "Shape");
+        assert_eq!(shape.relation, RelationKind::Implements);
+        assert_eq!(shape.parent_fqn.as_deref(), Some("typescript·app·ui/widget·Shape"));
+
+        // An EXTERNAL supertype becomes a lib node.
+        let comp = rel_to(&out, "Component");
+        assert_eq!(comp.relation, RelationKind::Extends);
+        assert!(comp.is_lib, "react is a dependency: {:?}", comp.parent_fqn);
+        assert!(comp.parent_fqn.as_deref().is_some_and(|f| f.starts_with("lib·")));
+
+        // An UNKNOWN supertype is unresolved — never stamped onto this module.
+        let orphan = rel_to(&out, "Mystery");
+        assert_eq!(
+            orphan.parent_fqn, None,
+            "an un-imported, undeclared supertype must not be minted here"
         );
     }
 
