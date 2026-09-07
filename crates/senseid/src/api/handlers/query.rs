@@ -652,6 +652,22 @@ const TYPE_KINDS: &[&str] = &["class", "struct", "interface", "enum", "type"];
 /// Max semantic NN candidates fused per query — bounds the extra work so the
 /// common path doesn't get materially slower.
 const SEM_CANDIDATES: i64 = 25;
+/// Cosine-distance ceiling for a semantic candidate. Beyond this a neighbour is
+/// not a weak match, it is not a match.
+///
+/// An ANN query has no notion of "far enough to be irrelevant" — it returns its
+/// `LIMIT` nearest rows whatever the distance. Unbounded, a search for a symbol
+/// that does not exist came back with a full list of the closest unrelated
+/// symbols and no way to tell them from real hits: `search("retract_undefined_stubs")`,
+/// a function that exists nowhere in the corpus, returned ten confident results
+/// about *retry*.
+///
+/// Measured over all 108,420 embedded function nodes in the live corpus: the
+/// distance from a symbol to its genuine relatives runs 0.12–0.26, while the
+/// corpus p01 is 0.4865 and the median 0.8892. Related and unrelated are
+/// separated by a wide empty band, so a cutoff inside it keeps every real hit
+/// while admitting under 1% of the corpus as a candidate at all.
+const SEM_MAX_DISTANCE: f64 = 0.45;
 /// Upper bound on fused results returned (mirrors the lexical `LIMIT 50`).
 const HYBRID_MAX: usize = 50;
 /// Query-embed timeout. Semantic ranking is additive, so a slow embed backend
@@ -661,8 +677,17 @@ const EMBED_QUERY_TIMEOUT_SECS: u64 = 10;
 /// it damps low-ranked items so a hit near the top of either list dominates.
 const RRF_K: f64 = 60.0;
 
-/// Row shape returned by `PgStore::semantic_search_nodes`.
-type SemRow = (uuid::Uuid, String, String, Option<String>, Option<i32>);
+/// Row shape returned by `PgStore::semantic_search_nodes` — the trailing `f64`
+/// is the cosine distance from the query vector.
+type SemRow = (uuid::Uuid, String, String, Option<String>, Option<i32>, f64);
+
+/// Convert a cosine distance into the `relevance` a caller sees: 1.0 is an exact
+/// match, 0.0 is unrelated. Reported on every semantic hit because a rank alone
+/// cannot distinguish "this is the answer" from "this was the closest thing in a
+/// corpus that has no answer".
+fn relevance(distance: f64) -> f64 {
+    ((1.0 - distance).clamp(0.0, 1.0) * 1000.0).round() / 1000.0
+}
 
 /// A single ranked search hit: a de-duplication key (`id`) plus the JSON item
 /// returned to the caller unchanged.
@@ -675,13 +700,13 @@ pub(crate) struct Hit {
 /// Project a semantic row into a function hit — identical shape to
 /// `PgStore::search_functions_scoped` so fused results stay homogeneous.
 fn function_hit(r: SemRow) -> serde_json::Value {
-    serde_json::json!({ "id": r.0, "name": r.1, "file_path": r.2, "signature": r.3, "line_start": r.4 })
+    serde_json::json!({ "id": r.0, "name": r.1, "file_path": r.2, "signature": r.3, "line_start": r.4, "relevance": relevance(r.5) })
 }
 
 /// Project a semantic row into a type hit — identical shape to
 /// `PgStore::search_types_scoped` (no `signature`).
 fn type_hit(r: SemRow) -> serde_json::Value {
-    serde_json::json!({ "id": r.0, "name": r.1, "file_path": r.2, "line_start": r.4 })
+    serde_json::json!({ "id": r.0, "name": r.1, "file_path": r.2, "line_start": r.4, "relevance": relevance(r.5) })
 }
 
 /// Fuse a lexical (keyword) and a semantic (embedding NN) ranked list with
@@ -789,7 +814,10 @@ async fn fuse_semantic(
     let Some(query_vec) = query_vec else {
         return lexical;
     };
-    let sem_rows = match state.pg.semantic_search_nodes(ids, query_vec, kinds, SEM_CANDIDATES).await
+    let sem_rows = match state
+        .pg
+        .semantic_search_nodes(ids, query_vec, kinds, SEM_CANDIDATES, SEM_MAX_DISTANCE)
+        .await
     {
         Ok(rows) => rows,
         Err(e) => {
