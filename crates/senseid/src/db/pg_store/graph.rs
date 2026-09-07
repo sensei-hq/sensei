@@ -729,25 +729,40 @@ impl PgStore {
     /// materially slows the common query path. Returns
     /// `(id, name, file_path, signature, line_start)` — the fields the query
     /// handler projects into function/type hits for fusion with lexical results.
+    /// Embedding nearest-neighbour search, bounded by cosine distance.
+    ///
+    /// `max_distance` is not optional and not cosmetic. An ANN query returns its
+    /// `limit` nearest neighbours HOWEVER FAR AWAY they are, so without a bound a
+    /// query naming a symbol that does not exist still yields a full, confident
+    /// list of whatever happened to be closest — a fabricated answer the caller
+    /// cannot tell from a real one. The bound is what makes "nothing matched"
+    /// expressible.
+    ///
+    /// The distance is returned alongside each row rather than discarded: rank
+    /// position cannot tell a caller whether hit #1 is an exact match or merely
+    /// the least-bad of a bad set, and only the score can.
     pub async fn semantic_search_nodes(
         &self,
         folder_ids: &[uuid::Uuid],
         query_embedding: &[f32],
         kinds: &[&str],
         limit: i64,
-    ) -> Result<Vec<(uuid::Uuid, String, String, Option<String>, Option<i32>)>, String> {
+        max_distance: f64,
+    ) -> Result<Vec<(uuid::Uuid, String, String, Option<String>, Option<i32>, f64)>, String> {
         if folder_ids.is_empty() || query_embedding.is_empty() || kinds.is_empty() {
             return Ok(Vec::new());
         }
         let vec_literal = vector_literal(query_embedding);
         let kind_strs: Vec<String> = kinds.iter().map(|k| k.to_string()).collect();
-        let rows: Vec<(uuid::Uuid, String, String, Option<String>, Option<i32>)> =
+        let rows: Vec<(uuid::Uuid, String, String, Option<String>, Option<i32>, f64)> =
             sqlx_core::query_as::query_as(
-                "SELECT id, name, file_path, signature, line_start
+                "SELECT id, name, file_path, signature, line_start,
+                        (embedding <=> $2::vector)::float8 AS distance
                    FROM sensei.nodes
                   WHERE folder_id = ANY($1::uuid[])
                     AND kind::text = ANY($3::text[])
                     AND embedding IS NOT NULL
+                    AND (embedding <=> $2::vector) <= $5
                   ORDER BY embedding <=> $2::vector
                   LIMIT $4",
             )
@@ -755,6 +770,7 @@ impl PgStore {
             .bind(vec_literal)
             .bind(kind_strs)
             .bind(limit)
+            .bind(max_distance)
             .fetch_all(&self.pool)
             .await
             .map_err(|e| e.to_string())?;
