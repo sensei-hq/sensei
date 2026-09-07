@@ -593,3 +593,50 @@ that and 1,361 rust stubs become REAL def-to-def edges — an increase in honest
 linkage rather than a retraction of fabrication. The checkpoint already noted the
 cause: "local_types is module-flat, so names inside `mod tests` anchor on the
 tests module."
+
+## RUST MODULE ANCHORING — TYPES FIXED AND MEASURED (`9ed5f2d1`). FUNCTIONS REMAIN.
+
+`FileScope::local_types` was a flat set, so `resolve_type_module` fell back to the
+CALLER's walk position; inside `mod tests` that is `<module>::tests`. Now a
+`HashMap<name, declaring_module>`, `collect_scope` carries the module path and
+appends each inline `mod`, and both readers return the DECLARING module.
+`resolve_trait_fqn` lost its now-dead `module` parameter.
+
+MEASURED after deploy + reindex of this repo: global `::tests`-qualified rust
+stubs 1,981 -> 1,851. Scoped to this repo, 562 remain — and ALL 562 are
+`kind = function`.
+
+### THE REMAINING HALF, quantified
+
+`collect_scope` tracks only `struct_item | enum_item | trait_item | type_item |
+union_item`. There is NO `function_item` arm, so a FREE FUNCTION declared at file
+level and called from inside `mod tests` still resolves against the caller's
+module. Split of the 562:
+
+- **460 are file-level functions MISQUALIFIED** — a resolved def exists at the
+  stripped fqn. Example, from today's own work:
+  `rust·senseid·tasks::handlers::scan_logic::tests·symlink_repository_links`
+  against the real `…::scan_logic·symlink_repository_links`.
+- 102 are genuinely declared INSIDE `mod tests` (no def at the stripped fqn) —
+  test helpers whose defs are not emitted. A DIFFERENT defect; do not conflate.
+
+FIX: a parallel `local_fns: HashMap<name, declaring_module>` populated from
+`function_item` in `collect_scope`, consulted on the bare-call path. Same shape
+as the type fix, same red-test pattern. ~460 recoverable in this repo; if the
+ratio holds across the 1,851 global, ~1,500.
+
+### THE JAVA EQUIVALENT — AND MY LOMBOK CLAIM WAS WRONG
+
+I told the user java's 40,520-edge bucket was Lombok-generated accessors. The
+review REFUTED that: it verified `setDateAdded`, `setTitle`, `getQuestionText`
+are HAND-WRITTEN, in source, and INDEXED. The real cause is `jvm.rs:87` minting
+the target under the CALLER's package when the receiver class is not in the
+import map — e.g. stub `java·com.rfs.admin.service.impl·OnboardingConfiguration·
+setDateAdded` against the real `java·com.rfs.admin.domain·OnboardingConfiguration·
+setDateAdded`. Measured 1,718 of 16,693 java stubs recover by same-class +
+same-method lookup in the same folder. Same defect class as the rust one:
+a derivation using the caller's position instead of the declaration's.
+
+Also measured by the review, and it kills any "def never arrives" argument:
+20,467 fqn nodes flipped `resolved` inside one six-minute window while the stub
+set fell 41,298 -> 32,129.
