@@ -161,7 +161,8 @@ pub(crate) async fn query_functions(
         let lexical = state.pg.search_functions_scoped(&ids, &term).await
             .map_err(|e| { tracing::warn!(error = %e, repo_id = %repo_id, "query_functions: search_functions_scoped failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
         let query_vec = embed_query(state, q).await;
-        fuse_semantic(state, query_vec.as_ref(), &ids, lexical, FUNCTION_KINDS, function_hit).await
+        fuse_semantic(state, query_vec.as_ref(), &ids, lexical, FUNCTION_KINDS, function_hit, &term)
+            .await
     } else {
         vec![]
     };
@@ -183,7 +184,7 @@ pub(crate) async fn query_types(
         let lexical = state.pg.search_types_scoped(&ids, &term).await
             .map_err(|e| { tracing::warn!(error = %e, repo_id = %repo_id, "query_types: search_types_scoped failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
         let query_vec = embed_query(state, q).await;
-        fuse_semantic(state, query_vec.as_ref(), &ids, lexical, TYPE_KINDS, type_hit).await
+        fuse_semantic(state, query_vec.as_ref(), &ids, lexical, TYPE_KINDS, type_hit, &term).await
     } else {
         vec![]
     };
@@ -316,11 +317,19 @@ pub(crate) async fn query_general(
         // (fuse_semantic/embed_query stay fail-open — a missing embedding degrades
         // to the lexical order, which is additive, not error-masking.)
         let query_vec = embed_query(state, q).await;
-        let fns =
-            fuse_semantic(state, query_vec.as_ref(), &ids, fns_lex, FUNCTION_KINDS, function_hit)
-                .await;
+        let fns = fuse_semantic(
+            state,
+            query_vec.as_ref(),
+            &ids,
+            fns_lex,
+            FUNCTION_KINDS,
+            function_hit,
+            &term,
+        )
+        .await;
         let tys =
-            fuse_semantic(state, query_vec.as_ref(), &ids, tys_lex, TYPE_KINDS, type_hit).await;
+            fuse_semantic(state, query_vec.as_ref(), &ids, tys_lex, TYPE_KINDS, type_hit, &term)
+                .await;
         // Promoted against `term`, not the raw `q`: `extract_search_term` is what
         // reduces "where are orphan stubs collected" to the symbol-ish token, so
         // it is the only form that can equal a symbol name. Applied after fusion
@@ -689,6 +698,53 @@ fn relevance(distance: f64) -> f64 {
     ((1.0 - distance).clamp(0.0, 1.0) * 1000.0).round() / 1000.0
 }
 
+/// Hold the lexical arm to the same distance bound as the semantic one, and give
+/// every hit a score.
+///
+/// The lexical arm is `ILIKE '%term%'` — a substring test with no notion of how
+/// good a hit is. Unscored, a coincidental collision entered the fused ranking
+/// with the same standing as the real answer: "what parses svelte script blocks"
+/// returned `assistant_text_blocks` twice and `barrier_unblocks_when_deps_complete`,
+/// all on the strength of `%blocks%`. Every searchable node carries an embedding,
+/// so the same bound that governs a semantic candidate can govern these too.
+///
+/// Two rules keep this from throwing away real answers:
+///
+/// - An **exact name match is never dropped** and scores 1.0. The caller named a
+///   symbol; if it exists, it is the answer, and no embedding distance may
+///   overrule that. (This is a statement about an exact match, not an invented
+///   number.)
+/// - A row with **no distance is kept and left unscored**. Dropping it would
+///   turn "cannot judge" into "irrelevant", and a lexical hit is real evidence
+///   the term occurs in that name. Reporting a made-up score would be worse.
+fn score_and_filter_lexical(
+    term: &str,
+    lexical: Vec<serde_json::Value>,
+    distances: &std::collections::HashMap<String, f64>,
+    max_distance: f64,
+) -> Vec<serde_json::Value> {
+    lexical
+        .into_iter()
+        .filter_map(|mut item| {
+            let exact = item["name"]
+                .as_str()
+                .is_some_and(|n| !term.is_empty() && n.eq_ignore_ascii_case(term));
+            if exact {
+                item["relevance"] = serde_json::json!(1.0);
+                return Some(item);
+            }
+            let Some(d) = item["id"].as_str().and_then(|id| distances.get(id)).copied() else {
+                return Some(item);
+            };
+            if d > max_distance {
+                return None;
+            }
+            item["relevance"] = serde_json::json!(relevance(d));
+            Some(item)
+        })
+        .collect()
+}
+
 /// A single ranked search hit: a de-duplication key (`id`) plus the JSON item
 /// returned to the caller unchanged.
 #[derive(Clone, Debug)]
@@ -810,10 +866,32 @@ async fn fuse_semantic(
     lexical: Vec<serde_json::Value>,
     kinds: &[&str],
     projector: fn(SemRow) -> serde_json::Value,
+    term: &str,
 ) -> Vec<serde_json::Value> {
     let Some(query_vec) = query_vec else {
         return lexical;
     };
+    // Hold the lexical arm to the same bound as the semantic one. Without this
+    // an `ILIKE '%blocks%'` collision entered the fused ranking unscored and
+    // indistinguishable from the real answer. Fail-open on a scoring error:
+    // an empty distance map leaves every lexical hit kept and unscored, which
+    // is the pre-existing behaviour, never a silent drop.
+    let lex_ids: Vec<uuid::Uuid> = lexical
+        .iter()
+        .filter_map(|h| h["id"].as_str().and_then(|s| s.parse::<uuid::Uuid>().ok()))
+        .collect();
+    let distances: std::collections::HashMap<String, f64> = match state
+        .pg
+        .embedding_distances(&lex_ids, query_vec)
+        .await
+    {
+        Ok(rows) => rows.into_iter().map(|(id, d)| (id.to_string(), d)).collect(),
+        Err(e) => {
+            tracing::warn!(error = %e, "fuse_semantic: embedding_distances failed — lexical hits left unscored");
+            std::collections::HashMap::new()
+        }
+    };
+    let lexical = score_and_filter_lexical(term, lexical, &distances, SEM_MAX_DISTANCE);
     let sem_rows = match state
         .pg
         .semantic_search_nodes(ids, query_vec, kinds, SEM_CANDIDATES, SEM_MAX_DISTANCE)
@@ -919,6 +997,64 @@ pub(crate) fn extract_search_term(q: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The lexical arm is a bare `ILIKE '%term%'`: it carries no notion of how
+    /// good a hit is, so every substring collision entered the fused list with
+    /// the same standing as a real match and no score to expose it. Measured
+    /// live: "what parses svelte script blocks" returned 18 results in which
+    /// `assistant_text_blocks` (twice) and `barrier_unblocks_when_deps_complete`
+    /// rode in purely on `%blocks%`.
+    ///
+    /// Every searchable node has an embedding (100% coverage over all 132,142
+    /// function/method/class/struct/interface/enum/type rows), so a lexical hit
+    /// can be held to the same distance bound as a semantic one — with one
+    /// exemption that must never be dropped.
+    #[test]
+    fn a_substring_collision_is_dropped_but_an_exact_name_match_is_never() {
+        let hit = |id: &str, name: &str| serde_json::json!({ "id": id, "name": name, "file_path": "src/x.rs" });
+        let lexical = vec![
+            hit("1", "extract_script_blocks"), // the real answer
+            hit("2", "assistant_text_blocks"), // rode in on `%blocks%`
+            hit("3", "parse_blocks_from_sfc"), // substring, genuinely close
+        ];
+        let distances: std::collections::HashMap<String, f64> =
+            [("1".into(), 0.88), ("2".into(), 0.71), ("3".into(), 0.22)].into_iter().collect();
+
+        let kept = score_and_filter_lexical("extract_script_blocks", lexical, &distances, 0.45);
+        let names: Vec<&str> = kept.iter().filter_map(|h| h["name"].as_str()).collect();
+
+        assert_eq!(
+            names,
+            vec!["extract_script_blocks", "parse_blocks_from_sfc"],
+            "the substring collision is dropped; the close hit survives"
+        );
+        assert_eq!(
+            kept[0]["relevance"].as_f64(),
+            Some(1.0),
+            "an EXACT name match is what the caller asked for by name — it is kept and scored 1.0 \
+             even at distance 0.88, because an embedding must never overrule an exact match"
+        );
+        assert_eq!(
+            kept[1]["relevance"].as_f64(),
+            Some(0.78),
+            "a surviving substring hit reports its real distance-derived score, not a placeholder"
+        );
+    }
+
+    /// Fail-open: with no distance for a row we cannot judge it, and silently
+    /// dropping it would turn "unknown" into "irrelevant" — a lexical hit is
+    /// real evidence the term occurs in that name.
+    #[test]
+    fn an_unscoreable_lexical_hit_is_kept_rather_than_judged() {
+        let lexical = vec![serde_json::json!({ "id": "9", "name": "some_fn" })];
+        let kept =
+            score_and_filter_lexical("other", lexical, &std::collections::HashMap::new(), 0.45);
+        assert_eq!(kept.len(), 1, "no distance available — keep it");
+        assert!(
+            kept[0].get("relevance").is_none_or(|v| v.is_null()),
+            "and report NO score rather than inventing one"
+        );
+    }
 
     /// Searching a symbol's EXACT name must return its definition first. RRF
     /// fuses a lexical ranking with a semantic one and neither knows that an

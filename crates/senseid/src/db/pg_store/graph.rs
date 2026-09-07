@@ -777,6 +777,39 @@ impl PgStore {
         Ok(rows)
     }
 
+    /// Cosine distance from `query_embedding` to each of `node_ids`.
+    ///
+    /// The lexical search arm matches by substring, so it returns rows carrying
+    /// no notion of how good a hit is. Every searchable node has an embedding,
+    /// which means the same measure that ranks a semantic candidate can score a
+    /// lexical one — and that is what lets a coincidental substring collision be
+    /// told apart from the real answer.
+    ///
+    /// A row with no embedding is simply absent from the result rather than
+    /// defaulted: the caller keeps such a hit unscored, because "cannot judge"
+    /// and "scored badly" are different answers.
+    pub async fn embedding_distances(
+        &self,
+        node_ids: &[uuid::Uuid],
+        query_embedding: &[f32],
+    ) -> Result<Vec<(uuid::Uuid, f64)>, String> {
+        if node_ids.is_empty() || query_embedding.is_empty() {
+            return Ok(Vec::new());
+        }
+        let vec_literal = vector_literal(query_embedding);
+        let rows: Vec<(uuid::Uuid, f64)> = sqlx_core::query_as::query_as(
+            "SELECT id, (embedding <=> $2::vector)::float8 AS distance
+               FROM sensei.nodes
+              WHERE id = ANY($1::uuid[]) AND embedding IS NOT NULL",
+        )
+        .bind(node_ids)
+        .bind(vec_literal)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(rows)
+    }
+
     /// Resolve nodes to their on-disk locations for snippet extraction, keyed by
     /// id. Returns `(id, abs_path, file_path, line_start, line_end, kind, name,
     /// signature)` — the repo's `abs_path` joined with the node `file_path` is the
