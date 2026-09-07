@@ -17,6 +17,11 @@ impl LanguageAdapter for KotlinAdapter {
         true
     }
 
+    /// Emits `extends`/`implements` (or trait impls) into `relations`.
+    fn emits_inheritance(&self) -> bool {
+        true
+    }
+
     fn fqn_output(
         &self,
         _abs_path: &str,

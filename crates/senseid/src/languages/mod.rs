@@ -101,6 +101,21 @@ pub trait LanguageAdapter: Send + Sync {
         false
     }
 
+    /// Whether this adapter emits INHERITANCE facts — `extends` / `implements` /
+    /// trait impls — into `FqnFileOutput::relations`.
+    ///
+    /// Declared separately, and reported, because `relations` being empty for a
+    /// file is ambiguous: a language with no producer looks exactly like a
+    /// language whose file simply declares no supertype. That ambiguity hid a
+    /// real gap for a long time — typescript, javascript and svelte emitted ZERO
+    /// while java, rust, python and kotlin emitted thousands, and the only way to
+    /// notice was to query the graph. A capability cell makes it self-reporting.
+    ///
+    /// Default `false`: an adapter with no relation producer must not claim one.
+    fn emits_inheritance(&self) -> bool {
+        false
+    }
+
     /// The language this one DELEGATES parsing to, if any.
     ///
     /// Frameworks compose over a host rather than inheriting from it: `svelte`
@@ -187,6 +202,10 @@ pub struct CapabilityReport {
     /// rules. Reported because it is the capability that separates a real
     /// resolution defect from a name coincidence, and it is NOT universal.
     pub scope: bool,
+    /// Whether this adapter emits `extends`/`implements`/trait-impl facts.
+    /// Reported for the same reason as `scope`: an empty `relations` list cannot
+    /// distinguish "no producer" from "nothing to report".
+    pub inheritance: bool,
 }
 
 /// The capability matrix for every registered language — a pure projection of
@@ -215,6 +234,13 @@ pub fn capability_matrix() -> Vec<CapabilityReport> {
             scope: a.resolves_in_scope()
                 || a.host_language().is_some_and(|h| {
                     all_adapters().iter().any(|x| x.language() == h && x.resolves_in_scope())
+                }),
+            // A framework inherits its host's relation capability for the same
+            // reason it inherits scope: svelte and vue hand their `<script>` to
+            // the TypeScript producer, so whatever it emits is what they emit.
+            inheritance: a.emits_inheritance()
+                || a.host_language().is_some_and(|h| {
+                    all_adapters().iter().any(|x| x.language() == h && x.emits_inheritance())
                 }),
         })
         .collect()
@@ -777,6 +803,76 @@ mod tests {
         assert!(
             without.contains(&"kotlin"),
             "kotlin has NO scope map and must not claim one: without={without:?}"
+        );
+    }
+
+    /// The INHERITANCE cell must be reported, honest, and inherited by a
+    /// framework from its host.
+    ///
+    /// It exists because an empty `relations` list is ambiguous — a language with
+    /// no producer looks exactly like a file that declares no supertype. That
+    /// ambiguity hid a real gap: typescript, javascript and svelte emitted ZERO
+    /// extends/implements while java (1,166+1,002), rust (753), python (389) and
+    /// kotlin (43+20) emitted thousands, and the only way to notice was to query
+    /// the graph.
+    ///
+    /// Probed, not just declared: each claimant parses a fixture WITH a supertype
+    /// and must produce a non-empty `relations`. A declaration can drift from the
+    /// implementation; a probe cannot.
+    #[test]
+    fn declared_inheritance_support_matches_a_real_probe() {
+        let m = capability_matrix();
+        let claims: Vec<&str> =
+            m.iter().filter(|r| r.inheritance).map(|r| r.language.as_str()).collect();
+
+        for lang in ["java", "rust", "python", "kotlin", "typescript", "javascript"] {
+            assert!(
+                claims.contains(&lang),
+                "{lang} emits relations and must declare it: {claims:?}"
+            );
+        }
+        // A framework INHERITS its host's capability — svelte/vue delegate their
+        // `<script>` to the TypeScript producer, so whatever it emits they emit.
+        for framework in ["svelte", "vue"] {
+            assert!(
+                claims.contains(&framework),
+                "{framework} delegates to typescript and must inherit the claim: {claims:?}"
+            );
+        }
+
+        // THE PROBE. Every claimant must actually produce a relation.
+        //
+        // Split by how the adapter resolves its context. java/kotlin/python are
+        // SOURCE-ONLY — the package comes from the file's own header — so a
+        // synthetic path works. typescript/javascript walk up for a
+        // `package.json`, so `fqn_output` on a synthetic path returns None by
+        // design; those go through the producer with an explicit context, which
+        // is the same code `fqn_output` calls.
+        let source_only: &[(&str, &str, &str)] = &[
+            ("java", "T.java", "package p;\nclass C extends B {}\n"),
+            ("kotlin", "T.kt", "package p\nclass C : B() {}\n"),
+            ("python", "t.py", "class C(B):\n    pass\n"),
+        ];
+        for (lang, file, src) in source_only {
+            let Some(a) = adapter_for_filename(file) else {
+                panic!("no adapter for {file}");
+            };
+            let out = a
+                .fqn_output(&format!("/tmp/probe/{file}"), file, src)
+                .unwrap_or_else(|| panic!("{lang}: fqn_output returned None for {file}"));
+            assert!(
+                !out.relations.is_empty(),
+                "{lang} claims inheritance but produced no relation for `{src}`"
+            );
+        }
+
+        let ts = crate::languages::typescript::typescript_fqn::produce_fqns(
+            "export class C extends B {}\n",
+            &fqn::FileFqnContext { package: "app".into(), module: "m".into() },
+        );
+        assert!(
+            !ts.relations.is_empty(),
+            "typescript/javascript claim inheritance but produced no relation"
         );
     }
 
