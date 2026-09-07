@@ -866,7 +866,11 @@ async fn semantic_search_nodes_ranks_by_cosine() {
     query[0] = 0.9;
     query[1] = 0.1;
 
-    let hits = s.semantic_search_nodes(&[fid], &query, &["function", "method"], 10).await.unwrap();
+    // Permissive bound (1.0 admits everything): this test is about ORDER, and
+    // `beta` is deliberately orthogonal, so a production-strength cutoff would
+    // correctly drop it. The bound itself is exercised by the test below.
+    let hits =
+        s.semantic_search_nodes(&[fid], &query, &["function", "method"], 10, 1.0).await.unwrap();
 
     let names: Vec<&str> = hits.iter().map(|(_, name, ..)| name.as_str()).collect();
     assert!(
@@ -880,12 +884,79 @@ async fn semantic_search_nodes_ranks_by_cosine() {
     );
 
     // A kind filter that matches neither node returns nothing.
-    let none = s.semantic_search_nodes(&[fid], &query, &["class"], 10).await.unwrap();
+    let none = s.semantic_search_nodes(&[fid], &query, &["class"], 10, 1.0).await.unwrap();
     assert!(none.is_empty(), "kind filter should exclude functions, got {none:?}");
 
     // Empty inputs are cheap no-ops, never a query.
-    assert!(s.semantic_search_nodes(&[], &query, &["function"], 10).await.unwrap().is_empty());
-    assert!(s.semantic_search_nodes(&[fid], &[], &["function"], 10).await.unwrap().is_empty());
+    assert!(s.semantic_search_nodes(&[], &query, &["function"], 10, 1.0).await.unwrap().is_empty());
+    assert!(s.semantic_search_nodes(&[fid], &[], &["function"], 10, 1.0).await.unwrap().is_empty());
+
+    s.delete_nodes_by_folder(&fid).await.unwrap();
+}
+
+#[tokio::test]
+async fn semantic_search_nodes_drops_neighbours_beyond_the_distance_bound() {
+    // An ANN query returns its k nearest neighbours HOWEVER FAR AWAY they are.
+    // Unbounded, a query naming a symbol that does not exist still comes back
+    // with a confident list of whatever happened to be closest — indistinguishable
+    // from a real match, which is the fabricate-on-miss shape this repo forbids.
+    //
+    // The bound is measured, not guessed. Over all 108,420 embedded function
+    // nodes in the live corpus, distance from one symbol to its genuine
+    // relatives runs 0.12–0.26, while the corpus p01 is 0.4865 and the median
+    // 0.8892. Related and unrelated are separated by a wide empty band, so a
+    // cutoff anywhere in it — 0.45 — keeps every real hit and admits under 1%
+    // of the corpus as candidates.
+    let s = pg_store().await;
+    let fid = create_test_folder(&s, &format!("semcut_{}", uuid::Uuid::new_v4())).await;
+
+    let dim = 384usize;
+    let mut e_near = vec![0.0f32; dim];
+    e_near[0] = 1.0;
+    // Orthogonal to the query direction → cosine distance ~1.0, far outside
+    // any plausible bound. This is the "nearest neighbour that is not a match".
+    let mut e_far = vec![0.0f32; dim];
+    e_far[1] = 1.0;
+
+    let id_near = s
+        .upsert_node(&fid, "function", "near", "n.rs", None, None, Some(1), Some(9))
+        .await
+        .unwrap();
+    let id_far =
+        s.upsert_node(&fid, "function", "far", "f.rs", None, None, Some(1), Some(9)).await.unwrap();
+    s.set_node_embedding(&id_near, &e_near).await.unwrap();
+    s.set_node_embedding(&id_far, &e_far).await.unwrap();
+
+    let mut query = vec![0.0f32; dim];
+    query[0] = 1.0;
+
+    let hits =
+        s.semantic_search_nodes(&[fid], &query, &["function", "method"], 10, 0.45).await.unwrap();
+    let names: Vec<&str> = hits.iter().map(|(_, name, ..)| name.as_str()).collect();
+    assert_eq!(
+        names,
+        vec!["near"],
+        "the orthogonal node is beyond the bound and must be dropped, not returned as a hit"
+    );
+
+    // The distance is REPORTED, not discarded. Ranking alone cannot tell a
+    // caller whether hit #1 is an exact match or the least-bad of a bad set;
+    // only the score can, so it has to survive the query.
+    assert!(
+        hits[0].5 < 0.01,
+        "an exact-direction match reports a near-zero distance, got {}",
+        hits[0].5
+    );
+
+    // A query pointing at nothing in the corpus returns NOTHING — the honest
+    // empty. Before the bound this returned both nodes.
+    let mut orthogonal = vec![0.0f32; dim];
+    orthogonal[2] = 1.0;
+    let none = s
+        .semantic_search_nodes(&[fid], &orthogonal, &["function", "method"], 10, 0.45)
+        .await
+        .unwrap();
+    assert!(none.is_empty(), "no node is within the bound — must return empty, got {none:?}");
 
     s.delete_nodes_by_folder(&fid).await.unwrap();
 }
