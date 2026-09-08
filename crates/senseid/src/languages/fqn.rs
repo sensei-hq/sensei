@@ -59,6 +59,86 @@ pub struct FqnDefinition {
     pub return_type: Option<String>,
 }
 
+/// What a call site SAW of its receiver, expressed as a graph KEY.
+///
+/// A method call is the one reference shape whose target no import can name:
+/// measured on the live graph, all 28,069 unresolved rust `calls` edges have a
+/// lowercase `target_name`. The producer had the receiver in hand at the moment
+/// it gave up and threw it away, so nothing downstream could finish the job.
+/// This carries it instead.
+///
+/// The payload is an FQN on purpose: a later resolver needs the node table and
+/// nothing else — no file path, no re-parse, no second pass over source.
+///
+/// There is deliberately no "probably" variant. A receiver whose type the file
+/// cannot name carries NO hint and the reference stays unresolved, because a
+/// plausible key the resolver cannot tell apart from a real one is exactly how
+/// ghost nodes get minted.
+///
+/// ONE variant, because only one shape is ever storable. Props are stamped only
+/// on an UNRESOLVED call (see `process.rs`), and the two producer arms that know
+/// the receiver's type outright — `self` inside an `impl`, a receiver bound to a
+/// first-party type — are the same two arms that already mint a target. A
+/// "receiver type" hint therefore attached only to calls that carried an fqn,
+/// and every one was computed and dropped on the floor.
+///
+/// Deleted rather than wired up. What it would buy is real — 2,142 rust `calls`
+/// edges in the live `sensei` folder point at a STUB (a target node with no
+/// file path), and the receiver's type is a second way to reach the definition
+/// those stubs stand in for. What it would cost is re-pointing calls that are
+/// ALREADY correctly resolved, which is a strictly worse failure than a stub:
+/// the edge would move only when the second lookup disagreed with the first,
+/// and nothing here can say which of the two was right. Reaching those 2,142
+/// wants a lookup that cannot wrong-merge, not a hint that can.
+///
+/// Reach, measured by replaying the rust producer over this repo's own 364 rust
+/// files with each file's real package and module (30,051 references emitted,
+/// 17,067 resolved / 12,984 not): 599 references gain a hint, and every one of
+/// them is unresolved — that is the new reach, references that had nothing but a
+/// bare method name. 12,385 unresolved references still carry none.
+///
+/// Every unresolved rust reference is a member call — the `field_expression`
+/// arm is the only one that yields an unresolved target — so that last bucket
+/// is entirely receivers this file cannot name: a chain deeper than one link
+/// (`a.b().c().d()`, where the inner hop is itself unresolved and so has no key
+/// to hand on) or an identifier the binding map never learned a type for
+/// (`let x = ctx.pg();`). Both are the same defect one level down and they
+/// unlock together: once a resolver can turn a hint into a concrete type,
+/// feeding that type back into the binding map is what reaches them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReceiverHint {
+    /// The receiver is the value another call returned — this is THAT call's
+    /// target FQN (`rust·senseid·tasks::executor·TaskContext·pg`). The resolver
+    /// reads the declared return type off that node ([`FqnDefinition::return_type`])
+    /// to learn the receiver's type, then finds the member under it.
+    ReturnOf(String),
+}
+
+impl ReceiverHint {
+    /// The `edges.props` key this variant is stored under.
+    ///
+    /// A call is emitted in one place and completed in another — the producer
+    /// has the receiver, the resolver has the graph — so the key name lives
+    /// HERE, next to the variant, rather than as string literals that can drift
+    /// apart across `process.rs` and `pg_store::graph`.
+    const PROPS_KEY: &'static str = "receiver_return_of";
+
+    /// Encode for `edges.props`. Only ever stamped on an UNRESOLVED call — a
+    /// resolved edge already names its target, and recording the receiver
+    /// alongside it would be a second answer to a question already answered.
+    pub fn to_props(&self) -> serde_json::Value {
+        let Self::ReturnOf(fqn) = self;
+        serde_json::json!({ Self::PROPS_KEY: fqn })
+    }
+
+    /// Decode from `edges.props`. `None` when the edge carries no hint, which
+    /// is every call emitted before this existed and every receiver the
+    /// producer could not name — both stay unresolved, as they are.
+    pub fn from_props(props: &serde_json::Value) -> Option<Self> {
+        props.get(Self::PROPS_KEY).and_then(|v| v.as_str()).map(|f| Self::ReturnOf(f.to_string()))
+    }
+}
+
 /// A reference (call-site) resolved to a target FQN. `target_fqn = None` means the
 /// producer could not resolve the target to a concrete symbol (e.g. a method call
 /// on a receiver whose type is out of the bounded binding→type scope, plan 0.7) —
@@ -73,6 +153,12 @@ pub struct FqnReference {
     pub target_name: String,
     /// True when the target resolves to an external dependency (`lib·…`).
     pub is_lib: bool,
+    /// What the call site saw of the receiver, when it saw something nameable.
+    /// `None` for every non-member call, for an external receiver type (no
+    /// definition in this graph to read a return type from), and for a receiver
+    /// the file genuinely cannot place. Inert to target matching — the emit path
+    /// still branches on `target_fqn`/`is_lib` alone.
+    pub receiver: Option<ReceiverHint>,
 }
 
 /// One type's relation to a supertype, resolved the same way a call target is.
@@ -189,6 +275,30 @@ mod tests {
     #[test]
     fn item_free_fn() {
         assert_eq!(item("rust", "senseid", "widget", "make"), "rust·senseid·widget·make");
+    }
+
+    /// The hint is written by the emit path and read by the resolver, in
+    /// different modules, days apart in the pipeline. What it carries is a
+    /// METHOD fqn to read a return type from, and the key name is the contract
+    /// that keeps the two ends agreeing across that gap.
+    #[test]
+    fn a_receiver_hint_round_trips_through_edge_props() {
+        let hint = ReceiverHint::ReturnOf("rust·senseid·tasks::executor·TaskContext·pg".into());
+        assert_eq!(
+            ReceiverHint::from_props(&hint.to_props()),
+            Some(hint.clone()),
+            "{hint:?} must survive the round trip through edges.props"
+        );
+        assert_eq!(
+            ReceiverHint::from_props(&serde_json::json!({})),
+            None,
+            "an edge with no hint yields no hint — never a defaulted one"
+        );
+        assert_eq!(
+            ReceiverHint::from_props(&serde_json::json!({ "relation": "trait_impl" })),
+            None,
+            "another writer's props key is not a receiver hint"
+        );
     }
 
     #[test]
