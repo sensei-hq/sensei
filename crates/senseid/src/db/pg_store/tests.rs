@@ -895,6 +895,105 @@ async fn semantic_search_nodes_ranks_by_cosine() {
 }
 
 #[tokio::test]
+async fn folder_completeness_propagates_incompleteness_up_the_tree() {
+    // The whole point of the view: a folder is complete only when everything
+    // BENEATH it is too. One unfinished file deep in a subtree must keep every
+    // ancestor incomplete, or a link phase fires against a partial graph.
+    //
+    // The recursion is over TREE STRUCTURE (parent_id), never over folder
+    // status — a view that read `folders.status` to decide `folders.status`
+    // would be self-referential and need a fixpoint loop to converge. This test
+    // pins that one pass suffices.
+    let s = pg_store().await;
+    let root_path = format!("/tmp/fc_{}", uuid::Uuid::new_v4());
+    let root_id = s.add_watch_root(&root_path, "fc", &serde_json::json!([])).await.unwrap();
+
+    // root ── child ── grandchild
+    let root = s.upsert_repo(&root_id, "fc-root", &root_path).await.unwrap();
+    let child = s.upsert_repo(&root_id, "fc-child", &format!("{root_path}/child")).await.unwrap();
+    let grand =
+        s.upsert_repo(&root_id, "fc-grand", &format!("{root_path}/child/grand")).await.unwrap();
+    for (c, p) in [(child, root), (grand, child)] {
+        sqlx_core::query::query("UPDATE sensei.folders SET parent_id = $2 WHERE id = $1")
+            .bind(c)
+            .bind(p)
+            .execute(s.pool())
+            .await
+            .unwrap();
+    }
+
+    macro_rules! complete {
+        ($id:expr) => {{
+            let r: (bool,) = sqlx_core::query_as::query_as(
+                "SELECT subtree_complete FROM sensei.folder_completeness WHERE id = $1",
+            )
+            .bind($id)
+            .fetch_one(s.pool())
+            .await
+            .unwrap();
+            r.0
+        }};
+    }
+
+    // Nothing walked yet: expected IS NULL everywhere ⇒ all incomplete.
+    // Never-walked must NOT read as complete — that is the fail-safe direction.
+    assert!(!complete!(root), "a never-walked root is not complete");
+    assert!(!complete!(grand), "a never-walked leaf is not complete");
+
+    // Walk them all. root and child hold no files of their own; grand holds one.
+    s.set_folder_expected_files(&root, 0).await.unwrap();
+    s.set_folder_expected_files(&child, 0).await.unwrap();
+    s.set_folder_expected_files(&grand, 1).await.unwrap();
+
+    // grand's single file is still undecided (no scan_state row at all) — which
+    // is exactly the case a bare "no undecided rows" check gets wrong.
+    assert!(!complete!(grand), "a folder short of its denominator is incomplete");
+    assert!(!complete!(child), "incompleteness propagates to the parent");
+    assert!(!complete!(root), "...and all the way to the root");
+
+    // Decide it.
+    s.upsert_scan_state(&grand, "a.rs", 1, "h").await.unwrap();
+    assert!(complete!(grand), "denominator met");
+    assert!(complete!(child), "an empty folder whose subtree is done is done");
+    assert!(complete!(root), "completeness reaches the root in ONE pass, no loop");
+
+    s.remove_watch_root(&root_id).await.ok();
+}
+
+#[tokio::test]
+async fn folder_completeness_counts_a_deliberate_skip_as_decided() {
+    // A binary or non-UTF-8 file can never be indexed, and it is fingerprinted
+    // with a `skip_reason` precisely so it stops being re-enqueued. If the view
+    // treated a skip as undecided, any folder holding one would never complete
+    // and the whole subtree above it would be stuck forever.
+    let s = pg_store().await;
+    let root_path = format!("/tmp/fcskip_{}", uuid::Uuid::new_v4());
+    let root_id = s.add_watch_root(&root_path, "fcs", &serde_json::json!([])).await.unwrap();
+    let f = s.upsert_repo(&root_id, "fcs-f", &root_path).await.unwrap();
+
+    s.set_folder_expected_files(&f, 1).await.unwrap();
+    sqlx_core::query::query(
+        "INSERT INTO sensei.scan_state (folder_id, file_path, mtime, content_hash, skip_reason)
+         VALUES ($1, 'logo.png', 1, 'h', 'binary_content')",
+    )
+    .bind(f)
+    .execute(s.pool())
+    .await
+    .unwrap();
+
+    let r: (bool,) = sqlx_core::query_as::query_as(
+        "SELECT subtree_complete FROM sensei.folder_completeness WHERE id = $1",
+    )
+    .bind(f)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert!(r.0, "a skip is a verdict — the folder is decided, not stuck");
+
+    s.remove_watch_root(&root_id).await.ok();
+}
+
+#[tokio::test]
 async fn folder_expected_files_round_trips_and_is_the_completeness_denominator() {
     // The denominator for folder completeness, persisted at walk time.
     //
