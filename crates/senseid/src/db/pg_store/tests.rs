@@ -896,6 +896,76 @@ async fn semantic_search_nodes_ranks_by_cosine() {
 }
 
 #[tokio::test]
+async fn a_lib_node_records_the_language_that_minted_it() {
+    // Every one of the 21,937 lib nodes in the live graph has `language = NULL`,
+    // because `upsert_lib_node_by_fqn` never set the column. That absence is not
+    // cosmetic: it is what blocks the last wrong-merge guard on the receiver
+    // resolver. A bare return type (`use reqwest::Client; fn f() -> Client`)
+    // could be refused when a lib symbol of that name is in scope — but with no
+    // language on the lib node the guard is unavoidably cross-language and would
+    // refuse a Rust `Session` because a PYTHON package exports that name.
+    // Measured: 23 first-party rust type names collide this way project-wide
+    // (Action, Column, Config, Gateway, Message, Node, Plan, Request, Session,
+    // Table, Transport, ...).
+    let s = pg_store().await;
+    let fid = create_test_folder(&s, &format!("liblang_{}", uuid::Uuid::new_v4())).await;
+
+    let rust_id = s
+        .upsert_lib_node_by_fqn(
+            &fid,
+            "lib·serde_json·serde_json·Value",
+            "Value",
+            "serde_json",
+            Some("rust"),
+        )
+        .await
+        .unwrap();
+    let py_id = s
+        .upsert_lib_node_by_fqn(
+            &fid,
+            "lib·pydantic·pydantic·Value",
+            "Value",
+            "pydantic",
+            Some("python"),
+        )
+        .await
+        .unwrap();
+
+    macro_rules! lang {
+        ($id:expr) => {{
+            let r: (Option<String>,) =
+                sqlx_core::query_as::query_as("SELECT language FROM sensei.nodes WHERE id = $1")
+                    .bind($id)
+                    .fetch_one(s.pool())
+                    .await
+                    .unwrap();
+            r.0
+        }};
+    }
+    assert_eq!(lang!(rust_id).as_deref(), Some("rust"));
+    assert_eq!(
+        lang!(py_id).as_deref(),
+        Some("python"),
+        "two libs exporting the SAME symbol name must be distinguishable by \
+         language — that is the whole point of recording it"
+    );
+
+    // The package CONTAINER is language-scoped too. Without it, a `lib·serde_json`
+    // container minted from rust and one minted from a TS file of the same name
+    // would be one row with no way to tell which language's dependency it is.
+    let container: (Option<String>,) = sqlx_core::query_as::query_as(
+        "SELECT language FROM sensei.nodes WHERE folder_id = $1 AND fqn = 'lib·serde_json'",
+    )
+    .bind(fid)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(container.0.as_deref(), Some("rust"), "the package container carries it too");
+
+    s.delete_nodes_by_folder(&fid).await.ok();
+}
+
+#[tokio::test]
 async fn folder_completeness_propagates_incompleteness_up_the_tree() {
     // The whole point of the view: a folder is complete only when everything
     // BENEATH it is too. One unfinished file deep in a subtree must keep every
@@ -2339,7 +2409,8 @@ async fn lib_node_by_fqn() {
     let fid = create_test_folder(&s, &format!("lib_{}", uuid::Uuid::new_v4())).await;
     let fqn = "lib·serde_json·serde_json·from_str";
 
-    let a = s.upsert_lib_node_by_fqn(&fid, fqn, "from_str", "serde_json").await.unwrap();
+    let a =
+        s.upsert_lib_node_by_fqn(&fid, fqn, "from_str", "serde_json", Some("rust")).await.unwrap();
     let (kind, resolved, fp, pkg): (String, bool, Option<String>, Option<String>) = query_as(
         "SELECT kind::text, resolved, file_path, props->>'package' FROM sensei.nodes WHERE id=$1",
     )
@@ -2353,7 +2424,8 @@ async fn lib_node_by_fqn() {
     assert_eq!(pkg.as_deref(), Some("serde_json"), "grouped by package in props");
 
     // A second reference to the same external fqn shares the one node.
-    let b = s.upsert_lib_node_by_fqn(&fid, fqn, "from_str", "serde_json").await.unwrap();
+    let b =
+        s.upsert_lib_node_by_fqn(&fid, fqn, "from_str", "serde_json", Some("rust")).await.unwrap();
     assert_eq!(a, b, "repeated external references share one lib node");
     let (n,): (i64,) = query_as(
             "SELECT count(*) FROM sensei.nodes WHERE folder_id=$1 AND kind='lib_symbol'::sensei.node_kind")
@@ -13495,14 +13567,22 @@ async fn an_unreferenced_lib_node_is_collected_and_a_referenced_one_survives() {
 
     // Referenced: a lib symbol with an edge pointing at it.
     let kept = s
-        .upsert_lib_node_by_fqn(&fid, "lib·serde·serde·Serialize", "Serialize", "serde")
+        .upsert_lib_node_by_fqn(
+            &fid,
+            "lib·serde·serde·Serialize",
+            "Serialize",
+            "serde",
+            Some("rust"),
+        )
         .await
         .unwrap();
     s.insert_edge(&fid, &src, Some(&kept), None, None, "calls").await.unwrap();
 
     // Orphan: minted and never pointed at — the shape a wrong derivation leaves.
-    let orphan =
-        s.upsert_lib_node_by_fqn(&fid, "lib·typo·typo·Nothing", "Nothing", "typo").await.unwrap();
+    let orphan = s
+        .upsert_lib_node_by_fqn(&fid, "lib·typo·typo·Nothing", "Nothing", "typo", Some("rust"))
+        .await
+        .unwrap();
 
     let removed = s.prune_unreferenced_lib_nodes_scoped(&[fid]).await.unwrap();
     assert!(removed >= 1, "the orphan must be collected, got {removed}");
