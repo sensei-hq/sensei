@@ -887,21 +887,25 @@ impl PgStore {
         fqn: &str,
         name: &str,
         package: &str,
+        language: Option<&str>,
     ) -> Result<uuid::Uuid, String> {
         // One `lib_package` container per dependency (fqn = `lib·<package>`).
         let pkg_fqn = format!("lib{}{}", crate::languages::fqn::SEP, package);
         let container: (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "INSERT INTO sensei.nodes
-                 (folder_id, fqn, kind, name, resolved, props)
+                 (folder_id, fqn, kind, name, resolved, props, language)
              VALUES($1, $2, 'lib_package'::sensei.node_kind, $3, true,
-                    jsonb_build_object('package', $3::text))
+                    jsonb_build_object('package', $3::text), $4)
              ON CONFLICT (folder_id, fqn) WHERE fqn IS NOT NULL DO UPDATE
-               SET resolved = true, modified_at = now()
+               SET resolved = true,
+                   language = COALESCE(nodes.language, EXCLUDED.language),
+                   modified_at = now()
              RETURNING id",
         )
         .bind(folder_id)
         .bind(&pkg_fqn)
         .bind(package)
+        .bind(language)
         .fetch_one(&self.pool)
         .await
         .map_err(|e| e.to_string())?;
@@ -909,13 +913,16 @@ impl PgStore {
         // The symbol, parented under its package container.
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "INSERT INTO sensei.nodes
-                 (folder_id, fqn, kind, name, resolved, parent_id, props)
+                 (folder_id, fqn, kind, name, resolved, parent_id, props, language)
              VALUES($1, $2, 'lib_symbol'::sensei.node_kind, $3, true, $4,
-                    jsonb_build_object('package', $5::text))
+                    jsonb_build_object('package', $5::text), $6)
              ON CONFLICT (folder_id, fqn) WHERE fqn IS NOT NULL DO UPDATE
                SET resolved    = true,
                    parent_id   = COALESCE(EXCLUDED.parent_id, nodes.parent_id),
                    props       = nodes.props || jsonb_build_object('package', $5::text),
+                   -- First writer wins: a lib fqn is language-scoped by
+                   -- construction, so a later NULL must not erase it.
+                   language    = COALESCE(nodes.language, EXCLUDED.language),
                    modified_at = now()
              RETURNING id",
         )
@@ -924,6 +931,7 @@ impl PgStore {
         .bind(name)
         .bind(container.0)
         .bind(package)
+        .bind(language)
         .fetch_one(&self.pool)
         .await
         .map_err(|e| e.to_string())?;
@@ -1580,7 +1588,8 @@ impl PgStore {
             TargetRef::Lib { fqn, name, package } => {
                 #[cfg(test)]
                 crate::graph_facts::arm_tally::bump(fact.kind, "lib");
-                let id = self.upsert_lib_node_by_fqn(folder_id, fqn, name, package).await?;
+                let id =
+                    self.upsert_lib_node_by_fqn(folder_id, fqn, name, package, language).await?;
                 (Some(id), None)
             }
             TargetRef::Internal { fqn, name, on_miss } => match known.get(fqn) {
