@@ -192,10 +192,18 @@ committed by D1–D3 (fields as symbols with declared types; parameters as typed
 props; return types carried; relations from the walk). The fact set is therefore
 sufficient — and that is a consistency check on the design, not a coincidence.
 
-The one fact this exposes as load-bearing that was previously treated as
-optional: **`self.field.method()` call edges.** They are impossible today (0
-field nodes in any language) and half the table above depends on them. This
-raises field types from "nice for G1" to a prerequisite for pattern detection.
+One consequence worth stating plainly, because it changes sequencing:
+
+`self.field.method()` call edges cannot be produced BY THE CURRENT INDEXER at
+all. There are zero field nodes in any language, so nothing records that `pg` is
+a `PgStore`, and there is nothing to look `method` up on. This is a statement
+about the code being replaced, not a limitation of the design.
+
+v2 must produce them: four of the seven patterns above (adapter, decorator,
+strategy, singleton) key on a field's declared type. D2 and D3 already commit to
+fields as symbols carrying their type, so v2 satisfies this — but it means field
+support is a PREREQUISITE for pattern detection, not an optional extra to add
+later.
 
 ## What is kept, and why
 
