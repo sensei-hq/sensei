@@ -996,6 +996,7 @@ pub(crate) mod python_fqn {
                     target_fqn,
                     target_name,
                     is_lib,
+                    receiver: None,
                 });
             }
             collect_calls(&child, src, ctx, imports, class, bindings, caller_fqn, seen, out);

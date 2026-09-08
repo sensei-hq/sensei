@@ -1340,6 +1340,7 @@ pub(crate) mod typescript_fqn {
                         target_fqn,
                         target_name,
                         is_lib,
+                        receiver: None,
                     });
                 }
             }

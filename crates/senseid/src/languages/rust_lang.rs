@@ -1,6 +1,6 @@
 use super::LanguageAdapter;
 use super::common::field_text;
-use super::fqn::{self, FileFqnContext, FqnDefinition, FqnFileOutput, FqnReference};
+use super::fqn::{self, FileFqnContext, FqnDefinition, FqnFileOutput, FqnReference, ReceiverHint};
 use crate::ir::{
     ClassKind, IRBase, IRClass, IRConstant, IRFunction, IRImport, IRMethod, IRModule, IRParam,
     IRParsedFile, Visibility,
@@ -901,6 +901,18 @@ fn collect_doc_comments(node: &Node, src: &[u8]) -> Option<String> {
 /// lifetimes, `dyn`/`impl`, and unwrapping smart-pointer wrappers (`Box<dyn T>`
 /// → `T`). Returns the final path's last segment (`crate::a::Widget` → `Widget`).
 fn base_type_name(text: &str) -> Option<String> {
+    base_type_path(text)?.pop()
+}
+
+/// Peel a type expression down past references, `mut` and lifetimes.
+///
+/// Its own function because THREE readers need the same peel and one of them
+/// used to do it by hand: `strip_fallible` normalised with
+/// `trim_start_matches('&')`, which left the `mut` on `&mut Result<T, E>`, so
+/// the wrapper-name test `leaf == "Result"` failed and the unwrap never ran —
+/// `&mut Result<PgStore, E>` named `Result` as the receiver type where
+/// `&Result<PgStore, E>` correctly named `PgStore`.
+fn peel_refs(text: &str) -> &str {
     let mut t = text.trim();
     loop {
         if let Some(r) = t.strip_prefix('&') {
@@ -918,31 +930,205 @@ fn base_type_name(text: &str) -> Option<String> {
         }
         break;
     }
-    if let Some(r) = t.strip_prefix("dyn ") {
-        t = r.trim();
+    t
+}
+
+/// [`base_type_name`]'s answer with the MODULE PATH still attached, as written
+/// (`&crate::a::Widget` → `["crate", "a", "Widget"]`). Never empty.
+///
+/// The path is what says WHICH `Widget` is meant — measured live, one folder
+/// holds twenty nodes named `PgStore` — so the resolver that turns a return type
+/// into a node needs it, and the leaf-only readers get it by taking the last
+/// segment. One peel, one wrapper list, one validity rule for both.
+fn base_type_path(text: &str) -> Option<Vec<String>> {
+    let t = peel_refs(text);
+    let t = if let Some(r) = t.strip_prefix("dyn ") {
+        r.trim()
     } else if let Some(r) = t.strip_prefix("impl ") {
-        t = r.trim();
-    }
-    for wrapper in ["Box", "Rc", "Arc", "RefCell", "Cell", "Mutex", "RwLock"] {
-        if let Some(rest) = t.strip_prefix(wrapper)
-            && let Some(inner) = rest.trim().strip_prefix('<').and_then(|s| s.strip_suffix('>'))
-        {
-            return base_type_name(inner.trim());
+        r.trim()
+    } else {
+        t
+    };
+    // Smart-pointer unwrap, matched on the path's LAST SEGMENT. Matching the
+    // whole text (`t.strip_prefix("Arc")`) missed every path-qualified wrapper:
+    // `std::sync::Arc<PgStore>` reduced to `Arc` and `Arc<tokio::sync::Mutex<T>>`
+    // to `Mutex`, so a receiver typed that way named the WRAPPER — a confidently
+    // wrong type rather than an unresolved one.
+    if let Some(open) = t.find('<')
+        && let Some(inner) = t.strip_suffix('>')
+    {
+        // No peel on `head`: `t` is already peeled above, so nothing here can
+        // carry a `&`/`mut`/lifetime prefix.
+        let head = t[..open].trim();
+        let leaf = head.rsplit("::").next().unwrap_or(head).trim();
+        if ["Box", "Rc", "Arc", "RefCell", "Cell", "Mutex", "RwLock"].contains(&leaf) {
+            return base_type_path(inner[open + 1..].trim());
         }
     }
     let base = t.split('<').next().unwrap_or(t).trim();
-    let name = base.rsplit("::").next().unwrap_or(base).trim();
-    let name = name.trim_end_matches(|c: char| !(c.is_alphanumeric() || c == '_'));
-    if name.is_empty() || !name.chars().next().unwrap().is_alphabetic() {
+    let mut segs: Vec<&str> = base.split("::").map(str::trim).collect();
+    let leaf = segs.pop()?.trim_end_matches(|c: char| !is_ident_char(c));
+    // An identifier, whole. Accepting anything that merely STARTS alphabetic let
+    // a function-pointer type through as a type name (`fn(u8) -> u8`), which is
+    // a string no lookup can mean.
+    if !leaf.chars().next().is_some_and(char::is_alphabetic) || !leaf.chars().all(is_ident_char) {
         return None;
     }
-    Some(name.to_string())
+    let mut path: Vec<String> =
+        segs.into_iter().filter(|s| !s.is_empty()).map(str::to_string).collect();
+    path.push(leaf.to_string());
+    Some(path)
+}
+
+/// What a declared return type names, keeping everything the text said about
+/// WHERE the type lives. A bare leaf is not the same answer as a qualified path
+/// and the resolver must not treat them alike: reducing
+/// `reqwest::blocking::Client` to `Client` turns a dependency's type into a
+/// lookup among first-party nodes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ReceiverType {
+    /// `Self` — whatever type the returning method is defined on. The resolver
+    /// reads that off the node's parent, which is a fact the graph holds and
+    /// this text does not.
+    SelfType,
+    /// A path-qualified name, module chain crate-relative (empty = crate root).
+    ///
+    /// Always the CURRENT crate's module chain, because `crate::`, the crate's
+    /// own name and a local module are the only internal path roots
+    /// (`classify_segments` owns that rule). A path rooted at a DEPENDENCY lands
+    /// here too and that is deliberate: it names a module the crate does not
+    /// have, so the lookup finds nothing, which is the correct answer for a type
+    /// with no definition in this graph.
+    Qualified { module: String, name: String },
+    /// A bare name with no path at all. Says nothing about which type of that
+    /// name is meant, so it is usable only where the name is unambiguous.
+    Bare(String),
+}
+
+/// What a declared RETURN TYPE says the receiver of a chained call is —
+/// `ctx.pg().count_edges()` needs `pg`'s return type to know which
+/// `count_edges` is meant. `None` when it names no concrete type, which leaves
+/// the call unresolved.
+///
+/// Layered ON TOP of [`base_type_path`] rather than folded into it. That helper
+/// has three owners (the IR walk's parameter binding, the fqn producer, and
+/// this) and deliberately answers a different question: it strips `dyn `/`impl `
+/// and returns the TRAIT name, which `rust_dyn_receiver_stays_unqualified`
+/// depends on. Only in RETURN position does an opaque type mean "no receiver".
+///
+/// The rules this adds:
+///
+/// * **Opaque and generic types are a miss.** `-> impl Trait`, `-> Box<dyn T>`
+///   and a bare parameter `T` name no type a member can be looked up under.
+/// * **`Result<T, E>` / `Option<T>` unwrap to `T`.** Not deref-transparent the
+///   way `Arc`/`Box` are, so this is a rule about the *chain*: the producer
+///   only records a receiver hint for a DIRECT call receiver and never for a
+///   `?`/`.await` one, and the member still has to exist on `T` for the lookup
+///   to succeed — a `Result` method that `T` does not have simply misses.
+/// * **`Self` is deferred, not substituted.** Only the graph knows what type the
+///   returning method sits on.
+/// * **`self::`/`super::` are a miss.** They are relative to the file's own
+///   module, which the resolver reading this cannot recover from an fqn (an
+///   empty module segment is dropped, so segment counts are ambiguous). Measured
+///   over this repo's 3,932 declared return types, ZERO are written that way, so
+///   the honest miss costs nothing that exists.
+pub(crate) fn concrete_receiver_type(return_type: &str, package: &str) -> Option<ReceiverType> {
+    let t = return_type.trim();
+    if t.is_empty() || mentions_opaque_type(t) {
+        return None;
+    }
+    let mut path = base_type_path(strip_fallible(t))?;
+    let name = path.pop()?;
+    if name == "Self" {
+        return Some(ReceiverType::SelfType);
+    }
+    // A single uppercase letter (optionally numbered) is the universal spelling
+    // of a generic parameter. It is a hole in the signature, not a type.
+    let mut chars = name.chars();
+    if chars.next().is_some_and(|c| c.is_ascii_uppercase()) && chars.all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    let Some(root) = path.first() else {
+        return Some(ReceiverType::Bare(name));
+    };
+    match root.as_str() {
+        "crate" => Some(ReceiverType::Qualified { module: path[1..].join("::"), name }),
+        "self" | "super" => None,
+        // The crate's own name is `crate::` spelled out, and rustc accepts both.
+        r if rust_fqn::norm_crate(r) == rust_fqn::norm_crate(package) => {
+            Some(ReceiverType::Qualified { module: path[1..].join("::"), name })
+        }
+        _ => Some(ReceiverType::Qualified { module: path.join("::"), name }),
+    }
+}
+
+/// True when the type expression mentions `impl` or `dyn` as a TOKEN anywhere.
+///
+/// Checked on the raw text rather than after peeling, because the keyword can
+/// sit at any depth (`Result<Box<dyn Store>, E>`) and a peel that reached it
+/// would be a second copy of [`base_type_name`]'s loop.
+fn mentions_opaque_type(text: &str) -> bool {
+    ["impl", "dyn"].iter().any(|kw| {
+        text.match_indices(kw).any(|(i, _)| {
+            let before_ok = i == 0 || !is_ident_char(text[..i].chars().next_back().unwrap());
+            let after_ok =
+                text[i + kw.len()..].chars().next().is_none_or(|c| !is_ident_char(c) && c != '<');
+            before_ok && after_ok
+        })
+    })
+}
+
+fn is_ident_char(c: char) -> bool {
+    c.is_alphanumeric() || c == '_'
+}
+
+/// Peel `Result<T, E>` / `Option<T>` down to `T`, repeatedly.
+///
+/// Matches the path's LAST SEGMENT so `anyhow::Result<T>` and `std::io::Result<T>`
+/// peel too, and splits the argument list at depth zero so the comma inside
+/// `Result<HashMap<String, PgStore>, E>` is not mistaken for the separator.
+fn strip_fallible(text: &str) -> &str {
+    let mut t = text.trim();
+    while let (Some(open), true) = (t.find('<'), t.ends_with('>')) {
+        let head = t[..open].trim();
+        let leaf = peel_refs(head).rsplit("::").next().unwrap_or(head).trim();
+        if leaf != "Result" && leaf != "Option" {
+            break;
+        }
+        t = first_type_arg(t[open + 1..t.len() - 1].trim());
+    }
+    t
+}
+
+/// The first argument of a generic argument list, split at nesting depth zero.
+///
+/// The `>` of a `->` closes nothing. Counting it as a closer drove the depth
+/// negative, so the depth-zero comma after a function-pointer argument was never
+/// seen and the whole list came back as one argument
+/// (`Result<fn(u8) -> u8, E>` → `fn(u8) -> u8, E`).
+fn first_type_arg(args: &str) -> &str {
+    let mut depth = 0i32;
+    let mut prev = ' ';
+    for (i, c) in args.char_indices() {
+        match c {
+            '<' | '(' | '[' => depth += 1,
+            '>' if prev == '-' => {}
+            '>' | ')' | ']' => depth -= 1,
+            ',' if depth == 0 => return args[..i].trim(),
+            _ => {}
+        }
+        prev = c;
+    }
+    args.trim()
 }
 
 pub(crate) mod rust_fqn {
     use super::*;
 
-    const RUST_LANG: &str = "rust";
+    /// The `<lang>` segment of every rust FQN. `pub(crate)` because the resolver
+    /// mints the same keys this producer does and must spell the language the
+    /// same way — two literals is two chances to drift.
+    pub(crate) const RUST_LANG: &str = "rust";
 
     /// Enclosing `impl` while walking: the Self type, its resolved canonical module
     /// (the anchoring rule — a method anchors on where its TYPE is defined, not the
@@ -1502,18 +1688,19 @@ pub(crate) mod rust_fqn {
             }
             if child.kind() == "call_expression"
             && let Some(func) = child.child_by_field_name("function")
-            && let Some((target_fqn, is_lib, target_name)) =
-                resolve_call(&func, src, ctx, module, scope, impl_ctx, bindings)
+            && let Some(target) = resolve_call(&func, src, ctx, module, scope, impl_ctx, bindings)
             // Dedup on the resolved target (so `A::new()` and `B::new()` in one fn
             // both survive), not the bare name.
-            && seen.insert(target_fqn.clone().unwrap_or_else(|| format!("?{target_name}")))
+            && seen.insert(target.dedup_key())
             {
+                let CallTarget { fqn: target_fqn, is_lib, name: target_name, receiver } = target;
                 out.refs.push(FqnReference {
                     caller_fqn: caller_fqn.to_string(),
                     caller_line: child.start_position().row as u32 + 1,
                     target_fqn,
                     target_name,
                     is_lib,
+                    receiver,
                 });
             }
             collect_fqn_calls(
@@ -1522,9 +1709,56 @@ pub(crate) mod rust_fqn {
         }
     }
 
-    /// Resolve one call's `function` node to `(target_fqn, is_lib, target_name)`.
-    /// `target_fqn = None` = deliberately unresolved (out-of-0.7 receiver) so it never
-    /// wrong-merges. Returns None to SKIP a call (denylisted / unsupported form).
+    /// One call site's resolved target.
+    ///
+    /// Was a `(Option<String>, bool, String)` tuple; it grew a fourth member
+    /// (`receiver`) that only one arm sets, and a four-member tuple threaded
+    /// through a recursive resolver is where a positional swap hides.
+    struct CallTarget {
+        /// `None` = deliberately unresolved (a receiver outside the bounded 0.7
+        /// scope), so the reference never wrong-merges.
+        fqn: Option<String>,
+        is_lib: bool,
+        /// Bare last segment — always known, even when `fqn` is not.
+        name: String,
+        receiver: Option<ReceiverHint>,
+    }
+
+    impl CallTarget {
+        fn resolved(fqn: String, is_lib: bool, name: String) -> Self {
+            Self { fqn: Some(fqn), is_lib, name, receiver: None }
+        }
+
+        fn unresolved(name: String) -> Self {
+            Self { fqn: None, is_lib: false, name, receiver: None }
+        }
+
+        fn on(mut self, receiver: Option<ReceiverHint>) -> Self {
+            self.receiver = receiver;
+            self
+        }
+
+        /// Per-caller dedup key. A resolved target keys on its fqn, so
+        /// `A::new()` and `B::new()` in one fn both survive.
+        ///
+        /// An UNRESOLVED target keys on its receiver hint too. Without that,
+        /// `a.mk().run()` and `b.mk().run()` in one function collapse onto one
+        /// reference carrying whichever receiver the walk reached first — and
+        /// once a later pass resolves hints, that one reference stands for both
+        /// call sites and would attribute a call to a method the other receiver
+        /// does not have.
+        fn dedup_key(&self) -> String {
+            match (&self.fqn, &self.receiver) {
+                (Some(f), _) => f.clone(),
+                (None, Some(ReceiverHint::ReturnOf(f))) => format!("?return-of:{f}:{}", self.name),
+                (None, None) => format!("?{}", self.name),
+            }
+        }
+    }
+
+    /// Resolve one call's `function` node. Returns None to SKIP a call
+    /// (denylisted / unsupported form) — distinct from a [`CallTarget`] whose
+    /// `fqn` is None, which is a call we saw and deliberately left unresolved.
     fn resolve_call(
         func: &Node,
         src: &[u8],
@@ -1533,7 +1767,7 @@ pub(crate) mod rust_fqn {
         scope: &FileScope,
         impl_ctx: Option<&ImplCtx>,
         bindings: &HashMap<String, String>,
-    ) -> Option<(Option<String>, bool, String)> {
+    ) -> Option<CallTarget> {
         match func.kind() {
             "identifier" => {
                 let name = source_text(func, src);
@@ -1543,20 +1777,24 @@ pub(crate) mod rust_fqn {
                 if let Some(full) = scope.use_map.get(&name) {
                     let segs: Vec<&str> = full.split("::").collect();
                     let (f, is_lib) = classify_segments(&segs, ctx, scope).to_fqn(ctx);
-                    Some((Some(f), is_lib, name))
+                    Some(CallTarget::resolved(f, is_lib, name))
                 } else if RUST_PRELUDE_ITEMS.contains(&name.as_str()) {
                     // In scope everywhere without a `use`; naming std also merges
                     // every caller's reference onto one node.
-                    Some((Some(fqn::lib("std", "prelude", &name)), true, name))
+                    Some(CallTarget::resolved(fqn::lib("std", "prelude", &name), true, name))
                 } else if let Some(declared_in) = scope.local_fns.get(&name) {
                     // The module that DECLARES the fn, not the caller's position.
-                    Some((
-                        Some(fqn::item(RUST_LANG, &ctx.package, declared_in, &name)),
+                    Some(CallTarget::resolved(
+                        fqn::item(RUST_LANG, &ctx.package, declared_in, &name),
                         false,
                         name,
                     ))
                 } else {
-                    Some((Some(fqn::item(RUST_LANG, &ctx.package, module, &name)), false, name))
+                    Some(CallTarget::resolved(
+                        fqn::item(RUST_LANG, &ctx.package, module, &name),
+                        false,
+                        name,
+                    ))
                 }
             }
             "scoped_identifier" => {
@@ -1570,14 +1808,8 @@ pub(crate) mod rust_fqn {
                     && segs[0] == "Self"
                     && let Some(ic) = impl_ctx
                 {
-                    return Some((
-                        Some(fqn::method(
-                            RUST_LANG,
-                            &ctx.package,
-                            &ic.type_module,
-                            &ic.type_name,
-                            &leaf,
-                        )),
+                    return Some(CallTarget::resolved(
+                        fqn::method(RUST_LANG, &ctx.package, &ic.type_module, &ic.type_name, &leaf),
                         false,
                         leaf,
                     ));
@@ -1595,10 +1827,10 @@ pub(crate) mod rust_fqn {
                         }
                     };
                     if is_ext {
-                        Some((Some(fqn::lib(&pkg, &mdl, &leaf)), true, leaf))
+                        Some(CallTarget::resolved(fqn::lib(&pkg, &mdl, &leaf), true, leaf))
                     } else {
-                        Some((
-                            Some(fqn::method(RUST_LANG, &pkg, &mdl, type_name, &leaf)),
+                        Some(CallTarget::resolved(
+                            fqn::method(RUST_LANG, &pkg, &mdl, type_name, &leaf),
                             false,
                             leaf,
                         ))
@@ -1607,7 +1839,7 @@ pub(crate) mod rust_fqn {
                     let pc = classify_segments(&segs, ctx, scope);
                     let leaf = pc.leaf().to_string();
                     let (f, is_lib) = pc.to_fqn(ctx);
-                    Some((Some(f), is_lib, leaf))
+                    Some(CallTarget::resolved(f, is_lib, leaf))
                 }
             }
             "field_expression" => {
@@ -1619,38 +1851,48 @@ pub(crate) mod rust_fqn {
                 let recv = func.child_by_field_name("value")?;
                 let recv_is_self = recv.kind() == "self"
                     || (recv.kind() == "identifier" && source_text(&recv, src) == "self");
+                // No hint on either arm below: both already name a target, and a
+                // hint is only ever stored on an UNRESOLVED call.
                 if recv_is_self {
                     return match impl_ctx {
-                        Some(ic) => Some((
-                            Some(fqn::method(
+                        Some(ic) => Some(CallTarget::resolved(
+                            fqn::method(
                                 RUST_LANG,
                                 &ctx.package,
                                 &ic.type_module,
                                 &ic.type_name,
                                 &method,
-                            )),
+                            ),
                             false,
                             method,
                         )),
-                        None => Some((None, false, method)),
+                        None => Some(CallTarget::unresolved(method)),
                     };
                 }
                 if recv.kind() == "identifier"
                     && let Some(tname) = bindings.get(&source_text(&recv, src))
                 {
                     let (pkg, mdl, is_ext) = resolve_type_module(tname, ctx, module, scope);
-                    return if is_ext {
-                        Some((Some(fqn::lib(&pkg, &mdl, &method)), true, method))
+                    return Some(if is_ext {
+                        CallTarget::resolved(fqn::lib(&pkg, &mdl, &method), true, method)
                     } else {
-                        Some((
-                            Some(fqn::method(RUST_LANG, &pkg, &mdl, tname, &method)),
+                        CallTarget::resolved(
+                            fqn::method(RUST_LANG, &pkg, &mdl, tname, &method),
                             false,
                             method,
-                        ))
-                    };
+                        )
+                    });
                 }
                 // Unknown receiver (out of the bounded 0.7 scope) → no wrong merge.
-                Some((None, false, method))
+                // But `a.b().m()` is not unknowable: `m`'s receiver is whatever
+                // `b` RETURNS, and `b`'s own fqn is mintable right here. This
+                // file cannot read that return type — `b` is almost always
+                // defined elsewhere — so record the hop as a key and leave the
+                // target unresolved for a pass that has the graph.
+                Some(
+                    CallTarget::unresolved(method)
+                        .on(receiver_return_of(&recv, src, ctx, module, scope, impl_ctx, bindings)),
+                )
             }
             "generic_function" => {
                 let inner = func.child_by_field_name("function")?;
@@ -1660,13 +1902,46 @@ pub(crate) mod rust_fqn {
         }
     }
 
+    /// The [`ReceiverHint::ReturnOf`] hop for a receiver that is itself a call,
+    /// or None for any other receiver shape.
+    ///
+    /// Only a target the inner call resolved to a FIRST-PARTY fqn qualifies: an
+    /// unresolved inner call has no key to hand on (so a chain stops at the
+    /// first hop it cannot name rather than propagating a half-truth), and a
+    /// `lib·` inner call names a node with no return type to read.
+    ///
+    /// Deliberately does NOT unwrap `.await` / `?` receivers. Those are
+    /// call-site unwraps of `Future`/`Result`, and treating `foo().await.m()`
+    /// as `ReturnOf(foo)` would hand the resolver `foo`'s declared type
+    /// (`impl Future<…>`, `Result<T, E>`) as if it were the receiver's — a
+    /// different rule that needs its own evidence.
+    fn receiver_return_of(
+        recv: &Node,
+        src: &[u8],
+        ctx: &FileFqnContext,
+        module: &str,
+        scope: &FileScope,
+        impl_ctx: Option<&ImplCtx>,
+        bindings: &HashMap<String, String>,
+    ) -> Option<ReceiverHint> {
+        if recv.kind() != "call_expression" {
+            return None;
+        }
+        let inner = recv.child_by_field_name("function")?;
+        let target = resolve_call(&inner, src, ctx, module, scope, impl_ctx, bindings)?;
+        if target.is_lib {
+            return None;
+        }
+        target.fqn.map(ReceiverHint::ReturnOf)
+    }
+
     /// PascalCase heuristic: distinguishes a `Type` segment from a `module`/`fn`.
     fn is_pascal(s: &str) -> bool {
         s.chars().next().is_some_and(|c| c.is_ascii_uppercase())
     }
 
     /// Normalise a crate name for comparison (path form uses `_`, manifest name `-`).
-    fn norm_crate(s: &str) -> String {
+    pub(super) fn norm_crate(s: &str) -> String {
         s.replace('-', "_")
     }
 
@@ -2119,6 +2394,192 @@ impl Engine {
             Some("Arc<PgStore>"),
             "wrappers are kept as written; unwrapping Arc/Result/Option is the \
              resolver's job and `base_type_name` already owns that rule"
+        );
+    }
+
+    // ── receiver hints ──────────────────────────────────────────────────────
+    // Measured on the live graph: every one of the 28,069 unresolved rust
+    // `calls` edges has a lowercase target_name, i.e. it is a method call that
+    // no import can name. `resolve_call` SAW the receiver in each of those
+    // cases and discarded it. These tests pin what it must record instead —
+    // and, just as load-bearing, what it must NOT invent.
+
+    /// `ctx.pg().method()` — the receiver is itself a call, so the receiver's
+    /// TYPE is whatever `pg` returns. That fact lives in another file, but
+    /// `pg`'s own fqn is mintable right here and is the graph key that carries
+    /// the return type. Record the hop; do not resolve it.
+    ///
+    /// Breaking mutation: drop the `call_expression` arm of the receiver walk —
+    /// the hint goes back to `None` and the hop is lost again.
+    #[test]
+    fn a_chained_receiver_records_the_method_whose_return_type_names_it() {
+        let src = "pub struct TaskContext;\n\
+                   impl TaskContext {\n\
+                     pub fn pg(&self) -> &crate::db::pg_store::PgStore { todo!() }\n\
+                   }\n\
+                   pub fn drive(ctx: &TaskContext) { ctx.pg().count_edges(); }\n";
+        let out = produce(src, "senseid", "tasks::executor");
+
+        // Hop 1 already resolved before this change and must keep doing so.
+        assert_eq!(
+            ref_to(&out, "pg").target_fqn.as_deref(),
+            Some("rust·senseid·tasks::executor·TaskContext·pg"),
+            "the inner call was already resolvable and its behaviour is unchanged"
+        );
+
+        let hop2 = ref_to(&out, "count_edges");
+        assert_eq!(
+            hop2.target_fqn, None,
+            "the target is still UNRESOLVED here — this file cannot know what \
+             `pg` returns, and guessing is what mints ghost nodes"
+        );
+        assert_eq!(
+            hop2.receiver,
+            Some(ReceiverHint::ReturnOf("rust·senseid·tasks::executor·TaskContext·pg".to_string())),
+            "the receiver hop is recorded as a graph KEY, so the later resolver \
+             needs only a node lookup — no file path, no re-parse: {:?}",
+            out.refs
+        );
+    }
+
+    /// `ctx.direct()` with `ctx: &TaskContext` — the binding map already knows
+    /// the receiver's type, so the call RESOLVES and carries no hint. A hint is
+    /// stored only on an unresolved call (`process.rs` stamps props on
+    /// `(None, Some(hint))`), so recording one here would be computed and
+    /// discarded on every call site of this shape.
+    #[test]
+    fn a_bound_receiver_resolves_and_records_no_hint() {
+        let src = "pub struct TaskContext;\n\
+                   pub fn drive(ctx: &TaskContext) { ctx.direct(); }\n";
+        let out = produce(src, "senseid", "tasks::executor");
+
+        let r = ref_to(&out, "direct");
+        assert_eq!(
+            r.target_fqn.as_deref(),
+            Some("rust·senseid·tasks::executor·TaskContext·direct"),
+            "a bound receiver names its target outright"
+        );
+        assert_eq!(
+            r.receiver, None,
+            "the target answers the question; a receiver beside it is a second \
+             answer nothing reads: {:?}",
+            out.refs
+        );
+    }
+
+    /// `self.helper()` inside an `impl` — the receiver's type is the impl's Self
+    /// type, which is as known as a binding, so it resolves for the same reason
+    /// and carries no hint for the same reason.
+    #[test]
+    fn a_self_receiver_resolves_and_records_no_hint() {
+        let src = "pub struct TaskContext;\n\
+                   impl TaskContext {\n\
+                     pub fn drive(&self) { self.helper(); }\n\
+                   }\n";
+        let out = produce(src, "senseid", "tasks::executor");
+
+        let r = ref_to(&out, "helper");
+        assert_eq!(
+            r.target_fqn.as_deref(),
+            Some("rust·senseid·tasks::executor·TaskContext·helper"),
+            "the self call resolves against the impl's Self type"
+        );
+        assert_eq!(r.receiver, None, "…and needs no receiver recorded: {:?}", out.refs);
+    }
+
+    /// A receiver whose type this file genuinely cannot name gets NO hint.
+    /// `let x = whatever();` is outside the bounded binding→type scope, so
+    /// there is nothing true to record — and a plausible-looking guess is
+    /// exactly the fabrication the graph must not contain.
+    #[test]
+    fn an_unknowable_receiver_gets_no_hint_and_stays_unresolved() {
+        let src = "pub fn drive() { let x = whatever(); x.method(); }\n";
+        let out = produce(src, "app", "svc");
+
+        let r = ref_to(&out, "method");
+        assert_eq!(r.target_fqn, None, "still unresolved");
+        assert_eq!(
+            r.receiver, None,
+            "no binding, no inner call to name — a miss is a miss: {:?}",
+            out.refs
+        );
+    }
+
+    /// An EXTERNAL receiver type gets no hint either. `lib·std·String` has no
+    /// definition in this graph, so a hint pointing at it would be a key the
+    /// resolver can never read a return type from — noise that looks like data.
+    #[test]
+    fn an_external_receiver_type_gets_no_hint() {
+        let src = "pub fn drive() { let s = String::new(); s.find(\"x\"); }\n";
+        let out = produce(src, "app", "svc");
+
+        let r = ref_to(&out, "find");
+        assert_eq!(
+            r.target_fqn.as_deref(),
+            Some("lib·std·String·find"),
+            "the external call still resolves onto the shared lib node"
+        );
+        assert!(r.is_lib);
+        assert_eq!(r.receiver, None, "an external type carries no return type we can read");
+    }
+
+    /// A chain records only the hop it can actually name. `a().b().c()` — the
+    /// receiver of `c` is the return of `b`, but `b` itself is unresolved, so
+    /// there is no key to record and `c` gets no hint. The chain stops at the
+    /// first unknown rather than propagating a half-truth.
+    #[test]
+    fn a_chain_stops_at_the_first_hop_it_cannot_name() {
+        let src = "pub fn drive() { thing().inner().outer(); }\n";
+        let out = produce(src, "app", "svc");
+
+        assert_eq!(
+            ref_to(&out, "inner").receiver,
+            Some(ReceiverHint::ReturnOf("rust·app·svc·thing".to_string())),
+            "hop 1: the receiver of `inner` is the return of the free fn `thing`"
+        );
+        assert_eq!(
+            ref_to(&out, "outer").receiver,
+            None,
+            "hop 2: `inner` has no fqn, so there is no key to hand the resolver: {:?}",
+            out.refs
+        );
+    }
+
+    /// Two unresolved calls to the SAME method name in one function must not
+    /// collapse onto one reference when their receivers differ.
+    ///
+    /// The dedup key was the bare `?<name>`, so the second call vanished and
+    /// the survivor carried whichever receiver came first. Once a later pass
+    /// starts resolving hints that is not merely lossy: it would resolve the
+    /// surviving reference — which stands for BOTH call sites — against one
+    /// receiver's type, attributing a call to a method the other receiver
+    /// never has.
+    ///
+    /// Breaking mutation: revert the dedup key to `format!("?{name}")` — the
+    /// second `run` disappears and the count drops to 1.
+    #[test]
+    fn two_receivers_calling_the_same_method_stay_two_references() {
+        let src = "pub struct A;\n\
+                   pub struct B;\n\
+                   impl A { pub fn mk(&self) -> C { todo!() } }\n\
+                   impl B { pub fn mk(&self) -> D { todo!() } }\n\
+                   pub fn drive(a: &A, b: &B) { a.mk().run(); b.mk().run(); }\n";
+        let out = produce(src, "app", "svc");
+
+        let hints: Vec<Option<&ReceiverHint>> = out
+            .refs
+            .iter()
+            .filter(|r| r.target_name == "run")
+            .map(|r| r.receiver.as_ref())
+            .collect();
+        assert_eq!(
+            hints,
+            vec![
+                Some(&ReceiverHint::ReturnOf("rust·app·svc·A·mk".to_string())),
+                Some(&ReceiverHint::ReturnOf("rust·app·svc·B·mk".to_string())),
+            ],
+            "each call site keeps its own receiver: {:?}",
+            out.refs
         );
     }
 
@@ -2766,5 +3227,168 @@ impl std::fmt::Debug for A { fn fmt(&self) {} }
             "deep() must NOT be attributed to outer, got {:?}",
             pf.edges
         );
+    }
+
+    // ── The return type → receiver type rule (transitive resolution, hop 2) ──
+
+    /// A declared return type the caller can dereference through names a
+    /// CONCRETE receiver type, and the chain may continue.
+    ///
+    /// The unwrapping itself is [`base_type_name`]'s rule and stays there —
+    /// this layer only adds what a *return position* means on top of it.
+    /// Read as written by a method of the `senseid` crate.
+    fn recv(declared: &str) -> Option<ReceiverType> {
+        concrete_receiver_type(declared, "senseid")
+    }
+    fn bare(name: &str) -> Option<ReceiverType> {
+        Some(ReceiverType::Bare(name.to_string()))
+    }
+    fn qual(module: &str, name: &str) -> Option<ReceiverType> {
+        Some(ReceiverType::Qualified { module: module.to_string(), name: name.to_string() })
+    }
+
+    #[test]
+    fn a_dereferenceable_return_type_names_the_receivers_type() {
+        for (declared, want) in [
+            ("&'a mut PgStore", bare("PgStore")),
+            // Deref-transparent wrappers: `Arc<PgStore>.method()` really does
+            // dispatch to `PgStore::method`.
+            ("Arc<PgStore>", bare("PgStore")),
+            ("Box<PgStore>", bare("PgStore")),
+            ("&Arc<PgStore>", bare("PgStore")),
+            // MEASURED gap in `base_type_path`: the wrapper list was prefix-
+            // matched against the FULL path text, so a path-qualified wrapper
+            // yielded the WRAPPER as the receiver type — `…·Arc·method`, a
+            // confidently wrong node rather than an unresolved one.
+            ("std::sync::Arc<PgStore>", bare("PgStore")),
+            ("Arc<tokio::sync::Mutex<PgStore>>", bare("PgStore")),
+        ] {
+            assert_eq!(recv(declared), want, "`-> {declared}` names a {want:?} receiver");
+        }
+    }
+
+    /// THE MODULE PATH SURVIVES. It is the whole reason the return type is
+    /// stored verbatim: it says WHICH type of that name is meant, and a resolver
+    /// handed only the leaf has to guess between a first-party type and a
+    /// dependency's.
+    #[test]
+    fn a_qualified_return_type_keeps_the_module_that_names_it() {
+        for (declared, want) in [
+            ("&crate::db::pg_store::PgStore", qual("db::pg_store", "PgStore")),
+            ("crate::PgStore", qual("", "PgStore")),
+            // The crate's own name is `crate::` spelled out — including with the
+            // `-`/`_` spelling difference rustc itself tolerates.
+            ("senseid::db::PgStore", qual("db", "PgStore")),
+            // A DEPENDENCY's path stays whole. It names a module this crate does
+            // not have, so the node lookup finds nothing — which is the point:
+            // the first-party `Client` is a different type from reqwest's.
+            ("reqwest::blocking::Client", qual("reqwest::blocking", "Client")),
+            ("&reqwest::Client", qual("reqwest", "Client")),
+            // A local module chain used without `crate::` is the same shape and
+            // resolves for the same reason: this crate DOES have `db::pg_store`.
+            ("db::pg_store::PgStore", qual("db::pg_store", "PgStore")),
+        ] {
+            assert_eq!(recv(declared), want, "`-> {declared}`");
+        }
+        assert_eq!(
+            concrete_receiver_type("sensei_cli::a::Widget", "sensei-cli"),
+            qual("a", "Widget"),
+            "a crate names itself with either spelling; `norm_crate` owns that rule"
+        );
+        // Relative to the writing file's own module, which an fqn cannot give
+        // back (an empty module segment is dropped, so segment counts are
+        // ambiguous). Measured: 0 of this repo's 3,932 return types use them.
+        assert_eq!(recv("self::PgStore"), None);
+        assert_eq!(recv("super::PgStore"), None);
+    }
+
+    /// `Result<T, E>` / `Option<T>` unwrap to `T`, including through a path
+    /// alias (`anyhow::Result<T>`) and a nested pair.
+    #[test]
+    fn a_fallible_return_type_unwraps_to_its_success_type() {
+        for (declared, want) in [
+            ("Result<PgStore, Error>", bare("PgStore")),
+            ("Result<PgStore, crate::Error>", bare("PgStore")),
+            ("anyhow::Result<PgStore>", bare("PgStore")),
+            ("Option<PgStore>", bare("PgStore")),
+            ("Result<Option<PgStore>, E>", bare("PgStore")),
+            // The success type's own generics must not be split on: the comma
+            // inside `HashMap<..>` is not the Result's argument separator.
+            ("Result<HashMap<String, PgStore>, E>", bare("HashMap")),
+            // The wrapper is recognised through a reference the same way, `mut`
+            // included. `trim_start_matches('&')` left the `mut` behind, the
+            // `== "Result"` test failed, and the WRAPPER leaked out as the
+            // receiver type — a wrong merge in any crate defining its own
+            // `Result`, and `&Result<..>` right beside it was correct.
+            ("&Result<PgStore, E>", bare("PgStore")),
+            ("&mut Result<PgStore, E>", bare("PgStore")),
+        ] {
+            assert_eq!(recv(declared), want, "`-> {declared}` unwraps to {want:?}");
+        }
+    }
+
+    /// The argument splitter answers about the FIRST argument, and the `>` of a
+    /// `->` closes nothing. Tested directly because the effect is invisible from
+    /// `concrete_receiver_type`: both the right answer (`fn(u8) -> u8`) and the
+    /// wrong one (`fn(u8) -> u8, E`) are rejected as non-identifiers, so this
+    /// pins the splitter's own contract before some future reader relies on it.
+    #[test]
+    fn the_argument_splitter_stops_at_the_first_argument_not_at_an_arrow() {
+        assert_eq!(strip_fallible("Result<fn(u8) -> u8, E>"), "fn(u8) -> u8");
+        assert_eq!(strip_fallible("Result<PgStore, fn() -> u8>"), "PgStore");
+        assert_eq!(
+            strip_fallible("Result<HashMap<String, PgStore>, E>"),
+            "HashMap<String, PgStore>"
+        );
+    }
+
+    /// `Self` is only meaningful against the impl the returning method sits in,
+    /// which is a fact the GRAPH holds (the node's parent) and this text does
+    /// not — so it is reported as `Self` and substituted by the resolver.
+    #[test]
+    fn self_is_reported_as_self_for_the_graph_to_resolve() {
+        for declared in ["Self", "Arc<Self>", "Result<Self, E>", "&Self"] {
+            assert_eq!(recv(declared), Some(ReceiverType::SelfType), "`-> {declared}`");
+        }
+    }
+
+    /// An OPAQUE return type names no concrete receiver, so the chain stops.
+    ///
+    /// `base_type_path` deliberately does NOT enforce this — it strips `dyn `
+    /// and `impl ` and hands back the TRAIT name, which `rust_dyn_receiver_
+    /// stays_unqualified` depends on for parameter binding. The gate belongs
+    /// here, in the return-position rule, not in the shared unwrapper.
+    #[test]
+    fn an_opaque_or_generic_return_type_stays_unresolved() {
+        for declared in [
+            "impl Trait",
+            "impl Iterator<Item = u8>",
+            "Box<dyn Store>",
+            "dyn Store",
+            "Pin<Box<dyn Future<Output = ()> + Send>>",
+            "Result<Box<dyn Store>, E>",
+            // A bare generic parameter is a hole, not a type.
+            "T",
+            "E",
+            "T1",
+            "Arc<T>",
+            "Result<T, E>",
+            // Unit / no declared type.
+            "()",
+            "",
+            "   ",
+            // A function-pointer type is not a name any node can carry, so it
+            // is rejected as a non-identifier. Before that check it was accepted
+            // on the strength of its first letter alone.
+            "Result<fn(u8) -> u8, E>",
+            "Option<fn() -> Foo>",
+            "fn(u8) -> u8",
+        ] {
+            assert_eq!(
+                recv(declared),
+                None,
+                "`-> {declared}` names no concrete type, so the receiver hop must MISS"
+            );
+        }
     }
 }
