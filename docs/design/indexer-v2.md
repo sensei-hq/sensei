@@ -25,10 +25,23 @@ Anything that serves neither is out of scope.
 point outside the local code — that is where libraries and language internals
 live. Dependency sources are never parsed.
 
-**FQN** — the identity of a symbol, `<lang>·<package>·<module>·<Type>·<member>`.
-It is a LOOKUP KEY, minted independently by a reference and by a definition. If
-the two sides mint different strings for the same symbol they never merge, so
-every rule that builds one is shared, never per-language.
+**FQN** — the identity of a symbol,
+`<lang>·<package>·<module>·<Type>·<member>·<ns>`. It is a LOOKUP KEY, minted
+independently by a reference and by a definition. If the two sides mint
+different strings for the same symbol they never merge, so every rule that
+builds one is shared, never per-language.
+
+The trailing `<ns>` is the NAMESPACE the name is minted in — for Rust, one of
+`ty`, `val`, `field`, `macro`. It is required because a language may let two
+declarations share one name in one scope when they sit in different namespaces:
+this repo has a `WatcherHealth::healthy` field alongside a `healthy()` getter,
+and `sensei-bootstrap` has `pub mod config;` alongside `pub fn config()`.
+Without it those mint one string, one declaration overwrites the other, and
+references to either land on the wrong one — a wrong edge (R4). The
+discriminator is the namespace and not the declaration KIND, because a use site
+can tell namespaces apart from syntax alone (`x.foo` vs `x.foo()`) but cannot
+tell a `const` from a `static`. An external (`lib·<package>·<member>`) carries
+no namespace: we index no declarations for it, so there is nothing to collide.
 
 **Local** — declared in a scanned source file. **External** — everything else.
 Externality is decided by the import that brought a name into scope, never by
