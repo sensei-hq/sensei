@@ -1,0 +1,890 @@
+{
+    "note": "Composite project health, live from sensei.project_health_score + project_health_trend. The dial/radar/component-breakdown input. NOTE the coverage inversion (issue #155): score is highest where rated_metrics is lowest.",
+    "scored_projects": 67,
+    "coverage_inversion": [
+        {
+            "projects": 3,
+            "avg_score": 58,
+            "rated_metrics": 18
+        },
+        {
+            "projects": 3,
+            "avg_score": 65,
+            "rated_metrics": 17
+        },
+        {
+            "projects": 3,
+            "avg_score": 75,
+            "rated_metrics": 16
+        },
+        {
+            "projects": 4,
+            "avg_score": 68,
+            "rated_metrics": 14
+        },
+        {
+            "projects": 2,
+            "avg_score": 62,
+            "rated_metrics": 12
+        },
+        {
+            "projects": 1,
+            "avg_score": 68,
+            "rated_metrics": 10
+        },
+        {
+            "projects": 1,
+            "avg_score": 78,
+            "rated_metrics": 9
+        },
+        {
+            "projects": 25,
+            "avg_score": 79,
+            "rated_metrics": 2
+        },
+        {
+            "projects": 25,
+            "avg_score": 98,
+            "rated_metrics": 1
+        }
+    ],
+    "weekly_trend_example": [
+        {
+            "period": "2026-03-02",
+            "coverage": 0.310,
+            "health_score": 36,
+            "rated_metrics": 7
+        },
+        {
+            "period": "2026-03-16",
+            "coverage": 0.034,
+            "health_score": 100,
+            "rated_metrics": 1
+        },
+        {
+            "period": "2026-03-23",
+            "coverage": 0.034,
+            "health_score": 100,
+            "rated_metrics": 1
+        },
+        {
+            "period": "2026-03-30",
+            "coverage": 0.034,
+            "health_score": 100,
+            "rated_metrics": 1
+        },
+        {
+            "period": "2026-06-01",
+            "coverage": 0.379,
+            "health_score": 71,
+            "rated_metrics": 9
+        },
+        {
+            "period": "2026-06-15",
+            "coverage": 0.034,
+            "health_score": 0,
+            "rated_metrics": 1
+        },
+        {
+            "period": "2026-06-22",
+            "coverage": 0.241,
+            "health_score": 77,
+            "rated_metrics": 3
+        },
+        {
+            "period": "2026-06-29",
+            "coverage": 0.241,
+            "health_score": 60,
+            "rated_metrics": 3
+        },
+        {
+            "period": "2026-07-13",
+            "coverage": 0.759,
+            "health_score": 71,
+            "rated_metrics": 14
+        },
+        {
+            "period": "2026-07-27",
+            "coverage": 0.793,
+            "health_score": 64,
+            "rated_metrics": 15
+        },
+        {
+            "period": "2026-08-03",
+            "coverage": 0.034,
+            "health_score": 0,
+            "rated_metrics": 1
+        },
+        {
+            "period": "2026-08-10",
+            "coverage": 0.793,
+            "health_score": 62,
+            "rated_metrics": 15
+        },
+        {
+            "period": "2026-08-17",
+            "coverage": 0.966,
+            "health_score": 51,
+            "rated_metrics": 18
+        },
+        {
+            "period": "2026-08-24",
+            "coverage": 0.172,
+            "health_score": 72,
+            "rated_metrics": 3
+        },
+        {
+            "period": "2026-08-31",
+            "coverage": 0.966,
+            "health_score": 61,
+            "rated_metrics": 18
+        },
+        {
+            "period": "2026-09-07",
+            "coverage": 0.172,
+            "health_score": 72,
+            "rated_metrics": 3
+        }
+    ],
+    "well_covered_examples": [
+        {
+            "project": "kavach",
+            "components": {
+                "ftr": {
+                    "name": "First-turn resolution",
+                    "rating": 5,
+                    "weight": 3
+                },
+                "coverage": {
+                    "name": "Coverage",
+                    "rating": 1,
+                    "weight": 3
+                },
+                "churn_rate": {
+                    "name": "Churn rate",
+                    "rating": 0,
+                    "weight": 1
+                },
+                "spec_depth": {
+                    "name": "Spec depth",
+                    "rating": 5,
+                    "weight": 2
+                },
+                "throughput": {
+                    "name": "Throughput",
+                    "rating": 1,
+                    "weight": 1
+                },
+                "rework_ratio": {
+                    "name": "Rework share",
+                    "rating": 5,
+                    "weight": 1
+                },
+                "module_quality": {
+                    "name": "Maintainability",
+                    "rating": 5,
+                    "weight": 3
+                },
+                "rework_density": {
+                    "name": "Rework density",
+                    "rating": 5,
+                    "weight": 1
+                },
+                "memory_promotion": {
+                    "name": "Memory promotion",
+                    "rating": 0,
+                    "weight": 1
+                },
+                "duplication_ratio": {
+                    "name": "Duplication",
+                    "rating": 3,
+                    "weight": 3
+                },
+                "interruption_rate": {
+                    "name": "Interruptions",
+                    "rating": 0,
+                    "weight": 1
+                },
+                "tokens_per_result": {
+                    "name": "Tokens per result",
+                    "rating": 0,
+                    "weight": 1
+                },
+                "spec_deviation_rate": {
+                    "name": "Spec deviation",
+                    "rating": 5,
+                    "weight": 2
+                },
+                "refuted_finding_rate": {
+                    "name": "Refuted findings",
+                    "rating": 5,
+                    "weight": 1
+                },
+                "context_pressure_rate": {
+                    "name": "Context pressure",
+                    "rating": 5,
+                    "weight": 1
+                },
+                "time_to_useful_result": {
+                    "name": "Time to useful result",
+                    "rating": 0,
+                    "weight": 1
+                },
+                "incomplete_analysis_rate": {
+                    "name": "Edit before read",
+                    "rating": 5,
+                    "weight": 1
+                },
+                "incomplete_analysis_llm_rate": {
+                    "name": "Shallow analysis",
+                    "rating": 5,
+                    "weight": 1
+                }
+            },
+            "health_score": 66,
+            "total_weight": 28,
+            "rated_metrics": 18
+        },
+        {
+            "project": "rokkit",
+            "components": {
+                "ftr": {
+                    "name": "First-turn resolution",
+                    "rating": 5,
+                    "weight": 3
+                },
+                "coverage": {
+                    "name": "Coverage",
+                    "rating": 5,
+                    "weight": 3
+                },
+                "churn_rate": {
+                    "name": "Churn rate",
+                    "rating": 0,
+                    "weight": 1
+                },
+                "spec_depth": {
+                    "name": "Spec depth",
+                    "rating": 3,
+                    "weight": 2
+                },
+                "throughput": {
+                    "name": "Throughput",
+                    "rating": 1,
+                    "weight": 1
+                },
+                "rework_ratio": {
+                    "name": "Rework share",
+                    "rating": 5,
+                    "weight": 1
+                },
+                "module_quality": {
+                    "name": "Maintainability",
+                    "rating": 4,
+                    "weight": 3
+                },
+                "rework_density": {
+                    "name": "Rework density",
+                    "rating": 3,
+                    "weight": 1
+                },
+                "memory_promotion": {
+                    "name": "Memory promotion",
+                    "rating": 0,
+                    "weight": 1
+                },
+                "duplication_ratio": {
+                    "name": "Duplication",
+                    "rating": 3,
+                    "weight": 3
+                },
+                "interruption_rate": {
+                    "name": "Interruptions",
+                    "rating": 5,
+                    "weight": 1
+                },
+                "tokens_per_result": {
+                    "name": "Tokens per result",
+                    "rating": 0,
+                    "weight": 1
+                },
+                "spec_deviation_rate": {
+                    "name": "Spec deviation",
+                    "rating": 0,
+                    "weight": 2
+                },
+                "refuted_finding_rate": {
+                    "name": "Refuted findings",
+                    "rating": 5,
+                    "weight": 1
+                },
+                "context_pressure_rate": {
+                    "name": "Context pressure",
+                    "rating": 5,
+                    "weight": 1
+                },
+                "time_to_useful_result": {
+                    "name": "Time to useful result",
+                    "rating": 0,
+                    "weight": 1
+                },
+                "incomplete_analysis_rate": {
+                    "name": "Edit before read",
+                    "rating": 5,
+                    "weight": 1
+                },
+                "incomplete_analysis_llm_rate": {
+                    "name": "Shallow analysis",
+                    "rating": 5,
+                    "weight": 1
+                }
+            },
+            "health_score": 65,
+            "total_weight": 28,
+            "rated_metrics": 18
+        },
+        {
+            "project": "dbd",
+            "components": {
+                "ftr": {
+                    "name": "First-turn resolution",
+                    "rating": 5,
+                    "weight": 3
+                },
+                "churn_rate": {
+                    "name": "Churn rate",
+                    "rating": 2,
+                    "weight": 1
+                },
+                "spec_depth": {
+                    "name": "Spec depth",
+                    "rating": 2,
+                    "weight": 2
+                },
+                "throughput": {
+                    "name": "Throughput",
+                    "rating": 1,
+                    "weight": 1
+                },
+                "rework_ratio": {
+                    "name": "Rework share",
+                    "rating": 5,
+                    "weight": 1
+                },
+                "module_quality": {
+                    "name": "Maintainability",
+                    "rating": 4,
+                    "weight": 3
+                },
+                "rework_density": {
+                    "name": "Rework density",
+                    "rating": 0,
+                    "weight": 1
+                },
+                "memory_promotion": {
+                    "name": "Memory promotion",
+                    "rating": 0,
+                    "weight": 1
+                },
+                "duplication_ratio": {
+                    "name": "Duplication",
+                    "rating": 5,
+                    "weight": 3
+                },
+                "interruption_rate": {
+                    "name": "Interruptions",
+                    "rating": 0,
+                    "weight": 1
+                },
+                "tokens_per_result": {
+                    "name": "Tokens per result",
+                    "rating": 0,
+                    "weight": 1
+                },
+                "spec_deviation_rate": {
+                    "name": "Spec deviation",
+                    "rating": 0,
+                    "weight": 2
+                },
+                "refuted_finding_rate": {
+                    "name": "Refuted findings",
+                    "rating": 5,
+                    "weight": 1
+                },
+                "context_pressure_rate": {
+                    "name": "Context pressure",
+                    "rating": 5,
+                    "weight": 1
+                },
+                "time_to_useful_result": {
+                    "name": "Time to useful result",
+                    "rating": 0,
+                    "weight": 1
+                },
+                "incomplete_analysis_rate": {
+                    "name": "Edit before read",
+                    "rating": 5,
+                    "weight": 1
+                },
+                "incomplete_analysis_llm_rate": {
+                    "name": "Shallow analysis",
+                    "rating": 5,
+                    "weight": 1
+                }
+            },
+            "health_score": 59,
+            "total_weight": 25,
+            "rated_metrics": 17
+        },
+        {
+            "project": "torii",
+            "components": {
+                "ftr": {
+                    "name": "First-turn resolution",
+                    "rating": 5,
+                    "weight": 3
+                },
+                "churn_rate": {
+                    "name": "Churn rate",
+                    "rating": 1,
+                    "weight": 1
+                },
+                "spec_depth": {
+                    "name": "Spec depth",
+                    "rating": 3,
+                    "weight": 2
+                },
+                "throughput": {
+                    "name": "Throughput",
+                    "rating": 1,
+                    "weight": 1
+                },
+                "rework_ratio": {
+                    "name": "Rework share",
+                    "rating": 5,
+                    "weight": 1
+                },
+                "module_quality": {
+                    "name": "Maintainability",
+                    "rating": 4,
+                    "weight": 3
+                },
+                "rework_density": {
+                    "name": "Rework density",
+                    "rating": 1,
+                    "weight": 1
+                },
+                "memory_promotion": {
+                    "name": "Memory promotion",
+                    "rating": 0,
+                    "weight": 1
+                },
+                "duplication_ratio": {
+                    "name": "Duplication",
+                    "rating": 4,
+                    "weight": 3
+                },
+                "interruption_rate": {
+                    "name": "Interruptions",
+                    "rating": 3,
+                    "weight": 1
+                },
+                "tokens_per_result": {
+                    "name": "Tokens per result",
+                    "rating": 1,
+                    "weight": 1
+                },
+                "spec_deviation_rate": {
+                    "name": "Spec deviation",
+                    "rating": 5,
+                    "weight": 2
+                },
+                "refuted_finding_rate": {
+                    "name": "Refuted findings",
+                    "rating": 5,
+                    "weight": 1
+                },
+                "context_pressure_rate": {
+                    "name": "Context pressure",
+                    "rating": 5,
+                    "weight": 1
+                },
+                "time_to_useful_result": {
+                    "name": "Time to useful result",
+                    "rating": 0,
+                    "weight": 1
+                },
+                "incomplete_analysis_rate": {
+                    "name": "Edit before read",
+                    "rating": 5,
+                    "weight": 1
+                },
+                "incomplete_analysis_llm_rate": {
+                    "name": "Shallow analysis",
+                    "rating": 5,
+                    "weight": 1
+                }
+            },
+            "health_score": 70,
+            "total_weight": 25,
+            "rated_metrics": 17
+        },
+        {
+            "project": "gateway",
+            "components": {
+                "ftr": {
+                    "name": "First-turn resolution",
+                    "rating": 5,
+                    "weight": 3
+                },
+                "churn_rate": {
+                    "name": "Churn rate",
+                    "rating": 4,
+                    "weight": 1
+                },
+                "spec_depth": {
+                    "name": "Spec depth",
+                    "rating": 5,
+                    "weight": 2
+                },
+                "throughput": {
+                    "name": "Throughput",
+                    "rating": 1,
+                    "weight": 1
+                },
+                "rework_ratio": {
+                    "name": "Rework share",
+                    "rating": 5,
+                    "weight": 1
+                },
+                "module_quality": {
+                    "name": "Maintainability",
+                    "rating": 5,
+                    "weight": 3
+                },
+                "rework_density": {
+                    "name": "Rework density",
+                    "rating": 1,
+                    "weight": 1
+                },
+                "memory_promotion": {
+                    "name": "Memory promotion",
+                    "rating": 0,
+                    "weight": 1
+                },
+                "duplication_ratio": {
+                    "name": "Duplication",
+                    "rating": 5,
+                    "weight": 3
+                },
+                "interruption_rate": {
+                    "name": "Interruptions",
+                    "rating": 0,
+                    "weight": 1
+                },
+                "tokens_per_result": {
+                    "name": "Tokens per result",
+                    "rating": 0,
+                    "weight": 1
+                },
+                "spec_deviation_rate": {
+                    "name": "Spec deviation",
+                    "rating": 0,
+                    "weight": 2
+                },
+                "refuted_finding_rate": {
+                    "name": "Refuted findings",
+                    "rating": 0,
+                    "weight": 1
+                },
+                "context_pressure_rate": {
+                    "name": "Context pressure",
+                    "rating": 5,
+                    "weight": 1
+                },
+                "time_to_useful_result": {
+                    "name": "Time to useful result",
+                    "rating": 0,
+                    "weight": 1
+                },
+                "incomplete_analysis_rate": {
+                    "name": "Edit before read",
+                    "rating": 5,
+                    "weight": 1
+                },
+                "incomplete_analysis_llm_rate": {
+                    "name": "Shallow analysis",
+                    "rating": 5,
+                    "weight": 1
+                }
+            },
+            "health_score": 65,
+            "total_weight": 25,
+            "rated_metrics": 17
+        },
+        {
+            "project": "swarco",
+            "components": {
+                "ftr": {
+                    "name": "First-turn resolution",
+                    "rating": 5,
+                    "weight": 3
+                },
+                "churn_rate": {
+                    "name": "Churn rate",
+                    "rating": 0,
+                    "weight": 1
+                },
+                "spec_depth": {
+                    "name": "Spec depth",
+                    "rating": 4,
+                    "weight": 2
+                },
+                "throughput": {
+                    "name": "Throughput",
+                    "rating": 1,
+                    "weight": 1
+                },
+                "rework_ratio": {
+                    "name": "Rework share",
+                    "rating": 5,
+                    "weight": 1
+                },
+                "module_quality": {
+                    "name": "Maintainability",
+                    "rating": 5,
+                    "weight": 3
+                },
+                "rework_density": {
+                    "name": "Rework density",
+                    "rating": 5,
+                    "weight": 1
+                },
+                "duplication_ratio": {
+                    "name": "Duplication",
+                    "rating": 5,
+                    "weight": 3
+                },
+                "interruption_rate": {
+                    "name": "Interruptions",
+                    "rating": 4,
+                    "weight": 1
+                },
+                "tokens_per_result": {
+                    "name": "Tokens per result",
+                    "rating": 1,
+                    "weight": 1
+                },
+                "spec_deviation_rate": {
+                    "name": "Spec deviation",
+                    "rating": 5,
+                    "weight": 2
+                },
+                "refuted_finding_rate": {
+                    "name": "Refuted findings",
+                    "rating": 5,
+                    "weight": 1
+                },
+                "context_pressure_rate": {
+                    "name": "Context pressure",
+                    "rating": 5,
+                    "weight": 1
+                },
+                "time_to_useful_result": {
+                    "name": "Time to useful result",
+                    "rating": 0,
+                    "weight": 1
+                },
+                "incomplete_analysis_rate": {
+                    "name": "Edit before read",
+                    "rating": 5,
+                    "weight": 1
+                },
+                "incomplete_analysis_llm_rate": {
+                    "name": "Shallow analysis",
+                    "rating": 5,
+                    "weight": 1
+                }
+            },
+            "health_score": 83,
+            "total_weight": 24,
+            "rated_metrics": 16
+        },
+        {
+            "project": "booksmith",
+            "components": {
+                "ftr": {
+                    "name": "First-turn resolution",
+                    "rating": 5,
+                    "weight": 3
+                },
+                "churn_rate": {
+                    "name": "Churn rate",
+                    "rating": 1,
+                    "weight": 1
+                },
+                "spec_depth": {
+                    "name": "Spec depth",
+                    "rating": 3,
+                    "weight": 2
+                },
+                "throughput": {
+                    "name": "Throughput",
+                    "rating": 2,
+                    "weight": 1
+                },
+                "rework_ratio": {
+                    "name": "Rework share",
+                    "rating": 5,
+                    "weight": 1
+                },
+                "module_quality": {
+                    "name": "Maintainability",
+                    "rating": 5,
+                    "weight": 3
+                },
+                "rework_density": {
+                    "name": "Rework density",
+                    "rating": 5,
+                    "weight": 1
+                },
+                "duplication_ratio": {
+                    "name": "Duplication",
+                    "rating": 2,
+                    "weight": 3
+                },
+                "interruption_rate": {
+                    "name": "Interruptions",
+                    "rating": 4,
+                    "weight": 1
+                },
+                "tokens_per_result": {
+                    "name": "Tokens per result",
+                    "rating": 3,
+                    "weight": 1
+                },
+                "spec_deviation_rate": {
+                    "name": "Spec deviation",
+                    "rating": 5,
+                    "weight": 2
+                },
+                "refuted_finding_rate": {
+                    "name": "Refuted findings",
+                    "rating": 2,
+                    "weight": 1
+                },
+                "context_pressure_rate": {
+                    "name": "Context pressure",
+                    "rating": 5,
+                    "weight": 1
+                },
+                "time_to_useful_result": {
+                    "name": "Time to useful result",
+                    "rating": 0,
+                    "weight": 1
+                },
+                "incomplete_analysis_rate": {
+                    "name": "Edit before read",
+                    "rating": 2,
+                    "weight": 1
+                },
+                "incomplete_analysis_llm_rate": {
+                    "name": "Shallow analysis",
+                    "rating": 2,
+                    "weight": 1
+                }
+            },
+            "health_score": 69,
+            "total_weight": 24,
+            "rated_metrics": 16
+        },
+        {
+            "project": "FizzBot",
+            "components": {
+                "ftr": {
+                    "name": "First-turn resolution",
+                    "rating": 5,
+                    "weight": 3
+                },
+                "churn_rate": {
+                    "name": "Churn rate",
+                    "rating": 0,
+                    "weight": 1
+                },
+                "spec_depth": {
+                    "name": "Spec depth",
+                    "rating": 4,
+                    "weight": 2
+                },
+                "throughput": {
+                    "name": "Throughput",
+                    "rating": 1,
+                    "weight": 1
+                },
+                "rework_ratio": {
+                    "name": "Rework share",
+                    "rating": 5,
+                    "weight": 1
+                },
+                "module_quality": {
+                    "name": "Maintainability",
+                    "rating": 4,
+                    "weight": 3
+                },
+                "rework_density": {
+                    "name": "Rework density",
+                    "rating": 5,
+                    "weight": 1
+                },
+                "duplication_ratio": {
+                    "name": "Duplication",
+                    "rating": 3,
+                    "weight": 3
+                },
+                "interruption_rate": {
+                    "name": "Interruptions",
+                    "rating": 4,
+                    "weight": 1
+                },
+                "tokens_per_result": {
+                    "name": "Tokens per result",
+                    "rating": 4,
+                    "weight": 1
+                },
+                "spec_deviation_rate": {
+                    "name": "Spec deviation",
+                    "rating": 0,
+                    "weight": 2
+                },
+                "refuted_finding_rate": {
+                    "name": "Refuted findings",
+                    "rating": 5,
+                    "weight": 1
+                },
+                "context_pressure_rate": {
+                    "name": "Context pressure",
+                    "rating": 5,
+                    "weight": 1
+                },
+                "time_to_useful_result": {
+                    "name": "Time to useful result",
+                    "rating": 5,
+                    "weight": 1
+                },
+                "incomplete_analysis_rate": {
+                    "name": "Edit before read",
+                    "rating": 5,
+                    "weight": 1
+                },
+                "incomplete_analysis_llm_rate": {
+                    "name": "Shallow analysis",
+                    "rating": 5,
+                    "weight": 1
+                }
+            },
+            "health_score": 73,
+            "total_weight": 24,
+            "rated_metrics": 16
+        }
+    ]
+}

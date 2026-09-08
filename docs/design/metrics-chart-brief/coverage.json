@@ -1,0 +1,606 @@
+[
+    {
+        "key": "churn_rate",
+        "max": 15975.000000,
+        "min": 1.000000,
+        "p50": 6.000000,
+        "rows": 6176,
+        "family": "quality",
+        "scopes": [
+            "repo",
+            "user"
+        ],
+        "last_day": "2026-09-08",
+        "first_day": "2016-02-01",
+        "props_keys": [
+            "explainer"
+        ],
+        "days_with_data": 2484,
+        "has_commit_sha": false,
+        "repos_with_data": 64
+    },
+    {
+        "key": "churn_concentration",
+        "max": 1.000000,
+        "min": 0.200000,
+        "p50": 0.774525,
+        "rows": 6168,
+        "family": "quality",
+        "scopes": [
+            "repo",
+            "user"
+        ],
+        "last_day": "2026-09-08",
+        "first_day": "2016-02-01",
+        "props_keys": [
+            "denominator",
+            "explainer",
+            "numerator"
+        ],
+        "days_with_data": 2484,
+        "has_commit_sha": false,
+        "repos_with_data": 64
+    },
+    {
+        "key": "rework_density",
+        "max": 0.904762,
+        "min": 0.000000,
+        "p50": 0.000000,
+        "rows": 1361,
+        "family": "quality",
+        "scopes": [
+            "user"
+        ],
+        "last_day": "2026-09-08",
+        "first_day": "2026-08-19",
+        "props_keys": [
+            "denominator",
+            "explainer",
+            "numerator"
+        ],
+        "days_with_data": 21,
+        "has_commit_sha": false,
+        "repos_with_data": 66
+    },
+    {
+        "key": "interruption_rate",
+        "max": 5.000000,
+        "min": 0.000000,
+        "p50": 0.875000,
+        "rows": 300,
+        "family": "autonomy",
+        "scopes": [
+            "user"
+        ],
+        "last_day": "2026-09-08",
+        "first_day": "2025-05-07",
+        "props_keys": [
+            "denominator",
+            "explainer",
+            "low_n",
+            "numerator"
+        ],
+        "days_with_data": 177,
+        "has_commit_sha": false,
+        "repos_with_data": 17
+    },
+    {
+        "key": "duplication_ratio",
+        "max": 0.897113,
+        "min": 0.000000,
+        "p50": 0.011413,
+        "rows": 259,
+        "family": "quality",
+        "scopes": [
+            "repo",
+            "user"
+        ],
+        "last_day": "2026-09-08",
+        "first_day": "2025-05-13",
+        "props_keys": [
+            "commit",
+            "denominator",
+            "explainer",
+            "numerator"
+        ],
+        "days_with_data": 78,
+        "has_commit_sha": true,
+        "repos_with_data": 11
+    },
+    {
+        "key": "module_quality",
+        "max": 0.005270,
+        "min": 0.000000,
+        "p50": 0.001359,
+        "rows": 259,
+        "family": "quality",
+        "scopes": [
+            "repo",
+            "user"
+        ],
+        "last_day": "2026-09-08",
+        "first_day": "2025-05-13",
+        "props_keys": [
+            "commit",
+            "denominator",
+            "explainer",
+            "numerator"
+        ],
+        "days_with_data": 78,
+        "has_commit_sha": true,
+        "repos_with_data": 11
+    },
+    {
+        "key": "session_duration",
+        "max": 183605.027000,
+        "min": 0.000000,
+        "p50": 6586.755000,
+        "rows": 181,
+        "family": "velocity",
+        "scopes": [
+            "user"
+        ],
+        "last_day": "2026-09-08",
+        "first_day": "2025-05-07",
+        "props_keys": [
+            "explainer",
+            "n"
+        ],
+        "days_with_data": 124,
+        "has_commit_sha": false,
+        "repos_with_data": 18
+    },
+    {
+        "key": "context_pressure_rate",
+        "max": 1.000000,
+        "min": 0.000000,
+        "p50": 0.000000,
+        "rows": 180,
+        "family": "outcome",
+        "scopes": [
+            "user"
+        ],
+        "last_day": "2026-09-08",
+        "first_day": "2025-05-07",
+        "props_keys": [
+            "denominator",
+            "explainer",
+            "numerator"
+        ],
+        "days_with_data": 123,
+        "has_commit_sha": false,
+        "repos_with_data": 17
+    },
+    {
+        "key": "throughput",
+        "max": 14.000000,
+        "min": 1.000000,
+        "p50": 1.000000,
+        "rows": 180,
+        "family": "velocity",
+        "scopes": [
+            "user"
+        ],
+        "last_day": "2026-09-08",
+        "first_day": "2025-05-07",
+        "props_keys": [
+            "explainer"
+        ],
+        "days_with_data": 123,
+        "has_commit_sha": false,
+        "repos_with_data": 17
+    },
+    {
+        "key": "ftr",
+        "max": 1.000000,
+        "min": 0.000000,
+        "p50": 1.000000,
+        "rows": 180,
+        "family": "outcome",
+        "scopes": [
+            "user"
+        ],
+        "last_day": "2026-09-08",
+        "first_day": "2025-05-07",
+        "props_keys": [
+            "correction_count",
+            "denominator",
+            "explainer",
+            "numerator"
+        ],
+        "days_with_data": 123,
+        "has_commit_sha": false,
+        "repos_with_data": 17
+    },
+    {
+        "key": "rework_ratio",
+        "max": 1.000000,
+        "min": 0.000000,
+        "p50": 0.000000,
+        "rows": 173,
+        "family": "outcome",
+        "scopes": [
+            "user"
+        ],
+        "last_day": "2026-09-08",
+        "first_day": "2025-05-07",
+        "props_keys": [
+            "denominator",
+            "explainer",
+            "numerator"
+        ],
+        "days_with_data": 119,
+        "has_commit_sha": false,
+        "repos_with_data": 17
+    },
+    {
+        "key": "time_to_useful_result",
+        "max": 4735485.384000,
+        "min": 0.000000,
+        "p50": 788.810505,
+        "rows": 173,
+        "family": "velocity",
+        "scopes": [
+            "user"
+        ],
+        "last_day": "2026-09-08",
+        "first_day": "2025-05-07",
+        "props_keys": [
+            "explainer",
+            "n"
+        ],
+        "days_with_data": 121,
+        "has_commit_sha": false,
+        "repos_with_data": 17
+    },
+    {
+        "key": "incomplete_analysis_rate",
+        "max": 1.000000,
+        "min": 0.000000,
+        "p50": 0.000000,
+        "rows": 163,
+        "family": "quality",
+        "scopes": [
+            "user"
+        ],
+        "last_day": "2026-09-08",
+        "first_day": "2025-05-07",
+        "props_keys": [
+            "denominator",
+            "explainer",
+            "numerator"
+        ],
+        "days_with_data": 112,
+        "has_commit_sha": false,
+        "repos_with_data": 16
+    },
+    {
+        "key": "memory_promotion",
+        "max": 4.000000,
+        "min": 0.000000,
+        "p50": 0.000000,
+        "rows": 141,
+        "family": "knowledge",
+        "scopes": [
+            "user"
+        ],
+        "last_day": "2026-09-08",
+        "first_day": "2026-08-19",
+        "props_keys": [
+            "denominator",
+            "eligible_corrections",
+            "eligible_patterns",
+            "explainer",
+            "numerator"
+        ],
+        "days_with_data": 21,
+        "has_commit_sha": false,
+        "repos_with_data": 7
+    },
+    {
+        "key": "tokens_in_per_day",
+        "max": 2329947229.000000,
+        "min": 9642.000000,
+        "p50": 21364598.000000,
+        "rows": 129,
+        "family": "usage",
+        "scopes": [
+            "user"
+        ],
+        "last_day": "2026-09-08",
+        "first_day": "2025-06-02",
+        "props_keys": [
+            "explainer",
+            "sessions",
+            "tokens_in",
+            "tokens_out"
+        ],
+        "days_with_data": 87,
+        "has_commit_sha": false,
+        "repos_with_data": 16
+    },
+    {
+        "key": "tokens_out_per_day",
+        "max": 9008959.000000,
+        "min": 635.000000,
+        "p50": 107471.000000,
+        "rows": 129,
+        "family": "usage",
+        "scopes": [
+            "user"
+        ],
+        "last_day": "2026-09-08",
+        "first_day": "2025-06-02",
+        "props_keys": [
+            "explainer",
+            "sessions",
+            "tokens_in",
+            "tokens_out"
+        ],
+        "days_with_data": 87,
+        "has_commit_sha": false,
+        "repos_with_data": 16
+    },
+    {
+        "key": "tokens_per_day",
+        "max": 2338956188.000000,
+        "min": 10803.000000,
+        "p50": 21421093.000000,
+        "rows": 129,
+        "family": "usage",
+        "scopes": [
+            "user"
+        ],
+        "last_day": "2026-09-08",
+        "first_day": "2025-06-02",
+        "props_keys": [
+            "explainer",
+            "sessions",
+            "tokens_in",
+            "tokens_out"
+        ],
+        "days_with_data": 87,
+        "has_commit_sha": false,
+        "repos_with_data": 16
+    },
+    {
+        "key": "incomplete_analysis_llm_rate",
+        "max": 1.000000,
+        "min": 0.000000,
+        "p50": 0.000000,
+        "rows": 124,
+        "family": "quality",
+        "scopes": [
+            "user"
+        ],
+        "last_day": "2026-09-04",
+        "first_day": "2025-05-27",
+        "props_keys": [
+            "denominator",
+            "explainer",
+            "numerator"
+        ],
+        "days_with_data": 77,
+        "has_commit_sha": false,
+        "repos_with_data": 14
+    },
+    {
+        "key": "refuted_finding_rate",
+        "max": 1.000000,
+        "min": 0.000000,
+        "p50": 0.000000,
+        "rows": 124,
+        "family": "quality",
+        "scopes": [
+            "user"
+        ],
+        "last_day": "2026-09-04",
+        "first_day": "2025-05-27",
+        "props_keys": [
+            "denominator",
+            "explainer",
+            "numerator"
+        ],
+        "days_with_data": 77,
+        "has_commit_sha": false,
+        "repos_with_data": 14
+    },
+    {
+        "key": "tokens_per_result",
+        "max": 6276131.000000,
+        "min": 635.000000,
+        "p50": 134749.000000,
+        "rows": 112,
+        "family": "usage",
+        "scopes": [
+            "user"
+        ],
+        "last_day": "2026-09-08",
+        "first_day": "2025-06-02",
+        "props_keys": [
+            "denominator",
+            "explainer",
+            "numerator"
+        ],
+        "days_with_data": 75,
+        "has_commit_sha": false,
+        "repos_with_data": 16
+    },
+    {
+        "key": "spec_deviation_rate",
+        "max": 1.000000,
+        "min": 0.000000,
+        "p50": 0.250000,
+        "rows": 111,
+        "family": "outcome",
+        "scopes": [
+            "user"
+        ],
+        "last_day": "2026-09-04",
+        "first_day": "2025-05-27",
+        "props_keys": [
+            "denominator",
+            "explainer",
+            "numerator"
+        ],
+        "days_with_data": 69,
+        "has_commit_sha": false,
+        "repos_with_data": 14
+    },
+    {
+        "key": "spec_depth",
+        "max": 5.000000,
+        "min": 1.000000,
+        "p50": 3.000000,
+        "rows": 108,
+        "family": "outcome",
+        "scopes": [
+            "user"
+        ],
+        "last_day": "2026-09-04",
+        "first_day": "2025-05-27",
+        "props_keys": [
+            "explainer",
+            "n"
+        ],
+        "days_with_data": 67,
+        "has_commit_sha": false,
+        "repos_with_data": 14
+    },
+    {
+        "key": "cache_reuse",
+        "max": 0.992450,
+        "min": 0.656236,
+        "p50": 0.975247,
+        "rows": 73,
+        "family": "usage",
+        "scopes": [
+            "user"
+        ],
+        "last_day": "2026-09-08",
+        "first_day": "2026-07-17",
+        "props_keys": [
+            "explainer",
+            "mean_of_session_ratios",
+            "pooled_ratio",
+            "sessions"
+        ],
+        "days_with_data": 38,
+        "has_commit_sha": false,
+        "repos_with_data": 10
+    },
+    {
+        "key": "coverage",
+        "max": 0.995431,
+        "min": 0.434562,
+        "p50": 0.558583,
+        "rows": 60,
+        "family": "quality",
+        "scopes": [
+            "user"
+        ],
+        "last_day": "2026-09-08",
+        "first_day": "2026-08-20",
+        "props_keys": [
+            "denominator",
+            "explainer",
+            "numerator"
+        ],
+        "days_with_data": 20,
+        "has_commit_sha": false,
+        "repos_with_data": 3
+    },
+    {
+        "key": "cost_per_result",
+        "max": 197.260274,
+        "min": 17.932752,
+        "p50": 197.260274,
+        "rows": 28,
+        "family": "cost",
+        "scopes": [
+            "user"
+        ],
+        "last_day": "2026-09-08",
+        "first_day": "2026-08-23",
+        "props_keys": [
+            "accepted_recommendations",
+            "currency",
+            "denominator",
+            "explainer",
+            "merged_runs",
+            "numerator",
+            "plan",
+            "window_days"
+        ],
+        "days_with_data": 17,
+        "has_commit_sha": false,
+        "repos_with_data": 2
+    },
+    {
+        "key": "run_completion",
+        "max": 1.000000,
+        "min": 0.000000,
+        "p50": 0.000000,
+        "rows": 5,
+        "family": "outcome",
+        "scopes": [
+            "user"
+        ],
+        "last_day": "2026-08-12",
+        "first_day": "2026-07-24",
+        "props_keys": [
+            "denominator",
+            "explainer",
+            "low_n",
+            "numerator"
+        ],
+        "days_with_data": 5,
+        "has_commit_sha": false,
+        "repos_with_data": 1
+    },
+    {
+        "key": "project_health",
+        "max": null,
+        "min": null,
+        "p50": null,
+        "rows": 0,
+        "family": "composite",
+        "scopes": null,
+        "last_day": null,
+        "first_day": null,
+        "props_keys": null,
+        "days_with_data": 0,
+        "has_commit_sha": false,
+        "repos_with_data": 0
+    },
+    {
+        "key": "false_crash_rate",
+        "max": null,
+        "min": null,
+        "p50": null,
+        "rows": 0,
+        "family": "autonomy",
+        "scopes": null,
+        "last_day": null,
+        "first_day": null,
+        "props_keys": null,
+        "days_with_data": 0,
+        "has_commit_sha": false,
+        "repos_with_data": 0
+    },
+    {
+        "key": "unused_tools",
+        "max": null,
+        "min": null,
+        "p50": null,
+        "rows": 0,
+        "family": "tool",
+        "scopes": null,
+        "last_day": null,
+        "first_day": null,
+        "props_keys": null,
+        "days_with_data": 0,
+        "has_commit_sha": false,
+        "repos_with_data": 0
+    }
+]
