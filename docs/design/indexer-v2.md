@@ -129,16 +129,48 @@ G2. A human can see a repo's structure and where its risk is concentrated.
 
 A change that moves a coverage number but serves neither is not progress.
 
-## Open questions for the user — answer before implementation starts
+## Decisions — SETTLED, do not re-open
 
-1. **Scope of v2.** Just the fact-production walk, or also the persistence path
-   (`process.rs` emit + `graph_facts`)? The emit path has its own dropped-data
-   seam (`upsert_node` takes 8 positional args and has no slot for a declared
-   type), so a clean walk alone will still lose data at the boundary.
-2. **Parameters as nodes.** They make "what shape is this call" answerable and
-   are needed for receiver typing, but they roughly double the node count.
-   Worth it, or keep parameter types on the function symbol only?
-3. **Do we index dependency sources?** Currently no, and externals map to a name.
-   Everything measured says that is sufficient. Confirm it stays that way.
-4. **Which language after rust**, and is the trigger "rust hits its acceptance
-   gate" rather than a time box?
+**D1. Scope is the walk AND the persistence path.** If data is lost at the
+boundary, a clean walk alone achieves nothing. `upsert_node` takes 8 positional
+args with no slot for a declared type; v2 owns the emit path too, and the wire
+format between producer and persistence must carry everything the walk captured.
+
+**D2. Parameters are PROPS on the function symbol, not nodes.** They carry the
+declared type (which receiver typing needs) without doubling the node count. A
+parameter is not a thing you navigate to.
+
+**D3. Externals: index the USE, never the internals.** The definition that
+governs this:
+
+> Indexing is the process of scanning SOURCE FILES to extract nodes and edges.
+> An edge may legitimately point outside the bubble of local code — that is where
+> libraries and language internals live.
+
+So the graph must answer "which libraries do we use most" and "which methods do
+we use from which library" — that requires member-level `lib_symbol`, which is
+what exists today and works (218,310 edges onto 18,240 nodes). It must NOT read
+the internals of an external function; that is what library docs are for. No
+dependency sources are ever parsed.
+
+Consequence for `lib_package`: 3,688 such nodes carry ZERO inbound edges. The
+"which libraries most" question is a GROUP BY over the symbols' package, not a
+node per package. Decide whether the container survives as structure or is
+replaced by aggregation — but it is not carrying graph signal today.
+
+**D4. Language order: rust, then js, ts, svelte — in that order.** The trigger to
+move on is rust passing its acceptance gate, not elapsed time. One at a time; no
+mixing, ever.
+
+**D5. OO structure comes from the SAME walk. No second scan.** The walk emits the
+FACTS: `extends`, `implements`, `impl` blocks, trait impls, mixins, decorators,
+and which type each member belongs to. These are single-file facts and there is
+no reason to re-read source for them.
+
+Distinction that matters for the design: naming a DESIGN PATTERN (adapter,
+factory, strategy) is a query over those facts across files — it needs the graph,
+not the source. "No second scan" means no second parse of source, not that
+pattern classification happens inside the walk. The walk's obligation is to emit
+every structural fact a classifier could need, so the classifier never has to go
+back to the bytes.
+
