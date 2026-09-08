@@ -1,0 +1,1215 @@
+{
+    "note": "portfolio comparison: latest reading per metric per repo. Use for small-multiples / heatmap / ranked-bar designs.",
+    "rows": [
+        {
+            "key": "context_pressure_rate",
+            "repo": "dbd",
+            "as_of": "2026-08-31",
+            "value": 0.000000,
+            "family": "outcome",
+            "rating": 5,
+            "weight": 1,
+            "direction": "lower_better"
+        },
+        {
+            "key": "ftr",
+            "repo": "dbd",
+            "as_of": "2026-08-31",
+            "value": 1.000000,
+            "family": "outcome",
+            "rating": 5,
+            "weight": 3,
+            "direction": "higher_better"
+        },
+        {
+            "key": "rework_ratio",
+            "repo": "dbd",
+            "as_of": "2026-08-31",
+            "value": 0.000000,
+            "family": "outcome",
+            "rating": 5,
+            "weight": 1,
+            "direction": "lower_better"
+        },
+        {
+            "key": "spec_depth",
+            "repo": "dbd",
+            "as_of": "2026-08-31",
+            "value": 2.000000,
+            "family": "outcome",
+            "rating": 2,
+            "weight": 2,
+            "direction": "higher_better"
+        },
+        {
+            "key": "spec_deviation_rate",
+            "repo": "dbd",
+            "as_of": "2026-08-31",
+            "value": 1.000000,
+            "family": "outcome",
+            "rating": 0,
+            "weight": 2,
+            "direction": "lower_better"
+        },
+        {
+            "key": "cost_per_result",
+            "repo": "dbd",
+            "as_of": "2026-09-08",
+            "value": 197.260274,
+            "family": "cost",
+            "rating": null,
+            "weight": 1,
+            "direction": "lower_better"
+        },
+        {
+            "key": "session_duration",
+            "repo": "dbd",
+            "as_of": "2026-08-31",
+            "value": 4961.510000,
+            "family": "velocity",
+            "rating": null,
+            "weight": 0,
+            "direction": "neutral"
+        },
+        {
+            "key": "throughput",
+            "repo": "dbd",
+            "as_of": "2026-08-31",
+            "value": 1.000000,
+            "family": "velocity",
+            "rating": 1,
+            "weight": 1,
+            "direction": "higher_better"
+        },
+        {
+            "key": "time_to_useful_result",
+            "repo": "dbd",
+            "as_of": "2026-08-31",
+            "value": 2232.262801,
+            "family": "velocity",
+            "rating": 0,
+            "weight": 1,
+            "direction": "lower_better"
+        },
+        {
+            "key": "churn_concentration",
+            "repo": "dbd",
+            "as_of": "2026-08-31",
+            "value": 0.664071,
+            "family": "quality",
+            "rating": null,
+            "weight": 0,
+            "direction": "neutral"
+        },
+        {
+            "key": "churn_rate",
+            "repo": "dbd",
+            "as_of": "2026-08-31",
+            "value": 17.000000,
+            "family": "quality",
+            "rating": 2,
+            "weight": 1,
+            "direction": "lower_better"
+        },
+        {
+            "key": "duplication_ratio",
+            "repo": "dbd",
+            "as_of": "2026-08-31",
+            "value": 0.003121,
+            "family": "quality",
+            "rating": 5,
+            "weight": 3,
+            "direction": "lower_better"
+        },
+        {
+            "key": "incomplete_analysis_llm_rate",
+            "repo": "dbd",
+            "as_of": "2026-08-31",
+            "value": 0.000000,
+            "family": "quality",
+            "rating": 5,
+            "weight": 1,
+            "direction": "lower_better"
+        },
+        {
+            "key": "incomplete_analysis_rate",
+            "repo": "dbd",
+            "as_of": "2026-08-31",
+            "value": 0.000000,
+            "family": "quality",
+            "rating": 5,
+            "weight": 1,
+            "direction": "lower_better"
+        },
+        {
+            "key": "module_quality",
+            "repo": "dbd",
+            "as_of": "2026-08-31",
+            "value": 0.001518,
+            "family": "quality",
+            "rating": 4,
+            "weight": 3,
+            "direction": "lower_better"
+        },
+        {
+            "key": "refuted_finding_rate",
+            "repo": "dbd",
+            "as_of": "2026-08-31",
+            "value": 0.000000,
+            "family": "quality",
+            "rating": 5,
+            "weight": 1,
+            "direction": "lower_better"
+        },
+        {
+            "key": "rework_density",
+            "repo": "dbd",
+            "as_of": "2026-09-08",
+            "value": 0.693487,
+            "family": "quality",
+            "rating": 0,
+            "weight": 1,
+            "direction": "lower_better"
+        },
+        {
+            "key": "interruption_rate",
+            "repo": "dbd",
+            "as_of": "2026-08-31",
+            "value": 1.000000,
+            "family": "autonomy",
+            "rating": 0,
+            "weight": 1,
+            "direction": "lower_better"
+        },
+        {
+            "key": "memory_promotion",
+            "repo": "dbd",
+            "as_of": "2026-09-08",
+            "value": 0.000000,
+            "family": "knowledge",
+            "rating": 0,
+            "weight": 1,
+            "direction": "higher_better"
+        },
+        {
+            "key": "cache_reuse",
+            "repo": "dbd",
+            "as_of": "2026-08-31",
+            "value": 0.975677,
+            "family": "usage",
+            "rating": null,
+            "weight": 1,
+            "direction": "higher_better"
+        },
+        {
+            "key": "tokens_in_per_day",
+            "repo": "dbd",
+            "as_of": "2026-08-31",
+            "value": 51002272.000000,
+            "family": "usage",
+            "rating": null,
+            "weight": 0,
+            "direction": "neutral"
+        },
+        {
+            "key": "tokens_out_per_day",
+            "repo": "dbd",
+            "as_of": "2026-08-31",
+            "value": 202544.000000,
+            "family": "usage",
+            "rating": null,
+            "weight": 0,
+            "direction": "neutral"
+        },
+        {
+            "key": "tokens_per_day",
+            "repo": "dbd",
+            "as_of": "2026-08-31",
+            "value": 51204816.000000,
+            "family": "usage",
+            "rating": null,
+            "weight": 0,
+            "direction": "neutral"
+        },
+        {
+            "key": "tokens_per_result",
+            "repo": "dbd",
+            "as_of": "2026-08-31",
+            "value": 202544.000000,
+            "family": "usage",
+            "rating": 0,
+            "weight": 1,
+            "direction": "lower_better"
+        },
+        {
+            "key": "context_pressure_rate",
+            "repo": "gateway",
+            "as_of": "2026-09-08",
+            "value": 0.000000,
+            "family": "outcome",
+            "rating": 5,
+            "weight": 1,
+            "direction": "lower_better"
+        },
+        {
+            "key": "ftr",
+            "repo": "gateway",
+            "as_of": "2026-09-08",
+            "value": 1.000000,
+            "family": "outcome",
+            "rating": 5,
+            "weight": 3,
+            "direction": "higher_better"
+        },
+        {
+            "key": "rework_ratio",
+            "repo": "gateway",
+            "as_of": "2026-09-08",
+            "value": 0.000000,
+            "family": "outcome",
+            "rating": 5,
+            "weight": 1,
+            "direction": "lower_better"
+        },
+        {
+            "key": "spec_depth",
+            "repo": "gateway",
+            "as_of": "2026-09-04",
+            "value": 5.000000,
+            "family": "outcome",
+            "rating": 5,
+            "weight": 2,
+            "direction": "higher_better"
+        },
+        {
+            "key": "spec_deviation_rate",
+            "repo": "gateway",
+            "as_of": "2026-09-04",
+            "value": 1.000000,
+            "family": "outcome",
+            "rating": 0,
+            "weight": 2,
+            "direction": "lower_better"
+        },
+        {
+            "key": "session_duration",
+            "repo": "gateway",
+            "as_of": "2026-09-08",
+            "value": 1655.160000,
+            "family": "velocity",
+            "rating": null,
+            "weight": 0,
+            "direction": "neutral"
+        },
+        {
+            "key": "throughput",
+            "repo": "gateway",
+            "as_of": "2026-09-08",
+            "value": 1.000000,
+            "family": "velocity",
+            "rating": 1,
+            "weight": 1,
+            "direction": "higher_better"
+        },
+        {
+            "key": "time_to_useful_result",
+            "repo": "gateway",
+            "as_of": "2026-09-08",
+            "value": 60.043992,
+            "family": "velocity",
+            "rating": 0,
+            "weight": 1,
+            "direction": "lower_better"
+        },
+        {
+            "key": "churn_concentration",
+            "repo": "gateway",
+            "as_of": "2026-09-08",
+            "value": 0.387244,
+            "family": "quality",
+            "rating": null,
+            "weight": 0,
+            "direction": "neutral"
+        },
+        {
+            "key": "churn_rate",
+            "repo": "gateway",
+            "as_of": "2026-09-08",
+            "value": 5.000000,
+            "family": "quality",
+            "rating": 4,
+            "weight": 1,
+            "direction": "lower_better"
+        },
+        {
+            "key": "duplication_ratio",
+            "repo": "gateway",
+            "as_of": "2026-09-08",
+            "value": 0.002155,
+            "family": "quality",
+            "rating": 5,
+            "weight": 3,
+            "direction": "lower_better"
+        },
+        {
+            "key": "incomplete_analysis_llm_rate",
+            "repo": "gateway",
+            "as_of": "2026-09-04",
+            "value": 0.000000,
+            "family": "quality",
+            "rating": 5,
+            "weight": 1,
+            "direction": "lower_better"
+        },
+        {
+            "key": "incomplete_analysis_rate",
+            "repo": "gateway",
+            "as_of": "2026-09-08",
+            "value": 0.000000,
+            "family": "quality",
+            "rating": 5,
+            "weight": 1,
+            "direction": "lower_better"
+        },
+        {
+            "key": "module_quality",
+            "repo": "gateway",
+            "as_of": "2026-09-08",
+            "value": 0.000466,
+            "family": "quality",
+            "rating": 5,
+            "weight": 3,
+            "direction": "lower_better"
+        },
+        {
+            "key": "refuted_finding_rate",
+            "repo": "gateway",
+            "as_of": "2026-09-04",
+            "value": 1.000000,
+            "family": "quality",
+            "rating": 0,
+            "weight": 1,
+            "direction": "lower_better"
+        },
+        {
+            "key": "rework_density",
+            "repo": "gateway",
+            "as_of": "2026-09-08",
+            "value": 0.273852,
+            "family": "quality",
+            "rating": 1,
+            "weight": 1,
+            "direction": "lower_better"
+        },
+        {
+            "key": "interruption_rate",
+            "repo": "gateway",
+            "as_of": "2026-09-08",
+            "value": 1.000000,
+            "family": "autonomy",
+            "rating": 0,
+            "weight": 1,
+            "direction": "lower_better"
+        },
+        {
+            "key": "memory_promotion",
+            "repo": "gateway",
+            "as_of": "2026-09-08",
+            "value": 0.000000,
+            "family": "knowledge",
+            "rating": 0,
+            "weight": 1,
+            "direction": "higher_better"
+        },
+        {
+            "key": "cache_reuse",
+            "repo": "gateway",
+            "as_of": "2026-09-08",
+            "value": 0.991196,
+            "family": "usage",
+            "rating": null,
+            "weight": 1,
+            "direction": "higher_better"
+        },
+        {
+            "key": "tokens_in_per_day",
+            "repo": "gateway",
+            "as_of": "2026-09-08",
+            "value": 68950451.000000,
+            "family": "usage",
+            "rating": null,
+            "weight": 0,
+            "direction": "neutral"
+        },
+        {
+            "key": "tokens_out_per_day",
+            "repo": "gateway",
+            "as_of": "2026-09-08",
+            "value": 438132.000000,
+            "family": "usage",
+            "rating": null,
+            "weight": 0,
+            "direction": "neutral"
+        },
+        {
+            "key": "tokens_per_day",
+            "repo": "gateway",
+            "as_of": "2026-09-08",
+            "value": 69388583.000000,
+            "family": "usage",
+            "rating": null,
+            "weight": 0,
+            "direction": "neutral"
+        },
+        {
+            "key": "tokens_per_result",
+            "repo": "gateway",
+            "as_of": "2026-09-08",
+            "value": 438132.000000,
+            "family": "usage",
+            "rating": 0,
+            "weight": 1,
+            "direction": "lower_better"
+        },
+        {
+            "key": "context_pressure_rate",
+            "repo": "kavach",
+            "as_of": "2026-08-27",
+            "value": 0.000000,
+            "family": "outcome",
+            "rating": 5,
+            "weight": 1,
+            "direction": "lower_better"
+        },
+        {
+            "key": "ftr",
+            "repo": "kavach",
+            "as_of": "2026-08-27",
+            "value": 1.000000,
+            "family": "outcome",
+            "rating": 5,
+            "weight": 3,
+            "direction": "higher_better"
+        },
+        {
+            "key": "rework_ratio",
+            "repo": "kavach",
+            "as_of": "2026-08-27",
+            "value": 0.000000,
+            "family": "outcome",
+            "rating": 5,
+            "weight": 1,
+            "direction": "lower_better"
+        },
+        {
+            "key": "spec_depth",
+            "repo": "kavach",
+            "as_of": "2026-08-14",
+            "value": 5.000000,
+            "family": "outcome",
+            "rating": 5,
+            "weight": 2,
+            "direction": "higher_better"
+        },
+        {
+            "key": "spec_deviation_rate",
+            "repo": "kavach",
+            "as_of": "2026-08-14",
+            "value": 0.000000,
+            "family": "outcome",
+            "rating": 5,
+            "weight": 2,
+            "direction": "lower_better"
+        },
+        {
+            "key": "session_duration",
+            "repo": "kavach",
+            "as_of": "2026-08-27",
+            "value": 9011.704000,
+            "family": "velocity",
+            "rating": null,
+            "weight": 0,
+            "direction": "neutral"
+        },
+        {
+            "key": "throughput",
+            "repo": "kavach",
+            "as_of": "2026-08-27",
+            "value": 1.000000,
+            "family": "velocity",
+            "rating": 1,
+            "weight": 1,
+            "direction": "higher_better"
+        },
+        {
+            "key": "time_to_useful_result",
+            "repo": "kavach",
+            "as_of": "2026-08-27",
+            "value": 1099.424958,
+            "family": "velocity",
+            "rating": 0,
+            "weight": 1,
+            "direction": "lower_better"
+        },
+        {
+            "key": "churn_concentration",
+            "repo": "kavach",
+            "as_of": "2026-08-27",
+            "value": 0.967958,
+            "family": "quality",
+            "rating": null,
+            "weight": 0,
+            "direction": "neutral"
+        },
+        {
+            "key": "churn_rate",
+            "repo": "kavach",
+            "as_of": "2026-08-27",
+            "value": 56.000000,
+            "family": "quality",
+            "rating": 0,
+            "weight": 1,
+            "direction": "lower_better"
+        },
+        {
+            "key": "coverage",
+            "repo": "kavach",
+            "as_of": "2026-09-08",
+            "value": 0.434562,
+            "family": "quality",
+            "rating": 1,
+            "weight": 3,
+            "direction": "higher_better"
+        },
+        {
+            "key": "duplication_ratio",
+            "repo": "kavach",
+            "as_of": "2026-08-25",
+            "value": 0.031662,
+            "family": "quality",
+            "rating": 3,
+            "weight": 3,
+            "direction": "lower_better"
+        },
+        {
+            "key": "incomplete_analysis_llm_rate",
+            "repo": "kavach",
+            "as_of": "2026-08-27",
+            "value": 0.000000,
+            "family": "quality",
+            "rating": 5,
+            "weight": 1,
+            "direction": "lower_better"
+        },
+        {
+            "key": "incomplete_analysis_rate",
+            "repo": "kavach",
+            "as_of": "2026-08-27",
+            "value": 0.000000,
+            "family": "quality",
+            "rating": 5,
+            "weight": 1,
+            "direction": "lower_better"
+        },
+        {
+            "key": "module_quality",
+            "repo": "kavach",
+            "as_of": "2026-08-25",
+            "value": 0.000880,
+            "family": "quality",
+            "rating": 5,
+            "weight": 3,
+            "direction": "lower_better"
+        },
+        {
+            "key": "refuted_finding_rate",
+            "repo": "kavach",
+            "as_of": "2026-08-27",
+            "value": 0.000000,
+            "family": "quality",
+            "rating": 5,
+            "weight": 1,
+            "direction": "lower_better"
+        },
+        {
+            "key": "rework_density",
+            "repo": "kavach",
+            "as_of": "2026-09-08",
+            "value": 0.019553,
+            "family": "quality",
+            "rating": 5,
+            "weight": 1,
+            "direction": "lower_better"
+        },
+        {
+            "key": "interruption_rate",
+            "repo": "kavach",
+            "as_of": "2026-08-28",
+            "value": 1.000000,
+            "family": "autonomy",
+            "rating": 0,
+            "weight": 1,
+            "direction": "lower_better"
+        },
+        {
+            "key": "memory_promotion",
+            "repo": "kavach",
+            "as_of": "2026-09-08",
+            "value": 0.000000,
+            "family": "knowledge",
+            "rating": 0,
+            "weight": 1,
+            "direction": "higher_better"
+        },
+        {
+            "key": "cache_reuse",
+            "repo": "kavach",
+            "as_of": "2026-08-27",
+            "value": 0.979657,
+            "family": "usage",
+            "rating": null,
+            "weight": 1,
+            "direction": "higher_better"
+        },
+        {
+            "key": "tokens_in_per_day",
+            "repo": "kavach",
+            "as_of": "2026-08-27",
+            "value": 148708196.000000,
+            "family": "usage",
+            "rating": null,
+            "weight": 0,
+            "direction": "neutral"
+        },
+        {
+            "key": "tokens_out_per_day",
+            "repo": "kavach",
+            "as_of": "2026-08-27",
+            "value": 532206.000000,
+            "family": "usage",
+            "rating": null,
+            "weight": 0,
+            "direction": "neutral"
+        },
+        {
+            "key": "tokens_per_day",
+            "repo": "kavach",
+            "as_of": "2026-08-27",
+            "value": 149240402.000000,
+            "family": "usage",
+            "rating": null,
+            "weight": 0,
+            "direction": "neutral"
+        },
+        {
+            "key": "tokens_per_result",
+            "repo": "kavach",
+            "as_of": "2026-08-27",
+            "value": 532206.000000,
+            "family": "usage",
+            "rating": 0,
+            "weight": 1,
+            "direction": "lower_better"
+        },
+        {
+            "key": "context_pressure_rate",
+            "repo": "rokkit",
+            "as_of": "2026-08-31",
+            "value": 0.000000,
+            "family": "outcome",
+            "rating": 5,
+            "weight": 1,
+            "direction": "lower_better"
+        },
+        {
+            "key": "ftr",
+            "repo": "rokkit",
+            "as_of": "2026-08-31",
+            "value": 1.000000,
+            "family": "outcome",
+            "rating": 5,
+            "weight": 3,
+            "direction": "higher_better"
+        },
+        {
+            "key": "rework_ratio",
+            "repo": "rokkit",
+            "as_of": "2026-08-31",
+            "value": 0.000000,
+            "family": "outcome",
+            "rating": 5,
+            "weight": 1,
+            "direction": "lower_better"
+        },
+        {
+            "key": "spec_depth",
+            "repo": "rokkit",
+            "as_of": "2026-08-31",
+            "value": 3.000000,
+            "family": "outcome",
+            "rating": 3,
+            "weight": 2,
+            "direction": "higher_better"
+        },
+        {
+            "key": "spec_deviation_rate",
+            "repo": "rokkit",
+            "as_of": "2026-08-31",
+            "value": 1.000000,
+            "family": "outcome",
+            "rating": 0,
+            "weight": 2,
+            "direction": "lower_better"
+        },
+        {
+            "key": "session_duration",
+            "repo": "rokkit",
+            "as_of": "2026-08-31",
+            "value": 13035.707000,
+            "family": "velocity",
+            "rating": null,
+            "weight": 0,
+            "direction": "neutral"
+        },
+        {
+            "key": "throughput",
+            "repo": "rokkit",
+            "as_of": "2026-08-31",
+            "value": 1.000000,
+            "family": "velocity",
+            "rating": 1,
+            "weight": 1,
+            "direction": "higher_better"
+        },
+        {
+            "key": "time_to_useful_result",
+            "repo": "rokkit",
+            "as_of": "2026-08-31",
+            "value": 8202.871128,
+            "family": "velocity",
+            "rating": 0,
+            "weight": 1,
+            "direction": "lower_better"
+        },
+        {
+            "key": "churn_concentration",
+            "repo": "rokkit",
+            "as_of": "2026-08-31",
+            "value": 0.866331,
+            "family": "quality",
+            "rating": null,
+            "weight": 0,
+            "direction": "neutral"
+        },
+        {
+            "key": "churn_rate",
+            "repo": "rokkit",
+            "as_of": "2026-08-31",
+            "value": 89.000000,
+            "family": "quality",
+            "rating": 0,
+            "weight": 1,
+            "direction": "lower_better"
+        },
+        {
+            "key": "coverage",
+            "repo": "rokkit",
+            "as_of": "2026-09-08",
+            "value": 0.995431,
+            "family": "quality",
+            "rating": 5,
+            "weight": 3,
+            "direction": "higher_better"
+        },
+        {
+            "key": "duplication_ratio",
+            "repo": "rokkit",
+            "as_of": "2026-08-31",
+            "value": 0.032521,
+            "family": "quality",
+            "rating": 3,
+            "weight": 3,
+            "direction": "lower_better"
+        },
+        {
+            "key": "incomplete_analysis_llm_rate",
+            "repo": "rokkit",
+            "as_of": "2026-08-31",
+            "value": 0.000000,
+            "family": "quality",
+            "rating": 5,
+            "weight": 1,
+            "direction": "lower_better"
+        },
+        {
+            "key": "incomplete_analysis_rate",
+            "repo": "rokkit",
+            "as_of": "2026-08-31",
+            "value": 0.000000,
+            "family": "quality",
+            "rating": 5,
+            "weight": 1,
+            "direction": "lower_better"
+        },
+        {
+            "key": "module_quality",
+            "repo": "rokkit",
+            "as_of": "2026-08-31",
+            "value": 0.002106,
+            "family": "quality",
+            "rating": 4,
+            "weight": 3,
+            "direction": "lower_better"
+        },
+        {
+            "key": "refuted_finding_rate",
+            "repo": "rokkit",
+            "as_of": "2026-08-31",
+            "value": 0.000000,
+            "family": "quality",
+            "rating": 5,
+            "weight": 1,
+            "direction": "lower_better"
+        },
+        {
+            "key": "rework_density",
+            "repo": "rokkit",
+            "as_of": "2026-09-08",
+            "value": 0.101695,
+            "family": "quality",
+            "rating": 3,
+            "weight": 1,
+            "direction": "lower_better"
+        },
+        {
+            "key": "interruption_rate",
+            "repo": "rokkit",
+            "as_of": "2026-09-01",
+            "value": 0.000000,
+            "family": "autonomy",
+            "rating": 5,
+            "weight": 1,
+            "direction": "lower_better"
+        },
+        {
+            "key": "memory_promotion",
+            "repo": "rokkit",
+            "as_of": "2026-09-08",
+            "value": 0.000000,
+            "family": "knowledge",
+            "rating": 0,
+            "weight": 1,
+            "direction": "higher_better"
+        },
+        {
+            "key": "cache_reuse",
+            "repo": "rokkit",
+            "as_of": "2026-08-31",
+            "value": 0.982514,
+            "family": "usage",
+            "rating": null,
+            "weight": 1,
+            "direction": "higher_better"
+        },
+        {
+            "key": "tokens_in_per_day",
+            "repo": "rokkit",
+            "as_of": "2026-08-31",
+            "value": 230781421.000000,
+            "family": "usage",
+            "rating": null,
+            "weight": 0,
+            "direction": "neutral"
+        },
+        {
+            "key": "tokens_out_per_day",
+            "repo": "rokkit",
+            "as_of": "2026-08-31",
+            "value": 723331.000000,
+            "family": "usage",
+            "rating": null,
+            "weight": 0,
+            "direction": "neutral"
+        },
+        {
+            "key": "tokens_per_day",
+            "repo": "rokkit",
+            "as_of": "2026-08-31",
+            "value": 231504752.000000,
+            "family": "usage",
+            "rating": null,
+            "weight": 0,
+            "direction": "neutral"
+        },
+        {
+            "key": "tokens_per_result",
+            "repo": "rokkit",
+            "as_of": "2026-08-31",
+            "value": 723331.000000,
+            "family": "usage",
+            "rating": 0,
+            "weight": 1,
+            "direction": "lower_better"
+        },
+        {
+            "key": "context_pressure_rate",
+            "repo": "sensei",
+            "as_of": "2026-08-27",
+            "value": 0.000000,
+            "family": "outcome",
+            "rating": 5,
+            "weight": 1,
+            "direction": "lower_better"
+        },
+        {
+            "key": "ftr",
+            "repo": "sensei",
+            "as_of": "2026-08-27",
+            "value": 0.000000,
+            "family": "outcome",
+            "rating": 0,
+            "weight": 3,
+            "direction": "higher_better"
+        },
+        {
+            "key": "rework_ratio",
+            "repo": "sensei",
+            "as_of": "2026-08-27",
+            "value": 1.000000,
+            "family": "outcome",
+            "rating": 0,
+            "weight": 1,
+            "direction": "lower_better"
+        },
+        {
+            "key": "run_completion",
+            "repo": "sensei",
+            "as_of": "2026-08-12",
+            "value": 0.000000,
+            "family": "outcome",
+            "rating": 0,
+            "weight": 1,
+            "direction": "higher_better"
+        },
+        {
+            "key": "spec_depth",
+            "repo": "sensei",
+            "as_of": "2026-08-26",
+            "value": 3.000000,
+            "family": "outcome",
+            "rating": 3,
+            "weight": 2,
+            "direction": "higher_better"
+        },
+        {
+            "key": "spec_deviation_rate",
+            "repo": "sensei",
+            "as_of": "2026-08-26",
+            "value": 1.000000,
+            "family": "outcome",
+            "rating": 0,
+            "weight": 2,
+            "direction": "lower_better"
+        },
+        {
+            "key": "cost_per_result",
+            "repo": "sensei",
+            "as_of": "2026-09-02",
+            "value": 24.657534,
+            "family": "cost",
+            "rating": null,
+            "weight": 1,
+            "direction": "lower_better"
+        },
+        {
+            "key": "session_duration",
+            "repo": "sensei",
+            "as_of": "2026-08-27",
+            "value": 79175.160500,
+            "family": "velocity",
+            "rating": null,
+            "weight": 0,
+            "direction": "neutral"
+        },
+        {
+            "key": "throughput",
+            "repo": "sensei",
+            "as_of": "2026-08-27",
+            "value": 1.000000,
+            "family": "velocity",
+            "rating": 1,
+            "weight": 1,
+            "direction": "higher_better"
+        },
+        {
+            "key": "time_to_useful_result",
+            "repo": "sensei",
+            "as_of": "2026-08-27",
+            "value": 1078.273268,
+            "family": "velocity",
+            "rating": 0,
+            "weight": 1,
+            "direction": "lower_better"
+        },
+        {
+            "key": "churn_concentration",
+            "repo": "sensei",
+            "as_of": "2026-09-02",
+            "value": 0.348276,
+            "family": "quality",
+            "rating": null,
+            "weight": 0,
+            "direction": "neutral"
+        },
+        {
+            "key": "churn_rate",
+            "repo": "sensei",
+            "as_of": "2026-09-02",
+            "value": 5.000000,
+            "family": "quality",
+            "rating": 4,
+            "weight": 1,
+            "direction": "lower_better"
+        },
+        {
+            "key": "duplication_ratio",
+            "repo": "sensei",
+            "as_of": "2026-08-31",
+            "value": 0.017791,
+            "family": "quality",
+            "rating": 4,
+            "weight": 3,
+            "direction": "lower_better"
+        },
+        {
+            "key": "incomplete_analysis_llm_rate",
+            "repo": "sensei",
+            "as_of": "2026-08-27",
+            "value": 0.000000,
+            "family": "quality",
+            "rating": 5,
+            "weight": 1,
+            "direction": "lower_better"
+        },
+        {
+            "key": "incomplete_analysis_rate",
+            "repo": "sensei",
+            "as_of": "2026-08-27",
+            "value": 0.000000,
+            "family": "quality",
+            "rating": 5,
+            "weight": 1,
+            "direction": "lower_better"
+        },
+        {
+            "key": "module_quality",
+            "repo": "sensei",
+            "as_of": "2026-08-31",
+            "value": 0.002339,
+            "family": "quality",
+            "rating": 4,
+            "weight": 3,
+            "direction": "lower_better"
+        },
+        {
+            "key": "refuted_finding_rate",
+            "repo": "sensei",
+            "as_of": "2026-08-27",
+            "value": 0.000000,
+            "family": "quality",
+            "rating": 5,
+            "weight": 1,
+            "direction": "lower_better"
+        },
+        {
+            "key": "rework_density",
+            "repo": "sensei",
+            "as_of": "2026-09-02",
+            "value": 0.311853,
+            "family": "quality",
+            "rating": 1,
+            "weight": 1,
+            "direction": "lower_better"
+        },
+        {
+            "key": "interruption_rate",
+            "repo": "sensei",
+            "as_of": "2026-09-02",
+            "value": 0.600000,
+            "family": "autonomy",
+            "rating": 1,
+            "weight": 1,
+            "direction": "lower_better"
+        },
+        {
+            "key": "memory_promotion",
+            "repo": "sensei",
+            "as_of": "2026-09-02",
+            "value": 0.000000,
+            "family": "knowledge",
+            "rating": 0,
+            "weight": 1,
+            "direction": "higher_better"
+        },
+        {
+            "key": "cache_reuse",
+            "repo": "sensei",
+            "as_of": "2026-08-27",
+            "value": 0.978042,
+            "family": "usage",
+            "rating": null,
+            "weight": 1,
+            "direction": "higher_better"
+        },
+        {
+            "key": "tokens_in_per_day",
+            "repo": "sensei",
+            "as_of": "2026-08-27",
+            "value": 2116815625.000000,
+            "family": "usage",
+            "rating": null,
+            "weight": 0,
+            "direction": "neutral"
+        },
+        {
+            "key": "tokens_out_per_day",
+            "repo": "sensei",
+            "as_of": "2026-08-27",
+            "value": 4263945.000000,
+            "family": "usage",
+            "rating": null,
+            "weight": 0,
+            "direction": "neutral"
+        },
+        {
+            "key": "tokens_per_day",
+            "repo": "sensei",
+            "as_of": "2026-08-27",
+            "value": 2121079570.000000,
+            "family": "usage",
+            "rating": null,
+            "weight": 0,
+            "direction": "neutral"
+        },
+        {
+            "key": "tokens_per_result",
+            "repo": "sensei",
+            "as_of": "2026-08-26",
+            "value": 342127.000000,
+            "family": "usage",
+            "rating": 0,
+            "weight": 1,
+            "direction": "lower_better"
+        },
+        {
+            "key": "rework_density",
+            "repo": "slips",
+            "as_of": "2026-09-08",
+            "value": 0.000000,
+            "family": "quality",
+            "rating": 5,
+            "weight": 1,
+            "direction": "lower_better"
+        }
+    ]
+}
