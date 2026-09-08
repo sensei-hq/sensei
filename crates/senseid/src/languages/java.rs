@@ -548,6 +548,7 @@ pub(crate) mod java_fqn {
                         docstring: None,
                         parent_type: None,
                         parent_fqn: None,
+                        return_type: None,
                     });
                     if let Some(body) = child.child_by_field_name("body") {
                         walk(&body, src, lines, ctx, imports, Some(&name), wildcard, out);
@@ -573,6 +574,7 @@ pub(crate) mod java_fqn {
                         docstring: None,
                         parent_type: Some(cls.to_string()),
                         parent_fqn: Some(fqn::item(JAVA_LANG, &ctx.package, "", cls)),
+                        return_type: None,
                     });
                     if let Some(body) = child.child_by_field_name("body") {
                         let bindings = build_bindings(&child, src);

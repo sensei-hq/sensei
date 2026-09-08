@@ -825,6 +825,7 @@ pub(crate) mod python_fqn {
                         docstring: None,
                         parent_type,
                         parent_fqn,
+                        return_type: None,
                     });
                     if let Some(body) = child.child_by_field_name("body") {
                         let bindings = build_bindings(&child, src);
@@ -860,6 +861,7 @@ pub(crate) mod python_fqn {
                                 docstring: None,
                                 parent_type: None,
                                 parent_fqn: None,
+                                return_type: None,
                             });
                         }
                     }
@@ -882,6 +884,7 @@ pub(crate) mod python_fqn {
                         docstring: None,
                         parent_type: None,
                         parent_fqn: None,
+                        return_type: None,
                     });
 
                     // Bases. Python has no `implements`, so every base is
