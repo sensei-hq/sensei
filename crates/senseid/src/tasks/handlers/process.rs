@@ -1466,7 +1466,7 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
                         let lib_fqn = crate::languages::fqn::lib(&package, import, "");
                         target = Some(
                             ctx.pg()
-                                .upsert_lib_node_by_fqn(&folder_id, &lib_fqn, import, &package)
+                                .upsert_lib_node_by_fqn(&folder_id, &lib_fqn, import, &package, file_lang)
                                 .await
                                 .map_err(|e| format!("mint lib import {lib_fqn}: {e}"))?,
                         );
