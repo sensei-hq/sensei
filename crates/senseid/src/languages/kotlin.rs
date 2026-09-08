@@ -689,6 +689,7 @@ pub(crate) mod kotlin_fqn {
                     target_fqn,
                     target_name,
                     is_lib,
+                    receiver: None,
                 });
             }
             collect_calls(&child, src, package, caller_fqn, imports, out);
