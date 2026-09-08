@@ -40,6 +40,23 @@ pub struct FqnDefinition {
     /// the emit path nests it under the type node (not the flat file node). `None`
     /// for a top-level item, which nests under the file's module container.
     pub parent_fqn: Option<String>,
+    /// The declared return type, verbatim as written (`&crate::db::PgStore`,
+    /// `Arc<PgStore>`, `Result<T, E>`). `None` for a function returning unit, or
+    /// a language/kind where the notion does not apply.
+    ///
+    /// Carried here because THIS is the pass that mints the node. The type was
+    /// already being extracted in a different pass over the same file and then
+    /// dropped, so the graph knew every function's name, signature and parent
+    /// but not what it returned — and that one absent field is what blocks
+    /// transitive receiver resolution: `ctx.pg().method()` needs the type of
+    /// `pg`'s return value to know which `method` is being called. Every other
+    /// hop in that chain is already a key we can mint.
+    ///
+    /// Kept VERBATIM on purpose. Normalising to a bare type name here would
+    /// discard the module path that says which `PgStore` is meant; unwrapping
+    /// `Arc`/`Result`/`Option` is the resolver's job, and `base_type_name`
+    /// already owns that rule.
+    pub return_type: Option<String>,
 }
 
 /// A reference (call-site) resolved to a target FQN. `target_fqn = None` means the
@@ -231,7 +248,17 @@ mod tests {
 /// `#[cfg(test)]`, so none of this is reachable from a shipped path.
 #[cfg(test)]
 pub(crate) mod finders {
-    use super::{FqnFileOutput, FqnReference, TypeRelation};
+    use super::{FqnDefinition, FqnFileOutput, FqnReference, TypeRelation};
+
+    /// The whole definition by name, for asserting on fields other than the fqn.
+    /// Panics with the def list, because a missing def usually means the producer
+    /// emitted nothing and the list is what tells you what it did emit.
+    pub(crate) fn def_of<'a>(out: &'a FqnFileOutput, name: &str) -> &'a FqnDefinition {
+        out.defs
+            .iter()
+            .find(|d| d.name == name)
+            .unwrap_or_else(|| panic!("no def named `{name}` in {:?}", out.defs))
+    }
 
     /// A definition's fqn by name, or `"<no-def>"` — a sentinel rather than a
     /// panic, so a test can assert a definition is ABSENT without catching.
