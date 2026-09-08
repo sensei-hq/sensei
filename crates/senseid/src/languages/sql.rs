@@ -330,6 +330,7 @@ pub(crate) mod sql_fqn {
                     docstring: None,
                     parent_type: None,
                     parent_fqn: None,
+                    return_type: None,
                 });
                 current = Some(fqn_str);
             }

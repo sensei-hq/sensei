@@ -1939,6 +1939,7 @@ mod tests {
                 docstring: None,
                 parent_type: None,
                 parent_fqn: None,
+                return_type: None,
             }],
             refs: vec![a_ref("typescript·app·mod")],
             ..Default::default()

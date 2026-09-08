@@ -994,6 +994,7 @@ pub(crate) mod typescript_fqn {
             docstring: None,
             parent_type: None,
             parent_fqn: None,
+            return_type: None,
         });
     }
 
@@ -1021,6 +1022,7 @@ pub(crate) mod typescript_fqn {
             docstring: None,
             parent_type: None,
             parent_fqn: None,
+            return_type: None,
         });
         if let Some(locals) = locals
             && let Some(body) = &f.body
@@ -1109,6 +1111,7 @@ pub(crate) mod typescript_fqn {
             docstring: None,
             parent_type: None,
             parent_fqn: None,
+            return_type: None,
         });
         // INHERITANCE. This file never wrote `out.relations`, so typescript,
         // javascript and svelte produced zero extends/implements edges while
@@ -1162,6 +1165,7 @@ pub(crate) mod typescript_fqn {
                     docstring: None,
                     parent_type: Some(class_name.clone()),
                     parent_fqn: Some(class_fqn.clone()),
+                    return_type: None,
                 });
                 if let Some(locals) = locals
                     && let Some(body) = &m.value.body
@@ -1201,6 +1205,7 @@ pub(crate) mod typescript_fqn {
                         docstring: None,
                         parent_type: None,
                         parent_fqn: None,
+                        return_type: None,
                     });
                     if let Some(locals) = locals {
                         scan_body(&arrow.body, &fqn_str, None, ctx, imports, source, out, locals);
@@ -1219,6 +1224,7 @@ pub(crate) mod typescript_fqn {
                         docstring: None,
                         parent_type: None,
                         parent_fqn: None,
+                        return_type: None,
                     });
                     if let Some(locals) = locals
                         && let Some(body) = &f.body

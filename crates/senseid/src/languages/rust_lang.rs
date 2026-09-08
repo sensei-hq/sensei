@@ -1178,6 +1178,9 @@ pub(crate) mod rust_fqn {
                         is_exported: has_child_kind(&child, "visibility_modifier"),
                         signature: line_at(lines, child.start_position().row),
                         docstring: collect_doc_comments(&child, src),
+                        // Reuses the IR walk's extractor rather than re-deriving it —
+                        // one owner for "what does this function return".
+                        return_type: super::extract_return_type(&child, src),
                         parent_type,
                         parent_fqn,
                     });
@@ -1212,6 +1215,8 @@ pub(crate) mod rust_fqn {
                         is_exported: has_child_kind(&child, "visibility_modifier"),
                         signature: line_at(lines, child.start_position().row),
                         docstring: collect_doc_comments(&child, src),
+                        // A struct/enum/trait/const does not return anything.
+                        return_type: None,
                         parent_type: None,
                         parent_fqn: None,
                     });
@@ -1818,7 +1823,7 @@ mod tests {
             &FileFqnContext { package: package.into(), module: module.into() },
         )
     }
-    use crate::languages::fqn::finders::{def_fqn, ref_to};
+    use crate::languages::fqn::finders::{def_fqn, def_of, ref_to};
 
     /// `IRClass.implements` must hold TRAIT NAMES, not fragments of source.
     ///
@@ -2064,6 +2069,57 @@ impl Engine {
             "external crate path → lib node"
         );
         assert!(r.is_lib);
+    }
+
+    /// A function's RETURN TYPE must survive into the fqn producer's output.
+    ///
+    /// It is already extracted — `extract_return_type` runs in the IR walk and
+    /// fills `IRFunction.return_type` — and then dropped, because the fqn pass
+    /// (the one that mints the node) is a SEPARATE parse that never sees it and
+    /// `upsert_node` has no slot for it. So the graph knows every function's
+    /// name, signature and parent but not what it returns.
+    ///
+    /// That one missing field is what blocks transitive receiver resolution.
+    /// `ctx.pg().method()` needs: ctx → TaskContext (bindings already has it) →
+    /// `TaskContext·pg` (fqn constructible today) → ITS RETURN TYPE → PgStore →
+    /// `PgStore·method`. Every hop but that one is already a lookup we can mint.
+    /// Measured: all 28,069 unresolved rust calls are lowercase, i.e. method
+    /// calls with no import to name them.
+    #[test]
+    fn a_functions_return_type_reaches_the_fqn_output() {
+        let src = "pub fn pg(&self) -> &crate::db::pg_store::PgStore { todo!() }\n\
+                   pub fn plain() {}\n";
+        let out = produce(src, "senseid", "tasks::executor");
+
+        assert_eq!(
+            def_of(&out, "pg").return_type.as_deref(),
+            Some("&crate::db::pg_store::PgStore"),
+            "the declared return type is carried verbatim — normalising it to a bare \
+             type name is the RESOLVER's job, and doing it here would throw away the \
+             module path that says WHICH PgStore"
+        );
+        assert_eq!(
+            def_of(&out, "plain").return_type,
+            None,
+            "a function returning unit has no return type — None, not an invented \"()\""
+        );
+    }
+
+    /// A method on an impl block carries it too — that is the case the transitive
+    /// chain actually walks, since the receiver hop is always a method.
+    #[test]
+    fn an_impl_methods_return_type_reaches_the_fqn_output() {
+        let src = "pub struct TaskContext;\n\
+                   impl TaskContext {\n\
+                     pub fn pg(&self) -> Arc<PgStore> { todo!() }\n\
+                   }\n";
+        let out = produce(src, "senseid", "tasks::executor");
+        assert_eq!(
+            def_of(&out, "pg").return_type.as_deref(),
+            Some("Arc<PgStore>"),
+            "wrappers are kept as written; unwrapping Arc/Result/Option is the \
+             resolver's job and `base_type_name` already owns that rule"
+        );
     }
 
     /// A SIBLING module brought in with `use super::x;` and then called as

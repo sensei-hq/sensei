@@ -673,6 +673,7 @@ pub(crate) mod swift_fqn {
                     docstring: s.docstring,
                     parent_type: s.parent,
                     parent_fqn,
+                    return_type: None,
                 }
             })
             .collect();
