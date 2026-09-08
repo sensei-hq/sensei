@@ -1962,6 +1962,25 @@ pub(crate) mod rust_fqn {
                 // file cannot read that return type — `b` is almost always
                 // defined elsewhere — so record the hop as a key and leave the
                 // target unresolved for a pass that has the graph.
+                // A call chained onto an EXTERNAL call belongs to that same
+                // package. `sqlx_core::query_as(sql).bind(x)` — we cannot know
+                // what `query_as` returns without sqlx's source and never will,
+                // but the chain started in `sqlx_core`, so `.bind` is
+                // `sqlx_core`'s. Knowing the crate is enough to record the
+                // dependency; the intermediate type is not required and not
+                // obtainable.
+                //
+                // This was previously declined outright, on the reasoning that a
+                // `lib·` node carries no return type to read — true, and beside
+                // the point. Measured, it is the bulk of rust's unresolved calls:
+                // map_err 1,351, bind 1,111, execute 699, plus fetch_one and
+                // fetch_all, all chained onto external calls and all reported as
+                // unplaced rather than attributed to the crate they belong to.
+                if let Some(pkg) =
+                    external_package_of(&recv, src, ctx, module, scope, impl_ctx, bindings)
+                {
+                    return Some(CallTarget::resolved(fqn::lib(&pkg, &pkg, &method), true, method));
+                }
                 Some(
                     CallTarget::unresolved(method)
                         .on(receiver_return_of(&recv, src, ctx, module, scope, impl_ctx, bindings)),
@@ -1973,6 +1992,35 @@ pub(crate) mod rust_fqn {
             }
             _ => None,
         }
+    }
+
+    /// The external PACKAGE a receiver came from, when the receiver is itself a
+    /// call that resolved into a dependency.
+    ///
+    /// This is the whole of what is needed to place a chained call like
+    /// `sqlx_core::query_as(sql).bind(x)`: the crate, not the type. Reads the
+    /// package straight off the inner target's `lib·<package>·<path>·<member>`
+    /// key, so it cannot disagree with what that call already recorded.
+    #[allow(clippy::too_many_arguments)]
+    fn external_package_of(
+        recv: &Node,
+        src: &[u8],
+        ctx: &FileFqnContext,
+        module: &str,
+        scope: &FileScope,
+        impl_ctx: Option<&ImplCtx>,
+        bindings: &HashMap<String, Binding>,
+    ) -> Option<String> {
+        if recv.kind() != "call_expression" {
+            return None;
+        }
+        let inner = recv.child_by_field_name("function")?;
+        let target = resolve_call(&inner, src, ctx, module, scope, impl_ctx, bindings)?;
+        if !target.is_lib {
+            return None;
+        }
+        // `lib·<package>·…` — segment 1 is the package.
+        target.fqn?.split(fqn::SEP).nth(1).map(str::to_string)
     }
 
     /// The [`ReceiverHint::ReturnOf`] hop for a receiver that is itself a call,
@@ -2512,6 +2560,36 @@ impl Engine {
             Some(ReceiverHint::ReturnOf("rust·senseid·tasks::executor·TaskContext·pg".to_string())),
             "the receiver hop is recorded as a graph KEY, so the later resolver \
              needs only a node lookup — no file path, no re-parse: {:?}",
+            out.refs
+        );
+    }
+
+    /// A call chained onto an EXTERNAL call is a call into that same package.
+    ///
+    /// `sqlx_core::query_as::query_as(sql).bind(x)` — we cannot know what
+    /// `query_as` returns without sqlx's source, and we never will. But we do not
+    /// need to: the chain started in `sqlx_core`, so `.bind` is `sqlx_core`'s.
+    /// Knowing the crate is sufficient; the exact type is not required to record
+    /// a dependency edge.
+    ///
+    /// `receiver_return_of` refused this outright (`if target.is_lib { None }`),
+    /// on the reasoning that a `lib·` node carries no return type to read. True,
+    /// and beside the point. Measured, this is the bulk of rust's unresolved
+    /// calls: bind 1,111, execute 699, fetch_one, fetch_all, map_err 1,351 — all
+    /// chained onto external calls, all currently unresolved rather than
+    /// attributed to the crate they plainly belong to.
+    #[test]
+    fn a_call_chained_onto_an_external_call_belongs_to_that_package() {
+        let src = "pub fn go() { sqlx_core::query_as::query_as(\"sql\").bind(1); }\n";
+        let out = produce(src, "senseid", "db");
+
+        let r = ref_to(&out, "bind");
+        assert!(r.is_lib, "the chain started in sqlx_core, so bind is external too");
+        assert_eq!(
+            r.target_fqn.as_deref(),
+            Some("lib·sqlx_core·sqlx_core·bind"),
+            "attributed to the PACKAGE — the intermediate type is unknowable and \
+             unnecessary: {:?}",
             out.refs
         );
     }

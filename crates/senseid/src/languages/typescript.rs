@@ -1523,6 +1523,7 @@ mod tests {
             &FileFqnContext { package: package.into(), module: module.into() },
         )
     }
+
     use crate::languages::fqn::finders::{def_fqn, ref_to};
 
     /// A member call on a GLOBAL receiver must resolve to a runtime lib node.
