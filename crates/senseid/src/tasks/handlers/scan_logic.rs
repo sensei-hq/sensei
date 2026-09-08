@@ -407,6 +407,22 @@ pub struct ReindexPlan {
     /// Count of files the cheap mtime gate skipped (never read, never hashed).
     /// Surfaced for logging so a no-op scan can be shown to be stats-only.
     pub unchanged: usize,
+    /// How many indexable files this folder has on disk right now — the
+    /// DENOMINATOR for folder completeness. `changed + touched + unchanged`
+    /// partitions it exactly.
+    ///
+    /// Folder status is otherwise decided by the task queue reaching
+    /// `DetectCommunities`, which is not dependable: the daily analyzer
+    /// enqueues that task UNBLOCKED (`analyzer_scheduler.rs:252`), so it can
+    /// run against a partially-indexed folder. Completeness derived from
+    /// persisted per-file facts is trustworthy instead — but only with a
+    /// denominator. Counting just the rows that EXIST cannot work: a walk that
+    /// dies at file 40 of 100 leaves 40 rows all marked decided and 60 with no
+    /// row at all, so "no undecided rows" is vacuously true.
+    ///
+    /// A file deleted on disk is absent from this count (it is in `removed`),
+    /// so a folder is never left waiting on a file that is gone.
+    pub expected: usize,
 }
 
 /// Diff the working tree against the last index with a two-tier gate so a
@@ -438,7 +454,9 @@ where
     F: FnMut(&str) -> Option<String>,
 {
     let current_set: std::collections::HashSet<&String> = current.iter().map(|(p, _)| p).collect();
-    let mut plan = ReindexPlan::default();
+    // `expected` is the denominator, taken from the caller's already-filtered
+    // disk listing rather than recomputed — one owner for "which files count".
+    let mut plan = ReindexPlan { expected: current.len(), ..Default::default() };
     for (path, mtime) in current {
         match prior.get(path) {
             // Cheap mtime gate: unchanged → skip without any read/hash.
@@ -1912,6 +1930,66 @@ mod tests {
         assert_eq!(plan.touched.len(), 1);
         assert_eq!(plan.touched[0].0, "src/t.rs");
         assert_eq!(plan.removed, vec!["src/gone.rs".to_string()]);
+    }
+
+    /// `expected` is the DENOMINATOR for folder completeness: how many files
+    /// this folder must have decided before it can be called indexed.
+    ///
+    /// Folder status is currently set by the task queue reaching
+    /// `DetectCommunities`, which is not a dependable signal — the daily
+    /// analyzer enqueues that task UNBLOCKED (`analyzer_scheduler.rs:252`), so
+    /// it can run against a partially-indexed folder. Deriving completeness
+    /// from persisted per-file facts instead needs a count to compare against,
+    /// and counting only the rows that EXIST cannot work: a walk that dies at
+    /// file 40 of 100 leaves 40 rows all marked decided and 60 with no row to
+    /// be undecided, so "no undecided rows" is vacuously true.
+    ///
+    /// `current` is already the right number — the post-filter set of indexable
+    /// files on disk right now — so this exposes it rather than recomputing it.
+    /// That also means a DELETED file cannot inflate the denominator: it is
+    /// absent from `current` (it appears in `removed`), so the folder can still
+    /// reach completion instead of waiting forever on a file that is gone.
+    #[test]
+    fn plan_reindex_reports_expected_as_the_full_post_filter_file_count() {
+        let prior = prior_of(&[
+            ("src/a.rs", 100, "ha"),
+            ("src/b.rs", 200, "hb"),
+            ("src/t.rs", 300, "ht"),
+            ("src/gone.rs", 400, "hg"), // deleted on disk
+        ]);
+        let current = vec![
+            ("src/a.rs".to_string(), 100),   // unchanged
+            ("src/b.rs".to_string(), 250),   // changed
+            ("src/t.rs".to_string(), 350),   // touched
+            ("src/new.rs".to_string(), 500), // new
+        ];
+        let plan = plan_reindex(&current, &prior, |p| match p {
+            "src/b.rs" => Some("hb_new".into()),
+            "src/t.rs" => Some("ht".into()),
+            other => panic!("unexpected hash of {other}"),
+        });
+
+        assert_eq!(
+            plan.expected, 4,
+            "every file on disk counts once, whatever bucket it landed in"
+        );
+        assert_eq!(
+            plan.expected,
+            plan.changed.len() + plan.touched.len() + plan.unchanged,
+            "the buckets partition `expected` exactly — a file counted twice or dropped \
+             would make a folder complete early or never"
+        );
+        assert!(
+            !plan.removed.is_empty() && plan.expected == current.len(),
+            "a deleted file is NOT in the denominator — it must not block completion"
+        );
+    }
+
+    /// An empty folder is complete the moment it is walked, not never.
+    #[test]
+    fn plan_reindex_expected_is_zero_for_a_folder_with_no_indexable_files() {
+        let plan = plan_reindex(&[], &prior_of(&[]), |_| panic!("nothing to hash"));
+        assert_eq!(plan.expected, 0);
     }
 
     #[test]

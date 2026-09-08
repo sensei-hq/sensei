@@ -350,6 +350,23 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
         super::helpers::hash_file(&repo_path.join(rel))
     });
 
+    // Record the denominator for folder completeness while the walk still knows
+    // it. This is the only point that does: `plan.expected` is the post-filter
+    // count of indexable files on disk right now, and nothing downstream can
+    // reconstruct it — counting the `scan_state` rows that exist is vacuous,
+    // since a walk that dies partway leaves every written row marked decided and
+    // the unwritten ones absent rather than undecided.
+    //
+    // Best-effort: a failure here leaves the folder without a denominator, which
+    // reads as "never walked" (None) — incomplete, not falsely complete. It must
+    // never abort the scan.
+    if let Some(fid) = folder_uuid.as_ref()
+        && let Err(e) = ctx.pg().set_folder_expected_files(fid, plan.expected as i64).await
+    {
+        tracing::warn!(folder_id = %fid, error = %e,
+            "set_folder_expected_files failed — folder completeness stays underivable this pass");
+    }
+
     // Touched-but-identical files: refresh the stored mtime so the cheap gate
     // hits next pass, but DON'T reindex — their nodes/embeddings are still valid.
     // (mtime drift with no content change: touch, checkout, branch-switch-to-same.)
