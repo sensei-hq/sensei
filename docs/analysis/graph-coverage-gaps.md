@@ -38,10 +38,33 @@ AST names a target: an import names a file, so it always resolves.
 | 2 | plain JS, no annotations | 11,851 | No. Needs real inference (what `tsc` does). |
 | 3 | rust receiver chains deeper than one link | 12,385 | Partly — needs resolved types fed back into the binding map. |
 | 4 | class/struct fields not indexed (`self.field.method()`) | 234 rust sites in this repo alone; TS unmeasured | **YES — fully.** The field's type is declared. |
-| 5 | external crate/package types (`.bind()`, `.execute()`, sqlx/std) | large share of rust's top-20 | No. The type lives in a dependency we do not index. |
+| 5 | ~~external crate types~~ **CORRECTED: same as #1** | folded into #1 | **YES.** See note below. |
 | 6 | unplaceable types -> ghost stubs (glob imports, `pub use`, macro impls) | 4,542 | No, not from one file. |
 
-Causes 1 and 4 are ours. Causes 2, 5, 6 are genuine limits of syntax-only parsing.
+Causes 1 and 4 are ours. Causes 2 and 6 are genuine limits of syntax-only parsing.
+
+### Correction: cause 5 was mis-diagnosed, and it is not a separate cause
+
+An earlier version of this table claimed external types were unrecoverable because
+"the type lives in a dependency we do not index". That is wrong, and it matters
+because it pointed at the most expensive possible fix.
+
+We already map externals exactly as intended — `lib·<package>·<member>`, no library
+internals, no file, no body. Measured, that mechanism WORKS: **218,310 edges resolve
+onto 18,240 `lib_symbol` nodes, 12 edges per node.**
+
+`bind`, `execute`, `map_err` are unresolved not for want of depth in sqlx or std, but
+because we never learn the RECEIVER's type, so we cannot tell the call is external at
+all. Given `pool: PgPool` from an annotation in OUR source, `pool.bind(..)` mints
+`lib·sqlx·..·bind` immediately — sqlx's source is never needed. Reading the annotation
+is cause #1. So #5 is not a separate limit; it collapses into #1 and makes it larger.
+
+### Aside: `lib_package` carries no graph signal
+
+3,688 `lib_package` nodes have **0 inbound edges**. Nothing points at them; they exist
+only as parents of `lib_symbol`. Their sole consumer is `list_dependencies` grouping,
+which a `GROUP BY` on the symbol's `package` prop would serve. Worth a deliberate
+decision rather than inheriting them.
 
 ## 4. What matters, graded
 
@@ -70,6 +93,6 @@ Grade = value to an LLM agent working in the codebase.
 
 ## 6. Not recoverable without new inputs
 
-Causes 2, 5, 6. Closing them needs either indexing dependency sources, or a real
+Causes 2 and 6. Closing them needs either indexing dependency sources, or a real
 type-checker (`tsc` / `rust-analyzer`) rather than a syntax tree. That is a
 different architecture and should be a deliberate decision, not a drift.
