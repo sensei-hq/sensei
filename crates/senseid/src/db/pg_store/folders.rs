@@ -1177,6 +1177,60 @@ impl PgStore {
     /// measurement of an indexer fix this cycle needed a manual
     /// `DELETE FROM sensei.scan_state` first, which is the same admission.
     ///
+    /// The number of indexable files this folder had on disk at its last walk —
+    /// the DENOMINATOR for deciding whether the folder is fully indexed.
+    ///
+    /// `None` means "never walked", which is deliberately NOT zero: zero is a
+    /// legitimate value meaning "walked, and it holds no indexable files", i.e.
+    /// complete. Collapsing the two would mark every unvisited folder complete.
+    pub async fn folder_expected_files(
+        &self,
+        folder_id: &uuid::Uuid,
+    ) -> Result<Option<i64>, String> {
+        let row: Option<(Option<i64>,)> = sqlx_core::query_as::query_as(
+            "SELECT (props->>'expected_files')::bigint FROM sensei.folders WHERE id = $1",
+        )
+        .bind(folder_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| format!("folder_expected_files: {e}"))?;
+        Ok(row.and_then(|(v,)| v))
+    }
+
+    /// Record the folder's indexable-file count, set by the walk that counted it.
+    ///
+    /// Folder status is currently decided by the task queue reaching
+    /// `DetectCommunities`, which is not dependable — the daily analyzer enqueues
+    /// that task UNBLOCKED (`analyzer_scheduler.rs:252`), so it can run against a
+    /// partially-indexed folder. Completeness derived from persisted per-file
+    /// facts is trustworthy instead, but needs something to count against:
+    /// counting only the `scan_state` rows that EXIST is vacuous, because a walk
+    /// that died at file 40 of 100 leaves 40 decided rows and 60 with no row.
+    ///
+    /// Writes a single key with `||`, so the folder's identity props
+    /// (label/role/summary/frontmatter) survive. Always overwrites rather than
+    /// taking a max: a re-walk that finds FEWER files must lower the bar, or
+    /// deleting files would leave the folder permanently short of a denominator
+    /// it can never meet.
+    pub async fn set_folder_expected_files(
+        &self,
+        folder_id: &uuid::Uuid,
+        expected: i64,
+    ) -> Result<(), String> {
+        sqlx_core::query::query(
+            "UPDATE sensei.folders
+                SET props = coalesce(props, '{}'::jsonb)
+                           || jsonb_build_object('expected_files', $2::bigint)
+              WHERE id = $1",
+        )
+        .bind(folder_id)
+        .bind(expected)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| format!("set_folder_expected_files: {e}"))?;
+        Ok(())
+    }
+
     /// Scoped to the root being rescanned and driven only by a binary-version
     /// change, so an ordinary reconcile keeps its cheap stat-only path.
     pub async fn clear_scan_state_for_root(&self, root_id: &uuid::Uuid) -> Result<u64, String> {

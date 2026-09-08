@@ -895,6 +895,65 @@ async fn semantic_search_nodes_ranks_by_cosine() {
 }
 
 #[tokio::test]
+async fn folder_expected_files_round_trips_and_is_the_completeness_denominator() {
+    // The denominator for folder completeness, persisted at walk time.
+    //
+    // Counting only the scan_state rows that EXIST cannot decide completeness: a
+    // walk that dies at file 40 of 100 leaves 40 rows all marked decided and 60
+    // with no row at all, so "no undecided rows" is vacuously true. The walk is
+    // the only place that knows how many files there should be, so it records it.
+    let s = pg_store().await;
+    let fid = create_test_folder(&s, &format!("expfiles_{}", uuid::Uuid::new_v4())).await;
+
+    assert_eq!(
+        s.folder_expected_files(&fid).await.unwrap(),
+        None,
+        "a folder never walked has no denominator — that is None, NOT zero, because \
+         zero would mean 'complete' for a folder nothing has looked at yet"
+    );
+
+    s.set_folder_expected_files(&fid, 42).await.unwrap();
+    assert_eq!(s.folder_expected_files(&fid).await.unwrap(), Some(42));
+
+    // A re-walk that finds fewer files must LOWER it — otherwise deleting files
+    // would leave the folder permanently short of a denominator it can never meet.
+    s.set_folder_expected_files(&fid, 7).await.unwrap();
+    assert_eq!(s.folder_expected_files(&fid).await.unwrap(), Some(7));
+
+    // An empty folder is complete once walked, so zero must be storable and
+    // distinguishable from "never walked".
+    s.set_folder_expected_files(&fid, 0).await.unwrap();
+    assert_eq!(s.folder_expected_files(&fid).await.unwrap(), Some(0));
+
+    s.delete_nodes_by_folder(&fid).await.ok();
+}
+
+#[tokio::test]
+async fn set_folder_expected_files_preserves_other_props() {
+    // It writes ONE key into a shared jsonb blob. Clobbering the folder's
+    // identity (label/role/summary) to record a file count would be a bad trade.
+    let s = pg_store().await;
+    let fid = create_test_folder(&s, &format!("expprops_{}", uuid::Uuid::new_v4())).await;
+
+    s.set_folder_props(&fid, &serde_json::json!({"label": "keep me", "role": "app"}))
+        .await
+        .unwrap();
+    s.set_folder_expected_files(&fid, 9).await.unwrap();
+
+    let row: (serde_json::Value,) =
+        sqlx_core::query_as::query_as("SELECT props FROM sensei.folders WHERE id = $1")
+            .bind(fid)
+            .fetch_one(s.pool())
+            .await
+            .unwrap();
+    assert_eq!(row.0.get("label").and_then(|v| v.as_str()), Some("keep me"));
+    assert_eq!(row.0.get("role").and_then(|v| v.as_str()), Some("app"));
+    assert_eq!(s.folder_expected_files(&fid).await.unwrap(), Some(9));
+
+    s.delete_nodes_by_folder(&fid).await.ok();
+}
+
+#[tokio::test]
 async fn semantic_search_nodes_drops_neighbours_beyond_the_distance_bound() {
     // An ANN query returns its k nearest neighbours HOWEVER FAR AWAY they are.
     // Unbounded, a query naming a symbol that does not exist still comes back
