@@ -1,57 +1,61 @@
 # Checkpoint
 
-**Slice:** unified-walk architecture + rust transitive receiver resolution. Branch `develop`.
+**Slice:** rust transitive receiver resolution (#151). Branch `develop`.
 
-## The plan we agreed
+## Landed — gate verified by me, not taken on report: fmt 0, clippy 0, 3,185 tests / 0 failed
 
-`code.rs` parses every file **THREE** times — `adapter.parse`, `adapter.parse_to_ir`,
-`adapter.fqn_output` — and no pass sees the others' work. Collapse 3 → 1 so nothing
-a later stage needs is dropped. Doing it big-bang across 8 adapters would be reckless,
-so it goes in increments, each independently useful and gated.
+- `b466c3e5` `expected_files` — the folder-completeness denominator.
+- `09d41f6d` `sensei.folder_completeness` view — completeness from FILES, recursing only
+  over `parent_id`, never reading `folders.status`. One UPDATE settles the hierarchy.
+- `5aeb5caf` `FqnDefinition.return_type` carried by the minting pass.
+- `c4fe6fcc` transitive receiver resolution, qualified by module.
 
-Rust's payoff from it, measured: **all 28,069 unresolved rust calls are lowercase**
-(method calls, which no import can name), while `imports` is already 3,718 resolved /
-**0 unresolved**. Import-side resolution is DONE; the receiver side is the whole gap.
+## Measured payoff — SMALL, and that is the honest number
 
-The transitive chain, of which only one hop was missing:
+Live, after a full reindex of all 48,654 files:
 
-    ctx.pg().method()
-      ctx             -> TaskContext                                   bindings has it
-      TaskContext·pg  -> rust·senseid·tasks::executor·TaskContext·pg    constructible today
-      its return type -> &crate::db::pg_store::PgStore                  <- WAS MISSING
-      PgStore·method  -> rust·senseid·db::pg_store·PgStore·method       constructible today
+| | before | after |
+|---|---:|---:|
+| nodes carrying a return_type | 0 | **8,509** |
+| rust call edges carrying a receiver hint | 0 | **1,990** |
+| `get_callees(scan_root)` resolved | 24 | **25** |
 
-## Done — all gated: fmt 0, clippy 0, 3,156 tests / 0 failed
+The mechanism is live end to end and correct. The RESOLUTION gain is about one call
+per symbol. Stored `edges.target_id` does not move because resolution is on the READ
+path by design (order-independent, no reindex needed to benefit).
 
-- `b466c3e5` `ReindexPlan.expected` + `set/get_folder_expected_files` — the
-  completeness denominator, recorded by the walk (the only thing that knows it).
-- `09d41f6d` `sensei.folder_completeness` view — "fully indexed" derived from FILES,
-  recursing only over `parent_id`, never reading `folders.status`. That is what makes
-  ONE update settle the hierarchy instead of a fixpoint loop. Has a `drifted` column.
-- `5aeb5caf` `FqnDefinition.return_type` — carried by the pass that MINTS the node.
-  Rust reuses the IR walk's `extract_return_type`; every other adapter records an
-  honest `None`. Kept verbatim (normalising here would discard the module path).
+Why so small: qualification (needed to stop wrong-merges) refuses every case it cannot
+prove, and ~97% of this repo's return types are written BARE, where only the count
+gates apply. The 12,385 hintless references are chains deeper than one link — they
+need resolved types fed back into the binding map, which is the next level down.
 
-## Next, in order
+## Three HIGH wrong-merge defects were found AFTER the suite was green
 
-1. **Persist `return_type`** — it is now carried to the emit path but NOT written to
-   the DB. Put it in node `props` (no DDL change; `expected_files` set the precedent).
-   Without this the chain still cannot be walked at query time.
-2. **Structured unresolved hint** — when `resolve_call` fails on a receiver, emit what
-   it SAW (receiver expression, use-path in scope) instead of a bare `target_name`.
-3. **Link phase** resolving those hints by fqn lookup, fired when
-   `folder_completeness.subtree_complete` first turns true. This is the piece
-   `folder_completeness` exists to unblock — DetectCommunities is NOT a safe hook
-   (`analyzer_scheduler.rs:252` enqueues it unblocked).
-4. Continue the 3→1 parse collapse for the remaining adapters.
+All by adversarial review; a 3,179-test green suite caught none of them.
+1. Uniqueness gate counted MEMBERS not TYPES — two same-named types with disjoint
+   members both passed. Proven live: `Verdict::as_str`, `Session::wall_ms` (cross-crate).
+2. External return types reduced to a bare name and hunted among first-party nodes
+   (`fn client() -> reqwest::blocking::Client` -> `"Client"`).
+3. `call_coverage` healed both directions but `get_callers_by_name` did not — reported
+   `complete: true` beside `resolved: false` on the same row.
+Root cause of 1+2 was the same and both reviewers found it independently: the return
+type is stored verbatim so the module path can disambiguate, then discarded before use.
+Fixed by qualifying (`SelfType | Qualified{module,name} | Bare`), not merely refusing.
 
-## Notes / refuted
+## Known and NOT closed
 
-- Keying fqns on the imported FILE was considered and rejected for rust: `use` does not
-  name a file (`mod.rs` vs `x.rs`, inline mods, `pub use` re-exports), and it cannot
-  touch method calls anyway. It IS a good fit for TS/JS/Python/Java.
-- Order-independent merge already exists (`OnMiss::CreateStub` + `upsert_node_by_fqn`);
-  there is no reconcile pass to remove.
-- Search threshold 0.45 is measured; tightening to 0.40 was refuted live. Do not retry.
-- Open: #151 (receiver resolution), #152 (rust import resolver ignores `local_modules`,
-  5 survivors). 1 folder failed the last reindex: `cluster:scheduler`, undiagnosed.
+- A BARE return-type name belonging to a dependency (`use reqwest::Client;
+  fn f() -> Client`) still falls to the name path. The obvious guard was rejected on
+  measurement: all 21,937 lib nodes have `language = NULL`, so it would refuse a Rust
+  `Session` because a Python package exports that name. **Prerequisite: record a
+  language on lib nodes**; then it is ~6 lines in the `Bare` arm.
+- 2,142 rust edges resolve onto a STUB. `ReceiverHint::Type` was removed rather than
+  wired, because wiring it while hop 2 matched on bare name would have relocated
+  correctly-resolved calls onto wrong targets.
+- #152: rust IMPORT resolver ignores `local_modules` (5 phantom survivors).
+- `cluster:scheduler` folder fails to index; undiagnosed.
+
+## Next
+
+The remaining mass is the 12,385 hintless references. Feeding resolved receiver types
+back into the binding map is what reaches them — same defect one level down.
