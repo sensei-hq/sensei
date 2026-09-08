@@ -197,6 +197,297 @@ impl PgStore {
         Ok(())
     }
 
+    /// A definition's declared return type, read back off the node.
+    ///
+    /// `None` means the node carries no return type — nothing was ever written,
+    /// or the function returns nothing. A node id that names no row also reads
+    /// as `None`: a lookup miss is an absence, not a value. The write side is
+    /// where a bad node id is surfaced ([`Self::set_node_return_type`] errors
+    /// rather than losing the fact silently).
+    pub async fn node_return_type(&self, node_id: &uuid::Uuid) -> Result<Option<String>, String> {
+        let row: Option<(Option<String>,)> = sqlx_core::query_as::query_as(
+            "SELECT props->>'return_type' FROM sensei.nodes WHERE id = $1",
+        )
+        .bind(node_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| format!("node_return_type: {e}"))?;
+        Ok(row.and_then(|(v,)| v))
+    }
+
+    /// Record a definition's return type on its node, VERBATIM.
+    ///
+    /// This is the one hop of the transitive receiver chain nothing else can
+    /// answer: `ctx.pg().method()` can only name WHICH `method` once the graph
+    /// knows `pg` returns a `PgStore`. `signature` is not a substitute — it
+    /// holds the declaration LINE only, and MEASURED on the live graph 1,092 of
+    /// 3,841 rust methods (28%) wrap their signature so the `->` never appears
+    /// in it.
+    ///
+    /// Verbatim (`&crate::db::pg_store::PgStore`, `Arc<PgStore>`) because the
+    /// module path is what says WHICH `PgStore` is meant. Unwrapping wrappers is
+    /// `base_type_name`'s rule and it already owns it.
+    ///
+    /// Writes the ONE key with `||` — the `set_folder_expected_files` idiom — so
+    /// props another writer owns (a section's `level`/`line_start`, a
+    /// rationale's `marker`) survive. `props` is deliberately absent from
+    /// [`Self::upsert_node_by_fqn`]'s DO UPDATE set-list and from
+    /// `adopt_node_by_identity`, which is what lets this land on a
+    /// reference-minted stub and survive the definition merging into the same
+    /// row.
+    ///
+    /// A `return_type` that names no type (`()`, or blank) REMOVES the key
+    /// rather than storing a placeholder: absence already means "returns
+    /// nothing", and no-op'ing instead would leave the previous scan's type on a
+    /// function that no longer returns it — a fact the receiver chain would go
+    /// on resolving against.
+    ///
+    /// The write is SKIPPED when the stored value already equals the new one.
+    /// The caller runs this on every function and method of every re-scan
+    /// (108,438 of the 136,583 definitions in the live index), and an
+    /// unconditional `SET … modified_at = now()` would make every one of them
+    /// report a modification on a scan that changed nothing. Still one round
+    /// trip: the guard is a CTE, and the row count it returns is what
+    /// distinguishes "already identical" from "no such node" — an UPDATE's
+    /// `rows_affected` alone cannot, once a matched row may go unwritten.
+    pub async fn set_node_return_type(
+        &self,
+        node_id: &uuid::Uuid,
+        return_type: &str,
+    ) -> Result<(), String> {
+        let named = return_type.trim();
+        let named = (!named.is_empty() && named != "()").then_some(named);
+        let (found,): (i64,) = sqlx_core::query_as::query_as(
+            "WITH hit AS (
+                 SELECT id, props->>'return_type' AS stored FROM sensei.nodes WHERE id = $1
+             ), upd AS (
+                 UPDATE sensei.nodes n
+                    SET props = CASE WHEN $2::text IS NULL
+                                     THEN n.props - 'return_type'
+                                     ELSE n.props || jsonb_build_object('return_type', $2::text) END,
+                        modified_at = now()
+                   FROM hit
+                  WHERE n.id = hit.id AND hit.stored IS DISTINCT FROM $2::text
+                 RETURNING 1
+             )
+             SELECT count(*) FROM hit",
+        )
+        .bind(node_id)
+        .bind(named)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| format!("set_node_return_type: {e}"))?;
+        // An UPDATE matching nothing reports success, so a mistyped id would
+        // drop the return type and read back exactly like a function the parser
+        // found none for.
+        if found == 0 {
+            return Err(format!("set_node_return_type: no node {node_id}"));
+        }
+        Ok(())
+    }
+
+    /// Close the transitive receiver chain: turn each `(receiver hint, member
+    /// name)` into the member's node id, or `None` where any hop misses.
+    ///
+    /// This is the hop no import can name. Measured on the live graph, ALL
+    /// 28,069 unresolved rust `calls` edges have a lowercase `target_name` —
+    /// they are member calls, and `imports` is already 3,718 resolved / 0
+    /// unresolved, so the receiver IS the whole remaining gap. `ctx.pg().m()`
+    /// needs `pg`'s return type to know which `m`; the producer records the
+    /// `pg` hop as a [`ReceiverHint`] and this reads the rest out of the graph.
+    ///
+    /// **Two queries regardless of batch size**, because the read path calls it
+    /// with a whole call list: one to read the hinted nodes, one to resolve
+    /// every distinct `(type, member)` pair through `unnest`. Per-row probes
+    /// would put a symbol with a thousand unresolved callers at a thousand
+    /// round trips.
+    ///
+    /// **The TYPE is matched on its FQN whenever the return type carries a
+    /// path**, and only on its bare name when the text carries nothing else.
+    /// The return type is stored verbatim precisely because the module path says
+    /// WHICH `PgStore` is meant, and reducing it to a leaf threw that away twice
+    /// over: two unrelated first-party types of one name became a coin flip, and
+    /// `reqwest::blocking::Client` became a lookup for a FIRST-PARTY `Client` —
+    /// the producer refuses to hint an external receiver for exactly this reason
+    /// (`lib·` nodes hold no definition) and the leaf reopened the hole one level
+    /// down. A dependency's path names a module this crate does not have, so it
+    /// matches nothing, which is the answer.
+    ///
+    /// **The member is found by joining on the PARENT TYPE, never by minting
+    /// `<type_fqn>·<member>`.** Minting looks cheaper (0.12 ms index scan vs
+    /// 0.42 ms join) and is wrong: measured live, `PgStore` is TWENTY nodes in
+    /// one folder — one `struct` plus 19 `impl`-block `class` nodes anchored on
+    /// their own file's module because `use super::*;` defeats the use-map — and
+    /// 1,552 of 3,837 rust method fqns (40%) carry a trait segment a call site
+    /// cannot name. The minted string misses both, and a miss on the EMIT path
+    /// mints a stub: 659 such ghosts with 2,305 inbound edges are already in the
+    /// graph. A lookup that finds nothing is the honest answer here; a lookup
+    /// that invents a node is the bug.
+    ///
+    /// Every hop is uniqueness-gated, and the gate counts TYPES as well as
+    /// members. Counting members alone let two same-named types with DISJOINT
+    /// member sets through — the normal case for unrelated types sharing a name
+    /// (`verdicts::Verdict` has `as_wire`, `verdict_classifier::Verdict` has
+    /// `as_str`) — because only one of them carried the member, so the count was
+    /// 1 and the call linked to whichever type owned it. Ambiguous type ⇒
+    /// unresolved, however unambiguous the member. Two definitions in scope →
+    /// `None`, never a pick: that is `sole_definition_id_by_name` bare-name
+    /// matching, which this graph refuses everywhere else for the same reason.
+    /// Stubs are excluded (`file_path IS NOT NULL`) so an unresolved call cannot
+    /// be laundered into a resolved one by pointing it at a placeholder.
+    ///
+    /// Both hops gate on `language = 'rust'`. The grammar that turns a return
+    /// type into a type name is Rust's, so an answer from a node of any other
+    /// language is an answer to a question that was never asked.
+    pub async fn resolve_receiver_calls(
+        &self,
+        folder_ids: &[uuid::Uuid],
+        calls: &[(crate::languages::fqn::ReceiverHint, String)],
+    ) -> Result<Vec<Option<uuid::Uuid>>, String> {
+        use crate::languages::fqn::{ReceiverHint, SEP};
+        use crate::languages::rust_lang::{ReceiverType, rust_fqn::RUST_LANG};
+        use std::collections::{HashMap, HashSet};
+
+        if calls.is_empty() || folder_ids.is_empty() {
+            return Ok(vec![None; calls.len()]);
+        }
+
+        // ── Hop 1: what type does the receiver have? ────────────────────────
+        // The hint names the method whose declared return type answers it, so
+        // each distinct one needs a node read: the return type itself, and the
+        // method's own type (what `Self` means).
+        let probes: Vec<String> = calls
+            .iter()
+            .map(|(ReceiverHint::ReturnOf(fqn), _)| fqn.clone())
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect();
+
+        // `None` = the fqn matched rows that DISAGREE (the same symbol indexed
+        // in two scoped folders with different return types). Refused, not
+        // averaged.
+        //
+        // The PARENT's fqn, not its name: it is what `Self` means, and naming
+        // the type outright is stronger than naming it by a leaf that twenty
+        // nodes in one folder can share.
+        let mut hinted: HashMap<String, Option<(Option<String>, Option<String>)>> = HashMap::new();
+        if !probes.is_empty() {
+            let rows: Vec<(String, Option<String>, Option<String>, Option<String>)> =
+                sqlx_core::query_as::query_as(
+                    "SELECT m.fqn, m.props->>'return_type', t.fqn, m.language
+                       FROM sensei.nodes m
+                       LEFT JOIN sensei.nodes t ON t.id = m.parent_id
+                      WHERE m.folder_id = ANY($1) AND m.fqn = ANY($2)",
+                )
+                .bind(folder_ids)
+                .bind(&probes)
+                .fetch_all(&self.pool)
+                .await
+                .map_err(|e| format!("resolve_receiver_calls (hint probe): {e}"))?;
+            for (fqn, return_type, self_fqn, language) in rows {
+                // The return-type grammar below is Rust's. Reading a TypeScript
+                // or Java return type with it would apply the wrong unwrapping
+                // rules, so a non-rust node answers nothing.
+                let fact =
+                    (language.as_deref() == Some(RUST_LANG)).then_some((return_type, self_fqn));
+                match hinted.entry(fqn) {
+                    std::collections::hash_map::Entry::Vacant(e) => {
+                        e.insert(fact);
+                    }
+                    std::collections::hash_map::Entry::Occupied(mut e) => {
+                        if e.get() != &fact {
+                            e.insert(None);
+                        }
+                    }
+                }
+            }
+        }
+
+        // The type to look under, as an exact FQN where the text gave one and as
+        // a bare name only where it did not. Both are carried per want-row so one
+        // `unnest` serves the batch; exactly one of the two is ever set.
+        type Want = (Option<String>, Option<String>, String);
+        let wanted: Vec<Option<Want>> = calls
+            .iter()
+            .map(|(hint, member)| {
+                let ReceiverHint::ReturnOf(fqn) = hint;
+                let (return_type, self_fqn) = hinted.get(fqn)?.as_ref()?;
+                // `<lang>·<package>·…` — the package of the method whose return
+                // type this is, which is the crate any relative path in it is
+                // relative to.
+                let package = fqn.split(SEP).nth(1).filter(|p| !p.is_empty())?;
+                let (tfqn, tname) = match crate::languages::rust_lang::concrete_receiver_type(
+                    return_type.as_deref()?,
+                    package,
+                )? {
+                    ReceiverType::SelfType => (Some(self_fqn.clone()?), None),
+                    ReceiverType::Qualified { module, name } => (
+                        Some(crate::languages::fqn::item(RUST_LANG, package, &module, &name)),
+                        None,
+                    ),
+                    ReceiverType::Bare(name) => (None, Some(name)),
+                };
+                Some((tfqn, tname, member.clone()))
+            })
+            .collect();
+
+        // ── Hop 2: the member under that type ───────────────────────────────
+        let pairs: Vec<Want> =
+            wanted.iter().flatten().cloned().collect::<HashSet<_>>().into_iter().collect();
+        if pairs.is_empty() {
+            return Ok(vec![None; calls.len()]);
+        }
+        let mut type_fqns: Vec<Option<String>> = Vec::with_capacity(pairs.len());
+        let mut type_names: Vec<Option<String>> = Vec::with_capacity(pairs.len());
+        let mut member_names: Vec<String> = Vec::with_capacity(pairs.len());
+        for (f, n, m) in pairs {
+            type_fqns.push(f);
+            type_names.push(n);
+            member_names.push(m);
+        }
+        // LEFT JOIN, so `n_types` counts every type the want matches whether or
+        // not it carries the member. An inner join counted only the types that
+        // did, which is what let a disjoint-member pair through.
+        type MemberRow = (Option<String>, Option<String>, String, Option<uuid::Uuid>, i64, i64);
+        let rows: Vec<MemberRow> = sqlx_core::query_as::query_as(
+            "WITH want(tfqn, tname, mname) AS (
+                 SELECT * FROM unnest($2::text[], $3::text[], $4::text[])
+             )
+             SELECT w.tfqn, w.tname, w.mname,
+                    (array_agg(m.id) FILTER (WHERE m.id IS NOT NULL))[1],
+                    count(DISTINCT m.id), count(DISTINCT t.id)
+               FROM want w
+               JOIN sensei.nodes t
+                 ON t.folder_id = ANY($1)
+                AND t.language = 'rust'
+                AND t.file_path IS NOT NULL
+                AND t.kind::text IN ('struct', 'enum', 'class', 'interface')
+                AND ((w.tfqn IS NULL AND t.name = w.tname) OR t.fqn = w.tfqn)
+               LEFT JOIN sensei.nodes m
+                 ON m.parent_id = t.id
+                AND m.folder_id = ANY($1)
+                AND m.language = 'rust'
+                AND m.file_path IS NOT NULL
+                AND m.kind::text IN ('method', 'function')
+                AND m.name = w.mname
+              GROUP BY w.tfqn, w.tname, w.mname",
+        )
+        .bind(folder_ids)
+        .bind(&type_fqns)
+        .bind(&type_names)
+        .bind(&member_names)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| format!("resolve_receiver_calls (member probe): {e}"))?;
+
+        let sole: HashMap<Want, uuid::Uuid> = rows
+            .into_iter()
+            .filter(|(_, _, _, _, members, types)| *members == 1 && *types == 1)
+            .filter_map(|(f, n, m, id, _, _)| id.map(|id| ((f, n, m), id)))
+            .collect();
+        Ok(wanted.iter().map(|w| w.as_ref().and_then(|k| sole.get(k).copied())).collect())
+    }
+
     /// Upsert a node (default `is_exported = false`). Thin wrapper over
     /// [`Self::upsert_node_ex`] for the many callers that don't carry visibility
     /// (file/section/rationale/module nodes, tests).
@@ -1649,13 +1940,77 @@ impl PgStore {
                   WHERE folder_id = ANY($1) AND source_name = $2 AND edge_kind = 'calls'"
             }
         };
-        let row: (i64, i64) = sqlx_core::query_as::query_as(sql)
+        let (resolved, unresolved): (i64, i64) = sqlx_core::query_as::query_as(sql)
             .bind(folder_ids)
             .bind(name)
             .fetch_one(&self.pool)
             .await
             .map_err(|e| e.to_string())?;
-        Ok(row)
+
+        // A member call the receiver chain CAN place is a placed call, and the
+        // OUTGOING list this number qualifies now shows it as one. Counting it
+        // unresolved here would tell a caller the list is incomplete while it is
+        // not — exactly the misreport `coverage` exists to prevent, inverted.
+        //
+        // INCOMING is deliberately NOT healed: `get_callers_by_name` reports
+        // `resolved` straight off `target_id` and does no chasing, so healing
+        // this side would put "complete: true" in the same MCP payload as a
+        // caller row flagged `resolved: false` — the two describing one edge and
+        // disagreeing. Coverage's whole job is to say how far the list beside it
+        // can be trusted, so it answers about THAT list or it answers nothing.
+        // The caller side heals when `get_callers_by_name` learns to, not before.
+        let healed = match direction {
+            CallDirection::Outgoing => self.heal_count(folder_ids, name).await?,
+            CallDirection::Incoming => 0,
+        };
+        Ok((resolved + healed, unresolved - healed))
+    }
+
+    /// How many of a symbol's UNRESOLVED outgoing `calls` edges the receiver
+    /// chain can place — the same chase `get_callees_by_name` runs, over the
+    /// same rows and by the same rules, so a row cannot be placed in one and
+    /// unresolved in the other. Only hint-bearing rows are fetched, so a symbol
+    /// with a thousand hintless unresolved callees costs one indexed count, not
+    /// a thousand.
+    ///
+    /// Counted over the WHOLE population while the list is `LIMIT 100`, which is
+    /// what coverage is for — the two numbers describe every recorded edge, and
+    /// the list is a page of them. What must not happen is the list being unable
+    /// to show a healed row at all, which is why hint-bearing rows sort first
+    /// there.
+    async fn heal_count(&self, folder_ids: &[uuid::Uuid], name: &str) -> Result<i64, String> {
+        let rows: Vec<(Option<String>, serde_json::Value)> = sqlx_core::query_as::query_as(
+            "SELECT target_symbol, props FROM sensei.call_graph
+              WHERE folder_id = ANY($1) AND source_name = $2 AND edge_kind = 'calls'
+                AND target_id IS NULL AND props ? 'receiver_return_of'",
+        )
+        .bind(folder_ids)
+        .bind(name)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        let (_, calls) = Self::hinted_calls(&rows);
+        Ok(self.resolve_receiver_calls(folder_ids, &calls).await?.iter().flatten().count() as i64)
+    }
+
+    /// The chase-able calls among a batch of rows: their positions in `rows`,
+    /// and the `(hint, member name)` pairs [`Self::resolve_receiver_calls`]
+    /// takes. A row missing either half carries no chain to follow and is
+    /// dropped — it stays exactly as unresolved as it already was.
+    ///
+    /// Returns the positions rather than filtering in place because the caller
+    /// has to put each answer back on the row it came from, and re-deriving
+    /// "which rows had hints" on the way back is where the two would drift.
+    #[allow(clippy::type_complexity)]
+    fn hinted_calls(
+        rows: &[(Option<String>, serde_json::Value)],
+    ) -> (Vec<usize>, Vec<(crate::languages::fqn::ReceiverHint, String)>) {
+        rows.iter()
+            .enumerate()
+            .filter_map(|(i, (name, props))| {
+                Some((i, (crate::languages::fqn::ReceiverHint::from_props(props)?, name.clone()?)))
+            })
+            .unzip()
     }
 
     /// Find callers of a function by name via the call_graph view.
@@ -1717,24 +2072,96 @@ impl PgStore {
         // fact the owner cannot know: an unresolved edge has NO target node, so
         // there is no row to classify and it is `unknown`. That is what the
         // COALESCE means — "no target node", not a reimplementation of the rule.
-        let rows: Vec<(String, Option<String>, Option<String>, Option<i32>, String)> =
-            sqlx_core::query_as::query_as(
-                "SELECT cg.target_symbol, cg.target_kind::text, cg.target_file, cg.target_line,
-                        coalesce(gn.locality, 'unknown')
+        //
+        // `props` comes along because an unresolved MEMBER call carries the one
+        // thing that can still place it: what the call site saw of its receiver.
+        // The chain is completed HERE, on the read path, not at emit — a
+        // definition indexed after its caller would otherwise never link, and
+        // the scan pipeline deliberately has no second pass to catch up.
+        //
+        // HINT-BEARING ROWS SORT FIRST, ahead of `target_file`. An unresolved
+        // edge has `target_file IS NULL`, which sorts LAST in Postgres ascending
+        // — so under a plain file sort the only rows the heal below can improve
+        // are exactly the ones `LIMIT 100` throws away. Measured on the live
+        // graph, 240 of 44,946 calling symbols have more than 100 `calls` edges
+        // (the largest has 3,742), and for every one of them the chain would
+        // have been dead code.
+        type CalleeRow =
+            (String, Option<String>, Option<String>, Option<i32>, String, serde_json::Value);
+        let rows: Vec<CalleeRow> = sqlx_core::query_as::query_as(
+            "SELECT cg.target_symbol, cg.target_kind::text, cg.target_file, cg.target_line,
+                        coalesce(gn.locality, 'unknown'), cg.props
                    FROM sensei.call_graph        cg
                    LEFT JOIN sensei.graph_nodes  gn ON gn.id = cg.target_id
                   WHERE cg.folder_id = ANY($1) AND cg.source_name = $2
                     AND cg.edge_kind = 'calls' AND cg.target_symbol IS NOT NULL
-                  ORDER BY cg.target_file, cg.target_line LIMIT 100",
+                  ORDER BY (cg.target_id IS NULL AND cg.props ? 'receiver_return_of') DESC,
+                           cg.target_file, cg.target_line LIMIT 100",
+        )
+        .bind(&folder_ids[..])
+        .bind(source)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+        // Index-aligned with `rows`: an already-placed row offers no member
+        // name, so it is not a candidate. `unknown` locality is the view's way
+        // of saying there was no target node to classify.
+        let candidates: Vec<(Option<String>, serde_json::Value)> =
+            rows.iter().map(|r| ((r.4 == "unknown").then(|| r.0.clone()), r.5.clone())).collect();
+        let (at, calls) = Self::hinted_calls(&candidates);
+        let placed = self.resolve_receiver_calls(&folder_ids, &calls).await?;
+        let healed: std::collections::HashMap<usize, uuid::Uuid> =
+            at.into_iter().zip(placed).filter_map(|(i, p)| p.map(|id| (i, id))).collect();
+
+        let found = self.nodes_display(&healed.values().copied().collect::<Vec<_>>()).await?;
+        Ok(rows
+            .into_iter()
+            .enumerate()
+            .map(|(i, (name, kind, file, line, locality, _))| {
+                match healed.get(&i).and_then(|id| found.get(id)) {
+                    Some(node) => node.clone(),
+                    None => serde_json::json!({
+                        "name": name, "kind": kind, "file_path": file,
+                        "line_start": line, "locality": locality,
+                    }),
+                }
+            })
+            .collect())
+    }
+
+    /// The display shape `get_callees_by_name` reports, for nodes named by id.
+    ///
+    /// Reads `locality` off `sensei.graph_nodes` like the list query does, so a
+    /// call placed by the receiver chain is described by the SAME owner as one
+    /// placed at emit — a second copy of that judgement here is how
+    /// `library_calls` would start mis-partitioning.
+    async fn nodes_display(
+        &self,
+        ids: &[uuid::Uuid],
+    ) -> Result<std::collections::HashMap<uuid::Uuid, serde_json::Value>, String> {
+        if ids.is_empty() {
+            return Ok(std::collections::HashMap::new());
+        }
+        let rows: Vec<(uuid::Uuid, String, String, Option<String>, Option<i32>, String)> =
+            sqlx_core::query_as::query_as(
+                "SELECT id, name, kind, file_path, line_start, locality
+                   FROM sensei.graph_nodes WHERE id = ANY($1)",
             )
-            .bind(&folder_ids[..])
-            .bind(source)
+            .bind(ids)
             .fetch_all(&self.pool)
             .await
             .map_err(|e| e.to_string())?;
-        Ok(rows.into_iter().map(|(name, kind, file, line, locality)| {
-            serde_json::json!({ "name": name, "kind": kind, "file_path": file, "line_start": line, "locality": locality })
-        }).collect())
+        Ok(rows
+            .into_iter()
+            .map(|(id, name, kind, file, line, locality)| {
+                (
+                    id,
+                    serde_json::json!({ "name": name, "kind": kind, "file_path": file,
+                                        "line_start": line, "locality": locality }),
+                )
+            })
+            .collect())
     }
 
     /// Get files matching a tag via the file_tags view.

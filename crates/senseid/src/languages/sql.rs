@@ -343,6 +343,7 @@ pub(crate) mod sql_fqn {
                         target_fqn: Some(fqn::item(SQL_LANG, &tsch, "", &tname)),
                         target_name: tname,
                         is_lib: false,
+                        receiver: None,
                     });
                 }
             }

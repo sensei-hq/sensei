@@ -1220,6 +1220,35 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
                     )
                     .await
                     .map_err(|e| format!("upsert fqn def {}: {e}", d.fqn))?;
+                // The declared return type — the one hop of the transitive
+                // receiver chain nothing else can answer, and the reason
+                // `ctx.pg().m()` could never name which `m`. Written through a
+                // second statement rather than folded into the upsert because
+                // `props` is deliberately absent from that DO UPDATE set-list,
+                // which is what lets a value written on a reference-minted stub
+                // survive the definition merging into the same row.
+                //
+                // UNCONDITIONAL for the kinds that can have one: a function
+                // that LOST its return type between scans reports `None` here,
+                // and only a write clears the previous scan's value. Skipping
+                // would leave the resolver chasing a type the function no
+                // longer returns.
+                //
+                // The fn/method gate is a CORRECTNESS gate, not a cheap one: no
+                // other kind is ever given a return type by any producer, so a
+                // write for one could only ever clear a key nothing set. It
+                // buys little traffic — measured on the live index, function +
+                // method are 108,438 of the 136,583 definitions (79%), so this
+                // statement runs for four definitions in five. What keeps a
+                // re-scan cheap is `set_node_return_type` itself skipping the
+                // write when the stored value is already identical.
+                if matches!(kind, crate::types::NodeKind::Function | crate::types::NodeKind::Method)
+                {
+                    ctx.pg()
+                        .set_node_return_type(&id, d.return_type.as_deref().unwrap_or(""))
+                        .await
+                        .map_err(|e| format!("set return type {}: {e}", d.fqn))?;
+                }
                 fqn_ids.insert(d.fqn.clone(), id);
             }
         } else {
@@ -1509,6 +1538,19 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
                         name: r.target_name.clone(),
                     },
                 };
+                // A RESOLVED call stamps no props — it already names its
+                // target, and recording the receiver beside it would be a
+                // second answer to a settled question. An UNRESOLVED one
+                // carries whatever the producer saw of its receiver, because
+                // that is the only surviving trace of it: measured, an
+                // unresolved `calls` edge stores the bare member name and
+                // NOTHING else (target_file NULL and props `{}` on all 161,612
+                // of them), so `ctx.pg().m()` and `whatever.m()` persist
+                // identically and no later pass can tell them apart.
+                let props = match (&r.target_fqn, &r.receiver) {
+                    (None, Some(hint)) => hint.to_props(),
+                    _ => serde_json::json!({}),
+                };
                 ctx.pg()
                     .persist_edge_fact(
                         &folder_id,
@@ -1516,10 +1558,7 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
                             source_id: source,
                             target,
                             kind: "calls",
-                            // Calls stamp NO props. Measured: calls/imports/
-                            // references are 0% stamped while extends/implements
-                            // are 100%, and unifying that would regress a side.
-                            props: serde_json::json!({}),
+                            props,
                         },
                         &fqn_ids,
                         file_lang,
@@ -1915,6 +1954,7 @@ mod tests {
             target_fqn: None,
             target_name: "x".to_string(),
             is_lib: false,
+            receiver: None,
         };
 
         // REFS, NO DEFS — the case this fixes.
@@ -2304,6 +2344,194 @@ mod tests {
         assert_eq!(unresolved, 0, "the helper() call is resolved at emit, not left bare");
 
         ctx.pg().delete_nodes_by_folder(&fid).await.unwrap();
+    }
+
+    /// THE SLICE'S PAYOFF, end to end: `c.pg().count_edges()` reaches the real
+    /// `PgStore::count_edges` across three files, in CALLER-FIRST order.
+    ///
+    /// Every hop but one was already mintable at the call site. The missing one
+    /// is what `pg` RETURNS, which lives in another file — so the producer
+    /// records the `pg` hop and the emit path persists two facts the graph did
+    /// not carry before: the definition's return type on its node, and the
+    /// receiver hint on the unresolved edge. Resolution itself happens on the
+    /// READ path, which is what makes it order-independent: `work.rs` is
+    /// indexed before either definition exists.
+    #[tokio::test]
+    async fn a_chained_member_call_resolves_through_the_receivers_return_type() {
+        let ctx = make_ctx().await;
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("recvchain");
+        std::fs::create_dir_all(repo.join("src/db")).unwrap();
+        std::fs::write(repo.join("Cargo.toml"), "[package]\nname = \"recvchain\"\n").unwrap();
+        std::fs::write(
+            repo.join("src/db/pg_store.rs"),
+            "pub struct PgStore;\nimpl PgStore {\n    pub fn count_edges(&self) -> i64 { 0 }\n}\n",
+        )
+        .unwrap();
+        std::fs::write(
+            repo.join("src/executor.rs"),
+            "pub struct TaskContext;\nimpl TaskContext {\n    \
+             pub fn pg(&self) -> &crate::db::pg_store::PgStore { todo!() }\n}\n",
+        )
+        .unwrap();
+        std::fs::write(
+            repo.join("src/work.rs"),
+            "use crate::executor::TaskContext;\n\
+             pub fn drive(c: &TaskContext) -> i64 { c.pg().count_edges() }\n",
+        )
+        .unwrap();
+        let repo_path = repo.to_string_lossy().to_string();
+        let folder_name = format!("recvchain_{}", uuid::Uuid::new_v4());
+
+        let rid = ctx
+            .pg()
+            .add_watch_root(&tmp.path().to_string_lossy(), "recvchain", &serde_json::json!([]))
+            .await
+            .unwrap();
+        let fid = ctx.pg().upsert_repo_kind(&rid, "git", &folder_name, &repo_path).await.unwrap();
+        ctx.pg().update_folder_status(&fid, "indexing").await.unwrap();
+
+        // CALLER FIRST. Neither definition exists when the call is emitted.
+        for f in ["src/work.rs", "src/executor.rs", "src/db/pg_store.rs"] {
+            let abs = repo.join(f).to_string_lossy().to_string();
+            process_file(&ctx, &Task::for_file(TaskKind::ProcessFile, &repo_path, &abs))
+                .await
+                .unwrap();
+        }
+
+        // 1. The definition's return type reached its node, VERBATIM.
+        let (pg_id, pg_return): (uuid::Uuid, Option<String>) = sqlx_core::query_as::query_as(
+            "SELECT id, props->>'return_type' FROM sensei.nodes
+              WHERE folder_id=$1 AND fqn='rust·recvchain·executor·TaskContext·pg'",
+        )
+        .bind(fid)
+        .fetch_one(ctx.pg().pool())
+        .await
+        .unwrap();
+        assert_eq!(
+            pg_return.as_deref(),
+            Some("&crate::db::pg_store::PgStore"),
+            "the emit path must persist the declared return type — nothing else in the \
+             graph can say WHICH PgStore `pg` hands back"
+        );
+
+        // 2. The unresolved call carries the receiver hop it saw, as a graph key.
+        let (hint,): (Option<String>,) = sqlx_core::query_as::query_as(
+            "SELECT e.props->>'receiver_return_of' FROM sensei.edges e
+               JOIN sensei.nodes s ON s.id = e.source_id
+              WHERE e.folder_id=$1 AND e.kind='calls'::sensei.edge_kind
+                AND e.target_name='count_edges' AND s.name='drive'",
+        )
+        .bind(fid)
+        .fetch_one(ctx.pg().pool())
+        .await
+        .unwrap();
+        assert_eq!(
+            hint.as_deref(),
+            Some("rust·recvchain·executor·TaskContext·pg"),
+            "the hint the producer recorded must survive to the edge, or the read \
+             path has nothing to chase"
+        );
+
+        // 3. THE PAYOFF: the read path closes the chain.
+        let (real_count_id,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "SELECT id FROM sensei.nodes
+              WHERE folder_id=$1 AND fqn='rust·recvchain·db::pg_store·PgStore·count_edges'",
+        )
+        .bind(fid)
+        .fetch_one(ctx.pg().pool())
+        .await
+        .unwrap();
+        let _ = real_count_id;
+
+        let callees = ctx.pg().get_callees_by_name(&folder_name, "drive").await.unwrap();
+        let hop2 = callees
+            .iter()
+            .find(|c| c["name"].as_str() == Some("count_edges"))
+            .unwrap_or_else(|| panic!("count_edges must be listed as a callee: {callees:?}"));
+        assert_eq!(
+            hop2["file_path"].as_str(),
+            Some("src/db/pg_store.rs"),
+            "the callee is the REAL definition, located: {hop2}"
+        );
+        assert_eq!(
+            hop2["locality"].as_str(),
+            Some("internal"),
+            "a resolved first-party callee is `internal`, so it stays out of \
+             `library_calls`: {hop2}"
+        );
+
+        // 4. Coverage must agree with the list — a callee shown as placed and
+        //    still counted unresolved is the inconsistency this guards.
+        let (resolved, unresolved) = ctx
+            .pg()
+            .call_coverage(&[fid], "drive", crate::db::pg_store::CallDirection::Outgoing)
+            .await
+            .unwrap();
+        assert_eq!(
+            (resolved, unresolved),
+            (2, 0),
+            "both of drive's calls are placed: pg at emit, count_edges through the chain"
+        );
+        // …and the OUTGOING list is what those two numbers describe: a callee is
+        // placed exactly when it has a locality to report.
+        let listed_placed =
+            callees.iter().filter(|c| c["locality"].as_str() != Some("unknown")).count() as i64;
+        assert_eq!(
+            (resolved, unresolved),
+            (listed_placed, callees.len() as i64 - listed_placed),
+            "coverage counts the very rows the callee list shows: {callees:?}"
+        );
+
+        // 4b. THE OTHER DIRECTION, same edge, same rule. `get_callers_by_name`
+        //     reports `resolved` straight off `target_id`, so coverage that
+        //     healed here would answer "complete" about a list that shows this
+        //     caller unresolved — one payload, two contradictory answers about
+        //     one edge (mcp.rs renders `complete: unresolved == 0` beside it).
+        let callers = ctx.pg().get_callers_by_name(&folder_name, "count_edges").await.unwrap();
+        assert!(
+            callers.iter().any(|c| c["name"].as_str() == Some("drive")),
+            "drive calls count_edges, so it must be in the caller list: {callers:?}"
+        );
+        let listed_resolved =
+            callers.iter().filter(|c| c["resolved"] == serde_json::json!(true)).count() as i64;
+        let (in_resolved, in_unresolved) = ctx
+            .pg()
+            .call_coverage(&[fid], "count_edges", crate::db::pg_store::CallDirection::Incoming)
+            .await
+            .unwrap();
+        assert_eq!(
+            (in_resolved, in_unresolved),
+            (listed_resolved, callers.len() as i64 - listed_resolved),
+            "incoming coverage must count the very rows the caller list shows: {callers:?}"
+        );
+
+        // 5. STALENESS. `pg` stops returning a PgStore. The previous scan's
+        //    return type must not survive on the node — a resolver chasing it
+        //    would keep placing the call on a type the function no longer hands
+        //    back, which is a fabricated link that heals into looking real.
+        std::fs::write(
+            repo.join("src/executor.rs"),
+            "pub struct TaskContext;\nimpl TaskContext {\n    pub fn pg(&self) {}\n}\n",
+        )
+        .unwrap();
+        let abs = repo.join("src/executor.rs").to_string_lossy().to_string();
+        process_file(&ctx, &Task::for_file(TaskKind::ProcessFile, &repo_path, &abs)).await.unwrap();
+        assert_eq!(
+            ctx.pg().node_return_type(&pg_id).await.unwrap(),
+            None,
+            "a definition that lost its return type must clear the old one, not keep it"
+        );
+        let callees = ctx.pg().get_callees_by_name(&folder_name, "drive").await.unwrap();
+        let hop2 = callees.iter().find(|c| c["name"].as_str() == Some("count_edges")).unwrap();
+        assert_eq!(
+            hop2["locality"].as_str(),
+            Some("unknown"),
+            "with nothing to chase the call goes back to honestly unresolved: {hop2}"
+        );
+
+        ctx.pg().delete_nodes_by_folder(&fid).await.unwrap();
+        ctx.pg().remove_watch_root(&rid).await.ok();
     }
 
     #[tokio::test]

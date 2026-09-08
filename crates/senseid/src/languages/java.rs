@@ -661,6 +661,7 @@ pub(crate) mod java_fqn {
                     target_fqn,
                     target_name,
                     is_lib,
+                    receiver: None,
                 });
             }
             collect_calls(
