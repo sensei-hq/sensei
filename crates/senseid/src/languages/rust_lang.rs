@@ -1371,7 +1371,7 @@ pub(crate) mod rust_fqn {
                         parent_fqn,
                     });
                     if let Some(body) = child.child_by_field_name("body") {
-                        let bindings = build_bindings(&child, src, ctx, scope, impl_ctx);
+                        let bindings = build_bindings(&child, src, ctx, module, scope, impl_ctx);
                         let mut seen = HashSet::new();
                         collect_fqn_calls(
                             &body, src, ctx, module, scope, impl_ctx, &bindings, &fqn_str,
@@ -1586,13 +1586,33 @@ pub(crate) mod rust_fqn {
 
     /// Per-function bounded binding→type map (plan 0.7): typed params, `let x: Type`,
     /// and `let x = Type::new()` / `Type { .. }`. Everything else is out of scope.
+    /// What a `let` binding is known to hold.
+    ///
+    /// Storing only a TYPE NAME loses the one fact that makes a split-over-two-lines
+    /// receiver resolvable: `let x = ctx.pg(); x.count_edges();` is the same hop as
+    /// `ctx.pg().count_edges()`, but the producer could not name `pg`'s return type
+    /// so it stored nothing and `x` became unknowable. Measured, 599 references gain
+    /// a `ReturnOf` hint while 12,385 unresolved ones gain none, and those are
+    /// exactly the receivers this file could not name — `let` bindings and chains
+    /// deeper than one link. Keeping the PROVENANCE alongside the type reaches them
+    /// without any cross-file lookup: only the resolver needs the graph.
+    #[derive(Debug, Clone)]
+    enum Binding {
+        /// The type is named outright (typed parameter, `let x: T`, `T::new()`).
+        Type(String),
+        /// The value is what another call returned — this is that call's target FQN.
+        ReturnOf(String),
+    }
+
+    #[allow(clippy::too_many_arguments)]
     fn build_bindings(
         fn_node: &Node,
         src: &[u8],
-        _ctx: &FileFqnContext,
-        _scope: &FileScope,
-        _impl_ctx: Option<&ImplCtx>,
-    ) -> HashMap<String, String> {
+        ctx: &FileFqnContext,
+        module: &str,
+        scope: &FileScope,
+        impl_ctx: Option<&ImplCtx>,
+    ) -> HashMap<String, Binding> {
         let mut map = HashMap::new();
         if let Some(params) = fn_node.child_by_field_name("parameters") {
             for i in 0..params.child_count() {
@@ -1608,7 +1628,7 @@ pub(crate) mod rust_fqn {
                 if pat.kind() == "identifier"
                     && let Some(t) = base_type_name(&source_text(&ty, src))
                 {
-                    map.insert(source_text(&pat, src), t);
+                    map.insert(source_text(&pat, src), Binding::Type(t));
                 }
             }
         }
@@ -1623,15 +1643,29 @@ pub(crate) mod rust_fqn {
                     continue;
                 }
                 let vname = source_text(&pat, src);
-                if let Some(ty) = stmt.child_by_field_name("type") {
-                    if let Some(t) = base_type_name(&source_text(&ty, src)) {
-                        map.insert(vname, t);
-                    }
-                } else if let Some(val) = stmt.child_by_field_name("value")
-                    && let Some(t) = type_of_value(&val, src)
-                {
-                    map.insert(vname, t);
-                }
+                // A re-`let` SHADOWS: whatever we learn now replaces what we knew,
+                // and learning nothing must CLEAR it. Leaving the previous entry
+                // would point a later call at a type the name no longer holds —
+                // a confident wrong answer, which is worse than no hint.
+                let learned: Option<Binding> = if let Some(ty) = stmt.child_by_field_name("type") {
+                    base_type_name(&source_text(&ty, src)).map(Binding::Type)
+                } else if let Some(val) = stmt.child_by_field_name("value") {
+                    type_of_value(&val, src).map(Binding::Type).or_else(|| {
+                        // The type could not be named, but the PROVENANCE can be:
+                        // `let x = ctx.pg()` records that x is whatever `pg`
+                        // returns. Uses the bindings gathered from earlier
+                        // statements, so `let a = f(); let b = a.g();` chains.
+                        let ReceiverHint::ReturnOf(f) =
+                            receiver_return_of(&val, src, ctx, module, scope, impl_ctx, &map)?;
+                        Some(Binding::ReturnOf(f))
+                    })
+                } else {
+                    None
+                };
+                match learned {
+                    Some(b) => map.insert(vname, b),
+                    None => map.remove(&vname),
+                };
             }
         }
         map
@@ -1676,7 +1710,7 @@ pub(crate) mod rust_fqn {
         module: &str,
         scope: &FileScope,
         impl_ctx: Option<&ImplCtx>,
-        bindings: &HashMap<String, String>,
+        bindings: &HashMap<String, Binding>,
         caller_fqn: &str,
         seen: &mut HashSet<String>,
         out: &mut FqnFileOutput,
@@ -1766,7 +1800,7 @@ pub(crate) mod rust_fqn {
         module: &str,
         scope: &FileScope,
         impl_ctx: Option<&ImplCtx>,
-        bindings: &HashMap<String, String>,
+        bindings: &HashMap<String, Binding>,
     ) -> Option<CallTarget> {
         match func.kind() {
             "identifier" => {
@@ -1870,8 +1904,21 @@ pub(crate) mod rust_fqn {
                     };
                 }
                 if recv.kind() == "identifier"
-                    && let Some(tname) = bindings.get(&source_text(&recv, src))
+                    && let Some(binding) = bindings.get(&source_text(&recv, src))
                 {
+                    // A binding that only knows its PROVENANCE cannot name a
+                    // target here — this file does not know what that call
+                    // returns. It hands the resolver the same key the
+                    // single-expression form would, and stays unresolved.
+                    let tname = match binding {
+                        Binding::Type(t) => t,
+                        Binding::ReturnOf(f) => {
+                            return Some(
+                                CallTarget::unresolved(method)
+                                    .on(Some(ReceiverHint::ReturnOf(f.clone()))),
+                            );
+                        }
+                    };
                     let (pkg, mdl, is_ext) = resolve_type_module(tname, ctx, module, scope);
                     return Some(if is_ext {
                         CallTarget::resolved(fqn::lib(&pkg, &mdl, &method), true, method)
@@ -1922,7 +1969,7 @@ pub(crate) mod rust_fqn {
         module: &str,
         scope: &FileScope,
         impl_ctx: Option<&ImplCtx>,
-        bindings: &HashMap<String, String>,
+        bindings: &HashMap<String, Binding>,
     ) -> Option<ReceiverHint> {
         if recv.kind() != "call_expression" {
             return None;
@@ -2442,6 +2489,73 @@ impl Engine {
         );
     }
 
+    /// A LET-BOUND call result must hand its provenance on: `let x = ctx.pg();`
+    /// then `x.method()` is the same hop as `ctx.pg().method()`, written over two
+    /// lines.
+    ///
+    /// The binding map is `name -> TYPE NAME`, so when `type_of_value` cannot
+    /// name the type it stores nothing and the provenance is lost — even though
+    /// the producer had just resolved `ctx.pg()` and knows exactly which fqn the
+    /// value came from. That is why the hint reaches only the single-expression
+    /// form today: measured, 599 references gain a `ReturnOf` hint while 12,385
+    /// unresolved ones gain none, and every one of those is a receiver this file
+    /// could not name — a `let` binding or a chain deeper than one link. Both are
+    /// this same defect, and both unlock by carrying the provenance rather than
+    /// only the type.
+    ///
+    /// Purely local: no cross-file lookup is needed to know that `x` IS the
+    /// return of `TaskContext::pg`. Only the resolver needs the graph.
+    #[test]
+    fn a_let_bound_call_result_carries_its_provenance_to_the_next_call() {
+        let src = "use crate::tasks::executor::TaskContext;\n\
+                   pub fn drive(ctx: &TaskContext) {\n\
+                   let x = ctx.pg();\n\
+                   x.count_edges();\n\
+                   }\n";
+        let out = produce(src, "senseid", "tasks::handlers::scan");
+
+        let hop2 = ref_to(&out, "count_edges");
+        assert_eq!(
+            hop2.target_fqn, None,
+            "still unresolved — this file cannot know what `pg` returns"
+        );
+        assert_eq!(
+            hop2.receiver,
+            Some(ReceiverHint::ReturnOf("rust·senseid·tasks::executor·TaskContext·pg".to_string())),
+            "`let x = ctx.pg(); x.count_edges()` is the SAME hop as \
+             `ctx.pg().count_edges()` — splitting it over two lines must not lose \
+             the receiver: {:?}",
+            out.refs
+        );
+    }
+
+    /// The provenance must not outlive the binding's truth. A re-`let` SHADOWS,
+    /// so whatever the new binding says must REPLACE what the old one said — a
+    /// stale key resolves confidently to the wrong symbol, which is worse than
+    /// no hint at all.
+    #[test]
+    fn rebinding_a_name_replaces_its_provenance() {
+        let src = "use crate::tasks::executor::TaskContext;\n\
+                   pub fn drive(ctx: &TaskContext) {\n\
+                   let x = ctx.pg();\n\
+                   let x: Widget = make();\n\
+                   x.count_edges();\n\
+                   }\n";
+        let out = produce(src, "senseid", "tasks::handlers::scan");
+        let r = ref_to(&out, "count_edges");
+        assert_eq!(
+            r.receiver, None,
+            "the second `let` names a TYPE, so the earlier ReturnOf provenance is \
+             gone — carrying it forward would point at PgStore for a Widget: {:?}",
+            out.refs
+        );
+        assert!(
+            r.target_fqn.as_deref().is_some_and(|f| f.contains("Widget")),
+            "and the new binding's type is what resolves the call, got {:?}",
+            r.target_fqn
+        );
+    }
+
     /// `ctx.direct()` with `ctx: &TaskContext` — the binding map already knows
     /// the receiver's type, so the call RESOLVES and carries no hint. A hint is
     /// stored only on an unresolved call (`process.rs` stamps props on
@@ -2487,20 +2601,33 @@ impl Engine {
         assert_eq!(r.receiver, None, "…and needs no receiver recorded: {:?}", out.refs);
     }
 
-    /// A receiver whose type this file genuinely cannot name gets NO hint.
-    /// `let x = whatever();` is outside the bounded binding→type scope, so
-    /// there is nothing true to record — and a plausible-looking guess is
-    /// exactly the fabrication the graph must not contain.
+    /// A receiver with NO inner call and no binding gets no hint — there is
+    /// nothing true to record, and a plausible-looking guess is exactly the
+    /// fabrication the graph must not contain.
+    ///
+    /// This test previously used `let x = whatever(); x.method();` and asserted
+    /// no hint, on the stated premise that there was "no inner call to name".
+    /// That premise was FALSE: `whatever()` is an inner call and the producer
+    /// already resolves it — the very same output carries a `calls` edge to
+    /// `rust·app·svc·whatever`. Once a `let` binding carries its provenance, the
+    /// receiver inherits that same key, so the assertion became unsatisfiable
+    /// without also refusing to record a fact the producer had already committed
+    /// to one line above.
+    ///
+    /// Recording it is not a new guess. It reuses the target the call edge
+    /// already names, so it adds no wrong-merge surface: if that fqn is a ghost,
+    /// the resolver's stub guard yields unresolved; if it is real, the return
+    /// type is real. The genuinely unnameable case — a bare identifier that was
+    /// never bound — is what this test now pins, and it still gets nothing.
     #[test]
-    fn an_unknowable_receiver_gets_no_hint_and_stays_unresolved() {
-        let src = "pub fn drive() { let x = whatever(); x.method(); }\n";
+    fn a_receiver_with_no_inner_call_and_no_binding_gets_no_hint() {
+        let src = "pub fn drive(x: SomeUnknownThing) { x.method(); }\n";
         let out = produce(src, "app", "svc");
 
         let r = ref_to(&out, "method");
-        assert_eq!(r.target_fqn, None, "still unresolved");
         assert_eq!(
             r.receiver, None,
-            "no binding, no inner call to name — a miss is a miss: {:?}",
+            "nothing was bound and nothing was called — a miss is a miss: {:?}",
             out.refs
         );
     }
