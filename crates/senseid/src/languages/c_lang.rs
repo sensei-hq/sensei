@@ -372,6 +372,7 @@ pub(crate) mod c_fqn {
                 docstring: s.docstring,
                 parent_type: None,
                 parent_fqn: None,
+                return_type: None,
             })
             .collect();
 

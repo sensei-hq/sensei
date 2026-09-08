@@ -960,6 +960,7 @@ pub(crate) mod kotlin_fqn {
             docstring: None,
             parent_type,
             parent_fqn,
+            return_type: None,
         }
     }
 }
