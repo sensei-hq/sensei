@@ -1,61 +1,66 @@
 # Checkpoint
 
-**Slice:** rust transitive receiver resolution (#151). Branch `develop`.
+**Slice:** rust receiver resolution + anchoring (#151, #152). Branch `develop`.
 
-## Landed — gate verified by me, not taken on report: fmt 0, clippy 0, 3,185 tests / 0 failed
+## Landed — gate verified by me each time: fmt 0, clippy 0, 3,187 tests / 0 failed
 
-- `b466c3e5` `expected_files` — the folder-completeness denominator.
-- `09d41f6d` `sensei.folder_completeness` view — completeness from FILES, recursing only
-  over `parent_id`, never reading `folders.status`. One UPDATE settles the hierarchy.
-- `5aeb5caf` `FqnDefinition.return_type` carried by the minting pass.
-- `c4fe6fcc` transitive receiver resolution, qualified by module.
+- `b466c3e5` `expected_files` denominator · `09d41f6d` `folder_completeness` view
+- `5aeb5caf` `FqnDefinition.return_type` carried by the minting pass
+- `c4fe6fcc` transitive receiver resolution, qualified by module
+- `43641ba4` `let` bindings carry provenance (`Binding::Type | ReturnOf`)
+- `4f4791f7` an unplaceable type is a MISS, not the caller's module
 
-## Measured payoff — SMALL, and that is the honest number
-
-Live, after a full reindex of all 48,654 files:
+## Measured live — full reindex of all 48,654 files after 4f4791f7
 
 | | before | after |
 |---|---:|---:|
-| nodes carrying a return_type | 0 | **8,509** |
-| rust call edges carrying a receiver hint | 0 | **1,990** |
-| `get_callees(scan_root)` resolved | 24 | **25** |
+| ghost-stub edges (resolved onto a node with no file) | 7,267 | **4,542** (−37%) |
+| REAL resolved (file-bearing targets) | 46,487 | **46,545** (+58) |
+| reported resolved | 53,754 | 51,087 |
+| unresolved | 28,237 | 29,875 |
+| hinted edges | 1,990 | 1,900 |
+| `get_callees(scan_root)` resolved | 25 | 23 |
 
-The mechanism is live end to end and correct. The RESOLUTION gain is about one call
-per symbol. Stored `edges.target_id` does not move because resolution is on the READ
-path by design (order-independent, no reindex needed to benefit).
+READ THIS THE RIGHT WAY. "Resolved" fell by 2,667 and ghosts fell by 2,725 — those
+are the same edges. No real link was lost (real resolved went UP 58). The graph got
+2,725 edges MORE HONEST: they pointed at invented nodes and now say unresolved.
 
-Why so small: qualification (needed to stop wrong-merges) refuses every case it cannot
-prove, and ~97% of this repo's return types are written BARE, where only the count
-gates apply. The 12,385 hintless references are chains deeper than one link — they
-need resolved types fed back into the binding map, which is the next level down.
+## What did NOT work, stated plainly
 
-## Three HIGH wrong-merge defects were found AFTER the suite was green
+`43641ba4` (let-binding provenance) was expected to reach a chunk of the 12,385
+hintless references. Measured, hints went 1,990 -> 1,900: essentially flat, slightly
+down. The anchoring fix removed the ghost anchors many hints were riding on, and
+provenance did not add enough to offset it. The change is still correct — it just did
+not buy reach on this corpus. Do not claim otherwise.
 
-All by adversarial review; a 3,179-test green suite caught none of them.
-1. Uniqueness gate counted MEMBERS not TYPES — two same-named types with disjoint
-   members both passed. Proven live: `Verdict::as_str`, `Session::wall_ms` (cross-crate).
-2. External return types reduced to a bare name and hunted among first-party nodes
-   (`fn client() -> reqwest::blocking::Client` -> `"Client"`).
-3. `call_coverage` healed both directions but `get_callers_by_name` did not — reported
-   `complete: true` beside `resolved: false` on the same row.
-Root cause of 1+2 was the same and both reviewers found it independently: the return
-type is stored verbatim so the module path can disambiguate, then discarded before use.
-Fixed by qualifying (`SelfType | Qualified{module,name} | Bare`), not merely refusing.
+Cumulative honest position: the architecture is right and the graph is measurably
+more truthful, but receiver resolution has NOT delivered a meaningful increase in
+resolved first-party calls. ~2% reach was the ceiling and the ghost cleanup consumed
+the visible part of it.
+
+## Two tests were found PINNING the ghost behaviour
+
+`rust_ref_fqn_self_local_bounded` asserted `let g = Gadget::new(); g.spin()` resolves
+to `rust·senseid·engine·Gadget·spin` while never declaring `Gadget` — that fqn WAS the
+ghost, and the test had guarded the bug for as long as it existed. Same hole in
+`rebinding_a_name_replaces_its_provenance`. Fixtures fixed, no expectation relaxed.
 
 ## Known and NOT closed
 
+- 4,542 ghost-stub edges remain. Sources: glob imports, `pub use` re-exports,
+  macro-generated impls — none placeable from one file.
 - A BARE return-type name belonging to a dependency (`use reqwest::Client;
-  fn f() -> Client`) still falls to the name path. The obvious guard was rejected on
-  measurement: all 21,937 lib nodes have `language = NULL`, so it would refuse a Rust
-  `Session` because a Python package exports that name. **Prerequisite: record a
-  language on lib nodes**; then it is ~6 lines in the `Bare` arm.
-- 2,142 rust edges resolve onto a STUB. `ReceiverHint::Type` was removed rather than
-  wired, because wiring it while hop 2 matched on bare name would have relocated
-  correctly-resolved calls onto wrong targets.
-- #152: rust IMPORT resolver ignores `local_modules` (5 phantom survivors).
+  fn f() -> Client`) still falls to the name path. Prerequisite for the guard:
+  **record a language on lib nodes** (all 21,937 have `language = NULL`), then ~6
+  lines in the `Bare` arm.
+- `ReceiverHint::Type` was removed, not wired (would have relocated correctly
+  resolved calls while hop 2 matched on bare name).
+- #152: rust IMPORT resolver ignores `local_modules`.
 - `cluster:scheduler` folder fails to index; undiagnosed.
 
 ## Next
 
-The remaining mass is the 12,385 hintless references. Feeding resolved receiver types
-back into the binding map is what reaches them — same defect one level down.
+The remaining mass is unresolved receivers whose type no single file can name. That
+needs either cross-file type propagation at index time, or accepting the ceiling and
+investing in the other languages instead — TS/JS/Python/Java, where an import names a
+file and the same machinery should pay off far better.
