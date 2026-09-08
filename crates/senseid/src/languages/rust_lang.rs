@@ -1416,7 +1416,13 @@ pub(crate) mod rust_fqn {
                     let trait_name = child
                         .child_by_field_name("trait")
                         .and_then(|t| base_type_name(&source_text(&t, src)));
-                    let (_, type_module, _) = resolve_type_module(&type_name, ctx, module, scope);
+                    // Nesting position for this impl's members. Unlike a call
+                    // target, this is not a claim about where the type is
+                    // DECLARED — the members really are written here — so the
+                    // walk position is the honest answer when nothing better
+                    // is known.
+                    let type_module = resolve_type_module(&type_name, ctx, scope)
+                        .map_or_else(|| module.to_string(), |(_, m, _)| m);
                     // `impl Trait for Type` is an inheritance fact. An INHERENT
                     // impl (`impl Type { .. }`) has no trait and is not a
                     // relation to anything, so the guard is the whole semantics.
@@ -1460,18 +1466,19 @@ pub(crate) mod rust_fqn {
     fn resolve_type_module(
         type_name: &str,
         ctx: &FileFqnContext,
-        module: &str,
         scope: &FileScope,
-    ) -> (String, String, bool) {
+    ) -> Option<(String, String, bool)> {
         // The DECLARING module, not the caller's walk position.
         if let Some(declared_in) = scope.local_types.get(type_name) {
-            return (ctx.package.clone(), declared_in.clone(), false);
+            return Some((ctx.package.clone(), declared_in.clone(), false));
         }
         if let Some(full) = scope.use_map.get(type_name) {
             let segs: Vec<&str> = full.split("::").collect();
             match classify_segments(&segs, ctx, scope) {
-                PathClass::Internal { module, .. } => return (ctx.package.clone(), module, false),
-                PathClass::External { package, path, .. } => return (package, path, true),
+                PathClass::Internal { module, .. } => {
+                    return Some((ctx.package.clone(), module, false));
+                }
+                PathClass::External { package, path, .. } => return Some((package, path, true)),
             }
         }
         // A prelude type needs no `use`, so a use-map miss does not make it local.
@@ -1480,9 +1487,21 @@ pub(crate) mod rust_fqn {
         // — one std constructor fragmented across 759 distinct FQNs. Checked AFTER
         // `local_types`, so a type defined in this file still wins.
         if RUST_PRELUDE_TYPES.contains(&type_name) {
-            return ("std".to_string(), type_name.to_string(), true);
+            return Some(("std".to_string(), type_name.to_string(), true));
         }
-        (ctx.package.clone(), module.to_string(), false)
+        // A type this file gives no way to place is a MISS, not the caller's
+        // module. Anchoring it on the walk position invented a node that exists
+        // nowhere — `SomeUnknownThing` used in `app::svc` minted
+        // `rust·app·svc·SomeUnknownThing·method` — and because a reference that
+        // misses creates a stub, the graph accumulated 659 such ghosts carrying
+        // 2,305 inbound edges. It is the same defect this function's own first
+        // line guards against, surviving in its last.
+        //
+        // The three cases that legitimately reach here are a type from a glob
+        // import, one behind a `pub use` re-export, and one from a macro-generated
+        // impl. None of them can be placed from this file alone, so all three must
+        // stay unresolved rather than each minting a plausible ghost.
+        None
     }
 
     /// Resolve a trait reference in an `impl Trait for Type` to `(fqn, is_lib)`.
@@ -1851,7 +1870,9 @@ pub(crate) mod rust_fqn {
                 if segs.len() >= 2 && is_pascal(segs[segs.len() - 2]) {
                     let type_name = segs[segs.len() - 2];
                     let (pkg, mdl, is_ext) = if segs.len() == 2 {
-                        resolve_type_module(type_name, ctx, module, scope)
+                        // Unplaceable type ⇒ unresolved, never a ghost keyed on
+                        // the caller's module.
+                        resolve_type_module(type_name, ctx, scope)?
                     } else {
                         match classify_segments(&segs[..segs.len() - 1], ctx, scope) {
                             PathClass::Internal { module: m, .. } => {
@@ -1919,7 +1940,12 @@ pub(crate) mod rust_fqn {
                             );
                         }
                     };
-                    let (pkg, mdl, is_ext) = resolve_type_module(tname, ctx, module, scope);
+                    // The binding named a type this file cannot place. Record
+                    // the member unresolved rather than inventing a node under
+                    // the caller's module.
+                    let Some((pkg, mdl, is_ext)) = resolve_type_module(tname, ctx, scope) else {
+                        return Some(CallTarget::unresolved(method));
+                    };
                     return Some(if is_ext {
                         CallTarget::resolved(fqn::lib(&pkg, &mdl, &method), true, method)
                     } else {
@@ -2294,6 +2320,7 @@ pub fn make() -> Widget { Widget::new() }
     fn rust_ref_fqn_self_local_bounded() {
         let src = r#"
 pub struct Engine;
+pub struct Gadget;
 pub fn helper() {}
 impl Engine {
     pub fn run(&self) {
@@ -2536,6 +2563,7 @@ impl Engine {
     #[test]
     fn rebinding_a_name_replaces_its_provenance() {
         let src = "use crate::tasks::executor::TaskContext;\n\
+                   pub struct Widget;\n\
                    pub fn drive(ctx: &TaskContext) {\n\
                    let x = ctx.pg();\n\
                    let x: Widget = make();\n\
@@ -2628,6 +2656,16 @@ impl Engine {
         assert_eq!(
             r.receiver, None,
             "nothing was bound and nothing was called — a miss is a miss: {:?}",
+            out.refs
+        );
+        assert_eq!(
+            r.target_fqn, None,
+            "and the TARGET is a miss too. `SomeUnknownThing` is not declared here, \
+             not in the use-map and not a prelude type, so this file cannot say \
+             which type it is — anchoring it on the CALLER's module invents \
+             `rust·app·svc·SomeUnknownThing·method`, a node that exists nowhere. \
+             Measured: 659 ghost stubs with 2,305 inbound edges came from exactly \
+             this fallback: {:?}",
             out.refs
         );
     }
