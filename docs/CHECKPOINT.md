@@ -1,66 +1,49 @@
 # Checkpoint
 
-**Slice:** rust receiver resolution + anchoring (#151, #152). Branch `develop`.
+**Slice:** indexer v2, rust. Spec `docs/design/indexer-v2.md`, plan
+`docs/plans/indexer-v2-rust.md`.
 
-## Landed — gate verified by me each time: fmt 0, clippy 0, 3,187 tests / 0 failed
+## Done — steps 1-4 of 10, committed 3a777a20
 
-- `b466c3e5` `expected_files` denominator · `09d41f6d` `folder_completeness` view
-- `5aeb5caf` `FqnDefinition.return_type` carried by the minting pass
-- `c4fe6fcc` transitive receiver resolution, qualified by module
-- `43641ba4` `let` bindings carry provenance (`Binding::Type | ReturnOf`)
-- `4f4791f7` an unplaceable type is a MISS, not the caller's module
+`crates/senseid/src/indexer/` — facts.rs, fqn.rs, lang/rust.rs (3,400 lines).
 
-## Measured live — full reindex of all 48,654 files after 4f4791f7
+SAFETY PROPERTY HOLDING, verified: `languages/` has zero changes, v2 has NO
+caller in the production path. The existing indexer still runs. Cutover has not
+happened and is a separate decision.
 
-| | before | after |
-|---|---:|---:|
-| ghost-stub edges (resolved onto a node with no file) | 7,267 | **4,542** (−37%) |
-| REAL resolved (file-bearing targets) | 46,487 | **46,545** (+58) |
-| reported resolved | 53,754 | 51,087 |
-| unresolved | 28,237 | 29,875 |
-| hinted edges | 1,990 | 1,900 |
-| `get_callees(scan_root)` resolved | 25 | 23 |
+Gate: fmt 0, clippy 0, **3,228 tests / 0 failed** (up 40).
 
-READ THIS THE RIGHT WAY. "Resolved" fell by 2,667 and ghosts fell by 2,725 — those
-are the same edges. No real link was lost (real resolved went UP 58). The graph got
-2,725 edges MORE HONEST: they pointed at invented nodes and now say unresolved.
+## What the gate agent caught, before the walk was built on it
 
-## What did NOT work, stated plainly
+The fqn grammar had no namespace discriminator, so two different declarations
+minted ONE key. Real collisions in this repo:
+  - `WatcherHealth` has a `healthy` field (root_watcher.rs:79) AND a `healthy()`
+    getter (:109)
+  - sensei-bootstrap has `pub mod config;` and `pub fn config()` at crate root
+Both legal — rust separates field/type/value namespaces. Merging them makes a
+WRONG edge, which R4 ranks worse than a missing one. 24 field/method collisions
+measured in this repo alone.
 
-`43641ba4` (let-binding provenance) was expected to reach a chunk of the 12,385
-hintless references. Measured, hints went 1,990 -> 1,900: essentially flat, slightly
-down. The anchoring fix removed the ghost anchors many hints were riding on, and
-provenance did not add enough to offset it. The change is still correct — it just did
-not buy reach on this corpus. Do not claim otherwise.
+Fixed with `Ns { Ty, Val, Field, Macro }` on every form. I mutation-verified it:
+collapsing all four labels to one string makes the test FAIL, so the guard is
+load-bearing, not decorative. The spec's §2 sketch had the same gap and is
+amended.
 
-Cumulative honest position: the architecture is right and the graph is measurably
-more truthful, but receiver resolution has NOT delivered a meaningful increase in
-resolved first-party calls. ~2% reach was the ceiling and the ghost cleanup consumed
-the visible part of it.
+## The verification that matters
 
-## Two tests were found PINNING the ghost behaviour
+`the_reference_count_equals_an_independent_count_of_use_sites` — a counter with
+no knowledge of the resolver, run over this repo's own rust, asserting >10,000
+use sites and naming every file that disagrees. That is what makes "no reference
+is dropped" a measurement instead of a claim.
 
-`rust_ref_fqn_self_local_bounded` asserted `let g = Gadget::new(); g.spin()` resolves
-to `rust·senseid·engine·Gadget·spin` while never declaring `Gadget` — that fqn WAS the
-ghost, and the test had guarded the bug for as long as it existed. Same hole in
-`rebinding_a_name_replaces_its_provenance`. Fixtures fixed, no expectation relaxed.
+## NOT done — steps 5-7
 
-## Known and NOT closed
-
-- 4,542 ghost-stub edges remain. Sources: glob imports, `pub use` re-exports,
-  macro-generated impls — none placeable from one file.
-- A BARE return-type name belonging to a dependency (`use reqwest::Client;
-  fn f() -> Client`) still falls to the name path. Prerequisite for the guard:
-  **record a language on lib nodes** (all 21,937 have `language = NULL`), then ~6
-  lines in the `Bare` arm.
-- `ReceiverHint::Type` was removed, not wired (would have relocated correctly
-  resolved calls while hop 2 matched on bare name).
-- #152: rust IMPORT resolver ignores `local_modules`.
-- `cluster:scheduler` folder fails to index; undiagnosed.
+Six agents died on a session limit. Resolution ladder, relations and persistence
+were NOT STARTED — not half-built. Nothing to clean up.
 
 ## Next
 
-The remaining mass is unresolved receivers whose type no single file can name. That
-needs either cross-file type propagation at index time, or accepting the ceiling and
-investing in the other languages instead — TS/JS/Python/Java, where an import names a
-file and the same machinery should pay off far better.
+Steps 5-7: `indexer/resolve.rs` (shared ladder + reason codes), relations from
+the same walk, then the persistence round-trip. Then step 8 differential
+harness, step 9 cutover, step 10 retire. Rust only until §6 acceptance passes;
+js/ts/svelte follow one at a time (D4).
