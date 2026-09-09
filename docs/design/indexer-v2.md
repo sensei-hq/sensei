@@ -1248,8 +1248,19 @@ declaration exists only because its file was walked. PARTIAL and EXTERNAL nodes
 carry `file_id` NULL by definition (R10.7d), which is a different thing from a
 missing lookup.
 
-Keep `(folder_id, file_path)` as a unique constraint: it is the natural key, and
-`plan_reindex` and the walk both address files by path.
+Keep `(folder_id, file_path)` as a UNIQUE constraint. The table then carries two
+keys serving two different callers, and neither is redundant:
+
+| key | who uses it |
+|---|---|
+| `id` (surrogate) | `nodes.file_id` — 16 bytes, stable across a rename |
+| `(folder_id, file_path)` | the walk, which only ever has a path |
+
+The path lookup is already an index scan today — verified, `EXPLAIN` on
+`WHERE folder_id = $1 AND file_path = $2` gives
+`Index Scan using scan_state_pkey`. Preserving that constraint through the rename
+keeps the walk's once-per-file lookup (47,904 per full scan) at O(log n) with no
+additional index.
 
 ### Cost, measured
 
