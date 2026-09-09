@@ -13,6 +13,7 @@ pub mod facts;
 pub mod fqn;
 pub mod lang;
 pub mod persist;
+pub mod reconcile;
 pub mod resolve;
 
 /// Every v2 source file, as `(path relative to `src/indexer/`, body)`.
@@ -32,7 +33,7 @@ pub mod resolve;
 fn guard_sources() -> Vec<(String, String)> {
     /// Files, and directories whose whole contents are v2's. Adding a v2 module
     /// outside these is a deliberate act that has to be recorded here.
-    const V2: &[&str] = &["facts.rs", "fqn.rs", "persist.rs", "resolve.rs", "lang"];
+    const V2: &[&str] = &["facts.rs", "fqn.rs", "persist.rs", "reconcile.rs", "resolve.rs", "lang"];
 
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/indexer");
     let mut out = Vec::new();
@@ -51,7 +52,9 @@ fn guard_sources() -> Vec<(String, String)> {
             .unwrap_or_else(|e| panic!("cannot read {relative}: {e}"));
         out.push((relative, body));
     }
-    for required in ["facts.rs", "fqn.rs", "persist.rs", "resolve.rs", "lang/rust.rs"] {
+    for required in
+        ["facts.rs", "fqn.rs", "persist.rs", "reconcile.rs", "resolve.rs", "lang/rust.rs"]
+    {
         assert!(
             out.iter().any(|(p, _)| p == required),
             "the guard did not find {required}, so it is not reading what it claims to guard"

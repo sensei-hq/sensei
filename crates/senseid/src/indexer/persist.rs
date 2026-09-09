@@ -76,7 +76,7 @@
 // This module has no caller on purpose — see the note in `indexer/mod.rs`.
 #![allow(dead_code)]
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use crate::db::pg_store::{EdgeColumns, NodeColumns, PgStore};
 use crate::graph_facts::{EdgeFact, OnMiss, TargetRef};
@@ -894,6 +894,20 @@ pub struct Written {
     pub edges: usize,
     pub collisions: Vec<Collision>,
     pub edge_collisions: Vec<EdgeCollision>,
+    /// The edge ROWS this file's occurrences now sit in.
+    ///
+    /// Rows and not groups, so `edge_rows.len()` is below `edges` exactly when
+    /// two of this file's groups landed on one row — the case
+    /// [`EdgeCollision`] names.
+    ///
+    /// Here because reconcile cannot compute it: an edge's row is decided by
+    /// the database, through `insert_edge_with_props`' conflict key and through
+    /// whatever `upsert_node_by_fqn` did with the source identity. The only way
+    /// to know which rows a write landed on is to be the write. Without it,
+    /// "which of this file's old edges did it stop producing" has to be
+    /// re-derived from the facts, which is a second copy of `edge_rows_of` and
+    /// its target resolution — two producers of one answer (R7).
+    pub edge_rows: BTreeSet<uuid::Uuid>,
 }
 
 /// One identity that more than one declaration in a single file minted.
@@ -948,9 +962,20 @@ pub async fn write(
     let language = facts.language.as_str();
     let mut known: HashMap<String, uuid::Uuid> = HashMap::new();
     let mut declarations: BTreeMap<String, usize> = BTreeMap::new();
+    let owner_of = owners(facts);
     for symbol in &facts.symbols {
         let row = SymbolRow::of(symbol, file_path, facts.language);
-        let id = store.upsert_v2_symbol(folder_id, &node_columns_of(&row)).await?;
+        // The owner's ROW has to exist before the member's, because `parent_id`
+        // is one of the six columns `nodes_unique_identity` keys on. Reached
+        // through `node_for`, so an owner this file does not declare is the same
+        // reference-before-definition stub an edge target is — which is what
+        // keeps the answer independent of whether the `impl` was written above
+        // or below the type (R6).
+        let parent = match owner_of.get(row.fqn.as_str()) {
+            Some(owner) => Some(node_for(store, folder_id, &mut known, owner, language).await?),
+            None => None,
+        };
+        let id = store.upsert_v2_symbol(folder_id, &node_columns_of(&row), parent.as_ref()).await?;
         *declarations.entry(row.fqn.clone()).or_default() += 1;
         known.insert(row.fqn, id);
     }
@@ -966,23 +991,7 @@ pub async fn write(
     let mut merged: HashMap<uuid::Uuid, String> = HashMap::new();
 
     for row in edge_rows_of(facts, &file_identity(facts)?) {
-        let source_id = match known.get(&row.source) {
-            Some(id) => *id,
-            // A use site can sit in the FILE itself rather than in a
-            // declaration the walk emitted — a `use`, a const initialiser at
-            // file scope. The file's module identity is a real symbol that some
-            // `mod x;` elsewhere declares, so this is the same
-            // reference-before-definition case the merge contract handles, not
-            // a node invented to hang an edge on.
-            None => {
-                let (kind, name) = stub_kind_and_name(&row.source)?;
-                let id = store
-                    .upsert_node_by_fqn(folder_id, &row.source, kind, &name, Some(language), None)
-                    .await?;
-                known.insert(row.source.clone(), id);
-                id
-            }
-        };
+        let source_id = node_for(store, folder_id, &mut known, &row.source, language).await?;
         let props = edge_props(&row);
         let target = target_ref_of(&row.target)?;
         let fact = EdgeFact { source_id, target, kind: row.kind, props };
@@ -1003,7 +1012,73 @@ pub async fn write(
         store.merge_v2_edge_occurrences(&edge_id, file_path, &occurrences_prop(&row)).await?;
         edges += 1;
     }
-    Ok(Written { symbols: facts.symbols.len(), edges, collisions, edge_collisions })
+    Ok(Written {
+        symbols: facts.symbols.len(),
+        edges,
+        collisions,
+        edge_collisions,
+        edge_rows: merged.into_keys().collect(),
+    })
+}
+
+/// The type each declaration is a member OF, read off the ownership relations
+/// the same walk produced (spec §3.3).
+///
+/// Read off the RELATIONS rather than re-derived from the fqn, for the reason
+/// `Owner` exists in the walk at all: a member's identity does not spell its
+/// owner's. An enum variant's container is `Enum::Variant`, which is not the
+/// spelling the variant's own identity uses, and a trait-impl member's identity
+/// carries a trait segment its type's does not. Re-minting an owner from a
+/// member's key would produce a parent no declaration ever minted.
+///
+/// An `Owns` whose parent the ladder could not place is skipped, not defaulted:
+/// a member parented on a guess is a containment the source does not state (R4).
+fn owners(facts: &FileFacts) -> HashMap<&str, &str> {
+    facts
+        .relations
+        .iter()
+        .filter(|relation| relation.kind == RelationKind::Owns)
+        .filter_map(|relation| match &relation.parent {
+            Resolution::Resolved(parent) => Some((relation.child.as_str(), parent.as_str())),
+            Resolution::Unresolved { .. } => None,
+        })
+        .collect()
+}
+
+/// The node an identity names, creating the STUB shape if nothing has written
+/// it yet.
+///
+/// One function for the two places that need it — an edge's source and a
+/// member's owner — because both are the same reference-before-definition case
+/// the merge contract handles, and two copies would be two stub policies. A use
+/// site can sit in the FILE itself rather than in a declaration the walk emitted
+/// (a `use`, a const initialiser at file scope); a member's owner can be a type
+/// declared in another file, or below the `impl` in this one. In every case the
+/// identity is one some declaration mints, so this is not a node invented to
+/// hang a row on.
+async fn node_for(
+    store: &PgStore,
+    folder_id: &uuid::Uuid,
+    known: &mut HashMap<String, uuid::Uuid>,
+    fqn: &str,
+    language: &str,
+) -> Result<uuid::Uuid, String> {
+    if let Some(id) = known.get(fqn) {
+        return Ok(*id);
+    }
+    // Ask before writing, so a re-scan of an unchanged file does not stamp
+    // `modified_at` on a row it is about to write back unaltered. A file's own
+    // module node comes through here on every file-scope use site, so without
+    // this every file churns at least one row per pass.
+    let id = match store.v2_node_unchanged_by_reference(folder_id, fqn, Some(language)).await? {
+        Some(id) => id,
+        None => {
+            let (kind, name) = stub_kind_and_name(fqn)?;
+            store.upsert_node_by_fqn(folder_id, fqn, kind, &name, Some(language), None).await?
+        }
+    };
+    known.insert(fqn.to_string(), id);
+    Ok(id)
 }
 
 /// The identity of the file itself, which is the identity of the module it
@@ -1015,12 +1090,27 @@ pub async fn write(
 /// re-derived, so the file's identity has ONE owner and the `mod x;` that names
 /// this file lands on the same node.
 fn file_identity(facts: &FileFacts) -> Result<String, String> {
-    let fqn = match facts.language {
-        Language::Rust => super::lang::rust::file_fqn(&facts.package, &facts.module, &facts.path),
+    file_identity_of(facts.language, &facts.package, &facts.module, &facts.path)
+}
+
+/// [`file_identity`] for a caller that has no facts.
+///
+/// Reconcile needs it for a file that is GONE from disk: there was no parse, so
+/// there are no facts, and the file's own module identity is still the source of
+/// every file-scope edge it emitted. Taking the four parts rather than the facts
+/// is what lets both callers reach the one derivation instead of the deleted
+/// file getting a second, weaker one.
+pub(crate) fn file_identity_of(
+    language: Language,
+    package: &str,
+    module: &str,
+    path: &str,
+) -> Result<String, String> {
+    let fqn = match language {
+        Language::Rust => super::lang::rust::file_fqn(package, module, path),
     };
-    fqn.map(|fqn| fqn.as_str().to_string()).map_err(|e| {
-        format!("{} ({}::{}) has no file identity: {e:?}", facts.path, facts.package, facts.module)
-    })
+    fqn.map(|fqn| fqn.as_str().to_string())
+        .map_err(|e| format!("{path} ({package}::{module}) has no file identity: {e:?}"))
 }
 
 /// The `node_kind` a stub carries when its identity does not state one.
@@ -1062,7 +1152,7 @@ const KIND_NOT_YET_KNOWN: &str = "parameter";
 /// guess: the identity DOES state that the target is a macro, and only the
 /// column cannot spell it. Named here rather than hidden, and it disappears
 /// when step 9 decides the enum.
-fn stub_kind_and_name(fqn: &str) -> Result<(&'static str, String), String> {
+pub(crate) fn stub_kind_and_name(fqn: &str) -> Result<(&'static str, String), String> {
     let parsed = fqn::parse(fqn).map_err(|e| format!("{fqn} is not an fqn: {e:?}"))?;
     let name = parsed
         .tail
@@ -2104,6 +2194,31 @@ pub fn widest(a: u32) -> u32 {
         );
     }
 
+    /// Corpus files the round trip below keeps whatever the spread does.
+    ///
+    /// A spread reaches a COLLAPSING identity only by luck, and what the round
+    /// trip needs from real files is exactly the shapes nobody writes into a
+    /// fixture. `adapters/manifest/gradle.rs` declares three function-local
+    /// `static RE`s; a declaration inside a function body is minted as if it sat
+    /// in the module, so the three mint one identity and two rows are lost —
+    /// the collapse `Written::collisions` exists to count.
+    const ALWAYS_SAMPLED: &[&str] = &["adapters/manifest/gradle.rs"];
+
+    /// Whether a corpus path is in the fixed sample the round trip below uses.
+    ///
+    /// FNV-1a spelled out rather than `DefaultHasher`, whose output std does not
+    /// promise to keep stable between releases — a sample that silently re-draws
+    /// itself on a toolchain upgrade is the positional bug again with a longer
+    /// fuse.
+    fn every_thirteenth(path: &str) -> bool {
+        let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+        for byte in path.bytes() {
+            hash ^= u64::from(byte);
+            hash = hash.wrapping_mul(0x100_0000_01b3);
+        }
+        hash.is_multiple_of(13)
+    }
+
     /// The same round trip, over REAL FILES from this repository.
     ///
     /// A fixture proves persistence handles what the fixture's author thought
@@ -2117,13 +2232,36 @@ pub fn widest(a: u32) -> u32 {
     #[tokio::test]
     async fn no_fact_is_lost_when_real_files_from_this_repo_are_persisted() {
         let sources = crate::indexer::corpus_rust_sources();
-        // Every 13th file: a spread across crates and sizes that is FIXED
-        // rather than randomly sampled, so a failure is reproducible. Every
-        // file would be a truer measurement and a several-minute test; the
-        // shapes this is here to catch — a repeated call, two declarations at
-        // one line — appear many times over in a thirtieth of the corpus.
-        let sample: Vec<&(String, String)> = sources.iter().step_by(13).collect();
+        // Roughly a thirteenth of the corpus: a spread across crates and sizes
+        // that is FIXED rather than randomly sampled, so a failure is
+        // reproducible. Every file would be a truer measurement and a
+        // several-minute test; the shapes this is here to catch — a repeated
+        // call, two declarations at one line — appear many times over in a
+        // thirteenth of it.
+        //
+        // Plus the files that carry the shape by construction — see
+        // [`ALWAYS_SAMPLED`]. A spread reaches a collapsing identity only by
+        // luck, and the luck ran out the moment a file was added to this
+        // workspace.
+        //
+        // Selected by each PATH rather than by position. `step_by` was
+        // positional, and the corpus is this workspace's own source, so adding
+        // one file to it re-drew the whole sample from that file onward and
+        // moved the count below — a failure with nothing wrong behind it.
+        // Keyed on the path, adding a file can only add that file.
+        let sample: Vec<&(String, String)> = sources
+            .iter()
+            .filter(|(path, _)| {
+                every_thirteenth(path) || ALWAYS_SAMPLED.iter().any(|tail| path.ends_with(tail))
+            })
+            .collect();
         assert!(sample.len() > 25, "{} files is not a spread", sample.len());
+        for tail in ALWAYS_SAMPLED {
+            assert!(
+                sample.iter().any(|(path, _)| path.ends_with(tail)),
+                "{tail} is named as always sampled but is not in the corpus, so the shape it                  was named for is no longer exercised here"
+            );
+        }
 
         let first_party: BTreeSet<String> =
             sources.iter().map(|(path, _)| crate::indexer::package_of(path)).collect();
@@ -2178,7 +2316,11 @@ pub fn widest(a: u32) -> u32 {
                 written.edge_collisions
             );
         }
-        assert_eq!(collisions, 1, "the sample's share of the bounded set the ratchet above names");
+        assert_eq!(
+            collisions, 2,
+            "the sample's share of the bounded set the ratchet above names — the two rows the \
+             three `static RE`s in the always-sampled `gradle.rs` collapse into one"
+        );
 
         let stored = persist::read_back(&store, &folder).await.expect("the rows read back");
         same_rows(stored.symbols, symbols.into_values().collect(), "symbols");
@@ -2428,5 +2570,168 @@ pub fn widest(a: u32) -> u32 {
             .expect("the merged node must read back as a definition");
         assert_eq!(toll.file_path, "src/bell.rs");
         assert_eq!(toll.declared_type, DeclaredType::Stated("u32".to_string()));
+    }
+
+    /// `nodes_unique_identity` is `(folder_id, file_path, kind, name, parent_id,
+    /// line_start)` with NULLS NOT DISTINCT, so `parent_id` is the ONLY column
+    /// that separates two same-named members of two different types written on
+    /// one line.
+    ///
+    /// Written with `parent_id = NULL` they are one row, and the loss is
+    /// invisible from above: the two fqns are DISTINCT, so
+    /// [`persist::Written::collisions`] counts nothing, and the second insert
+    /// falls into `adopt_node_by_identity`, which re-points the first row's fqn
+    /// at the second. One declaration is gone and every reference to it lands
+    /// on the other type's member — a wrong edge (R4), not a missing one.
+    ///
+    /// One line is not a contrivance for its own sake; it is the smallest thing
+    /// that isolates `parent_id`. Two members on two lines are separated by
+    /// `line_start` and would pass whatever `parent_id` held.
+    #[tokio::test]
+    async fn two_same_named_members_of_two_types_on_one_line_are_two_rows() {
+        let facts = walk_of(
+            "twins",
+            "src/twins.rs",
+            "pub struct A { pub v: u32 } pub struct B { pub v: u32 }",
+        );
+        let store = PgStore::connect_test().await.expect("the test database must be reachable");
+        let folder = a_folder(&store, "twins").await;
+
+        let written = persist::write(&store, &folder, &facts).await.expect("the facts persist");
+        assert_eq!(
+            written.collisions,
+            vec![],
+            "the two fields mint two identities, so nothing above the database sees a collapse"
+        );
+
+        let stored = persist::read_back(&store, &folder).await.expect("the rows read back");
+        let fields: BTreeSet<&str> =
+            stored.symbols.iter().filter(|s| s.name == "v").map(|s| s.fqn.as_str()).collect();
+        assert_eq!(
+            fields,
+            ["rust·senseid·twins·A·v·field", "rust·senseid·twins·B·v·field"]
+                .into_iter()
+                .collect::<BTreeSet<&str>>(),
+            "`A::v` and `B::v` are two declarations; with a null parent_id the identity index \
+             keyed them as one row and one of them was silently re-pointed at the other"
+        );
+    }
+
+    /// The `parent_id` column, read back by IDENTITY and compared to the
+    /// ownership relations the walk read.
+    ///
+    /// The test above proves the column is doing its job at the identity index;
+    /// this proves it holds the right value. Both are needed: a `parent_id` set
+    /// to any old node would separate `A::v` from `B::v` just as well and would
+    /// still be a containment the source does not state.
+    ///
+    /// Every `Owns` the walk produced, not a chosen sample, so a member kind
+    /// that stops being parented fails here.
+    #[tokio::test]
+    async fn every_ownership_relation_the_walk_read_is_a_parent_id_in_the_database() {
+        use crate::indexer::facts::Resolution;
+
+        let facts = walked();
+        let store = PgStore::connect_test().await.expect("the test database must be reachable");
+        let folder = a_folder(&store, "containment").await;
+        persist::write(&store, &folder, &facts).await.expect("the facts persist");
+
+        let containment: std::collections::BTreeMap<String, Option<String>> = store
+            .v2_containment(&folder)
+            .await
+            .expect("the containment reads back")
+            .into_iter()
+            .collect();
+
+        let owned: Vec<(&str, &str)> = facts
+            .relations
+            .iter()
+            .filter(|r| r.kind == RelationKind::Owns)
+            .filter_map(|r| match &r.parent {
+                Resolution::Resolved(parent) => Some((r.child.as_str(), parent.as_str())),
+                Resolution::Unresolved { .. } => None,
+            })
+            .collect();
+        assert!(
+            owned.len() >= 5,
+            "the fixture must actually own some members, or this asserts nothing: {owned:?}"
+        );
+
+        for (child, parent) in &owned {
+            assert_eq!(
+                containment.get(*child).map(Option::as_deref),
+                Some(Some(*parent)),
+                "{child} is a member of {parent} in the facts, and `nodes.parent_id` must say so"
+            );
+        }
+
+        // And the other way: a free item is a member of NOTHING, so the column
+        // is not simply being filled with whatever was in hand.
+        let free = "rust·senseid·gadget·widest·item";
+        assert_eq!(
+            containment.get(free).map(Option::as_deref),
+            Some(None),
+            "{free} is declared at file scope and is owned by no type"
+        );
+    }
+
+    /// Every place a reference to an EXTERNAL puts the package, read back.
+    ///
+    /// `target_ref_of` derives one string — the package segment of a `lib·` fqn
+    /// — and that one string reaches four writes: the container's `fqn`, the
+    /// container's `name`, `props.package` on the container, and
+    /// `props.package` on the symbol. Nothing read any of them, so inverting the
+    /// derivation (taking the member's name, or the fqn's first segment) left
+    /// the whole suite green while `list_dependencies` — which answers "what
+    /// does this repo depend on" off `lib_package.name` — reported nonsense.
+    ///
+    /// Asserted as WHOLE ROWS rather than field by field, so a fifth write
+    /// appearing on either row has to be looked at rather than skipped past.
+    #[tokio::test]
+    async fn a_reference_to_an_external_names_its_package_in_all_four_places() {
+        use crate::db::pg_store::LibColumns;
+
+        let facts = walked();
+        let store = PgStore::connect_test().await.expect("the test database must be reachable");
+        let folder = a_folder(&store, "externals").await;
+        persist::write(&store, &folder, &facts).await.expect("the facts persist");
+
+        let lib = store.v2_lib_nodes(&folder).await.expect("the external rows read back");
+        let container = lib
+            .iter()
+            .find(|row| row.kind == "lib_package")
+            .expect("an external reference mints a package container");
+        assert_eq!(
+            *container,
+            LibColumns {
+                fqn: "lib·std".to_string(),
+                kind: "lib_package".to_string(),
+                name: "std".to_string(),
+                package: Some("std".to_string()),
+                parent_fqn: None,
+            },
+            "three of the four package writes are on the container: its fqn, its name and its \
+             props.package"
+        );
+
+        // The fixture's only external is `std::collections::BTreeMap`, brought
+        // in by a `use` and then constructed — so both an import edge and a
+        // construction edge reach the same symbol.
+        let symbol = lib
+            .iter()
+            .find(|row| row.kind == "lib_symbol" && row.name == "BTreeMap")
+            .unwrap_or_else(|| panic!("the fixture's external symbol reached no row: {lib:?}"));
+        assert_eq!(
+            *symbol,
+            LibColumns {
+                fqn: "lib·std·collections::BTreeMap".to_string(),
+                kind: "lib_symbol".to_string(),
+                name: "BTreeMap".to_string(),
+                package: Some("std".to_string()),
+                parent_fqn: Some("lib·std".to_string()),
+            },
+            "the fourth write is props.package on the symbol, and the symbol hangs under the \
+             container the same package minted"
+        );
     }
 }

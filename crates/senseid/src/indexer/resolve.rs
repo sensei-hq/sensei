@@ -1471,4 +1471,140 @@ mod tests {
         );
         assert_eq!(forward.len(), reversed.len(), "one order produced more files than the other");
     }
+    /// Whether an fqn is a TRAIT-IMPL member's, and if so the identity a use
+    /// site mints for it.
+    ///
+    /// `rust·pkg·module·Type·Trait·member·reach` becomes
+    /// `rust·pkg·module·Type·member·reach`, which is the `Form::Member` a call
+    /// like `x.member()` or `Type::member()` produces — see
+    /// [`the_members_a_trait_impl_supplies_are_named_where_no_use_site_can_reach_them`].
+    ///
+    /// Told apart by the grammar's OWN type rule and not by segment count: a
+    /// trait-impl member is the only form with two consecutive type-naming
+    /// segments before its name, because a module segment is one segment however
+    /// many `::` it contains and Rust lints modules into `snake_case`.
+    fn as_a_use_site_would_mint_it(fqn: &str) -> Option<String> {
+        let mut segments: Vec<&str> = fqn.split('·').collect();
+        let names_a_type = |s: &&str| (rust::GRAMMAR.names_a_type)(s);
+        // lang · package · [module] · Type · Trait · member · reach
+        let member = segments.len().checked_sub(2)?;
+        let ty = member.checked_sub(2)?;
+        if ty < 2 || !names_a_type(&segments[ty]) || !names_a_type(&segments[member - 1]) {
+            return None;
+        }
+        segments.remove(member - 1);
+        Some(segments.join("·"))
+    }
+
+    /// The residual: every first-party reference naming an identity that NO
+    /// declaration mints, counted and split by cause.
+    ///
+    /// `no_reference_names_a_declaration_that_differs_only_in_its_reach` asserts
+    /// ZERO for the one class the reach rule closes. This is the rest, and it is
+    /// not zero — so it is measured, split, and ratcheted, because a residual
+    /// nobody counts is a residual that grows.
+    ///
+    /// The split is the point. One part is a defect with a KNOWN fix that lives
+    /// in a later step; the other is the deferred trait-dispatch lookup (spec
+    /// §5), and confusing them would either scope-creep this step or lose the
+    /// first behind the second.
+    #[test]
+    fn the_references_that_name_no_declaration_are_a_measured_and_split_set() {
+        let (first_party, walked) = corpus();
+        let declared: BTreeSet<String> = walked
+            .iter()
+            .flat_map(|(_, facts)| facts.symbols.iter().map(|s| s.fqn.as_str().to_string()))
+            .collect();
+        // Every trait-impl member declaration, keyed by the identity a use site
+        // would mint for it. Two traits supplying one member name on one type
+        // would put two entries under one key — the collision the trait segment
+        // exists to prevent — so the set is kept and its size asserted below.
+        let mut supplied_by_a_trait: BTreeMap<String, BTreeSet<&str>> = BTreeMap::new();
+        for fqn in &declared {
+            if let Some(flattened) = as_a_use_site_would_mint_it(fqn) {
+                supplied_by_a_trait.entry(flattened).or_default().insert(fqn.as_str());
+            }
+        }
+
+        let scanned = BTreeSet::new();
+        let world = World { first_party: &first_party, scanned: &scanned };
+        let mut resolved = 0usize;
+        let mut elsewhere: BTreeMap<String, usize> = BTreeMap::new();
+        let mut through_a_trait: BTreeMap<String, usize> = BTreeMap::new();
+        for (_, facts) in walked {
+            for reference in resolve(facts, &rust::GRAMMAR, &world).references {
+                let Resolution::Resolved(fqn) = &reference.target else {
+                    continue;
+                };
+                let Ok(parsed) = fqn::parse(fqn.as_str()) else {
+                    continue;
+                };
+                // An external has no declaration by design (R5).
+                if !matches!(parsed.origin, fqn::Origin::Local { .. }) {
+                    continue;
+                }
+                resolved += 1;
+                if declared.contains(fqn.as_str()) {
+                    continue;
+                }
+                let counter = if supplied_by_a_trait.contains_key(fqn.as_str()) {
+                    &mut through_a_trait
+                } else {
+                    &mut elsewhere
+                };
+                *counter.entry(fqn.as_str().to_string()).or_insert(0) += 1;
+            }
+        }
+
+        let trait_shaped: usize = through_a_trait.values().sum();
+        let other: usize = elsewhere.values().sum();
+        let mut worst: Vec<(&String, &usize)> = elsewhere.iter().collect();
+        worst.sort_by(|a, b| b.1.cmp(a.1).then(a.0.cmp(b.0)));
+
+        // The trait-impl half, exactly. A declaration made inside
+        // `impl Trait for Type` carries a `Trait` segment, and NO use site can
+        // spell it: `x.default()` and `Type::default()` both mint the plain
+        // member form. So the declaration and every reference to it are two
+        // halves of one symbol — the same failure the reach rule closed for
+        // plain paths, one level in.
+        //
+        // It is recorded here rather than fixed, and the reason is the
+        // measurement beside it: `supplied_by_a_trait` has no key with two
+        // entries, so dropping the `Trait` segment would close all of these and
+        // create no collision IN THIS CORPUS — but it would delete the only
+        // thing separating `<X as Display>::fmt` from `<X as Debug>::fmt`, a
+        // shape this corpus does not contain and therefore cannot ratchet. R4
+        // ranks the wrong edge that would produce below the missing one it
+        // removes. The real fix is the impl-set lookup spec §5 defers under
+        // trait dispatch, which is a query over the whole graph and not a thing
+        // a per-file ladder can answer without depending on scan order (R6).
+        assert!(
+            supplied_by_a_trait.values().all(|declarations| declarations.len() == 1),
+            "two traits now supply one member name on one type, so the `Trait` segment is \
+             load-bearing in this corpus and the note below has to be re-decided: {:?}",
+            supplied_by_a_trait.iter().filter(|(_, d)| d.len() > 1).take(8).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            (trait_shaped, through_a_trait.len()),
+            (22, 3),
+            "the references that a trait impl supplies and no use site can name moved: {:?}",
+            through_a_trait
+        );
+
+        // Everything else. A ceiling and not an equality: this bucket holds the
+        // split-`impl` mis-anchoring that
+        // `every_ownership_edge_points_at_a_type_declared_somewhere_in_its_own_package`
+        // already names, plus re-exports the walk does not follow and impls
+        // generated by a `derive` that exists in no source file (spec §5). It
+        // moves whenever anyone edits any rust in this workspace, and a ratchet
+        // that fails on unrelated work is a ratchet nobody trusts.
+        assert!(
+            other <= 320,
+            "{other} of {resolved} first-party references ({} distinct identities) name an \
+             identity no declaration mints, up from the 312 this was measured at — 309 of them \
+             before `indexer/reconcile.rs` itself joined the corpus. Worst: {:?}",
+            elsewhere.len(),
+            worst.iter().take(12).collect::<Vec<_>>()
+        );
+    }
 }
