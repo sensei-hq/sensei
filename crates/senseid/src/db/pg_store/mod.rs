@@ -487,11 +487,13 @@ mod extensions;
 pub(crate) mod folders;
 mod governance;
 mod graph;
+mod indexer_v2;
 /// Named outside this module because the MCP handler picks the direction and
 /// `graph` consumes it — the caller/callee envelope and `call_coverage` must
 /// agree on which side of the relation is being counted, so the choice is one
 /// shared enum rather than a string each side re-interprets.
 pub(crate) use graph::CallDirection;
+pub(crate) use indexer_v2::{EdgeColumns, NodeColumns};
 mod library;
 mod logs;
 mod mcp;
@@ -537,7 +539,7 @@ mod run_tests;
 // see `crate::tasks::test_support::TestGate` for why an async mutex loses
 // wakeups across per-test runtimes. One allow per test module, not per site.
 #[allow(clippy::await_holding_lock)]
-mod tests;
+pub(crate) mod tests;
 
 #[allow(dead_code, clippy::too_many_arguments, clippy::type_complexity)]
 // PgStore API surface — methods wired up incrementally; SQLx tuple return types
