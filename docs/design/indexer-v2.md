@@ -745,6 +745,38 @@ without re-reading the file.
 Dirty is a state of KNOWLEDGE, not of the code. Nothing about the graph is
 asserted to be wrong; we are saying we could not re-confirm it.
 
+### R10.9 — the failure must be ACTIONABLE and REACHABLE
+
+Marking a file unparseable is only worth doing if it reaches something that can
+fix it. Two requirements follow, and neither is optional.
+
+**The reason must be specific enough to act on.** Not "parse failed" but the
+parser's own error and WHERE: file, line, column, and the message. An agent
+handed "x.rs:142: expected `}`" can fix the file; an agent handed "unparseable"
+can only shrug. Whatever the grammar reports is recorded verbatim — this is
+evidence, and R1's rule against discarding evidence applies.
+
+**It must be reachable through MCP.** A dirty flag nothing can query is invisible
+and therefore useless. Required:
+
+- a way to ask "which files in this project are unparseable, and why", returning
+  the path, the reason and when it started failing
+- every query that returns a dirty node labels it as dirty, with the reason,
+  rather than returning it as though it were current
+
+This makes the graph SELF-HEALING through the agent, which is the point: the
+indexer cannot fix a syntax error, but the thing consuming the indexer can. The
+loop is — file breaks, index reports it precisely, agent fixes it, next index
+clears the flag. No human has to notice.
+
+It is also a G2 capability. "Which files is this repository unable to parse" is
+exactly the kind of thing a person wants when judging whether a codebase is in
+trouble, and today it is unanswerable.
+
+Contrast with what this replaces: demotion silently served WRONG data and gave
+nobody anything to act on. Dirty serves the last known-true data, says so, and
+names the fix.
+
 ### R10.8 — a file that parsed is authoritative, and removal is REMOVAL
 
 When `read` returns `Ok`, the claim set is the truth. A declaration the file no
