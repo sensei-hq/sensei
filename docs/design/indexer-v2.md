@@ -733,53 +733,60 @@ so demotion trades a data-loss RISK for a wrong-data CERTAINTY. Backwards.
 
 They are two different events and get two different mechanisms.
 
-### R10.7 — parse status lives on the FILE, and dirty is DERIVED
+### R10.7 — the file entity ALREADY EXISTS: it is `scan_state`
 
-A file is already a node (`kind = 'file'`), and every symbol carries the
-`file_path` it was declared in. So the file is the natural owner of parse status,
-and nothing else needs to be written:
+Correcting an earlier draft that proposed putting status in the file NODE's
+props. There is a per-file row already, and it is the right owner:
 
-- The FILE node records `parsed | unparseable`, and on failure the parser's own
-  error verbatim WITH a location — file, line, column, message (R10.9). One row,
-  one write.
-- A symbol is DIRTY if the file it belongs to is unparseable. That is a JOIN
-  (`nodes.folder_id = f.folder_id AND nodes.file_path = f.file_path AND
-  f.kind = 'file'`), not a flag stamped on each symbol.
+    sensei.scan_state (folder_id, file_path, mtime, content_hash,
+                       indexed_at, modified_at, skip_reason)
 
-Writing dirty onto every symbol was rejected on two grounds. It is N writes where
-one will do — a file with 200 declarations costs 200 updates and 200 more to
-clear. And two copies of one fact can disagree: a partial failure leaves some
-symbols marked and others not, for a file that is either parseable or it is not.
-Derived state cannot drift from the thing it derives from.
+`skip_reason` is an enum and it ALREADY carries the reason code this design
+needs: `unsupported_format | binary_content | invalid_utf8 | parse_error |
+excluded_by_config`. Live today: 48,646 indexed, 17 binary_content, 2
+invalid_utf8. `parse_error` exists as a value and is effectively unused.
 
-No DDL is required. `(folder_id, file_path)` already identifies a file and the
-file node already exists; status goes in its `props`, alongside the
-`props.claims` / `props.occurrences` precedent.
+So the status and the reason code need nothing new. What is missing is the
+DETAIL — there is no column for the parser's message and location, and R10.9
+requires it, because "parse_error" tells an agent a file is broken and
+"x.rs:142: expected `}`" tells it what to do.
 
-TWO PREREQUISITES, both currently unmet and both small:
+**Add one nullable column to `scan_state` for the failure detail.** That is a
+DDL change and it is additive, so it must go through the dbd workflow rather
+than being written by hand. It is deliberately NOT put in a node's props: the
+code lives on scan_state, and splitting the detail somewhere else recreates the
+two-copies-of-one-fact problem this requirement exists to avoid.
 
-1. **The file node needs an fqn.** Every `kind = 'file'` node in the live graph
-   has an EMPTY fqn, so it is not addressable as a merge target and cannot be
-   upserted by identity like every other node. Give it one.
-2. **The file node must be claimed like any other declaration**, so R10.8's
-   claim/release rules apply to it and a deleted file's node goes with its
-   contents.
+A symbol is DIRTY if its file's `scan_state.skip_reason` is set — a JOIN on
+`(folder_id, file_path)`, never a flag written onto each symbol.
 
-### R10.7b — the composed view
+### R10.7b — folders roll up through the view that already exists
 
-`node + edge + file + folder` is the query surface both goals need, and each
-layer is already present: folders have `parent_id` (a real tree, 9,205 of 9,377
-populated), files are nodes, symbols carry `file_path`, edges carry endpoints.
-What is missing is the join expressed once, in a view, rather than re-derived by
-every caller.
+`sensei.folder_completeness` already derives a folder's state from its files and
+its child folders, recursing over `parent_id` and reading nothing but persisted
+per-file facts. Folder status is that view, extended to carry unparseable counts
+— not a second mechanism.
 
-That view is what makes these answerable in one place:
-- G2: which files will not parse, and where is the risk concentrated by folder
-- G1: is this symbol current, or is its file broken — returned WITH the answer,
-  not as a separate lookup a caller may forget to make
+### R10.7c — containment is one structure sliced many ways
 
-Deferred until v2 has a caller, but the shape is fixed now so the data lands in
-the right place rather than being migrated later.
+The graph should answer "what contains this" at whatever granularity the caller
+wants, from one containment relation rather than a bespoke query per level:
+
+    folder -> file -> type -> member
+    package -> module -> item
+    library -> package -> symbol
+
+These are different SLICES of the same parent/child structure, not different
+structures. `Owns` (R10, D5) is that relation for symbols; folders have
+`parent_id`; files sit between the two. A node knowing its file makes the whole
+chain walkable in one direction and sliceable at any level — which is what makes
+"show me this repo by folder" and "show me this package's types" the same query
+with a different cut.
+
+The one thing currently in the way: a symbol references its file by `file_path`
+TEXT, and every `kind = 'file'` node has an EMPTY fqn, so a file is not
+addressable as a merge target the way every other node is. Give the file node an
+fqn and claim it like any other declaration, and the chain closes.
 
 ### R10.9 — the failure must be ACTIONABLE and REACHABLE
 
