@@ -24,6 +24,8 @@
 
 use std::fmt;
 
+use super::fqn::Reach;
+
 // ── identity ─────────────────────────────────────────────────────────────────
 
 /// Where a fact was read from, in the file the walk was given. Columns are
@@ -124,9 +126,9 @@ pub enum SymbolKind {
     /// lifetime, and singleton detection reads exactly that (R8).
     Static,
     Module,
-    /// A `macro_rules!` or proc-macro definition. Its own kind because a macro
-    /// is in neither the type nor the value namespace, and "where is X defined"
-    /// must answer for a macro too.
+    /// A `macro_rules!` or proc-macro definition. Its own kind because only a
+    /// `name!` reaches a macro, and "where is X defined" must answer for a
+    /// macro too.
     Macro,
     /// A declared storage slot on a type.
     Field,
@@ -295,6 +297,16 @@ pub struct Evidence {
     /// The tree-sitter node kind of the use site. This is what names an
     /// [`Reason::UnhandledForm`] miss in the histogram.
     pub node_kind: String,
+    /// HOW this use site reaches its target (spec §2.1) — a function of the use
+    /// SYNTAX, so only the walk that read the syntax can state it.
+    ///
+    /// Here rather than derived downstream from [`RefKind`], and the difference
+    /// is not tidiness. `RefKind::Reads` is a path leaf at `a::B::C` and a field
+    /// at `x.y`, so the kind alone cannot tell them apart and anything deriving
+    /// a reach from it would mint `item` for half this repo's field reads — a
+    /// wrong identity, on the side of the merge contract that has no way to
+    /// notice (R4, R7).
+    pub reach: Reach,
     /// Everything else the walk saw, in the order it saw it. Empty means it saw
     /// nothing beyond the name, which is itself a reading worth having.
     pub saw: Vec<Observation>,
@@ -399,6 +411,12 @@ pub struct FileFacts {
     pub package: String,
     /// This file's package-relative module path, empty at the package root.
     pub module: String,
+    /// Where this file is. A fact of the walk and not an argument the writer
+    /// supplies again later, because the identity a file-scope use site is
+    /// filed under and the identity the writer hangs imports off must be one
+    /// string — and at a crate root, where the module path is empty and a
+    /// package may have several, the path is what tells two files apart.
+    pub path: String,
     pub symbols: Vec<Symbol>,
     pub references: Vec<Reference>,
     pub relations: Vec<Relation>,
@@ -422,7 +440,7 @@ mod tests {
             package: "senseid",
             module: "indexer::facts",
             name,
-            ns: fqn::Ns::Ty,
+            reach: fqn::Reach::Item,
         })
         .expect("the test's own fqn parts are well formed")
     }
@@ -502,6 +520,7 @@ mod tests {
         Evidence {
             name: "pg".to_string(),
             node_kind: "field_expression".to_string(),
+            reach: Reach::Field,
             saw: all_observations(),
         }
     }
@@ -730,6 +749,7 @@ mod tests {
             language: Language::Rust,
             package: "senseid".to_string(),
             module: "indexer::facts".to_string(),
+            path: "src/indexer/facts.rs".to_string(),
             symbols: vec![symbol],
             references: vec![reference],
             relations: vec![relation],

@@ -13,15 +13,15 @@
 //!
 //! | form | encoding |
 //! |---|---|
-//! | [`Form::Item`] | `<lang>·<package>·<module>·<name>·<ns>` |
-//! | [`Form::Member`] | `<lang>·<package>·<module>·<Type>·<member>·<ns>` |
-//! | [`Form::TraitMember`] | `<lang>·<package>·<module>·<Type>·<Trait>·<member>·<ns>` |
+//! | [`Form::Item`] | `<lang>·<package>·<module>·<name>·<reach>` |
+//! | [`Form::Member`] | `<lang>·<package>·<module>·<Type>·<member>·<reach>` |
+//! | [`Form::TraitMember`] | `<lang>·<package>·<module>·<Type>·<Trait>·<member>·<reach>` |
 //! | [`Form::Lib`] | `lib·<package>·<member>` |
 //!
-//! The trailing [`Ns`] is what keeps two declarations Rust allows to share a
-//! name from merging onto one node — see [`Ns`] for why the spec §2 sketch,
+//! The trailing [`Reach`] is what keeps two declarations Rust allows to share a
+//! name from merging onto one node — see [`Reach`] for why the spec §2 sketch,
 //! which has no such segment, is not enough. It goes last so that a prefix
-//! query still gathers every member of a type regardless of namespace.
+//! query still gathers every member of a type regardless of reach.
 //!
 //! `module` is ONE segment that may itself contain `::` (`api::handlers::codebase`)
 //! and may be empty at the package root; an empty `module` is dropped rather
@@ -59,56 +59,79 @@ pub enum Segment {
     Member,
 }
 
-/// The namespace a name is minted in — the last segment of every local form.
+/// HOW a use site gets to a name — the last segment of every local form
+/// (spec §2.1, D7).
 ///
-/// Rust permits two declarations to share one name in one scope when they sit
-/// in different namespaces: a `healthy` field and a `healthy()` getter on one
-/// struct, `pub mod config;` and `pub fn config()` in one module. Both are in
-/// this repo today. The fqn is the merge key (spec §2), so without this segment
-/// those two declarations mint one string, one overwrites the other, and every
-/// reference to either lands on the wrong one about half the time — a wrong
-/// edge, which is worse than a missing one (R4).
+/// A key needs a trailing discriminator because Rust permits two declarations
+/// to share one name in one scope: a `healthy` field beside a `healthy()`
+/// getter, `pub mod config;` beside `pub fn config()`. Both are in this repo
+/// today. The fqn is the merge key (spec §2), so without this segment those two
+/// mint one string, one overwrites the other, and every reference to either
+/// lands on the wrong one about half the time — a wrong edge, which is worse
+/// than a missing one (R4).
 ///
-/// The granularity is the NAMESPACE, not the declaration kind, and that is the
-/// whole design. A use site can tell namespaces apart from syntax alone —
-/// `x.foo` is a field, `x.foo()` is a method, `foo::bar` puts `foo` in the type
-/// namespace — but it cannot tell a `const` from a `static`, so discriminating
-/// on kind would break the merge contract instead of protecting it.
+/// The discriminator is the REACH and not the Rust NAMESPACE, and the
+/// difference is forced rather than stylistic. `Foo::Bar` is spelled
+/// identically whether `Bar` is an enum variant, an associated const, an
+/// associated type or a type inside a module, so at a path leaf the namespace
+/// is not observable. Worse for any repair on the reference side: one
+/// declaration can occupy BOTH namespaces — the Rust Reference files an enum
+/// variant and a unit struct under the type namespace and their constructors
+/// under the value namespace — so there is no single true namespace for the
+/// DECLARATION side to mint either.
+///
+/// Each value below is decided by something the declaration side and the use
+/// site can both observe, so a use site mints exactly ONE candidate and there
+/// is no ambiguity for a resolver to adjudicate. What the collapse gives up —
+/// a type and a function sharing a name in one scope — is not argued away, it
+/// is CHECKED: see A7.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Ns {
-    /// Types, traits, modules, type aliases, associated types.
-    Ty,
-    /// Functions, methods, associated fns, consts, statics, enum variants.
-    Val,
-    /// Struct and enum-variant fields, named or positional. Rust gives fields
-    /// their own namespace per type, which is exactly why a field and a method
-    /// may share a name.
+pub enum Reach {
+    /// Anything reached by a path segment, a bare name, or a dotted call:
+    /// types, traits, type aliases, associated types, functions, methods,
+    /// consts, statics, enum variants.
+    Item,
+    /// Reached by `x.name` or `x.0` — a dot with NO call — or by a
+    /// struct-literal or struct-pattern field position. Its own reach because a
+    /// field is reachable no other way: `Type::field` is not a path Rust
+    /// admits, so `field` and [`Reach::Item`] never overlap and a field beside
+    /// a same-named method stays two symbols.
     Field,
-    /// `macro_rules!` and proc macros.
+    /// Reached by `name!`. `macro_rules!` and proc macros.
     Macro,
+    /// Reached by nothing: a module appears in an identity as the `module`
+    /// segment, never as a target.
+    ///
+    /// Its own reach for a measured reason, not an aesthetic one. Collapse the
+    /// type and value namespaces while leaving modules in the collapsed bucket
+    /// and `crate::installer::install(..)` — a call to a function re-exported
+    /// from a module of the same name — lands on the MODULE: a wrong edge where
+    /// today there is a dangling one. 7 such references in this repo, 6 distinct
+    /// identities. It costs nothing, because no reference ever mints `mod`.
+    Mod,
 }
 
-impl Ns {
-    /// The label this namespace occupies the trailing segment with. Paired with
-    /// [`Ns::from_label`] here so the two directions cannot drift.
+impl Reach {
+    /// The label this reach occupies the trailing segment with. Paired with
+    /// [`Reach::from_label`] here so the two directions cannot drift.
     pub fn as_str(&self) -> &'static str {
         match self {
-            Self::Ty => "ty",
-            Self::Val => "val",
+            Self::Item => "item",
             Self::Field => "field",
             Self::Macro => "macro",
+            Self::Mod => "mod",
         }
     }
 
-    /// The inverse of [`Ns::as_str`]. `None` means the label names no namespace
+    /// The inverse of [`Reach::as_str`]. `None` means the label names no reach
     /// a builder here could have written — the caller turns that into a typed
     /// error rather than picking one.
     pub fn from_label(label: &str) -> Option<Self> {
         match label {
-            "ty" => Some(Self::Ty),
-            "val" => Some(Self::Val),
+            "item" => Some(Self::Item),
             "field" => Some(Self::Field),
             "macro" => Some(Self::Macro),
+            "mod" => Some(Self::Mod),
             _ => None,
         }
     }
@@ -134,10 +157,10 @@ pub enum FqnError {
     /// An error rather than a guess: a symbol filed under the wrong language is
     /// a wrong-merge waiting to happen.
     UnknownLanguage { found: String },
-    /// [`parse`] read a trailing segment naming no namespace a builder here
-    /// could have written. Guessing one would merge two declarations that the
-    /// namespace exists to keep apart.
-    UnknownNamespace { found: String },
+    /// [`parse`] read a trailing segment naming no reach a builder here could
+    /// have written. Guessing one would merge two declarations that the reach
+    /// exists to keep apart.
+    UnknownReach { found: String },
     /// [`type_segment`] was handed source text that names no type — a tuple, a
     /// slice, a unit. There is no segment to mint and inventing one would be
     /// fabrication (R4).
@@ -149,16 +172,16 @@ pub enum FqnError {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Form<'a> {
     /// A free item: function, type, trait, const, static, module.
-    Item { lang: Language, package: &'a str, module: &'a str, name: &'a str, ns: Ns },
+    Item { lang: Language, package: &'a str, module: &'a str, name: &'a str, reach: Reach },
     /// A member of a type: field, inherent method, associated fn, enum variant.
-    /// [`Ns`] is what keeps a field and a same-named method apart.
+    /// [`Reach`] is what keeps a field and a same-named method apart.
     Member {
         lang: Language,
         package: &'a str,
         module: &'a str,
         ty: &'a str,
         member: &'a str,
-        ns: Ns,
+        reach: Reach,
     },
     /// A member supplied by a trait impl. The trait qualifier is what keeps
     /// `Display::fmt` and `Debug::fmt` on one type from becoming one symbol.
@@ -169,16 +192,16 @@ pub enum Form<'a> {
         ty: &'a str,
         tr: &'a str,
         member: &'a str,
-        ns: Ns,
+        reach: Reach,
     },
     /// An external symbol (R5). `member` may be empty, which names the crate
     /// itself.
     ///
-    /// No namespace, and the asymmetry is deliberate: the namespace exists to
-    /// keep two of OUR declarations from merging, and we index no declarations
-    /// for a library — an external is named by use and never opened (R5, D3).
-    /// A library member is also reached through a whole path (`sync::Mutex::new`),
-    /// which has no single namespace to name.
+    /// No reach, and the asymmetry is deliberate: the reach exists to keep two
+    /// of OUR declarations from merging, and we index no declarations for a
+    /// library — an external is named by use and never opened (R5, D3). A
+    /// library member is also reached through a whole path (`sync::Mutex::new`),
+    /// which has no single answer anyway.
     Lib { package: &'a str, member: &'a str },
 }
 
@@ -200,26 +223,26 @@ pub fn refer(form: &Form<'_>) -> Result<Fqn, FqnError> {
 /// The single encoder. Both doors lead here; nothing else does.
 fn encode(form: &Form<'_>) -> Result<Fqn, FqnError> {
     let segments: Vec<&str> = match form {
-        Form::Item { lang, package, module, name, ns } => {
+        Form::Item { lang, package, module, name, reach } => {
             check(Segment::Package, package, Required::Yes)?;
             check(Segment::Module, module, Required::No)?;
             check(Segment::Member, name, Required::Yes)?;
-            vec![lang.as_str(), package, module, name, ns.as_str()]
+            vec![lang.as_str(), package, module, name, reach.as_str()]
         }
-        Form::Member { lang, package, module, ty, member, ns } => {
+        Form::Member { lang, package, module, ty, member, reach } => {
             check(Segment::Package, package, Required::Yes)?;
             check(Segment::Module, module, Required::No)?;
             check(Segment::Type, ty, Required::Yes)?;
             check(Segment::Member, member, Required::Yes)?;
-            vec![lang.as_str(), package, module, ty, member, ns.as_str()]
+            vec![lang.as_str(), package, module, ty, member, reach.as_str()]
         }
-        Form::TraitMember { lang, package, module, ty, tr, member, ns } => {
+        Form::TraitMember { lang, package, module, ty, tr, member, reach } => {
             check(Segment::Package, package, Required::Yes)?;
             check(Segment::Module, module, Required::No)?;
             check(Segment::Type, ty, Required::Yes)?;
             check(Segment::Trait, tr, Required::Yes)?;
             check(Segment::Member, member, Required::Yes)?;
-            vec![lang.as_str(), package, module, ty, tr, member, ns.as_str()]
+            vec![lang.as_str(), package, module, ty, tr, member, reach.as_str()]
         }
         Form::Lib { package, member } => {
             check(Segment::Package, package, Required::Yes)?;
@@ -282,6 +305,19 @@ fn join(segments: &[&str]) -> String {
 /// resolution: `Self` and a bare `Widget` come back verbatim, because deciding
 /// WHICH `Widget` is meant needs the import table and belongs to the ladder.
 pub fn type_segment(raw: &str) -> Result<String, FqnError> {
+    let path = type_path(raw)?;
+    Ok(path.rsplit("::").next().unwrap_or(&path).trim().to_string())
+}
+
+/// The same reduction as [`type_segment`], stopping one step earlier: it keeps
+/// the PATH that leads to the type instead of only the name at its end.
+///
+/// Both are needed and both are here, because the name alone cannot say WHICH
+/// `Widget` is meant while the path can: `crate::widget::Widget` states its own
+/// root, and a reference that kept only `Widget` has thrown that away. Discarding
+/// something already parsed is the failure this rewrite is measuring, so the walk
+/// records the path as evidence and the resolution ladder reads it back.
+pub fn type_path(raw: &str) -> Result<String, FqnError> {
     let not_a_type = || FqnError::NotATypeName { value: raw.to_string() };
 
     let mut rest = raw.trim();
@@ -306,8 +342,8 @@ pub fn type_segment(raw: &str) -> Result<String, FqnError> {
     // `Widget` are one type.
     let head = rest.split('<').next().unwrap_or(rest).trim();
     // `Widget::<u32>` leaves a turbofish's `::` dangling once the arguments go.
-    let head = head.trim_end_matches(':');
-    let name = head.rsplit("::").next().unwrap_or(head).trim();
+    let path = head.trim_end_matches(':').trim();
+    let name = path.rsplit("::").next().unwrap_or(path).trim();
 
     if name.is_empty() {
         return Err(not_a_type());
@@ -318,21 +354,21 @@ pub fn type_segment(raw: &str) -> Result<String, FqnError> {
     if !name.starts_with(|c: char| c.is_alphabetic() || c == '_') {
         return Err(not_a_type());
     }
-    if name.contains(SEP) {
+    if path.contains(SEP) {
         return Err(FqnError::SeparatorInSegment {
             segment: Segment::Type,
-            value: name.to_string(),
+            value: path.to_string(),
         });
     }
-    Ok(name.to_string())
+    Ok(path.to_string())
 }
 
 /// Whether an fqn names something of ours or something we only ever name (R5).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Origin {
-    /// Local symbols carry the namespace their name was minted in; see [`Ns`].
-    Local { lang: Language, ns: Ns },
-    /// An external has no namespace — see [`Form::Lib`].
+    /// Local symbols carry the reach they are named through; see [`Reach`].
+    Local { lang: Language, reach: Reach },
+    /// An external has no reach — see [`Form::Lib`].
     Lib,
 }
 
@@ -347,8 +383,8 @@ pub enum Origin {
 pub struct Parsed<'a> {
     pub origin: Origin,
     pub package: &'a str,
-    /// Everything between the package and the trailing namespace, in order.
-    /// Empty for a bare crate.
+    /// Everything between the package and the trailing reach, in order. Empty
+    /// for a bare crate.
     pub tail: Vec<&'a str>,
 }
 
@@ -373,15 +409,15 @@ pub fn parse(encoded: &str) -> Result<Parsed<'_>, FqnError> {
     }
     let lang = Language::from_label(head)
         .ok_or_else(|| FqnError::UnknownLanguage { found: (*head).to_string() })?;
-    // `<lang>·<package>·<ns>` alone names no symbol — every local form has at
-    // least a name between the package and the namespace.
-    let (ns_label, tail) = tail.split_last().ok_or_else(malformed)?;
+    // `<lang>·<package>·<reach>` alone names no symbol — every local form has
+    // at least a name between the package and the reach.
+    let (reach_label, tail) = tail.split_last().ok_or_else(malformed)?;
     if tail.is_empty() {
         return Err(malformed());
     }
-    let ns = Ns::from_label(ns_label)
-        .ok_or_else(|| FqnError::UnknownNamespace { found: (*ns_label).to_string() })?;
-    Ok(Parsed { origin: Origin::Local { lang, ns }, package, tail: tail.to_vec() })
+    let reach = Reach::from_label(reach_label)
+        .ok_or_else(|| FqnError::UnknownReach { found: (*reach_label).to_string() })?;
+    Ok(Parsed { origin: Origin::Local { lang, reach }, package, tail: tail.to_vec() })
 }
 
 #[cfg(test)]
@@ -405,9 +441,9 @@ mod tests {
                     package: "senseid",
                     module: "api::handlers::codebase",
                     name: "language_for_ext",
-                    ns: Ns::Val,
+                    reach: Reach::Item,
                 },
-                "rust·senseid·api::handlers::codebase·language_for_ext·val",
+                "rust·senseid·api::handlers::codebase·language_for_ext·item",
             ),
             (
                 "free fn at the crate root",
@@ -416,20 +452,20 @@ mod tests {
                     package: "sensei-cli",
                     module: "",
                     name: "main",
-                    ns: Ns::Val,
+                    reach: Reach::Item,
                 },
-                "rust·sensei-cli·main·val",
+                "rust·sensei-cli·main·item",
             ),
             (
-                "a module declaration is itself an item",
+                "a module declaration, the one thing no reference ever reaches",
                 Form::Item {
                     lang: Language::Rust,
                     package: "senseid",
                     module: "api",
                     name: "handlers",
-                    ns: Ns::Ty,
+                    reach: Reach::Mod,
                 },
-                "rust·senseid·api·handlers·ty",
+                "rust·senseid·api·handlers·mod",
             ),
             (
                 "inherent method",
@@ -439,9 +475,9 @@ mod tests {
                     module: "widget",
                     ty: "Widget",
                     member: "new",
-                    ns: Ns::Val,
+                    reach: Reach::Item,
                 },
-                "rust·senseid·widget·Widget·new·val",
+                "rust·senseid·widget·Widget·new·item",
             ),
             (
                 "method on a crate-root type",
@@ -451,9 +487,9 @@ mod tests {
                     module: "",
                     ty: "Config",
                     member: "load",
-                    ns: Ns::Val,
+                    reach: Reach::Item,
                 },
-                "rust·senseid·Config·load·val",
+                "rust·senseid·Config·load·item",
             ),
             (
                 "a field, which shares its type, module and package with a method",
@@ -463,7 +499,7 @@ mod tests {
                     module: "widget",
                     ty: "Widget",
                     member: "width",
-                    ns: Ns::Field,
+                    reach: Reach::Field,
                 },
                 "rust·senseid·widget·Widget·width·field",
             ),
@@ -475,7 +511,7 @@ mod tests {
                     module: "widget",
                     ty: "Widget",
                     member: "new",
-                    ns: Ns::Field,
+                    reach: Reach::Field,
                 },
                 "rust·senseid·widget·Widget·new·field",
             ),
@@ -487,9 +523,9 @@ mod tests {
                     module: "indexer::facts",
                     ty: "Reason",
                     member: "UnhandledForm",
-                    ns: Ns::Val,
+                    reach: Reach::Item,
                 },
-                "rust·senseid·indexer::facts·Reason·UnhandledForm·val",
+                "rust·senseid·indexer::facts·Reason·UnhandledForm·item",
             ),
             (
                 "trait-impl method",
@@ -500,9 +536,9 @@ mod tests {
                     ty: "Widget",
                     tr: "Display",
                     member: "fmt",
-                    ns: Ns::Val,
+                    reach: Reach::Item,
                 },
-                "rust·senseid·widget·Widget·Display·fmt·val",
+                "rust·senseid·widget·Widget·Display·fmt·item",
             ),
             (
                 "trait-impl method on a crate-root type",
@@ -513,18 +549,18 @@ mod tests {
                     ty: "Config",
                     tr: "Debug",
                     member: "fmt",
-                    ns: Ns::Val,
+                    reach: Reach::Item,
                 },
-                "rust·senseid·Config·Debug·fmt·val",
+                "rust·senseid·Config·Debug·fmt·item",
             ),
             (
-                "a macro definition, in neither the type nor the value namespace",
+                "a macro definition, which only a `name!` can reach",
                 Form::Item {
                     lang: Language::Rust,
                     package: "senseid",
                     module: "macros",
                     name: "bail",
-                    ns: Ns::Macro,
+                    reach: Reach::Macro,
                 },
                 "rust·senseid·macros·bail·macro",
             ),
@@ -577,7 +613,7 @@ mod tests {
             module: "",
             ty: "Config",
             member: "load",
-            ns: Ns::Val,
+            reach: Reach::Item,
         };
         let bare_crate = Form::Lib { package: "tokio", member: "" };
 
@@ -604,7 +640,7 @@ mod tests {
             ty: "Widget",
             tr: "Display",
             member: "fmt",
-            ns: Ns::Val,
+            reach: Reach::Item,
         })
         .expect("well-formed");
         let debug = define(&Form::TraitMember {
@@ -614,7 +650,7 @@ mod tests {
             ty: "Widget",
             tr: "Debug",
             member: "fmt",
-            ns: Ns::Val,
+            reach: Reach::Item,
         })
         .expect("well-formed");
         assert_ne!(display, debug, "two traits, one member name, one type: still two symbols");
@@ -635,7 +671,7 @@ mod tests {
                     package: "",
                     module: "m",
                     name: "n",
-                    ns: Ns::Val,
+                    reach: Reach::Item,
                 },
                 Segment::Package,
             ),
@@ -646,7 +682,7 @@ mod tests {
                     package: "p",
                     module: "m",
                     name: "",
-                    ns: Ns::Val,
+                    reach: Reach::Item,
                 },
                 Segment::Member,
             ),
@@ -658,7 +694,7 @@ mod tests {
                     module: "m",
                     ty: "",
                     member: "x",
-                    ns: Ns::Val,
+                    reach: Reach::Item,
                 },
                 Segment::Type,
             ),
@@ -670,7 +706,7 @@ mod tests {
                     module: "m",
                     ty: "T",
                     member: "",
-                    ns: Ns::Val,
+                    reach: Reach::Item,
                 },
                 Segment::Member,
             ),
@@ -683,7 +719,7 @@ mod tests {
                     ty: "T",
                     tr: "",
                     member: "x",
-                    ns: Ns::Val,
+                    reach: Reach::Item,
                 },
                 Segment::Trait,
             ),
@@ -706,7 +742,7 @@ mod tests {
             package: "senseid",
             module: "a·b",
             name: "n",
-            ns: Ns::Val,
+            reach: Reach::Item,
         };
         let expected = Err(FqnError::SeparatorInSegment {
             segment: Segment::Module,
@@ -724,21 +760,21 @@ mod tests {
             let built = define(&form).unwrap_or_else(|e| panic!("{what}: {e:?}"));
             let parsed = parse(built.as_str()).unwrap_or_else(|e| panic!("{what}: {e:?}"));
 
-            let (head, ns) = match parsed.origin {
-                Origin::Local { lang, ns } => (lang.as_str(), ns.as_str()),
+            let (head, reach) = match parsed.origin {
+                Origin::Local { lang, reach } => (lang.as_str(), reach.as_str()),
                 Origin::Lib => (LIB, ""),
             };
             let mut segments = vec![head, parsed.package];
             segments.extend(parsed.tail.iter().copied());
-            segments.push(ns);
+            segments.push(reach);
             assert_eq!(join(&segments), expected, "{what}: round trip");
         }
     }
 
     #[test]
     fn parse_reports_the_parts_a_string_actually_carries() {
-        let local = parse("rust·senseid·widget·Widget·new·val").expect("well-formed");
-        assert_eq!(local.origin, Origin::Local { lang: Language::Rust, ns: Ns::Val });
+        let local = parse("rust·senseid·widget·Widget·new·item").expect("well-formed");
+        assert_eq!(local.origin, Origin::Local { lang: Language::Rust, reach: Reach::Item });
         assert_eq!(local.package, "senseid");
         assert_eq!(local.tail, vec!["widget", "Widget", "new"]);
 
@@ -766,7 +802,7 @@ mod tests {
             module: "",
             ty: "Config",
             member: "load",
-            ns: Ns::Val,
+            reach: Reach::Item,
         })
         .expect("well-formed");
         let item_in_a_module = define(&Form::Item {
@@ -774,7 +810,7 @@ mod tests {
             package: "p",
             module: "Config",
             name: "load",
-            ns: Ns::Val,
+            reach: Reach::Item,
         })
         .expect("well-formed");
 
@@ -791,7 +827,7 @@ mod tests {
 
     #[test]
     fn parse_rejects_a_string_no_builder_here_could_have_produced() {
-        for encoded in ["", "rust", "rust·senseid", "rust·senseid·val", "rust··x·val", "lib"]
+        for encoded in ["", "rust", "rust·senseid", "rust·senseid·item", "rust··x·item", "lib"]
         {
             assert_eq!(
                 parse(encoded),
@@ -800,27 +836,37 @@ mod tests {
             );
         }
         assert_eq!(
-            parse("python·p·x·val"),
+            parse("python·p·x·item"),
             Err(FqnError::UnknownLanguage { found: "python".to_string() }),
             "a language this build cannot read is an error, not a silent Rust"
         );
         assert_eq!(
             parse("rust·p·m·x"),
-            Err(FqnError::UnknownNamespace { found: "x".to_string() }),
-            "a trailing segment no builder could have written is an error, not a guessed namespace"
+            Err(FqnError::UnknownReach { found: "x".to_string() }),
+            "a trailing segment no builder could have written is an error, not a guessed reach"
+        );
+        assert_eq!(
+            parse("rust·p·m·x·ty"),
+            Err(FqnError::UnknownReach { found: "ty".to_string() }),
+            "`ty` and `val` were the NAMESPACE this segment used to carry; a string still \
+             spelling one is a stale identity, not a reach this build can read"
         );
     }
 
     /// Rust lets a field and a method share a name on one type, and lets a
-    /// module and a function share a name in one scope, because they live in
-    /// different namespaces. The fqn is the merge key (spec §2), so a grammar
-    /// that cannot tell them apart merges two different declarations onto one
-    /// node and every reference to either points at the wrong one about half the
-    /// time — a wrong edge, which is worse than a missing one (R4).
+    /// module and a function share a name in one scope. The fqn is the merge key
+    /// (spec §2), so a grammar that cannot tell them apart merges two different
+    /// declarations onto one node and every reference to either points at the
+    /// wrong one about half the time — a wrong edge, which is worse than a
+    /// missing one (R4).
     ///
-    /// Both of these are real collisions in this repo: `WatcherHealth` has a
-    /// `healthy` field and a `healthy()` getter, and `sensei-bootstrap` has
-    /// `pub mod config;` and `pub fn config()` at its crate root.
+    /// Both are real collisions in this repo: `WatcherHealth` has a `healthy`
+    /// field and a `healthy()` getter, and `sensei-bootstrap` has
+    /// `pub mod config;` and `pub fn config()` at its crate root. What keeps
+    /// each pair apart has changed, and the two rows now prove different things:
+    /// the field is separated by the DOT it is reached through, and the module
+    /// by the fact that nothing reaches a module at all. Neither is separated by
+    /// a namespace any more, because a path leaf does not state one (§2.1).
     #[test]
     fn two_declarations_that_rust_allows_to_share_a_name_mint_distinct_fqns() {
         let field = define(&Form::Member {
@@ -829,7 +875,7 @@ mod tests {
             module: "watcher::root_watcher",
             ty: "WatcherHealth",
             member: "healthy",
-            ns: Ns::Field,
+            reach: Reach::Field,
         })
         .expect("well-formed");
         let getter = define(&Form::Member {
@@ -838,7 +884,7 @@ mod tests {
             module: "watcher::root_watcher",
             ty: "WatcherHealth",
             member: "healthy",
-            ns: Ns::Val,
+            reach: Reach::Item,
         })
         .expect("well-formed");
         assert_ne!(field, getter, "a field and a same-named method are two symbols, not one");
@@ -848,7 +894,7 @@ mod tests {
             package: "sensei-bootstrap",
             module: "",
             name: "config",
-            ns: Ns::Ty,
+            reach: Reach::Mod,
         })
         .expect("well-formed");
         let function = define(&Form::Item {
@@ -856,7 +902,7 @@ mod tests {
             package: "sensei-bootstrap",
             module: "",
             name: "config",
-            ns: Ns::Val,
+            reach: Reach::Item,
         })
         .expect("well-formed");
         assert_ne!(module, function, "a module and a same-named fn are two symbols, not one");
@@ -884,6 +930,32 @@ mod tests {
             ("Self", "Self"),
         ] {
             assert_eq!(type_segment(raw).as_deref(), Ok(expected), "normalising `{raw}`");
+        }
+    }
+
+    /// The path a type is reached through is a fact the source states and the
+    /// name at its end is not: `Widget` alone cannot say which `Widget`, while
+    /// `crate::widget::Widget` roots itself. Both reductions strip the same
+    /// decorations, so a caller that wants one and a caller that wants the other
+    /// cannot disagree about what a type's text says.
+    #[test]
+    fn the_path_to_a_type_survives_the_same_reduction_that_produces_its_name() {
+        for (raw, path, segment) in [
+            ("Widget", "Widget", "Widget"),
+            ("&mut crate::widget::Widget<T>", "crate::widget::Widget", "Widget"),
+            ("std::collections::HashMap<String, u32>", "std::collections::HashMap", "HashMap"),
+            ("super::Widget", "super::Widget", "Widget"),
+            ("dyn crate::draw::Draw", "crate::draw::Draw", "Draw"),
+            ("Widget::<u32>", "Widget", "Widget"),
+        ] {
+            assert_eq!(type_path(raw).as_deref(), Ok(path), "the path of `{raw}`");
+            assert_eq!(type_segment(raw).as_deref(), Ok(segment), "the name of `{raw}`");
+        }
+        for raw in ["(u32, u32)", "[u8]", "()", "&[u8]", ""] {
+            assert!(
+                matches!(type_path(raw), Err(FqnError::NotATypeName { .. })),
+                "`{raw}` names no type, so it has no path either"
+            );
         }
     }
 
