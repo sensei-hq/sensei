@@ -1,49 +1,76 @@
-# Checkpoint
+# Checkpoint — indexer v2
 
-**Slice:** indexer v2, rust. Spec `docs/design/indexer-v2.md`, plan
+**State: DESIGN COMPLETE, IMPLEMENTATION NOT STARTED.**
+Read `docs/design/indexer-v2.md` (spec) then `docs/plans/indexer-v2-rust.md`
+(build + verification). They are self-contained; this file is orientation only.
+
+## Where the code is
+
+| | |
+|---|---|
+| last code commit | `bc343622` — v2 steps 1-7 + reconcile |
+| gate there | fmt 0, clippy 0, **3,292 tests / 0 failed** |
+| safety property | `languages/` UNTOUCHED, v2 has NO CALLER, no DDL |
+
+The shipped indexer still runs and is unaffected. Everything after `bc343622`
+is documentation.
+
+## Known-wrong IN THE COMMITTED CODE — superseded by the spec, do not build on
+
+1. **DEMOTION** (`demote_v2_symbol`). Keeps a node and nulls `file_path`, so an
+   edge's `target_id` points at a row naming nothing and any consumer reading
+   `target_id IS NOT NULL` calls it resolved. 67,839 such edges measured in
+   `sensei_test`. Replaced by R10.7 (dirty) + R10.8 (delete-and-unresolve).
+2. **`v2_edges_contributed_by`** narrows with
+   `AND (s.fqn = ANY($current) OR s.resolved = false)`, so an edge whose source
+   this file deleted, and which resolves elsewhere, is never revisited and its
+   stale occurrence survives forever. R10.10: the occurrence key is the ONLY
+   attribution unit. The narrowing is not needed — 19.7ms scoped by folder
+   against the largest folder here (330,437 edges).
+3. **11 unverified column mappings**, 6 in `v2_symbol_unchanged`. The round trip
+   reads back props the same writer wrote, so column values verify against
+   themselves. Fix the class (read the COLUMN), not the fields.
+
+## Start here
+
+**R13 first.** Rename `scan_state` -> `files`, add an `id`, point
+`nodes.file_id` at it. It is DDL through dbd, and everything else assumes it —
+including the fix for the 8,147 ORPHANED nodes, which the foreign key makes
+UNREPRESENTABLE rather than merely detectable.
+
+Then the pipeline top-down: `scan_root` -> `scan_repo` -> `index_file`, per
 `docs/plans/indexer-v2-rust.md`.
 
-## Done — steps 1-4 of 10, committed 3a777a20
+## Measured facts the design rests on (live graph, 48,654 files)
 
-`crates/senseid/src/indexer/` — facts.rs, fqn.rs, lang/rust.rs (3,400 lines).
+| | |
+|---|---:|
+| imports resolved / unresolved | 141,980 / **4** |
+| rust calls: real resolved / unresolved / ghost | 46,545 / 29,875 / 4,542 |
+| typescript calls resolved / unresolved | 104,634 / 64,050 |
+| nodes: COMPLETE / PARTIAL / EXTERNAL / **ORPHANED** | 346,506 / 18,450 / 21,928 / **8,147** |
+| `library_packages` (the grouping) | **0 rows** |
+| library pages / components / skills / agents | 130 / 128 / 10 / 6 |
+| field + enum-variant nodes, any language | **0** |
 
-SAFETY PROPERTY HOLDING, verified: `languages/` has zero changes, v2 has NO
-caller in the production path. The existing indexer still runs. Cutover has not
-happened and is a separate decision.
+## The rules that produced this design
 
-Gate: fmt 0, clippy 0, **3,228 tests / 0 failed** (up 40).
+- Mint identity from what the CALL SITE can see; if the two sides mint different
+  strings they never merge. Broke twice before it was believed.
+- A WRONG edge is worse than a MISSING one (R4).
+- Absence is not evidence — it is scan-order dependent.
+- Defer WORK, never discard EVIDENCE (R11).
+- Derived beats stored: derived state cannot drift from what it derives from.
+- Structure before work: create the rows, then enqueue the tasks (R14).
+- Measure against the live corpus; ASSERT against a fixture.
 
-## What the gate agent caught, before the walk was built on it
+## Open, not blocking
 
-The fqn grammar had no namespace discriminator, so two different declarations
-minted ONE key. Real collisions in this repo:
-  - `WatcherHealth` has a `healthy` field (root_watcher.rs:79) AND a `healthy()`
-    getter (:109)
-  - sensei-bootstrap has `pub mod config;` and `pub fn config()` at crate root
-Both legal — rust separates field/type/value namespaces. Merging them makes a
-WRONG edge, which R4 ranks worse than a missing one. 24 field/method collisions
-measured in this repo alone.
-
-Fixed with `Ns { Ty, Val, Field, Macro }` on every form. I mutation-verified it:
-collapsing all four labels to one string makes the test FAIL, so the guard is
-load-bearing, not decorative. The spec's §2 sketch had the same gap and is
-amended.
-
-## The verification that matters
-
-`the_reference_count_equals_an_independent_count_of_use_sites` — a counter with
-no knowledge of the resolver, run over this repo's own rust, asserting >10,000
-use sites and naming every file that disagrees. That is what makes "no reference
-is dropped" a measurement instead of a claim.
-
-## NOT done — steps 5-7
-
-Six agents died on a session limit. Resolution ladder, relations and persistence
-were NOT STARTED — not half-built. Nothing to clean up.
-
-## Next
-
-Steps 5-7: `indexer/resolve.rs` (shared ladder + reason codes), relations from
-the same walk, then the persistence round-trip. Then step 8 differential
-harness, step 9 cutover, step 10 retire. Rust only until §6 acceptance passes;
-js/ts/svelte follow one at a time (D4).
+- `library_packages` is empty, so node -> package -> library -> skills/agents
+  stops one link short. Needs `sensei.library.json` ingestion or workspace
+  members. Not v2 work.
+- 8,147 ORPHANED nodes exist in the SHIPPED graph today and read as complete.
+  Partly created by `clear_scan_state_for_root`, which every forced reindex
+  calls. Not v2 work; R13 prevents recurrence.
+- A consistency review of the spec and plan was run at checkpoint time; fold its
+  findings in before implementing.
