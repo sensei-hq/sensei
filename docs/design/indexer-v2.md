@@ -745,6 +745,41 @@ without re-reading the file.
 Dirty is a state of KNOWLEDGE, not of the code. Nothing about the graph is
 asserted to be wrong; we are saying we could not re-confirm it.
 
+### R10.10 — deletion is found by DIFF, not by parse, and the diff must be complete
+
+A deleted function is invisible to a parse: the parse says what IS there, never
+what stopped being there. Deletion is only detectable by comparing the file's
+PREVIOUS claims against its CURRENT ones. Three cases, and all three are diffs:
+
+1. A node this file previously claimed and no longer claims -> the claim is
+   released; the node is deleted if no other file claims it (R10.8).
+2. A node whose EDGES changed -> the edges this file previously contributed and
+   no longer contributes are removed, and the new ones inserted. Unchanged edges
+   are left alone.
+3. A node still claimed and unchanged -> nothing is written at all. No churn, no
+   `modified_at` bump.
+
+Case 2 is the one that is easy to get half right, because "insert the new ones"
+happens naturally and "remove the old ones" does not. It requires finding every
+edge the file previously contributed, which is exactly the rows carrying its
+occurrence key — nothing else. `props -> 'occurrences' ? <file>` IS the
+attribution unit and the ONLY one; any additional predicate can only exclude rows
+that genuinely belong to the file.
+
+A DEFECT of this shape was found and must not be reintroduced:
+`v2_edges_contributed_by` narrowed the lookup with
+`AND (s.fqn = ANY($current_sources) OR s.resolved = false)`. An edge whose source
+the file has since deleted, and which is resolved elsewhere, satisfies neither —
+so the file's stale occurrence survived a re-index forever. Concretely:
+`impl Foo { fn a() { z(); } }` in x.rs, then `fn a` is deleted; `Foo::a` is not
+in the new source list and was resolved, so the `a -> z` edge is never revisited.
+
+The narrowing was there for cost and the cost does not justify it: scoped by
+`folder_id`, the containment probe alone runs in 19.7ms against the largest
+folder in this corpus (330,437 edges), on the incremental path that reconcile
+exists to serve. If that ever matters, the answer is a GIN index on the props
+key, not a predicate that drops correct rows.
+
 ### R10.9 — the failure must be ACTIONABLE and REACHABLE
 
 Marking a file unparseable is only worth doing if it reaches something that can
