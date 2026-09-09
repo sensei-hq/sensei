@@ -1045,6 +1045,72 @@ next good index restores the declaration and inbound edges re-resolve. Demotion'
 failure was not. The brake still applies: a file going from >=1 claims to zero
 triggers one confirming re-read before any removal.
 
+## 7c. R11 — a gap is DATA, and every gap has a fill path
+
+The pipeline's output is not "the graph, plus some things we could not work out".
+It is one dataset in which what is UNKNOWN is recorded as explicitly as what is
+known, with a route to closing it. Every mechanism in this spec already works
+that way and R11 states it once:
+
+| unknown | recorded as | closed by |
+|---|---|---|
+| a reference we cannot place | `Unresolved { reason, evidence }` | a later parse, or a resolver rung |
+| a symbol not yet declared | completeness = PARTIAL | its file being parsed |
+| a file that will not parse | `skip_reason` + detail | the file being fixed |
+| a node whose file is untracked | completeness = ORPHANED | re-scan, or pruning |
+| packages with no library | `library_packages` empty for them | R11.1 below |
+
+### R11.1 — three ways a grouping arrives, and provenance distinguishes them
+
+1. **Declared by the dependency** — `sensei.library.json` at its root (R10.7h).
+   Authoritative, and it also brings skills, agents and the docs corpus.
+2. **Declared by the user** — "these crates are the `gateway` library, this is
+   its root url". Equally declared, just locally. A UI surfaces the gap and takes
+   the answer; it is never asked to confirm a guess the system made.
+3. **Absent** — the packages stand alone. Complete, ungrouped, not wrong.
+
+PROVENANCE IS RECORDED ON THE FACT, not implied by which table it landed in. A
+user-supplied grouping and a manifest-supplied one must be distinguishable
+forever, because they differ in authority: the manifest is the dependency
+speaking about itself, the user is a local judgement that may be wrong or may be
+right in a way upstream has not yet said. `library_kind` already carries
+`detected | imported` and is the natural home.
+
+This does NOT weaken the no-inference rule (R10.7f). A user stating a grouping is
+a declaration. The system inferring one from `@rokkit/*` is a guess. The
+difference is not confidence, it is who is answerable for it.
+
+### R11.2 — closing the loop: generate the manifest, offer it upstream
+
+When a user fills a grouping, sensei knows something that is true, useful, and
+that every other consumer of that dependency is missing. So:
+
+- emit the `sensei.library.json` the dependency would have shipped
+- offer to open an issue or PR on its repository with that file
+
+The gap stops being a local workaround and becomes a contribution. Next indexer
+to meet that dependency gets it declared, at provenance level 1, and never has to
+ask a user at all.
+
+This is the difference between a tool that tolerates missing metadata and one
+that reduces it. It also gives the user something better than a form to fill in:
+a reason to fill it in once.
+
+### R11.3 — the gap queue is a first-class view
+
+"What does this graph not know, and what would fix it" must be answerable in one
+query, per gap kind, with counts. Measured examples that exist right now:
+
+- 18,450 PARTIAL nodes — closed by parsing their files
+- 8,147 ORPHANED nodes — closed by re-scan or pruning
+- 1,121 packages with no library — closed by R11.1
+- 331 references naming an fqn no declaration mints
+- unresolved references by reason code
+
+That view is the work queue, for a person and for an agent. It is the same data
+G2 needs to show where a repository is weak, and the same data an agent needs to
+decide whether an answer it just received can be trusted.
+
 ## 8. Decisions
 
 **D1.** Scope is the walk AND the persistence path (see R3).
