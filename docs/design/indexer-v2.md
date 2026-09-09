@@ -1309,6 +1309,58 @@ COMPLETE. No amount of care in the writer prevents that; a foreign key does. Thi
 is the same argument as R9 — a failure that the type system makes impossible
 beats one that a reviewer has to notice.
 
+## 7f. R14 — the pipeline has two modes, and both create structure before work
+
+### Full — process repo
+
+    glob all folders and files (post-filter)
+      -> create the folder rows and the file rows      <-- structure barrier
+      -> enqueue one parse task per file
+
+Structure first, work second. The barrier is what gives R14 its properties: no
+parse task creates shared state, so none can race another, and the complete file
+set is known at that instant, which IS `expected_files` (R10) with no second
+count.
+
+### Incremental — a change arrives
+
+A change is detected as OLD plus NEW, and that pairing is what makes it
+classifiable rather than guessable:
+
+| detected | file/folder rows | reparse? |
+|---|---|---|
+| content changed, path same | touch `mtime` + `content_hash` | YES |
+| path changed, content same | UPDATE the path, `id` unchanged | see below |
+| path + content changed | update both | YES |
+| added | create the row | YES |
+| removed | delete the row, cascade | no — R10.8 reconcile |
+| touched, hash identical | refresh `mtime` only | NO |
+
+Content decides reparse. `content_hash` already exists on the file row and
+already gates this today (`plan_reindex`).
+
+### What a rename actually costs, and what it does not
+
+`file_id` removes the node churn that a path change used to cause: nodes never
+stored the path, so renaming a file rewrites ONE row instead of every node in it
+— 7.4 on average here, 1,150 in the worst case.
+
+But it does NOT always make a rename free of reparsing, and the earlier draft of
+R10 case 6 was closer to right than it looked. In Rust and in TS/JS the MODULE
+PATH is derived from the file path, and the module is a segment of every fqn the
+file declares. So:
+
+- rename that CHANGES the module path -> every declaration's identity changes ->
+  the file must be re-minted even though its bytes are identical
+- rename that does NOT (a case-only change, a move that preserves the module) ->
+  update the file row and stop
+
+So the honest saving is: the file and folder rows update trivially and the node
+rows stop carrying a redundant path, but identity still depends on location, so a
+module-changing rename is a re-mint. That is a property of the FQN grammar, not
+of the storage choice, and it is the price of an identity a reference can
+independently compute (R2).
+
 ## 8. Decisions
 
 **D1.** Scope is the walk AND the persistence path (see R3).
