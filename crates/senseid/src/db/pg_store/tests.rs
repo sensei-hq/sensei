@@ -554,7 +554,7 @@ async fn tag_file_nodes_by_framework_kind_aggregates_symbol_kinds() {
 }
 
 /// Create a unique test folder for FK tests. Uses suffix for isolation.
-async fn create_test_folder(s: &PgStore, suffix: &str) -> uuid::Uuid {
+pub(crate) async fn create_test_folder(s: &PgStore, suffix: &str) -> uuid::Uuid {
     use sqlx_core::query_as::query_as;
     s.execute_raw(
             "INSERT INTO sensei.folders_to_watch(id, path, name, status) VALUES('00000000-0000-0000-0000-000000000001', '/_test', '_test', 'watching'::sensei.watch_status) ON CONFLICT DO NOTHING"

@@ -17,9 +17,10 @@ use tree_sitter::Node;
 
 use crate::indexer::facts::{
     Binding, DeclaredType, Evidence, FileFacts, Fqn, Import, ImportOrigin, Language, Observation,
-    Param, Reason, RefKind, Reference, Relation, Resolution, Symbol, SymbolKind, Visibility,
+    Param, Reason, RefKind, Reference, Relation, RelationKind, Resolution, Symbol, SymbolKind,
+    Visibility,
 };
-use crate::indexer::fqn::{self, Form, FqnError, Ns};
+use crate::indexer::fqn::{self, Form, FqnError, Reach};
 
 /// One file, plus the two things the file cannot know about itself: which
 /// package owns it and where it sits in that package's module tree. Both are
@@ -30,6 +31,14 @@ pub struct Source<'a> {
     pub package: &'a str,
     /// Package-relative module path, `::`-joined, empty at the crate root.
     pub module: &'a str,
+    /// Where the file is, as the graph records it.
+    ///
+    /// Needed because the module path does not identify a file at the CRATE
+    /// ROOT, where it is empty and one package may have several — see
+    /// [`crate_root`]. Carried on the facts rather than supplied again at write
+    /// time so the identity a use site is filed under and the identity the
+    /// writer hangs imports off cannot be derived from two different strings.
+    pub path: &'a str,
     pub text: &'a str,
 }
 
@@ -51,10 +60,163 @@ pub enum ReadError {
     NoFileIdentity(crate::indexer::fqn::FqnError),
 }
 
-/// The name standing for a file that IS a crate root, where the module path is
-/// empty and there is no `mod` declaration anywhere that names this file. It is
+/// The module segment standing for a file that IS a crate root, where the
+/// module path is empty and no `mod` declaration anywhere names the file. It is
 /// a reserved word, so no declaration can ever mint the same identity.
 const CRATE_ROOT: &str = "crate";
+
+/// What the shared resolution ladder needs to know about Rust, and nothing more
+/// (R7). The rungs and the reason codes are `resolve.rs`'s; this is only the
+/// spelling.
+pub const GRAMMAR: crate::indexer::resolve::Grammar = crate::indexer::resolve::Grammar {
+    language: Language::Rust,
+    separator: "::",
+    package_root: CRATE_ROOT,
+    module_self: "self",
+    module_parent: "super",
+    names_the_binding: " as ",
+    wildcard: "*",
+    // Rust lints every type into `CamelCase` and every module into
+    // `snake_case`, so the name states which of the two a segment is. See
+    // `Grammar::names_a_type` for what a misread costs.
+    names_a_type: |segment| segment.starts_with(|c: char| c.is_uppercase()),
+    prelude_package: "std",
+    prelude: PRELUDE,
+    plumbing: PLUMBING,
+};
+
+/// The names Rust puts in scope with nothing written to bring them there, each
+/// with the path inside [`GRAMMAR`]'s `prelude_package` that re-exports it.
+///
+/// The path and not the bare name, so that a file writing `use std::vec::Vec;`
+/// and a file relying on the prelude land on ONE node instead of two. The set is
+/// `std::prelude::v1` plus the standard macros, which are in scope on the same
+/// terms.
+const PRELUDE: &[(&str, &str)] = &[
+    ("Box", "boxed::Box"),
+    ("String", "string::String"),
+    ("ToString", "string::ToString"),
+    ("Vec", "vec::Vec"),
+    ("Option", "option::Option"),
+    ("Some", "option::Option::Some"),
+    ("None", "option::Option::None"),
+    ("Result", "result::Result"),
+    ("Ok", "result::Result::Ok"),
+    ("Err", "result::Result::Err"),
+    ("Clone", "clone::Clone"),
+    ("Copy", "marker::Copy"),
+    ("Send", "marker::Send"),
+    ("Sync", "marker::Sync"),
+    ("Sized", "marker::Sized"),
+    ("Unpin", "marker::Unpin"),
+    ("Drop", "ops::Drop"),
+    ("Fn", "ops::Fn"),
+    ("FnMut", "ops::FnMut"),
+    ("FnOnce", "ops::FnOnce"),
+    ("PartialEq", "cmp::PartialEq"),
+    ("PartialOrd", "cmp::PartialOrd"),
+    ("Eq", "cmp::Eq"),
+    ("Ord", "cmp::Ord"),
+    ("AsRef", "convert::AsRef"),
+    ("AsMut", "convert::AsMut"),
+    ("Into", "convert::Into"),
+    ("From", "convert::From"),
+    ("TryInto", "convert::TryInto"),
+    ("TryFrom", "convert::TryFrom"),
+    ("Iterator", "iter::Iterator"),
+    ("IntoIterator", "iter::IntoIterator"),
+    ("FromIterator", "iter::FromIterator"),
+    ("DoubleEndedIterator", "iter::DoubleEndedIterator"),
+    ("ExactSizeIterator", "iter::ExactSizeIterator"),
+    ("Extend", "iter::Extend"),
+    ("ToOwned", "borrow::ToOwned"),
+    ("drop", "mem::drop"),
+    ("print", "print"),
+    ("println", "println"),
+    ("eprint", "eprint"),
+    ("eprintln", "eprintln"),
+    ("format", "format"),
+    ("format_args", "format_args"),
+    ("vec", "vec"),
+    ("write", "write"),
+    ("writeln", "writeln"),
+    ("panic", "panic"),
+    ("assert", "assert"),
+    ("assert_eq", "assert_eq"),
+    ("assert_ne", "assert_ne"),
+    ("debug_assert", "debug_assert"),
+    ("debug_assert_eq", "debug_assert_eq"),
+    ("debug_assert_ne", "debug_assert_ne"),
+    ("todo", "todo"),
+    ("unimplemented", "unimplemented"),
+    ("unreachable", "unreachable"),
+    ("matches", "matches"),
+    ("dbg", "dbg"),
+    ("include", "include"),
+    ("include_str", "include_str"),
+    ("include_bytes", "include_bytes"),
+    ("concat", "concat"),
+    ("stringify", "stringify"),
+    ("env", "env"),
+    ("option_env", "option_env"),
+    ("line", "line"),
+    ("column", "column"),
+    ("file", "file"),
+    ("module_path", "module_path"),
+    ("cfg", "cfg"),
+    ("compile_error", "compile_error"),
+];
+
+/// Members every value has, from a blanket impl or a derive.
+///
+/// A miss on one of these is not a gap anybody can close — no first-party
+/// declaration is on the other end of it — and there are thousands, so leaving
+/// them in the general bucket buries the misses that ARE worth closing. This is
+/// the list the `Denylisted` reason exists for: filtering, not failure, and only
+/// ever applied to a reference the ladder has already failed to place, so a
+/// provable edge is never dropped by it.
+const PLUMBING: &[&str] = &[
+    "clone",
+    "clone_from",
+    "to_owned",
+    "to_string",
+    "to_vec",
+    "into",
+    "try_into",
+    "as_ref",
+    "as_mut",
+    "as_str",
+    "as_slice",
+    "borrow",
+    "borrow_mut",
+    "deref",
+    "deref_mut",
+    "fmt",
+    "eq",
+    "ne",
+    "cmp",
+    "partial_cmp",
+    "hash",
+    "drop",
+    "unwrap",
+    "unwrap_or",
+    "unwrap_or_else",
+    "unwrap_err",
+    "expect",
+    "expect_err",
+    "ok",
+    "err",
+    "is_ok",
+    "is_err",
+    "is_some",
+    "is_none",
+    "ok_or",
+    "ok_or_else",
+    "map",
+    "map_err",
+    "and_then",
+    "or_else",
+];
 
 /// Parse one file once (R1) and return everything that parse saw (spec §3).
 pub fn read(source: &Source<'_>) -> Result<FileFacts, ReadError> {
@@ -67,7 +229,9 @@ pub fn read(source: &Source<'_>) -> Result<FileFacts, ReadError> {
     let scope = Scope {
         module: source.module.to_string(),
         container: Container::File,
-        from: file_fqn(source.package, source.module).map_err(ReadError::NoFileIdentity)?,
+        from: file_fqn(source.package, source.module, source.path)
+            .map_err(ReadError::NoFileIdentity)?,
+        owner: Owner::Nobody,
     };
     let mut walk = Walk {
         src: source.text,
@@ -83,6 +247,7 @@ pub fn read(source: &Source<'_>) -> Result<FileFacts, ReadError> {
         language: Language::Rust,
         package: source.package.to_string(),
         module: source.module.to_string(),
+        path: source.path.to_string(),
         symbols: walk.symbols,
         references: walk.references,
         relations: walk.relations,
@@ -92,16 +257,57 @@ pub fn read(source: &Source<'_>) -> Result<FileFacts, ReadError> {
 
 /// The identity of the file itself, which is the identity of the module it
 /// declares. Minted exactly the way the `mod x;` that names this file mints it —
-/// last segment as the name, everything before it as the module — so the file
-/// and its declaration are one node and not two.
-fn file_fqn(package: &str, module: &str) -> Result<Fqn, FqnError> {
+/// last segment as the name, everything before it as the module, and the same
+/// [`Reach::Mod`] — so the file and its declaration are one node and not two.
+///
+/// This and [`Walk::module_item`] are the ONLY two producers of `mod`, and they
+/// move together or not at all: one of them at `item` would put a file and the
+/// `mod x;` that names it on two nodes, which is the two-half-symbols failure
+/// the merge key exists to prevent.
+pub fn file_fqn(package: &str, module: &str, path: &str) -> Result<Fqn, FqnError> {
     let (parent, name) = match module.rsplit_once("::") {
         Some((parent, name)) => (parent, name),
-        None if module.is_empty() => ("", CRATE_ROOT),
+        // A crate root is the one file the module tree does not name, so its
+        // identity is its own — see [`crate_root`].
+        None if module.is_empty() => (CRATE_ROOT, crate_root(path)),
         None => ("", module),
     };
-    fqn::define(&Form::Item { lang: Language::Rust, package, module: parent, name, ns: Ns::Ty })
+    fqn::define(&Form::Item { lang: Language::Rust, package, module: parent, name, reach: MODULE })
 }
+
+/// The name a CRATE ROOT is identified by: its own file stem.
+///
+/// Every other file is named by the `mod x;` that declares it, and its identity
+/// must equal what that declaration mints or the two become separate nodes. A
+/// crate root has no such declaration — its module path is empty — and a
+/// package may have SEVERAL of them: `crates/mcp` has `lib.rs` beside `main.rs`,
+/// and a `build.rs` would be a third. Reducing them all to one name made every
+/// import and every file-scope use site of all of them one node's, which is two
+/// files claiming one symbol (spec §2).
+///
+/// The stem sits under the module segment `crate`, which is a reserved word, so
+/// no `mod` can ever mint the same identity and the "no declaration collides
+/// with a file identity" property the reserved word bought is kept.
+///
+/// An empty stem is an ERROR and not a fallback: falling back would rebuild the
+/// shared identity this exists to split, and a file the caller did not name is
+/// a caller mistake, reported as [`ReadError::NoFileIdentity`].
+fn crate_root(path: &str) -> &str {
+    let file = path.rsplit(['/', '\\']).next().unwrap_or(path);
+    file.strip_suffix(".rs").unwrap_or(file)
+}
+
+/// The reach every module declaration is minted under — the file's own identity
+/// and the `mod x;` that names it (spec §2.1).
+///
+/// A constant so the two producers cannot be changed apart, and so the reason
+/// has one home: no reference EVER mints `mod`, because a module is spelled as
+/// the `module` segment of other identities and never as a target. That is what
+/// makes the separation free, and what stops `crate::installer::install(..)` —
+/// a call to a function re-exported from a module of the same name — from
+/// landing on the module. 7 such references in this repo, 6 distinct identities:
+/// a wrong edge where the collapse would otherwise put one.
+const MODULE: Reach = Reach::Mod;
 
 /// Where the walk currently is, in the terms the fqn grammar needs.
 #[derive(Debug, Clone)]
@@ -111,6 +317,26 @@ struct Scope {
     container: Container,
     /// The symbol a use site found here sits inside — [`Reference::from`].
     from: Fqn,
+    /// The type a declaration found here is a member of, as an IDENTITY.
+    owner: Owner,
+}
+
+/// The parent side of every ownership relation (spec §3.3, R8's Facade row).
+///
+/// Carried next to [`Container`] rather than derived from it. A container names
+/// its type with a string, and an enum variant's container is the string
+/// `Enum::Variant`, which is not the spelling the variant's own identity uses —
+/// re-minting from it would produce an owner no declaration ever minted, which
+/// is a dangling edge (A4). The identity the walk already pushed cannot drift
+/// from the one its members were named under.
+#[derive(Debug, Clone)]
+enum Owner {
+    /// A free item, at the file level or inside an inline `mod`. Owned by no
+    /// type — naming the module as an owner would be an edge the source does
+    /// not state. Also what an unnameable container leaves behind: a type with
+    /// no identity owns nothing, because there is nothing to point at (R4).
+    Nobody,
+    Type(Fqn),
 }
 
 /// What a declaration found here is a member OF. This is the only thing that
@@ -153,17 +379,19 @@ impl<'a> Walk<'a> {
     /// Mint the identity of a declaration named `member` in the current
     /// container. One place, so a declaration and a use site of it cannot pick
     /// different forms.
-    fn declare(&self, scope: &Scope, member: &str, ns: Ns) -> Result<Fqn, FqnError> {
+    fn declare(&self, scope: &Scope, member: &str, reach: Reach) -> Result<Fqn, FqnError> {
         let lang = Language::Rust;
         let package = self.package;
         let module = scope.module.as_str();
         match &scope.container {
-            Container::File => fqn::define(&Form::Item { lang, package, module, name: member, ns }),
+            Container::File => {
+                fqn::define(&Form::Item { lang, package, module, name: member, reach })
+            }
             Container::Type(ty) => {
-                fqn::define(&Form::Member { lang, package, module, ty, member, ns })
+                fqn::define(&Form::Member { lang, package, module, ty, member, reach })
             }
             Container::TraitImpl { ty, tr } => {
-                fqn::define(&Form::TraitMember { lang, package, module, ty, tr, member, ns })
+                fqn::define(&Form::TraitMember { lang, package, module, ty, tr, member, reach })
             }
             Container::Unnameable { raw } => Err(FqnError::NotATypeName { value: raw.clone() }),
         }
@@ -196,11 +424,11 @@ impl<'a> Walk<'a> {
             "field_declaration" => self.named_field(node, scope),
             "ordered_field_declaration_list" => self.positional_fields(node, scope),
             "type_item" | "associated_type" => {
-                self.plain(node, scope, SymbolKind::TypeAlias, Ns::Ty)
+                self.plain(node, scope, SymbolKind::TypeAlias, Reach::Item)
             }
-            "const_item" => self.plain(node, scope, SymbolKind::Const, Ns::Val),
-            "static_item" => self.plain(node, scope, SymbolKind::Static, Ns::Val),
-            "macro_definition" => self.plain(node, scope, SymbolKind::Macro, Ns::Macro),
+            "const_item" => self.plain(node, scope, SymbolKind::Const, Reach::Item),
+            "static_item" => self.plain(node, scope, SymbolKind::Static, Reach::Item),
+            "macro_definition" => self.plain(node, scope, SymbolKind::Macro, Reach::Macro),
             "mod_item" => self.module_item(node, scope),
             "impl_item" => self.impl_block(node, scope),
 
@@ -214,9 +442,25 @@ impl<'a> Walk<'a> {
     /// Push a symbol and return the scope its body is walked in. Returns the
     /// scope unchanged when the declaration could not be named, so the body is
     /// still walked and nothing below it is lost.
+    ///
+    /// This is also the one place ownership is recorded, because it is the one
+    /// place every declaration passes through: a member declared in a type's
+    /// body is owned by that type, whichever arm read it. Doing it per-arm would
+    /// be six chances to forget one.
     fn push(&mut self, symbol: Result<Symbol, FqnError>, scope: &Scope) -> Scope {
         match symbol {
             Ok(symbol) => {
+                if let Owner::Type(owner) = &scope.owner {
+                    self.relations.push(Relation {
+                        kind: RelationKind::Owns,
+                        child: symbol.fqn.clone(),
+                        // Proven, not guessed: this identity was minted by the
+                        // same rule that named the member, from a declaration
+                        // this walk read, so the two sides cannot disagree.
+                        parent: Resolution::Resolved(owner.clone()),
+                        at: symbol.span,
+                    });
+                }
                 let inner = Scope { from: symbol.fqn.clone(), ..scope.clone() };
                 self.symbols.push(symbol);
                 inner
@@ -225,17 +469,31 @@ impl<'a> Walk<'a> {
         }
     }
 
+    /// [`Walk::push`] for a declaration whose own body declares members OF it,
+    /// returning a scope in which those members are owned by it. A declaration
+    /// whose identity could not be minted owns nothing, because there would be
+    /// nothing for the edge to point at (R4).
+    fn push_owner(&mut self, symbol: Result<Symbol, FqnError>, scope: &Scope) -> Scope {
+        let owner = symbol.as_ref().ok().map(|s| s.fqn.clone());
+        let mut inner = self.push(symbol, scope);
+        inner.owner = match owner {
+            Some(fqn) => Owner::Type(fqn),
+            None => Owner::Nobody,
+        };
+        inner
+    }
+
     fn symbol(
         &self,
         node: Node<'_>,
         scope: &Scope,
         name: &str,
         kind: SymbolKind,
-        ns: Ns,
+        reach: Reach,
         declared_type: DeclaredType,
     ) -> Result<Symbol, FqnError> {
         Ok(Symbol {
-            fqn: self.declare(scope, name, ns)?,
+            fqn: self.declare(scope, name, reach)?,
             kind,
             name: name.to_string(),
             span: span(node),
@@ -248,13 +506,13 @@ impl<'a> Walk<'a> {
 
     /// A declaration whose whole identity is a `name` field: type alias,
     /// associated type, const, static, macro definition.
-    fn plain(&mut self, node: Node<'_>, scope: &Scope, kind: SymbolKind, ns: Ns) {
+    fn plain(&mut self, node: Node<'_>, scope: &Scope, kind: SymbolKind, reach: Reach) {
         let Some(name) = self.field_text(node, "name") else {
             self.children(node, scope);
             return;
         };
         let declared = self.declared_type(node, "type");
-        let symbol = self.symbol(node, scope, name, kind, ns, declared);
+        let symbol = self.symbol(node, scope, name, kind, reach, declared);
         let inner = self.push(symbol, scope);
         self.children(node, &inner);
     }
@@ -271,7 +529,7 @@ impl<'a> Walk<'a> {
             _ => SymbolKind::Method,
         };
         let declared = self.declared_type(node, "return_type");
-        let symbol = self.symbol(node, scope, name, kind, Ns::Val, declared).map(|mut s| {
+        let symbol = self.symbol(node, scope, name, kind, Reach::Item, declared).map(|mut s| {
             s.params = self.params(node);
             s
         });
@@ -287,15 +545,48 @@ impl<'a> Walk<'a> {
             self.children(node, scope);
             return;
         };
-        let symbol = self.symbol(node, scope, name, kind, Ns::Ty, DeclaredType::Unstated);
-        let mut inner = self.push(symbol, scope);
+        let symbol = self.symbol(node, scope, name, kind, Reach::Item, DeclaredType::Unstated);
+        let mut inner = self.push_owner(symbol, scope);
         inner.container = Container::Type(name.to_string());
+        if let Owner::Type(child) = &inner.owner {
+            self.supertraits(node, scope, child.clone());
+        }
         self.children(node, &inner);
     }
 
-    /// An enum variant is a member of its enum in the value namespace, and its
-    /// own fields are members of the variant. `Enum::Variant` as the type
-    /// segment is what keeps two variants' same-named fields apart.
+    /// `trait Sub: Super` is the one thing Rust states in the shape `extends` is
+    /// stated in: every `Sub` is a `Super`. A struct has no such bound, so this
+    /// fires only where the grammar puts one.
+    ///
+    /// Only the three node kinds that NAME a type are read. A lifetime bound
+    /// (`'a`), a relaxed bound (`?Sized`) and a higher-ranked one bound no
+    /// supertrait, and the first two are not supertraits at all — a relation for
+    /// either would say the opposite of what the source says (R4).
+    fn supertraits(&mut self, node: Node<'_>, scope: &Scope, child: Fqn) {
+        let Some(bounds) = node.child_by_field_name("bounds") else {
+            return;
+        };
+        let mut cursor = bounds.walk();
+        let named: Vec<Node<'_>> = bounds
+            .named_children(&mut cursor)
+            .filter(|b| {
+                matches!(b.kind(), "type_identifier" | "scoped_type_identifier" | "generic_type")
+            })
+            .collect();
+        for bound in named {
+            let parent = self.name_type(bound, scope).resolution();
+            self.relations.push(Relation {
+                kind: RelationKind::Extends,
+                child: child.clone(),
+                parent,
+                at: span(bound),
+            });
+        }
+    }
+
+    /// An enum variant is a member of its enum, reached the way any path leaf
+    /// is, and its own fields are members of the variant. `Enum::Variant` as the
+    /// type segment is what keeps two variants' same-named fields apart.
     fn enum_variant(&mut self, node: Node<'_>, scope: &Scope) {
         let Some(name) = self.field_text(node, "name") else {
             self.children(node, scope);
@@ -306,10 +597,10 @@ impl<'a> Walk<'a> {
             scope,
             name,
             SymbolKind::EnumVariant,
-            Ns::Val,
+            Reach::Item,
             DeclaredType::Unstated,
         );
-        let mut inner = self.push(symbol, scope);
+        let mut inner = self.push_owner(symbol, scope);
         if let Container::Type(enum_name) = &scope.container {
             inner.container = Container::Type(format!("{enum_name}::{name}"));
         }
@@ -322,7 +613,7 @@ impl<'a> Walk<'a> {
             return;
         };
         let declared = self.declared_type(node, "type");
-        let symbol = self.symbol(node, scope, name, SymbolKind::Field, Ns::Field, declared);
+        let symbol = self.symbol(node, scope, name, SymbolKind::Field, Reach::Field, declared);
         let inner = self.push(symbol, scope);
         self.children(node, &inner);
     }
@@ -335,7 +626,7 @@ impl<'a> Walk<'a> {
         for (position, ty) in types.into_iter().enumerate() {
             let name = position.to_string();
             let declared = DeclaredType::Stated(self.text(ty).to_string());
-            let symbol = self.symbol(ty, scope, &name, SymbolKind::Field, Ns::Field, declared);
+            let symbol = self.symbol(ty, scope, &name, SymbolKind::Field, Reach::Field, declared);
             let inner = self.push(symbol, scope);
             // The type node is dispatched, not descended into: the field's type
             // is itself a use site and skipping it would lose the edge.
@@ -346,13 +637,16 @@ impl<'a> Walk<'a> {
     /// An inline `mod` extends the module path, so a declaration inside one is
     /// named the same as if it lived in its own file. Two spellings of one
     /// symbol would never merge (spec §2).
+    ///
+    /// [`MODULE`] and not [`Reach::Item`], for the reason recorded there — and
+    /// this is the other half of the pair that must move with [`file_fqn`].
     fn module_item(&mut self, node: Node<'_>, scope: &Scope) {
         let Some(name) = self.field_text(node, "name") else {
             self.children(node, scope);
             return;
         };
         let symbol =
-            self.symbol(node, scope, name, SymbolKind::Module, Ns::Ty, DeclaredType::Unstated);
+            self.symbol(node, scope, name, SymbolKind::Module, MODULE, DeclaredType::Unstated);
         let mut inner = self.push(symbol, scope);
         inner.module = if scope.module.is_empty() {
             name.to_string()
@@ -360,6 +654,9 @@ impl<'a> Walk<'a> {
             format!("{}::{name}", scope.module)
         };
         inner.container = Container::File;
+        // A module is not a type, so what it contains are free items owned by
+        // nothing — even when the `mod` itself sits inside a type's body.
+        inner.owner = Owner::Nobody;
         self.children(node, &inner);
     }
 
@@ -373,6 +670,7 @@ impl<'a> Walk<'a> {
         let Ok(ty) = fqn::type_segment(ty) else {
             let mut inner = scope.clone();
             inner.container = Container::Unnameable { raw: ty.to_string() };
+            inner.owner = Owner::Nobody;
             self.children(node, &inner);
             return;
         };
@@ -386,6 +684,7 @@ impl<'a> Walk<'a> {
             Some(tr) => Container::TraitImpl { ty: ty.clone(), tr },
             None => Container::Type(ty.clone()),
         };
+        inner.owner = Owner::Nobody;
         // A use site in the impl header sits inside no member, so it belongs to
         // the type the impl is about.
         if let Ok(owner) = fqn::define(&Form::Item {
@@ -393,11 +692,40 @@ impl<'a> Walk<'a> {
             package: self.package,
             module: &scope.module,
             name: &ty,
-            ns: Ns::Ty,
+            reach: Reach::Item,
         }) {
-            inner.from = owner;
+            inner.from = owner.clone();
+            inner.owner = Owner::Type(owner.clone());
+            self.trait_impl(node, scope, owner);
         }
         self.children(node, &inner);
+    }
+
+    /// `impl Trait for Type` states that `Type` IS a `Trait`. An inherent
+    /// `impl Type { }` states no such thing — it only groups members — so it
+    /// reaches here and emits nothing. That distinction is the whole point:
+    /// pattern detection reads an implements edge as real, and an Adapter is
+    /// "implements X and holds an X", so an inheritance edge on every impl block
+    /// would name a large part of any repository an Adapter.
+    fn trait_impl(&mut self, node: Node<'_>, scope: &Scope, child: Fqn) {
+        let Some(named) = node.child_by_field_name("trait") else {
+            return;
+        };
+        // `impl !Send for T` states the OPPOSITE of an implements edge, and the
+        // grammar hands back a `trait` node of `Send` either way — measured by
+        // deleting this guard, which turns `impl !Send for Widget` into
+        // `TraitImpl Widget -> Send`. So the `!` has to be read off the header,
+        // which is everything before the ` for ` that a trait impl always has.
+        if self.text(node).split(" for ").next().is_some_and(|head| head.contains('!')) {
+            return;
+        }
+        let parent = self.name_type(named, scope).resolution();
+        self.relations.push(Relation {
+            kind: RelationKind::TraitImpl,
+            child,
+            parent,
+            at: span(node),
+        });
     }
 
     // ── use sites (spec §3.2, R2) ────────────────────────────────────────────
@@ -432,8 +760,8 @@ impl<'a> Walk<'a> {
 
     fn call(&mut self, node: Node<'_>, scope: &Scope) {
         let miss = match node.child_by_field_name("function") {
-            Some(callee) => self.name_callee(callee, scope, Ns::Val),
-            None => Miss::unhandled(node, self.text(node)),
+            Some(callee) => self.name_callee(callee, scope, Reach::Item),
+            None => Miss::unhandled(node, self.text(node), Reach::Item),
         };
         self.emit(scope, RefKind::Calls, node, miss);
     }
@@ -441,20 +769,20 @@ impl<'a> Walk<'a> {
     /// Whatever stands in callee position. Every shape either names something or
     /// says which shape defeated it — there is no path out of here that emits
     /// nothing, which is the defect this rewrite exists to remove.
-    fn name_callee(&self, callee: Node<'_>, scope: &Scope, ns: Ns) -> Miss {
+    fn name_callee(&self, callee: Node<'_>, scope: &Scope, reach: Reach) -> Miss {
         match callee.kind() {
             "identifier" | "scoped_identifier" => {
                 let path = self.text(callee);
-                Miss::unplaced(callee, path, self.considered_path(path, scope, ns))
+                Miss::unplaced(callee, path, reach, self.considered_path(path, scope, reach))
             }
             // A turbofish wraps the real callee; the type arguments are use
             // sites in their own right and are counted as such.
             "generic_function" => match callee.child_by_field_name("function") {
-                Some(inner) => self.name_callee(inner, scope, ns),
-                None => Miss::unhandled(callee, self.text(callee)),
+                Some(inner) => self.name_callee(inner, scope, reach),
+                None => Miss::unhandled(callee, self.text(callee), reach),
             },
-            "field_expression" => self.name_member(callee, scope, Ns::Val),
-            _ => Miss::unhandled(callee, self.text(callee)),
+            "field_expression" => self.name_member(callee, scope, Reach::Item),
+            _ => Miss::unhandled(callee, self.text(callee), reach),
         }
     }
 
@@ -462,13 +790,13 @@ impl<'a> Walk<'a> {
     /// identity depends on the receiver's TYPE, which the walk only knows when
     /// the receiver is `self` inside a type's own body — anywhere else that is a
     /// real, permanent-until-inference miss and is reported as one.
-    fn name_member(&self, node: Node<'_>, scope: &Scope, ns: Ns) -> Miss {
+    fn name_member(&self, node: Node<'_>, scope: &Scope, reach: Reach) -> Miss {
         // Both children are malformed-source cases, and an empty string in
         // either would name a member that is not there. Say what was seen.
         let (Some(member), Some(receiver)) =
             (self.field_text(node, "field"), self.field_text(node, "value"))
         else {
-            return Miss::unhandled(node, self.text(node));
+            return Miss::unhandled(node, self.text(node), reach);
         };
 
         let self_type = match (&scope.container, receiver) {
@@ -481,6 +809,7 @@ impl<'a> Walk<'a> {
                 reason: Reason::ReceiverTypeUnknown,
                 name: member.to_string(),
                 node_kind: node.kind().to_string(),
+                reach,
                 saw: vec![Observation::Receiver(receiver.to_string())],
             };
         };
@@ -490,16 +819,16 @@ impl<'a> Walk<'a> {
             module: &scope.module,
             ty,
             member,
-            ns,
+            reach,
         }));
-        Miss::unplaced(node, member, considered)
+        Miss::unplaced(node, member, reach, considered)
     }
 
     fn member_access(&mut self, node: Node<'_>, scope: &Scope) {
         // A read and a write of one field are different facts, and pattern
         // detection reads the difference (R8).
         let kind = if is_assignment_target(node) { RefKind::Writes } else { RefKind::Reads };
-        let miss = self.name_member(node, scope, Ns::Field);
+        let miss = self.name_member(node, scope, Reach::Field);
         self.emit(scope, kind, node, miss);
     }
 
@@ -509,10 +838,15 @@ impl<'a> Walk<'a> {
                 let path = self.text(name);
                 Miss {
                     node_kind: node.kind().to_string(),
-                    ..Miss::unplaced(name, path, self.considered_path(path, scope, Ns::Macro))
+                    ..Miss::unplaced(
+                        name,
+                        path,
+                        Reach::Macro,
+                        self.considered_path(path, scope, Reach::Macro),
+                    )
                 }
             }
-            None => Miss::unhandled(node, self.text(node)),
+            None => Miss::unhandled(node, self.text(node), Reach::Macro),
         };
         self.emit(scope, RefKind::MacroInvokes, node, miss);
     }
@@ -520,14 +854,15 @@ impl<'a> Walk<'a> {
     fn construct(&mut self, node: Node<'_>, scope: &Scope) {
         let miss = match node.child_by_field_name("name") {
             Some(name) => self.name_type(name, scope),
-            None => Miss::unhandled(node, self.text(node)),
+            None => Miss::unhandled(node, self.text(node), Reach::Item),
         };
         self.emit(scope, RefKind::Constructs, node, miss);
     }
 
     fn path_use(&mut self, node: Node<'_>, scope: &Scope) {
         let path = self.text(node);
-        let miss = Miss::unplaced(node, path, self.considered_path(path, scope, Ns::Val));
+        let miss =
+            Miss::unplaced(node, path, Reach::Item, self.considered_path(path, scope, Reach::Item));
         self.emit(scope, RefKind::Reads, node, miss);
     }
 
@@ -541,24 +876,32 @@ impl<'a> Walk<'a> {
     /// and the definition side reduce `Widget<T>` and `Widget` the same way.
     fn name_type(&self, node: Node<'_>, scope: &Scope) -> Miss {
         let raw = self.text(node);
-        let Ok(name) = fqn::type_segment(raw) else {
-            return Miss::unhandled(node, raw);
+        let Ok(path) = fqn::type_path(raw) else {
+            return Miss::unhandled(node, raw, Reach::Item);
         };
-        let considered = considered(fqn::refer(&Form::Item {
+        let Ok(name) = fqn::type_segment(&path) else {
+            return Miss::unhandled(node, raw, Reach::Item);
+        };
+        let mut saw = considered(fqn::refer(&Form::Item {
             lang: Language::Rust,
             package: self.package,
             module: &scope.module,
             name: &name,
-            ns: Ns::Ty,
+            reach: Reach::Item,
         }));
-        Miss::unplaced(node, &name, considered)
+        // The name alone cannot say WHICH `Widget` is meant; the path can, and
+        // it is the only place the root word of `crate::db::PgStore` survives
+        // the reduction to a segment. Discarding it here would be discarding
+        // something already parsed.
+        saw.push(Observation::UnplacedType(path));
+        Miss::unplaced(node, &name, Reach::Item, saw)
     }
 
     /// The identity a path COULD name if it named something in this module —
     /// CONSIDERED, never proven, which is why it goes into the evidence and not
     /// into the resolution. Only the shapes whose reading is unambiguous get
     /// one; a longer path needs the import table, which is the ladder's.
-    fn considered_path(&self, raw: &str, scope: &Scope, ns: Ns) -> Vec<Observation> {
+    fn considered_path(&self, raw: &str, scope: &Scope, reach: Reach) -> Vec<Observation> {
         let lang = Language::Rust;
         let package = self.package;
         let module = scope.module.as_str();
@@ -569,7 +912,7 @@ impl<'a> Walk<'a> {
             .filter(|s| !s.starts_with('<') && !s.is_empty())
             .collect();
         match segments.as_slice() {
-            [name] => considered(fqn::refer(&Form::Item { lang, package, module, name, ns })),
+            [name] => considered(fqn::refer(&Form::Item { lang, package, module, name, reach })),
             [ty, member] if !matches!(*ty, "crate" | "self" | "super") => {
                 match fqn::type_segment(ty) {
                     Ok(ty) => considered(fqn::refer(&Form::Member {
@@ -578,7 +921,7 @@ impl<'a> Walk<'a> {
                         module,
                         ty: &ty,
                         member,
-                        ns,
+                        reach,
                     })),
                     Err(_) => Vec::new(),
                 }
@@ -595,10 +938,7 @@ impl<'a> Walk<'a> {
             from: scope.from.clone(),
             kind,
             at: span(at),
-            target: Resolution::Unresolved {
-                reason: miss.reason,
-                evidence: Evidence { name: miss.name, node_kind: miss.node_kind, saw: miss.saw },
-            },
+            target: miss.resolution(),
         });
     }
 
@@ -782,29 +1122,56 @@ struct Miss {
     /// kind when the walk read it fine and the inner node's kind when it did
     /// not. This is what a reader sees in the histogram.
     node_kind: String,
+    /// How this use site reaches its target (spec §2.1). Stated by every arm,
+    /// including the ones that could not read the shape: a `call_expression`
+    /// the walk cannot parse is still reached the way a call is, and the arm
+    /// that dispatched on the node kind is the only place that knows it.
+    reach: Reach,
     saw: Vec<Observation>,
 }
 
 impl Miss {
     /// The walk read the use site and named it. Placing that name needs the
     /// shared ladder, which a language module is not (R7).
-    fn unplaced(node: Node<'_>, name: &str, saw: Vec<Observation>) -> Self {
+    fn unplaced(node: Node<'_>, name: &str, reach: Reach, saw: Vec<Observation>) -> Self {
         Self {
             reason: Reason::Unplaced,
             name: readable(name, node),
             node_kind: node.kind().to_string(),
+            reach,
             saw,
         }
     }
 
     /// The walk has no rule for this shape. Named rather than dropped, so the
     /// histogram says what was not understood instead of saying nothing.
-    fn unhandled(node: Node<'_>, name: &str) -> Self {
+    ///
+    /// It still states a reach, and that is not a guess: the arm calling this
+    /// dispatched on the node kind, so it knows a call is reached like a call
+    /// and a field access like a field even when the inside of the node
+    /// defeated it.
+    fn unhandled(node: Node<'_>, name: &str, reach: Reach) -> Self {
         Self {
             reason: Reason::UnhandledForm,
             name: readable(name, node),
             node_kind: node.kind().to_string(),
+            reach,
             saw: Vec::new(),
+        }
+    }
+
+    /// The unresolved target this miss stands for. One owner, so a reference and
+    /// a relation cannot describe the same failure two different ways — the
+    /// ladder reads both through the same shape.
+    fn resolution(self) -> Resolution {
+        Resolution::Unresolved {
+            reason: self.reason,
+            evidence: Evidence {
+                name: self.name,
+                node_kind: self.node_kind,
+                reach: self.reach,
+                saw: self.saw,
+            },
         }
     }
 }
@@ -900,7 +1267,7 @@ fn span(node: Node<'_>) -> crate::indexer::facts::Span {
 mod tests {
     use super::*;
     use crate::indexer::facts::{
-        Binding, ImportOrigin, Observation, Reason, RefKind, Resolution, SymbolKind,
+        Binding, ImportOrigin, Observation, Reason, RefKind, RelationKind, Resolution, SymbolKind,
     };
 
     /// One of every declaration the plan's step 3 names, in one file, so the
@@ -950,7 +1317,8 @@ pub fn free(w: &Widget) -> u32 { w.width }
 "#;
 
     fn facts(module: &str, text: &str) -> FileFacts {
-        read(&Source { package: "p", module, text }).expect("the fixture parses")
+        read(&Source { package: "p", module, path: "src/fixture.rs", text })
+            .expect("the fixture parses")
     }
 
     fn fqns(facts: &FileFacts) -> Vec<&str> {
@@ -966,38 +1334,38 @@ pub fn free(w: &Widget) -> u32 { w.width }
         got.sort_unstable();
 
         let mut expected = vec![
-            "rust·p·m·inner·ty",
-            "rust·p·m·MAX·val",
-            "rust·p·m·NAME·val",
-            "rust·p·m·Alias·ty",
+            "rust·p·m·inner·mod",
+            "rust·p·m·MAX·item",
+            "rust·p·m·NAME·item",
+            "rust·p·m·Alias·item",
             "rust·p·m·shout·macro",
-            "rust·p·m·Widget·ty",
+            "rust·p·m·Widget·item",
             "rust·p·m·Widget·width·field",
             "rust·p·m·Widget·height·field",
-            "rust·p·m·Pair·ty",
+            "rust·p·m·Pair·item",
             "rust·p·m·Pair·0·field",
             "rust·p·m·Pair·1·field",
-            "rust·p·m·Shape·ty",
-            "rust·p·m·Shape·Circle·val",
-            "rust·p·m·Shape·Rect·val",
+            "rust·p·m·Shape·item",
+            "rust·p·m·Shape·Circle·item",
+            "rust·p·m·Shape·Rect·item",
             "rust·p·m·Shape::Rect·w·field",
-            "rust·p·m·Draw·ty",
-            "rust·p·m·Draw·Canvas·ty",
-            "rust·p·m·Draw·SIDES·val",
-            "rust·p·m·Draw·draw·val",
-            "rust·p·m·Widget·new·val",
-            "rust·p·m·Widget·width·val",
-            "rust·p·m·Widget·Draw·Canvas·ty",
-            "rust·p·m·Widget·Draw·SIDES·val",
-            "rust·p·m·Widget·Draw·draw·val",
-            "rust·p·m·free·val",
+            "rust·p·m·Draw·item",
+            "rust·p·m·Draw·Canvas·item",
+            "rust·p·m·Draw·SIDES·item",
+            "rust·p·m·Draw·draw·item",
+            "rust·p·m·Widget·new·item",
+            "rust·p·m·Widget·width·item",
+            "rust·p·m·Widget·Draw·Canvas·item",
+            "rust·p·m·Widget·Draw·SIDES·item",
+            "rust·p·m·Widget·Draw·draw·item",
+            "rust·p·m·free·item",
         ];
         expected.sort_unstable();
 
         assert_eq!(got, expected);
     }
 
-    /// The collision the fqn grammar's namespace segment exists to prevent,
+    /// The collision the fqn grammar's trailing REACH exists to prevent,
     /// checked end to end through the walk rather than through the builder.
     /// `nodes_unique_identity` is `(folder, path, kind, name, parent, line)`, so
     /// two declarations sharing a name on one type must differ in `kind` AND in
@@ -1043,7 +1411,7 @@ pub fn free(w: &Widget) -> u32 { w.width }
         assert!(
             !fqns(&facts)
                 .iter()
-                .any(|f| f.ends_with("·w·val") || f.ends_with("·width·val") && f.contains("free")),
+                .any(|f| f.ends_with("·w·item") || f.ends_with("·width·item") && f.contains("free")),
             "no parameter may appear as a symbol"
         );
 
@@ -1072,9 +1440,9 @@ pub fn free(w: &Widget) -> u32 { w.width }
             by("rust·p·m·Widget·width·field").declared_type,
             DeclaredType::Stated("u32".to_string())
         );
-        assert_eq!(by("rust·p·m·MAX·val").declared_type, DeclaredType::Stated("u32".to_string()));
+        assert_eq!(by("rust·p·m·MAX·item").declared_type, DeclaredType::Stated("u32".to_string()));
         assert_eq!(
-            by("rust·p·m·Widget·ty").declared_type,
+            by("rust·p·m·Widget·item").declared_type,
             DeclaredType::Unstated,
             "a struct states no type of its own; that is a fact, not a miss"
         );
@@ -1090,7 +1458,12 @@ pub fn free(w: &Widget) -> u32 { w.width }
         got.sort_unstable();
         assert_eq!(
             got,
-            vec!["rust·p·a::b::c·g·val", "rust·p·a::b·c·ty", "rust·p·a::b·f·val", "rust·p·a·b·ty",]
+            vec![
+                "rust·p·a::b::c·g·item",
+                "rust·p·a::b·c·mod",
+                "rust·p·a::b·f·item",
+                "rust·p·a·b·mod",
+            ]
         );
     }
 
@@ -1098,7 +1471,7 @@ pub fn free(w: &Widget) -> u32 { w.width }
     #[test]
     fn a_declaration_at_the_crate_root_carries_no_module_segment() {
         let facts = facts("", "pub fn main() {}");
-        assert_eq!(fqns(&facts), vec!["rust·p·main·val"]);
+        assert_eq!(fqns(&facts), vec!["rust·p·main·item"]);
     }
 
     /// `impl Trait for (A, B)` names no type, so its members have no identity in
@@ -1114,11 +1487,11 @@ pub fn free(w: &Widget) -> u32 { w.width }
         );
         let got = fqns(&facts);
         assert!(
-            !got.contains(&"rust\u{b7}p\u{b7}m\u{b7}draw\u{b7}val"),
+            !got.contains(&"rust\u{b7}p\u{b7}m\u{b7}draw\u{b7}item"),
             "the trait-impl method was named as a free item of the module: {got:?}"
         );
         assert_eq!(
-            got.iter().filter(|f| f.ends_with("draw\u{b7}val")).count(),
+            got.iter().filter(|f| f.ends_with("draw\u{b7}item")).count(),
             1,
             "only the trait's own declaration can be named; got {got:?}"
         );
@@ -1186,30 +1559,7 @@ pub fn free(w: &Widget) -> u32 { w.width }
         "field_declaration",
     ];
 
-    /// Every source file of this repo's own Rust, which is the corpus the
-    /// counting tests run over. A fixture proves the walk handles what the
-    /// fixture's author thought of; the corpus proves it handles what is there.
-    fn repo_rust_sources() -> Vec<(String, String)> {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .and_then(|p| p.parent())
-            .expect("the crate sits two levels below the workspace root")
-            .join("crates");
-        let mut out = Vec::new();
-        for entry in walkdir::WalkDir::new(&root).into_iter().filter_entry(|e| {
-            e.file_name() != "target" && !e.file_name().to_string_lossy().starts_with('.')
-        }) {
-            let entry = entry.expect("the workspace source tree must be readable");
-            if entry.path().extension().is_none_or(|ext| ext != "rs") {
-                continue;
-            }
-            let body = std::fs::read_to_string(entry.path())
-                .unwrap_or_else(|e| panic!("cannot read {}: {e}", entry.path().display()));
-            out.push((entry.path().display().to_string(), body));
-        }
-        assert!(out.len() > 100, "the corpus is this repo's rust; {} files is not it", out.len());
-        out
-    }
+    use crate::indexer::corpus_rust_sources as repo_rust_sources;
 
     /// True for a node the walk deliberately does not read: an attribute's
     /// contents are an unparsed token tree.
@@ -1364,7 +1714,7 @@ pub fn free(w: &Widget) -> u32 { w.width }
     fn the_symbol_count_equals_an_independent_count_of_declaration_nodes() {
         let mut disagreements = Vec::new();
         for (path, text) in repo_rust_sources() {
-            let facts = read(&Source { package: "p", module: "m", text: &text })
+            let facts = read(&Source { package: "p", module: "m", path: &path, text: &text })
                 .unwrap_or_else(|e| panic!("{path}: {e:?}"));
             let expected = count_declarations(parse(&text).root_node());
             if facts.symbols.len() != expected {
@@ -1395,7 +1745,7 @@ pub fn free(w: &Widget) -> u32 { w.width }
         let mut disagreements = Vec::new();
         let mut total = 0usize;
         for (path, text) in repo_rust_sources() {
-            let facts = read(&Source { package: "p", module: "m", text: &text })
+            let facts = read(&Source { package: "p", module: "m", path: &path, text: &text })
                 .unwrap_or_else(|e| panic!("{path}: {e:?}"));
             let expected = count_use_sites(parse(&text).root_node());
             total += expected;
@@ -1422,7 +1772,7 @@ pub fn free(w: &Widget) -> u32 { w.width }
     #[test]
     fn every_unresolved_reference_carries_a_reason_and_the_node_kind_it_came_from() {
         for (path, text) in repo_rust_sources().into_iter().take(40) {
-            let facts = read(&Source { package: "p", module: "m", text: &text })
+            let facts = read(&Source { package: "p", module: "m", path: &path, text: &text })
                 .unwrap_or_else(|e| panic!("{path}: {e:?}"));
             for reference in &facts.references {
                 let Resolution::Unresolved { evidence, .. } = &reference.target else {
@@ -1489,7 +1839,7 @@ pub fn free(w: &Widget) -> u32 { w.width }
             "fn f() { a.b.c().d[0].e(); }",
             "",
         ] {
-            let facts = read(&Source { package: "p", module: "m", text })
+            let facts = read(&Source { package: "p", module: "m", path: "src/m.rs", text })
                 .unwrap_or_else(|e| panic!("`{text}`: {e:?}"));
             let expected = count_use_sites(parse(text).root_node());
             assert_eq!(
@@ -1539,9 +1889,9 @@ fn helper() -> u32 { 0 }
             // `self.width` inside an impl knows its receiver's type.
             "rust·p·m·Widget·width·field",
             // `Widget { .. }` is a construction of the declared struct.
-            "rust·p·m·Widget·ty",
+            "rust·p·m·Widget·item",
             // `helper()` is a free call in the same module.
-            "rust·p·m·helper·val",
+            "rust·p·m·helper·item",
         ] {
             assert!(
                 considered.contains(&expected),
@@ -1637,7 +1987,7 @@ fn helper() -> u32 { 0 }
         let mut histogram: BTreeMap<String, usize> = BTreeMap::new();
         let mut total = 0usize;
         for (path, text) in repo_rust_sources() {
-            let facts = read(&Source { package: "p", module: "m", text: &text })
+            let facts = read(&Source { package: "p", module: "m", path: &path, text: &text })
                 .unwrap_or_else(|e| panic!("{path}: {e:?}"));
             for reference in &facts.references {
                 total += 1;
@@ -1664,5 +2014,165 @@ fn helper() -> u32 { 0 }
             "the reasons must account for 100% of {total} references, not {histogram:?}"
         );
         assert!(total > 10_000, "the corpus produced only {total} references; that is not it");
+    }
+
+    // ── relations (spec §3.3, plan step 6) ───────────────────────────────────
+
+    /// Every relation as `kind child -> parent`, so an assertion names the fact
+    /// it wants instead of indexing into a vector.
+    fn relations(facts: &FileFacts) -> Vec<String> {
+        facts
+            .relations
+            .iter()
+            .map(|r| {
+                let parent = match &r.parent {
+                    Resolution::Resolved(fqn) => fqn.as_str().to_string(),
+                    Resolution::Unresolved { reason, evidence } => {
+                        format!("{reason:?}({})", evidence.name)
+                    }
+                };
+                format!("{:?} {} -> {}", r.kind, r.child.as_str(), parent)
+            })
+            .collect()
+    }
+
+    /// The relations that claim one type IS another. Kept apart from
+    /// [`RelationKind::Owns`], which claims only that a member lives on a type.
+    fn inheritance(facts: &FileFacts) -> Vec<String> {
+        facts
+            .relations
+            .iter()
+            .filter(|r| r.kind != RelationKind::Owns)
+            .map(|r| format!("{:?} {}", r.kind, r.child.as_str()))
+            .collect()
+    }
+
+    /// The trap the plan names. An inherent `impl Foo { }` says nothing about
+    /// what `Foo` IS — it only groups members. Emitting an inheritance edge for
+    /// one is a false edge, and pattern detection reads false edges as real: an
+    /// Adapter is "implements X and holds an X", so a bogus `implements` on
+    /// every impl block would name half the repository an Adapter.
+    #[test]
+    fn an_inherent_impl_is_not_inheritance_and_only_a_trait_impl_is() {
+        let facts = facts(
+            "m",
+            "pub struct Widget;\npub trait Draw {}\n\
+             impl Widget { fn area(&self) -> u32 { 0 } }\n\
+             impl<T: Clone> Holder<T> { fn get(&self) {} }\n\
+             impl !Send for Widget {}\n\
+             impl Draw for Widget {}\n",
+        );
+
+        assert_eq!(
+            inheritance(&facts),
+            vec!["TraitImpl rust·p·m·Widget·item"],
+            "only `impl Draw for Widget` claims Widget IS something; the inherent impls claim \
+             nothing, and `impl !Send` claims the opposite. Got {:?}",
+            relations(&facts)
+        );
+        assert!(
+            relations(&facts)
+                .contains(&"TraitImpl rust·p·m·Widget·item -> Unplaced(Draw)".to_string()),
+            "the trait side is a name the shared ladder places, carried as a stated miss \
+             rather than a bare string; got {:?}",
+            relations(&facts)
+        );
+    }
+
+    /// A supertrait is the one thing Rust spells the way `extends` is spelled:
+    /// `trait Sub: Super` states that every `Sub` is a `Super`. A lifetime in
+    /// the same bound list names no type, so it yields no relation rather than
+    /// a relation to an invented one (R4).
+    #[test]
+    fn a_supertrait_bound_is_the_only_extends_rust_states() {
+        let facts = facts("m", "pub trait Sub<'a>: Super + Send + 'a {}");
+        assert_eq!(
+            relations(&facts),
+            vec![
+                "Extends rust·p·m·Sub·item -> Unplaced(Super)",
+                "Extends rust·p·m·Sub·item -> Unplaced(Send)",
+            ],
+            "`'a` bounds the trait's lifetime, not its supertraits"
+        );
+    }
+
+    /// R8's Facade row needs member ownership as an EDGE, not as a substring of
+    /// an identity: "which members does this type own" has to be answerable from
+    /// nodes and edges with no return to source. A field, a method, an
+    /// associated const, an enum variant and a trait-impl method are all owned.
+    #[test]
+    fn a_type_owns_every_member_declared_on_it() {
+        let facts = facts("m", ONE_OF_EACH);
+        let owned = relations(&facts);
+
+        for expected in [
+            "Owns rust·p·m·Widget·width·field -> rust·p·m·Widget·item",
+            "Owns rust·p·m·Widget·height·field -> rust·p·m·Widget·item",
+            "Owns rust·p·m·Pair·0·field -> rust·p·m·Pair·item",
+            "Owns rust·p·m·Shape·Circle·item -> rust·p·m·Shape·item",
+            "Owns rust·p·m·Shape::Rect·w·field -> rust·p·m·Shape·Rect·item",
+            "Owns rust·p·m·Draw·Canvas·item -> rust·p·m·Draw·item",
+            "Owns rust·p·m·Draw·SIDES·item -> rust·p·m·Draw·item",
+            "Owns rust·p·m·Widget·new·item -> rust·p·m·Widget·item",
+            "Owns rust·p·m·Widget·Draw·draw·item -> rust·p·m·Widget·item",
+        ] {
+            assert!(owned.contains(&expected.to_string()), "no relation {expected}; got {owned:?}");
+        }
+
+        // A free item is owned by nothing. Naming the file or the module as its
+        // owner would be an edge the source never states.
+        assert!(
+            !owned.iter().any(|r| r.contains("·free·item ->")),
+            "a free function is owned by no type; got {owned:?}"
+        );
+    }
+
+    /// An `impl` on a type with no name has no identity to hang a relation on,
+    /// and the members inside it have none either. Minting one would be exactly
+    /// the fabrication R4 forbids, so the whole block yields no relation while
+    /// its body is still walked for use sites.
+    #[test]
+    fn an_impl_on_an_unnameable_type_yields_no_relation_at_all() {
+        let facts = facts(
+            "m",
+            "pub trait Draw { fn draw(&self); }\n\
+             impl Draw for (u32, u32) { fn draw(&self) {} }\n",
+        );
+        assert_eq!(
+            relations(&facts),
+            vec!["Owns rust·p·m·Draw·draw·item -> rust·p·m·Draw·item"],
+            "the tuple impl names no type, so it hangs no relation; the trait's own \
+             declaration still owns its member"
+        );
+    }
+
+    /// The plan's step 6 verify, over the corpus rather than a fixture. A
+    /// relation with a child that is not a well-formed identity, or a parent
+    /// that is a bare name with nothing said about it, is the "wrong edge"
+    /// failure in structural form.
+    #[test]
+    fn every_relation_in_this_repos_rust_names_both_of_its_ends() {
+        let mut total = 0usize;
+        for (path, text) in repo_rust_sources() {
+            let facts = read(&Source { package: "p", module: "m", path: &path, text: &text })
+                .unwrap_or_else(|e| panic!("{path}: {e:?}"));
+            for relation in &facts.relations {
+                total += 1;
+                fqn::parse(relation.child.as_str())
+                    .unwrap_or_else(|e| panic!("{path}: relation child is not an fqn: {e:?}"));
+                match &relation.parent {
+                    Resolution::Resolved(fqn) => {
+                        fqn::parse(fqn.as_str()).unwrap_or_else(|e| {
+                            panic!("{path}: relation parent is not an fqn: {e:?}")
+                        });
+                    }
+                    Resolution::Unresolved { evidence, .. } => assert!(
+                        !evidence.name.is_empty(),
+                        "{path}: a relation parent with no name is a bare edge with no reason"
+                    ),
+                }
+            }
+        }
+        assert!(total > 1_000, "the corpus produced only {total} relations; that is not it");
     }
 }
