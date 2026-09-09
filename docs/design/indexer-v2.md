@@ -1389,7 +1389,24 @@ no nested `.git`, no marker of any kind in the working tree. Verified here:
 `homebrew/` and `marketplace/` are subtrees and are indistinguishable from any
 other directory.
 
-The only trace is in COMMIT HISTORY:
+GIT CANNOT BE ASKED. `git subtree` exposes only `add | merge | split | pull |
+push` — there is no list or query subcommand. The only trace is in COMMIT
+HISTORY, and every way of reading that history is wrong in a different
+direction. Measured, all three against this repo, whose real subtrees are
+`homebrew/` and `marketplace/`:
+
+| method | returns | how it fails |
+|---|---|---|
+| `git log --grep='git-subtree-dir'` | 3 | FALSE POSITIVE — matched a doc commit that merely writes about subtree detection |
+| `%(trailers:key=git-subtree-dir)` | 5 | STALE — `daemon`, `docs`, `gateway` are historical; `git subtree split` writes the same trailer, and `gateway` has since moved out to its own repo |
+| `Squashed '<dir>/'` subject | 2 (correct) | only catches `--squash` adds; a non-squashed subtree never produces it |
+
+No combination repairs this. A directory that still exists and once carried a
+trailer is indistinguishable from a live subtree, BECAUSE THERE IS NO DIFFERENCE
+IN THE WORKING TREE. History says a subtree operation happened once; it cannot
+say the arrangement still holds.
+
+The raw evidence:
 
     5d998336 Squashed 'marketplace/' content from commit 10ea796
     4a8e7ed4 Squashed 'homebrew/' content from commit 4f2e246
