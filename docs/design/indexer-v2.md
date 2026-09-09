@@ -263,7 +263,11 @@ ownership. Emitted by the same walk.
 
 Each is independently testable.
 
-**R1. One parse per file.** No stage may re-read source bytes.
+**R1. One parse per file.** No stage may re-read source bytes. One exception,
+stated in R10.3 and nowhere else: reconcile re-reads a file whose parse produced
+no declarations where it previously had some. That is not a stage recovering a
+fact the walk already had — which is what this rule forbids — it is reconcile
+deciding whether to trust the first read at all.
 
 **R2. No reference is ever dropped.** Every use site in the AST yields exactly
 one `Reference`. A miss yields `Unresolved` with a reason, never omission.
@@ -329,6 +333,285 @@ construction edges, member ownership, and member -> field-member call edges. All
 are required by §3. Pattern NAMING is a query over these; it is not part of the
 walk.
 
+**R10. Re-indexing a file replaces exactly what that file claims.** Today the
+write path only ADDS. A deleted call keeps its edge and reads back as a live
+fact, which is a wrong edge (R4) that no query can tell from a real one. The fix
+is a per-file set diff, and every part of it that can go wrong is settled below
+rather than at the keyboard.
+
+Every number in R10 was measured over this repository's own Rust on the tree at
+`d58e230d`: 372 files, 12,519 declarations, 82,913 distinct edges, 119,248 edge
+sources.
+
+### R10.1 The unit of attribution is not the same for every row
+
+Reconcile has to know which rows belong to file F. `file_path` answers that for
+one row type and for no other, and the difference is not a detail — it is where
+the naive implementation destroys data.
+
+| row | belongs to F when | not `file_path` because |
+|---|---|---|
+| a DEFINITION in `nodes` | F is in the node's CLAIM SET (R10.4) | the column holds one path and a claim set can hold two |
+| a STUB in `nodes` | never — a stub belongs to no file | it has none: `file_path IS NULL` is what makes it a stub |
+| a row in `edges` | never — an edge row is owned by the union of its contributors | `edges` has no column for the emitting file; `target_file` is the TARGET's path, not the emitter's |
+| `edges.props.occurrences -> F` | always, and this is the only edge-side unit | this IS the unit |
+
+**So: for a declaration the unit is the ROW; for an edge the unit is the
+OCCURRENCE KEY inside the row.** Reconcile releases a claim on the first and
+deletes a key from the second. An edge row is deleted only when its occurrence
+object is empty — see R10.4.
+
+The measured trap. `nodes.file_path` is NOT "the file whose edges hang off this
+node". A file's own module node is minted by the `mod x;` that names it, which
+sits in the PARENT file, while the file-scope edges sourced at that node are
+emitted by the child. Measured: **356 of 372 files have their own module node
+declared by another file** (`rust·sensei-bootstrap·config·mod` is declared by
+`lib.rs`), 16 are crate roots no file declares, and **3,290 file-scope edges
+across 355 files are sourced at a node whose `file_path` names a different
+file**. `DELETE FROM sensei.nodes WHERE file_path = $F` — which is what
+`delete_nodes_by_file` does today — therefore deletes every child module node of
+a `lib.rs` or `mod.rs`, and `edges.source_id ... on delete cascade` takes all
+3,290 of those children's edges with it, in silence, from files nobody
+re-indexed. Reconcile must not use that predicate, and step 9 must not keep it.
+
+Finding F's edges without a jsonb scan. Every edge F contributes to is sourced
+at a symbol F declares or at F's own module identity — with **26 exceptions out
+of 119,248 edge sources** (0.02%), all of them split-impl anchors
+(`impl PgStore` in `commands.rs` anchors at
+`rust·senseid·db::pg_store::commands·PgStore·item`, which no file declares —
+the gap §2.1 records). So the affordable predicate is
+
+    source.fqn = ANY(claims(F) ∪ {file_fqn(F)})
+      OR (source.resolved = false AND props->'occurrences' ? F)
+
+The second disjunct is the correctness clause and it scans only stub-sourced
+edges. `create index … using gin ((props->'occurrences'))` would collapse both
+into one clean test; it is DDL on a table the shipped indexer writes, so it is
+step 9's (§7). The interim predicate must be proven a SUPERSET of the occurrence
+key over the corpus, never a convenient narrowing of it.
+
+### R10.2 Removal is DEMOTION, never deletion
+
+A definition F no longer declares does not lose its node. The node is demoted to
+a stub: `resolved = false`, `file_path = NULL`, `kind` back to the placeholder
+§2.1 names, and every definition-only column and prop CLEARED — `line_start`,
+`line_end`, `docstring`, `signature`, `is_exported`, and the props
+`symbol_kind`, `visibility`, `declared_type`, `params`, `span_columns`. Clearing
+them is not tidiness: a row that says `resolved = false` while still carrying a
+`line_start` answers "where is X defined" with a line in a file that no longer
+defines it, which is a fabricated reading (R4).
+
+**Inbound edges are left exactly as they are.** They keep pointing at the same
+node id, which now states that nothing declares it. That reading is true, and it
+is the same shape as an edge to a target that has not been indexed yet — which
+is deliberate, because R6 forbids a graph that can tell those two apart by scan
+order, and A4 already admits the shape.
+
+Three reasons demotion and not deletion, in order of weight.
+
+1. **Deleting is not reversible and the input is not trustworthy.** R10.3 shows
+   that a damaged parse cannot be detected. A demotion taken on a bad parse
+   costs a few minutes of `resolved = false` and is undone by the next healthy
+   index of the same file, which re-promotes the same node by fqn. A deletion
+   taken on a bad parse destroys every inbound edge from every file that is not
+   being re-indexed, and nothing re-creates them until each of those files is
+   itself re-indexed.
+2. **The blast radius is measured and large.** 1,485 of 12,519 declarations have
+   inbound edges from a file other than their own — 3,070 (declaration,
+   referring file) pairs — and the worst is
+   `rust·senseid·db::pg_store·PgStore·item`, referenced from **67 files**. A bad
+   parse of one `mod.rs` would take all 67 files' inbound edges with it.
+3. **A node deletion cascades in BOTH directions and counts nothing.** The DDL
+   is explicit: `source_id … on delete cascade`, `target_id … on delete
+   cascade`, and `nodes.parent_id … on delete cascade`. There is no version of
+   "remove the node, keep the edges".
+
+Reconcile therefore performs exactly one kind of deletion: an EDGE ROW whose
+occurrence object became empty. It never deletes a node, so it never cascades.
+
+**Reconcile does not garbage-collect.** A stub with no edges and no children is
+collected by the pass that already owns that predicate
+(`prune_orphan_stubs_scoped`). Two owners of deletion is how a race gets built,
+and the existing owner already runs on every reconcile tick.
+
+### R10.3 Parse failure versus empty file — the case that must not be guessed
+
+There are two failures here and only one of them is solvable. Both are stated
+because conflating them is what produces a confident wrong answer.
+
+**A failed READ never reaches reconcile, by type.** `read` returns
+`Result<FileFacts, ReadError>`, so an IO failure, an unloadable grammar
+(`GrammarUnavailable`), a tree-sitter refusal (`NotParsed`) and an unmintable
+file identity (`NoFileIdentity`) are all `Err` and produce no `FileFacts` at
+all. Reconcile takes the facts of a SUCCESSFUL parse and there is no other way
+to obtain them: `FileFacts` must have no production constructor other than a
+language module's `read`, enforced the way the other v2 grammar rules are
+enforced — by a guard test over the v2 sources. On `Err`, reconcile does not
+run, the file keeps the graph it had, and the failure is recorded so it is
+visible rather than inferred later from a hole. Nothing may turn that `Err` into
+an empty fact set; `.unwrap_or_default()` here is the exact shape R4 forbids.
+
+**A DAMAGED parse is not detectable, and this was measured rather than
+assumed.** tree-sitter returns a tree for anything.
+
+- Truncating each of the 294 corpus files that declare ≥10 symbols to half its
+  bytes produced **0 `ReadError`s**. Symbols fell 12,167 → 6,973 (57% kept),
+  references 109,328 → 53,524. Per-file retention: min 0%, **median 52%**, max
+  100%. Worst single file: 354 symbols → 187.
+- `""`, `"fn main() {"` and `"}}} not rust @@@"` all return `Ok` with 0 symbols,
+  0 references, 0 relations and 0 imports — identical to a genuinely empty file.
+- The obvious gate does not work in EITHER direction. `tree.root_node()
+  .has_error()` is true for **6 of 372 intact, valid corpus files** and false for
+  **53 of 366 truncated ones**. Gating on it would refuse to ever reconcile six
+  healthy files and would wave through fifty-three damaged ones.
+
+So reconcile does not try to decide whether a parse was good. Two rules replace
+the detector it cannot have.
+
+1. **Removal is demotion (R10.2).** Being wrong is survivable, which is the
+   property that makes an undetectable input acceptable at all.
+2. **A brake on the one diff shape that is almost always damage.** If F
+   previously claimed ≥1 declaration and now claims zero, reconcile does not
+   apply the diff on the first read. It re-reads F from disk once and applies
+   the diff only if the second read also claims zero. A truncated read is a
+   transient — an editor mid-save, a partial write — and does not survive a
+   second read; a file genuinely emptied to `//! moved to bar.rs` reads zero
+   twice and reconciles on the second. This is R1's one exception, and it costs
+   one extra parse on a shape that a healthy scan of this corpus produces zero
+   times.
+
+What the brake deliberately does NOT cover: partial damage. A file truncated to
+half still claims half its declarations, the brake does not fire, and the other
+half demote to stubs. That is the residual, it is named rather than papered
+over, and it is bounded by R10.2 — the graph says "no definition known", which
+is true of what it can see, and the next healthy index restores it. A threshold
+on the retained fraction was rejected: the measured distribution runs from 0% to
+100% with a median of 52%, so any cut-off refuses real edits at the same rate it
+catches damage, and it would silently pin a file's graph to a stale state with
+nothing counting it.
+
+**The brake guards INFERRED emptiness only.** A file that is absent from disk is
+an OBSERVED fact the caller already holds, not something concluded from a parse,
+so R10.5's deletion path does not re-read and does not brake.
+
+### R10.4 Two files can claim one thing — nodes as well as edges
+
+**Edges.** Occurrences are already keyed by file
+(`props.occurrences = {"<path>": [...]}`), because two files can produce one
+`(folder, source, target, kind)` row and jsonb `||` replaces a key rather than
+appending. Reconcile removes F's key and only F's key:
+
+    props = jsonb_set(props, '{occurrences}', (props->'occurrences') - $F)
+
+and deletes the edge row when the result is `{}`. It must never use the
+source-scoped form `DELETE FROM sensei.edges WHERE source_id = ANY(…)` — that is
+the v1 shape and it takes every other file's occurrences with it.
+
+Measured: **4 of 82,913 corpus edges have more than one contributing file**, all
+four sourced at `rust·senseid·base_url·item`. Four is not "safe to ignore" — it
+is precisely the class of loss that nothing counts — but it does mean the corpus
+cannot exercise this. The test is a two-file fixture that mints one source
+identity, and the corpus count is the ratchet that says whether the case grew.
+
+**Nodes need the same treatment, and this is the new structure R10 introduces.**
+Measured: **2 identities are claimed by two different files** —
+`rust·senseid·base_url·item` and `rust·senseid·main·item`, both already on A7's
+known list of 15. Without a claim set, reconcile cannot tell "F was the only
+declarer" from "F was one of two", so releasing F's claim would demote a node
+another file still defines. A node therefore carries
+
+    props.claims = { "<file path>": true, … }
+
+merged with the same `jsonb_set` idiom the occurrences use, for the same reason
+(plain `||` on `props` would replace the whole object). No DDL: `props` is the
+column the schema documents as extensible and where every other v2 fact that has
+no column already lives.
+
+The rule: reconcile removes F's key from `props.claims`, and the node demotes
+only when `props.claims` is empty. When a claim remains but the released one was
+the one in the `file_path` column, the node's definition columns are now stale
+and are cleared anyway — the row honestly states "no definition known" until the
+surviving claimant is next indexed and re-promotes it. Reconcile does not pick a
+winner and does not invent the survivor's columns, which it does not have.
+
+Two files claiming one identity is an A7 violation, not a state to support
+gracefully. So reconcile REPORTS it — the same way `persist::write` returns
+`Collision` rather than swallowing it — and the repair belongs to the identity
+rule, not here.
+
+### R10.5 Deletion, rename, and package rename
+
+**A deleted file is `reconcile(F, claims = ∅)`.** The same code path, so there
+can be no second removal semantics that behaves differently from an emptied
+file. A folder deletion is N file reconciles, never a path-prefix `DELETE`, for
+the cascade reason in R10.2.
+
+Nothing in the walk can trigger it — there is no file to walk — so the trigger
+is the caller's, and all three already exist and all three must be re-pointed at
+reconcile at cutover:
+
+- the scan_state diff's `plan.removed` loop in
+  `tasks/handlers/process.rs::process_git_folder`;
+- `tasks/handlers/scan.rs::prune_vanished`, the safety net for nodes that
+  outlived their scan_state row;
+- the `delete_file` / `delete_folder` task handlers, the fs-watcher path.
+
+**A rename is a deletion plus an addition, and needs no case of its own.** In
+Rust the module path IS the file path, so renaming `a/b.rs` to `a/c.rs` turns
+`pkg·a::b·Foo·item` into `pkg·a::c·Foo·item`: nothing is "the same symbol at a
+new path". Reconcile `a/b.rs` with an empty claim set, index `a/c.rs` normally.
+
+**The case the question is really about is a symbol MOVING between two files
+that share a module path** — `mod b { fn foo() }` inline in `a.rs` moved out to
+`a/b.rs`, or anything moved between the two crate roots of one package. The fqn
+is unchanged and `file_path` changes. Which claim wins: **neither, because a
+claim is not a winner.** Both files sit in `props.claims` while both declare it,
+the old file's re-index removes its key, the new file's adds its own, and
+because a SET is order-independent the answer does not depend on which file the
+scan reaches first (R6, A6). Release-before-claim is explicitly NOT required:
+new-first means both claim it briefly, old-first means neither does and the node
+is a stub in between, and both intermediate states are true. What is forbidden
+is deleting on release — under deletion, "old first" destroys the node the new
+file was about to promote, and which happens is decided by scan order.
+
+**A package rename is a full-package reindex, not reconcile's problem.** Say it
+plainly: it is not that reconcile handles it badly. Reconcile handles the
+renamed package's own files correctly, one at a time, releasing every old
+identity and claiming every new one. What it cannot reach is everything ELSE —
+every reference to that package from every other package changes at the same
+moment (`rust·<old>·…` and `lib·<old>·…` alike) and those references live in
+files the rename did not touch, so no set of reconciles over CHANGED files ever
+visits them. The trigger is a folder-level observation, "the manifest's `name`
+differs from the one the graph was built with", made by the manifest reader that
+already supplies `package` to the walk; the action is to re-index every file in
+the scan root. Reconcile's only obligation under a rename is not to corrupt, and
+it does not.
+
+### R10.6 The invariant
+
+> **After `reconcile(F, facts)`, the graph records F as stating exactly what
+> `facts` states and nothing more; every other file's statements are unchanged;
+> and every identity that only F previously stated survives as a stub that
+> states nothing.**
+
+Three clauses, each independently testable, and in this order:
+
+- **(a) F's contribution is exactly the new facts.** The set of nodes whose
+  `props.claims` contains F equals `facts.symbols`' fqns, and the set of
+  `props.occurrences -> F` lists equals what the grouping of `facts` produces.
+- **(b) No other file's contribution moved.** Read the folder back before and
+  after with F's contribution projected out; the two must be equal. This is the
+  clause that catches a cascade, a source-scoped edge delete, and a
+  `file_path`-keyed node delete — all three of which pass (a).
+- **(c) What F alone dropped is a stub, not a hole.** Every fqn in
+  `previous_claims(F) \ facts.symbols` still has a node, with `resolved = false`,
+  `file_path = NULL`, no definition column and no definition prop set.
+
+Reconciling F twice with the same facts must leave all three clauses holding and
+change no row the first pass did not already change. Idempotence is what lets
+the invariant be checked by RUNNING reconcile rather than by reading it, and it
+is the property a partial implementation loses first.
+
 ## 5. Deferred — and what is captured now so they stay cheap
 
 These are not in this pass. They are NOT ruled out, and the difference matters:
@@ -348,6 +631,28 @@ CAPTURED NOW: the binding's provenance in `Evidence` — that `x` is the return 
 coherence rules. CAPTURED NOW: the receiver's stated bound, and every impl as a
 `Relation`. A later solver enumerates candidates from the graph; it does not need
 the source.
+
+The EASY end of the same case is already measurable and is deferred with it: a
+member declared in `impl Trait for Type` is minted
+`<lang>·<pkg>·<mod>·<Type>·<Trait>·<member>·<reach>` (§2), and no use site can
+spell the `Trait` segment — `x.default()` and `Type::default()` both mint the
+plain member form. So the declaration and every reference to it are two halves of
+one symbol: the failure the reach rule closed for plain paths, one level in.
+Measured over this repository: **22 references over 3 identities**, all
+`Default::default`, out of 443 trait-impl member declarations —
+`the_references_that_name_no_declaration_are_a_measured_and_split_set` is the
+ratchet.
+
+It is NOT closed by dropping the `Trait` segment, and the reason is a
+measurement rather than a preference. No type in this corpus has two traits
+supplying one member name, so dropping it would create zero collisions here —
+which is exactly the problem: it would delete the only thing separating
+`<X as Display>::fmt` from `<X as Debug>::fmt`, a shape no test in this
+repository could then catch regressing, and R4 ranks the wrong edge that
+produces below the missing one it removes. The real answer is the impl-set
+lookup above: which trait supplies `default` on `CopyLimits` is a query over the
+whole graph, and a per-file ladder that answered it would answer differently
+depending on scan order (R6).
 
 **Blanket impls.** `impl<T: Foo> Bar for T` grants `Bar`'s members to every
 conforming `T`. CAPTURED NOW: the impl's generic parameters and their bounds, so
@@ -392,6 +697,12 @@ Thresholds, not comparisons.
   discriminator existed to prevent becomes a checked property instead of an
   assumed one, and which of two colliding declarations wins is otherwise
   scan-order dependent, so this is also an A6 obligation.
+- **A8.** Re-indexing a file removes what it stopped claiming and nothing else.
+  R10.6's three clauses hold over the corpus for: a file that lost a
+  declaration, a file that lost a use site, a file emptied, a file deleted, and
+  a symbol moved between two files sharing a module path. Zero rows belonging to
+  a file that was not re-indexed change in any of them. This is what makes a
+  stale edge a caught failure rather than a fact the graph reports.
 
 ## 7. Build order
 
@@ -409,6 +720,65 @@ Per language:
 The existing indexer keeps running until step 3 for a given language, so the
 graph never goes stale.
 
+## 7b. R10 CORRECTION — dirty is not deleted, and deleted is not demoted
+
+An earlier draft of R10 answered both "this file will not parse" and "this file
+no longer declares X" with one mechanism: DEMOTION, which keeps the node and
+nulls its `file_path`. That is wrong, and measurement shows how wrong: it leaves
+an edge whose `target_id` is set pointing at a node that names nothing, which is
+the ghost-stub-edge shape this rewrite exists to remove. Consumers compute
+resolved as `target_id IS NOT NULL`, so `get_callers(z)` reports "z is called by
+x" after `x()` has been deleted. R4 ranks a wrong edge worse than a missing one,
+so demotion trades a data-loss RISK for a wrong-data CERTAINTY. Backwards.
+
+They are two different events and get two different mechanisms.
+
+### R10.7 — a file that will not parse marks its contents DIRTY
+
+`read` returning `Err` removes NOTHING. The file is recorded unparseable and
+every node it claims is marked dirty, with the reason. A dirty node is still
+returned by every query — it is the last thing known to be true — but it is
+returned LABELLED, so a caller can tell a current fact from a stale one. The
+label carries the failure and the timestamp, so "why is this stale" is answerable
+without re-reading the file.
+
+Dirty is a state of KNOWLEDGE, not of the code. Nothing about the graph is
+asserted to be wrong; we are saying we could not re-confirm it.
+
+### R10.8 — a file that parsed is authoritative, and removal is REMOVAL
+
+When `read` returns `Ok`, the claim set is the truth. A declaration the file no
+longer makes is not demoted, it is DELETED, because ownership differs by fact
+type:
+
+- A DECLARATION is owned by the file that declares it. No claimant, no node.
+- A REFERENCE is owned by the file that wrote it. `x.rs` saying "I call z"
+  stays true after `z()` is deleted; only `x.rs` can withdraw it.
+
+So:
+
+| fact | on removal |
+|---|---|
+| node `z`, no remaining claimant | DELETED |
+| edge `x -> z`, target deleted | UNRESOLVED — `target_id` NULL, `target_name` kept |
+| edge `x -> z`, source `x()` deleted | DELETED — its only claimant withdrew |
+| edge with other files' occurrences | only the withdrawing file's key is removed |
+
+"x calls something named z that we cannot place" is true and is kept. "x calls z"
+when neither exists is not, and goes.
+
+### What remains genuinely undetectable, and why that is now acceptable
+
+A file that is DAMAGED but still parses is indistinguishable from one that was
+legitimately edited: truncating 294 corpus files to half produced 0 `ReadError`s
+and retained 57% of symbols, and `has_error()` is wrong in both directions (true
+for 6 of 372 intact files, false for 53 of 366 truncated). No gate separates them.
+
+Under R10.8 that is survivable rather than fatal: the loss is RECOVERABLE — the
+next good index restores the declaration and inbound edges re-resolve. Demotion's
+failure was not. The brake still applies: a file going from >=1 claims to zero
+triggers one confirming re-read before any removal.
+
 ## 8. Decisions
 
 **D1.** Scope is the walk AND the persistence path (see R3).
@@ -423,3 +793,11 @@ considered complete (see R8).
 `item`, `field`, `macro`, `mod` (see §2.1). Rust's type and value namespaces
 collapse into `item` because a path leaf does not state which it is, and a
 declaration may occupy both. A7 is what makes that safe.
+**D8.** Reconcile DEMOTES a node it no longer has a claim for; it never deletes
+one (R10.2). Deletion cascades both ways with no count, and the input it would
+act on — a parse that succeeded but read half a file — is measurably
+undetectable (R10.3). The only row reconcile deletes is an edge whose occurrence
+object is empty.
+**D9.** A file's claim on a declaration is a KEY in `nodes.props.claims`, exactly
+as its contribution to an edge is a key in `edges.props.occurrences` (R10.4).
+Both because two files can state one thing, and `file_path` is one column.
