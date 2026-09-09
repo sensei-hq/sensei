@@ -939,19 +939,37 @@ The node references the package. A library groups packages and is attached
 later, if the information ever arrives. Absent it, the package stands alone and
 nothing is missing — the graph is not wrong, it is simply not yet grouped.
 
-MEASURED STATE: this level does not exist. `sensei.libraries` holds PACKAGES —
-`@rokkit/actions`, `@rokkit/app`, `@rokkit/blocks`, `@rokkit/core` are separate
-rows, all `kind = 'detected'`, `ecosystem = 'npm'`, and there is no `rokkit` row
-grouping them. The `library_kind` enum is `detected | imported`, which records
-PROVENANCE (found by scan vs added deliberately), not LEVEL. 1,121 rows across
-npm/cargo/pypi/nuget/maven, every one a package.
+MEASURED STATE — CORRECTION. The level DOES exist in the schema; it is simply
+unpopulated. `sensei.library_packages` is the library->package grouping and has
+ZERO rows. Alongside it: `library_pages` holds 130 pages across 128 distinct
+COMPONENTS, `library_skills` 10, `library_agents` 6. So the model is already
+right and the data is not there — a very different problem from a missing design.
 
-So two things are needed, both additive:
-- a level discriminator, so a row can be a library rather than a package
-- a parent link from package to library
+`sensei.libraries` currently holds packages (`@rokkit/actions`, `@rokkit/app`,
+`@rokkit/core` as separate rows, all `kind = 'detected'`), because with
+`library_packages` empty there is nothing to group them under. `library_kind` is
+`detected | imported`, which records PROVENANCE, not level.
 
-Neither changes any fqn. `lib·@rokkit/ui·…` stays exactly as it is; the grouping
-hangs above it.
+### R10.7g — the reference chain that makes docs, skills and agents reachable
+
+This is why the package/library split earns its place. A node referencing an
+external symbol should reach everything known about it:
+
+    node -> lib_package (@rokkit/ui)        observable at scan
+         -> library_packages                the grouping, currently empty
+         -> library (rokkit)                declared, from llms.txt or add_library
+         -> library_pages.component         128 components indexed
+         -> library_skills / library_agents 10 and 6
+
+Every link exists but two: `library_packages` is unpopulated, and a `lib_package`
+NODE joins to a `libraries` ROW only by matching name strings, with no key
+between them.
+
+The payoff is concrete and serves G1 directly. An agent editing code that calls
+`@rokkit/ui`'s `List` can be handed rokkit's `List` page and the
+`rokkit-components` skill, instead of inferring the API from call sites. It also
+answers the inverse for G2 — "which of this library's components do we actually
+use" — which is a dependency-surface question nobody can ask today.
 
 THE GROUPING MUST BE DECLARED, NEVER INFERRED. `@rokkit/*` -> `rokkit` is a
 tempting prefix rule and it is a guess: `@types/node` belongs to no "types"
