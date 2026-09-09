@@ -869,6 +869,33 @@ that receives a symbol has to be able to tell "this is current", "this is not
 declared anywhere yet" and "this is stale because its file is broken" apart —
 they lead to different actions, and today they are indistinguishable.
 
+### R10.7e — a resolved reference lands in a FILE or a LIBRARY, and that is DERIVED
+
+Where a reference lands is a property of its target, so it is a join, not a
+column. Measured on the live graph for `calls`: 83,820 land in a file, 41,194 in
+a library, 36,556 in neither because they are still partial.
+
+    target_id -> node -> file_path      (first-party: which file)
+    target_id -> node -> fqn origin     (external: which library)
+
+DO NOT copy the file id or library id onto the edge. It is derivable, and storing
+it creates two representations of one fact that drift the moment a symbol moves
+file or a node is re-resolved. That failure has already occurred three times in
+this build — `occurrences` clobbered by a shallow jsonb merge, column values
+verified against props the same writer wrote, and demotion making a deleted node
+indistinguishable from a partial one. Each was one fact held twice.
+
+The need behind the question is real and belongs in the VIEW (R10.7b/7c): "which
+files does this file depend on" and "which libraries does it use" are answered
+once, in one place, and no caller writes the join.
+
+ONE EXCEPTION, where it is not derivable and therefore must be recorded: an
+UNRESOLVED reference that is nonetheless known to land in a package — a call
+chained onto an external call, where the crate is known and the member is not.
+There is no target node to join through, so the package is genuinely additional
+information and belongs on the edge. `edges.target_file` already exists and is
+used for the analogous first-party hint.
+
 ### R10.8 — a file that parsed is authoritative, and removal is REMOVAL
 
 When `read` returns `Ok`, the claim set is the truth. A declaration the file no
