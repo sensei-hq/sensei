@@ -820,6 +820,44 @@ Contrast with what this replaces: demotion silently served WRONG data and gave
 nobody anything to act on. Dirty serves the last known-true data, says so, and
 names the fix.
 
+### R10.7d — COMPLETENESS is a derived state with three values
+
+A node is in exactly one of three states, and the node+file join gives all three
+from columns that already exist. Verified on the live graph:
+
+| state | condition | meaning | live count |
+|---|---|---|---:|
+| COMPLETE | `file_path` set, file has no `skip_reason` | the declaration was parsed | 354,653 |
+| PARTIAL | `file_path` IS NULL | referenced, not yet declared | 18,450 |
+| DIRTY | `file_path` set, file HAS a `skip_reason` | was complete, its file now fails | 0 |
+
+    LEFT JOIN sensei.scan_state s
+           ON s.folder_id = n.folder_id AND s.file_path = n.file_path
+
+PARTIAL is the ordinary case, not an error: `x()` calls `y()` before `y.rs` is
+parsed, so a node carrying only the fqn and the name is persisted, and the
+declaration fills it in later by upserting on the same key. That is the
+stub-and-merge model this design already rests on, and it is what makes indexing
+order-independent (R6).
+
+The three states differ in TRAJECTORY, which is why they must not be conflated:
+
+- PARTIAL becomes complete when its file is parsed. Nothing is wrong.
+- DIRTY was complete and will be again. What we hold is the last known-true
+  answer, and we say so.
+- DELETED is neither. It is gone, and no future parse restores it.
+
+THIS IS EXACTLY WHAT DEMOTION GOT WRONG. It set `file_path = NULL` on a deleted
+declaration, making it indistinguishable from PARTIAL — so the graph claimed
+"we have not found this yet" about something that definitively no longer exists,
+and every consumer treated a dead symbol as a pending one. Under R10.8 a deleted
+node is deleted, so the three states stay distinct by construction.
+
+Every query that returns a node should return its completeness with it. A caller
+that receives a symbol has to be able to tell "this is current", "this is not
+declared anywhere yet" and "this is stale because its file is broken" apart —
+they lead to different actions, and today they are indistinguishable.
+
 ### R10.8 — a file that parsed is authoritative, and removal is REMOVAL
 
 When `read` returns `Ok`, the claim set is the truth. A declaration the file no
