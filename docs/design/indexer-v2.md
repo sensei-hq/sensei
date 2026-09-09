@@ -828,8 +828,19 @@ from columns that already exist. Verified on the live graph:
 | state | condition | meaning | live count |
 |---|---|---|---:|
 | COMPLETE | `file_path` set, file has no `skip_reason` | the declaration was parsed | 354,653 |
-| PARTIAL | `file_path` IS NULL | referenced, not yet declared | 18,450 |
+| PARTIAL | first-party, `file_path` IS NULL | referenced, not yet declared | 18,450 |
 | DIRTY | `file_path` set, file HAS a `skip_reason` | was complete, its file now fails | 0 |
+| EXTERNAL | origin is `lib·` | a library symbol — NO file will ever exist | 21,928 |
+
+A NODE IS CONTAINED BY EITHER A FILE OR A LIBRARY, and the two are not the same
+absence. A `lib·` symbol has no `file_path` and never will: R5 says we index the
+USE of a dependency and never its internals, so "no file" is its COMPLETE state,
+not a pending one. Treating it as PARTIAL would report 21,928 permanent gaps that
+no amount of indexing can close.
+
+The discriminator is already in the key — the fqn's first segment is `lib` for an
+external symbol and the language for a first-party one — so no new column is
+needed to tell the two containers apart.
 
     LEFT JOIN sensei.scan_state s
            ON s.folder_id = n.folder_id AND s.file_path = n.file_path
