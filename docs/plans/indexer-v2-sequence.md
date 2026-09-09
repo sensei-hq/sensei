@@ -34,51 +34,54 @@ Steps 1-3 can be verified without any parsing at all. Step 4 needs no database.
 Only 6 onward touch persistence. That is deliberate — it front-loads everything
 cheap to test.
 
-## Two things scan_repo reads that are not source (R10.7f-h, R12)
+## Manifests and commands: ALREADY BUILT — correcting an earlier draft of this plan
 
-Both are DECLARED in manifests, so they belong to discovery, not to parsing.
-Neither needs a single file to be parsed.
+An earlier version of this section specified dependency and command extraction as
+work to be done. It is not. `ManifestAdapter` exists as a deliberate sibling to
+`LanguageAdapter` (`crates/senseid/src/adapters.rs`), created to replace "ten
+spaghetti sites" of hardcoded `if path == "package.json"` chains, and it is
+wired and producing data.
 
-**Dependency manifests** -> what this repo depends on, and at what version.
-`Cargo.toml` (+ `[workspace] members`), `package.json` (+ `workspaces`),
-`pyproject.toml`, `go.mod`, `pom.xml`. This yields the PACKAGE set, which is the
-observable level (R10.7f) and the input to `referenced_libraries`. Workspace
-members additionally give the package boundaries INSIDE one repo — the
-`package -> module -> item` slice, and the one case where grouping can be
-populated with no external manifest at all.
+The trait already provides everything this pipeline needs:
 
-**Commands** -> how to build, test and run. `package.json` scripts, `Makefile`
-targets, `justfile`, `Taskfile.yml`, `.cargo/config.toml` aliases. This is a
-first-class G1 answer: after "where is X", the next thing an agent needs is
-"how do I verify a change", and today it guesses or greps. It is also G2 — a
-repo whose test command cannot be found is a repo in trouble.
+    manifest_filenames / accepts / ecosystem
+    parse_dependencies        -> Vec<DepVersion>
+    detect_workspace_members  -> Vec<PackageInfo>
+    parse_commands            -> Vec<DiscoveredCommand>
+    is_workspace_root / stack_labels / infer_role
 
-### The concrete extraction targets, from this repo
+TEN ecosystems implement it: cargo, npm, pyproject, go, maven, gradle, ruby,
+dotnet, composer, swiftpm.
 
-| source | yields | real examples here |
-|---|---|---|
-| `Cargo.toml` `[workspace] members` | the CRATES in this repo | `crates/senseid`, `crates/cli`, `crates/mcp`, `crates/bootstrap`, `crates/logger`, `crates/dojo-protocol` |
-| `Cargo.toml` `[dependencies]` | crates depended ON, + version | the input to `referenced_libraries` |
-| `package.json` `workspaces` | the PACKAGES in this repo | — |
-| `package.json` `dependencies` | packages depended ON, + version | |
-| `package.json` `scripts` | commands | `dev`, `build`, `preview`, `tauri`, `check`, `test:unit`, `test:e2e` (from `app/`) |
-| `Makefile` targets | commands | `crates`, `crates-debug`, `crates-all`, `install`, `supabase-up`, `db-backup` |
-| `justfile` / `Taskfile.yml` | commands | not present here |
-| `.cargo/config.toml` `[alias]` | commands | |
+It is CALLED — `manifest_adapter_for_filename` from `libraries/registry.rs`,
+`indexer/lib_indexer.rs` and `scan_logic.rs`; `parse_commands` from
+`tasks/handlers/libraries.rs:575` — and it PERSISTS to
+`sensei.project_commands (id, folder_id, raw_name, command_line, category,
+ecosystem, source_file, discovered_at)`.
 
-FOUR `package.json` files exist here (`app/`, `dojo/`, `website/`, `marketplace/`)
-plus a root `Cargo.toml` and `Makefile`. So a repo has MANY manifests, not one,
-and commands are SCOPED to where their manifest lives — `bun run test:unit` in
-`app/` is not the same command as at the root. A flat list of command names
-loses that and produces instructions that fail when run.
+Live: **572 commands across 58 folders and 4 ecosystems.** `source_file` already
+records the declaring manifest, so the per-manifest scoping this plan called for
+is present — the working directory is its dirname.
 
-Each extracted command records: its name, the manifest that declared it, the
-directory it runs in, and the raw command line. An agent then has enough to
-actually run it rather than guess a working directory.
+### So what v2 actually changes here
 
-Both are declared facts. Neither is inferred from file layout, and a repo that
-declares neither simply has none — that is honest-empty, not a gap to fill by
-guessing.
+Not the extraction. Only WHERE IT RUNS. Today it happens in a `libraries` task
+handler, separate from the scan. Under R14 it belongs in `scan_repo`, before the
+structure barrier, because:
+
+- the same walk that finds files finds the manifests, so reading them twice is
+  waste
+- workspace members define package boundaries, which stage 2b needs BEFORE any
+  parsing (see below)
+- a repo's commands should be known as soon as the repo is known, not after a
+  separate handler happens to run
+
+### The one genuine gap
+
+`category` is unpopulated on some rows (`coverage`, `quality:gate` have none;
+`test:system` and `install` do). A command with no category cannot be answered
+against "how do I test this", which is the G1 question the data exists to serve.
+Worth a look, but it is a field to fill, not a subsystem to build.
 
 ## Library discovery is its own stage, and it does NOT depend on parsing
 
