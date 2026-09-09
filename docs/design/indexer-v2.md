@@ -1180,6 +1180,50 @@ does it reach, which of that library's components document it, and which skills
 and agents exist for it. That is R10.7g, and it is two links away — not a new
 subsystem.
 
+## 7e. R13 — rename `scan_state` to `files`, and give it a key
+
+The name is wrong and it caused a design error. `scan_state` reads as transient
+bookkeeping, so the question "do we have a file entity?" stayed open for several
+rounds of this design while the answer sat in that table. A table called `files`
+would have made the entity obvious, and would have made the missing surrogate key
+obvious with it.
+
+It is the file entity: `(folder_id, file_path, mtime, content_hash, indexed_at,
+modified_at, skip_reason)`, one row per file, 48,665 of them.
+
+### Do the rename and the key in ONE migration
+
+They are the same change and splitting them means migrating the same table twice.
+
+- **Rename** `scan_state` -> `files`.
+- **Add `id uuid`** as a surrogate key. Today the PK is `(folder_id, file_path)`
+  and there is no id, which is why `nodes` references a file by TEXT.
+- **Point `nodes.file_id` at it.** That closes R12 defect [1] and makes the 8,147
+  ORPHANED nodes UNREPRESENTABLE — a node cannot name a file that does not exist
+  if the reference is a foreign key. The state stops needing detection because it
+  stops being possible.
+
+Keep `(folder_id, file_path)` as a unique constraint: it is the natural key, and
+`plan_reindex` and the walk both address files by path.
+
+### Cost, measured
+
+134 references across 10 Rust files, plus `design.dbml` and the
+`folder_completeness` view. Real but bounded, and mechanical.
+
+It is DDL on a table the SHIPPED indexer writes on every file of every scan, so it
+goes through the dbd workflow, not by hand, and it is the largest schema change
+this design asks for. Sequence it with the `scan_state` detail column R10.7
+already needs (the parser error message and location) so the table is opened once.
+
+### Why bother, when the join works today
+
+Because the string join is what allows the broken state. 8,147 nodes currently
+assert a declaration in a file the scanner does not track, and they read as
+COMPLETE. No amount of care in the writer prevents that; a foreign key does. This
+is the same argument as R9 — a failure that the type system makes impossible
+beats one that a reviewer has to notice.
+
 ## 8. Decisions
 
 **D1.** Scope is the walk AND the persistence path (see R3).
