@@ -426,3 +426,39 @@ directory someone pointed us at" is not, and it is what produced the
 nested-root and duplicate-project drift classes the doctor has to repair. If a
 non-git directory genuinely needs indexing, the honest answer is to say so
 explicitly rather than infer roothood from a walk.
+
+## Incremental: files -> repos, the inverse traversal
+
+The full scan goes repo -> files. A change arrives the other way:
+
+    list_changed_files(watch_root)         IO     watcher or a diff
+    match_repos(paths, known_roots)       PURE    group each path to its repo
+    save_folders_and_files(changed)        DB     <-- SAME BARRIER
+    -> enqueue index_file per changed file             [queue]
+
+`match_repos` is pure — paths in, groupings out — so it is testable with string
+literals and no filesystem. Three rules it must get right:
+
+**LONGEST PREFIX WINS.** A file under `repo/submodule/x.rs` belongs to the
+SUBMODULE, not the parent. Matching the first or shortest root attributes a
+submodule's files to its parent repo, which silently merges two codebases.
+
+**A path matching NO known root is not a file event.** It means a repo appeared,
+or the path is outside every watch root. Enqueueing an `index_file` for it would
+create work with no repo to attach to. It escalates to `scan_root`, it does not
+guess.
+
+**Some changed files are REPO events, not file events.** A modified
+`.gitmodules`, `Cargo.toml [workspace] members`, `package.json workspaces` or
+`sensei.library.json` changes the repo's STRUCTURE, so it re-runs the repo-level
+discovery rather than being parsed as a source file. Treating them as ordinary
+files leaves the structure stale while the content is current.
+
+The barrier holds here too, for the same reason as R14: rows for the changed set
+are written before any task is enqueued, so no task races another and the
+denominator for progress is the changed count, known upfront.
+
+Deletions produce NO task. A deleted file is reconcile's job (R10.8) — the claim
+is released, the node is deleted, inbound edges are unresolved. Enqueueing a
+parse task for a file that no longer exists is how a pipeline ends up with a
+"file not found" error path it then has to interpret.
