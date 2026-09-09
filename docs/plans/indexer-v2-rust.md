@@ -462,3 +462,39 @@ Deletions produce NO task. A deleted file is reconcile's job (R10.8) — the cla
 is released, the node is deleted, inbound edges are unresolved. Enqueueing a
 parse task for a file that no longer exists is how a pipeline ends up with a
 "file not found" error path it then has to interpret.
+
+## .gitignore applies in scan_repo, and it is NOT the same list as the globs
+
+Ignore rules are a REPO concern, so they belong in `scan_repo`, not `scan_root`
+— at root time we do not yet know where the repos are, and a `.gitignore` only
+has meaning relative to one.
+
+Two filters, complementary, neither replacing the other:
+
+| filter | says | examples |
+|---|---|---|
+| `.gitignore` | NOT TRACKED — the repo's own declaration | `target/`, `node_modules/`, `.env`, `.DS_Store` |
+| `DEFAULT_EXCLUDE_GLOBS` | tracked, but NOT SOURCE | committed `*.min.js`, vendored bundles, `assets/*-<hash>.js` |
+
+Git states what is not part of the repository. The glob list states what is in
+the repository but is not worth indexing. Conflating them loses one or the other:
+drop the globs and committed minified bundles get parsed; drop gitignore and we
+maintain a list the repo already publishes.
+
+### The current gap
+
+The walks use `walkdir`, which is NOT gitignore-aware, so the repo's own
+declarations are currently unread — including NESTED ones, of which this repo has
+five (`/`, `database/`, `app/`, `website/`, `dojo/`). Nested matters: a
+`.gitignore` deep in a tree can exclude a subtree that the root file says nothing
+about.
+
+`ignore = "0.4"` is ALREADY a dependency and is gitignore-aware, including
+nested files and `.git/info/exclude`. `scan_repo` should walk with its
+`WalkBuilder`, which prunes at the directory (satisfying the prune-not-filter
+rule above) and reads the hierarchy correctly.
+
+This is also why `DEFAULT_EXCLUDE_GLOBS` grew entries like `**/target/**` and
+`**/node_modules/**`: they were hand-added to compensate for gitignore not being
+read. Once it is, those entries are redundant and should go, leaving only the
+tracked-but-not-source cases the list actually exists for.
