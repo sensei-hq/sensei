@@ -76,6 +76,42 @@ structure barrier, because:
 - a repo's commands should be known as soon as the repo is known, not after a
   separate handler happens to run
 
+### The manifest pass, concretely
+
+    the file walk (already visiting every file)
+      -> for each file, ManifestAdapter::accepts(filename)?
+           -> dispatch to that adapter
+           -> store its facts on the FOLDER CONTAINING the manifest
+
+**Do NOT glob a second time.** `scan_repo` already walks every file for the file
+set. Testing each against `accepts()` as it passes costs one string comparison
+per file and needs no extra traversal. A separate manifest glob would re-walk
+48,654 files to find perhaps 200 — and would then need its own exclusion rules,
+which is a second place for them to drift.
+
+**Do NOT hardcode the filename list.** Each adapter declares
+`manifest_filenames()` / `manifest_extensions()`, and the dispatch table is the
+registry. The glob set is DERIVED from the adapters, so adding an ecosystem is
+one impl and no edit anywhere else. That is the whole reason the trait exists —
+the doc comment names the ten hardcoded sites it replaced.
+
+**Folder level is the right home**, and it is already the shape:
+`project_commands.folder_id`. A manifest sits AT a directory and describes that
+directory's subtree, so its facts belong to that folder:
+
+| fact | from | example here |
+|---|---|---|
+| commands | `parse_commands` | `app/` gets `dev`, `build`, `test:unit`, `test:e2e` |
+| dependencies | `parse_dependencies` | with versions, per manifest |
+| hierarchy | `detect_workspace_members`, `is_workspace_root` | root `Cargo.toml` -> six crates |
+| language / framework | `stack_labels` | |
+| role | `infer_role` | |
+
+This repo has SIX manifest-bearing folders (root `Cargo.toml` + `Makefile`, and
+`package.json` in `app/`, `dojo/`, `website/`, `marketplace/`), so folder-level
+storage is not a refinement — a repo-level store would collapse four different
+`build` commands into one and lose which directory each runs in.
+
 ### The one genuine gap
 
 `category` is unpopulated on some rows (`coverage`, `quality:gate` have none;
