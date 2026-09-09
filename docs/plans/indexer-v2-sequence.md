@@ -53,6 +53,29 @@ first-class G1 answer: after "where is X", the next thing an agent needs is
 "how do I verify a change", and today it guesses or greps. It is also G2 — a
 repo whose test command cannot be found is a repo in trouble.
 
+### The concrete extraction targets, from this repo
+
+| source | yields | real examples here |
+|---|---|---|
+| `Cargo.toml` `[workspace] members` | the CRATES in this repo | `crates/senseid`, `crates/cli`, `crates/mcp`, `crates/bootstrap`, `crates/logger`, `crates/dojo-protocol` |
+| `Cargo.toml` `[dependencies]` | crates depended ON, + version | the input to `referenced_libraries` |
+| `package.json` `workspaces` | the PACKAGES in this repo | — |
+| `package.json` `dependencies` | packages depended ON, + version | |
+| `package.json` `scripts` | commands | `dev`, `build`, `preview`, `tauri`, `check`, `test:unit`, `test:e2e` (from `app/`) |
+| `Makefile` targets | commands | `crates`, `crates-debug`, `crates-all`, `install`, `supabase-up`, `db-backup` |
+| `justfile` / `Taskfile.yml` | commands | not present here |
+| `.cargo/config.toml` `[alias]` | commands | |
+
+FOUR `package.json` files exist here (`app/`, `dojo/`, `website/`, `marketplace/`)
+plus a root `Cargo.toml` and `Makefile`. So a repo has MANY manifests, not one,
+and commands are SCOPED to where their manifest lives — `bun run test:unit` in
+`app/` is not the same command as at the root. A flat list of command names
+loses that and produces instructions that fail when run.
+
+Each extracted command records: its name, the manifest that declared it, the
+directory it runs in, and the raw command line. An agent then has enough to
+actually run it rather than guess a working directory.
+
 Both are declared facts. Neither is inferred from file layout, and a repo that
 declares neither simply has none — that is honest-empty, not a gap to fill by
 guessing.
