@@ -831,6 +831,34 @@ from columns that already exist. Verified on the live graph:
 | PARTIAL | first-party, `file_path` IS NULL | referenced, not yet declared | 18,450 |
 | DIRTY | `file_path` set, file HAS a `skip_reason` | was complete, its file now fails | 0 |
 | EXTERNAL | origin is `lib·` | a library symbol — NO file will ever exist | 21,928 |
+| ORPHANED | `file_path` set, NO `scan_state` row for it | claims a file the scanner does not track | 8,147 |
+| EXCLUDED | file's `skip_reason` is not a parse failure | the file is deliberately not indexed | 0 |
+
+ORPHANED IS THE DANGEROUS ONE AND IT EXISTS TODAY. 8,147 nodes name a
+`file_path` for which there is no `scan_state` row at all, and they read as
+COMPLETE to every consumer — `file_path` set, `resolved = true` — so the graph
+asserts "declared in x.rs" about a file it is not tracking. That is wrong data,
+not missing data. Three routes in, all live: `clear_scan_state_for_root` (which
+the version-rescan path calls on purpose) drops scan_state without touching
+nodes; a newly-excluded glob prunes scan_state and leaves the symbols; a file
+deleted from disk leaves its declarations behind.
+
+EXCLUDED is empty today only because excluded files never parsed and so produced
+no nodes. It is reachable: index a file, then add a glob that covers it.
+
+The six differ in TRAJECTORY, which is why they must stay separate:
+
+| state | resolves when |
+|---|---|
+| PARTIAL | its file is parsed |
+| DIRTY | its file is fixed |
+| ORPHANED | its file is re-scanned, OR the node is pruned |
+| EXCLUDED | the exclusion is lifted, OR the node is pruned |
+| EXTERNAL | never — it is already complete |
+| COMPLETE | — |
+
+For ORPHANED and EXCLUDED the honest answer may be DELETE rather than wait, and
+neither is detected today.
 
 A NODE IS CONTAINED BY EITHER A FILE OR A LIBRARY, and the two are not the same
 absence. A `lib·` symbol has no `file_path` and never will: R5 says we index the
