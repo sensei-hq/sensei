@@ -393,3 +393,36 @@ and an excluded file are both "not indexed" but only one is actionable (R10.9).
 The UI should be able to show "3 files could not be parsed" separately from "17
 binary files skipped", because the first is a call to action and the second is
 noise.
+
+## Exclusions: PRUNE during the walk, never filter after it
+
+A watch root carries exclusions (`folders_to_watch.excluded`, e.g. a
+dev root excluding `["Code"]`). These must prune the traversal, not filter
+its output.
+
+Globbing everything and discarding afterwards pays the full descent cost on
+exactly the trees you least want to enter — `node_modules`, `target`, `.venv`,
+build output — which is where the file count explodes. The walker must be told
+"do not descend here" at the directory, so the subtree is never read.
+
+Two levels, both pruning:
+- ROOT exclusions from `folders_to_watch.excluded`, relative to the watch root
+- the shared default globs (`DEFAULT_EXCLUDE_GLOBS`), which already exist and
+  already have one owner — do not grow a second list
+
+`find_files` takes the filter set as an ARGUMENT (see the purity table), so the
+pruning rule is testable against a tempdir without a watch root or a database.
+
+## Accepted scope reduction: git-only roots
+
+`scan_root` globbing for `.git` means a directory that is not a git repository is
+no longer a root. Measured, that drops the `standalone` kind: 89 folders today,
+against 84 `git`. Everything else is unaffected — the 9,076 `folder` rows are
+subfolders INSIDE repos and are created by `scan_repo`, and 129
+`workspace_member` rows likewise.
+
+This is deliberate. A repo boundary is a real, declared thing (`.git`); "a
+directory someone pointed us at" is not, and it is what produced the
+nested-root and duplicate-project drift classes the doctor has to repair. If a
+non-git directory genuinely needs indexing, the honest answer is to say so
+explicitly rather than infer roothood from a walk.
