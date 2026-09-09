@@ -17,6 +17,11 @@ reason. Never a plausible guess.
 **G2.** A person can see a repository's structure and judge where its risk is
 concentrated, without reading the code.
 
+OO patterns serve BOTH goals. For G2 they are how a person recognises the shape
+of an unfamiliar codebase. For G1 they stop an agent inventing a second way to do
+something the codebase already has a convention for — an agent that can see
+"these six types are adapters" writes the seventh adapter, not a novel design.
+
 Anything that serves neither is out of scope.
 
 ## 2. Definitions
@@ -116,6 +121,17 @@ same graph. Resolution must not depend on what has been scanned so far.
 reason codes live in one place. A language module owns only "how do I read this
 grammar".
 
+**R9. A field cannot be lost at a boundary.** Every persistence function takes a
+typed row, never a positional argument list, and every conversion from a fact to
+a row destructures its source EXHAUSTIVELY. Adding a field to `Symbol` or
+`Reference` must fail the build until someone decides where it goes.
+
+A positional list is a hand-copied enumeration of an object's fields: add a field
+to the producer and nothing breaks, the value simply stops. That is how
+`extract_return_type` ran on every function for months while the value never
+reached a column. Exhaustive destructuring moves that failure from
+runtime-invisible to build-time-loud. Existing offenders outside v2 are issue #161.
+
 **R8. Pattern-detection completeness.** The facts emitted must be sufficient to
 derive OO patterns from nodes and edges alone, with no return to source. Derived
 from the patterns worth detecting:
@@ -135,14 +151,46 @@ construction edges, member ownership, and member -> field-member call edges. All
 are required by §3. Pattern NAMING is a query over these; it is not part of the
 walk.
 
-## 5. Non-goals
+## 5. Deferred — and what is captured now so they stay cheap
 
-- Type inference. The walk reads types the language STATES. It does not infer
-  the type of an unannotated value. Where a language does not state a type, the
-  reference is `Unresolved` with that reason.
-- Parsing dependency sources.
-- Pattern classification inside the walk.
-- Any language beyond the one currently being built.
+These are not in this pass. They are NOT ruled out, and the difference matters:
+a capability declared impossible gets designed around, and the design then
+actively obstructs it later. For each, the walk captures the evidence a future
+pass needs, so filling the gap is a new consumer of existing facts rather than a
+re-parse and a schema change.
+
+**Type inference for unannotated values.** `let x = foo()` where `foo` is
+first-party is NOT inference — `foo`'s fqn is mintable at the call site and its
+return type is on its node, so it is a graph lookup and R2/R3 already cover it.
+What is deferred is inference proper: a value whose type no declaration states.
+CAPTURED NOW: the binding's provenance in `Evidence` — that `x` is the return of
+`foo` — so a later pass has the input without re-reading source.
+
+**Trait dispatch.** `x.fmt()` where `x: impl Display` needs the impl set and
+coherence rules. CAPTURED NOW: the receiver's stated bound, and every impl as a
+`Relation`. A later solver enumerates candidates from the graph; it does not need
+the source.
+
+**Blanket impls.** `impl<T: Foo> Bar for T` grants `Bar`'s members to every
+conforming `T`. CAPTURED NOW: the impl's generic parameters and their bounds, so
+the rule is present as data and a solver can match against it later.
+
+**Macro-generated code.** `#[derive(Serialize)]` produces an impl in no source
+file. CAPTURED NOW: the invocation site and the macro's resolved path, so a later
+expansion pass knows what generated what and where. Without this, expansion would
+require a full re-walk.
+
+**Untyped JavaScript.** Nothing states a type, so there is nothing to read.
+CAPTURED NOW: a distinct `Reason` for "no annotation exists here" versus "an
+annotation exists and we did not read it". The histogram must separate a gap that
+is CLOSEABLE from one that is not, or nobody can tell which is worth work.
+
+**Pattern classification** runs over nodes and edges (R8), not inside the walk.
+
+The rule behind all of these: it is legitimate to defer WORK; it is not
+legitimate to discard EVIDENCE. Anything the AST states and a future pass could
+need is captured now, because re-parsing 48,654 files to recover a field we
+already had is the expensive version.
 
 ## 6. Acceptance
 
