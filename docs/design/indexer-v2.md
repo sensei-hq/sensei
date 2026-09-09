@@ -924,6 +924,46 @@ There is no target node to join through, so the package is genuinely additional
 information and belongs on the edge. `edges.target_file` already exists and is
 used for the analogous first-party hint.
 
+### R10.7f — PACKAGE is observable, LIBRARY is enrichment
+
+An external reference resolves to the PACKAGE or CRATE the import names, because
+that is the only thing the call site can see. `import { X } from '@rokkit/ui'`
+names `@rokkit/ui`; it says nothing about `rokkit`. Keying on the library would
+derive identity from information the reference side does not have — the failure
+that killed namespace-as-key and the kotlin source-root attempt.
+
+    scan time   -> package / crate    @rokkit/ui, gateway-embedded, serde_json
+    enrichment  -> library            rokkit, gateway        (optional, later)
+
+The node references the package. A library groups packages and is attached
+later, if the information ever arrives. Absent it, the package stands alone and
+nothing is missing — the graph is not wrong, it is simply not yet grouped.
+
+MEASURED STATE: this level does not exist. `sensei.libraries` holds PACKAGES —
+`@rokkit/actions`, `@rokkit/app`, `@rokkit/blocks`, `@rokkit/core` are separate
+rows, all `kind = 'detected'`, `ecosystem = 'npm'`, and there is no `rokkit` row
+grouping them. The `library_kind` enum is `detected | imported`, which records
+PROVENANCE (found by scan vs added deliberately), not LEVEL. 1,121 rows across
+npm/cargo/pypi/nuget/maven, every one a package.
+
+So two things are needed, both additive:
+- a level discriminator, so a row can be a library rather than a package
+- a parent link from package to library
+
+Neither changes any fqn. `lib·@rokkit/ui·…` stays exactly as it is; the grouping
+hangs above it.
+
+THE GROUPING MUST BE DECLARED, NEVER INFERRED. `@rokkit/*` -> `rokkit` is a
+tempting prefix rule and it is a guess: `@types/node` belongs to no "types"
+library, and the crates of `gateway` share no prefix at all. Grouping comes from
+declared metadata (llms.txt, registry, an explicit `add_library`) or it does not
+happen. An invented grouping is a fabricated fact about a dependency, and it
+would be believed.
+
+This is the `library -> package -> symbol` slice of R10.7c, with the top level
+optional — the same shape as `folder -> file -> type -> member`, where a folder
+may or may not be a project.
+
 ### R10.8 — a file that parsed is authoritative, and removal is REMOVAL
 
 When `read` returns `Ok`, the claim set is the truth. A declaration the file no
